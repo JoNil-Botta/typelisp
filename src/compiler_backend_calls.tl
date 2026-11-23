@@ -1567,7 +1567,8 @@
       (be_facts.compiler-backend-group-type?
         type-segment-bases
         program-index
-        ty))))
+        ty))
+    (= (be_facts.compiler-backend-abi-memory-size type-segment-bases ty) 0)))
 
 ;; Snapshot moves in a forwarder may be omitted together with parameter spills
 ;; only when each destination is fresh and each source is an unchanged incoming
@@ -4128,6 +4129,8 @@
           (be_state.compiler-backend-asm-append5
             out
             (cond
+              [(not (compiler_abi.compiler-abi-xmm-register-id? source))
+                "    movq "]
               [(= class compiler-backend-scalar-arg-f32) "    movss "]
               [(= class compiler-backend-scalar-arg-f64) "    movsd "]
               [else "    movq "])
@@ -7520,6 +7523,164 @@
       may-escape?
       label)))
 
+;; Collect incoming SysV Memory-class parameter var ids whose incoming stack
+;; slots overlap the outgoing tail-call stack area `[0, tail-stack-count)`.
+;; Returns the number of overlapping params stored in `roots`, or -1 when the
+;; function's parameter list is unavailable and a Memory param overlaps so the
+;; caller fails closed (#9289).
+(define (compiler-backend-overwritten-memory-param-vars
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [source-function : i64]
+  [tail-stack-count : i64]
+  [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [roots : (&mut roots (__tl_dyn-array i64))]) : i64
+  (if (or
+    (<= tail-stack-count 0)
+    (not (be_state.compiler-backend-target-sysv-aggregates? target (Internal))))
+    0
+    (match (be_operand.compiler-backend-index-function-slot
+      program-index
+      source-function)
+      [(LookupFound slot)
+        (if (and (>= slot 0) (< slot functions.len))
+          (match (& (array-ref functions.slots slot))
+            [(Function _ params _ _ _ _)
+              (let
+                [int-idx : i64 0]
+                [float-idx : i64 0]
+                [position : i64 0]
+                [stack-idx : i64 0]
+                [count : i64 0]
+                (for [index (iterator.range 0 params.len)]
+                  (match (compiler_ir_types.compiler-ir-param-seq-ref
+                    params
+                    index)
+                    [(Param _ ty var-id)
+                      (cond
+                        [(be_facts.compiler-backend-group-type?
+                            type-segment-bases
+                            program-index
+                            (& ty))
+                          (let
+                            [w0-sse : bool
+                              (be_facts.compiler-backend-group-word-sse?
+                                type-segment-bases
+                                program-index
+                                (& ty)
+                                0)]
+                            [w0-stack : bool
+                              (be_scalar.compiler-backend-stack-call-arg-for-banks?
+                                target
+                                (Internal)
+                                w0-sse
+                                int-idx
+                                float-idx
+                                position)]
+                            [int1 : i64
+                              (if w0-sse
+                                int-idx
+                                (+ int-idx 1))]
+                            [float1 : i64
+                              (if w0-sse
+                                (+ float-idx 1)
+                                float-idx)]
+                            [w1-sse : bool
+                              (be_facts.compiler-backend-group-word-sse?
+                                type-segment-bases
+                                program-index
+                                (& ty)
+                                1)]
+                            [w1-stack : bool
+                              (be_scalar.compiler-backend-stack-call-arg-for-banks?
+                                target
+                                (Internal)
+                                w1-sse
+                                int1
+                                float1
+                                (+ position 1))]
+                            (if (or w0-stack w1-stack)
+                              (+= stack-idx 2)
+                              (begin
+                                (set!
+                                  int-idx
+                                  (if w1-sse
+                                    int1
+                                    (+ int1 1)))
+                                (set!
+                                  float-idx
+                                  (if w1-sse
+                                    (+ float1 1)
+                                    float1))))
+                            (+= position 2))]
+                        [(be_operand.compiler-backend-float-type? (& ty))
+                          (when
+                            (be_scalar.compiler-backend-stack-call-arg-for-banks?
+                              target
+                              (Internal)
+                              true
+                              int-idx
+                              float-idx
+                              position)
+                            (+= stack-idx 1))
+                          (+= float-idx 1)
+                          (+= position 1)]
+                        [else
+                          (let
+                            [private-memory-size : i64
+                              (be_facts.compiler-backend-abi-memory-size
+                                type-segment-bases
+                                ty)]
+                            (if (> private-memory-size 0)
+                              (begin
+                                (when
+                                  (< stack-idx tail-stack-count)
+                                  (set! (array-ref roots count) var-id)
+                                  (+= count 1))
+                                (+=
+                                  stack-idx
+                                  (compiler-backend-stack-slots-for-size
+                                    private-memory-size))
+                                (+= position 1))
+                              (begin
+                                (when
+                                  (be_scalar.compiler-backend-stack-call-arg-for-banks?
+                                    target
+                                    (Internal)
+                                    false
+                                    int-idx
+                                    float-idx
+                                    position)
+                                  (+= stack-idx 1))
+                                (+= int-idx 1)
+                                (+= position 1))))])]))
+                count)])
+          (let
+            [param-types : compiler_ast_types.AstTypeList
+              (compiler-backend-call-param-types-index
+                source-function
+                program-index)]
+            [count : i64 (compiler_ast_types.ast-type-list-len (& param-types))]
+            (for [index (iterator.range 0 count)]
+              (let
+                [ty : compiler_ast_types.AstType
+                  (compiler_ast_types.ast-type-segment-bases-get
+                    type-segment-bases
+                    (compiler_ast_types.ast-type-list-get
+                      (& param-types)
+                      index
+                      (compiler_ast_types.ast-type-id-fallback)))]
+                (when
+                  (>
+                    (be_facts.compiler-backend-abi-memory-size
+                      type-segment-bases
+                      ty)
+                    0)
+                  (return -1))))
+            0))]
+      [(LookupMissing) 0])))
+
 (define (compiler-backend-emit-tail-call
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
@@ -7534,7 +7695,7 @@
   [global-types : be_state.CompilerBackendGlobalTypeTable]
   [vars : i64]
   [plan : be_state.CompilerBackendRuntimePlan]
-  [_functions : compiler_ir_types.CompilerIrFunctionSeq]
+  [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [_externs : compiler_ir_types.CompilerIrExternSeq]
   [program-index : be_state.CompilerBackendProgramIndex]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
@@ -7587,16 +7748,51 @@
         target
         extern-call-info
         (be_state.compiler-backend-global-shared-view param-types))]
+    ;; Outgoing tail stack arguments overwrite incoming stack slots
+    ;; [0, tail-stack-count). If an incoming SysV Memory-class parameter lies
+    ;; inside that range and its address (or a derived address) escapes, keep
+    ;; this frame so the callee receives its arguments below the return address.
+    [memory-param-overlap? : bool
+      (if (and
+        (> tail-stack-count 0)
+        (be_state.compiler-backend-target-sysv-aggregates? target (Internal)))
+        (let
+          [source-param-count : i64
+            (compiler_ast_types.ast-type-list-len
+              (&
+                (compiler-backend-call-param-types-index
+                  source-function
+                  program-index)))]
+          [overwritten-roots : (__tl_dyn-array i64)
+            (__tl_make-array i64 (+ source-param-count 1))]
+          [overwritten : i64
+            (compiler-backend-overwritten-memory-param-vars
+              type-segment-bases
+              target
+              source-function
+              tail-stack-count
+              (& functions)
+              program-index
+              (&mut overwritten-roots))]
+          (or
+            (< overwritten 0)
+            (compiler_ir_types.compiler-ir-blocks-vars-escape?
+              (& blocks)
+              (& overwritten-roots)
+              overwritten)))
+        false)]
     ;; Both jump paths below retire this frame. A register-only argument can
     ;; still point into it, including through casts, projections or stored
     ;; aliases, so ABI register placement is not a lifetime proof. Whether a
     ;; frame address can exist here is a property of this block's paths.
     [frame-safe : bool
-      (not
-        (compiler-backend-blocks-expose-frame-at?
-          backend-state
-          (& blocks)
-          current-label))]
+      (and
+        (not memory-param-overlap?)
+        (not
+          (compiler-backend-blocks-expose-frame-at?
+            backend-state
+            (& blocks)
+            current-label)))]
     (if (and
       frame-safe
       (compiler-backend-direct-tail-call?
@@ -9479,7 +9675,7 @@
     value
     "private SPMD call mask"
     lanes
-    (be_simd.compiler-backend-avx512-mask-gpr lanes)
+    (be_simd.compiler-backend-avx512-mask-gpr-part "%rax" lanes)
     backend-state)
     [(Ok use)
       (match use

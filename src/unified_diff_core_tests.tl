@@ -80,7 +80,7 @@
   (let
     [buf : byte_buf.ByteBuf (byte_buf.new)]
     (for [index (iterator.range 0 count)]
-      (set! buf (byte_buf.append-string buf (clone piece))))
+      (set! buf (byte_buf.append-string buf (string.copy (& piece)))))
     (byte_buf.to-string buf)))
 
 (define (from-bytes [values : (__tl_dyn-array i64)]) : String
@@ -209,17 +209,21 @@
   [run : (& r Run)]) : unit
   (assert
     (complete? run)
-    (str_cat.str-cat (clone name) ": rendering did not complete"))
+    (str_cat.str-cat (string.copy (& name)) ": rendering did not complete"))
   (assert
     (= run.report.emitted-bytes (string.string-length run.text))
-    (str_cat.str-cat (clone name) ": emitted bytes do not match the output"))
+    (str_cat.str-cat
+      (string.copy (& name))
+      ": emitted bytes do not match the output"))
   (assert
     (= run.report.emitted-lines (count-newlines (& run.text)))
-    (str_cat.str-cat (clone name) ": emitted lines do not match the output"))
-  (assert
-    (applies? old new (clone run.text))
     (str_cat.str-cat
-      (clone name)
+      (string.copy (& name))
+      ": emitted lines do not match the output"))
+  (assert
+    (applies? old new (string.copy (& run.text)))
+    (str_cat.str-cat
+      (string.copy (& name))
       ": diff does not apply:\n"
       (string.copy run.text))))
 
@@ -233,11 +237,19 @@
   [expected : String]) : unit
   (let
     [run : Run
-      (run-diff "t.tl" (clone old) (clone new) (unified_diff.unbounded) 0)]
+      (run-diff
+        "t.tl"
+        (string.copy (& old))
+        (string.copy (& new))
+        (unified_diff.unbounded)
+        0)]
     (assert
       (string.eq run.text expected)
-      (str_cat.str-cat (clone name) ": unexpected diff:\n" (clone run.text)))
-    (check-run (clone name) old new (& run))))
+      (str_cat.str-cat
+        (string.copy (& name))
+        ": unexpected diff:\n"
+        (string.copy (& run.text))))
+    (check-run (string.copy (& name)) old new (& run))))
 
 ;; --- goldens ----------------------------------------------------------------
 (test
@@ -318,8 +330,8 @@
         (=
           (string.string-length
             (diff
-              (str_cat.str-cat (clone line) "\n")
-              (str_cat.str-cat (clone line) "\n")))
+              (str_cat.str-cat (string.copy (& line)) "\n")
+              (str_cat.str-cat (string.copy (& line)) "\n")))
           0)
         "equal lines rendered a diff")
       (for [position (iterator.range 0 len)]
@@ -331,10 +343,10 @@
               (string.substring (& line) (+ position 1) (- len (+ position 1))))]
           [rendered : String
             (diff
-              (str_cat.str-cat (clone line) "\n")
-              (str_cat.str-cat (clone changed) "\n"))]
+              (str_cat.str-cat (string.copy (& line)) "\n")
+              (str_cat.str-cat (string.copy (& changed)) "\n"))]
           [expected : String
-            (str_cat.str-cat "\n-" (clone line) "\n+" changed "\n")]
+            (str_cat.str-cat "\n-" (string.copy (& line)) "\n+" changed "\n")]
           (assert
             (string.contains (& rendered) (& expected))
             (str_cat.str-cat "byte change was not detected:\n" rendered)))))))
@@ -349,7 +361,10 @@
         buf
         (byte_buf.append-string
           buf
-          (str_cat.str-cat (clone prefix) (string.int->string index) "\n"))))
+          (str_cat.str-cat
+            (string.copy (& prefix))
+            (string.int->string index)
+            "\n"))))
     (byte_buf.to-string (byte_buf.append-string buf "tail\n"))))
 
 (test
@@ -358,7 +373,12 @@
     [old : String (long-replacement "old-")]
     [new : String (long-replacement "new-")]
     [run : Run
-      (run-diff "long.tl" (clone old) (clone new) (unified_diff.unbounded) 0)]
+      (run-diff
+        "long.tl"
+        (string.copy (& old))
+        (string.copy (& new))
+        (unified_diff.unbounded)
+        0)]
     (check-run "long replacement" old new (& run))
     (assert
       (and
@@ -392,7 +412,12 @@
     [old : String (sparse-fixture false 4096)]
     [new : String (sparse-fixture true 4096)]
     [run : Run
-      (run-diff "large.tl" (clone old) (clone new) (unified_diff.unbounded) 0)]
+      (run-diff
+        "large.tl"
+        (string.copy (& old))
+        (string.copy (& new))
+        (unified_diff.unbounded)
+        0)]
     (check-run "sparse" old new (& run))
     (assert
       (and
@@ -464,7 +489,12 @@
         [old : String (random-text old-lines)]
         [new : String (random-text new-lines)]
         [run : Run
-          (run-diff "r.tl" (clone old) (clone new) (unified_diff.unbounded) 0)]
+          (run-diff
+            "r.tl"
+            (string.copy (& old))
+            (string.copy (& new))
+            (unified_diff.unbounded)
+            0)]
         (check-run
           (str_cat.str-cat "random case " (string.int->string case))
           old
@@ -475,7 +505,12 @@
 (define (expect-headers [path : String] [expected : String]) : unit
   (let
     [run : Run
-      (run-diff (clone path) "(a)\n" "(b)\n" (unified_diff.unbounded) 0)]
+      (run-diff
+        (string.copy (& path))
+        "(a)\n"
+        "(b)\n"
+        (unified_diff.unbounded)
+        0)]
     (assert
       (string.is-string-prefix-at (& run.text) (& expected) 0)
       (str_cat.str-cat "unexpected headers:\n" run.text))))
@@ -546,11 +581,18 @@
     (let
       [path : String (from-bytes every-byte)]
       [run : Run
-        (run-diff (clone path) "(a)\n" "(b)\n" (unified_diff.unbounded) 0)]
+        (run-diff
+          (string.copy (& path))
+          "(a)\n"
+          "(b)\n"
+          (unified_diff.unbounded)
+          0)]
       [first-end : i64 (string.index-of-byte (& run.text) 0 (cast 10 : u8))]
       [name : String (string.substring (& run.text) 4 (- first-end 4))]
       (assert
-        (string.eq (unquote-name (clone name)) (str_cat.str-cat "a/" path))
+        (string.eq
+          (unquote-name (string.copy (& name)))
+          (str_cat.str-cat "a/" path))
         (str_cat.str-cat "header quoting is not reversible: " name)))))
 
 ;; --- sink failures, chunking and caps -------------------------------------------
@@ -680,7 +722,7 @@
   (let
     [full : Run
       (run-diff
-        (clone path)
+        (string.copy (& path))
         (distant-old)
         (distant-new)
         (unified_diff.unbounded)
@@ -763,12 +805,17 @@
     [expected : String
       (str_cat.str-cat
         "--- a/t.tl\n+++ b/t.tl\n@@ -1,1 +1,1 @@\n-"
-        (clone old)
+        (string.copy (& old))
         "\n+"
-        (clone new)
+        (string.copy (& new))
         "\n")]
     [run : Run
-      (run-diff "t.tl" (clone old) (clone new) (unified_diff.unbounded) 0)]
+      (run-diff
+        "t.tl"
+        (string.copy (& old))
+        (string.copy (& new))
+        (unified_diff.unbounded)
+        0)]
     (assert (string.eq run.text expected) "enormous line diff differs")
     (assert
       (and
@@ -780,8 +827,8 @@
       [huge : Run
         (run-diff
           "t.tl"
-          (clone old)
-          (clone new)
+          (string.copy (& old))
+          (string.copy (& new))
           (options
             unified_diff.no-limit
             unified_diff.no-limit
@@ -799,7 +846,12 @@
     [old : String (repeat "x\n" 20000)]
     [new : String (repeat "y\n" 20000)]
     [run : Run
-      (run-diff "t.tl" (clone old) (clone new) (unified_diff.unbounded) 0)]
+      (run-diff
+        "t.tl"
+        (string.copy (& old))
+        (string.copy (& new))
+        (unified_diff.unbounded)
+        0)]
     (check-run "tiny lines" old new (& run))
     (assert
       (and
@@ -824,7 +876,7 @@
     [buf : byte_buf.ByteBuf (byte_buf.new)]
     [line : String (str_cat.str-cat "(" (repeat marker 96) ")\n")]
     (for [index (iterator.range 0 4096)]
-      (set! buf (byte_buf.append-string buf (clone line))))
+      (set! buf (byte_buf.append-string buf (string.copy (& line)))))
     (byte_buf.to-string buf)))
 
 ;; Rendering allocates the two line indexes and one staging chunk, never

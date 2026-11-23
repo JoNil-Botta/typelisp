@@ -3500,9 +3500,16 @@
           (& (compiler-reg-low-xmm-vector-clobber-function)))
           [(Plan clobber-assignments _ _ _ _)
             (and
+              (compiler-reg-location-any-register?
+                (reg.compiler-reg-assignment-lookup splat-assignments 0))
               (not
-                (compiler-reg-location-any-register?
-                  (reg.compiler-reg-assignment-lookup splat-assignments 0)))
+                (reg.compiler-reg-location-register?
+                  (& (reg.compiler-reg-assignment-lookup splat-assignments 0))
+                  (cabi.compiler-abi-xmm-register-id 0)))
+              (not
+                (reg.compiler-reg-location-register?
+                  (& (reg.compiler-reg-assignment-lookup splat-assignments 0))
+                  (cabi.compiler-abi-xmm-register-id 1)))
               (not
                 (reg.compiler-reg-location-register?
                   (& (reg.compiler-reg-assignment-lookup clobber-assignments 0))
@@ -4108,17 +4115,121 @@
 
 (cfg
   test
-  ;; R3S-1 fail-closed shape gate: a float parameter makes the position -> ABI
-  ;; index map depend on two-bank bookkeeping this constraint does not carry, so
-  ;; the builder answers an EMPTY array and alloc-one! keeps the legacy
-  ;; callee-saved-only parameter rule for the whole function.
-  (define (compiler-reg-param-entry-forbidden-refuses-float-ok?) : bool
-    (=
-      (array-length
+  (define (compiler-reg-entry-forbidden-mixed-params-4) : ir.CompilerIrParamSeq
+    (irt.params "p0=%0:f64, p1=%1:i64, p2=%2:f64, p3=%3:i64")))
+
+(cfg
+  test
+  (define (compiler-reg-entry-forbidden-win64-mixed-params-4) : ir.CompilerIrParamSeq
+    (irt.params "p0=%0:i64, p1=%1:f64, p2=%2:i64, p3=%3:f64")))
+
+(cfg
+  test
+  ;; Mixed GP/FP param-entry scheduling: tracks GP and XMM incoming arg
+  ;; registers independently on SysV (`int-idx` vs `float-idx`) and via shared
+  ;; positional slots on Win64 (`index`), forbidding only later incoming arg
+  ;; registers in the SAME bank.
+  (define (compiler-reg-param-entry-forbidden-mixed-float-ok?) : bool
+    (let
+      [rows : (__tl_dyn-array reg.CompilerRegIdSeq)
         (compiler-reg-entry-forbidden-rows
-          3
-          (compiler-reg-entry-forbidden-float-params-3)))
-      0)))
+          4
+          (compiler-reg-entry-forbidden-mixed-params-4))]
+      [win-params : ir.CompilerIrParamSeq
+        (compiler-reg-entry-forbidden-win64-mixed-params-4)]
+      [win-p0-later : reg.CompilerRegIdSeq
+        (reg.compiler-reg-param-entry-later-arg-regs
+          Windows
+          (& win-params)
+          0
+          false
+          0
+          0
+          0
+          (reg.compiler-reg-id-seq-empty))]
+      [win-p1-later : reg.CompilerRegIdSeq
+        (reg.compiler-reg-param-entry-later-arg-regs
+          Windows
+          (& win-params)
+          1
+          true
+          0
+          0
+          0
+          (reg.compiler-reg-id-seq-empty))]
+      (and
+        (= (array-length rows) 4)
+        ;; SysV p0 (f64, float 0): later float p2 arrives in %xmm1; GP regs untouched.
+        (compiler-reg-entry-forbidden-row-has?
+          (clone rows)
+          0
+          (cabi.compiler-abi-xmm-register-id 1))
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (clone rows)
+            0
+            (cabi.compiler-abi-xmm-register-id 0)))
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (clone rows)
+            0
+            cabi.compiler-reg-id-rdi))
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (clone rows)
+            0
+            cabi.compiler-reg-id-rsi))
+        ;; SysV p1 (i64, int 0): later GP p3 arrives in %rsi; XMM regs untouched.
+        (compiler-reg-entry-forbidden-row-has?
+          (clone rows)
+          1
+          cabi.compiler-reg-id-rsi)
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (clone rows)
+            1
+            cabi.compiler-reg-id-rdi))
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (clone rows)
+            1
+            (cabi.compiler-abi-xmm-register-id 1)))
+        ;; SysV p2 (last float) and p3 (last GP): no later same-bank arg regs.
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            (clone rows)
+            2
+            (cabi.compiler-abi-xmm-register-id 1)))
+        (not
+          (compiler-reg-entry-forbidden-row-has?
+            rows
+            3
+            cabi.compiler-reg-id-rsi))
+        ;; Win64 shared positional slots 0..3: p0 (i64, slot 0) forbids only
+        ;; later GP p2 (slot 2 = %r8), not slot 1 (%rdx); p1 (f64, slot 1)
+        ;; forbids only later FP p3 (slot 3 = %xmm3), not slot 2 (%xmm2).
+        (reg.compiler-reg-id-seq-contains?
+          (clone win-p0-later)
+          cabi.compiler-reg-id-r8)
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            (clone win-p0-later)
+            cabi.compiler-reg-id-rdx))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            win-p0-later
+            (cabi.compiler-abi-xmm-register-id 3)))
+        (reg.compiler-reg-id-seq-contains?
+          (clone win-p1-later)
+          (cabi.compiler-abi-xmm-register-id 3))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            (clone win-p1-later)
+            (cabi.compiler-abi-xmm-register-id 2)))
+        (not
+          (reg.compiler-reg-id-seq-contains?
+            win-p1-later
+            cabi.compiler-reg-id-r8))))))
 
 (cfg
   test
@@ -4167,13 +4278,15 @@
           (not (live.compiler-live-set-contains? ineligible 0))
           (not (live.compiler-live-set-contains? ineligible 1))
           (not (live.compiler-live-set-contains? ineligible 2))
-          (and
-            (not
-              (compiler-reg-location-any-register?
-                (reg.compiler-reg-assignment-lookup assignments 0)))
-            (not
-              (compiler-reg-location-any-register?
-                (reg.compiler-reg-assignment-lookup assignments 1))))
+          ;; With per-bank param-entry scheduling, unpinned leaf float params
+          ;; a (%xmm0) and b (%xmm1) take caller-saved XMM homes instead of
+          ;; spilling, while avoiding later incoming arg register %xmm2.
+          (reg.compiler-reg-location-register?
+            (& (reg.compiler-reg-assignment-lookup assignments 0))
+            (cabi.compiler-abi-xmm-register-id 3))
+          (reg.compiler-reg-location-register?
+            (& (reg.compiler-reg-assignment-lookup assignments 1))
+            (cabi.compiler-abi-xmm-register-id 4))
           (reg.compiler-reg-location-register?
             (& (reg.compiler-reg-assignment-lookup assignments 2))
             (cabi.compiler-abi-xmm-register-id 2)))])))
@@ -9503,6 +9616,7 @@
      entry:
        %0 = mov 9 : i64
        %1 = mov %0 : i64
+       %0 = mov 11 : i64
        store @keep, %0 : i64
        return %1
      }"))
@@ -9637,10 +9751,10 @@
         (= (compiler-reg-test-assignment-table-count assignments) 2)
         (reg.compiler-reg-location-register?
           (& (reg.compiler-reg-assignment-lookup assignments 0))
-          cabi.compiler-reg-id-r12)
+          cabi.compiler-reg-id-rax)
         (reg.compiler-reg-location-register?
           (& (reg.compiler-reg-assignment-lookup assignments 1))
-          cabi.compiler-reg-id-r12))]))
+          cabi.compiler-reg-id-rax))]))
 
 (define (compiler-reg-f64-reuse-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
@@ -9657,22 +9771,17 @@
 (define (compiler-reg-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-overlap-function))
     [(Plan assignments _ _ _ _)
-      ;; Seven simultaneously live values against a five-register callee-saved
-      ;; pool: the first five take %r12..%r15 and %rbx, and the remaining two
-      ;; spill. %rbx joined the pool once its fixed scratch role moved under the
-      ;; scavenger.
+      ;; Seven simultaneously live values in a zero-call SIMD function now use
+      ;; the full unified ABI integer pool and all fit in registers (0 spills).
       (and
         (= (compiler-reg-test-assignment-table-count assignments) 7)
-        (= (compiler-reg-spill-count assignments) 2)
-        (reg.compiler-reg-location-register?
-          (& (reg.compiler-reg-assignment-lookup assignments 3))
-          cabi.compiler-reg-id-r15)
-        (reg.compiler-reg-location-register?
-          (& (reg.compiler-reg-assignment-lookup assignments 4))
-          cabi.compiler-reg-id-rbx)
-        (compiler-reg-location-spill-offset?
-          (reg.compiler-reg-assignment-lookup assignments 6)
-          (reg.compiler-reg-stack-slot-offset 6)))]))
+        (= (compiler-reg-spill-count assignments) 0)
+        (compiler-reg-location-any-register?
+          (reg.compiler-reg-assignment-lookup assignments 0))
+        (compiler-reg-location-any-register?
+          (reg.compiler-reg-assignment-lookup assignments 5))
+        (compiler-reg-location-any-register?
+          (reg.compiler-reg-assignment-lookup assignments 6)))]))
 
 (define (compiler-reg-f64-overlap-spill-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-overlap-function))
@@ -9759,27 +9868,24 @@
           (compiler-reg-location-any-register?
             (reg.compiler-reg-assignment-lookup assignments 0)))
         (compiler-reg-unassigned? assignments 1)
-        (reg.compiler-reg-location-register?
-          (& (reg.compiler-reg-assignment-lookup assignments 2))
-          (cabi.compiler-abi-xmm-register-id 2)))]))
+        (not
+          (compiler-reg-location-any-register?
+            (reg.compiler-reg-assignment-lookup assignments 2))))]))
 
 (define (compiler-reg-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-call-arg-function))
     [(Plan assignments ineligible _ _ _)
       (and
-        (live.compiler-live-set-contains? ineligible 0)
-        (live.compiler-live-set-contains? ineligible 1)
-        (compiler-reg-unassigned? assignments 0)
-        (compiler-reg-unassigned? assignments 1)
-        (reg.compiler-reg-location-register?
-          (& (reg.compiler-reg-assignment-lookup assignments 3))
-          cabi.compiler-reg-id-r12))]))
+        (not (live.compiler-live-set-contains? ineligible 0))
+        (not (live.compiler-live-set-contains? ineligible 1))
+        (compiler-reg-location-any-register?
+          (reg.compiler-reg-assignment-lookup assignments 3)))]))
 
 (define (compiler-reg-f64-call-arg-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-f64-call-arg-function))
     [(Plan assignments ineligible _ _ _)
       (and
-        (live.compiler-live-set-contains? ineligible 0)
+        (not (live.compiler-live-set-contains? ineligible 0))
         (compiler-reg-unassigned? assignments 0)
         (reg.compiler-reg-location-register?
           (& (reg.compiler-reg-assignment-lookup assignments 2))
@@ -9791,25 +9897,22 @@
       (let
         [marked : bool
           (and
-            (live.compiler-live-set-contains? ineligible 0)
-            (live.compiler-live-set-contains? ineligible 2)
+            (not (live.compiler-live-set-contains? ineligible 0))
+            (not (live.compiler-live-set-contains? ineligible 2))
             (live.compiler-live-set-contains? ineligible 3)
-            (live.compiler-live-set-contains? ineligible 4)
+            (not (live.compiler-live-set-contains? ineligible 4))
             (not (live.compiler-live-set-contains? ineligible 6)))]
-        [unassigned : bool
-          (and
-            (compiler-reg-unassigned? assignments 0)
-            (compiler-reg-unassigned? assignments 2)
-            (compiler-reg-unassigned? assignments 3)
-            (compiler-reg-unassigned? assignments 4))]
+        [unassigned : bool (compiler-reg-unassigned? assignments 3)]
         [homes : bool
           (and
             (reg.compiler-reg-location-register?
+              (& (reg.compiler-reg-assignment-lookup assignments 0))
+              cabi.compiler-reg-id-rdi)
+            (reg.compiler-reg-location-register?
               (& (reg.compiler-reg-assignment-lookup assignments 1))
               (cabi.compiler-abi-xmm-register-id 2))
-            (reg.compiler-reg-location-register?
-              (& (reg.compiler-reg-assignment-lookup assignments 5))
-              cabi.compiler-reg-id-r12)
+            (compiler-reg-location-any-register?
+              (reg.compiler-reg-assignment-lookup assignments 5))
             (compiler-reg-location-any-register?
               (reg.compiler-reg-assignment-lookup assignments 6)))]
         (and marked unassigned homes))]))
@@ -11233,7 +11336,7 @@
                           1
                           2)
                         (compiler-reg-same-location? phi-assignments 0 1)
-                        (compiler-reg-different-location? loop-assignments 1 2)
+                        (compiler-reg-same-location? loop-assignments 1 2)
                         (compiler-reg-different-location?
                           blocked-assignments
                           0
@@ -14742,7 +14845,7 @@
     (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
     (cfg test (compiler-reg-param-entry-forbidden-ok?) true)
     (cfg test (compiler-reg-param-entry-forbidden-refuses-windows-ok?) true)
-    (cfg test (compiler-reg-param-entry-forbidden-refuses-float-ok?) true)
+    (cfg test (compiler-reg-param-entry-forbidden-mixed-float-ok?) true)
     (cfg test (compiler-reg-param-entry-forbidden-refuses-memory-ok?) true)
     (cfg test (compiler-reg-scalar-float-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-win64-float-param-registers-ok?) true)
@@ -17145,3 +17248,79 @@
         builder.links.len
         builder.moves.len
         "later insertions retain link alignment"))))
+
+(cfg
+  test
+  (test
+    regalloc-simd-tail-mask-avoids-rcx
+    (let
+      [func : ir.CompilerIrFunction
+        (irt.func
+          "function @tail_mask_rcx(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64) -> i64 vars 6 {
+           entry:
+             %4 = tail_mask %0, %1 lanes 8
+             %5 = add %3, %2 : i64
+             return %5
+           }")]
+      (match (compiler-reg-plan-function func)
+        [(Plan assignments _ _ _ _)
+          (test.assert-true
+            (compiler-reg-location-any-register?
+              (reg.compiler-reg-assignment-lookup assignments 3))
+            "4th SysV param (%rcx incoming) still gets a GP register home across TailMask")
+          (test.assert-true
+            (not
+              (reg.compiler-reg-location-register?
+                (& (reg.compiler-reg-assignment-lookup assignments 3))
+                cabi.compiler-reg-id-rcx))
+            "TailMask shift clobber keeps live GP values out of %rcx")]))))
+
+(cfg
+  test
+  (test
+    regalloc-win64-coalesced-float-param-disjoint-from-vector
+    (let
+      [func : ir.CompilerIrFunction
+        (irt.func
+          "function @win64_f32_reduce(ptr=%0:i64, n=%1:i64, seed=%2:f32) -> f32 vars 11 {
+           entry:
+             %3 = mov 0 : i64
+             jump header
+           header:
+             %4 = phi [%3, entry], [%8, body] : i64
+             %5 = phi [%2, entry], [%9, body] : f32
+             %6 = lt %4, %1 : bool
+             branch %6, body, exit
+           body:
+             %7 = vector_load %0, %4 lanes 8 : f32
+             vector_store %0, %4, %7 lanes 8 : f32
+             %9 = add %5, %5 : f32
+             %8 = add %4, 8 : i64
+             jump header
+           exit:
+             return %5
+           }")]
+      (match (compiler-reg-plan-function-avx2-for-abi Windows func)
+        [(Plan assignments _ _ _ _)
+          (match (reg.compiler-reg-assignment-lookup assignments 5)
+            [(Some acc-loc)
+              (match (reg.compiler-reg-assignment-lookup assignments 7)
+                [(Some vec-loc)
+                  (match acc-loc
+                    [(Register acc-reg)
+                      (match vec-loc
+                        [(Register vec-reg)
+                          (test.assert-true
+                            (not
+                              (reg.compiler-reg-registers-overlap?
+                                acc-reg
+                                vec-reg))
+                            "coalesced Win64 float param accumulator must not alias vector register family")]
+                        [_
+                          (test.assert-true
+                            false
+                            "expected vector register for %7")])]
+                    [_
+                      (test.assert-true false "expected scalar register for %5")])]
+                [(No) (test.assert-true false "expected assignment for %7")])]
+            [(No) (test.assert-true false "expected assignment for %5")])]))))

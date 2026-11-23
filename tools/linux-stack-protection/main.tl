@@ -73,7 +73,8 @@
             raw
             (backend.compiler-backend-peephole-asm-drop-fallthrough-target
               raw
-              (be_state.CompilerBackendTarget.Linux)))]
+              (be_state.CompilerBackendTarget.Linux)
+              true))]
         (io.write-file (io.arg 4) (byte_buf.str-as-bytes (& assembly)))
         0)]
     [(and

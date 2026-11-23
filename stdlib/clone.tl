@@ -995,14 +995,8 @@
               (comptime.string-append
                 "gen-clone: expected a nominal aggregate, got "
                 (type-key T)))])]
-      `(begin
-        ;; Keep the runtime string dependency in the generated owner. The
-        ;; clone producer is loaded by core_macros for every source file, so
-        ;; importing stdlib.string at producer scope would leak its public
-        ;; definitions into unrelated static-library archives.
-        (import stdlib.string)
-        (define (,function-name [value : (& value ,T)]) : ,T
-          ,body)))))
+      `(define (,function-name [value : (& value ,T)]) : ,T
+        ,body))))
 
 ;: Emit clone helper declarations for all requested reachable aggregates.
 (defmacro (synthesize-helpers [types : comptime.Expr ...]) : Decls

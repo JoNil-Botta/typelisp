@@ -1,3 +1,4 @@
+(import stdlib.string)
 (import stdlib.byte_buf)
 (import stdlib.fs)
 (import stdlib.io)
@@ -63,9 +64,9 @@
     [label : String (repeat-text "a" 63)]
     [source : String
       (str_cat.str-cat
-        (clone label)
+        (string.copy (& label))
         "."
-        (clone label)
+        (string.copy (& label))
         "."
         label
         "."
@@ -176,9 +177,9 @@
     [large : String (repeat-text "a" 63)]
     [suffix : String
       (str_cat.str-cat
-        (clone large)
+        (string.copy (& large))
         "."
-        (clone large)
+        (string.copy (& large))
         "."
         large
         "."
@@ -230,9 +231,9 @@
     [address : ip.IpAddr (V6 (ip.ipv6 0xfe80 0 0 0 0 0 0 1))]
     [servers : (Array config.Nameserver 4)
       (array
-        (config.Nameserver (clone address) 1053 7)
-        (config.Nameserver (clone address) 53 7)
-        (config.Nameserver (clone address) 1053 8)
+        (config.Nameserver address 1053 7)
+        (config.Nameserver address 53 7)
+        (config.Nameserver address 1053 8)
         (config.Nameserver address 1053 7))]
     [suffixes : (Array String 2) (array "EXAMPLE." "Second.example")]
     [values : (Array i64 4) (array 1 1000 29999 30000)]
@@ -317,9 +318,9 @@
     [label : String (repeat-text "a" 63)]
     [suffix : String
       (str_cat.str-cat
-        (clone label)
+        (string.copy (& label))
         "."
-        (clone label)
+        (string.copy (& label))
         "."
         label
         "."

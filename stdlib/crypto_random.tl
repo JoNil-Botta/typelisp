@@ -26,6 +26,7 @@
 ;#       [(crypto_random.ErrFillRandom _) 1])))
 ;# ```
 (import stdlib.byte_buf)
+(cfg test (import stdlib.string))
 (cfg test (import stdlib.test))
 
 ;: Distinct failures returned by cryptographic random-byte fills.
@@ -411,7 +412,7 @@
         (test.assert-i64-eq
           (cast (byte_buf.ref buf index) : i64)
           expected
-          (clone message))
+          (string.copy (& message)))
         (set! index (+ index 1))))))
 
 ;: Assert success from the checked fill driver.

@@ -46,7 +46,10 @@
 ;; multiblock gate used to refuse.
 (define (sa-lookup-in [var : i64]) : SynthValue
   (if (and (>= var 0) (< var sa-len))
-    (clone (array-ref sa-slots var))
+    (match (array-ref sa-slots var)
+      [(Unknown) (Unknown)]
+      [(Const key first second) (Const key first second)]
+      [(Over) (Over)])
     (Unknown)))
 
 ;; The wrapper, and the site this fixture exists for: the accessor call is the

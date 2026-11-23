@@ -55,6 +55,7 @@
 ;# every integer and float type. The `p` selector and raw-pointer Debug require
 ;# an unsafe call-site context. Nominal/aggregate Debug hooks and builders are a
 ;# separate layer over the public `DebugOptions` contract.
+(import stdlib.clone)
 (import stdlib.comptime)
 (import stdlib.format_writer_core)
 (import stdlib.str_cat)
@@ -6600,7 +6601,7 @@
 ;: BigNum a shifted right by n bits.
 (define (bn-shr-bits [a : (& a BigNum)] [n : i64]) : BigNum
   (if (or (= a.len 0) (<= n 0))
-    (BigNum (clone a.limbs) a.len)
+    (BigNum (clone.deep a.limbs) a.len)
     (let
       [limb-shift : i64 (/ n 32)]
       [bit-shift : i64 (% n 32)]

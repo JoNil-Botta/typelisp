@@ -196,10 +196,10 @@
   [actual : (& actual Outcome)]
   [expected : (& expected Outcome)]
   [label : String]) : unit
-  (test.assert-i64-eq actual.code expected.code (clone label))
-  (test.assert-i64-eq actual.id expected.id (clone label))
-  (test.assert-i64-eq actual.input expected.input (clone label))
-  (test.assert-i64-eq actual.output expected.output (clone label))
+  (test.assert-i64-eq actual.code expected.code (string.copy (& label)))
+  (test.assert-i64-eq actual.id expected.id (string.copy (& label)))
+  (test.assert-i64-eq actual.input expected.input (string.copy (& label)))
+  (test.assert-i64-eq actual.output expected.output (string.copy (& label)))
   (test.assert-i64-eq actual.work expected.work label))
 
 (define (assert-outcome
@@ -208,8 +208,8 @@
   [input : i64]
   [output : i64]
   [label : String]) : unit
-  (test.assert-i64-eq actual.code code (clone label))
-  (test.assert-i64-eq actual.input input (clone label))
+  (test.assert-i64-eq actual.code code (string.copy (& label)))
+  (test.assert-i64-eq actual.input input (string.copy (& label)))
   (test.assert-i64-eq actual.output output label))
 
 (define (record!

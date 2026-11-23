@@ -4,7 +4,7 @@ set -eu
 # benchmark-size-vs-clang.sh - the size lane's reference instrument.
 #
 # For every benchmarks/<name>/ pair holding bench.tl and baseline.c, build the
-# TypeLisp side with `build --opt-level LEVEL` (default 2) and the C side with
+# TypeLisp side with `build --opt-level LEVEL` (default s) and the C side with
 # clang at -Os and -O2, using the compile-lane flags -std=c11 -DNDEBUG. Read
 # each unstripped binary's .text, user .text (the FUNC symbols in .text minus
 # the runtime's own entry and startup helpers), .rodata and .data sizes, strip
@@ -25,7 +25,7 @@ usage() {
 usage: scripts/benchmark-size-vs-clang.sh [options] [typelisp-compiler]
 
 Options:
-  --opt-level LEVEL  TypeLisp optimizer level: 0, 1 or 2 (default 2)
+  --opt-level LEVEL  TypeLisp optimizer level: 0, 1, 2 or s (default s)
   --only NAME        Measure only benchmarks/NAME
   -h, --help         Show this help
 
@@ -37,7 +37,7 @@ EOF
 
 COMPILER=
 ONLY=
-OPT_LEVEL=2
+OPT_LEVEL=s
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --opt-level)
@@ -98,9 +98,9 @@ case "$ONLY" in
         ;;
 esac
 case "$OPT_LEVEL" in
-    0 | 1 | 2) ;;
+    0 | 1 | 2 | s) ;;
     *)
-        echo "invalid --opt-level: $OPT_LEVEL (expected 0, 1 or 2)" >&2
+        echo "invalid --opt-level: $OPT_LEVEL (expected 0, 1, 2 or s)" >&2
         exit 2
         ;;
 esac

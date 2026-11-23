@@ -635,8 +635,8 @@ compile-lane reference: it builds the benchmark pairs with the compiler at
 opt1/opt2 and clang at `-O0`/`-O2`, then reports the geomean TypeLisp/clang
 wall-time and peak-RSS ratios from `target/compile-vs-clang/results.tsv`.
 `scripts/benchmark-size-vs-clang.sh` is the size-lane reference: it builds the
-same pairs with the compiler at opt2 (or `--opt-level LEVEL`) and clang at
-`-Os`/`-O2`, reads `.text`, user `.text`, `.rodata` and `.data` from the
-unstripped binaries, strips them, and reports the geomean, sum and worst-five
-TypeLisp/clang ratios for the stripped bytes and each section from
-`target/size-vs-clang/results.tsv`.
+same pairs with the compiler at `--opt-level s` by default (`--opt-level LEVEL`
+accepts `0`, `1`, `2` or `s`) and clang at `-Os`/`-O2`, reads `.text`, user
+`.text`, `.rodata` and `.data` from the unstripped binaries, strips them, and
+reports the geomean, sum and worst-five TypeLisp/clang ratios for the stripped
+bytes and each section from `target/size-vs-clang/results.tsv`.

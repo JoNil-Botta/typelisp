@@ -3074,24 +3074,25 @@
   [pool : (&mut pool AstExprNodePoolState)]
   [node : AstExpr]) : i64
   (let
-    [claimed : i64 (ast-expr-pool-cursor-claim! pool.segment-bases)]
-    (set!
-      pool.storage-arena
-      (ast-expr-pool-cursor-cover!
-        pool.segment-bases
-        pool.span-slot-segment-bases
-        pool.storage-arena
-        claimed))
-    (set! pool.segment-count (ast-expr-pool-cursor-segments pool.segment-bases))
+    [segment-bases : i64 pool.segment-bases]
+    [id : i64 (ast-expr-pool-cursor-claim! segment-bases)]
+    [segment : i64 (shr id ast-expr-node-pool-segment-shift)]
+    [segment-count : i64 (ast-expr-pool-cursor-segments segment-bases)]
+    (if (< segment segment-count)
+      (set! pool.segment-count segment-count)
+      (begin
+        (set!
+          pool.storage-arena
+          (ast-expr-pool-cursor-cover!
+            segment-bases
+            pool.span-slot-segment-bases
+            pool.storage-arena
+            id))
+        (set! pool.segment-count (ast-expr-pool-cursor-segments segment-bases))))
     (let
-      [segment-bases : i64 pool.segment-bases]
-      [id : i64 claimed]
       [biased-base : i64
         (unsafe
-          (ptr-read
-            (ptr-offset
-              (int->ptr segment-bases : (Ptr i64))
-              (shr id ast-expr-node-pool-segment-shift))))]
+          (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) segment)))]
       [dest : (MutPtr i64)
         (unsafe
           (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -3102,7 +3103,7 @@
         (unsafe
           (ptr-read source))]
       (unsafe
-        (ptr-write! dest (ptr-read source))
+        (ptr-write! dest storage-tag)
         (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
         (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))
         (ptr-write! (ptr-offset dest 3) (ptr-read (ptr-offset source 3))))

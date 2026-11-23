@@ -325,20 +325,53 @@
       (extract-fixture-module
         "(module fixture)
 (import stdlib.crypto_secret as other)
-(defstruct Wrapped (:cleanup other.close-fixed) (code i64))
-(defenum Choice (:cleanup other.close-bytes-result) (Empty))
+(defstruct Wrapped
+  (:cleanup other.close-fixed)
+  (qualified other.SecretHandle (:cleanup stdlib.crypto_secret/storage-close))
+  (slashed other.SecretNominalHandle (:cleanup other/nominal-handle-close)))
+(defenum Choice
+  (:cleanup other.close-bytes-result)
+  (Empty)
+  (Payload other.SecretHandle (:cleanup other/storage-close)))
 ")]
     (match (& (array-ref row.types 0).cleanup)
       [(Fn name)
         (test.assert-string-eq
           name
-          "stdlib.crypto_secret/close-bytes-result"
-          "imported enum cleanup")]
+          "fixture/other.close-bytes-result"
+          "type-level enum cleanup stays in defining module")]
       [_ (io.panic "expected an enum cleanup")])
+    (match (& (array-ref row.types 0).body)
+      [(Enum variants)
+        (match (& (array-ref (array-ref variants 1).payloads 0).cleanup)
+          [(Fn name)
+            (test.assert-string-eq
+              name
+              "stdlib.crypto_secret/storage-close"
+              "slash-alias enum payload cleanup")]
+          [_ (io.panic "expected an enum payload cleanup")])]
+      [_ (io.panic "expected an enum body")])
     (match (& (array-ref row.types 1).cleanup)
       [(Fn name)
         (test.assert-string-eq
           name
-          "stdlib.crypto_secret/close-fixed"
-          "imported struct cleanup")]
-      [_ (io.panic "expected a struct cleanup")])))
+          "fixture/other.close-fixed"
+          "type-level struct cleanup stays in defining module")]
+      [_ (io.panic "expected a struct cleanup")])
+    (match (& (array-ref row.types 1).body)
+      [(Struct fields)
+        (match (& (array-ref fields 0).cleanup)
+          [(Fn name)
+            (test.assert-string-eq
+              name
+              "stdlib.crypto_secret/storage-close"
+              "dotted struct field cleanup")]
+          [_ (io.panic "expected dotted struct field cleanup")])
+        (match (& (array-ref fields 1).cleanup)
+          [(Fn name)
+            (test.assert-string-eq
+              name
+              "stdlib.crypto_secret/nominal-handle-close"
+              "slash-alias struct field cleanup")]
+          [_ (io.panic "expected slash-alias struct field cleanup")])]
+      [_ (io.panic "expected a struct body")])))

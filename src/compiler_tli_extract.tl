@@ -180,11 +180,18 @@
   [name : intern.InternSyntaxId]) : tli.TliCleanup
   (let
     [raw : i64 (intern.intern-syntax-id-value name)]
+    [resolved : i64
+      (if (tc.tc-source-slash-qualified-id?
+        (tc.tc-context-structural-session ctx)
+        (tli-extract-name raw)
+        raw)
+        (tc.tc-cleanup-source-slash-alias-helper-name ctx raw)
+        raw)]
     [handle : i64
       (tc.tc-move-qualified-value-symbol-handle-id
         ctx
-        raw
-        (tc.tc-global-effect-handle ctx tc.TcNameIdList.Nil raw))]
+        resolved
+        (tc.tc-global-effect-handle ctx tc.TcNameIdList.Nil resolved))]
     [kind : i64 (symbols.compiler-symbol-handle-kind handle)]
     [index : i64 (symbols.compiler-symbol-handle-index handle)]
     (tli.TliCleanup.Fn
@@ -213,7 +220,7 @@
         [else
           (tc.macro-tlci-catalog-identity
             (string.copy (tc.tc-context-module ctx))
-            (tli-extract-name raw))]))))
+            (tli-extract-name resolved))]))))
 
 (define (tli-extract-fields
   [ctx : tc.TcContext]
@@ -364,7 +371,11 @@
           [cleanup-row : tli.TliCleanup
             (match cleanup
               [(No) (tli.TliCleanup.No)]
-              [(Fn fn-name) (tli-extract-cleanup-symbol ctx fn-name)])]
+              [(Fn fn-name)
+                (tli.TliCleanup.Fn
+                  (tc.macro-tlci-catalog-identity
+                    (string.copy (& module-name))
+                    (tli-extract-name (intern.intern-syntax-id-value fn-name))))])]
           (match repr
             [(Default)
               (types.push-ref!
@@ -428,21 +439,28 @@
             (io.panic message))])]
     (match layout
       [(Enum size alignment _)
-        (types.push-ref!
-          out
-          (tli-extract-type-row
-            module-name
-            name
-            flags
-            lifetimes
+        (let
+          [cleanup-row : tli.TliCleanup
             (match cleanup
               [(No) (tli.TliCleanup.No)]
-              [(Fn fn-name) (tli-extract-cleanup-symbol ctx fn-name)])
-            size
-            alignment
-            0
-            0
-            (tli-extract-variants ctx variants)))]
+              [(Fn fn-name)
+                (tli.TliCleanup.Fn
+                  (tc.macro-tlci-catalog-identity
+                    (string.copy (& module-name))
+                    (tli-extract-name (intern.intern-syntax-id-value fn-name))))])]
+          (types.push-ref!
+            out
+            (tli-extract-type-row
+              module-name
+              name
+              flags
+              lifetimes
+              cleanup-row
+              size
+              alignment
+              0
+              0
+              (tli-extract-variants ctx variants))))]
       [_ (io.panic "TLI expected a checked enum layout")])))
 
 (defstruct TliExtractEffects
@@ -808,14 +826,13 @@
 ;; Generated declarations carry comptime provenance. The handwritten
 ;; stdlib.comptime surface is also compile-time by module identity.
 (define (tli-extract-comptime? [ctx : tc.TcContext] [decl : (& ast.AstDecl)]) : bool
-  (and
-    (or
+  (or
+    (symbols.compiler-symbols-comptime-module-id? (tc.tc-context-module-id ctx))
+    (and
       (ast.ast-decl-comptime-only? decl)
-      (symbols.compiler-symbols-comptime-module-id?
-        (tc.tc-context-module-id ctx)))
-    (match (ast.ast-decl-generated-meta decl)
-      [(No) true]
-      [_ false])))
+      (match (ast.ast-decl-generated-meta decl)
+        [(No) true]
+        [_ false]))))
 
 (define (tli-extract-local-fn!
   [out : (&mut TliExtractModule)]

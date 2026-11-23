@@ -289,7 +289,13 @@ function derive(i,    s, sym, an, word, lead) {
     else if (starts(s, ".L_tl_")) { sym = substr(s, 7); re[i] = "(_tl__u2eL_tl_" sym "|_tl_" sym "|\\.L_tl_" sym ")" }
     else if (starts(s, "_tl_") && ends(s, ":")) { sym = no_colon(substr(s, 5)); re[i] = "^" lead sym ":$" }
     else if (starts(s, "_tl_")) { sym = substr(s, 5); re[i] = lead sym word }
-    else if (starts(s, "call _tl_")) { sym = substr(s, 10); re[i] = "call[ \t\v\f\r]+" lead sym word }
+    else if (starts(s, "call _tl_")) {
+        sym = substr(s, 10)
+        # Located aborts call a local thunk for the same runtime helper.
+        if (sym ~ /^(oob_abort|div_abort|shift_abort|panic)_at$/)
+            lead = "(" lead "|\\.L_tl_abort_tl_)"
+        re[i] = "call[ \t\v\f\r]+" lead sym word
+    }
     else if (starts(s, "call .L_tl_")) { sym = substr(s, 12); re[i] = "call[ \t\v\f\r]+(_tl__u2eL_tl_" sym "|_tl_" sym "|\\.L_tl_" sym ")" }
     symbol[i] = sym
     readable[i] = ""
@@ -741,6 +747,14 @@ expectation_self_test() {
         "$(at compact_stage0 "is missing expected text [_tl_gadget:]" stage0)" "$compact" 'contains|_tl_gadget:'
     expectation_self_test_case miss stage1 exactly-one \
         "$(at miss "is missing expected text [nothing here]" stage1)" "$base" 'contains|call _tl_mod_widget' 'contains|nothing here'
+
+    expectation_self_test_case abort_direct stage0 exactly-one pass \
+        'main:\n    call tl_panic_at\n' 'contains|call _tl_panic_at'
+    expectation_self_test_case abort_thunk stage1 exactly-one pass \
+        'main:\n    call .L_tl_abort_tl_panic_at\n' 'contains|call _tl_panic_at'
+    expectation_self_test_case abort_thunk_uncalled stage1 exactly-one \
+        "$(at abort_thunk_uncalled "is missing expected text [call _tl_panic_at]" stage1)" \
+        'main:\n    call .L_tl_abort_tl_panic_at_other\n.L_tl_abort_tl_panic_at:\n    jmp tl_panic_at\n' 'contains|call _tl_panic_at'
 
     # not-contains: clean, literal hit, symbol-regex hit and compact hit.
     expectation_self_test_case absent stage1 exactly-one pass "$base" 'not-contains|call _tl_other'

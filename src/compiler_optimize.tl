@@ -33,6 +33,7 @@
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_builtin_ids as cbi)
 (import compiler_ir_types as ir)
+(import compiler_opt_level as opt_level)
 (import compiler_ir_return_storage as return_storage)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
@@ -60452,6 +60453,7 @@
   ;; Set only for the inliner's checked tier, which runs the frozen priced
   ;; pipeline instead of the live one (see opt-live-only).
   (priced? bool)
+  (optimize-for-size bool)
   ;; Compile-profile ownership follows the already per-program summary bundle.
   ;; The disabled state is a one-word sentinel and allocates no summary storage.
   (profile-state profile_state.CompilerProfileState)
@@ -60494,6 +60496,7 @@
 (define (opt-program-summaries-empty-for [priced? : bool]) : OptProgramSummaries
   (OptProgramSummaries
     priced?
+    false
     (profile_state.compiler-profile-state-new)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -103883,7 +103886,10 @@
                   (& (opt-pass-blocks s))))
               s)
             s)))]
-    [s (opt-stage "rotation" (opt-pass-rotation pools s))]
+    [s
+      (if summaries.optimize-for-size
+        s
+        (opt-stage "rotation" (opt-pass-rotation pools s)))]
     ;; A multi-def register-group var becomes one word var per word, which the
     ;; SSA below renames (opt-group-split-function). A split hands SSA a stale
     ;; context, since the CFG index holds the block values; an untouched
@@ -104076,23 +104082,25 @@
     ;; which lost every predecessor (the pass also runs it between its own
     ;; rounds).
     [s
-      (opt-stage
-        "thread_branch"
-        (opt-pass-with-rewrite
-          (&
-            (opt-thread-const-branch-function-with-context-result
-              type-segment-bases
-              (&
-                (opt-pass-context
-                  s
-                  (let
-                    [blocks (opt-pass-blocks s)]
-                    (opt-thread-const-branch-blocks-have-candidate?
-                      type-segment-bases
-                      blocks))))
-              false
-              (& (opt-pass-func s))))
-          (& s)))]
+      (if summaries.optimize-for-size
+        s
+        (opt-stage
+          "thread_branch"
+          (opt-pass-with-rewrite
+            (&
+              (opt-thread-const-branch-function-with-context-result
+                type-segment-bases
+                (&
+                  (opt-pass-context
+                    s
+                    (let
+                      [blocks (opt-pass-blocks s)]
+                      (opt-thread-const-branch-blocks-have-candidate?
+                        type-segment-bases
+                        blocks))))
+                false
+                (& (opt-pass-func s))))
+            (& s))))]
     ;; The block merge closes the same stage: `phi_cmp_fold` and the fuser
     ;; above leave a merge holding one input and the compare that reads it one
     ;; block further on, and the cleanup right above is what turns that phi
@@ -104164,13 +104172,15 @@
           ctx
           (opt-loop-preheaders-function-with-context-result ctx verified? func)))]
     [s
-      (opt-stage
-        "rotate_ssa"
-        (opt-pass-move
-          s
-          func
-          ctx
-          (opt-rotate-ssa-function-with-context-result ctx verified? func)))]
+      (if summaries.optimize-for-size
+        s
+        (opt-stage
+          "rotate_ssa"
+          (opt-pass-move
+            s
+            func
+            ctx
+            (opt-rotate-ssa-function-with-context-result ctx verified? func))))]
     [s
       (opt-stage
         "scratch_reset"
@@ -104269,19 +104279,21 @@
     ;; canonical shape at the fixpoint cap).
     [bce-version-start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [s
-      (opt-pass-observed
-        (opt-pass-move
-          s
-          func
-          ctx
-          (opt-bce-version-function-with-context-result
-            type-segment-bases
-            (& summaries.direct-call-clean)
-            (& summaries.global-cell.len-eq)
+      (if summaries.optimize-for-size
+        s
+        (opt-pass-observed
+          (opt-pass-move
+            s
+            func
             ctx
-            verified?
-            func))
-        "bce_version")]
+            (opt-bce-version-function-with-context-result
+              type-segment-bases
+              (& summaries.direct-call-clean)
+              (& summaries.global-cell.len-eq)
+              ctx
+              verified?
+              func))
+          "bce_version"))]
     ;; P-B's late slot: the versioner has had every loop now, so the
     ;; length-equality relation is read inside loop bodies too (see
     ;; opt-len-eq-late-sweep).
@@ -104344,17 +104356,19 @@
     ;; rebuilds the context for the new CFG, so the stages below keep valid
     ;; dominance facts.
     [s
-      (opt-stage
-        "unroll"
-        (opt-pass-move
-          s
-          func
-          ctx
-          (opt-unroll-function-with-context-result
-            type-segment-bases
+      (if summaries.optimize-for-size
+        s
+        (opt-stage
+          "unroll"
+          (opt-pass-move
+            s
+            func
             ctx
-            verified?
-            func)))]
+            (opt-unroll-function-with-context-result
+              type-segment-bases
+              ctx
+              verified?
+              func))))]
     ;; Byte-compose load combining runs immediately after the unroller: a
     ;; constant-trip loop unrolled THIS iteration exposes its straight-line
     ;; compose here, and the round's DCE below removes the dead byte
@@ -104528,11 +104542,13 @@
     ;; absorbed into its caller and reappears as an out-of-line callee, for a
     ;; rotation it was already getting.
     [s
-      (opt-stage
-        "rotate_ssa"
-        (opt-pass-with-cfg-func
-          (& (opt-uniform-phi-rotate-gated (& (opt-pass-func s))))
-          s))]
+      (if summaries.optimize-for-size
+        s
+        (opt-stage
+          "rotate_ssa"
+          (opt-pass-with-cfg-func
+            (& (opt-uniform-phi-rotate-gated (& (opt-pass-func s))))
+            s)))]
     ;; Sink loop-closing compares next to their branches so the backend's
     ;; compare+branch fusion fires past the flag-safe pointer-increment Gep
     ;; (the counted-fill shape's setl/movzbq/test/jne becomes cmp;jcc).
@@ -106111,9 +106127,7 @@
               (Array (ir.CompilerIrBlockSeq out seq.len))
               abi))))]))
 
-;; Opt levels (0/1/2): 0 = none, 1 = cheap stack-only (the fast self-compile
-;; path), 2 = the full optimizer + scalar register allocation + inlining (the
-;; quality "ship" build).
+;; Levels 2 and s run the full optimizer with different code growth policies.
 (define (optimize-function-with-level-and-summaries-pass
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
@@ -106148,6 +106162,8 @@
             func)
           changed))
       (let
+        [_size : unit
+          (set! summaries.optimize-for-size (opt_level.opt-level-size? level))]
         [s : OptPassState
           (match (optimize-function-fixed-pass-with-summaries
             pools
@@ -106186,15 +106202,17 @@
             s)]
         [if-converted : ir.CompilerIrFunction (opt-pass-func s)]
         [s
-          (opt-pass-observed
-            (opt-pass-with-cfg-func
-              (&
-                (opt-licm-unswitch-final
-                  type-segment-bases
-                  (not s.priced?)
-                  (opt-pass-func s)))
-              s)
-            "licm_unswitch")]
+          (if (opt_level.opt-level-size? level)
+            s
+            (opt-pass-observed
+              (opt-pass-with-cfg-func
+                (&
+                  (opt-licm-unswitch-final
+                    type-segment-bases
+                    (not s.priced?)
+                    (opt-pass-func s)))
+                s)
+              "licm_unswitch"))]
         ;; Below every pass that clones a loop (opt-licm-guard-final). The
         ;; priced pipeline leaves it out, so inlining prices what it always did,
         ;; and a function without the shape a guard reads pays one scan.
@@ -106245,23 +106263,27 @@
                 (& (opt-pass-func s))))
             s)]
         [s
-          (opt-pass-with-result
-            (&
-              (opt-thread-const-branch-final-pass
-                type-segment-bases
-                (& (opt-pass-func s))))
-            s)]
+          (if (opt_level.opt-level-size? level)
+            s
+            (opt-pass-with-result
+              (&
+                (opt-thread-const-branch-final-pass
+                  type-segment-bases
+                  (& (opt-pass-func s))))
+              s))]
         ;; ST-2: the threader retargets a jump-only arm's own jump (its phi
         ;; inputs decided the tree), so an arm that fell through before it no
         ;; longer does and costs a taken `jmp` on the path around it. Once more,
         ;; below it.
         [s
-          (opt-pass-with-result
-            (&
-              (opt-cfg-straighten-below-threader-pass
-                type-segment-bases
-                (opt-pass-func s)))
-            s)]
+          (if (opt_level.opt-level-size? level)
+            s
+            (opt-pass-with-result
+              (&
+                (opt-cfg-straighten-below-threader-pass
+                  type-segment-bases
+                  (opt-pass-func s)))
+              s))]
         ;; Moves a bump-first counter's increment into its latch (the `for`
         ;; range shape). It reads final block order and labels only, and
         ;; `cmp_dup` below re-pairs the latch compare with its branch.
@@ -106333,7 +106355,7 @@
 ;; Level 1 keeps the direct path: its inline stage is the cheap tiny-leaf pass,
 ;; whose arena is a fraction of the level-2 one, and the loop reads it in place.
 (define (opt-optimizer-input-carrier [level : i64]) : i64
-  (if (< level 2)
+  (if (not (opt_level.opt-level-full? level))
     0
     (arena.tl_arena_make)))
 
@@ -106829,7 +106851,7 @@
                 "bounds_group"
                 level
                 _profile-name
-                (if (>= level 2)
+                (if (opt_level.opt-level-full? level)
                   (opt-mul-latency-function
                     (opt-bg-function type-segment-bases (& body-optimized)))
                   body-optimized))]
@@ -106887,7 +106909,8 @@
   (addrtaken opt_i64_i64_map.Map)
   ;; The same references as `refcount`, each weighted by the loop nesting depth
   ;; of the block that holds it. See opt-inline-census-depth-weight.
-  (hotcount opt_i64_i64_map.Map))
+  (hotcount opt_i64_i64_map.Map)
+  (optimize-for-size bool))
 
 (defstruct OptSccResult
   (scc-of (__tl_dyn-array i64))
@@ -107487,7 +107510,8 @@
         (opt-inline-census-bump-map
           census.hotcount
           slot
-          opt-inline-census-site-weight))]
+          opt-inline-census-site-weight)
+        census.optimize-for-size)]
     [(None) census]))
 
 (define (opt-inline-census-add-address
@@ -107499,7 +107523,11 @@
       (let
         [addrtaken : opt_i64_i64_map.Map census.addrtaken]
         (opt_i64_i64_map.insert-ref! (&mut addrtaken) slot 1)
-        (OptInlineCensus census.refcount addrtaken census.hotcount))]
+        (OptInlineCensus
+          census.refcount
+          addrtaken
+          census.hotcount
+          census.optimize-for-size))]
     [(None) census]))
 
 (define (opt-inline-census-use
@@ -107622,7 +107650,8 @@
       (OptInlineCensus
         (opt_i64_i64_map.with-capacity capacity)
         (opt_i64_i64_map.with-capacity capacity)
-        (opt_i64_i64_map.with-capacity capacity))
+        (opt_i64_i64_map.with-capacity capacity)
+        false)
       functions
       0)))
 
@@ -116487,7 +116516,7 @@
 ;; either site class.
 (define (opt-inline-single-block-site-admitted?
   [index : (& OptFunctionIndex)]
-  [census : (& OptInlineCensus)]
+  [census : (& census OptInlineCensus)]
   [func-name : i64]
   [callee-name : i64]
   [cargs : (& cargs ir.CompilerIrCallArgs)]
@@ -116496,6 +116525,17 @@
   [callee-ret : (& ast.AstType)]
   [caller-blocks : i64]
   [added-so-far : i64]) : bool
+  (when
+    census.optimize-for-size
+    (return
+      (or
+        (opt-inline-census-absorbable? index census func-name callee-name)
+        (and
+          (<
+            (opt-inline-single-block-cost-instrs cblocks)
+            (opt-inline-cost-call-bonus))
+          (opt-inline-blocks-call-free? cblocks)
+          (not (opt-inline-blocks-have-bounds-check? cblocks))))))
   (let
     [added-blocks : i64 0]
     [body-instrs : ir.CompilerIrInstrSeq
@@ -117016,6 +117056,12 @@
         [np : i64 (opt-inline-param-count cparams)]
         (if (opt-inline-arity-ok? cargs np)
           (let
+            [absorb-class : i64
+              (opt-inline-census-absorb-class
+                index
+                census
+                func-name
+                callee-name)]
             ;; The blocks the site adds to the caller: the callee's own,
             ;; plus the continuation block the split opens. A tail-call site
             ;; opens none -- the spliced body ends in the caller's exits --
@@ -117048,13 +117094,39 @@
                 (if stage-args?
                   np
                   0))]
+            [_size : unit
+              (when
+                census.optimize-for-size
+                (if (and
+                  (opt-inline-sole-call-absorb-ok?
+                    absorb-class
+                    stage-args?
+                    cblocks)
+                  (not (opt-inline-tailrec-converted-slot? index callee-name))
+                  (not
+                    (opt-inline-cost-crosses-heavy-gate?
+                      caller-blocks
+                      added-so-far
+                      added-blocks)))
+                  (return
+                    (SitePlan
+                      (OptInlineSitePlan
+                        np
+                        added-blocks
+                        tail-slots
+                        stage-all-args?
+                        stage-args?
+                        callee-instrs
+                        absorb-class
+                        1
+                        false
+                        false
+                        false
+                        false
+                        false
+                        false)))
+                  (return (NoSitePlan))))]
             [const-args : i64 (opt-inline-args-const-count cargs)]
-            [absorb-class : i64
-              (opt-inline-census-absorb-class
-                index
-                census
-                func-name
-                callee-name)]
             ;; The site-level verdict: this site claims the callee's body,
             ;; either because it is the only one (class 1, absorption) or
             ;; because the duplicating clauses admit a copy (class 2).
@@ -119464,17 +119536,37 @@
     (arena.destroy-safe! scratch)
     current-spans))
 
-;; Inline small single-block leaf callees across the whole program. Level 2
-;; (the register-allocated quality build) runs the full census/SCC pipeline;
-;; level 1 runs only the call-free tiny-leaf pass above.
+;; A retained body cannot be absorbed for size. Treat library and export
+;; roots as having an external reference when pricing a single-site call.
+(define (opt-inline-size-retained-functions!
+  [index : (& OptFunctionIndex)]
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]
+  [census : (&mut census OptInlineCensus)]) : unit
+  (if (opt-function-seq-defines? functions "main")
+    (for [i (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
+      (match (ir.compiler-ir-extern-seq-borrow externs i)
+        [(Extern name-id _ _ _ _ _ _ provided _)
+          (when
+            provided
+            (match (opt-function-index-slot-id index name-id)
+              [(Some slot)
+                (opt_i64_i64_map.insert-ref! (&mut census.addrtaken) slot 1)]
+              [(None) unit]))]))
+    (for [slot (iterator.range 0 (opt-function-index-count index))]
+      (opt_i64_i64_map.insert-ref! (&mut census.addrtaken) slot 1))))
+
+;; Full optimization uses the census and SCC walk. Level 1 uses only the
+;; call-free tiny-leaf pass above.
 (define (opt-inline-program-functions-with-spans
   [pools : ast.AstNodePoolContext]
   [input : (&mut input OptOptimizerInput)]
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
+  [externs : (& ir.CompilerIrExternSeq)]
   [level : i64]
   [spans : ir.CompilerSourceSpans]) : OptInlineSpanProgram
-  (if (< level 2)
+  (if (not (opt_level.opt-level-full? level))
     (if (= level 1)
       (opt-inline-tiny-leaf-program-functions-with-spans (& functions) spans)
       (Program functions spans))
@@ -119503,14 +119595,25 @@
           index
           (&
             (opt-function-index-to-seq (compiler-opt-global-shared-view index))))]
+      [_size : unit
+        (when
+          (opt_level.opt-level-size? level)
+          (set! census.optimize-for-size true)
+          (opt-inline-size-retained-functions!
+            (& index)
+            (& devirt)
+            externs
+            (&mut census)))]
       [_install-owned-state : unit (opt-inline-owned-state-install! index)]
       [_synth : unit
-        (opt-inline-synth-build!
-          index
-          census
-          graph
-          scc-result
-          (& (opt-inline-slot-order scc-result)))]
+        (when
+          (opt_level.opt-level-speed? level)
+          (opt-inline-synth-build!
+            index
+            census
+            graph
+            scc-result
+            (& (opt-inline-slot-order scc-result))))]
       [_begin-price-memo : unit (opt-inline-price-memo-begin!)]
       [_begin-checked : unit (opt-inline-checked-program-begin!)]
       [next-spans : ir.CompilerSourceSpans
@@ -122613,6 +122716,7 @@
         capacity)]
     (OptProgramSummaries
       false
+      false
       (profile_state.compiler-profile-state-new)
       (opt-direct-call-clean-map functions call-memory capacity)
       call-memory
@@ -122728,7 +122832,7 @@
   [externs : (& ir.CompilerIrExternSeq)]
   [reachable-functions : (& reachable-functions ir.CompilerIrFunctionSeq)]
   [level : i64]) : OptProgramSummaries
-  (if (< level 2)
+  (if (not (opt_level.opt-level-full? level))
     (opt-program-summaries-empty)
     (let
       [count : i64 (opt-function-seq-count reachable-functions)]
@@ -128018,12 +128122,12 @@
   (let
     [count : i64 (opt-function-seq-count functions)]
     (if (or
-      (< level 2)
+      (not (opt_level.opt-level-full? level))
       (<= count 0)
       (> count (opt-summary-function-limit))
       (= (ir.compiler-ir-global-seq-count globals) 0))
       (begin
-        (if (>= level 2)
+        (if (opt_level.opt-level-full? level)
           (opt-lga-trace-gate! "declined-program-gate" count)
           unit)
         functions)
@@ -130149,7 +130253,7 @@
             [_arm-checked : unit (opt-inline-checked-set-active! true)]
             [_arm-input-chunks : unit
               (when
-                (= level 2)
+                (opt_level.opt-level-full? level)
                 (opt-inline-input-chunks-arm!
                   input-retirement
                   input-chunk-bounds))]
@@ -130159,6 +130263,7 @@
                 (&mut optimizer-input)
                 type-segment-bases
                 functions
+                (& externs)
                 level
                 spans)]
             [_leave-inline-arena : unit
@@ -130187,7 +130292,7 @@
             ;; outside the retired storage.
             [source-retired? : bool
               (and
-                (= level 2)
+                (opt_level.opt-level-full? level)
                 (match input-retirement
                   [(Retain) false]
                   [(Retire owner release-input _)
@@ -130322,7 +130427,7 @@
                             optimized-functions
                             (& externs)
                             false
-                            (>= level 2))]
+                            (opt_level.opt-level-full? level))]
                         [final-globals : ir.CompilerIrGlobalSeq
                           (opt-pruned-program-globals final-pruned)]
                         [final-functions : ir.CompilerIrFunctionSeq
@@ -130341,7 +130446,7 @@
                             specialized-functions
                             level)]
                         [merged : OptMergedProgram
-                          (if (>= level 2)
+                          (if (opt_level.opt-level-full? level)
                             (opt-merge-identical-functions
                               type-segment-bases
                               final-globals
@@ -132436,7 +132541,7 @@
   [type-segment-bases : i64]
   [functions : ir.CompilerIrFunctionSeq]
   [level : i64]) : ir.CompilerIrFunctionSeq
-  (if (< level 2)
+  (if (not (opt_level.opt-level-full? level))
     functions
     (let
       [scratch : arena.Arena (arena.make)]

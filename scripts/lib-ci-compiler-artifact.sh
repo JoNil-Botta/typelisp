@@ -267,6 +267,7 @@ cica_corpus() {
 }
 # cica_roles PLAN: the roles (scripts/ci-compiler-artifacts.tsv) whose
 # producer gate is in this plan, one gate ID per line, on this host.
+# The opt1 reference also requires a bootstrap parity manifest to bind to.
 cica_roles() {
     awk -F '\t' -v host="$CICA_HOST" '
         { sub(/\r$/, "") }
@@ -274,6 +275,7 @@ cica_roles() {
         /^#/ { next }
         NF != 6 || $1 != 4 || ($2 != "bootstrap-converged" && $2 != "build-invariance-opt1-reference") ||
             ($3 != "all" && $3 != "linux" && $3 != "windows") { bad = 1; exit 1 }
+        $2 == "build-invariance-opt1-reference" && !("bootstrap-fixpoint" in plan) { next }
         ($3 == "all" || $3 == host) && ($4 in plan) { print $2 }
         END { if (bad) exit 1 }
     ' "$1" "$CICA_ROOT/scripts/ci-compiler-artifacts.tsv" || cica_fail 'invalid plan or role inventory'

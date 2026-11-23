@@ -6,6 +6,8 @@
 (import stdlib.hashmap)
 (import compiler_symbols as csym)
 (cfg test (import compiler_global_effects as global_effects))
+(cfg test (import compiler_check_core as check))
+(cfg test (import compiler_semantic_lint_facts as facts))
 (import (vector.vector i64 core) as effect_words)
 (import compiler_load as cload)
 (import compiler_ast_types as ast)
@@ -13830,7 +13832,9 @@
 
 (cfg
   test
-  (define (tc-selected-query-staging-env [pools : ast.AstNodePoolContext]) : tc_core.TcTypeEnv
+  (define (tc-selected-query-staging-env
+    [pools : ast.AstNodePoolContext]
+    [job : tc_core.TcJobState]) : tc_core.TcTypeEnv
     (let
       [params : ast.AstTypeList (ast.ast-type-list-with-capacity 8)]
       [cleanup-params : ast.AstTypeList (ast.ast-type-list-with-capacity 1)]
@@ -13841,7 +13845,7 @@
       (tc_core.tc-bind-id
         (tc_core.tc-bind-id
           (tc_core.tc-bind-id
-            (tc_core.tc-empty-env)
+            (tc_core.tc-empty-env-with-job-state job)
             (ci.intern "query-view")
             (ast.ast-ty-ref-with-pools pools 0 (& (I64))))
           (ci.intern "query-callee")
@@ -13858,7 +13862,8 @@
       [pools : ast.AstNodePoolContext
         (ast.ast-node-pool-context-capture-active)]
       [ctx : tc_core.TcContext (tc-selected-test-context pools)]
-      [env : tc_core.TcTypeEnv (tc-selected-query-staging-env pools)]
+      [env : tc_core.TcTypeEnv
+        (tc-selected-query-staging-env pools (tc_core.tc-context-job-state ctx))]
       [intern-state : ci.InternCompatState
         (ci.intern-compat-state-capture-active)]
       [lease : (typed.TypedBodyLease intern-state)
@@ -17970,6 +17975,256 @@
           "the tuple forces the let to be unrepresented")
         (test.assert-true initializer-hint? "the later binding has an i32 hint")
         (test.assert-true use-hint? "the later variable use has a type")))))
+
+(cfg
+  test
+  (define (tc-test-selected-scope-facts
+    [snapshot : (& snapshot facts.CompilerSemanticFacts)]) : unit
+    (let
+      [parameter-count : i64 0]
+      [lambda-owner : i64 -1]
+      [lambda-use? : bool false]
+      (for [i
+        (iterator.range
+          0
+          (facts.compiler-semantic-facts-binding-count snapshot))]
+        (match (facts.compiler-semantic-facts-binding-at snapshot i)
+          [(facts.CompilerSemanticBindingLookup.Found binding)
+            (when
+              (string.eq (& binding.name) "lambda-arg")
+              (match (facts.compiler-semantic-facts-function-at
+                snapshot
+                binding.function)
+                [(facts.CompilerSemanticFunctionLookup.Found owner)
+                  (test.assert-string-eq
+                    (& owner.identity.name)
+                    ""
+                    "binding belongs to the lambda")]
+                [_ (test.assert-true false "lambda owner must exist")])
+              (match binding.kind
+                [(facts.CompilerSemanticFactIdentityKind.Parameter)
+                  (when
+                    (> binding.span.start-line 0)
+                    (+= parameter-count 1)
+                    (set! lambda-owner binding.function))]
+                [_ unit]))]
+          [_ unit]))
+      (test.assert-i64-eq
+        parameter-count
+        1
+        "lambda argument has one source token")
+      (for [i
+        (iterator.range
+          0
+          (facts.compiler-semantic-facts-expression-count snapshot))]
+        (match (facts.compiler-semantic-facts-expression-at snapshot i)
+          [(facts.CompilerSemanticFactLookup.Found fact)
+            (when
+              (string.eq (& fact.resolved-value.name) "lambda-arg")
+              (test.assert-i64-eq
+                fact.function
+                lambda-owner
+                "lambda argument use belongs to the lambda")
+              (set! lambda-use? true))]
+          [_ unit]))
+      (test.assert-true lambda-use? "lambda argument use is observed"))))
+
+(cfg
+  test
+  (test
+    selected-scope-semantic-facts
+    (ast_tests.with-test-interns
+      (let
+        [path : String "selected_scope_facts.tl"]
+        [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+        [parse-state : parser.CompilerParseState
+          (parser.compiler-parse-state-new)]
+        [_origins : unit
+          (parser.compiler-parse-state-set-binding-origins!
+            (&mut parse-state)
+            true)]
+        [cfgs : sym_i64_env.SymI64Env
+          (parser.compiler-parse-state-cfgs
+            (& parse-state)
+            (check.compiler-check-language-cfgs))]
+        [decls : ast.AstDeclList
+          (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
+            (clone path)
+            "(define (immediate) : i64
+               ((lambda ([lambda-arg : i64]) : i64 (+ lambda-arg 1)) 41))"
+            cfgs)
+            [(Parsed (Program decls) _) (deref decls)]
+            [_ (io.panic "immediate lambda fixture must parse")])]
+        [recorder : facts.CompilerSemanticFactRecorder
+          (facts.compiler-semantic-fact-recorder-new (clone path) false)]
+        (tc_core.tc-job-state-set-parser-control!
+          job
+          (parser.compiler-parse-state-control-addr (& parse-state)))
+        (tc_core.tc-job-state-set-semantic-observer!
+          job
+          (facts.compiler-semantic-fact-recorder-observer recorder))
+        (let
+          [result : check.ResultCompilerCheck
+            (check.compiler-check-program
+              (clone path)
+              decls
+              (ast.ast-decl-root-path-cons path (ast.ast-decl-path-list-new))
+              (svec.new)
+              cfgs
+              ""
+              job)]
+          (tc_core.tc-job-state-set-semantic-observer!
+            job
+            (tc_core.TcSemanticObserver 0))
+          (match result
+            [(check.ResultCompilerCheck.Ok _ _)
+              (let
+                [snapshot : facts.CompilerSemanticFacts
+                  (facts.compiler-semantic-fact-recorder-finish! recorder)]
+                (tc-test-selected-scope-facts (& snapshot)))]
+            [(check.ResultCompilerCheck.Err diagnostics _)
+              (let
+                [first : cdiag.CompilerDiagnostic
+                  (cdiag.compiler-diagnostic-list-first (deref diagnostics))]
+                (io.panic (cdiag.compiler-diagnostic-message (& first))))])
+          (parser.compiler-parse-origin-reset!
+            (parser.compiler-parse-array-data-addr parse-state.semantic-origins))
+          (tc_core.compiler-typecheck-reset-file-state-for-job! job))))))
+
+(cfg
+  test
+  (define (tc-test-selected-scope-body-id [ctx : tc_core.TcContext] [id : i64]) : i64
+    (match (ast.ast-expr-unspan-with-segment-bases
+      (tc_core.tc-context-expr-bases ctx)
+      (& (tc_core.tc-context-expr-get ctx id)))
+      [(ast.AstExpr.Match payload)
+        (match (__tl-box-place payload)
+          [(ast.AstMatch.Match _ arms)
+            (match (ast.ast-match-arm-list-get
+              (& arms)
+              0
+              (ast.ast-match-arm-fallback))
+              [(ast.AstMatchArm.Arm _ body-id) body-id])])]
+      [(ast.AstExpr.WithResource payload)
+        (match (__tl-box-place payload)
+          [(ast.AstWithResource.WithResource _ body)
+            (ast.ast-expr-list-get (& body) 0 -1)])]
+      [_ -1])))
+
+(cfg
+  test
+  (test
+    selected-scope-checks-reachable-lambda-moves
+    (ast_tests.with-test-interns
+      (let
+        [caller-pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 64 32)]
+        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+        [ctx : tc_core.TcContext
+          (tc_core.tc-context-new-with-source-names-and-job-state
+            (ast.ast-program (ast.ast-decl-list-new))
+            (csym.compiler-symbols-empty)
+            (csym.compiler-registries-empty)
+            ""
+            cbi.compiler-builtin-id-fix-empty
+            pools
+            (ci.intern-source-name-session-capture-active-handle)
+            job)]
+        [env : tc_core.TcTypeEnv (tc-selected-query-staging-env pools job)]
+        [intern-state : ci.InternCompatState
+          (ci.intern-compat-state-capture-active)]
+        [lease : (typed.TypedBodyLease intern-state)
+          (match (tc_core.tc-selected-body-lease! (& ctx) (& intern-state))
+            [(tc_core.TcSelectedBodyLeaseResult.Ok lease) lease]
+            [_ (io.panic "could not lease scope fixture body")])]
+        ;; The staging environment gives query-callee a type without a graph callee.
+        [cases : (Array String 3)
+          (array
+            "(query-callee 0 0 0 0 0 0 0 0)"
+            "(match (query-callee 0 0 0 0 0 0 0 0)
+               [1 (lambda ([owned : String]) : String (let [_moved : String owned] owned))]
+               [_ (lambda ([other : String]) : String other)])"
+            "(with ([item (query-callee 0 0 0 0 0 0 0 0) query-cleanup])
+               (lambda ([owned : String]) : String (let [_moved : String owned] owned)))")]
+        (for [i (iterator.range 0 3)]
+          (let
+            [id : i64
+              (match (parser.parse-ast-expr-with-pools
+                (parser.compiler-parse-dispatch-env)
+                pools
+                (macro-output-source-sexpr (clone (array-ref cases i))))
+                [(Ok value) value]
+                [_ (io.panic "selected scope fixture must parse")])]
+            [bindings : tc_core.TcSelectedBindings
+              (tc_core.tc-selected-bindings-new (& lease))]
+            [store : typed.TypedStore (tc-selected-test-store (& lease))]
+            [saved : tc_core.TcTypeEnvScopedRuntimeSave
+              (tc_core.tc-type-env-scoped-runtime-enter-env! env)]
+            [carrier : tc_core.TcTypeEnvScopedCarrier
+              (tc_core.tc-type-env-scoped-runtime-current env)]
+            [state : TcTestExpressionObserver
+              (TcTestExpressionObserver
+                (tc-test-selected-scope-body-id ctx id)
+                (__tl_make-array 0 0))]
+            [observer : tc_core.TcSemanticObserver
+              (tc_core.tc-semantic-observer-new
+                (unsafe
+                  (cast (ptr->int (ptr-addr-of state)) : i64))
+                tc-test-observe-expression!)]
+            (match (tc_core.tc-selected-bindings-pin!
+              (&mut bindings)
+              (& lease)
+              (& carrier))
+              [(typed.TypedResult.Ok _) unit]
+              [_ (io.panic "could not pin scope fixture bindings")])
+            (tc_core.tc-job-state-set-semantic-observer! job observer)
+            (tc_core.tc-context-set-semantic-observer! ctx observer)
+            (match (tc_core.tc-infer-selected-id
+              ctx
+              env
+              id
+              ast.AstMaybeType.No
+              (ownership.OwnershipSource
+                (ownership.ownership-body-path "selected_scope.tl")
+                1
+                1
+                (ownership.ownership-expansion-none))
+              (tc_core.tc-selected-capture
+                (&mut store)
+                (& lease)
+                (&mut bindings)))
+              [(tc_core.TcSelectedResult.Err message _)
+                (test.assert-true
+                  (and
+                    (> i 0)
+                    (string.contains message "use of moved value `owned`"))
+                  message)]
+              [(tc_core.TcSelectedResult.Ok _ occurrence _)
+                (test.assert-true
+                  (and
+                    (= i 0)
+                    (not (tc_core.tc-selected-represented? (& occurrence))))
+                  "prefix is unrepresented and Capture rejects the move in each reachable lambda")])
+            (tc_core.tc-context-set-semantic-observer!
+              ctx
+              (tc_core.TcSemanticObserver 0))
+            (tc_core.tc-job-state-set-semantic-observer!
+              job
+              (tc_core.TcSemanticObserver 0))
+            (tc_core.tc-type-env-scoped-runtime-restore! saved)
+            (typed.typed-store-retire! (&mut store))
+            (when
+              (> i 0)
+              (test.assert-i64-eq
+                (array-ref state.events 0)
+                1
+                "reachable lambda is observed"))))
+        (tc_core.compiler-typecheck-reset-file-state-for-job! job)
+        (ast.ast-node-pool-context-install! caller-pools)
+        (ast.ast-node-pool-context-destroy-storage! pools)))))
 
 (cfg
   test

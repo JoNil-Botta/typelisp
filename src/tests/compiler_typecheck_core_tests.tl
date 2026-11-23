@@ -1269,6 +1269,63 @@
       job)))
 
 (test
+  raw-field-store-retargets-unspanned-variant
+  (let
+    [pools (ast.ast-node-pool-context-capture-active)]
+    [job (tc_core.tc-job-state-new)]
+    [ctx
+      (tc-checked-nominal-test-context
+        pools
+        job
+        "(defenum A (Empty))\n(defenum B (Empty))\n(defstruct Holder (state A))")]
+    [top-env
+      (match (tc_core.tc-build-top-env ctx (tc_core.tc-context-program ctx))
+        [(Ok env) env]
+        [(Err message) (io.panic message)])]
+    [macro-state (tc_core.tc-context-macro-state ctx)]
+    [pointer (ci.intern "p")]
+    [holder
+      (tc_core.tc-resolve-type ctx (ast.AstType.Var (ci.intern "Holder")))]
+    [env
+      (tc_core.tc-enter-unsafe
+        (tc_core.tc-bind-id
+          top-env
+          pointer
+          (ast.ast-ty-mut-ptr-with-pools pools (& holder))))]
+    ;; Build `(set! (. (deref p) state) Empty)` with a direct, unspanned RHS.
+    [receiver
+      (ast.ast-expr-box-take-with-pools
+        pools
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var pointer)))]
+    [value
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Var (ci.intern "Empty")))]
+    [store
+      (ast.ast-expr-struct-set-id-with-pools
+        pools
+        receiver
+        (ci.intern "state")
+        value)]
+    (tc_core.tc-hygiene-reset-active-top-env! macro-state top-env)
+    (match (tc_core.tc-expr-id ctx env store)
+      [(Ok (Unit)) unit]
+      [(Err message) (io.panic message)]
+      [_ (io.panic "raw field store must have type unit")])
+    (match (tc_core.tc-context-expr-get ctx value)
+      [(Var name)
+        (unless
+          (=
+            (tc_core.macro-hygiene-global-source-name-id-or
+              (tc_core.tc-context-structural-session ctx)
+              name
+              name)
+            (ci.intern "A.Empty"))
+          (io.panic "raw field store did not retarget Empty to A.Empty"))]
+      [_ (io.panic "raw field store changed the variant expression form")])
+    (tc_core.tc-hygiene-clear-active-top-env! macro-state)))
+
+(test
   checked-nominal-facts-reject-replaced-symbol-owners
   (let
     [pools (ast.ast-node-pool-context-capture-active)]

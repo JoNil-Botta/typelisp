@@ -4251,19 +4251,26 @@
             (= (be_state.compiler-backend-peephole-byte-at data (+ i 4)) 98)
             (= (be_state.compiler-backend-peephole-byte-at data (+ i 5)) 115)
             (= (be_state.compiler-backend-peephole-byte-at data (+ i 6)) 113))]
-        ;; movzbq, movzwq, movsbq, movswq, movslq
+        ;; Byte/word zero-extension can write either GP width.
         [(= mlen 6)
           (let
             [kind : i64
               (be_state.compiler-backend-peephole-byte-at data (+ i 3))]
             [width : i64
               (be_state.compiler-backend-peephole-byte-at data (+ i 4))]
+            [suffix : i64
+              (be_state.compiler-backend-peephole-byte-at data (+ i 5))]
             (and
               (= base3 7761773)
-              (= (be_state.compiler-backend-peephole-byte-at data (+ i 5)) 113)
               (or
-                (and (= kind 122) (or (= width 98) (= width 119)))
-                (and (= kind 115) (or (= width 98) (= width 119) (= width 108))))))]
+                (and
+                  (= kind 122)
+                  (or (= suffix 113) (= suffix 108))
+                  (or (= width 98) (= width 119)))
+                (and
+                  (= kind 115)
+                  (= suffix 113)
+                  (or (= width 98) (= width 119) (= width 108))))))]
         [else
           (let
             [suffix : i64
@@ -4558,7 +4565,7 @@
 ;; The zext pair rule reads the widening move's destination register; it is the
 ;; last-operand register of a `movzb{q,l}` line and "none" everywhere else.
 (define (compiler-backend-peephole-desc-zext-dst
-  [line : be_state.CompilerBackendPeepholeLine]) : i64
+  [line : (& line be_state.CompilerBackendPeepholeLine)]) : i64
   (if (= (bit-and line.flags compiler-backend-peephole-desc-flag-zext) 0)
     -1
     (-
@@ -6365,7 +6372,7 @@
   [reg : i64]) : bool
   (if (or
     (not (compiler-backend-peephole-desc-has-operands? next))
-    (not (compiler-backend-peephole-line-mnemonic-eq? next "movzbq")))
+    (!= (compiler-backend-peephole-desc-zext-dst next) reg))
     false
     (let
       [data : (Ptr u8) next.data]
@@ -6381,14 +6388,12 @@
             (be_state.compiler-backend-peephole-byte-at data (- src-end 1))]
           (if (not (or (= last 108) (= last 98)))
             false
-            (and
-              (=
-                (compiler-backend-peephole-token-reg-index-range
-                  data
-                  src-start
-                  src-end)
-                reg)
-              (= (compiler-backend-peephole-desc-last-reg next) reg))))))))
+            (=
+              (compiler-backend-peephole-token-reg-index-range
+                data
+                src-start
+                src-end)
+              reg)))))))
 
 (define (compiler-backend-peephole-redundant-zext-pair-desc?
   [pending : be_state.CompilerBackendPeepholeLine]
@@ -10018,8 +10023,9 @@
     (= (be_state.compiler-backend-peephole-byte-at data (+ s 1)) 76)))
 
 ;; `movq $c, %reg` / `movl $c, %reg` / `movabsq $c, %reg` / `xorl %r, %r`: an
-;; instruction whose whole effect is to place a literal in a register. Asked
-;; only of the handful of lines inside a candidate arm, never of every line.
+;; instruction whose whole effect is to place a numeric literal in a register.
+;; A local address load should keep its layout whether it uses LEA or MOV.
+;; Asked only of the handful of lines inside a candidate arm.
 (define (compiler-backend-layout-const-line?
   [data : (Ptr u8)]
   [s : i64]
@@ -10056,6 +10062,10 @@
                 "movabsq"))
               (and
                 (= (be_state.compiler-backend-peephole-byte-at data ops) 36)
+                (not
+                  (=
+                    (be_state.compiler-backend-peephole-byte-at data (+ ops 1))
+                    46))
                 (= (be_state.compiler-backend-peephole-byte-at data rhs) 37)
                 (>=
                   (be_operand.compiler-backend-peephole-scan-byte-range

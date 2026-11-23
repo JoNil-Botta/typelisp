@@ -7,6 +7,51 @@
 
 args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
 
+file private_literal_address.tl
+(import stdlib.io)
+(define (main) : i64
+  (io.println "private literal address")
+  0)
+end-file
+
+case private-literal-closed-elf
+source {{work}}/private_literal_address.tl
+args --cfg closed-executable-image
+target linux-x86_64
+opt 2
+assemble
+in fn main
+match ^[[:space:]]+movl \$\.L_tl_str_
+
+case private-literal-portable-elf
+source {{work}}/private_literal_address.tl
+target linux-x86_64
+opt 2
+assemble
+in fn main
+match ^[[:space:]]+leaq \.L_tl_str_
+not-match ^[[:space:]]+movl \$\.L_tl_str_
+
+case private-literal-coff
+source {{work}}/private_literal_address.tl
+args --cfg closed-executable-image
+target windows-x86_64
+opt 2
+assemble
+in fn main
+match ^[[:space:]]+leaq \.L_tl_str_
+not-match ^[[:space:]]+movl \$\.L_tl_str_
+
+case private-literal-separate-elf
+source {{work}}/private_literal_address.tl
+args --cfg closed-executable-image --no-entry
+target linux-x86_64
+opt 2
+assemble
+in fn main
+match ^[[:space:]]+leaq \.L_tl_str_
+not-match ^[[:space:]]+movl \$\.L_tl_str_
+
 # Effect-free static arrays disappear at every level, including opt0. Used,
 # mutated and address-taken tables retain independent writable storage.
 case static-array-reachability
@@ -93,7 +138,7 @@ after ^[[:space:]]+leaq -4[(]%r[a-z0-9]+[)], %r
 next-line ^[[:space:]]+testq %r[a-z0-9]+, %r
 not-match ^[[:space:]]+leaq -2\(%r[a-z0-9]+\), %r
 count = 1 __unroll_guard:$
-count = 1 ^[[:space:]]+movzbq[ ]
+count = 1 ^[[:space:]]+movzbl[ ]
 
 # #8555: the iterator protocol over a range. `into-next` returns the two-word
 # `IntoNext` register group, which the multiblock inliner admits; the match on
@@ -272,7 +317,7 @@ metric fallthrough-jmps = 0
 in fn _tl_block_layout_keep_probe
 metric fallthrough-jmps = 0
 in fn _tl_block_layout_sink_probe
-after ^[[:space:]]+movzbq .*, %r[a-z0-9]+$
+after ^[[:space:]]+movzbl .*, %(e[a-z]+|r[0-9]+d)$
 next-line ^[.]L.*_if_merge[.][0-9.]+
 after ^[[:space:]]+movq [$]-1, %r[a-z0-9]+$
 next-line ^[[:space:]]+jmp [.]L.*_if_merge[.][0-9]
@@ -1116,10 +1161,10 @@ not-match ^[[:space:]]+leaq 96\(%r[a-z0-9]+\), %r[a-z0-9]+$
 case load-widen-cast-fold
 source tests/integration/load_widen_cast_fold.tl
 in fn _tl_load_widen_cast_fold_classify
-count = 1 ^[[:space:]]+movzbq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$
-not-match ^[[:space:]]+movzbq %[a-z0-9]+l, %r
+count = 1 ^[[:space:]]+movzbl \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %(e[a-z]+|r[0-9]+d)$
+not-match ^[[:space:]]+movzb[lq] %[a-z0-9]+[lb],
 in fn _tl_load_widen_cast_fold_refused
-match ^[[:space:]]+movzbq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$
+match ^[[:space:]]+movzbl \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %(e[a-z]+|r[0-9]+d)$
 match movb[ ]
 
 # Single-bit and matching-mask tests become `test` + the right jcc sense;
@@ -1268,21 +1313,21 @@ case select-flags-lea
 source tests/integration/select_flags_lea.tl
 in fn tl_sfl_min_scan
 count = 0 ^[[:space:]]+set[a-z]+[ ]
-count = 0 ^[[:space:]]+movzbq %r[a-z0-9]+b,[ ]
+count = 0 ^[[:space:]]+movzb[lq] %r[a-z0-9]+b,[ ]
 count = 0 ^[[:space:]]+cmovne[ ]
 count = 2 ^[[:space:]]+cmovl[ ]
 count = 2 ^[[:space:]]+cmov
 metric cmov-under-cmp = ok
 in fn tl_sfl_max_scan
 count = 0 ^[[:space:]]+set[a-z]+[ ]
-count = 0 ^[[:space:]]+movzbq %r[a-z0-9]+b,[ ]
+count = 0 ^[[:space:]]+movzb[lq] %r[a-z0-9]+b,[ ]
 count = 0 ^[[:space:]]+cmovne[ ]
 count = 2 ^[[:space:]]+cmovg[ ]
 count = 2 ^[[:space:]]+cmov
 metric cmov-under-cmp = ok
 in fn tl_sfl_umin_scan
 count = 0 ^[[:space:]]+set[a-z]+[ ]
-count = 0 ^[[:space:]]+movzbq %r[a-z0-9]+b,[ ]
+count = 0 ^[[:space:]]+movzb[lq] %r[a-z0-9]+b,[ ]
 count = 0 ^[[:space:]]+cmovne[ ]
 count = 2 ^[[:space:]]+cmovb[ ]
 count = 2 ^[[:space:]]+cmov
@@ -1484,7 +1529,7 @@ in fn _tl_raw_pointer_field_place_score
 not-contains movups
 not-contains tl_memcpy
 count = 1 ^[[:space:]]+movslq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r[a-z0-9]+$
-count = 2 ^[[:space:]]+movzbq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+movzbl -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %(e[a-z]+|r[0-9]+d)$
 in fn _tl_raw_pointer_field_place_pair_sum
 count = 2 ^[[:space:]]+movslq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r[a-z0-9]+$
 not-match ^[[:space:]]+movq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r

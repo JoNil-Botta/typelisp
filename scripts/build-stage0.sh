@@ -78,6 +78,12 @@ printf '%s' "$BUILD_DATE" > "$BUILD_DATE_FILE"
 # so it never ships the seed's unconverged codegen. Built at --opt-level 2.
 STAGES=4
 PREV="$SEED"
+LINUX_EXECUTABLE_ARGS=
+if [ "$NL_HOST_OS" = linux ]; then
+    # The publication link is a closed low-address ELF executable. Ordinary
+    # compile output may be used with another linker or code model.
+    LINUX_EXECUTABLE_ARGS="--cfg closed-executable-image"
+fi
 case "${TYPELISP_STAGE0_SIZE_REPORT:-0}" in
     0 | 1) ;;
     *)
@@ -110,7 +116,7 @@ while [ "$i" -le "$STAGES" ]; do
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib --stdlib-root src --opt-level 2 \
-        --cfg stage0-build-version $EMBEDDED_STDLIB_TLCI_ARGS; then
+        --cfg stage0-build-version $LINUX_EXECUTABLE_ARGS $EMBEDDED_STDLIB_TLCI_ARGS; then
         echo "[build-stage0] stage$i compiler failed while compiling src/main.tl" >&2
         echo "[build-stage0] compiler stdout:" >&2
         sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true

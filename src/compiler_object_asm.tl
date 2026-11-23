@@ -155,6 +155,9 @@
         target
         "(%rip), %rax\n")
       true]
+    [(LoadAbsAddress target)
+      (compiler-object-asm-append-rip-instr! out "    movl $" target ", %eax\n")
+      true]
     [(LoadRipAddressR11 target)
       (compiler-object-asm-append-rip-instr!
         out

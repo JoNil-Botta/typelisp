@@ -7294,7 +7294,7 @@
   [type-segment-bases : i64]
   [ty : compiler_ast_types.AstType]) : String
   (if (= (be_operand.compiler-backend-type-size type-segment-bases ty) 0)
-    "    movq $0, %rax\n"
+    "    movl $0, %eax\n"
     ""))
 
 ;; The edge index (compiler-backend-function-i64-array-edge-index) of one
@@ -8343,7 +8343,7 @@
   [ty : (& ty compiler_ast_types.AstType)]) : String
   (if (and normalize? (string.eq reg "%rax"))
     (match ty
-      [(Bool) "    movzbq %al, %rax\n"]
+      [(Bool) "    movzbl %al, %eax\n"]
       [_ ""])
     ""))
 

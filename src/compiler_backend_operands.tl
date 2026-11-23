@@ -418,7 +418,8 @@
     [(Max)
       (match elem-ty
         [(I32) "vpmaxsd"]
-        [_ ""])]))
+        [_ ""])]
+    [(LastLane) ""]))
 
 (define (compiler-backend-avx512-shape-ok?
   [elem-ty : (& elem-ty compiler_ast_types.AstType)]
@@ -2209,6 +2210,27 @@
         reg
         "\n"))))
 
+(define (compiler-backend-emit-literal-address-into
+  [out : (&mut out be_state.CompilerBackendAsmBuf)]
+  [symbol : String]
+  [reg : String]
+  [backend-state : be_state.CompilerBackendState]) : unit
+  (if (be_state.compiler-backend-state-absolute-literal-ok? backend-state)
+    (be_state.compiler-backend-asm-append5
+      out
+      "    movl $"
+      symbol
+      ", "
+      (compiler-backend-reg-part reg 4)
+      "\n")
+    (be_state.compiler-backend-asm-append5
+      out
+      "    leaq "
+      symbol
+      "(%rip), "
+      reg
+      "\n")))
+
 (define (compiler-backend-emit-load-value-into
   [out : (&mut out be_state.CompilerBackendAsmBuf)]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -2281,22 +2303,18 @@
             ""
             "backend: f64 values are not supported yet")))]
     [(String text)
-      (be_state.compiler-backend-asm-append5
+      (compiler-backend-emit-literal-address-into
         out
-        "    leaq "
         (compiler-backend-string-fat-label text)
-        "(%rip), "
         reg
-        "\n")
+        backend-state)
       (Ok "")]
     [(Bytes text)
-      (be_state.compiler-backend-asm-append5
+      (compiler-backend-emit-literal-address-into
         out
-        "    leaq "
         (compiler-backend-bytes-fat-label text)
-        "(%rip), "
         reg
-        "\n")
+        backend-state)
       (Ok "")]
     ;; `RuntimeGlobal` and `StaticArray` only initialize globals.
     [_

@@ -4425,7 +4425,9 @@
               [_ 204])
             (be_state.compiler-backend-global-shared-view work0-xmm)
             (be_state.compiler-backend-global-shared-view work1-xmm))
-          "    vperm2i128 $0, "
+          (match op
+            [(Sum) "    vperm2i128 $8, "]
+            [_ "    vperm2i128 $0, "])
           dst-reg
           ", "
           dst-reg
@@ -4440,7 +4442,9 @@
             op
             elem-ty
             dst-reg
-            240
+            (match op
+              [(Sum) -1]
+              [_ 240])
             (be_state.compiler-backend-global-shared-view work0-xmm)
             work1-xmm))]
       [_
@@ -4459,22 +4463,44 @@
               [_ 204])
             (be_state.compiler-backend-global-shared-view work0-xmm)
             (be_state.compiler-backend-global-shared-view work1-xmm))
-          "    vperm2i128 $0, "
-          dst-reg
-          ", "
-          dst-reg
-          ", "
-          work0
-          "\n    vpermq $85, "
-          work0
-          ", "
-          work0
-          "\n"
+          (match op
+            [(Sum)
+              (str_cat.str-cat
+                "    vpunpckhqdq "
+                dst-reg
+                ", "
+                dst-reg
+                ", "
+                work0
+                "\n"
+                "    vperm2i128 $8, "
+                work0
+                ", "
+                work0
+                ", "
+                work0
+                "\n")]
+            [_
+              (str_cat.str-cat
+                "    vperm2i128 $0, "
+                dst-reg
+                ", "
+                dst-reg
+                ", "
+                work0
+                "\n"
+                "    vpermq $85, "
+                work0
+                ", "
+                work0
+                "\n")])
           (compiler-backend-avx2-vector-prefix-numeric-combine
             op
             elem-ty
             dst-reg
-            240
+            (match op
+              [(Sum) -1]
+              [_ 240])
             work0-xmm
             work1-xmm))])))
 
@@ -4604,295 +4630,6 @@
       ", "
       dst-reg
       "\n")))
-
-(define (compiler-backend-avx2-vector-prefix-bool-carry
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [carry : compiler_ir_types.CompilerIrValue]
-  [dst-reg : (& dst-reg str)]
-  [op : compiler_ir_types.CompilerIrVectorPrefixOp]
-  [work0-xmm : String]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (let
-    [work0 : String
-      (compiler-backend-vector-prefix-work
-        (be_state.compiler-backend-global-shared-view work0-xmm)
-        "ymm")]
-    [exclude : (__tl_dyn-array String)
-      (be_operand.compiler-backend-scavenge-exclude-ops2
-        backend-state
-        assignments
-        (be_state.compiler-backend-global-shared-view carry)
-        (& (Unit)))]
-    [gp-reg : String
-      (be_operand.compiler-backend-scavenge-reg
-        -1
-        exclude
-        7
-        "%r10"
-        backend-state)]
-    [gp32 : String
-      (be_operand.compiler-backend-reg-part
-        (be_state.compiler-backend-global-shared-view gp-reg)
-        4)]
-    [gp8 : String
-      (be_operand.compiler-backend-reg-part
-        (be_state.compiler-backend-global-shared-view gp-reg)
-        1)]
-    [carry-asm
-      (try
-        (be_operand.compiler-backend-emit-load-value
-          assignments
-          carry
-          (be_state.compiler-backend-global-shared-view gp-reg)
-          backend-state))]
-    (Ok
-      (str_cat.str-cat
-        carry-asm
-        "    testq "
-        gp-reg
-        ", "
-        gp-reg
-        "\n    setne "
-        gp8
-        "\n    movzbl "
-        gp8
-        ", "
-        gp32
-        "\n    negl "
-        gp32
-        "\n    vmovd "
-        gp32
-        ", "
-        work0-xmm
-        "\n    vpbroadcastb "
-        work0-xmm
-        ", "
-        work0
-        "\n    "
-        (match op
-          [(Any) "vpor"]
-          [_ "vpand"])
-        " "
-        work0
-        ", "
-        dst-reg
-        ", "
-        dst-reg
-        "\n"))))
-
-(define (compiler-backend-avx2-vector-prefix-numeric-carry
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [carry : compiler_ir_types.CompilerIrValue]
-  [elem-ty : compiler_ast_types.AstType]
-  [work0-xmm : String]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (let
-    [work0 : String
-      (compiler-backend-vector-prefix-work
-        (be_state.compiler-backend-global-shared-view work0-xmm)
-        "ymm")]
-    (match (compiler-backend-splat-memory-load
-      assignments
-      (be_state.compiler-backend-global-shared-view carry)
-      elem-ty
-      backend-state)
-      [(Some asm) (Ok (str_cat.str-cat asm work0 "\n"))]
-      [(No)
-        (let
-          [exclude : (__tl_dyn-array String)
-            (be_operand.compiler-backend-scavenge-exclude-ops2
-              backend-state
-              assignments
-              (be_state.compiler-backend-global-shared-view carry)
-              (& (Unit)))]
-          [gp-reg : String
-            (be_operand.compiler-backend-scavenge-reg
-              -1
-              exclude
-              7
-              "%r10"
-              backend-state)]
-          [gp-part : String
-            (be_operand.compiler-backend-reg-part
-              (be_state.compiler-backend-global-shared-view gp-reg)
-              (match (& elem-ty)
-                [(I32) 4]
-                [_ 8]))]
-          [carry-asm
-            (try
-              (be_operand.compiler-backend-emit-load-value
-                assignments
-                carry
-                gp-reg
-                backend-state))]
-          (Ok
-            (str_cat.str-cat
-              carry-asm
-              "    "
-              (match (& elem-ty)
-                [(I32) "vmovd"]
-                [_ "vmovq"])
-              " "
-              gp-part
-              ", "
-              work0-xmm
-              "\n    "
-              (match elem-ty
-                [(I32) "vpbroadcastd"]
-                [_ "vpbroadcastq"])
-              " "
-              work0-xmm
-              ", "
-              work0
-              "\n")))])))
-
-(define (compiler-backend-emit-avx2-vector-prefix
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrVectorPrefixOp]
-  [src : compiler_ir_types.CompilerIrValue]
-  [carry : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [work0-xmm : String]
-  [work1-xmm : String]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (compiler-backend-avx2-vector-prefix-shape-ok? op lanes elem-ty))
-    (be_state.compiler-backend-instr-error
-      instr-diag
-      "backend: unsupported AVX2 vector prefix shape")
-    (let
-      [register-ty : compiler_ast_types.AstType
-        (match (& elem-ty)
-          [(Bool) (I8)]
-          [_ (owned_view.compiler-owned-shared-view elem-ty)])]
-      [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
-      [dst-scratch-xmm : String
-        (be_operand.compiler-backend-scavenge-xmm-reg
-          dst
-          no-exclude
-          0
-          "%xmm15"
-          backend-state)]
-      [dst-scratch : String
-        (be_operand.compiler-backend-xmm-spelling-family-register
-          dst-scratch-xmm
-          "ymm")]
-      (match (compiler-backend-vector-dst-reg
-        assignments
-        dst
-        "prefix dst"
-        "ymm"
-        dst-scratch
-        backend-state)
-        [(Ok dst-reg)
-          (match (be_operand.compiler-backend-vector-register-use
-            assignments
-            src
-            "prefix source"
-            "ymm"
-            register-ty
-            (be_state.compiler-backend-global-shared-view dst-reg)
-            backend-state)
-            [(Ok src-use)
-              (match src-use
-                [(Use src-asm src-reg)
-                  (let
-                    [copy-asm : String
-                      (if (string.eq src-reg dst-reg)
-                        ""
-                        (str_cat.str-cat
-                          "    vmovdqu "
-                          src-reg
-                          ", "
-                          dst-reg
-                          "\n"))]
-                    [prefix-asm : String
-                      (match (& elem-ty)
-                        [(Bool)
-                          (compiler-backend-avx2-vector-prefix-bool-body
-                            op
-                            dst-reg
-                            (be_state.compiler-backend-global-shared-view
-                              work0-xmm)
-                            (be_state.compiler-backend-global-shared-view
-                              work1-xmm))]
-                        [_
-                          (compiler-backend-avx2-vector-prefix-numeric-body
-                            op
-                            elem-ty
-                            (be_state.compiler-backend-global-shared-view
-                              dst-reg)
-                            (be_state.compiler-backend-global-shared-view
-                              work0-xmm)
-                            (be_state.compiler-backend-global-shared-view
-                              work1-xmm))])]
-                    (match (& elem-ty)
-                      [(Bool)
-                        (match (compiler-backend-avx2-vector-prefix-bool-carry
-                          assignments
-                          carry
-                          dst-reg
-                          op
-                          work0-xmm
-                          backend-state)
-                          [(Ok carry-asm)
-                            (Ok
-                              (str_cat.str-cat
-                                src-asm
-                                copy-asm
-                                prefix-asm
-                                carry-asm
-                                (compiler-backend-vector-store-dst
-                                  assignments
-                                  dst
-                                  "ymm"
-                                  register-ty
-                                  dst-reg
-                                  backend-state)))]
-                          [(Err message)
-                            (be_state.compiler-backend-instr-error-from
-                              instr-diag
-                              message)])]
-                      [_
-                        (match (compiler-backend-avx2-vector-prefix-numeric-carry
-                          assignments
-                          carry
-                          (be_state.compiler-backend-global-shared-view elem-ty)
-                          (be_state.compiler-backend-global-shared-view
-                            work0-xmm)
-                          backend-state)
-                          [(Ok carry-asm)
-                            (Ok
-                              (str_cat.str-cat
-                                src-asm
-                                copy-asm
-                                prefix-asm
-                                carry-asm
-                                (compiler-backend-avx2-vector-prefix-numeric-combine
-                                  op
-                                  elem-ty
-                                  (be_state.compiler-backend-global-shared-view
-                                    dst-reg)
-                                  -1
-                                  work0-xmm
-                                  work1-xmm)
-                                (compiler-backend-vector-store-dst
-                                  assignments
-                                  dst
-                                  "ymm"
-                                  elem-ty
-                                  dst-reg
-                                  backend-state)))]
-                          [(Err message)
-                            (be_state.compiler-backend-instr-error-from
-                              instr-diag
-                              message)])]))])]
-            [(Err message)
-              (be_state.compiler-backend-instr-error instr-diag message)])]
-        [(Err message)
-          (be_state.compiler-backend-instr-error instr-diag message)]))))
 
 (define (compiler-backend-avx512-vector-prefix-shape-ok?
   [op : compiler_ir_types.CompilerIrVectorPrefixOp]
@@ -5120,44 +4857,6 @@
         (str_cat.str-cat "    notq " bits-gp "\n")
         ""))))
 
-(define (compiler-backend-avx512-vector-prefix-bool-carry-asm
-  [op : compiler_ir_types.CompilerIrVectorPrefixOp]
-  [carry-gp : String]
-  [bits-gp : (& bits-gp str)]) : String
-  (let
-    [carry32 : String
-      (be_operand.compiler-backend-reg-part
-        (be_state.compiler-backend-global-shared-view carry-gp)
-        4)]
-    [carry8 : String
-      (be_operand.compiler-backend-reg-part
-        (be_state.compiler-backend-global-shared-view carry-gp)
-        1)]
-    [combine : String
-      (match op
-        [(Any) "orq"]
-        [_ "andq"])]
-    (str_cat.str-cat
-      "    testq "
-      carry-gp
-      ", "
-      carry-gp
-      "\n    setne "
-      carry8
-      "\n    movzbl "
-      carry8
-      ", "
-      carry32
-      "\n    negq "
-      carry-gp
-      "\n    "
-      combine
-      " "
-      carry-gp
-      ", "
-      bits-gp
-      "\n")))
-
 (define (compiler-backend-avx512-vector-prefix-bool-result-asm
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -5235,12 +4934,14 @@
               (compiler-backend-mask-spill-scratch 0)
               backend-state)
               [(Ok dst-reg)
-                (match (be_operand.compiler-backend-emit-load-value
+                (match (be_operand.compiler-backend-avx512-mask-register-use
                   assignments
                   carry
-                  (be_state.compiler-backend-global-shared-view carry-gp)
+                  "vector prefix carry"
+                  lanes
+                  (compiler-backend-mask-spill-scratch 1)
                   backend-state)
-                  [(Ok carry-asm)
+                  [(Ok (Use carry-asm carry-reg))
                     (Ok
                       (str_cat.str-cat
                         src-asm
@@ -5256,10 +4957,24 @@
                           bits-gp
                           carry-gp)
                         carry-asm
-                        (compiler-backend-avx512-vector-prefix-bool-carry-asm
-                          op
-                          carry-gp
-                          bits-gp)
+                        "    "
+                        mask-move
+                        " "
+                        carry-reg
+                        ", "
+                        carry-gp
+                        "\n"
+                        "    sarq $63, "
+                        carry-gp
+                        "\n    "
+                        (match op
+                          [(Any) "orq"]
+                          [_ "andq"])
+                        " "
+                        carry-gp
+                        ", "
+                        bits-gp
+                        "\n"
                         (compiler-backend-avx512-vector-prefix-bool-result-asm
                           assignments
                           dst
@@ -5269,155 +4984,156 @@
                           dst-reg
                           backend-state)))]
                   [(Err message)
-                    (be_state.compiler-backend-instr-error-from
-                      instr-diag
-                      message)])]
+                    (be_state.compiler-backend-instr-error instr-diag message)])]
               [(Err message)
                 (be_state.compiler-backend-instr-error instr-diag message)])])]
       [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
 
-(define (compiler-backend-emit-avx512-vector-prefix-numeric
+;; Read the carry before the current prefix overwrites its previous value.
+(define (compiler-backend-vector-prefix-broadcast-last
+  [avx2? : bool]
+  [elem-ty : (& compiler_ast_types.AstType)]
+  [lanes : i64]
+  [src : (& str)]
+  [work : (& str)]
+  [work-xmm : (& str)]) : String
+  (if avx2?
+    (match elem-ty
+      [(I64) (str_cat.str-cat "    vpermq $255, " src ", " work "\n")]
+      [(I32)
+        (str_cat.str-cat
+          "    vperm2i128 $17, "
+          src
+          ", "
+          src
+          ", "
+          work
+          "\n"
+          "    vpshufd $255, "
+          work
+          ", "
+          work
+          "\n")]
+      [_
+        (str_cat.str-cat
+          "    vextracti128 $1, "
+          src
+          ", "
+          work-xmm
+          "\n"
+          "    vpsrldq $15, "
+          work-xmm
+          ", "
+          work-xmm
+          "\n"
+          "    vpbroadcastb "
+          work-xmm
+          ", "
+          work
+          "\n")])
+    (let
+      [dword? : bool
+        (match elem-ty
+          [(I32) true]
+          [_ false])]
+      (str_cat.str-cat
+        (if dword?
+          "    valignd $"
+          "    valignq $")
+        (string.int->string (- lanes 1))
+        ", "
+        src
+        ", "
+        src
+        ", "
+        work
+        "\n"
+        (if dword?
+          "    vpbroadcastd "
+          "    vpbroadcastq ")
+        work-xmm
+        ", "
+        work
+        "\n"))))
+
+(define (compiler-backend-preserve-prefix-scratch!
+  [backend-state : be_state.CompilerBackendState]
+  [reg : String]) : unit
+  (when
+    (be_state.compiler-backend-current-fn-win64? backend-state)
+    (be_operand.compiler-backend-emergency-add!
+      (be_state.compiler-backend-state-function-state backend-state)
+      reg)))
+
+(define (compiler-backend-emit-vector-splat-last
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
-  [op : compiler_ir_types.CompilerIrVectorPrefixOp]
   [src : compiler_ir_types.CompilerIrValue]
-  [carry : compiler_ir_types.CompilerIrValue]
+  [lanes : i64]
   [elem-ty : compiler_ast_types.AstType]
-  [work0-xmm : String]
-  [work1-xmm : String]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
   (let
-    [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
-    [dst-scratch-xmm : String
-      (be_operand.compiler-backend-scavenge-xmm-reg
-        dst
-        no-exclude
-        0
-        "%xmm15"
-        backend-state)]
-    [dst-scratch : String
-      (be_operand.compiler-backend-xmm-spelling-family-register
-        dst-scratch-xmm
+    [avx2? : bool
+      (be_operand.compiler-backend-avx2-shape-ok? (& elem-ty) lanes)]
+    [width : String
+      (if avx2?
+        "ymm"
         "zmm")]
+    (unless
+      (and
+        (match (& elem-ty)
+          [(or (I32) (I64)) true]
+          [_ false])
+        (or
+          avx2?
+          (be_operand.compiler-backend-avx512-shape-ok? (& elem-ty) lanes)))
+      (return
+        (be_state.compiler-backend-instr-error
+          instr-diag
+          "backend: unsupported vector splat shape")))
     (match (compiler-backend-vector-dst-reg
       assignments
       dst
-      "vector prefix dst"
-      "zmm"
-      dst-scratch
+      "splat last lane destination"
+      (string.copy (& width))
+      (be_operand.compiler-backend-vector-spill-scratch (& width) 0)
       backend-state)
       [(Ok dst-reg)
+        (when
+          (or (string.eq dst-reg "%ymm14") (string.eq dst-reg "%zmm14"))
+          (compiler-backend-preserve-prefix-scratch! backend-state "%xmm14"))
         (match (be_operand.compiler-backend-vector-register-use
           assignments
           src
-          "vector prefix source"
-          "zmm"
-          elem-ty
-          (be_state.compiler-backend-global-shared-view dst-reg)
+          "splat last lane source"
+          (string.copy (& width))
+          (& elem-ty)
+          (string.copy (& dst-reg))
           backend-state)
-          [(Ok src-use)
-            (match src-use
-              [(Use src-asm src-reg)
-                (let
-                  [copy-asm : String
-                    (if (string.eq src-reg dst-reg)
-                      ""
-                      (str_cat.str-cat
-                        "    vmovdqu64 "
-                        src-reg
-                        ", "
-                        dst-reg
-                        "\n"))]
-                  (match (compiler-backend-simd-splat-load
-                    (Avx512)
-                    assignments
-                    dst
-                    carry
-                    (be_state.compiler-backend-global-shared-view elem-ty)
-                    backend-state)
-                    [(Ok carry-asm)
-                      (let
-                        [work0 : String
-                          (compiler-backend-vector-prefix-work
-                            (be_state.compiler-backend-global-shared-view
-                              work0-xmm)
-                            "zmm")]
-                        (Ok
-                          (str_cat.str-cat
-                            src-asm
-                            copy-asm
-                            (compiler-backend-avx512-vector-prefix-numeric-body
-                              op
-                              (be_state.compiler-backend-global-shared-view
-                                elem-ty)
-                              dst-reg
-                              (be_state.compiler-backend-global-shared-view
-                                work0-xmm)
-                              work1-xmm)
-                            carry-asm
-                            work0
-                            "\n"
-                            (compiler-backend-avx512-vector-prefix-numeric-combine
-                              op
-                              elem-ty
-                              dst-reg
-                              -1
-                              work0-xmm)
-                            (compiler-backend-vector-store-dst
-                              assignments
-                              dst
-                              "zmm"
-                              elem-ty
-                              dst-reg
-                              backend-state))))]
-                    [(Err message)
-                      (be_state.compiler-backend-instr-error-from
-                        instr-diag
-                        message)]))])]
+          [(Ok (Use load-asm src-reg))
+            (Ok
+              (str_cat.str-cat
+                load-asm
+                (compiler-backend-vector-prefix-broadcast-last
+                  avx2?
+                  (& elem-ty)
+                  lanes
+                  (& src-reg)
+                  (& dst-reg)
+                  (&
+                    (be_operand.compiler-backend-vector-reg-lower-xmm
+                      (string.copy (& dst-reg)))))
+                (compiler-backend-vector-store-dst
+                  assignments
+                  dst
+                  width
+                  elem-ty
+                  dst-reg
+                  backend-state)))]
           [(Err message)
             (be_state.compiler-backend-instr-error instr-diag message)])]
       [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])))
-
-(define (compiler-backend-emit-avx512-vector-prefix
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [op : compiler_ir_types.CompilerIrVectorPrefixOp]
-  [src : compiler_ir_types.CompilerIrValue]
-  [carry : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [work0-xmm : String]
-  [work1-xmm : String]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (not (compiler-backend-avx512-vector-prefix-shape-ok? op lanes elem-ty))
-    (be_state.compiler-backend-instr-error
-      instr-diag
-      "backend: unsupported AVX-512 vector prefix shape")
-    (match (& elem-ty)
-      [(Bool)
-        (compiler-backend-emit-avx512-vector-prefix-bool
-          assignments
-          dst
-          op
-          src
-          carry
-          lanes
-          instr-diag
-          backend-state)]
-      [_
-        (compiler-backend-emit-avx512-vector-prefix-numeric
-          assignments
-          dst
-          op
-          src
-          carry
-          elem-ty
-          work0-xmm
-          work1-xmm
-          instr-diag
-          backend-state)])))
 
 (define (compiler-backend-emit-vector-prefix
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -5433,64 +5149,278 @@
     [avx2? : bool
       (be_state.compiler-backend-current-mode-avx2?
         (be_state.compiler-backend-state-function-state backend-state))]
-    [needs-xmm-work : bool
-      (or avx2? (not (compiler-backend-vector-prefix-bool-op? op)))]
-    [operand-exclude : (__tl_dyn-array String)
-      (be_operand.compiler-backend-scavenge-exclude-ops2
-        backend-state
-        assignments
-        (be_state.compiler-backend-global-shared-view src)
-        carry)]
-    [dst-exclude : (__tl_dyn-array String)
-      (be_operand.compiler-backend-scavenge-exclude-append operand-exclude 7 "")]
-    [work0 : String
-      (if needs-xmm-work
-        (be_operand.compiler-backend-scavenge-xmm-reg
+    [bool? : bool (compiler-backend-vector-prefix-bool-op? op)]
+    [local? : bool
+      (match (& carry)
+        [(Unit) true]
+        [_ false])]
+    (when
+      (match (& op)
+        [(SplatLast) true]
+        [_ false])
+      (return
+        (if local?
+          (compiler-backend-emit-vector-splat-last
+            assignments
+            dst
+            src
+            lanes
+            elem-ty
+            instr-diag
+            backend-state)
+          (be_state.compiler-backend-instr-error
+            instr-diag
+            "backend: splat last lane does not take a carry"))))
+    (when
+      (and
+        local?
+        (not
+          (match (& op)
+            [(Sum) true]
+            [_ false])))
+      (return
+        (be_state.compiler-backend-instr-error
+          instr-diag
+          "backend: prefix without a carry requires sum")))
+    (unless
+      (if avx2?
+        (compiler-backend-avx2-vector-prefix-shape-ok? op lanes (& elem-ty))
+        (compiler-backend-avx512-vector-prefix-shape-ok? op lanes (& elem-ty)))
+      (return
+        (be_state.compiler-backend-instr-error
+          instr-diag
+          "backend: unsupported vector prefix shape")))
+    (when
+      (and bool? (not avx2?))
+      (return
+        (compiler-backend-emit-avx512-vector-prefix-bool
+          assignments
           dst
-          (be_state.compiler-backend-global-shared-view dst-exclude)
-          8
-          "%xmm0"
-          backend-state)
-        "%xmm0")]
-    [work1-exclude : (__tl_dyn-array String)
-      (be_operand.compiler-backend-scavenge-exclude-append
-        dst-exclude
-        8
-        (be_state.compiler-backend-global-shared-view work0))]
-    [work1 : String
-      (if needs-xmm-work
-        (be_operand.compiler-backend-scavenge-xmm-reg
+          op
+          src
+          carry
+          lanes
+          instr-diag
+          backend-state)))
+    (let
+      [width : String
+        (if avx2?
+          "ymm"
+          "zmm")]
+      [register-ty : compiler_ast_types.AstType
+        (if bool?
+          (I8)
+          (be_state.compiler-backend-global-shared-view elem-ty))]
+      ;; The allocator reserves these SIMD families for backend temporaries.
+      [work0 : String "%xmm0"]
+      [work1 : String "%xmm1"]
+      [carry-xmm : String "%xmm14"]
+      [carry-work : String
+        (compiler-backend-vector-prefix-work
+          (be_state.compiler-backend-global-shared-view carry-xmm)
+          (be_state.compiler-backend-global-shared-view width))]
+      [dst-result
+        (compiler-backend-vector-dst-reg
+          assignments
           dst
-          work1-exclude
-          9
-          "%xmm1"
-          backend-state)
-        "%xmm1")]
-    (if avx2?
-      (compiler-backend-emit-avx2-vector-prefix
+          "prefix dst"
+          (be_state.compiler-backend-global-shared-view width)
+          (be_operand.compiler-backend-vector-spill-scratch (& width) 1)
+          backend-state)]
+      (match dst-result
+        [(Ok dst-reg)
+          (unless
+            local?
+            (compiler-backend-preserve-prefix-scratch! backend-state "%xmm14"))
+          (when
+            (or (string.eq dst-reg "%ymm15") (string.eq dst-reg "%zmm15"))
+            (compiler-backend-preserve-prefix-scratch! backend-state "%xmm15"))
+          (match (if local?
+            (be_state.ResultBackendVectorUse.Ok
+              (be_state.CompilerBackendVectorUse.Use "" ""))
+            (be_operand.compiler-backend-vector-register-use
+              assignments
+              carry
+              "prefix carry"
+              (be_state.compiler-backend-global-shared-view width)
+              (& register-ty)
+              (be_state.compiler-backend-global-shared-view carry-work)
+              backend-state))
+            [(Ok (Use carry-load carry-reg))
+              (match (be_operand.compiler-backend-vector-register-use
+                assignments
+                src
+                "prefix source"
+                (be_state.compiler-backend-global-shared-view width)
+                (& register-ty)
+                (be_state.compiler-backend-global-shared-view dst-reg)
+                backend-state)
+                [(Ok (Use src-load src-reg))
+                  (let
+                    [copy-asm : String
+                      (if (string.eq src-reg dst-reg)
+                        ""
+                        (str_cat.str-cat
+                          "    "
+                          (if avx2?
+                            "vmovdqu "
+                            "vmovdqu64 ")
+                          src-reg
+                          ", "
+                          dst-reg
+                          "\n"))]
+                    [prefix-asm : String
+                      (cond
+                        [bool?
+                          (compiler-backend-avx2-vector-prefix-bool-body
+                            op
+                            (& dst-reg)
+                            (be_state.compiler-backend-global-shared-view work0)
+                            (be_state.compiler-backend-global-shared-view work1))]
+                        [avx2?
+                          (compiler-backend-avx2-vector-prefix-numeric-body
+                            op
+                            (& elem-ty)
+                            (be_state.compiler-backend-global-shared-view
+                              dst-reg)
+                            (be_state.compiler-backend-global-shared-view work0)
+                            (be_state.compiler-backend-global-shared-view work1))]
+                        [else
+                          (compiler-backend-avx512-vector-prefix-numeric-body
+                            op
+                            (be_state.compiler-backend-global-shared-view
+                              elem-ty)
+                            (& dst-reg)
+                            (be_state.compiler-backend-global-shared-view work0)
+                            (be_state.compiler-backend-global-shared-view work1))])]
+                    [combine-asm : String
+                      (cond
+                        [local? ""]
+                        [bool?
+                          (str_cat.str-cat
+                            "    "
+                            (match op
+                              [(Any) "vpor "]
+                              [_ "vpand "])
+                            carry-work
+                            ", "
+                            dst-reg
+                            ", "
+                            dst-reg
+                            "\n")]
+                        [avx2?
+                          (compiler-backend-avx2-vector-prefix-numeric-combine
+                            op
+                            (& elem-ty)
+                            (be_state.compiler-backend-global-shared-view
+                              dst-reg)
+                            -1
+                            (be_state.compiler-backend-global-shared-view
+                              carry-xmm)
+                            (be_state.compiler-backend-global-shared-view work1))]
+                        [else
+                          (compiler-backend-avx512-vector-prefix-numeric-combine
+                            op
+                            (& elem-ty)
+                            (& dst-reg)
+                            -1
+                            (be_state.compiler-backend-global-shared-view
+                              carry-xmm))])]
+                    (Ok
+                      (str_cat.str-cat
+                        carry-load
+                        (if local?
+                          ""
+                          (compiler-backend-vector-prefix-broadcast-last
+                            avx2?
+                            (& elem-ty)
+                            lanes
+                            (& carry-reg)
+                            (& carry-work)
+                            (& carry-xmm)))
+                        src-load
+                        copy-asm
+                        prefix-asm
+                        combine-asm
+                        (compiler-backend-vector-store-dst
+                          assignments
+                          dst
+                          (be_state.compiler-backend-global-shared-view width)
+                          register-ty
+                          (be_state.compiler-backend-global-shared-view dst-reg)
+                          backend-state))))]
+                [(Err message)
+                  (be_state.compiler-backend-instr-error instr-diag message)])]
+            [(Err message)
+              (be_state.compiler-backend-instr-error instr-diag message)])]
+        [(Err message)
+          (be_state.compiler-backend-instr-error instr-diag message)]))))
+
+(define (compiler-backend-emit-vector-last-lane
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [src : compiler_ir_types.CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : compiler_ast_types.AstType]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (let
+    [avx512? : bool
+      (be_operand.compiler-backend-avx512-shape-ok? (& elem-ty) lanes)]
+    [shift : i64
+      (match (& elem-ty)
+        [(I32) 12]
+        [(I64) 8]
+        [_ 0])]
+    [width : String
+      (if avx512?
+        "zmm"
+        "ymm")]
+    [scratch : String "%xmm0"]
+    (if (and
+      (> shift 0)
+      (or
+        avx512?
+        (be_operand.compiler-backend-avx2-shape-ok? (& elem-ty) lanes)))
+      (match (be_operand.compiler-backend-vector-register-use
         assignments
-        dst
-        op
         src
-        carry
-        lanes
-        elem-ty
-        work0
-        work1
-        instr-diag
+        "last lane source"
+        (be_state.compiler-backend-global-shared-view width)
+        (& elem-ty)
+        (compiler-backend-vector-prefix-work
+          (be_state.compiler-backend-global-shared-view scratch)
+          (be_state.compiler-backend-global-shared-view width))
         backend-state)
-      (compiler-backend-emit-avx512-vector-prefix
-        assignments
-        dst
-        op
-        src
-        carry
-        lanes
-        elem-ty
-        work0
-        work1
+        [(Ok (Use load-asm src-reg))
+          (Ok
+            (str_cat.str-cat
+              load-asm
+              (if avx512?
+                "    vextracti32x4 $3, "
+                "    vextracti128 $1, ")
+              src-reg
+              ", "
+              scratch
+              "\n"
+              "    vpsrldq $"
+              (string.int->string shift)
+              ", "
+              scratch
+              ", "
+              scratch
+              "\n"
+              (be_operand.compiler-backend-vector-reduce-store-scalar
+                assignments
+                dst
+                elem-ty
+                scratch
+                backend-state)))]
+        [(Err message)
+          (be_state.compiler-backend-instr-error instr-diag message)])
+      (be_state.compiler-backend-instr-error
         instr-diag
-        backend-state))))
+        "backend: unsupported vector last lane shape"))))
 
 (define (compiler-backend-avx512-partial-mask [active-lanes : i64]) : i64
   (let

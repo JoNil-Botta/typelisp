@@ -1237,6 +1237,14 @@
 (defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
 (define (main) : i64 (tuple-ref (dot (tuple 1 2)) 1))")
 
+(define (compiler-lower-defdispatch-nominal-sret-source) : String
+  "(defstruct Big (a i64) (b i64) (c i64))
+(define (big-scalar [x : i64]) : Big (Big x (+ x 1) (+ x 2)))
+(define (big-avx2 [x : i64]) : Big (Big x (+ x 1) (+ x 2)))
+(define (big-avx512 [x : i64]) : Big (Big x (+ x 1) (+ x 2)))
+(defdispatch make-big (scalar big-scalar) (avx2 big-avx2) (avx512 big-avx512))
+(define (main) : i64 (let [v : Big (make-big 40)] (+ v.a (- v.c v.b))))")
+
 (define (compiler-lower-defdispatch-direct-source) : String
   "(define (dot-scalar [x : i64]) : i64 x)
 (define (dot-avx2 [x : i64]) : i64 (+ x 2))
@@ -6481,6 +6489,33 @@
         (= (lower-test-function-call-count functions "main" "dot") 1)
         (>= (lower-test-count functions "dot" (IndirectCall)) 1))]
     [_ false]))
+
+(define (compiler-lower-defdispatch-sret-mode-verifies?
+  [source : String]
+  [mode : lower.CompilerLowerMode]) : bool
+  (match (lower.lower-compiler-source-with-mode source mode)
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match (optimize.opt-verify-program (& program))
+            [(optimize.ResultCompilerOptimizeVerify.Ok) true]
+            [(optimize.ResultCompilerOptimizeVerify.Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
+    [(Err _) false]))
+
+(define (compiler-lower-defdispatch-sret-verify-ok?) : bool
+  (and
+    (compiler-lower-defdispatch-sret-mode-verifies?
+      (compiler-lower-defdispatch-structural-source)
+      (lower.CompilerLowerMode.WindowsScalar))
+    (compiler-lower-defdispatch-sret-mode-verifies?
+      (compiler-lower-defdispatch-nominal-sret-source)
+      (lower.CompilerLowerMode.LinuxScalar))
+    (compiler-lower-defdispatch-sret-mode-verifies?
+      (compiler-lower-defdispatch-nominal-sret-source)
+      (lower.CompilerLowerMode.WindowsScalar))))
 
 (define (compiler-lower-defdispatch-direct-shape-ok?) : bool
   (match (lower-test-functions
@@ -16493,6 +16528,12 @@
   (test.assert-true
     (compiler-lower-defdispatch-structural-shape-ok?)
     "defdispatch structural thunk transport"))
+
+(test
+  compiler-lower-defdispatch-sret-verify
+  (test.assert-true
+    (compiler-lower-defdispatch-sret-verify-ok?)
+    "defdispatch sret thunks carry matching ReturnStorage ABI and pass IR verify"))
 
 (test
   compiler-lower-defdispatch-thunk-shape

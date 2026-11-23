@@ -41,18 +41,12 @@
           [cloned-item : comptime.Expr
             (match (type-kind element-type)
               ["string"
-                (if (comptime.module-value? "stdlib.string" "copy")
-                  (comptime.expr-call
-                    (comptime.module-value-expr "stdlib.string" "copy")
-                    (comptime.expr-list-cons
-                      item-source
-                      (comptime.expr-list-empty)))
-                  `(stdlib.clone.clone-borrowed-value
-                    ,element-type
-                    ,item-source
-                    ,item-place
-                    ,root-key-expr
-                    ,item-path))]
+                `(stdlib.clone.clone-borrowed-value
+                  ,element-type
+                  ,item-source
+                  ,item-place
+                  ,root-key-expr
+                  ,item-path)]
               ["unit" `unit]
               ["bool" `(deref ,item-source)]
               ["char" `(deref ,item-source)]
@@ -113,18 +107,12 @@
           [cloned-item : comptime.Expr
             (match (type-kind element-type)
               ["string"
-                (if (comptime.module-value? "stdlib.string" "copy")
-                  (comptime.expr-call
-                    (comptime.module-value-expr "stdlib.string" "copy")
-                    (comptime.expr-list-cons
-                      item-source
-                      (comptime.expr-list-empty)))
-                  `(stdlib.clone.clone-borrowed-value
-                    ,element-type
-                    ,item-source
-                    ,item-place
-                    ,root-key-expr
-                    ,item-path))]
+                `(stdlib.clone.clone-borrowed-value
+                  ,element-type
+                  ,item-source
+                  ,item-place
+                  ,root-key-expr
+                  ,item-path)]
               ["unit" `unit]
               ["bool" `(deref ,item-source)]
               ["char" `(deref ,item-source)]
@@ -639,34 +627,45 @@
       ["f64" `(deref ,source)]
       ["f32" `(deref ,source)]
       ["string"
-        (if (comptime.module-value? "stdlib.string" "copy")
-          (comptime.expr-call
-            (comptime.module-value-expr "stdlib.string" "copy")
-            (comptime.expr-list-cons source (comptime.expr-list-empty)))
-          ;; Allocate in the expansion so the macro module stays usable in PIC
-          ;; programs that only load its declarations.
-          `(let
-            [__clone_text ,source]
-            [__clone_text_len : i64 (__tl_string_length __clone_text)]
-            [__clone_bytes : (__tl_dyn-array u8)
-              (__tl_make-array u8 __clone_text_len)]
-            [__clone_dst : (MutPtr u8)
+        (let
+          [copy : comptime.Expr
+            (if (comptime.module-value? "stdlib.string" "copy")
+              (comptime.module-value-expr "stdlib.string" "copy")
+              `unit)]
+          ;; A dotted spelling still requires an import at the call site.
+          ;; Only a resolved reference can be called from any module.
+          [name : String
+            (match copy
+              [(comptime.Expr.Var name) name]
+              [_ ""])]
+          (if (string-eq name "copy")
+            (comptime.expr-call
+              copy
+              (comptime.expr-list-cons source (comptime.expr-list-empty)))
+            ;; Allocate in the expansion so the macro module stays usable in PIC
+            ;; programs that only load its declarations.
+            `(let
+              [__clone_text ,source]
+              [__clone_text_len : i64 (__tl_string_length __clone_text)]
+              [__clone_bytes : (__tl_dyn-array u8)
+                (__tl_make-array u8 __clone_text_len)]
+              [__clone_dst : (MutPtr u8)
+                (unsafe
+                  (ptr-cast (__tl_array-data __clone_bytes) : (MutPtr u8)))]
+              [__clone_src : (Ptr u8)
+                (unsafe
+                  (string-data __clone_text))]
+              [__clone_offset : i64 0]
+              (while (< __clone_offset __clone_text_len)
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset __clone_dst __clone_offset)
+                    (ptr-read (ptr-offset __clone_src __clone_offset))))
+                (set! __clone_offset (+ __clone_offset 1)))
               (unsafe
-                (ptr-cast (__tl_array-data __clone_bytes) : (MutPtr u8)))]
-            [__clone_src : (Ptr u8)
-              (unsafe
-                (string-data __clone_text))]
-            [__clone_offset : i64 0]
-            (while (< __clone_offset __clone_text_len)
-              (unsafe
-                (ptr-write!
-                  (ptr-offset __clone_dst __clone_offset)
-                  (ptr-read (ptr-offset __clone_src __clone_offset))))
-              (set! __clone_offset (+ __clone_offset 1)))
-            (unsafe
-              (string-from-bytes
-                (ptr-cast __clone_dst : (Ptr u8))
-                __clone_text_len))))]
+                (string-from-bytes
+                  (ptr-cast __clone_dst : (Ptr u8))
+                  __clone_text_len)))))]
       ["tuple"
         `(let
           [__clone_tuple_source ,source]

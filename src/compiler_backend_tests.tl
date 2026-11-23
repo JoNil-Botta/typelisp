@@ -19030,15 +19030,26 @@ f:
         "    vmovdqu -64(%rbp), %ymm14\n    vpaddq %ymm6, %ymm14, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
     [(Err _) false]))
 
+(define (compiler-backend-prefix-test-state
+  [mode : be_state.CompilerBackendMode]) : be_state.CompilerBackendState
+  (let
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-set-current-mode!
+      (be_state.compiler-backend-state-function-state state)
+      mode)
+    state))
+
 (define (compiler-backend-vector-prefix-spill-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=%vec6 %1=%r12 %2=spill:-64"))
+  (reg-homes "%0=%vec6 %1=%vec7 %2=spill:-64"))
 
 (define (compiler-backend-vector-prefix-source-carry-spill-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=spill:-64 %1=spill:-8 %2=%vec7"))
+  (reg-homes "%0=spill:-64 %1=spill:-96 %2=%vec7"))
 
 (define (compiler-backend-avx2-vector-prefix-i64-spill-ok?) : bool
   (asm-ok?
-    (be_simd.compiler-backend-emit-avx2-vector-prefix
+    (be_simd.compiler-backend-emit-vector-prefix
       (compiler-backend-vector-prefix-spill-assignments)
       2
       (Min)
@@ -19046,18 +19057,15 @@ f:
       (Var 1)
       4
       (I64)
-      "%xmm0"
-      "%xmm1"
       (cdiag.compiler-diagnostic-at-start "" "")
-      (be_state.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+      (compiler-backend-prefix-test-state (Avx2)))
     (has
       "    vmovdqu %ymm6, %ymm15\n"
       "    vpslldq $8, %ymm15, %ymm0\n"
       "    vperm2i128 $0, %ymm15, %ymm15, %ymm0\n"
       "    vpcmpgtq "
       "    vpandn "
-      "    vmovq %r10, %xmm0\n"
+      "    vpermq $255, %ymm7, %ymm14\n"
       "    vmovdqu %ymm15, -64(%rbp)\n")))
 
 (define (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?) : bool
@@ -19066,7 +19074,7 @@ f:
       (compiler-backend-vector-prefix-source-carry-spill-assignments)]
     (and
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx2-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Sum)
@@ -19074,17 +19082,15 @@ f:
           (Var 1)
           4
           (I64)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx2)))
         (has
           "    vmovdqu -64(%rbp), %ymm7\n"
-          "    vpbroadcastq -8(%rbp), %ymm0\n")
+          "    vmovdqu -96(%rbp), %ymm14\n"
+          "    vpermq $255, %ymm14, %ymm14\n")
         (lacks "    vmovdqu %ymm7, -64(%rbp)\n"))
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx2-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Any)
@@ -19092,20 +19098,17 @@ f:
           (Var 1)
           32
           (Bool)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx2)))
         (has
           "    vmovdqu -64(%rbp), %ymm7\n"
-          "    movq -8(%rbp), %r10\n"
-          "    setne %r10b\n"
-          "    vpbroadcastb %xmm0, %ymm0\n")))))
+          "    vmovdqu -96(%rbp), %ymm14\n"
+          "    vextracti128 $1, %ymm14, %xmm14\n"
+          "    vpbroadcastb %xmm14, %ymm14\n")))))
 
 (define (compiler-backend-avx2-vector-prefix-bool-spill-ok?) : bool
   (asm-ok?
-    (be_simd.compiler-backend-emit-avx2-vector-prefix
+    (be_simd.compiler-backend-emit-vector-prefix
       (compiler-backend-vector-prefix-spill-assignments)
       2
       (All)
@@ -19113,17 +19116,14 @@ f:
       (Var 1)
       32
       (Bool)
-      "%xmm0"
-      "%xmm1"
       (cdiag.compiler-diagnostic-at-start "" "")
-      (be_state.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+      (compiler-backend-prefix-test-state (Avx2)))
     (has
       "    vpslldq $1, %ymm15, %ymm0\n"
       "    vpslldq $8, %ymm15, %ymm0\n"
-      "    vpbroadcastb %xmm0, %ymm0\n"
-      "    setne %r10b\n"
-      "    vpand %ymm0, %ymm15, %ymm15\n")
+      "    vextracti128 $1, %ymm7, %xmm14\n"
+      "    vpbroadcastb %xmm14, %ymm14\n"
+      "    vpand %ymm14, %ymm15, %ymm15\n")
     (lacks "%al")
     (has "    vmovdqu %ymm15, -64(%rbp)\n")))
 
@@ -19133,7 +19133,7 @@ f:
       (compiler-backend-vector-prefix-spill-assignments)]
     (and
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Min)
@@ -19141,20 +19141,17 @@ f:
           (Var 1)
           8
           (I64)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    vmovdqu64 %zmm6, %zmm15\n"
           "    valignq $7, %zmm1, %zmm15, %zmm0\n"
           "    kshiftlw $4, %k7, %k7\n"
           "    vpminsq %zmm0, %zmm15, %zmm15{%k7}\n"
-          "    vpbroadcastq %r8, %zmm0\n"
+          "    vpbroadcastq %xmm14, %zmm14\n"
           "    vmovdqu64 %zmm15, -64(%rbp)\n"))
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Max)
@@ -19162,19 +19159,16 @@ f:
           (Var 1)
           16
           (I32)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    valignd $15, %zmm1, %zmm15, %zmm0\n"
           "    valignd $8, %zmm1, %zmm15, %zmm0\n"
           "    vpmaxsd %zmm0, %zmm15, %zmm15{%k7}\n"
-          "    vpbroadcastd %r8d, %zmm0\n")))))
+          "    vpbroadcastd %xmm14, %zmm14\n")))))
 
 (define (compiler-backend-avx512-vector-prefix-bool-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=%k2 %1=%rax %2=spill:-64"))
+  (reg-homes "%0=%k2 %1=%k3 %2=spill:-64"))
 
 (define (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=spill:-64 %1=spill:-8 %2=%k3"))
@@ -19184,7 +19178,7 @@ f:
     [diag : cdiag.CompilerDiagnostic (cdiag.compiler-diagnostic-at-start "" "")]
     (and
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           (compiler-backend-avx512-vector-prefix-bool-assignments)
           2
           (All)
@@ -19192,23 +19186,20 @@ f:
           (Var 1)
           64
           (Bool)
-          "%xmm0"
-          "%xmm1"
           (owned_view.compiler-owned-shared-view diag)
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    kmovq %k2, %r11\n"
           "    notq %r11\n"
           "    shlq $32, %r10\n"
-          "    movq %rax, %r10\n"
-          "    setne %r10b\n"
+          "    kmovq %k3, %r10\n"
+          "    sarq $63, %r10\n"
           "    andq %r10, %r11\n"
           "    kmovq %r11, %k7\n"
           "    kmovq %k7, -64(%rbp)\n")
         (lacks "    kmovq %k2, %rax\n" "%zmm"))
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments)
           2
           (Any)
@@ -19216,15 +19207,14 @@ f:
           (Var 1)
           64
           (Bool)
-          "%xmm0"
-          "%xmm1"
           diag
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    kmovq -64(%rbp), %k7\n"
           "    kmovq %k7, %r11\n"
-          "    movq -8(%rbp), %r10\n"
+          "    kmovq -8(%rbp), %k7\n"
+          "    kmovq %k7, %r10\n"
+          "    sarq $63, %r10\n"
           "    orq %r10, %r11\n"
           "    kmovq %r11, %k3\n")
         (lacks "%rax")))))

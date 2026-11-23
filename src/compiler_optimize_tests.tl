@@ -87082,6 +87082,39 @@ return
             (test.assert-true (string.eq reason expected) "SSA rejection")])))))
 
 (test
+  verifier-block-terminators-refresh-invalidates-cache
+  (let
+    [clean
+      (irt.func
+        "function @ok() -> unit vars 1 {\nentry:\n%0 = mov 1 : i64\nreturn\n}")]
+    [broken
+      (irt.func
+        "function @ok() -> unit vars 1 {\nentry:\nreturn\n%0 = mov 1 : i64\n}")]
+    [ctx (opt.opt-cfg-context-build (opt.opt-function-blocks (& clean)))]
+    (test.assert-true
+      (opt.opt-verify-ok?
+        (& (opt.opt-verify-function-with-context (& clean) (& ctx))))
+      "fresh context accepts clean blocks")
+    (opt.opt-cfg-index-refresh-blocks!
+      (& ctx.index)
+      (& (opt.opt-function-blocks (& broken))))
+    (test.assert-true
+      (match (opt.opt-verify-function-with-context (& broken) (& ctx))
+        [(Err reason)
+          (string.eq
+            reason
+            "optimizer verify: instruction after terminator in block entry")]
+        [(Ok) false])
+      "refreshed context detects post-terminator instruction")
+    (opt.opt-cfg-index-refresh-blocks!
+      (& ctx.index)
+      (& (opt.opt-function-blocks (& clean))))
+    (test.assert-true
+      (opt.opt-verify-ok?
+        (& (opt.opt-verify-function-with-context (& clean) (& ctx))))
+      "re-refreshed context accepts restored clean blocks")))
+
+(test
   verifier-store-owned-region-types-use-explicit-pools
   (let
     [pools : ast.AstNodePoolContext

@@ -76590,18 +76590,29 @@
   [ret-ty : ast.AstType]
   [sret-var : i64]
   [base : i64]) : ir.CompilerIrBlock
-  (let
-    [ret-instr : ir.CompilerIrInstr
-      (lower-dispatch-call-return-instr (+ base 1) sret-var (& ret-ty))]
-    (Block
-      (ir.compiler-ir-label "cached")
-      (ir.compiler-ir-instr-seq3
-        ;; The atomic primitive returns a machine word. Retype it to the exact
-        ;; checked dispatch signature before the indirect call so ABI lowering
-        ;; never has to infer the signature from an untyped cache word.
-        (Cast base (Var cached-word-var) (I64) fn-ty)
-        (CallIndirect (+ base 1) (Var base) args ret-ty)
-        ret-instr))))
+  (match (& ret-ty)
+    [(ast.AstType.Never)
+      (Block
+        (ir.compiler-ir-label "cached")
+        (ir.compiler-ir-instr-seq2
+          ;; The atomic primitive returns a machine word. Retype it to the exact
+          ;; checked dispatch signature before the indirect call so ABI lowering
+          ;; never has to infer the signature from an untyped cache word.
+          (Cast base (Var cached-word-var) (I64) fn-ty)
+          (CallIndirect (+ base 1) (Var base) args ret-ty)))]
+    [_
+      (let
+        [ret-instr : ir.CompilerIrInstr
+          (lower-dispatch-call-return-instr (+ base 1) sret-var (& ret-ty))]
+        (Block
+          (ir.compiler-ir-label "cached")
+          (ir.compiler-ir-instr-seq3
+            ;; The atomic primitive returns a machine word. Retype it to the exact
+            ;; checked dispatch signature before the indirect call so ABI lowering
+            ;; never has to infer the signature from an untyped cache word.
+            (Cast base (Var cached-word-var) (I64) fn-ty)
+            (CallIndirect (+ base 1) (Var base) args ret-ty)
+            ret-instr)))]))
 
 (define (lower-dispatch-select-block
   [label : i64]
@@ -76615,6 +76626,10 @@
   (let
     [instrs : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity 6)]
+    [never? : bool
+      (match (& ret-ty)
+        [(ast.AstType.Never) true]
+        [_ false])]
     [ret-instr : ir.CompilerIrInstr
       (lower-dispatch-call-return-instr (+ base 4) sret-var (& ret-ty))]
     ;; The cache is a private pointer-width word. Sequentially consistent CAS
@@ -76651,7 +76666,7 @@
     (ir.compiler-ir-instr-builder-push!
       (&mut instrs)
       (ir.CompilerIrInstr.CallIndirect (+ base 4) (Var (+ base 3)) args ret-ty))
-    (ir.compiler-ir-instr-builder-push! (&mut instrs) ret-instr)
+    (unless never? (ir.compiler-ir-instr-builder-push! (&mut instrs) ret-instr))
     (Block label (ir.compiler-ir-instr-builder-to-seq instrs))))
 
 (define (lower-dispatch-entry-block

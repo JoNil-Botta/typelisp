@@ -9400,11 +9400,13 @@
   (offsets (__tl_dyn-array i64))
   (edges (__tl_dyn-array i64)))
 
-;; `targets-known` is one of the optimizer verifier's two structural CFG checks.
-;; It falls out of the build for free: `opt-cfg-index-build-csr` drops
-;; successor labels it cannot resolve, so an unknown target is a short CSR row.
-;; The other check needs no field -- see `opt-cfg-index-labels-unique?`. Neither
-;; has to rebuild a label map or rehash every label and successor edge.
+;; `targets-known` and `post-terminator-state` are two of the optimizer
+;; verifier's structural CFG checks. Both fall out of `opt-cfg-index-build-csr`
+;; for free during its single pass over instructions: an unresolved target sets
+;; `targets-known` to false, and a mid-block terminator records `label + 1` in
+;; `post-terminator-state[0]` (0 means clean; -1 marks the cache dirty after
+;; `opt-cfg-index-refresh-blocks!` mutates `blocks` in place). The third check
+;; is `opt-cfg-index-labels-unique?`.
 (defstruct OptCfgIndex
   (labels-unique bool)
   (labels (__tl_dyn-array i64))
@@ -9423,7 +9425,8 @@
   (reach-count i64)
   (rpo (__tl_dyn-array i64))
   (rpo-num (__tl_dyn-array i64))
-  (targets-known bool))
+  (targets-known bool)
+  (post-terminator-state (__tl_dyn-array i64)))
 
 (defstruct OptPredMap
   (index OptCfgIndex))
@@ -9526,7 +9529,8 @@
 (defstruct OptCfgCsrRows
   (succs OptCfgCsr)
   (preds OptCfgCsr)
-  (targets-known bool))
+  (targets-known bool)
+  (post-terminator-block i64))
 
 (define (opt-cfg-edges-grow [edges : (& (__tl_dyn-array i64))] [used : i64]) : (__tl_dyn-array
     i64)
@@ -9560,6 +9564,7 @@
     [edges : (__tl_dyn-array i64) (__tl_make-array i64 (+ (* 2 count) 4))]
     [end : i64 0]
     [known : bool true]
+    [post-terminator-block : i64 (ir.compiler-ir-label-none)]
     (for [b (iterator.range 0 count)]
       (let
         [start : i64 end]
@@ -9572,21 +9577,27 @@
         (match (compiler-opt-global-array-element-shared-view
           (owned_view.compiler-owned-reference-shared-view dense-blocks)
           b)
-          [(Block _ instrs)
+          [(Block block-label instrs)
             (let
               [slots : (__tl_dyn-array ir.CompilerIrInstr)
                 (compiler-opt-global-shared-view instrs.slots)]
               [n : i64 instrs.len]
+              [last : i64 (- n 1)]
               [i : i64 0]
               ;; Jumps and two-way branches, in instruction order: the
               ;; labels `opt-cfg-instr-seq-successors` adds, in its order.
               ;; Most instructions branch nowhere, so the loop test is
               ;; the bound alone and room for a row's two new edges is
               ;; made only in the arms that push them; a switch leaves by
-              ;; moving `i` to the end.
+              ;; moving `i` to the end. Every terminator arm also records
+              ;; the first block with an instruction after a terminator so
+              ;; `opt-verify-structure` stays O(1) on fresh indices.
               (while (< i n)
                 (match (compiler-opt-global-array-element-shared-view slots i)
                   [(Jump label)
+                    (when
+                      (and (< i last) (< post-terminator-block 0))
+                      (set! post-terminator-block block-label))
                     (let
                       [id : i64 (opt-cfg-label-table-get label generation)]
                       (if (< id 0)
@@ -9600,6 +9611,9 @@
                             (opt-cfg-row-push! (&mut edges) start end id)))))]
                   [(or (Branch _ true-label false-label)
                        (TotalEnumBranch _ true-label false-label))
+                    (when
+                      (and (< i last) (< post-terminator-block 0))
+                      (set! post-terminator-block block-label))
                     (let
                       [t : i64 (opt-cfg-label-table-get true-label generation)]
                       [f : i64 (opt-cfg-label-table-get false-label generation)]
@@ -9613,8 +9627,23 @@
                         (set! known false)
                         (set! end (opt-cfg-row-push! (&mut edges) start end f))))]
                   [(or (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
+                    (when
+                      (and (< i last) (< post-terminator-block 0))
+                      (set! post-terminator-block block-label))
                     (set! general true)
                     (set! i n)]
+                  [(or (Return _) (TailCall _ _ _) (TailCallIndirect _ _ _))
+                    (when
+                      (and (< i last) (< post-terminator-block 0))
+                      (set! post-terminator-block block-label))]
+                  [(or (Call _ _ _ ty) (CallIndirect _ _ _ ty)
+                       (CallIndirectC _ _ _ ty))
+                    (match (& ty)
+                      [(ast.AstType.Never)
+                        (when
+                          (and (< i last) (< post-terminator-block 0))
+                          (set! post-terminator-block block-label))]
+                      [_ unit])]
                   [_ unit])
                 (+= i 1))
               (if general
@@ -9694,7 +9723,8 @@
       (OptCfgCsrRows
         (OptCfgCsr succ-offsets succ-edges)
         (OptCfgCsr pred-offsets pred-edges)
-        known))))
+        known
+        post-terminator-block))))
 
 ;; Only for arrays being *re*-initialised. `make-array` already hands back
 ;; zeroed memory -- `tl_array_zero` either fills the allocation or skips the
@@ -9849,6 +9879,7 @@
     [rpo-num : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [reach-count : i64 0]
     [targets-known : bool true]
+    [post-terminator-state : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (opt-cfg-index-fill-id-map! (&mut id-map) labels count)
     (opt-cfg-fill-i64! (&mut postorder) count (- 0 1))
     (opt-cfg-fill-i64! (&mut rpo) count (- 0 1))
@@ -9859,6 +9890,11 @@
       [succ-csr : OptCfgCsr rows.succs]
       [pred-csr : OptCfgCsr rows.preds]
       (set! targets-known rows.targets-known)
+      (when
+        (>= rows.post-terminator-block 0)
+        (set!
+          (array-ref post-terminator-state 0)
+          (+ rows.post-terminator-block 1)))
       (if (> count 0)
         (set!
           reach-count
@@ -9882,7 +9918,8 @@
         reach-count
         rpo
         rpo-num
-        targets-known))))
+        targets-known
+        post-terminator-state))))
 
 (define (opt-cfg-index-block-count [index : (& index OptCfgIndex)]) : i64
   (array-length index.labels))
@@ -9947,14 +9984,20 @@
     [blocks : ir.CompilerIrBlockList
       (owned_view.compiler-owned-reference-shared-view blocks)]
     [count : i64 (opt-cfg-index-block-count index)]
-    ;; The index is shared; its block table is a refreshable cache.
-    [cells : (__tl_dyn-array ir.CompilerIrBlock)
-      (owned_view.compiler-owned-reference-shared-view (& index.blocks))]
-    (if (= count (ir.compiler-ir-block-list-count blocks))
-      (begin
-        (opt-cfg-index-refresh-blocks-from! (&mut cells) (& blocks) 0)
-        unit)
-      unit)))
+    ;; The index is shared; its block table and post-terminator cache are
+    ;; refreshable. Mark post-terminator-state dirty (-1) so any later
+    ;; `opt-verify-structure` rescans the refreshed blocks instead of trusting
+    ;; the pre-refresh build.
+    [index-view : OptCfgIndex
+      (owned_view.compiler-owned-reference-shared-view index)]
+    (match index-view
+      [(OptCfgIndex _ _ _ cells _ _ _ _ _ _ _ post-term)
+        (set! (array-ref post-term 0) -1)
+        (if (= count (ir.compiler-ir-block-list-count blocks))
+          (begin
+            (opt-cfg-index-refresh-blocks-from! (&mut cells) (& blocks) 0)
+            unit)
+          unit)])))
 
 (define (opt-cfg-index-block [index : (& index OptCfgIndex)] [id : i64]) : OptMaybeBlock
   (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
@@ -12102,8 +12145,22 @@
           (ir.compiler-ir-block-list-view blocks)
           0))]))
 
-;; A rewrite with the same CFG can reuse the index. Read instruction ordering
-;; from the current body so the check also works with a stale block cache.
+(define (opt-verify-scan-post-terminator [blocks : (& ir.CompilerIrBlockList)]) : i64
+  (match blocks
+    [(Array seq)
+      (for [block (iterator.range 0 seq.len)]
+        (match (& (array-ref seq.slots block))
+          [(Block label instrs)
+            (for [i (iterator.range 0 (- instrs.len 1))]
+              (when
+                (ir.compiler-ir-instr-terminator?
+                  (& (array-ref instrs.slots i)))
+                (return label)))]))])
+  (ir.compiler-ir-label-none))
+
+;; Fresh indices record any mid-block terminator during `opt-cfg-index-build-csr`,
+;; keeping this check O(1). In-place refreshes via `opt-cfg-index-refresh-blocks!`
+;; mark `post-terminator-state[0]` as -1, falling back to a rescan of `blocks`.
 (define (opt-verify-structure
   [index : (& index OptCfgIndex)]
   [blocks : (& ir.CompilerIrBlockList)]) : ResultCompilerOptimizeVerify
@@ -12113,21 +12170,20 @@
     [(not index.targets-known)
       (Err "optimizer verify: unknown successor label")]
     [else
-      (match blocks
-        [(Array seq)
-          (for [block (iterator.range 0 seq.len)]
-            (match (& (array-ref seq.slots block))
-              [(Block label instrs)
-                (for [i (iterator.range 0 (- instrs.len 1))]
-                  (when
-                    (ir.compiler-ir-instr-terminator?
-                      (& (array-ref instrs.slots i)))
-                    (return
-                      (Err
-                        (str_cat.str-cat
-                          "optimizer verify: instruction after terminator in block "
-                          (ir.compiler-ir-label-text label))))))]))])
-      (Ok)]))
+      (let
+        [raw : i64 (array-ref index.post-terminator-state 0)]
+        [bad-label : i64
+          (if (= raw 0)
+            (ir.compiler-ir-label-none)
+            (if (> raw 0)
+              (- raw 1)
+              (opt-verify-scan-post-terminator blocks)))]
+        (if (>= bad-label 0)
+          (Err
+            (str_cat.str-cat
+              "optimizer verify: instruction after terminator in block "
+              (ir.compiler-ir-label-text bad-label)))
+          (Ok)))]))
 
 ;; Test-only defects are applied to actual pass outputs. The full verifier
 ;; remains the oracle and each named output is probed once per matrix run.

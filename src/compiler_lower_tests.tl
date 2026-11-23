@@ -1245,6 +1245,14 @@
 (defdispatch make-big (scalar big-scalar) (avx2 big-avx2) (avx512 big-avx512))
 (define (main) : i64 (let [v : Big (make-big 40)] (+ v.a (- v.c v.b))))")
 
+(define (compiler-lower-defdispatch-never-source) : String
+  "(extern (fail [message : String]) : never (:symbol \"tl_abort_string\"))
+(define (f-scalar [x : i64]) : never (fail \"s\"))
+(define (f-avx2 [x : i64]) : never (fail \"a\"))
+(define (f-avx512 [x : i64]) : never (fail \"z\"))
+(defdispatch f (scalar f-scalar) (avx2 f-avx2) (avx512 f-avx512))
+(define (main) : i64 (f 1))")
+
 (define (compiler-lower-defdispatch-direct-source) : String
   "(define (dot-scalar [x : i64]) : i64 x)
 (define (dot-avx2 [x : i64]) : i64 (+ x 2))
@@ -6516,6 +6524,19 @@
     (compiler-lower-defdispatch-sret-mode-verifies?
       (compiler-lower-defdispatch-nominal-sret-source)
       (lower.CompilerLowerMode.WindowsScalar))))
+
+(define (compiler-lower-defdispatch-never-verify-ok?) : bool
+  (match (lower.lower-compiler-source (compiler-lower-defdispatch-never-source))
+    [(Ok program _ lower-owner)
+      (let
+        [ok : bool
+          (match (optimize.opt-verify-program (& program))
+            [(optimize.ResultCompilerOptimizeVerify.Ok) true]
+            [(optimize.ResultCompilerOptimizeVerify.Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas lower-owner))
+        ok)]
+    [(Err _) false]))
 
 (define (compiler-lower-defdispatch-direct-shape-ok?) : bool
   (match (lower-test-functions
@@ -16534,6 +16555,12 @@
   (test.assert-true
     (compiler-lower-defdispatch-sret-verify-ok?)
     "defdispatch sret thunks carry matching ReturnStorage ABI and pass IR verify"))
+
+(test
+  compiler-lower-defdispatch-never-verify
+  (test.assert-true
+    (compiler-lower-defdispatch-never-verify-ok?)
+    "defdispatch never-returning thunks omit trailing return and pass IR verify"))
 
 (test
   compiler-lower-defdispatch-thunk-shape

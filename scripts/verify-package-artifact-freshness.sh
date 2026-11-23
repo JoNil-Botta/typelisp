@@ -306,8 +306,6 @@ EOF
 
 cat > "$WORK/pkg/src/main.tl" <<'EOF'
 (import dep.src.lib as dep)
-(defmacro (unused-transform [value : Expr]) : Expr
-  `(+ ,value 1))
 (define (main) : i64 (dep.add-one 41))
 EOF
 
@@ -320,6 +318,8 @@ cat > "$WORK/pkg/vendor/dep/typelisp.pkg" <<'EOF'
 EOF
 
 cat > "$WORK/pkg/vendor/dep/src/lib.tl" <<'EOF'
+(defmacro (unused-transform [value : Expr]) : Expr
+  `(+ ,value 1))
 (define (add-one [value : i64]) : i64 (+ value 1))
 EOF
 
@@ -348,6 +348,10 @@ run_graph() {
     fi
     code=$?
     set -e
+    [ ! -e "$ROOT_TLCI" ] || fail "executable package wrote a tlci image"
+    if grep -F 'fresh_root.tlci' "$out" >/dev/null; then
+        fail "executable package reported a tlci image: $(cat "$out")"
+    fi
 }
 
 run_serial() {
@@ -377,21 +381,20 @@ run_graph initial
 [ "$code" -eq 0 ] || fail "initial package build failed: $(cat "$err")"
 [ ! -s "$err" ] || fail "initial package build wrote stderr: $(cat "$err")"
 assert_artifact_role "$out" Built "fresh_root$EXE_SUFFIX"
-assert_artifact_role "$out" Built "fresh_root.tlci"
+assert_artifact_role "$out" Built "fresh_dep.tlci"
 
 snapshot "$WORK/noop.before" \
-    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_TLCI" "$ROOT_INPUTS" \
+    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS" \
     "$DEP_ASM" "$DEP_OBJ" "$DEP_RUNTIME" "$DEP_TLCI" "$DEP_INPUTS"
 sleep 1
 run_graph noop
 [ "$code" -eq 0 ] || fail "no-op package build failed: $(cat "$err")"
 [ ! -s "$err" ] || fail "no-op package build wrote stderr: $(cat "$err")"
 assert_artifact_role "$out" Fresh "fresh_root$EXE_SUFFIX"
-assert_artifact_role "$out" Fresh "fresh_root.tlci"
 assert_artifact_role "$out" Fresh "${LIB_PREFIX}fresh_dep$LIB_SUFFIX"
 assert_artifact_role "$out" Fresh "fresh_dep.tlci"
 snapshot "$WORK/noop.after" \
-    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_TLCI" "$ROOT_INPUTS" \
+    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS" \
     "$DEP_ASM" "$DEP_OBJ" "$DEP_RUNTIME" "$DEP_TLCI" "$DEP_INPUTS"
 assert_same "$WORK/noop.before" "$WORK/noop.after"
 
@@ -435,28 +438,30 @@ if [ "$HOST_OS" = linux ]; then
     [ "$code" -eq 0 ] || fail "tool-identity rebuild failed: $(cat "$err")"
     assert_artifact_role "$out" Built "fresh_root$EXE_SUFFIX"
     assert_artifact_role "$out" Built "${LIB_PREFIX}fresh_dep$LIB_SUFFIX"
-    assert_artifact_role "$out" Fresh "fresh_root.tlci"
     assert_artifact_role "$out" Fresh "fresh_dep.tlci"
     identity_calls=$(wc -l < "$TOOL_LOG" | tr -d ' ')
     [ "$identity_calls" -gt "$after_calls" ] || fail "tool identity change did not invoke native tools"
 fi
 
 snapshot "$WORK/comptime-runtime.before" \
-    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS"
-snapshot "$WORK/comptime-tlci.before" "$ROOT_TLCI"
+    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS" \
+    "$DEP_ASM" "$DEP_OBJ" "$DEP_RUNTIME" "$DEP_INPUTS"
+snapshot "$WORK/comptime-tlci.before" "$DEP_TLCI"
 if [ "$HOST_OS" = linux ]; then
     tool_calls_before=$(wc -l < "$TOOL_LOG" | tr -d ' ')
 fi
-sed 's/`(+ ,value 1)/`(+ ,value 2)/' "$WORK/pkg/src/main.tl" > "$WORK/main.next"
-mv "$WORK/main.next" "$WORK/pkg/src/main.tl"
+sed 's/`(+ ,value 1)/`(+ ,value 2)/' "$WORK/pkg/vendor/dep/src/lib.tl" > "$WORK/dep.next"
+mv "$WORK/dep.next" "$WORK/pkg/vendor/dep/src/lib.tl"
 sleep 1
 run_graph comptime-only
 [ "$code" -eq 0 ] || fail "comptime-only rebuild failed: $(cat "$err")"
 assert_artifact_role "$out" Fresh "fresh_root$EXE_SUFFIX"
-assert_artifact_role "$out" Built "fresh_root.tlci"
+assert_artifact_role "$out" Fresh "fresh_dep$LIB_SUFFIX"
+assert_artifact_role "$out" Built "fresh_dep.tlci"
 snapshot "$WORK/comptime-runtime.after" \
-    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS"
-snapshot "$WORK/comptime-tlci.after" "$ROOT_TLCI"
+    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS" \
+    "$DEP_ASM" "$DEP_OBJ" "$DEP_RUNTIME" "$DEP_INPUTS"
+snapshot "$WORK/comptime-tlci.after" "$DEP_TLCI"
 assert_same "$WORK/comptime-runtime.before" "$WORK/comptime-runtime.after"
 assert_different "$WORK/comptime-tlci.before" "$WORK/comptime-tlci.after"
 if [ "$HOST_OS" = linux ]; then
@@ -469,7 +474,7 @@ mv "$WORK/main.next" "$WORK/pkg/src/main.tl"
 run_graph runtime-edit
 [ "$code" -eq 0 ] || fail "runtime rebuild failed: $(cat "$err")"
 assert_artifact_role "$out" Built "fresh_root$EXE_SUFFIX"
-assert_artifact_role "$out" Built "fresh_root.tlci"
+assert_artifact_role "$out" Fresh "fresh_dep.tlci"
 
 sed 's/+ value 1/+ value 2/' "$WORK/pkg/vendor/dep/src/lib.tl" > "$WORK/dep.next"
 mv "$WORK/dep.next" "$WORK/pkg/vendor/dep/src/lib.tl"
@@ -502,8 +507,27 @@ snapshot "$WORK/serial.after" \
     "$SERIAL_RUNTIME.runtime-inputs"
 assert_same "$WORK/serial.before" "$WORK/serial.after"
 
+# A failed library rebuild must preserve both runtime artifacts and the image.
+printf '(define (serial-value) : i64 8)\n' > "$WORK/serial/src/lib.tl"
+if [ "$HOST_OS" = linux ]; then
+    mkdir -p "$WORK/fail-archive"
+    printf '#!/usr/bin/env sh\nexit 97\n' > "$WORK/fail-archive/ar"
+    chmod +x "$WORK/fail-archive/ar"
+    PATH="$WORK/fail-archive:$PATH" run_serial failed-archive
+else
+    TYPELISP_WINDOWS_LIB=where.exe run_serial failed-archive
+fi
+[ "$code" -ne 0 ] || fail "failing archiver package build unexpectedly succeeded"
+snapshot "$WORK/serial.failure" \
+    "$SERIAL_OUT/fresh_serial.s" \
+    "$SERIAL_OUT/fresh_serial$OBJ_SUFFIX" \
+    "$SERIAL_RUNTIME" \
+    "$SERIAL_OUT/fresh_serial.tlci" \
+    "$SERIAL_RUNTIME.runtime-inputs"
+assert_same "$WORK/serial.before" "$WORK/serial.failure"
+
 snapshot "$WORK/failure.before" \
-    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_TLCI" "$ROOT_INPUTS"
+    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS"
 sed 's/dep.add-one 42/dep.add-one 43/' "$WORK/pkg/src/main.tl" > "$WORK/main.next"
 mv "$WORK/main.next" "$WORK/pkg/src/main.tl"
 if [ "$HOST_OS" = linux ]; then
@@ -525,7 +549,7 @@ else
 fi
 [ "$code" -ne 0 ] || fail "failing linker package build unexpectedly succeeded"
 snapshot "$WORK/failure.after" \
-    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_TLCI" "$ROOT_INPUTS"
+    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS"
 assert_same "$WORK/failure.before" "$WORK/failure.after"
 
 echo "package artifact freshness verification passed ($HOST_OS)"

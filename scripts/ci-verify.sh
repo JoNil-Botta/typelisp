@@ -315,6 +315,7 @@ read_handoff() {
 # because gates may run in different pool workers.
 CI_VERIFY_STAGE1_PATH_FILE="$ROOT/target/ci-verify-stage1.path"
 CI_VERIFY_STAGE2_PATH_FILE="$ROOT/target/ci-verify-stage2.path"
+CI_VERIFY_OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
 CI_VERIFY_PROFILE_PATH_FILE="$ROOT/target/ci-verify-compile-profile-cli.path"
 
 # ci_verify_load_handoffs NEEDS
@@ -327,6 +328,7 @@ ci_verify_load_handoffs() {
     STAGE1_BIN="$CI_VERIFY_UNPRODUCED/previous-stage-compiler"
     STAGE2_BIN="$CI_VERIFY_UNPRODUCED/converged-compiler"
     COMPILE_PROFILE_BIN="$CI_VERIFY_UNPRODUCED/compile-profile-compiler"
+    OPT2_REFERENCE_ASM="$CI_VERIFY_UNPRODUCED/build-invariance-opt1-reference.s"
     case ",$1," in
         *,bootstrap-compiler,*)
             read_handoff "bootstrap previous-stage compiler capture" "$CI_VERIFY_STAGE1_PATH_FILE" || return 1
@@ -335,6 +337,16 @@ ci_verify_load_handoffs() {
             read_handoff "bootstrap fixpoint compiler capture" "$CI_VERIFY_STAGE2_PATH_FILE" || return 1
             STAGE2_BIN=$CI_VERIFY_HANDOFF
             ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
+            ;;
+    esac
+    case ",$1," in
+        *,stage2-opt1-opt2-build-invariance,*)
+            read_handoff "build-invariance opt1 reference handoff" "$CI_VERIFY_OPT2_REFERENCE_PATH_FILE" || return 1
+            OPT2_REFERENCE_ASM=$CI_VERIFY_HANDOFF
+            if [ ! -s "$OPT2_REFERENCE_ASM" ]; then
+                ci_verify_error "build-invariance published a missing or empty assembly: $OPT2_REFERENCE_ASM"
+                return 1
+            fi
             ;;
     esac
     case ",$1," in
@@ -497,12 +509,21 @@ stage2_can_compile_native_windows() {
     return 0
 }
 
+# The Linux opt2 gate compares against the validated build-invariance output.
+# Windows compiles its own reference.
 gate_build_invariance() {
-    TYPELISP_CI_REFERENCE_ENVELOPE_DIR=$CI_REFERENCE_ENVELOPE_DIR scripts/check-build-invariance.sh
+    TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE=$CI_VERIFY_OPT2_REFERENCE_PATH_FILE \
+        TYPELISP_CI_REFERENCE_ENVELOPE_DIR=$CI_REFERENCE_ENVELOPE_DIR \
+        scripts/check-build-invariance.sh
 }
 
 gate_opt2_cli_regression() {
-    scripts/check-opt2-cli-regression.sh
+    if [ "$HOST_OS" = windows ]; then
+        scripts/check-opt2-cli-regression.sh
+        return $?
+    fi
+    echo "[ci-verify] opt2 gate reuses build-invariance reference: $OPT2_REFERENCE_ASM"
+    TYPELISP_OPT2_CLI_REFERENCE_ASM=$OPT2_REFERENCE_ASM scripts/check-opt2-cli-regression.sh
 }
 
 # The compile-profile verifier reuses the embedded stdlib image the image gate
@@ -805,7 +826,8 @@ esac
 CI_VERIFY_UNPRODUCED="$ROOT/target/ci-verify-unproduced"
 rm -rf "$CI_VERIFY_UNPRODUCED"
 CI_VERIFY_NO_COMPILER="$CI_VERIFY_UNPRODUCED/gate-names-no-compiler"
-rm -f "$CI_VERIFY_STAGE1_PATH_FILE" "$CI_VERIFY_STAGE2_PATH_FILE" "$CI_VERIFY_PROFILE_PATH_FILE"
+rm -f "$CI_VERIFY_STAGE1_PATH_FILE" "$CI_VERIFY_STAGE2_PATH_FILE" \
+    "$CI_VERIFY_OPT2_REFERENCE_PATH_FILE" "$CI_VERIFY_PROFILE_PATH_FILE"
 
 # run_gate LABEL NEEDS COMPILER COMMAND
 #   Run one gate in a subshell, so nothing it sets or exits reaches the next
@@ -1014,11 +1036,10 @@ fi
 if [ -n "$CI_REFERENCE_ENVELOPE_DIR" ]; then
     case ",$CI_VERIFY_PLAN_IDS" in
         *,stage2-opt1-opt2-build-invariance,*)
-            ci_verify_load_handoffs bootstrap-compiler
+            ci_verify_load_handoffs bootstrap-compiler,stage2-opt1-opt2-build-invariance
             ci_timing_run build-invariance-opt1-reference artifact-snapshot \
                 scripts/ci-compiler-artifact.sh publish "$ROOT" "$CI_REFERENCE_ENVELOPE_DIR" \
-                "$HOST_OS" build-invariance-opt1-reference \
-                "$ROOT/target/build-invariance/compare/opt2-built/selfhost_main_opt1.s" "$STAGE2_BIN"
+                "$HOST_OS" build-invariance-opt1-reference "$OPT2_REFERENCE_ASM" "$STAGE2_BIN"
             ;;
     esac
 fi

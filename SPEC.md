@@ -4391,13 +4391,14 @@ Example:
   with `/Brepro`, or falls back to `llvm-ar --format=coff rcsD`.
   `TYPELISP_WINDOWS_LIB` may name either tool family by the executable basename
   `lib[.exe]` or `llvm-ar[.exe]`; other basenames are rejected because their
-  deterministic invocation contract is unknown. Package builds also produce a
-  host comptime image
-  named `<package-name>.tlci` in the same profile directory; direct dependency
+  deterministic invocation contract is unknown. Library packages
+  (`kind "lib"`) also produce a host comptime image named
+  `<package-name>.tlci` in the same profile directory. Executable packages
+  (`kind "bin"`) produce only runtime artifacts. Direct dependency
   builds produce each dependency's tlci next to its static archive without
-  changing runtime link behavior. Macro-free packages emit metadata-only
+  changing runtime link behavior. Macro-free libraries emit metadata-only
   images with an auxiliary source-set binding in rodata (the code, fixup,
-  entry, symbol, and import sections remain empty). Packages with
+  entry, symbol, and import sections remain empty). Libraries with
   package-owned macro declarations emit deterministic
   code-bearing images and one registration-table record per macro. Supported
   expression/value transformer bodies execute compiled template (nested calls,
@@ -4427,7 +4428,8 @@ Example:
   executes on the host platform that produced it and stays separate from the
   selected runtime target's artifacts; it is not portable code across host
   operating systems.
-  Runtime artifacts and the host image have independent freshness decisions.
+  Library runtime artifacts and the host image have independent freshness
+  decisions.
   The `.tlci` binds the complete deterministic package-owned source set, so
   every source path/byte/add/remove change updates it, including a source edit
   that leaves runtime assembly unchanged. A comptime-only edit may therefore
@@ -7389,15 +7391,15 @@ Exclusions:
 
 #### 5.17.1 TypeLisp comptime image (`.tlci`) v2
 
-A TypeLisp comptime image (`tlci`) is the package compile-time interface. Every
-package emits one: a metadata-only image carries signature/layout metadata and
-the auxiliary source-set binding (its code/fixup/entry/symbol/import sections
-remain empty), and a package that defines macros additionally carries compiled
-comptime code. The
-runtime archive (`lib<name>.a` / `<name>.lib`) is separate. This section
-specifies the v2 container and its independently versioned metadata schemas.
+A TypeLisp comptime image (`tlci`) is the compile-time interface emitted by
+library packages (`kind "lib"`). A metadata-only image carries signature/layout
+metadata and the auxiliary source-set binding (its code/fixup/entry/symbol/import
+sections remain empty). A library that defines macros additionally carries
+compiled comptime code. The runtime archive (`lib<name>.a` / `<name>.lib`) is
+separate. This section specifies the v2 container and its independently
+versioned metadata schemas.
 
-Package producers make freshness decisions for the runtime artifact and host
+Library producers make freshness decisions for the runtime artifact and host
 `.tlci` independently. If the newly emitted bytes and all material inputs for a
 side are unchanged, the producer preserves that side byte-for-byte without
 changing its modification time; a fresh runtime side does not invoke the

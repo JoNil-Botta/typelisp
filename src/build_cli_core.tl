@@ -172,6 +172,7 @@
 
 (defstruct BuildPackageArtifactPaths
   (runtime String)
+  ;; Empty for executable packages.
   (tlci String))
 
 (defstruct BuildPackageCommitFile
@@ -798,7 +799,9 @@
       kind
       profile
       target)
-    (build-package-tlci-path-profile manifest-dir name profile)))
+    (if (build-package-kind-lib? kind)
+      (build-package-tlci-path-profile manifest-dir name profile)
+      "")))
 
 (define (build-package-runtime-artifact-path
   [artifacts : BuildPackageArtifactPaths]) : String
@@ -3459,9 +3462,9 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (defstruct BuildPackageTlciSourceInputs
-    (source-set package_source_core.PackageSourceSet)
-    (digest i64)))
+  (defenum BuildPackageTlciSourceInputs
+    (Image package_source_core.PackageSourceSet i64)
+    (NoImage)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -3490,7 +3493,7 @@
               (str_cat.str-cat
                 "build: failed to compute package source digest: "
                 message))]
-          [(Ok digest) (Ok (BuildPackageTlciSourceInputs source-set digest))])))))
+          [(Ok digest) (Ok (Image source-set digest))])))))
 
 ;; Only canonical text and owned catalog strings cross runtime lowering. Native
 ;; captures themselves contain AST pool indices and must remain inside capture.
@@ -3571,9 +3574,9 @@
   (define (build-package-tlci-text-with-surface
     [exports : ResultBuildPackageTlciExports]
     [producer-identity : String]
-    [source-inputs : BuildPackageTlciSourceInputs]
+    [source-digest : i64]
     [surface : package_surface.PackageSurfacePayloads]) : ResultBuildPackageTlciText
-    (match (package_surface.package-surface-pack surface source-inputs.digest)
+    (match (package_surface.package-surface-pack surface source-digest)
       [(Err message)
         (Err
           (str_cat.str-cat
@@ -4316,7 +4319,9 @@
           (owned_view.compiler-owned-shared-view dir)
           "f"
           fingerprint-path)
-        (build-package-stage-file dir "t" tlci-path)))))
+        (if (> (string.string-length tlci-path) 0)
+          (build-package-stage-file dir "t" tlci-path)
+          "")))))
 
 (define (build-package-remove-staged-file [path : String]) : unit
   (fs.try-remove-file-if-exists (& path))
@@ -4330,7 +4335,9 @@
   (build-package-remove-staged-file paths.obj)
   (build-package-remove-staged-file paths.artifact)
   (build-package-remove-staged-file paths.fingerprint)
-  (build-package-remove-staged-file paths.tlci)
+  (when
+    (> (string.string-length (& paths.tlci)) 0)
+    (build-package-remove-staged-file paths.tlci))
   (let
     [dir : String paths.dir]
     (fs.try-remove-dir-if-exists (& dir)))
@@ -4376,7 +4383,9 @@
     (build-package-remove-staged-file-after-rollback paths.obj rollback)
     (build-package-remove-staged-file-after-rollback paths.artifact rollback)
     (build-package-remove-staged-file-after-rollback paths.fingerprint rollback)
-    (build-package-remove-staged-file-after-rollback paths.tlci rollback)
+    (when
+      (> (string.string-length (& paths.tlci)) 0)
+      (build-package-remove-staged-file-after-rollback paths.tlci rollback))
     (let
       [dir : String paths.dir]
       (if (build-package-rollback-recovery-required? rollback)
@@ -4723,14 +4732,16 @@
             "Fresh ")
           artifact-path
           "\n"))
-      (io.print-format
-        "{}"
-        (str_cat.str-cat
-          (if tlci-dirty
-            "Built "
-            "Fresh ")
-          tlci-path
-          "\n"))
+      (when
+        (> (string.string-length (& tlci-path)) 0)
+        (io.print-format
+          "{}"
+          (str_cat.str-cat
+            (if tlci-dirty
+              "Built "
+              "Fresh ")
+            tlci-path
+            "\n")))
       0)
     0))
 
@@ -4851,10 +4862,12 @@
       (build-package-runtime-fingerprint-path
         (owned_view.compiler-owned-shared-view artifact-path))]
     [tlci-dirty : bool
-      (not
-        (build-package-file-text-eq?
-          (owned_view.compiler-owned-shared-view tlci-path)
-          (owned_view.compiler-owned-shared-view tlci-text)))]
+      (and
+        (> (string.string-length (& tlci-path)) 0)
+        (not
+          (build-package-file-text-eq?
+            (owned_view.compiler-owned-shared-view tlci-path)
+            (owned_view.compiler-owned-shared-view tlci-text))))]
     (match (build-package-runtime-input-transcript
       kind
       target
@@ -4975,10 +4988,12 @@
     [augmented-asm : String
       (build_run_core.source-tool-augment-assembly-for-target asm target)]
     [tlci-dirty : bool
-      (not
-        (build-package-file-text-eq?
-          (owned_view.compiler-owned-shared-view tlci-path)
-          (owned_view.compiler-owned-shared-view tlci-text)))]
+      (and
+        (> (string.string-length (& tlci-path)) 0)
+        (not
+          (build-package-file-text-eq?
+            (owned_view.compiler-owned-shared-view tlci-path)
+            (owned_view.compiler-owned-shared-view tlci-text))))]
     (match (build-package-runtime-input-transcript
       kind
       target
@@ -5220,29 +5235,33 @@
     [tlci-path : String]
     [announce : bool]
     [cfgs : sym_i64_env.SymI64Env]) : i64
-    (package_surface.package-surface-capture-start!
-      (package_surface.package-surface-identity-key
-        (owned_view.compiler-owned-shared-view name)
-        (owned_view.compiler-owned-shared-view owned-paths)
-        source-inputs.digest
-        (owned_view.compiler-owned-shared-view producer-identity)
-        (build_run_core.source-tool-target-name target))
-      (sym_i64_env.sym-i64-copy seen))
     (let
-      [source-context : compiler_tlci_native_producer.TlciNativeSourceContext
-        (compiler_tlci_native_producer.tlci-native-source-context-new
-          (compiler_driver_core.compiler-driver-state-pool-context
-            (& scope.state))
-          (compiler_driver_core.compiler-driver-state-owned-interns
-            (& scope.state)))]
       [exports : ResultBuildPackageTlciExports
-        (build-package-tlci-capture-exports
-          (& source-context)
-          manifest
-          mode
-          (owned_view.compiler-owned-shared-view decls)
-          source-paths
-          source-inputs.source-set)]
+        (match (& source-inputs)
+          [(Image source-set digest)
+            (package_surface.package-surface-capture-start!
+              (package_surface.package-surface-identity-key
+                (owned_view.compiler-owned-shared-view name)
+                (owned_view.compiler-owned-shared-view owned-paths)
+                digest
+                (owned_view.compiler-owned-shared-view producer-identity)
+                (build_run_core.source-tool-target-name target))
+              (sym_i64_env.sym-i64-copy seen))
+            (let
+              [source-context : compiler_tlci_native_producer.TlciNativeSourceContext
+                (compiler_tlci_native_producer.tlci-native-source-context-new
+                  (compiler_driver_core.compiler-driver-state-pool-context
+                    (& scope.state))
+                  (compiler_driver_core.compiler-driver-state-owned-interns
+                    (& scope.state)))]
+              (build-package-tlci-capture-exports
+                (& source-context)
+                manifest
+                mode
+                (owned_view.compiler-owned-shared-view decls)
+                source-paths
+                source-set))]
+          [_ (Err "")])]
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-prepare-owned-runtime
           (owned_view.compiler-owned-shared-view scope)
@@ -5258,53 +5277,58 @@
             owned-paths
             cfgs
             (owned_view.compiler-owned-shared-view entry-path)))]
-      [_abort : unit
-        (match (owned_view.compiler-owned-shared-view prepared)
-          [(Err message)
-            (package_surface.package-surface-capture-abort! message)]
-          [_ unit])]
       [captured : package_surface.ResultPackageSurfacePayloads
-        (package_surface.package-surface-capture-take)]
+        (if (> (string.string-length (& tlci-path)) 0)
+          (begin
+            (match (& prepared)
+              [(Err message)
+                (package_surface.package-surface-capture-abort!
+                  (string.copy message))]
+              [_ unit])
+            (package_surface.package-surface-capture-take))
+          (Err ""))]
       [_release : unit (build-package-runtime-scope-release! scope)]
-      (match (owned_view.compiler-owned-shared-view prepared)
+      [tlci : ResultBuildPackageTlciText
+        (match (& prepared)
+          [(Err _) (Ok "")]
+          [_
+            (match source-inputs
+              [(NoImage) (Ok "")]
+              [(Image _ digest)
+                (match captured
+                  [(Err message)
+                    (Err
+                      (str_cat.str-cat
+                        "build: failed to capture package frontend surface: "
+                        message))]
+                  [(Ok surface)
+                    (build-package-tlci-text-with-surface
+                      exports
+                      (string.copy (& producer-identity))
+                      digest
+                      surface)])])])]
+      (match tlci
         [(Err message)
           (io.print-error message)
           1]
-        [_
-          (match captured
-            [(Err message)
-              (io.print-error
-                (str_cat.str-cat
-                  "build: failed to capture package frontend surface: "
-                  message))
-              1]
-            [(Ok surface)
-              (match (build-package-tlci-text-with-surface
-                exports
-                (owned_view.compiler-owned-shared-view producer-identity)
-                source-inputs
-                surface)
-                [(Err message)
-                  (io.print-error message)
-                  1]
-                [(Ok tlci-text)
-                  (build-package-finish-prepared-runtime
-                    prepared
-                    name
-                    kind
-                    target
-                    opt-level
-                    profile
-                    mode
-                    producer-identity
-                    output-dir
-                    asm-path
-                    obj-path
-                    artifact-path
-                    link-inputs
-                    tlci-path
-                    tlci-text
-                    announce)])])]))))
+        [(Ok tlci-text)
+          (build-package-finish-prepared-runtime
+            prepared
+            name
+            kind
+            target
+            opt-level
+            profile
+            mode
+            producer-identity
+            output-dir
+            asm-path
+            obj-path
+            artifact-path
+            link-inputs
+            tlci-path
+            tlci-text
+            announce)]))))
 
 (define (build-package-doctest-paths
   [owner : String]
@@ -5484,7 +5508,9 @@
     [emit-entry : bool]
     [compile-cfgs : sym_i64_env.SymI64Env]
     [announce : bool]) : i64
-    (match (build-package-tlci-source-inputs manifest-path producer-identity)
+    (match (if (> (string.string-length (& tlci-path)) 0)
+      (build-package-tlci-source-inputs manifest-path producer-identity)
+      (ResultBuildPackageTlciSourceInputs.Ok (NoImage)))
       [(Err message)
         (io.print-error message)
         1]

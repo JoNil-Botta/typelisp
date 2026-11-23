@@ -227,11 +227,15 @@ file pkg/typelisp.pkg
     (math "vendor/math")))
 end-file
 file pkg/src/main.tl
-(import macros)
+(import math.src.macros as macros)
 (define (main) : i64 (macros.add-one-macro 41))
 end-file
-file pkg/src/macros.tl
-(import math.src.lib as math)
+file pkg/vendor/math/src/api.tl
+(import lib)
+(import macros)
+end-file
+file pkg/vendor/math/src/macros.tl
+(import lib as math)
 (import stdlib.comptime)
 (define stage1-exported-value : i64 7)
 (defstruct Stage1Point
@@ -256,7 +260,7 @@ file pkg/vendor/math/typelisp.pkg
   (name "stage1_math")
   (version "0.1.0")
   (kind "lib")
-  (entry "src/lib.tl"))
+  (entry "src/api.tl"))
 end-file
 file pkg/vendor/math/src/lib.tl
 (define (add-one [x : i64]) : i64 (+ x 1))
@@ -304,24 +308,24 @@ run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
 test -x "{{dir}}/pkg/target/release/stage1_pkg"
 test -f "{{dir}}/pkg/target/release/stage1_pkg.s"
 test -s "{{dir}}/pkg/vendor/math/target/release/libstage1_math.a"
-test -s "{{dir}}/pkg/target/release/stage1_pkg.tlci"
+test ! -e "{{dir}}/pkg/target/release/stage1_pkg.tlci"
 test -s "{{dir}}/pkg/vendor/math/target/release/stage1_math.tlci"
 stdout contains Built {{dir}}/pkg/vendor/math/target/release/libstage1_math.a
 stdout contains Built {{dir}}/pkg/target/release/stage1_pkg
 stdout contains Built {{dir}}/pkg/vendor/math/target/release/stage1_math.tlci
-stdout contains Built {{dir}}/pkg/target/release/stage1_pkg.tlci
+stdout not-contains stage1_pkg.tlci
 in file {{dir}}/pkg/target/release/stage1_pkg.s
 contains main:
-contains .extern _tl_stage1_math_src_lib_add_one
-not-contains _tl_stage1_math_src_lib_add_one:
+contains .extern _tl_stage1_math_src_lib_lib_add_one
+not-contains _tl_stage1_math_src_lib_lib_add_one:
 step producer-identity
 run --producer-identity
 stdout capture producer ^([0-9a-f]{40})$
 step inspect-package-tlci
-run inspect "{{dir}}/pkg/target/release/stage1_pkg.tlci"
+run inspect "{{dir}}/pkg/vendor/math/target/release/stage1_math.tlci"
 stderr empty
 stdout contains tlci image
-stdout contains package-name: stage1_pkg
+stdout contains package-name: stage1_math
 stdout contains producer-compiler-identity: {{producer}}
 stdout contains source-set-binding-schema: 1
 stdout not-contains source-set-digest: unavailable
@@ -333,13 +337,17 @@ stdout not-contains   (none)
 # (the native producer, tlci loader, embedded stdlib image and CTFE): this step
 # is most of the gate's cost, and that cost is inherent.
 step package-tlci-native-verify
-run run "{{root}}/src/tests/compiler_tlci_native_producer_smoke.tl" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src" -- "{{dir}}/pkg/target/release/stage1_pkg.tlci" macros/add-one-macro math.add-one macros/all-macro macros/unsupported-macro
+run run "{{root}}/src/tests/compiler_tlci_native_producer_smoke.tl" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src" -- "{{dir}}/pkg/vendor/math/target/release/stage1_math.tlci" macros/add-one-macro math.add-one macros/all-macro macros/unsupported-macro
 stdout empty
 stderr empty
 step build-package-repeat
-sh cp "{{dir}}/pkg/target/release/stage1_pkg.tlci" "{{dir}}/stage1_pkg.first.tlci"
+sh cp "{{dir}}/pkg/vendor/math/target/release/stage1_math.tlci" "{{dir}}/stage1_math.first.tlci"
 run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
-same "{{dir}}/stage1_pkg.first.tlci" "{{dir}}/pkg/target/release/stage1_pkg.tlci"
+same "{{dir}}/stage1_math.first.tlci" "{{dir}}/pkg/vendor/math/target/release/stage1_math.tlci"
+stdout contains Fresh {{dir}}/pkg/target/release/stage1_pkg
+stdout contains Fresh {{dir}}/pkg/vendor/math/target/release/stage1_math.tlci
+stdout not-contains stage1_pkg.tlci
+test ! -e "{{dir}}/pkg/target/release/stage1_pkg.tlci"
 step inspect-bad-tlci
 file -n bad.tlci
 bad
@@ -357,12 +365,12 @@ run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --profile dev
 test -x "{{dir}}/pkg/target/dev/stage1_pkg"
 test -f "{{dir}}/pkg/target/dev/stage1_pkg.s"
 test -s "{{dir}}/pkg/vendor/math/target/dev/libstage1_math.a"
-test -s "{{dir}}/pkg/target/dev/stage1_pkg.tlci"
+test ! -e "{{dir}}/pkg/target/dev/stage1_pkg.tlci"
 test -s "{{dir}}/pkg/vendor/math/target/dev/stage1_math.tlci"
 stdout contains Built {{dir}}/pkg/vendor/math/target/dev/libstage1_math.a
 stdout contains Built {{dir}}/pkg/target/dev/stage1_pkg
 stdout contains Built {{dir}}/pkg/vendor/math/target/dev/stage1_math.tlci
-stdout contains Built {{dir}}/pkg/target/dev/stage1_pkg.tlci
+stdout not-contains stage1_pkg.tlci
 step build-package-discover
 sh rm -rf "{{dir}}/pkg/target"
 cwd {{dir}}/pkg/src/nested/deeper

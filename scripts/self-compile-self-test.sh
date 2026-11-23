@@ -1052,6 +1052,25 @@ EOF
             "$(grep -c 'download/stage0-20261017-120000-r99/' "$_sfb_dir/seed/calls" | tr -d ' ')|$(grep -c 'download/stage0-latest/' "$_sfb_dir/seed/calls" | tr -d ' ')" "0|0"
         st_eq "fallback parent provenance" "$(sc_record_get target/records/parent.tsv commit)" "$_sfb_base"
         st_succeeds "second copied fallback measures PR base" sc_run_fallback "$_sfb_base" "$_sfb_head" target/records/base.tsv base-fallback
+        # A local synthetic merge commit is unknown to GitHub: passing its
+        # pushed base parent as SEED_COMMIT seeds fetch-stage0.sh from that
+        # parent while checking out, building and validating the synthetic commit.
+        _sfb_synth=$(GIT_AUTHOR_NAME=self-compile GIT_AUTHOR_EMAIL=self-compile@invalid \
+            GIT_COMMITTER_NAME=self-compile GIT_COMMITTER_EMAIL=self-compile@invalid \
+            git commit-tree "$(git rev-parse "$_sfb_base^{tree}")" -p "$_sfb_base" -p "$_sfb_head" -m synthetic)
+        : > "$_sfb_dir/seed/calls"
+        st_succeeds "copied fallback seeds a synthetic merge from SEED_COMMIT and accepts absolute record paths" \
+            sc_run_fallback "$_sfb_synth" "$_sfb_head" "$_sfb_dir/abs-synth.tsv" head-reproduction "$_sfb_base"
+        st_eq "synthetic merge seeds from SEED_COMMIT, not the synthetic commit" \
+            "$(grep -c "compare/stage0-20261018-120000-r100\.\.\.$_sfb_base" "$_sfb_dir/seed/calls" | tr -d ' ')|$(grep -c "$_sfb_synth" "$_sfb_dir/seed/calls" | tr -d ' ')" "1|0"
+        st_eq "synthetic merge record measures the synthetic commit" \
+            "$(sc_record_get "$_sfb_dir/abs-synth.tsv" commit)" "$_sfb_synth"
+        st_fails "fallback rejects a malformed SEED_COMMIT" \
+            env TYPELISP_SELF_COMPILE_ROOT="$PWD" \
+            sh "$SC_TOOL_DIR/self-compile.sh" fallback "$_sfb_synth" "$_sfb_head" "$_sfb_dir/bad-seed.tsv" head-reproduction not-a-sha
+        st_fails "fallback rejects an empty SEED_COMMIT" \
+            env TYPELISP_SELF_COMPILE_ROOT="$PWD" \
+            sh "$SC_TOOL_DIR/self-compile.sh" fallback "$_sfb_synth" "$_sfb_head" "$_sfb_dir/empty-seed.tsv" head-reproduction ""
         st_eq "fallback restores checkout" "$(git rev-parse HEAD)" "$_sfb_head"
         st_eq "fallback restores target" "$(cat target/sentinel)" preserved
         st_fails "bootstrap failure propagates" env ST_BOOTSTRAP_FAIL=yes TYPELISP_SELF_COMPILE_ROOT="$PWD" \
@@ -1254,11 +1273,19 @@ st_e2e_ledger() {
         sc_run_fallback() {
             [ "$TYPELISP_SELF_COMPILE_TOOLS_READY" = true ] || return 1
             echo "$4" >> "$_sel_dir/events"
+            printf '%s %s %s %s\n' "$1" "$2" "$4" "${5:-}" >> "$_sel_dir/fallback-args"
+            if [ "$4" = head-reproduction ] && [ "${ST_FAIL_HEAD_REPRO:-no}" = yes ]; then
+                return 1
+            fi
             _self_sha=${ST_FALLBACK_SHA:-7777777777777777777777777777777777777777777777777777777777777777}
             if [ "$4" = base-fallback ] && [ -n "${ST_FALLBACK_BASE_SHA:-}" ]; then
                 _self_sha=$ST_FALLBACK_BASE_SHA
             fi
-            st_runner_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count=116000000000 role="$4" \
+            _self_ir=116000000000
+            if [ "$4" = head-reproduction ] && [ -n "${ST_FALLBACK_HEAD_IR:-}" ]; then
+                _self_ir=$ST_FALLBACK_HEAD_IR
+            fi
+            st_runner_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count="$_self_ir" role="$4" \
                 run.id="$GITHUB_RUN_ID" run.attempt=1 compiler_sha256="$_self_sha"
         }
         sc_ledger_measure_pair_here() {
@@ -1488,6 +1515,99 @@ st_e2e_settle() {
         "$(st_e2e_ledger c0 "$ST_SET_C0" 900 settle-api | cut -d' ' -f1-2)" "1 infrastructure-failure"
 }
 
+# Synthetic merge reproduction (SEED_COMMIT + refs/pull/<PR>/head fallback)
+# and comparability-failure repair on a subsequent merge.
+st_e2e_repro_repair() {
+    # Set up a 3-commit history p0 -> c0 -> c1 plus a PR head commit on p0
+    # reachable only via refs/pull/50/head, whose merge with p0 produces a
+    # tested tree distinct from c0's tree (class M).
+    st_e2e_repro_setup() {
+        _sers_set=$1
+        st_e2e_ledger_set "$_sers_set" - 116000050100 key.valgrind=valgrind-old
+        _sers_repo=$ST_E2E/$_sers_set-repo
+        _sers_p0=$(git -C "$_sers_repo" rev-parse HEAD~2)
+        _sers_c0=$(git -C "$_sers_repo" rev-parse HEAD~1)
+        _sers_c1=$(git -C "$_sers_repo" rev-parse HEAD)
+        (
+            cd "$_sers_repo"
+            git config uploadpack.allowAnySHA1InWant false
+            git config uploadpack.allowReachableSHA1InWant false
+            git checkout -q --detach "$_sers_p0"
+            printf 'pr-head\n' > pr-change.txt
+            st_git add pr-change.txt
+            st_git commit -qm pr50-head
+            _sers_h=$(git rev-parse HEAD)
+            git update-ref refs/pull/50/head "$_sers_h"
+            _sers_tt=$(git merge-tree --write-tree "$_sers_p0" "$_sers_h" | sed -n 1p)
+            git checkout -q "$_sers_c1"
+            printf '%s\n%s\n' "$_sers_h" "$_sers_tt" > "$ST_E2E/$_sers_set-pr.info"
+            ST_API=$ST_E2E/$_sers_set-api
+            ST_ART=$ST_E2E/$_sers_set-art
+            st_e2e_pr_api "$_sers_c0" 50 "$_sers_h" 7050 116000050100 116000000000 "$_sers_p0" key.valgrind=valgrind-old
+            # Override the tested head tree to the distinct class-M merge tree.
+            st_record "$ST_ART/id-70503/head.tsv" commit="$ST_SHA_D" tree="$_sers_tt" ir_count=116000050100 \
+                run.id=7050 run.event=pull_request key.valgrind=valgrind-old
+        )
+        ST_REPRO_P0=$_sers_p0
+        ST_REPRO_C0=$_sers_c0
+        ST_REPRO_C1=$_sers_c1
+    }
+
+    # 1. sc_ledger_reproduce fetches PR head via refs/pull/50/head and passes
+    #    B (p0) as SEED_COMMIT for the synthetic merge commit.
+    st_e2e_repro_setup repro-synth
+    st_eq "e2e ledger reproduces a synthetic class-M merge via refs/pull/<PR>/head" \
+        "$(ST_FALLBACK_HEAD_IR=116000050000 st_e2e_ledger c0 "$ST_REPRO_C0" 900 repro-synth)" "0 ok yes clean 1"
+    st_eq "synthetic merge reproduction passes PR base as SEED_COMMIT" \
+        "$(awk '$3 == "head-reproduction" { print $2, $4 }' "$ST_E2E/repro-synth-c0/fallback-args")" \
+        "$ST_REPRO_C0 $ST_REPRO_P0"
+
+    # 2. When c0 fails head-reproduction (leaving comparability-failure with
+    #    rep-base.tsv uploaded and own=-), c1's ledger --prepare requests tools
+    #    and c1's ledger repairs c0 reusing rep-base.tsv with HEAD=c1 and
+    #    SEED_COMMIT=p0.
+    st_e2e_repro_setup repro-repair
+    st_eq "e2e ledger records comparability-failure when synthetic head reproduction fails" \
+        "$(ST_FAIL_HEAD_REPRO=yes st_e2e_ledger c0 "$ST_REPRO_C0" 900 repro-repair)" \
+        "1 comparability-failure no unresolved 1"
+    st_eq "failed reproduction leaves rep-base.tsv in uploaded entry-inputs" \
+        "$( [ -f "$ST_E2E/repro-repair-art/id-9002/entry-inputs/rep-base.tsv" ] && echo yes || echo no )" yes
+    st_eq "later ledger repairs comparability-failure and clears the account" \
+        "$(ST_FALLBACK_HEAD_IR=116000050000 st_e2e_ledger c1 "$ST_REPRO_C1" 901 repro-repair)" \
+        "0 ok yes clean 2"
+    st_eq "ledger --prepare sets needs-tools=yes for parent's repairable comparability-failure" \
+        "$(cat "$ST_E2E/repro-repair-c1/outputs")" needs-tools=yes
+    st_eq "repair reuses uploaded rep-base.tsv instead of re-measuring base-fallback" \
+        "$(tr '\n' ' ' < "$ST_E2E/repro-repair-c1/events")" "install identity head-reproduction "
+    st_eq "repair passes current HEAD and PR base SEED_COMMIT to head-reproduction" \
+        "$(awk '$3 == "head-reproduction" { print $2, $4 }' "$ST_E2E/repro-repair-c1/fallback-args")" \
+        "$ST_REPRO_C1 $ST_REPRO_P0"
+    _serr_acc=$ST_E2E/repro-repair-c1/repo/target/self-compile/ledger/account.tsv
+    st_eq "repaired entry preserves step and populates own and own_reproduced" \
+        "$(awk -F '\t' -v c="$ST_REPRO_C0" '$1 == "entry" && $2 == c { print $3, $5, $6, $7, $12 }' "$_serr_acc")" \
+        "M ok 50000 50100 50000"
+    st_eq "repaired entry records reproduced provenance" \
+        "$(sc_record_get "$ST_E2E/repro-repair-c1/repo/target/self-compile/ledger-work/repair/repair-$ST_REPRO_C0/reproduced/entry.tsv" reproduced)" \
+        "ledger run 901 attempt 1"
+
+    # 3. Without an uploaded rep-base.tsv, repair measures both base-fallback
+    #    and head-reproduction.
+    rm -f "$ST_E2E/repro-repair-art/id-9002/entry-inputs/rep-base.tsv"
+    st_eq "repair without rep-base.tsv measures base and head" \
+        "$(ST_FALLBACK_HEAD_IR=116000050000 st_e2e_ledger c1-nobase "$ST_REPRO_C1" 901 repro-repair)" \
+        "0 ok yes clean 2"
+    st_eq "repair without rep-base.tsv runs base-fallback then head-reproduction" \
+        "$(tr '\n' ' ' < "$ST_E2E/repro-repair-c1-nobase/events")" "install identity base-fallback head-reproduction "
+
+    # 4. Repair refuses when this runner's identity differs from uploaded landed.tsv
+    #    (never overwriting landed.tsv/parent.tsv).
+    st_eq "repair refuses when runner identity differs from uploaded landed.tsv" \
+        "$(ST_RUNNER_VALGRIND=other-valgrind ST_FALLBACK_HEAD_IR=116000050000 st_e2e_ledger c1-badrunner "$ST_REPRO_C1" 901 repro-repair)" \
+        "1 ok no unresolved 2"
+    st_eq "refused repair logs runner identity mismatch" \
+        "$(grep -c "cannot repair $ST_REPRO_C0: this runner's measurement identity differs" "$ST_E2E/repro-repair-c1-badrunner/ledger.log" | tr -d ' ')" 1
+}
+
 st_e2e() {
     case "$(uname -s)" in
         Linux*) ;;
@@ -1656,6 +1776,7 @@ st_e2e() {
         "$(st_e2e_ledger c0 "$ST_SET_C0" 900 legacy-job)" "0 ok yes clean 1"
     st_e2e_lost_association
     st_e2e_settle
+    st_e2e_repro_repair
     st_e2e_ledger_set e6 - 116000050100 "key.valgrind=valgrind-old key.as=GNU-assembler-2.41"
     st_eq "e2e ledger accepts agreeing same-commit measurements" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e6)" "0 ok yes clean 1"
 

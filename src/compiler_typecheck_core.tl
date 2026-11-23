@@ -26205,7 +26205,9 @@
 ;; shells and vector/list/string backing payload). Superseded bytes are bump
 ;; storage added to the declaration generation; the ring's later destroy is
 ;; reported separately so the signed non-output live contribution reconciles
-;; the fired-decl live lane. `nested` is the union of the hygiene and
+;; the fired-decl live lane. Committed bytes include module-environment
+;; preparation, which starts before the declaration generation is entered.
+;; `nested` is the union of the hygiene and
 ;; produced-node rewalk lanes, and the pool-node, survivor, non-output and
 ;; residual rows are derived from the others when the rows are written.
 (cfg
@@ -127627,10 +127629,14 @@
                           (tc-global-shared-view out-rev)
                           (tc-global-shared-view out-paths-rev)))]
                     [else
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-tc-walk-decl-sample-note! 2))
+                      (let
+                        [_profile-note : unit
+                          (cfg
+                            compile-profile
+                            (compiler-tc-walk-decl-sample-note! 2)
+                            unit)]
+                        [_profile-env-start-live : i64
+                          (cfg compile-profile (profile.alloc-live) 0)]
                         ;; R3-P1: this is the only arm that runs a macro over
                         ;; a declaration body, and its superseded intermediate
                         ;; forms are the macro arena's dominant owner. Expand
@@ -127641,16 +127647,36 @@
                           (tc-global-shared-view cur-module)
                           cur-module-id)
                           [(Ok local-env)
-                            (macro-expand-decl-with-path-generational
-                              cur-ctx
-                              cur-top-env
-                              local-env
-                              (tc-global-shared-view cur-orig-decls)
-                              (tc-global-shared-view cur-module)
-                              cur-module-id
-                              decl
-                              cfgs
-                              decl-path)]
+                            (let
+                              [_profile-env-live : i64
+                                (cfg
+                                  compile-profile
+                                  (-
+                                    (profile.alloc-live)
+                                    _profile-env-start-live)
+                                  0)]
+                              [expanded : ResultMacroDeclExpansion
+                                (macro-expand-decl-with-path-generational
+                                  cur-ctx
+                                  cur-top-env
+                                  local-env
+                                  (tc-global-shared-view cur-orig-decls)
+                                  (tc-global-shared-view cur-module)
+                                  cur-module-id
+                                  decl
+                                  cfgs
+                                  decl-path)]
+                              (cfg
+                                compile-profile
+                                (when
+                                  (>
+                                    compiler-tc-walk-operand-captures
+                                    compiler-tc-walk-decl-sample-start-captures)
+                                  (counters.add!
+                                    tc-profile-fire-committed-live
+                                    _profile-env-live))
+                                unit)
+                              expanded)]
                           [(Err message)
                             (ResultMacroDeclExpansion.Err
                               (box

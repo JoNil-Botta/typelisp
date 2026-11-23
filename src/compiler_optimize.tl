@@ -20889,7 +20889,8 @@
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match (compiler-opt-global-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ frame blocks _)
+      (opt-addr-taken-refresh! frame (& blocks))
       (match (opt-verify-at
         "entry.rotate_ssa"
         (opt-verify-post
@@ -21669,7 +21670,7 @@
       [(string.eq pass "switch") (Shared)]
       [(string.eq pass "preheaders")
         (NotObservable "splits edges, moves instructions")]
-      [(string.eq pass "rotate_ssa") (NotObservable "rotates SSA form")]
+      [(string.eq pass "rotate_ssa") (Shared)]
       [(string.eq pass "scratch_reset") (NotObservable "resets scratch slots")]
       [(string.eq pass "dead_phi") (NotObservable "drops dead phis")]
       [(string.eq pass "induction") (Taint)]
@@ -71259,12 +71260,28 @@
     (set! (array-ref state index) (- 0 1))
     (opt-load-combine-state-reset state (+ index 1))))
 
+;; Address-taken locals do not satisfy single-value SSA identity: a store
+;; through `addr_of` or a later direct def can change their value between
+;; address derivations even when no write sits between the earliest byte load
+;; and the compose root.
+(define (opt-load-combine-addr-taken-var? [var : i64]) : bool
+  (cfg
+    test
+    (opt-addr-taken-require-current! "opt-load-combine-addr-taken-var?"))
+  (and
+    (> opt-function-addr-taken-count 0)
+    (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)))
+
 ;; A chain element must be used exactly once function-wide (by the next chain
-;; link); anything else rejects the fold.
+;; link) and must not be address-taken; anything else rejects the fold.
 (define (opt-load-combine-single-use?
   [uses : (& uses (__tl_dyn-array i64))]
   [var : i64]) : bool
-  (and (>= var 0) (< var (array-length uses)) (= (array-ref uses var) 1)))
+  (and
+    (>= var 0)
+    (< var (array-length uses))
+    (= (array-ref uses var) 1)
+    (not (opt-load-combine-addr-taken-var? var))))
 
 ;; Record one chain element instruction for deletion; the count cap only
 ;; bounds the scratch (a deep but ultimately rejected chain never overflows
@@ -71282,25 +71299,28 @@
         true))))
 
 ;; Resolve a var through same-block Mov copies (fuel-bounded), used for both
-;; the compose accumulator chain and the gep base/offset temps.
+;; the compose accumulator chain and the gep base/offset temps. Returns -1 when
+;; `var` or any var traversed along the Mov chain is address-taken.
 (define (opt-load-combine-resolve
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [var : i64]
   [fuel : i64]) : i64
-  (if (<= fuel 0)
-    var
-    (let
-      [index : i64 (opt_i64_i64_map.get-value-or (& defs) var (- 0 1))]
-      (if (< index 0)
-        var
-        (match (ir.compiler-ir-instr-seq-borrow instrs index)
-          [(Mov _ src _)
-            (match src
-              [(Var src-id)
-                (opt-load-combine-resolve instrs defs src-id (- fuel 1))]
-              [_ var])]
-          [_ var])))))
+  (if (opt-load-combine-addr-taken-var? var)
+    (- 0 1)
+    (if (<= fuel 0)
+      var
+      (let
+        [index : i64 (opt_i64_i64_map.get-value-or (& defs) var (- 0 1))]
+        (if (< index 0)
+          var
+          (match (ir.compiler-ir-instr-seq-borrow instrs index)
+            [(Mov _ src _)
+              (match src
+                [(Var src-id)
+                  (opt-load-combine-resolve instrs defs src-id (- fuel 1))]
+                [_ var])]
+            [_ var]))))))
 
 ;; Record one byte leaf: `cast (load (gep base, off : u8) : u8) : i64/u64` at
 ;; shift index `shift`. Fills the state's offset/gep slots and the shared base
@@ -71317,6 +71337,7 @@
   (if (or
     (< shift 0)
     (> shift 7)
+    (opt-load-combine-addr-taken-var? gep-var)
     (not (opt-load-combine-single-use? uses load-var))
     ;; one byte per shift index
     (!= (bit-and (array-ref state 4) (shl 1 shift)) 0)
@@ -71335,70 +71356,85 @@
                     (let
                       [resolved-base : i64
                         (opt-load-combine-resolve instrs defs base-id 16)]
-                      (match offset
-                        [(I64 k)
-                          (opt-load-combine-leaf-slot
-                            state
-                            resolved-base
-                            (- 0 1)
-                            k
-                            gep-var
-                            load-pos
-                            shift)]
-                        [(Var off-id)
-                          (let
-                            [resolved-off : i64
-                              (opt-load-combine-resolve instrs defs off-id 16)]
-                            [off-index : i64
-                              (opt_i64_i64_map.get-value-or
-                                (& defs)
-                                resolved-off
-                                (- 0 1))]
-                            (if (< off-index 0)
-                              false
-                              (match (ir.compiler-ir-instr-seq-borrow
-                                instrs
-                                off-index)
-                                [(BinOp _ add-op add-lhs add-rhs _)
-                                  (match add-op
-                                    [(Add)
-                                      (match add-lhs
-                                        [(Var x)
-                                          (match add-rhs
-                                            [(I64 k)
-                                              (opt-load-combine-leaf-slot
-                                                state
-                                                resolved-base
-                                                (opt-load-combine-resolve
-                                                  instrs
-                                                  defs
-                                                  x
-                                                  16)
-                                                k
-                                                gep-var
-                                                load-pos
-                                                shift)]
-                                            [_ false])]
-                                        [(I64 k)
-                                          (match add-rhs
-                                            [(Var x)
-                                              (opt-load-combine-leaf-slot
-                                                state
-                                                resolved-base
-                                                (opt-load-combine-resolve
-                                                  instrs
-                                                  defs
-                                                  x
-                                                  16)
-                                                k
-                                                gep-var
-                                                load-pos
-                                                shift)]
-                                            [_ false])]
-                                        [_ false])]
-                                    [_ false])]
-                                [_ false])))]
-                        [_ false]))]
+                      (if (< resolved-base 0)
+                        false
+                        (match offset
+                          [(I64 k)
+                            (opt-load-combine-leaf-slot
+                              state
+                              resolved-base
+                              (- 0 1)
+                              k
+                              gep-var
+                              load-pos
+                              shift)]
+                          [(Var off-id)
+                            (let
+                              [resolved-off : i64
+                                (opt-load-combine-resolve instrs defs off-id 16)]
+                              (if (< resolved-off 0)
+                                false
+                                (let
+                                  [off-index : i64
+                                    (opt_i64_i64_map.get-value-or
+                                      (& defs)
+                                      resolved-off
+                                      (- 0 1))]
+                                  (if (< off-index 0)
+                                    false
+                                    (match (ir.compiler-ir-instr-seq-borrow
+                                      instrs
+                                      off-index)
+                                      [(BinOp _ add-op add-lhs add-rhs _)
+                                        (match add-op
+                                          [(Add)
+                                            (match add-lhs
+                                              [(Var x)
+                                                (match add-rhs
+                                                  [(I64 k)
+                                                    (let
+                                                      [resolved-x : i64
+                                                        (opt-load-combine-resolve
+                                                          instrs
+                                                          defs
+                                                          x
+                                                          16)]
+                                                      (if (< resolved-x 0)
+                                                        false
+                                                        (opt-load-combine-leaf-slot
+                                                          state
+                                                          resolved-base
+                                                          resolved-x
+                                                          k
+                                                          gep-var
+                                                          load-pos
+                                                          shift)))]
+                                                  [_ false])]
+                                              [(I64 k)
+                                                (match add-rhs
+                                                  [(Var x)
+                                                    (let
+                                                      [resolved-x : i64
+                                                        (opt-load-combine-resolve
+                                                          instrs
+                                                          defs
+                                                          x
+                                                          16)]
+                                                      (if (< resolved-x 0)
+                                                        false
+                                                        (opt-load-combine-leaf-slot
+                                                          state
+                                                          resolved-base
+                                                          resolved-x
+                                                          k
+                                                          gep-var
+                                                          load-pos
+                                                          shift)))]
+                                                  [_ false])]
+                                              [_ false])]
+                                          [_ false])]
+                                      [_ false])))))]
+                          [_ false])))]
                   [_ false])]
               [_ false])]
           [_ false])))))

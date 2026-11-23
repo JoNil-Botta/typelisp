@@ -5092,6 +5092,74 @@
         ,source
         (TcSelectedSink.Capture store lease bindings))]))
 
+(defmacro (tc-selected-query? [sink : Expr]) : Expr
+  `(match ,sink
+    [(TcSelectedSink.Query) true]
+    [_ false]))
+
+(defmacro (tc-selected-aggregate-query
+  [ctx : Expr]
+  [env : Expr]
+  [expr : Expr]
+  [expected : Expr]) : Expr
+  `(tc-selected-project
+    (tc-infer-selected-inner
+      ,ctx
+      ,env
+      ,expr
+      typed.TypedSyntax.Generated
+      ,expected
+      (ownership.OwnershipSource
+        (ownership.ownership-path-none)
+        0
+        0
+        (ownership.ownership-expansion-none))
+      TcSelectedSink.Query)))
+
+(defmacro (tc-aggregate-contextual-type
+  [ctx : Expr]
+  [env : Expr]
+  [expected : Expr]
+  [result : Expr]) : Expr
+  `(let
+    [checked : ResultTcType ,result]
+    (match ,expected
+      [(ast.AstMaybeType.Some want)
+        (tc-expr-result-with-expected-or-actual ,ctx ,env want false checked)]
+      [(ast.AstMaybeType.No) checked])))
+
+;; Only Capture constructs and replays the selected operand list.
+(defmacro (tc-infer-selected-typed-form
+  [ctx : Expr]
+  [env : Expr]
+  [syntax : Expr]
+  [source : Expr]
+  [sink : Expr]
+  [result : Expr]
+  [code : Expr]
+  [operands : Expr]
+  [modes : Expr]) : Expr
+  `(match ,result
+    [(ResultTcType.Err message) (TcSelectedResult.Err message ,sink)]
+    [(ResultTcType.Ok type)
+      (match ,sink
+        [(TcSelectedSink.Query)
+          (TcSelectedResult.Ok
+            type
+            TcSelectedOccurrence.Unrepresented
+            TcSelectedSink.Query)]
+        [(TcSelectedSink.Capture store lease bindings)
+          (tc-infer-selected-form-typed
+            ,ctx
+            ,env
+            type
+            ,code
+            ,operands
+            ,modes
+            ,syntax
+            ,source
+            (TcSelectedSink.Capture store lease bindings))])]))
+
 (define (tc-infer-selected-inner
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -5357,30 +5425,43 @@
         source
         sink)]
     [(ast.AstExpr.TupleRef receiver index)
-      (if (tc-raw-deref-place? ctx env (tc-global-shared-view expr))
-        (tc-infer-selected-raw-read
-          ctx
-          env
-          receiver
-          -1
-          (tc-global-shared-view expr)
-          syntax
-          expected
-          source
-          sink)
-        (if (tc-selected-tuple-select? ctx env receiver index)
-          ;; As for an array literal (form 154): only the selected element's
-          ;; loans flow into the result.
-          (tc-infer-selected-tuple-select
-            ctx
-            env
-            expr
-            (tc-selected-tuple-items ctx receiver)
-            index
-            syntax
-            expected
-            source
-            sink)
+      (let
+        [capture? : bool (not (tc-selected-query? (& sink)))]
+        [raw? : bool (and capture? (tc-raw-deref-place? ctx env (clone expr)))]
+        (if (or
+          raw?
+          (and capture? (tc-selected-tuple-select? ctx env receiver index)))
+          (let
+            [result : ResultTcType
+              (tc-selected-project
+                (tc-infer-selected-tuple-ref
+                  ctx
+                  env
+                  receiver
+                  index
+                  syntax
+                  (clone source)
+                  TcSelectedSink.Query))]
+            (if raw?
+              (tc-infer-selected-raw-read
+                ctx
+                env
+                receiver
+                -1
+                result
+                syntax
+                expected
+                source
+                sink)
+              (tc-infer-selected-tuple-select
+                ctx
+                env
+                (tc-selected-tuple-items ctx receiver)
+                index
+                syntax
+                source
+                sink
+                (tc-aggregate-contextual-type ctx env expected result))))
           (tc-selected-contextual-result
             ctx
             env
@@ -5394,181 +5475,245 @@
               source
               sink))))]
     [(ast.AstExpr.StructGet receiver field)
-      (if (tc-raw-deref-place? ctx env (tc-global-shared-view expr))
-        (tc-infer-selected-raw-read
-          ctx
-          env
-          receiver
-          -1
-          (tc-global-shared-view expr)
-          syntax
-          expected
-          source
-          sink)
-        (cond
-          ;; A field read through a reference value (a call's result): the
-          ;; reference is held in a temporary and the field is projected
-          ;; through its referent.
-          [(and
-              (not
-                (tc-selected-place-expression?
-                  ctx
-                  (tc-context-expr-get ctx receiver)))
-              (match (tc-expr-id ctx env receiver)
-                [(ResultTcType.Ok receiver-ty)
-                  (>
-                    (tc-selected-reference-kind
-                      ctx
-                      (tc-resolve-type ctx receiver-ty))
-                    0)]
-                [(ResultTcType.Err _) false]))
-            (tc-selected-contextual-result
-              ctx
-              env
-              (tc-global-shared-view expected)
-              (tc-selected-place-acquire
+      (cond
+        [(tc-selected-query? (& sink))
+          (tc-selected-contextual-result
+            ctx
+            env
+            expected
+            (tc-selected-unrepresented
+              (tc-struct-read-type ctx env receiver field)
+              sink))]
+        [(tc-raw-deref-place? ctx env (clone expr))
+          (tc-infer-selected-raw-read
+            ctx
+            env
+            receiver
+            -1
+            (tc-struct-read-type ctx env receiver field)
+            syntax
+            expected
+            source
+            sink)]
+        [else
+          (let
+            [place? : bool
+              (tc-selected-place-expression?
                 ctx
-                env
-                false
-                (tc-global-shared-view expected)
-                syntax
-                (tc-global-shared-view source)
-                (tc-selected-place-field
-                  ctx
-                  env
-                  field
-                  (tc-global-shared-view source)
-                  (tc-selected-place-temporary
-                    ctx
-                    env
-                    receiver
-                    (tc-global-shared-view source)
-                    sink))))]
-          [(tc-selected-place-expression?
-              ctx
-              (tc-context-expr-get ctx receiver))
-            (tc-selected-contextual-result
-              ctx
-              env
-              (tc-global-shared-view expected)
-              (tc-selected-place-acquire
-                ctx
-                env
-                false
-                (tc-global-shared-view expected)
-                syntax
-                (tc-global-shared-view source)
-                (tc-selected-place-field
-                  ctx
-                  env
-                  field
-                  (tc-global-shared-view source)
-                  (tc-infer-selected-place-id
-                    ctx
-                    env
-                    receiver
-                    (tc-global-shared-view source)
-                    sink))))]
-          [else
-            (tc-selected-contextual-result
-              ctx
-              env
-              expected
-              (tc-infer-selected-value-field
-                ctx
-                env
-                receiver
-                field
-                syntax
-                source
-                sink))]))]
-    [(ast.AstExpr.ArrayRef receiver index)
-      (if (tc-raw-deref-place? ctx env (tc-global-shared-view expr))
-        (tc-infer-selected-raw-read
-          ctx
-          env
-          receiver
-          index
-          (tc-global-shared-view expr)
-          syntax
-          expected
-          source
-          sink)
-        (cond
-          ;; A literal index into an array literal of views selects that
-          ;; element: the others are evaluated and dropped, so only the selected
-          ;; element's loans flow into the result (form 154).
-          [(tc-selected-literal-select? ctx env receiver index)
-            (tc-infer-selected-staged-form
-              ctx
-              env
-              expr
-              (tc-selected-form-code-literal-select)
-              (tc-selected-literal-select-ids ctx receiver index)
-              (tc-selected-literal-select-modes ctx receiver)
-              syntax
-              expected
-              source
-              sink)]
-          [else
+                (tc-context-expr-get ctx receiver))]
             (tc-selected-contextual-result
               ctx
               env
               (clone expected)
-              (tc-infer-selected-array-ref
+              (if (or
+                place?
+                (match (tc-expr-id ctx env receiver)
+                  [(ResultTcType.Ok ty)
+                    (>
+                      (tc-selected-reference-kind ctx (tc-resolve-type ctx ty))
+                      0)]
+                  [_ false]))
+                (tc-selected-place-acquire
+                  ctx
+                  env
+                  false
+                  expected
+                  syntax
+                  (clone source)
+                  (tc-selected-place-field
+                    ctx
+                    env
+                    field
+                    (clone source)
+                    (if place?
+                      (tc-infer-selected-place-id ctx env receiver source sink)
+                      (tc-selected-place-temporary ctx env receiver source sink))))
+                (tc-infer-selected-value-field
+                  ctx
+                  env
+                  receiver
+                  field
+                  syntax
+                  source
+                  sink))))])]
+    [(ast.AstExpr.ArrayRef receiver index)
+      (let
+        [capture? : bool (not (tc-selected-query? (& sink)))]
+        [raw? : bool (and capture? (tc-raw-deref-place? ctx env (clone expr)))]
+        (if (or
+          raw?
+          (and capture? (tc-selected-literal-select? ctx env receiver index)))
+          (let
+            [result : ResultTcType
+              (tc-selected-project
+                (tc-infer-selected-array-ref
+                  ctx
+                  env
+                  receiver
+                  index
+                  ast.AstMaybeType.No
+                  syntax
+                  (clone source)
+                  TcSelectedSink.Query))]
+            (if raw?
+              (tc-infer-selected-raw-read
                 ctx
                 env
                 receiver
                 index
+                result
+                syntax
                 expected
+                source
+                sink)
+              ;; A literal index into an array of views retains only the chosen element's loans.
+              (tc-infer-selected-typed-form
+                ctx
+                env
                 syntax
                 source
-                sink))]))]
-    [(or (ast.AstExpr.Array _) (ast.AstExpr.DynArray _) (ast.AstExpr.Box _)
-         (ast.AstExpr.BoxSet _ _) (ast.AstExpr.CpuIdEax _ _)
-         (ast.AstExpr.CpuIdEbx _ _) (ast.AstExpr.CpuIdEcx _ _)
-         (ast.AstExpr.CpuIdEdx _ _) (ast.AstExpr.Xgetbv _)
-         (ast.AstExpr.Syscall _) (ast.AstExpr.StringFromBytes _ _)
-         (ast.AstExpr.ArrayData _) (ast.AstExpr.StringData _)
-         (ast.AstExpr.MakeArray _ _) (ast.AstExpr.FixedMakeArray _ _)
-         (ast.AstExpr.ArrayTake _ _ _) (ast.AstExpr.Quote _)
+                sink
+                (tc-aggregate-contextual-type ctx env expected result)
+                (tc-selected-form-code-literal-select)
+                (tc-selected-literal-select-ids ctx receiver index)
+                (tc-selected-literal-select-modes ctx receiver))))
+          (tc-selected-contextual-result
+            ctx
+            env
+            (clone expected)
+            (tc-infer-selected-array-ref
+              ctx
+              env
+              receiver
+              index
+              expected
+              syntax
+              source
+              sink))))]
+    [(or (ast.AstExpr.Array items) (ast.AstExpr.DynArray items))
+      (let
+        [dynamic? : bool
+          (match (& expr)
+            [(ast.AstExpr.DynArray _) true]
+            [_ false])]
+        (tc-infer-selected-typed-form
+          ctx
+          env
+          syntax
+          source
+          sink
+          (tc-array-literal-type ctx env (& items) expected dynamic?)
+          (if dynamic?
+            (tc-selected-form-code-dyn-array-literal)
+            (tc-selected-form-code-array-literal))
+          (tc-selected-list-ids (& items))
+          (tc-selected-modes items.len 7)))]
+    [(ast.AstExpr.Box inner)
+      (tc-infer-selected-typed-form
+        ctx
+        env
+        syntax
+        source
+        sink
+        (tc-box-type ctx env (tc-context-expr-get ctx inner) expected)
+        (tc-selected-form-code-box)
+        (tc-selected-ids1 inner)
+        (tc-selected-ids1 2))]
+    [(ast.AstExpr.BoxSet box-id value-id)
+      (tc-infer-selected-typed-form
+        ctx
+        env
+        syntax
+        source
+        sink
+        (tc-aggregate-contextual-type
+          ctx
+          env
+          expected
+          (tc-box-mutation-value
+            ctx
+            env
+            (tc-context-expr-get ctx box-id)
+            (tc-context-expr-get ctx value-id)))
+        (tc-selected-form-code-box-set)
+        (tc-selected-ids2 box-id value-id)
+        (tc-selected-ids2 8 6))]
+    [(or (ast.AstExpr.MakeArray elem-id len-id)
+         (ast.AstExpr.FixedMakeArray elem-id len-id))
+      (let
+        [fixed? : bool
+          (match (& expr)
+            [(ast.AstExpr.FixedMakeArray _ _) true]
+            [_ false])]
+        (tc-infer-selected-typed-form
+          ctx
+          env
+          syntax
+          source
+          sink
+          (tc-aggregate-contextual-type
+            ctx
+            env
+            expected
+            (tc-make-array-type ctx env elem-id len-id fixed?))
+          (if fixed?
+            (tc-selected-form-code-fixed-make-array)
+            (tc-selected-form-code-make-array))
+          (tc-selected-ids1 len-id)
+          (tc-selected-ids1 3)))]
+    [(ast.AstExpr.ArrayTake array-id live-id index-id)
+      (tc-infer-selected-typed-form
+        ctx
+        env
+        syntax
+        source
+        sink
+        (tc-aggregate-contextual-type
+          ctx
+          env
+          expected
+          (tc-array-take-type ctx env array-id live-id index-id))
+        (tc-selected-form-code-array-take)
+        (tc-selected-ids3 array-id live-id index-id)
+        (tc-selected-ids3 8 1 3))]
+    [(ast.AstExpr.ArrayPush array-id value-id)
+      (tc-infer-selected-typed-form
+        ctx
+        env
+        syntax
+        source
+        sink
+        (tc-aggregate-contextual-type
+          ctx
+          env
+          expected
+          (tc-array-push-type ctx env array-id value-id))
+        (tc-selected-form-code-array-push)
+        (tc-selected-ids2 array-id value-id)
+        (tc-selected-ids2 8 4))]
+    [(or (ast.AstExpr.CpuIdEax _ _) (ast.AstExpr.CpuIdEbx _ _)
+         (ast.AstExpr.CpuIdEcx _ _) (ast.AstExpr.CpuIdEdx _ _)
+         (ast.AstExpr.Xgetbv _) (ast.AstExpr.Syscall _)
+         (ast.AstExpr.StringFromBytes _ _) (ast.AstExpr.ArrayData _)
+         (ast.AstExpr.StringData _) (ast.AstExpr.Quote _)
          (ast.AstExpr.Quasiquote _) (ast.AstExpr.BinaryData _)
          (ast.AstExpr.ProgramEnvp) (ast.AstExpr.ProgramArgc)
-         (ast.AstExpr.ProgramArgv) (ast.AstExpr.ArrayPush _ _)
-         (ast.AstExpr.StringRef _ _))
+         (ast.AstExpr.ProgramArgv) (ast.AstExpr.StringRef _ _))
       (tc-infer-selected-data-form ctx env expr syntax expected source sink)]
-    [(ast.AstExpr.BoxTake receiver)
+    [(or (ast.AstExpr.BoxTake receiver) (ast.AstExpr.BoxGet receiver))
       (tc-infer-selected-deref
         ctx
         env
-        expr
         receiver
-        syntax
-        expected
-        source
-        sink)]
-    ;; The bootstrap bridge `(box-get b)` (`__tl-box-place`) is `(deref b)`:
-    ;; a Copy value is copied out, and a move-only one moves out of the box.
-    [(ast.AstExpr.BoxGet receiver)
-      (tc-infer-selected-deref
-        ctx
-        env
-        expr
-        receiver
+        (match (& expr)
+          [(ast.AstExpr.BoxTake _) true]
+          [_ false])
         syntax
         expected
         source
         sink)]
     [(ast.AstExpr.Tuple items)
-      (tc-infer-selected-tuple
-        ctx
-        env
-        expr
-        (& items)
-        syntax
-        expected
-        source
-        sink)]
+      (tc-infer-selected-tuple ctx env (& items) syntax expected source sink)]
     [(ast.AstExpr.Lambda lambda-box)
       (tc-infer-selected-lambda
         ctx
@@ -5596,103 +5741,16 @@
         "typecheck: unquote-splicing is only valid inside quasiquote"
         sink)]
     [(ast.AstExpr.ArraySet array-id index-id value-id)
-      (if (tc-selected-slice-reference? ctx env array-id)
-        ;; A slice element is written through the (mutable) reference.
-        (tc-infer-selected-staged-form
-          ctx
-          env
-          expr
-          (tc-selected-form-code-slice-store)
-          (tc-selected-ids3 array-id index-id value-id)
-          (tc-selected-ids3 2 3 5)
-          syntax
-          expected
-          source
-          sink)
-        (cond
-          ;; A store through a raw pointer's pointee (#8564).
-          [(tc-raw-deref-place? ctx env (tc-context-expr-get ctx array-id))
-            (match (tc-infer-selected-legacy ctx env expr syntax expected)
-              [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-              [(ResultTcType.Ok _)
-                (match (tc-expr-id ctx env array-id)
-                  [(ResultTcType.Err message)
-                    (TcSelectedResult.Err message sink)]
-                  [(ResultTcType.Ok array-ty)
-                    (match (tc-array-set-receiver ctx array-ty)
-                      [(ResultTcArrayReceiver.Err message)
-                        (TcSelectedResult.Err message sink)]
-                      [(ResultTcArrayReceiver.Ok receiver)
-                        (match receiver
-                          [(TcArrayReceiver _ elem-ty)
-                            (tc-infer-selected-raw-store
-                              ctx
-                              env
-                              array-id
-                              index-id
-                              value-id
-                              elem-ty
-                              syntax
-                              source
-                              sink)])])])])]
-          ;; A receiver selecting a place through control flow is borrowed at
-          ;; the store like any written place (`tc-infer-selected-receiver`);
-          ;; as a temporary its selected place would be moved, not written.
-          [(and
-              (not
-                (tc-selected-place-expression?
-                  ctx
-                  (tc-context-expr-get ctx array-id)))
-              (= (tc-selected-receiver-mode ctx array-id) 2))
-            (tc-infer-selected-staged-form
-              ctx
-              env
-              expr
-              (tc-selected-form-code-array-set)
-              (tc-selected-ids3 array-id index-id value-id)
-              (tc-selected-ids3 8 3 5)
-              syntax
-              expected
-              source
-              sink)]
-          ;; A move-only element at an exact literal path is reinitialized.
-          [(>= (tc-selected-exact-element-store ctx env array-id index-id) 0)
-            (tc-infer-selected-exact-element-store
-              ctx
-              env
-              expr
-              array-id
-              index-id
-              value-id
-              syntax
-              expected
-              source
-              sink)]
-          [(tc-selected-fixed-element-store? ctx env array-id index-id)
-            ;; An exact fixed-array element: named and located as legacy.
-            (tc-infer-selected-staged-form
-              ctx
-              env
-              expr
-              (tc-selected-form-code-fixed-element-set)
-              (tc-selected-ids3 array-id index-id value-id)
-              (tc-selected-ids3 8 3 5)
-              syntax
-              expected
-              source
-              sink)]
-          [else
-            (tc-infer-selected-staged-form
-              ctx
-              env
-              expr
-              (tc-selected-form-code-array-set)
-              (tc-selected-ids3 array-id index-id value-id)
-              (tc-selected-ids3 8 3 5)
-              syntax
-              expected
-              source
-              sink)]))]
+      (tc-infer-selected-array-set
+        ctx
+        env
+        array-id
+        index-id
+        value-id
+        syntax
+        expected
+        source
+        sink)]
     ;; A comparison of move-only values (strings, aggregates) reads both
     ;; operands through shared borrows, as Rust's `PartialEq::eq(&a, &b)`.
     [(ast.AstExpr.Binary op left-id right-id)
@@ -12891,7 +12949,7 @@
 
 ;; --- Array and raw storage forms (#8449) -------------------------------------
 ;;
-;; Legacy types each form; its operands are produced by access mode
+;; Checked operands are replayed by access mode
 ;; (`tc-selected-form-*` codes): 0 reads (an owned non-Copy place is borrowed
 ;; shared, any other operand is a value), 1 writes (the place is borrowed
 ;; exclusively; through a `&mut` parameter, reborrowed), 2 consumes (an
@@ -12918,38 +12976,19 @@
 ;; `(set! (array-ref a N) v)` of an owned fixed array `a` at a literal `N`.
 (define (tc-selected-fixed-element-store?
   [ctx : TcContext]
-  [env : TcTypeEnv]
-  [array-id : i64]
+  [array-type : ast.AstType]
   [index-id : i64]) : bool
   (and
     (match (ast.ast-expr-unspan (& (tc-context-expr-get ctx index-id)))
       [(ast.AstExpr.Literal (ast.AstLiteral.Int _ _)) true]
       [_ false])
-    (match (tc-expr-id ctx env array-id)
-      [(ResultTcType.Ok ty)
-        (match (tc-type-strip-region
-          (tc-resolve-type ctx (tc-global-shared-view ty)))
-          [(ast.AstType.Array _ _) true]
-          [_ false])]
-      [(ResultTcType.Err _) false])))
+    (match (tc-type-strip-region (tc-resolve-type ctx array-type))
+      [(ast.AstType.Array _ _) true]
+      [_ false])))
 
-(define (tc-selected-exact-element-store
+(define (tc-infer-selected-array-set
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [array-id : i64]
-  [index-id : i64]) : i64
-  (match (tc-expr-id ctx env array-id)
-    [(ResultTcType.Ok ty)
-      (tc-selected-exact-element ctx ty (tc-context-expr-get ctx index-id))]
-    [(ResultTcType.Err _) -1]))
-
-;; `(set! (array-ref items k) value)` at an exact element path: legacy typing
-;; checks the store, then the value is moved into the element's place, which
-;; reinitializes it (SPEC: literal-index stores).
-(define (tc-infer-selected-exact-element-store
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr : ast.AstExpr]
   [array-id : i64]
   [index-id : i64]
   [value-id : i64]
@@ -12961,55 +13000,181 @@
     lease
     intern
     bind)
-  (match (tc-infer-selected-legacy
+  (let
+    [array : ast.AstExpr (tc-context-expr-get ctx array-id)]
+    [raw-pointer : ast.AstMaybeType
+      (tc-raw-deref-place-pointer-type ctx env (clone array))]
+    [array-type : ast.AstType
+      (match (& raw-pointer)
+        [(Some (Ptr _))
+          (return (TcSelectedResult.Err (tc-raw-deref-read-only-message) sink))]
+        [_
+          (match (tc-expr-id ctx env array-id)
+            [(ResultTcType.Ok ty) ty]
+            [(ResultTcType.Err message)
+              (return (TcSelectedResult.Err message sink))])])]
+    (match (tc-expr-with-expected-or-actual-id ctx env index-id (I64))
+      [(ResultTcType.Err message) (return (TcSelectedResult.Err message sink))]
+      [(ResultTcType.Ok ty)
+        (when
+          (not (tc-integer-type? ty))
+          (return
+            (TcSelectedResult.Err "typecheck: array index must be integer" sink)))])
+    (let
+      [receiver : TcArrayReceiver
+        (match (tc-array-set-receiver ctx (clone array-type))
+          [(ResultTcArrayReceiver.Ok info) info]
+          [(ResultTcArrayReceiver.Err message)
+            (return (TcSelectedResult.Err message sink))])]
+      (match receiver
+        [(TcArrayReceiver container elem)
+          (let
+            [ty : ast.AstType
+              (match (tc-aggregate-contextual-type
+                ctx
+                env
+                expected
+                (tc-array-mutation-value
+                  ctx
+                  env
+                  (clone array)
+                  container
+                  (clone elem)
+                  (tc-context-expr-get ctx value-id)
+                  (tc-kind-message
+                    (TypeMismatch)
+                    "typecheck: array assignment value type mismatch")))
+                [(ResultTcType.Ok ty) ty]
+                [(ResultTcType.Err message)
+                  (return (TcSelectedResult.Err message sink))])]
+            (when
+              (tc-selected-query? (& sink))
+              (return (tc-selected-unrepresented (ResultTcType.Ok ty) sink)))
+            (let
+              [array-type : ast.AstType (tc-resolve-type ctx array-type)]
+              [slice? : bool
+                (tc-selected-slice-container? ctx (clone array-type))]
+              [raw? : bool
+                (and
+                  (not slice?)
+                  (match raw-pointer
+                    [(Some _) true]
+                    [_ false]))]
+              [selected-receiver? : bool
+                (and
+                  (not slice?)
+                  (not raw?)
+                  (not (tc-selected-place-expression? ctx array))
+                  (= (tc-selected-receiver-mode ctx array-id) 2))]
+              (cond
+                [raw?
+                  (tc-infer-selected-raw-store
+                    ctx
+                    env
+                    array-id
+                    index-id
+                    value-id
+                    elem
+                    syntax
+                    source
+                    sink)]
+                [(and
+                    (not slice?)
+                    (not selected-receiver?)
+                    (>=
+                      (tc-selected-exact-element
+                        ctx
+                        (clone array-type)
+                        (tc-context-expr-get ctx index-id))
+                      0))
+                  (tc-infer-selected-exact-element-store
+                    ctx
+                    env
+                    array-id
+                    index-id
+                    value-id
+                    elem
+                    syntax
+                    source
+                    sink)]
+                [else
+                  (tc-infer-selected-form-typed
+                    ctx
+                    env
+                    ty
+                    (cond
+                      [slice? (tc-selected-form-code-slice-store)]
+                      [(and
+                          (not selected-receiver?)
+                          (tc-selected-fixed-element-store?
+                            ctx
+                            array-type
+                            index-id))
+                        (tc-selected-form-code-fixed-element-set)]
+                      [else (tc-selected-form-code-array-set)])
+                    (tc-selected-ids3 array-id index-id value-id)
+                    (tc-selected-ids3
+                      (if slice?
+                        2
+                        8)
+                      3
+                      5)
+                    syntax
+                    source
+                    sink)])))]))))
+
+;; A checked store at an exact element path reinitializes that element.
+(define (tc-infer-selected-exact-element-store
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [array-id : i64]
+  [index-id : i64]
+  [value-id : i64]
+  [element-ty : ast.AstType]
+  [syntax : typed.TypedSyntax]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-infer-selected-array-place
     ctx
     env
-    (tc-global-shared-view expr)
-    syntax
-    expected)
-    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcType.Ok _)
-      (match (tc-infer-selected-array-place
+    array-id
+    index-id
+    (tc-global-shared-view source)
+    sink)
+    [(TcSelectedPlaceResult.Err message next)
+      (TcSelectedResult.Err message next)]
+    [(TcSelectedPlaceResult.Ok _ place next)
+      (match (tc-infer-selected-id
         ctx
         env
-        array-id
-        index-id
+        value-id
+        (ast.AstMaybeType.Some
+          (tc-type-strip-region (tc-global-shared-view element-ty)))
         (tc-global-shared-view source)
-        sink)
-        [(TcSelectedPlaceResult.Err message next)
-          (TcSelectedResult.Err message next)]
-        [(TcSelectedPlaceResult.Ok element-ty place next)
-          (match (tc-infer-selected-id
-            ctx
-            env
-            value-id
-            (ast.AstMaybeType.Some
+        next)
+        [(TcSelectedResult.Err message after)
+          (TcSelectedResult.Err message after)]
+        [(TcSelectedResult.Ok value-ty occurrence after)
+          ;; As the graph sees types: a Copy value read through a
+          ;; reference is a plain value (`tc-selected-canonical-type`).
+          (if (tc-selected-same-type?
+            (tc-selected-canonical-type
+              ctx
               (tc-type-strip-region (tc-global-shared-view element-ty)))
-            (tc-global-shared-view source)
-            next)
-            [(TcSelectedResult.Err message after)
-              (TcSelectedResult.Err message after)]
-            [(TcSelectedResult.Ok value-ty occurrence after)
-              ;; As the graph sees types: a Copy value read through a
-              ;; reference is a plain value (`tc-selected-canonical-type`).
-              (if (tc-selected-same-type?
-                (tc-selected-canonical-type
-                  ctx
-                  (tc-type-strip-region (tc-global-shared-view element-ty)))
-                (tc-selected-canonical-type
-                  ctx
-                  (tc-global-shared-view value-ty)))
-                (tc-selected-place-assign
-                  (ResultTcType.Ok ast.AstType.Unit)
-                  false
-                  syntax
-                  source
-                  place
-                  occurrence
-                  after)
-                (tc-selected-unrepresented
-                  (ResultTcType.Ok ast.AstType.Unit)
-                  after))])])]))
+            (tc-selected-canonical-type ctx (tc-global-shared-view value-ty)))
+            (tc-selected-place-assign
+              (ResultTcType.Ok ast.AstType.Unit)
+              false
+              syntax
+              source
+              place
+              occurrence
+              after)
+            (tc-selected-unrepresented (ResultTcType.Ok ast.AstType.Unit) after))])]))
 
 (define (tc-selected-form-code-string-ref) : i64
   106)
@@ -14066,7 +14231,6 @@
 (define (tc-infer-selected-tuple
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
   [items : (& items ast.AstExprList)]
   [syntax : typed.TypedSyntax]
   [expected : ast.AstMaybeType]
@@ -14076,7 +14240,7 @@
     lease
     intern
     bind)
-  (match (tc-infer-selected-legacy ctx env expr syntax expected)
+  (match (tc-tuple-literal-type ctx env items expected)
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok ty)
       (when
@@ -14193,29 +14357,6 @@
 (define (tc-selected-form-code-slice-store) : i64
   125)
 
-;; Whether expression `id` is a reference to a slice (`(& r (Slice T))` or
-;; `(&mut r (Slice T))`): its elements are reached only through it.
-(define (tc-selected-slice-reference?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [id : i64]) : bool
-  (match (tc-expr-id ctx env id)
-    [(ResultTcType.Ok ty)
-      (match (tc-type-strip-region
-        (tc-resolve-type ctx (tc-global-shared-view ty)))
-        [(ast.AstType.Ref _ inner)
-          (match (tc-type-strip-region
-            (tc-resolve-type ctx (ast.ty-node-get inner)))
-            [(ast.AstType.Slice _) true]
-            [_ false])]
-        [(ast.AstType.MutRef _ inner)
-          (match (tc-type-strip-region
-            (tc-resolve-type ctx (ast.ty-node-get inner)))
-            [(ast.AstType.Slice _) true]
-            [_ false])]
-        [_ false])]
-    [(ResultTcType.Err _) false]))
-
 ;; The element ids of a literal, each consumed against the element type.
 (define (tc-selected-list-ids [items : (& items ast.AstExprList)]) : (__tl_dyn-array
     i64)
@@ -14236,6 +14377,24 @@
       (set! (array-ref modes index) mode)
       (set! index (+ index 1)))
     modes))
+
+(define (tc-struct-read-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : i64]
+  [field : i64]) : ResultTcType
+  (let
+    [ty
+      (try
+        (match (tc-expr-id ctx env receiver)
+          [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+          [(ResultTcType.Err message)
+            (tc-raw-deref-field-receiver-type
+              ctx
+              env
+              (tc-context-expr-get ctx receiver)
+              message)]))]
+    (tc-struct-get-result-type-id ctx (TcMaybeTypeEnv.Some env) ty field)))
 
 ;; A field of an evaluated owned value (a call result, a raw read, an unsafe
 ;; block): the value is consumed and the field is the result. Values holding
@@ -14319,28 +14478,6 @@
   (let
     [plan : TcSelectedFormPlan
       (match (tc-global-shared-view expr)
-        [(ast.AstExpr.Array items)
-          (TcSelectedFormPlan
-            (tc-selected-form-code-array-literal)
-            (tc-selected-list-ids (& items))
-            (tc-selected-modes (ast.ast-expr-list-len (& items)) 7))]
-        [(ast.AstExpr.DynArray items)
-          (TcSelectedFormPlan
-            (tc-selected-form-code-dyn-array-literal)
-            (tc-selected-list-ids (& items))
-            (tc-selected-modes (ast.ast-expr-list-len (& items)) 7))]
-        [(ast.AstExpr.Box inner-id)
-          (TcSelectedFormPlan
-            (tc-selected-form-code-box)
-            (tc-selected-ids1 inner-id)
-            (tc-selected-ids1 2))]
-        ;; `(set! (deref b) v)`: a conflict on the written box or referent is
-        ;; reported at `b`, as an assignment to it.
-        [(ast.AstExpr.BoxSet box-id value-id)
-          (TcSelectedFormPlan
-            (tc-selected-form-code-box-set)
-            (tc-selected-ids2 box-id value-id)
-            (tc-selected-ids2 8 6))]
         ;; `(syscall n args ...)` and `(string-from-bytes ptr len)` (unsafe) read
         ;; integer and raw-pointer values only: no operand is a tracked place.
         ;; CPU feature instructions (forms 130-134): plain integer operands.
@@ -14389,21 +14526,6 @@
             (tc-selected-form-code-string-data)
             (tc-selected-ids1 str-id)
             (tc-selected-ids1 0))]
-        [(ast.AstExpr.MakeArray _ len-id)
-          (TcSelectedFormPlan
-            (tc-selected-form-code-make-array)
-            (tc-selected-ids1 len-id)
-            (tc-selected-ids1 3))]
-        [(ast.AstExpr.FixedMakeArray _ len-id)
-          (TcSelectedFormPlan
-            (tc-selected-form-code-fixed-make-array)
-            (tc-selected-ids1 len-id)
-            (tc-selected-ids1 3))]
-        [(ast.AstExpr.ArrayTake array-id live-id index-id)
-          (TcSelectedFormPlan
-            (tc-selected-form-code-array-take)
-            (tc-selected-ids3 array-id live-id index-id)
-            (tc-selected-ids3 8 1 3))]
         [(ast.AstExpr.Quote _)
           (TcSelectedFormPlan
             (tc-selected-form-code-fresh-data)
@@ -14431,11 +14553,6 @@
             (tc-selected-form-code-program-argv)
             (tc-selected-no-i64s)
             (tc-selected-no-i64s))]
-        [(ast.AstExpr.ArrayPush array-id value-id)
-          (TcSelectedFormPlan
-            (tc-selected-form-code-array-push)
-            (tc-selected-ids2 array-id value-id)
-            (tc-selected-ids2 8 4))]
         [(ast.AstExpr.StringRef str-id index-id)
           (TcSelectedFormPlan
             (tc-selected-form-code-string-ref)
@@ -15116,30 +15233,15 @@
 (define (tc-infer-selected-tuple-select
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
   [items : ast.AstExprList]
   [index : i64]
   [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
-  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
-    store
-    lease
-    intern
-    bind)
-  (match (tc-infer-selected-legacy
-    ctx
-    env
-    (tc-global-shared-view expr)
-    syntax
-    expected)
+  [sink : (TcSelectedSink store lease intern bind)]
+  [result : ResultTcType]) : (TcSelectedResult store lease intern bind)
+  (match result
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok ty)
-      (when
-        (match (& sink)
-          [(TcSelectedSink.Query) true]
-          [_ false])
-        (return (tc-selected-unrepresented (ResultTcType.Ok ty) sink)))
       (match (tc-infer-selected-form-operands
         ctx
         env
@@ -20640,7 +20742,7 @@
   [env : TcTypeEnv]
   [receiver-id : i64]
   [index-id : i64]
-  [expr : ast.AstExpr]
+  [result : ResultTcType]
   [syntax : typed.TypedSyntax]
   [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
@@ -20649,7 +20751,7 @@
     lease
     intern
     bind)
-  (match (tc-infer-selected-legacy ctx env expr syntax expected)
+  (match (tc-aggregate-contextual-type ctx env expected result)
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok ty)
       (match (tc-infer-selected-raw-place-operands
@@ -21512,25 +21614,6 @@
             [_ true])]
         [_ false]))))
 
-;; `(deref value)`: a place receiver projects its box's contents (a Copy value
-;; is read, a move-only one consumes the box); an evaluated box is consumed;
-;; an evaluated reference to a Copy value is read through (form 147). Other
-;; reference receivers keep the legacy route.
-;; A reference receiver whose referent is Copy: a dereference reads a copy.
-(define (tc-selected-copy-referent-receiver?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [receiver : i64]) : bool
-  (match (tc-expr-id ctx env receiver)
-    [(ResultTcType.Ok receiver-ty)
-      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-        [(ast.AstType.Ref _ inner)
-          (tc-type-copyable? ctx (tc-context-type-get ctx inner))]
-        [(ast.AstType.MutRef _ inner)
-          (tc-type-copyable? ctx (tc-context-type-get ctx inner))]
-        [_ false])]
-    [(ResultTcType.Err _) false]))
-
 ;; A place expression whose projection chain passes through an array element.
 (define (tc-selected-element-place-expression?
   [ctx : TcContext]
@@ -21548,7 +21631,7 @@
     [_ false]))
 
 ;; `(deref receiver)` read by value: an opaque value is unusable by value
-;; outside its module family (#8734), as `tc-deref-expr` checks. Typing
+;; outside its module family (#8734), when used as a scrutinee. Typing
 ;; reports any other failure.
 (define (tc-selected-deref-opaque-ok
   [ctx : TcContext]
@@ -21567,8 +21650,8 @@
 (define (tc-infer-selected-deref
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
   [receiver : i64]
+  [take? : bool]
   [syntax : typed.TypedSyntax]
   [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
@@ -21577,109 +21660,78 @@
     lease
     intern
     bind)
-  (match (tc-selected-deref-opaque-ok ctx env receiver)
-    [(ResultTcUnit.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcUnit.Ok)
-      (cond
-        ;; A reference read out of an array element: the graph reaches an element
-        ;; only as access to the whole array, never the referent behind it, so a
-        ;; Copy read goes through the evaluated reference (the element read uses
-        ;; the array and the loans it carries).
-        [(and
-            (tc-selected-element-place-expression?
-              ctx
-              (tc-context-expr-get ctx receiver))
-            (tc-selected-copy-referent-receiver? ctx env receiver))
-          (tc-infer-selected-staged-form
-            ctx
-            env
-            expr
-            (tc-selected-form-code-deref-read)
-            (tc-selected-ids1 receiver)
-            (tc-selected-ids1 0)
-            syntax
-            expected
-            source
-            sink)]
-        [(tc-selected-place-expression? ctx (tc-context-expr-get ctx receiver))
-          (tc-selected-contextual-result
-            ctx
-            env
-            (tc-global-shared-view expected)
-            (tc-selected-place-acquire
+  (match (tc-deref-value-type
+    ctx
+    env
+    (tc-context-expr-get ctx receiver)
+    take?
+    (clone expected))
+    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
+    [(ResultTcType.Ok ty)
+      (let
+        [expr : ast.AstExpr (tc-context-expr-get ctx receiver)]
+        [place? : bool (tc-selected-place-expression? ctx (clone expr))]
+        ;; A reference read from an array element is evaluated before its
+        ;; referent is copied. The whole-array place cannot name the referent.
+        [receiver-type : ast.AstType
+          (if (or (not place?) (tc-selected-element-place-expression? ctx expr))
+            (match (tc-expr-id ctx env receiver)
+              [(ResultTcType.Ok type)
+                (tc-type-strip-region (tc-resolve-type ctx type))]
+              [_ ast.AstType.Never])
+            ast.AstType.Never)]
+        [consume-box? : bool
+          (and
+            (not place?)
+            (match (& receiver-type)
+              [(ast.AstType.Box _) true]
+              [_ false]))]
+        [copy-ref? : bool
+          (match (& receiver-type)
+            [(or (ast.AstType.Ref _ inner) (ast.AstType.MutRef _ inner))
+              (tc-type-copyable? ctx (tc-context-type-get ctx inner))]
+            [_ false])]
+        (cond
+          [(or consume-box? copy-ref?)
+            (if (tc-selected-query? (& sink))
+              (tc-selected-unrepresented (ResultTcType.Ok ty) sink)
+              (tc-infer-selected-form-typed
+                ctx
+                env
+                ty
+                (if consume-box?
+                  (tc-selected-form-code-deref-value)
+                  (tc-selected-form-code-deref-read))
+                (tc-selected-ids1 receiver)
+                (tc-selected-ids1
+                  (if consume-box?
+                    2
+                    0))
+                syntax
+                source
+                sink))]
+          [(or place? (tc-selected-deref-referent-ok? ctx receiver-type))
+            ;; A computed reference is held in a temporary. A move-only
+            ;; read through it is checked as a move from its referent.
+            (tc-selected-contextual-result
               ctx
               env
-              false
-              (tc-global-shared-view expected)
-              syntax
-              (tc-global-shared-view source)
-              (tc-selected-place-box
+              (clone expected)
+              (tc-selected-place-acquire
                 ctx
-                (TcMaybeTypeEnv.Some env)
-                (tc-global-shared-view source)
-                (tc-infer-selected-place-id
+                env
+                false
+                expected
+                syntax
+                (clone source)
+                (tc-selected-place-box
                   ctx
-                  env
-                  receiver
-                  (tc-global-shared-view source)
-                  sink))))]
-        [(match (tc-expr-id ctx env receiver)
-            [(ResultTcType.Ok receiver-ty)
-              (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-                [(ast.AstType.Box _) true]
-                [_ false])]
-            [(ResultTcType.Err _) false])
-          (tc-infer-selected-staged-form
-            ctx
-            env
-            expr
-            (tc-selected-form-code-deref-value)
-            (tc-selected-ids1 receiver)
-            (tc-selected-ids1 2)
-            syntax
-            expected
-            source
-            sink)]
-        [(tc-selected-copy-referent-receiver? ctx env receiver)
-          (tc-infer-selected-staged-form
-            ctx
-            env
-            expr
-            (tc-selected-form-code-deref-read)
-            (tc-selected-ids1 receiver)
-            (tc-selected-ids1 0)
-            syntax
-            expected
-            source
-            sink)]
-        ;; The referent of a computed reference is the place `*{e}` through a
-        ;; temporary holding the reference (`tc-selected-place-temporary`),
-        ;; read as the referent's own value: a move-only one taken there is a
-        ;; move out of the reference, which the graph rejects.
-        [(match (tc-expr-id ctx env receiver)
-            [(ResultTcType.Ok receiver-ty)
-              (tc-selected-deref-referent-ok? ctx receiver-ty)]
-            [(ResultTcType.Err _) false])
-          (tc-selected-contextual-result
-            ctx
-            env
-            (tc-global-shared-view expected)
-            (tc-selected-place-acquire
-              ctx
-              env
-              false
-              expected
-              syntax
-              (tc-global-shared-view source)
-              (tc-selected-place-box
-                ctx
-                (TcMaybeTypeEnv.Some env)
-                (tc-global-shared-view source)
-                (tc-selected-place-temporary ctx env receiver source sink))))]
-        [else
-          (tc-selected-unrepresented
-            (tc-infer-selected-legacy ctx env expr syntax expected)
-            sink)])]))
+                  (TcMaybeTypeEnv.Some env)
+                  (clone source)
+                  (if place?
+                    (tc-infer-selected-place-id ctx env receiver source sink)
+                    (tc-selected-place-temporary ctx env receiver source sink)))))]
+          [else (tc-selected-unrepresented (ResultTcType.Ok ty) sink)]))]))
 
 (defenum TcSelectedMaybeRegion
   (Some i64)
@@ -21938,93 +21990,84 @@
     (match (tc-store-place-lifetime ctx env (tc-global-shared-view receiver))
       [(ResultTcNameId.Err message) (TcSelectedResult.Err message sink)]
       [(ResultTcNameId.Ok _)
-        (match (tc-field-receiver-type ctx env (tc-global-shared-view receiver))
+        (match (if (ast.ast-tuple-set-field-id? field)
+          (tc-expr ctx env (clone receiver))
+          (tc-field-receiver-type ctx env (clone receiver)))
           [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
           [(ResultTcType.Ok receiver-ty)
-            (match (tc-struct-mutable-field-type-id ctx env receiver-ty field)
+            (match (tc-struct-mutable-field-type-id
+              ctx
+              env
+              (clone receiver-ty)
+              field)
               [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
               [(ResultTcType.Ok field-ty)
-                (if (tc-raw-deref-place?
-                  ctx
-                  env
-                  (tc-global-shared-view receiver))
-                  (match (tc-expr-with-expected-or-actual-id
-                    ctx
-                    env
-                    value-id
-                    (tc-type-strip-region (tc-global-shared-view field-ty)))
-                    [(ResultTcType.Err message)
-                      (TcSelectedResult.Err message sink)]
-                    [(ResultTcType.Ok value-ty)
-                      (match (tc-selected-field-store-ok
-                        ctx
-                        env
-                        (tc-global-shared-view receiver)
-                        (tc-global-shared-view value)
-                        (tc-global-shared-view field-ty)
-                        value-ty
-                        field
-                        (tc-global-shared-view label))
-                        [(ResultTcUnit.Err message)
-                          (TcSelectedResult.Err message sink)]
-                        [(ResultTcUnit.Ok)
-                          (tc-infer-selected-raw-store
+                (let
+                  [raw? : bool
+                    (and
+                      (not (tc-selected-query? (& sink)))
+                      (tc-raw-deref-place? ctx env (clone receiver)))]
+                  [want : ast.AstType
+                    (if (not (tc-selected-query? (& sink)))
+                      (tc-type-strip-region (clone field-ty))
+                      (clone field-ty))]
+                  (match (if (or raw? (tc-selected-query? (& sink)))
+                    (TcSelectedPlaceResult.Ok
+                      ast.AstType.Unit
+                      TcSelectedPlace.Unrepresented
+                      sink)
+                    (let
+                      ;; A view binder's fields are the viewed storage's
+                      ;; (`tc-selected-view-receiver`): the store writes through
+                      ;; the view, as every other write to a view's part does.
+                      [receiver-place : (TcSelectedPlaceResult
+                        store
+                        lease
+                        intern
+                        bind)
+                        (tc-selected-view-receiver
+                          ctx
+                          env
+                          (ownership.ownership-source-copy (& source))
+                          (tc-infer-selected-place-id
                             ctx
                             env
                             receiver-id
-                            -1
-                            value-id
-                            (tc-type-strip-region
-                              (tc-global-shared-view field-ty))
-                            syntax
-                            source
-                            sink)])])
-                  (match (let
-                    ;; A view binder's fields are the viewed storage's
-                    ;; (`tc-selected-view-receiver`): the store writes through
-                    ;; the view, as every other write to a view's part does.
-                    [receiver-place : (TcSelectedPlaceResult
-                      store
-                      lease
-                      intern
-                      bind)
-                      (tc-selected-view-receiver
-                        ctx
-                        env
-                        (ownership.ownership-source-copy (& source))
-                        (tc-infer-selected-place-id
+                            (tc-global-shared-view source)
+                            sink))]
+                      ;; A tuple element store names its element by index.
+                      (if (ast.ast-tuple-set-field-id? field)
+                        (tc-selected-place-tuple
+                          ctx
+                          (ast.ast-tuple-set-index-from-field-id field)
+                          (tc-global-shared-view source)
+                          receiver-place)
+                        (tc-selected-place-field
                           ctx
                           env
-                          receiver-id
+                          field
                           (tc-global-shared-view source)
-                          sink))]
-                    ;; A tuple element store names its element by index.
-                    (if (ast.ast-tuple-set-field-id? field)
-                      (tc-selected-place-tuple
-                        ctx
-                        (ast.ast-tuple-set-index-from-field-id field)
-                        (tc-global-shared-view source)
-                        receiver-place)
-                      (tc-selected-place-field
-                        ctx
-                        env
-                        field
-                        (tc-global-shared-view source)
-                        receiver-place)))
+                          receiver-place))))
                     [(TcSelectedPlaceResult.Err message next)
                       (TcSelectedResult.Err message next)]
                     [(TcSelectedPlaceResult.Ok _ place next)
                       ;; The stored value is owned: a field reached through a
                       ;; reference is a view only when read.
-                      (match (tc-infer-selected-id
-                        ctx
-                        env
-                        value-id
-                        (ast.AstMaybeType.Some
-                          (tc-type-strip-region
-                            (tc-global-shared-view field-ty)))
-                        (tc-global-shared-view source)
-                        next)
+                      (match (if (or raw? (tc-selected-query? (& next)))
+                        (tc-selected-unrepresented
+                          (tc-expr-with-expected-or-actual-id
+                            ctx
+                            env
+                            value-id
+                            want)
+                          next)
+                        (tc-infer-selected-id
+                          ctx
+                          env
+                          value-id
+                          (ast.AstMaybeType.Some want)
+                          (clone source)
+                          next))
                         [(TcSelectedResult.Err message after)
                           (TcSelectedResult.Err message after)]
                         [(TcSelectedResult.Ok value-ty occurrence after)
@@ -22032,6 +22075,7 @@
                             ctx
                             env
                             (tc-global-shared-view receiver)
+                            receiver-ty
                             (tc-global-shared-view value)
                             (tc-global-shared-view field-ty)
                             (tc-global-shared-view value-ty)
@@ -22046,31 +22090,46 @@
                               ;; (`tc-selected-canonical-type`). A view of a
                               ;; move-only value stored back keeps the legacy
                               ;; route.
-                              (if (tc-selected-same-type?
-                                (tc-selected-canonical-type
-                                  ctx
-                                  (tc-type-strip-region
-                                    (tc-global-shared-view field-ty)))
-                                (tc-selected-canonical-type
-                                  ctx
-                                  (tc-global-shared-view value-ty)))
-                                (tc-selected-place-assign
-                                  (ResultTcType.Ok ast.AstType.Unit)
-                                  false
-                                  syntax
-                                  source
-                                  place
-                                  occurrence
-                                  after)
-                                (tc-selected-unrepresented
-                                  (ResultTcType.Ok ast.AstType.Unit)
-                                  after))])])]))])])])))
+                              (cond
+                                [(tc-selected-query? (& after))
+                                  (tc-selected-unrepresented
+                                    (ResultTcType.Ok ast.AstType.Unit)
+                                    after)]
+                                [raw?
+                                  (tc-infer-selected-raw-store
+                                    ctx
+                                    env
+                                    receiver-id
+                                    -1
+                                    value-id
+                                    (tc-type-strip-region field-ty)
+                                    syntax
+                                    source
+                                    after)]
+                                [(tc-selected-same-type?
+                                    (tc-selected-canonical-type
+                                      ctx
+                                      (tc-type-strip-region field-ty))
+                                    (tc-selected-canonical-type ctx value-ty))
+                                  (tc-selected-place-assign
+                                    (ResultTcType.Ok ast.AstType.Unit)
+                                    false
+                                    syntax
+                                    source
+                                    place
+                                    occurrence
+                                    after)]
+                                [else
+                                  (tc-selected-unrepresented
+                                    (ResultTcType.Ok ast.AstType.Unit)
+                                    after)])])])]))])])])))
 
-;; The checks after inference that `tc-struct-field-mutation-value-id` makes.
+;; Validate the value before recording and checking its storage lifetimes.
 (define (tc-selected-field-store-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
   [receiver : ast.AstExpr]
+  [receiver-ty : ast.AstType]
   [value : ast.AstExpr]
   [field-ty : ast.AstType]
   [value-ty : ast.AstType]
@@ -22103,28 +22162,23 @@
     (tc-global-shared-view label))
     [(ResultTcUnit.Err message) (return (ResultTcUnit.Err message))]
     [(ResultTcUnit.Ok) unit])
-  (match (if (ast.ast-tuple-set-field-id? field)
-    (tc-expr ctx env (tc-global-shared-view receiver))
-    (tc-field-receiver-type ctx env (tc-global-shared-view receiver)))
-    [(ResultTcType.Err message) (ResultTcUnit.Err message)]
-    [(ResultTcType.Ok receiver-ty)
-      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-        ;; `b.f` with `b : (&mut m T)` stores through the reference: its
-        ;; references must outlive the field's own lifetime, which `m` does
-        ;; not bound (#8584).
-        [(ast.AstType.MutRef lifetime referent)
-          (tc-ensure-reference-lifetimes-can-store-at
-            env
-            (tc-type-collect-reference-lifetimes value-ty)
-            (tc-store-place-reference-target ctx lifetime referent)
-            label)]
-        [_
-          (tc-ensure-reference-value-can-store-in-place
-            ctx
-            env
-            receiver
-            value-ty
-            label)])]))
+  (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+    ;; `b.f` with `b : (&mut m T)` stores through the reference: its
+    ;; references must outlive the field's own lifetime, which `m` does
+    ;; not bound (#8584).
+    [(ast.AstType.MutRef lifetime referent)
+      (tc-ensure-reference-lifetimes-can-store-at
+        env
+        (tc-type-collect-reference-lifetimes value-ty)
+        (tc-store-place-reference-target ctx lifetime referent)
+        label)]
+    [_
+      (tc-ensure-reference-value-can-store-in-place
+        ctx
+        env
+        receiver
+        value-ty
+        label)]))
 
 ;; Forms `place` and moves the value occurrence into it.
 (define (tc-selected-place-assign
@@ -57571,22 +57625,9 @@
                     ;; noncontextual retry; its failed child is never selected.
                     (tc-selected-unrepresented (tc-expr ctx env expr) next)])])]))]))
 
-(define (tc-expr-list-with-expected-elements
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
-  [elem-ty : ast.AstType]) : ResultTcType
-  (tc-expr-list-with-expected-elements-at
-    ctx
-    env
-    (& exprs)
-    0
-    (tc-global-shared-view elem-ty)
-    elem-ty))
-
 ;; Checks each element against ELEM-TY. The result is the element type of the
 ;; literal: ELEM-TY joined with every element's regions (`tc-type-join-regions`).
-(define (tc-expr-list-with-expected-elements-at
+(define (tc-array-literal-elements
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
@@ -57609,7 +57650,7 @@
             (tc-global-shared-view got)
             (tc-global-shared-view elem-ty)
             "typecheck: array elements must have same type"))]
-      (tc-expr-list-with-expected-elements-at
+      (tc-array-literal-elements
         ctx
         env
         exprs
@@ -57617,24 +57658,58 @@
         elem-ty
         (tc-type-join-regions env joined (& got))))))
 
-(define (tc-expr-array-with-expected-or-actual
+(define (tc-array-literal-type
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
-  [elem-ty : ast.AstType]
-  [expected-len : i64]) : ResultTcType
-  (if (= (tc-expr-list-len (tc-global-shared-view exprs)) expected-len)
-    (let
-      [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
-      [joined-elem
-        (try
-          (tc-expr-list-with-expected-elements
-            ctx
-            env
-            exprs
-            (tc-global-shared-view elem-ty)))]
-      (Ok (ast.ast-ty-array (& joined-elem) expected-len)))
-    (tc-expr ctx env (Array exprs))))
+  [items : (& items ast.AstExprList)]
+  [expected : ast.AstMaybeType]
+  [dynamic? : bool]) : ResultTcType
+  (let
+    [_ (try (tc-aggregate-items-storable ctx env items))]
+    [context : ast.AstMaybeType
+      (match expected
+        [(ast.AstMaybeType.Some want)
+          (match (tc-type-strip-region
+            (if dynamic?
+              (tc-resolve-type ctx want)
+              want))
+            [(ast.AstType.Array elem size)
+              (if (and (not dynamic?) (= size items.len))
+                (ast.AstMaybeType.Some (ast.ty-node-get elem))
+                ast.AstMaybeType.No)]
+            [(ast.AstType.DynArray elem)
+              (if dynamic?
+                (ast.AstMaybeType.Some
+                  (tc-resolve-type ctx (tc-context-type-get ctx elem)))
+                ast.AstMaybeType.No)]
+            [_ ast.AstMaybeType.No])]
+        [_ ast.AstMaybeType.No])]
+    [start : i64
+      (match (& context)
+        [(ast.AstMaybeType.Some _) 0]
+        [_ 1])]
+    [elem
+      (try
+        (match context
+          [(ast.AstMaybeType.Some ty) (ResultTcType.Ok ty)]
+          [_
+            (if (= items.len 0)
+              (ResultTcType.Err
+                (if dynamic?
+                  "typecheck: cannot infer element type of empty dynamic array literal"
+                  "typecheck: cannot infer type of empty array"))
+              (tc-expr-id ctx env (ast.ast-expr-list-get items 0 0)))]))]
+    [_
+      (try
+        (if dynamic?
+          (tc-dyn-array-literal-element-supported env (clone elem))
+          ResultTcUnit.Ok))]
+    [joined
+      (try (tc-array-literal-elements ctx env items start (clone elem) elem))]
+    (ResultTcType.Ok
+      (if dynamic?
+        (tc-tag-active-region env (ast.ast-ty-dyn-array (& joined)))
+        (ast.ast-ty-array (& joined) items.len)))))
 
 (define (tc-dyn-array-literal-element-supported
   [env : TcTypeEnv]
@@ -57645,64 +57720,6 @@
       (tc-kind-message
         (TypeMismatch)
         "typecheck: dynamic array literal element type is not supported"))))
-
-(define (tc-expr-dyn-array-literal-with-elem
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
-  [elem-ty : ast.AstType]) : ResultTcType
-  (let
-    [resolved-elem : ast.AstType (tc-resolve-type ctx elem-ty)]
-    [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
-    [_
-      (try
-        (tc-dyn-array-literal-element-supported
-          env
-          (tc-global-shared-view resolved-elem)))]
-    [joined-elem
-      (try
-        (tc-expr-list-with-expected-elements
-          ctx
-          env
-          exprs
-          (tc-global-shared-view resolved-elem)))]
-    (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& joined-elem))))))
-
-(define (tc-expr-dyn-array-literal-infer
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]) : ResultTcType
-  (let
-    [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
-    (if (ast.ast-expr-list-empty? (& exprs))
-      (Err
-        "typecheck: cannot infer element type of empty dynamic array literal")
-      (let
-        [first : i64 (ast.ast-expr-list-get (& exprs) 0 0)]
-        [rest : ast.AstExprList (ast.ast-expr-list-tail-from-ref (& exprs) 1)]
-        [first-ty (try (tc-expr-id ctx env first))]
-        [_
-          (try
-            (tc-dyn-array-literal-element-supported
-              env
-              (tc-global-shared-view first-ty)))]
-        [elem-ty
-          (try (tc-expr-list-with-expected-elements ctx env rest first-ty))]
-        (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem-ty))))))))
-
-(define (tc-expr-dyn-array-literal-with-expected-or-actual
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
-  [expected : ast.AstType]) : ResultTcType
-  (match (tc-type-strip-region (tc-resolve-type ctx expected))
-    [(DynArray elem-ty)
-      (tc-expr-dyn-array-literal-with-elem
-        ctx
-        env
-        exprs
-        (tc-context-type-get ctx elem-ty))]
-    [_ (tc-expr-dyn-array-literal-infer ctx env exprs)]))
 
 (define (tc-expr-if-with-expected-or-actual
   [ctx : TcContext]
@@ -57987,25 +58004,7 @@
 ;; Flow each tuple element into its expected element type so contextual
 ;; literals (e.g. f32 floats) resolve against the tuple's declared element
 ;; type instead of their default. Returns the resolved element types.
-(define (tc-check-tuple-elements-with-expected
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
-  [types : ast.AstTypeList]) : ResultTcTypeList
-  (let
-    [out : ast.AstTypeList (ast.ast-type-list-new)]
-    [_
-      (try
-        (tc-check-tuple-elements-with-expected-into-at
-          ctx
-          env
-          (& exprs)
-          (& types)
-          0
-          (&mut out)))]
-    (Ok out)))
-
-(define (tc-check-tuple-elements-with-expected-into-at
+(define (tc-tuple-contextual-elements
   [ctx : TcContext]
   [env : TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
@@ -58013,62 +58012,64 @@
   [index : i64]
   [out : (&mut out ast.AstTypeList)]) : ResultTcUnit
   (if (>= index exprs.len)
-    (if (>= index (ast.ast-type-list-len types))
-      Ok
-      (Err
-        (tc-kind-message
-          (TypeMismatch)
-          "typecheck: tuple element type mismatch")))
-    (if (>= index (ast.ast-type-list-len types))
-      (Err
-        (tc-kind-message
-          (TypeMismatch)
-          "typecheck: tuple element type mismatch"))
-      (let
-        [expr-id : i64 (ast.ast-expr-list-get exprs index 0)]
-        [want : ast.AstType
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        [got
-          (try
-            (tc-expr-with-expected-or-actual-id
-              ctx
-              env
-              expr-id
-              (tc-global-shared-view want)))]
-        [_
-          (try
-            (tc-expect
-              (tc-global-shared-view got)
-              (tc-global-shared-view want)
-              "typecheck: tuple element type mismatch"))]
-        (ast.ast-type-list-push
-          out
-          (ast.ast-node-pool-reader-type-push
-            (& (tc-contextual-result-type want got))))
-        (tc-check-tuple-elements-with-expected-into-at
-          ctx
-          env
-          exprs
-          types
-          (+ index 1)
-          out)))))
+    ResultTcUnit.Ok
+    (let
+      [want : ast.AstType
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      [got
+        (try
+          (tc-expr-with-expected-or-actual-id
+            ctx
+            env
+            (ast.ast-expr-list-get exprs index 0)
+            (clone want)))]
+      [_
+        (try
+          (tc-expect
+            (clone got)
+            (clone want)
+            "typecheck: tuple element type mismatch"))]
+      (ast.ast-type-list-push
+        out
+        (ast.ast-node-pool-reader-type-push
+          (& (tc-contextual-result-type want got))))
+      (tc-tuple-contextual-elements ctx env exprs types (+ index 1) out))))
 
-(define (tc-expr-tuple-with-expected-or-actual
+(define (tc-tuple-literal-type
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [exprs : ast.AstExprList]
-  [expected-elems : ast.AstTypeList]) : ResultTcType
-  (if (=
-    (tc-expr-list-len (tc-global-shared-view exprs))
-    (tc-type-list-len expected-elems))
-    (let
-      [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
-      [result-elems : ast.AstTypeList
-        (try
-          (tc-check-tuple-elements-with-expected ctx env exprs expected-elems))]
-      (Ok (ast.ast-ty-tuple result-elems)))
-    (tc-expr ctx env (Tuple exprs))))
+  [items : (& items ast.AstExprList)]
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (let
+    [_ (try (tc-aggregate-items-storable ctx env items))]
+    [out : ast.AstTypeList (ast.ast-type-list-new)]
+    (match expected
+      [(ast.AstMaybeType.Some want)
+        (match (tc-type-strip-region want)
+          [(ast.AstType.Tuple elems)
+            (let
+              [slots : ast.AstTypeList
+                (ast.ast-type-list-box-shared-view elems)]
+              (when
+                (= slots.len items.len)
+                (match (tc-tuple-contextual-elements
+                  ctx
+                  env
+                  items
+                  (& slots)
+                  0
+                  (&mut out))
+                  [(ResultTcUnit.Err message)
+                    (return (ResultTcType.Err message))]
+                  [(ResultTcUnit.Ok)
+                    (return (ResultTcType.Ok (ast.ast-ty-tuple out)))])))]
+          [_ unit])]
+      [_ unit])
+    (match (tc-expr-list-types-into-at ctx env items 0 (&mut out))
+      [(ResultTcUnit.Err message) (ResultTcType.Err message)]
+      [(ResultTcUnit.Ok)
+        (ResultTcType.Ok (tc-tag-active-region env (ast.ast-ty-tuple out)))])))
 
 ;; Flow the expected type into a begin's final expression so a contextual
 ;; literal in tail position resolves against it; non-final expressions keep
@@ -58740,27 +58741,21 @@
           (let
             [scrut-ty (try (tc-expr-id ctx env scrutinee-box))]
             (tc-match-expr ctx env scrut-ty arms (Some expected)))])]
-    [(Array exprs)
-      (match (tc-type-strip-region expected)
-        [(Array elem-ty len)
-          (tc-expr-array-with-expected-or-actual
-            ctx
-            env
-            exprs
-            (ast.ty-node-get elem-ty)
-            len)]
-        [_ (tc-expr ctx env expr)])]
-    [(DynArray exprs)
-      (tc-expr-dyn-array-literal-with-expected-or-actual ctx env exprs expected)]
-    [(Tuple exprs)
-      (match (tc-type-strip-region expected)
-        [(Tuple expected-elems)
-          (tc-expr-tuple-with-expected-or-actual
-            ctx
-            env
-            exprs
-            (ast.ast-type-list-box-shared-view expected-elems))]
-        [_ (tc-expr ctx env expr)])]
+    [(or (Array _) (DynArray _) (Tuple _) (Box _))
+      (tc-selected-aggregate-query
+        ctx
+        env
+        expr
+        (ast.AstMaybeType.Some expected))]
+    [(or (BoxGet receiver) (BoxTake receiver))
+      (tc-deref-value-type
+        ctx
+        env
+        (tc-context-expr-get ctx receiver)
+        (match (& expr)
+          [(BoxTake _) true]
+          [_ false])
+        (ast.AstMaybeType.Some expected))]
     [(Begin exprs) (tc-begin-list-with-expected ctx env exprs expected)]
     [(Unsafe exprs)
       (tc-unsafe-begin-list-scoped ctx env exprs (Some expected) No)]
@@ -58813,18 +58808,6 @@
             true
             TcBorrowSource.No)
           (tc-expr ctx env expr)))]
-    [(Box inner-box)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (tc-box-expr-with-expected-or-actual ctx env inner expected))]
-    [(BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (tc-box-get-expr-with-expected-or-actual ctx env inner expected))]
-    [(BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (tc-deref-expr-with-expected-or-actual ctx env inner expected))]
     [(Comptime inner-box)
       (let
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
@@ -70489,7 +70472,7 @@
 ;; their usual save/restore and call the same unscoped implementation above.
 ;; --- `replace!` (SPEC 5.10.1, #8449) ------------------------------------------
 ;;
-;; Mirrors `tc-replace-type`: the place is formed first, then the replacement is
+;; The place is formed first, then the replacement is
 ;; inferred once against the place's value type; the occurrence replaces the
 ;; formed place's value and yields the old one. That value is the place's own,
 ;; never a view of a reference on its path: `replace!` writes the place
@@ -70509,7 +70492,7 @@
     bind)
   (let
     [place : ast.AstExpr (tc-context-expr-get ctx place-id)]
-    ;; As `tc-replace-type`: a raw pointer never becomes a safe mutable place.
+    ;; A raw pointer never becomes a safe mutable place.
     (match (tc-raw-deref-place-pointer-type
       ctx
       env
@@ -70550,16 +70533,21 @@
                     (cdiag.CompilerTypecheckKind.ResourceOwnership)
                     "typecheck: replace! does not support cleanup-owning places")
                   sink)
-                (match (tc-selected-view-receiver
-                  ctx
-                  env
-                  (tc-global-shared-view source)
-                  (tc-infer-selected-place-id
+                (match (if (tc-selected-query? (& sink))
+                  (TcSelectedPlaceResult.Ok
+                    ast.AstType.Unit
+                    TcSelectedPlace.Unrepresented
+                    sink)
+                  (tc-selected-view-receiver
                     ctx
                     env
-                    place-id
                     (tc-global-shared-view source)
-                    sink))
+                    (tc-infer-selected-place-id
+                      ctx
+                      env
+                      place-id
+                      (tc-global-shared-view source)
+                      sink)))
                   [(TcSelectedPlaceResult.Err message next)
                     (TcSelectedResult.Err message next)]
                   [(TcSelectedPlaceResult.Ok _ formed next)
@@ -70597,8 +70585,8 @@
                           TcSelectedSink.Query)])]))]))])))
 
 ;; The replacement of `replace!` into the formed place of own type `own-ty`
-;; (`place-ty` is its typing): inferred against that type, checked as
-;; `tc-replace-type` checks it, then moved in. A replacement of another graph
+;; (`place-ty` is its typing): inferred against that type, validated, and
+;; moved in. A replacement of another graph
 ;; type (a view read through a reference) is not the place's value and keeps
 ;; the unrepresented route.
 (define (tc-infer-selected-replace-value
@@ -70616,47 +70604,50 @@
     lease
     intern
     bind)
-  (match (tc-infer-selected-id
-    ctx
-    env
-    replacement-id
-    (ast.AstMaybeType.Some (clone own-ty))
-    (ownership.ownership-source-copy (& source))
-    sink)
+  (match (if (tc-selected-query? (& sink))
+    (tc-selected-unrepresented
+      (tc-expr-with-expected-or-actual-id ctx env replacement-id (clone own-ty))
+      sink)
+    (tc-infer-selected-id
+      ctx
+      env
+      replacement-id
+      (ast.AstMaybeType.Some (clone own-ty))
+      (ownership.ownership-source-copy (& source))
+      sink))
     [(TcSelectedResult.Err message after) (TcSelectedResult.Err message after)]
     [(TcSelectedResult.Ok replacement-ty value after)
-      (let
-        [moved-in? : bool
-          (or
-            (match (& replacement-ty)
-              [(ast.AstType.Never) true]
-              [_ false])
-            ;; As the graph sees types: a Copy value read through a reference
-            ;; is a plain value (`tc-selected-canonical-type`).
-            (tc-selected-same-type?
-              (tc-selected-canonical-type ctx (clone own-ty))
-              (tc-selected-canonical-type ctx (clone replacement-ty))))]
-        (match (tc-replace-replacement-ok
-          ctx
-          env
-          place
-          place-ty
-          replacement-ty
-          replacement-id)
-          [(ResultTcUnit.Err message) (TcSelectedResult.Err message after)]
-          [(ResultTcUnit.Ok)
-            (if moved-in?
-              (tc-selected-place-assign
-                (ResultTcType.Ok own-ty)
-                true
-                syntax
-                source
-                formed
-                value
-                after)
-              (tc-selected-unrepresented (ResultTcType.Ok own-ty) after))]))]))
+      (match (tc-replace-replacement-ok
+        ctx
+        env
+        place
+        place-ty
+        (clone replacement-ty)
+        replacement-id)
+        [(ResultTcUnit.Err message) (TcSelectedResult.Err message after)]
+        [(ResultTcUnit.Ok)
+          (if (and
+            (not (tc-selected-query? (& after)))
+            (or
+              (match (& replacement-ty)
+                [(ast.AstType.Never) true]
+                [_ false])
+              ;; As the graph sees types: a Copy value read through a reference
+              ;; is a plain value (`tc-selected-canonical-type`).
+              (tc-selected-same-type?
+                (tc-selected-canonical-type ctx (clone own-ty))
+                (tc-selected-canonical-type ctx (clone replacement-ty)))))
+            (tc-selected-place-assign
+              (ResultTcType.Ok own-ty)
+              true
+              syntax
+              source
+              formed
+              value
+              after)
+            (tc-selected-unrepresented (ResultTcType.Ok own-ty) after))])]))
 
-;; The replacement checks of `tc-replace-type` after its inference.
+;; Validate the replacement after inference.
 (define (tc-replace-replacement-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -78161,18 +78152,6 @@
       owners
       bound)))
 
-(define (tc-expr-list-any-result-uses-cleanup-owner?
-  [expr-bases : i64]
-  [exprs : (& ast.AstExprList)]
-  [owners : TcStringList]
-  [bound : TcStringList]) : bool
-  (tc-expr-list-any-result-uses-cleanup-owner-at?
-    expr-bases
-    (& exprs)
-    0
-    owners
-    bound))
-
 (define (tc-expr-list-any-result-uses-cleanup-owner-at?
   [expr-bases : i64]
   [exprs : (& exprs ast.AstExprList)]
@@ -78423,21 +78402,6 @@
           owners
           Nil)])))
 
-(define (tc-expr-list-any-result-uses-active-cleanup-owner?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : (& ast.AstExprList)]) : bool
-  (let
-    [owners : TcStringList (tc-active-cleanup-owners env)]
-    (match (& owners)
-      [(Nil) false]
-      [_
-        (tc-expr-list-any-result-uses-cleanup-owner?
-          (tc-context-expr-bases ctx)
-          exprs
-          owners
-          Nil)])))
-
 ;; An ordinary `let` may own a cleanup-owning value under the move checker's
 ;; discharge obligation (#6947), but it cannot take a value an active `with`
 ;; owner still cleans.
@@ -78474,16 +78438,26 @@
         "typecheck: cannot store cleanup-required resource in ordinary aggregate"))
     Ok))
 
-(define (tc-ensure-cleanup-resource-not-stored-list
+(define (tc-aggregate-items-storable
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [exprs : (& ast.AstExprList)]) : ResultTcUnit
-  (if (tc-expr-list-any-result-uses-active-cleanup-owner? ctx env exprs)
-    (Err
-      (tc-kind-message
-        (ResourceOwnership)
-        "typecheck: cannot store cleanup-required resource in ordinary aggregate"))
-    Ok))
+  [items : (& items ast.AstExprList)]) : ResultTcUnit
+  (let
+    [owners : TcStringList (tc-active-cleanup-owners env)]
+    (match (& owners)
+      [(Nil) ResultTcUnit.Ok]
+      [_
+        (if (tc-expr-list-any-result-uses-cleanup-owner-at?
+          (tc-context-expr-bases ctx)
+          items
+          0
+          owners
+          Nil)
+          (Err
+            (tc-kind-message
+              (ResourceOwnership)
+              "typecheck: cannot store cleanup-required resource in ordinary aggregate"))
+          ResultTcUnit.Ok)])))
 
 (define (tc-ensure-cleanup-resource-not-assigned
   [ctx : TcContext]
@@ -89424,95 +89398,95 @@
       [_ (try (tc-syscall-args ctx env args))]
       (Ok (I64)))))
 
-(define (tc-box-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
-  (let
-    [_
-      (try
-        (tc-ensure-cleanup-resource-not-stored-expr
-          ctx
-          env
-          (tc-global-shared-view inner)))]
-    [inner-ty (try (tc-expr ctx env inner))]
-    (Ok (tc-tag-active-region env (ast.ast-ty-box (& inner-ty))))))
-
-(define (tc-box-expr-with-expected-or-actual
+(define (tc-box-type
   [ctx : TcContext]
   [env : TcTypeEnv]
   [inner : ast.AstExpr]
-  [expected : ast.AstType]) : ResultTcType
-  (match (tc-type-strip-region (tc-resolve-type ctx expected))
-    [(Box expected-inner)
-      (let
-        [expected-inner-ty : ast.AstType (ast.ty-node-get expected-inner)]
-        [_
-          (try
-            (tc-ensure-cleanup-resource-not-stored-expr
-              ctx
-              env
-              (tc-global-shared-view inner)))]
-        [inner-ty
-          (try
-            (tc-expr-with-expected-or-actual
-              ctx
-              env
-              inner
-              (tc-global-shared-view expected-inner-ty)))]
-        ;; The checked element type, not the expected one: an unchecked
-        ;; element keeps its own type for the caller's check to reject.
-        (Ok (tc-tag-active-region env (ast.ast-ty-box (& inner-ty)))))]
-    [_ (tc-box-expr ctx env inner)]))
-
-(define (tc-box-get-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [box-expr : ast.AstExpr]) : ResultTcType
+  [expected : ast.AstMaybeType]) : ResultTcType
   (let
-    [box-ty : ast.AstType (try (tc-expr ctx env box-expr))]
-    (match (tc-type-strip-region
-      (tc-resolve-type ctx (tc-global-shared-view box-ty)))
-      [(Box inner-ty)
-        (tc-opaque-by-value-result
-          ctx
-          (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))
-          "cannot read out of a box the")]
-      [_
-        (Err
-          (tc-kind-message
-            (TypeMismatch)
-            "typecheck: deref requires Box or reference type"))])))
-
-(define (tc-box-get-expr-with-expected-or-actual
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [box-expr : ast.AstExpr]
-  [expected : ast.AstType]) : ResultTcType
-  (let
-    [box-ty
+    [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env (clone inner)))]
+    [inner-ty
       (try
-        (tc-expr-with-expected-or-actual
-          ctx
-          env
-          box-expr
-          (ast.ast-ty-box (& expected))))]
-    (match (tc-type-strip-region
-      (tc-resolve-type ctx (tc-global-shared-view box-ty)))
-      [(Box inner-ty)
-        (let
-          [projected : ast.AstType
-            (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))]
-          (tc-opaque-by-value-result
-            ctx
-            (if (tc-type-compatible?
-              (tc-global-shared-view expected)
-              (tc-global-shared-view projected))
-              (tc-contextual-result-type expected projected)
-              projected)
-            "cannot read out of a box the"))]
-      [_
-        (Err
-          (tc-kind-message
-            (TypeMismatch)
-            "typecheck: deref requires Box or reference type"))])))
+        (match expected
+          [(ast.AstMaybeType.Some want)
+            (match (tc-type-strip-region (tc-resolve-type ctx want))
+              [(ast.AstType.Box elem)
+                (tc-expr-with-expected-or-actual
+                  ctx
+                  env
+                  inner
+                  (ast.ty-node-get elem))]
+              [_ (tc-expr ctx env inner)])]
+          [_ (tc-expr ctx env inner)]))]
+    (ResultTcType.Ok (tc-tag-active-region env (ast.ast-ty-box (& inner-ty))))))
+
+(define (tc-deref-value-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [receiver : ast.AstExpr]
+  [take? : bool]
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (let
+    [actual : ResultTcType
+      (if (or
+        take?
+        (match (& expected)
+          [(ast.AstMaybeType.No) true]
+          [_ false]))
+        (tc-expr ctx env (clone receiver))
+        (ResultTcType.Ok ast.AstType.Never))]
+    [box-context? : bool
+      (match (& expected)
+        [(ast.AstMaybeType.No) false]
+        [_
+          (or
+            (not take?)
+            (match (& actual)
+              [(ResultTcType.Err _) true]
+              [(ResultTcType.Ok ty)
+                (match (tc-type-strip-region
+                  (tc-resolve-type ctx (clone (deref ty))))
+                  [(ast.AstType.Box _) true]
+                  [_ false])]))])]
+    [receiver-ty
+      (try
+        (if box-context?
+          (match (& expected)
+            [(ast.AstMaybeType.Some want)
+              (tc-expr-with-expected-or-actual
+                ctx
+                env
+                receiver
+                (ast.ast-ty-box (& want)))]
+            [_ actual])
+          actual))]
+    [projected
+      (try
+        (if (or box-context? (not take?))
+          (match (tc-type-strip-region
+            (tc-resolve-type ctx (clone receiver-ty)))
+            [(ast.AstType.Box inner)
+              (ResultTcType.Ok
+                (tc-project-from-region-container
+                  receiver-ty
+                  (ast.ty-node-get inner)))]
+            [_
+              (ResultTcType.Err
+                (tc-kind-message
+                  (TypeMismatch)
+                  "typecheck: deref requires Box or reference type"))])
+          (tc-deref-result-type ctx (TcMaybeTypeEnv.Some env) receiver-ty)))]
+    (tc-opaque-by-value-result
+      ctx
+      (match expected
+        [(ast.AstMaybeType.Some want)
+          (if (tc-type-compatible? (clone want) (clone projected))
+            (tc-contextual-result-type want projected)
+            projected)]
+        [_ projected])
+      (if (or box-context? (not take?))
+        "cannot read out of a box the"
+        "cannot dereference by value the"))))
 
 (define (tc-deref-result-type
   [ctx : TcContext]
@@ -89596,8 +89570,7 @@
 
 ;; The type a struct-field projection reads its field from. An ordinary
 ;; receiver is typed as an expression; only when that fails is the receiver
-;; tried as a raw-pointer `deref`, so ordinary projections pay nothing. The
-;; StructGet case of `tc-expr-inner` inlines the same fallback.
+;; tried as a raw-pointer `deref`, so ordinary projections pay nothing.
 (define (tc-field-receiver-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -89618,45 +89591,6 @@
         [elem (try (tc-raw-pointer-elem pointer-ty message))]
         (Ok (tc-resolve-type ctx elem)))]
     [(No) (Err message)]))
-
-(define (tc-deref-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [receiver : ast.AstExpr]) : ResultTcType
-  (let
-    [receiver-ty : ast.AstType (try (tc-expr ctx env receiver))]
-    (tc-opaque-by-value-result
-      ctx
-      (try (tc-deref-result-type ctx (TcMaybeTypeEnv.Some env) receiver-ty))
-      "cannot dereference by value the")))
-
-(define (tc-deref-expr-with-expected-or-actual
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [receiver : ast.AstExpr]
-  [expected : ast.AstType]) : ResultTcType
-  (match (tc-expr ctx env (tc-global-shared-view receiver))
-    [(Ok receiver-ty)
-      (match (tc-type-strip-region
-        (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
-        [(Box _)
-          (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]
-        [_
-          (let
-            [projected : ast.AstType
-              (try
-                (tc-deref-result-type ctx (TcMaybeTypeEnv.Some env) receiver-ty))]
-            (tc-opaque-by-value-result
-              ctx
-              (if (tc-type-compatible?
-                (tc-global-shared-view expected)
-                (tc-global-shared-view projected))
-                (tc-contextual-result-type expected projected)
-                projected)
-              "cannot dereference by value the"))])]
-    [(Err _)
-      ;; Preserve contextual inference for `(deref (box value))`.
-      (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]))
 
 (define (tc-box-set-inner-type [ctx : TcContext] [box-ty : ast.AstType]) : ResultTcType
   (match (tc-type-strip-region
@@ -90227,44 +90161,58 @@
       (tc-make-array-zero-literal-length? expr-bases len)
       (not (tc-type-contains-reference? (& elem))))))
 
-(define (tc-fixed-make-array-expr
+(define (tc-make-array-type
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [elem : ast.AstType]
-  [len : ast.AstExpr]) : ResultTcType
+  [elem-id : i64]
+  [len-id : i64]
+  [fixed? : bool]) : ResultTcType
   (let
-    [ctfe-env : ctfe_support.CtfeEnv
-      (tc-ctfe-env-for-comptime ctx (tc-global-shared-view len))]
-    (match (ctfe_support.compiler-ctfe-eval
-      (& len)
-      ctfe-env
-      (ctfe_support.ctfe-fuel-limit))
-      [(Ok value _)
-        (match value
-          [(I64 count)
-            (if (< count 0)
+    [elem : ast.AstType (tc-resolve-type ctx (tc-context-type-get ctx elem-id))]
+    [len : ast.AstExpr (tc-context-expr-get ctx len-id)]
+    (if fixed?
+      (let
+        [ctfe-env : ctfe_support.CtfeEnv
+          (tc-ctfe-env-for-comptime ctx (clone len))]
+        (match (ctfe_support.compiler-ctfe-eval
+          (& len)
+          ctfe-env
+          (ctfe_support.ctfe-fuel-limit))
+          [(Ok (I64 count) _)
+            (if (>= count 0)
+              (let
+                [_ (try (tc-make-array-element-ok ctx env (clone elem)))]
+                (tc-init-expr ctx env (ast.ast-ty-array (& elem) count)))
               (Err
                 (tc-kind-message
                   (ComptimeConstraint)
-                  "typecheck: make-array length must be a non-negative compile-time integer"))
-              (let
-                [_
-                  (try
-                    (tc-make-array-element-ok
-                      ctx
-                      env
-                      (tc-global-shared-view elem)))]
-                (tc-init-expr ctx env (ast.ast-ty-array (& elem) count))))]
+                  "typecheck: make-array length must be a non-negative compile-time integer")))]
           [_
             (Err
               (tc-kind-message
                 (ComptimeConstraint)
-                "typecheck: make-array length must be a non-negative compile-time integer"))])]
-      [(Err _)
-        (Err
-          (tc-kind-message
-            (ComptimeConstraint)
-            "typecheck: make-array length must be a non-negative compile-time integer"))])))
+                "typecheck: make-array length must be a non-negative compile-time integer"))]))
+      (let
+        [len-ty (try (tc-expr-with-expected-or-actual-id ctx env len-id (I64)))]
+        (cond
+          [(not (tc-integer-type? len-ty))
+            (Err "typecheck: __tl_make-array length must be integer")]
+          [(not (tc-dyn-array-elem-supported? env (clone elem)))
+            (Err
+              (tc-kind-message
+                (TypeMismatch)
+                "typecheck: __tl_make-array element type is not supported"))]
+          [else
+            (let
+              [_
+                (try
+                  (if (tc-make-array-requires-element-init?
+                    (tc-context-expr-segment-bases ctx)
+                    (clone elem)
+                    len)
+                    (tc-make-array-element-ok ctx env (clone elem))
+                    ResultTcUnit.Ok))]
+              (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem)))))])))))
 
 ;; An unquote recursively enters ordinary typechecking, which may install a
 ;; different node-pool context during macro expansion. Re-project every child
@@ -91049,7 +90997,7 @@
                 (tc-context-expr-bases ctx)
                 receiver-box)))]
         (if mutable
-          (tc-struct-mutable-field-type-id ctx env receiver-ty field)
+          (tc-struct-mutable-field-type-id ctx env (clone receiver-ty) field)
           (tc-struct-set-field-type-id ctx receiver-ty field)))]
     [(ast.AstExpr.TupleRef receiver-box index)
       (let
@@ -91123,96 +91071,6 @@
         [(ResultTcType.Err _) (tc-expr-id ctx env receiver-id)])
       (tc-expr-id ctx env receiver-id))))
 
-(define (tc-replace-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [place : ast.AstExpr]
-  [replacement-id : i64]) : ResultTcType
-  (match (tc-raw-deref-place-pointer-type ctx env (tc-global-shared-view place))
-    [(Some _)
-      (Err
-        (tc-kind-message
-          (Place)
-          "typecheck: replace! target cannot be reached through a raw pointer; use ptr-read and ptr-write!"))]
-    [(No) (tc-replace-storage-place-type ctx env place replacement-id)]))
-
-(define (tc-replace-storage-place-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [place : ast.AstExpr]
-  [replacement-id : i64]) : ResultTcType
-  (match (tc-store-place-lifetime ctx env (tc-global-shared-view place))
-    [(Ok _)
-      (if (tc-active-cleanup-owner-place? ctx env (tc-global-shared-view place))
-        (Err
-          (tc-kind-message
-            (ResourceOwnership)
-            "typecheck: replace! cannot replace an active cleanup owner"))
-        (let
-          [place-ty
-            (try
-              (tc-replace-place-value-type-with-access
-                ctx
-                env
-                true
-                (tc-global-shared-view place)))]
-          (if (tc-cleanup-owning-aggregate-type?
-            ctx
-            (tc-global-shared-view place-ty))
-            (Err
-              (tc-kind-message
-                (ResourceOwnership)
-                "typecheck: replace! does not support cleanup-owning places"))
-            (let
-              [replacement : ast.AstExpr
-                (tc-context-expr-get ctx replacement-id)]
-              [replacement-ty
-                (try
-                  (tc-expr-with-expected-or-actual-id
-                    ctx
-                    env
-                    replacement-id
-                    (tc-global-shared-view place-ty)))]
-              [_
-                (try
-                  (tc-expect-in-context
-                    ctx
-                    env
-                    (tc-global-shared-view replacement-ty)
-                    (tc-global-shared-view place-ty)
-                    "typecheck: replace! replacement type mismatch"))]
-              (let
-                [_
-                  (try
-                    (tc-ensure-cleanup-resource-not-stored-expr
-                      ctx
-                      env
-                      replacement))]
-                (let
-                  [_
-                    (tc-arena-store-note-tagged!
-                      ctx
-                      (tc-arena-store-node ctx replacement-id)
-                      (& replacement-ty))]
-                  [_
-                    (try
-                      (tc-ensure-region-value-can-flow-into
-                        env
-                        (tc-global-shared-view place-ty)
-                        (tc-global-shared-view replacement-ty)
-                        "replace! destination"))]
-                  (let
-                    [_
-                      (try
-                        (tc-ensure-reference-value-can-store-in-place
-                          ctx
-                          env
-                          place
-                          replacement-ty
-                          "replace! destination"))]
-                    (Ok place-ty))))))))]
-    [(Err message) (Err (tc-replace-storage-place-error message))]))
-
 ;; A `replace!` target that is no storage place, or that is reached only
 ;; through a shared reference (E0215). A target whose typing reports the `&mut`
 ;; borrow rule's direct diagnostic keeps it, including a plain source location.
@@ -91250,6 +91108,90 @@
           (BorrowViolation)
           "typecheck: __tl_array-push! requires mutable dynamic array access"))]
     [_ (Err "typecheck: __tl_array-push! requires dynamic array type")]))
+
+(define (tc-array-take-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [array-box : i64]
+  [live-box : i64]
+  [index-box : i64]) : ResultTcType
+  (let
+    [array-ty (try (tc-expr-id ctx env array-box))]
+    [receiver (try (tc-array-set-receiver ctx array-ty))]
+    (match receiver
+      [(TcArrayReceiver container-ty elem-ty)
+        (match (tc-type-strip-region (tc-resolve-type ctx container-ty))
+          [(DynArray _)
+            (let
+              [live-ty (try (tc-expr-id ctx env live-box))]
+              [live-receiver (try (tc-array-set-receiver ctx live-ty))]
+              (match live-receiver
+                [(TcArrayReceiver live-container live-elem)
+                  (match (tc-type-strip-region
+                    (tc-resolve-type ctx live-container))
+                    [(DynArray _)
+                      (if (tc-type-eq
+                        (tc-type-strip-region (tc-resolve-type ctx live-elem))
+                        (Bool))
+                        (let
+                          [index-ty
+                            (try
+                              (tc-expr-with-expected-or-actual-id
+                                ctx
+                                env
+                                index-box
+                                (I64)))]
+                          (if (tc-integer-type? index-ty)
+                            (Ok
+                              (ast.ast-ty-tuple
+                                (ast.ast-type-cons
+                                  (& (Bool))
+                                  (&
+                                    (ast.ast-type-cons
+                                      (& elem-ty)
+                                      (& (ast.ast-type-list-new)))))))
+                            (Err
+                              "typecheck: __tl_array-take! index must be integer")))
+                        (Err
+                          "typecheck: __tl_array-take! liveness bitmap must contain bool"))]
+                    [_
+                      (Err
+                        "typecheck: __tl_array-take! liveness bitmap must be dynamic array")])]))]
+          [_
+            (Err
+              (tc-kind-message
+                (TypeMismatch)
+                "typecheck: __tl_array-take! source must be dynamic array"))])])))
+
+(define (tc-array-push-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [array-box : i64]
+  [value-box : i64]) : ResultTcType
+  (let
+    [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
+    [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
+    [array-ty (try (tc-expr-id ctx env array-box))]
+    [receiver (try (tc-array-push-receiver ctx array-ty))]
+    (match receiver
+      [(TcArrayReceiver container-ty elem-ty)
+        (let
+          [grown-array : ast.AstType (clone container-ty)]
+          [grown-elem : ast.AstType (clone elem-ty)]
+          [pushed
+            (try
+              (tc-array-mutation-value
+                ctx
+                env
+                array
+                container-ty
+                elem-ty
+                value
+                (tc-kind-message
+                  (TypeMismatch)
+                  "typecheck: __tl_array-push! value type mismatch")))]
+          [_ (try (tc-array-growth-ok env grown-array grown-elem))]
+          (Ok pushed))])))
 
 (define (tc-array-mutation-value
   [ctx : TcContext]
@@ -91408,88 +91350,6 @@
             (BorrowViolation)
             "typecheck: set! struct field requires mutable struct access"))]
       [_ (Err "typecheck: set! struct field requires struct")])))
-
-(define (tc-struct-field-mutation-value-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [receiver : ast.AstExpr]
-  [field-id : i64]
-  [value : ast.AstExpr]) : ResultTcType
-  (let
-    [_ (try (tc-store-place-lifetime ctx env (tc-global-shared-view receiver)))]
-    (let
-      [receiver-ty
-        (try
-          (if (ast.ast-tuple-set-field-id? field-id)
-            (tc-expr ctx env (tc-global-shared-view receiver))
-            (tc-field-receiver-type ctx env (tc-global-shared-view receiver))))]
-      [field-ty : ast.AstType
-        (try
-          (tc-struct-mutable-field-type-id
-            ctx
-            env
-            (tc-global-shared-view receiver-ty)
-            field-id))]
-      [value-ty
-        (try
-          (tc-expr-with-expected-or-actual
-            ctx
-            env
-            (tc-global-shared-view value)
-            (tc-global-shared-view field-ty)))]
-      [_
-        (try
-          (tc-expect-noting-shadow
-            env
-            (& value-ty)
-            (& field-ty)
-            (if (ast.ast-tuple-set-field-id? field-id)
-              (tc-kind-message
-                (TypeMismatch)
-                "typecheck: tuple element assignment type mismatch")
-              (tc-kind-message
-                (TypeMismatch)
-                "typecheck: struct field assignment type mismatch"))))]
-      (let
-        [_
-          (tc-arena-store-note-tagged!
-            ctx
-            (tc-arena-store-expr-node ctx (& value))
-            (& value-ty))]
-        [_ (try (tc-ensure-cleanup-resource-not-stored-expr ctx env value))]
-        (let
-          [_
-            (try
-              (tc-ensure-region-value-can-flow-into
-                env
-                field-ty
-                (tc-global-shared-view value-ty)
-                (if (ast.ast-tuple-set-field-id? field-id)
-                  "tuple element"
-                  "struct field")))]
-          (let
-            [context : String
-              (if (ast.ast-tuple-set-field-id? field-id)
-                "tuple element"
-                "struct field")]
-            [_
-              (try
-                (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-                  ;; `b.f` with `b : (&mut m T)` stores through the reference.
-                  [(MutRef lifetime referent)
-                    (tc-ensure-reference-lifetimes-can-store-at
-                      env
-                      (tc-type-collect-reference-lifetimes value-ty)
-                      (tc-store-place-reference-target ctx lifetime referent)
-                      context)]
-                  [_
-                    (tc-ensure-reference-value-can-store-in-place
-                      ctx
-                      env
-                      receiver
-                      value-ty
-                      context)]))]
-            (Ok (Unit))))))))
 
 ;; A name whose type holds an opaque aggregate by value, or a function whose
 ;; parameters or result do, is unusable outside its module family (#6999).
@@ -92362,202 +92222,20 @@
           (let
             [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
             (tc-lambda-expr ctx env params maybe-ret body))])]
-    [(Tuple exprs)
-      (let
-        [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
-        [tys (try (tc-expr-list-types ctx env exprs))]
-        (Ok (tc-tag-active-region env (ast.ast-ty-tuple tys))))]
-    [(TupleRef tuple-box index)
-      (tc-selected-project
-        (tc-infer-selected-tuple-ref
-          ctx
-          env
-          tuple-box
-          index
-          typed.TypedSyntax.Generated
-          (ownership.OwnershipSource
-            (ownership.ownership-path-none)
-            0
-            0
-            (ownership.ownership-expansion-none))
-          TcSelectedSink.Query))]
-    [(Array exprs)
-      (let
-        [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
-        (if (ast.ast-expr-list-empty? (& exprs))
-          (Err "typecheck: cannot infer type of empty array")
-          (let
-            [first : i64 (ast.ast-expr-list-get (& exprs) 0 0)]
-            [rest : ast.AstExprList
-              (ast.ast-expr-list-tail-from-ref (& exprs) 1)]
-            [first-ty (try (tc-expr-id ctx env first))]
-            [elem-ty
-              (try (tc-expr-list-with-expected-elements ctx env rest first-ty))]
-            (Ok (ast.ast-ty-array (& elem-ty) (tc-expr-list-len exprs))))))]
-    [(DynArray exprs) (tc-expr-dyn-array-literal-infer ctx env exprs)]
-    [(FixedMakeArray elem-ty-id len-box)
-      (tc-fixed-make-array-expr
+    [(StructGet receiver field) (tc-struct-read-type ctx env receiver field)]
+    [(or (Tuple _) (TupleRef _ _) (Array _) (DynArray _) (FixedMakeArray _ _)
+         (MakeArray _ _) (ArrayRef _ _) (ArraySet _ _ _) (ArrayTake _ _ _)
+         (Replace _ _) (ArrayPush _ _) (StructSet _ _ _) (Box _) (BoxSet _ _))
+      (tc-selected-aggregate-query ctx env expr ast.AstMaybeType.No)]
+    [(or (BoxGet receiver) (BoxTake receiver))
+      (tc-deref-value-type
         ctx
         env
-        (tc-resolve-type ctx (tc-context-type-get ctx elem-ty-id))
-        (tc-context-expr-get ctx len-box))]
-    [(MakeArray elem-ty-id len-box)
-      (let
-        [len : ast.AstExpr (tc-context-expr-get ctx len-box)]
-        [elem : ast.AstType
-          (tc-resolve-type ctx (tc-context-type-get ctx elem-ty-id))]
-        [len-ty
-          (try (tc-expr-with-expected-or-actual-id ctx env len-box (I64)))]
-        (cond
-          [(not (tc-integer-type? len-ty))
-            (Err "typecheck: __tl_make-array length must be integer")]
-          [(not (tc-dyn-array-elem-supported? env (tc-global-shared-view elem)))
-            (Err
-              (tc-kind-message
-                (TypeMismatch)
-                "typecheck: __tl_make-array element type is not supported"))]
-          [(not
-              (tc-make-array-requires-element-init?
-                (tc-context-expr-segment-bases ctx)
-                (tc-global-shared-view elem)
-                len))
-            (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem))))]
-          [else
-            (let
-              [_
-                (try
-                  (tc-make-array-element-ok
-                    ctx
-                    env
-                    (tc-global-shared-view elem)))]
-              (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem)))))]))]
-    [(ArrayRef array-box index-box)
-      (tc-selected-project
-        (tc-infer-selected-array-ref
-          ctx
-          env
-          array-box
-          index-box
-          ast.AstMaybeType.No
-          typed.TypedSyntax.Generated
-          (ownership.OwnershipSource
-            (ownership.ownership-path-none)
-            0
-            0
-            (ownership.ownership-expansion-none))
-          TcSelectedSink.Query))]
-    [(ArraySet array-box index-box value-box)
-      (let
-        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-        [array-ty
-          (try
-            (match (tc-raw-deref-place-pointer-type
-              ctx
-              env
-              (tc-global-shared-view array))
-              [(Some (Ptr _))
-                (ResultTcType.Err (tc-raw-deref-read-only-message))]
-              [_ (tc-expr-id ctx env array-box)]))]
-        [index-ty
-          (try (tc-expr-with-expected-or-actual-id ctx env index-box (I64)))]
-        (if (tc-integer-type? index-ty)
-          (let
-            [receiver (try (tc-array-set-receiver ctx array-ty))]
-            (match receiver
-              [(TcArrayReceiver container-ty elem-ty)
-                (tc-array-mutation-value
-                  ctx
-                  env
-                  array
-                  container-ty
-                  elem-ty
-                  value
-                  (tc-kind-message
-                    (TypeMismatch)
-                    "typecheck: array assignment value type mismatch"))]))
-          (Err "typecheck: array index must be integer")))]
-    [(ArrayTake array-box live-box index-box)
-      (let
-        [array-ty (try (tc-expr-id ctx env array-box))]
-        [receiver (try (tc-array-set-receiver ctx array-ty))]
-        (match receiver
-          [(TcArrayReceiver container-ty elem-ty)
-            (match (tc-type-strip-region (tc-resolve-type ctx container-ty))
-              [(DynArray _)
-                (let
-                  [live-ty (try (tc-expr-id ctx env live-box))]
-                  [live-receiver (try (tc-array-set-receiver ctx live-ty))]
-                  (match live-receiver
-                    [(TcArrayReceiver live-container live-elem)
-                      (match (tc-type-strip-region
-                        (tc-resolve-type ctx live-container))
-                        [(DynArray _)
-                          (if (tc-type-eq
-                            (tc-type-strip-region
-                              (tc-resolve-type ctx live-elem))
-                            (Bool))
-                            (let
-                              [index-ty
-                                (try
-                                  (tc-expr-with-expected-or-actual-id
-                                    ctx
-                                    env
-                                    index-box
-                                    (I64)))]
-                              (if (tc-integer-type? index-ty)
-                                (Ok
-                                  (ast.ast-ty-tuple
-                                    (ast.ast-type-cons
-                                      (& (Bool))
-                                      (&
-                                        (ast.ast-type-cons
-                                          (& elem-ty)
-                                          (& (ast.ast-type-list-new)))))))
-                                (Err
-                                  "typecheck: __tl_array-take! index must be integer")))
-                            (Err
-                              "typecheck: __tl_array-take! liveness bitmap must contain bool"))]
-                        [_
-                          (Err
-                            "typecheck: __tl_array-take! liveness bitmap must be dynamic array")])]))]
-              [_
-                (Err
-                  (tc-kind-message
-                    (TypeMismatch)
-                    "typecheck: __tl_array-take! source must be dynamic array"))])]))]
-    [(Replace place-box replacement-box)
-      (tc-replace-type
-        ctx
-        env
-        (tc-context-expr-get ctx place-box)
-        replacement-box)]
-    [(ArrayPush array-box value-box)
-      (let
-        [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-        [array-ty (try (tc-expr-id ctx env array-box))]
-        [receiver (try (tc-array-push-receiver ctx array-ty))]
-        (match receiver
-          [(TcArrayReceiver container-ty elem-ty)
-            (let
-              [grown-array : ast.AstType (clone container-ty)]
-              [grown-elem : ast.AstType (clone elem-ty)]
-              (match (tc-array-mutation-value
-                ctx
-                env
-                array
-                container-ty
-                elem-ty
-                value
-                (tc-kind-message
-                  (TypeMismatch)
-                  "typecheck: __tl_array-push! value type mismatch"))
-                [(ResultTcType.Err message) (Err message)]
-                [(ResultTcType.Ok pushed)
-                  (match (tc-array-growth-ok env grown-array grown-elem)
-                    [(ResultTcUnit.Ok) (Ok pushed)]
-                    [(ResultTcUnit.Err message) (Err message)])]))]))]
+        (tc-context-expr-get ctx receiver)
+        (match (& expr)
+          [(BoxTake _) true]
+          [_ false])
+        ast.AstMaybeType.No)]
     [(StringRef str-box index-box)
       (let
         [str-ty (try (tc-expr-id ctx env str-box))]
@@ -92688,33 +92366,6 @@
           (let
             [scrut-ty (try (tc-expr-id ctx env scrutinee-box))]
             (tc-match-expr ctx env scrut-ty arms No))])]
-    [(StructGet receiver-box field)
-      (match (tc-expr-id ctx env receiver-box)
-        [(Ok receiver-ty)
-          (tc-struct-get-result-type-id
-            ctx
-            (TcMaybeTypeEnv.Some env)
-            receiver-ty
-            field)]
-        [(Err message)
-          (let
-            [receiver-ty
-              (try
-                (tc-raw-deref-field-receiver-type
-                  ctx
-                  env
-                  (tc-context-expr-get ctx receiver-box)
-                  message))]
-            (tc-struct-get-result-type-id
-              ctx
-              (TcMaybeTypeEnv.Some env)
-              receiver-ty
-              field))])]
-    [(StructSet receiver-box field value-box)
-      (let
-        [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-        (tc-struct-field-mutation-value-id ctx env receiver field value))]
     [(WithRegion region body)
       (tc-with-region-expr-scoped ctx env region body No)]
     [(WithEscape scratch-box body)
@@ -92730,23 +92381,6 @@
       (match (ast.ast-with-resource-box-shared-view wr-box)
         [(WithResource bindings body)
           (tc-with-resource-expr ctx env bindings body No)])]
-    [(Box inner-box)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (tc-box-expr ctx env inner))]
-    [(BoxGet inner-box)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (tc-box-get-expr ctx env inner))]
-    [(BoxTake inner-box)
-      (let
-        [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]
-        (tc-deref-expr ctx env inner))]
-    [(BoxSet box-box value-box)
-      (let
-        [box-expr : ast.AstExpr (tc-context-expr-get ctx box-box)]
-        [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
-        (tc-box-mutation-value ctx env box-expr value))]
     [(Comptime inner-box)
       (let
         [inner : ast.AstExpr (tc-context-expr-get ctx inner-box)]

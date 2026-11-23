@@ -424,7 +424,7 @@
                         [(DnsNameOk name)
                           (set!
                             (array-ref bindings count)
-                            (HostBinding name (clone address)))
+                            (HostBinding name address))
                           (set! count (+ count 1))])
                       (set! names (+ names 1))
                       (set! cursor (skip-space input name-end content)))))])))
@@ -477,7 +477,8 @@
         (while (< cursor end)
           (let
             [binding : (& snapshot HostBinding) (binding-ref snapshot cursor)]
-            (set! (array-ref slots (- cursor low)) (clone binding.address)))
+            (match binding
+              [(fields address) (set! (array-ref slots (- cursor low)) address)]))
           (set! cursor (+ cursor 1)))
         (HostAddresses slots (- end low))))))
 
@@ -488,7 +489,9 @@
 ;: Copy one canonical address by checked index.
 (define (address-ref [addresses : (& addresses HostAddresses)] [index : i64]) : ip.IpAddr
   (byte_buf.check-range addresses.len index 1)
-  (clone (array-ref addresses.slots index)))
+  (match (& (array-ref addresses.slots index))
+    [(V4 value) (V4 value)]
+    [(V6 value) (V6 value)]))
 
 ;: Reserved localhost policy result, independent of all administrative hosts
 ;: entries. Consumers test dns_name.localhost? before hosts lookup or DNS.
@@ -642,7 +645,9 @@
         (while (< index (array-length servers))
           (match (add-server!
             (&mut builder)
-            (clone (array-ref servers index))
+            (match (& (array-ref servers index))
+              [(Nameserver address port scope-id)
+                (Nameserver address port scope-id)])
             (ConfigExplicit)
             0
             index)

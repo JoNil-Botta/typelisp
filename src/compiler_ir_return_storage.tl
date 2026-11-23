@@ -299,7 +299,7 @@
           (let
             [abi : ir.CompilerIrReturnStorageAbi
               (ir.compiler-ir-box-shared-view boxed)]
-            (ast.ast-type-eq-with-seg-bases? facts.bases output abi.output))]
+            (ast.ast-type-abi-eq-with-seg-bases? facts.bases output abi.output))]
         [_ false]))
     (if (not (single? facts root))
       false
@@ -312,7 +312,7 @@
             [(ir.CompilerIrBlock.Block _ instrs)
               (match (ir.compiler-ir-instr-seq-ref instrs position)
                 [(ir.CompilerIrInstr.Alloc _ ty)
-                  (ast.ast-type-eq-with-seg-bases? facts.bases output ty)]
+                  (ast.ast-type-abi-eq-with-seg-bases? facts.bases output ty)]
                 [_ false])]))))))
 
 ;; The range of a join: one exact range when every arm has it. Arms that are
@@ -432,7 +432,10 @@
             (ReturnStorageProof.Invalid
               "sret physical argument count differs from callee ABI")]
           [(not
-              (ast.ast-type-eq-with-seg-bases? bases result abi.physical-result))
+              (ast.ast-type-abi-eq-with-seg-bases?
+                bases
+                result
+                abi.physical-result))
             (ReturnStorageProof.Invalid
               "sret physical result differs from callee ABI")]
           [else (ReturnStorageProof.Known declaration)])]

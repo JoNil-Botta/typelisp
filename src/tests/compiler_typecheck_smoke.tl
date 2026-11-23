@@ -2986,7 +2986,8 @@
               "typecheck-generated-import-state-threading"
               pools
               (ci.intern-compat-state-capture-active)
-              (tc_core.TcSemanticObserver 0)))]
+              (tc_core.TcSemanticObserver 0)
+              false))]
         [(Err diag) (Err (diagnostic.compiler-diagnostic-list-box-single diag))])]
     [_reset-before-controlled-failure : unit
       (tc_core.compiler-typecheck-reset-file-state!)]
@@ -3009,7 +3010,8 @@
               "typecheck-controlled-failure-state-threading"
               pools
               (ci.intern-compat-state-capture-active)
-              (tc_core.TcSemanticObserver 0)))]
+              (tc_core.TcSemanticObserver 0)
+              false))]
         [(Err diag) (Err (diagnostic.compiler-diagnostic-list-box-single diag))])]
     [ok : bool
       (and
@@ -3182,7 +3184,8 @@
               "typecheck-macro-transitive-dependency-state"
               pools
               (ci.intern-compat-state-capture-active)
-              (tc_core.TcSemanticObserver 0)))]
+              (tc_core.TcSemanticObserver 0)
+              false))]
         [(Err diag) (Err (diagnostic.compiler-diagnostic-list-box-single diag))])]
     [ok : bool
       (match result

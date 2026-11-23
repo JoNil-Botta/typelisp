@@ -5849,7 +5849,8 @@
 (define (normalize-arena-box-referent!
   [state : (&mut state NormalizeState)]
   [route : (& route NormalizePlaceRoute)]
-  [type : i64]) : NormalizeRouteResult
+  [type : i64]
+  [use-source : (& use-source own.OwnershipSource)]) : NormalizeRouteResult
   (if (< type 0)
     (NormalizeRouteResult.Ok (NormalizePlaceRoute -1 -1 -1 false false))
     (let
@@ -5861,17 +5862,17 @@
           (set! found (array-ref state.arena-box-places index)))
         (set! index (+ index 1)))
       (let
-        [source : own.OwnershipSource
-          (try (normalize-place-source-copy! state route.place))]
         [referent : i64
           (if (>= found 0)
             found
             (let
-              [fresh : i64 (try (normalize-local! state type true (& source)))]
+              [place-source : own.OwnershipSource
+                (try (normalize-place-source-copy! state route.place))]
+              [fresh : i64
+                (try (normalize-local! state type true (& place-source)))]
               (normalize-push! state.arena-box-binders route.place)
               (normalize-push! state.arena-box-places fresh)
-              (try (normalize-note-flow! state route.place fresh))
-              (try (normalize-note-flow! state fresh route.place))
+              (normalize-note-deref! state fresh route.place)
               fresh))]
         (unless
           (= (array-ref state.body.places referent).type.index type)
@@ -5885,7 +5886,7 @@
               state.form-block
               (own.OwnershipOperation.Read
                 (normalize-place-id (& state) route.place))
-              (& source)))
+              use-source))
           (try
             (normalize-note-use!
               state
@@ -5923,6 +5924,7 @@
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [id : typed.TypedPlaceId]
+  [use-source : (& use-source own.OwnershipSource)]
   [depth : i64]) : NormalizeRouteResult
   (when (> depth state.limits.depth) (return (normalize-route-resource)))
   (try (normalize-charge! state 0 1 0))
@@ -5938,7 +5940,8 @@
     [(NormalizePlaceStep.Projection parent projection)
       (let
         [route : NormalizePlaceRoute
-          (try (normalize-place! state store lease parent (+ depth 1)))]
+          (try
+            (normalize-place! state store lease parent use-source (+ depth 1)))]
         [step : NormalizeProjectionStep
           (try (normalize-projection-step! store lease projection))]
         [_fixed : unit
@@ -5996,7 +5999,8 @@
                   true
                   (and route.boxed (!= step.ordinal -3))))]
             [(and arena-box-step? (< route.loan 0))
-              (try (normalize-arena-box-referent! state (& route) type))]
+              (try
+                (normalize-arena-box-referent! state (& route) type use-source))]
             [box-step?
               (NormalizePlaceRoute
                 route.place
@@ -6135,7 +6139,7 @@
       [_form : unit (set! state.form-block active)]
       [_fixed : unit (set! state.walk-fixed false)]
       [route : NormalizePlaceRoute
-        (try (normalize-place! state store lease place 0))]
+        (try (normalize-place! state store lease place (& node.source) 0))]
       (set! state.form-block -1)
       (unless
         (or

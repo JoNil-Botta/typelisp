@@ -16066,10 +16066,13 @@
 (define (lower-state-pattern-place [state : LowerState] [var-id : i64]) : i64
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (lower_i64_i64_map.get-value-or
-      (& (__tl-project-field (__tl-box-place data) pattern-places))
-      var-id
-      0)))
+    (if (lower_i64_i64_map.is-empty?
+      (& (__tl-project-field (__tl-box-place data) pattern-places)))
+      0
+      (lower_i64_i64_map.get-value-or
+        (& (__tl-project-field (__tl-box-place data) pattern-places))
+        var-id
+        0))))
 
 (define (lower-state-view-place? [state : LowerState] [var-id : i64]) : bool
   (= (lower-state-pattern-place state var-id) 2))
@@ -19837,8 +19840,15 @@
         (lower-borrow-place-value-reference?
           ctx
           (tc_core.tc-borrow-referent-type (clone stored-ty)))]))
-    (match (lower-load-inline-value-at-offset ctx state slot 0 stored-ty)
-      [(Expr loaded value _) (Expr loaded value result-ty)])
+    (if (lower-type-register-group? ctx (& stored-ty))
+      (match (lower-load-inline-value-at-offset ctx state slot 0 stored-ty)
+        [(Expr loaded value _) (Expr loaded value result-ty)])
+      (match (lower-state-alloc-var state)
+        [(Alloc allocated var-id)
+          (Expr
+            (lower-state-emit allocated (Load var-id slot stored-ty))
+            (Var var-id)
+            result-ty)]))
     (Expr state slot result-ty)))
 
 (define (lower-borrow-reference-var-address

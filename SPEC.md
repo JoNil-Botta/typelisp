@@ -4374,7 +4374,7 @@ Example:
   suppressed with `;; lint-allow: dead-code`.
 - Package builds accept `--profile dev|release` and `--release`. The default
   profile is `release`; `--release` is an alias for `--profile release`.
-  `--opt-level 0|1|2` overrides the profile's optimizer level. Without an
+  `--opt-level 0|1|2|s` overrides the profile's optimizer level. Without an
   explicit level, `release` uses level 2 and `dev` uses level 0.
 - Package builds accept `--locked` and `--update-lock` as described above.
   These flags are rejected for source-file builds and non-package commands.
@@ -9934,9 +9934,9 @@ and not a general manual memory management feature.
   ownership/lifetime forms rather than silently
   bit-copying them. Unsupported clone operands include function values,
   references including borrowed `str`, raw pointers,
-  compile-time-only values, and named aggregate shapes containing
-  non-cloneable fields. A `(Box T)` operand with a cloneable `T`, owned or read
-  through a reference, clones into a new box.
+  compile-time-only values, cleanup-owning types, and named aggregate shapes
+  containing non-cloneable or cleanup-owning fields. A `(Box T)` operand with a
+  cloneable `T`, owned or read through a reference, clones into a new box.
 
 ---
 
@@ -9950,8 +9950,8 @@ in documentation passes.
 ### 8.1 Implemented
 
 - The full pipeline on both targets: lexer, parser, type checker, lowerer,
-  optimizer (`--opt-level 0|1|2`, with scalar register allocation and
-  inlining at level 2), and x86_64 backends for `linux-x86_64` and
+  optimizer (`--opt-level 0|1|2|s`, with scalar register allocation and
+  inlining at levels 2 and s), and x86_64 backends for `linux-x86_64` and
   `windows-x86_64`.
 - All scalar types (`i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`, `char`,
   `unit`), enums with `match`, structs with in-place field mutation, tuples
@@ -10386,7 +10386,7 @@ Common Command Options:
   --backend-mode <mode>          scalar, avx2, or avx512
   --manifest-path <file>         Package manifest path
   --stdlib-root <dir>            Search root for stdlib/... imports
-  --opt-level <0|1|2>            Select optimizer level
+  --opt-level <0|1|2|s>|-Os            Select optimizer level
   --debug, -g                    Emit source line and unwind debug information
   --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
   --cfg <name>                   Enable a compile-time cfg predicate name
@@ -10516,9 +10516,10 @@ than retaining every manifest entry in the process arena.
 nearest `typelisp.pkg` upward). `--locked` requires a matching
 `typelisp.lock` and does not rewrite it; `--update-lock` refreshes remote
 pins and transactionally commits changed canonical lock bytes. The lock-policy
-flags are valid only for package builds. `--opt-level <0|1|2>` selects the
-optimizer level; for
-package builds it overrides the profile default (release `2`, dev `0`).
+flags are valid only for package builds. `--opt-level <0|1|2|s>` selects the
+optimizer level. `-Os` selects size optimization and is equivalent to
+`--opt-level s`. For package builds an explicit level overrides the profile
+default (release `2`, dev `0`).
 Source-file `build` and `run` accept `--link-lib <name>` (link a named
 native library), `--link-search <dir>` (linker search directory), and
 `--link-arg <arg>` (raw linker argument).

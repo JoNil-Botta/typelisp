@@ -4251,19 +4251,26 @@
             (= (be_state.compiler-backend-peephole-byte-at data (+ i 4)) 98)
             (= (be_state.compiler-backend-peephole-byte-at data (+ i 5)) 115)
             (= (be_state.compiler-backend-peephole-byte-at data (+ i 6)) 113))]
-        ;; movzbq, movzwq, movsbq, movswq, movslq
+        ;; Byte/word zero-extension can write either GP width.
         [(= mlen 6)
           (let
             [kind : i64
               (be_state.compiler-backend-peephole-byte-at data (+ i 3))]
             [width : i64
               (be_state.compiler-backend-peephole-byte-at data (+ i 4))]
+            [suffix : i64
+              (be_state.compiler-backend-peephole-byte-at data (+ i 5))]
             (and
               (= base3 7761773)
-              (= (be_state.compiler-backend-peephole-byte-at data (+ i 5)) 113)
               (or
-                (and (= kind 122) (or (= width 98) (= width 119)))
-                (and (= kind 115) (or (= width 98) (= width 119) (= width 108))))))]
+                (and
+                  (= kind 122)
+                  (or (= suffix 113) (= suffix 108))
+                  (or (= width 98) (= width 119)))
+                (and
+                  (= kind 115)
+                  (= suffix 113)
+                  (or (= width 98) (= width 119) (= width 108))))))]
         [else
           (let
             [suffix : i64
@@ -4558,7 +4565,7 @@
 ;; The zext pair rule reads the widening move's destination register; it is the
 ;; last-operand register of a `movzb{q,l}` line and "none" everywhere else.
 (define (compiler-backend-peephole-desc-zext-dst
-  [line : be_state.CompilerBackendPeepholeLine]) : i64
+  [line : (& line be_state.CompilerBackendPeepholeLine)]) : i64
   (if (= (bit-and line.flags compiler-backend-peephole-desc-flag-zext) 0)
     -1
     (-
@@ -6365,7 +6372,7 @@
   [reg : i64]) : bool
   (if (or
     (not (compiler-backend-peephole-desc-has-operands? next))
-    (not (compiler-backend-peephole-line-mnemonic-eq? next "movzbq")))
+    (!= (compiler-backend-peephole-desc-zext-dst next) reg))
     false
     (let
       [data : (Ptr u8) next.data]
@@ -6381,14 +6388,12 @@
             (be_state.compiler-backend-peephole-byte-at data (- src-end 1))]
           (if (not (or (= last 108) (= last 98)))
             false
-            (and
-              (=
-                (compiler-backend-peephole-token-reg-index-range
-                  data
-                  src-start
-                  src-end)
-                reg)
-              (= (compiler-backend-peephole-desc-last-reg next) reg))))))))
+            (=
+              (compiler-backend-peephole-token-reg-index-range
+                data
+                src-start
+                src-end)
+              reg)))))))
 
 (define (compiler-backend-peephole-redundant-zext-pair-desc?
   [pending : be_state.CompilerBackendPeepholeLine]
@@ -8578,18 +8583,1168 @@
     (unsafe
       (string-from-bytes (ptr-cast dst : (Ptr u8)) pos))))
 
-;; The single render of the group, with COLD-1's out-of-line abort stubs. A
-;; group without an abort call renders in record order; otherwise the plan and its
-;; synthesized lines are scratch and only the rendered string is cloned out into
-;; the caller's arena.
-(define (compiler-backend-peephole-records-render
-  [v : be_state.CompilerBackendPeepholeLineVec]) : String
-  (if (= v.abort-cand-len 0)
-    (compiler-backend-peephole-records-render-plain v)
-    (with-scratch
+;; Final-record tail merging. Text equality is checked after hashing, and the
+;; earlier surviving run always supplies the shared instructions.
+(defstruct CompilerBackendTailRun
+  (first i64)
+  (last i64)
+  (label i64)
+  (end-hash i64))
+
+(import (vector.vector CompilerBackendTailRun core) as tail_runs)
+
+;; ASCII digits, letters and the emitter's three punctuation bytes in symbols.
+(define compiler-backend-tail-symbol-bytes : String
+  "00000000000000000000000000000000000010000000001011111111110000000111111111111111111111111110000101111111111111111111111111100000")
+
+(define (compiler-backend-tail-symbol-byte? [b : i64]) : bool
+  (and
+    (< b 128)
+    (=
+      (be_state.compiler-backend-peephole-byte-at
+        (unsafe
+          (string-data compiler-backend-tail-symbol-bytes))
+        b)
+      49)))
+
+(define (compiler-backend-tail-symbol-end
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [i : i64 start]
+    (while (and
+      (< i end)
+      (compiler-backend-tail-symbol-byte?
+        (be_state.compiler-backend-peephole-byte-at data i)))
+      (+= i 1))
+    i))
+
+;; A direct jmp must name a symbol. Numeric local labels such as 1f acquire a
+;; different meaning at another site, even when the two instructions match.
+(define (compiler-backend-tail-jmp? [data : (Ptr u8)] [s : i64] [e : i64]) : bool
+  (let
+    [operand : i64 (+ s 8)]
+    (and
+      (> e operand)
+      (compiler-backend-asm-jmp-prefix-at? data s)
       (let
-        [plan : CompilerBackendColdPlan (compiler-backend-cold-plan v)]
-        (compiler-backend-cold-render v plan)))))
+        [b : i64 (be_state.compiler-backend-peephole-byte-at data operand)]
+        (or (< b 48) (> b 57)))
+      (= (compiler-backend-tail-symbol-end data operand e) e))))
+
+(define (compiler-backend-tail-abort? [data : (Ptr u8)] [s : i64] [e : i64]) : bool
+  (let
+    [prefix : i64
+      (if (compiler-backend-cold-prefix? data s e "    call .L_tl_abort_")
+        21
+        9)]
+    [callee : i64 (+ s prefix)]
+    (and
+      (> e callee)
+      (or (= prefix 21) (compiler-backend-cold-prefix? data s e "    call "))
+      (or
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          callee
+          e
+          "tl_oob_abort")
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          callee
+          e
+          "tl_shift_abort")
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          callee
+          e
+          "tl_div_abort")
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          callee
+          e
+          "tl_region_abort")
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          callee
+          e
+          "tl_oom_abort")))))
+
+(define (compiler-backend-tail-line-hash
+  [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : i64
+  (let
+    [s : i64 (compiler-backend-peephole-record-start rec)]
+    (ci.intern-hash-words
+      (compiler-backend-peephole-record-data rec)
+      s
+      (- (compiler-backend-peephole-record-end rec) s))))
+
+(define (compiler-backend-tail-prev-live
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [i : i64]
+  [lo : i64]) : i64
+  (let
+    [prev : i64 (- i 1)]
+    (while (and (>= prev lo) (= (array-ref v.live prev) 0))
+      (-= prev 1))
+    prev))
+
+(define (compiler-backend-tail-lines-eq?
+  [x : (& x be_state.CompilerBackendPeepholeLineRecord)]
+  [y : (& y be_state.CompilerBackendPeepholeLineRecord)]) : bool
+  (be_operand.compiler-backend-peephole-ranges-eq?
+    (compiler-backend-peephole-record-data x)
+    (compiler-backend-peephole-record-start x)
+    (compiler-backend-peephole-record-end x)
+    (compiler-backend-peephole-record-data y)
+    (compiler-backend-peephole-record-start y)
+    (compiler-backend-peephole-record-end y)))
+
+;; Record indices survive all plans, even when the store sweep left holes.
+(define (compiler-backend-tail-equal?
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [a : i64]
+  [b : i64]
+  [last : i64]) : bool
+  (let
+    [rhs : i64 b]
+    (for [lhs (iterator.range a (+ last 1))]
+      (when
+        (= (array-ref v.live lhs) 1)
+        (while (= (array-ref v.live rhs) 0)
+          (+= rhs 1))
+        (let
+          [x : (& v be_state.CompilerBackendPeepholeLineRecord)
+            (& (array-ref v.lines lhs))]
+          [y : (& v be_state.CompilerBackendPeepholeLineRecord)
+            (& (array-ref v.lines rhs))]
+          (unless (compiler-backend-tail-lines-eq? x y) (return false)))
+        (+= rhs 1)))
+    true))
+
+;; Only already-renderable owned records are installed here. The sweeps and
+;; cold plan have finished, so the replacement needs only its text and newline.
+(define (compiler-backend-tail-replace!
+  [v : (&mut v be_state.CompilerBackendPeepholeLineVec)]
+  [index : i64]
+  [text : String]) : unit
+  (let
+    [len : i64 (string.string-length text)]
+    [meta : i64
+      (bit-or
+        compiler-backend-peephole-record-owned-bit
+        (bit-and
+          (array-ref v.lines index).meta
+          compiler-backend-peephole-record-newline-bit))]
+    (set!
+      (array-ref v.lines index)
+      (be_state.CompilerBackendPeepholeLineRecord
+        text
+        (shl len compiler-backend-peephole-record-span-shift)
+        meta
+        0
+        0
+        0))))
+
+;; A lower bound on encoded size, including a possible rel8 jump. MOV
+;; immediates and displaced qword memory operands give stronger bounds than
+;; the register forms, so can pay for a replacement jump even in a two-line tail.
+(define (compiler-backend-tail-insn-bytes [data : (Ptr u8)] [s : i64] [e : i64]) : i64
+  (let
+    [imm? : bool
+      (and
+        (< (+ s 9) e)
+        (= (be_state.compiler-backend-peephole-byte-at data (+ s 9)) 36))]
+    (cond
+      [(compiler-backend-cold-prefix? data s e "    movabsq ") 10]
+      [(and imm? (compiler-backend-cold-prefix? data s e "    movq ")) 7]
+      [(or
+          (compiler-backend-cold-prefix? data s e "    movq ")
+          (compiler-backend-cold-prefix? data s e "    leaq "))
+        (let
+          [paren : i64
+            (be_operand.compiler-backend-peephole-scan-byte-range
+              data
+              (+ s 9)
+              e
+              40)]
+          (if (>= paren e)
+            3
+            (let
+              [disp : i64
+                (compiler-backend-rsp-rebase-int-start data (+ s 9) paren)]
+              (if (or
+                (compiler-backend-cold-prefix? data paren e "(%rsp")
+                (compiler-backend-cold-prefix? data paren e "(%rbp")
+                (compiler-backend-cold-prefix? data paren e "(%r12")
+                (compiler-backend-cold-prefix? data paren e "(%r13")
+                (and
+                  (>= disp 0)
+                  (!= (compiler-backend-rsp-rebase-parse-int data disp paren) 0)))
+                4
+                3))))]
+      [(compiler-backend-cold-prefix? data s e "    movl ")
+        (if imm?
+          5
+          2)]
+      [else 1])))
+
+(define (compiler-backend-tail-eligible-insn?
+  [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : bool
+  (let
+    [s : i64 (compiler-backend-peephole-record-start rec)]
+    [e : i64 (compiler-backend-peephole-record-end rec)]
+    [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+    (when
+      (or
+        (<= e (+ s 4))
+        (!=
+          (unsafe
+            (ptr-read (ptr-cast (ptr-offset data s) : (Ptr i32))))
+          538976288))
+      (return false))
+    (let
+      [head : i64 (be_state.compiler-backend-peephole-byte-at data (+ s 4))]
+      (and
+        ;; A bare dot is position dependent. Dot-based symbols are kept in
+        ;; place as well.
+        (!= head 32)
+        (>=
+          (be_operand.compiler-backend-peephole-scan-byte-range data s e 46)
+          e)
+        (cond
+          [(= head 108)
+            (not
+              (or
+                (compiler-backend-cold-prefix? data (+ s 4) e "loop")
+                (compiler-backend-cold-prefix? data (+ s 4) e "lret")))]
+          [(= head 105)
+            (not
+              (or
+                (compiler-backend-cold-prefix? data (+ s 4) e "int")
+                (compiler-backend-cold-prefix? data (+ s 4) e "iret")))]
+          [(= head 115)
+            (not (compiler-backend-cold-prefix? data (+ s 4) e "sys"))]
+          [else true])))))
+
+;; A body is fingerprinted backwards so the same recurrence can identify its
+;; whole block and every proper suffix.
+(define (compiler-backend-tail-extend-hash
+  [hash : i64]
+  [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : i64
+  (bit-xor (* hash 1000003) (compiler-backend-tail-line-hash rec)))
+
+(define (compiler-backend-tail-alias-label?
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [index : i64]
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : bool
+  (let
+    [label : (& v be_state.CompilerBackendPeepholeLineRecord)
+      (& (array-ref v.lines index))]
+    (be_operand.compiler-backend-peephole-ranges-eq?
+      data
+      s
+      e
+      (compiler-backend-peephole-record-data label)
+      (compiler-backend-peephole-record-start label)
+      (- (compiler-backend-peephole-record-end label) 1))))
+
+(define (compiler-backend-tail-label-text
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [index : i64]) : String
+  (let
+    [label : (& v be_state.CompilerBackendPeepholeLineRecord)
+      (& (array-ref v.lines index))]
+    [s : i64 (compiler-backend-peephole-record-start label)]
+    (string.substring
+      label.src
+      s
+      (- (compiler-backend-peephole-record-end label) (+ s 1)))))
+
+;; Inspect every reference to a proposed alias. A bare operand of a direct
+;; branch can be rewritten. All other references pin the definition, including
+;; RIP-relative addresses, table entries and assembler/debug expressions.
+(define (compiler-backend-tail-alias-refs!
+  [v : (&mut v be_state.CompilerBackendPeepholeLineVec)]
+  [aliases : (& aliases backend_label_i64_map.Map)]
+  [redirects : (&mut redirects (__tl_dyn-array i64))]
+  [lo : i64]
+  [hi : i64]
+  [home : arena.Arena]
+  [rewrite? : bool]) : unit
+  (for [i (iterator.range lo hi)]
+    (when
+      (= (array-ref v.live i) 1)
+      (let
+        [replacement : String ""]
+        (let
+          [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+            (& (array-ref v.lines i))]
+          [kind : i64 (compiler-backend-peephole-record-kind rec)]
+          [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+          [s : i64 (compiler-backend-peephole-record-start rec)]
+          [e : i64 (compiler-backend-peephole-record-end rec)]
+          (unless
+            (= kind compiler-backend-sweep-line-kind-label)
+            (let
+              [dot : i64
+                (be_operand.compiler-backend-peephole-scan-byte-range
+                  data
+                  s
+                  e
+                  46)]
+              (while (< (+ dot 2) e)
+                (when
+                  (compiler-backend-layout-local-label? data dot e)
+                  (let
+                    [end : i64 (compiler-backend-tail-symbol-end data dot e)]
+                    [key : i64 (compiler-backend-layout-hash data dot end)]
+                    [index : i64
+                      (backend_label_i64_map.get-value-or aliases key -1)]
+                    (when
+                      (and
+                        (>= index lo)
+                        (> (array-ref redirects (- index lo)) 0)
+                        (compiler-backend-tail-alias-label?
+                          v
+                          index
+                          data
+                          dot
+                          end))
+                      (let
+                        [flags : i64
+                          (if (and
+                            (= end e)
+                            (=
+                              kind
+                              compiler-backend-sweep-line-kind-instruction))
+                            (compiler-backend-layout-classify-line data s e)
+                            0)]
+                        [branch? : bool
+                          (and
+                            (not (= (bit-and flags 6) 0))
+                            (=
+                              (+
+                                s
+                                (shr
+                                  flags
+                                  compiler-backend-layout-flag-ops-shift))
+                              dot))]
+                        (cond
+                          [(and rewrite? branch?)
+                            (set!
+                              replacement
+                              (unsafe
+                                (in-arena
+                                  (arena.Arena (arena.raw-handle home))
+                                  (let
+                                    [target : i64
+                                      (- (array-ref redirects (- index lo)) 1)]
+                                    (str_cat.str-cat
+                                      (string.substring rec.src s (- dot s))
+                                      (compiler-backend-tail-label-text
+                                        v
+                                        target))))))]
+                          [else
+                            (unless
+                              branch?
+                              (set! (array-ref redirects (- index lo)) 0))])))
+                    (set! dot (- end 1))))
+                (set!
+                  dot
+                  (be_operand.compiler-backend-peephole-scan-byte-range
+                    data
+                    (+ dot 1)
+                    e
+                    46))))))
+        (unless
+          (string.eq (& replacement) "")
+          (compiler-backend-tail-replace! v i replacement))))))
+
+(define (compiler-backend-tail-whole-blocks!
+  [v : (&mut v be_state.CompilerBackendPeepholeLineVec)]
+  [runs : (& runs tail_runs.Vec)]
+  [ends : (& ends backend_label_i64_map.Map)]
+  [lo : i64]
+  [hi : i64]
+  [home : arena.Arena]) : unit
+  (let
+    [bodies : backend_label_i64_map.Map (backend_label_i64_map.with-capacity 8)]
+    [aliases : backend_label_i64_map.Map
+      (backend_label_i64_map.with-capacity 8)]
+    [redirects : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    (for [k (iterator.range 0 runs.len)]
+      (let
+        [run : CompilerBackendTailRun (array-ref (tail_runs.slots runs) k)]
+        (when
+          (and
+            (>= run.label lo)
+            (> (backend_label_i64_map.get-value-or ends run.end-hash 0) 1))
+          (let
+            [hash : i64 run.end-hash]
+            [i : i64 (compiler-backend-tail-prev-live v run.last run.first)]
+            (while (>= i run.first)
+              (set!
+                hash
+                (compiler-backend-tail-extend-hash
+                  hash
+                  (& (array-ref v.lines i))))
+              (set! i (compiler-backend-tail-prev-live v i run.first)))
+            (when
+              (< i run.first)
+              (let
+                [prev : i64
+                  (backend_label_i64_map.get-value-or (& bodies) hash -1)]
+                (if (< prev 0)
+                  (backend_label_i64_map.insert-ref! (&mut bodies) hash k)
+                  (let
+                    [canonical : CompilerBackendTailRun
+                      (array-ref (tail_runs.slots runs) prev)]
+                    (when
+                      (compiler-backend-tail-equal?
+                        v
+                        run.first
+                        canonical.first
+                        run.last)
+                      (let
+                        [label : (&
+                          v
+                          be_state.CompilerBackendPeepholeLineRecord)
+                          (& (array-ref v.lines run.label))]
+                        [key : i64
+                          (compiler-backend-layout-hash
+                            (compiler-backend-peephole-record-data label)
+                            (compiler-backend-peephole-record-start label)
+                            (- (compiler-backend-peephole-record-end label) 1))]
+                        (when
+                          (= (array-length redirects) 0)
+                          (set! redirects (__tl_make-array i64 (- hi lo))))
+                        (when
+                          (<
+                            (backend_label_i64_map.get-value-or
+                              (& aliases)
+                              key
+                              -1)
+                            0)
+                          (backend_label_i64_map.insert-ref!
+                            (&mut aliases)
+                            key
+                            run.label)
+                          (set!
+                            (array-ref redirects (- run.label lo))
+                            (+ canonical.label 1)))))))))))))
+    (unless
+      (= (array-length redirects) 0)
+      (compiler-backend-tail-alias-refs!
+        v
+        (& aliases)
+        (&mut redirects)
+        lo
+        hi
+        home
+        false)
+      (compiler-backend-tail-alias-refs!
+        v
+        (& aliases)
+        (&mut redirects)
+        lo
+        hi
+        home
+        true)
+      (for [run (tail_runs.view runs)]
+        (when
+          (and (>= run.label lo) (> (array-ref redirects (- run.label lo)) 0))
+          (for [i (iterator.range run.label (+ run.last 1))]
+            (set! (array-ref v.live i) 0)))))))
+
+(define (compiler-backend-tail-suffix-name
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [anchor : i64]
+  [canonical : i64]) : String
+  (str_cat.str-cat
+    ".L_tail_"
+    (compiler-backend-tail-label-text v anchor)
+    "."
+    (string.int->string (- canonical anchor))))
+
+(define (compiler-backend-tail-share-suffix!
+  [v : (&mut v be_state.CompilerBackendPeepholeLineVec)]
+  [first : i64]
+  [last : i64]
+  [canonical : i64]
+  [anchor : i64]
+  [home : arena.Arena]) : unit
+  (unsafe
+    (in-arena
+      (arena.Arena (arena.raw-handle home))
+      (let
+        [name : String (compiler-backend-tail-suffix-name v anchor canonical)]
+        (compiler-backend-tail-replace!
+          v
+          first
+          (str_cat.str-cat "    jmp " name)))))
+  (for [i (iterator.range (+ first 1) (+ last 1))]
+    (set! (array-ref v.live i) 0)))
+
+(define (compiler-backend-tail-emit-suffix-label!
+  [v : (&mut v be_state.CompilerBackendPeepholeLineVec)]
+  [anchor : i64]
+  [canonical : i64]
+  [home : arena.Arena]) : unit
+  (unsafe
+    (in-arena
+      (arena.Arena (arena.raw-handle home))
+      (let
+        [text : String
+          (let
+            [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+              (& (array-ref v.lines canonical))]
+            [s : i64 (compiler-backend-peephole-record-start rec)]
+            [name : String
+              (compiler-backend-tail-suffix-name v anchor canonical)]
+            (str_cat.str-cat
+              name
+              ":\n"
+              (string.substring
+                rec.src
+                s
+                (- (compiler-backend-peephole-record-end rec) s))))]
+        (compiler-backend-tail-replace! v canonical text)))))
+
+;; A branch tail can share instructions with the fallthrough into its
+;; destination. The replacement jump is then the only jump it executes.
+;; An explicit final jump that already targets the immediately following label
+;; is also a fallthrough host once that jump is removed.
+(define (compiler-backend-tail-match-fallthrough
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [run : (& run CompilerBackendTailRun)]
+  [targets : (& targets backend_label_i64_map.Map)]
+  [anchor : i64]) : (Tuple i64 i64 i64)
+  (let
+    [term : (& v be_state.CompilerBackendPeepholeLineRecord)
+      (& (array-ref v.lines run.last))]
+    [data : (Ptr u8) (compiler-backend-peephole-record-data term)]
+    [s : i64 (+ (compiler-backend-peephole-record-start term) 8)]
+    [e : i64 (compiler-backend-peephole-record-end term)]
+    [target : i64
+      (backend_label_i64_map.get-value-or
+        targets
+        (compiler-backend-layout-hash data s e)
+        -1)]
+    (when
+      (or
+        (<= target anchor)
+        (not (compiler-backend-tail-alias-label? v target data s e)))
+      (return (tuple -1 -1 -1)))
+    (let
+      [host : i64 (compiler-backend-tail-prev-live v target anchor)]
+      [drop : i64 -1]
+      [left : i64 (compiler-backend-tail-prev-live v run.last run.first)]
+      [right : i64 host]
+      [bytes : i64 2]
+      [first : i64 -1]
+      [canonical : i64 -1]
+      (when (= host run.last) (return (tuple -1 -1 -1)))
+      (when
+        (compiler-backend-tail-lines-eq? term (& (array-ref v.lines host)))
+        (set! drop host)
+        (set! right (compiler-backend-tail-prev-live v host anchor)))
+      (while (and (>= left run.first) (>= right anchor))
+        (let
+          [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+            (& (array-ref v.lines left))]
+          (unless
+            (and
+              (compiler-backend-tail-eligible-insn? rec)
+              (compiler-backend-tail-lines-eq?
+                rec
+                (& (array-ref v.lines right))))
+            (break))
+          (+=
+            bytes
+            (compiler-backend-tail-insn-bytes
+              (compiler-backend-peephole-record-data rec)
+              (compiler-backend-peephole-record-start rec)
+              (compiler-backend-peephole-record-end rec)))
+          (when (> bytes 5) (set! first left) (set! canonical right)))
+        (set! left (compiler-backend-tail-prev-live v left run.first))
+        (set! right (compiler-backend-tail-prev-live v right anchor)))
+      (tuple first canonical drop))))
+
+(define (compiler-backend-tail-index-targets
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [labels : (& labels (__tl_dyn-array i64))]
+  [count : i64]) : backend_label_i64_map.Map
+  (let
+    [targets : backend_label_i64_map.Map
+      (backend_label_i64_map.with-capacity count)]
+    (for [k (iterator.range 0 count)]
+      (let
+        [index : i64 (array-ref labels k)]
+        [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+          (& (array-ref v.lines index))]
+        (when
+          (= (array-ref v.live index) 1)
+          (backend_label_i64_map.insert-ref!
+            (&mut targets)
+            (compiler-backend-layout-hash
+              (compiler-backend-peephole-record-data rec)
+              (compiler-backend-peephole-record-start rec)
+              (- (compiler-backend-peephole-record-end rec) 1))
+            index))))
+    targets))
+
+(define (compiler-backend-tail-suffixes!
+  [v : (&mut v be_state.CompilerBackendPeepholeLineVec)]
+  [runs : (& runs tail_runs.Vec)]
+  [ends : (& ends backend_label_i64_map.Map)]
+  [targets : (& targets backend_label_i64_map.Map)]
+  [anchor : i64]
+  [hi : i64]
+  [home : arena.Arena]) : unit
+  (let
+    [suffixes : backend_label_i64_map.Map
+      (backend_label_i64_map.with-capacity 8)]
+    [labels : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    (for [run (tail_runs.view runs)]
+      (when
+        (and
+          (> run.last run.first)
+          (= (array-ref v.live run.last) 1)
+          (> (backend_label_i64_map.get-value-or ends run.end-hash 0) 1))
+        (let
+          [term : (& v be_state.CompilerBackendPeepholeLineRecord)
+            (& (array-ref v.lines run.last))]
+          [jump? : bool
+            (=
+              (be_state.compiler-backend-peephole-byte-at
+                (compiler-backend-peephole-record-data term)
+                (+ (compiler-backend-peephole-record-start term) 4))
+              106)]
+          (if jump?
+            (let
+              [matched-run : (Tuple i64 i64 i64)
+                (compiler-backend-tail-match-fallthrough v run targets anchor)]
+              [first : i64 (tuple-ref matched-run 0)]
+              [canonical : i64 (tuple-ref matched-run 1)]
+              [drop : i64 (tuple-ref matched-run 2)]
+              (when
+                (>= first 0)
+                (when
+                  (= (array-length labels) 0)
+                  (set! labels (__tl_make-array i64 (- hi anchor))))
+                (set! (array-ref labels (- canonical anchor)) 1)
+                (when (>= drop 0) (set! (array-ref labels (- drop anchor)) 2))
+                (compiler-backend-tail-share-suffix!
+                  v
+                  first
+                  run.last
+                  canonical
+                  anchor
+                  home)))
+            (let
+              [hash : i64 run.end-hash]
+              ;; Abort paths have no return edge and can always share a copy.
+              [bytes : i64 5]
+              [matched : i64 -1]
+              [canonical : i64 -1]
+              [i : i64 (compiler-backend-tail-prev-live v run.last run.first)]
+              [oldest : i64 i]
+              (while (>= i run.first)
+                (let
+                  [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+                    (& (array-ref v.lines i))]
+                  (+=
+                    bytes
+                    (compiler-backend-tail-insn-bytes
+                      (compiler-backend-peephole-record-data rec)
+                      (compiler-backend-peephole-record-start rec)
+                      (compiler-backend-peephole-record-end rec)))
+                  (set! hash (compiler-backend-tail-extend-hash hash rec))
+                  (when
+                    (> bytes 5)
+                    (let
+                      [prev : i64
+                        (backend_label_i64_map.get-value-or
+                          (& suffixes)
+                          hash
+                          -1)]
+                      (when (>= prev 0) (set! matched i) (set! canonical prev))))
+                  (set! i (compiler-backend-tail-prev-live v i run.first))))
+              (if (and
+                (>= matched 0)
+                (compiler-backend-tail-equal? v matched canonical run.last))
+                (begin
+                  (when
+                    (= (array-length labels) 0)
+                    (set! labels (__tl_make-array i64 (- hi anchor))))
+                  (set! (array-ref labels (- canonical anchor)) 1)
+                  (compiler-backend-tail-share-suffix!
+                    v
+                    matched
+                    run.last
+                    canonical
+                    anchor
+                    home))
+                (let
+                  [key : i64 run.end-hash]
+                  [at : i64 oldest]
+                  ;; Publish only runs that retain their entire suffix. The first
+                  ;; definition remains canonical even after a label is emitted.
+                  (while (> at i)
+                    (set!
+                      key
+                      (compiler-backend-tail-extend-hash
+                        key
+                        (& (array-ref v.lines at))))
+                    (when
+                      (<
+                        (backend_label_i64_map.get-value-or (& suffixes) key -1)
+                        0)
+                      (backend_label_i64_map.insert-ref! (&mut suffixes) key at))
+                    (set! at (compiler-backend-tail-prev-live v at run.first))))))))))
+    (for [i (iterator.range 0 (array-length labels))]
+      (cond
+        [(= (array-ref labels i) 1)
+          (compiler-backend-tail-emit-suffix-label! v anchor (+ anchor i) home)]
+        [(= (array-ref labels i) 2) (set! (array-ref v.live (+ anchor i)) 0)]
+        [else unit]))))
+
+;; Walk backwards only for a repeated terminator, stopping at the first live
+;; line that cannot be part of its straight-line suffix.
+(define (compiler-backend-tail-resolve-run
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [run : CompilerBackendTailRun]) : CompilerBackendTailRun
+  (let
+    [at : i64 (compiler-backend-tail-prev-live v run.last run.first)]
+    [first : i64 run.last]
+    [label : i64 -1]
+    (while (>= at run.first)
+      (let
+        [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+          (& (array-ref v.lines at))]
+        [kind : i64 (compiler-backend-peephole-record-kind rec)]
+        [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+        [s : i64 (compiler-backend-peephole-record-start rec)]
+        [e : i64 (compiler-backend-peephole-record-end rec)]
+        (when
+          (= kind compiler-backend-sweep-line-kind-label)
+          (when
+            (and
+              (compiler-backend-layout-local-label? data s e)
+              (not (compiler-backend-cold-prefix? data s e ".L_tl_"))
+              (not (compiler-backend-cold-prefix? data s e ".Lcv"))
+              (not (compiler-backend-cold-prefix? data s e ".Ldebug")))
+            (let
+              [prev : i64 (compiler-backend-tail-prev-live v at run.first)]
+              (when
+                (>= prev run.first)
+                (let
+                  [prev-rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+                    (& (array-ref v.lines prev))]
+                  [flags : i64
+                    (compiler-backend-peephole-record-flags prev-rec)]
+                  (when
+                    (or
+                      (!=
+                        0
+                        (bit-and
+                          flags
+                          (bit-or
+                            compiler-backend-sweep-line-flag-jmp
+                            compiler-backend-sweep-line-flag-ret)))
+                      (compiler-backend-tail-abort?
+                        (compiler-backend-peephole-record-data prev-rec)
+                        (compiler-backend-peephole-record-start prev-rec)
+                        (compiler-backend-peephole-record-end prev-rec)))
+                    (set! label at))))))
+          (break))
+        (unless
+          (and
+            (= kind compiler-backend-sweep-line-kind-instruction)
+            (compiler-backend-tail-eligible-insn? rec)
+            (!= (be_state.compiler-backend-peephole-byte-at data (+ s 4)) 106)
+            (not (compiler-backend-cold-prefix? data s e "    call"))
+            (=
+              0
+              (bit-and
+                (compiler-backend-peephole-record-flags rec)
+                (bit-or
+                  compiler-backend-sweep-line-flag-ret
+                  (bit-or
+                    compiler-backend-sweep-line-flag-rsp-dst
+                    (bit-or
+                      compiler-backend-sweep-line-flag-push
+                      (bit-or
+                        compiler-backend-sweep-line-flag-pop
+                        compiler-backend-sweep-line-flag-leave)))))))
+          (break))
+        (set! first at))
+      (set! at (compiler-backend-tail-prev-live v at run.first)))
+    (CompilerBackendTailRun first run.last label run.end-hash)))
+
+;; Scan ordinary instructions in a leaf loop using just the cached metadata.
+;; The caller cuts this range at its next recorded abort call.
+(define (compiler-backend-tail-next-candidate
+  [lines : (MutPtr be_state.CompilerBackendPeepholeLineRecord)]
+  [start : i64]
+  [stop : i64]) : i64
+  (let
+    [at : i64 start]
+    [mask : i64
+      (bit-or
+        compiler-backend-peephole-record-kind-mask
+        (shl
+          compiler-backend-sweep-line-flag-jmp
+          compiler-backend-peephole-record-flags-shift))]
+    (while (and
+      (< at stop)
+      (=
+        compiler-backend-sweep-line-kind-instruction
+        (bit-and
+          mask
+          (unsafe
+            (deref (ptr-offset lines at)).meta))))
+      (+= at 1))
+    at))
+
+;; The cheap discovery walk visits instruction text only at a cached jump or
+;; abort. Label references and straight-line bytes are examined after finding a
+;; repeated exit, within the same function and outside planned cold stubs.
+(define (compiler-backend-tail-function!
+  [v : (&mut v be_state.CompilerBackendPeepholeLineVec)]
+  [cold : (& cold CompilerBackendColdPlan)]
+  [stub-start : i64]
+  [lo : i64]
+  [hi : i64]
+  [abort-start : i64]
+  [abort-end : i64]
+  [home : arena.Arena]) : unit
+  (let
+    [runs : tail_runs.Vec (tail_runs.new)]
+    [ends : backend_label_i64_map.Map (backend_label_i64_map.with-capacity 8)]
+    [targets : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [target-count : i64 0]
+    ;; lo and hi bound the initialized portion of both arrays.
+    [lines : (MutPtr be_state.CompilerBackendPeepholeLineRecord)
+      (unsafe
+        (__tl_array-data v.lines))]
+    [live : (MutPtr i64)
+      (unsafe
+        (__tl_array-data v.live))]
+    [jump-mask : i64
+      (shl
+        compiler-backend-sweep-line-flag-jmp
+        compiler-backend-peephole-record-flags-shift)]
+    [stub : i64 stub-start]
+    [stub-entry : i64
+      (if (< stub-start cold.stubs)
+        (array-ref cold.jcc stub-start)
+        hi)]
+    [stub-end : i64
+      (if (< stub-start cold.stubs)
+        (array-ref cold.target stub-start)
+        hi)]
+    [lower : i64 lo]
+    [abort : i64 abort-start]
+    [next-abort : i64
+      (if (< abort-start abort-end)
+        (array-ref v.abort-cands abort-start)
+        hi)]
+    [anchor : i64 -1]
+    [global? : bool false]
+    [repeated? : bool false]
+    [indirect-exit? : bool false]
+    [i : i64 lo]
+    (while (< i hi)
+      (set! i (compiler-backend-tail-next-candidate lines i next-abort))
+      (when (>= i hi) (break))
+      (let
+        [abort? : bool (= i next-abort)]
+        (when
+          abort?
+          (+= abort 1)
+          (set!
+            next-abort
+            (if (< abort abort-end)
+              (array-ref v.abort-cands abort)
+              hi)))
+        (when
+          (=
+            (unsafe
+              (ptr-read (ptr-offset live i)))
+            1)
+          (while (> i stub-end)
+            (set! lower (+ stub-end 1))
+            (+= stub 1)
+            (set!
+              stub-entry
+              (if (< stub cold.stubs)
+                (array-ref cold.jcc stub)
+                hi))
+            (set!
+              stub-end
+              (if (< stub cold.stubs)
+                (array-ref cold.target stub)
+                hi)))
+          (when
+            (< i stub-entry)
+            (let
+              [meta : i64
+                (unsafe
+                  (deref (ptr-offset lines i)).meta)]
+              [kind : i64
+                (bit-and meta compiler-backend-peephole-record-kind-mask)]
+              [jmp? : bool (!= (bit-and meta jump-mask) 0)]
+              [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+                (& (array-ref v.lines i))]
+              [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+              [s : i64 (compiler-backend-peephole-record-start rec)]
+              [e : i64 (compiler-backend-peephole-record-end rec)]
+              (cond
+                [(= kind compiler-backend-sweep-line-kind-label)
+                  (let
+                    [head : i64
+                      (be_state.compiler-backend-peephole-byte-at data s)]
+                    [local? : bool
+                      (compiler-backend-layout-local-label? data s e)]
+                    (when
+                      (and
+                        (compiler-backend-tail-symbol-byte? head)
+                        (or (< head 48) (> head 57)))
+                      (unless
+                        local?
+                        (when global? (return unit))
+                        (set! global? true))
+                      (when (< anchor 0) (set! anchor i))
+                      (when
+                        local?
+                        (set!
+                          targets
+                          (compiler-backend-cold-grow-i64 targets target-count))
+                        (set! (array-ref targets target-count) i)
+                        (+= target-count 1))))]
+                [(= kind compiler-backend-sweep-line-kind-skip)
+                  (let
+                    [head : i64 (compiler-backend-cold-line-first data s e)]
+                    (when
+                      (and
+                        (< head e)
+                        (=
+                          (be_state.compiler-backend-peephole-byte-at data head)
+                          46)
+                        (or
+                          (compiler-backend-cold-prefix? data head e ".seh_")
+                          (compiler-backend-cold-prefix? data head e ".cfi_")
+                          (compiler-backend-cold-loc-line? data head e)))
+                      (return unit)))]
+                [else
+                  (let
+                    [direct? : bool
+                      (and jmp? (compiler-backend-tail-jmp? data s e))]
+                    (when
+                      (and
+                        jmp?
+                        (not direct?)
+                        (<
+                          (be_operand.compiler-backend-peephole-scan-byte-range
+                            data
+                            s
+                            e
+                            42)
+                          e))
+                      (set! indirect-exit? true))
+                    (when
+                      (and
+                        (>= anchor 0)
+                        (or
+                          direct?
+                          (and
+                            abort?
+                            (compiler-backend-tail-abort? data s e)
+                            (not
+                              (compiler-backend-tail-abort-site-follows? v i hi)))))
+                      (let
+                        [hash : i64 (compiler-backend-tail-line-hash rec)]
+                        [count : i64
+                          (backend_label_i64_map.get-value-or (& ends) hash 0)]
+                        (when (> count 0) (set! repeated? true))
+                        (backend_label_i64_map.insert-ref!
+                          (&mut ends)
+                          hash
+                          (+ count 1))
+                        (tail_runs.push-ref!
+                          (&mut runs)
+                          (CompilerBackendTailRun
+                            (if (> anchor lower)
+                              anchor
+                              lower)
+                            i
+                            -1
+                            hash)))))])))))
+      (+= i 1))
+    (when
+      (and repeated? (>= anchor 0))
+      (for [k (iterator.range 0 runs.len)]
+        (let
+          [run : CompilerBackendTailRun (array-ref runs.slots k)]
+          (when
+            (> (backend_label_i64_map.get-value-or (& ends) run.end-hash 0) 1)
+            (set!
+              (array-ref runs.slots k)
+              (compiler-backend-tail-resolve-run v run)))))
+      ;; Switch tables can live in a program-wide .rodata group that this
+      ;; function cannot see. An indirect dispatch pins its possible entries.
+      (unless
+        indirect-exit?
+        (compiler-backend-tail-whole-blocks! v (& runs) (& ends) lo hi home))
+      (let
+        [by-label : backend_label_i64_map.Map
+          (compiler-backend-tail-index-targets v (& targets) target-count)]
+        (compiler-backend-tail-suffixes!
+          v
+          (& runs)
+          (& ends)
+          (& by-label)
+          anchor
+          hi
+          home)))))
+
+(define (compiler-backend-tail-abort-site-follows?
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [i : i64]
+  [hi : i64]) : bool
+  (let
+    [next : i64 (+ i 1)]
+    (while (and (< next hi) (= (array-ref v.live next) 0))
+      (+= next 1))
+    (when (>= next hi) (return false))
+    (let
+      [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+        (& (array-ref v.lines next))]
+      (compiler-backend-cold-prefix?
+        (compiler-backend-peephole-record-data rec)
+        (compiler-backend-peephole-record-start rec)
+        (compiler-backend-peephole-record-end rec)
+        ".L_tl_abort_site_"))))
+
+;; Most small functions have no pair of terminating branches. Filter them with
+;; the cached jmp bits and abort candidate count before allocating any tables.
+(define (compiler-backend-tail-candidates?
+  [lines : (MutPtr be_state.CompilerBackendPeepholeLineRecord)]
+  [lo : i64]
+  [hi : i64]
+  [abort-count : i64]) : bool
+  (let
+    [count : i64 abort-count]
+    [index : i64 lo]
+    [jump-mask : i64
+      (shl
+        compiler-backend-sweep-line-flag-jmp
+        compiler-backend-peephole-record-flags-shift)]
+    (while (and (< count 2) (< index hi))
+      (when
+        (not
+          (=
+            (bit-and
+              jump-mask
+              (unsafe
+                (deref (ptr-offset lines index)).meta))
+            0))
+        (+= count 1))
+      (+= index 1))
+    (>= count 2)))
+
+(define (compiler-backend-peephole-merge-tails!
+  [v : (&mut v be_state.CompilerBackendPeepholeLineVec)]
+  [cold : (& cold CompilerBackendColdPlan)]) : unit
+  (when (< v.len 5) (return unit))
+  (let
+    [home : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    [lo : i64 0]
+    [stub : i64 0]
+    [abort : i64 0]
+    [lines : (MutPtr be_state.CompilerBackendPeepholeLineRecord)
+      (unsafe
+        (__tl_array-data v.lines))]
+    (for [close (iterator.range 0 (+ v.close-cand-len 1))]
+      (let
+        [hi : i64
+          (if (< close v.close-cand-len)
+            (array-ref v.close-cands close)
+            v.len)]
+        (while (and
+          (< abort v.abort-cand-len)
+          (< (array-ref v.abort-cands abort) lo))
+          (+= abort 1))
+        (let
+          [first-abort : i64 abort]
+          (while (and
+            (< abort v.abort-cand-len)
+            (< (array-ref v.abort-cands abort) hi))
+            (+= abort 1))
+          (when
+            (and
+              (>= (- hi lo) 5)
+              (compiler-backend-tail-candidates?
+                lines
+                lo
+                hi
+                (- abort first-abort)))
+            (let
+              [phase : arena.ArenaPhase (arena.phase scratch)]
+              (in-arena
+                scratch
+                (unsafe
+                  ;; Replacement strings are explicitly allocated in home.
+                  (compiler-backend-tail-function!
+                    v
+                    cold
+                    stub
+                    lo
+                    hi
+                    first-abort
+                    abort
+                    home)))
+              (arena.rewind-safe! phase))))
+        (set! lo (+ hi 1))
+        (while (and (< stub cold.stubs) (< (array-ref cold.target stub) lo))
+          (+= stub 1))))
+    (arena.destroy-safe! scratch)))
+
+;; The single render of the group, with COLD-1's out-of-line abort stubs. A
+;; group without an abort call renders in record order; otherwise the cold
+;; plan stays in scratch while the final string is rendered into the caller's
+;; arena.
+(define (compiler-backend-peephole-records-render
+  [v : be_state.CompilerBackendPeepholeLineVec]
+  [merge-tails? : bool]) : String
+  (if (= v.abort-cand-len 0)
+    (begin
+      (when
+        merge-tails?
+        (let
+          [plan : CompilerBackendColdPlan (compiler-backend-cold-plan-empty)]
+          (compiler-backend-peephole-merge-tails! (&mut v) (& plan))))
+      (compiler-backend-peephole-records-render-plain v))
+    (let
+      [scratch : arena.Arena (arena.make)]
+      ;; The plan owns the cold labels and inverses until rendering copies them.
+      [plan : CompilerBackendColdPlan
+        (unsafe
+          (in-arena
+            (arena.Arena (arena.raw-handle scratch))
+            (compiler-backend-cold-plan v)))]
+      [_merge : unit
+        (when
+          merge-tails?
+          (compiler-backend-peephole-merge-tails! (&mut v) (& plan)))]
+      [rendered : String (compiler-backend-cold-render v plan)]
+      (arena.destroy-safe! scratch)
+      rendered)))
 
 ;; ---------------------------------------------------------------------------
 ;; RMW-2/RMW-3: fold an adjacent load / ALU / store of ONE memory location into
@@ -10018,8 +11173,9 @@
     (= (be_state.compiler-backend-peephole-byte-at data (+ s 1)) 76)))
 
 ;; `movq $c, %reg` / `movl $c, %reg` / `movabsq $c, %reg` / `xorl %r, %r`: an
-;; instruction whose whole effect is to place a literal in a register. Asked
-;; only of the handful of lines inside a candidate arm, never of every line.
+;; instruction whose whole effect is to place a numeric literal in a register.
+;; A local address load should keep its layout whether it uses LEA or MOV.
+;; Asked only of the handful of lines inside a candidate arm.
 (define (compiler-backend-layout-const-line?
   [data : (Ptr u8)]
   [s : i64]
@@ -10056,6 +11212,10 @@
                 "movabsq"))
               (and
                 (= (be_state.compiler-backend-peephole-byte-at data ops) 36)
+                (not
+                  (=
+                    (be_state.compiler-backend-peephole-byte-at data (+ ops 1))
+                    46))
                 (= (be_state.compiler-backend-peephole-byte-at data rhs) 37)
                 (>=
                   (be_operand.compiler-backend-peephole-scan-byte-range
@@ -12641,7 +13801,13 @@
 (define (compiler-backend-peephole-records-buffer
   [out : (text_buf_borrowed.TextBufBorrowed asm)]
   [v : be_state.CompilerBackendPeepholeLineVec]
-  [asm : (& asm str)]) : (text_buf_borrowed.TextBufBorrowed asm)
+  [asm : (& asm str)]
+  [merge-tails? : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
+  (when
+    merge-tails?
+    (let
+      [plan : CompilerBackendColdPlan (compiler-backend-cold-plan-empty)]
+      (compiler-backend-peephole-merge-tails! (&mut v) (& plan))))
   (let
     [recs : (__tl_dyn-array be_state.CompilerBackendPeepholeLineRecord) v.lines]
     [live : (__tl_dyn-array i64) v.live]

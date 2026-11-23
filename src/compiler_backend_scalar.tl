@@ -3623,15 +3623,13 @@
         "    "
         (if (be_facts.compiler-backend-type-signed? type-segment-bases ty)
           (cond [(= size 1) "movsbq"] [(= size 2) "movswq"] [else "movslq"])
-          (cond [(= size 1) "movzbq"] [(= size 2) "movzwq"] [else "movl"]))
+          (cond [(= size 1) "movzbl"] [(= size 2) "movzwl"] [else "movl"]))
         " "
         src
         ", "
-        (if (and
-          (not (be_facts.compiler-backend-type-signed? type-segment-bases ty))
-          (= size 4))
-          "%r11d"
-          "%r11")
+        (if (be_facts.compiler-backend-type-signed? type-segment-bases ty)
+          "%r11"
+          "%r11d")
         "\n    pushq %r11\n"))))
 
 (define (compiler-backend-rewrite-panic-call
@@ -4012,11 +4010,11 @@
       [(= size 2)
         (if (be_facts.compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movswq " addr ", %rax\n")
-          (str_cat.str-cat "    movzwq " addr ", %rax\n"))]
+          (str_cat.str-cat "    movzwl " addr ", %eax\n"))]
       [(= size 1)
         (if (be_facts.compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movsbq " addr ", %rax\n")
-          (str_cat.str-cat "    movzbq " addr ", %rax\n"))]
+          (str_cat.str-cat "    movzbl " addr ", %eax\n"))]
       [else ""])))
 
 (define (compiler-backend-emit-load-float-memory
@@ -4053,11 +4051,21 @@
       [(= size 2)
         (if (be_facts.compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movswq " addr ", " reg "\n")
-          (str_cat.str-cat "    movzwq " addr ", " reg "\n"))]
+          (str_cat.str-cat
+            "    movzwl "
+            addr
+            ", "
+            (be_operand.compiler-backend-reg-part reg 4)
+            "\n"))]
       [(= size 1)
         (if (be_facts.compiler-backend-type-signed? type-segment-bases ty)
           (str_cat.str-cat "    movsbq " addr ", " reg "\n")
-          (str_cat.str-cat "    movzbq " addr ", " reg "\n"))]
+          (str_cat.str-cat
+            "    movzbl "
+            addr
+            ", "
+            (be_operand.compiler-backend-reg-part reg 4)
+            "\n"))]
       [else ""])))
 
 (define (compiler-backend-emit-load-register-to-reg
@@ -4090,10 +4098,10 @@
             dst-reg
             "\n")
           (str_cat.str-cat
-            "    movzwq "
+            "    movzwl "
             (be_operand.compiler-backend-reg-part src-reg size)
             ", "
-            dst-reg
+            (be_operand.compiler-backend-reg-part dst-reg 4)
             "\n"))]
       [(= size 1)
         (if (be_facts.compiler-backend-type-signed? type-segment-bases ty)
@@ -4104,10 +4112,10 @@
             dst-reg
             "\n")
           (str_cat.str-cat
-            "    movzbq "
+            "    movzbl "
             (be_operand.compiler-backend-reg-part src-reg size)
             ", "
-            dst-reg
+            (be_operand.compiler-backend-reg-part dst-reg 4)
             "\n"))]
       [else ""])))
 
@@ -4257,16 +4265,27 @@
   [sse? : bool]) : String
   (if (string.eq src dst)
     ""
-    (str_cat.str-cat
-      "    "
-      (if sse?
-        "movsd"
-        "movq")
-      " "
-      src
-      ", "
-      dst
-      "\n")))
+    (let
+      [cross-gp? : bool
+        (and
+          sse?
+          (or
+            (and
+              (be_operand.compiler-backend-peephole-register-operand? src)
+              (not (string.is-string-prefix-at src "%xmm" 0)))
+            (and
+              (be_operand.compiler-backend-peephole-register-operand? dst)
+              (not (string.is-string-prefix-at dst "%xmm" 0)))))]
+      (str_cat.str-cat
+        "    "
+        (if (and sse? (not cross-gp?))
+          "movsd"
+          "movq")
+        " "
+        src
+        ", "
+        dst
+        "\n"))))
 
 (define (compiler-backend-emit-group-word-copy
   [entry : (&mut entry be_state.CompilerBackendAsmBuf)]
@@ -5042,7 +5061,7 @@
 (define (compiler-backend-emit-group-copy
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
+  [dst : (& dst compiler_ir_types.CompilerIrValue)]
   [src : compiler_ir_types.CompilerIrValue]
   [vars : i64]
   [ty : compiler_ast_types.AstType]
@@ -5067,22 +5086,44 @@
               1
               vars
               backend-state))]
+        [dst-var : i64
+          (match dst
+            [(Var var) var]
+            [_ -1])]
+        [symbol : String
+          (match dst
+            [(Global name)
+              (be_operand.compiler-backend-global-symbol-index
+                program-index
+                name)]
+            [(Var _) ""]
+            [_
+              (return
+                (Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      "backend: register-group copy requires variable or global destination"))))])]
         [dst0
-          (try
-            (compiler-backend-group-word-operand-with-backend-state
-              assignments
-              dst
-              0
-              vars
-              backend-state))]
+          (if (>= dst-var 0)
+            (try
+              (compiler-backend-group-word-operand-with-backend-state
+                assignments
+                dst-var
+                0
+                vars
+                backend-state))
+            (str_cat.str-cat symbol "(%rip)"))]
         [dst1
-          (try
-            (compiler-backend-group-word-operand-with-backend-state
-              assignments
-              dst
-              1
-              vars
-              backend-state))]
+          (if (>= dst-var 0)
+            (try
+              (compiler-backend-group-word-operand-with-backend-state
+                assignments
+                dst-var
+                1
+                vars
+                backend-state))
+            (str_cat.str-cat symbol "+8(%rip)"))]
         [sse0? : bool
           (be_facts.compiler-backend-group-word-sse?
             type-segment-bases
@@ -5098,7 +5139,7 @@
         [reg0 : String
           (if sse0?
             (compiler-backend-group-copy-xmm-scratch
-              dst
+              dst-var
               (be_state.compiler-backend-global-shared-view src0)
               (be_state.compiler-backend-global-shared-view src1)
               (be_state.compiler-backend-global-shared-view dst0)
@@ -5117,7 +5158,7 @@
         [reg1 : String
           (if sse1?
             (compiler-backend-group-copy-xmm-scratch
-              dst
+              dst-var
               (be_state.compiler-backend-global-shared-view src0)
               (be_state.compiler-backend-global-shared-view src1)
               (be_state.compiler-backend-global-shared-view dst0)
@@ -5877,10 +5918,10 @@
       setcc
       " "
       (be_operand.compiler-backend-reg-part (string.copy dst-reg) 1)
-      "\n    movzbq "
+      "\n    movzbl "
       (be_operand.compiler-backend-reg-part (string.copy dst-reg) 1)
       ", "
-      dst-reg
+      (be_operand.compiler-backend-reg-part (string.copy dst-reg) 4)
       "\n")))
 
 (define (compiler-backend-binop-compare-flags-reg-asm
@@ -5916,10 +5957,10 @@
       (compiler-backend-compare-setcc type-segment-bases op ty)
       " "
       (be_operand.compiler-backend-reg-part (string.copy dst-reg) 1)
-      "\n    movzbq "
+      "\n    movzbl "
       (be_operand.compiler-backend-reg-part (string.copy dst-reg) 1)
       ", "
-      dst-reg
+      (be_operand.compiler-backend-reg-part (string.copy dst-reg) 4)
       "\n")))
 
 (define (compiler-backend-binop-test-zero-reg-asm
@@ -5945,10 +5986,10 @@
         setcc
         " "
         (be_operand.compiler-backend-reg-part (string.copy reg) 1)
-        "\n    movzbq "
+        "\n    movzbl "
         (be_operand.compiler-backend-reg-part (string.copy reg) 1)
         ", "
-        reg
+        (be_operand.compiler-backend-reg-part (string.copy reg) 4)
         "\n"))))
 
 (define (compiler-backend-compare-setcc
@@ -7875,7 +7916,7 @@
       (str_cat.str-cat
         "    cmpq "
         scratch-reg
-        ", %rax\n    setae %al\n    movzbq %al, %rax\n"))))
+        ", %rax\n    setae %al\n    movzbl %al, %eax\n"))))
 
 (define (compiler-backend-unsigned-magic-divmod-asm
   [divisor : u64]
@@ -9550,17 +9591,17 @@
       (Some
         (if (string.eq imm "$255")
           (str_cat.str-cat
-            "    movzbq "
+            "    movzbl "
             (be_operand.compiler-backend-reg-part (string.copy dst-reg) 1)
             ", "
-            dst-reg
+            (be_operand.compiler-backend-reg-part (string.copy dst-reg) 4)
             "\n")
           (if (string.eq imm "$65535")
             (str_cat.str-cat
-              "    movzwq "
+              "    movzwl "
               (be_operand.compiler-backend-reg-part (string.copy dst-reg) 2)
               ", "
-              dst-reg
+              (be_operand.compiler-backend-reg-part (string.copy dst-reg) 4)
               "\n")
             (compiler-backend-binop-reg-asm
               type-segment-bases
@@ -9920,33 +9961,19 @@
           (be_operand.compiler-backend-type-size type-segment-bases ty)]
         (Some
           (if (string.eq imm "$255")
-            (if (= size 8)
+            (str_cat.str-cat
+              "    movzbl "
+              (be_operand.compiler-backend-reg-part staging-reg 1)
+              ", "
+              (be_operand.compiler-backend-reg-part result-reg 4)
+              "\n")
+            (if (and (>= size 2) (string.eq imm "$65535"))
               (str_cat.str-cat
-                "    movzbq "
-                (be_operand.compiler-backend-reg-part staging-reg 1)
-                ", "
-                result-reg
-                "\n")
-              (str_cat.str-cat
-                "    movzbl "
-                (be_operand.compiler-backend-reg-part staging-reg 1)
+                "    movzwl "
+                (be_operand.compiler-backend-reg-part staging-reg 2)
                 ", "
                 (be_operand.compiler-backend-reg-part result-reg 4)
-                "\n"))
-            (if (and (>= size 2) (string.eq imm "$65535"))
-              (if (= size 8)
-                (str_cat.str-cat
-                  "    movzwq "
-                  (be_operand.compiler-backend-reg-part staging-reg 2)
-                  ", "
-                  result-reg
-                  "\n")
-                (str_cat.str-cat
-                  "    movzwl "
-                  (be_operand.compiler-backend-reg-part staging-reg 2)
-                  ", "
-                  (be_operand.compiler-backend-reg-part result-reg 4)
-                  "\n"))
+                "\n")
               (compiler-backend-binop-immediate-reg-asm
                 type-segment-bases
                 "and"
@@ -10094,10 +10121,10 @@
         (compiler-backend-float-compare-setcc op)
         " "
         (be_operand.compiler-backend-reg-part (string.copy dst-home) 1)
-        "\n    movzbq "
+        "\n    movzbl "
         (be_operand.compiler-backend-reg-part (string.copy dst-home) 1)
         ", "
-        dst-home
+        (be_operand.compiler-backend-reg-part (string.copy dst-home) 4)
         "\n")
       (str_cat.str-cat
         (compiler-backend-machine-line
@@ -14877,14 +14904,25 @@
   [program-index : be_state.CompilerBackendProgramIndex]) : String
   (str_cat.str-cat
     length-asm
-    (str_cat.str-cat
-      "    cmpq "
-      index-imm
-      ", "
-      length-operand
-      "\n    ja "
-      ok-symbol
-      "\n")
+    (if (and
+      (string.eq index-imm "$0")
+      (be_operand.compiler-backend-string-prefix-at? length-operand "%" 0))
+      (str_cat.str-cat
+        "    testq "
+        length-operand
+        ", "
+        length-operand
+        "\n    ja "
+        ok-symbol
+        "\n")
+      (str_cat.str-cat
+        "    cmpq "
+        index-imm
+        ", "
+        length-operand
+        "\n    ja "
+        ok-symbol
+        "\n"))
     (compiler-backend-bounds-check-tail
       call-space
       ok-symbol

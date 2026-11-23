@@ -542,6 +542,9 @@
       lsp-frame-memory-state.stdout
       (str_cat.str-cat-scoped lsp-frame-memory-state.stdout text))))
 
+(define (lsp-frame-memory-copy-stdout) : String
+  (string.copy (& lsp-frame-memory-state.stdout)))
+
 (define (lsp-frame-memory-stderr-append! [text : String]) : unit
   (in-arena
     lsp-frame-memory-state.owner
@@ -13488,7 +13491,7 @@
     (match (lsp-json-field-ref message (& key))
       [(Found id)
         (if (lsp-json-rpc-id? id)
-          (clone (deref id))
+          (json.clone-json id)
           JsonNull)]
       [(Missing) JsonNull])))
 
@@ -13787,7 +13790,10 @@
                   [(Found id)
                     (unsafe
                       ;; unsafe: stdout text lives in the arena of the global lsp-frame-memory-state.owner handle
-                      (lsp-write-error (clone (deref id)) -32602 error-message))]
+                      (lsp-write-error
+                        (json.clone-json id)
+                        -32602
+                        error-message))]
                   [(Missing) unit]))
               true]))
         (return (Continue state)))
@@ -14037,7 +14043,7 @@
     [_restore-enclosing : unit
       (unsafe
         (arena.tl_arena_set enclosing))]
-    [captured-stdout : String (string.copy (& lsp-frame-memory-state.stdout))]
+    [captured-stdout : String (lsp-frame-memory-copy-stdout)]
     [captured-stderr : String (string.copy (& lsp-frame-memory-state.stderr))]
     [transport-head : i64 lsp-frame-memory-state.owner.handle]
     [_fresh-after : unit (lsp-frame-fresh-session-reset!)]
@@ -14910,7 +14916,7 @@
             (if (= (json.list-count-ref items) 0)
               (Err "path must not be empty")
               (if (lsp-json-list-all-strings? items)
-                (Ok (clone (deref items)))
+                (Ok (json.clone-json-seq items))
                 (Err "path entries must be strings")))]
           [_ (Err "path must be an array")])]
       [(Missing) (Err "Missing path parameter")])))

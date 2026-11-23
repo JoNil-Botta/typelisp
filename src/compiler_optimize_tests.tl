@@ -1,6 +1,8 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import stdlib.iterator)
 (import compiler_optimize as opt)
+(import compiler_opt_level as opt_level)
+(import cli_option_core as cli_option)
 (import compiler_regalloc as reg)
 (import compiler_optimize.opt-natural-loop-work-empty-slots)
 (cfg test (import compiler_allocation_profile as allocation_profile))
@@ -873,7 +875,9 @@
       pools
       (&mut input)
       type-segment-bases
+      (& (ir.compiler-ir-global-seq-empty))
       functions
+      (& (ir.compiler-ir-extern-seq-empty))
       level
       spans)))
 
@@ -1018,6 +1022,8 @@
       dst
       (& ret)
       (& sa)
+      (& (ir.compiler-ir-param-seq-empty))
+      (& (opt.OptInlineArgStaging false false (__tl_make-array bool 0) 0))
       np
       base
       label-prefix
@@ -3608,7 +3614,9 @@
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         (ast.ast-node-pool-reader-type-segment-bases)
+        (& (ir.compiler-ir-global-seq-empty))
         (opt-input-arena-functions)
+        (& (ir.compiler-ir-extern-seq-empty))
         2
         (ir.compiler-source-spans-empty))]
     [out : ir.CompilerIrFunctionSeq
@@ -3789,7 +3797,9 @@
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         (ast.ast-node-pool-reader-type-segment-bases)
+        (& (ir.compiler-ir-global-seq-empty))
         (opt-input-arena-functions)
+        (& (ir.compiler-ir-extern-seq-empty))
         1
         (ir.compiler-source-spans-empty))]
     [out : ir.CompilerIrFunctionSeq
@@ -4040,10 +4050,10 @@
       [(Program result _)
         (test.assert-i64-eq
           (array-ref state.calls 0)
-          (if (and authority? (= level 2))
+          (if (and authority? (opt_level.opt-level-full? level))
             1
             0)
-          "only level 2 consumes explicit retirement authority")
+          "full optimization consumes explicit retirement authority")
         (test.assert-true
           (opt-test-program-eq
             (ast.ast-node-pool-context-type-segment-bases pools)
@@ -4070,7 +4080,7 @@
 
 (test
   optimizer-input-retirement-authority-and-levels
-  (for [level (iterator.range 0 3)]
+  (for [level (iterator.range 0 4)]
     (for [authority (iterator.range 0 2)]
       (opt-test-input-retirement
         (ast.ast-node-pool-reader-context-current)
@@ -11668,9 +11678,8 @@
     [(= kind 2) (irt.instr "%3 = le 0, %0 : i64")]
     [else (irt.instr "%3 = lt -1, %0 : i64")]))
 
-;; 0 `lt i bound`, 1 `gt bound i`. `bound` is `len` (%1), which the true arm
-;; bounds-checks against, or `probe` (%2), which nothing ever checks -- the
-;; negative case for the non-negativity gate.
+;; 0 `lt i bound`, 1 `gt bound i`. `bound` is `len` (%1), whose sign the entry
+;; guard proves, or unconstrained `probe` (%2), the negative case for the gate.
 (define (opt-range-merge-high-instr [kind : i64] [bound : i64]) : ir.CompilerIrInstr
   (if (= kind 0)
     (BinOp 4 (Lt) (Var 0) (Var bound) (I64))
@@ -11718,8 +11727,10 @@
         (ir.compiler-ir-block-list-empty))]
     (ir.compiler-ir-blocks-with-tail
       tail
-      (irt.block "entry:
-           jump low")
+      (irt.block
+        "entry:
+           %15 = ge %1, 0 : i64
+           branch %15, low, fail")
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "low")
         (opt-range-merge-low-instrs low-kind extra-use? low-fail))
@@ -13579,32 +13590,25 @@
           (return true))]))
   false)
 
-(define (opt-level-parse-ok? [value : String] [expected : i64]) : bool
-  (match (compiler-optimize-parse-level value)
-    [(Ok level) (= level expected)]
-    [(Err) false]))
-
-(define (opt-level-parse-err? [value : String]) : bool
-  (match (compiler-optimize-parse-level value)
-    [(Ok _) false]
-    [(Err) true]))
-
 (define (compiler-optimize-level-policy-ok?) : bool
   (and
     (= (opt.compiler-optimize-default-level) 1)
-    (compiler-optimize-level-valid? 0)
-    (compiler-optimize-level-valid? 1)
-    (compiler-optimize-level-valid? 2)
-    (not (compiler-optimize-level-valid? 3))
-    (not (compiler-optimize-level-valid? (- 0 1)))
-    (not (compiler-optimize-level-valid? 4))
-    (opt-level-parse-ok? "0" 0)
-    (opt-level-parse-ok? "1" 1)
-    (opt-level-parse-ok? "2" 2)
-    (opt-level-parse-err? "3")
-    (opt-level-parse-err? "")
-    (opt-level-parse-err? "4")
-    (opt-level-parse-err? "10")))
+    (not (opt_level.opt-level-full? 0))
+    (not (opt_level.opt-level-full? 1))
+    (opt_level.opt-level-full? 2)
+    (opt_level.opt-level-full? 3)
+    (opt_level.opt-level-speed? 2)
+    (not (opt_level.opt-level-speed? 3))
+    (not (opt_level.opt-level-size? 2))
+    (opt_level.opt-level-size? 3)
+    (= (cli_option.cli-option-opt-level "0") 0)
+    (= (cli_option.cli-option-opt-level "1") 1)
+    (= (cli_option.cli-option-opt-level "2") 2)
+    (= (cli_option.cli-option-opt-level "s") 3)
+    (< (cli_option.cli-option-opt-level "3") 0)
+    (< (cli_option.cli-option-opt-level "") 0)
+    (< (cli_option.cli-option-opt-level "4") 0)
+    (< (cli_option.cli-option-opt-level "10") 0)))
 
 ;; Whole-program structural equality: globals, functions and externs pairwise.
 (define (opt-test-program-eq
@@ -33359,7 +33363,8 @@
         [(No) true]
         [(Some _) false])]))
 
-(define (opt-loop-rotation-top-test-blocks [constant-edge? : bool]) : ir.CompilerIrBlockList
+(define (opt-loop-rotation-top-test-blocks
+  [entry-instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks-with-tail
     (irt.blocks
       "loop:
@@ -33370,13 +33375,46 @@
          jump loop
        exit:
          return %1")
-    (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label "entry")
-      (opt-test-instrs
-        (ir.CompilerIrInstr.Mov 1 (I64 0) (I64))
-        (if constant-edge?
-          (irt.instr "branch true, loop, exit")
-          (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop")))))))
+    (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") entry-instrs)))
+
+(define (opt-loop-rotation-unrelated-phi-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %0 = mov true : bool
+       branch %0, left, right
+     left:
+       jump merge
+     right:
+       jump merge
+     merge:
+       %1 = phi [1, left], [2, right] : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       jump loop
+     loop:
+       %3 = lt %2, %1 : bool
+       branch %3, body, exit
+     body:
+       %2 = add %2, 1 : i64
+       jump loop
+     exit:
+       return %2"))
+
+(define (opt-loop-rotation-exit-phi-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %1 = mov 0 : i64
+       jump loop
+     loop:
+       %2 = lt %1, 10 : bool
+       branch %2, body, exit
+     body:
+       %1 = add %1, 1 : i64
+       jump loop
+     exit:
+       %3 = phi [%1, loop] : i64
+       return %3"))
 
 (define (opt-loop-rotation-false-body-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -39016,6 +39054,75 @@
     11
     (opt-unroll-mutable-map-test-blocks mode)
     Ordinary))
+
+(define (opt-test-simd-unroll-keeps-blocks? [func : ir.CompilerIrFunction]) : bool
+  (let
+    [blocks (opt.opt-function-blocks func)]
+    [type-bases (ast.ast-node-pool-reader-type-segment-bases)]
+    (match (opt.opt-unroll-simd-function-with-context-result
+      type-bases
+      (opt.opt-cfg-context-build (opt.opt-function-blocks func))
+      func
+      true)
+      [(Result result _)
+        (let
+          [result-blocks (opt.opt-function-blocks result)]
+          (opt.opt-block-list-eq type-bases blocks result-blocks))])))
+
+(test
+  simd-unroll-rejects-recurrent-shuffle
+  (test.assert-true
+    (opt-test-simd-unroll-keeps-blocks?
+      (irt.func
+        "function @recurrent_shuffle(n=%0:i64, src=%1:i64, dst=%2:i64) -> unit vars 11 {
+entry:
+  %3 = mov 0 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  %7 = lane_id 4 : i64
+  %8 = splat 3 lanes 4 : i64
+  %6 = vector_sub %8, %7 lanes 4 : i64
+  branch %5, body, exit
+body:
+  %8 = vector_load %1, %3 lanes 4 : i64
+  %7 = vector_shuffle %7, %6, active 4 lanes 4 : i64
+  %10 = vector_add %8, %7 lanes 4 : i64
+  vector_store %2, %3, %10 lanes 4 : i64
+  %3 = mov %4 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  branch %5, body, exit
+exit:
+  return
+}"))
+    "each shuffle reads the previous gang's vector"))
+
+(test
+  simd-unroll-rejects-recurrent-mask-not
+  (test.assert-true
+    (opt-test-simd-unroll-keeps-blocks?
+      (irt.func
+        "function @recurrent_mask(n=%0:i64, src=%1:i64, dst=%2:i64) -> unit vars 10 {
+entry:
+  %3 = mov 0 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  %6 = lane_id 4 : i64
+  %7 = vector_compare_eq %6, %6 lanes 4 : i64
+  branch %5, body, exit
+body:
+  %8 = vector_load %1, %3 lanes 4 : i64
+  %7 = mask_not %7 lanes 4
+  %9 = select %7, %8, %6 lanes 4 : i64
+  vector_store %2, %3, %9 lanes 4 : i64
+  %3 = mov %4 : i64
+  %4 = add %3, 4 : i64
+  %5 = le %4, %0 : i64
+  branch %5, body, exit
+exit:
+  return
+}"))
+    "each mask negation reads the previous gang's mask"))
 
 (define (opt-unroll-test-count-add-instr-seq
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -52471,9 +52578,71 @@
         61]
       [else 42])))
 
+(define (opt-test-normalized-rotation-keeps-loop?
+  [func : ir.CompilerIrFunction]) : bool
+  (match (opt.opt-loop-rotation-normalized-function-result
+    (ast.ast-node-pool-reader-context-current)
+    func)
+    [(Result blocks _ _)
+      (opt-block-list-has-label?
+        (ir.compiler-ir-block-list-view blocks)
+        (ir.compiler-ir-label "loop"))]))
+
+(test
+  rotation-entry-backedge-keeps-parameter
+  (test.assert-true
+    (opt-test-normalized-rotation-keeps-loop?
+      (irt.func
+        "function @entry_backedge(flag=%0:bool, src=%1:i64, dst=%2:i64) -> unit vars 6 {
+entry:
+  %3 = mov 0 : i64
+  branch %0, loop, done
+loop:
+  %4 = lt %3, 16 : bool
+  branch %4, body, repeat
+body:
+  %5 = vector_load %1, %3 lanes 4 : i64
+  vector_store %2, %3, %5 lanes 4 : i64
+  %3 = add %3, 4 : i64
+  jump loop
+repeat:
+  %0 = mov true : bool
+  jump entry
+done:
+  return
+}"))
+    "the caller supplies the flag on the first entry"))
+
+(test
+  rotation-entry-fallthrough-sees-last-definition
+  (test.assert-true
+    (opt-test-normalized-rotation-keeps-loop?
+      (irt.func
+        "function @fallthrough(src=%0:i64, dst=%1:i64) -> unit vars 6 {
+entry:
+  %2 = mov 0 : i64
+  %3 = mov true : bool
+  %3 = mov false : bool
+pre:
+  branch %3, loop, done
+loop:
+  %4 = lt %2, 16 : bool
+  branch %4, body, done
+body:
+  %5 = vector_load %0, %2 lanes 4 : i64
+  vector_store %1, %2, %5 lanes 4 : i64
+  %2 = add %2, 4 : i64
+  jump loop
+done:
+  return
+}"))
+    "the final fallthrough instruction sets the flag to false"))
+
 (define (compiler-optimize-loop-rotation-self-test) : i64
   (let
-    [raw : ir.CompilerIrBlockList (opt-loop-rotation-top-test-blocks false)]
+    [raw : ir.CompilerIrBlockList
+      (opt-loop-rotation-top-test-blocks
+        (irt.instrs "%1 = mov 0 : i64\n jump loop"))]
     [_addr-taken : unit (opt.opt-function-addr-taken-install! 0 (& raw))]
     [rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
@@ -52482,8 +52651,26 @@
     [constant-edge-rotated : ir.CompilerIrBlockList
       (match (opt.opt-loop-rotation-normalized-function-result
         (ast.ast-node-pool-reader-context-current)
-        (opt-cfg-test-function (opt-loop-rotation-top-test-blocks true)))
+        (opt-cfg-test-function
+          (opt-loop-rotation-top-test-blocks
+            (irt.instrs "%1 = mov 0 : i64\n branch true, loop, exit"))))
         [(Result blocks _ _) blocks])]
+    [mov-edge-rotated : ir.CompilerIrBlockList
+      (match (opt.opt-loop-rotation-normalized-function-result
+        (ast.ast-node-pool-reader-context-current)
+        (opt-cfg-test-function
+          (opt-loop-rotation-top-test-blocks
+            (irt.instrs
+              "%1 = mov 0 : i64
+               %3 = mov true : bool
+               %3 = mov false : bool
+               branch %3, exit, loop"))))
+        [(Result blocks _ _) blocks])]
+    [unrelated-phi-rotated : ir.CompilerIrBlockList
+      (opt.opt-loop-rotation-blocks
+        (ast.ast-node-pool-reader-context-current)
+        (& (opt-loop-rotation-unrelated-phi-blocks)))]
+    [exit-phi : ir.CompilerIrBlockList (opt-loop-rotation-exit-phi-blocks)]
     [false-body-rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
         (ast.ast-node-pool-reader-context-current)
@@ -52599,6 +52786,33 @@
             (ir.compiler-ir-label "body")
             (ir.compiler-ir-label "exit")))
         18]
+      [(not
+          (opt-loop-rotation-successors?
+            mov-edge-rotated
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-label "body")
+            (ir.compiler-ir-label "exit")))
+        19]
+      [(or
+          (opt-block-list-has-label?
+            (ir.compiler-ir-block-list-view unrelated-phi-rotated)
+            (ir.compiler-ir-label "loop"))
+          (!=
+            (opt-count-phi-blocks
+              (ir.compiler-ir-block-list-view unrelated-phi-rotated))
+            1))
+        20]
+      [(not
+          (let
+            [unchanged
+              (opt.opt-loop-rotation-blocks
+                (ast.ast-node-pool-reader-context-current)
+                (& exit-phi))]
+            (opt.opt-block-list-eq
+              (ast.ast-node-pool-reader-type-segment-bases)
+              unchanged
+              exit-phi)))
+        21]
       [else 42])))
 
 ;; Nested-loop SSA fixture: the inner-loop counter/accumulator phis at the
@@ -73598,8 +73812,10 @@ done:
       (ir.compiler-ir-function-seq-prepend
         (& (opt-test-function (ir.compiler-ir-instr-seq-empty)))
         (& (ir.compiler-ir-function-seq-empty)))]
-    [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
-    [_install : unit (opt.opt-inline-owned-state-install! index)]
+    [_install : unit
+      (opt.opt-inline-owned-state-install!
+        (& functions)
+        (& (ir.compiler-ir-global-seq-empty)))]
     [live-owned : opt.CompilerOptOwnedState
       (opt.compiler-opt-owned-state-shared-view)]
     [live : opt.OptInlineOwnedState live-owned.inline-state]
@@ -77354,7 +77570,7 @@ done:
 ;; compute the same bool, but `ubound` and `lftr` below match loop shapes on the
 ;; signed one, so the pass does not touch it; the compare with an unconstrained
 ;; operand is untouched for the plainer reason that nothing is proved about it.
-;; (e) The length itself is non-negative, so `len >= 0` is a constant.
+;; (e) After the check passes, its length is nonnegative, so `len >= 0` is constant.
 (define (opt-nn-length-blocks) : ir.CompilerIrBlockList
   (irt.blocks
     "entry:
@@ -77447,6 +77663,112 @@ done:
     42
     "the non-negativity lattice proves a counter reassigned through an inner loop, a difference under a dominating lower bound and a fenced increment, refuses an unfenced increment and a phi with one open input, folds `>= 0` on a proved value, and leaves every comparison's signed spelling alone"))
 
+(test
+  bounds-dom-conditional-length-scope
+  (let
+    [out : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             %10 = lt %1, 0 : i64
+             branch %0, checked, sibling
+           checked:
+             bounds_check %2, %1 message \"first\"
+             %11 = ge %1, 0 : i64
+             jump merge
+           sibling:
+             %12 = ge %1, 0 : i64
+             jump merge
+           merge:
+             %13 = phi [%1, checked], [-1, sibling] : i64
+             %14 = ge %13, 0 : i64
+             return %10"))]
+    (test.assert-bool-eq
+      (and
+        (opt-nn-compare-signed? out "entry" 0 10)
+        (opt-nn-folded? out "checked" 1 11 true)
+        (opt-nn-compare-signed? out "sibling" 0 12)
+        (opt-nn-compare-signed? out "merge" 1 14))
+      true
+      "a conditional check proves its length only after execution, never before it, in a sibling or across a phi with a negative input")))
+
+(test
+  bounds-dom-length-definition-order
+  (let
+    [out : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             %10 = sub %1, 1 : i64
+             %11 = ge %10, 0 : i64
+             %12 = mov %1 : i64
+             %13 = cast %12 : i64 to u64
+             bounds_check %2, %13 message \"first\"
+             %14 = ge %1, 0 : i64
+             %15 = sub %1, 1 : i64
+             %16 = ge %15, 0 : i64
+             jump next
+           next:
+             %17 = ge %1, 0 : i64
+             bounds_check %1, %1 message \"self\"
+             return %11"))]
+    (test.assert-bool-eq
+      (and
+        (opt-nn-compare-signed? out "entry" 1 11)
+        (opt-nn-folded? out "entry" 5 14 true)
+        (opt-nn-folded? out "entry" 7 16 true)
+        (opt-nn-folded? out "next" 0 17 true)
+        (= (opt-nn-count out "next") 3))
+      true
+      "copy/cast length facts respect definition order and strict dominance, and cannot prove length below itself")))
+
+(test
+  bounds-dom-later-length-keeps-signed-range
+  (let
+    [out : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             %10 = ge %2, 0 : i64
+             branch %10, upper, miss
+           upper:
+             %11 = lt %2, %1 : i64
+             branch %11, hit, miss
+           hit:
+             bounds_check %2, %1 message \"later\"
+             return 1
+           miss:
+             return 0"))]
+    (test.assert-bool-eq
+      (and
+        (opt-nn-compare-signed? out "entry" 0 10)
+        (opt-nn-compare-signed? out "upper" 0 11))
+      true
+      "a later bounds check cannot justify replacing a signed range guard with an unsigned comparison")))
+
+(test
+  bounds-dom-loop-length-entry
+  (let
+    [out : ir.CompilerIrBlockList
+      (opt-nn-run
+        (irt.blocks
+          "entry:
+             jump header
+           header:
+             %10 = phi [%1, entry], [%12, body] : i64
+             %11 = lt %10, 0 : i64
+             branch %11, exit, body
+           body:
+             bounds_check 0, %10 message \"body\"
+             %12 = sub %10, 1 : i64
+             jump header
+           exit:
+             return %10"))]
+    (test.assert-bool-eq
+      (opt-nn-compare-signed? out "header" 1 11)
+      true
+      "a loop body's length check cannot erase the header's negative seed or decrement exit")))
+
 ;; --- UNR-1: length reads, narrowing forms, and the unsigned power-of-two divide
 ;;
 ;; One straight-line block over two parameters -- `text`, a String descriptor
@@ -77507,6 +77829,22 @@ done:
     (& (opt-unr-params))
     32
     (& blocks)))
+
+(test
+  bounds-dom-reassigned-length-address
+  (let
+    [out
+      (opt-unr-run
+        (irt.blocks
+          "entry:
+             %2 = gep %0, 1 : i64
+             %2 = gep %0, 0 : i64
+             %3 = load %2 : i64
+             %4 = lt %3, 0 : i64
+             return %4"))]
+    (test.assert-true
+      (opt-nn-compare-signed? out "entry" 3 4)
+      "a reused length address does not prove the sign of a load")))
 
 ;; 0 no such dst, 1 a signed `i64` BinOp, 2 an unsigned `u64` BinOp, 3 other.
 (define (opt-unr-binop-kind-at
@@ -78317,12 +78655,12 @@ done:
 ;; induction (`post <= len`); the copying loop below it reads
 ;; `out[(post - 1) - i]` under `0 <= i < post`, which the decreasing rule
 ;; discharges from it. The fill's own check has nothing to stand on -- nothing
-;; says the length is positive -- and stays.
-(define (opt-abcd-cursor-blocks) : ir.CompilerIrBlockList
-  (irt.blocks
-    "entry:
-       jump fill_header
-     fill_header:
+;; says the length is positive -- and stays. An entry guard supplies the
+;; nonnegative length premise; without it the zero seed has no upper bound.
+(define (opt-abcd-cursor-blocks [known-length? : bool]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks
+      "fill_header:
        %20 = phi [0, entry], [%21, fill_body] : i64
        branch %0, fill_body, after
      fill_body:
@@ -78342,7 +78680,14 @@ done:
        %27 = add %24, 1 : i64
        jump copy_header
      exit:
-       return %2"))
+       return %2")
+    (opt-nn-block
+      "entry"
+      (if known-length?
+        (opt-test-instrs
+          (irt.instr "%4 = ge %1, 0 : i64")
+          (opt-nn-branch 4 "fill_header" "exit"))
+        (opt-test-instrs (opt-nn-jump "fill_header"))))))
 
 ;; (e) THE WORKLIST POP. `pending - 1` is checked on the arm the header's own
 ;; test guards. With `pending >= 1` the difference is in [0, pending] and the
@@ -78420,7 +78765,9 @@ done:
     [open-seed : ir.CompilerIrBlockList
       (opt-nn-run (opt-abcd-stack-blocks (Var 2)))]
     [split : ir.CompilerIrBlockList (opt-nn-run (opt-abcd-stack-split-blocks))]
-    [cursor : ir.CompilerIrBlockList (opt-nn-run (opt-abcd-cursor-blocks))]
+    [cursor : ir.CompilerIrBlockList (opt-nn-run (opt-abcd-cursor-blocks true))]
+    [cursor-open : ir.CompilerIrBlockList
+      (opt-nn-run (opt-abcd-cursor-blocks false))]
     [guarded : ir.CompilerIrBlockList
       (opt-nn-run (opt-abcd-decrease-blocks (Ge)))]
     [unguarded : ir.CompilerIrBlockList
@@ -78451,6 +78798,8 @@ done:
       ;; through three phis; and the same shape with the inner step unfenced.
       [(not (= (opt-nn-count scan "inner_body") 1)) 10]
       [(not (= (opt-nn-count scan-open "inner_body") 2)) 11]
+      ;; Without an entry length proof, a skipped fill cannot prove 0 <= len.
+      [(not (= (opt-nn-count cursor-open "copy_body") 4)) 12]
       [else 42])))
 
 (test
@@ -81081,6 +81430,7 @@ done:
         summary)
       unit)
     (opt.OptProgramSummaries
+      false
       false
       (profile_state.compiler-profile-state-new)
       (opt_i64_i64_map.with-capacity 8)
@@ -84404,18 +84754,6 @@ done:
             (opt.opt-verify-function
               (& (opt.opt-ssa-construct-function 0 (& out))))))
         "loop-carried prefix definitions remain valid after SSA"))))
-
-(define (compiler-optimize-level-valid? [level : i64]) : bool
-  (and (>= level 0) (<= level 2)))
-
-(define (compiler-optimize-parse-level [value : String]) : opt.ResultCompilerOptimizeLevel
-  (if (= (string.string-length value) 1)
-    (let
-      [c : char (string.string-ref value 0)]
-      (if (or (= c '0') (= c '1') (= c '2'))
-        (Ok (string.>int value))
-        (Err)))
-    (Err)))
 
 (define (opt-cfg-index-rpo-label
   [index : (& index opt.OptCfgIndex)]
@@ -87843,3 +88181,341 @@ return
             1))
         18]
       [else 42])))
+
+(define (opt-inline-global-actual-case?
+  [site : String]
+  [body : String]
+  [extra : String]
+  [expected : String]
+  [level : i64]) : bool
+  (match (irt.program
+    (str_cat.str-cat
+      "global @capture_a : i64 = 7\nglobal @capture_b : i64 = 11\n"
+      "function @main(x=%0:i64) -> i64 vars 2 {\nentry:\n"
+      site
+      "\n}\nfunction @touch(y=%0:i64, x=%1:i64) -> i64 vars 4 {\nentry:\n"
+      body
+      "\n}\n"
+      extra))
+    [(Program globals functions _ _)
+      (let
+        [input : opt.OptOptimizerInput (opt.opt-optimizer-input-new 0 0)]
+        [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+        (match (opt.opt-inline-program-functions-with-spans
+          (ast.ast-node-pool-reader-context-current)
+          (&mut input)
+          bases
+          (& globals)
+          functions
+          (& (ir.compiler-ir-extern-seq-empty))
+          level
+          (ir.compiler-source-spans-empty))
+          [(Program result _)
+            (match (opt-function-seq-find (& result) "main")
+              [(Some func)
+                (and
+                  (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+                  (string.eq
+                    (irt.blocks-text (opt.opt-function-blocks func))
+                    (irt.blocks-text (irt.blocks expected))))]
+              [(No) false])]))]))
+
+(test
+  inline-global-actual-direct-opt1
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "store @capture_a, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  store @capture_a, 9 : i64
+  %4 = add %2, %0 : i64
+  %1 = mov %4 : i64
+  return %1
+"
+      1)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-direct-opt2
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "store @capture_a, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  store @capture_a, 9 : i64
+  %4 = add %2, %0 : i64
+  %1 = mov %4 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-tail-opt2
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "tailcall touch(@capture_a, %0) : i64"
+      "store @capture_a, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  store @capture_a, 9 : i64
+  %4 = add %2, %0 : i64
+  return %4
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-non-writer
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  %2 = add @capture_a, %0 : i64
+  %1 = mov %2 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-different-global
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "store @capture_b, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:
+  store @capture_b, 9 : i64
+  %2 = add @capture_a, %0 : i64
+  %1 = mov %2 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-transitive
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call write_a() : unit\n%3 = add %0, %1 : i64\nreturn %3"
+      "function @write_a() -> unit vars 0 {\nentry:\nstore @capture_a, 9 : i64\nreturn\n}"
+      "entry:
+  %2 = mov @capture_a : i64
+  store @capture_a, 9 : i64
+  %4 = mov unit : unit
+  %5 = add %2, %0 : i64
+  %1 = mov %5 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-unknown-writer
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call unknown_write() : unit\n%3 = add %0, %1 : i64\nreturn %3"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  %4 = call unknown_write() : unit
+  %5 = add %2, %0 : i64
+  %1 = mov %5 : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-conditional
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "branch %1, yes, no\nyes:\nstore @capture_a, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2\nno:\nreturn %0"
+      ""
+      "entry:
+  %2 = mov @capture_a : i64
+  jump inl.entry.0.entry
+
+inl.entry.0.entry:
+  branch %0, inl.entry.0.yes, inl.entry.0.no
+
+inl.entry.0.yes:
+  store @capture_a, 9 : i64
+  %4 = add %2, %0 : i64
+  jump inl.entry.0.cont
+
+inl.entry.0.no:
+  jump inl.entry.0.cont
+
+inl.entry.0.cont:
+  %1 = phi [%4, inl.entry.0.yes], [%2, inl.entry.0.no] : i64
+  return %1
+"
+      2)
+    "global actuals retain call-entry values and non-writers keep direct operands"))
+
+(test
+  inline-global-actual-call-non-writer
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call inspect_args() : i64\n%3 = add %0, %1 : i64\nreturn %3"
+      "function @inspect_args() -> i64 vars 1 {\nentry:\n%0 = entry_argc\nreturn %0\n}"
+      "entry:
+  %2 = call inspect_args() : i64
+  %3 = add @capture_a, %0 : i64
+  %1 = mov %3 : i64
+  return %1
+"
+      2)
+    "mod-ref distinguishes the captured cell even when the nested call stays out of line"))
+
+(test
+  inline-global-actual-call-different-global
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call write_b() : i64\n%3 = add %0, %1 : i64\nreturn %3"
+      "function @write_b() -> i64 vars 1 {\nentry:\n%0 = entry_argc\nstore @capture_b, 9 : i64\nreturn %0\n}"
+      "entry:
+  %2 = call write_b() : i64
+  %3 = add @capture_a, %0 : i64
+  %1 = mov %3 : i64
+  return %1
+"
+      2)
+    "mod-ref distinguishes the captured cell even when the nested call stays out of line"))
+
+(test
+  inline-global-actual-call-same-global
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "%2 = call write_a() : i64\n%3 = add %0, %1 : i64\nreturn %3"
+      "function @write_a() -> i64 vars 1 {\nentry:\n%0 = entry_argc\nstore @capture_a, 9 : i64\nreturn %0\n}"
+      "entry:
+  %2 = mov @capture_a : i64
+  %4 = call write_a() : i64
+  %5 = add %2, %0 : i64
+  %1 = mov %5 : i64
+  return %1
+"
+      2)
+    "mod-ref distinguishes the captured cell even when the nested call stays out of line"))
+
+(test
+  inline-global-actual-address-and-arity
+  (let
+    [params (irt.params "a=%0:u64, x=%1:i64")]
+    [blocks (irt.blocks "entry:\nstore @capture_a, 9 : i64\nreturn %0")]
+    [name (ir.compiler-ir-symbol "capture_a")]
+    [args : (Array ir.CompilerIrCallArgs 3)
+      (array (Nil) (One (Global name)) (Two (GlobalAddr name) (I64 10)))]
+    (for [index (iterator.range 0 (array-length args))]
+      (let
+        [plan
+          (opt.opt-inline-arg-staging
+            (& params)
+            (& (array-ref args index))
+            (& blocks)
+            false
+            false)]
+        (test.assert-i64-eq
+          plan.count
+          0
+          "invalid arity and global addresses are never captured")
+        (test.assert-i64-eq
+          (array-length plan.globals)
+          0
+          "no snapshot slots allocated")))))
+
+(test
+  inline-global-actual-pointer-write
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, %0) : i64\nreturn %1"
+      "store_ptr %1, 9 : i64\n%2 = add %0, %1 : i64\nreturn %2"
+      ""
+      "entry:\nstore_ptr %0, 9 : i64\n%2 = add @capture_a, %0 : i64\n%1 = mov %2 : i64\nreturn %1"
+      2)
+    "a pointer write cannot change a scalar cell whose address never exists"))
+
+(test
+  inline-global-actual-aliased-pointer-write
+  (test.assert-true
+    (opt-inline-global-actual-case?
+      "%1 = call touch(@capture_a, &@capture_a) : i64\nreturn %1"
+      "store_ptr %1, 9 : i64\nreturn %0"
+      ""
+      "entry:\n%2 = mov @capture_a : i64\nstore_ptr &@capture_a, 9 : i64\n%1 = mov %2 : i64\nreturn %1"
+      2)
+    "taking the scalar cell address retains its call-entry snapshot"))
+
+(test
+  inline-global-actual-cell-and-payload
+  (let
+    [types (array "i64" "(&mut r Cell)" "Cell")]
+    [bodies
+      (array
+        "store_ptr %1, 9 : i64\nreturn %0"
+        "store @capture_a, 9 : i64\nreturn %0"
+        "%2 = call mutate(%1) : unit\nreturn %0"
+        "%2 = call opaque(%1) : unit\nreturn %0")]
+    [expected : (Array i64 12) (array 0 0 1 1 1 1 0 0 1 1 1 1)]
+    (for [escaped (iterator.range 0 2)]
+      (for [ty (iterator.range 0 (array-length types))]
+        (match (irt.program
+          (str_cat.str-cat
+            (if (= ty 0)
+              "global @capture_a : i64 = 7\n"
+              "global @capture_a : Cell = runtime-init@init\n")
+            "function @mutate(p=%0:u64) -> unit vars 1 {\nentry:\nstore_ptr %0, 9 : i64\nreturn\n}\n"
+            (if (= escaped 0)
+              ""
+              "function @address() -> u64 vars 0 {\nentry:\nreturn &@capture_a\n}\n")))
+          [(Program globals functions _ _)
+            (let
+              [_install : unit
+                (opt.opt-inline-owned-state-install! (& functions) (& globals))]
+              (for [body (iterator.range 0 (array-length bodies))]
+                (let
+                  [params
+                    (irt.params
+                      (str_cat.str-cat
+                        "value=%0:"
+                        (clone (array-ref types ty))
+                        ", ptr=%1:u64"))]
+                  [blocks
+                    (irt.blocks
+                      (str_cat.str-cat
+                        "entry:\n"
+                        (clone (array-ref bodies body))))]
+                  [args
+                    (ir.CompilerIrCallArgs.Two
+                      (Global (ir.compiler-ir-symbol "capture_a"))
+                      (Var 0))]
+                  [plan
+                    (opt.opt-inline-arg-staging
+                      (& params)
+                      (& args)
+                      (& blocks)
+                      false
+                      false)]
+                  (test.assert-i64-eq
+                    plan.count
+                    (if (= escaped 1)
+                      1
+                      (array-ref expected (+ (* body 3) ty)))
+                    "cell facts spare word and reference values; payload copies and escaped cells retain snapshots")))
+              (opt.opt-inline-owned-state-reset! true))])))))

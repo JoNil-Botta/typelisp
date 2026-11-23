@@ -12445,13 +12445,14 @@
   [src : String]
   [elem-ty : ast.AstType]
   [lanes : i64]
+  [vector-loads : i64]
   [vector-shapes : i64]
   [vector-binops : i64]) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source-with-mode src (lower.CompilerLowerMode.Avx2)))
     [(Some functions)
       (and
-        (= (lower-test-count functions "f" (VectorLoad)) 1)
+        (= (lower-test-count functions "f" (VectorLoad)) vector-loads)
         (= (lower-test-count functions "f" (VectorReduce)) 1)
         (= (lower-test-count functions "f" (VectorBinop)) vector-binops)
         (=
@@ -12479,7 +12480,10 @@
 
 (define (compiler-lower-spmd-reduce-map-fused-shape-ok?
   [mode : lower.CompilerLowerMode]
-  [lanes : i64]) : bool
+  [lanes : i64]
+  [vector-loads : i64]
+  [vector-binops : i64]
+  [vector-shapes : i64]) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source-with-mode
       "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [r : i64]) : i64
@@ -12488,10 +12492,12 @@
       mode))
     [(Some functions)
       (and
-        (= (lower-test-count functions "f" (VectorLoad)) 1)
+        (= (lower-test-count functions "f" (VectorLoad)) vector-loads)
         (= (lower-test-count functions "f" (VectorReduce)) 1)
-        (= (lower-test-count functions "f" (VectorBinop)) 4)
-        (= (lower-test-function-vector-shape-count functions "f" lanes (I64)) 9)
+        (= (lower-test-count functions "f" (VectorBinop)) vector-binops)
+        (=
+          (lower-test-function-vector-shape-count functions "f" lanes (I64))
+          vector-shapes)
         (> (lower-test-count functions "f" (Bounds)) 0))]
     [_ false]))
 
@@ -12520,7 +12526,9 @@
 
 (define (compiler-lower-spmd-reduce-lane-identity-shape-ok?
   [mode : lower.CompilerLowerMode]
-  [lanes : i64]) : bool
+  [lanes : i64]
+  [vector-binops : i64]
+  [vector-shapes : i64]) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source-with-mode
       (compiler-lower-spmd-reduce-lane-identity-source)
@@ -12529,8 +12537,10 @@
       (and
         (= (lower-test-count functions "f" (VectorLoad)) 0)
         (= (lower-test-count functions "f" (VectorReduce)) 1)
-        (= (lower-test-count functions "f" (VectorBinop)) 2)
-        (= (lower-test-function-vector-shape-count functions "f" lanes (I64)) 5)
+        (= (lower-test-count functions "f" (VectorBinop)) vector-binops)
+        (=
+          (lower-test-function-vector-shape-count functions "f" lanes (I64))
+          vector-shapes)
         (= (lower-test-count functions "f" (Bounds)) 0))]
     [_ false]))
 
@@ -12563,6 +12573,8 @@
       mode
       lanes)))
 
+;; Each integer fold loads five gangs, seeds four accumulators, merges
+;; three pairs and reduces horizontally once. Min/max fold with selects.
 (define (compiler-lower-avx2-spmd-reduce-tests-ok?) : bool
   (and
     (compiler-lower-and8
@@ -12570,56 +12582,69 @@
         "(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
         (I64)
         4
-        4
-        1)
+        5
+        18
+        8)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i32)] [n : i64]) : i32 (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref xs i)))"
         (I32)
         8
-        4
-        1)
+        5
+        18
+        8)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (I32)
         8
-        4
+        5
+        18
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i32)] [n : i64] [seed : i32]) : i32 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (I32)
         8
-        4
+        5
+        18
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))"
         (F64)
         4
+        1
         2
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce min ([i : i64 0 n]) seed (array-ref xs i)))"
         (I64)
         4
-        4
+        5
+        18
         0)
       (compiler-lower-avx2-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array i64)] [n : i64] [seed : i64]) : i64 (spmd-reduce max ([i : i64 0 n]) seed (array-ref xs i)))"
         (I64)
         4
-        4
+        5
+        18
         0)
       (compiler-lower-spmd-reduce-lane-identity-shape-ok?
         (lower.CompilerLowerMode.Avx2)
-        4))
+        4
+        13
+        19))
     (compiler-lower-avx2-spmd-reduce-shape-ok?
       "(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
       (F32)
       8
+      1
       2
       0)
     (compiler-lower-spmd-reduce-map-fused-shape-ok?
       (lower.CompilerLowerMode.Avx2)
-      4)
+      4
+      5
+      23
+      35)
     (compiler-lower-spmd-reduce-gather-shape-ok?
       (lower.CompilerLowerMode.Avx2)
       8)
@@ -12673,7 +12698,9 @@
         0)
       (compiler-lower-spmd-reduce-lane-identity-shape-ok?
         (lower.CompilerLowerMode.Avx512)
-        8)
+        8
+        2
+        5)
       (compiler-lower-avx512-spmd-reduce-shape-ok?
         "(define (f [xs : (__tl_dyn-array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
         (F32)
@@ -12682,7 +12709,10 @@
         0))
     (compiler-lower-spmd-reduce-map-fused-shape-ok?
       (lower.CompilerLowerMode.Avx512)
-      8)
+      8
+      1
+      4
+      9)
     (compiler-lower-spmd-reduce-gather-shape-ok?
       (lower.CompilerLowerMode.Avx512)
       16)
@@ -19072,3 +19102,142 @@
             -1)
           -1
           "global hit alone does not seed scope variable")))))
+
+(define (lower-test-function-return-u64?
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
+  [name : String]) : bool
+  (match (lower-test-function-seq-find funcs name)
+    [(Some func)
+      (match func
+        [(Function _ _ ret-ty _ _ _)
+          (match (& ret-ty)
+            [(ast.AstType.U64) true]
+            [_ false])])]
+    [(No) false]))
+
+(define (lower-test-function-return-tuple?
+  [funcs : (& funcs ir.CompilerIrFunctionSeq)]
+  [name : String]) : bool
+  (match (lower-test-function-seq-find funcs name)
+    [(Some func)
+      (match func
+        [(Function _ _ ret-ty _ _ _)
+          (match (& ret-ty)
+            [(ast.AstType.Tuple _) true]
+            [_ false])])]
+    [(No) false]))
+
+(define (compiler-lower-global-init-small-array-tuple-source) : String
+  "(define (minus-one) : i8 -1)
+(define (get-bool) : bool true)
+(define (get-char) : char 'z')
+(define (get-f32) : f32 2.5)
+(define (get-i64) : i64 6)
+(define a-i8 : (Array i8 4) (array (minus-one) 2 3 4))
+(define a-bool : (Array bool 3) (array false (get-bool) false))
+(define a-char : (Array char 3) (array 'a' (get-char) 'c'))
+(define a-f32 : (Array f32 3) (array 1.5 (get-f32) 3.5))
+(define a-i64 : (Array i64 2) (array 5 (get-i64)))
+(define a-str : (Array String 2) (array \"left\" \"right\"))
+(define a-static : (Array i8 4) (array 1 2 3 4))
+(define t-i8 : (Tuple i8 i8 i8 i8) (tuple (minus-one) 2 3 4))
+(define t-f32 : (Tuple f32 f32 f32) (tuple 1.5 (get-f32) 3.5))
+(define t-i64 : (Tuple i64 i64) (tuple 5 (get-i64)))
+(define (main) : i64 0)")
+
+;; #8488: `__global_init_*` functions return stable arena pointers (never
+;; reclassified under the ordinary <=16B integer/register-group ABI), while
+;; constant scalar fixed arrays stay on the static data path.
+(test
+  compiler-lower-global-init-small-array-tuple-return-types
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      (compiler-lower-global-init-small-array-tuple-source)))
+    [(Some functions)
+      (test.assert-true
+        (lower-test-function-return-u64? (& functions) "__global_init_a-i8")
+        "(Array i8 4) global init returns u64 arena pointer")
+      (test.assert-true
+        (lower-test-function-return-u64? (& functions) "__global_init_a-bool")
+        "(Array bool 3) global init returns u64 arena pointer")
+      (test.assert-true
+        (lower-test-function-return-u64? (& functions) "__global_init_a-char")
+        "(Array char 3) global init returns u64 arena pointer")
+      (test.assert-true
+        (lower-test-function-return-u64? (& functions) "__global_init_a-f32")
+        "(Array f32 3) global init returns u64 arena pointer")
+      (test.assert-true
+        (lower-test-function-return-u64? (& functions) "__global_init_a-i64")
+        "(Array i64 2) global init returns u64 arena pointer")
+      (test.assert-true
+        (lower-test-function-return-u64? (& functions) "__global_init_a-str")
+        "(Array String 2) global init returns u64 arena pointer")
+      (test.assert-false
+        (lower-test-function-defined? (& functions) "__global_init_a-static")
+        "constant scalar fixed array stays on static path")
+      (test.assert-true
+        (lower-test-function-return-tuple? (& functions) "__global_init_t-i8")
+        "(Tuple i8 i8 i8 i8) global init keeps tuple pointer return")
+      (test.assert-true
+        (lower-test-function-return-tuple? (& functions) "__global_init_t-f32")
+        "(Tuple f32 f32 f32) global init keeps tuple pointer return")
+      (test.assert-true
+        (lower-test-function-return-tuple? (& functions) "__global_init_t-i64")
+        "(Tuple i64 i64) global init keeps tuple pointer return")]
+    [_ (test.assert-true false "lowering small array/tuple globals failed")]))
+
+(define (compiler-lower-tail-call-stack-param-borrow-source) : String
+  "(define (g-arr [t : (& t (Array i64 4))] [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [x : i64]) : i64
+  (array-ref t 0))
+(define (g-elem [p : (& p i64)] [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [x : i64]) : i64
+  (deref p))
+(define (g-reg [t : (& t (Array i64 4))] [x : i64]) : i64
+  (array-ref t 0))
+(define (f-overlap [t : (Array i64 4)] [x : i64]) : i64
+  (g-arr (& t) 1 2 3 4 5 x))
+(define (f-proj-arr [t : (Array i64 4)] [x : i64]) : i64
+  (g-elem (& (array-ref t 0)) 1 2 3 4 5 x))
+(define (f-proj-tup [t : (Tuple i64 i64 i64)] [x : i64]) : i64
+  (g-elem (& (tuple-ref t 0)) 1 2 3 4 5 x))
+(define (f-nonoverlap-reg [t : (Array i64 4)] [x : i64]) : i64
+  (g-reg (& t) x))
+(define (f-box-deref [t : (Tuple (Box (Array i64 4)) i64 i64)] [x : i64]) : i64
+  (g-arr (& (deref (tuple-ref t 0))) 1 2 3 4 5 x))
+(define (main) : i64 0)")
+
+;; #9289: borrows of SysV Memory-class parameters decline tail calls when
+;; outgoing tail stack args can overwrite incoming stack-param slots, while
+;; register-only tail calls and Box deref into heap storage keep tail calls.
+(test
+  compiler-lower-tail-call-sysv-memory-param-borrow
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      (compiler-lower-tail-call-stack-param-borrow-source)))
+    [(Some functions)
+      (test.assert-i64-eq
+        (lower-test-function-tail-call-count functions "f-overlap" "g-arr")
+        0
+        "overlapping (& t) of SysV Memory array param declines tailcall")
+      (test.assert-true
+        (> (lower-test-function-call-count functions "f-overlap" "g-arr") 0)
+        "overlapping (& t) emits ordinary call")
+      (test.assert-i64-eq
+        (lower-test-function-tail-call-count functions "f-proj-arr" "g-elem")
+        0
+        "overlapping projected array element borrow declines tailcall")
+      (test.assert-i64-eq
+        (lower-test-function-tail-call-count functions "f-proj-tup" "g-elem")
+        0
+        "overlapping projected tuple element borrow declines tailcall")
+      (test.assert-i64-eq
+        (lower-test-function-tail-call-count
+          functions
+          "f-nonoverlap-reg"
+          "g-reg")
+        1
+        "register-only tail call borrowing Memory param keeps tailcall")
+      (test.assert-i64-eq
+        (lower-test-function-tail-call-count functions "f-box-deref" "g-arr")
+        1
+        "Box deref inside Memory param points to heap and keeps tailcall")]
+    [_ (test.assert-true false "lowering tail-call stack param borrow failed")]))

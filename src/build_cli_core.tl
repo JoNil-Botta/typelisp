@@ -27,6 +27,7 @@
 (import (hashmap.hashmap String i64) as build_string_i64_map)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
+(import tli_cli_core as tli_cli)
 (import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
 (import compiler_backend_object as be_object)
@@ -461,9 +462,11 @@
 
 ;; Options a package build accepts.
 (define (build-package-cli-options) : String
-  "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
-   --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
-   --profile <dev|release> --release --locked --update-lock")
+  (str_cat.str-cat
+    "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
+     --debug|-g|--backtrace -o <exe> --manifest-path <file> --backend-mode <mode>
+     --profile <dev|release> --release --locked --update-lock "
+    (tli_cli.tli-sysroot-cli-options)))
 
 (define (build-config-from [idx : i64] [count : i64]) : ResultBuildConfig
   (let
@@ -476,12 +479,14 @@
     [profile : BuildProfile (build-default-profile)]
     [has-profile : bool false]
     [lock-policy : BuildPackageLockPolicy (Default)]
+    [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions
       (cli_option.cli-compile-options
         (target_cfg.compiler-target-cfg-host)
         (build-package-default-opt-level))]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "-o")
           (if has-output
@@ -533,6 +538,14 @@
             (&mut args)
             "build: accepts only one source file")]
         [else (set! has-source true)]))
+    (unless
+      args.failed
+      (let
+        [sysroot-error : String
+          (tli_cli.tli-build-sysroot-error (& sysroot) options.target)]
+        (when
+          (> (string.string-length (& sysroot-error)) 0)
+          (cli_option.cli-args-fail! (&mut args) sysroot-error))))
     (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
     (cond
       [args.failed (Err args.error)]
@@ -563,7 +576,7 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "build"
-        "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
+        "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
          --debug|-g|--backtrace --manifest-path <file> --backend-mode <mode>
          --profile <dev|release> --release --locked --update-lock --resolved-dep"
         idx
@@ -5518,13 +5531,14 @@
                   (build_run_core.source-tool-link-inputs-empty))]
               ;; The dependency section keeps each package's raw arguments.
               [effective-link-inputs : build_run_core.SourceToolLinkInputs
-                (clone
-                  (build_run_core.source-tool-link-inputs-merge-with
-                    (build_run_core.source-tool-link-inputs-merge
-                      manifest-link-inputs
-                      metadata-link-inputs)
-                    dep-link-inputs
-                    false))]
+                (build_run_core.clone-source-tool-link-inputs
+                  (&
+                    (build_run_core.source-tool-link-inputs-merge-with
+                      (build_run_core.source-tool-link-inputs-merge
+                        manifest-link-inputs
+                        metadata-link-inputs)
+                      dep-link-inputs
+                      false)))]
               [crt-entry : bool
                 (and
                   emit-entry
@@ -5849,7 +5863,7 @@
       (build-package-worker-append-option
         args5
         "--opt-level"
-        (string.int->string opt-level))]
+        (cli_option.cli-option-opt-level-name opt-level))]
     [debug-args : process.ProcessStringList
       (if (ir.compiler-debug-info-enabled?)
         (build_run_core.source-tool-args-append args6 "--debug")
@@ -6911,9 +6925,11 @@
       (cli_option.cli-args
         "build"
         (str_cat.str-cat
-          "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2>
+          "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
            --debug|-g|--backtrace -o <exe> --backend-mode <mode>
            --manifest-path <file> --profile --release --locked --update-lock "
+          (tli_cli.tli-sysroot-cli-options)
+          " "
           (build-link-cli-options))
         idx
         count)]
@@ -6923,12 +6939,14 @@
     [has-output : bool false]
     [link-inputs : build_run_core.SourceToolLinkInputs
       (build_run_core.source-tool-link-inputs-empty)]
+    [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions
       (cli_option.cli-compile-options
         (target_cfg.compiler-target-cfg-host)
         (opt.compiler-optimize-default-level))]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "-o")
           (if has-output
@@ -6978,6 +6996,14 @@
         [else
           (set! source (string.copy (& args.arg)))
           (set! has-source true)]))
+    (unless
+      args.failed
+      (let
+        [sysroot-error : String
+          (tli_cli.tli-build-sysroot-error (& sysroot) options.target)]
+        (when
+          (> (string.string-length (& sysroot-error)) 0)
+          (cli_option.cli-args-fail! (&mut args) sysroot-error))))
     (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
     (cond
       [args.failed (Err args.error)]

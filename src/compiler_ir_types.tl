@@ -124,14 +124,16 @@
 (defenum CompilerIrVectorReduceOp
   (Sum)
   (Min)
-  (Max))
+  (Max)
+  (LastLane))
 
 (defenum CompilerIrVectorPrefixOp
   (Sum)
   (Min)
   (Max)
   (All)
-  (Any))
+  (Any)
+  (SplatLast))
 
 (defenum CompilerIrMaskReduceOp
   (All)
@@ -1093,8 +1095,10 @@
   (Splat i64 CompilerIrValue i64 ast.AstType)
   (VectorBinOp (Box CompilerIrInstrVectorBinOpPayload))
   ;; Inclusive, carry-seeded lane prefix. For associative `op`, the result
-  ;; lanes are `out[0] = op(carry, src[0])` and
-  ;; `out[i] = op(out[i - 1], src[i])`.
+  ;; lanes are `out[0] = op(carry[lanes - 1], src[0])` and
+  ;; `out[i] = op(out[i - 1], src[i])`. Sum with Unit carry is a
+  ;; local prefix seeded with zero. SplatLast projects the last lane of a
+  ;; local prefix into every lane and takes Unit carry.
   (VectorPrefix (Box CompilerIrInstrVectorPrefixPayload))
   (VectorReduce i64 CompilerIrVectorReduceOp CompilerIrValue i64 ast.AstType)
   (VectorCompare (Box CompilerIrInstrVectorComparePayload))
@@ -5552,6 +5556,47 @@
       dst]
     [_ -1]))
 
+(define (compiler-ir-block-seq-vars-escape?
+  [seq : (& seq CompilerIrBlockSeq)]
+  [derived : (&mut derived ir_i64_i64_map.Map)]) : bool
+  (let
+    [hits : (__tl_dyn-array bool) (__tl_make-array bool 2)]
+    [escaped : bool false]
+    [changed : bool true]
+    (while changed
+      (set! changed false)
+      (for [b (iterator.range 0 seq.len)]
+        (match (& (array-ref seq.slots b))
+          [(CompilerIrBlock.Block _ instrs)
+            (for [i (iterator.range 0 instrs.len)]
+              (let
+                [instr : CompilerIrInstr
+                  (owned_view.compiler-owned-element-view instrs.slots i)]
+                [dst : i64 (compiler-ir-frame-propagating-dst (& instr))]
+                (when
+                  (and (>= dst 0) (not (ir_i64_i64_map.contains? derived dst)))
+                  (compiler-ir-frame-instr-uses! derived (&mut hits) instr)
+                  (when
+                    (array-ref hits 0)
+                    (ir_i64_i64_map.insert-ref! derived dst 1)
+                    (set! changed true)))))])))
+    (for [b (iterator.range 0 seq.len)]
+      (match (& (array-ref seq.slots b))
+        [(CompilerIrBlock.Block _ instrs)
+          (for [i (iterator.range 0 instrs.len)]
+            (let
+              [instr : CompilerIrInstr
+                (owned_view.compiler-owned-element-view instrs.slots i)]
+              (when
+                (and
+                  (< (compiler-ir-frame-propagating-dst (& instr)) 0)
+                  (match (& instr)
+                    [(CompilerIrInstr.BoundsCheck _ _ _) false]
+                    [_ true]))
+                (compiler-ir-frame-instr-uses! derived (&mut hits) instr)
+                (when (array-ref hits 1) (set! escaped true)))))]))
+    escaped))
+
 (define (compiler-ir-blocks-capture-frame?
   [blocks : (& blocks CompilerIrBlockList)]) : bool
   (match blocks
@@ -5560,9 +5605,6 @@
         true
         (let
           [derived : ir_i64_i64_map.Map (ir_i64_i64_map.with-capacity 8)]
-          [hits : (__tl_dyn-array bool) (__tl_make-array bool 2)]
-          [escaped : bool false]
-          [changed : bool true]
           (for [b (iterator.range 0 seq.len)]
             (match (& (array-ref seq.slots b))
               [(CompilerIrBlock.Block _ instrs)
@@ -5572,47 +5614,29 @@
                          (CompilerIrInstr.AddrOf dst _ _))
                       (ir_i64_i64_map.insert-ref! (&mut derived) dst 1)]
                     [_ unit]))]))
-          (while changed
-            (set! changed false)
-            (for [b (iterator.range 0 seq.len)]
-              (match (& (array-ref seq.slots b))
-                [(CompilerIrBlock.Block _ instrs)
-                  (for [i (iterator.range 0 instrs.len)]
-                    (let
-                      [instr : CompilerIrInstr
-                        (owned_view.compiler-owned-element-view instrs.slots i)]
-                      [dst : i64 (compiler-ir-frame-propagating-dst (& instr))]
-                      (when
-                        (and
-                          (>= dst 0)
-                          (not (ir_i64_i64_map.contains? (& derived) dst)))
-                        (compiler-ir-frame-instr-uses!
-                          (& derived)
-                          (&mut hits)
-                          instr)
-                        (when
-                          (array-ref hits 0)
-                          (ir_i64_i64_map.insert-ref! (&mut derived) dst 1)
-                          (set! changed true)))))])))
-          (for [b (iterator.range 0 seq.len)]
-            (match (& (array-ref seq.slots b))
-              [(CompilerIrBlock.Block _ instrs)
-                (for [i (iterator.range 0 instrs.len)]
-                  (let
-                    [instr : CompilerIrInstr
-                      (owned_view.compiler-owned-element-view instrs.slots i)]
-                    (when
-                      (and
-                        (< (compiler-ir-frame-propagating-dst (& instr)) 0)
-                        (match (& instr)
-                          [(CompilerIrInstr.BoundsCheck _ _ _) false]
-                          [_ true]))
-                      (compiler-ir-frame-instr-uses!
-                        (& derived)
-                        (&mut hits)
-                        instr)
-                      (when (array-ref hits 1) (set! escaped true)))))]))
-          escaped))]))
+          (compiler-ir-block-seq-vars-escape? (& seq) (&mut derived))))]))
+
+;; Whether any var id in `roots[0..root-count)` (or an address derived from
+;; one via Mov/Gep/Phi/casts/arithmetic) escapes through a non-Address/Condition
+;; use in `blocks`. Used by tail-call emission to detect when an incoming SysV
+;; Memory-class parameter address can be observed after outgoing tail stack
+;; arguments overwrite its incoming stack slots (#9289).
+(define (compiler-ir-blocks-vars-escape?
+  [blocks : (& blocks CompilerIrBlockList)]
+  [roots : (& roots (__tl_dyn-array i64))]
+  [root-count : i64]) : bool
+  (if (<= root-count 0)
+    false
+    (match blocks
+      [(CompilerIrBlockList.Array seq)
+        (if (or (< seq.len 0) (> seq.len (array-length seq.slots)))
+          true
+          (let
+            [derived : ir_i64_i64_map.Map
+              (ir_i64_i64_map.with-capacity (+ root-count 8))]
+            (for [i (iterator.range 0 root-count)]
+              (ir_i64_i64_map.insert-ref! (&mut derived) (array-ref roots i) 1))
+            (compiler-ir-block-seq-vars-escape? (& seq) (&mut derived))))])))
 
 ;; Blocks a frame address may have reached: every block holding a producer and
 ;; every block a CFG path leads to from one. Each block is pushed once.
@@ -7278,7 +7302,8 @@
   (match op
     [(Sum) "sum"]
     [(Min) "min"]
-    [(Max) "max"]))
+    [(Max) "max"]
+    [(LastLane) "last_lane"]))
 
 (define (compiler-ir-vector-prefix-op-render [op : CompilerIrVectorPrefixOp]) : String
   (match op
@@ -7286,7 +7311,8 @@
     [(Min) "min"]
     [(Max) "max"]
     [(All) "all"]
-    [(Any) "any"]))
+    [(Any) "any"]
+    [(SplatLast) "splat_last"]))
 
 (define (compiler-ir-mask-reduce-op-render [op : CompilerIrMaskReduceOp]) : String
   (match op

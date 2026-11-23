@@ -254,6 +254,19 @@
   [elem-ty : compiler_ast_types.AstType]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (when
+    (match (& op)
+      [(LastLane) true]
+      [_ false])
+    (return
+      (be_simd.compiler-backend-emit-vector-last-lane
+        assignments
+        dst
+        src
+        lanes
+        elem-ty
+        instr-diag
+        backend-state)))
   (if (be_operand.compiler-backend-avx512-shape-ok? elem-ty lanes)
     (be_operand.compiler-backend-emit-avx512-vector-reduce
       type-segment-bases
@@ -2206,56 +2219,18 @@
               ctx.type-segment-bases
               ctx.program-index
               ty)
-              ;; Storing a register-group into a global writes both words
-              ;; inline (word0 at sym, word1 at sym+8).
-              (let
-                [reg0 : String
-                  (be_scalar.compiler-backend-group-return-reg
-                    ctx.type-segment-bases
-                    ctx.program-index
-                    (be_state.compiler-backend-global-shared-view ty)
-                    0)]
-                [reg1 : String
-                  (be_scalar.compiler-backend-group-return-reg
-                    ctx.type-segment-bases
-                    ctx.program-index
-                    (be_state.compiler-backend-global-shared-view ty)
-                    1)]
-                [sym1 : String (str_cat.str-cat symbol "+8(%rip)" "")]
-                (match (be_scalar.compiler-backend-emit-group-load
+              ;; An internal store must preserve live homes across both words.
+              (compiler-backend-with-instr-diagnostic
+                (be_scalar.compiler-backend-emit-group-copy
                   ctx.type-segment-bases
                   ctx.assignments
+                  (& (Global name))
                   value
-                  reg0
-                  reg1
                   ctx.vars
-                  (be_state.compiler-backend-global-shared-view ty)
+                  ty
                   ctx.program-index
                   ctx.backend-state)
-                  [(Ok load)
-                    (Ok
-                      (str_cat.str-cat
-                        load
-                        (be_scalar.compiler-backend-emit-group-word-move
-                          reg0
-                          addr
-                          (be_facts.compiler-backend-group-word-sse?
-                            ctx.type-segment-bases
-                            ctx.program-index
-                            ty
-                            0))
-                        (be_scalar.compiler-backend-emit-group-word-move
-                          reg1
-                          sym1
-                          (be_facts.compiler-backend-group-word-sse?
-                            ctx.type-segment-bases
-                            ctx.program-index
-                            ty
-                            1))))]
-                  [(Err message)
-                    (be_state.compiler-backend-instr-error-from
-                      instr-diag
-                      message)]))
+                instr-diag)
               (let
                 [no-exclude : (__tl_dyn-array String)
                   (__tl_make-array String 0)]
@@ -18116,8 +18091,7 @@
 
 ;; Fill the successor CSR and the terminator classes, reading targets straight
 ;; off the terminators so nothing is allocated per block. Returns
-;;   -1  some block has no terminator: its successor is its list neighbour and
-;;       nothing names it, so the function declines layout;
+;;   -1  a backward edge exists, but an implicit fallthrough prevents rotation;
 ;;    0  no edge runs backward in list order, so the function closes no cycle
 ;;       and this pass has nothing to rotate -- the answer that lets the common
 ;;       loop-free function stop before the loop nest is ever built;
@@ -18206,11 +18180,11 @@
           (set! closes? true)
           unit)))
     (set! (array-ref succ-off n) write)
-    (if (not ok)
-      (- 0 1)
-      (if closes?
+    (if closes?
+      (if ok
         1
-        0))))
+        -1)
+      0)))
 
 ;; The condition of the two-arm branch that ends this block.
 (define (compiler-backend-placement-branch-cond
@@ -19030,12 +19004,13 @@
       (set! (array-ref st.order i) i))
     st))
 
-;; Choose the layout for `seq`, leaving it in `st.order`.
+;; Record loop membership and, when permitted, leave the layout in `st.order`.
 (define (compiler-backend-placement-plan!
   [st : CompilerBackendPlacement]
   [nest : compiler_regalloc.CompilerRegLoopNest]
   [header-count : i64]
-  [seq : compiler_ir_types.CompilerIrBlockSeq]) : unit
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [rotate? : bool]) : unit
   (let
     [sorted : (__tl_dyn-array i64) (__tl_make-array i64 (+ header-count 1))]
     [size : (__tl_dyn-array i64) (__tl_make-array i64 st.count)]
@@ -19045,30 +19020,31 @@
       (&mut sorted)
       size
       header-count)
-    (compiler-backend-placement-rotate!
-      st
-      nest
-      seq
-      sorted
-      header-count
-      (* 2 (+ header-count 1)))))
+    (when
+      rotate?
+      (compiler-backend-placement-rotate!
+        st
+        nest
+        seq
+        sorted
+        header-count
+        (* 2 (+ header-count 1))))))
 
 ;; The state this pass builds for one block sequence, or `No` when the sequence
-;; declines: too small to reorder, a block without a terminator, or no edge
-;; running backward at all. Shared by the production entry and by the unit
+;; contains no loops. Shared by the production entry and by the unit
 ;; tests, which read the chosen order out of `st.order` rather than out of
 ;; emitted text.
 (define (compiler-backend-placement-plan-for-seq
   [seq : compiler_ir_types.CompilerIrBlockSeq]) : CompilerBackendMaybePlacement
   (let
     [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-    (if (< n 3)
+    [succ-bound : i64 (compiler-backend-placement-succ-bound seq)]
+    (if (= succ-bound 1)
       (No)
       (let
         [term-kind : (__tl_dyn-array i64) (__tl_make-array i64 n)]
         [succ-off : (__tl_dyn-array i64) (__tl_make-array i64 (+ n 1))]
-        [succ-buf : (__tl_dyn-array i64)
-          (__tl_make-array i64 (compiler-backend-placement-succ-bound seq))]
+        [succ-buf : (__tl_dyn-array i64) (__tl_make-array i64 succ-bound)]
         [shape : i64
           (compiler-backend-placement-fill-succ!
             (&mut term-kind)
@@ -19082,7 +19058,7 @@
             seq)]
         ;; No backward edge means no cycle, and most functions are that: stop
         ;; here rather than build a loop nest whose answer is already known.
-        (if (not (= shape 1))
+        (if (= shape 0)
           (No)
           (let
             [nest : compiler_regalloc.CompilerRegLoopNest
@@ -19103,8 +19079,37 @@
                   (be_state.compiler-backend-global-shared-view st)
                   nest
                   header-count
-                  seq)
+                  seq
+                  (and
+                    (= compiler-backend-placement-mode 1)
+                    (>= n 3)
+                    (= shape 1)))
                 (Some st)))))))))
+
+;; The nest and the placement order use original block indices. Compact the
+;; finished membership array into labels so it also describes the emitted
+;; order after a permutation. This array belongs to the function scratch.
+(define (compiler-backend-placement-retain-loop-blocks!
+  [function-state : be_state.CompilerBackendFunctionState]
+  [seq : (& compiler_ir_types.CompilerIrBlockSeq)]
+  [inner : (__tl_dyn-array i64)]) : unit
+  (let
+    [count : i64 0]
+    (for [i (iterator.range 0 (array-length inner))]
+      (when
+        (>= (array-ref inner i) 0)
+        (match (compiler_ir_types.compiler-ir-block-seq-borrow seq i)
+          [(Block label _)
+            (set! (array-ref inner count) label)
+            (+= count 1)])))
+    (be_state.compiler-backend-function-scratch-set-i64-array!
+      function-state
+      be_state.compiler-backend-scratch-i64-array-loop-block-labels
+      inner)
+    (be_state.compiler-backend-function-scratch-set-i64!
+      function-state
+      be_state.compiler-backend-scratch-i64-loop-block-count
+      count)))
 
 ;; The pass entry. Returns the input list untouched whenever the layout is the
 ;; identity or the function declines, so a compile that gains nothing allocates
@@ -19112,45 +19117,52 @@
 (define (compiler-backend-placement-blocks
   [function-state : be_state.CompilerBackendFunctionState]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
-  (if (= compiler-backend-placement-mode 0)
-    blocks
-    (let
-      [dense : compiler_ir_types.CompilerIrBlockList
-        (be_state.compiler-backend-global-shared-view blocks)]
-      (match dense
-        [(Array seq)
-          (match (compiler-backend-placement-plan-for-seq
-            (be_state.compiler-backend-global-shared-view seq))
-            [(No) blocks]
-            [(Some st)
-              (let
-                [n : i64 st.count]
-                (if (compiler-backend-placement-identity? st.order n)
-                  blocks
-                  ;; Only a real permutation has to carry the gep displacement
-                  ;; table, so its walk is paid here and not on every function.
-                  (let
-                    [starts : (__tl_dyn-array i64)
-                      (__tl_make-array i64 (+ n 1))]
-                    [total : i64
-                      (compiler-backend-placement-gep-starts! seq (&mut starts))]
-                    (if (not
-                      (compiler-backend-placement-gep-table-permutable?
+  (let
+    [dense : compiler_ir_types.CompilerIrBlockList
+      (be_state.compiler-backend-global-shared-view blocks)]
+    (match dense
+      [(Array seq)
+        (match (compiler-backend-placement-plan-for-seq
+          (be_state.compiler-backend-global-shared-view seq))
+          [(No)
+            ;; Frame-layout retries reuse this function's scratch owner.
+            (be_state.compiler-backend-function-scratch-set-i64!
+              function-state
+              be_state.compiler-backend-scratch-i64-loop-block-count
+              0)
+            blocks]
+          [(Some st)
+            (let
+              [n : i64 st.count]
+              (compiler-backend-placement-retain-loop-blocks!
+                function-state
+                (& seq)
+                st.inner)
+              (if (compiler-backend-placement-identity? st.order n)
+                blocks
+                ;; Only a real permutation has to carry the gep displacement
+                ;; table, so its walk is paid here and not on every function.
+                (let
+                  [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ n 1))]
+                  [total : i64
+                    (compiler-backend-placement-gep-starts! seq (&mut starts))]
+                  (if (not
+                    (compiler-backend-placement-gep-table-permutable?
+                      function-state
+                      total))
+                    blocks
+                    (begin
+                      (if (be_state.compiler-backend-function-state-bool?
                         function-state
-                        total))
-                      blocks
-                      (begin
-                        (if (be_state.compiler-backend-function-state-bool?
+                        be_state.compiler-backend-function-bool-gep-fold-ready)
+                        (compiler-backend-placement-permute-geps!
                           function-state
-                          be_state.compiler-backend-function-bool-gep-fold-ready)
-                          (compiler-backend-placement-permute-geps!
-                            function-state
-                            st.order
-                            starts
-                            n
-                            total)
-                          unit)
-                        (compiler-backend-placement-apply seq st.order n))))))])]))))
+                          st.order
+                          starts
+                          n
+                          total)
+                        unit)
+                      (compiler-backend-placement-apply seq st.order n))))))])])))
 
 ;; ---------------------------------------------------------------------------
 ;; SW-1: general shrink-wrapping -- the prologue at the dominator of the frame's
@@ -24484,7 +24496,10 @@ tl_shared_object_init:
                   backend-state
                   (&mut records))]
               [kept : String
-                (be_peephole.compiler-backend-peephole-records-render records)]
+                (be_peephole.compiler-backend-peephole-records-render
+                  records
+                  (be_state.compiler-backend-state-tail-merging-enabled?
+                    backend-state))]
               (be_state.CompilerBackendPeepholeSweepChunkState
                 (text_buf.append state.out kept)
                 (text_buf.empty)
@@ -24761,7 +24776,8 @@ tl_shared_object_init:
         (be_peephole.compiler-backend-peephole-records-buffer
           (text_buf_borrowed.empty-like (& asm))
           records
-          asm))]
+          asm
+          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)))]
     (compiler-backend-peephole-records-retire! stream)
     (compiler-backend-sweep-reset! backend-state stream)
     buf))
@@ -24788,7 +24804,8 @@ tl_shared_object_init:
 ;; Its production boundary must expand probes after the same analyses.
 (define (compiler-backend-peephole-asm-drop-fallthrough-target
   [asm : String]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]
+  [merge-tails? : bool]) : String
   (let
     [state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
@@ -24798,6 +24815,9 @@ tl_shared_object_init:
     (be_state.compiler-backend-state-set-emission-target-policy!
       state
       (be_state.compiler-backend-target-policy-new target))
+    (be_state.compiler-backend-state-set-tail-merging-enabled!
+      state
+      merge-tails?)
     (text_buf.render
       (compiler-backend-peephole-asm-buffer-with-state
         state
@@ -25495,7 +25515,9 @@ tl_shared_object_init:
             (compiler-backend-pic-asm
               (compiler-backend-peephole-asm-drop-fallthrough-target
                 (text_buf.render buf)
-                target)
+                target
+                (be_state.compiler-backend-state-tail-merging-enabled?
+                  backend-state))
               (be_state.compiler-backend-global-shared-view image))
             (compiler-backend-pic-fixup-table
               (be_state.compiler-backend-global-shared-view image))))

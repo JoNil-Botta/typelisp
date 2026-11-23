@@ -9,6 +9,7 @@
 (import compiler_abi)
 (import compiler_regalloc)
 (import compiler_liveness)
+(import compiler_opt_level as opt_level)
 (import compiler_profile_state as profile_state)
 (import stdlib.text_buf)
 (import stdlib.text_buf_borrowed)
@@ -1144,6 +1145,8 @@
   ;; exact intern capability so concurrent backend jobs never consult a
   ;; process-global opt-level switch.
   (scalar-registers-enabled bool)
+  (tail-merging-enabled bool)
+  (optimize-for-size bool)
   (user-symbol-cache-keys (__tl_dyn-array i64))
   (user-symbol-cache-values (__tl_dyn-array String))
   (user-symbol-cache-epochs (__tl_dyn-array i64))
@@ -1260,6 +1263,8 @@
         (compiler-backend-global-shared-view intern-state)
         owner-arena
         0
+        false
+        false
         false
         ;; User-symbol storage is deliberately lazy.  In particular, a
         ;; generated id near the high end of the intern lane must not force
@@ -1754,7 +1759,7 @@
 ;; Whether scalar functions get full register allocation. Register allocation
 ;; makes the EMITTED binary faster but its planning + register-aware emission
 ;; cost more compile time than it saves on a single self-compile, so it is
-;; reserved for opt level 2, the high-quality path. Lower opt levels stay on
+;; reserved for full optimization. Lower opt levels stay on
 ;; cheap stack-only homing. The option is owned by each CompilerBackendState,
 ;; so a given job emits deterministically even when another job is active.
 ;; SIMD (Avx2/Avx512) functions always use register allocation regardless.
@@ -1770,6 +1775,40 @@
     (set!
       (deref (compiler-backend-state-ptr state)).scalar-registers-enabled
       enabled)))
+
+(define (compiler-backend-state-tail-merging-enabled?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).tail-merging-enabled))
+
+(define (compiler-backend-state-set-tail-merging-enabled!
+  [state : CompilerBackendState]
+  [enabled : bool]) : unit
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).tail-merging-enabled
+      enabled)))
+
+;; The branch-tail scan is reserved for the high-quality path, along with
+;; scalar register allocation.
+(define (compiler-backend-state-set-opt-level!
+  [state : CompilerBackendState]
+  [opt-level : i64]) : unit
+  (let
+    [high-quality? : bool (opt_level.opt-level-full? opt-level)]
+    (compiler-backend-state-set-scalar-registers-enabled! state high-quality?)
+    (compiler-backend-state-set-tail-merging-enabled! state high-quality?)))
+
+(define (compiler-backend-state-optimize-for-size?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).optimize-for-size))
+
+(define (compiler-backend-state-set-optimize-for-size!
+  [state : CompilerBackendState]
+  [enabled : bool]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).optimize-for-size enabled)))
 
 ;; Public observations for the retained operand-render storage.  The backing
 ;; StateData remains opaque; capacities are reported from the actual arrays so
@@ -1845,6 +1884,14 @@
   [ok : bool]) : unit
   (unsafe
     (set! (deref (compiler-backend-state-ptr state)).absolute-switch-ok ok)))
+
+;; Only a closed executable linked in the low ELF code model can put a
+;; private literal's address in a zero-extending imm32.
+(define (compiler-backend-state-absolute-literal-ok?
+  [state : CompilerBackendState]) : bool
+  (and
+    (compiler-backend-state-closed-executable? state)
+    (compiler-backend-state-absolute-switch-ok? state)))
 
 (define (compiler-backend-state-abort-site-counter
   [state : CompilerBackendState]) : i64
@@ -2495,8 +2542,10 @@
   21)
 (define compiler-backend-scratch-i64-edge-flags-width : i64
   22)
-(define compiler-backend-scratch-i64-count : i64
+(define compiler-backend-scratch-i64-loop-block-count : i64
   23)
+(define compiler-backend-scratch-i64-count : i64
+  24)
 (define compiler-backend-scratch-bool-emergency-pending : i64
   0)
 (define compiler-backend-scratch-bool-emergency-used : i64
@@ -2547,8 +2596,10 @@
 ;; save); `< 0` = `-(slot-index + 1)`, the classic 64-byte frame slot.
 (define compiler-backend-scratch-i64-array-emergency-save-locs : i64
   8)
-(define compiler-backend-scratch-i64-array-count : i64
+(define compiler-backend-scratch-i64-array-loop-block-labels : i64
   9)
+(define compiler-backend-scratch-i64-array-count : i64
+  10)
 (define compiler-backend-scratch-bool-array-const-hoist-site-wide : i64
   0)
 (define compiler-backend-scratch-bool-array-const-hoist-site-frame : i64
@@ -3042,6 +3093,25 @@
   (set!
     (array-ref (compiler-backend-function-scratch-i64-arrays state) index)
     value))
+
+(define (compiler-backend-function-loop-block?
+  [state : CompilerBackendFunctionState]
+  [label : i64]) : bool
+  (let
+    [count : i64
+      (compiler-backend-function-scratch-i64
+        state
+        compiler-backend-scratch-i64-loop-block-count)]
+    (if (= count 0)
+      false
+      (let
+        [labels : (__tl_dyn-array i64)
+          (compiler-backend-function-scratch-i64-array
+            state
+            compiler-backend-scratch-i64-array-loop-block-labels)]
+        (for [i (iterator.range 0 count)]
+          (when (= (array-ref labels i) label) (return true)))
+        false))))
 
 (define (compiler-backend-function-scratch-bool-array
   [state : CompilerBackendFunctionState]

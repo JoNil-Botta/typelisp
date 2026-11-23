@@ -4383,12 +4383,12 @@
   (reg-homes "%0=%r12"))
 
 (define (compiler-backend-c-abi-call-result-store-bool-asm-ok? [asm : String]) : bool
-  (asm-has? asm "    movzbq %al, %rax\n" "    movq %rax, %r12\n"))
+  (asm-has? asm "    movzbl %al, %eax\n" "    movq %rax, %r12\n"))
 
 (define (compiler-backend-typelisp-call-result-store-bool-asm-ok?
   [asm : String]) : bool
   (and
-    (asm-lacks? asm "    movzbq %al, %rax\n")
+    (asm-lacks? asm "    movzbq %al, %rax\n" "    movzbl %al, %eax\n")
     (asm-has? asm "    movq %rax, %r12\n")))
 
 (define (compiler-backend-c-abi-call-result-store-bool-ok?) : bool
@@ -4464,7 +4464,7 @@
     (has
       ".extern tl_cabi_bool_return\n"
       "    call tl_cabi_bool_return\n"
-      "    movzbq %al, %rax\n")))
+      "    movzbl %al, %eax\n")))
 
 (define (compiler-backend-c-abi-bool-return-ok?) : bool
   (be_state.backend-and4
@@ -4890,7 +4890,7 @@
         (be_state.backend-and4
           (asm-has? asm "    movq 8(%r10), %r8\n")
           (asm-has? asm "(%r10)")
-          (asm-has? asm "movzbq")
+          (asm-has? asm "movzbl")
           (asm-lacks? asm "movsbq (%r10)"))
         (asm-lacks? asm "    movq 8(%r10), %rax\n" "    jge .Lf0_str_bounds_ok")
         (not
@@ -6239,7 +6239,7 @@
           ;; The boolean is never materialised, so neither half of the
           ;; `setcc`/`movzbq` pair survives and no site spends a `test`.
           (asm-lacks? body "    setl ")
-          (asm-lacks? body "    movzbq ")
+          (asm-lacks? body "    movzbq " "    movzbl ")
           (asm-lacks? body "    testq ")))]
     [(Err _) false]))
 
@@ -6358,19 +6358,19 @@
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-lt-source))
       "    setl "
-      "    movzbq "
+      "    movzbl "
       "    jge "
       true)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-ult-source))
       "    setb "
-      "    movzbq "
+      "    movzbl "
       "    jae "
       true)
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-neg-source))
       "    setl "
-      "    movzbq "
+      "    movzbl "
       "    jl "
       true)
     (compiler-backend-flags-reuse-body-ok?
@@ -6382,7 +6382,7 @@
     (compiler-backend-flags-reuse-body-ok?
       (string.copy (& compiler-backend-flags-reuse-gap-source))
       "    setl "
-      "    movzbq "
+      "    movzbl "
       ""
       false)))
 
@@ -12064,6 +12064,154 @@ high:
       (text_buf.render (compiler-backend-peephole-text-buf-once chunks))]
     (string.eq legacy chunked)))
 
+;; Exercise both final-record consumers. The fixtures omit layout and
+;; fallthrough-jump deletion so the final pass sees the exact incoming edges.
+(define (compiler-backend-tail-test-stream [asm : (& str)]) : String
+  (text_buf.render
+    (compiler-backend-peephole-text-buf-once
+      (text_buf.append (text_buf.empty) (string.copy asm)))))
+
+(define (compiler-backend-tail-test-buffer [asm : (& str)]) : String
+  (compiler-backend-peephole-asm-once (string.copy asm)))
+
+(define (compiler-backend-tail-test-whole-source
+  [entry : (& str)]
+  [data : (& str)]) : String
+  (str_cat.str-cat
+    "tail_test:\n"
+    entry
+    "    testl %eax, %eax\n    jne .L_tail_test_first\n    jmp .L_tail_test_second\n"
+    ".L_tail_test_first:\n    movl $403, %r8d\n    jmp .L_tail_test_join\n"
+    ".L_tail_test_second:\n    movl $403, %r8d\n    jmp .L_tail_test_join\n"
+    data
+    ".L_tail_test_join:\n    ret\n"))
+
+(test
+  peephole-tail-merges-identical-blocks
+  (let
+    [input : String (compiler-backend-tail-test-whole-source "" "")]
+    [out : String (compiler-backend-tail-test-stream (& input))]
+    (test.assert-true
+      (and
+        (string.eq (& out) (compiler-backend-tail-test-buffer (& input)))
+        (asm-has?
+          out
+          "    jne .L_tail_test_first\n    jmp .L_tail_test_first\n"
+          ".L_tail_test_first:\n    movl $403, %r8d\n    jmp .L_tail_test_join\n")
+        (asm-lacks? out ".L_tail_test_second"))
+      "both renderers redirect the duplicate's incoming branch and remove its body")))
+
+(test
+  peephole-tail-merges-identical-suffixes
+  (let
+    [input : String
+      (str_cat.str-cat
+        "tail_suffix:\n    testl %eax, %eax\n    jne .L_suffix_second\n"
+        "    movl $301, %r10d\n    movq $401, %r8\n    movq %r8, (%rbx)\n"
+        "    jmp .L_suffix_join\n"
+        ".L_suffix_second:\n    movl $302, %r10d\n    movq $401, %r8\n"
+        "    movq %r8, (%rbx)\n    jmp .L_suffix_join\n"
+        ".L_suffix_join:\n    ret\n")]
+    [out : String (compiler-backend-tail-test-stream (& input))]
+    (test.assert-true
+      (and
+        (string.eq (& out) (compiler-backend-tail-test-buffer (& input)))
+        (asm-has?
+          out
+          "    movl $301, %r10d\n    jmp .L_tail_tail_suffix."
+          "    movl $302, %r10d\n.L_tail_tail_suffix."
+          "    movq %r8, (%rbx)\n.L_suffix_join:\n")
+        (asm-lacks? out "    jmp .L_suffix_join\n"))
+      "branching to the longest shared fallthrough suffix takes one jump")))
+
+(test
+  peephole-tail-preserves-located-abort-sites
+  (let
+    [input : String
+      (str_cat.str-cat
+        "tail_abort:\n    testl %eax, %eax\n    jne .L_abort_second\n"
+        "    movq $401, %r8\n    call .L_tl_abort_tl_oob_abort_at\n"
+        ".L_tl_abort_site_1_bounds:\n"
+        "    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n"
+        ".L_abort_second:\n    movq $401, %r8\n"
+        "    call .L_tl_abort_tl_oob_abort_at\n"
+        ".L_tl_abort_site_2_bounds:\n"
+        "    .tl_abort_row .L_tl_abort_site_2_bounds, .L_tl_str_fat, 5, 9, tl_oob_abort_at\n"
+        "    ret\n    .size tail_abort, . - tail_abort\n")]
+    [out : String (compiler-backend-tail-test-stream (& input))]
+    [buf : String (compiler-backend-tail-test-buffer (& input))]
+    [site-one : String
+      "    call .L_tl_abort_tl_oob_abort_at\n.L_tl_abort_site_1_bounds:\n    .tl_abort_row .L_tl_abort_site_1_bounds, .L_tl_str_fat, 4, 9, tl_oob_abort_at\n"]
+    [site-two : String
+      "    call .L_tl_abort_tl_oob_abort_at\n.L_tl_abort_site_2_bounds:\n    .tl_abort_row .L_tl_abort_site_2_bounds, .L_tl_str_fat, 5, 9, tl_oob_abort_at\n"]
+    (test.assert-true
+      (and (asm-has? out site-one site-two) (asm-has? buf site-one site-two))
+      "every located abort retains its own adjacent return-PC label and span row")))
+
+(test
+  peephole-tail-preserves-address-taken-and-jump-table-labels
+  (let
+    [address : String
+      (compiler-backend-tail-test-whole-source
+        "    leaq .L_tail_test_second(%rip), %rsi\n"
+        "")]
+    [table : String
+      (compiler-backend-tail-test-whole-source
+        ""
+        ".L_tail_test_switch:\n    .long .L_tail_test_second - .L_tail_test_switch\n")]
+    [split-table : String
+      (str_cat.str-cat
+        ".section .rodata\n.L_tail_external_table:\n    .long .L_tail_test_second\n"
+        ".text\n.globl tail_test\n"
+        (compiler-backend-tail-test-whole-source "" "    jmp *%r11\n"))]
+    [split-out : String (compiler-backend-tail-test-stream (& split-table))]
+    [address-out : String (compiler-backend-tail-test-stream (& address))]
+    [table-out : String (compiler-backend-tail-test-stream (& table))]
+    (test.assert-true
+      (and
+        (string.eq
+          (& address-out)
+          (compiler-backend-tail-test-buffer (& address)))
+        (string.eq (& table-out) (compiler-backend-tail-test-buffer (& table)))
+        (asm-has?
+          address-out
+          "leaq .L_tail_test_second(%rip), %rsi"
+          ".L_tail_test_second:")
+        (asm-has?
+          table-out
+          ".long .L_tail_test_second -"
+          ".L_tail_test_second:")
+        (asm-has?
+          split-out
+          "    .long .L_tail_test_second\n"
+          ".L_tail_test_second:")
+        (string.eq
+          (& split-out)
+          (compiler-backend-tail-test-buffer (& split-table))))
+      "address and table operands pin the second definition in both renderers")))
+
+(test
+  peephole-tail-preserves-seh-and-ret
+  (let
+    [body : String
+      (compiler-backend-tail-test-whole-source "    .seh_endprologue\n" "")]
+    [seh : String
+      (str_cat.str-cat ".seh_proc tail_test\n" body "    .seh_endproc\n")]
+    [returns : String
+      (str_cat.str-cat
+        "tail_return:\n    testl %eax, %eax\n    jne .L_ret_second\n"
+        "    movq $401, %r8\n    ret\n"
+        ".L_ret_second:\n    movq $401, %r8\n    ret\n")]
+    [seh-out : String (compiler-backend-tail-test-stream (& seh))]
+    [ret-out : String (compiler-backend-tail-test-stream (& returns))]
+    (test.assert-true
+      (and
+        (string.eq (& seh) (& seh-out))
+        (string.eq (& seh-out) (compiler-backend-tail-test-buffer (& seh)))
+        (string.eq (& returns) (& ret-out))
+        (string.eq (& ret-out) (compiler-backend-tail-test-buffer (& returns))))
+      "SEH functions and ret-ending blocks remain intact")))
+
 ;; COLD-1: the render moves each abort stub behind its function and inverts
 ;; the check's branch; a guard that is not a pure abort stub stays inline.
 (define (compiler-backend-cold-split-source) : String
@@ -12743,12 +12891,12 @@ high:
         (be_state.CompilerBackendTarget.Windows))
         [(Ok asm)
           ;; The merged emitter folds the constant index 0 directly into the
-          ;; bounds compare (`cmpq $0, %rax`) instead of materializing it in a
+          ;; bounds check (`testq %rax, %rax`) instead of materializing it in a
           ;; scratch register. The Win64 safety invariant is unchanged: the
           ;; length (in %rax) is never clobbered, so no degenerate
           ;; `cmpq %rax, %rax` self-compare is emitted.
           (and
-            (asm-has? asm "    cmpq $0, %rax\n")
+            (asm-has? asm "    testq %rax, %rax\n")
             (asm-lacks? asm "    cmpq %rax, %rax\n"))]
         [(Err _) false])]
     ok))
@@ -12956,11 +13104,12 @@ high:
     (compiler-backend-peephole-single-dest-mnemonic? "decq")
     (compiler-backend-peephole-single-dest-mnemonic? "movzbq")
     (compiler-backend-peephole-single-dest-mnemonic? "movzwq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzbl")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzwl")
     (compiler-backend-peephole-single-dest-mnemonic? "movsbq")
     (compiler-backend-peephole-single-dest-mnemonic? "movswq")
     (compiler-backend-peephole-single-dest-mnemonic? "movslq")
     (not (compiler-backend-peephole-single-dest-mnemonic? "movq"))
-    (not (compiler-backend-peephole-single-dest-mnemonic? "movzbl"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "movsd"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "imulq"))
     (not (compiler-backend-peephole-single-dest-mnemonic? "mulq"))
@@ -14586,7 +14735,7 @@ f:
         cabi.compiler-reg-id-r15
         (ir.compiler-ir-instr-seq-empty))
       (has "    movq %rcx, %r15\n    cmpq %rcx, %r13\n    cmovb %r13, %r15\n")
-      (lacks "setb" "movzbq" "    testq "))
+      (lacks "setb" "movzbq" "movzbl" "    testq "))
     ;; signed lt -> cmovl off the same operands.
     (asm-ok?
       (compiler-backend-select-flags-asm
@@ -16188,7 +16337,7 @@ f:
     (be_peephole.compiler-backend-expand-stack-probes! state (&mut records))
     (let
       [text : String
-        (be_peephole.compiler-backend-peephole-records-render records)]
+        (be_peephole.compiler-backend-peephole-records-render records true)]
       (test.assert-true
         (asm-has?
           text
@@ -16205,11 +16354,13 @@ f:
     [linux : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Linux))]
+        (be_state.CompilerBackendTarget.Linux)
+        true)]
     [windows : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Windows))]
+        (be_state.CompilerBackendTarget.Windows)
+        true)]
     (test.assert-true
       (asm-has? linux "    pushq %r11\n" "    movq 8192(%rsp), %r11\n")
       "the PIC whole-text boundary expands Linux probes")
@@ -16223,7 +16374,8 @@ f:
     [text : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "# tl-stack-entry\n    subq $32768, %rsp\n    subq $4096, %rsp\n    movq %r11, (%rsp)\n    addq $4096, %rsp\n# tl-stack-entry\n    subq $32776, %rsp\n    movq %r11, (%rsp)\n    addq $32776, %rsp\n    subq $4104, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Linux))]
+        (be_state.CompilerBackendTarget.Linux)
+        true)]
     (test.assert-true
       (asm-has? text "    subq $32768, %rsp\n    subq $4096, %rsp\n")
       "entry 32768 plus balanced transient 4096 remains unprobed")
@@ -19029,15 +19181,26 @@ f:
         "    vmovdqu -64(%rbp), %ymm14\n    vpaddq %ymm6, %ymm14, %ymm14\n    vmovdqu %ymm14, -64(%rbp)\n")]
     [(Err _) false]))
 
+(define (compiler-backend-prefix-test-state
+  [mode : be_state.CompilerBackendMode]) : be_state.CompilerBackendState
+  (let
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-set-current-mode!
+      (be_state.compiler-backend-state-function-state state)
+      mode)
+    state))
+
 (define (compiler-backend-vector-prefix-spill-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=%vec6 %1=%r12 %2=spill:-64"))
+  (reg-homes "%0=%vec6 %1=%vec7 %2=spill:-64"))
 
 (define (compiler-backend-vector-prefix-source-carry-spill-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=spill:-64 %1=spill:-8 %2=%vec7"))
+  (reg-homes "%0=spill:-64 %1=spill:-96 %2=%vec7"))
 
 (define (compiler-backend-avx2-vector-prefix-i64-spill-ok?) : bool
   (asm-ok?
-    (be_simd.compiler-backend-emit-avx2-vector-prefix
+    (be_simd.compiler-backend-emit-vector-prefix
       (compiler-backend-vector-prefix-spill-assignments)
       2
       (Min)
@@ -19045,18 +19208,15 @@ f:
       (Var 1)
       4
       (I64)
-      "%xmm0"
-      "%xmm1"
       (cdiag.compiler-diagnostic-at-start "" "")
-      (be_state.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+      (compiler-backend-prefix-test-state (Avx2)))
     (has
       "    vmovdqu %ymm6, %ymm15\n"
       "    vpslldq $8, %ymm15, %ymm0\n"
       "    vperm2i128 $0, %ymm15, %ymm15, %ymm0\n"
       "    vpcmpgtq "
       "    vpandn "
-      "    vmovq %r10, %xmm0\n"
+      "    vpermq $255, %ymm7, %ymm14\n"
       "    vmovdqu %ymm15, -64(%rbp)\n")))
 
 (define (compiler-backend-avx2-vector-prefix-source-carry-spill-ok?) : bool
@@ -19065,7 +19225,7 @@ f:
       (compiler-backend-vector-prefix-source-carry-spill-assignments)]
     (and
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx2-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Sum)
@@ -19073,17 +19233,15 @@ f:
           (Var 1)
           4
           (I64)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx2)))
         (has
           "    vmovdqu -64(%rbp), %ymm7\n"
-          "    vpbroadcastq -8(%rbp), %ymm0\n")
+          "    vmovdqu -96(%rbp), %ymm14\n"
+          "    vpermq $255, %ymm14, %ymm14\n")
         (lacks "    vmovdqu %ymm7, -64(%rbp)\n"))
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx2-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Any)
@@ -19091,20 +19249,17 @@ f:
           (Var 1)
           32
           (Bool)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx2)))
         (has
           "    vmovdqu -64(%rbp), %ymm7\n"
-          "    movq -8(%rbp), %r10\n"
-          "    setne %r10b\n"
-          "    vpbroadcastb %xmm0, %ymm0\n")))))
+          "    vmovdqu -96(%rbp), %ymm14\n"
+          "    vextracti128 $1, %ymm14, %xmm14\n"
+          "    vpbroadcastb %xmm14, %ymm14\n")))))
 
 (define (compiler-backend-avx2-vector-prefix-bool-spill-ok?) : bool
   (asm-ok?
-    (be_simd.compiler-backend-emit-avx2-vector-prefix
+    (be_simd.compiler-backend-emit-vector-prefix
       (compiler-backend-vector-prefix-spill-assignments)
       2
       (All)
@@ -19112,17 +19267,14 @@ f:
       (Var 1)
       32
       (Bool)
-      "%xmm0"
-      "%xmm1"
       (cdiag.compiler-diagnostic-at-start "" "")
-      (be_state.compiler-backend-state-new
-        (ci.intern-compat-state-capture-active)))
+      (compiler-backend-prefix-test-state (Avx2)))
     (has
       "    vpslldq $1, %ymm15, %ymm0\n"
       "    vpslldq $8, %ymm15, %ymm0\n"
-      "    vpbroadcastb %xmm0, %ymm0\n"
-      "    setne %r10b\n"
-      "    vpand %ymm0, %ymm15, %ymm15\n")
+      "    vextracti128 $1, %ymm7, %xmm14\n"
+      "    vpbroadcastb %xmm14, %ymm14\n"
+      "    vpand %ymm14, %ymm15, %ymm15\n")
     (lacks "%al")
     (has "    vmovdqu %ymm15, -64(%rbp)\n")))
 
@@ -19132,7 +19284,7 @@ f:
       (compiler-backend-vector-prefix-spill-assignments)]
     (and
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Min)
@@ -19140,20 +19292,17 @@ f:
           (Var 1)
           8
           (I64)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    vmovdqu64 %zmm6, %zmm15\n"
           "    valignq $7, %zmm1, %zmm15, %zmm0\n"
           "    kshiftlw $4, %k7, %k7\n"
           "    vpminsq %zmm0, %zmm15, %zmm15{%k7}\n"
-          "    vpbroadcastq %r8, %zmm0\n"
+          "    vpbroadcastq %xmm14, %zmm14\n"
           "    vmovdqu64 %zmm15, -64(%rbp)\n"))
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           assignments
           2
           (Max)
@@ -19161,19 +19310,16 @@ f:
           (Var 1)
           16
           (I32)
-          "%xmm0"
-          "%xmm1"
           (cdiag.compiler-diagnostic-at-start "" "")
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    valignd $15, %zmm1, %zmm15, %zmm0\n"
           "    valignd $8, %zmm1, %zmm15, %zmm0\n"
           "    vpmaxsd %zmm0, %zmm15, %zmm15{%k7}\n"
-          "    vpbroadcastd %r8d, %zmm0\n")))))
+          "    vpbroadcastd %xmm14, %zmm14\n")))))
 
 (define (compiler-backend-avx512-vector-prefix-bool-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=%k2 %1=%rax %2=spill:-64"))
+  (reg-homes "%0=%k2 %1=%k3 %2=spill:-64"))
 
 (define (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=spill:-64 %1=spill:-8 %2=%k3"))
@@ -19183,7 +19329,7 @@ f:
     [diag : cdiag.CompilerDiagnostic (cdiag.compiler-diagnostic-at-start "" "")]
     (and
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           (compiler-backend-avx512-vector-prefix-bool-assignments)
           2
           (All)
@@ -19191,23 +19337,20 @@ f:
           (Var 1)
           64
           (Bool)
-          "%xmm0"
-          "%xmm1"
           (owned_view.compiler-owned-shared-view diag)
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    kmovq %k2, %r11\n"
           "    notq %r11\n"
           "    shlq $32, %r10\n"
-          "    movq %rax, %r10\n"
-          "    setne %r10b\n"
+          "    kmovq %k3, %r10\n"
+          "    sarq $63, %r10\n"
           "    andq %r10, %r11\n"
           "    kmovq %r11, %k7\n"
           "    kmovq %k7, -64(%rbp)\n")
         (lacks "    kmovq %k2, %rax\n" "%zmm"))
       (asm-ok?
-        (be_simd.compiler-backend-emit-avx512-vector-prefix
+        (be_simd.compiler-backend-emit-vector-prefix
           (compiler-backend-avx512-vector-prefix-bool-source-spill-assignments)
           2
           (Any)
@@ -19215,15 +19358,14 @@ f:
           (Var 1)
           64
           (Bool)
-          "%xmm0"
-          "%xmm1"
           diag
-          (be_state.compiler-backend-state-new
-            (ci.intern-compat-state-capture-active)))
+          (compiler-backend-prefix-test-state (Avx512)))
         (has
           "    kmovq -64(%rbp), %k7\n"
           "    kmovq %k7, %r11\n"
-          "    movq -8(%rbp), %r10\n"
+          "    kmovq -8(%rbp), %k7\n"
+          "    kmovq %k7, %r10\n"
+          "    sarq $63, %r10\n"
           "    orq %r10, %r11\n"
           "    kmovq %r11, %k3\n")
         (lacks "%rax")))))
@@ -21241,15 +21383,15 @@ entry:
     (compiler-backend-avx512-mask-reduce-emits?
       (Any)
       8
-      "    kortestw %k1, %k1\n    setne %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")
+      "    kortestw %k1, %k1\n    setne %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-avx512-mask-reduce-emits?
       (All)
       16
-      "    kortestw %k1, %k1\n    setc %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")
+      "    kortestw %k1, %k1\n    setc %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-avx512-mask-reduce-emits?
       (All)
       8
-      "    kmovw %k1, %eax\n    cmpl $255, %eax\n    sete %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")))
+      "    kmovw %k1, %r12d\n    cmpl $255, %r12d\n    sete %r12b\n    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-avx512-mask-spill-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=spill:-8 %1=spill:-16 %2=spill:-24 %3=%r12"))
@@ -21352,7 +21494,8 @@ entry:
     (has
       "    kmovw -8(%rbp), %k7\n"
       "    kortestw %k7, %k7\n"
-      "    movq %rax, %r12\n")))
+      "    setne %r12b\n"
+      "    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-avx512-mask-spill-load-store-emits-ok?) : bool
   (match (be_simd.compiler-backend-emit-avx512-mask-load
@@ -24769,7 +24912,7 @@ entry:
       "    leaq (%r10,%r8,4), %r10\n")
     (compiler-backend-instr-contains?
       (Load 4 (Var 1) (U8))
-      "    movzbq (%r10), %r8\n")
+      "    movzbl (%r10), %r8d\n")
     (compiler-backend-instr-contains?
       (irt.instr "store_ptr %1, 7 : i32")
       "    movl $7, (%r10)\n")
@@ -25593,7 +25736,7 @@ entry:
     [(Ok asm)
       (let
         [load-pos : i64
-          (backend.compiler-backend-string-find-from asm "    movzbq " 0)]
+          (backend.compiler-backend-string-find-from asm "    movzbl " 0)]
         [dst-base-pos : i64
           (backend.compiler-backend-string-find-from asm "    movq -8(%rbp)" 0)]
         [bad-rcx-pos : i64
@@ -25633,7 +25776,7 @@ entry:
       6)
       [(Ok asm)
         (and
-          (asm-has? asm "    movzbq (%r12,%r8,1), %rcx\n")
+          (asm-has? asm "    movzbl (%r12,%r8,1), %ecx\n")
           (asm-lacks? asm "    movq %r8, %r9\n" "    movq %r12, %r10\n")
           (not
             (let
@@ -25977,7 +26120,7 @@ entry:
         (U64)
         index
         index.backend-state)
-        [(Ok asm) (string.eq asm "    movzbq -48(%rbp), %rbx\n")]
+        [(Ok asm) (string.eq asm "    movzbl -48(%rbp), %ebx\n")]
         [(Err _) false]))))
 
 (define (compiler-backend-global-store-direct-home-shape-ok?) : bool
@@ -26513,7 +26656,7 @@ entry:
            %6 = mov %5 : i64")
         assignments
         7)
-      (has "    movzbq (%r12,%r8,1), %rcx\n")
+      (has "    movzbl (%r12,%r8,1), %ecx\n")
       (lacks "    addq (%r12"))))
 
 ;; M6: folding a single-use load into the comparing instruction's memory
@@ -26550,7 +26693,7 @@ entry:
   (asm-ok?
     (compiler-backend-cmp-mem-narrow-asm (U8) (U8) (Eq) 10)
     (has "    cmpb $10, (%r12,%r8,1)\n")
-    (lacks "    movzbq ")))
+    (lacks "    movzbq " "    movzbl ")))
 
 ;; The same at WORD width, and with a literal above the byte range so the width
 ;; is load-bearing rather than incidental.
@@ -26558,7 +26701,7 @@ entry:
   (asm-ok?
     (compiler-backend-cmp-mem-narrow-asm (U16) (U16) (Eq) 300)
     (has "    cmpw $300, (%r12,%r8,2)\n")
-    (lacks "    movzwq ")))
+    (lacks "    movzwq " "    movzwl ")))
 
 ;; Signedness/width refusal: a SIGN-extending byte load cannot produce 200, so
 ;; `ext(mem) == 200` is constant-false while `cmpb $200, (mem)` would be true
@@ -26586,9 +26729,9 @@ entry:
         ;; Same division of labour as the signed-literal refusal above: M6-C
         ;; declines the ordered narrow compare, M6-G folds the re-extension the
         ;; refusal leaves behind, so the surviving load writes the widening
-        ;; cast's home %r9 and no `movzbq %r13b, %r9` follows it.
-        (asm-has? asm "    movzbq (%r12,%r8,1), %r9\n")
-        (asm-lacks? asm "    movzbq %r13b, ")
+        ;; cast's home %r9 and no separate zero-extension follows it.
+        (asm-has? asm "    movzbl (%r12,%r8,1), %r9d\n")
+        (asm-lacks? asm "    movzbq %r13b, " "    movzbl %r13b, ")
         (asm-lacks? asm "    cmpb "))]
     [(Err _) false]))
 
@@ -26625,7 +26768,7 @@ entry:
         (compiler-backend-cmp-mem-direct-has?
           asm
           "    cmpb $47, (%r12,%r8,1)\n")
-        (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+        (asm-lacks? asm "    movzbq " "    movzbl "))]
     [(Err _) false]))
 
 ;; Unlike M6-C, an ORDERED compare folds too: the compare already runs at the
@@ -26640,7 +26783,7 @@ entry:
         (or
           (compiler-backend-cmp-mem-direct-has? asm "    jb ")
           (compiler-backend-cmp-mem-direct-has? asm "    jae "))
-        (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+        (asm-lacks? asm "    movzbq " "    movzbl "))]
     [(Err _) false]))
 
 ;; A register other operand is spelled at the byte width, on whichever side
@@ -26654,7 +26797,7 @@ entry:
           (compiler-backend-cmp-mem-direct-has?
             asm
             "    cmpb %r14b, (%r12,%r8,1)\n")
-          (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+          (asm-lacks? asm "    movzbq " "    movzbl "))]
       [(Err _) false])
     (match (compiler-backend-cmp-mem-direct-asm (U8) (Lt) (Var 4) (Var 3))
       [(Ok asm)
@@ -26662,7 +26805,7 @@ entry:
           (compiler-backend-cmp-mem-direct-has?
             asm
             "    cmpb (%r12,%r8,1), %r14b\n")
-          (not (compiler-backend-cmp-mem-direct-has? asm "    movzbq ")))]
+          (asm-lacks? asm "    movzbq " "    movzbl "))]
       [(Err _) false])))
 
 ;; Refusals: an ordered compare with the literal on the LEFT (the memory operand
@@ -26673,7 +26816,7 @@ entry:
     (match (compiler-backend-cmp-mem-direct-asm (U8) (Lt) (I64 10) (Var 3))
       [(Ok asm)
         (and
-          (compiler-backend-cmp-mem-direct-has? asm "    movzbq (%r12,%r8,1), ")
+          (compiler-backend-cmp-mem-direct-has? asm "    movzbl (%r12,%r8,1), ")
           (not (compiler-backend-cmp-mem-direct-has? asm ", (%r12,%r8,1)\n")))]
       [(Err _) false])
     (match (compiler-backend-cmp-mem-direct-asm (I8) (Eq) (Var 3) (I64 200))
@@ -26926,7 +27069,7 @@ entry:
         (be_state.backend-and4
           (asm-has? body "    cmpb $10, (")
           (asm-has? body "    xorl %esi, %esi\n")
-          (asm-lacks? body "    movzbq ")
+          (asm-lacks? body "    movzbq " "    movzbl ")
           (asm-lacks? body "    cmpq ")))]
     [(Err _) false]))
 
@@ -29546,10 +29689,10 @@ entry:
       "    movl $0, %r12d\n    jp 1f\n    setbe %r12b\n1:\n")
     (compiler-backend-float-unordered-sequence-ok?
       (Gt)
-      "    seta %r12b\n    movzbq %r12b, %r12\n")
+      "    seta %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-float-unordered-sequence-ok?
       (Ge)
-      "    setae %r12b\n    movzbq %r12b, %r12\n")))
+      "    setae %r12b\n    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-direct-float-compare-asm [ty : ast.AstType]) : be_state.ResultCompilerBackend
   (be_scalar.compiler-backend-emit-binop
@@ -30395,7 +30538,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    movzbq %al, %rax\n")]
+        [(Some asm) (string.eq asm "    movzbl %al, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30405,7 +30548,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    movzwq %ax, %rax\n")]
+        [(Some asm) (string.eq asm "    movzwl %ax, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30496,12 +30639,12 @@ entry:
             [(Ok negative-asm)
               (and
                 (be_state.backend-and4
-                  (asm-has? byte-asm "    movzbq %r12b, %r12\n")
+                  (asm-has? byte-asm "    movzbl %r12b, %r12d\n")
                   (asm-lacks?
                     byte-asm
                     "    andq $255, %r12\n"
                     "    andl $255, %r12d\n")
-                  (asm-has? word-asm "    movzwq %r12w, %r12\n")
+                  (asm-has? word-asm "    movzwl %r12w, %r12d\n")
                   (asm-lacks?
                     word-asm
                     "    andq $65535, %r12\n"
@@ -30539,7 +30682,7 @@ entry:
     (be_state.backend-and4
       (asm-has? asm "    movq %r15, %r12\n")
       (asm-has? asm "    setl %r12b\n")
-      (asm-has? asm "    movzbq %r12b, %r12\n")
+      (asm-has? asm "    movzbl %r12b, %r12d\n")
       (asm-lacks? asm "%rax"))
     (asm-lacks? asm "%r8")))
 
@@ -31610,7 +31753,7 @@ entry:
             "b"
             "8"
             false
-            "    movzbq %r8b, %r11"
+            "    movzbl %r8b, %r11d"
             flag-reg)
           (compiler-backend-shift-guard-body-ok?
             si16
@@ -31624,7 +31767,7 @@ entry:
             "w"
             "16"
             false
-            "    movzwq %r8w, %r11"
+            "    movzwl %r8w, %r11d"
             flag-reg)
           (compiler-backend-shift-guard-body-ok?
             si32
@@ -33691,7 +33834,7 @@ entry:
     [(Ok asm)
       (be_state.backend-and4
         (asm-has? asm "    call tl_tail_unit_target\n")
-        (asm-has? asm "    movq $0, %rax\n")
+        (asm-has? asm "    movl $0, %eax\n")
         (asm-lacks? asm "    leave\n    jmp tl_tail_unit_target\n")
         true)]
     [(Err _) false]))
@@ -34271,29 +34414,78 @@ entry:
   (asm-ok?
     (backend.compiler-backend-emit-source (compiler-backend-box-source))
     (has
-      "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n"
-      "    leaq 8(%rax), %rcx\n")
+      "    call .L_tl_alloc8\n"
+      "    movq 16(%r9), %rax\n    leaq 8(%rax), %rcx\n")
     (lacks
       ".L_tl_alloc8:\n    movq %fs:tl_current_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc8_slow\n    movq 40(%r8), %r9\n"
       "    movq %rax, %rcx\n    addq $8, %rcx\n")))
 
-;; Tuple literals are inline frame values (#7070), so the fixed-size allocation
-;; these fast-path fixtures pin comes from an explicit `box`.
-(define (compiler-backend-inline-fast-alloc-source) : String
-  "(define (main) : i64
-  (let
-    [b : (Box (Tuple bool i64)) (box (tuple true 42))]
-    (tuple-ref (deref b) 1)))")
+(define (compiler-backend-loop-alloc-program) : ir.CompilerIrProgram
+  (Program
+    (ir.compiler-ir-global-seq-empty)
+    (ir.compiler-ir-function-seq1
+      (&
+        (Function
+          cbi.compiler-builtin-id-fix-main
+          (ir.compiler-ir-param-seq-empty)
+          (I64)
+          4
+          (ir.compiler-ir-blocks
+            ;; IR text assigns user symbol IDs. Bind these two allocator calls
+            ;; to the actual runtime builtin.
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "entry")
+              (ir.compiler-ir-instr-seq2
+                (Call 0 cbi.compiler-builtin-id-tl-alloc (One (I64 16)) (U64))
+                (irt.instr "jump header")))
+            (irt.block
+              "header:
+               %1 = phi [0, entry], [%3, body] : i64
+               branch %1, exit, body")
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "body")
+              (compiler-backend-test-instr-seq-prepend
+                (Call 2 cbi.compiler-builtin-id-tl-alloc (One (I64 24)) (U64))
+                (irt.instrs
+                  "%3 = add %1, 1 : i64
+                         jump header")))
+            (irt.block "exit:
+               return %1"))
+          Ordinary)))
+    (ir.compiler-ir-extern-seq1
+      (ir.compiler-ir-extern-default-id
+        cbi.compiler-builtin-id-tl-alloc
+        "tl_alloc"
+        (U64)))
+    (ir.CompilerIrReturnStorageAuthority.None)))
+
+(define (compiler-backend-loop-alloc-target-ok?
+  [target : be_state.CompilerBackendTarget]) : bool
+  (match (backend.compiler-backend-emit-program-for-target
+    (compiler-backend-loop-alloc-program)
+    target)
+    [(Ok asm)
+      (and
+        (compiler-backend-string-contains-inline-alloc-size? asm 24)
+        (asm-has? asm "    call .L_tl_alloc16\n")
+        (asm-lacks? asm "_slow:\n    call .L_tl_alloc16\n")
+        (=
+          (backend.compiler-backend-string-count asm "    call .L_tl_alloc24\n")
+          1))]
+    [(Err _) false]))
 
 (define (compiler-backend-inline-fast-alloc-result-ok?) : bool
   (asm-ok?
-    (backend.compiler-backend-emit-source-for-target
-      (compiler-backend-inline-fast-alloc-source)
-      (be_state.CompilerBackendTarget.Windows))
+    (compiler-backend-emit-alloc-instrs-for-target
+      (ir.compiler-ir-instr-seq1
+        (Call 0 cbi.compiler-builtin-id-tl-alloc (One (I64 16)) (U64)))
+      (be_state.CompilerBackendTarget.Windows)
+      true
+      false)
     (has
-      "    testb $1, 48(%r8)\n    jnz .Lf0_allocentry_i9_v3_slow\n    movq 56(%r8), %r9\n"
+      "    testb $1, 48(%r8)\n    jnz .L_tl_test_allocentry_i0_v0_slow\n    movq 56(%r8), %r9\n"
       "    movq 56(%r8), %r9\n    movq 16(%r9), %rax\n    leaq 16(%rax), %r8\n"
-      "    cmpq 64(%r9), %r8\n    ja .Lf0_allocentry_i9_v3_slow\n    movq %r8, 16(%r9)\n")
+      "    cmpq 64(%r9), %r8\n    ja .L_tl_test_allocentry_i0_v0_slow\n    movq %r8, 16(%r9)\n")
     (lacks
       "    movq 16(%r8), %r10\n    addq $16, %r10\n"
       "    movq %rax, %r10\n    addq $16, %r10\n"
@@ -34317,7 +34509,9 @@ entry:
         (compiler-backend-test-instr-seq-prepend
           (Call 0 (ci.intern "tl_alloc_global") (One (I64 16)) (U64))
           (ir.compiler-ir-instr-seq-empty))
-        target)
+        target
+        false
+        false)
       (has
         "    movq .L_tl_global_aggregate_arena+56(%rip), %r9\n    movq 16(%r9), %rax\n"
         "_retry:\n    leaq 16(%rax), %r8\n"
@@ -34326,17 +34520,40 @@ entry:
         slow)
       (lacks "_slow:\n    call .L_tl_alloc16\n"))))
 
-(test
-  backend-inline-global-alloc
-  (cbi.compiler-builtin-initialize-for-parse!)
+(define (compiler-backend-size-optimized-alloc-target-ok?
+  [target : be_state.CompilerBackendTarget]) : bool
+  (asm-ok?
+    (compiler-backend-emit-alloc-instrs-for-target
+      (ir.compiler-ir-instr-seq2
+        (Call 0 cbi.compiler-builtin-id-tl-alloc (One (I64 16)) (U64))
+        (Call 0 cbi.compiler-builtin-id-tl-alloc-global (One (I64 24)) (U64)))
+      target
+      true
+      true)
+    (has "    call .L_tl_alloc16\n" "    call tl_alloc_global\n")
+    (lacks "    call .L_tl_alloc24\n" "_slow:\n" "    lock cmpxchgq")))
+
+(define (compiler-backend-test-fixed-size-alloc
+  [target : be_state.CompilerBackendTarget]) : unit
   (unless
-    (and
-      (compiler-backend-inline-global-alloc-target-ok?
-        (be_state.CompilerBackendTarget.Linux))
-      (compiler-backend-inline-global-alloc-target-ok?
-        (be_state.CompilerBackendTarget.Windows)))
+    (compiler-backend-loop-alloc-target-ok? target)
+    (io.panic "fixed-size allocations inline only in loop blocks"))
+  (unless
+    (compiler-backend-inline-global-alloc-target-ok? target)
     (io.panic
-      "global container allocation must reserve atomically and grow through its private root")))
+      "global container allocation must reserve atomically and grow through its private root"))
+  (unless
+    (compiler-backend-size-optimized-alloc-target-ok? target)
+    (io.panic
+      "size optimization must outline loop allocations and call the global allocator directly")))
+
+(test
+  backend-fixed-size-alloc
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (compiler-backend-test-fixed-size-alloc
+    (be_state.CompilerBackendTarget.Linux))
+  (compiler-backend-test-fixed-size-alloc
+    (be_state.CompilerBackendTarget.Windows)))
 
 (define (compiler-backend-fast-alloc-gate-ok?) : bool
   (and
@@ -34347,13 +34564,13 @@ entry:
     (= (be_calls.compiler-backend-fast-alloc-size (One (I64 65))) 0)
     (= (be_calls.compiler-backend-fast-alloc-size (One (I64 0))) 0)
     (= (be_calls.compiler-backend-fast-alloc-size (One (Var 0))) 0)
-    (be_calls.compiler-backend-inline-fast-alloc? 8)
-    (be_calls.compiler-backend-inline-fast-alloc? 24)
-    (be_calls.compiler-backend-inline-fast-alloc? 40)
-    (be_calls.compiler-backend-inline-fast-alloc? 64)
-    (not (be_calls.compiler-backend-inline-fast-alloc? 0))
-    (not (be_calls.compiler-backend-inline-fast-alloc? 10))
-    (not (be_calls.compiler-backend-inline-fast-alloc? 72))))
+    (be_calls.compiler-backend-fast-alloc-supported-size? 8)
+    (be_calls.compiler-backend-fast-alloc-supported-size? 24)
+    (be_calls.compiler-backend-fast-alloc-supported-size? 40)
+    (be_calls.compiler-backend-fast-alloc-supported-size? 64)
+    (not (be_calls.compiler-backend-fast-alloc-supported-size? 0))
+    (not (be_calls.compiler-backend-fast-alloc-supported-size? 10))
+    (not (be_calls.compiler-backend-fast-alloc-supported-size? 72))))
 
 (define (compiler-backend-inline-fast-alloc-reused-vreg-instrs) : ir.CompilerIrInstrSeq
   (compiler-backend-test-instr-seq-prepend
@@ -34368,7 +34585,9 @@ entry:
 (define (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?) : bool
   (match (compiler-backend-emit-alloc-instrs-for-target
     (compiler-backend-inline-fast-alloc-reused-vreg-instrs)
-    (be_state.CompilerBackendTarget.Linux))
+    (be_state.CompilerBackendTarget.Linux)
+    true
+    false)
     [(Ok asm)
       (be_state.backend-and4
         (asm-has? asm ".L_tl_test_allocentry_i0_v0_slow:\n")
@@ -34377,10 +34596,28 @@ entry:
         (asm-has? asm ".L_tl_test_allocentry_i1_v0_done:\n"))]
     [(Err _) false]))
 
+;; Single-instruction emission fixtures bypass placement. Seed the same
+;; membership that placement would record for their loop block.
+(define (compiler-backend-test-mark-entry-loop!
+  [state : be_state.CompilerBackendFunctionState]) : unit
+  (let
+    [labels : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (set! (array-ref labels 0) (ir.compiler-ir-label "entry"))
+    (be_state.compiler-backend-function-scratch-set-i64-array!
+      state
+      be_state.compiler-backend-scratch-i64-array-loop-block-labels
+      labels)
+    (be_state.compiler-backend-function-scratch-set-i64!
+      state
+      be_state.compiler-backend-scratch-i64-loop-block-count
+      1)))
+
 ;; Emits `instrs` as the one block of a test function returning u64.
 (define (compiler-backend-emit-alloc-instrs-for-target
   [instrs : ir.CompilerIrInstrSeq]
-  [target : be_state.CompilerBackendTarget]) : be_state.ResultCompilerBackend
+  [target : be_state.CompilerBackendTarget]
+  [loop-block? : bool]
+  [optimize-for-size? : bool]) : be_state.ResultCompilerBackend
   (let
     [backend-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
@@ -34395,6 +34632,13 @@ entry:
           (owned_view.compiler-owned-shared-view instrs)))]
     [_position : unit
       (begin
+        (be_state.compiler-backend-state-set-optimize-for-size!
+          backend-state
+          optimize-for-size?)
+        (when
+          loop-block?
+          (compiler-backend-test-mark-entry-loop!
+            (be_state.compiler-backend-state-function-state backend-state)))
         (compiler-backend-test-scavenge-install-ctx!
           "_tl_test"
           (ir.compiler-ir-param-seq-empty)
@@ -34417,7 +34661,7 @@ entry:
     (set-state-emit-current-site! backend-state prev-current-site)
     result))
 
-(define (compiler-backend-inline-fast-alloc-multi-size-source) : String
+(define (compiler-backend-outlined-fast-alloc-multi-size-source) : String
   "(define (make3 [x : i64]) : (Box (Tuple i64 i64 i64))
   (box (tuple x (+ x 1) (+ x 2))))
 
@@ -34430,31 +34674,25 @@ entry:
     [b : (Box (Tuple i64 i64 i64 i64 i64)) (make5 20)]
     (+ (tuple-ref (deref a) 2) (tuple-ref (deref b) 4))))")
 
-(define (compiler-backend-inline-fast-alloc-multi-size-target-ok?
+(define (compiler-backend-outlined-fast-alloc-multi-size-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
   (match (backend.compiler-backend-emit-source-for-target
-    (compiler-backend-inline-fast-alloc-multi-size-source)
+    (compiler-backend-outlined-fast-alloc-multi-size-source)
     target)
     [(Ok asm)
       (and
-        (compiler-backend-string-contains-inline-alloc-size? asm 24)
-        (compiler-backend-string-contains-inline-alloc-size? asm 40)
-        (asm-has?
-          asm
-          "_slow:\n    call .L_tl_alloc24\n"
-          "_slow:\n    call .L_tl_alloc40\n")
-        (asm-lacks? asm "    call tl_alloc\n")
-        (asm-has? asm "    jb " "    ja "))]
+        (asm-has? asm "    call .L_tl_alloc24\n" "    call .L_tl_alloc40\n")
+        (asm-lacks? asm "_slow:\n    call .L_tl_alloc" "    call tl_alloc\n"))]
     [(Err _) false]))
 
-(define (compiler-backend-inline-fast-alloc-multi-size-ok?) : bool
+(define (compiler-backend-outlined-fast-alloc-multi-size-ok?) : bool
   (and
-    (compiler-backend-inline-fast-alloc-multi-size-target-ok?
+    (compiler-backend-outlined-fast-alloc-multi-size-target-ok?
       (be_state.CompilerBackendTarget.Linux))
-    (compiler-backend-inline-fast-alloc-multi-size-target-ok?
+    (compiler-backend-outlined-fast-alloc-multi-size-target-ok?
       (be_state.CompilerBackendTarget.Windows))))
 
-(define (compiler-backend-inline-alloc-alias-case-ok?
+(define (compiler-backend-outlined-alloc-alias-case-ok?
   [target : be_state.CompilerBackendTarget]
   [result-type : String]
   [symbol : String]
@@ -34474,63 +34712,65 @@ entry:
     target)
     [(Ok asm)
       (if (> expected 0)
-        (compiler-backend-string-contains-inline-alloc-size? asm expected)
-        (asm-lacks? asm "_slow:\n    call .L_tl_alloc"))]
+        (asm-has? asm (compiler-backend-alloc-fixed-call-text expected))
+        (=
+          (compiler-backend-alloc-call-count asm)
+          (backend.compiler-backend-string-count asm "    call tl_alloc\n")))]
     [(Err _) false]))
 
-(define (compiler-backend-inline-alloc-alias-target-ok?
+(define (compiler-backend-outlined-alloc-alias-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
   (and
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "tl_alloc"
       ""
       1
       8)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr i64)"
       "tl_alloc"
       ""
       24
       24)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "tl_alloc"
       " (:abi c)"
       63
       64)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "tl_alloc"
       ""
       0
       0)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "tl_alloc"
       ""
       65
       0)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "(MutPtr u8)"
       "unrelated_allocator"
       ""
       24
       0)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "u64"
       "tl_alloc"
       ""
       24
       0)
-    (compiler-backend-inline-alloc-alias-case-ok?
+    (compiler-backend-outlined-alloc-alias-case-ok?
       target
       "f64"
       "tl_alloc"
@@ -34538,11 +34778,11 @@ entry:
       24
       0)))
 
-(define (compiler-backend-inline-alloc-alias-ok?) : bool
+(define (compiler-backend-outlined-alloc-alias-ok?) : bool
   (and
-    (compiler-backend-inline-alloc-alias-target-ok?
+    (compiler-backend-outlined-alloc-alias-target-ok?
       (be_state.CompilerBackendTarget.Linux))
-    (compiler-backend-inline-alloc-alias-target-ok?
+    (compiler-backend-outlined-alloc-alias-target-ok?
       (be_state.CompilerBackendTarget.Windows))))
 
 (define compiler-backend-inline-fast-alloc-emergency-live-count : i64
@@ -34641,6 +34881,8 @@ entry:
           (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
+        (compiler-backend-test-mark-entry-loop!
+          (be_state.compiler-backend-state-function-state backend-state))
         (compiler-backend-test-scavenge-install-ctx!
           "inline_fast_alloc_emergency"
           (ir.compiler-ir-param-seq-empty)
@@ -38208,8 +38450,8 @@ entry:
         index
         7
         backend-state)
-      (has "    movzbq 48(%rbp), ")
-      (lacks "    movzbq 48(%rbp), %r9\n"))))
+      (has "    movzbl 48(%rbp), ")
+      (lacks "    movzbq 48(%rbp), %r9\n" "    movzbl 48(%rbp), %r9d\n"))))
 
 ;; #8894: the stale body cursor the float parameter copies used to consult.
 ;; Its occupancy reports every register free, although the pinned parameters
@@ -39596,6 +39838,7 @@ b_keep:
       (compiler-backend-inline-fast-alloc-reused-vreg-instrs)]
     [_configure : unit
       (begin
+        (compiler-backend-test-mark-entry-loop! function-b)
         (set! (array-ref forward-a 4) 17)
         (set! (array-ref forward-b 4) 29)
         (set! (array-ref uses-a 4) 31)
@@ -40159,13 +40402,12 @@ b_keep:
     (compiler-backend-placement-test-expected 0 1 2 3 4)))
 
 ;; A block with no terminator falls through to whatever the list puts next, so
-;; the function declines whole: no order at all.
+;; membership is available, but the layout stays in source order.
 (define (compiler-backend-placement-open-block-declines-ok?) : bool
-  (=
-    (array-length
-      (compiler-backend-placement-order-for-blocks
-        (compiler-backend-placement-test-while-blocks true false)))
-    0))
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-test-while-blocks true false))
+    (compiler-backend-placement-test-expected 0 1 2 3 4)))
 
 ;; entry / header(=body) / latch / exit, with the counting test at the BOTTOM:
 ;; the header already has a fall-through predecessor and the bottom already
@@ -41163,8 +41405,8 @@ b_keep:
         (compiler-backend-fast-alloc-gate-ok?)
         (compiler-backend-inline-fast-alloc-result-ok?)
         (compiler-backend-inline-fast-alloc-reused-vreg-labels-ok?)
-        (compiler-backend-inline-fast-alloc-multi-size-ok?)
-        (compiler-backend-inline-alloc-alias-ok?)
+        (compiler-backend-outlined-fast-alloc-multi-size-ok?)
+        (compiler-backend-outlined-alloc-alias-ok?)
         (compiler-backend-inline-fast-alloc-emergency-preserved-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))
     (compiler-backend-tuple-ok?)
@@ -41898,7 +42140,9 @@ b_keep:
                 stream
                 (be_state.compiler-backend-global-shared-view records))]
             [rendered : String
-              (be_peephole.compiler-backend-peephole-records-render records)]
+              (be_peephole.compiler-backend-peephole-records-render
+                records
+                true)]
             (backend.compiler-backend-peephole-records-retire! stream)
             rendered))]
       (CompilerBackendPeepholeChunkState
@@ -42070,7 +42314,8 @@ b_keep:
         (be_peephole.compiler-backend-peephole-records-buffer
           (text_buf_borrowed.empty-like (& asm))
           records
-          asm))]
+          asm
+          true))]
     (backend.compiler-backend-peephole-records-retire! stream)
     result))
 
@@ -46228,3 +46473,573 @@ user_fn:
       (compiler-backend-byte-directives-match-reference?
         (compiler-backend-test-byte-run 11 13 33)))
     (io.panic "the .byte directives differ from the per-byte reference")))
+
+;; #8964: physical float/packed-f32 transfers between GP and XMM registers must
+;; emit `movq` (64-bit, preserving packed `(f32, f32)` lanes and `-0.0`) or
+;; `movd` (32-bit scalar `f32`), never illegal `movsd`/`movss` with GP operands.
+(test
+  backend-cross-bank-float-moves-reject-gp-movsd
+  (let
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-insert
+        (regalloc.compiler-reg-assignment-table-insert
+          (regalloc.compiler-reg-assignment-table-insert
+            (regalloc.compiler-reg-assignment-table-make 3)
+            0
+            (Register cabi.compiler-reg-id-rax))
+          1
+          (Register cabi.compiler-reg-id-r13))
+        2
+        (Register (cabi.compiler-abi-xmm-register-id 5)))]
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [load-packed : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        0
+        (F64)
+        "%xmm4"
+        state)]
+    [store-packed : String
+      (be_operand.compiler-backend-emit-store-float-var
+        assignments
+        1
+        "%xmm2"
+        (& (F64))
+        state)]
+    [load-r13 : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        1
+        (F64)
+        "%xmm3"
+        state)]
+    [load-f32-gp : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        0
+        (F32)
+        "%xmm4"
+        state)]
+    [store-f32-gp : String
+      (be_operand.compiler-backend-emit-store-float-var
+        assignments
+        1
+        "%xmm2"
+        (& (F32))
+        state)]
+    [load-xmm : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        2
+        (F64)
+        "%xmm3"
+        state)]
+    [group-cross-a : String
+      (be_scalar.compiler-backend-emit-group-word-move "%rax" "%xmm4" true)]
+    [group-cross-b : String
+      (be_scalar.compiler-backend-emit-group-word-move "%xmm2" "%r13" true)]
+    [group-xmm : String
+      (be_scalar.compiler-backend-emit-group-word-move "%xmm2" "%xmm3" true)]
+    [all : String
+      (str_cat.str-cat
+        (string.copy (& load-packed))
+        (string.copy (& store-packed))
+        (string.copy (& load-r13))
+        (string.copy (& load-f32-gp))
+        (string.copy (& store-f32-gp))
+        (string.copy (& group-cross-a))
+        (string.copy (& group-cross-b)))]
+    (unless
+      (and
+        (string.eq load-packed "    movq %rax, %xmm4\n")
+        (string.eq store-packed "    movq %xmm2, %r13\n")
+        (string.eq load-r13 "    movq %r13, %xmm3\n")
+        (string.eq load-f32-gp "    movd %eax, %xmm4\n")
+        (string.eq store-f32-gp "    movd %xmm2, %r13d\n")
+        (string.eq load-xmm "    movsd %xmm5, %xmm3\n")
+        (string.eq group-cross-a "    movq %rax, %xmm4\n")
+        (string.eq group-cross-b "    movq %xmm2, %r13\n")
+        (string.eq group-xmm "    movsd %xmm2, %xmm3\n")
+        (not (be_operand.compiler-backend-string-contains? (& all) "movsd"))
+        (not (be_operand.compiler-backend-string-contains? (& all) "movss")))
+      (io.panic
+        "cross-bank float moves emitted illegal movsd/movss or wrong width"))))
+
+;; Verify that SIMD GPR scavenges respect live caller-saved GPRs in the
+;; occupancy mask (never blindly clobbering %rax/%r8/%r9/%r10/%r11).
+(test
+  backend-simd-gpr-scavenge-avoids-live-gprs
+  (let
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [fn-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state state)]
+    [occupied : i64
+      (bit-or
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%rax")
+          (be_operand.compiler-backend-scavenge-reg-bit "%r8"))
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%r9")
+          (bit-or
+            (be_operand.compiler-backend-scavenge-reg-bit "%r10")
+            (be_operand.compiler-backend-scavenge-reg-bit "%r11"))))]
+    [masks : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    (for [i (iterator.range 0 4)]
+      (set! (array-ref masks i) occupied))
+    (be_state.compiler-backend-function-scratch-set-i64-array!
+      fn-state
+      be_state.compiler-backend-scratch-i64-array-scavenge-occupied-masks
+      masks)
+    (be_state.compiler-backend-function-scratch-set-i64!
+      fn-state
+      be_state.compiler-backend-scratch-i64-simd-scratch-bytes
+      256)
+    (let
+      [assignments : regalloc.CompilerRegAssignmentTable
+        (regalloc.compiler-reg-assignment-table-insert
+          (regalloc.compiler-reg-assignment-table-make 4)
+          0
+          (Register (cabi.compiler-abi-vector-register-id 6)))]
+      [diag : cdiag.CompilerDiagnostic
+        (cdiag.compiler-diagnostic-at-start "" "")]
+      (match (be_simd.compiler-backend-emit-avx2-mask-reduce
+        (ast.ast-node-pool-reader-type-segment-bases)
+        assignments
+        1
+        (Any)
+        (Var 0)
+        4
+        (cdiag.compiler-diagnostic-at-start "" "")
+        state)
+        [(Ok asm)
+          (unless
+            (and
+              (not
+                (be_operand.compiler-backend-string-contains? (& asm) "%eax"))
+              (not
+                (be_operand.compiler-backend-string-contains? (& asm) "%rax"))
+              (not (be_operand.compiler-backend-string-contains? (& asm) "%al")))
+            (io.panic "avx2 mask-reduce clobbered occupied %rax"))]
+        [(Err _) (io.panic "avx2 mask-reduce failed")])
+      (match (be_simd.compiler-backend-emit-avx2-tail-mask
+        (ast.ast-node-pool-reader-type-segment-bases)
+        "tail_scav"
+        (ir.compiler-ir-label "entry")
+        assignments
+        2
+        (I64 0)
+        (I64 3)
+        4
+        diag
+        state)
+        [(Ok asm)
+          (unless
+            (and
+              (not (be_operand.compiler-backend-string-contains? (& asm) "%r8"))
+              (not (be_operand.compiler-backend-string-contains? (& asm) "%r9")))
+            (io.panic "avx2 tail-mask clobbered occupied %r8/%r9"))]
+        [(Err _) (io.panic "avx2 tail-mask failed")]))))
+
+(define (compiler-backend-global-pair-store-live-case?
+  [mask : i64]
+  [homes : String]
+  [target : be_state.CompilerBackendTarget]
+  [pressure? : bool]) : bool
+  (let
+    [type-name : String
+      (str_cat.str-cat
+        "__tl_internal_abi_group_m"
+        (string.int->string mask)
+        "__store_test")]
+    [func : ir.CompilerIrFunction
+      (irt.func
+        (str_cat.str-cat
+          "function @global_pair_store() -> i64 vars 1 {\nentry:\n%0 = pack ["
+          (if (= (bit-and mask 1) 0)
+            "1"
+            "float-bits:4607182418800017408")
+          ", "
+          (if (= (bit-and mask 2) 0)
+            "2"
+            "float-bits:4611686018427387904")
+          "] : "
+          type-name
+          "\n"
+          "store @pair_sink, %0 : "
+          type-name
+          "\nreturn 0\n}"))]
+    [index : be_state.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-prepend
+          (& func)
+          (& (ir.compiler-ir-function-seq-empty)))
+        (ir.compiler-ir-extern-seq-empty))]
+    [state : be_state.CompilerBackendState index.backend-state]
+    [function-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state state)]
+    [assignments : regalloc.CompilerRegAssignmentTable (reg-homes homes)]
+    [occupied : i64
+      (if pressure?
+        -1
+        (compiler-backend-test-register-mask
+          (__tl_make-array
+            cabi.compiler-reg-id-rax
+            cabi.compiler-reg-id-rdx
+            (cabi.compiler-abi-xmm-register-id 2)
+            (cabi.compiler-abi-xmm-register-id 3))))]
+    [_setup : unit
+      (begin
+        (be_state.compiler-backend-set-current-fn-abi!
+          state
+          (be_state.compiler-backend-target-abi target))
+        (be_facts.compiler-backend-current-slot-vars-set! state 1)
+        (be_facts.compiler-backend-group-vars-enable!
+          state
+          (compiler_liveness.compiler-live-set1 0)
+          (compiler_liveness.compiler-live-set-empty))
+        (backend.compiler-backend-set-scavenge-ctx-ready!
+          function-state
+          (__tl_make-array 0)
+          (__tl_make-array 3)
+          assignments
+          0
+          (__tl_make-array occupied occupied occupied occupied)
+          1)
+        (set-state-emit-instr-post-base! state 0)
+        (set-state-emit-current-count! state 0))]
+    [result : be_state.ResultCompilerBackend
+      (match func
+        [(Function name _ _ _ blocks _)
+          (backend.compiler-backend-emit-instr
+            (be_state.CompilerBackendEmissionContext
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (be_state.compiler-backend-target-policy-new target)
+              "_tl_global_pair_store"
+              name
+              blocks
+              (ir.compiler-ir-label "entry")
+              assignments
+              1
+              (regalloc.compiler-reg-var-types-empty)
+              (Empty)
+              (I64)
+              (compiler-backend-runtime-helper-full-plan)
+              (ir.compiler-ir-function-seq-empty)
+              (ir.compiler-ir-extern-seq-empty)
+              index
+              (ir.compiler-source-spans-empty)
+              (compiler-backend-source-span-index-build
+                (ir.compiler-source-spans-empty))
+              (cdiag.compiler-diagnostic-at-start "" "")
+              (__tl_make-array 1)
+              state
+              function-state)
+            (No)
+            (ir.compiler-ir-instr-seq-ref
+              (irt.instrs (str_cat.str-cat "store @pair_sink, %0 : " type-name))
+              0))])]
+    (be_facts.compiler-backend-group-vars-disable! state)
+    (if pressure?
+      (and
+        (>
+          (be_state.compiler-backend-function-scratch-i64
+            function-state
+            be_state.compiler-backend-scratch-i64-emergency-pending-count)
+          0)
+        (asm-ok? result (has "_tl_pair_sink(%rip)" "_tl_pair_sink+8(%rip)")))
+      (asm-ok?
+        result
+        (has "_tl_pair_sink(%rip)" "_tl_pair_sink+8(%rip)")
+        (lacks ", %rax\n" ", %rdx\n" ", %xmm2\n" ", %xmm3\n")))))
+
+(test
+  backend-global-pair-store-live-homes
+  (let
+    [registers
+      (array "%0=%r12/%r13" "%0=%xmm4/%r12" "%0=%r12/%xmm4" "%0=%xmm4/%xmm5")]
+    [overlapping
+      (array "%0=%rdx/%rax" "%0=%xmm0/%rax" "%0=%rax/%xmm0" "%0=%xmm1/%xmm0")]
+    [targets
+      (array
+        be_state.CompilerBackendTarget.Linux
+        be_state.CompilerBackendTarget.Windows)]
+    (for [host (iterator.range 0 (array-length targets))]
+      (for [mask (iterator.range 0 4)]
+        (test.assert-true
+          (compiler-backend-global-pair-store-live-case?
+            mask
+            (clone (array-ref registers mask))
+            (array-ref targets host)
+            false)
+          "register pair store preserves GP and SSE live homes")
+        (test.assert-true
+          (compiler-backend-global-pair-store-live-case?
+            mask
+            (clone (array-ref overlapping mask))
+            (array-ref targets host)
+            false)
+          "source words in ABI registers are not overwritten during staging")
+        (test.assert-true
+          (compiler-backend-global-pair-store-live-case?
+            mask
+            "%0=spill:-8"
+            (array-ref targets host)
+            false)
+          "spill pair store preserves GP and SSE live homes")
+        (test.assert-true
+          (compiler-backend-global-pair-store-live-case?
+            mask
+            "%0=spill:-8"
+            (array-ref targets host)
+            true)
+          "spill pair store requests emergency saves when staging registers are live")))))
+
+(test
+  backend-global-pair-store-errors
+  (let
+    [index (compiler-backend-register-group-test-index)]
+    [assignments (reg-homes "%0=%r12/%r13")]
+    [name (ir.compiler-ir-symbol "pair_sink")]
+    [destinations : (Array ir.CompilerIrValue 2)
+      (array (Global name) (GlobalAddr name))]
+    [sources : (Array ir.CompilerIrValue 2) (array (I64 7) (Var 0))]
+    (for [at (iterator.range 0 2)]
+      (test.assert-true
+        (match (be_scalar.compiler-backend-emit-group-copy
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (clone assignments)
+          (& (array-ref destinations at))
+          (clone (array-ref sources at))
+          1
+          (compiler-backend-register-group-test-type)
+          index
+          index.backend-state)
+          [(Err _) true]
+          [(Ok _) false])
+        "malformed group-copy operands fail before emitting assembly"))))
+
+(define (compiler-backend-global-init-small-array-tuple-source) : String
+  "(define (minus-one) : i8 -1)
+(define (get-f32) : f32 2.5)
+(define (get-i64) : i64 6)
+(define a-i8 : (Array i8 4) (array (minus-one) 2 3 4))
+(define a-f32 : (Array f32 3) (array 1.5 (get-f32) 3.5))
+(define a-i64 : (Array i64 2) (array 5 (get-i64)))
+(define a-str : (Array String 2) (array \"left\" \"right\"))
+(define a-static : (Array i8 4) (array 1 2 3 4))
+(define t-i8 : (Tuple i8 i8 i8 i8) (tuple (minus-one) 2 3 4))
+(define t-f32 : (Tuple f32 f32 f32) (tuple 1.5 (get-f32) 3.5))
+(define t-i64 : (Tuple i64 i64) (tuple 5 (get-i64)))
+(define (main) : i64
+  (+ (cast (array-ref a-i8 1) : i64)
+     (+ (array-ref a-i64 1)
+        (+ (cast (array-ref a-static 1) : i64)
+           (+ (cast (tuple-ref t-i8 1) : i64) (tuple-ref t-i64 1))))))")
+
+;; #8488: small fixed-array and fixed-tuple runtime initializers emit clean
+;; startup calls and keep constant scalar fixed arrays on their static path.
+(test
+  backend-global-init-small-array-tuple-asm
+  (match (backend.compiler-backend-emit-source
+    (compiler-backend-global-init-small-array-tuple-source))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (unless
+        (and
+          (asm-has? asm "_tl___global_init_a_i8:")
+          (asm-has? asm "_tl___global_init_a_f32:")
+          (asm-has? asm "_tl___global_init_a_i64:")
+          (asm-has? asm "_tl___global_init_a_str:")
+          (asm-has? asm "_tl___global_init_t_i8:")
+          (asm-has? asm "_tl___global_init_t_f32:")
+          (asm-has? asm "_tl___global_init_t_i64:")
+          (asm-lacks? asm "_tl___global_init_a_static:")
+          (asm-has? asm "_tl_a_static:\n    .quad .+8\n"))
+        (io.panic "small array/tuple global init assembly shape mismatch"))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "small array/tuple global init backend emission failed")]))
+
+(define (compiler-backend-tail-memory-param-source) : String
+  "(define (g-arr [t : (& t (Array i64 4))] [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [x : i64]) : i64
+  (array-ref t 0))
+(define (g-reg [t : (& t (Array i64 4))] [x : i64]) : i64
+  (array-ref t 0))
+(define (f-overlap [t : (Array i64 4)] [x : i64]) : i64
+  (g-arr (& t) 1 2 3 4 5 x))
+(define (f-nonoverlap-reg [t : (Array i64 4)] [x : i64]) : i64
+  (g-reg (& t) x))
+(define (f-box-deref [t : (Tuple (Box (Array i64 4)) i64 i64)] [x : i64]) : i64
+  (g-arr (& (deref (tuple-ref t 0))) 1 2 3 4 5 x))
+(define (main) : i64
+  (+ (f-overlap (array 7 7 7 7) 42)
+     (+ (f-nonoverlap-reg (array 7 7 7 7) 42)
+        (f-box-deref (tuple (box (array 7 7 7 7)) 1 2) 42))))")
+
+;; Authored IR bypassing lowering: mode 0 passes overlapping Memory param %0 to
+;; a 7-arg tail call (must emit call, not jmp); mode 1 loads %0 in Address role
+;; and passes the loaded value (no escape -> keeps jmp); mode 2 places the
+;; Memory param at incoming stack slot 1 past a scalar stack arg while the tail
+;; call only writes slot 0 (no overlap -> keeps jmp).
+(define (compiler-backend-tail-memory-param-ir-program [mode : i64]) : ir.CompilerIrProgram
+  (let
+    [callee-id : i64 (ir.compiler-ir-test-symbol "mem_tail_callee")]
+    [caller-id : i64 (ir.compiler-ir-test-symbol "mem_tail_caller")]
+    [mem-ty : ast.AstType
+      (ast.AstType.Struct
+        (ir.compiler-ir-symbol "__tl_internal_abi_mem_s32__arr4"))]
+    [callee-params : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity 7)]
+    [_cp : unit
+      (for [i (iterator.range 0 7)]
+        (ir.compiler-ir-param-builder-push!
+          (&mut callee-params)
+          (ir.CompilerIrParam.Param "p" (ast.AstType.I64) i)))]
+    [callee : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        callee-id
+        (ir.compiler-ir-param-builder-to-seq callee-params)
+        (ast.AstType.I64)
+        7
+        (irt.blocks "entry:
+          return %0")
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [caller-params : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity 8)]
+    [caller-vars : i64
+      (if (= mode 2)
+        8
+        3)]
+    [_caller-p : unit
+      (if (= mode 2)
+        (begin
+          (for [i (iterator.range 0 7)]
+            (ir.compiler-ir-param-builder-push!
+              (&mut caller-params)
+              (ir.CompilerIrParam.Param "a" (ast.AstType.I64) i)))
+          (ir.compiler-ir-param-builder-push!
+            (&mut caller-params)
+            (ir.CompilerIrParam.Param "t" mem-ty 7)))
+        (begin
+          (ir.compiler-ir-param-builder-push!
+            (&mut caller-params)
+            (ir.CompilerIrParam.Param "t" mem-ty 0))
+          (ir.compiler-ir-param-builder-push!
+            (&mut caller-params)
+            (ir.CompilerIrParam.Param "x" (ast.AstType.I64) 1))))]
+    [caller-blocks : ir.CompilerIrBlockList
+      (cond
+        [(= mode 0)
+          (irt.blocks
+            "entry:
+              tailcall mem_tail_callee(%0, 1, 2, 3, 4, 5, %1) : i64")]
+        [(= mode 1)
+          (irt.blocks
+            "entry:
+              %2 = load %0 : i64
+              tailcall mem_tail_callee(%2, 1, 2, 3, 4, 5, %1) : i64")]
+        [else
+          (irt.blocks
+            "entry:
+              tailcall mem_tail_callee(%7, 1, 2, 3, 4, 5, %6) : i64")])]
+    [caller : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        caller-id
+        (ir.compiler-ir-param-builder-to-seq caller-params)
+        (ast.AstType.I64)
+        caller-vars
+        caller-blocks
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [main-fn : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "main")
+        (ir.compiler-ir-param-seq-empty)
+        (ast.AstType.I64)
+        0
+        (irt.blocks "entry:
+          return 0")
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [fns : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& callee)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& caller)
+            (& (ir.compiler-ir-function-seq1 (& main-fn))))))]
+    (ir.CompilerIrProgram.Program
+      (ir.compiler-ir-global-seq-empty)
+      fns
+      (ir.compiler-ir-extern-seq-empty)
+      (ir.CompilerIrReturnStorageAuthority.None))))
+
+;; #9289: verify overlapping SysV Memory-param tail calls fall back to `call`
+;; while non-overlapping tail calls (register-only, Box deref, and non-overlap
+;; stack slot) stay `jmp`.
+(test
+  backend-tail-call-memory-param-overlap-and-nonoverlap-asm
+  (match (backend.compiler-backend-emit-source
+    (compiler-backend-tail-memory-param-source))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (let
+        [overlap-body : String
+          (compiler-backend-asm-function-body asm "_tl_f_overlap")]
+        [reg-body : String
+          (compiler-backend-asm-function-body asm "_tl_f_nonoverlap_reg")]
+        [box-body : String
+          (compiler-backend-asm-function-body asm "_tl_f_box_deref")]
+        (unless
+          (and
+            (asm-has? overlap-body "    call _tl_g_arr\n")
+            (asm-lacks? overlap-body "    jmp _tl_g_arr\n")
+            (asm-has? reg-body "    jmp _tl_g_reg\n")
+            (asm-lacks? reg-body "    call _tl_g_reg\n")
+            (asm-has? reg-body "    leaq ")
+            (asm-has? box-body "    jmp _tl_g_arr\n")
+            (asm-lacks? box-body "    call _tl_g_arr\n"))
+          (io.panic "tail-call Memory-param source asm shape mismatch")))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "tail-call Memory-param source emission failed")])
+  (match (backend.compiler-backend-emit-program-linux
+    (compiler-backend-tail-memory-param-ir-program 0))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_mem_tail_caller")]
+        (unless
+          (and
+            (asm-has? body "    call _tl_mem_tail_callee\n")
+            (asm-lacks? body "    jmp _tl_mem_tail_callee\n"))
+          (io.panic
+            "overlapping authored-IR Memory param tailcall must emit call")))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "authored-IR mode 0 emission failed")])
+  (match (backend.compiler-backend-emit-program-linux
+    (compiler-backend-tail-memory-param-ir-program 1))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_mem_tail_caller")]
+        (unless
+          (and
+            (asm-has? body "    jmp _tl_mem_tail_callee\n")
+            (asm-lacks? body "    call _tl_mem_tail_callee\n"))
+          (io.panic "non-escaping Memory param load tailcall must keep jmp")))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "authored-IR mode 1 emission failed")])
+  (match (backend.compiler-backend-emit-program-linux
+    (compiler-backend-tail-memory-param-ir-program 2))
+    [(be_state.ResultCompilerBackend.Ok asm)
+      (let
+        [body : String
+          (compiler-backend-asm-function-body asm "_tl_mem_tail_caller")]
+        (unless
+          (and
+            (asm-has? body "    jmp _tl_mem_tail_callee\n")
+            (asm-lacks? body "    call _tl_mem_tail_callee\n"))
+          (io.panic
+            "non-overlapping stack slot Memory param tailcall must keep jmp")))]
+    [(be_state.ResultCompilerBackend.Err _)
+      (io.panic "authored-IR mode 2 emission failed")]))

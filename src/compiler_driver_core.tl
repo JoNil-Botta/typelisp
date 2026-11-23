@@ -43,6 +43,7 @@
   compile-startup-profile
   (import compiler_startup_profile as startup_profile))
 (import compiler_optimize)
+(import compiler_opt_level as opt_level)
 (import stdlib.text_buf)
 (import sym_i64_env)
 
@@ -2279,14 +2280,14 @@
   4194304)
 
 ;; The lowering request's chunk policy, set on the owner before each lowering:
-;; only level 2 retires lowered IR progressively, so only it escapes bodies
-;; into chunks; every other level keeps the whole-owner arena.
+;; full optimization retires lowered IR progressively and escapes bodies
+;; into chunks. Levels 0 and 1 keep the whole-owner arena.
 (define (compiler-driver-lower-state-configure-input!
   [lower-state : compiler_lower.CompilerLowerState]
   [opt-level : i64]) : unit
   (compiler_lower.compiler-lower-arena-state-set-ir-chunk-budget!
     (& (compiler_lower.compiler-lower-state-arenas lower-state))
-    (if (= opt-level 2)
+    (if (opt_level.opt-level-full? opt-level)
       compiler-driver-lowered-ir-chunk-bytes
       0)))
 
@@ -2498,9 +2499,10 @@
           (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
           (compiler-driver-release-lowered-ir! opt-level lower-state)
           (return (Exhausted)))
-        (be_state.compiler-backend-state-set-scalar-registers-enabled!
+        (be_state.compiler-backend-state-set-opt-level! backend-state opt-level)
+        (be_state.compiler-backend-state-set-optimize-for-size!
           backend-state
-          (>= opt-level 2))
+          (opt_level.opt-level-size? opt-level))
         (Program optimized optimized-spans)])))
 
 ;; The object routes' eligibility gate. An ineligible ObjectImage program keeps
@@ -2589,9 +2591,12 @@
                   side-backend-state
                   (compiler_typecheck_core.tc-job-state-advisory-sink
                     typecheck-state))
-                (be_state.compiler-backend-state-set-scalar-registers-enabled!
+                (be_state.compiler-backend-state-set-opt-level!
                   side-backend-state
-                  (>= opt-level 2))
+                  opt-level)
+                (be_state.compiler-backend-state-set-optimize-for-size!
+                  side-backend-state
+                  (opt_level.opt-level-size? opt-level))
                 (cfg
                   compile-profile
                   (compiler-driver-profile-start-phase profile-state))
@@ -3001,7 +3006,7 @@
               backend-state
               (and
                 closed-executable
-                (>= opt-level 2)
+                (opt_level.opt-level-full? opt-level)
                 emit-entry
                 (not crt-entry)
                 (not (compiler_ir_types.compiler-debug-info-enabled?))))
@@ -3087,7 +3092,8 @@
   [has-target : bool]
   [mode : be_state.CompilerBackendMode]
   [opt-level : i64]
-  [emit-entry : bool]) : ResultCompilerDriverBuffer
+  [emit-entry : bool]
+  [closed-executable : bool]) : ResultCompilerDriverBuffer
   (match (compiler-driver-emit-lowered-result
     (CompilerDriverOutputRoute.Buffer)
     input-path
@@ -3098,7 +3104,7 @@
     opt-level
     emit-entry
     false
-    false)
+    closed-executable)
     [(Emitted (Buffer output) advisories) (Ok output advisories)]
     [(Emitted (Err diagnostic) advisories) (Err diagnostic advisories)]
     [_ (io.panic "compiler driver: unexpected emit result")]))
@@ -4685,7 +4691,13 @@
         has-target
         mode
         opt-level
-        emit-entry))))
+        emit-entry
+        (and
+          emit-entry
+          (be_state.compiler-backend-target-elf? target)
+          (cfg_core.compiler-cfg-enabled?
+            cfgs
+            (ci.intern "closed-executable-image")))))))
 
 (define (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
   [state : CompilerDriverState]

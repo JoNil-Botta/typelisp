@@ -3,7 +3,7 @@
 
 (define (main) : i64
   (match (cli_option.cli-option-lookup
-    "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>"
+    "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os"
     "--target")
     [(Found name 1)
       (if (string.eq name "--target")

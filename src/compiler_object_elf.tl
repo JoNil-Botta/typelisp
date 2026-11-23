@@ -72,6 +72,8 @@
   2)
 (define compiler-object-elf-r-x86-64-plt32 : i64
   4)
+(define compiler-object-elf-r-x86-64-32 : i64
+  10)
 
 (define (compiler-object-elf-relocation-list-supported?
   [relocs : (& relocs cobj.CompilerObjectRelocationList)]) : bool
@@ -457,6 +459,7 @@
   (match kind
     [(or (Call) (TailCall)) compiler-object-elf-r-x86-64-plt32]
     [(Abs64) compiler-object-elf-r-x86-64-64]
+    [(Abs32) compiler-object-elf-r-x86-64-32]
     [(or (RipValue) (RipAddress) (Branch)) compiler-object-elf-r-x86-64-pc32]
     [_ 0]))
 
@@ -941,7 +944,7 @@
   (define (compiler-object-elf-text-smoke-instrs) : cobj.CompilerObjectX64InstrList
     (let
       [instrs0 : cobj.CompilerObjectX64InstrBuilder
-        (cobj.compiler-object-instr-builder-with-capacity 16)]
+        (cobj.compiler-object-instr-builder-with-capacity 17)]
       [instrs1 : cobj.CompilerObjectX64InstrBuilder
         (cobj.compiler-object-instr-builder-push instrs0 (Label "_tl_text"))]
       [instrs2 : cobj.CompilerObjectX64InstrBuilder
@@ -984,14 +987,17 @@
         (cobj.compiler-object-instr-builder-push
           instrs15
           (Raw (compiler-object-elf-ret-bytes)))]
-      (cobj.compiler-object-instr-builder-finish instrs16))))
+      (cobj.compiler-object-instr-builder-finish
+        (cobj.compiler-object-instr-builder-push
+          instrs16
+          (LoadAbsAddress "_tl_message"))))))
 
 (cfg
   test
   (define (compiler-object-elf-text-smoke-relocations) : cobj.CompilerObjectRelocationList
     (let
       [relocs0 : cobj.CompilerObjectRelocationBuilder
-        (cobj.compiler-object-relocation-builder-with-capacity 10)]
+        (cobj.compiler-object-relocation-builder-with-capacity 11)]
       [relocs1 : cobj.CompilerObjectRelocationBuilder
         (cobj.compiler-object-relocation-builder-push
           relocs0
@@ -1032,7 +1038,10 @@
         (cobj.compiler-object-relocation-builder-push
           relocs9
           (Relocation (Text) "_tl_text" (RipValue) "_tl_message"))]
-      (cobj.compiler-object-relocation-builder-finish relocs10))))
+      (cobj.compiler-object-relocation-builder-finish
+        (cobj.compiler-object-relocation-builder-push
+          relocs10
+          (Relocation (Text) "_tl_text" (Abs32) "_tl_message"))))))
 
 (cfg
   test
@@ -1309,13 +1318,13 @@
                   obj
                   image
                   compiler-object-elf-section-text-index)
-                72)
+                77)
               (=
                 (compiler-object-elf-section-header-size-at
                   obj
                   image
                   compiler-object-elf-section-rela-text-index)
-                (* 10 compiler-object-elf-relocation-size))
+                (* 11 compiler-object-elf-relocation-size))
               (= (layout.compiler-object-layout-u8-at obj text-offset) 0xe8)
               (=
                 (layout.compiler-object-layout-u8-at obj (+ text-offset 26))
@@ -1347,6 +1356,25 @@
                 (compiler-object-elf-rela-type-at obj rela-offset 5)
                 compiler-object-elf-r-x86-64-pc32)
               (compiler-object-elf-rela-addend-rel32? obj rela-offset 5)
+              (=
+                (layout.compiler-object-layout-u8-at obj (+ text-offset 72))
+                0xb8)
+              (=
+                (compiler-object-elf-rela-target-offset-at obj rela-offset 10)
+                73)
+              (=
+                (compiler-object-elf-rela-type-at obj rela-offset 10)
+                compiler-object-elf-r-x86-64-32)
+              (=
+                (layout.compiler-object-layout-u32-at
+                  obj
+                  (+ (compiler-object-elf-rela-entry-offset rela-offset 10) 16))
+                0)
+              (=
+                (layout.compiler-object-layout-u32-at
+                  obj
+                  (+ (compiler-object-elf-rela-entry-offset rela-offset 10) 20))
+                0)
               (layout.compiler-object-layout-contains? obj "_tl_cell")
               (layout.compiler-object-layout-contains? obj "foreign_exact")))]
         [(Err _) false]))))

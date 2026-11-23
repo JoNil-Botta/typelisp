@@ -16431,19 +16431,6 @@
     lease
     intern
     bind)
-  (when
-    (and
-      (= info.arm 5)
-      (!= args.len 1)
-      (not (cbi.compiler-builtin-typecheck-array-length-id? info.name-id)))
-    (return
-      (tc-selected-unrepresented
-        (tc-call-contextual-type
-          ctx
-          env
-          expected
-          (tc-call-expr-ordinary ctx env func args))
-        sink)))
   (match (tc-builtin-start ctx env (clone func) info (& args))
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok first)
@@ -68137,6 +68124,7 @@
 ;; classification, so neither route can type a builtin as an ordinary call.
 ;; Arms are tested in order; the first matching predicate wins.
 ;; Classify `raw-name`. A runtime identity is classified with shadowing off.
+;; Macro hygiene passes -1 when checking a name without call operands.
 (define (tc-call-builtin-name
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -68196,7 +68184,14 @@
           TcSliceViewCallKind.None))
       (let
         [arena-owner-kind : i64
-          (tc-arena-owner-call-kind-ids ctx env name-id lookup-id arg-count)]
+          (tc-arena-owner-call-kind-ids
+            ctx
+            env
+            name-id
+            lookup-id
+            (if (< arg-count 0)
+              0
+              arg-count))]
         [slice-call-kind : TcSliceViewCallKind
           (tc-slice-view-call-kind-name
             ctx
@@ -68212,7 +68207,14 @@
             [(tc-string-length-helper-call-id? ctx env name-id lookup-id) 2]
             [(tc-slice-call-split? slice-call-kind) 3]
             [(not (= slice-call-kind TcSliceViewCallKind.None)) 4]
-            [(cbi.compiler-builtin-typecheck-length-call-id? name-id) 5]
+            ;; `length` can also name an ordinary function of another arity.
+            [(and
+                (cbi.compiler-builtin-typecheck-length-call-id? name-id)
+                (or
+                  (< arg-count 0)
+                  (= arg-count 1)
+                  (cbi.compiler-builtin-typecheck-array-length-id? name-id)))
+              5]
             [(and
                 (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
                 (not (tc-source-value-bound-id? ctx env name-id)))
@@ -112218,7 +112220,7 @@
         (csym.compiler-symbols-missing-handle)))
     (let
       [info : TcCallBuiltinName
-        (tc-call-builtin-name definition-ctx (tc-default-env) source-id 0)]
+        (tc-call-builtin-name definition-ctx (tc-default-env) source-id -1)]
       (not (= info.arm 0)))))
 
 (define (macro-hygiene-definition-prelude-macro?

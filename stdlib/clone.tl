@@ -145,48 +145,27 @@
       (comptime.comptime-error
         "gen-clone: tuple index must be an integer literal")]))
 
-;; Name construction intentionally lives in macro CTFE rather than an ordinary
-;; helper call: every operation below is part of the source/native TLCI macro
-;; contract. Acronym boundaries follow `HTTPServer` -> `http-server`.
-;: Copy a nominal by shared read or dispatch to its owner hook.
-(defmacro (clone-nominal-value
+;: Build a literal hook name from a nominal type using lowercase kebab case.
+;: Acronym boundaries follow `HTTPServer` -> `http-server`.
+(defmacro (nominal-hook-name
   [T : type (:kind struct enum)]
-  [source : comptime.Expr]
-  [copy-place : comptime.Expr]
-  [root-key-expr : comptime.Expr]
-  [path-expr : comptime.Expr]) : comptime.Expr
+  [hook-prefix : String]
+  [diagnostic-prefix : String]
+  [empty-name : String]) : comptime.Expr
   (let
-    [type-key-text : String (type-key T)]
-    [path : String (comptime.expr-string-value path-expr)]
-    [root-key : String (comptime.expr-string-value root-key-expr)]
-    [owner : String (type-nominal-module T)]
-    [owner-display : String
-      (if (string-eq owner "")
-        "<root>"
-        owner)]
+    [diagnostic : String (comptime.expr-string-value diagnostic-prefix)]
     [type-name : String (type-nominal-name T)]
     [length : i64 (__tl_string_length type-name)]
     [index : i64 0]
     [lowercase-alphabet : String "abcdefghijklmnopqrstuvwxyz"]
     [decimal-digits : String "0123456789"]
-    [function-name : String "clone-"]
+    [function-name : String (comptime.expr-string-value hook-prefix)]
     [last-was-separator : bool false]
-    (if (type-cleanup-owning? T)
-      (comptime.comptime-error
-        (comptime.string-append
-          "gen-clone: unsupported cleanup-owning type "
-          (comptime.string-append
-            type-key-text
-            (comptime.string-append " at " path))))
-      unit)
-    (if (string-eq type-key-text root-key)
-      (comptime.comptime-error
-        (comptime.string-append
-          "gen-clone: cyclic clone dependency reaches "
-          (comptime.string-append root-key (comptime.string-append " at " path))))
-      unit)
     (if (= length 0)
-      (comptime.comptime-error "gen-clone: nominal dependency name is empty")
+      (comptime.comptime-error
+        (comptime.string-append
+          diagnostic
+          (comptime.expr-string-value empty-name)))
       unit)
     (while (< index length)
       (let
@@ -226,7 +205,9 @@
               true
               last-was-separator)
               (comptime.comptime-error
-                "gen-clone: nominal name has an ambiguous separator")
+                (comptime.string-append
+                  diagnostic
+                  "nominal name has an ambiguous separator"))
               (begin
                 (set! function-name (comptime.string-append function-name "-"))
                 (set! last-was-separator true)))]
@@ -295,11 +276,31 @@
             (set! last-was-separator false)]
           [_
             (comptime.comptime-error
-              "gen-clone: unsupported character in nominal name")])
+              (comptime.string-append
+                diagnostic
+                "unsupported character in nominal name"))])
         (set! index (+ index 1))))
     (if last-was-separator
-      (comptime.comptime-error "gen-clone: nominal name ends in a separator")
+      (comptime.comptime-error
+        (comptime.string-append diagnostic "nominal name ends in a separator"))
       unit)
+    (comptime.expr-string function-name)))
+
+;: Use the canonical owner's hook when present, or check for an ordinary Copy read.
+(defmacro (clone-nominal-value
+  [T : type (:kind struct enum)]
+  [source : comptime.Expr]
+  [copy-place : comptime.Expr]
+  [path-expr : comptime.Expr]
+  [hook-name : String]) : comptime.Expr
+  (let
+    [path : String (comptime.expr-string-value path-expr)]
+    [owner : String (type-nominal-module T)]
+    [owner-display : String
+      (if (string-eq owner "")
+        "<root>"
+        owner)]
+    [function-name : String (comptime.expr-string-value hook-name)]
     (if (comptime.module-value? owner function-name)
       ;; The generated ordinary call deliberately leaves signature
       ;; validation to the normal typechecker. This keeps clone
@@ -611,7 +612,10 @@
   (let
     [kind : String (type-kind T)]
     [path : String (comptime.expr-string-value path-expr)]
-    (match kind
+    ;; Enums and structs share the nominal validation and hook lookup.
+    (match (if (string-eq kind "enum")
+      "struct"
+      kind)
       ["unit" `unit]
       ["never" `(deref ,source)]
       ["bool" `(deref ,source)]
@@ -725,19 +729,35 @@
                 ,root-key-expr
                 ,element-path))))]
       ["struct"
-        `(stdlib.clone.clone-nominal-value
-          ,T
-          ,source
-          ,copy-place
-          ,root-key-expr
-          ,path-expr)]
-      ["enum"
-        `(stdlib.clone.clone-nominal-value
-          ,T
-          ,source
-          ,copy-place
-          ,root-key-expr
-          ,path-expr)]
+        (let
+          [type-key-text : String (type-key T)]
+          [root-key : String (comptime.expr-string-value root-key-expr)]
+          (if (type-cleanup-owning? T)
+            (comptime.comptime-error
+              (comptime.string-append
+                "gen-clone: unsupported cleanup-owning type "
+                (comptime.string-append
+                  type-key-text
+                  (comptime.string-append " at " path))))
+            unit)
+          (if (string-eq type-key-text root-key)
+            (comptime.comptime-error
+              (comptime.string-append
+                "gen-clone: cyclic clone dependency reaches "
+                (comptime.string-append
+                  root-key
+                  (comptime.string-append " at " path))))
+            unit)
+          `(stdlib.clone.clone-nominal-value
+            ,T
+            ,source
+            ,copy-place
+            ,path-expr
+            (stdlib.clone.nominal-hook-name
+              ,T
+              "clone-"
+              "gen-clone: "
+              "nominal dependency name is empty")))]
       [_
         (comptime.comptime-error
           (comptime.string-append
@@ -906,142 +926,55 @@
 ;: Move-only nominal dependencies must already expose a clone function.
 (defmacro (gen-clone [T : type (:kind struct enum)]) : Decls
   (let
-    [kind : String (type-kind T)]
     [owner : String (type-nominal-module T)]
-    [owner-display : String
-      (if (string-eq owner "")
-        "<root>"
-        owner)]
-    [type-name : String (type-nominal-name T)]
-    [length : i64 (__tl_string_length type-name)]
-    [index : i64 0]
-    [lowercase-alphabet : String "abcdefghijklmnopqrstuvwxyz"]
-    [decimal-digits : String "0123456789"]
-    [function-name-text : String "clone-"]
-    [last-was-separator : bool false]
+    [caller : String (comptime.current-module)]
+    (if (string-eq owner caller)
+      unit
+      (let
+        [owner-display : String
+          (if (string-eq owner "")
+            "<root>"
+            owner)]
+        [caller-display : String
+          (if (string-eq caller "")
+            "<root>"
+            caller)]
+        (comptime.comptime-error
+          (comptime.string-append
+            "gen-clone: "
+            (comptime.string-append
+              (type-nominal-name T)
+              (comptime.string-append
+                " must be generated in its canonical owner module "
+                (comptime.string-append
+                  owner-display
+                  (comptime.string-append
+                    " (current module "
+                    (comptime.string-append caller-display ")")))))))))
     (if (type-cleanup-owning? T)
       (comptime.comptime-error
         (comptime.string-append
           "gen-clone: unsupported cleanup-owning root "
           (type-key T)))
       unit)
-    (if (= length 0)
-      (comptime.comptime-error "gen-clone: nominal root name is empty")
-      unit)
-    (while (< index length)
-      (let
-        [code : i64 (cast (__tl_string_ref type-name index) : i64)]
-        [upper? : bool
-          (if (>= code 65)
-            (<= code 90)
-            false)]
-        [lower? : bool
-          (if (>= code 97)
-            (<= code 122)
-            false)]
-        [digit? : bool
-          (if (>= code 48)
-            (<= code 57)
-            false)]
-        [separator? : bool
-          (if (= code 45)
-            true
-            (= code 95))]
-        [category : i64 4]
-        (if separator?
-          (set! category 0)
-          unit)
-        (if upper?
-          (set! category 1)
-          unit)
-        (if lower?
-          (set! category 2)
-          unit)
-        (if digit?
-          (set! category 3)
-          unit)
-        (match category
-          [0
-            (if (if (= index 0)
-              true
-              last-was-separator)
-              (comptime.comptime-error
-                "gen-clone: nominal name has an ambiguous separator")
-              (begin
-                (set!
-                  function-name-text
-                  (comptime.string-append function-name-text "-"))
-                (set! last-was-separator true)))]
-          [1
-            (let
-              [previous-code : i64
-                (if (> index 0)
-                  (cast (__tl_string_ref type-name (- index 1)) : i64)
-                  0)]
-              [next-code : i64
-                (if (< (+ index 1) length)
-                  (cast (__tl_string_ref type-name (+ index 1)) : i64)
-                  0)]
-              [previous-lower? : bool
-                (if (>= previous-code 97)
-                  (<= previous-code 122)
-                  false)]
-              [previous-digit? : bool
-                (if (>= previous-code 48)
-                  (<= previous-code 57)
-                  false)]
-              [previous-upper? : bool
-                (if (>= previous-code 65)
-                  (<= previous-code 90)
-                  false)]
-              [next-lower? : bool
-                (if (>= next-code 97)
-                  (<= next-code 122)
-                  false)]
-              [word-boundary? : bool false]
-              (if previous-lower?
-                (set! word-boundary? true)
-                unit)
-              (if previous-digit?
-                (set! word-boundary? true)
-                unit)
-              (if previous-upper?
-                (set! word-boundary? next-lower?)
-                unit)
-              (if word-boundary?
-                (if (= last-was-separator false)
-                  (set!
-                    function-name-text
-                    (comptime.string-append function-name-text "-"))
-                  unit)
-                unit)
-              (set!
-                function-name-text
-                (comptime.string-append
-                  function-name-text
-                  (comptime.string-slice lowercase-alphabet (- code 65) 1)))
-              (set! last-was-separator false))]
-          [2
-            (set!
-              function-name-text
-              (comptime.string-append
-                function-name-text
-                (comptime.string-slice lowercase-alphabet (- code 97) 1)))
-            (set! last-was-separator false)]
-          [3
-            (set!
-              function-name-text
-              (comptime.string-append
-                function-name-text
-                (comptime.string-slice decimal-digits (- code 48) 1)))
-            (set! last-was-separator false)]
-          [_
-            (comptime.comptime-error
-              "gen-clone: unsupported character in nominal name")])
-        (set! index (+ index 1))))
-    (if last-was-separator
-      (comptime.comptime-error "gen-clone: nominal name ends in a separator")
-      unit)
+    `(stdlib.clone.gen-clone-named
+      ,T
+      (stdlib.clone.nominal-hook-name
+        ,T
+        "clone-"
+        "gen-clone: "
+        "nominal root name is empty"))))
+
+;: Emit the clone declaration after the nominal hook name has been computed.
+(defmacro (gen-clone-named [T : type (:kind struct enum)] [hook-name : String]) : Decls
+  (let
+    [kind : String (type-kind T)]
+    [owner : String (type-nominal-module T)]
+    [owner-display : String
+      (if (string-eq owner "")
+        "<root>"
+        owner)]
+    [function-name-text : String (comptime.expr-string-value hook-name)]
     (if (comptime.module-value? owner function-name-text)
       (comptime.comptime-error
         (comptime.string-append
@@ -1062,14 +995,8 @@
               (comptime.string-append
                 "gen-clone: expected a nominal aggregate, got "
                 (type-key T)))])]
-      `(begin
-        ;; Keep the runtime string dependency in the generated owner. The
-        ;; clone producer is loaded by core_macros for every source file, so
-        ;; importing stdlib.string at producer scope would leak its public
-        ;; definitions into unrelated static-library archives.
-        (import stdlib.string)
-        (define (,function-name [value : (& value ,T)]) : ,T
-          ,body)))))
+      `(define (,function-name [value : (& value ,T)]) : ,T
+        ,body))))
 
 ;: Emit clone helper declarations for all requested reachable aggregates.
 (defmacro (synthesize-helpers [types : comptime.Expr ...]) : Decls

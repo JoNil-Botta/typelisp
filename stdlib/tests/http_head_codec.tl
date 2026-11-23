@@ -260,7 +260,7 @@
 (define (assert-large-response-suffix) : unit
   (let
     [head-text : String "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\n"]
-    [wire : byte_buf.ByteBuf (byte_buf.from-string (clone head-text))]
+    [wire : byte_buf.ByteBuf (byte_buf.from-string (string.copy (& head-text)))]
     [index : i64 0]
     (while (< index 32768)
       (set! wire (byte_buf.push wire (cast 120 : u8)))

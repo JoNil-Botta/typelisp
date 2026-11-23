@@ -209,7 +209,8 @@
         cache-scope
         (ast.ast-node-pool-context-capture-active)
         (ci.intern-compat-state-capture-active)
-        (tc.tc-job-state-semantic-observer job-state)))
+        (tc.tc-job-state-semantic-observer job-state)
+        false))
       [(Ok summary)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "typecheck"))

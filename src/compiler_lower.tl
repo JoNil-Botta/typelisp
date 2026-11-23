@@ -16199,7 +16199,7 @@
     (Name state lambda-id)))
 
 ;; A terminator ends its block. What is lowered after one (the operands and
-;; consumers after a diverging `return`, `break` or `continue`) is emitted into
+;; consumers after a diverging `return`, `break`, `continue` or call) is emitted into
 ;; a fresh block nothing branches to, as rustc's MIR builder continues in a new
 ;; block after a diverging expression; `lower-state-build-blocks` drops the
 ;; blocks control cannot reach, so none of it reaches a pass or a backend.
@@ -74387,11 +74387,11 @@
 ;; sret ABI: append the hidden result-slot pointer param at index
 ;; `sret-var` (the var id reserved just past the real params). Internal calling
 ;; convention only -- C-ABI externs keep their own ABI on a separate path.
-(define (lower-return-storage-function-abi
+(define (lower-return-storage-function-abi-from-types
   [ctx : tc_core.TcContext]
-  [source-params : ast.AstParamList]
+  [source-param-types : ast.AstTypeList]
   [output : ast.AstType]
-  [physical-params : ir.CompilerIrParamSeq]
+  [physical-params : (& physical-params ir.CompilerIrParamSeq)]
   [physical-result : ast.AstType]
   [sret-var : i64]
   [leading? : bool]) : ir.CompilerIrFunctionAbi
@@ -74429,9 +74429,26 @@
             types
             (ast.ast-ty-func-with-pools
               (tc_core.tc-context-pools ctx)
-              (tc_core.tc-type-list-without-regions
-                (tc_core.tc-param-type-list ctx source-params))
+              source-param-types
               resolved)))))))
+
+(define (lower-return-storage-function-abi
+  [ctx : tc_core.TcContext]
+  [source-params : ast.AstParamList]
+  [output : ast.AstType]
+  [physical-params : ir.CompilerIrParamSeq]
+  [physical-result : ast.AstType]
+  [sret-var : i64]
+  [leading? : bool]) : ir.CompilerIrFunctionAbi
+  (lower-return-storage-function-abi-from-types
+    ctx
+    (tc_core.tc-type-list-without-regions
+      (tc_core.tc-param-type-list ctx source-params))
+    output
+    (& physical-params)
+    physical-result
+    sret-var
+    leading?))
 
 (define (lower-param-list-append-sret
   [params : ir.CompilerIrParamSeq]
@@ -76457,14 +76474,14 @@
 (define (lower-dispatch-physical-param-list
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
-  [types : ast.AstTypeList]
+  [types : (& types ast.AstTypeList)]
   [source-start : i64]
   [leading-sret? : bool]) : ir.CompilerIrParamSeq
   (let
     [builder : ir.CompilerIrParamBuilder
       (ir.compiler-ir-param-builder-with-capacity
         (+
-          (ast.ast-type-list-len (& types))
+          (ast.ast-type-list-len types)
           (if leading-sret?
             1
             0)))]
@@ -76479,7 +76496,7 @@
     (lower-dispatch-physical-param-list-into!
       ctx
       mode
-      (& types)
+      types
       source-start
       (&mut builder))
     (ir.compiler-ir-param-builder-to-seq builder)))
@@ -76555,28 +76572,47 @@
 
 (define (lower-dispatch-call-return-instr
   [call-var : i64]
-  [ret-ty : ast.AstType]) : ir.CompilerIrInstr
-  (Return (lower-return-maybe (Var call-var) ret-ty)))
+  [sret-var : i64]
+  [ret-ty : (& ret-ty ast.AstType)]) : ir.CompilerIrInstr
+  (let
+    [result-var : i64
+      (if (>= sret-var 0)
+        sret-var
+        call-var)]
+    (match ret-ty
+      [(Unit) (Return No)]
+      [_ (Return (Some (Var result-var)))])))
 
 (define (lower-dispatch-cached-block
   [cached-word-var : i64]
   [fn-ty : ast.AstType]
   [args : ir.CompilerIrCallArgs]
   [ret-ty : ast.AstType]
+  [sret-var : i64]
   [base : i64]) : ir.CompilerIrBlock
-  (Block
-    (ir.compiler-ir-label "cached")
-    (ir.compiler-ir-instr-seq3
-      ;; The atomic primitive returns a machine word. Retype it to the exact
-      ;; checked dispatch signature before the indirect call so ABI lowering
-      ;; never has to infer the signature from an untyped cache word.
-      (Cast base (Var cached-word-var) (I64) fn-ty)
-      (CallIndirect
-        (+ base 1)
-        (Var base)
-        args
-        (lower-global-shared-view ret-ty))
-      (lower-dispatch-call-return-instr (+ base 1) ret-ty))))
+  (match (& ret-ty)
+    [(ast.AstType.Never)
+      (Block
+        (ir.compiler-ir-label "cached")
+        (ir.compiler-ir-instr-seq2
+          ;; The atomic primitive returns a machine word. Retype it to the exact
+          ;; checked dispatch signature before the indirect call so ABI lowering
+          ;; never has to infer the signature from an untyped cache word.
+          (Cast base (Var cached-word-var) (I64) fn-ty)
+          (CallIndirect (+ base 1) (Var base) args ret-ty)))]
+    [_
+      (let
+        [ret-instr : ir.CompilerIrInstr
+          (lower-dispatch-call-return-instr (+ base 1) sret-var (& ret-ty))]
+        (Block
+          (ir.compiler-ir-label "cached")
+          (ir.compiler-ir-instr-seq3
+            ;; The atomic primitive returns a machine word. Retype it to the exact
+            ;; checked dispatch signature before the indirect call so ABI lowering
+            ;; never has to infer the signature from an untyped cache word.
+            (Cast base (Var cached-word-var) (I64) fn-ty)
+            (CallIndirect (+ base 1) (Var base) args ret-ty)
+            ret-instr)))]))
 
 (define (lower-dispatch-select-block
   [label : i64]
@@ -76585,10 +76621,17 @@
   [fn-ty : ast.AstType]
   [args : ir.CompilerIrCallArgs]
   [ret-ty : ast.AstType]
+  [sret-var : i64]
   [base : i64]) : ir.CompilerIrBlock
   (let
     [instrs : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity 6)]
+    [never? : bool
+      (match (& ret-ty)
+        [(ast.AstType.Never) true]
+        [_ false])]
+    [ret-instr : ir.CompilerIrInstr
+      (lower-dispatch-call-return-instr (+ base 4) sret-var (& ret-ty))]
     ;; The cache is a private pointer-width word. Sequentially consistent CAS
     ;; publishes exactly once: zero means this thread won; otherwise the old
     ;; nonzero word is the winner another resolver already published.
@@ -76622,14 +76665,8 @@
       (ir.CompilerIrInstr.Cast (+ base 3) (Var (+ base 2)) (I64) fn-ty))
     (ir.compiler-ir-instr-builder-push!
       (&mut instrs)
-      (ir.CompilerIrInstr.CallIndirect
-        (+ base 4)
-        (Var (+ base 3))
-        args
-        (lower-global-shared-view ret-ty)))
-    (ir.compiler-ir-instr-builder-push!
-      (&mut instrs)
-      (lower-dispatch-call-return-instr (+ base 4) ret-ty))
+      (ir.CompilerIrInstr.CallIndirect (+ base 4) (Var (+ base 3)) args ret-ty))
+    (unless never? (ir.compiler-ir-instr-builder-push! (&mut instrs) ret-instr))
     (Block label (ir.compiler-ir-instr-builder-to-seq instrs))))
 
 (define (lower-dispatch-entry-block
@@ -76744,6 +76781,7 @@
   [fn-ty : ast.AstType]
   [args : ir.CompilerIrCallArgs]
   [ret-ty : ast.AstType]
+  [sret-var : i64]
   [scalar-name : i64]
   [maybe-avx2 : LowerMaybeIrSymbol]
   [maybe-avx512 : LowerMaybeIrSymbol]
@@ -76762,6 +76800,7 @@
             (lower-global-shared-view fn-ty)
             (lower-global-shared-view args)
             (lower-global-shared-view ret-ty)
+            sret-var
             (+ base 36)))]
       [(No) unit])
     (match maybe-avx2
@@ -76775,6 +76814,7 @@
             (lower-global-shared-view fn-ty)
             (lower-global-shared-view args)
             (lower-global-shared-view ret-ty)
+            sret-var
             (+ base 31)))]
       [(No) unit])
     (ir.compiler-ir-block-builder-push!
@@ -76786,6 +76826,7 @@
         fn-ty
         args
         ret-ty
+        sret-var
         (+ base 26)))
     (ir.compiler-ir-block-builder-to-list blocks)))
 
@@ -76858,14 +76899,31 @@
           (match ret-class
             [(Sret _) true]
             [_ false])]
+        [nominal-sret? : bool
+          (and
+            (not leading-sret?)
+            (lower-type-inline-struct-or-enum? ctx ret-ty)
+            (not (lower-type-register-resident? ctx ret-ty)))]
         [source-start : i64
           (if leading-sret?
             1
             0)]
         [source-count : i64 (lower-dispatch-param-type-count clean-param-types)]
-        [param-count : i64 (+ source-start source-count)]
+        [sret-var : i64
+          (if leading-sret?
+            0
+            (if nominal-sret?
+              (+ source-start source-count)
+              (- 0 1)))]
+        [param-count : i64
+          (+
+            source-start
+            source-count
+            (if nominal-sret?
+              1
+              0))]
         [physical-ret-ty : ast.AstType
-          (lower-internal-return-physical-type ctx mode ret-ty)]
+          (lower-internal-return-physical-type ctx mode (clone ret-ty))]
         [args : ir.CompilerIrCallArgs
           (ir.compiler-ir-call-args-from-seq
             (& (lower-dispatch-physical-param-values param-count 0)))]
@@ -76901,6 +76959,7 @@
                     (lower-global-shared-view fn-ty)
                     (lower-global-shared-view args)
                     (lower-global-shared-view physical-ret-ty)
+                    sret-var
                     scalar-name
                     maybe-avx2
                     maybe-avx512
@@ -76908,6 +76967,26 @@
               [blocks : ir.CompilerIrBlockBuilder
                 (ir.compiler-ir-block-builder-with-capacity
                   (+ 2 (ir.compiler-ir-block-list-count tail-blocks)))]
+              [base-params : ir.CompilerIrParamSeq
+                (lower-dispatch-physical-param-list
+                  ctx
+                  mode
+                  (& clean-param-types)
+                  source-start
+                  leading-sret?)]
+              [physical-params : ir.CompilerIrParamSeq
+                (if nominal-sret?
+                  (lower-param-list-append-sret base-params sret-var)
+                  base-params)]
+              [function-abi : ir.CompilerIrFunctionAbi
+                (lower-return-storage-function-abi-from-types
+                  ctx
+                  clean-param-types
+                  ret-ty
+                  (& physical-params)
+                  (clone physical-ret-ty)
+                  sret-var
+                  leading-sret?)]
               (ir.compiler-ir-block-builder-push!
                 (&mut blocks)
                 (lower-dispatch-entry-block
@@ -76922,6 +77001,7 @@
                   fn-ty
                   args
                   (lower-global-shared-view physical-ret-ty)
+                  sret-var
                   (+ param-count 24)))
               (ir.compiler-ir-block-builder-append-list!
                 (&mut blocks)
@@ -76931,16 +77011,11 @@
                   (&
                     (Function
                       logical-name
-                      (lower-dispatch-physical-param-list
-                        ctx
-                        mode
-                        clean-param-types
-                        source-start
-                        leading-sret?)
+                      physical-params
                       physical-ret-ty
                       (+ param-count 41)
                       (ir.compiler-ir-block-builder-to-list blocks)
-                      Ordinary)))
+                      function-abi)))
                 spans))]
           [(No)
             (Err
@@ -79058,7 +79133,8 @@
         pools
         source-names
         typecheck-intern-state
-        true)
+        true
+        false)
         [(Ok summary source-ctx source-top-env _)
           (let
             [_freeze-let-facts : unit
@@ -80417,7 +80493,8 @@
                     cfgs)
                   (ast.ast-node-pool-context-capture-active)
                   (ci.intern-compat-state-capture-active)
-                  (tc_core.TcSemanticObserver 0))))
+                  (tc_core.TcSemanticObserver 0)
+                  false)))
             (lower-compiler-program-with-path-mode-and-state
               lower-state
               path

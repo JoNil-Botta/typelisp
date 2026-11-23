@@ -21930,7 +21930,7 @@
                       (not (tc-selected-query? (& sink)))
                       (tc-raw-deref-place? ctx env (clone receiver)))]
                   [want : ast.AstType
-                    (if (or raw? (not (tc-selected-query? (& sink))))
+                    (if (not (tc-selected-query? (& sink)))
                       (tc-type-strip-region (clone field-ty))
                       (clone field-ty))]
                   (match (if (or raw? (tc-selected-query? (& sink)))
@@ -21977,10 +21977,10 @@
                       ;; reference is a view only when read.
                       (match (if (or raw? (tc-selected-query? (& next)))
                         (tc-selected-unrepresented
-                          (tc-expr-with-expected-or-actual
+                          (tc-expr-with-expected-or-actual-id
                             ctx
                             env
-                            (clone value)
+                            value-id
                             want)
                           next)
                         (tc-infer-selected-id
@@ -136297,7 +136297,8 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state-input : ci.InternCompatState]) : ResultCompilerTypecheckChecked
+  [intern-state-input : ci.InternCompatState]
+  [retain-global-call-effects : bool]) : ResultCompilerTypecheckChecked
   (tc-typecheck-specialized-program-with-selected-lowering
     load-state
     prefix-cache
@@ -136309,7 +136310,8 @@
     pools
     source-names
     intern-state-input
-    false))
+    false
+    retain-global-call-effects))
 
 (define (tc-typecheck-specialized-program-with-selected-lowering
   [load-state : cload.CompilerLoadSessionState]
@@ -136322,7 +136324,8 @@
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
   [intern-state-input : ci.InternCompatState]
-  [capture-lowering? : bool]) : ResultCompilerTypecheckChecked
+  [capture-lowering? : bool]
+  [retain-global-call-effects : bool]) : ResultCompilerTypecheckChecked
   (let
     [intern-state : ci.InternCompatState intern-state-input]
     ;; Publish owner-generated IDs before the legacy body/typecheck state runs.
@@ -136360,7 +136363,9 @@
             job-source-names
             body-state
             semantic-observer)))]
-    (tc-global-call-effects-finish! job-state)
+    (unless
+      retain-global-call-effects
+      (tc-global-call-effects-finish! job-state))
     (ast.ast-node-pool-context-capture-active! pools)
     (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
     (match checked

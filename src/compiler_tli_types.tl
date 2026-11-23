@@ -133,6 +133,11 @@
   (symbol String)
   (flags u8))
 
+(define tli-fn-has-indirect-effects : i64
+  32)
+(define tli-fn-stores-ambient-arena-arg : i64
+  256)
+
 (defstruct TliFnSummary
   (effect-flags i64)
   (arena-arg-store-mask i64)

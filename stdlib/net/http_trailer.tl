@@ -317,7 +317,7 @@
 (define (response-trailer-parser-feed
   [parser : HttpResponseTrailerParser]
   [input : (& input bytes)]) : HttpResponseTrailerFeedResult
-  (match (clone parser.state)
+  (match parser.state
     [(HttpResponseTrailerComplete) (HttpResponseTrailerFeedComplete parser 0)]
     [(HttpResponseTrailerFailed terminal-error)
       (HttpResponseTrailerFeedErr parser terminal-error 0)]
@@ -445,14 +445,14 @@
             (set! parser.state (HttpResponseTrailerComplete))
             (HttpResponseTrailerFeedComplete parser consumed)]
           [(= result-kind 2)
-            (set! parser.state (HttpResponseTrailerFailed (clone failure)))
+            (set! parser.state (HttpResponseTrailerFailed failure))
             (HttpResponseTrailerFeedErr parser failure consumed)]
           [else (HttpResponseTrailerFeedNeedInput parser consumed)]))]))
 
 ;: Finish at explicit EOF, preserving an existing terminal state or reporting
 ;: the first missing byte and whether a field or final terminator was pending.
 (define (response-trailer-parser-finish [parser : HttpResponseTrailerParser]) : HttpResponseTrailerFinishResult
-  (match (clone parser.state)
+  (match parser.state
     [(HttpResponseTrailerComplete) (HttpResponseTrailerFinishComplete parser)]
     [(HttpResponseTrailerFailed terminal-error)
       (HttpResponseTrailerFinishErr parser terminal-error)]
@@ -471,7 +471,7 @@
                 (HttpResponseTrailerTruncatedTerminator))
               parser.fields.len
               parser.total-bytes))]
-        (set! parser.state (HttpResponseTrailerFailed (clone failure)))
+        (set! parser.state (HttpResponseTrailerFailed failure))
         (HttpResponseTrailerFinishErr parser failure))]))
 
 ;: Consume a completed parser and return the separate ordered trailers. Open

@@ -22,6 +22,18 @@
 (defstruct ValueList
   (items (__tl_dyn-array Value)))
 
+(define (clone-value [value : (& Value)]) : Value
+  (match value
+    [(Bool item) (Bool item)]
+    [(Int item) (Int item)]
+    [(Float item) (Float item)]
+    [(Text text) (Text (string.copy text))]
+    [(Object fields) (Object (box (clone-field-list fields)))]
+    [(Sequence items) (Sequence (box (clone-value-list items)))]))
+
+(define (clone-field [field : (& Field)]) : Field
+  (Field (string.copy (& field.name)) (clone-value (& field.value))))
+
 (defenum Lookup
   (Found Value)
   (Missing))
@@ -32,11 +44,21 @@
 (define (field-list-copy-from
   [source : (& source (__tl_dyn-array Field))]
   [target : (&mut target (__tl_dyn-array Field))]
+  [offset : i64]
   [index : i64]) : unit
   (unless
     (= index (array-length source))
-    (set! (array-ref target (+ index 1)) (clone (array-ref source index)))
-    (field-list-copy-from source target (+ index 1))))
+    (set!
+      (array-ref target (+ index offset))
+      (clone-field (& (array-ref source index))))
+    (field-list-copy-from source target offset (+ index 1))))
+
+(define (clone-field-list [list : (& FieldList)]) : FieldList
+  (let
+    [target : (__tl_dyn-array Field)
+      (__tl_make-array Field (array-length list.items))]
+    (field-list-copy-from (& list.items) (&mut target) 0 0)
+    (FieldList target)))
 
 (define (field-list-prepend [name : String] [value : Value] [rest : FieldList]) : FieldList
   (let
@@ -44,7 +66,7 @@
     [target : (__tl_dyn-array Field)
       (__tl_make-array Field (+ (array-length source) 1))]
     (set! (array-ref target 0) (Field name value))
-    (field-list-copy-from (& source) (&mut target) 0)
+    (field-list-copy-from (& source) (&mut target) 1 0)
     (FieldList target)))
 
 (define (field-list-get-from
@@ -54,7 +76,7 @@
   (if (= index (array-length items))
     (Missing)
     (let
-      [field : Field (clone (array-ref items index))]
+      [field : Field (clone-field (& (array-ref items index)))]
       (if (string.eq field.name name)
         (Found field.value)
         (field-list-get-from items name (+ index 1))))))
@@ -68,7 +90,7 @@
 (define (value-list-get [items : (& items ValueList)] [index : i64]) : Lookup
   (if (or (< index 0) (>= index (value-list-count items)))
     (Missing)
-    (Found (clone (array-ref items.items index)))))
+    (Found (clone-value (& (array-ref items.items index))))))
 
 (define (value-list-empty) : ValueList
   (ValueList (__tl_make-array Value 0)))
@@ -76,11 +98,21 @@
 (define (value-list-copy-from
   [source : (& source (__tl_dyn-array Value))]
   [target : (&mut target (__tl_dyn-array Value))]
+  [offset : i64]
   [index : i64]) : unit
   (unless
     (= index (array-length source))
-    (set! (array-ref target (+ index 1)) (clone (array-ref source index)))
-    (value-list-copy-from source target (+ index 1))))
+    (set!
+      (array-ref target (+ index offset))
+      (clone-value (& (array-ref source index))))
+    (value-list-copy-from source target offset (+ index 1))))
+
+(define (clone-value-list [list : (& ValueList)]) : ValueList
+  (let
+    [target : (__tl_dyn-array Value)
+      (__tl_make-array Value (array-length list.items))]
+    (value-list-copy-from (& list.items) (&mut target) 0 0)
+    (ValueList target)))
 
 (define (value-list-prepend [value : Value] [rest : ValueList]) : ValueList
   (let
@@ -88,7 +120,7 @@
     [target : (__tl_dyn-array Value)
       (__tl_make-array Value (+ (array-length source) 1))]
     (set! (array-ref target 0) value)
-    (value-list-copy-from (& source) (&mut target) 0)
+    (value-list-copy-from (& source) (&mut target) 1 0)
     (ValueList target)))
 
 (defmacro (encode-bool [value : bool]) : Value

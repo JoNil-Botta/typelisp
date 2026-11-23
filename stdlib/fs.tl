@@ -22,6 +22,7 @@
 ;#     (fs.path-join (& left) (& right))))
 ;# ```
 (cfg test (import stdlib.byte_buf))
+(import stdlib.clone)
 (import stdlib.byte_buf_core)
 (import stdlib.comptime)
 (import stdlib.env)
@@ -1094,7 +1095,7 @@
                   (when
                     (not
                       (linux-read-dir-append-page!
-                        (clone buf)
+                        (clone.deep buf)
                         read-count
                         (&mut out)))
                     (set! ok false)
@@ -3308,7 +3309,7 @@
       [valid-out : byte_buf_core.ByteBufBuilder
         (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
       [valid-result : bool
-        (linux-read-dir-append-page! (clone valid) 24 (&mut valid-out))]
+        (linux-read-dir-append-page! (clone.deep valid) 24 (&mut valid-out))]
       [valid-text : String (read-dir-bytes-string (&mut valid-out))]
       [short : (__tl_dyn-array u8) (fs-test-linux-dirent-page 19 true)]
       [short-out : byte_buf_core.ByteBufBuilder

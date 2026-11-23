@@ -1,4 +1,5 @@
 ;; Deterministic Linux process execution and cleanup fault coverage. refs #7570
+(import stdlib.string)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.process_runtime)
@@ -185,7 +186,7 @@
   (test.assert-i64-eq
     (linux-test-open-fd-count process-fd-scan-limit)
     baseline-fds
-    (clone label))
+    (string.copy (& label)))
   (test.assert-true (linux-test-no-children?) label))
 
 (define (assert-fd-open [fd : i64] [label : String]) : unit
@@ -199,7 +200,12 @@
 ;: Every injected failure is followed by a clean success and resource proof.
 (define (assert-clean-follow-up [baseline-fds : i64] [label : String]) : unit
   (process_linux_test_hooks.reset!)
-  (assert-output-ok (process.output (true-command)) 0 "" "" (clone label))
+  (assert-output-ok
+    (process.output (true-command))
+    0
+    ""
+    ""
+    (string.copy (& label)))
   (assert-no-resource-growth baseline-fds label))
 
 (define (assert-output-failure-followed-by-success
@@ -207,7 +213,10 @@
   [expected : String]
   [baseline-fds : i64]
   [label : String]) : unit
-  (assert-output-error (process.output command) expected (clone label))
+  (assert-output-error
+    (process.output command)
+    expected
+    (string.copy (& label)))
   (assert-clean-follow-up baseline-fds label))
 
 (define (assert-inherit-failure-followed-by-success
@@ -215,7 +224,10 @@
   [expected : String]
   [baseline-fds : i64]
   [label : String]) : unit
-  (assert-output-error (process.inherit command) expected (clone label))
+  (assert-output-error
+    (process.inherit command)
+    expected
+    (string.copy (& label)))
   (assert-clean-follow-up baseline-fds label))
 
 (define (assert-start-failure-followed-by-success
@@ -223,7 +235,7 @@
   [expected : String]
   [baseline-fds : i64]
   [label : String]) : unit
-  (assert-child-error (process.start command) expected (clone label))
+  (assert-child-error (process.start command) expected (string.copy (& label)))
   (assert-clean-follow-up baseline-fds label))
 
 (define (run-parent-faults [baseline-fds : i64]) : unit
@@ -777,7 +789,7 @@
   (with
     ([child
         (child-or-panic
-          (process.start (printf-command (clone text)))
+          (process.start (printf-command (string.copy (& text))))
           "capability filler start failed")
         process.cleanup-process-child])
     (assert-output-ok
@@ -797,8 +809,12 @@
             (process.start (printf-command "capability-original"))
             "capability original start failed")
           process.cleanup-process-child]
-        [copied-live (clone original) process.cleanup-process-child]
-        [stale (clone original) process.cleanup-process-child])
+        [copied-live
+          (process.ProcessChild (box (deref original.authority)))
+          process.cleanup-process-child]
+        [stale
+          (process.ProcessChild (box (deref original.authority)))
+          process.cleanup-process-child])
       (let
         [original-pid : i64 (process_linux_test_hooks.last-child-pid)]
         [original-stdout : i64 (process_linux_test_hooks.last-child-stdout)]
@@ -973,7 +989,7 @@
   (match result
     [(ErrProcessChild error)
       (test.assert-true
-        (process.error-spawn-failed? (clone error))
+        (process.error-spawn-failed? (process.clone-process-error (& error)))
         "registry error is spawn failure")
       (assert-string-owned-eq
         (process.error-message error)
@@ -1051,9 +1067,12 @@
     [(ProcessRuntimeChildReserved child)
       (with
         ([reserved child process_runtime.cleanup-process-runtime-child])
-        ;; A structural clone must not cancel the real reserved authority.
+        ;; The same token in a fresh box cannot cancel the real reservation.
         (with
-          ([copy (clone reserved) process_runtime.cleanup-process-runtime-child])
+          ([copy
+              (process_runtime.ProcessRuntimeChild
+                (box (deref reserved.authority)))
+              process_runtime.cleanup-process-runtime-child])
           unit)
         (unsafe
           (atomic-fetch-add! (ptr-addr-of reservation-ready) 1))

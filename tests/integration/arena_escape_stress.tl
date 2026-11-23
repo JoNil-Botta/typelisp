@@ -9,6 +9,7 @@
 ; reads the clone after later scratch cycles. RSS/peak-memory assertion is left
 ; manual because host reporting differs across CI platforms; stale handles fail
 ; as output/exit mismatches here.
+(import stdlib.clone)
 (import stdlib.arena)
 (import stdlib.string)
 
@@ -92,7 +93,7 @@
         (unsafe
           (arena.set! enclosing))
         (let
-          [escaped : (__tl_dyn-array String) (clone raw)]
+          [escaped : (__tl_dyn-array String) (clone.deep raw)]
           (unsafe
             (arena.destroy scratch-head))
           escaped)))))
@@ -112,7 +113,7 @@
         (unsafe
           (arena.set! enclosing))
         (let
-          [escaped : (__tl_dyn-array String) (clone raw)]
+          [escaped : (__tl_dyn-array String) (clone.deep raw)]
           [new-enclosing : arena.Arena (arena.current)]
           (unsafe
             (arena.set! scratch-head)

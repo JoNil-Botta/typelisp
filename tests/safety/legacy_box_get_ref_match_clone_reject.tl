@@ -1,3 +1,4 @@
+(import stdlib.string)
 (import stdlib.io)
 
 (defstruct Store
@@ -14,7 +15,7 @@
     [(Chunks.Dense store _)
       (let
         [s : (& store Store) (& (box-get store))]
-        (clone (array-ref s.slots 0)))]))
+        (string.copy (& (array-ref s.slots 0))))]))
 
 (define (first-via-ref [chunks : (& chunks Chunks)]) : String
   (first-slot-via-template chunks))

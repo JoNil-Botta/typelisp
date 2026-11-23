@@ -1,5 +1,6 @@
 ;; Pure, bounded Git object identities and decoders. All String values here
 ;; are byte strings; no repository-controlled byte is placed in an error.
+(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.str_cat)
@@ -20,6 +21,8 @@
   (format GitObjectFormat)
   (binary String)
   (hex String))
+
+(clone_gen.gen-clone GitObjectId)
 
 (defenum ResultGitObjectId
   (Ok GitObjectId)
@@ -510,6 +513,8 @@
   (name String)
   (id GitObjectId))
 
+(clone_gen.gen-clone GitTreeEntry)
+
 (import (vector.vector GitTreeEntry core) as tree-entries)
 (import (vector.vector i64 core) as tree-indices)
 
@@ -705,7 +710,9 @@
         (tree-entries.slots (& entries))]
       [index : i64 0]
       (while (< index count)
-        (set! (array-ref items index) (clone (array-ref slots index)))
+        (set!
+          (array-ref items index)
+          (clone-git-tree-entry (& (array-ref slots index))))
         (set! index (+ index 1)))
       (Ok (GitTree items)))))
 

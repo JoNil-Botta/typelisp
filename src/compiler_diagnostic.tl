@@ -904,7 +904,7 @@
   (compiler-diagnostic-copy-fix-list-ref (& diag.fixes)))
 
 (define (compiler-diagnostic-primary-span [diag : (& diag CompilerDiagnostic)]) : CompilerDiagnosticSpan
-  (compiler-diagnostic-copy-span-ref (& diag.primary)))
+  (compiler-diagnostic-copy-span (& diag.primary)))
 
 (define (compiler-diagnostic-text-edit-span [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticSpan
   edit.span)
@@ -986,15 +986,6 @@
     span.end-line
     span.end-col))
 
-(define (compiler-diagnostic-copy-span-ref
-  [span : (& span CompilerDiagnosticSpan)]) : CompilerDiagnosticSpan
-  (CompilerDiagnosticSpan
-    (string.copy (& span.path))
-    span.start-line
-    span.start-col
-    span.end-line
-    span.end-col))
-
 (define (compiler-diagnostic-label-list-empty) : CompilerDiagnosticLabelList
   (CompilerDiagnosticLabelList (__tl_make-array CompilerDiagnosticLabel 0) 0))
 
@@ -1057,7 +1048,7 @@
         (set!
           (array-ref dst index)
           (CompilerDiagnosticLabel
-            (compiler-diagnostic-copy-span-ref (& label.span))
+            (compiler-diagnostic-copy-span (& label.span))
             (compiler-diagnostic-copy-maybe-string-ref (& label.label))))))
     (CompilerDiagnosticLabelList dst count)))
 
@@ -1110,66 +1101,45 @@
         (set! (array-ref dst index) (string.copy (& note)))))
     (CompilerDiagnosticNoteList dst count)))
 
-(define (compiler-diagnostic-copy-text-edit
+(define (clone-compiler-diagnostic-text-edit
   [edit : (& CompilerDiagnosticTextEdit)]) : CompilerDiagnosticTextEdit
   (CompilerDiagnosticTextEdit
     (compiler-diagnostic-copy-span (& edit.span))
     (string.copy (& edit.replacement))))
 
-(define (compiler-diagnostic-copy-text-edit-ref
-  [edit : (& edit CompilerDiagnosticTextEdit)]) : CompilerDiagnosticTextEdit
-  (CompilerDiagnosticTextEdit
-    (compiler-diagnostic-copy-span-ref (& edit.span))
-    (string.copy (& edit.replacement))))
-
 (define (compiler-diagnostic-copy-text-edit-list
-  [edits : CompilerDiagnosticTextEditSeq]) : CompilerDiagnosticTextEditSeq
+  [edits : (& CompilerDiagnosticTextEditSeq)]) : CompilerDiagnosticTextEditSeq
   (let
     [count : i64 edits.len]
-    [src : (__tl_dyn-array CompilerDiagnosticTextEdit) edits.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticTextEdit)
       (__tl_make-array CompilerDiagnosticTextEdit count)]
     (for [index (iterator.range 0 count)]
       (set!
         (array-ref dst index)
-        (compiler-diagnostic-copy-text-edit
-          (&
-            (unsafe
-              (ptr-read (ptr-offset (__tl_array-data src) index)))))))
+        (clone-compiler-diagnostic-text-edit (& (array-ref edits.slots index)))))
     (CompilerDiagnosticTextEditSeq dst count)))
 
-(define (compiler-diagnostic-copy-fix [fix : CompilerDiagnosticFix]) : CompilerDiagnosticFix
+(define (clone-compiler-diagnostic-fix [fix : (& CompilerDiagnosticFix)]) : CompilerDiagnosticFix
   (CompilerDiagnosticFix
     (string.copy (& fix.title))
-    fix.applicability
-    (compiler-diagnostic-copy-text-edit-list fix.edits)))
+    (match (& fix.applicability)
+      [(CompilerDiagnosticMachineApplicable)
+        CompilerDiagnosticMachineApplicable]
+      [(CompilerDiagnosticMaybeIncorrect) CompilerDiagnosticMaybeIncorrect]
+      [(CompilerDiagnosticHasPlaceholders) CompilerDiagnosticHasPlaceholders]
+      [(CompilerDiagnosticUnspecified) CompilerDiagnosticUnspecified])
+    (compiler-diagnostic-copy-text-edit-list (& fix.edits))))
 
-(define (compiler-diagnostic-copy-fix-list [fixes : CompilerDiagnosticFixSeq]) : CompilerDiagnosticFixSeq
+(define (compiler-diagnostic-copy-fix-list-ref
+  [fixes : (& CompilerDiagnosticFixSeq)]) : CompilerDiagnosticFixSeq
   (let
     [count : i64 fixes.len]
-    [src : (__tl_dyn-array CompilerDiagnosticFix) fixes.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticFix)
       (__tl_make-array CompilerDiagnosticFix count)]
     (for [index (iterator.range 0 count)]
       (set!
         (array-ref dst index)
-        (compiler-diagnostic-copy-fix
-          (unsafe
-            (ptr-read (ptr-offset (__tl_array-data src) index))))))
-    (CompilerDiagnosticFixSeq dst count)))
-
-(define (compiler-diagnostic-copy-fix-list-ref
-  [fixes : (& fixes CompilerDiagnosticFixSeq)]) : CompilerDiagnosticFixSeq
-  (let
-    [count : i64 fixes.len]
-    [dst : (__tl_dyn-array CompilerDiagnosticFix)
-      (__tl_make-array CompilerDiagnosticFix count)]
-    (for [index (iterator.range 0 count)]
-      (let
-        [fix : CompilerDiagnosticFix
-          (unsafe
-            (ptr-read (ptr-offset (__tl_array-data fixes.slots) index)))]
-        (set! (array-ref dst index) (compiler-diagnostic-copy-fix fix))))
+        (clone-compiler-diagnostic-fix (& (array-ref fixes.slots index)))))
     (CompilerDiagnosticFixSeq dst count)))
 
 (define (compiler-diagnostic-copy [diag : CompilerDiagnostic]) : CompilerDiagnostic
@@ -1182,7 +1152,7 @@
     (compiler-diagnostic-copy-maybe-string (& diag.help))
     (compiler-diagnostic-copy-label-list diag.secondary)
     (compiler-diagnostic-copy-note-list diag.notes)
-    (compiler-diagnostic-copy-fix-list diag.fixes)))
+    (compiler-diagnostic-copy-fix-list-ref (& diag.fixes))))
 
 (define (compiler-diagnostic-copy-ref [diag : (& diag CompilerDiagnostic)]) : CompilerDiagnostic
   (CompilerDiagnostic
@@ -1190,11 +1160,14 @@
     (compiler-diagnostic-level diag)
     (compiler-diagnostic-copy-maybe-string-ref (& diag.code))
     (compiler-diagnostic-copy-maybe-string-ref (& diag.category))
-    (compiler-diagnostic-copy-span-ref (& diag.primary))
+    (compiler-diagnostic-copy-span (& diag.primary))
     (compiler-diagnostic-copy-maybe-string-ref (& diag.help))
     (compiler-diagnostic-copy-label-list-ref (& diag.secondary))
     (compiler-diagnostic-copy-note-list-ref (& diag.notes))
     (compiler-diagnostic-copy-fix-list-ref (& diag.fixes))))
+
+(define (clone-compiler-diagnostic [diag : (& CompilerDiagnostic)]) : CompilerDiagnostic
+  (compiler-diagnostic-copy-ref diag))
 
 (define (compiler-diagnostic-position-before-or-equal?
   [left-line : i64]
@@ -1293,7 +1266,7 @@
       (if (compiler-diagnostic-edit-overlaps?
         (compiler-diagnostic-place-shared-view diagnostic-path)
         (owned_view.compiler-owned-reference-shared-view edit)
-        (compiler-diagnostic-copy-text-edit-ref (& (array-ref slots cursor))))
+        (clone-compiler-diagnostic-text-edit (& (array-ref slots cursor))))
         (set! found true)
         unit)
       (+= cursor 1))

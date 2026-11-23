@@ -7,6 +7,7 @@
 (import compiler_driver_core as driver)
 (import compiler_load)
 (import stdlib.io)
+(import stdlib.string)
 (import stdlib.profile)
 
 (define (main) : i64
@@ -27,7 +28,7 @@
         (=
           (tltest.tltest-run-batch-run-path
             "tests/inline/test_batch_retention_leaf.tl"
-            (clone target)
+            (string.copy (& target))
             (tltest_tests.tltest-roots-for-self-test)
             1
             (Scalar)

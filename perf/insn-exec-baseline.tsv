@@ -49,7 +49,7 @@ benchmark/typelisp/pure_call_join	154501097
 benchmark/c-scalar/pure_call_join	218406456
 benchmark/typelisp/loop_call_literal	9001646
 benchmark/c-scalar/loop_call_literal	100006683
-benchmark/typelisp/fp_mixed_recurrence	166250735
+benchmark/typelisp/fp_mixed_recurrence	162500729
 benchmark/c-scalar/fp_mixed_recurrence	150005415
 benchmark/typelisp/fp_taylor_exp	96000736
 benchmark/c-scalar/fp_taylor_exp	94005450

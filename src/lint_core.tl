@@ -47,6 +47,22 @@
   (span ast.AstSourceSpan)
   (fix LintFixDecision))
 
+(define (clone-lint-finding [source : (& LintFinding)]) : LintFinding
+  (LintFinding
+    (string.copy (& source.message))
+    (string.copy (& source.rule-id))
+    source.depth
+    (ast.AstSourceSpan
+      source.span.start-line
+      source.span.start-col
+      source.span.end-line
+      source.span.end-col)
+    (match (& source.fix)
+      [(LintFixUnavailable code message)
+        (LintFixUnavailable (string.copy code) (string.copy message))]
+      [(LintFixAvailable fix)
+        (LintFixAvailable (cdiag.clone-compiler-diagnostic-fix fix))])))
+
 (define (lint-rule-nested-if-ladder-value-message) : String
   "nested if-ladder: value dispatch chain; prefer bracket-arm cond or match")
 

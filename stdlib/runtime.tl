@@ -737,12 +737,16 @@
               (/ byte-count 64)
               0)]
           [index : i64 0]
+          [end-index : i64
+            (if (< count limit)
+              count
+              limit)]
           [shown : i64 0]
           (when
             (and (> row-count 0) (> count 0))
             (begin
               (abort-write "stack backtrace:\n")
-              (while (and (< index count) (< shown limit))
+              (while (and (< index end-index) (< shown limit))
                 (let
                   [return-address : i64
                     (unsafe
@@ -764,8 +768,17 @@
                       (ptr-null : (Ptr i64))
                       located-row)]
                   [repeat-count : i64 1]
+                  ;; The abort lookup frame is marked separately from ABI
+                  ;; bridges. Spend the one extra captured slot on its caller.
+                  (when
+                    (and
+                      (< end-index count)
+                      (not (ptr-null? row))
+                      (= (backtrace-map-word row 3) 0)
+                      (= (backtrace-map-word row 6) -1))
+                    (+= end-index 1))
                   (while (and
-                    (< (+ index repeat-count) count)
+                    (< (+ index repeat-count) end-index)
                     (=
                       (unsafe
                         (ptr-read (ptr-offset addresses (+ index repeat-count))))
@@ -822,10 +835,10 @@
               (unsafe
                 (ptr->int (program-envp)))
               : i64))]
-        [addresses : (Array i64 64) (make-array i64 64)]
+        [addresses : (Array i64 65) (make-array i64 65)]
         [count : i64 0]
         [done : bool (= mode 0)]
-        (while (and (not done) (< count limit))
+        (while (and (not done) (<= count limit))
           (let
             [frame-address : i64
               (cast
@@ -864,8 +877,8 @@
 (cfg
   (all windows compiler-backtrace)
   (define (abort-write-backtrace) : unit
-    ;; ADDRESSES is a live aligned 64-word sink and LIMIT bounds both the host
-    ;; write and the renderer read before its address is exposed.
+    ;; ADDRESSES includes one extra slot for the abort lookup frame. The
+    ;; renderer uses that slot only if the lookup frame is present.
     (unsafe
       (let
         [mode : i64 (backtrace-mode)]
@@ -873,13 +886,13 @@
           (if (= mode 1)
             8
             64)]
-        [addresses : (Array i64 64) (make-array i64 64)]
+        [addresses : (Array i64 65) (make-array i64 65)]
         [count : u16
           (if (= mode 0)
             (cast 0 : u16)
             (runtime-windows-capture-stack-back-trace
               (cast 0 : u32)
-              (cast limit : u32)
+              (cast (+ limit 1) : u32)
               (unsafe
                 (ptr-addr-of (array-ref addresses 0)))
               (ptr-null : (MutPtr u32))))]

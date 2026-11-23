@@ -3151,6 +3151,108 @@
     "    .section .rdata$TLBT,\"dr\"\n"
     "    .section .typelisp_backtrace,\"a\",@progbits\n"))
 
+;; The row travels with its call through speculative function emission and
+;; cold-stub placement. Only an assembled row opens the table and marks its
+;; kind as used. The two displacements are relative to their own fields.
+(define (compiler-backend-abort-table-prefix
+  [target : be_state.CompilerBackendTarget]) : String
+  (str_cat.str-cat
+    "    .macro .tl_abort_row pc, path, line, column, kind\n"
+    (if (be_state.compiler-backend-target-coff? target)
+      "    .pushsection .rdata$TLAS,\"dr\"\n"
+      "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
+    "    .ifndef .L_tl_abort_table\n    .balign 4\n.L_tl_abort_table:\n    .endif\n"
+    "    .long \\pc - ., \\path - ., \\line, \\column\n"
+    "    .popsection\n    .set .L_tl_abort_used_\\kind, 1\n    .endm\n"))
+
+;; Only volatile scratch registers are touched before the call. The frame
+;; pointer describes both incoming stack alignments (a SysV abort-only leaf
+;; can call from its red zone), and Win64 gets its own outgoing shadow space.
+;; The existing runtime readers see the same four-word descriptor.
+(define (compiler-backend-abort-table-trailer
+  [target : be_state.CompilerBackendTarget]
+  [site-count : i64]) : String
+  (when (= site-count 0) (return ""))
+  (let
+    [windows? : bool (be_state.compiler-backend-target-coff? target)]
+    [debug? : bool (compiler_ir_types.compiler-debug-info-enabled?)]
+    ;; Speculative emission can leave fewer rows than sites. The assembler
+    ;; guard below still requires a surviving row, so one allocated site
+    ;; guarantees exactly one possible caller of the thunk.
+    [scan? : bool (> site-count 1)]
+    [site-reg : String
+      (if windows?
+        "%rcx"
+        "%rdi")]
+    [site-offset : i64
+      (if windows?
+        32
+        0)]
+    (str_cat.str-cat
+      "    .section .text\n    .ifdef .L_tl_abort_table\n"
+      (if scan?
+        (str_cat.str-cat
+          (if windows?
+            "    .pushsection .rdata$TLAS,\"dr\"\n"
+            "    .pushsection .rodata.tl_abort_sites,\"a\",@progbits\n")
+          ".L_tl_abort_table_end:\n    .popsection\n")
+        "")
+      "    .irp kind, tl_oob_abort_at, tl_div_abort_at, tl_shift_abort_at, tl_panic_at\n"
+      "    .ifdef .L_tl_abort_used_\\kind\n.L_tl_abort_\\kind:\n"
+      "    leaq 1f(%rip), %r11\n    jmp .L_tl_abort_lookup\n1:\n    jmp \\kind\n"
+      "    .endif\n    .endr\n"
+      (if windows?
+        "    .seh_proc .L_tl_abort_lookup\n.L_tl_abort_lookup:\n    pushq %rbp\n    .seh_pushreg %rbp\n    subq $64, %rsp\n    .seh_stackalloc 64\n    leaq 64(%rsp), %rbp\n    .seh_setframe %rbp, 64\n    .seh_endprologue\n    andq $-16, %rsp\n"
+        (if debug?
+          ".L_tl_abort_lookup:\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n    movq %rsp, %rbp\n    .cfi_def_cfa_register %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n"
+          ".L_tl_abort_lookup:\n    pushq %rbp\n    movq %rsp, %rbp\n    andq $-16, %rsp\n    subq $32, %rsp\n"))
+      "    leaq .L_tl_abort_table(%rip), %r10\n"
+      (if scan?
+        (str_cat.str-cat
+          "    movq 8(%rbp), %rax\n"
+          "2:\n    leaq .L_tl_abort_table_end(%rip), "
+          site-reg
+          "\n    cmpq "
+          site-reg
+          ", %r10\n    jae 3f\n    movslq (%r10), "
+          site-reg
+          "\n    addq %r10, "
+          site-reg
+          "\n    cmpq %rax, "
+          site-reg
+          "\n    je 4f\n    addq $16, %r10\n    jmp 2b\n3:\n    ud2\n4:\n")
+        "")
+      "    leaq "
+      (string.int->string site-offset)
+      "(%rsp), "
+      site-reg
+      "\n    movslq 8(%r10), %rax\n    movq %rax, 16("
+      site-reg
+      ")\n    movslq 12(%r10), %rax\n    movq %rax, 24("
+      site-reg
+      ")\n    movslq 4(%r10), %rax\n"
+      "    movdqu 4(%r10,%rax), %xmm0\n    movdqu %xmm0, ("
+      site-reg
+      ")\n    call *%r11\n    ud2\n"
+      (if debug?
+        ".L_tl_abort_lookup_end:\n"
+        "")
+      (cond
+        [windows? "    .seh_endproc\n"]
+        [debug? "    .cfi_endproc\n"]
+        [else ""])
+      (if debug?
+        (str_cat.str-cat
+          (compiler-backend-backtrace-map-section target)
+          "    .balign 8\n    .quad .L_tl_abort_lookup\n    .quad .L_tl_abort_lookup_end\n"
+          "    .quad tl_backtrace_string_data_begin\n    .quad 0\n"
+          "    .quad tl_backtrace_string_data_begin\n    .quad 0\n"
+          ;; An empty name and line -1 mark the abort lookup frame, which
+          ;; must not consume a slot in the runtime's backtrace frame budget.
+          "    .quad -1\n    .quad 0\n    .text\n")
+        "")
+      "    .endif\n")))
+
 (define (compiler-backend-backtrace-string-section
   [target : be_state.CompilerBackendTarget]) : String
   (if (be_state.compiler-backend-target-coff? target)
@@ -3408,54 +3510,36 @@
       "_"
       suffix)))
 
-(define (compiler-backend-abort-site-load-arg0
+(define (compiler-backend-abort-site-return-label
   [backend-state : be_state.CompilerBackendState]
-  [label : (& label str)]) : String
-  (str_cat.str-cat
-    "    leaq "
-    label
-    "(%rip), "
-    (compiler-backend-abort-arg-reg backend-state 0)
-    "\n"))
-
-(define (compiler-backend-abort-site-descriptor-after-call
-  [backend-state : be_state.CompilerBackendState]
-  [label : String]) : String
+  [label : String]
+  [symbol : String]) : String
   (let
-    [end-label : String (str_cat.str-cat label "_end")]
     [function-state : be_state.CompilerBackendFunctionState
       (be_state.compiler-backend-state-function-state backend-state)]
     [path : String
       (be_state.compiler-backend-function-state-string
         function-state
         be_state.compiler-backend-function-string-abort-site-path)]
-    [shared-object : bool
-      (be_state.compiler-backend-state-emission-target-policy backend-state).shared-object]
-    ;; Under the shared-object code model the descriptor's path word needs a
-    ;; load-time relocation, so it lives in `.data.rel.ro` instead of inline.
     (str_cat.str-cat
-      (if shared-object
-        "    .pushsection .data.rel.ro,\"aw\",@progbits\n    .balign 8\n"
-        (str_cat.str-cat "    jmp " end-label "\n    .balign 8\n"))
       label
-      ":\n    .quad "
-      (be_facts.compiler-backend-string-data-label path)
-      "\n    .quad "
-      (string.int->string (string.string-length path))
-      "\n    .quad "
+      ":\n    .tl_abort_row "
+      label
+      ", "
+      (be_operand.compiler-backend-string-fat-label path)
+      ", "
       (string.int->string
         (be_state.compiler-backend-function-state-i64
           function-state
           be_state.compiler-backend-function-i64-abort-site-line))
-      "\n    .quad "
+      ", "
       (string.int->string
         (be_state.compiler-backend-function-state-i64
           function-state
           be_state.compiler-backend-function-i64-abort-site-column))
-      "\n"
-      (if shared-object
-        "    .popsection\n"
-        (str_cat.str-cat end-label ":\n")))))
+      ", "
+      symbol
+      "\n")))
 
 ;; SAVE-SECOND runs before SAVE-FIRST. The top of stack is therefore the first
 ;; reported value and can be popped straight into ABI argument 1.
@@ -3472,18 +3556,18 @@
     (str_cat.str-cat
       save-second
       save-first
-      (compiler-backend-abort-site-load-arg0 backend-state label)
+      "    # tl_abort_operand_stage\n"
       "    popq "
       (compiler-backend-abort-arg-reg backend-state 1)
       "\n    popq "
       (compiler-backend-abort-arg-reg backend-state 2)
       "\n"
       (be_operand.compiler-backend-emit-call-space-sub call-space)
-      "    call "
+      "    call .L_tl_abort_"
       symbol
       "\n"
-      (be_operand.compiler-backend-emit-call-space-add call-space)
-      (compiler-backend-abort-site-descriptor-after-call backend-state label))))
+      (compiler-backend-abort-site-return-label backend-state label symbol)
+      (be_operand.compiler-backend-emit-call-space-add call-space))))
 
 ;; Shift source-located aborts carry a fourth boolean argument indicating
 ;; whether the count is unsigned.  Keep this setup separate from the legacy
@@ -3503,7 +3587,7 @@
     (str_cat.str-cat
       save-width
       save-count
-      (compiler-backend-abort-site-load-arg0 backend-state label)
+      "    # tl_abort_operand_stage\n"
       "    popq "
       (compiler-backend-abort-arg-reg backend-state 1)
       "\n    popq "
@@ -3516,11 +3600,11 @@
       (compiler-backend-abort-arg-reg backend-state 3)
       "\n"
       (be_operand.compiler-backend-emit-call-space-sub call-space)
-      "    call "
+      "    call .L_tl_abort_"
       symbol
       "\n"
-      (be_operand.compiler-backend-emit-call-space-add call-space)
-      (compiler-backend-abort-site-descriptor-after-call backend-state label))))
+      (compiler-backend-abort-site-return-label backend-state label symbol)
+      (be_operand.compiler-backend-emit-call-space-add call-space))))
 
 (define (compiler-backend-abort-normalized-push-asm
   [type-segment-bases : i64]
@@ -3572,34 +3656,32 @@
           ", "
           arg1
           "\n"
-          (compiler-backend-abort-site-load-arg0 backend-state label)
-          "    call tl_panic_at\n")]
-      (str_cat.str-cat
-        (string.replace asm needle replacement)
-        (compiler-backend-abort-site-descriptor-after-call backend-state label)))))
+          "    call .L_tl_abort_tl_panic_at\n"
+          (compiler-backend-abort-site-return-label
+            backend-state
+            label
+            "tl_panic_at"))]
+      (string.replace asm needle replacement))))
 
 (define (compiler-backend-float-value-register
   [backend-state : be_state.CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : (& value compiler_ir_types.CompilerIrValue)]) : String
-  (let
-    [value : compiler_ir_types.CompilerIrValue
-      (owned_view.compiler-owned-reference-shared-view value)]
-    (match value
-      [(Var id)
-        (match (be_operand.compiler-backend-emit-assignment-lookup
-          backend-state
-          assignments
-          id)
-          [(Some location)
-            (match location
-              [(Register home)
-                (if (compiler_abi.compiler-abi-xmm-register-id? home)
-                  (compiler_abi.compiler-abi-register-spelling home)
-                  "")]
-              [_ ""])]
-          [(No) ""])]
-      [_ ""])))
+  (match value
+    [(Var id)
+      (match (be_operand.compiler-backend-emit-assignment-lookup
+        backend-state
+        assignments
+        id)
+        [(Some location)
+          (match location
+            [(Register home)
+              (if (compiler_abi.compiler-abi-xmm-register-id? home)
+                (compiler_abi.compiler-abi-register-spelling home)
+                "")]
+            [_ ""])]
+        [(No) ""])]
+    [_ ""]))
 
 (define (compiler-backend-float-value-stack-address
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -9978,12 +10060,10 @@
     [(Ge) "setae"]
     [_ "sete"]))
 
-(define (compiler-backend-float-compare-reg-asm
-  [op : compiler_ir_types.CompilerIrBinOp]
+(define (compiler-backend-float-compare-flags
   [fty : compiler_ast_types.AstType]
   [lhs-reg : String]
-  [rhs-operand : String]
-  [dst-home : String]) : String
+  [rhs-operand : String]) : String
   (str_cat.str-cat
     "    ucomi"
     (compiler-backend-float-suffix fty)
@@ -9991,7 +10071,16 @@
     rhs-operand
     ", "
     lhs-reg
-    "\n"
+    "\n"))
+
+(define (compiler-backend-float-compare-reg-asm
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [fty : compiler_ast_types.AstType]
+  [lhs-reg : String]
+  [rhs-operand : String]
+  [dst-home : String]) : String
+  (str_cat.str-cat
+    (compiler-backend-float-compare-flags fty lhs-reg rhs-operand)
     ;; UCOMIS sets ZF/PF/CF for unordered operands. Above/above-equal
     ;; already reject that case; the other predicates must inspect PF.
     ;; MOV preserves those flags and its 32-bit destination clears the
@@ -10025,6 +10114,23 @@
         (be_operand.compiler-backend-reg-part dst-home 1)
         "\n1:\n"))))
 
+;; A scalar home owns the whole register. Copy all lanes to avoid
+;; MOVSS/MOVSD's dependency on the destination's previous upper lanes.
+(define (compiler-backend-emit-float-register-copy
+  [src : String]
+  [dst : String]
+  [ty : (& ty compiler_ast_types.AstType)]) : String
+  (if (string.eq src dst)
+    ""
+    (str_cat.str-cat
+      (if (be_state.compiler-backend-f64-type? ty)
+        "    movapd "
+        "    movaps ")
+      src
+      ", "
+      dst
+      "\n")))
+
 (define (compiler-backend-emit-float-binop-direct
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst-home : String]
@@ -10034,14 +10140,21 @@
   [fty : compiler_ast_types.AstType]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
   (let
+    [lhs-home : String
+      (compiler-backend-float-value-register backend-state assignments lhs)]
     [lhs-asm
-      (try
-        (be_operand.compiler-backend-emit-load-float-value
-          assignments
-          lhs
-          fty
+      (if (string.eq lhs-home "")
+        (try
+          (be_operand.compiler-backend-emit-load-float-value
+            assignments
+            lhs
+            fty
+            (be_state.compiler-backend-global-shared-view dst-home)
+            backend-state))
+        (compiler-backend-emit-float-register-copy
+          lhs-home
           (be_state.compiler-backend-global-shared-view dst-home)
-          backend-state))]
+          fty))]
     (Ok
       (str_cat.str-cat
         lhs-asm
@@ -10075,11 +10188,12 @@
         0
         1)]
     [result-reg : String
-      (be_operand.compiler-backend-scavenge-xmm-reg
+      (be_operand.compiler-backend-scavenge-xmm-reg-for-staging
         dst
         exclude
         exclude-n
         "%xmm2"
+        true
         backend-state)]
     [rhs-operand : String
       (compiler-backend-float-direct-rhs-operand
@@ -10184,6 +10298,27 @@
           result-ty
           backend-state)))))
 
+(define (compiler-backend-emit-staged-float-result
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [reg : String]
+  [ty : (& ty compiler_ast_types.AstType)]
+  [backend-state : be_state.CompilerBackendState]) : String
+  (let
+    [home : String
+      (compiler-backend-float-value-register
+        backend-state
+        assignments
+        (& (compiler_ir_types.CompilerIrValue.Var dst)))]
+    (if (string.eq home "")
+      (be_operand.compiler-backend-emit-store-float-var
+        assignments
+        dst
+        reg
+        ty
+        backend-state)
+      (compiler-backend-emit-float-register-copy reg home ty))))
+
 (define (compiler-backend-emit-float-binop-fallback
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -10207,11 +10342,12 @@
           0
           1)]
       [lhs-reg : String
-        (be_operand.compiler-backend-scavenge-xmm-reg
+        (be_operand.compiler-backend-scavenge-xmm-reg-for-staging
           dst
           xmm-exclude
           xmm-exclude-n
           "%xmm2"
+          true
           backend-state)]
       [rhs-operand : String
         (compiler-backend-float-direct-rhs-operand
@@ -10246,11 +10382,12 @@
             (be_operand.compiler-backend-one-exclude
               (be_state.compiler-backend-global-shared-view lhs-reg))]
           [rhs-temp : String
-            (be_operand.compiler-backend-scavenge-xmm-reg
+            (be_operand.compiler-backend-scavenge-xmm-reg-for-staging
               dst
               rhs-temp-exclude
               1
               "%xmm3"
+              true
               backend-state)]
           [rhs-asm
             (try
@@ -10312,11 +10449,12 @@
             0
             1)]
         [result-reg : String
-          (be_operand.compiler-backend-scavenge-xmm-reg
+          (be_operand.compiler-backend-scavenge-xmm-reg-for-staging
             dst
             exclude
             exclude-n
             "%xmm2"
+            true
             backend-state)]
         [rhs-operand : String
           (compiler-backend-float-direct-rhs-operand
@@ -10331,11 +10469,12 @@
               (be_operand.compiler-backend-one-exclude
                 (be_state.compiler-backend-global-shared-view result-reg))]
             [rhs-temp : String
-              (be_operand.compiler-backend-scavenge-xmm-reg
+              (be_operand.compiler-backend-scavenge-xmm-reg-for-staging
                 dst
                 rhs-temp-exclude
                 1
                 "%xmm3"
+                true
                 backend-state)]
             [rhs-asm
               (try
@@ -10359,7 +10498,7 @@
               (str_cat.str-cat
                 rhs-asm
                 asm
-                (be_operand.compiler-backend-emit-store-float-var
+                (compiler-backend-emit-staged-float-result
                   assignments
                   dst
                   result-reg
@@ -10379,7 +10518,7 @@
             (Ok
               (str_cat.str-cat
                 asm
-                (be_operand.compiler-backend-emit-store-float-var
+                (compiler-backend-emit-staged-float-result
                   assignments
                   dst
                   result-reg
@@ -13960,7 +14099,181 @@
           false-jcc
           backend-state)))))
 
+(define (compiler-backend-emit-float-compare-branch-jumps
+  [function : String]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [true-label : i64]
+  [false-label : i64]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [backend-state : be_state.CompilerBackendState]) : String
+  (let
+    [equal? : bool
+      (match (& op)
+        [(Eq) true]
+        [_ false])]
+    [check-parity? : bool
+      (match (& op)
+        [(or (Eq) (Ne)) true]
+        [_ false])]
+    [unordered-target : i64
+      (if equal?
+        false-label
+        true-label)]
+    [unordered-falls? : bool
+      (and
+        check-parity?
+        (compiler-backend-jump-target-is-fallthrough?
+          unordered-target
+          fallthrough))]
+    ;; Unordered sets CF, ZF and PF. JA/JAE therefore already reject it
+    ;; and their complements accept it. JE/JNE need the parity check first.
+    [true-jcc : String
+      (match (& op)
+        [(Eq) "je"]
+        [(Ne) "jne"]
+        [(Ge) "jae"]
+        [_ "ja"])]
+    [false-jcc : String
+      (match (& op)
+        [(Eq) "jne"]
+        [(Ne) "je"]
+        [(Ge) "jb"]
+        [_ "jbe"])]
+    [restore : String
+      (compiler-backend-emergency-restore-before-jumps backend-state)]
+    [parity : String
+      (cond
+        [unordered-falls? "    jp 1f\n"]
+        [check-parity?
+          (compiler-backend-emit-jcc-label
+            "jp"
+            (be_state.compiler-backend-global-shared-view function)
+            (compiler-backend-jump-resolve-target
+              backend-state
+              unordered-target
+              fallthrough))]
+        [else ""])]
+    (str_cat.str-cat
+      restore
+      parity
+      (compiler-backend-emit-compare-branch-jumps
+        function
+        true-label
+        false-label
+        fallthrough
+        true-jcc
+        false-jcc
+        backend-state)
+      (if unordered-falls?
+        "1:\n"
+        ""))))
+
+(define (compiler-backend-emit-float-compare-branch
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [function : String]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [true-label : i64]
+  [false-label : i64]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (let
+    [swap? : bool
+      (match (& op)
+        [(or (Lt) (Le)) true]
+        [_ false])]
+    [predicate : compiler_ir_types.CompilerIrBinOp
+      (if swap?
+        (be_operand.compiler-backend-compare-swapped-op op)
+        op)]
+    (match (if swap?
+      (tuple rhs lhs)
+      (tuple lhs rhs))
+      [(tuple left right)
+        (let
+          [right-operand : String
+            (compiler-backend-float-direct-rhs-operand
+              assignments
+              right
+              ty
+              ""
+              backend-state)]
+          [left-home : String
+            (compiler-backend-float-value-register
+              backend-state
+              assignments
+              left)]
+          [left-reg : String
+            (if (string.eq left-home "")
+              (be_operand.compiler-backend-scavenge-xmm-reg-for-staging
+                -1
+                (be_operand.compiler-backend-one-exclude
+                  (string.copy (& right-operand)))
+                1
+                "%xmm2"
+                true
+                backend-state)
+              left-home)]
+          [load : String
+            (try
+              (be_operand.compiler-backend-emit-load-float-value
+                assignments
+                left
+                ty
+                (be_state.compiler-backend-global-shared-view left-reg)
+                backend-state))]
+          (Ok
+            (str_cat.str-cat
+              load
+              (compiler-backend-float-compare-flags ty left-reg right-operand)
+              (compiler-backend-emit-float-compare-branch-jumps
+                function
+                predicate
+                true-label
+                false-label
+                fallthrough
+                backend-state))))])))
+
 (define (compiler-backend-emit-compare-branch
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [function : String]
+  [op : compiler_ir_types.CompilerIrBinOp]
+  [lhs : compiler_ir_types.CompilerIrValue]
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [ty : compiler_ast_types.AstType]
+  [true-label : i64]
+  [false-label : i64]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (if (be_operand.compiler-backend-float-type? ty)
+    (compiler-backend-emit-float-compare-branch
+      assignments
+      function
+      op
+      lhs
+      rhs
+      ty
+      true-label
+      false-label
+      fallthrough
+      backend-state)
+    (compiler-backend-emit-int-compare-branch
+      type-segment-bases
+      assignments
+      function
+      op
+      lhs
+      rhs
+      ty
+      true-label
+      false-label
+      fallthrough
+      backend-state)))
+
+(define (compiler-backend-emit-int-compare-branch
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [function : String]

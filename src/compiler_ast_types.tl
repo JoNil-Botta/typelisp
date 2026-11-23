@@ -4083,7 +4083,7 @@
 ;; Shallow structural equality between a stored node and a candidate node. Child
 ;; ids compare as plain integers because children are themselves deduplicated.
 (define (ty-node-shallow-value-eq? [a : AstType] [b : AstType]) : bool
-  (ast-type-children-eq? a b ast-type-id-same?))
+  (ast-type-children-eq? a b false ast-type-id-same?))
 
 (define (ty-node-shallow-eq? [a-id : i64] [b : (& AstType)]) : bool
   (ty-node-shallow-value-eq?
@@ -9140,6 +9140,7 @@
 (defmacro (ast-type-children-eq?
   [left : Expr]
   [right : Expr]
+  [ignore-lifetimes? : Expr]
   [on-type-id : Expr]
   [contexts : Expr ...]) : bool
   (let
@@ -9268,12 +9269,16 @@
       [(AstType.Ref a-name a-inner)
         (match ,r
           [(AstType.Ref b-name b-inner)
-            (and (= a-name b-name) (,t ,@x a-inner b-inner))]
+            (and
+              (or ,ignore-lifetimes? (= a-name b-name))
+              (,t ,@x a-inner b-inner))]
           [_ false])]
       [(AstType.MutRef a-name a-inner)
         (match ,r
           [(AstType.MutRef b-name b-inner)
-            (and (= a-name b-name) (,t ,@x a-inner b-inner))]
+            (and
+              (or ,ignore-lifetimes? (= a-name b-name))
+              (,t ,@x a-inner b-inner))]
           [_ false])]
       [(AstType.Enum a-name)
         (match ,r
@@ -12525,7 +12530,7 @@
       (ast-lifetime-list-eq-at? (& a) (& b) len))))
 
 (define (ast-type-eq? [a : AstType] [b : AstType]) : bool
-  (ast-type-children-eq? a b ast-type-installed-ids-eq?))
+  (ast-type-children-eq? a b false ast-type-installed-ids-eq?))
 
 (define (ast-extern-abi-eq? [a : (& AstExternAbi)] [b : (& AstExternAbi)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view a)
@@ -12562,7 +12567,39 @@
   [seg-bases : i64]
   [a : AstType]
   [b : AstType]) : bool
-  (ast-type-children-eq? a b ast-type-seg-ids-eq? seg-bases))
+  (ast-type-children-eq? a b false ast-type-seg-ids-eq? seg-bases))
+
+(define (ast-type-erase-abi-lifetimes [bases : i64] [ty : AstType]) : AstType
+  (match (& ty)
+    [(or (Region _ inner) (Invalidate _ inner))
+      (ast-type-erase-abi-lifetimes
+        bases
+        (ast-type-segment-bases-get bases inner))]
+    [(EnumArgs name _) (Enum name)]
+    [(StructArgs name _) (Struct name)]
+    [(VarArgs name _) (Var name)]
+    [_ ty]))
+
+(defmacro (ast-type-abi-ids-eq? [bases : Expr] [a : Expr] [b : Expr]) : Expr
+  `(or
+    (= ,a ,b)
+    (ast-type-abi-eq-with-seg-bases?
+      ,bases
+      (ast-type-segment-bases-get ,bases ,a)
+      (ast-type-segment-bases-get ,bases ,b))))
+
+;; Regions and lifetime arguments do not affect the physical ABI. Preserve
+;; nominal identity, reference mutability, and every concrete type child.
+(define (ast-type-abi-eq-with-seg-bases?
+  [bases : i64]
+  [a : AstType]
+  [b : AstType]) : bool
+  (ast-type-children-eq?
+    (ast-type-erase-abi-lifetimes bases a)
+    (ast-type-erase-abi-lifetimes bases b)
+    true
+    ast-type-abi-ids-eq?
+    bases))
 
 (define (ast-extern-link-input-eq?
   [a : (& AstExternLinkInput)]

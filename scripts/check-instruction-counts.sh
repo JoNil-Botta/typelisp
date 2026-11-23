@@ -25,6 +25,7 @@ DEFAULT_BASELINE="$ROOT/perf/insn-exec-baseline.tsv"
 DEFAULT_WORKDIR="target/instruction-count-check"
 BASELINE=${TYPELISP_IR_CHECK_BASELINE:-$DEFAULT_BASELINE}
 RUNS=${TYPELISP_IR_CHECK_RUNS:-1}
+CYCLES=0
 BENCHMARKS=${TYPELISP_IR_CHECK_BENCHMARKS:-$DEFAULT_BENCHMARKS}
 WORKDIR=${TYPELISP_IR_CHECK_OUT:-$DEFAULT_WORKDIR}
 UPDATE_BASELINE=0
@@ -40,6 +41,7 @@ Options:
                        preserving every other row
   --baseline FILE      Baseline TSV path (default: perf/insn-exec-baseline.tsv)
   --runs N             Cachegrind runs per metric (default: 1)
+  --cycles             Also report native cycles (requires Linux perf)
   --benchmarks LIST    Comma-separated benchmark names for the per-PR gate
   --benchmarks-only    Accepted for compatibility: benchmark rows are all this
                        checker measures
@@ -65,6 +67,10 @@ EOF
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --cycles)
+            CYCLES=1
+            shift
+            ;;
         --update-baseline)
             UPDATE_BASELINE=1
             shift
@@ -644,6 +650,8 @@ else
 fi
 
 echo "[ir-check] measure instruction-count subset"
+set --
+if [ "$CYCLES" -eq 1 ]; then set -- --cycles; fi
 env -i PATH="$PATH" HOME="${HOME:-}" LC_ALL=C \
     GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-local}" GITHUB_RUN_ID="${GITHUB_RUN_ID:-local}" \
     GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-local}" GITHUB_WORKFLOW_REF="${GITHUB_WORKFLOW_REF:-local}" \
@@ -654,6 +662,7 @@ env -i PATH="$PATH" HOME="${HOME:-}" LC_ALL=C \
     --output "$MEASURE_OUT" \
     --benchmarks-only \
     --c-scalar \
+    "$@" \
     "$CHECK_COMPILER"
 
 awk -F '\t' -v gate_auto_c="$GATE_AUTO_C" '

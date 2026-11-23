@@ -62,3 +62,42 @@ tl_oob_abort_at:
     (test.assert-true
       (not (string.contains (& output) "other_unused:"))
       "an extern declaration does not root a dead helper cycle")))
+
+(test
+  compiler-backend-runtime-prune-abort-handlers
+  (let
+    [program : String
+      (str_cat.str-cat
+        "    .tl_abort_row .L_pc, .L_path, 1, 1, tl_oob_abort_at
+"
+        (prune.optional-fragment "tl_oob_abort_at:
+    ret
+")
+        (prune.optional-fragment "tl_div_abort_at:
+    ret
+")
+        (prune.optional-fragment "tl_shift_abort_at:
+    ret
+")
+        (prune.optional-fragment "tl_panic_at:
+    ret
+")
+        "    .irp kind, tl_oob_abort_at, tl_div_abort_at, tl_shift_abort_at, tl_panic_at
+    .ifdef .L_tl_abort_used_\\kind
+    jmp \\kind
+    .endif
+    .endr
+")]
+    [output : String (prune.prune program)]
+    (test.assert-true
+      (string.contains (& output) "tl_oob_abort_at:\n")
+      "the abort row keeps its handler")
+    (test.assert-true
+      (not (string.contains (& output) "tl_div_abort_at:\n"))
+      "the iteration list does not keep the division abort handler")
+    (test.assert-true
+      (not (string.contains (& output) "tl_shift_abort_at:\n"))
+      "the iteration list does not keep the shift abort handler")
+    (test.assert-true
+      (not (string.contains (& output) "tl_panic_at:\n"))
+      "the iteration list does not keep the panic handler")))

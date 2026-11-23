@@ -32,6 +32,9 @@
 (import stdlib.comptime)
 
 ;; lint-allow: unused-import
+(import stdlib.clone)
+
+;; lint-allow: unused-import
 (import stdlib.string)
 
 ;; lint-allow: unused-import
@@ -102,39 +105,41 @@
     [insertion-less : comptime.Expr
       (if scalar?
         `(< value (array-ref slots (- j 1)))
-        `(less? (clone value) (clone (array-ref slots (- j 1)))))]
+        `(less?
+          (stdlib.clone.deep value)
+          (stdlib.clone.deep (array-ref slots (- j 1)))))]
     [insertion-shift-value : comptime.Expr
       (if scalar?
         `(array-ref slots (- j 1))
-        `(clone (array-ref slots (- j 1))))]
+        `(stdlib.clone.deep (array-ref slots (- j 1))))]
     [insertion-value : comptime.Expr
       (if scalar?
         `(array-ref slots i)
-        `(clone (array-ref slots i)))]
+        `(stdlib.clone.deep (array-ref slots i)))]
     [boundary-less : comptime.Expr
       (if scalar?
         `(< (array-ref slots mid) (array-ref slots (- mid 1)))
         `(less?
-          (clone (array-ref slots mid))
-          (clone (array-ref slots (- mid 1)))))]
+          (stdlib.clone.deep (array-ref slots mid))
+          (stdlib.clone.deep (array-ref slots (- mid 1)))))]
     [right-before-left : comptime.Expr
       (if scalar?
         `(< (array-ref slots right-index) (array-ref slots left-index))
         `(less?
-          (clone (array-ref slots right-index))
-          (clone (array-ref slots left-index))))]
+          (stdlib.clone.deep (array-ref slots right-index))
+          (stdlib.clone.deep (array-ref slots left-index))))]
     [left-merge-value : comptime.Expr
       (if scalar?
         `(array-ref slots left-index)
-        `(clone (array-ref slots left-index)))]
+        `(stdlib.clone.deep (array-ref slots left-index)))]
     [right-merge-value : comptime.Expr
       (if scalar?
         `(array-ref slots right-index)
-        `(clone (array-ref slots right-index)))]
+        `(stdlib.clone.deep (array-ref slots right-index)))]
     [copy-back-value : comptime.Expr
       (if scalar?
         `(array-ref scratch out)
-        `(clone (array-ref scratch out)))]
+        `(stdlib.clone.deep (array-ref scratch out)))]
     [sort-body : comptime.Expr
       `(let
         [n : i64 (len-mut v)]

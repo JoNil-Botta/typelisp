@@ -12474,6 +12474,7 @@
     [rhs-id : i64 (compiler-backend-edge-flags-var-id rhs)]
     (if (and
       (= after instr-count)
+      (not (be_operand.compiler-backend-float-type? operand-ty))
       (not (be_facts.compiler-backend-bit-test-op? op))
       (>= lhs-id 0)
       (>= rhs-id 0)
@@ -12551,6 +12552,7 @@
       (if (or
         (= order 0)
         (not (= index 1))
+        (be_operand.compiler-backend-float-type? operand-ty)
         (be_facts.compiler-backend-bit-test-op? op)
         (< lhs-id 0)
         (< rhs-id 0)
@@ -12785,21 +12787,21 @@
       (be_facts.compiler-backend-compare-op? op)
       (or
         (be_simd.compiler-backend-var-single-use? ctx.use-counts dst)
-        (compiler-backend-var-fuse-safe? ctx.backend-state dst))
-      (not
-        (be_scalar.compiler-backend-binop-f64?
-          ctx.types
-          (be_state.compiler-backend-global-shared-view ctx.global-types)
-          lhs
-          rhs
-          ty)))
+        (compiler-backend-var-fuse-safe? ctx.backend-state dst)))
       (if (< index instrs.len)
         (let
           [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
           [after-branch : i64 (+ index 1)]
+          [float? : bool
+            (be_scalar.compiler-backend-binop-f64?
+              ctx.types
+              (be_state.compiler-backend-global-shared-view ctx.global-types)
+              lhs
+              rhs
+              ty)]
           (match next
             [(Return maybe)
-              (if (< after-branch instrs.len)
+              (if (or (< after-branch instrs.len) float?)
                 (compiler-backend-emit-instrs-normal
                   (be_state.compiler-backend-global-shared-view ctx)
                   fallthrough
@@ -12883,6 +12885,7 @@
                     [select-ty ty])))
               (match (if (and
                 (= select-lanes 0)
+                (not float?)
                 (be_operand.compiler-backend-branch-uses-var? select-mask dst))
                 (be_simd.compiler-backend-emit-select-on-flags
                   ctx.type-segment-bases
@@ -15115,29 +15118,7 @@
     ""))
 
 (define compiler-backend-scavenge-reg-bit-count : i64
-  18)
-
-(define (compiler-backend-scavenge-reg-bit-by-index [index : i64]) : i64
-  (cond
-    [(= index 0) 1]
-    [(= index 1) 2]
-    [(= index 2) 4]
-    [(= index 3) 8]
-    [(= index 4) 16]
-    [(= index 5) 32]
-    [(= index 6) 64]
-    [(= index 7) 128]
-    [(= index 8) 256]
-    [(= index 9) 512]
-    [(= index 10) 1024]
-    [(= index 11) 2048]
-    [(= index 12) 4096]
-    [(= index 13) 8192]
-    [(= index 14) 16384]
-    [(= index 15) 32768]
-    [(= index 16) 65536]
-    [(= index 17) 131072]
-    [else 0]))
+  30)
 
 (define (compiler-backend-scavenge-location-mask
   [location : compiler_regalloc.CompilerRegLocation]) : i64
@@ -15154,7 +15135,7 @@
     [count : i64 0]
     (for [bit-index (iterator.range 0 compiler-backend-scavenge-reg-bit-count)]
       (let
-        [bit : i64 (compiler-backend-scavenge-reg-bit-by-index bit-index)]
+        [bit : i64 (shl 1 bit-index)]
         (if (not (= (bit-and mask bit) 0))
           (+= count 1)
           unit)))
@@ -15302,7 +15283,7 @@
     [out : i64 used]
     (for [bit-index (iterator.range 0 compiler-backend-scavenge-reg-bit-count)]
       (let
-        [bit : i64 (compiler-backend-scavenge-reg-bit-by-index bit-index)]
+        [bit : i64 (shl 1 bit-index)]
         (if (not (= (bit-and mask bit) 0))
           (set!
             out
@@ -15368,9 +15349,7 @@
     [mask : i64 0]
     (while (< bit-index compiler-backend-scavenge-reg-bit-count)
       (if (> (array-ref active-counts bit-index) 0)
-        (set!
-          mask
-          (bit-or mask (compiler-backend-scavenge-reg-bit-by-index bit-index)))
+        (set! mask (bit-or mask (shl 1 bit-index)))
         unit)
       (+= bit-index 1))
     mask))
@@ -23770,11 +23749,9 @@
 ;; A Linux shared object needs object code with no text relocation, no
 ;; local-exec TLS and no exported internal symbol. The emission keeps the
 ;; executable code everywhere else, so the model is applied by one pass over
-;; the finished assembly (`compiler-backend-shared-object-assembly`) plus two
-;; emission changes the pass cannot make: the program has no entry, only
-;; `tl_shared_object_init`, and an abort-site descriptor is placed in
-;; `.data.rel.ro` instead of inline in `.text`. The executable code model's
-;; output is unchanged.
+;; the finished assembly (`compiler-backend-shared-object-assembly`) plus
+;; one emission change the pass cannot make: `tl_shared_object_init` takes
+;; the place of the executable entry point.
 (define (compiler-backend-shared-object-target-message
   [target : be_state.CompilerBackendTarget]) : String
   (str_cat.str-cat
@@ -23957,7 +23934,9 @@ tl_shared_object_init:
                 (be_state.compiler-backend-global-shared-view functions)
                 program-index
                 (be_state.compiler-backend-global-shared-view span-index)))
-            (be_scalar.compiler-backend-backtrace-map-prefix target))]
+            (str_cat.str-cat
+              (be_scalar.compiler-backend-backtrace-map-prefix target)
+              (be_scalar.compiler-backend-abort-table-prefix target)))]
         [function-input : text_buf.TextBuf
           (if (be_facts.compiler-backend-assembly-stream-active?
             (be_state.compiler-backend-state-stream-state
@@ -24040,6 +24019,10 @@ tl_shared_object_init:
                   (text_buf.append
                     with-functions
                     (str_cat.str-cat
+                      (be_scalar.compiler-backend-abort-table-trailer
+                        target
+                        (be_state.compiler-backend-state-abort-site-counter
+                          program-index.backend-state))
                       (be_scalar.compiler-backend-backtrace-map-trailer target)
                       (be_scalar.compiler-backend-debug-trailer
                         target

@@ -4433,45 +4433,20 @@
                         "0"
                         "0")
                       (+ opened 1))))]
-              ;; Resolve one captured type literal from a variadic ExprList.
-              ;; Unlike ordinary expr-list-nth, the host callback pushes a
-              ;; comptime Type value so reflection consumers see exactly the
-              ;; interpreted expr-list-type-nth result. Refs #6552.
+              ;; Index an operand or local ExprList. The type variant resolves
+              ;; a captured TypeLiteral for subsequent reflection.
               [(and
                   (or
                     (string.eq head "comptime.expr-list-type-nth")
-                    (string.eq head "expr-list-type-nth"))
-                  (= argc 2))
-                (let
-                  [list-param : i64
-                    (embedded-native-var-param-index
-                      context
-                      params
-                      (compiler_ast_types.ast-expr-list-get (& args) 0 0))]
-                  [index-text : String
-                    (embedded-native-data-index-text
-                      context
-                      (compiler_ast_types.ast-expr-list-get (& args) 1 0))]
-                  (if (or (< list-param 0) (string.eq index-text ""))
-                    -1
-                    (begin
-                      (embedded-native-template-push!
-                        ops
-                        ops-count
-                        (tlci_core.tlci-host-callback-name expr-list-type-nth)
-                        (string.int->string list-param)
-                        index-text
-                        "0")
-                      1)))]
-              ;; `(comptime.expr-list-nth p index)` over a variadic operand:
-              ;; the host op indexes the operand list exactly like the
-              ;; interpreted builtin. Refs #5617.
-              [(and
-                  (or
+                    (string.eq head "expr-list-type-nth")
                     (string.eq head "comptime.expr-list-nth")
                     (string.eq head "expr-list-nth"))
                   (= argc 2))
                 (let
+                  [type-item? : bool
+                    (or
+                      (string.eq head "comptime.expr-list-type-nth")
+                      (string.eq head "expr-list-type-nth"))]
                   [list-param : i64
                     (embedded-native-var-param-index
                       context
@@ -4503,16 +4478,23 @@
                       (embedded-native-template-push!
                         ops
                         ops-count
-                        (if (>= list-param 0)
-                          (tlci_core.tlci-host-callback-name expr-list-nth)
-                          (tlci_core.tlci-host-callback-name
-                            local-expr-list-nth))
+                        (cond
+                          [(< list-param 0)
+                            (tlci_core.tlci-host-callback-name
+                              local-expr-list-nth)]
+                          [type-item?
+                            (tlci_core.tlci-host-callback-name
+                              expr-list-type-nth)]
+                          [else
+                            (tlci_core.tlci-host-callback-name expr-list-nth)])
                         (string.int->string
                           (if (>= list-param 0)
                             list-param
                             list-slot))
                         index-text
-                        "0")
+                        (if (and (< list-param 0) type-item?)
+                          "1"
+                          "0"))
                       1)))]
               [else
                 (embedded-native-fallback-opened

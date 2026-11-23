@@ -9,6 +9,7 @@ The checked tables in this directory, and the gates and scripts that own them:
 | `benchmark-ci-cases.tsv` | suite membership for the benchmark, optimizer-corpus and instruction-count gates |
 | `compiler-scaling-budgets.tsv` | `linux-compiler-scaling-budgets` (`scripts/check-compiler-scaling.sh`) |
 | `spmd-mode-insn-baseline.tsv`, `spmd-mode-support.tsv` | opt-in `scripts/measure-spmd-mode-instruction-counts.sh` |
+| `codegen-cycle-report.md` | Same-host realistic-kernel, FP and AVX2 SPMD hardware measurements |
 | `self-compile-declarations/pr-<N>.tsv` | PR N's acknowledged `self_compile` cost (`scripts/self-compile.sh check`) |
 | `self-compile-ledger-resolutions.tsv`, `self-compile-ledger-checkpoint.tsv` | reviewed `self_compile` ledger resolutions and checkpoint (`scripts/self-compile.sh ledger`), when present |
 
@@ -19,10 +20,9 @@ Measured deltas belong in the PR that changes a row, not in this file.
 `perf/insn-exec-baseline.tsv` and `perf/insn-exec-heavy-baseline.tsv` are the
 committed cachegrind `Ir` baselines for the required Linux per-PR performance
 gates. The first covers the `instruction-main` cases of
-`perf/benchmark-ci-cases.tsv`: the twelve compiler-derived kernels,
-`pure_call_join` and `loop_call_literal`, and the eleven original kernels
-(`arith_loop`, `array_sum`, `borrowed_disjoint_store`, the four `hashmap_*`
-cases, `opt_bytecode_vm`, `opt_crc32`, `opt_quicksort` and `spmd_reduce`).
+`perf/benchmark-ci-cases.tsv`: twelve compiler-derived kernels, the
+`graph_dijkstra`, `phys_nbody` and `route_http` workloads, two floating-point
+pairs, and the original benchmark pairs.
 That is every `benchmark/typelisp` row the file carries, so none goes stale
 unchecked. The second covers the `instruction-heavy` cases, benchmark rows
 only. Explicit `--benchmarks` subsets
@@ -37,8 +37,8 @@ introduces them.
 
 ### Refreshing
 
-Benchmark rows reproduce exactly across the supported Linux, WSL and
-GitHub-hosted environments, so a local Linux or WSL run refreshes them:
+Refresh benchmark rows on Linux or WSL with the recorded tools and workload
+paths described under [C comparison provenance](#c-comparison-provenance).
 
 ```sh
 scripts/check-instruction-counts.sh --update-baseline
@@ -284,6 +284,12 @@ these compact records. Every unresolved failure stays listed.
   step must come out unchanged. The rules are the same; the repair step never
   measures, so when the PR's identity differs from the pair's the entry stays
   unattributed.
+- An unreproduced `comparability-failure` whose step was measured and whose PR
+  records were uploaded is repaired by a later ledger run when the runner's
+  identity matches the uploaded landed record: it reuses a comparable uploaded
+  reproduced base or measures the PR's base and tested merge (seeding a rebuilt
+  synthetic merge from its pushed base parent) and recomputes the entry with
+  unchanged step.
 - If the artifact chain is lost, a reviewed
   `perf/self-compile-ledger-checkpoint.tsv` (a copy of an account) restores
   continuity.
@@ -360,6 +366,29 @@ A clang, libc, or Valgrind change that alters instructions executed from `main`
 onward is still a real, reviewable C comparison change; only pre-`main` loader
 startup is excluded.
 
+### Hardware cycles and workload geomeans
+
+`scripts/check-instruction-counts.sh --cycles` adds native hardware samples to
+the usual exact Ir check. Both measurement scripts also accept `--cycles`
+directly and take `--cycle-runs N` to set the native sample count (default
+five). They run the same executables and arguments under
+`perf stat -e cycles:u`, counting whole-process user-mode cycles, including
+startup. Each sample must match the Cachegrind run's observable output and
+exit status. The harness requires one positive, fully scheduled event count.
+See the [checked-in cycle report](codegen-cycle-report.md) for the commands,
+host details and results.
+
+The main measurement prints TypeLisp/Clang Ir geomeans for the
+`realistic-kernel` cases listed in the benchmark manifest, with the pair
+count and separate scalar and auto-vectorized C references. It prints the
+corresponding median-cycle geomeans with `--cycles`. The group covers the
+compiler kernels, routing, graph, physics, bytecode, CRC and sorting workloads.
+The FP probes and microbenchmarks retain per-pair ratios. The SPMD mode matrix
+reports its own geomeans, including all eight AVX2 pairs on a full AVX2 run.
+A filtered run aggregates the selected pairs. The cycle reports include raw
+samples, medians and ranges, ratios, geomeans, and host metadata. Cycles are
+host-dependent and informational. Required CI gates the exact Ir rows.
+
 ### C comparison provenance
 
 Each benchmark measurement writes `measure/c-provenance.json` under the
@@ -412,6 +441,14 @@ unknown. Neither absence nor incompatibility skips C rows, substitutes a mode,
 changes tolerances, or authorizes a baseline update. The scalar/auto modes
 remain separate, and the TypeLisp <=1.01x C target is unchanged.
 
+The five added pairs and revised `borrowed_disjoint_store` were pinned in a
+local Ubuntu 24.04 reproduction with Ubuntu Clang 18.1.3 (1ubuntu1), glibc
+2.39, Valgrind 3.22.0, and GNU ld 2.42. The executable hashes for Clang,
+Valgrind and ld and the libc hash match the existing hosted sidecar. That
+sidecar still describes its original hosted run. Newly added rows have no
+hosted producer there, and the old borrowed row is bound to its previous
+count. Use a successful hosted artifact for a subsequent producer refresh.
+
 To reproduce a hosted comparison locally, use a disposable VM or container
 matching the record's OS/architecture, and install its exact Clang, libc,
 linker and Valgrind versions **inside that environment**. Restore the named
@@ -428,7 +465,8 @@ local reproduction does not replace required hosted CI.
 
 `perf/benchmark-ci-cases.tsv` assigns positive membership to the Linux generic
 `benchmark` suite, the `optimization-opt2` optimizer-corpus suite, and the
-`instruction-main` and `instruction-heavy` suites. `scripts/lib-benchmark.sh`
+`instruction-main` and `instruction-heavy` suites. Every `realistic-kernel`
+report case also belongs to `instruction-main`. `scripts/lib-benchmark.sh`
 enforces that no `instruction-heavy` case is also in `benchmark`: its measured
 execution already supplies output parity. An `instruction-main` case may also
 be in `benchmark` or `optimization-opt2`, because each suite checks something
@@ -498,7 +536,7 @@ it is on the compiler's own sources.
 ## SPMD scalar/AVX2 mode matrix
 
 `scripts/measure-spmd-mode-instruction-counts.sh` is the opt-in deterministic
-mode comparison for the seven SPMD benchmarks. It builds TypeLisp explicitly at
+mode comparison for the eight SPMD benchmarks. It builds TypeLisp explicitly at
 `--opt-level 2 --backend-mode scalar|avx2`; scalar rows are paired with
 `clang -O2 -fno-vectorize -fno-slp-vectorize`, while AVX2 rows are paired with
 auto-vectorized `clang -O2 -mavx2 -mno-avx512f`. Thus each

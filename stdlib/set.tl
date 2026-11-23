@@ -72,7 +72,7 @@
             `key)]
         [owned-key : comptime.Expr
           (if string-key?
-            `(clone key)
+            `(stdlib.string.copy (& key))
             `key)]
         [key-eq : comptime.Expr
           (if string-key?

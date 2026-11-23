@@ -432,6 +432,7 @@ INTEGRATION_POOL_PEAK_LABEL=
 integration_batch_group_run() {
     _compile_group=$1
     shift
+    set -- "$@" --verify-ir
     case "$_compile_group" in
         embedded | stage-stdlib) ;;
         embedded-opt0 | stage-stdlib-opt0 | embedded-opt1 | stage-stdlib-opt1 | embedded-opt2 | stage-stdlib-opt2)
@@ -2447,7 +2448,7 @@ EOF
         _level_want=${_level_case#*:}
         integration_batch_group_run "$_level_group" printf '%s\n' \
             > "$_dir/level.argv"
-        : > "$_dir/level.expected.argv"
+        printf '%s\n' --verify-ir > "$_dir/level.expected.argv"
         if [ "$_level_want" != default ]; then
             printf '%s\n' --opt-level "$_level_want" >> "$_dir/level.expected.argv"
         fi
@@ -2982,7 +2983,7 @@ EOF
 
     _driver_dir="$WORKDIR/windows-selfhost-compile-driver"
     mkdir -p "$_driver_dir"
-    _driver_bin="$_driver_dir/selfhost-compile.exe"
+    _driver_bin="$COMPILER"
     _driver_source="$_driver_dir/main.tl"
     _driver_asm="$_driver_dir/main.s"
     _driver_linux_asm="$_driver_dir/main-linux.s"
@@ -2991,16 +2992,7 @@ EOF
     _driver_stderr="$_driver_dir/run.stderr"
     _driver_code="$_driver_dir/run.exit"
 
-    echo "[windows-selfhost-compile-driver] build -> exercise"
-    # The compile-only bootstrapped stage1 has no `build` host action, so build the
-    # driver via compile + clang + lld-link (mirrors the runtime fixture above).
-    _driver_self_asm="$_driver_dir/selfhost-compile.s"
-    _driver_self_obj="$_driver_dir/selfhost-compile.obj"
-    "$COMPILER" compile src/main.tl --target windows-x86_64 --cfg windows -o "$_driver_self_asm" || {
-        echo "FAIL: windows-selfhost-compile-driver compile failed" >&2
-        exit 1
-    }
-    assemble_link_windows "$_driver_self_asm" "$_driver_self_obj" "$_driver_bin" windows-selfhost-compile-driver
+    echo "[windows-selfhost-compile-driver] exercise"
     printf '%s\n' '(define (main) : i64 42)' > "$_driver_source"
     run_windows_program "$_driver_bin" "$_driver_stdout" "$_driver_stderr" "$_driver_code" 0 compile \
         "$(cygpath -aw "$_driver_source")" -o "$(cygpath -aw "$_driver_asm")"
@@ -4292,7 +4284,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
             windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
+                "$COMPILER" compile "$work_src_rel" --verify-ir --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
@@ -4300,7 +4292,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
             windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
+                "$COMPILER" compile "$work_src_rel" --verify-ir --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
@@ -4316,7 +4308,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
                 "$build_stdout" \
                 "$build_stderr" \
                 "$asm" \
-                "compile $work_src_rel --target windows-x86_64 --cfg windows --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
+                "compile $work_src_rel --verify-ir --target windows-x86_64 --cfg windows --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue
@@ -4370,7 +4362,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
             ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" \
+                "$COMPILER" compile "$work_src_rel" --verify-ir \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
@@ -4378,7 +4370,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
             ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
-                "$COMPILER" compile "$work_src_rel" \
+                "$COMPILER" compile "$work_src_rel" --verify-ir \
                 --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
@@ -4396,7 +4388,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
                 "$build_stdout" \
                 "$build_stderr" \
                 "$asm" \
-                "compile $work_src_rel --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
+                "compile $work_src_rel --verify-ir --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
             failed=$((failed + 1))
             ran=$((ran + 1))
             continue

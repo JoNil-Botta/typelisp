@@ -285,3 +285,6 @@ end
 
 case|selfhost_compiler_tli_codec|src/compiler_tli_codec.tl|assembly|none|direct
 end
+
+case|selfhost_compiler_tli_extract|src/compiler_tli_extract.tl|assembly|none|direct
+end

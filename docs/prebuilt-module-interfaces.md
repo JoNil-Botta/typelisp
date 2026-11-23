@@ -172,7 +172,9 @@ d) `functions` (`TliFnDecl`): `s:name`, `s:module`, `s:link_symbol`, `u8 abi`
    `list<(s:name, t:type, u8 is_mut)> params`, `t:return_type`, then
    `TliFnSummary`: `u32 effect_flags` (bit0 `UNSAFE`, bit1 `COMPTIME`,
    bit2 `PURE`, bit3 `NEVER_RETURNS`, bit4 `STORES_AMBIENT_ARENA_GLOBAL`,
-   bit5 `HAS_INDIRECT_EFFECTS`, bit6 `HAS_INLINE_IR`, bit7 `MUST_USE`),
+   bit5 `HAS_INDIRECT_EFFECTS`, bit6 `HAS_INLINE_IR`, bit7 `MUST_USE`,
+   bit8 `STORES_AMBIENT_ARENA_ARG` for writes of ambient-arena values through
+   an argument),
    `u64 arena_arg_store_mask` (params 0..63),
    `list<u32> arena_arg_store_extra` (params >= 64),
    `list<(s:global_symbol, u8 write_flags)> global_writes` (from
@@ -180,7 +182,8 @@ d) `functions` (`TliFnDecl`): `s:name`, `s:module`, `s:link_symbol`, `u8 abi`
    The ABI byte is wire identity, not `AstExternAbi`'s declaration order: `0`
    is the `TypeLisp` convention of
    [#8485](https://github.com/JoNil-Botta/typelisp/issues/8485), and
-   `arena_arg_store_*` is the arena-store summary of
+   `arena_arg_store_*` records which of the function's own parameters it calls
+   inside an arena scope, as described in
    [#8681](https://github.com/JoNil-Botta/typelisp/issues/8681).
 e) `values` (`TliValueDecl`): `s:name`, `s:module`, `s:link_symbol`,
    `t:value_type`, `u32 flags` (bit0 `COMPTIME`, bit1 `IS_UNSAFE`, bit2

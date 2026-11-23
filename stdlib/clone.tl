@@ -5,8 +5,9 @@
 ;# With `(gen-clone T)`, an owning module requests one
 ;# ordinary `clone-<kebab-name>` function with signature `(& T) -> T`. The
 ;# generated body reconstructs the aggregate and uses only ordinary language
-;# and stdlib operations. Nominal dependencies must have their own generated
-;# clone function already available from their canonical owner module.
+;# and stdlib operations. Nominal dependencies use a clone function in their
+;# canonical owner module when available. Cloneable Copy nominals without a
+;# hook use an ordinary read.
 ;#
 ;# `synthesize-helpers` remains temporarily while compiler and repository call
 ;# sites migrate away from the semantic `(clone value)` form.
@@ -39,7 +40,13 @@
           [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
           [cloned-item : comptime.Expr
             (match (type-kind element-type)
-              ["string" `(stdlib.string.copy ,item-source)]
+              ["string"
+                `(stdlib.clone.clone-borrowed-value
+                  ,element-type
+                  ,item-source
+                  ,item-place
+                  ,root-key-expr
+                  ,item-path)]
               ["unit" `unit]
               ["bool" `(deref ,item-source)]
               ["char" `(deref ,item-source)]
@@ -57,6 +64,7 @@
                 `(stdlib.clone.clone-value
                   ,element-type
                   ,item-source
+                  ,item-place
                   ,root-key-expr
                   ,item-path)])]
           `(stdlib.clone.clone-fixed-array
@@ -98,7 +106,13 @@
           [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
           [cloned-item : comptime.Expr
             (match (type-kind element-type)
-              ["string" `(stdlib.string.copy ,item-source)]
+              ["string"
+                `(stdlib.clone.clone-borrowed-value
+                  ,element-type
+                  ,item-source
+                  ,item-place
+                  ,root-key-expr
+                  ,item-path)]
               ["unit" `unit]
               ["bool" `(deref ,item-source)]
               ["char" `(deref ,item-source)]
@@ -116,6 +130,7 @@
                 `(stdlib.clone.clone-value
                   ,element-type
                   ,item-source
+                  ,item-place
                   ,root-key-expr
                   ,item-path)])]
           `(stdlib.clone.clone-tuple
@@ -130,193 +145,377 @@
       (comptime.comptime-error
         "gen-clone: tuple index must be an integer literal")]))
 
-;; Name construction intentionally lives in macro CTFE rather than an ordinary
-;; helper call: every operation below is part of the source/native TLCI macro
-;; contract. Acronym boundaries follow `HTTPServer` -> `http-server`.
-;: Resolve and call one explicitly generated nominal clone dependency.
+;: Build a literal hook name from a nominal type using lowercase kebab case.
+;: Acronym boundaries follow `HTTPServer` -> `http-server`.
+(defmacro (nominal-hook-name
+  [T : type (:kind struct enum)]
+  [hook-prefix : String]
+  [diagnostic-prefix : String]
+  [empty-name : String]) : comptime.Expr
+  (let
+    [diagnostic : String (comptime.expr-string-value diagnostic-prefix)]
+    [type-name : String (type-nominal-name T)]
+    [length : i64 (__tl_string_length type-name)]
+    [index : i64 0]
+    [lowercase-alphabet : String "abcdefghijklmnopqrstuvwxyz"]
+    [decimal-digits : String "0123456789"]
+    [function-name : String (comptime.expr-string-value hook-prefix)]
+    [last-was-separator : bool false]
+    (if (= length 0)
+      (comptime.comptime-error
+        (comptime.string-append
+          diagnostic
+          (comptime.expr-string-value empty-name)))
+      unit)
+    (while (< index length)
+      (let
+        [code : i64 (cast (__tl_string_ref type-name index) : i64)]
+        [upper? : bool
+          (if (>= code 65)
+            (<= code 90)
+            false)]
+        [lower? : bool
+          (if (>= code 97)
+            (<= code 122)
+            false)]
+        [digit? : bool
+          (if (>= code 48)
+            (<= code 57)
+            false)]
+        [separator? : bool
+          (if (= code 45)
+            true
+            (= code 95))]
+        [category : i64 4]
+        (if separator?
+          (set! category 0)
+          unit)
+        (if upper?
+          (set! category 1)
+          unit)
+        (if lower?
+          (set! category 2)
+          unit)
+        (if digit?
+          (set! category 3)
+          unit)
+        (match category
+          [0
+            (if (if (= index 0)
+              true
+              last-was-separator)
+              (comptime.comptime-error
+                (comptime.string-append
+                  diagnostic
+                  "nominal name has an ambiguous separator"))
+              (begin
+                (set! function-name (comptime.string-append function-name "-"))
+                (set! last-was-separator true)))]
+          [1
+            (let
+              [previous-code : i64
+                (if (> index 0)
+                  (cast (__tl_string_ref type-name (- index 1)) : i64)
+                  0)]
+              [next-code : i64
+                (if (< (+ index 1) length)
+                  (cast (__tl_string_ref type-name (+ index 1)) : i64)
+                  0)]
+              [previous-lower? : bool
+                (if (>= previous-code 97)
+                  (<= previous-code 122)
+                  false)]
+              [previous-digit? : bool
+                (if (>= previous-code 48)
+                  (<= previous-code 57)
+                  false)]
+              [previous-upper? : bool
+                (if (>= previous-code 65)
+                  (<= previous-code 90)
+                  false)]
+              [next-lower? : bool
+                (if (>= next-code 97)
+                  (<= next-code 122)
+                  false)]
+              [word-boundary? : bool false]
+              (if previous-lower?
+                (set! word-boundary? true)
+                unit)
+              (if previous-digit?
+                (set! word-boundary? true)
+                unit)
+              (if previous-upper?
+                (set! word-boundary? next-lower?)
+                unit)
+              (if word-boundary?
+                (if (= last-was-separator false)
+                  (set!
+                    function-name
+                    (comptime.string-append function-name "-"))
+                  unit)
+                unit)
+              (set!
+                function-name
+                (comptime.string-append
+                  function-name
+                  (comptime.string-slice lowercase-alphabet (- code 65) 1)))
+              (set! last-was-separator false))]
+          [2
+            (set!
+              function-name
+              (comptime.string-append
+                function-name
+                (comptime.string-slice lowercase-alphabet (- code 97) 1)))
+            (set! last-was-separator false)]
+          [3
+            (set!
+              function-name
+              (comptime.string-append
+                function-name
+                (comptime.string-slice decimal-digits (- code 48) 1)))
+            (set! last-was-separator false)]
+          [_
+            (comptime.comptime-error
+              (comptime.string-append
+                diagnostic
+                "unsupported character in nominal name"))])
+        (set! index (+ index 1))))
+    (if last-was-separator
+      (comptime.comptime-error
+        (comptime.string-append diagnostic "nominal name ends in a separator"))
+      unit)
+    (comptime.expr-string function-name)))
+
+;: Use the canonical owner's hook when present, or check for an ordinary Copy read.
 (defmacro (clone-nominal-value
   [T : type (:kind struct enum)]
   [source : comptime.Expr]
-  [root-key-expr : comptime.Expr]
-  [path-expr : comptime.Expr]) : comptime.Expr
+  [copy-place : comptime.Expr]
+  [path-expr : comptime.Expr]
+  [hook-name : String]) : comptime.Expr
   (let
-    [type-key-text : String (type-key T)]
     [path : String (comptime.expr-string-value path-expr)]
-    [root-key : String (comptime.expr-string-value root-key-expr)]
-    (if (type-cleanup-owning? T)
-      (comptime.comptime-error
-        (comptime.string-append
-          "gen-clone: unsupported cleanup-owning type "
-          (comptime.string-append
-            type-key-text
-            (comptime.string-append " at " path))))
-      (if (string-eq type-key-text root-key)
-        (comptime.comptime-error
-          (comptime.string-append
-            "gen-clone: cyclic clone dependency reaches "
-            (comptime.string-append
-              root-key
-              (comptime.string-append " at " path))))
-        (let
-          [owner : String (type-nominal-module T)]
-          [owner-display : String
-            (if (string-eq owner "")
-              "<root>"
-              owner)]
-          [type-name : String (type-nominal-name T)]
-          [length : i64 (__tl_string_length type-name)]
-          [index : i64 0]
-          [lowercase-alphabet : String "abcdefghijklmnopqrstuvwxyz"]
-          [decimal-digits : String "0123456789"]
-          [function-name : String "clone-"]
-          [last-was-separator : bool false]
-          (if (= length 0)
-            (comptime.comptime-error
-              "gen-clone: nominal dependency name is empty")
-            unit)
-          (while (< index length)
-            (let
-              [code : i64 (cast (__tl_string_ref type-name index) : i64)]
-              [upper? : bool
-                (if (>= code 65)
-                  (<= code 90)
-                  false)]
-              [lower? : bool
-                (if (>= code 97)
-                  (<= code 122)
-                  false)]
-              [digit? : bool
-                (if (>= code 48)
-                  (<= code 57)
-                  false)]
-              [separator? : bool
-                (if (= code 45)
-                  true
-                  (= code 95))]
-              [category : i64 4]
-              (if separator?
-                (set! category 0)
-                unit)
-              (if upper?
-                (set! category 1)
-                unit)
-              (if lower?
-                (set! category 2)
-                unit)
-              (if digit?
-                (set! category 3)
-                unit)
-              (match category
-                [0
-                  (if (if (= index 0)
-                    true
-                    last-was-separator)
-                    (comptime.comptime-error
-                      "gen-clone: nominal name has an ambiguous separator")
-                    (begin
-                      (set!
-                        function-name
-                        (comptime.string-append function-name "-"))
-                      (set! last-was-separator true)))]
-                [1
-                  (let
-                    [previous-code : i64
-                      (if (> index 0)
-                        (cast (__tl_string_ref type-name (- index 1)) : i64)
-                        0)]
-                    [next-code : i64
-                      (if (< (+ index 1) length)
-                        (cast (__tl_string_ref type-name (+ index 1)) : i64)
-                        0)]
-                    [previous-lower? : bool
-                      (if (>= previous-code 97)
-                        (<= previous-code 122)
-                        false)]
-                    [previous-digit? : bool
-                      (if (>= previous-code 48)
-                        (<= previous-code 57)
-                        false)]
-                    [previous-upper? : bool
-                      (if (>= previous-code 65)
-                        (<= previous-code 90)
-                        false)]
-                    [next-lower? : bool
-                      (if (>= next-code 97)
-                        (<= next-code 122)
-                        false)]
-                    [word-boundary? : bool false]
-                    (if previous-lower?
-                      (set! word-boundary? true)
-                      unit)
-                    (if previous-digit?
-                      (set! word-boundary? true)
-                      unit)
-                    (if previous-upper?
-                      (set! word-boundary? next-lower?)
-                      unit)
-                    (if word-boundary?
-                      (if (= last-was-separator false)
-                        (set!
-                          function-name
-                          (comptime.string-append function-name "-"))
-                        unit)
-                      unit)
-                    (set!
-                      function-name
-                      (comptime.string-append
-                        function-name
-                        (comptime.string-slice lowercase-alphabet (- code 65) 1)))
-                    (set! last-was-separator false))]
-                [2
-                  (set!
-                    function-name
-                    (comptime.string-append
-                      function-name
-                      (comptime.string-slice lowercase-alphabet (- code 97) 1)))
-                  (set! last-was-separator false)]
-                [3
-                  (set!
-                    function-name
-                    (comptime.string-append
-                      function-name
-                      (comptime.string-slice decimal-digits (- code 48) 1)))
-                  (set! last-was-separator false)]
-                [_
-                  (comptime.comptime-error
-                    "gen-clone: unsupported character in nominal name")])
-              (set! index (+ index 1))))
-          (if last-was-separator
-            (comptime.comptime-error
-              "gen-clone: nominal name ends in a separator")
-            unit)
+    [owner : String (type-nominal-module T)]
+    [owner-display : String
+      (if (string-eq owner "")
+        "<root>"
+        owner)]
+    [function-name : String (comptime.expr-string-value hook-name)]
+    (if (comptime.module-value? owner function-name)
+      ;; The generated ordinary call deliberately leaves signature
+      ;; validation to the normal typechecker. This keeps clone
+      ;; dependencies subject to exactly the same borrow/return
+      ;; rules as any other function call.
+      (comptime.expr-call
+        (comptime.module-value-expr owner function-name)
+        (comptime.expr-list-cons source (comptime.expr-list-empty)))
+      (let
+        ;; Follow reflected fields, inspecting each nominal at most once.
+        ;; Legal recursive layouts have an owning edge, so they
+        ;; cannot take the Copy path even when a visit reaches a cycle.
+        [types : comptime.ExprList
+          (comptime.expr-list-cons
+            (comptime.type-expr T)
+            (comptime.expr-list-empty))]
+        [paths : comptime.ExprList
+          (comptime.expr-list-cons
+            (comptime.expr-string (type-nominal-name T))
+            (comptime.expr-list-empty))]
+        [seen : comptime.ExprList (comptime.expr-list-empty)]
+        [copyable? : bool true]
+        [type-count : i64 1]
+        [visited : i64 0]
+        (while (< visited type-count)
           (let
-            [present? : bool (comptime.module-value? owner function-name)]
-            (if present?
-              ;; The generated ordinary call deliberately leaves signature
-              ;; validation to the normal typechecker. This keeps clone
-              ;; dependencies subject to exactly the same borrow/return
-              ;; rules as any other function call.
-              (comptime.expr-call
-                (comptime.module-value-expr owner function-name)
-                (comptime.expr-list-cons source (comptime.expr-list-empty)))
-              (comptime.comptime-error
-                (comptime.string-append
-                  "gen-clone: missing explicit dependency "
-                  (comptime.string-append
-                    function-name
+            [index : i64 (- (- type-count 1) visited)]
+            [ty : comptime.Expr (comptime.expr-list-type-nth types index)]
+            [kind : String (type-kind ty)]
+            [ty-path : String
+              (comptime.expr-string-value (comptime.expr-list-nth paths index))]
+            [inspect? : bool true]
+            (if (if (string-eq kind "struct")
+              true
+              (string-eq kind "enum"))
+              (let
+                [key : String (type-key ty)]
+                [seen-count : i64 (comptime.expr-list-length seen)]
+                [previous : i64 0]
+                (while (< previous seen-count)
+                  (if (string-eq
+                    key
+                    (comptime.expr-string-value
+                      (comptime.expr-list-nth seen previous)))
+                    (set! inspect? false)
+                    unit)
+                  (set! previous (+ previous 1)))
+                (if inspect?
+                  (set!
+                    seen
+                    (comptime.expr-list-cons (comptime.expr-string key) seen))
+                  unit))
+              unit)
+            (if inspect?
+              (begin
+                (if (type-cleanup-owning? ty)
+                  (comptime.comptime-error
                     (comptime.string-append
-                      " for "
+                      "gen-clone: unsupported cleanup-owning type "
                       (comptime.string-append
-                        (type-key T)
-                        (comptime.string-append
-                          " at "
-                          (comptime.string-append
-                            path
-                            (comptime.string-append
-                              " from owner "
+                        (type-key ty)
+                        (comptime.string-append " at " ty-path))))
+                  unit)
+                (match (match kind
+                  ["struct" "product"]
+                  ["tuple" "product"]
+                  [_ kind])
+                  ["unit" unit]
+                  ["never" unit]
+                  ["bool" unit]
+                  ["char" unit]
+                  ["i64" unit]
+                  ["i32" unit]
+                  ["i16" unit]
+                  ["i8" unit]
+                  ["u64" unit]
+                  ["u32" unit]
+                  ["u16" unit]
+                  ["u8" unit]
+                  ["f64" unit]
+                  ["f32" unit]
+                  ["string" (set! copyable? false)]
+                  ["box" (set! copyable? false)]
+                  ["dyn-array" (set! copyable? false)]
+                  ["array"
+                    (let
+                      [element : comptime.Expr (array-element-type ty)]
+                      (set!
+                        types
+                        (comptime.expr-list-cons
+                          (comptime.type-expr element)
+                          types))
+                      (set!
+                        paths
+                        (comptime.expr-list-cons
+                          (comptime.expr-string
+                            (comptime.string-append ty-path "[]"))
+                          paths))
+                      (set! type-count (+ type-count 1)))]
+                  ["product"
+                    (let
+                      [struct? : bool (string-eq kind "struct")]
+                      [count : i64
+                        (if struct?
+                          (struct-field-count ty)
+                          (tuple-element-count ty))]
+                      [field : i64 0]
+                      (while (< field count)
+                        (let
+                          [member : comptime.Expr
+                            (if struct?
+                              (struct-field-type ty field)
+                              (tuple-element-type ty field))]
+                          [suffix : String
+                            (if struct?
                               (comptime.string-append
-                                owner-display
-                                "; invoke gen-clone in its owner module first"))))))))))))))))
+                                "."
+                                (struct-field-name ty field))
+                              (comptime.string-append
+                                "["
+                                (comptime.string-append
+                                  (comptime.int->string field)
+                                  "]")))]
+                          (set!
+                            types
+                            (comptime.expr-list-cons
+                              (comptime.type-expr member)
+                              types))
+                          (set!
+                            paths
+                            (comptime.expr-list-cons
+                              (comptime.expr-string
+                                (comptime.string-append ty-path suffix))
+                              paths))
+                          (set! type-count (+ type-count 1))
+                          (set! field (+ field 1))))
+                      unit)]
+                  ["enum"
+                    (let
+                      [count : i64 (enum-variant-count ty)]
+                      [variant : i64 0]
+                      (while (< variant count)
+                        (let
+                          [payload-count : i64
+                            (enum-variant-payload-count ty variant)]
+                          [payload : i64 0]
+                          (while (< payload payload-count)
+                            (let
+                              [member : comptime.Expr
+                                (enum-variant-payload-type ty variant payload)]
+                              [variant-path : String
+                                (comptime.string-append
+                                  ty-path
+                                  (comptime.string-append
+                                    "."
+                                    (enum-variant-name ty variant)))]
+                              [member-path : String
+                                (comptime.string-append
+                                  variant-path
+                                  (comptime.string-append
+                                    "["
+                                    (comptime.string-append
+                                      (comptime.int->string payload)
+                                      "]")))]
+                              (set!
+                                types
+                                (comptime.expr-list-cons
+                                  (comptime.type-expr member)
+                                  types))
+                              (set!
+                                paths
+                                (comptime.expr-list-cons
+                                  (comptime.expr-string member-path)
+                                  paths))
+                              (set! type-count (+ type-count 1))
+                              (set! payload (+ payload 1))))
+                          (set! variant (+ variant 1))))
+                      unit)]
+                  [_
+                    (comptime.comptime-error
+                      (comptime.string-append
+                        "gen-clone: unsupported type "
+                        (comptime.string-append
+                          (type-key ty)
+                          (comptime.string-append " at " ty-path))))]))
+              unit)
+            (if copyable?
+              (set! visited (+ visited 1))
+              (set! visited type-count))))
+        (if copyable?
+          (let
+            [place-type : comptime.Expr (comptime.expr-type copy-place)]
+            (if (string-eq (type-kind place-type) "region")
+              `(let
+                [__clone_copy_source ,source]
+                (deref __clone_copy_source))
+              copy-place))
+          (comptime.comptime-error
+            (comptime.string-append
+              "gen-clone: missing explicit dependency "
+              (comptime.string-append
+                function-name
+                (comptime.string-append
+                  " for "
+                  (comptime.string-append
+                    (type-key T)
+                    (comptime.string-append
+                      " at "
+                      (comptime.string-append
+                        path
+                        (comptime.string-append
+                          " from owner "
+                          (comptime.string-append
+                            owner-display
+                            "; invoke gen-clone in its owner module first"))))))))))))))
 
 ;: Emit an ordinary deep copy for one source expression.
 ;:
@@ -326,6 +525,7 @@
 (defmacro (clone-value
   [T : type]
   [source : comptime.Expr]
+  [copy-place : comptime.Expr]
   [root-key-expr : comptime.Expr]
   [path-expr : comptime.Expr]) : comptime.Expr
   (let
@@ -343,6 +543,7 @@
           (stdlib.clone.clone-value
             ,(comptime.box-element-type T)
             ,source
+            (deref ,source)
             ,root-key-expr
             ,path-expr))
         (let
@@ -367,26 +568,54 @@
             `(stdlib.clone.clone-borrowed-value
               String
               ,source
+              ,copy-place
               ,root-key-expr
               ,path-expr)
             `(stdlib.clone.clone-borrowed-value
               ,value-type
               ,source
+              ,copy-place
               ,root-key-expr
               ,path-expr))))
-      ;; Only a Copy payload binds by value; its copy is the clone.
-      source)))
+      ;; A by-value payload still has to obey clone's narrower type rules.
+      (match kind
+        ["unit" source]
+        ["never" source]
+        ["bool" source]
+        ["char" source]
+        ["i64" source]
+        ["i32" source]
+        ["i16" source]
+        ["i8" source]
+        ["u64" source]
+        ["u32" source]
+        ["u16" source]
+        ["u8" source]
+        ["f64" source]
+        ["f32" source]
+        [_
+          `(stdlib.clone.clone-borrowed-value
+            ,T
+            (& ,source)
+            ,source
+            ,root-key-expr
+            ,path-expr)]))))
 
 ;: Emit an ordinary deep copy for one shared-reference source expression.
+;: A Copy nominal reads its original place so it doesn't inherit a loan tag.
 (defmacro (clone-borrowed-value
   [T : type]
   [source : comptime.Expr]
+  [copy-place : comptime.Expr]
   [root-key-expr : comptime.Expr]
   [path-expr : comptime.Expr]) : comptime.Expr
   (let
     [kind : String (type-kind T)]
     [path : String (comptime.expr-string-value path-expr)]
-    (match kind
+    ;; Enums and structs share the nominal validation and hook lookup.
+    (match (if (string-eq kind "enum")
+      "struct"
+      kind)
       ["unit" `unit]
       ["never" `(deref ,source)]
       ["bool" `(deref ,source)]
@@ -401,7 +630,46 @@
       ["u8" `(deref ,source)]
       ["f64" `(deref ,source)]
       ["f32" `(deref ,source)]
-      ["string" `(stdlib.string.copy ,source)]
+      ["string"
+        (let
+          [copy : comptime.Expr
+            (if (comptime.module-value? "stdlib.string" "copy")
+              (comptime.module-value-expr "stdlib.string" "copy")
+              `unit)]
+          ;; A dotted spelling still requires an import at the call site.
+          ;; Only a resolved reference can be called from any module.
+          [name : String
+            (match copy
+              [(comptime.Expr.Var name) name]
+              [_ ""])]
+          (if (string-eq name "copy")
+            (comptime.expr-call
+              copy
+              (comptime.expr-list-cons source (comptime.expr-list-empty)))
+            ;; Allocate in the expansion so the macro module stays usable in PIC
+            ;; programs that only load its declarations.
+            `(let
+              [__clone_text ,source]
+              [__clone_text_len : i64 (__tl_string_length __clone_text)]
+              [__clone_bytes : (__tl_dyn-array u8)
+                (__tl_make-array u8 __clone_text_len)]
+              [__clone_dst : (MutPtr u8)
+                (unsafe
+                  (ptr-cast (__tl_array-data __clone_bytes) : (MutPtr u8)))]
+              [__clone_src : (Ptr u8)
+                (unsafe
+                  (string-data __clone_text))]
+              [__clone_offset : i64 0]
+              (while (< __clone_offset __clone_text_len)
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset __clone_dst __clone_offset)
+                    (ptr-read (ptr-offset __clone_src __clone_offset))))
+                (set! __clone_offset (+ __clone_offset 1)))
+              (unsafe
+                (string-from-bytes
+                  (ptr-cast __clone_dst : (Ptr u8))
+                  __clone_text_len)))))]
       ["tuple"
         `(let
           [__clone_tuple_source ,source]
@@ -441,6 +709,7 @@
                 (stdlib.clone.clone-value
                   ,element-type
                   (& (array-ref __clone_source __clone_index))
+                  (array-ref __clone_source __clone_index)
                   ,root-key-expr
                   ,element-path))
               (set! __clone_index (+ __clone_index 1)))
@@ -456,12 +725,39 @@
               (stdlib.clone.clone-value
                 ,element-type
                 (& (deref (deref __clone_box_source)))
+                (deref (deref __clone_box_source))
                 ,root-key-expr
                 ,element-path))))]
       ["struct"
-        `(stdlib.clone.clone-nominal-value ,T ,source ,root-key-expr ,path-expr)]
-      ["enum"
-        `(stdlib.clone.clone-nominal-value ,T ,source ,root-key-expr ,path-expr)]
+        (let
+          [type-key-text : String (type-key T)]
+          [root-key : String (comptime.expr-string-value root-key-expr)]
+          (if (type-cleanup-owning? T)
+            (comptime.comptime-error
+              (comptime.string-append
+                "gen-clone: unsupported cleanup-owning type "
+                (comptime.string-append
+                  type-key-text
+                  (comptime.string-append " at " path))))
+            unit)
+          (if (string-eq type-key-text root-key)
+            (comptime.comptime-error
+              (comptime.string-append
+                "gen-clone: cyclic clone dependency reaches "
+                (comptime.string-append
+                  root-key
+                  (comptime.string-append " at " path))))
+            unit)
+          `(stdlib.clone.clone-nominal-value
+            ,T
+            ,source
+            ,copy-place
+            ,path-expr
+            (stdlib.clone.nominal-hook-name
+              ,T
+              "clone-"
+              "gen-clone: "
+              "nominal dependency name is empty")))]
       [_
         (comptime.comptime-error
           (comptime.string-append
@@ -474,13 +770,14 @@
 ;:
 ;: Pass a place or an rvalue such as a call result; for a conditional or block
 ;: (`if`, `let`, or `match`), call `clone.deep` in each result position.
-;: A nominal type must expose its generated clone function from its owner.
+;: Move-only nominals must expose a clone function from their owner.
 (defmacro (deep [value : comptime.Expr]) : comptime.Expr
   (let
     [value-type : comptime.Expr (comptime.expr-type value)]
     [kind : String (type-kind value-type)]
     [needs-binding? : bool
       (match kind
+        ["string" true]
         ["tuple" true]
         ["array" true]
         ["dyn-array" true]
@@ -494,7 +791,12 @@
         (comptime.expr-shared-let-scope
           name
           value
-          `(stdlib.clone.clone-value ,value-type ,source "" "clone.deep")))
+          `(stdlib.clone.clone-value
+            ,value-type
+            ,source
+            (deref ,source)
+            ""
+            "clone.deep")))
       (match kind
         ["unit" value]
         ["never" value]
@@ -514,6 +816,7 @@
           `(stdlib.clone.clone-borrowed-value
             ,value-type
             (& ,value)
+            ,value
             ""
             "clone.deep")]))))
 
@@ -542,6 +845,7 @@
             `(stdlib.clone.clone-value
               ,field-type
               ,field-source
+              ,field-place
               ,root-key-expr
               ,field-path)
             args))
@@ -596,6 +900,7 @@
                 `(stdlib.clone.clone-value
                   ,payload-type
                   ,binding
+                  (deref ,binding)
                   ,root-key-expr
                   ,payload-path)
                 args))
@@ -617,9 +922,51 @@
 
 ;: Generate a public ordinary `clone-<type>` function in a nominal type's owner.
 ;:
-;: The source is a shared borrow so the function preserves its input. Every
-;: nominal dependency must already expose its own generated clone function.
+;: The source is a shared borrow so the function preserves its input.
+;: Move-only nominal dependencies must already expose a clone function.
 (defmacro (gen-clone [T : type (:kind struct enum)]) : Decls
+  (let
+    [owner : String (type-nominal-module T)]
+    [caller : String (comptime.current-module)]
+    (if (string-eq owner caller)
+      unit
+      (let
+        [owner-display : String
+          (if (string-eq owner "")
+            "<root>"
+            owner)]
+        [caller-display : String
+          (if (string-eq caller "")
+            "<root>"
+            caller)]
+        (comptime.comptime-error
+          (comptime.string-append
+            "gen-clone: "
+            (comptime.string-append
+              (type-nominal-name T)
+              (comptime.string-append
+                " must be generated in its canonical owner module "
+                (comptime.string-append
+                  owner-display
+                  (comptime.string-append
+                    " (current module "
+                    (comptime.string-append caller-display ")")))))))))
+    (if (type-cleanup-owning? T)
+      (comptime.comptime-error
+        (comptime.string-append
+          "gen-clone: unsupported cleanup-owning root "
+          (type-key T)))
+      unit)
+    `(stdlib.clone.gen-clone-named
+      ,T
+      (stdlib.clone.nominal-hook-name
+        ,T
+        "clone-"
+        "gen-clone: "
+        "nominal root name is empty"))))
+
+;: Emit the clone declaration after the nominal hook name has been computed.
+(defmacro (gen-clone-named [T : type (:kind struct enum)] [hook-name : String]) : Decls
   (let
     [kind : String (type-kind T)]
     [owner : String (type-nominal-module T)]
@@ -627,136 +974,7 @@
       (if (string-eq owner "")
         "<root>"
         owner)]
-    [type-name : String (type-nominal-name T)]
-    [length : i64 (__tl_string_length type-name)]
-    [index : i64 0]
-    [lowercase-alphabet : String "abcdefghijklmnopqrstuvwxyz"]
-    [decimal-digits : String "0123456789"]
-    [function-name-text : String "clone-"]
-    [last-was-separator : bool false]
-    (if (type-cleanup-owning? T)
-      (comptime.comptime-error
-        (comptime.string-append
-          "gen-clone: unsupported cleanup-owning root "
-          (type-key T)))
-      unit)
-    (if (= length 0)
-      (comptime.comptime-error "gen-clone: nominal root name is empty")
-      unit)
-    (while (< index length)
-      (let
-        [code : i64 (cast (__tl_string_ref type-name index) : i64)]
-        [upper? : bool
-          (if (>= code 65)
-            (<= code 90)
-            false)]
-        [lower? : bool
-          (if (>= code 97)
-            (<= code 122)
-            false)]
-        [digit? : bool
-          (if (>= code 48)
-            (<= code 57)
-            false)]
-        [separator? : bool
-          (if (= code 45)
-            true
-            (= code 95))]
-        [category : i64 4]
-        (if separator?
-          (set! category 0)
-          unit)
-        (if upper?
-          (set! category 1)
-          unit)
-        (if lower?
-          (set! category 2)
-          unit)
-        (if digit?
-          (set! category 3)
-          unit)
-        (match category
-          [0
-            (if (if (= index 0)
-              true
-              last-was-separator)
-              (comptime.comptime-error
-                "gen-clone: nominal name has an ambiguous separator")
-              (begin
-                (set!
-                  function-name-text
-                  (comptime.string-append function-name-text "-"))
-                (set! last-was-separator true)))]
-          [1
-            (let
-              [previous-code : i64
-                (if (> index 0)
-                  (cast (__tl_string_ref type-name (- index 1)) : i64)
-                  0)]
-              [next-code : i64
-                (if (< (+ index 1) length)
-                  (cast (__tl_string_ref type-name (+ index 1)) : i64)
-                  0)]
-              [previous-lower? : bool
-                (if (>= previous-code 97)
-                  (<= previous-code 122)
-                  false)]
-              [previous-digit? : bool
-                (if (>= previous-code 48)
-                  (<= previous-code 57)
-                  false)]
-              [previous-upper? : bool
-                (if (>= previous-code 65)
-                  (<= previous-code 90)
-                  false)]
-              [next-lower? : bool
-                (if (>= next-code 97)
-                  (<= next-code 122)
-                  false)]
-              [word-boundary? : bool false]
-              (if previous-lower?
-                (set! word-boundary? true)
-                unit)
-              (if previous-digit?
-                (set! word-boundary? true)
-                unit)
-              (if previous-upper?
-                (set! word-boundary? next-lower?)
-                unit)
-              (if word-boundary?
-                (if (= last-was-separator false)
-                  (set!
-                    function-name-text
-                    (comptime.string-append function-name-text "-"))
-                  unit)
-                unit)
-              (set!
-                function-name-text
-                (comptime.string-append
-                  function-name-text
-                  (comptime.string-slice lowercase-alphabet (- code 65) 1)))
-              (set! last-was-separator false))]
-          [2
-            (set!
-              function-name-text
-              (comptime.string-append
-                function-name-text
-                (comptime.string-slice lowercase-alphabet (- code 97) 1)))
-            (set! last-was-separator false)]
-          [3
-            (set!
-              function-name-text
-              (comptime.string-append
-                function-name-text
-                (comptime.string-slice decimal-digits (- code 48) 1)))
-            (set! last-was-separator false)]
-          [_
-            (comptime.comptime-error
-              "gen-clone: unsupported character in nominal name")])
-        (set! index (+ index 1))))
-    (if last-was-separator
-      (comptime.comptime-error "gen-clone: nominal name ends in a separator")
-      unit)
+    [function-name-text : String (comptime.expr-string-value hook-name)]
     (if (comptime.module-value? owner function-name-text)
       (comptime.comptime-error
         (comptime.string-append

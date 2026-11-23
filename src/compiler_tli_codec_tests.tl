@@ -162,7 +162,7 @@
       inputs
       params
       (tli.TliType.Never)
-      (tli.TliFnSummary 184 -9223372036854775807 extra writes 0 0))))
+      (tli.TliFnSummary 440 -9223372036854775807 extra writes 0 0))))
 
 (define (tli-test-const [index : i64]) : tli.TliConst
   (match index
@@ -363,6 +363,10 @@
         (& (array-ref module.global-inits 0))
         "__global_init_z"
         "startup order stays intact")
+      (test.assert-i64-eq
+        fn.summary.effect-flags
+        440
+        "arena argument effect bit")
       (test.assert-i64-eq
         fn.summary.arena-arg-store-mask
         -9223372036854775807

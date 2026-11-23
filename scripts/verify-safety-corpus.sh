@@ -63,11 +63,9 @@ NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
 
 BUILD_TARGET=linux-x86_64
-CHECK_BIN="$WORKDIR/selfhost-check"
 TARGET_CFG_ARGS="--cfg linux --cfg unix --cfg target-linux --cfg os-linux"
 if [ "$HOST_OS" = windows ]; then
     BUILD_TARGET=windows-x86_64
-    CHECK_BIN="$WORKDIR/selfhost-check.exe"
     TARGET_CFG_ARGS="--cfg windows --cfg target-windows --cfg os-windows"
 fi
 
@@ -75,7 +73,6 @@ case "$WORKDIR" in
     /*) WORKDIR_ABS=$WORKDIR ;;
     *) WORKDIR_ABS=$ROOT/$WORKDIR ;;
 esac
-CHECK_BIN_ABS="$WORKDIR_ABS/$(basename "$CHECK_BIN")"
 
 # Windows-target check-only rows run from either host and never execute. Each
 # fixture is checked against the source stdlib roots, and again from a
@@ -88,7 +85,7 @@ windows_target_check() {
     _route=$4
     if [ "$_route" = source ]; then
         run_case "$_out" "$_err" - \
-            "$CHECK_BIN" check "$_source" --target windows-x86_64 \
+            "$COMPILER" check "$_source" --target windows-x86_64 \
             --stdlib-root "$ROOT/stdlib" \
             --stdlib-root "$ROOT/src" \
             --stdlib-root "$ROOT/tests/integration"
@@ -97,7 +94,7 @@ windows_target_check() {
         run_case "$_out" "$_err" - \
             sh -c 'cd "$1" && shift && exec "$@"' windows-embedded-check \
             "$WORKDIR_ABS/embedded-stdlib-cwd" \
-            "$CHECK_BIN_ABS" check "$ROOT/$_source" \
+            "$COMPILER" check "$ROOT/$_source" \
             --target windows-x86_64
     fi
 }
@@ -273,58 +270,6 @@ assemble_link_windows() {
     fi
 }
 
-build_selfhost_checker() {
-    out="$WORKDIR/selfhost-check.build.out"
-    err="$WORKDIR/selfhost-check.build.err"
-    if [ "$HOST_OS" = windows ]; then
-        asm="$WORKDIR/selfhost-check.s"
-        obj="$WORKDIR/selfhost-check.obj"
-        run_case "$out" "$err" 0 \
-            "$COMPILER" compile src/main.tl \
-            --target "$BUILD_TARGET" \
-            $TARGET_CFG_ARGS \
-            --stdlib-root stdlib \
-            -o "$asm"
-        if [ "$code" -ne 0 ]; then
-            echo "stdout:" >&2
-            sed 's/^/  /' "$out" >&2 || true
-            echo "stderr:" >&2
-            sed 's/^/  /' "$err" >&2 || true
-            fail "src/main.tl compile failed with exit $code"
-        fi
-        assemble_link_windows "$asm" "$obj" "$CHECK_BIN" "src/main.tl" "$out" "$err"
-    else
-        # The compile-only bootstrapped stage1 has `compile`/`check` but not the
-        # `build` host action, so assemble + link the checker by hand (mirrors
-        # build_case_program's Linux path).
-        asm="$WORKDIR/selfhost-check.s"
-        obj="$WORKDIR/selfhost-check.o"
-        run_case "$out" "$err" 0 \
-            "$COMPILER" compile src/main.tl \
-            --target "$BUILD_TARGET" \
-            $TARGET_CFG_ARGS \
-            --stdlib-root stdlib \
-            -o "$asm"
-        if [ "$code" -ne 0 ]; then
-            echo "stdout:" >&2
-            sed 's/^/  /' "$out" >&2 || true
-            echo "stderr:" >&2
-            sed 's/^/  /' "$err" >&2 || true
-            fail "src/main.tl compile failed with exit $code"
-        fi
-        if ! as "$asm" -o "$obj" < /dev/null >> "$out" 2>> "$err"; then
-            show_stream_if_nonempty stderr "$err"
-            fail "src/main.tl assemble failed"
-        fi
-        entry=$(linux_entry_symbol_for_asm "$asm") || exit $?
-        if ! ld "$obj" -o "$CHECK_BIN" -static -e "$entry" \
-            < /dev/null >> "$out" 2>> "$err"; then
-            show_stream_if_nonempty stderr "$err"
-            fail "src/main.tl link failed"
-        fi
-    fi
-}
-
 safe_name() {
     safe_name_rest=$1
     case_name=
@@ -449,7 +394,7 @@ run_manifest_case() {
         check-ok)
             echo "[safety-corpus] check-ok $case_id"
             run_case "$out" "$err" 0 \
-                "$CHECK_BIN" check "$source" \
+                "$COMPILER" check "$source" \
                 --stdlib-root "$ROOT/stdlib" \
                 --stdlib-root "$ROOT/src" \
                 --stdlib-root "$ROOT/tests/integration"
@@ -462,7 +407,7 @@ run_manifest_case() {
         check-fail)
             echo "[safety-corpus] check-fail $case_id"
             run_case "$out" "$err" - \
-                "$CHECK_BIN" check "$source" \
+                "$COMPILER" check "$source" \
                 --stdlib-root "$ROOT/stdlib" \
                 --stdlib-root "$ROOT/src" \
                 --stdlib-root "$ROOT/tests/integration"
@@ -681,7 +626,6 @@ expected_cases=$(awk -F '|' '
     END { if (invalid) exit 1; print count + 0 }
 ' "$NORMALIZED_MANIFEST") || fail "infrastructure-resource-failure: malformed or duplicate manifest row"
 [ "$expected_cases" -gt 0 ] || fail "infrastructure-resource-failure: manifest contains no cases"
-build_selfhost_checker
 for_each_manifest_case "$NORMALIZED_MANIFEST" run_manifest_case
 [ "$checked" -eq "$expected_cases" ] || fail "infrastructure-resource-failure: executed $checked of $expected_cases cases"
 

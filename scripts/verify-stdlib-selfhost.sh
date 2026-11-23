@@ -20,6 +20,7 @@ case "$COMPILER" in
     *.exe) ;;
     *) [ "$HOST_OS" = windows ] && COMPILER="$COMPILER.exe" ;;
 esac
+gate_require_compiler
 # Negative witnesses: the selfhost typechecker must REJECT these with the given
 # diagnostic substring. Every other witness must be accepted (parse + typecheck
 # clean). Keep this list in sync with the `expect-fail` rows of
@@ -303,23 +304,6 @@ reject_diag() {
 # A crash is a real compiler bug, not a flake — do not retry it (see the
 # no-retry policy in scripts/ci-verify.sh).
 
-WORKDIR="$ROOT/target/stdlib-selfhost-verify"
-rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR"
-CHECK_BIN="$WORKDIR/check"
-[ "$HOST_OS" = windows ] && CHECK_BIN="$WORKDIR/check.exe"
-CHECK_OUT="$WORKDIR/check.compile.out"
-CHECK_ERR="$WORKDIR/check.compile.err"
-BUILD_TARGET=linux-x86_64
-[ "$HOST_OS" = windows ] && BUILD_TARGET=windows-x86_64
-
-if ! "$COMPILER" build src/main.tl --target "$BUILD_TARGET" \
-    --stdlib-root stdlib -o "$CHECK_BIN" >"$CHECK_OUT" 2>"$CHECK_ERR"; then
-    echo "FAIL: src/main.tl build failed" >&2
-    sed 's/^/  /' "$CHECK_ERR" >&2 || true
-    exit 1
-fi
-
 # Sets the global `expected` to 1 when the (rc,out) pair matches the witness
 # expectation: a reject witness ($2 non-empty) must fail AND carry the diagnostic
 # substring; a positive witness must pass cleanly. The substring test is a
@@ -343,7 +327,7 @@ checked=0
 for witness in stdlib/tests/*.tl; do
     checked=$((checked + 1))
     expect="$(reject_diag "$witness")"
-    if out="$("$CHECK_BIN" check "$witness" --stdlib-root stdlib 2>&1)"; then
+    if out="$("$COMPILER" check "$witness" --stdlib-root stdlib 2>&1)"; then
         rc=0
     else
         rc=$?

@@ -10,8 +10,25 @@
 (import stdlib.fs)
 (import stdlib.json)
 (import stdlib.process)
+(import stdlib.thread)
+(import stdlib.env)
+(import stdlib.str_cat)
 (import stdlib.vector)
 (import (vector.vector String core) as strings)
+
+(defenum MaybeWorker
+  (NoWorker)
+  (HasWorker thread.ThreadString))
+
+;; Read-only inputs published on the main thread before spawning a worker batch,
+;; never mutated while workers run. Workers only read and copy into their own
+;; atomic arenas, while scalar (mask, target) pairs are captured by value.
+(define batch-inspector : String
+  "")
+(define batch-root : String
+  "")
+(define batch-cfg-names : strings.Vec
+  (strings.new))
 
 (defstruct ConfigSpace
   (names strings.Vec)
@@ -250,75 +267,239 @@
       (set! index (+ index 1)))
     count))
 
+(define (worker-count) : i64
+  (match (env.get "TYPELISP_CORE_IR_BOUNDARY_WORKERS")
+    [(env.EnvSomeString raw)
+      (let
+        [parsed : i64 (string.>int (& raw))]
+        (cond [(< parsed 1) 1] [(> parsed 8) 8] [else parsed]))]
+    [(env.EnvNoString) 4]))
+
+(define (build-inspector-command
+  [inspector : (& inspector str)]
+  [root : (& root str)]
+  [names : (& names strings.Vec)]
+  [mask : i64]
+  [target : i64]) : process.ProcessCommand
+  (let
+    [command : process.ProcessCommand
+      (process.command-with-arg
+        (process.command
+          (string.copy inspector)
+          (process.args-single (string.copy root)))
+        (if (= target 0)
+          "linux-x86_64"
+          "windows-x86_64"))]
+    [bits : i64 mask]
+    [index : i64 0]
+    (while (< index (strings.len names))
+      (when
+        (= (% bits 2) 1)
+        (set!
+          command
+          (process.command-with-arg command (strings.get names index ""))))
+      (set! bits (/ bits 2))
+      (set! index (+ index 1)))
+    command))
+
+;; Encode one inspector ProcessOutput into a self-delimiting String:
+;;   "E" + error-message
+;;   "O" + status + "\n" + stderr-len + "\n" + stderr + stdout
+(define (run-inspector-encoded [mask : i64] [target : i64]) : String
+  (let
+    [command : process.ProcessCommand
+      (build-inspector-command
+        (& batch-inspector)
+        (& batch-root)
+        (& batch-cfg-names)
+        mask
+        target)]
+    (match (process.run command)
+      [(process.OkProcessOutput output)
+        (let
+          [status : i64 (process.output-status (& output))]
+          [stderr : String (process.output-stderr (& output))]
+          [stdout : String (process.output-stdout (& output))]
+          (str_cat.str-cat
+            "O"
+            (string.int->string status)
+            "\n"
+            (string.int->string (string.string-length (& stderr)))
+            "\n"
+            stderr
+            stdout))]
+      [(process.ErrProcessOutput error)
+        (str_cat.str-cat "E" (process.error-message error))])))
+
+(define (observe-encoded-result!
+  [policy : (&mut policy Policy)]
+  [space : (&mut space ConfigSpace)]
+  [mask : i64]
+  [target : i64]
+  [encoded : (& encoded str)]) : unit
+  (let
+    [total-len : i64 (string.string-length encoded)]
+    (require (> total-len 0) "dependency boundary: empty worker result")
+    (let
+      [tag : char (string.string-ref encoded 0)]
+      (if (= tag 'E')
+        (fail (string.substring encoded 1 (- total-len 1)))
+        (let
+          [nl1 : i64 (string.index-of-byte encoded 1 (cast 10 : u8))]
+          [_ok1 : unit
+            (require (> nl1 1) "dependency boundary: malformed worker status")]
+          [status-text : String (string.substring encoded 1 (- nl1 1))]
+          [status : i64 (string.>int (& status-text))]
+          [nl2 : i64 (string.index-of-byte encoded (+ nl1 1) (cast 10 : u8))]
+          [_ok2 : unit
+            (require
+              (> nl2 (+ nl1 1))
+              "dependency boundary: malformed worker stderr length")]
+          [stderr-len-text : String
+            (string.substring encoded (+ nl1 1) (- nl2 (+ nl1 1)))]
+          [stderr-len : i64 (string.>int (& stderr-len-text))]
+          [stderr-start : i64 (+ nl2 1)]
+          [stdout-start : i64 (+ stderr-start stderr-len)]
+          [_ok3 : unit
+            (require
+              (and (>= stderr-len 0) (<= stdout-start total-len))
+              "dependency boundary: malformed worker payload")]
+          [stderr : String (string.substring encoded stderr-start stderr-len)]
+          [stdout : String
+            (string.substring encoded stdout-start (- total-len stdout-start))]
+          (when
+            (!= status 0)
+            (io.eprintln
+              "dependency boundary: inspector failed for configuration {} target {} (exit {})"
+              mask
+              target
+              status)
+            (io.print-error stderr)
+            (fail "canonical frontend processing failed"))
+          (require
+            (= (string.string-length (& stderr)) 0)
+            "dependency boundary: unexpected inspector stderr")
+          (observe-output! policy space (& stdout)))))))
+
+(define (copy-string-vec [source : (& source strings.Vec)]) : strings.Vec
+  (let
+    [out : strings.Vec (strings.new)]
+    [i : i64 0]
+    (while (< i (strings.len source))
+      (strings.push-ref! (&mut out) (strings.get source i ""))
+      (set! i (+ i 1)))
+    out))
+
 (define (check [inspector : String] [root : String] [policy-path : String]) : i64
   (let
     [policy : Policy (read-policy policy-path (& root))]
     [space : ConfigSpace (ConfigSpace (strings.new) (strings.new))]
-    [mask : i64 0]
+    [workers : i64 (worker-count)]
+    [next-job : i64 0]
     [index : i64 0]
     ;; New names append stable bit positions. Previously visited assignments
     ;; already covered the new bits as false, so extending the mask range
     ;; explores the complete discovered boolean space without restarting jobs.
-    (while (< mask (configuration-count (& space.names)))
+    ;; Dispatch pending (mask, target) pairs in parallel batches of `workers`
+    ;; isolated inspector processes, then observe results in exact order.
+    (set! batch-inspector (string.copy (& inspector)))
+    (set! batch-root (string.copy (& root)))
+    (while (< next-job (* (configuration-count (& space.names)) 2))
       (let
-        [target : i64 0]
-        (while (< target 2)
+        [total-jobs : i64 (* (configuration-count (& space.names)) 2)]
+        [remaining : i64 (- total-jobs next-job)]
+        [batch-size : i64
+          (if (< remaining workers)
+            remaining
+            workers)]
+        (if (= batch-size 1)
           (let
+            [mask : i64 (/ next-job 2)]
+            [target : i64 (% next-job 2)]
             [command : process.ProcessCommand
-              (process.command-with-arg
-                (process.command
-                  (string.copy (& inspector))
-                  (process.args-single (string.copy (& root))))
-                (if (= target 0)
-                  "linux-x86_64"
-                  "windows-x86_64"))]
-            [bits : i64 mask]
-            (set! index 0)
-            (while (< index (strings.len (& space.names)))
-              (if (= (% bits 2) 1)
-                (set!
-                  command
-                  (process.command-with-arg
-                    command
-                    (strings.get (& space.names) index "")))
-                unit)
-              (set! bits (/ bits 2))
-              (set! index (+ index 1)))
+              (build-inspector-command
+                (& inspector)
+                (& root)
+                (& space.names)
+                mask
+                target)]
             (match (process.run command)
               [(process.OkProcessOutput output)
-                (if (= (process.output-status (& output)) 0)
-                  unit
-                  (begin
-                    (io.eprintln
-                      "dependency boundary: inspector failed for configuration {} target {} (exit {})"
-                      mask
-                      target
-                      (process.output-status (& output)))
-                    (io.print-error (process.output-stderr (& output)))
-                    (fail "canonical frontend processing failed")))
+                (when
+                  (!= (process.output-status (& output)) 0)
+                  (io.eprintln
+                    "dependency boundary: inspector failed for configuration {} target {} (exit {})"
+                    mask
+                    target
+                    (process.output-status (& output)))
+                  (io.print-error (process.output-stderr (& output)))
+                  (fail "canonical frontend processing failed"))
                 (require
                   (= (string.string-length (& output.stderr)) 0)
                   "dependency boundary: unexpected inspector stderr")
                 (observe-output! (&mut policy) (&mut space) (& output.stdout))]
               [(process.ErrProcessOutput error)
                 (fail (process.error-message error))])
-            (set! target (+ target 1))))
-        (set! mask (+ mask 1))))
+            (set! next-job (+ next-job 1)))
+          (let
+            [handles : (Array MaybeWorker 8) (make-array MaybeWorker 8)]
+            [results : (Array String 8) (make-array String 8)]
+            [slot : i64 0]
+            (set! batch-cfg-names (copy-string-vec (& space.names)))
+            (while (< slot batch-size)
+              (let
+                [job-id : i64 (+ next-job slot)]
+                [job-mask : i64 (/ job-id 2)]
+                [job-target : i64 (% job-id 2)]
+                (match (thread.spawn-string
+                  (lambda () : String
+                    (run-inspector-encoded job-mask job-target)))
+                  [(thread.ThreadStringSpawnOk worker)
+                    (set!
+                      (array-ref handles slot)
+                      (MaybeWorker.HasWorker worker))]
+                  [(thread.ThreadStringSpawnErr message) (fail message)]))
+              (set! slot (+ slot 1)))
+            ;; Join every spawned worker before validating so no worker outlives
+            ;; an early fail/exit or reads batch globals during teardown.
+            (set! slot 0)
+            (while (< slot batch-size)
+              (match (replace! (array-ref handles slot) (MaybeWorker.NoWorker))
+                [(MaybeWorker.HasWorker worker)
+                  (match (thread.join-string worker)
+                    [(thread.ThreadStringJoinOk encoded)
+                      (set! (array-ref results slot) encoded)]
+                    [(thread.ThreadStringJoinErr message) (fail message)])]
+                [(MaybeWorker.NoWorker)
+                  (fail "dependency boundary: missing worker handle")])
+              (set! slot (+ slot 1)))
+            (set! slot 0)
+            (while (< slot batch-size)
+              (let
+                [job-id : i64 (+ next-job slot)]
+                [job-mask : i64 (/ job-id 2)]
+                [job-target : i64 (% job-id 2)]
+                (observe-encoded-result!
+                  (&mut policy)
+                  (&mut space)
+                  job-mask
+                  job-target
+                  (& (array-ref results slot))))
+              (set! slot (+ slot 1)))
+            (set! next-job (+ next-job batch-size))))))
     (set! index 0)
     (while (< index (strings.len (& policy.paths)))
-      (begin
-        (if (or
+      (unless
+        (or
           (array-ref policy.seen index)
           (string.eq (strings.get (& policy.roles) index "") "forbidden"))
-          unit
-          (begin
-            (io.eprintln
-              "dependency boundary: stale unreachable policy source {}"
-              (strings.get (& policy.paths) index ""))
-            (fail "remove the stale support classification")))
-        (set! index (+ index 1))))
+        (io.eprintln
+          "dependency boundary: stale unreachable policy source {}"
+          (strings.get (& policy.paths) index ""))
+        (fail "remove the stale support classification"))
+      (set! index (+ index 1)))
     (io.println
       "core IR dependency boundary passed: {} target/configuration jobs, {} cfg names"
-      (* mask 2)
+      next-job
       (strings.len (& space.names)))
     0))

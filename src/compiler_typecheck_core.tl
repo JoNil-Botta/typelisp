@@ -377,7 +377,7 @@
   (owner-arena i64)
   (slots (__tl_dyn-array i64))
   (epoch i64)
-  (type-pool-owner-id i64)
+  (type-pool-revision i64)
   (type-segment-bases i64)
   (outlives-slots (__tl_dyn-array TcLifetimeOutlivesMemoEntry))
   ;; `tc-type-rebuild-var-resolves-to-itself?` lanes, allocated in
@@ -2793,7 +2793,7 @@
       (tc-type-resolution-cache-state-ptr state)]
     (unsafe
       (set! (deref data).epoch (+ (deref data).epoch 1))
-      (set! (deref data).type-pool-owner-id 0)
+      (set! (deref data).type-pool-revision 0)
       (set! (deref data).type-segment-bases 0)
       ;; A job reset also retires every `tc-selected-holds-memo-bind!` entry:
       ;; a new generation (header word 0) matches none of them.
@@ -4833,12 +4833,16 @@
   [syntax : typed.TypedSyntax]
   [expected : ast.AstMaybeType]
   [source : ownership.OwnershipSource]
+  ;; An id read has already checked both the environment and context lease.
+  ;; A semantic observer can run between that check and this entry, so that
+  ;; path and callers supplying a free-standing expression still check here.
+  [already-checked? : bool]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
     intern
     bind)
-  (if (tc-type-env-scoped-identity-exhausted? env)
+  (if (and (not already-checked?) (tc-type-env-scoped-identity-exhausted? env))
     (TcSelectedResult.Err (tc-selected-error typed.TypedError.Exhausted) sink)
     (match sink
       [(TcSelectedSink.Query)
@@ -4851,7 +4855,9 @@
           source
           TcSelectedSink.Query)]
       [(TcSelectedSink.Capture store lease bindings)
-        (match (tc-selected-context-lease-ok ctx lease)
+        (match (if already-checked?
+          (typed.TypedResult.Ok unit)
+          (tc-selected-context-lease-ok ctx lease))
           [(typed.TypedResult.Err error)
             (TcSelectedResult.Err
               (tc-selected-error error)
@@ -5007,6 +5013,7 @@
           (typed.TypedSyntax.Source expr-id)
           expected
           source
+          (not observed?)
           sink)
           [(TcSelectedResult.Ok ty occurrence next)
             (when
@@ -41066,10 +41073,11 @@
 
 ;; Per-type-node memo for the resolution predicate: type nodes are immutable
 ;; and hash-consed, so the answer is a pure function of the node id within one
-;; pool owner. One slot packs the owning job's fill epoch with the answer bit;
-;; rebinding or resetting only that job advances its epoch. Fixed storage is
-;; allocated lazily in the job owner arena, and ids beyond it fall back to the
-;; uncached walk over the same explicitly bound segment table.
+;; pool revision. Context and compatibility readers can share one live cursor.
+;; One slot packs the job's fill epoch with the answer bit. The epoch advances
+;; when the cursor revision or segment table changes, or when the job resets.
+;; Fixed storage is allocated lazily in the job owner arena. IDs beyond it fall
+;; back to the uncached walk over the same bound segment table.
 (define tc-type-resolution-cache-capacity : i64
   131072)
 
@@ -41096,7 +41104,7 @@
 
 (define (tc-type-resolution-cache-bind!
   [state : TcTypeResolutionCacheState]
-  [type-pool-owner-id : i64]
+  [type-pool-revision : i64]
   [type-segment-bases : i64]) : unit
   (let
     [data : (MutPtr TcTypeResolutionCacheStateData)
@@ -41104,10 +41112,10 @@
     (unsafe
       (unless
         (and
-          (= (deref data).type-pool-owner-id type-pool-owner-id)
+          (= (deref data).type-pool-revision type-pool-revision)
           (= (deref data).type-segment-bases type-segment-bases))
         (set! (deref data).epoch (+ (deref data).epoch 1))
-        (set! (deref data).type-pool-owner-id type-pool-owner-id)
+        (set! (deref data).type-pool-revision type-pool-revision)
         (set! (deref data).type-segment-bases type-segment-bases)))))
 
 (define (tc-type-resolution-cache-bind-pools-for-job!
@@ -41115,14 +41123,17 @@
   [pools : ast.AstNodePoolContext]) : unit
   (tc-type-resolution-cache-bind!
     (tc-job-state-type-resolution-cache job-state)
-    (ast.ast-node-pool-context-type-cell-address pools)
+    (ast.ast-node-pool-context-type-live-revision pools)
     (ast.ast-node-pool-context-type-segment-bases pools)))
 
 (define (tc-type-resolution-cache-bind-active-for-state!
   [state : TcTypeResolutionCacheState]) : unit
   (let
     [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
-    (tc-type-resolution-cache-bind! state type-segment-bases type-segment-bases)))
+    (tc-type-resolution-cache-bind!
+      state
+      (ast.ast-node-pool-reader-type-live-revision)
+      type-segment-bases)))
 
 (define (tc-type-resolution-cache-ensure-bound-for-state!
   [state : TcTypeResolutionCacheState]) : unit
@@ -41153,33 +41164,43 @@
 (define (tc-type-needs-resolution-id-for-state?
   [state : TcTypeResolutionCacheState]
   [ty-id : i64]) : bool
-  (tc-type-resolution-cache-storage-ensure-for-state! state)
   (let
-    [data : TcTypeResolutionCacheStateData
-      (tc-type-resolution-cache-state-data state)]
-    (when
-      (>= ty-id (array-length data.slots))
-      (return
-        (tc-type-needs-resolution-for-state?
-          state
-          (& (ast.ast-type-segment-bases-get data.type-segment-bases ty-id)))))
-    (let
-      [slot : i64 (array-ref data.slots ty-id)]
-      (if (= (shr slot 1) data.epoch)
-        (= (bit-and slot 1) 1)
-        (let
-          [answer : bool
-            (tc-type-needs-resolution-for-state?
-              state
-              (& (ast.ast-type-segment-bases-get data.type-segment-bases ty-id)))]
-          (set!
-            (array-ref data.slots ty-id)
-            (bit-or
-              (shl data.epoch 1)
-              (if answer
-                1
-                0)))
-          answer)))))
+    [data : (MutPtr TcTypeResolutionCacheStateData)
+      (tc-type-resolution-cache-state-ptr state)]
+    (unsafe
+      (when
+        (= (array-length (deref data).slots) 0)
+        (tc-type-resolution-cache-storage-ensure-for-state! state))
+      (when
+        (>= ty-id (array-length (deref data).slots))
+        (return
+          (tc-type-needs-resolution-for-state?
+            state
+            (&
+              (ast.ast-type-segment-bases-get
+                (deref data).type-segment-bases
+                ty-id)))))
+      (let
+        [slot : i64 (array-ref (deref data).slots ty-id)]
+        [epoch : i64 (deref data).epoch]
+        (if (= (shr slot 1) epoch)
+          (= (bit-and slot 1) 1)
+          (let
+            [answer : bool
+              (tc-type-needs-resolution-for-state?
+                state
+                (&
+                  (ast.ast-type-segment-bases-get
+                    (deref data).type-segment-bases
+                    ty-id)))]
+            (set!
+              (array-ref (deref data).slots ty-id)
+              (bit-or
+                (shl epoch 1)
+                (if answer
+                  1
+                  0)))
+            answer))))))
 
 (define (tc-type-needs-resolution-for-state?
   [state : TcTypeResolutionCacheState]
@@ -41207,7 +41228,7 @@
       (tc-job-state-type-resolution-cache job-state)]
     (tc-type-resolution-cache-bind!
       state
-      (ast.ast-node-pool-context-type-cell-address pools)
+      (ast.ast-node-pool-context-type-live-revision pools)
       type-bases)
     (tc-type-list-needs-resolution-for-state? state types)))
 
@@ -41221,7 +41242,7 @@
       (tc-job-state-type-resolution-cache job-state)]
     (tc-type-resolution-cache-bind!
       state
-      (ast.ast-node-pool-context-type-cell-address pools)
+      (ast.ast-node-pool-context-type-live-revision pools)
       type-bases)
     (tc-type-needs-resolution-for-state? state (& ty))))
 
@@ -41239,11 +41260,11 @@
 
 ;; The ordinary resolver reads and appends through the installed reader rather
 ;; than through an explicit `AstNodePoolContext`. Bind the job-owned memo to
-;; that reader's segment table directly: selecting and copying a pool context
+;; that reader's live cursor revision and segment table: copying a pool context
 ;; for every composite type would cost more than the rebuilds this predicate
 ;; avoids. Reader segment tables are stable across pool growth, and rebinding
-;; advances only this job's cache epoch when a compatibility caller swaps the
-;; installed reader.
+;; advances only this job's cache epoch when the reader starts using a different
+;; pool revision.
 (define (tc-type-needs-resolution-for-reader-context?
   [ctx : TcContext]
   [ty : (& ast.AstType)]) : bool
@@ -56408,6 +56429,7 @@
                   right-syntax
                   ast.AstMaybeType.No
                   source
+                  false
                   ready))])])]))
 
 ;; `op` shifts its left operand by its right.
@@ -56450,6 +56472,7 @@
             ast.AstMaybeType.No
             (ast.AstMaybeType.Some (tc-global-shared-view left-ty)))
           source
+          false
           next))
         [(TcSelectedResult.Err message ready)
           (TcSelectedBinOpResult.Err message ready)]
@@ -56508,6 +56531,7 @@
         left-syntax
         ast.AstMaybeType.No
         (tc-global-shared-view source)
+        false
         sink))))
 
 ;; Scalar tags occupy a nibble each. Zero marks an empty lane and -1
@@ -57014,6 +57038,7 @@
           left-syntax
           (ast.AstMaybeType.Some (tc-global-shared-view operand-ty))
           (tc-global-shared-view source)
+          false
           sink)
           [(TcSelectedResult.Ok left-ty left-occurrence next)
             (match (tc-infer-selected
@@ -57035,6 +57060,7 @@
                     ast.AstMaybeType.No)]
                 [_ (ast.AstMaybeType.Some operand-ty)])
               (tc-global-shared-view source)
+              false
               next)
               [(TcSelectedResult.Ok right-ty right-occurrence ready)
                 (match (tc-binop-type
@@ -57186,6 +57212,7 @@
             typed.TypedSyntax.Generated
             ast.AstMaybeType.No
             (tc-global-shared-view source)
+            false
             sink)])
         [(TcSelectedResult.Err message next)
           (TcSelectedResult.Err message next)]
@@ -57222,6 +57249,7 @@
               typed.TypedSyntax.Generated
               (ast.AstMaybeType.Some operand-ty)
               (tc-global-shared-view source)
+              false
               sink)
               [(TcSelectedResult.Err message next)
                 (TcSelectedResult.Err message next)]
@@ -81772,6 +81800,7 @@
         typed.TypedSyntax.Generated
         (ast.AstMaybeType.Some (tc-global-shared-view return-ty))
         (tc-global-shared-view source)
+        false
         sink)
         [(TcSelectedResult.Err message next)
           (TcSelectedResult.Err message next)]
@@ -102971,6 +103000,32 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-intern-storage-bytes) : i64
+    (let
+      [persistent : i64 (ci.intern-persistent-arena-handle)]
+      [records : i64 (ci.intern-structural-records-arena-handle)]
+      [map : i64 (ci.intern-structural-map-arena-handle)]
+      [expansion : i64 (ci.intern-expansion-arena-handle)]
+      (+
+        (compiler-tc-macro-lifetime-arena-bytes persistent)
+        (+
+          (if (and (!= records 0) (!= records persistent))
+            (compiler-tc-macro-lifetime-arena-bytes records)
+            0)
+          (+
+            (if (and (!= map 0) (!= map persistent) (!= map records))
+              (compiler-tc-macro-lifetime-arena-bytes map)
+              0)
+            (if (and
+              (!= expansion 0)
+              (!= expansion persistent)
+              (!= expansion records)
+              (!= expansion map))
+              (compiler-tc-macro-lifetime-arena-bytes expansion)
+              0)))))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-macro-lifetime-row
     [boundary : String]
     [owner : String]
@@ -103080,8 +103135,7 @@
       (compiler-tc-profile-metric-set!
         metrics-address
         compiler-tc-macro-lifetime-start-intern-bytes-metric
-        (compiler-tc-macro-lifetime-arena-bytes
-          (ci.intern-persistent-arena-handle))))))
+        (compiler-tc-intern-storage-bytes)))))
 
 (cfg
   compile-profile
@@ -103174,15 +103228,19 @@
           (compiler-tc-profile-metric-value
             metrics-address
             compiler-tc-macro-lifetime-start-scoped-env-bytes-metric))]
-      ;; Spellings interned during expansion (generated names, hygiene
-      ;; renames) persist in the intern arena for the whole session.
+      ;; Spellings, structural records, and expansion provenance frames created
+      ;; during expansion persist in intern-owned arenas for the whole session.
       [intern-handle : i64 (ci.intern-persistent-arena-handle)]
+      [intern-records-handle : i64 (ci.intern-structural-records-arena-handle)]
+      [intern-map-handle : i64 (ci.intern-structural-map-arena-handle)]
+      [intern-expansion-handle : i64 (ci.intern-expansion-arena-handle)]
       [interns : i64
-        (compiler-tc-macro-lifetime-owner-delta
-          intern-handle
-          (compiler-tc-profile-metric-value
-            metrics-address
-            compiler-tc-macro-lifetime-start-intern-bytes-metric))]
+        (compiler-tc-macro-lifetime-nonnegative
+          (-
+            (compiler-tc-intern-storage-bytes)
+            (compiler-tc-profile-metric-value
+              metrics-address
+              compiler-tc-macro-lifetime-start-intern-bytes-metric)))]
       [job-owner : i64
         (if (or
           (= job-owner-handle (ast.ast-node-pool-context-base-arena pools))
@@ -103214,7 +103272,10 @@
             job-owner-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
           (= job-owner-handle scoped-env-handle)
-          (= job-owner-handle intern-handle))
+          (= job-owner-handle intern-handle)
+          (= job-owner-handle intern-records-handle)
+          (= job-owner-handle intern-map-handle)
+          (= job-owner-handle intern-expansion-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             job-owner-handle
@@ -103257,7 +103318,10 @@
             enclosing-handle
             (tc-macro-walk-field state macro-splice-generation-retired-arena))
           (= enclosing-handle scoped-env-handle)
-          (= enclosing-handle intern-handle))
+          (= enclosing-handle intern-handle)
+          (= enclosing-handle intern-records-handle)
+          (= enclosing-handle intern-map-handle)
+          (= enclosing-handle intern-expansion-handle))
           0
           (compiler-tc-macro-lifetime-owner-delta
             enclosing-handle

@@ -11263,10 +11263,10 @@
               (= (bit-and slot-a 1) 0)
               (= (shr slot-b 1) data-b.epoch)
               (= (bit-and slot-b 1) 1)
-              (= reset-a.type-pool-owner-id 0)
+              (= reset-a.type-pool-revision 0)
               (= reset-a.type-segment-bases 0)
               (> reset-a.epoch data-a.epoch)
-              (= intact-b.type-pool-owner-id data-b.type-pool-owner-id)
+              (= intact-b.type-pool-revision data-b.type-pool-revision)
               (= intact-b.type-segment-bases data-b.type-segment-bases)
               (= intact-b.epoch data-b.epoch)
               (= (array-ref intact-b.slots parent-b) slot-b)
@@ -11282,6 +11282,58 @@
               unit
               (io.panic
                 "typecheck: type-resolution cache state isolation failed"))))))))
+
+(cfg
+  test
+  (test
+    type-resolution-cache-live-pool-revision
+    (let
+      [saved : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 4 4)]
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [cache : tc_core.TcTypeResolutionCacheState
+        (tc_core.tc-job-state-type-resolution-cache job)]
+      [child : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+      [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-clone pools)]
+      [_install : unit (ast.ast-node-pool-context-install! pools)]
+      [_bind-alias : unit
+        (tc_core.tc-type-resolution-cache-bind-pools-for-job! job alias)]
+      [before? : bool
+        (tc_core.tc-type-needs-resolution-id-for-state? cache child)]
+      [epoch : i64 (tc_core.tc-type-resolution-cache-state-data cache).epoch]
+      [_append : i64 (ast.ty-node-push (& (Bool)))]
+      [_bind-installed : unit
+        (tc_core.tc-type-resolution-cache-bind-active-for-state! cache)]
+      [installed-epoch : i64
+        (tc_core.tc-type-resolution-cache-state-data cache).epoch]
+      [_truncate : unit (ast.ty-node-pool-truncate! child)]
+      [reissued : i64 (ast.ty-node-push (& (Var (ci.intern "ReissuedType"))))]
+      ;; The alias predates the rollback. Its live cursor still changed.
+      [_rebind-alias : unit
+        (tc_core.tc-type-resolution-cache-bind-pools-for-job! job alias)]
+      [after? : bool
+        (tc_core.tc-type-needs-resolution-id-for-state? cache reissued)]
+      [new-epoch : i64
+        (tc_core.tc-type-resolution-cache-state-data cache).epoch]
+      [_rebind-installed : unit
+        (tc_core.tc-type-resolution-cache-bind-active-for-state! cache)]
+      [rebound-epoch : i64
+        (tc_core.tc-type-resolution-cache-state-data cache).epoch]
+      (ast.ast-node-pool-context-install! saved)
+      (test.assert-i64-eq child reissued "truncation reissues the same type ID")
+      (test.assert-i64-eq
+        installed-epoch
+        epoch
+        "installed aliases and appends preserve the cache epoch")
+      (test.assert-true
+        (and (not before?) after? (> new-epoch epoch))
+        "the reissued type is classified in a new epoch")
+      (test.assert-i64-eq
+        rebound-epoch
+        new-epoch
+        "both readers share the new epoch"))))
 
 (cfg
   test
@@ -13617,6 +13669,7 @@
           3
           4
           (ownership.ownership-expansion-frame 0 1 2 3 4 5 6 7))
+        false
         (tc_core.tc-selected-capture
           (&mut store)
           (& lease)

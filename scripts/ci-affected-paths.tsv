@@ -288,6 +288,8 @@ src/compiler_spmd_logical_gang.tl	stage2-selfhost-compile-manifest	@compiler	Dir
 src/compiler_stack_traffic.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_state_schema.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_symbols.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_tli_codec.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by the compile manifest.
+src/compiler_tli_types.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by the compile manifest.
 src/compiler_typecheck_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_typed_occurrence_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_typed_occurrence.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.

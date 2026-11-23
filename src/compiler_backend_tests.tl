@@ -14363,8 +14363,8 @@ f:
         (I64)
         (be_state.compiler-backend-state-new
           (ci.intern-compat-state-capture-active)))
-      (has "    testq $1, %r13\n    setne %r13b\n")
-      (lacks "    andq $1"))))
+      (has "    testb $1, %r13b\n    setne %r13b\n")
+      (lacks "    andq $1" "    andl $1"))))
 
 (define (compiler-backend-scalar-select-ok?) : bool
   (and
@@ -30418,7 +30418,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    andq $254, %rax\n")]
+        [(Some asm) (string.eq asm "    andl $254, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30428,7 +30428,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    andq $256, %rax\n")]
+        [(Some asm) (string.eq asm "    andl $256, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30438,7 +30438,7 @@ entry:
         "%rax"
         "%rax"
         false)
-        [(Some asm) (string.eq asm "    andq $65280, %rax\n")]
+        [(Some asm) (string.eq asm "    andl $65280, %eax\n")]
         [(No) false])
       (match (be_scalar.compiler-backend-binop-immediate-asm
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -30479,10 +30479,16 @@ entry:
               (and
                 (be_state.backend-and4
                   (asm-has? byte-asm "    movzbq %r12b, %r12\n")
-                  (asm-lacks? byte-asm "    andq $255, %r12\n")
+                  (asm-lacks?
+                    byte-asm
+                    "    andq $255, %r12\n"
+                    "    andl $255, %r12d\n")
                   (asm-has? word-asm "    movzwq %r12w, %r12\n")
-                  (asm-lacks? word-asm "    andq $65535, %r12\n"))
-                (asm-has? negative-asm "    andq $254, %r12\n"))]
+                  (asm-lacks?
+                    word-asm
+                    "    andq $65535, %r12\n"
+                    "    andl $65535, %r12d\n"))
+                (asm-has? negative-asm "    andl $254, %r12d\n"))]
             [(Err _) false])]
         [(Err _) false])]
     [(Err _) false]))
@@ -30763,8 +30769,8 @@ entry:
     (and
       direct-result.ok
       spilled-result.ok
-      (asm-has? direct "    leaq 31(,%rbp,1), %r12\n")
-      (asm-has? spilled "    leaq 31(,%rbp,1), %r8\n")
+      (asm-has? direct "    leaq 31( %rbp), %r12\n")
+      (asm-has? spilled "    leaq 31( %rbp), %r8\n")
       (asm-lacks? direct "31(%rsp)")
       (asm-lacks? spilled "31(%rsp)")
       (asm-lacks? direct "    addq $31")
@@ -30890,7 +30896,7 @@ entry:
       "    movq $-1, %rax\n")
     (string.eq
       (be_scalar.compiler-backend-emit-load-i64-immediate 2147483648 "%rax")
-      "    movq $2147483648, %rax\n")
+      "    movl $2147483648, %eax\n")
     true
     true
     true))
@@ -30949,9 +30955,9 @@ entry:
         (asm-has? asm "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
         (asm-has? asm "    movabsq $-8543223828751151131, %r8\n    imulq %r8\n")
         (asm-has? asm "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
-        ;; M-F folds the power-of-2 modulo mask into an immediate `andq`
+        ;; M-F folds the power-of-2 modulo mask into an immediate `andl`
         ;; (was `movabsq $7, %r8; andq %r8, %rax`).
-        (asm-has? asm "    andq $7, %rax\n")
+        (asm-has? asm "    andl $7, %eax\n")
         (asm-lacks? asm "    idivq %r8\n")
         (asm-lacks? asm "    divq %r8\n")
         (asm-lacks? asm "    call tl_div_abort\n")
@@ -31164,7 +31170,7 @@ entry:
       (match (compiler-backend-divmod-polish-asm false false true false)
         [(Ok r12-asm)
           (and
-            (asm-has? rbp-asm "    leaq 62(,%rbp,1), %r9\n")
+            (asm-has? rbp-asm "    leaq 62( %rbp), %r9\n")
             (asm-lacks? rbp-asm "(%rbp)")
             (asm-has? r12-asm "    leaq 62(%r12), %r9\n"))]
         [(Err _) false])]
@@ -45618,7 +45624,8 @@ user_fn:
 
 (define (compiler-backend-literal-pool-case
   [values : (__tl_dyn-array String)]
-  [maximum-bytes : i64]) : bool
+  [maximum-bytes : i64]
+  [terminated? : bool]) : bool
   (let
     [owner : arena.Arena
       (unsafe
@@ -45692,7 +45699,9 @@ user_fn:
               (array-ref out.slots (+ offset j))
               (cast (string.string-ref value j) : u8))
             (return false)))
-        (unless (= (array-ref out.slots (+ offset length)) 0) (return false))
+        (when
+          (and terminated? (!= (array-ref out.slots (+ offset length)) 0))
+          (return false))
         (for [j (iterator.range 0 8)]
           (unless
             (=
@@ -45748,23 +45757,39 @@ user_fn:
         (set! (array-ref many i) value)))
     (set! (array-ref many 64) "end")
     (and
-      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0)
-      (compiler-backend-literal-pool-case (__tl_make-array "only") 24)
-      (compiler-backend-literal-pool-case (__tl_make-array "ab" "cd" "ef") 64)
+      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0 true)
+      (compiler-backend-literal-pool-case (__tl_make-array "only") 24 true)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "ab" "cd" "ef")
+        64
+        true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "prefix/abc" "abc" "bc" "c" "")
-        96)
+        96
+        true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "" "c" "abc" "prefix/abc" "bc")
-        96)
+        96
+        true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "cab" "dab" "ab" "b" "")
-        88)
-      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56)
+        88
+        true)
+      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56 true)
       (compiler-backend-literal-pool-case
         (__tl_make-array "prefixλ" "λ" "")
-        64)
-      (compiler-backend-literal-pool-case many budget))))
+        64
+        true)
+      (compiler-backend-literal-pool-case many budget true))))
+
+(test
+  backend-interior-literal-records
+  (test.assert-true
+    (compiler-backend-literal-pool-case
+      (__tl_make-array "prefix-middle-suffix" "middle")
+      56
+      false)
+    "interior literal relocation and byte length agree with its descriptor"))
 
 (test
   backend-packed-literal-records

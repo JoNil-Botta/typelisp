@@ -2118,13 +2118,8 @@
                 (compiler-backend-float-type-name ty)
                 " value"))))])))
 
-;; Prefer compact 32-bit encodings for small non-negative immediates.
-;; Writing a 32-bit register zero-extends into the full 64-bit register, so for
-;; 0 <= n < 2^31 the 64-bit value is exactly n: `xorl r32,r32` (2 bytes) clears
-;; the register, and `movl $n,r32` (5-6 bytes) beats `movq $n,r64` (7 bytes, or
-;; a 10-byte movabs once n no longer fits a signed-32 immediate). Negative or
-;; >= 2^31 values keep the full-width `movq $n` (sign extension / 64-bit
-;; immediate), which the assembler widens to movabs as needed.
+;; A 32-bit destination zero-extends the full unsigned imm32 range. Negative
+;; signed imm32 values use the sign-extending 64-bit form.
 (define (compiler-backend-emit-load-i64-immediate-into
   [out : (&mut out be_state.CompilerBackendAsmBuf)]
   [n : i64]
@@ -2139,7 +2134,7 @@
         ", "
         reg32
         "\n"))
-    (if (compiler-backend-imm32? n)
+    (if (and (>= n (- 0 2147483648)) (<= n 4294967295))
       ;; `movl` zero-extends a positive imm32, `movq` sign-extends a negative.
       (compiler-backend-asm-append-machine!
         out
@@ -3608,28 +3603,23 @@
           [_ ""]))]
     [_ ""]))
 
-;; Base-register-parameterized address: scavenged-register-aware address
-;; formatting so addressing-base scratch is not fixed to one register.
-;; GAP7: spell a %rbp memory-operand BASE as the SIB scale-1 index form
-;; `disp(,%rbp,1)` -- base absent, %rbp as a scale-1 index, semantically
-;; identical to `disp(%rbp)` but textually DISTINCT from a frame reference. The
-;; FPO rsp-rebase pass and the peephole slot recognizers key frame slots on the
-;; `(%rbp)` / `(%rsp)` base spelling; `(,%rbp,1)` matches NEITHER, so a pool
-;; value homed in %rbp can serve as a memory base directly (no staged
-;; `movq %rbp,%rSCRATCH` copy) while the rebase pass still rewrites every real
-;; frame slot and never rewrites the pool base -- STRUCTURAL disambiguation by
-;; addressing MODE. Every OTHER base (a scavenged scratch or a non-%rbp register
-;; home) spells normally; base-address / copy-address / base-deref never format
-;; a frame slot (those go through compiler-backend-slot / the slot machinery),
-;; so a %rbp base reaching these formatters is ALWAYS a pool value. On Win64
-;; and any keep-rbp function %rbp is not a pool register, so it never arrives
-;; here as a base (unconditionally sound across targets).
-(define (compiler-backend-mem-base-address [disp : i64] [base : String]) : String
+;; Keep the space before a pool %rbp. The rebase and slot scanners match
+;; "(%rbp" for frame operands, and the CSR census counts %rbp after a space
+;; as a value read. GAS and the COFF assembler encode both spellings as the
+;; same base operand. Indexed addressing keeps its own base/index syntax.
+(define (compiler-backend-value-base-prefix [base : (& base str)]) : String
   (if (string.eq base "%rbp")
-    (str_cat.str-cat (string.int->string disp) "(,%rbp,1)")
+    "( "
+    "("))
+
+(define (compiler-backend-mem-base-address [disp : i64] [base : String]) : String
+  (str_cat.str-cat
     (if (= disp 0)
-      (str_cat.str-cat "(" base ")")
-      (str_cat.str-cat (string.int->string disp) "(" base ")"))))
+      ""
+      (string.int->string disp))
+    (compiler-backend-value-base-prefix base)
+    base
+    ")"))
 
 ;; Exclude an already-chosen register R (so a second scavenge at the same point
 ;; cannot collide with it).

@@ -3812,7 +3812,7 @@
   ;; M-G3 stage 2 (#rbp-base): a %rbp home spelled as a plain `off(%rbp)` base
   ;; would be rewritten as a frame slot by the FPO rsp-rebase pass (and mis-slot
   ;; by the peephole). GAP7: when `allow-rbp` is set, the CONST-offset caller
-  ;; spells the %rbp base as the SIB scale-1 form `off(,%rbp,1)` (textually
+  ;; spells the %rbp base as the spaced form `off( %rbp)` (textually
   ;; distinct from a frame ref), so %rbp is admitted here. When it is not set
   ;; (the variable-index store caller, where the base occupies the SIB base slot
   ;; alongside the gep index), %rbp stays excluded -> staged. SIB INDEX position
@@ -3900,7 +3900,7 @@
 ;; The plain (avoid-free) address base is only ever consumed by CONST-offset
 ;; callers (store-ptr, store-to-gep const, store-ptr-pair, load-deref -- each
 ;; formats the returned base with copy-address / base-deref), so GAP7 admits a
-;; %rbp base here (allow-rbp = true; spelled `off(,%rbp,1)`). The variable-index
+;; %rbp base here (allow-rbp = true; spelled `off( %rbp)`). The variable-index
 ;; store caller uses emit-address-base-with-avoid with allow-rbp = false.
 (define (compiler-backend-emit-address-base
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -5688,20 +5688,62 @@
       true
       (compiler-backend-value-float? types global-types rhs))))
 
+;; A small nonnegative mask makes both the full result and the flags agree
+;; at the narrower width. Keep TEST below bit 7 when using its byte form.
+(define (compiler-backend-nonnegative-mask [imm : (& imm str)]) : i64
+  (let
+    [len : i64 (string.string-length imm)]
+    [value : i64 0]
+    (when
+      (or (< len 2) (> len 11) (!= (string.string-ref imm 0) '$'))
+      (return (- 0 1)))
+    (for [index (iterator.range 1 len)]
+      (let
+        [digit : i64 (- (cast (string.string-ref imm index) : i64) 48)]
+        (when (or (< digit 0) (> digit 9)) (return (- 0 1)))
+        (set! value (+ (* value 10) digit))))
+    (if (<= value 2147483647)
+      value
+      (- 0 1))))
+
 (define (compiler-backend-binop-reg-asm
   [type-segment-bases : i64]
   [mnemonic : String]
   [ty : compiler_ast_types.AstType]
   [rhs : (& rhs str)]
   [lhs : String]) : String
-  (str_cat.str-cat
+  (let
+    [suffix : String
+      (be_operand.compiler-backend-int-instruction-suffix type-segment-bases ty)]
+    [test? : bool (string.eq mnemonic "test")]
+    [mask : i64
+      (if (and
+        (string.eq suffix "q")
+        (or test? (string.eq mnemonic "and"))
+        (>= (string.string-length lhs) 3)
+        (<= (string.string-length lhs) 4)
+        (= (string.string-ref lhs 0) '%')
+        (= (string.string-ref lhs 1) 'r')
+        (not (string.eq lhs "%rsp")))
+        (compiler-backend-nonnegative-mask rhs)
+        (- 0 1))]
+    [byte? : bool (and test? (<= 0 mask) (<= mask 127))]
+    [operand : String
+      (if (>= mask 0)
+        (be_operand.compiler-backend-reg-part
+          lhs
+          (if byte?
+            1
+            4))
+        lhs)]
     (str_cat.str-cat
-      "    "
-      mnemonic
-      (be_operand.compiler-backend-int-instruction-suffix type-segment-bases ty)
-      " "
-      rhs)
-    (str_cat.str-cat ", " lhs "\n")))
+      (str_cat.str-cat
+        "    "
+        mnemonic
+        (cond [byte? "b"] [(>= mask 0) "l"] [else suffix])
+        " "
+        rhs)
+      (str_cat.str-cat ", " operand "\n"))))
 
 (define (compiler-backend-binop-cmp-set-asm
   [type-segment-bases : i64]
@@ -5858,7 +5900,7 @@
 ;; are never live across an emitted op). `movabsq` in the output is therefore
 ;; textually reserved for genuine 64-bit constants.
 (define (compiler-backend-emit-load-i64-absolute [n : i64] [reg : String]) : String
-  (if (be_operand.compiler-backend-imm32? n)
+  (if (and (>= n (- 0 2147483648)) (<= n 4294967295))
     (compiler-backend-emit-load-i64-immediate n reg)
     (str_cat.str-cat "    movabsq $" (string.int->string n) ", " reg "\n")))
 
@@ -7713,9 +7755,9 @@
         ;; M-F: imm32 masks use the immediate form (no constant mov).
         (if (be_operand.compiler-backend-imm32? (cast mask : i64))
           (str_cat.str-cat
-            "    andq $"
+            "    andl $"
             (string.int->string (cast mask : i64))
-            ", %rax\n")
+            ", %eax\n")
           (str_cat.str-cat
             (compiler-backend-emit-load-u64-absolute
               mask
@@ -7859,10 +7901,10 @@
     [mask-op-asm : String
       (if (be_operand.compiler-backend-imm32? mask-i64)
         (str_cat.str-cat
-          "    andq $"
+          "    andl $"
           (string.int->string mask-i64)
           ", "
-          mask-reg
+          (be_operand.compiler-backend-reg-part (string.copy mask-reg) 4)
           "\n")
         (str_cat.str-cat
           (compiler-backend-emit-load-u64-absolute
@@ -8038,9 +8080,9 @@
     [mask-asm : String
       (if (be_operand.compiler-backend-imm32? (cast mask : i64))
         (str_cat.str-cat
-          "    andq $"
+          "    andl $"
           (string.int->string (cast mask : i64))
-          ", %rdx\n")
+          ", %edx\n")
         (str_cat.str-cat
           (compiler-backend-emit-load-u64-absolute
             mask
@@ -10717,8 +10759,7 @@
 ;; Every other constant keeps the imulq (a
 ;; mov+shl pair would trade latency for instruction count).
 ;; `leaq (,%rbp,scale)` is safe under the FPO rsp-rebase pass: the rebased
-;; frame shape is `disp(%rbp)`, and the no-base SIB spelling is exactly the
-;; `disp(,%rbp,1)` idiom mem-base-address already relies on.
+;; frame shape is `disp(%rbp)`, while this form names only an index.
 (define (compiler-backend-mul-immediate-direct-asm
   [lhs-reg : String]
   [dst-home : String]
@@ -10727,7 +10768,7 @@
   (match rhs
     [(I64 n)
       (let
-        [sib : String (compiler-backend-mul-sib-operand lhs-reg n)]
+        [sib : String (compiler-backend-mul-sib-operand lhs-reg n true)]
         (cond
           [(not (string.eq sib ""))
             (str_cat.str-cat "    leaq " sib ", " dst-home "\n")]
@@ -10753,12 +10794,18 @@
             (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))]
     [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
 
-;; The SIB memory operand computing `reg * n`, or "" when no LEA does: SIB
-;; scales 2/4/8 take the no-base `(,reg,n)` spelling and factors 3/5/9 put
-;; `reg` in both roles, `(reg,reg,n-1)`. A value in %rbp must never look like
-;; a frame address to the final rsp-rebase pass, so it may not be a base.
-(define (compiler-backend-mul-sib-operand [reg : (& reg str)] [n : i64]) : String
+;; Doubling can use base + index to avoid the displacement required by a
+;; baseless SIB. A fused addition of another register needs the base slot,
+;; so that caller keeps the index-only encoding for factors 2/4/8.
+(define (compiler-backend-mul-sib-operand
+  [reg : (& reg str)]
+  [n : i64]
+  [double-base? : bool]) : String
   (cond
+    [(and (= n 2) double-base?)
+      (if (string.eq reg "%rbp")
+        "( %rbp,%rbp)"
+        (str_cat.str-cat "(" reg "," reg ")"))]
     [(or (= n 2) (= n 4) (= n 8))
       (str_cat.str-cat "(," reg "," (string.int->string n) ")")]
     [(and (or (= n 3) (= n 5) (= n 9)) (not (string.eq reg "%rbp")))
@@ -10773,8 +10820,8 @@
 ;;
 ;; The FPO `%rbp` value-home invariant is centralized here rather than in
 ;; selected callers. `K(%rbp)` is textually indistinguishable from a frame
-;; address to the final rsp rebase. The no-base SIB form `K(,%rbp,1)` computes
-;; the same value but cannot be classified as a frame reference. Any current or
+;; address to the final rsp rebase. The spaced base spelling preserves that
+;; distinction. Any current or
 ;; retried register plan that reaches this formatter is therefore safe by
 ;; construction.
 (define (compiler-backend-binop-immediate-lea-asm
@@ -10789,10 +10836,8 @@
         (str_cat.str-cat
           "    leaq "
           (compiler-backend-immediate-displacement imm)
-          "("
-          (if (string.eq lhs-reg "%rbp")
-            ",%rbp,1"
-            lhs-reg)
+          (be_operand.compiler-backend-value-base-prefix lhs-reg)
+          lhs-reg
           "), "
           dst-home
           "\n"))]
@@ -10804,10 +10849,8 @@
               (str_cat.str-cat
                 "    leaq "
                 (string.int->string (- 0 value))
-                "("
-                (if (string.eq lhs-reg "%rbp")
-                  ",%rbp,1"
-                  lhs-reg)
+                (be_operand.compiler-backend-value-base-prefix lhs-reg)
+                lhs-reg
                 "), "
                 dst-home
                 "\n"))
@@ -16334,7 +16377,7 @@
         ;; Constant index: the element address is the base home alone, with the
         ;; whole displacement carried by the chunk addresses. The base occupies
         ;; the operand's BASE slot ALONE, so GAP7 admits a %rbp home here (spelled
-        ;; `disp(,%rbp,1)` by compiler-backend-mem-base-address) exactly as at the
+        ;; `disp( %rbp)` by compiler-backend-mem-base-address) exactly as at the
         ;; other const-offset fused gep sites.
         (let
           [scale : i64

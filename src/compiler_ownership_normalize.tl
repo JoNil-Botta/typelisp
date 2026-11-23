@@ -1945,7 +1945,10 @@
   (function-places (__tl_dyn-array i64))
   (retire-count i64)
   (retired-blocks NormalizeI64s)
-  (retired-indices NormalizeI64s))
+  (retired-indices NormalizeI64s)
+  ;; Non-view-alias region-tagged binders that own frame storage (#9288):
+  ;; retiring one also retires any synthetic opaque referent projected from it.
+  (frame-view-places (__tl_dyn-array i64)))
 
 (define (normalize-charge!
   [state : (&mut state NormalizeState)]
@@ -3773,11 +3776,28 @@
   [block : i64]
   [place : i64]) : NormalizeUnit
   (set! state.retire-count (+ state.retire-count 1))
-  (normalize-record-use!
-    state
-    block
-    (array-ref state.instruction-counts block)
-    (- -2 place)))
+  (try
+    (normalize-record-use!
+      state
+      block
+      (array-ref state.instruction-counts block)
+      (- -2 place)))
+  (when
+    (normalize-i64-member? (& state.frame-view-places) place)
+    (let
+      [index : i64 0]
+      (while (< index (array-length state.opaque-binders))
+        (when
+          (= (array-ref state.opaque-binders index) place)
+          (set! state.retire-count (+ state.retire-count 1))
+          (try
+            (normalize-record-use!
+              state
+              block
+              (array-ref state.instruction-counts block)
+              (- -2 (array-ref state.opaque-places index)))))
+        (set! index (+ index 1)))))
+  (NormalizeUnit.Ok unit))
 
 ;; At a function exit, after every scope is left, the storage of the
 ;; parameters and temporaries ends.
@@ -3793,29 +3813,39 @@
     (NormalizeUnit.Ok unit)))
 
 ;; The storage of the binder at `place` comes into scope here (Rust's
-;; `StorageLive`); a temporary's lasts until the function returns. A move-only
-;; region-tagged binder (a view, or a value allocated in an arena) has no
-;; storage of its own that a borrow through it reaches: a borrow of a view is
-;; a reborrow of its referent, and lowering keeps the view in the referent's
-;; storage. A copyable one is a copy in the binder's own storage
-;; (`normalize-view-class?`).
+;; `StorageLive`); a temporary's lasts until the function returns. Only a
+;; move-only region-tagged binder initialized from a reference-read view loan
+;; (`view-alias?`) aliases its referent's storage with no frame storage of its
+;; own. Every other region-tagged binder (a call-returned view, an `in-arena`
+;; frame aggregate, or a copyable value) owns frame storage and retires when
+;; its scope ends (#9288).
 (define (normalize-scope-bind!
   [state : (&mut state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [block : i64]
   [place : i64]
+  [view-alias? : bool]
   [source : (& source own.OwnershipSource)]) : NormalizeUnit
-  (cond
-    [(and
-        (try
-          (normalize-view-type! store lease (array-ref state.place-typed place)))
-        (normalize-view-class? (& state) (array-ref state.place-typed place)))
-      (NormalizeUnit.Ok unit)]
-    [(= (normalize-binder-owner (& state) place) 7)
-      (normalize-push! state.function-places place)
-      (NormalizeUnit.Ok unit)]
-    [else (normalize-owner-bind! state block place 8 source)]))
+  (let
+    [typed : i64 (array-ref state.place-typed place)]
+    [view-type? : bool (try (normalize-view-type! store lease typed))]
+    [arena-box? : bool
+      (and
+        view-type?
+        (= (try (normalize-box-type! store lease typed)) 1)
+        (= (try (normalize-box-view! (& state) store lease typed)) 0))]
+    (cond
+      [(or
+          arena-box?
+          (and view-alias? view-type? (normalize-view-class? (& state) typed)))
+        (NormalizeUnit.Ok unit)]
+      [(= (normalize-binder-owner (& state) place) 7)
+        (normalize-push! state.function-places place)
+        (NormalizeUnit.Ok unit)]
+      [else
+        (when view-type? (normalize-push! state.frame-view-places place))
+        (normalize-owner-bind! state block place 8 source)])))
 
 ;; The first owner a loop exit leaves: those bound in the innermost loop body.
 (define (normalize-loop-owners [state : (& state NormalizeState)]) : i64
@@ -4633,76 +4663,87 @@
           (and assign? (normalize-copy-type? (& state) type))
           (try
             (normalize-emit-init-check! state value.block dest (& node.source))))
-        (when
-          (and (not assign?) (!= (normalize-reference-kind (& state) dest) 0))
-          (let
-            [direct : i64 (normalize-direct-origin (& state) value.place)]
-            [loan : i64
-              (if (>= direct 0)
-                direct
-                (normalize-local-referent-loan (& state) value.place))]
-            (when
-              (>= loan 0)
-              (begin
-                (normalize-push! state.local-referents dest)
-                (normalize-push! state.local-referent-loans loan)))))
-        ;; A reassigned reference no longer points at the loan it was
-        ;; initialized from: later dereferences reach its referent through
-        ;; whatever it holds (`normalize-opaque-referent!`), as any other
-        ;; reference's; earlier ones keep their checked route.
-        (when
-          (and assign? (!= (normalize-reference-kind (& state) dest) 0))
-          (let
-            [index : i64 0]
-            (while (< index (array-length state.local-referents))
-              (when
-                (= (array-ref state.local-referents index) dest)
-                (set! (array-ref state.local-referents index) -1))
-              (set! index (+ index 1)))))
-        ;; Reassigning an initialized cleanup owner would lose its cleanup.
-        (when
-          (and assign? (normalize-cleanup-type? (& state) type))
+        (let
+          [view-alias? : bool
+            (if (and
+              (not assign?)
+              (!= (normalize-reference-kind (& state) dest) 0))
+              (let
+                [direct : i64 (normalize-direct-origin (& state) value.place)]
+                [loan : i64
+                  (if (>= direct 0)
+                    direct
+                    (normalize-local-referent-loan (& state) value.place))]
+                (if (>= loan 0)
+                  (begin
+                    (normalize-push! state.local-referents dest)
+                    (normalize-push! state.local-referent-loans loan)
+                    (normalize-view-loan? (& state) loan))
+                  false))
+              false)]
+          ;; A reassigned reference no longer points at the loan it was
+          ;; initialized from: later dereferences reach its referent through
+          ;; whatever it holds (`normalize-opaque-referent!`), as any other
+          ;; reference's; earlier ones keep their checked route.
+          (when
+            (and assign? (!= (normalize-reference-kind (& state) dest) 0))
+            (let
+              [index : i64 0]
+              (while (< index (array-length state.local-referents))
+                (when
+                  (= (array-ref state.local-referents index) dest)
+                  (set! (array-ref state.local-referents index) -1))
+                (set! index (+ index 1)))))
+          ;; Reassigning an initialized cleanup owner would lose its cleanup.
+          (when
+            (and assign? (normalize-cleanup-type? (& state) type))
+            (try
+              (normalize-overwrite-check!
+                state
+                value.block
+                dest
+                (& node.source))))
+          ;; Moving an owner's value into another owner transfers its
+          ;; obligation; into any other binder loses it.
           (try
-            (normalize-overwrite-check! state value.block dest (& node.source))))
-        ;; Moving an owner's value into another owner transfers its
-        ;; obligation; into any other binder loses it.
-        (try
-          (normalize-obligation-consume!
-            state
-            value.place
-            (normalize-cleanup-owner? (normalize-binder-owner (& state) dest))
-            (& node.source)))
-        (try
-          (normalize-transfer!
-            state
-            value.block
-            value.place
-            dest
-            (& node.source)))
-        (unless
-          assign?
-          (try
-            (normalize-scope-bind!
+            (normalize-obligation-consume!
               state
-              store
-              lease
-              value.block
-              dest
-              (& node.source))))
-        (when
-          (and
-            (not assign?)
-            (or
+              value.place
               (normalize-cleanup-owner? (normalize-binder-owner (& state) dest))
-              (= (normalize-binder-owner (& state) dest) 6)))
+              (& node.source)))
           (try
-            (normalize-owner-bind!
+            (normalize-transfer!
               state
               value.block
+              value.place
               dest
-              (normalize-binder-owner (& state) dest)
-              (& node.source))))
-        (normalize-value! state value.block 0 (& node.source))))))
+              (& node.source)))
+          (unless
+            assign?
+            (try
+              (normalize-scope-bind!
+                state
+                store
+                lease
+                value.block
+                dest
+                view-alias?
+                (& node.source))))
+          (when
+            (and
+              (not assign?)
+              (or
+                (normalize-cleanup-owner?
+                  (normalize-binder-owner (& state) dest))
+                (= (normalize-binder-owner (& state) dest) 6)))
+            (try
+              (normalize-owner-bind!
+                state
+                value.block
+                dest
+                (normalize-binder-owner (& state) dest)
+                (& node.source))))
+          (normalize-value! state value.block 0 (& node.source)))))))
 
 ;; `normalize-argument!` for an argument `context` consumes (`move-context`).
 (define (normalize-argument-in-context!
@@ -8901,10 +8942,30 @@
       (let
         [position : i64 (array-ref state.pattern-positions index)]
         [place : i64 (array-ref places (- index first))]
+        [source-place : i64 (array-ref state.pattern-sources index)]
+        [view-alias? : bool
+          (and
+            (< position 0)
+            (>= source-place 0)
+            (let
+              [direct : i64 (normalize-direct-origin (& state) source-place)]
+              [loan : i64
+                (if (>= direct 0)
+                  direct
+                  (normalize-local-referent-loan (& state) source-place))]
+              (and (>= loan 0) (normalize-view-loan? (& state) loan))))]
         (when
           declare?
           (try (normalize-initializer! state place))
-          (try (normalize-scope-bind! state store lease block place source)))
+          (try
+            (normalize-scope-bind!
+              state
+              store
+              lease
+              block
+              place
+              view-alias?
+              source)))
         ;; At owned box contents: when a binder takes a move-only part,
         ;; the pattern moves the contents out of the box, consuming it once
         ;; and handing each binder its part; otherwise each binder reads
@@ -16873,7 +16934,8 @@
           (normalize-no-i64s)
           0
           (normalize-i64s)
-          (normalize-i64s))]
+          (normalize-i64s)
+          (normalize-no-i64s))]
       [_projected : unit (try (normalize-projected! (&mut state) store lease))]
       [result-type : i64
         (try (normalize-type! (&mut state) store lease return-type))]

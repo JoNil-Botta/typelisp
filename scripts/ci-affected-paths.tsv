@@ -762,5 +762,7 @@ scripts/verify-crypto-stack-scrub.sh	stage2-crypto-stack-residue	@corpus	Both-ho
 stdlib/crypto_secret.tl	stage2-crypto-stack-residue	@stdlib	Focused both-opt native crypto correctness and residue input.
 stdlib/tests/crypto_aes128_gcm_inline.tl	stage2-crypto-stack-residue	@stdlib	Focused both-opt native crypto correctness and residue input.
 stdlib/tests/crypto_aes128_gcm_kat_inline.tl	stage2-crypto-stack-residue	@stdlib	Focused both-opt native crypto correctness and residue input.
-tests/addr-taken-matrix/*	stage2-addr-taken-matrix	@corpus	Adversarial address-taken-local programs compiled and run at opt0/1/2; pending/ leaders move here as their fixes land.
+scripts/ci-affected-paths.tsv	stage2-public-tool-affected-map	-	The affected-map audit verifies the reviewed path inventory and fallback behavior.
+scripts/verify-addr-taken-matrix.sh	stage2-addr-taken-matrix	-	Native address-taken-local matrix runner.
+tests/addr-taken-matrix/*	stage2-addr-taken-matrix	@corpus	Adversarial address-taken-local programs compiled and run at opt0/1/2/s; pending/ leaders move here as their fixes land.
 tools/embedded-stdlib-tli/roundtrip.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Checked embedded stdlib interface round trip.

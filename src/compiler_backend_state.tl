@@ -1144,6 +1144,7 @@
   ;; exact intern capability so concurrent backend jobs never consult a
   ;; process-global opt-level switch.
   (scalar-registers-enabled bool)
+  (tail-merging-enabled bool)
   (user-symbol-cache-keys (__tl_dyn-array i64))
   (user-symbol-cache-values (__tl_dyn-array String))
   (user-symbol-cache-epochs (__tl_dyn-array i64))
@@ -1260,6 +1261,7 @@
         (compiler-backend-global-shared-view intern-state)
         owner-arena
         0
+        false
         false
         ;; User-symbol storage is deliberately lazy.  In particular, a
         ;; generated id near the high end of the intern lane must not force
@@ -1770,6 +1772,29 @@
     (set!
       (deref (compiler-backend-state-ptr state)).scalar-registers-enabled
       enabled)))
+
+(define (compiler-backend-state-tail-merging-enabled?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).tail-merging-enabled))
+
+(define (compiler-backend-state-set-tail-merging-enabled!
+  [state : CompilerBackendState]
+  [enabled : bool]) : unit
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).tail-merging-enabled
+      enabled)))
+
+;; The branch-tail scan is reserved for the high-quality path, along with
+;; scalar register allocation.
+(define (compiler-backend-state-set-opt-level!
+  [state : CompilerBackendState]
+  [opt-level : i64]) : unit
+  (let
+    [high-quality? : bool (>= opt-level 2)]
+    (compiler-backend-state-set-scalar-registers-enabled! state high-quality?)
+    (compiler-backend-state-set-tail-merging-enabled! state high-quality?)))
 
 ;; Public observations for the retained operand-render storage.  The backing
 ;; StateData remains opaque; capacities are reported from the actual arrays so

@@ -24497,7 +24497,10 @@ tl_shared_object_init:
                   backend-state
                   (&mut records))]
               [kept : String
-                (be_peephole.compiler-backend-peephole-records-render records)]
+                (be_peephole.compiler-backend-peephole-records-render
+                  records
+                  (be_state.compiler-backend-state-tail-merging-enabled?
+                    backend-state))]
               (be_state.CompilerBackendPeepholeSweepChunkState
                 (text_buf.append state.out kept)
                 (text_buf.empty)
@@ -24774,7 +24777,8 @@ tl_shared_object_init:
         (be_peephole.compiler-backend-peephole-records-buffer
           (text_buf_borrowed.empty-like (& asm))
           records
-          asm))]
+          asm
+          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)))]
     (compiler-backend-peephole-records-retire! stream)
     (compiler-backend-sweep-reset! backend-state stream)
     buf))
@@ -24801,7 +24805,8 @@ tl_shared_object_init:
 ;; Its production boundary must expand probes after the same analyses.
 (define (compiler-backend-peephole-asm-drop-fallthrough-target
   [asm : String]
-  [target : be_state.CompilerBackendTarget]) : String
+  [target : be_state.CompilerBackendTarget]
+  [merge-tails? : bool]) : String
   (let
     [state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
@@ -24811,6 +24816,9 @@ tl_shared_object_init:
     (be_state.compiler-backend-state-set-emission-target-policy!
       state
       (be_state.compiler-backend-target-policy-new target))
+    (be_state.compiler-backend-state-set-tail-merging-enabled!
+      state
+      merge-tails?)
     (text_buf.render
       (compiler-backend-peephole-asm-buffer-with-state
         state
@@ -25508,7 +25516,9 @@ tl_shared_object_init:
             (compiler-backend-pic-asm
               (compiler-backend-peephole-asm-drop-fallthrough-target
                 (text_buf.render buf)
-                target)
+                target
+                (be_state.compiler-backend-state-tail-merging-enabled?
+                  backend-state))
               (be_state.compiler-backend-global-shared-view image))
             (compiler-backend-pic-fixup-table
               (be_state.compiler-backend-global-shared-view image))))

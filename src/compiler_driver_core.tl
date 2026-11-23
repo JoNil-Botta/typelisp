@@ -2498,9 +2498,7 @@
           (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
           (compiler-driver-release-lowered-ir! opt-level lower-state)
           (return (Exhausted)))
-        (be_state.compiler-backend-state-set-scalar-registers-enabled!
-          backend-state
-          (>= opt-level 2))
+        (be_state.compiler-backend-state-set-opt-level! backend-state opt-level)
         (Program optimized optimized-spans)])))
 
 ;; The object routes' eligibility gate. An ineligible ObjectImage program keeps
@@ -2589,9 +2587,9 @@
                   side-backend-state
                   (compiler_typecheck_core.tc-job-state-advisory-sink
                     typecheck-state))
-                (be_state.compiler-backend-state-set-scalar-registers-enabled!
+                (be_state.compiler-backend-state-set-opt-level!
                   side-backend-state
-                  (>= opt-level 2))
+                  opt-level)
                 (cfg
                   compile-profile
                   (compiler-driver-profile-start-phase profile-state))

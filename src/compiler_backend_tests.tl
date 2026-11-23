@@ -16337,7 +16337,7 @@ f:
     (be_peephole.compiler-backend-expand-stack-probes! state (&mut records))
     (let
       [text : String
-        (be_peephole.compiler-backend-peephole-records-render records)]
+        (be_peephole.compiler-backend-peephole-records-render records true)]
       (test.assert-true
         (asm-has?
           text
@@ -16354,11 +16354,13 @@ f:
     [linux : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Linux))]
+        (be_state.CompilerBackendTarget.Linux)
+        true)]
     [windows : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "    subq $8200, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Windows))]
+        (be_state.CompilerBackendTarget.Windows)
+        true)]
     (test.assert-true
       (asm-has? linux "    pushq %r11\n" "    movq 8192(%rsp), %r11\n")
       "the PIC whole-text boundary expands Linux probes")
@@ -16372,7 +16374,8 @@ f:
     [text : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         "# tl-stack-entry\n    subq $32768, %rsp\n    subq $4096, %rsp\n    movq %r11, (%rsp)\n    addq $4096, %rsp\n# tl-stack-entry\n    subq $32776, %rsp\n    movq %r11, (%rsp)\n    addq $32776, %rsp\n    subq $4104, %rsp\n    movq %r11, (%rsp)\n"
-        (be_state.CompilerBackendTarget.Linux))]
+        (be_state.CompilerBackendTarget.Linux)
+        true)]
     (test.assert-true
       (asm-has? text "    subq $32768, %rsp\n    subq $4096, %rsp\n")
       "entry 32768 plus balanced transient 4096 remains unprobed")
@@ -42037,7 +42040,9 @@ b_keep:
                 stream
                 (be_state.compiler-backend-global-shared-view records))]
             [rendered : String
-              (be_peephole.compiler-backend-peephole-records-render records)]
+              (be_peephole.compiler-backend-peephole-records-render
+                records
+                true)]
             (backend.compiler-backend-peephole-records-retire! stream)
             rendered))]
       (CompilerBackendPeepholeChunkState
@@ -42209,7 +42214,8 @@ b_keep:
         (be_peephole.compiler-backend-peephole-records-buffer
           (text_buf_borrowed.empty-like (& asm))
           records
-          asm))]
+          asm
+          true))]
     (backend.compiler-backend-peephole-records-retire! stream)
     result))
 

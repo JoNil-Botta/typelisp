@@ -8,7 +8,6 @@
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_check_core)
-(import build_run_core)
 (import compiler_typecheck_core as tc)
 (import compiler_driver_core)
 (import doc_test)
@@ -18,8 +17,9 @@
 (import compiler_intern as ci)
 (import package_source_core)
 (import test_cli_core)
-(import compiler_builtin_ids as cbi)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector String) as svec)
 (import sym_i64_env)
 
 (defenum SelfhostCheckConfig
@@ -145,25 +145,13 @@
   (compiler_load.compiler-load-normalize-path
     (compiler_load.compiler-load-join-root-path manifest-dir manifest.entry)))
 
-(define (selfhost-check-package-doctest-paths-snapshot
-  [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
-  (let
-    [count : i64 (ast.ast-decl-path-list-len (& paths))]
-    [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
-    (for [index (iterator.range 0 count)]
-      (let
-        [path : String (ast.ast-decl-path-list-get (& paths) index "")]
-        [owned-path : String
-          (string.substring path 0 (string.string-length path))]
-        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-          (&mut out)
-          owned-path
-          cbi.compiler-builtin-id-fix-empty
-          (ast.ast-decl-path-list-provenance-id
-            (& paths)
-            index
-            cbi.compiler-builtin-id-fix-empty))))
-    out))
+(define (selfhost-check-package-has-inline-tests? [sources : (& svec.Vec)]) : bool
+  (for [index (iterator.range 0 (svec.len sources))]
+    (when
+      (test_cli_core.tltest-source-has-inline-tests?
+        (svec.get sources index ""))
+      (return true)))
+  false)
 
 (define (selfhost-check-package
   [manifest-path : String]
@@ -180,7 +168,6 @@
       (let
         [manifest : compiler_load.CompilerPkgManifest source-set.manifest]
         [manifest-dir : String source-set.manifest-dir]
-        [name : String (owned_view.compiler-owned-shared-view manifest.name)]
         [entry-path : String
           (selfhost-check-package-entry-path
             (owned_view.compiler-owned-shared-view manifest-dir)
@@ -188,54 +175,70 @@
         [emit-entry : bool (selfhost-check-package-kind-entry? manifest.kind)]
         [_reset-file-state : unit
           (compiler_driver_core.compiler-driver-reset-file-state!)]
-        [discovery : compiler_driver_core.ResultCompilerDriverPackagePaths
-          (compiler_driver_core.compiler-driver-load-package-preflight-paths
-            (string.copy (& entry-path))
-            (build_run_core.source-tool-backend-target options.target)
-            (& options.cfgs)
-            (clone options.stdlib-roots)
-            (string.copy (& manifest-dir))
-            (clone manifest.deps)
-            emit-entry)]
-        [inline-test-status : i64
-          (match (& discovery)
-            [(Ok paths)
-              (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-                (package_source_core.package-source-reachable-owned-files
-                  paths
-                  (& manifest-dir)
-                  (& options.stdlib-roots))
+        [job : tc.TcJobState (tc.tc-serial-job-state)]
+        [cfgs : sym_i64_env.SymI64Env
+          (target_cfg.compiler-target-cfgs-with-names
+            options.target
+            (clone options.cfgs))]
+        [_begin-check : unit
+          (compiler_check_core.compiler-check-package-begin! job)]
+        [loaded : compiler_load.ResultCompilerLoadWithPaths
+          (compiler_load.compiler-load-package-file-with-runtime-cfg
+            (& entry-path)
+            (& options.stdlib-roots)
+            (& manifest-dir)
+            (& manifest.deps)
+            emit-entry
+            cfgs)]
+        ;; Reachable paths own their strings and carry no session-local ids.
+        [reachable : ast.AstDeclPathList
+          (match (& loaded)
+            [(Ok _ paths _ seen)
+              (compiler_load.compiler-load-package-reachable-paths
+                (& entry-path)
+                paths
+                seen)]
+            [(Err _) (ast.ast-decl-path-list-new)])]
+        [sources : svec.Vec
+          (package_source_core.package-source-reachable-owned-files
+            (& reachable)
+            (& manifest-dir)
+            (& options.stdlib-roots))]
+        [checked : compiler_check_core.ResultCompilerCheckWithPaths
+          (if (selfhost-check-package-has-inline-tests? (& sources))
+            (let
+              [status : i64
+                (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
+                  sources
+                  (clone options.stdlib-roots)
+                  (string.copy (& manifest-dir))
+                  (string.copy (& manifest.name))
+                  (clone manifest.deps)
+                  cfgs
+                  "typecheck-prefix-inline-check-package")]
+              (when (not (= status 0)) (return status))
+              ;; Inline preflight resets the loader pools and interned cfg ids.
+              (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
+                entry-path
                 (clone options.stdlib-roots)
                 (string.copy (& manifest-dir))
-                (string.copy (& name))
                 (clone manifest.deps)
+                emit-entry
                 (target_cfg.compiler-target-cfgs-with-names
                   options.target
                   (clone options.cfgs))
-                "typecheck-prefix-inline-check-package")]
-            ;; The ordinary check below reports loader errors with its usual diagnostics.
-            [(Err _) 0])]
-        (when (not (= inline-test-status 0)) (return inline-test-status))
-        (match (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
-          entry-path
-          (owned_view.compiler-owned-shared-view options.stdlib-roots)
-          (owned_view.compiler-owned-shared-view manifest-dir)
-          (owned_view.compiler-owned-shared-view manifest.deps)
-          emit-entry
-          (target_cfg.compiler-target-cfgs-with-names
-            options.target
-            (owned_view.compiler-owned-shared-view options.cfgs))
-          (tc.tc-serial-job-state))
-          [(Ok _ paths advisories)
+                job))
+            (compiler_check_core.compiler-check-package-loaded
+              entry-path
+              loaded
+              (clone options.stdlib-roots)
+              cfgs
+              job))]
+        (match checked
+          [(Ok _ _ advisories)
             (compiler_driver_core.compiler-driver-print-advisories
               (& advisories))
             (let
-              ;; Retain the filesystem paths across the compiler-state reset.
-              [doctest-paths : ast.AstDeclPathList
-                (match discovery
-                  [(Ok reachable) reachable]
-                  [(Err _)
-                    (selfhost-check-package-doctest-paths-snapshot paths)])]
               [_reset-after-entry : unit
                 (begin
                   (compiler_driver_core.compiler-driver-reset-file-state!)
@@ -243,7 +246,7 @@
               [doctest-status : i64
                 (doc_test.doc-test-report-status
                   (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
-                    doctest-paths
+                    reachable
                     options.stdlib-roots
                     manifest-dir
                     manifest.deps

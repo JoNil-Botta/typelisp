@@ -5512,119 +5512,120 @@
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
     [request : (& BuildPackageEmitRequest)]
     [check-closure : bool]) : ResultBuildPackageEmit
-    (match (if (> (string.string-length (& request.tlci-path)) 0)
-      (build-package-tlci-source-inputs
-        (string.copy (& request.manifest-path))
-        (& request.producer-identity))
-      (ResultBuildPackageTlciSourceInputs.Ok (NoImage)))
-      [(Err message)
-        (io.print-error message)
+    (match (compiler_driver_core.compiler-driver-package-runtime-load
+      (owned_view.compiler-owned-shared-view scope)
+      (string.copy (& request.entry-path))
+      (clone request.stdlib-roots)
+      (string.copy (& request.manifest-dir))
+      (clone request.manifest.deps)
+      request.emit-entry
+      (cfg_core.compiler-cfg-snapshot-to-env (clone request.compile-cfgs)))
+      [(Err diag)
+        (io.print-error
+          (compiler_driver_core.compiler-driver-render-source-diagnostic
+            (deref diag)))
         (Finished 1)]
-      [(Ok source-inputs)
-        (match (compiler_driver_core.compiler-driver-package-runtime-load
-          (owned_view.compiler-owned-shared-view scope)
-          (string.copy (& request.entry-path))
-          (clone request.stdlib-roots)
-          (string.copy (& request.manifest-dir))
-          (clone request.manifest.deps)
-          request.emit-entry
-          (cfg_core.compiler-cfg-snapshot-to-env (clone request.compile-cfgs)))
-          [(Err diag)
-            (io.print-error
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (deref diag)))
-            (Finished 1)]
-          [(Ok decls paths _ seen)
-            (when
-              check-closure
+      [(Ok decls paths _ seen)
+        (when
+          check-closure
+          (let
+            [files : cli_svec.Vec
+              (package_source_core.package-source-reachable-owned-files
+                (&
+                  (load.compiler-load-package-reachable-paths
+                    (& request.entry-path)
+                    (& paths)
+                    seen))
+                (& request.manifest-dir)
+                (& request.stdlib-roots))]
+            [inline-sources : cli_svec.Vec (cli_svec.new)]
+            [doctests : bool false]
+            (for [index (iterator.range 0 (cli_svec.len (& files)))]
               (let
-                [files : cli_svec.Vec
-                  (package_source_core.package-source-reachable-owned-files
-                    (&
-                      (load.compiler-load-package-reachable-paths
-                        (& request.entry-path)
-                        (& paths)
-                        seen))
-                    (& request.manifest-dir)
-                    (& request.stdlib-roots))]
-                [inline-sources : cli_svec.Vec (cli_svec.new)]
-                [doctests : bool false]
-                (for [index (iterator.range 0 (cli_svec.len (& files)))]
-                  (let
-                    [path : String (cli_svec.get (& files) index "")]
-                    (when
-                      (test_cli_core.tltest-source-has-inline-tests?
-                        (string.copy (& path)))
-                      (cli_svec.push-ref!
-                        (&mut inline-sources)
-                        (string.copy (& path))))
-                    (unless
-                      doctests
-                      (set!
-                        doctests
-                        (doc_test.doc-test-package-file-has-examples? (& path))))))
+                [path : String (cli_svec.get (& files) index "")]
                 (when
-                  (or doctests (> (cli_svec.len (& inline-sources)) 0))
-                  (return (Preflight inline-sources doctests)))))
-            (let
-              [owned-paths : ast.AstDeclPathList
-                (load.compiler-load-package-owned-paths-for-decls
-                  (& request.manifest.name)
-                  (& request.manifest-dir)
-                  (& request.stdlib-roots)
-                  (& request.entry-path)
-                  (& decls)
-                  (& paths))]
-              [metadata-link-inputs : build_run_core.SourceToolLinkInputs
-                (build_run_core.source-tool-link-inputs-from-decls
-                  (owned_view.compiler-owned-shared-view decls)
-                  (build_run_core.source-tool-link-inputs-empty))]
-              ;; The dependency section keeps each package's raw arguments.
-              [effective-link-inputs : build_run_core.SourceToolLinkInputs
-                (clone
-                  (build_run_core.source-tool-link-inputs-merge-with
-                    (build_run_core.source-tool-link-inputs-merge
-                      (clone request.manifest-link-inputs)
-                      metadata-link-inputs)
-                    (clone request.dep-link-inputs)
-                    false))]
-              [crt-entry : bool
-                (and
-                  request.emit-entry
-                  (build_run_core.source-tool-linux-crt-entry?
-                    (clone request.target)
-                    effective-link-inputs))]
-              (Finished
-                (build-package-finish-fresh-artifacts-with-surface
-                  scope
-                  (clone request.manifest)
-                  source-inputs
-                  seen
-                  (string.copy (& request.manifest.name))
-                  (clone request.kind)
-                  (clone request.target)
-                  request.opt-level
-                  (clone request.profile)
-                  (clone request.mode)
-                  (string.copy (& request.producer-identity))
-                  (string.copy (& request.entry-path))
-                  request.emit-entry
-                  crt-entry
-                  decls
-                  paths
-                  owned-paths
-                  (build-package-output-dir-profile
-                    (string.copy (& request.manifest-dir))
-                    (string.copy (& request.manifest.name))
-                    (clone request.profile))
-                  (string.copy (& request.asm-path))
-                  (string.copy (& request.obj-path))
-                  (string.copy (& request.artifact-path))
-                  effective-link-inputs
-                  (string.copy (& request.tlci-path))
-                  request.announce
-                  (cfg_core.compiler-cfg-snapshot-to-env
-                    (clone request.compile-cfgs)))))])])))
+                  (test_cli_core.tltest-source-has-inline-tests?
+                    (string.copy (& path)))
+                  (cli_svec.push-ref!
+                    (&mut inline-sources)
+                    (string.copy (& path))))
+                (unless
+                  doctests
+                  (set!
+                    doctests
+                    (doc_test.doc-test-package-file-has-examples? (& path))))))
+            (when
+              (or doctests (> (cli_svec.len (& inline-sources)) 0))
+              (return (Preflight inline-sources doctests)))))
+        (let
+          [source-inputs : BuildPackageTlciSourceInputs
+            (match (if (> (string.string-length (& request.tlci-path)) 0)
+              (build-package-tlci-source-inputs
+                (string.copy (& request.manifest-path))
+                (& request.producer-identity))
+              (ResultBuildPackageTlciSourceInputs.Ok (NoImage)))
+              [(Err message)
+                (io.print-error message)
+                (return (Finished 1))]
+              [(Ok inputs) inputs])]
+          [owned-paths : ast.AstDeclPathList
+            (load.compiler-load-package-owned-paths-for-decls
+              (& request.manifest.name)
+              (& request.manifest-dir)
+              (& request.stdlib-roots)
+              (& request.entry-path)
+              (& decls)
+              (& paths))]
+          [metadata-link-inputs : build_run_core.SourceToolLinkInputs
+            (build_run_core.source-tool-link-inputs-from-decls
+              (owned_view.compiler-owned-shared-view decls)
+              (build_run_core.source-tool-link-inputs-empty))]
+          ;; The dependency section keeps each package's raw arguments.
+          [effective-link-inputs : build_run_core.SourceToolLinkInputs
+            (clone
+              (build_run_core.source-tool-link-inputs-merge-with
+                (build_run_core.source-tool-link-inputs-merge
+                  (clone request.manifest-link-inputs)
+                  metadata-link-inputs)
+                (clone request.dep-link-inputs)
+                false))]
+          [crt-entry : bool
+            (and
+              request.emit-entry
+              (build_run_core.source-tool-linux-crt-entry?
+                (clone request.target)
+                effective-link-inputs))]
+          (Finished
+            (build-package-finish-fresh-artifacts-with-surface
+              scope
+              (clone request.manifest)
+              source-inputs
+              seen
+              (string.copy (& request.manifest.name))
+              (clone request.kind)
+              (clone request.target)
+              request.opt-level
+              (clone request.profile)
+              (clone request.mode)
+              (string.copy (& request.producer-identity))
+              (string.copy (& request.entry-path))
+              request.emit-entry
+              crt-entry
+              decls
+              paths
+              owned-paths
+              (build-package-output-dir-profile
+                (string.copy (& request.manifest-dir))
+                (string.copy (& request.manifest.name))
+                (clone request.profile))
+              (string.copy (& request.asm-path))
+              (string.copy (& request.obj-path))
+              (string.copy (& request.artifact-path))
+              effective-link-inputs
+              (string.copy (& request.tlci-path))
+              request.announce
+              (cfg_core.compiler-cfg-snapshot-to-env
+                (clone request.compile-cfgs)))))])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

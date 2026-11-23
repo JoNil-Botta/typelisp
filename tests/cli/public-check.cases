@@ -1490,32 +1490,35 @@ file typelisp.pkg
   (entry "src/main.tl"))
 end-file
 file src/main.tl
-(import lib)
-(define (main) : i64 (lib.helper))
+(import tests.helper)
+(define (main) : i64 (helper.value))
 end-file
-file src/lib.tl
+file src/tests/helper.tl
 ;# ```typelisp
 ;# (define (bad) : i64 true)
 ;# ```
-(define (helper) : i64 1)
+(define (value) : i64 1)
+
+(test value-type
+  (let [_ : i64 (value)] unit))
 end-file
 step normal-doctest-package-check
 run check --manifest-path "{{dir}}/typelisp.pkg"
 exit nonzero
 stdout empty
-stderr contains {{native-dir}}/src/lib.tl:1:
+stderr contains {{native-dir}}/src/tests/helper.tl:1:
 step normal-doctest-package-build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
 exit nonzero
 stdout empty
-stderr contains {{native-dir}}/src/lib.tl:1:
+stderr contains {{native-dir}}/src/tests/helper.tl:1:
 
 if-host linux
 step normal-doctest-package-build-spawn-fallback
 exec bash -c 'exec -a "$0" "$1" build --manifest-path "$2" --target "$3" --stdlib-root "$4"' "{{dir}}/missing-doctest-worker" "{{compiler}}" "{{dir}}/typelisp.pkg" "{{host-target}}" "{{root}}/stdlib"
 exit nonzero
 stdout empty
-stderr contains {{native-dir}}/src/lib.tl:1:
+stderr contains {{native-dir}}/src/tests/helper.tl:1:
 end-if
 
 case normal-inline
@@ -2770,21 +2773,26 @@ run test --check --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
 exit nonzero
 stderr contains inline-owned/src/orphan.tl:3:
 stderr contains typecheck: integer operator expects matching integer operands
+file src/tests/helper.tl
+(cfg test
+  (test helper-bad
+    (+ true 1)))
+end-file
 file src/main.tl
-(import orphan)
+(import tests.helper)
 (define (main) : i64 0)
 end-file
 step normal-inline-package-check
 run check --manifest-path "{{dir}}/typelisp.pkg"
 exit nonzero
 stdout empty
-stderr contains inline-owned/src/orphan.tl:3:
+stderr contains inline-owned/src/tests/helper.tl:3:
 stderr contains typecheck: integer operator expects matching integer operands
 step normal-inline-package-build
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
 exit nonzero
 stdout empty
-stderr contains inline-owned/src/orphan.tl:3:
+stderr contains inline-owned/src/tests/helper.tl:3:
 stderr contains typecheck: integer operator expects matching integer operands
 
 if-host linux
@@ -2792,7 +2800,7 @@ step normal-inline-package-build-spawn-fallback
 exec bash -c 'exec -a "$0" "$1" build --manifest-path "$2" --target "$3" --stdlib-root "$4"' "{{dir}}/missing-doctest-worker" "{{compiler}}" "{{dir}}/typelisp.pkg" "{{host-target}}" "{{root}}/stdlib"
 exit nonzero
 stdout empty
-stderr contains inline-owned/src/orphan.tl:3:
+stderr contains inline-owned/src/tests/helper.tl:3:
 stderr contains typecheck: integer operator expects matching integer operands
 end-if
 

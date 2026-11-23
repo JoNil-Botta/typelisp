@@ -513,6 +513,12 @@
               [into-done-name : Expr (expr-var "IntoNext.Done")]
               [into-item-name : Expr (expr-var "IntoNext.Item")]
               [kind : String (type-kind T)]
+              ;; The published bootstrap compiler needs the import to resolve
+              ;; reflected calls to string.copy in generated vector bodies.
+              [string-imports : ExprList
+                (if (string-eq kind "string")
+                  (expr-list-cons `(import stdlib.string) (expr-list-empty))
+                  (expr-list-empty))]
               ;; Borrowed String storage has the public immutable `str` view
               ;; type. Other shared items retain their concrete element type,
               ;; including move-only aggregates.
@@ -533,6 +539,7 @@
                   [_ `,T])]
               `(begin
                 (module ,module-name)
+                ,@string-imports
                 (import (eq.eq ,T) as value_eq)
                 ,@core
                 (define (copy-from-slice!

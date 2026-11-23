@@ -137,6 +137,13 @@
     [item : owner.HTTPItem (owner.HTTPItem "family" 7)]
     [family-item : owner.HTTPItem (items.copy (copy-item item))]
     [family-text : String (strings.copy (string.copy text))]
+    [raw-copy : owner.RawBuf
+      (clone.deep
+        (owner.RawBuf
+          (unsafe
+            (int->ptr (cast 0 : u64) : (MutPtr u8)))
+          7))]
+    [stamp-copy : owner.CopyStamp (clone.deep (owner.CopyStamp 7))]
     (set! (array-ref (deref (array-ref (tuple-ref copy 0) 0)) 0).count 99)
     (set! (array-ref temporary 0).label "changed")
     (set! family-item.label "changed")
@@ -144,6 +151,8 @@
       (= (array-ref (deref (array-ref (tuple-ref source 0) 0)) 0).count 7)
       (= (array-ref (deref (array-ref (tuple-ref copy 0) 0)) 0).count 99)
       (= (tuple-ref copy 1) 8)
+      (= raw-copy.count 8)
+      (= stamp-copy.count 8)
       (= calls 1)
       (string.eq (array-ref temporary 0).label "changed")
       (string.eq family-text "original")

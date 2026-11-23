@@ -1,7 +1,6 @@
 # identity	declared-params	shape	result	fixture	native-status	fuel	comparison
 stdlib.clone/clone-fixed-array	6	variadic	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/clone-tuple	6	variadic	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
-stdlib.clone/clone-nominal-owner	3	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/clone-nominal-value	5	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/clone-value	5	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/clone-borrowed-value	5	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly

@@ -5,9 +5,9 @@
 ;# With `(gen-clone T)`, an owning module requests one
 ;# ordinary `clone-<kebab-name>` function with signature `(& T) -> T`. The
 ;# generated body reconstructs the aggregate and uses only ordinary language
-;# and stdlib operations. Move-only nominal dependencies need a clone
-;# function in their canonical owner module. Cloneable Copy nominals use an
-;# ordinary read.
+;# and stdlib operations. Nominal dependencies use a clone function in their
+;# canonical owner module when available. Cloneable Copy nominals without a
+;# hook use an ordinary read.
 ;#
 ;# `synthesize-helpers` remains temporarily while compiler and repository call
 ;# sites migrate away from the semantic `(clone value)` form.
@@ -40,6 +40,19 @@
           [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
           [cloned-item : comptime.Expr
             (match (type-kind element-type)
+              ["string"
+                (if (comptime.module-value? "stdlib.string" "copy")
+                  (comptime.expr-call
+                    (comptime.module-value-expr "stdlib.string" "copy")
+                    (comptime.expr-list-cons
+                      item-source
+                      (comptime.expr-list-empty)))
+                  `(stdlib.clone.clone-borrowed-value
+                    ,element-type
+                    ,item-source
+                    ,item-place
+                    ,root-key-expr
+                    ,item-path))]
               ["unit" `unit]
               ["bool" `(deref ,item-source)]
               ["char" `(deref ,item-source)]
@@ -99,6 +112,19 @@
           [next-index : comptime.Expr (comptime.expr-int (+ index 1))]
           [cloned-item : comptime.Expr
             (match (type-kind element-type)
+              ["string"
+                (if (comptime.module-value? "stdlib.string" "copy")
+                  (comptime.expr-call
+                    (comptime.module-value-expr "stdlib.string" "copy")
+                    (comptime.expr-list-cons
+                      item-source
+                      (comptime.expr-list-empty)))
+                  `(stdlib.clone.clone-borrowed-value
+                    ,element-type
+                    ,item-source
+                    ,item-place
+                    ,root-key-expr
+                    ,item-path))]
               ["unit" `unit]
               ["bool" `(deref ,item-source)]
               ["char" `(deref ,item-source)]
@@ -134,13 +160,17 @@
 ;; Name construction intentionally lives in macro CTFE rather than an ordinary
 ;; helper call: every operation below is part of the source/native TLCI macro
 ;; contract. Acronym boundaries follow `HTTPServer` -> `http-server`.
-;: Resolve and call one move-only nominal clone dependency.
-(defmacro (clone-nominal-owner
+;: Copy a nominal by shared read or dispatch to its owner hook.
+(defmacro (clone-nominal-value
   [T : type (:kind struct enum)]
   [source : comptime.Expr]
+  [copy-place : comptime.Expr]
+  [root-key-expr : comptime.Expr]
   [path-expr : comptime.Expr]) : comptime.Expr
   (let
+    [type-key-text : String (type-key T)]
     [path : String (comptime.expr-string-value path-expr)]
+    [root-key : String (comptime.expr-string-value root-key-expr)]
     [owner : String (type-nominal-module T)]
     [owner-display : String
       (if (string-eq owner "")
@@ -153,6 +183,20 @@
     [decimal-digits : String "0123456789"]
     [function-name : String "clone-"]
     [last-was-separator : bool false]
+    (if (type-cleanup-owning? T)
+      (comptime.comptime-error
+        (comptime.string-append
+          "gen-clone: unsupported cleanup-owning type "
+          (comptime.string-append
+            type-key-text
+            (comptime.string-append " at " path))))
+      unit)
+    (if (string-eq type-key-text root-key)
+      (comptime.comptime-error
+        (comptime.string-append
+          "gen-clone: cyclic clone dependency reaches "
+          (comptime.string-append root-key (comptime.string-append " at " path))))
+      unit)
     (if (= length 0)
       (comptime.comptime-error "gen-clone: nominal dependency name is empty")
       unit)
@@ -268,256 +312,221 @@
     (if last-was-separator
       (comptime.comptime-error "gen-clone: nominal name ends in a separator")
       unit)
-    (let
-      [present? : bool (comptime.module-value? owner function-name)]
-      (if present?
-        ;; The generated ordinary call deliberately leaves signature
-        ;; validation to the normal typechecker. This keeps clone
-        ;; dependencies subject to exactly the same borrow/return
-        ;; rules as any other function call.
-        (comptime.expr-call
-          (comptime.module-value-expr owner function-name)
-          (comptime.expr-list-cons source (comptime.expr-list-empty)))
-        (comptime.comptime-error
-          (comptime.string-append
-            "gen-clone: missing explicit dependency "
-            (comptime.string-append
-              function-name
-              (comptime.string-append
-                " for "
-                (comptime.string-append
-                  (type-key T)
-                  (comptime.string-append
-                    " at "
+    (if (comptime.module-value? owner function-name)
+      ;; The generated ordinary call deliberately leaves signature
+      ;; validation to the normal typechecker. This keeps clone
+      ;; dependencies subject to exactly the same borrow/return
+      ;; rules as any other function call.
+      (comptime.expr-call
+        (comptime.module-value-expr owner function-name)
+        (comptime.expr-list-cons source (comptime.expr-list-empty)))
+      (let
+        ;; Follow reflected fields, inspecting each nominal at most once.
+        ;; Legal recursive layouts have an owning edge, so they
+        ;; cannot take the Copy path even when a visit reaches a cycle.
+        [types : comptime.ExprList
+          (comptime.expr-list-cons
+            (comptime.type-expr T)
+            (comptime.expr-list-empty))]
+        [paths : comptime.ExprList
+          (comptime.expr-list-cons
+            (comptime.expr-string (type-nominal-name T))
+            (comptime.expr-list-empty))]
+        [seen : comptime.ExprList (comptime.expr-list-empty)]
+        [copyable? : bool true]
+        [type-count : i64 1]
+        [visited : i64 0]
+        (while (< visited type-count)
+          (let
+            [index : i64 (- (- type-count 1) visited)]
+            [ty : comptime.Expr (comptime.expr-list-type-nth types index)]
+            [kind : String (type-kind ty)]
+            [ty-path : String
+              (comptime.expr-string-value (comptime.expr-list-nth paths index))]
+            [inspect? : bool true]
+            (if (if (string-eq kind "struct")
+              true
+              (string-eq kind "enum"))
+              (let
+                [key : String (type-key ty)]
+                [seen-count : i64 (comptime.expr-list-length seen)]
+                [previous : i64 0]
+                (while (< previous seen-count)
+                  (if (string-eq
+                    key
+                    (comptime.expr-string-value
+                      (comptime.expr-list-nth seen previous)))
+                    (set! inspect? false)
+                    unit)
+                  (set! previous (+ previous 1)))
+                (if inspect?
+                  (set!
+                    seen
+                    (comptime.expr-list-cons (comptime.expr-string key) seen))
+                  unit))
+              unit)
+            (if inspect?
+              (begin
+                (if (type-cleanup-owning? ty)
+                  (comptime.comptime-error
                     (comptime.string-append
-                      path
+                      "gen-clone: unsupported cleanup-owning type "
                       (comptime.string-append
-                        " from owner "
-                        (comptime.string-append
-                          owner-display
-                          "; invoke gen-clone in its owner module first")))))))))))))
-
-;: Copy a nominal by shared read or dispatch to its owner hook.
-(defmacro (clone-nominal-value
-  [T : type (:kind struct enum)]
-  [source : comptime.Expr]
-  [copy-place : comptime.Expr]
-  [root-key-expr : comptime.Expr]
-  [path-expr : comptime.Expr]) : comptime.Expr
-  (let
-    [type-key-text : String (type-key T)]
-    [path : String (comptime.expr-string-value path-expr)]
-    [root-key : String (comptime.expr-string-value root-key-expr)]
-    (if (type-cleanup-owning? T)
-      (comptime.comptime-error
-        (comptime.string-append
-          "gen-clone: unsupported cleanup-owning type "
-          (comptime.string-append
-            type-key-text
-            (comptime.string-append " at " path))))
-      (if (string-eq type-key-text root-key)
-        (comptime.comptime-error
-          (comptime.string-append
-            "gen-clone: cyclic clone dependency reaches "
-            (comptime.string-append
-              root-key
-              (comptime.string-append " at " path))))
-        (let
-          ;; Follow reflected fields, inspecting each nominal at most once.
-          ;; Legal recursive layouts have an owning edge, so they
-          ;; cannot take the Copy path even when a visit reaches a cycle.
-          [types : comptime.ExprList
-            (comptime.expr-list-cons
-              (comptime.type-expr T)
-              (comptime.expr-list-empty))]
-          [paths : comptime.ExprList
-            (comptime.expr-list-cons
-              (comptime.expr-string (type-nominal-name T))
-              (comptime.expr-list-empty))]
-          [seen : comptime.ExprList (comptime.expr-list-empty)]
-          [copyable? : bool true]
-          [type-count : i64 1]
-          [visited : i64 0]
-          (while (< visited type-count)
-            (let
-              [index : i64 (- (- type-count 1) visited)]
-              [ty : comptime.Expr (comptime.expr-list-type-nth types index)]
-              [kind : String (type-kind ty)]
-              [ty-path : String
-                (comptime.expr-string-value
-                  (comptime.expr-list-nth paths index))]
-              [inspect? : bool true]
-              (if (if (string-eq kind "struct")
-                true
-                (string-eq kind "enum"))
-                (let
-                  [key : String (type-key ty)]
-                  [seen-count : i64 (comptime.expr-list-length seen)]
-                  [previous : i64 0]
-                  (while (< previous seen-count)
-                    (if (string-eq
-                      key
-                      (comptime.expr-string-value
-                        (comptime.expr-list-nth seen previous)))
-                      (set! inspect? false)
-                      unit)
-                    (set! previous (+ previous 1)))
-                  (if inspect?
-                    (set!
-                      seen
-                      (comptime.expr-list-cons (comptime.expr-string key) seen))
-                    unit))
-                unit)
-              (if inspect?
-                (begin
-                  (if (type-cleanup-owning? ty)
+                        (type-key ty)
+                        (comptime.string-append " at " ty-path))))
+                  unit)
+                (match (match kind
+                  ["struct" "product"]
+                  ["tuple" "product"]
+                  [_ kind])
+                  ["unit" unit]
+                  ["never" unit]
+                  ["bool" unit]
+                  ["char" unit]
+                  ["i64" unit]
+                  ["i32" unit]
+                  ["i16" unit]
+                  ["i8" unit]
+                  ["u64" unit]
+                  ["u32" unit]
+                  ["u16" unit]
+                  ["u8" unit]
+                  ["f64" unit]
+                  ["f32" unit]
+                  ["string" (set! copyable? false)]
+                  ["box" (set! copyable? false)]
+                  ["dyn-array" (set! copyable? false)]
+                  ["array"
+                    (let
+                      [element : comptime.Expr (array-element-type ty)]
+                      (set!
+                        types
+                        (comptime.expr-list-cons
+                          (comptime.type-expr element)
+                          types))
+                      (set!
+                        paths
+                        (comptime.expr-list-cons
+                          (comptime.expr-string
+                            (comptime.string-append ty-path "[]"))
+                          paths))
+                      (set! type-count (+ type-count 1)))]
+                  ["product"
+                    (let
+                      [struct? : bool (string-eq kind "struct")]
+                      [count : i64
+                        (if struct?
+                          (struct-field-count ty)
+                          (tuple-element-count ty))]
+                      [field : i64 0]
+                      (while (< field count)
+                        (let
+                          [member : comptime.Expr
+                            (if struct?
+                              (struct-field-type ty field)
+                              (tuple-element-type ty field))]
+                          [suffix : String
+                            (if struct?
+                              (comptime.string-append
+                                "."
+                                (struct-field-name ty field))
+                              (comptime.string-append
+                                "["
+                                (comptime.string-append
+                                  (comptime.int->string field)
+                                  "]")))]
+                          (set!
+                            types
+                            (comptime.expr-list-cons
+                              (comptime.type-expr member)
+                              types))
+                          (set!
+                            paths
+                            (comptime.expr-list-cons
+                              (comptime.expr-string
+                                (comptime.string-append ty-path suffix))
+                              paths))
+                          (set! type-count (+ type-count 1))
+                          (set! field (+ field 1))))
+                      unit)]
+                  ["enum"
+                    (let
+                      [count : i64 (enum-variant-count ty)]
+                      [variant : i64 0]
+                      (while (< variant count)
+                        (let
+                          [payload-count : i64
+                            (enum-variant-payload-count ty variant)]
+                          [payload : i64 0]
+                          (while (< payload payload-count)
+                            (let
+                              [member : comptime.Expr
+                                (enum-variant-payload-type ty variant payload)]
+                              [variant-path : String
+                                (comptime.string-append
+                                  ty-path
+                                  (comptime.string-append
+                                    "."
+                                    (enum-variant-name ty variant)))]
+                              [member-path : String
+                                (comptime.string-append
+                                  variant-path
+                                  (comptime.string-append
+                                    "["
+                                    (comptime.string-append
+                                      (comptime.int->string payload)
+                                      "]")))]
+                              (set!
+                                types
+                                (comptime.expr-list-cons
+                                  (comptime.type-expr member)
+                                  types))
+                              (set!
+                                paths
+                                (comptime.expr-list-cons
+                                  (comptime.expr-string member-path)
+                                  paths))
+                              (set! type-count (+ type-count 1))
+                              (set! payload (+ payload 1))))
+                          (set! variant (+ variant 1))))
+                      unit)]
+                  [_
                     (comptime.comptime-error
                       (comptime.string-append
-                        "gen-clone: unsupported cleanup-owning type "
+                        "gen-clone: unsupported type "
                         (comptime.string-append
                           (type-key ty)
-                          (comptime.string-append " at " ty-path))))
-                    unit)
-                  (match (match kind
-                    ["box" "sequence"]
-                    ["array" "sequence"]
-                    ["dyn-array" "sequence"]
-                    ["struct" "product"]
-                    ["tuple" "product"]
-                    [_ kind])
-                    ["unit" unit]
-                    ["never" unit]
-                    ["bool" unit]
-                    ["char" unit]
-                    ["i64" unit]
-                    ["i32" unit]
-                    ["i16" unit]
-                    ["i8" unit]
-                    ["u64" unit]
-                    ["u32" unit]
-                    ["u16" unit]
-                    ["u8" unit]
-                    ["f64" unit]
-                    ["f32" unit]
-                    ["string" (set! copyable? false)]
-                    ["sequence"
-                      (let
-                        [element : comptime.Expr
-                          (if (string-eq kind "box")
-                            (comptime.box-element-type ty)
-                            (array-element-type ty))]
-                        (if (string-eq kind "array")
-                          unit
-                          (set! copyable? false))
-                        (set!
-                          types
-                          (comptime.expr-list-cons
-                            (comptime.type-expr element)
-                            types))
-                        (set!
-                          paths
-                          (comptime.expr-list-cons
-                            (comptime.expr-string
-                              (comptime.string-append ty-path "[]"))
-                            paths))
-                        (set! type-count (+ type-count 1)))]
-                    ["product"
-                      (let
-                        [struct? : bool (string-eq kind "struct")]
-                        [count : i64
-                          (if struct?
-                            (struct-field-count ty)
-                            (tuple-element-count ty))]
-                        [field : i64 0]
-                        (while (< field count)
-                          (let
-                            [member : comptime.Expr
-                              (if struct?
-                                (struct-field-type ty field)
-                                (tuple-element-type ty field))]
-                            [suffix : String
-                              (if struct?
-                                (comptime.string-append
-                                  "."
-                                  (struct-field-name ty field))
-                                (comptime.string-append
-                                  "["
-                                  (comptime.string-append
-                                    (comptime.int->string field)
-                                    "]")))]
-                            (set!
-                              types
-                              (comptime.expr-list-cons
-                                (comptime.type-expr member)
-                                types))
-                            (set!
-                              paths
-                              (comptime.expr-list-cons
-                                (comptime.expr-string
-                                  (comptime.string-append ty-path suffix))
-                                paths))
-                            (set! type-count (+ type-count 1))
-                            (set! field (+ field 1))))
-                        unit)]
-                    ["enum"
-                      (let
-                        [count : i64 (enum-variant-count ty)]
-                        [variant : i64 0]
-                        (while (< variant count)
-                          (let
-                            [payload-count : i64
-                              (enum-variant-payload-count ty variant)]
-                            [payload : i64 0]
-                            (while (< payload payload-count)
-                              (let
-                                [member : comptime.Expr
-                                  (enum-variant-payload-type ty variant payload)]
-                                [variant-path : String
-                                  (comptime.string-append
-                                    ty-path
-                                    (comptime.string-append
-                                      "."
-                                      (enum-variant-name ty variant)))]
-                                [member-path : String
-                                  (comptime.string-append
-                                    variant-path
-                                    (comptime.string-append
-                                      "["
-                                      (comptime.string-append
-                                        (comptime.int->string payload)
-                                        "]")))]
-                                (set!
-                                  types
-                                  (comptime.expr-list-cons
-                                    (comptime.type-expr member)
-                                    types))
-                                (set!
-                                  paths
-                                  (comptime.expr-list-cons
-                                    (comptime.expr-string member-path)
-                                    paths))
-                                (set! type-count (+ type-count 1))
-                                (set! payload (+ payload 1))))
-                            (set! variant (+ variant 1))))
-                        unit)]
-                    [_
-                      (comptime.comptime-error
+                          (comptime.string-append " at " ty-path))))]))
+              unit)
+            (if copyable?
+              (set! visited (+ visited 1))
+              (set! visited type-count))))
+        (if copyable?
+          (let
+            [place-type : comptime.Expr (comptime.expr-type copy-place)]
+            (if (string-eq (type-kind place-type) "region")
+              `(let
+                [__clone_copy_source ,source]
+                (deref __clone_copy_source))
+              copy-place))
+          (comptime.comptime-error
+            (comptime.string-append
+              "gen-clone: missing explicit dependency "
+              (comptime.string-append
+                function-name
+                (comptime.string-append
+                  " for "
+                  (comptime.string-append
+                    (type-key T)
+                    (comptime.string-append
+                      " at "
+                      (comptime.string-append
+                        path
                         (comptime.string-append
-                          "gen-clone: unsupported type "
+                          " from owner "
                           (comptime.string-append
-                            (type-key ty)
-                            (comptime.string-append " at " ty-path))))]))
-                unit)
-              (set! visited (+ visited 1))))
-          (if copyable?
-            (let
-              [place-type : comptime.Expr (comptime.expr-type copy-place)]
-              (if (string-eq (type-kind place-type) "region")
-                `(let
-                  [__clone_copy_source ,source]
-                  (deref __clone_copy_source))
-                copy-place))
-            `(stdlib.clone.clone-nominal-owner ,T ,source ,path-expr)))))))
+                            owner-display
+                            "; invoke gen-clone in its owner module first"))))))))))))))
 
 ;: Emit an ordinary deep copy for one source expression.
 ;:
@@ -630,30 +639,34 @@
       ["f64" `(deref ,source)]
       ["f32" `(deref ,source)]
       ["string"
-        ;; Allocate in the expansion so the macro module stays usable in PIC
-        ;; programs that only load its declarations.
-        `(let
-          [__clone_text ,source]
-          [__clone_text_len : i64 (__tl_string_length __clone_text)]
-          [__clone_bytes : (__tl_dyn-array u8)
-            (__tl_make-array u8 __clone_text_len)]
-          [__clone_dst : (MutPtr u8)
+        (if (comptime.module-value? "stdlib.string" "copy")
+          (comptime.expr-call
+            (comptime.module-value-expr "stdlib.string" "copy")
+            (comptime.expr-list-cons source (comptime.expr-list-empty)))
+          ;; Allocate in the expansion so the macro module stays usable in PIC
+          ;; programs that only load its declarations.
+          `(let
+            [__clone_text ,source]
+            [__clone_text_len : i64 (__tl_string_length __clone_text)]
+            [__clone_bytes : (__tl_dyn-array u8)
+              (__tl_make-array u8 __clone_text_len)]
+            [__clone_dst : (MutPtr u8)
+              (unsafe
+                (ptr-cast (__tl_array-data __clone_bytes) : (MutPtr u8)))]
+            [__clone_src : (Ptr u8)
+              (unsafe
+                (string-data __clone_text))]
+            [__clone_offset : i64 0]
+            (while (< __clone_offset __clone_text_len)
+              (unsafe
+                (ptr-write!
+                  (ptr-offset __clone_dst __clone_offset)
+                  (ptr-read (ptr-offset __clone_src __clone_offset))))
+              (set! __clone_offset (+ __clone_offset 1)))
             (unsafe
-              (ptr-cast (__tl_array-data __clone_bytes) : (MutPtr u8)))]
-          [__clone_src : (Ptr u8)
-            (unsafe
-              (string-data __clone_text))]
-          [__clone_offset : i64 0]
-          (while (< __clone_offset __clone_text_len)
-            (unsafe
-              (ptr-write!
-                (ptr-offset __clone_dst __clone_offset)
-                (ptr-read (ptr-offset __clone_src __clone_offset))))
-            (set! __clone_offset (+ __clone_offset 1)))
-          (unsafe
-            (string-from-bytes
-              (ptr-cast __clone_dst : (Ptr u8))
-              __clone_text_len)))]
+              (string-from-bytes
+                (ptr-cast __clone_dst : (Ptr u8))
+                __clone_text_len))))]
       ["tuple"
         `(let
           [__clone_tuple_source ,source]

@@ -1134,7 +1134,7 @@
   [roots : cli_svec.Vec]
   [target : be_state.CompilerBackendTarget]) : bool
   (let
-    [legacy-roots : cli_svec.Vec (clone roots)]
+    [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
     (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
       (tltest.tltest-program-with-print-runtime program target)
       (tltest.tltest-paths-with-print-runtime target harness-paths)
@@ -1175,7 +1175,7 @@
   [roots : cli_svec.Vec]
   [target : be_state.CompilerBackendTarget]) : bool
   (let
-    [legacy-roots : cli_svec.Vec (clone roots)]
+    [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
     (match (lower.lower-compiler-program-with-decl-paths-mode-cache
       source
       (tltest.tltest-program-with-print-runtime program target)
@@ -1411,7 +1411,7 @@
             source
             "(cfg test (test package-cfg-inline unit))\n")
           (let
-            [legacy-roots : cli_svec.Vec (clone roots)]
+            [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
             (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
               (owned_view.compiler-owned-shared-view source)
               (owned_view.compiler-owned-shared-view legacy-roots)
@@ -1492,7 +1492,7 @@
   [roots : cli_svec.Vec]
   [backend-target : be_state.CompilerBackendTarget]) : String
   (let
-    [legacy-roots : cli_svec.Vec (clone roots)]
+    [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
     (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
       "typecheck-prefix-test-cli"
       legacy-roots

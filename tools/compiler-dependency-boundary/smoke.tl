@@ -10,7 +10,7 @@
 (import stdlib.process)
 
 (define (item [items : (& items json.JsonSeq)] [index : i64]) : json.Json
-  (clone (array-ref items.slots index)))
+  (json.clone-json (& (array-ref items.slots index))))
 
 (define (text-item [items : (& items json.JsonSeq)] [index : i64]) : String
   (boundary.json-string (item items index)))

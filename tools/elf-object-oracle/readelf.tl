@@ -2,6 +2,7 @@
 ;; physical table and entry identity. LLVM supplies raw indexes/flags as well.
 (import linker_elf_object_reader as elf)
 (import stdlib.byte_buf)
+(import stdlib.string)
 (import stdlib.text_buf as text)
 (import stdlib.format)
 (import stdlib.iterator)
@@ -23,7 +24,7 @@
     (for [i (iterator.range 0 13)]
       (when
         (elf.flag? value (array-ref bits i))
-        (text.append! out (clone (array-ref letters i)))))
+        (text.append! out (string.copy (& (array-ref letters i))))))
     (when (elf.flag? value 4) (text.append! out "X"))
     (text.render out)))
 

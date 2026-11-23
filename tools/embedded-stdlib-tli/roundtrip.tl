@@ -3,6 +3,9 @@
 (import compiler_tli_extract as extract)
 (import compiler_tli_types as tli)
 (import compiler_tli_codec as codec)
+(import compiler_tli_hydrate as hydrate)
+(import compiler_intern as intern)
+(cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci as tlci))
 (import compiler_ast_types as ast)
 (import compiler_load as load)
 (import compiler_embedded_stdlib as embedded)
@@ -23,16 +26,19 @@
 
 (include-str payload-inventory "../../src/compiler_embedded_stdlib_payload.tl")
 
-(define expected-modules : i64
+(define expected-source-modules : i64
   83)
+(define expected-generated-modules : i64
+  13)
 
-;; The embedded catalog includes clone.deep (#9875).
+;; Includes the current native clone operations.
 (define expected-native-handles : i64
-  (cfg embedded-stdlib-tlci 170 0))
+  (cfg embedded-stdlib-tlci 172 0))
 
 (define (embedded-paths) : (__tl_dyn-array String)
   (let
-    [paths : (__tl_dyn-array String) (__tl_make-array String expected-modules)]
+    [paths : (__tl_dyn-array String)
+      (__tl_make-array String expected-source-modules)]
     [count : i64 0]
     [cursor : i64 0]
     [prefix : String "\"../stdlib/"]
@@ -44,7 +50,7 @@
           [end : i64
             (string.index-of-byte (& payload-inventory) start (cast 34 : u8))]
           (when
-            (or (< end start) (>= count expected-modules))
+            (or (< end start) (>= count expected-source-modules))
             (io.panic "invalid embedded stdlib source inventory"))
           (set!
             (array-ref paths count)
@@ -53,7 +59,7 @@
           (set! cursor (+ end 1)))
         (+= cursor 1)))
     (when
-      (!= count expected-modules)
+      (!= count expected-source-modules)
       (io.panic "unexpected embedded stdlib source count"))
     paths))
 
@@ -62,7 +68,7 @@
   (let
     [paths : (__tl_dyn-array String) (embedded-paths)]
     [sources : (__tl_dyn-array extract.TliSource)
-      (__tl_make-array extract.TliSource expected-modules)]
+      (__tl_make-array extract.TliSource expected-source-modules)]
     [roots : strings.Vec (strings.new)]
     [cfgs : sym_env.SymI64Env
       (cfg
@@ -74,7 +80,7 @@
     [decls : ast.AstDeclList (ast.ast-decl-list-new)]
     [decl-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
     [seen : sym_env.SymI64Env (sym_env.sym-i64-empty)]
-    (for [index (iterator.range 0 expected-modules)]
+    (for [index (iterator.range 0 expected-source-modules)]
       (let
         [suffix (& (array-ref paths index))]
         [path : String (str_cat.str-cat "stdlib/" (string.copy suffix))]
@@ -204,8 +210,22 @@
       (__tl_make-array tli.TliModuleRecord count)]
     [counts : RoundtripCounts (RoundtripCounts 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)]
     (when
-      (!= count expected-modules)
-      (io.panic "wrong TLI module directory count"))
+      (!= count (+ expected-source-modules expected-generated-modules))
+      (io.panic "unexpected TLI source and generated module count"))
+    (let
+      [paths : (__tl_dyn-array String) (embedded-paths)]
+      (for [index (iterator.range 0 expected-source-modules)]
+        (let
+          [path : String
+            (str_cat.str-cat
+              "stdlib/"
+              (string.copy (& (array-ref paths index))))]
+          [name : String
+            (load.compiler-load-canonical-module-id-from-path (& path))]
+          (when
+            (< (hydrate.tli-catalog-find (& directory) (& name)) 0)
+            (io.panic
+              (string.append "TLI directory is missing source module " (& name)))))))
     (for [index (iterator.range 0 count)]
       (match (codec.tli-decode-module-at (& directory) index)
         [(Ok row)
@@ -234,9 +254,10 @@
           (!= (array-ref reencoded index) (array-ref bytes index))
           (io.panic "re-encoded TLI bytes changed"))))
     (io.println
-      "{}/{} modules, {} bytes, bit-identical. imports={} inits={} types={} functions={} values={} macros={} dispatches={} opaque={} cleanup={} consts={} never={} writes={} arena-global={} arena-param={} native={}"
-      count
-      expected-modules
+      "{}/{} source modules and {} generated modules, {} bytes, bit-identical. imports={} inits={} types={} functions={} values={} macros={} dispatches={}"
+      expected-source-modules
+      expected-source-modules
+      (- count expected-source-modules)
       (array-length bytes)
       counts.imports
       counts.inits
@@ -244,7 +265,9 @@
       counts.functions
       counts.values
       counts.macros
-      counts.dispatches
+      counts.dispatches)
+    (io.println
+      "opaque={} cleanup={} consts={} never={} writes={} arena-global={} arena-param={} native={}"
       counts.opaque
       counts.cleanup
       counts.consts
@@ -270,17 +293,150 @@
         (= counts.native expected-native-handles))
       (io.panic "unexpected TLI section counts"))))
 
+(cfg
+  embedded-stdlib-tlci
+  (define (roundtrip-native-macro! [row : (& tli.TliMacroHandle)]) : unit
+    (when
+      (!= (bit-and row.flags 1) 0)
+      (match (tlci.compiler-embedded-stdlib-tlci-catalog-lookup
+        (string.copy (& row.identity)))
+        [(Resolved resolved)
+          (let
+            [digest : (Array u8 32)
+              (extract.tli-extract-native-catalog-digest
+                resolved.catalog-generation)]
+            (match (hydrate.tli-hydrate-native-macro
+              row
+              resolved.entry-index
+              (& digest))
+              [(Native _ _ _) unit]
+              [_ (io.panic "TLI handle mismatches native TLCI lookup")]))]
+        [_ (io.panic "native TLI handle has no TLCI entry")]))))
+
+(define (roundtrip-project!
+  [counts : (&mut RoundtripCounts)]
+  [row : (& tli.TliModuleRecord)]) : unit
+  (roundtrip-count! counts row)
+  (for [index (iterator.range 0 (array-length row.types))]
+    (let
+      [ty : hydrate.TliHydratedType
+        (hydrate.tli-hydrate-type-decl (& (array-ref row.types index)))]
+      (unless
+        (and (>= ty.size 0) (>= ty.align 0))
+        (io.panic "invalid projected type layout"))))
+  (for [index (iterator.range 0 (array-length row.functions))]
+    (let
+      [fn : hydrate.TliHydratedFunction
+        (hydrate.tli-hydrate-function (& (array-ref row.functions index)))]
+      (match (ast.ty-node-get fn.signature-id)
+        [(Func _ _) unit]
+        [_ (io.panic "invalid projected function signature")])))
+  (for [index (iterator.range 0 (array-length row.values))]
+    (let
+      [value : hydrate.TliHydratedValue
+        (hydrate.tli-hydrate-value (& (array-ref row.values index)))]
+      (when (< value.type-id 0) (io.panic "invalid projected value type"))))
+  (cfg
+    embedded-stdlib-tlci
+    (for [index (iterator.range 0 (array-length row.macros))]
+      (roundtrip-native-macro! (& (array-ref row.macros index))))))
+
+(define (roundtrip-hydrate!
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [cfg-digest : (& (Array u8 32))]) : unit
+  (let
+    [build : String (identity.compiler-build-producer-identity)]
+    [target : String
+      (cfg windows "x86_64-pc-windows-msvc" "x86_64-unknown-linux-gnu")]
+    [catalog : hydrate.TliCatalog
+      (match (hydrate.tli-catalog-open bytes (& build) (& target) cfg-digest)
+        [(Ok catalog) catalog]
+        [(Err error) (io.panic error.message)])]
+    [counts : RoundtripCounts (RoundtripCounts 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)]
+    (when
+      (!= (hydrate.tli-catalog-ready-count (& catalog)) 0)
+      (io.panic "TLI directory decoded records eagerly"))
+    (match (hydrate.tli-catalog-hydrate! (&mut catalog) "stdlib.io")
+      [(Ok _)
+        (when
+          (!= (hydrate.tli-catalog-ready-count (& catalog)) 11)
+          (io.panic "stdlib.io must hydrate ten dependencies and the root"))]
+      [(Err error) (io.panic error.message)])
+    (for [index
+      (iterator.range
+        0
+        (array-length (hydrate.tli-catalog-directory (& catalog)).entries))]
+      (match (hydrate.tli-catalog-record (& catalog) index)
+        [(Some row) (roundtrip-project! (&mut counts) row)]
+        [(None) unit]))
+    (let
+      [startup : (__tl_dyn-array i64)
+        (hydrate.tli-catalog-startup-symbols (& catalog))]
+      (unless
+        (and
+          (> counts.types 0)
+          (> counts.functions 0)
+          (> counts.macros 0)
+          (= counts.inits 2)
+          (= (array-length startup) 2)
+          (string.eq
+            (intern.intern-str (array-ref startup 0))
+            "__tl_mod_init_stdlib.format_writer_core")
+          (string.eq
+            (intern.intern-str (array-ref startup 1))
+            "__tl_mod_init_stdlib.format"))
+        (io.panic "stdlib.io closure lost semantic facts or init order")))
+    (let
+      [names : (Array String 3) (array "stdlib.args" "stdlib.json" "stdlib.fs")]
+      (for [index (iterator.range 0 3)]
+        (match (hydrate.tli-catalog-hydrate!
+          (&mut catalog)
+          (& (array-ref names index)))
+          [(Ok _) unit]
+          [(Err error) (io.panic error.message)])))
+    (let
+      [names : (Array String 3)
+        (array
+          "stdlib.vector.generated.String"
+          "stdlib.vector.generated.core.enum_stdlib.json/Json"
+          "stdlib.vector.generated.core.struct_stdlib.json/JsonMember")]
+      (for [index (iterator.range 0 3)]
+        (let
+          [index : i64
+            (hydrate.tli-catalog-find
+              (hydrate.tli-catalog-directory (& catalog))
+              (& (array-ref names index)))]
+          (match (hydrate.tli-catalog-record (& catalog) index)
+            [(Some row)
+              (unless
+                (and
+                  (> (array-length row.types) 0)
+                  (> (array-length row.functions) 0))
+                (io.panic "generated stdlib interface has no declarations"))]
+            [(None) (io.panic "generated stdlib interface did not hydrate")])))))
+  (cfg embedded-stdlib-tlci (tlci.compiler-embedded-stdlib-tlci-session-close!)))
+
 (define (main) : i64
   (when (!= (io.arg-count) 2) (io.panic "usage: roundtrip <out.tli>"))
   (let
     [path : String (io.arg 1)]
     [bundle : tli.TliBundle (roundtrip-load)]
+    [cfg-digest : (Array u8 32)
+      (array-ref bundle.modules 0).cfg-fingerprint-sha256]
     [encoded : byte_buf.ByteBuf
       (byte_buf.from-array (codec.tli-encode-bundle (& bundle)))]
     (match (io.try-write-file (& path) (byte_buf.as-bytes (& encoded)))
       [(OkIoUnit) unit]
       [(ErrIoUnit _) (io.panic "cannot write TLI bundle")])
     (match (io.try-read-file (& path))
-      [(OkIoBytes data) (roundtrip-verify (& (byte_buf.to-array data)))]
+      [(OkIoBytes data)
+        (let
+          [bytes : (__tl_dyn-array u8) (byte_buf.to-array data)]
+          (roundtrip-verify (& bytes))
+          (with-arena
+            tli-job
+            (unsafe
+              ;; Compiler interner, AST pool and TLCI session select their own storage.
+              (roundtrip-hydrate! (& bytes) (& cfg-digest)))))]
       [(ErrIoBytes _) (io.panic "cannot read TLI bundle")]))
   0)

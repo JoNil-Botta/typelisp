@@ -101,14 +101,18 @@
     [core-count : i64 0]
     (while (< index rows.len)
       (let
-        [row : json.JsonSeq (json-array (clone (array-ref rows.slots index)))]
+        [row : json.JsonSeq
+          (json-array (json.clone-json (& (array-ref rows.slots index))))]
         [_shape : unit
           (require
             (= row.len 3)
             "dependency boundary: policy row requires path, role and reason")]
-        [source : String (json-string (clone (array-ref row.slots 0)))]
-        [role : String (json-string (clone (array-ref row.slots 1)))]
-        [reason : String (json-string (clone (array-ref row.slots 2)))]
+        [source : String
+          (json-string (json.clone-json (& (array-ref row.slots 0))))]
+        [role : String
+          (json-string (json.clone-json (& (array-ref row.slots 1))))]
+        [reason : String
+          (json-string (json.clone-json (& (array-ref row.slots 2))))]
         [normalized : String (fs.path-normalize (& source))]
         (require
           (and
@@ -181,8 +185,10 @@
     [event : json.JsonSeq (json-array (parse-json line))]
     [_shape : unit
       (require (= event.len 2) "dependency boundary: malformed compiler fact")]
-    [kind : String (json-string (clone (array-ref event.slots 0)))]
-    [value : String (json-string (clone (array-ref event.slots 1)))]
+    [kind : String
+      (json-string (json.clone-json (& (array-ref event.slots 0))))]
+    [value : String
+      (json-string (json.clone-json (& (array-ref event.slots 1))))]
     (cond
       [(string.eq (& kind) "source")
         (observe-source! policy value)

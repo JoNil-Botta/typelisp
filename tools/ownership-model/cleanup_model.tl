@@ -296,9 +296,15 @@
     (while (> memory.depth 0)
       (let
         [owner : Owner (array-ref memory.stack (- memory.depth 1))]
-        ;; The stack element carries the borrow's view type: clone the small
-        ;; owner out of it to hand `leave!` an owned value.
-        (unless (leave! modes memory (clone owner)) (return false))))
+        ;; Project the borrowed stack entry to an owned enum for leave!.
+        (unless
+          (leave!
+            modes
+            memory
+            (match (& owner)
+              [(Outer) Outer]
+              [(Inner) Inner]))
+          (return false))))
     true))
 
 (define (export!

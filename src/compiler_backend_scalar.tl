@@ -4265,16 +4265,27 @@
   [sse? : bool]) : String
   (if (string.eq src dst)
     ""
-    (str_cat.str-cat
-      "    "
-      (if sse?
-        "movsd"
-        "movq")
-      " "
-      src
-      ", "
-      dst
-      "\n")))
+    (let
+      [cross-gp? : bool
+        (and
+          sse?
+          (or
+            (and
+              (be_operand.compiler-backend-peephole-register-operand? src)
+              (not (string.is-string-prefix-at src "%xmm" 0)))
+            (and
+              (be_operand.compiler-backend-peephole-register-operand? dst)
+              (not (string.is-string-prefix-at dst "%xmm" 0)))))]
+      (str_cat.str-cat
+        "    "
+        (if (and sse? (not cross-gp?))
+          "movsd"
+          "movq")
+        " "
+        src
+        ", "
+        dst
+        "\n"))))
 
 (define (compiler-backend-emit-group-word-copy
   [entry : (&mut entry be_state.CompilerBackendAsmBuf)]
@@ -5050,7 +5061,7 @@
 (define (compiler-backend-emit-group-copy
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
+  [dst : (& dst compiler_ir_types.CompilerIrValue)]
   [src : compiler_ir_types.CompilerIrValue]
   [vars : i64]
   [ty : compiler_ast_types.AstType]
@@ -5075,22 +5086,44 @@
               1
               vars
               backend-state))]
+        [dst-var : i64
+          (match dst
+            [(Var var) var]
+            [_ -1])]
+        [symbol : String
+          (match dst
+            [(Global name)
+              (be_operand.compiler-backend-global-symbol-index
+                program-index
+                name)]
+            [(Var _) ""]
+            [_
+              (return
+                (Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      "backend: register-group copy requires variable or global destination"))))])]
         [dst0
-          (try
-            (compiler-backend-group-word-operand-with-backend-state
-              assignments
-              dst
-              0
-              vars
-              backend-state))]
+          (if (>= dst-var 0)
+            (try
+              (compiler-backend-group-word-operand-with-backend-state
+                assignments
+                dst-var
+                0
+                vars
+                backend-state))
+            (str_cat.str-cat symbol "(%rip)"))]
         [dst1
-          (try
-            (compiler-backend-group-word-operand-with-backend-state
-              assignments
-              dst
-              1
-              vars
-              backend-state))]
+          (if (>= dst-var 0)
+            (try
+              (compiler-backend-group-word-operand-with-backend-state
+                assignments
+                dst-var
+                1
+                vars
+                backend-state))
+            (str_cat.str-cat symbol "+8(%rip)"))]
         [sse0? : bool
           (be_facts.compiler-backend-group-word-sse?
             type-segment-bases
@@ -5106,7 +5139,7 @@
         [reg0 : String
           (if sse0?
             (compiler-backend-group-copy-xmm-scratch
-              dst
+              dst-var
               (be_state.compiler-backend-global-shared-view src0)
               (be_state.compiler-backend-global-shared-view src1)
               (be_state.compiler-backend-global-shared-view dst0)
@@ -5125,7 +5158,7 @@
         [reg1 : String
           (if sse1?
             (compiler-backend-group-copy-xmm-scratch
-              dst
+              dst-var
               (be_state.compiler-backend-global-shared-view src0)
               (be_state.compiler-backend-global-shared-view src1)
               (be_state.compiler-backend-global-shared-view dst0)

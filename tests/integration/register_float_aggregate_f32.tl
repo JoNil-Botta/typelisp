@@ -86,6 +86,57 @@
         (vec-sum v))]
     (= (reader) 42.0)))
 
+;; #8964: packed f32 field mutation surviving a call (held in a GP carrier
+;; across the call), f64 control, spilled carrier, and bit-exact preservation
+;; including `-0.0` and nontrivial bit patterns.
+(define (clobber-floats [k : i64] [a : f64] [b : f64]) : f64
+  (let
+    [acc : f64 (+ a b)]
+    [i : i64 0]
+    (while (< i k)
+      (set! acc (+ (* acc 0.5) 1.25))
+      (set! i (+ i 1)))
+    acc))
+
+(define (is-neg-zero-f32 [x : f32]) : bool
+  (and (= x 0.0) (< (/ 1.0 x) 0.0)))
+
+(define (is-pos-zero-f32 [x : f32]) : bool
+  (and (= x 0.0) (> (/ 1.0 x) 0.0)))
+
+(define (case-field-assign-across-call) : bool
+  (let
+    [p : Vec2 (Vec2 1.0 2.0)]
+    [ctrl : f64 3.625]
+    (set! p.x 7.5)
+    (let
+      [sink : f64 (clobber-floats 4 1.5 2.5)]
+      (and (> sink 0.0) (= p.x 7.5) (= p.y 2.0) (= ctrl 3.625)))))
+
+(define (case-bit-patterns-across-call) : bool
+  (let
+    ;; Produce runtime +/-0.0 so opt1/opt2 keep the IEEE sign bit distinct.
+    [rt-zero : f32 (cast (- (clobber-floats 1 0.0 0.0) 1.25) : f32)]
+    [nz : f32 (neg rt-zero)]
+    [pz : f32 rt-zero]
+    [p1 : Vec2 (Vec2 nz (cast 0.33333334 : f32))]
+    [p2 : Vec2 (Vec2 (cast -3.75 : f32) nz)]
+    [p3 : Vec2 (Vec2 pz (cast 12345.625 : f32))]
+    (set! p2.x (cast -17.125 : f32))
+    (let
+      [sink : f64 (clobber-floats 3 2.0 4.0)]
+      [p-spilled : Vec2 (Vec2 p1.x p2.y)]
+      (and
+        (> sink 0.0)
+        (is-neg-zero-f32 p1.x)
+        (= p1.y (cast 0.33333334 : f32))
+        (= p2.x (cast -17.125 : f32))
+        (is-neg-zero-f32 p2.y)
+        (is-pos-zero-f32 p3.x)
+        (= p3.y (cast 12345.625 : f32))
+        (is-neg-zero-f32 p-spilled.x)
+        (is-neg-zero-f32 p-spilled.y)))))
+
 (define (main) : i64
   (unless (case-vec-return) (return 1))
   (unless (case-vec-phi) (return 2))
@@ -94,4 +145,6 @@
   (unless (case-global) (return 5))
   (unless (case-array) (return 6))
   (unless (case-capture) (return 7))
+  (unless (case-field-assign-across-call) (return 8))
+  (unless (case-bit-patterns-across-call) (return 9))
   42)

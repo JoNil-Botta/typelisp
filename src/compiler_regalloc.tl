@@ -5182,27 +5182,24 @@
     (compiler-reg-type-register-group? type-segment-bases representations ty)
     (ir.compiler-ir-representation-internal-transport? type-segment-bases ty)))
 
-;; Fail-closed shape gate. When every parameter is a non-group, non-float,
-;; register-eligible value the integer ABI index of position p is exactly p on
-;; both ABIs: no parameter consumes two argument slots, none diverts to the
-;; float bank, and none is passed by memory. Any other shape makes the
-;; position -> ABI index map depend on bookkeeping this walk does not carry
-;; (compiler-reg-param-assign-walk's own note: a register-group parameter
-;; occupies two slots and disables every pin past it), so the whole function
-;; falls back to the callee-saved-only rule rather than guess.
-;; FLT-1: `compiler-reg-integer-param-type?` alone did not enforce "none is
-;; passed by memory" -- a by-memory ABI transport satisfies every one of its
-;; three tests. The explicit opaque test below is what closes that.
+;; Fail-closed shape gate. Every parameter must be a single-register-slot,
+;; non-opaque GP or FP value (no two-word register groups, no by-memory ABI
+;; transports, no hidden SPMD private vector/mask params). Tracking per-bank
+;; `(int-idx, float-idx, position)` below then matches
+;; `compiler-backend-emit-param-spills-from` on both SysV (independent GP/XMM
+;; indices) and Win64 (shared positional slots).
 (define (compiler-reg-param-entry-simple-shape?
   [type-segment-bases : i64]
   [representations : (& ir.CompilerIrRepresentationIndex)]
   [params : (& ir.CompilerIrParamSeq)]) : bool
   (for [position (iterator.range 0 params.len)]
     (match (ir.compiler-ir-param-seq-borrow params position)
-      [(Param _ ty _)
+      [(Param name ty _)
         (unless
           (and
-            (compiler-reg-integer-param-type?
+            (not (compiler-reg-spmd-varying-param? name))
+            (not (compiler-reg-spmd-mask-param? (& name)))
+            (compiler-reg-param-greedy-eligible?
               type-segment-bases
               representations
               (& ty))
@@ -5215,31 +5212,69 @@
         unit]))
   true)
 
-;; The incoming argument registers of the parameters AFTER `position` -- the
-;; sources of every entry copy the backend emits later than this one. Positions
-;; past the ABI's argument-register count are stack-passed and answer invalid,
-;; contributing nothing: their entry copy reads the incoming stack area.
+;; The incoming argument registers of the parameters AFTER `position` in the
+;; SAME register bank (`want-float` = false -> GP, true -> XMM) -- the sources
+;; of every later entry copy the backend emits into that bank. Tracks both
+;; independent SysV bank indices (`int-idx`, `float-idx`) and Win64 shared
+;; positional slots (`index`). Stack-passed positions answer invalid and
+;; contribute nothing.
 (define (compiler-reg-param-entry-later-arg-regs
   [target-abi : cabi.CompilerRegTargetAbi]
-  [count : i64]
+  [params : (& ir.CompilerIrParamSeq)]
   [position : i64]
+  [want-float : bool]
   [index : i64]
+  [int-idx : i64]
+  [float-idx : i64]
   [out : CompilerRegIdSeq]) : CompilerRegIdSeq
-  (if (>= index count)
+  (if (>= index params.len)
     out
-    (compiler-reg-param-entry-later-arg-regs
-      target-abi
-      count
-      position
-      (+ index 1)
-      (if (> index position)
+    (match (ir.compiler-ir-param-seq-borrow params index)
+      [(Param _ ty _)
         (let
-          [reg : i64
-            (cabi.compiler-abi-gp-arg-register-id target-abi (Internal) index)]
-          (if (= reg cabi.compiler-reg-id-invalid)
-            out
-            (compiler-reg-id-seq-push out reg)))
-        out))))
+          [is-float : bool (compiler-reg-float-type? (& ty))]
+          [next-int : i64
+            (if is-float
+              int-idx
+              (+ int-idx 1))]
+          [next-float : i64
+            (if is-float
+              (+ float-idx 1)
+              float-idx)]
+          [next-out : CompilerRegIdSeq
+            (if (and (> index position) (= is-float want-float))
+              (let
+                [bank-idx : i64
+                  (if (cabi.compiler-abi-arg-banks-independent?
+                    target-abi
+                    (Internal))
+                    (if is-float
+                      float-idx
+                      int-idx)
+                    index)]
+                [reg : i64
+                  (if is-float
+                    (cabi.compiler-abi-float-arg-register-id
+                      target-abi
+                      (Internal)
+                      bank-idx)
+                    (cabi.compiler-abi-gp-arg-register-id
+                      target-abi
+                      (Internal)
+                      bank-idx))]
+                (if (= reg cabi.compiler-reg-id-invalid)
+                  out
+                  (compiler-reg-id-seq-push out reg)))
+              out)]
+          (compiler-reg-param-entry-later-arg-regs
+            target-abi
+            params
+            position
+            want-float
+            (+ index 1)
+            next-int
+            next-float
+            next-out))])))
 
 (define (compiler-reg-param-entry-forbidden-fill!
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -5250,8 +5285,9 @@
   (unless
     (>= position params.len)
     (match (ir.compiler-ir-param-seq-borrow params position)
-      [(Param _ _ var)
+      [(Param _ ty var)
         (let
+          [want-float : bool (compiler-reg-float-type? (& ty))]
           [root : i64
             (if (and (>= var 0) (< var (array-length parents)))
               (array-ref parents var)
@@ -5263,8 +5299,11 @@
                 (compiler-reg-global-array-element-shared-view out root)
                 (compiler-reg-param-entry-later-arg-regs
                   target-abi
-                  params.len
+                  params
                   position
+                  want-float
+                  0
+                  0
                   0
                   (compiler-reg-id-seq-empty))))
             unit))])
@@ -6306,6 +6345,12 @@
               target-abi
               (compiler-reg-call-instr-convention (& (array-ref slots index)))
               false)]
+          [(SpmdCall (box (fields active-mask args)))
+            (live.compiler-live-set-union
+              out
+              (live.compiler-live-value-vars-into
+                (live.compiler-live-spmd-call-args-vars (& args))
+                (& active-mask)))]
           [_ out])))
     out))
 
@@ -6408,57 +6453,6 @@
 ;; into a caller-saved register would leave it unsaved across the call. Spilled
 ;; call-spanning integers therefore stay in memory (still correct), exactly as a
 ;; non-rescued scalar spill would.
-(define (compiler-reg-ineligible-vars-simd
-  [func : (& ir.CompilerIrFunction)]
-  [types : CompilerRegVarTypes]
-  [intervals : (& CompilerRegIntervalSeq)]) : live.CompilerLiveI64Set
-  (match func
-    [(Function _ params _ _ blocks _)
-      ;; Mask registers have no ABI-nonvolatile subset and remain ineligible
-      ;; across calls. Full vectors are volatile on both ABIs; Win64 preserves
-      ;; only scalar XMM low halves. Private inputs are initialized at entry.
-      (let
-        [vector-mask-defs : live.CompilerLiveUseDef
-          (compiler-reg-function-vector-mask-defs func)]
-        [private-param-defs : live.CompilerLiveUseDef
-          (compiler-reg-spmd-private-param-defs
-            (& params)
-            (& (live.compiler-live-set-empty))
-            (& (live.compiler-live-set-empty)))]
-        [call-points : live.CompilerLiveI64Set (compiler-reg-call-points func)]
-        ;; Only hidden helper parameters must escape the structural
-        ;; non-scalar block so their incoming private registers get homes.
-        ;; SpmdCall operands/results can use their ordinary vector spill
-        ;; homes; admitting them to fixed-register allocation here would
-        ;; also reclassify synthetic/scalar IR fixtures as SIMD values.
-        [private-param-vars : live.CompilerLiveI64Set
-          (live.compiler-live-set-union
-            private-param-defs.uses
-            private-param-defs.defs)]
-        [base-ineligible : live.CompilerLiveI64Set
-          (live.compiler-live-set-minus
-            (compiler-reg-ineligible-memory
-              (& blocks)
-              (compiler-reg-ineligible-params
-                (& params)
-                (&
-                  (compiler-reg-call-arg-vars-blocks
-                    (& blocks)
-                    (compiler-reg-ineligible-non-scalars
-                      types
-                      (live.compiler-live-set-empty)
-                      false)))))
-            (clone private-param-vars))]
-        (compiler-reg-mark-spanning-in-set
-          (owned_view.compiler-owned-reference-shared-view intervals)
-          (&
-            (live.compiler-live-set-union
-              vector-mask-defs.defs
-              (clone private-param-vars)))
-          (& private-param-vars)
-          (& call-points)
-          base-ineligible))]))
-
 (interval_sort.compiler-reg-interval-heapsort
   CompilerRegInterval
   compiler-reg-interval-before?
@@ -9137,6 +9131,8 @@
         [(= kind 1) (compiler-reg-clobber-binop-div? op)]
         [(= kind 2) (compiler-reg-clobber-binop-shift? (& op) (& rhs) (& ty))]
         [else false])]
+    ;; AVX-512 dynamic tail-mask shifts the mask builder by `%cl`, clobbering `%rcx`.
+    [(TailMask _ _ _ _) (= kind 2)]
     [_
       (cond
         [(= kind 0)
@@ -25719,7 +25715,7 @@
   [assignment-table : CompilerRegAssignmentTable]
   [ineligible : live.CompilerLiveI64Set]
   [blocked : (& live.CompilerLiveI64Set)]
-  [allow-caller-saved-zero-call : bool]
+  [allow-call-save-split : bool]
   [mask-vars-use-vector-registers : bool]
   [target-abi : cabi.CompilerRegTargetAbi]
   [ignore-single-cold-call? : bool]
@@ -25734,13 +25730,11 @@
     [storage-identity-vars : live.CompilerLiveI64Set
       (let
         [base : live.CompilerLiveI64Set
-          (if allow-caller-saved-zero-call
-            (match func
-              [(Function _ _ _ _ blocks _)
-                (compiler-reg-ineligible-memory
-                  (& blocks)
-                  (live.compiler-live-set-empty))])
-            (live.compiler-live-set-empty))]
+          (match func
+            [(Function _ _ _ _ blocks _)
+              (compiler-reg-ineligible-memory
+                (& blocks)
+                (live.compiler-live-set-empty))])]
         (if (>= forced-spill-from 0)
           (match func
             [(Function _ _ _ fn-vars _ _)
@@ -25756,30 +25750,18 @@
     ;; a different-value destructive chain must not reshape itself across any of
     ;; those physical-register boundaries.
     ;;
-    ;; This binding is the scalar plan's call-clobber model: it feeds the
-    ;; destructive-tie and same-value coalescing exclusions, the coalesce-hull
-    ;; pin re-validation (compiler-reg-param-pins-demote!) and, as `call-points`
-    ;; below, the greedy's csr-only restriction. Every one of those asks the same
-    ;; SURVIVAL question, so it uses kind 6 -- call-like MINUS the tail-call
-    ;; family -- rather than kind 0. Nothing is live across a tail call: it is a
-    ;; block terminator after which control never returns here, so a value whose
-    ;; coarse interval hull merely covers a sibling arm's tail call keeps the
-    ;; caller-saved registers instead of being pinned into a callee-saved home
-    ;; the prologue must then push. The conservative kind-0 set remains in force
-    ;; where the question is NOT survival: call-region boundaries
-    ;; (compiler-reg-call-region-boundary-instr?) and the caller-saved rescue
-    ;; both compute kind 0 for themselves.
+    ;; This binding is the call-clobber model: it feeds the destructive-tie and
+    ;; same-value coalescing exclusions, the coalesce-hull pin re-validation
+    ;; (compiler-reg-param-pins-demote!) and, as `call-points` below, the
+    ;; greedy's csr-only restriction. Every one of those asks the same SURVIVAL
+    ;; question, so it uses kind 6 -- call-like MINUS the tail-call family.
     [clobber-points : live.CompilerLiveI64Set
       (if ignore-single-cold-call?
         (live.compiler-live-set-empty)
         (compiler-reg-clobber-kind-points type-segment-bases func 6))]
     ;; Per-register clobber point sets (15c): kind 1 = idiv (rax:rdx), kind 2 =
-    ;; variable shift (rcx). Bound once here and reused both for the destructive
-    ;; tie exclusion below and for the GAP3c pin demotion / greedy further down,
-    ;; so each is walked once per function.
-    ;; `compiler-reg-clobber-kind-points` is a pure fold over the function's
-    ;; blocks and `compiler-live-set-union` never writes through its operands,
-    ;; so the shared sets are the same values two separate walks would produce.
+    ;; variable shift / dynamic tail-mask (rcx). Bound once here and reused both
+    ;; for the destructive tie exclusion below and for GAP3c pin demotion / greedy.
     [div-points : live.CompilerLiveI64Set
       (compiler-reg-clobber-kind-points type-segment-bases func 1)]
     [shift-points : live.CompilerLiveI64Set
@@ -25797,116 +25779,59 @@
         interval-index
         destructive-clobber-points
         storage-identity-vars)]
-    ;; GAP8-C operand-tie flips, shared by BOTH tie mechanisms below (the
-    ;; destructive-tie move harvest and the copy hints) so the shape is derived
-    ;; once per function. Scalar-opt2 only: the SIMD/AVX plan keeps its plain
-    ;; move list and hints, and the empty array admits nothing there.
     [alu-prefer-rhs : (__tl_dyn-array i64)
-      (if allow-caller-saved-zero-call
-        (compiler-reg-function-alu-prefer-rhs func)
-        (__tl_make-array i64 0))]
-    [raw-moves
-      : CompilerRegMoveSeq
-      ;; Phi back-edge moves NON-strict so loop-carried phi/copy pairs coalesce
-      ;; (then merge into one root via coalescing-by-rename). SIMD passes false
-      ;; too; only the scalar-opt2 plan gets the loop coalescing.
-      ;; Scalar opt2 additionally harvests bounded destructive-binop chain ties,
-      ;; then width-64 int casts as copies. SIMD/AVX keeps the plain move list.
-      (if allow-caller-saved-zero-call
-        (compiler-reg-function-moves-with-destructive-and-casts-eligible
-          func
-          false
-          (& destructive-eligible)
-          (& alu-prefer-rhs))
-        (compiler-reg-function-moves func false))]
+      (compiler-reg-function-alu-prefer-rhs func)]
+    [raw-moves : CompilerRegMoveSeq
+      (compiler-reg-function-moves-with-destructive-and-casts-eligible
+        func
+        false
+        (& destructive-eligible)
+        (& alu-prefer-rhs))]
     [moves : CompilerRegMoveSeq
       (compiler-reg-move-list-filter-storage-identity
         (& raw-moves)
         storage-identity-vars)]
     [group-vars : live.CompilerLiveI64Set
       (compiler-reg-function-group-vars type-segment-bases func type-info)]
-    ;; Same-value overlap-coalescing exclusion points. This is the KIND-6
-    ;; (call-like minus tail calls: call/syscall/cpuid/xgetbv) point set, NOT the
-    ;; coarse merged
-    ;; caller-clobber set. A value that spans only a div/mod or shift is safely
-    ;; handled by the greedy's per-register forbidden-regs (div -> {rax,rdx},
-    ;; shift -> {rcx}): the coalesced root inherits the union interval and the
-    ;; greedy forbids exactly those registers, so the value keeps every other
-    ;; register and is never clobbered. Excluding such div/shift-spanning
-    ;; same-values from coalescing (as the merged set would) needlessly inflates
-    ;; register pressure. Bounds-check and Pack are already absent from both sets
-    ;; (clobber-point-instr? returns false for them), so only div/shift differ.
-    ;; XMM-family ABI volatility is narrower than the GP clobber model above.
-    ;; CpuId/Xgetbv/syscall have fixed GP effects but preserve XMM registers, so
-    ;; only real call instructions restrict float/vector candidates to the ABI
-    ;; nonvolatile suffix. compiler-reg-call-points deliberately KEEPS the
-    ;; tail-call family: the same never-returns argument would license dropping
-    ;; them here too, but over-approximating a clobber set is always sound, this
-    ;; set is also the SIMD/AVX mask ineligibility input
-    ;; (compiler-reg-ineligible-vars-simd), and XMM-homed values crossing a
-    ;; tail-call hull are rare -- so it stays conservative.
+    [vector-mask-defs : live.CompilerLiveUseDef
+      (compiler-reg-function-vector-mask-defs func)]
+    [vector-vars : live.CompilerLiveI64Set vector-mask-defs.uses]
+    [mask-vars : live.CompilerLiveI64Set vector-mask-defs.defs]
+    ;; Scalar-only functions (no vector or mask IR values) have no special
+    ;; candidates at all: keep vector/mask variables out of scalar coalescing
+    ;; and scalar candidate pools when present so they never displace GP/XMM
+    ;; loop values or merge into scalar coalesce classes.
+    [vector-mask-empty? : bool
+      (and
+        (= (live.compiler-live-set-count vector-vars) 0)
+        (= (live.compiler-live-set-count mask-vars) 0))]
+    [vector-and-mask-vars : live.CompilerLiveI64Set
+      (if vector-mask-empty?
+        (live.compiler-live-set-empty)
+        (live.compiler-live-set-union (clone vector-vars) (clone mask-vars)))]
+    [non-coalesce-vars : live.CompilerLiveI64Set
+      (if vector-mask-empty?
+        (clone group-vars)
+        (live.compiler-live-set-union
+          (clone group-vars)
+          (clone vector-and-mask-vars)))]
     [xmm-call-points : live.CompilerLiveI64Set (compiler-reg-call-points func)]
-    ;; #2 same-value overlap coalescing: single-def direct copy pairs carry one
-    ;; identical value and may coalesce even when their live segments overlap.
-    ;; Vars spanning a modeled caller-clobber point stay out of the same-value
-    ;; relation; their save/restore and regmask constraints are already
-    ;; represented by normal interference and must not be bypassed by an overlap
-    ;; waiver.
-    [sv-parents
-      : (__tl_dyn-array i64)
-      ;; M-C (part 1): the scalar-opt2 path uses the extended relation that also
-      ;; admits copies of mutable (multi-def / phi-def) sources under the
-      ;; def-inside-liveness safety check; other paths keep the single-def-only
-      ;; builder (their coalesce map is empty anyway).
-      (if allow-caller-saved-zero-call
-        (compiler-reg-function-same-value-parents-multi
-          func
+    [sv-parents : (__tl_dyn-array i64)
+      (compiler-reg-function-same-value-parents-multi
+        func
+        (compiler-reg-same-value-eligible-vars-excluding
+          interval-index
+          clobber-points
+          storage-identity-vars)
+        (let
+          [set-empty (live.compiler-live-set-empty)]
           (compiler-reg-same-value-eligible-vars-excluding
             interval-index
-            clobber-points
-            storage-identity-vars)
-          ;; P22 nested-pair admission: the same exclusion list MINUS the
-          ;; clobber-span test. Storage-identity values stay out (their address
-          ;; identity, not their bits, is what a consumer reads) and a var with
-          ;; no interval stays out; only the call-crossing refusal is lifted,
-          ;; and only for a pair whose hulls nest.
-          (let
-            [set-empty (live.compiler-live-set-empty)]
-            (compiler-reg-same-value-eligible-vars-excluding
-              interval-index
-              set-empty
-              storage-identity-vars))
-          type-info
-          (owned_view.compiler-owned-reference-shared-view interval-index))
-        (compiler-reg-function-same-value-parents-filtered
-          func
-          (&
-            (compiler-reg-same-value-eligible-vars-excluding
-              interval-index
-              clobber-points
-              storage-identity-vars))))]
-    ;; LP-1: edge-precise liveness, the SAFE-MODE phi-touched mask, and the EP
-    ;; segment rows, built once here and shared by the coalescing hybrid below
-    ;; and by the allocation index. `compiler-reg-liveness-handle-edge-precise`
-    ;; only reads the handle's already-computed field, so naming it twice costs
-    ;; nothing; the two segment WALKS are separate because they want different
-    ;; rows (see `seed-live-in?`), and the allocation walk is not run at all
-    ;; unless the mode below asks for it.
-    ;;
-    ;; Everything here is dead work for a move-free function and for the
-    ;; SIMD/AVX plan, exactly as before: the coalesce map build returns the
-    ;; empty map without reading an index, so the plan is unchanged.
-    [ep-relax? : bool
-      (and
-        allow-caller-saved-zero-call
-        (not (compiler-reg-move-list-empty? moves)))]
-    ;; Exclude unsafe live-out inputs while admitting proven self-loop
-    ;; back-edge-only values. Fixed div/mod or variable-shift functions retain
-    ;; the conservative guard: relaxing an otherwise unrelated carry can reshape
-    ;; fixed-home pressure differently on SysV/Win64. Built BEFORE the EP segment
-    ;; walks (all are pure reads of `func` and the EP liveness into their own
-    ;; fresh arrays, so the order does not change any result) so each walk can
-    ;; restrict itself to the rows its consumer will actually read.
+            set-empty
+            storage-identity-vars))
+        type-info
+        (owned_view.compiler-owned-reference-shared-view interval-index))]
+    [ep-relax? : bool (not (compiler-reg-move-list-empty? moves))]
     [ep-phi-touched : (__tl_dyn-array i64)
       (if ep-relax?
         (compiler-reg-function-phi-touched-safe-mode
@@ -25914,7 +25839,6 @@
           (& (compiler-reg-liveness-handle-edge-precise liveness-handle))
           (= (live.compiler-live-set-word-count destructive-fixed-points) 0))
         (__tl_make-array i64 0))]
-    ;; The coalescer's rows: NO live-in bridge.
     [ep-coalesce-segs : (__tl_dyn-array CompilerRegIntervalSeq)
       (if ep-relax?
         (compiler-reg-live-interval-selection-ep-segments
@@ -25923,9 +25847,6 @@
           ep-phi-touched
           false)
         (__tl_make-array CompilerRegIntervalSeq 0))]
-    ;; The allocation rows: the SAME walk WITH the live-in bridge, so a selected
-    ;; var's row differs from its conservative row only by the phi-point touches
-    ;; (see compiler-reg-ep-alloc-index).
     [ep-alloc-segs : (__tl_dyn-array CompilerRegIntervalSeq)
       (if (and ep-relax? (> (compiler-reg-ep-alloc-mode) 0))
         (compiler-reg-live-interval-selection-ep-segments
@@ -25934,60 +25855,27 @@
           ep-phi-touched
           true)
         (__tl_make-array CompilerRegIntervalSeq 0))]
-    ;; Coalescing interference uses a hybrid view. Scalar opt2 allocation already
-    ;; receives the edge-precise interval-index at the plan entry; the hybrid adds
-    ;; the same precise phi-edge segments while retaining a separately built
-    ;; conservative view for the live-out-input exclusion. A loop-carried phi and
-    ;; its back-edge / merge input do not really interfere (the baseline spuriously
-    ;; overlaps them via phi-inputs-live-at-the-header), so this lets the carry
-    ;; coalesce into one interval without weakening that defensive exclusion.
     [coalesce-index : CompilerRegIntervalIndex
       (if (compiler-reg-move-list-empty? moves)
         (owned_view.compiler-owned-reference-shared-view interval-index)
-        (if allow-caller-saved-zero-call
-          ;; Edge-precise liveness (PHIElimination semantics) computed once and shared
-          ;; by the coalescing segment index AND the live-out-input phi exclusion.
-          ;; Skipped entirely when there are no moves to coalesce (the empty arm
-          ;; above): the map build below returns the empty map without reading
-          ;; this index, so the plan is unchanged and the EP interval
-          ;; selection + safe-mode exclusion are provably dead work for
-          ;; move-free functions.
-          (let
-            ;; The hybrid's conservative input: allocation runs on the
-            ;; edge-precise index (see the EP comment at the plan entry),
-            ;; while the live-out-input phi exclusion's defense in depth is
-            ;; specified against CONSERVATIVE segments, so this gate alone
-            ;; keeps a baseline-liveness index -- computed on the coalescing
-            ;; branch only, so move-free functions never pay the second
-            ;; interval-selection walk. The M-A (RC1) param extension is
-            ;; applied as well, so the gate's param hulls carry the entry
-            ;; reservation. The cold-split plan's allocation index is
-            ;; edge-precise at both levels, so it feeds this gate that same
-            ;; object.
-            ;; Keyed on the cold-split CLAIM and not on the threshold: the
-            ;; call-hole split also forces a carrier range to memory, but its
-            ;; function still contains every one of its calls, so it must keep
-            ;; the conservative index this gate is specified against.
-            [cons-index : CompilerRegIntervalIndex
-              (if ignore-single-cold-call?
-                (owned_view.compiler-owned-reference-shared-view interval-index)
-                (match (compiler-reg-live-interval-selection
-                  func
-                  (& liveness-handle.baseline))
-                  [(Selection _ cons-idx)
-                    (match func
-                      [(Function _ params _ _ _ _)
-                        (compiler-reg-param-intervals-extend-entry!
-                          (& params)
-                          cons-idx)])
-                    cons-idx]))]
-            (compiler-reg-hybrid-coalesce-index
-              cons-index
-              ep-coalesce-segs
-              ep-phi-touched))
-          (owned_view.compiler-owned-reference-shared-view interval-index)))]
-    ;; LP-1: the index the GREEDY, its eviction logic, the rescue rounds and the
-    ;; spill machinery see. Mode 0 hands back `interval-index` unchanged.
+        (let
+          [cons-index : CompilerRegIntervalIndex
+            (if ignore-single-cold-call?
+              (owned_view.compiler-owned-reference-shared-view interval-index)
+              (match (compiler-reg-live-interval-selection
+                func
+                (& liveness-handle.baseline))
+                [(Selection _ cons-idx)
+                  (match func
+                    [(Function _ params _ _ _ _)
+                      (compiler-reg-param-intervals-extend-entry!
+                        (& params)
+                        cons-idx)])
+                  cons-idx]))]
+          (compiler-reg-hybrid-coalesce-index
+            cons-index
+            ep-coalesce-segs
+            ep-phi-touched)))]
     [alloc-index : CompilerRegIntervalIndex
       (if (and ep-relax? (> (compiler-reg-ep-alloc-mode) 0))
         (compiler-reg-ep-alloc-index
@@ -25997,61 +25885,42 @@
           (> (compiler-reg-ep-alloc-mode) 1))
         (owned_view.compiler-owned-reference-shared-view interval-index))]
     [coalesce : CompilerRegCoalesceMap
-      (if allow-caller-saved-zero-call
-        (compiler-reg-coalesce-map-build
-          moves
-          coalesce-index
-          type-info
-          group-vars
-          (array-length coalesce-index.starts)
-          (& sv-parents))
-        (CompilerRegCoalesceMap (__tl_make-array i64 0)))]
-    ;; Collapse coalesce classes to one root candidate each, and run
-    ;; the allocation passes over those roots with an EMPTY coalesce map (the
-    ;; merge already realised coalescing, so no per-member coalesce-location is
-    ;; needed). SIMD/AVX (allow-caller-saved-zero-call = false) builds no coalesce
-    ;; map, so eff-* fall back to the originals and that path is byte-identical.
+      (compiler-reg-coalesce-map-build
+        moves
+        coalesce-index
+        type-info
+        (& non-coalesce-vars)
+        (array-length coalesce-index.starts)
+        (& sv-parents))]
     [eff-index : CompilerRegIntervalIndex
-      (if allow-caller-saved-zero-call
-        (compiler-reg-merged-root-index coalesce (& alloc-index))
-        (owned_view.compiler-owned-reference-shared-view interval-index))]
-    ;; Every register home, including an existing parameter pin, must respect
-    ;; exclusions inherited from any member of its coalesced class.
+      (compiler-reg-merged-root-index coalesce (& alloc-index))]
     [eff-blocked : live.CompilerLiveI64Set
-      (if allow-caller-saved-zero-call
-        (compiler-reg-coalesce-root-set-from-vars
-          coalesce
-          (owned_view.compiler-owned-reference-shared-view blocked))
+      (compiler-reg-coalesce-root-set-from-vars
+        coalesce
         (owned_view.compiler-owned-reference-shared-view blocked))]
-    ;; `div-points` / `shift-points` (kinds 1 and 2) are the sets bound above;
-    ;; the GAP3c pin demotion below and the greedy share that one computation.
-    ;; GAP3c: validate every ABI pin against its coalesce-class hull now that
-    ;; the coalesce map exists; unsound pins are unassigned and their params
-    ;; fall through to the ordinary greedy CSR path (see
-    ;; compiler-reg-param-pins-demote!). Scalar-opt2 only -- the SIMD path
-    ;; never pins (param-assign-plan is not on it).
+    [scalar-eff-blocked : live.CompilerLiveI64Set
+      (if vector-mask-empty?
+        (clone eff-blocked)
+        (live.compiler-live-set-union
+          (clone eff-blocked)
+          (clone vector-and-mask-vars)))]
     [_pin-demote : unit
-      (if allow-caller-saved-zero-call
-        (compiler-reg-param-pins-demote!
-          func
-          assignment-table
-          coalesce
-          (& eff-index)
-          (& eff-blocked)
-          clobber-points
-          div-points
-          shift-points)
-        unit)]
-    ;; Literal SafeDiv/SafeMod need speculative scratch pseudos. Keep ordinary
-    ;; coloring independent of synthetic scratch demand: the early-scratch model
-    ;; below colors those pseudos in a separate phase after the base allocation.
+      (compiler-reg-param-pins-demote!
+        func
+        assignment-table
+        coalesce
+        (& eff-index)
+        (& eff-blocked)
+        clobber-points
+        div-points
+        shift-points)]
     [early-scratch-model : CompilerRegEarlyScratchModel
       (compiler-reg-early-scratch-model
         func
         (compiler-reg-global-shared-view eff-index)
         type-info
         assignment-table
-        allow-caller-saved-zero-call)]
+        true)]
     [allocation-index : CompilerRegIntervalIndex
       (owned_view.compiler-owned-shared-view early-scratch-model.interval-index)]
     [early-scratch-base : i64 early-scratch-model.scratch-base]
@@ -26060,13 +25929,11 @@
       (owned_view.compiler-owned-shared-view
         early-scratch-model.scratch-weights)]
     [eff-intervals : CompilerRegIntervalSeq
-      (if allow-caller-saved-zero-call
-        (compiler-reg-interval-arrays-to-seq
-          eff-index.starts
-          eff-index.ends
-          (- (array-length eff-index.starts) 1)
-          (& (compiler-reg-interval-seq-empty)))
-        (owned_view.compiler-owned-shared-view intervals))]
+      (compiler-reg-interval-arrays-to-seq
+        eff-index.starts
+        eff-index.ends
+        (- (array-length eff-index.starts) 1)
+        (& (compiler-reg-interval-seq-empty)))]
     [allocation-intervals : CompilerRegIntervalSeq
       (if (= early-scratch-count 0)
         (owned_view.compiler-owned-shared-view eff-intervals)
@@ -26075,27 +25942,13 @@
           allocation-index.ends
           (- (array-length allocation-index.starts) 1)
           (& (compiler-reg-interval-seq-empty))))]
-    ;; copy-hint biasing: per-root preferred move-neighbour for the integer passes.
-    [copy-hints
-      : (__tl_dyn-array i64)
-      ;; Built unconditionally because the greedy allocates the SIMD-integer path
-      ;; too: with the empty false-path coalesce, copy-hints-add-move! falls back to
-      ;; identity roots, so this yields direct var->move-neighbour hints -- letting
-      ;; the SIMD-integer greedy bias a copy's dst onto its src register (LLVM-style
-      ;; copy hint for every class).
-      ;; The scalar float->XMM greedy consumes the same hints over its XMM pool.
+    [copy-hints : (__tl_dyn-array i64)
       (compiler-reg-function-copy-hints
         (& moves)
         coalesce
         (array-length interval-index.starts)
         func
         (& alu-prefer-rhs))]
-    ;; arg-var -> ABI-arg-register physical preference: each outgoing call-argument
-    ;; var biased toward the target register it will be marshalled into, so the
-    ;; backend's `movq <home>, <arg-reg>` becomes an elided self-move. Indexed by
-    ;; coalesce root, like copy-hints. The scalar-opt2 integer greedy consumes
-    ;; this GP-pool array; the float greedy consumes the separate XMM-pool array
-    ;; below. SIMD-integer uses a different pool and ignores both.
     [arg-prefs : (__tl_dyn-array i64)
       (compiler-reg-function-arg-prefs
         target-abi
@@ -26109,49 +25962,29 @@
         type-info
         coalesce
         (array-length interval-index.starts))]
-    ;; M-A (RC1): param var ids mapped to their coalesce ROOTS -- each greedy
-    ;; allocates class roots. Under R3S-1 a class containing a param is not
-    ;; restricted to callee-saved homes; this set marks the classes
-    ;; that (a) take the inclusive-start clobber-span test, because a param is
-    ;; defined by the prologue before point 0, and (b) carry the entry-copy
-    ;; schedule constraint below. It still forces callee-saved-only whenever
-    ;; that constraint is refused (an empty `param-entry-forbidden`). Reuses the
-    ;; ineligible-params walk as a plain param-id collector. Scalar-opt2 only:
-    ;; the SIMD path stack-homes every param (ineligible-vars-simd). Integer and
-    ;; float candidates consume the same root set over their respective
-    ;; callee-saved banks.
     [param-roots : live.CompilerLiveI64Set
-      (if allow-caller-saved-zero-call
-        (compiler-reg-coalesce-root-set-from-vars
-          coalesce
-          (match func
-            [(Function _ params _ _ _ _)
-              (compiler-reg-ineligible-params
-                (& params)
-                (& (live.compiler-live-set-empty)))]))
-        (live.compiler-live-set-empty))]
-    ;; R3S-1: the entry-copy schedule constraint that REPLACES the
-    ;; `is-param -> csr-only` rule for the classes it covers (see
-    ;; compiler-reg-param-entry-forbidden). Empty -> alloc-one! keeps the legacy
-    ;; callee-saved-only rule, which is what a refused parameter shape and every
-    ;; non-scalar-opt2 stage get.
-    [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)
-      (if allow-caller-saved-zero-call
+      (compiler-reg-coalesce-root-set-from-vars
+        coalesce
         (match func
           [(Function _ params _ _ _ _)
-            (compiler-reg-param-entry-forbidden
-              type-segment-bases
-              (& (compiler-reg-var-types-representations type-info))
-              target-abi
+            (compiler-reg-ineligible-params
               (& params)
-              coalesce.parents
-              (array-length interval-index.starts))])
-        (__tl_make-array CompilerRegIdSeq 0))]
+              (& (live.compiler-live-set-empty)))]))]
+    [param-entry-forbidden : (__tl_dyn-array CompilerRegIdSeq)
+      (match func
+        [(Function _ params _ _ _ _)
+          (compiler-reg-param-entry-forbidden
+            type-segment-bases
+            (& (compiler-reg-var-types-representations type-info))
+            target-abi
+            (& params)
+            coalesce.parents
+            (array-length interval-index.starts))])]
     [integer-candidates : CompilerRegIntervalSeq
       (compiler-reg-candidates
         (compiler-reg-global-shared-view eff-intervals)
         type-info
-        eff-blocked
+        (& scalar-eff-blocked)
         false)]
     [scratch-candidates : CompilerRegIntervalSeq
       (compiler-reg-early-scratch-intervals
@@ -26159,42 +25992,19 @@
         early-scratch-base)]
     [integer-registers : CompilerRegIdSeq
       (compiler-reg-callee-saved-integer-registers-for-abi target-abi)]
-    [vector-mask-defs : live.CompilerLiveUseDef
-      (compiler-reg-function-vector-mask-defs func)]
-    ;; Loop-depth-weighted use counts drive spill-weight eviction on the
-    ;; integer scalar opt2 stage (allow-caller-saved-zero-call is the scalar-opt2
-    ;; discriminator). An empty array selects the original furthest-end policy,
-    ;; keeping the SIMD/AVX plan and the caller-saved XMM stage byte-identical.
     [base-eviction-ref-counts : (__tl_dyn-array i64)
-      (if allow-caller-saved-zero-call
-        ;; The greedy ALWAYS uses remat-discounted spill weights for its priority
-        ;; order (LLVM RAGreedy always computes spill weights). Gating the
-        ;; weights on total candidates versus the full pool would give a
-        ;; call-spanning function -- whose values may only use the ABI
-        ;; callee-saved suffix and so oversubscribe even below the full pool
-        ;; size -- var-id order, keeping a rematerialisable constant in a
-        ;; register and spilling a more expensive non-remat value. Each
-        ;; coalesced class is scored by its hottest member. The discounted
-        ;; weight is combined with the RAW use-density as a tie-break (combine-
-        ;; spill-weights) so that among equal-discounted values the genuinely
-        ;; coldest one spills, not an arbitrary tied one. The combined weights
-        ;; then carry the LLVM enqueue priority band in their low digits
-        ;; (compiler-reg-priority-keys!): locals below globals of equal weight,
-        ;; and locals among themselves in start order. The band is read off the
-        ;; MERGED-ROOT index, which is the interval the greedy allocates.
-        (let
-          [weights : (__tl_dyn-array i64)
-            (compiler-reg-function-spill-weights-combined
-              func
-              coalesce
-              (array-length interval-index.starts))]
-          (match func
-            [(Function _ _ _ _ blocks _)
-              (compiler-reg-priority-keys! (&mut weights) (& blocks) eff-index)])
-          weights)
-        (__tl_make-array i64 0))]
+      (let
+        [weights : (__tl_dyn-array i64)
+          (compiler-reg-function-spill-weights-combined
+            func
+            coalesce
+            (array-length interval-index.starts))]
+        (match func
+          [(Function _ _ _ _ blocks _)
+            (compiler-reg-priority-keys! (&mut weights) (& blocks) eff-index)])
+        weights)]
     [base-eviction-raw-counts : (__tl_dyn-array i64)
-      (if (and allow-caller-saved-zero-call (> early-scratch-count 0))
+      (if (> early-scratch-count 0)
         (compiler-reg-merge-ref-counts
           coalesce
           (& (compiler-reg-function-spill-weights func))
@@ -26208,79 +26018,32 @@
         early-scratch-base
         early-scratch-count
         (& early-scratch-weights))]
-    ;; The greedy's per-register clobber restriction (15c) reuses the kind
-    ;; point sets bound above: `clobber-points` IS the kind-6 set (call-like
-    ;; minus the tail-call family; see its binding), and
-    ;; div-points/shift-points let the greedy forbid only the registers each op
-    ;; actually clobbers, so a div/shift-spanning value keeps the caller-saved
-    ;; regs the op leaves alone instead of being forced callee-saved. On the
-    ;; SIMD-integer path caller-saved-count=0 makes every pool register
-    ;; callee-saved (no restriction); XMM-family paths use the ABI volatile/
-    ;; nonvolatile boundary directly.
     [call-points : live.CompilerLiveI64Set clobber-points]
-    ;; Step B: preserve the established scalar coloring as the base plan. The
-    ;; scratch-only worklist below starts from that exact table and may
-    ;; evict/requeue real roots when a targeted instruction creates pressure.
-    ;; If it moves no real root, downstream passes retain this original table by
-    ;; identity, keeping no-pressure functions byte-identical.
     [prepass-assignments : CompilerRegAssignmentTable assignment-table]
-    [integer-state
-      : CompilerRegAssignState
-      ;; Integer allocation via the unified per-vreg Greedy allocator (priority-queue
-      ;; selectOrSplit, per-physreg LiveIntervalUnion, call-clobber as interference).
-      ;; Scalar-opt2 (true) uses the ABI-specific integer pool + coalescing; the
-      ;; SIMD/AVX branch below (false) uses the Linux callee-saved pool with no
-      ;; coalescing -- the same algorithm, a conservative config.
-      (if allow-caller-saved-zero-call
-        (compiler-reg-greedy-state
-          (& integer-candidates)
-          (& (compiler-reg-greedy-integer-pool-for-abi target-abi))
-          prepass-assignments
-          (& eff-index)
-          group-vars
-          param-roots
-          (& param-entry-forbidden)
-          (& base-eviction-ref-counts)
-          copy-hints
-          (& arg-prefs)
-          (& call-points)
-          div-points
-          shift-points
-          (& integer-registers)
-          (compiler-reg-greedy-caller-saved-count-for-abi target-abi)
-          -1)
-        ;; SIMD/AVX integer allocation: same unified greedy, over the 5 callee-saved
-        ;; integer registers with caller-saved-count=0 so every register is
-        ;; treated callee-saved (no caller-saved-first ordering).
-        ;; ref-counts/copy-hints are empty here -> the greedy's bounds-guarded
-        ;; spill-weight/hint accesses fall back to var-id order / no-hint.
-        (let
-          [param-roots (live.compiler-live-set-empty)]
-          (compiler-reg-greedy-state
-            (& integer-candidates)
-            (& integer-registers)
-            prepass-assignments
-            (& eff-index)
-            group-vars
-            param-roots
-            (& (__tl_make-array CompilerRegIdSeq 0))
-            (& base-eviction-ref-counts)
-            copy-hints
-            (& (__tl_make-array i64 0))
-            (& call-points)
-            div-points
-            shift-points
-            (& integer-registers)
-            0
-            -1)))]
+    ;; Unified per-vreg Greedy integer allocation over the full ABI pool
+    ;; (volatile prefix + nonvolatile suffix) with coalescing and loop-depth
+    ;; spill weights for both scalar and SIMD/AVX functions.
+    [integer-state : CompilerRegAssignState
+      (compiler-reg-greedy-state
+        (& integer-candidates)
+        (& (compiler-reg-greedy-integer-pool-for-abi target-abi))
+        prepass-assignments
+        (& eff-index)
+        group-vars
+        param-roots
+        (& param-entry-forbidden)
+        (& base-eviction-ref-counts)
+        copy-hints
+        (& arg-prefs)
+        (& call-points)
+        div-points
+        shift-points
+        (& integer-registers)
+        (compiler-reg-greedy-caller-saved-count-for-abi target-abi)
+        -1)]
     [base-integer-assignments : CompilerRegAssignmentTable
       (match integer-state
         [(State _ assignments) assignments])]
-    ;; The early interval shape is allocation-independent, but each lowering
-    ;; constraint excludes the instruction operands' PHYSICAL homes. Refresh the
-    ;; targeted model after base coloring so C15b's scratch phase cannot claim an
-    ;; operand or result home of the divmod it serves. Non-target functions keep
-    ;; the original empty model by identity and pay no second walk.
     [colored-early-scratch-model : CompilerRegEarlyScratchModel
       (if (= early-scratch-count 0)
         early-scratch-model
@@ -26336,14 +26099,9 @@
         (compiler-reg-assignment-table-prefix
           integer-scratch-assignments
           early-scratch-base))]
-    ;; Step B: the caller-saved-overflow pass is gone -- the unified greedy already
-    ;; allocates the caller-saved zero-call prefix itself, so retrying the same
-    ;; registers here was redundant. The call-spanning save/restore rescue (a
-    ;; real spill-avoidance, not a register-allocation pass) is kept and fed the
-    ;; greedy's assignments directly.
     [integer-with-call-save-state : CompilerRegCallSaveAssignState
       (if (and
-        allow-caller-saved-zero-call
+        allow-call-save-split
         (compiler-reg-assignment-table-has-spill? integer-assignments))
         (compiler-reg-assign-caller-saved-call-spanning
           type-segment-bases
@@ -26366,16 +26124,14 @@
     [call-save-shadows : live.CompilerLiveI64Set
       (compiler-reg-call-split-shadows
         (compiler-reg-global-shared-view call-save-split))]
-    [scalar-state
-      : CompilerRegAssignState
-      ;; float -> XMM allocation: the unified greedy over the ABI XMM bank.
-      ;; A clobber-spanning float starts at the ABI callee-saved suffix: none on
-      ;; SysV (so it spills), XMM6-XMM15 on Win64. Non-spanning floats may use the
-      ;; whole configured XMM pool. Reuse the coalesced-class spill weights and copy
-      ;; hints so float pressure is ordered by actual use density and moves bias
-      ;; toward an already assigned neighbour, matching the integer greedy.
+    [scalar-state : CompilerRegAssignState
       (compiler-reg-greedy-state
-        (& (compiler-reg-candidates eff-intervals type-info eff-blocked true))
+        (&
+          (compiler-reg-candidates
+            eff-intervals
+            type-info
+            (& scalar-eff-blocked)
+            true))
         (& (compiler-reg-xmm-registers-for-abi target-abi))
         integer-call-assignments
         (& eff-index)
@@ -26395,24 +26151,12 @@
       (match scalar-state
         [(State _ assignments) assignments])]
     [_float-call-arg-demote : unit
-      (if allow-caller-saved-zero-call
-        (compiler-reg-float-call-args-demote!
-          target-abi
-          func
-          type-info
-          coalesce
-          scalar-assignments)
-        unit)]
-    [vector-vars : live.CompilerLiveI64Set vector-mask-defs.uses]
-    [mask-vars : live.CompilerLiveI64Set vector-mask-defs.defs]
-    ;; Scalar-only functions (no vector or mask IR values) have no special
-    ;; candidates at all: the select-false preference walk, both special-candidate
-    ;; interval filters, the vector greedy, and the mask fixed-candidate pass all
-    ;; return their inputs unchanged, so skip the whole vector/mask prep chain.
-    [vector-mask-empty? : bool
-      (and
-        (= (live.compiler-live-set-count vector-vars) 0)
-        (= (live.compiler-live-set-count mask-vars) 0))]
+      (compiler-reg-float-call-args-demote!
+        target-abi
+        func
+        type-info
+        coalesce
+        scalar-assignments)]
     [vector-candidate-vars : live.CompilerLiveI64Set
       (if vector-mask-empty?
         vector-vars
@@ -26441,14 +26185,12 @@
           vector-candidate-vars
           blocked))]
     [_vector-class-reset : unit
-      (compiler-reg-unassign-special-candidates!
-        scalar-assignments
-        (compiler-reg-global-shared-view vector-candidates))]
-    [vector-state
-      : CompilerRegAssignState
-      ;; Vectors share the XMM physical bank and the scalar greedy's ABI
-      ;; clobber rule. `%vecN` is an allocator-only class spelling; backend
-      ;; save/restore sees the same physical N through the overlap helper.
+      (if vector-mask-empty?
+        unit
+        (compiler-reg-unassign-special-candidates!
+          scalar-assignments
+          (compiler-reg-global-shared-view vector-candidates)))]
+    [vector-state : CompilerRegAssignState
       (if vector-mask-empty?
         (State (compiler-reg-active-seq-empty) scalar-assignments)
         (let
@@ -26458,7 +26200,11 @@
             (& vector-candidates)
             (& (compiler-reg-vector-registers-for-abi target-abi))
             scalar-assignments
-            interval-index
+            ;; `scalar-assignments` is keyed by coalesce root before class
+            ;; expansion, so vector allocation must check occupancy against
+            ;; `eff-index` to see coalesced scalar XMM ranges (e.g. a Win64
+            ;; `%xmm2` float parameter coalesced with a loop accumulator phi).
+            (& eff-index)
             group-vars
             param-roots
             (& (__tl_make-array CompilerRegIdSeq 0))
@@ -26474,18 +26220,15 @@
     [vector-assignments : CompilerRegAssignmentTable
       (match vector-state
         [(State _ assignments) assignments])]
-    [_mask-class-reset
-      : unit
-      ;; The scalar greedy provisionally homes mask values in GP registers.
-      ;; Clear those homes before fixed k-register allocation so excess mask
-      ;; pressure remains unassigned and is emitted through the existing
-      ;; stack-slot spill path instead of reaching the backend as a GP home.
-      (compiler-reg-unassign-special-candidates!
-        vector-assignments
-        (compiler-reg-special-candidates
-          (compiler-reg-global-shared-view intervals)
-          mask-candidate-vars
-          blocked))]
+    [_mask-class-reset : unit
+      (if vector-mask-empty?
+        unit
+        (compiler-reg-unassign-special-candidates!
+          vector-assignments
+          (compiler-reg-special-candidates
+            (compiler-reg-global-shared-view intervals)
+            mask-candidate-vars
+            blocked)))]
     [mask-state : CompilerRegAssignState
       (if vector-mask-empty?
         (State (compiler-reg-active-seq-empty) vector-assignments)
@@ -26503,54 +26246,37 @@
     [assignments : CompilerRegAssignmentTable
       (match mask-state
         [(State _ found) found])]
-    ;; The passes above assigned class ROOTS; expand so every member
-    ;; inherits its root's location (realising the coalesce). SIMD/AVX has no
-    ;; coalesce map, so this is the identity there.
     [final-assignments : CompilerRegAssignmentTable
-      (if allow-caller-saved-zero-call
-        (compiler-reg-rewrite-remat-assignments
-          (compiler-reg-expand-class-assignments
-            assignments
-            coalesce
-            (& storage-identity-vars)
-            interval-index.starts
-            (array-length interval-index.starts))
-          func
+      (compiler-reg-rewrite-remat-assignments
+        (compiler-reg-expand-class-assignments
+          assignments
           coalesce
-          (& call-save-shadows)
-          (compiler-reg-invariant-facts-build func type-info).cells-clean
+          (& storage-identity-vars)
+          interval-index.starts
           (array-length interval-index.starts))
-        assignments)]
-    ;; GAP2b: register-pair homing for group values. Runs LAST, when every
-    ;; scalar home is final, so pair selection/eviction is judged against the
-    ;; exact register landscape the backend will see. Linux scalar-opt2 only
-    ;; (the M-G3/M-F gating pattern); every other path is byte-identical.
+        func
+        coalesce
+        (& call-save-shadows)
+        (compiler-reg-invariant-facts-build func type-info).cells-clean
+        (array-length interval-index.starts))]
     [pair-assignments : CompilerRegAssignmentTable
-      (if allow-caller-saved-zero-call
-        (match target-abi
-          [(Linux)
-            (compiler-reg-assign-group-pairs
-              type-segment-bases
-              func
-              type-info
-              (& group-vars)
-              interval-index
-              final-assignments
-              base-eviction-ref-counts
-              call-points
-              (& call-save-split))]
-          [(Windows) final-assignments])
-        final-assignments)]
-    ;; RG-1: the home tracer. Placed at the end of the scalar plan, where the
-    ;; final assignment table, the coalesce parents, the interval index, the
-    ;; priority keys the eviction gate reads and the call-clobber point set are
-    ;; all the objects the decisions were actually made against. Guarded so an
-    ;; untraced compile pays one boolean test per planned function.
+      (match target-abi
+        [(Linux)
+          (compiler-reg-assign-group-pairs
+            type-segment-bases
+            func
+            type-info
+            (& group-vars)
+            interval-index
+            final-assignments
+            base-eviction-ref-counts
+            call-points
+            (& call-save-split))]
+        [(Windows) final-assignments])]
     [_trace-homes : unit
       (if (and
         compiler-reg-debug-trace-homes
-        (not compiler-reg-trace-suppressed?)
-        allow-caller-saved-zero-call)
+        (not compiler-reg-trace-suppressed?))
         (compiler-reg-trace-plan-homes!
           func
           pair-assignments
@@ -26565,15 +26291,17 @@
         unit)]
     (Plan pair-assignments ineligible intervals type-info call-save-split)))
 
-;; SIMD/AVX register plan (unchanged from before #perf): full dataflow-liveness
-;; intervals + the call-live-conservative ineligibility, keeping AVX backend
-;; golden output byte-identical.
-(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
+;; Unified SIMD/AVX register plan: uses EP liveness, full ABI GP pool,
+;; coalescing, loop-depth spill weights, and scalar/handle parameter allocation
+;; (keeping SPMD private vector/mask helpers on their dedicated param path and
+;; mask/private-param call-spanning ineligibility intact).
+(define (compiler-reg-plan-function-simd-internal
   [type-segment-bases : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : (& ir.CompilerIrFunction)]
   [representations : (& ir.CompilerIrRepresentationIndex)]
-  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegPlan
+  [metrics : profile_state.CompilerProfileMetrics]
+  [mask-vars-use-vector-registers : bool]) : CompilerRegPlan
   (let
     [type-info : CompilerRegVarTypes
       (compiler-reg-function-var-types-with-representations-and-metrics
@@ -26583,30 +26311,133 @@
     [liveness-handle : CompilerRegLivenessHandle
       (compiler-reg-liveness-handle-make
         func
-        false
+        true
         (compiler-reg-var-types-metrics type-info))]
-    [intervals : CompilerRegIntervalSeq
-      (compiler-reg-live-intervals func (& liveness-handle.baseline))]
-    [ineligible : live.CompilerLiveI64Set
-      (compiler-reg-ineligible-vars-simd func type-info (& intervals))]
     [vars : i64
       (match func
         [(Function _ _ _ function-vars _ _) function-vars])]
-    (compiler-reg-plan-from
-      type-segment-bases
-      func
-      (& liveness-handle)
-      type-info
-      (compiler-reg-global-shared-view intervals)
-      (& (compiler-reg-interval-index-build (& intervals) vars))
-      (compiler-reg-assignment-table-make vars)
-      (compiler-reg-global-shared-view ineligible)
-      (& ineligible)
-      false
-      false
-      target-abi
-      false
-      (- 0 1))))
+    [interval-selection : CompilerRegIntervalSelection
+      (compiler-reg-live-interval-selection
+        func
+        (& (compiler-reg-liveness-handle-edge-precise liveness-handle)))]
+    (match interval-selection
+      [(Selection _ interval-index)
+        (let
+          [vector-mask-defs : live.CompilerLiveUseDef
+            (compiler-reg-function-vector-mask-defs func)]
+          [private-param-defs : live.CompilerLiveUseDef
+            (match func
+              [(Function _ params _ _ _ _)
+                (compiler-reg-spmd-private-param-defs
+                  (& params)
+                  (& (live.compiler-live-set-empty))
+                  (& (live.compiler-live-set-empty)))])]
+          [private-param-vars : live.CompilerLiveI64Set
+            (live.compiler-live-set-union
+              private-param-defs.uses
+              private-param-defs.defs)]
+          [has-private-params? : bool
+            (> (live.compiler-live-set-count private-param-vars) 0)]
+          [_param-extend : unit
+            (match func
+              [(Function _ params _ _ _ _)
+                (compiler-reg-param-intervals-extend-entry!
+                  (& params)
+                  interval-index)])]
+          [intervals : CompilerRegIntervalSeq
+            (compiler-reg-interval-arrays-to-seq
+              interval-index.starts
+              interval-index.ends
+              (- vars 1)
+              (& (compiler-reg-interval-seq-empty)))]
+          [call-points : live.CompilerLiveI64Set
+            (compiler-reg-call-points func)]
+          [non-param-ineligible : live.CompilerLiveI64Set
+            (compiler-reg-ineligible-vars-non-params
+              type-segment-bases
+              func
+              type-info
+              target-abi)]
+          [structural-ineligible : live.CompilerLiveI64Set
+            (if has-private-params?
+              (live.compiler-live-set-minus
+                (match func
+                  [(Function _ params _ _ _ _)
+                    (compiler-reg-ineligible-params
+                      (& params)
+                      (& non-param-ineligible))])
+                (clone private-param-vars))
+              (live.compiler-live-set-minus
+                non-param-ineligible
+                (clone private-param-vars)))]
+          [base-ineligible : live.CompilerLiveI64Set
+            (compiler-reg-mark-spanning-in-set
+              (clone intervals)
+              (&
+                (live.compiler-live-set-union
+                  vector-mask-defs.defs
+                  (clone private-param-vars)))
+              (& private-param-vars)
+              (& call-points)
+              structural-ineligible)]
+          (if has-private-params?
+            (compiler-reg-plan-from
+              type-segment-bases
+              func
+              (& liveness-handle)
+              type-info
+              intervals
+              (& interval-index)
+              (compiler-reg-assignment-table-make vars)
+              (clone base-ineligible)
+              (& base-ineligible)
+              false
+              mask-vars-use-vector-registers
+              target-abi
+              false
+              (- 0 1))
+            (let
+              [param-plan : CompilerRegParamAssignPlan
+                (compiler-reg-param-assign-plan
+                  type-segment-bases
+                  (& (compiler-reg-var-types-representations type-info))
+                  target-abi
+                  func
+                  (& interval-index)
+                  (& base-ineligible)
+                  vars
+                  false)]
+              (match param-plan
+                [(Plan preassignments ineligible blocked)
+                  (compiler-reg-plan-from
+                    type-segment-bases
+                    func
+                    (& liveness-handle)
+                    type-info
+                    intervals
+                    (& interval-index)
+                    preassignments
+                    ineligible
+                    (& blocked)
+                    false
+                    mask-vars-use-vector-registers
+                    target-abi
+                    false
+                    (- 0 1))]))))])))
+
+(define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
+  [type-segment-bases : i64]
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [func : (& ir.CompilerIrFunction)]
+  [representations : (& ir.CompilerIrRepresentationIndex)]
+  [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegPlan
+  (compiler-reg-plan-function-simd-internal
+    type-segment-bases
+    target-abi
+    func
+    representations
+    metrics
+    false))
 
 (define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
   [type-segment-bases : i64]
@@ -26628,39 +26459,13 @@
   [func : (& ir.CompilerIrFunction)]
   [representations : (& ir.CompilerIrRepresentationIndex)]
   [metrics : profile_state.CompilerProfileMetrics]) : CompilerRegPlan
-  (let
-    [type-info : CompilerRegVarTypes
-      (compiler-reg-function-var-types-with-representations-and-metrics
-        func
-        representations
-        metrics)]
-    [liveness-handle : CompilerRegLivenessHandle
-      (compiler-reg-liveness-handle-make
-        func
-        false
-        (compiler-reg-var-types-metrics type-info))]
-    [intervals : CompilerRegIntervalSeq
-      (compiler-reg-live-intervals func (& liveness-handle.baseline))]
-    [ineligible : live.CompilerLiveI64Set
-      (compiler-reg-ineligible-vars-simd func type-info (& intervals))]
-    [vars : i64
-      (match func
-        [(Function _ _ _ function-vars _ _) function-vars])]
-    (compiler-reg-plan-from
-      type-segment-bases
-      func
-      (& liveness-handle)
-      type-info
-      (compiler-reg-global-shared-view intervals)
-      (& (compiler-reg-interval-index-build (& intervals) vars))
-      (compiler-reg-assignment-table-make vars)
-      (compiler-reg-global-shared-view ineligible)
-      (& ineligible)
-      false
-      true
-      target-abi
-      false
-      (- 0 1))))
+  (compiler-reg-plan-function-simd-internal
+    type-segment-bases
+    target-abi
+    func
+    representations
+    metrics
+    true))
 
 (define (compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
   [type-segment-bases : i64]

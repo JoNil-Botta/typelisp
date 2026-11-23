@@ -4128,6 +4128,8 @@
           (be_state.compiler-backend-asm-append5
             out
             (cond
+              [(not (compiler_abi.compiler-abi-xmm-register-id? source))
+                "    movq "]
               [(= class compiler-backend-scalar-arg-f32) "    movss "]
               [(= class compiler-backend-scalar-arg-f64) "    movsd "]
               [else "    movq "])
@@ -9479,7 +9481,7 @@
     value
     "private SPMD call mask"
     lanes
-    (be_simd.compiler-backend-avx512-mask-gpr lanes)
+    (be_simd.compiler-backend-avx512-mask-gpr-part "%rax" lanes)
     backend-state)
     [(Ok use)
       (match use

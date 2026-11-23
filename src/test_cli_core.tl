@@ -6,6 +6,7 @@
 ;; directly. Imported files provide runtime declarations but do not contribute
 ;; their own tests to this source's harness. Normal compile paths ignore
 ;; `AstDecl.Test`.
+(import stdlib.clone as clone_gen)
 (import compiler_backend_program_facts as be_facts)
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
@@ -87,8 +88,12 @@
   (Ignored String)
   (SlowSkipped))
 
+(clone_gen.gen-clone InlineTestSelection)
+
 (defenum InlineTest
   (Case String String i64 i64 i64 String i64 i64 InlineTestSelection))
+
+(clone_gen.gen-clone InlineTest)
 
 (defenum InlineCollect
   (Collect ast.AstDeclList ast.AstDeclPathList (__tl_dyn-array InlineTest)))
@@ -658,8 +663,11 @@
           (if (= index other)
             unit
             (let
-              [saved : InlineTest (clone (array-ref tests index))]
-              (set! (array-ref tests index) (clone (array-ref tests other)))
+              [saved : InlineTest
+                (clone-inline-test (& (array-ref tests index)))]
+              (set!
+                (array-ref tests index)
+                (clone-inline-test (& (array-ref tests other))))
               (set! (array-ref tests other) saved)))
           (-= index 1))))
     unit))
@@ -673,9 +681,12 @@
         (let
           [next-state : u64 (tltest-xorshift64-next state)]
           [other : i64 (cast (% next-state (cast (+ index 1) : u64)) : i64)]
-          [saved : String (clone (cli_svec.get items index ""))]
+          [saved : String (string.copy (& (cli_svec.get items index "")))]
           (set! state next-state)
-          (cli_svec.set-ref! items index (clone (cli_svec.get items other "")))
+          (cli_svec.set-ref!
+            items
+            index
+            (string.copy (& (cli_svec.get items other ""))))
           (cli_svec.set-ref! items other saved)
           (-= index 1))))
     unit))
@@ -2149,7 +2160,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (if (or
-    (tltest-inline-stdlib-source? source (clone roots))
+    (tltest-inline-stdlib-source? source (cli_svec.clone-vec (& roots)))
     (not (io.file-exists? (owned_view.compiler-owned-shared-view source)))
     (not
       (tltest-source-has-inline-tests?
@@ -2157,7 +2168,7 @@
     0
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
-      [legacy-roots : cli_svec.Vec (clone roots)]
+      [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
       (tltest-inline-reset-load-state!)
       (match (driver.compiler-driver-load-file-with-runtime
         (owned_view.compiler-owned-shared-view source)
@@ -2190,7 +2201,7 @@
     (owned_view.compiler-owned-shared-view source))
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
-      [legacy-roots : cli_svec.Vec (clone roots)]
+      [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
       (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
         (owned_view.compiler-owned-shared-view source)
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -2362,7 +2373,7 @@
   [target : be_state.CompilerBackendTarget]
   [roots : cli_svec.Vec]) : i64
   (let
-    [legacy-roots : cli_svec.Vec (clone roots)]
+    [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
     (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
       (tltest-program-with-print-runtime program target)
       (tltest-paths-with-print-runtime target paths)
@@ -2551,7 +2562,7 @@
   (let
     [files : build_run_core.SourceToolTempFiles
       (build_run_core.source-tool-temp-files temp-dir source target)]
-    [legacy-roots : cli_svec.Vec (clone roots)]
+    [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
     ;; Generated inline harnesses reserve status 1 for recoverable assertion
     ;; failures, so a harness that cannot be built, cannot start, or aborts or
     ;; traps maps to status 2. Integration programs keep their historical 0/1
@@ -2718,7 +2729,7 @@
   [roots : cli_svec.Vec]
   [target : be_state.CompilerBackendTarget]) : i64
   (let
-    [legacy-roots : cli_svec.Vec (clone roots)]
+    [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
     (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
       (ast.ast-program decls)
       paths
@@ -3076,7 +3087,7 @@
       (owned_view.compiler-owned-shared-view source)))
   (if (tltest-decls-have-main? (owned_view.compiler-owned-shared-view decls))
     (let
-      [legacy-roots : cli_svec.Vec (clone roots)]
+      [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
       (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
         (ast.ast-program decls)
         paths
@@ -3292,7 +3303,7 @@
     (owned_view.compiler-owned-shared-view source))
     (let
       [source-roots : cli_svec.Vec (tltest-source-roots (& source) roots)]
-      [legacy-roots : cli_svec.Vec (clone source-roots)]
+      [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& source-roots))]
       (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
         (owned_view.compiler-owned-shared-view source)
         (owned_view.compiler-owned-shared-view legacy-roots)
@@ -3628,9 +3639,9 @@
             (compiler_load.compiler-load-join-root-path
               (string.copy (& source-set.manifest-dir))
               (string.copy (& source-set.manifest.entry))))
-          (clone (deref roots))
+          (cli_svec.clone-vec roots)
           (string.copy (& source-set.manifest-dir))
-          (clone source-set.manifest.deps)
+          (compiler_load.clone-compiler-pkg-deps (& source-set.manifest.deps))
           (match source-set.manifest.kind
             [(CompilerPkgKindBin) true]
             [(CompilerPkgKindLib) false])

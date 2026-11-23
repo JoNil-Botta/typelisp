@@ -267,7 +267,7 @@
   (let
     [expr : compiler_ast_types.AstExpr
       (compiler_ast_types.ast-node-pool-context-expr-get pools node)]
-    (match (clone expr)
+    (match (& expr)
       [(Spanned inner _)
         (stress-expr-get
           (compiler_ast_types.ast-node-pool-context-shared-view (& pools))

@@ -1,8 +1,13 @@
 ;: A live generated hashmap value borrow blocks a bang mutation of the map.
 (import stdlib.hashmap)
+(import stdlib.string)
 
 (defstruct BorrowedNominalValue
   (text String))
+
+(define (clone-borrowed-nominal-value
+  [source : (& source BorrowedNominalValue)]) : BorrowedNominalValue
+  (BorrowedNominalValue (string.copy (& source.text))))
 
 (import (hashmap.hashmap i64 BorrowedNominalValue) as nominal_map)
 

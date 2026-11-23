@@ -118,11 +118,11 @@ function copy_chains_to_rax(   i, n, f, source, previous, previous_dst) {
     return n + 0
 }
 
-# Located abort tails whose staging push right before the descriptor `leaq`
+# Located abort tails whose staging push right before the operand staging marker
 # reads memory.
 function abort_staging_push_from_memory(   i, n) {
     for (i = 2; i <= NR; i++)
-        if (L[i] ~ /^[[:space:]]+leaq \.L_tl_abort_site_/ && L[i - 1] ~ /^[[:space:]]+pushq [-0-9]*\(%/) n++
+        if (L[i] ~ /^[[:space:]]+# tl_abort_operand_stage/ && L[i - 1] ~ /^[[:space:]]+pushq [-0-9]*\(%/) n++
     return n + 0
 }
 

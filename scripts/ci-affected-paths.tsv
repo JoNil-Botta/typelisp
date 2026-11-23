@@ -4,6 +4,19 @@
 path	required	advisory	reason
 # Safety fixture owners for #8570, #8915 and #8897.
 @always	bootstrap-compiler,bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests	-	Shared local hygiene and documented-source content guard, with canonical producer dependencies.
+benchmarks/README.md	@docs	-	Benchmark documentation is consumed by the documentation gates.
+benchmarks/borrowed_disjoint_store/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	This pair is in the instruction-main and benchmark suites.
+benchmarks/fp_mixed_recurrence/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	This pair is in the instruction-main and benchmark suites.
+benchmarks/fp_taylor_exp/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	This pair is in the instruction-main and benchmark suites.
+perf/benchmark-ci-cases.tsv	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,stage2-benchmark-comparison-correctness,stage2-optimization-corpus-opt2-runtime-correctness	-	Positive case membership for the benchmark-related gates.
+perf/insn-exec-baseline.tsv	linux-instruction-count-baseline,instruction-count-comparison-self-tests	-	Exact main-suite pins and paired-row contract.
+perf/codegen-cycle-report.md	@docs	-	Recorded performance report.
+perf/README.md	@docs	-	Benchmark and self-compile documentation.
+scripts/check-instruction-counts.sh	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,instruction-count-comparison-self-tests	-	Exact main and heavy instruction-count checker and comparison fixtures.
+scripts/measure-instruction-counts.sh	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,linux-self-compile-measurement,c-measured-region-instruction-harness-self-tests	-	Benchmark and self-compile instruction measurement.
+scripts/measure-spmd-mode-instruction-counts.sh	spmd-mode-instruction-count-harness-self-tests	-	SPMD mode harness and parser fixtures.
+scripts/lib-benchmark-cycles.sh	spmd-mode-instruction-count-harness-self-tests	-	Opt-in hardware measurement and reporting helpers exercised by harness fixtures.
+scripts/lib-benchmark.sh	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,linux-self-compile-measurement,c-measured-region-instruction-harness-self-tests,instruction-count-comparison-self-tests,spmd-mode-instruction-count-harness-self-tests,stage2-benchmark-comparison-correctness,benchmark-wall-clock-harness-self-tests,stage2-optimization-corpus-correctness,stage2-optimization-corpus-opt2-runtime-correctness	-	Shared benchmark builds, case inventories and measurement helpers.
 src/tests/compiler_optimize_smoke.tl	stage2-opt2-built-cli-compile-cross-fixpoint-regression	@compiler	The numbered opt2 gate wrapper directly executes this optimizer smoke unit.
 src/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@compiler	Any compiler source can carry target references; source guards read source content and module paths directly.
 src/compiler_*	stage2-codegen-target-parity	@compiler	Compiler data and target references retain the target boundary check.

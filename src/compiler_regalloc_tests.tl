@@ -17264,17 +17264,16 @@
            }")]
       (match (compiler-reg-plan-function func)
         [(Plan assignments _ _ _ _)
-          (begin
-            (test.assert-true
-              (compiler-reg-location-any-register?
-                (reg.compiler-reg-assignment-lookup assignments 3))
-              "4th SysV param (%rcx incoming) still gets a GP register home across TailMask")
-            (test.assert-true
-              (not
-                (reg.compiler-reg-location-register?
-                  (& (reg.compiler-reg-assignment-lookup assignments 3))
-                  cabi.compiler-reg-id-rcx))
-              "TailMask shift clobber keeps live GP values out of %rcx"))]))))
+          (test.assert-true
+            (compiler-reg-location-any-register?
+              (reg.compiler-reg-assignment-lookup assignments 3))
+            "4th SysV param (%rcx incoming) still gets a GP register home across TailMask")
+          (test.assert-true
+            (not
+              (reg.compiler-reg-location-register?
+                (& (reg.compiler-reg-assignment-lookup assignments 3))
+                cabi.compiler-reg-id-rcx))
+            "TailMask shift clobber keeps live GP values out of %rcx")]))))
 
 (cfg
   test

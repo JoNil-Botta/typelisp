@@ -9938,9 +9938,9 @@ and not a general manual memory management feature.
   ownership/lifetime forms rather than silently
   bit-copying them. Unsupported clone operands include function values,
   references including borrowed `str`, raw pointers,
-  compile-time-only values, and named aggregate shapes containing
-  non-cloneable fields. A `(Box T)` operand with a cloneable `T`, owned or read
-  through a reference, clones into a new box.
+  compile-time-only values, cleanup-owning types, and named aggregate shapes
+  containing non-cloneable or cleanup-owning fields. A `(Box T)` operand with a
+  cloneable `T`, owned or read through a reference, clones into a new box.
 
 ---
 

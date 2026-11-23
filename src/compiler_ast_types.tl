@@ -5511,6 +5511,14 @@
       (ptr->int (ptr-cast (ast-type-pool-cell-ptr pools.type-pool) : (Ptr u8))))
     : i64))
 
+(define (ast-node-pool-context-type-live-revision
+  [pools : (& pools AstNodePoolContext)]) : i64
+  (let
+    [state : (MutPtr AstTypeNodePoolState)
+      (ast-type-pool-cell-ptr pools.type-pool)]
+    (unsafe
+      (ast-type-pool-cursor-live-revision (deref state).revision-cell))))
+
 ;; A stamp names type storage by its single cursor cell, not by whichever
 ;; state cell or context produced it: every alias of one storage shares that
 ;; cursor and therefore one logical length. It never dereferences the captured
@@ -5727,6 +5735,11 @@
   (if ast-node-pool-reader-explicit?
     (ast-node-pool-context-type-segment-bases ast-node-pool-reader-context)
     ty-node-pool-segment-bases))
+
+(define (ast-node-pool-reader-type-live-revision) : i64
+  (if ast-node-pool-reader-explicit?
+    (ast-node-pool-context-type-live-revision (& ast-node-pool-reader-context))
+    (ast-type-pool-cursor-live-revision ty-node-pool-revision-cell)))
 
 ;; Legacy/test bridge for APIs that now require a pools value. Capturing the
 ;; compatibility globals is intentionally outside every compile-job path.

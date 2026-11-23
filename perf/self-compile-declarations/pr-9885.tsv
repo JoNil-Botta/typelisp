@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-9786	Typecheck memoizes per-module name resolution and skips re-checking already-checked bodies on the unobserved path; local own cost -1.051 G Ir, same-source -1.096 G, opt1 self-compile .s byte-identical.

@@ -996,11 +996,14 @@
 (define (compiler-symbol-module-key-id-by-id [module-id : i64] [name-id : i64]) : i64
   (cond
     [(compiler-symbol-root-module-id? module-id) name-id]
-    [(and
-        (ci.intern-renderable-id? name-id)
-        (ci.intern-qualified? name-id)
-        (= (ci.intern-qualified-module-id name-id) module-id))
-      (compiler-symbol-name-id-key name-id)]
+    [(ci.intern-renderable-id? name-id)
+      (compiler-composite-pair-key-id
+        module-id
+        (if (and
+          (ci.intern-qualified? name-id)
+          (= (ci.intern-qualified-module-id name-id) module-id))
+          (ci.intern-qualified-base-id name-id)
+          name-id))]
     [(compiler-composite-pair-key-id? name-id)
       (compiler-composite-triple-key-id
         module-id

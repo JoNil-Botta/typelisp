@@ -518,10 +518,12 @@ RSS per leg in `target/compile-vs-clang/results.tsv`, and prints the geomean
 TypeLisp/clang time and peak-memory ratios for `opt1:-O0` and `opt2:-O2`.
 
 `scripts/benchmark-size-vs-clang.sh` is the size lane's counterpart. It builds
-the same pairs at `--opt-level 2` and with clang at `-Os` and `-O2`, strips all
-three binaries, records their byte sizes and TypeLisp/clang ratios in
-`target/size-vs-clang/results.tsv`, and prints the geomean `opt2:-Os` and
-`opt2:-O2` ratios plus the five largest `-Os` ratios.
+the same pairs at `--opt-level 2` (or `--opt-level LEVEL`) and with clang at
+`-Os` and `-O2`, reads each binary's `.text`, user `.text`, `.rodata` and
+`.data` sizes before stripping it, records their byte, section and
+TypeLisp/clang ratio columns in `target/size-vs-clang/results.tsv`, and prints
+the geomeans, sums and five largest `-Os` ratios for the stripped bytes and
+each section.
 
 ## Moving a script
 

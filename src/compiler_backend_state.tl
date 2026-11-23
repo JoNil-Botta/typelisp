@@ -9,6 +9,7 @@
 (import compiler_abi)
 (import compiler_regalloc)
 (import compiler_liveness)
+(import compiler_opt_level as opt_level)
 (import compiler_profile_state as profile_state)
 (import stdlib.text_buf)
 (import stdlib.text_buf_borrowed)
@@ -1145,6 +1146,7 @@
   ;; process-global opt-level switch.
   (scalar-registers-enabled bool)
   (tail-merging-enabled bool)
+  (optimize-for-size bool)
   (user-symbol-cache-keys (__tl_dyn-array i64))
   (user-symbol-cache-values (__tl_dyn-array String))
   (user-symbol-cache-epochs (__tl_dyn-array i64))
@@ -1261,6 +1263,7 @@
         (compiler-backend-global-shared-view intern-state)
         owner-arena
         0
+        false
         false
         false
         ;; User-symbol storage is deliberately lazy.  In particular, a
@@ -1756,7 +1759,7 @@
 ;; Whether scalar functions get full register allocation. Register allocation
 ;; makes the EMITTED binary faster but its planning + register-aware emission
 ;; cost more compile time than it saves on a single self-compile, so it is
-;; reserved for opt level 2, the high-quality path. Lower opt levels stay on
+;; reserved for full optimization. Lower opt levels stay on
 ;; cheap stack-only homing. The option is owned by each CompilerBackendState,
 ;; so a given job emits deterministically even when another job is active.
 ;; SIMD (Avx2/Avx512) functions always use register allocation regardless.
@@ -1792,9 +1795,20 @@
   [state : CompilerBackendState]
   [opt-level : i64]) : unit
   (let
-    [high-quality? : bool (>= opt-level 2)]
+    [high-quality? : bool (opt_level.opt-level-full? opt-level)]
     (compiler-backend-state-set-scalar-registers-enabled! state high-quality?)
     (compiler-backend-state-set-tail-merging-enabled! state high-quality?)))
+
+(define (compiler-backend-state-optimize-for-size?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).optimize-for-size))
+
+(define (compiler-backend-state-set-optimize-for-size!
+  [state : CompilerBackendState]
+  [enabled : bool]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).optimize-for-size enabled)))
 
 ;; Public observations for the retained operand-render storage.  The backing
 ;; StateData remains opaque; capacities are reported from the actual arrays so

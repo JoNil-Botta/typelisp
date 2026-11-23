@@ -1,4 +1,5 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
+(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.byte_buf)
@@ -14741,6 +14742,8 @@
   (alias String)
   (path String))
 
+(clone_gen.gen-clone CompilerPkgDep)
+
 ;: Alias->path dependency list from a parsed manifest, in manifest order.
 (defstruct CompilerPkgDepList
   (slots (__tl_dyn-array CompilerPkgDep))
@@ -14827,7 +14830,7 @@
 (define (compiler-pkg-dep-list-at
   [deps : (& deps CompilerPkgDepList)]
   [index : i64]) : CompilerPkgDep
-  (clone (array-ref deps.slots index)))
+  (clone-compiler-pkg-dep (& (array-ref deps.slots index))))
 
 (define (compiler-pkg-dep-list-empty) : CompilerPkgDepList
   (CompilerPkgDepList (__tl_make-array CompilerPkgDep 0) 0))
@@ -14841,7 +14844,18 @@
     (for [index (iterator.range 0 n)]
       (set!
         (array-ref dst (+ dst-offset index))
-        (clone (array-ref src.slots index))))))
+        (clone-compiler-pkg-dep (& (array-ref src.slots index)))))))
+
+(define (clone-compiler-pkg-dep-list [source : (& CompilerPkgDepList)]) : CompilerPkgDepList
+  (let
+    [count : i64 source.len]
+    [slots : (__tl_dyn-array CompilerPkgDep)
+      (__tl_make-array CompilerPkgDep count)]
+    (compiler-pkg-dep-list-copy-into (&mut slots) source 0)
+    (CompilerPkgDepList slots count)))
+
+(define (clone-compiler-pkg-deps [source : (& CompilerPkgDeps)]) : CompilerPkgDeps
+  (CompilerPkgDeps (clone-compiler-pkg-dep-list (& source.ordered))))
 
 ;: Append `dep`. Every push right-sizes a fresh array, so callers that keep
 ;: extending the same list from several branches never share a buffer.
@@ -14885,11 +14899,10 @@
     [(CompilerPkgKindBin) (NoDependency)]
     [(CompilerPkgKindLib)
       (let
-        [deps : CompilerPkgDepList
-          (compiler-pkg-deps-list (clone manifest.deps))]
-        (if (= (compiler-pkg-dep-list-count (& deps)) 0)
+        [deps : (& manifest CompilerPkgDepList) (& manifest.deps.ordered)]
+        (if (= (compiler-pkg-dep-list-count deps) 0)
           (NoDependency)
-          (Dependency (compiler-pkg-dep-list-at (& deps) 0))))]))
+          (Dependency (compiler-pkg-dep-list-at deps 0))))]))
 
 ;: Explain the dependency-free library invariant and its supported
 ;: composition/native-link alternatives.

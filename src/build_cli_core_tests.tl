@@ -738,7 +738,9 @@
             (& (load.compiler-pkg-dep-list-empty))
             dep)]
         [resolve-manifest : load.CompilerPkgManifest
-          (build-package-graph-test-manifest-with-deps "layer" (clone deps))]
+          (build-package-graph-test-manifest-with-deps
+            "layer"
+            (load.clone-compiler-pkg-dep-list (& deps)))]
         [graph-node : build.BuildPackageGraphNode
           (build.BuildPackageGraphNode
             "acquired/layer/typelisp.pkg"

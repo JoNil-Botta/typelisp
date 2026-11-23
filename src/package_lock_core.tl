@@ -862,7 +862,7 @@
           (return (package-lock-stage-write-opened path (& source) handle))]
         [(ErrIoFile error)
           (unless
-            (package-lock-io-already-exists? (& (clone error)))
+            (package-lock-io-already-exists? (& error))
             (return
               (Err
                 (package-lock-transaction-error
@@ -960,9 +960,7 @@
   (match (fs.try-atomic-replace stage (& destination))
     [(OkIoUnit) (Ok destination)]
     [(ErrIoUnit error)
-      (if (and
-        (< attempt 100)
-        (package-lock-io-retryable-replace? (& (clone error))))
+      (if (and (< attempt 100) (package-lock-io-retryable-replace? (& error)))
         (match (time.sleep-ms 10)
           [(ErrTimeUnit sleep-error) (Err (time.error-message sleep-error))]
           [(OkTimeUnit)

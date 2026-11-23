@@ -1,4 +1,5 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers.
+(import stdlib.clone as clone_gen)
 (import compiler_backend_program_facts as be_facts)
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
@@ -62,6 +63,8 @@
   (values process.ProcessStringList)
   (declared-by process.ProcessStringList))
 
+(clone_gen.gen-clone SourceToolLinkOrigins)
+
 (defstruct SourceToolLinkInputs
   (libs process.ProcessStringList)
   (search-dirs process.ProcessStringList)
@@ -73,6 +76,8 @@
   (archives process.ProcessStringList)
   ;; Every declaration, kept even when a merge drops its input as a duplicate.
   (origins SourceToolLinkOrigins))
+
+(clone_gen.gen-clone SourceToolLinkInputs)
 
 (defenum ResultSourceToolLinkInputs
   (Ok SourceToolLinkInputs)

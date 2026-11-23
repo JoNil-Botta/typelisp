@@ -13704,127 +13704,134 @@
     (typed.typed-store-retire! (&mut store))
     (and different generated query (= query-count store.occurrence-count))))
 
-(define (tc-selected-query-staging-case
-  [ctx : tc_core.TcContext]
-  [env : tc_core.TcTypeEnv]
-  [form : String]
-  [_max-query-bytes : i64]) : unit
-  (let
-    [id : i64
-      (match (parser.parse-ast-expr-with-pools
-        (parser.compiler-parse-dispatch-env)
-        (tc_core.tc-context-pools ctx)
-        (macro-output-source-sexpr (clone form)))
-        [(Ok value) value]
-        [_ (io.panic "query staging fixture must parse")])]
-    [source : ownership.OwnershipSource
-      (ownership.OwnershipSource
-        (ownership.ownership-path-none)
-        0
-        0
-        (ownership.ownership-expansion-none))]
-    ;; Check the legacy result and warm both paths before measuring Query.
-    [want : ast.AstType
-      (match (tc_core.tc-expr-id ctx env id)
-        [(tc_core.ResultTcType.Ok ty) ty]
-        [(tc_core.ResultTcType.Err message) (io.panic message)])]
-    [_warm : unit
-      (cfg
-        compile-profile
-        (begin
-          (tc_core.tc-selected-project
-            (tc_core.tc-infer-selected-id
-              ctx
-              env
-              id
-              ast.AstMaybeType.No
-              (ownership.ownership-source-copy (& source))
-              tc_core.TcSelectedSink.Query))
-          unit))]
-    [before : i64 (profile.alloc-total)]
-    (match (tc_core.tc-infer-selected-id
-      ctx
-      env
-      id
-      ast.AstMaybeType.No
-      source
-      tc_core.TcSelectedSink.Query)
-      [(tc_core.TcSelectedResult.Ok
-          ty
-          (tc_core.TcSelectedOccurrence.Unrepresented)
-          (tc_core.TcSelectedSink.Query))
-        (let
-          [_allocated : i64 (- (profile.alloc-total) before)]
-          (test.assert-true (tc_core.tc-type-eq ty want) (clone form))
-          (cfg
-            compile-profile
-            (test.assert-true
-              (<= _allocated _max-query-bytes)
-              (str_cat.str-cat
-                form
-                " allocated "
-                (string.int->string _allocated)
-                " bytes, expected at most "
-                (string.int->string _max-query-bytes)))))]
-      [(tc_core.TcSelectedResult.Err message _) (io.panic message)]
-      [_ (io.panic "selected query published an occurrence")])))
+(cfg
+  test
+  (define (tc-selected-query-staging-case
+    [ctx : tc_core.TcContext]
+    [env : tc_core.TcTypeEnv]
+    [form : String]
+    [_max-query-bytes : i64]) : unit
+    (let
+      [id : i64
+        (match (parser.parse-ast-expr-with-pools
+          (parser.compiler-parse-dispatch-env)
+          (tc_core.tc-context-pools ctx)
+          (macro-output-source-sexpr (clone form)))
+          [(Ok value) value]
+          [_ (io.panic "query staging fixture must parse")])]
+      [source : ownership.OwnershipSource
+        (ownership.OwnershipSource
+          (ownership.ownership-path-none)
+          0
+          0
+          (ownership.ownership-expansion-none))]
+      ;; Check the legacy result and warm both paths before measuring Query.
+      [want : ast.AstType
+        (match (tc_core.tc-expr-id ctx env id)
+          [(tc_core.ResultTcType.Ok ty) ty]
+          [(tc_core.ResultTcType.Err message) (io.panic message)])]
+      [_warm : unit
+        (cfg
+          compile-profile
+          (begin
+            (tc_core.tc-selected-project
+              (tc_core.tc-infer-selected-id
+                ctx
+                env
+                id
+                ast.AstMaybeType.No
+                (ownership.ownership-source-copy (& source))
+                tc_core.TcSelectedSink.Query))
+            unit))]
+      [before : i64 (profile.alloc-total)]
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        id
+        ast.AstMaybeType.No
+        source
+        tc_core.TcSelectedSink.Query)
+        [(tc_core.TcSelectedResult.Ok
+            ty
+            (tc_core.TcSelectedOccurrence.Unrepresented)
+            (tc_core.TcSelectedSink.Query))
+          (let
+            [_allocated : i64 (- (profile.alloc-total) before)]
+            (test.assert-true (tc_core.tc-type-eq ty want) (clone form))
+            (cfg
+              compile-profile
+              (test.assert-true
+                (<= _allocated _max-query-bytes)
+                (str_cat.str-cat
+                  form
+                  " allocated "
+                  (string.int->string _allocated)
+                  " bytes, expected at most "
+                  (string.int->string _max-query-bytes)))))]
+        [(tc_core.TcSelectedResult.Err message _) (io.panic message)]
+        [_ (io.panic "selected query published an occurrence")]))))
 
-(define (tc-selected-query-staging-env [pools : ast.AstNodePoolContext]) : tc_core.TcTypeEnv
-  (let
-    [params : ast.AstTypeList (ast.ast-type-list-with-capacity 8)]
-    [cleanup-params : ast.AstTypeList (ast.ast-type-list-with-capacity 1)]
-    [i64-id : i64 (ast.ast-node-pool-context-type-push pools (I64))]
-    (for [index (iterator.range 0 8)]
-      (ast.ast-type-list-push (&mut params) i64-id))
-    (ast.ast-type-list-push (&mut cleanup-params) i64-id)
-    (tc_core.tc-bind-id
+(cfg
+  test
+  (define (tc-selected-query-staging-env [pools : ast.AstNodePoolContext]) : tc_core.TcTypeEnv
+    (let
+      [params : ast.AstTypeList (ast.ast-type-list-with-capacity 8)]
+      [cleanup-params : ast.AstTypeList (ast.ast-type-list-with-capacity 1)]
+      [i64-id : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+      (for [index (iterator.range 0 8)]
+        (ast.ast-type-list-push (&mut params) i64-id))
+      (ast.ast-type-list-push (&mut cleanup-params) i64-id)
       (tc_core.tc-bind-id
         (tc_core.tc-bind-id
-          (tc_core.tc-empty-env)
-          (ci.intern "query-view")
-          (ast.ast-ty-ref-with-pools pools 0 (& (I64))))
-        (ci.intern "query-callee")
-        (ast.ast-ty-func-with-pools pools params (& (I64))))
-      (ci.intern "query-cleanup")
-      (ast.ast-ty-func-with-pools pools cleanup-params (& (Unit))))))
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env)
+            (ci.intern "query-view")
+            (ast.ast-ty-ref-with-pools pools 0 (& (I64))))
+          (ci.intern "query-callee")
+          (ast.ast-ty-func-with-pools pools params (& (I64))))
+        (ci.intern "query-cleanup")
+        (ast.ast-ty-func-with-pools pools cleanup-params (& (Unit)))))))
 
-(test
-  selected-query-skips-staging
-  (let
-    [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
-    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
-    [env : tc_core.TcTypeEnv (tc-selected-query-staging-env pools)]
-    [intern-state : ci.InternCompatState
-      (ci.intern-compat-state-capture-active)]
-    [lease : (typed.TypedBodyLease intern-state)
-      (tc-selected-test-lease ctx (& intern-state))]
-    [store : typed.TypedStore (tc-selected-test-store (& lease))]
-    [serial : u64 store.next-serial]
-    [work : i64 store.work]
-    ;; Allow one 16-byte allocation beyond each fixture's typechecking cost.
-    ;; Each removed staging path allocates more than that.
-    (tc-selected-query-staging-case ctx env "(tuple 0 0 0 0 0 0 0 0)" 216)
-    (tc-selected-query-staging-case
-      ctx
-      env
-      "(query-callee 0 0 0 0 0 0 0 0)"
-      472)
-    (tc-selected-query-staging-case
-      ctx
-      env
-      "(with ([a 0 query-cleanup] [b 0 query-cleanup] [c 0 query-cleanup]) 0)"
-      848)
-    (tc-selected-query-staging-case
-      ctx
-      env
-      "(array-ref (array query-view query-view query-view query-view) 0)"
-      128)
-    (test.assert-true
-      (= store.next-serial serial)
-      "Query mints no TypedStore handles")
-    (test.assert-i64-eq store.work work "Query charges no TypedStore work")
-    (typed.typed-store-retire! (&mut store))))
+(cfg
+  test
+  (test
+    selected-query-skips-staging
+    (let
+      [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+      [env : tc_core.TcTypeEnv (tc-selected-query-staging-env pools)]
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [lease : (typed.TypedBodyLease intern-state)
+        (tc-selected-test-lease ctx (& intern-state))]
+      [store : typed.TypedStore (tc-selected-test-store (& lease))]
+      [serial : u64 store.next-serial]
+      [work : i64 store.work]
+      ;; Allow one 16-byte allocation beyond each fixture's typechecking cost.
+      ;; Each removed staging path allocates more than that.
+      (tc-selected-query-staging-case ctx env "(tuple 0 0 0 0 0 0 0 0)" 216)
+      (tc-selected-query-staging-case
+        ctx
+        env
+        "(query-callee 0 0 0 0 0 0 0 0)"
+        472)
+      (tc-selected-query-staging-case
+        ctx
+        env
+        "(with ([a 0 query-cleanup] [b 0 query-cleanup] [c 0 query-cleanup]) 0)"
+        848)
+      (tc-selected-query-staging-case
+        ctx
+        env
+        "(array-ref (array query-view query-view query-view query-view) 0)"
+        128)
+      (test.assert-true
+        (= store.next-serial serial)
+        "Query mints no TypedStore handles")
+      (test.assert-i64-eq store.work work "Query charges no TypedStore work")
+      (typed.typed-store-retire! (&mut store)))))
 
 (define (tc-selected-unary-and-plain-if-ok?) : bool
   (let

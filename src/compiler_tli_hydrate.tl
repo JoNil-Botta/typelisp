@@ -348,23 +348,23 @@
         (tli-hydrate-name life)
         (tli-hydrate-type-id (& (deref inner))))]
     [(Invalidate life inner)
-      (ast.AstType.Invalidate
+      (ast.ast-ty-invalidate-id
         (tli-hydrate-name life)
         (tli-hydrate-type-id (& (deref inner))))]
     [(Enum name) (ast.AstType.Enum (tli-hydrate-nominal-name name))]
     [(EnumArgs name lives)
       (ast.ast-ty-enum-args
-        (tli-hydrate-name name)
+        (tli-hydrate-nominal-name name)
         (tli-hydrate-lifetimes lives))]
     [(Struct name) (ast.AstType.Struct (tli-hydrate-nominal-name name))]
     [(StructArgs name lives)
       (ast.ast-ty-struct-args
-        (tli-hydrate-name name)
+        (tli-hydrate-nominal-name name)
         (tli-hydrate-lifetimes lives))]
     [(Var name) (ast.AstType.Var (tli-hydrate-nominal-name name))]
     [(VarArgs name lives)
       (ast.ast-ty-var-args
-        (tli-hydrate-name name)
+        (tli-hydrate-nominal-name name)
         (tli-hydrate-lifetimes lives))]
     [(Ptr elem) (ast.AstType.Ptr (tli-hydrate-type-id (& (deref elem))))]
     [(MutPtr elem) (ast.AstType.MutPtr (tli-hydrate-type-id (& (deref elem))))]
@@ -473,7 +473,8 @@
           [2 (ast.AstExternAbi.CVarargsOpen)]
           [_
             (ast.AstExternAbi.CVarargsTyped
-              (tli-hydrate-type (& (array-ref row.params fixed-count).ty)))])]
+              (ast.ty-node-get
+                (tli-hydrate-type-id (& (array-ref row.params fixed-count).ty))))])]
       (TliHydratedFunction
         (tli-hydrate-name (& row.name))
         (tli-hydrate-name (& row.module-name))

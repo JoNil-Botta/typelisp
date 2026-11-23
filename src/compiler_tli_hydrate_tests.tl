@@ -241,6 +241,107 @@
       (not (hydrate.tli-hydrate-arena-arg-store? (& summary) -1))
       "negative index")))
 
+(test
+  tli-registers-hydrated-invalidate-types
+  (let
+    [before : i64 ast.ast-invalidate-type-count]
+    [ty : tli.TliType (tli.TliType.Invalidate "r" (box (tli.TliType.I64)))]
+    [hydrated : ast.AstType
+      (ast.ty-node-get (hydrate.tli-hydrate-type-id (& ty)))]
+    (test.assert-i64-eq
+      ast.ast-invalidate-type-count
+      (+ before 1)
+      "hydration registers one invalidation effect")
+    (match hydrated
+      [(Invalidate life inner)
+        (test.assert-i64-eq life (intern.intern "r") "invalidate lifetime")
+        (test.assert-true
+          (ast.ty-node-shallow-eq? inner (& (ast.AstType.I64)))
+          "invalidate inner type")]
+      [_ (io.panic "expected a hydrated Invalidate")])))
+
+(test
+  tli-canonicalizes-qualified-nominals-with-lifetime-args
+  (let
+    [name : i64 (ast.ast-nominal-name-id-key (intern.intern "dep/Named"))]
+    (match (hydrate.tli-hydrate-type
+      (& (tli.TliType.StructArgs "dep/Named" (__tl_make-array "r"))))
+      [(StructArgs actual _) (test.assert-i64-eq actual name "struct identity")]
+      [_ (io.panic "expected a hydrated StructArgs")])
+    (match (hydrate.tli-hydrate-type
+      (& (tli.TliType.EnumArgs "dep/Named" (__tl_make-array "r"))))
+      [(EnumArgs actual _) (test.assert-i64-eq actual name "enum identity")]
+      [_ (io.panic "expected a hydrated EnumArgs")])
+    (match (hydrate.tli-hydrate-type
+      (& (tli.TliType.VarArgs "dep/Named" (__tl_make-array "r"))))
+      [(VarArgs actual _) (test.assert-i64-eq actual name "var identity")]
+      [_ (io.panic "expected a hydrated VarArgs")])))
+
+(test
+  tli-retains-boxed-c-varargs-tail-after-job-arena
+  (let
+    [row : tli.TliFnDecl
+      (tli.TliFnDecl
+        "variadic"
+        "dep"
+        "variadic"
+        3
+        0
+        ""
+        true
+        0
+        (__tl_make-array tli.TliExternLinkInput 0)
+        (__tl_make-array
+          (tli.TliParam
+            "tail"
+            (tli.TliType.Tuple (__tl_make-array (tli.TliType.U8)))
+            false))
+        (tli.TliType.Unit)
+        (tli.TliFnSummary
+          0
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array tli.TliGlobalWrite 0)
+          0
+          0))]
+    [abi : ast.AstExternAbi (ast.AstExternAbi.C)]
+    (with-arena
+      tli-job
+      (unsafe
+        ;; Copy the ABI without promoting any of its payloads out of this arena.
+        (let
+          [hydrated : hydrate.TliHydratedFunction
+            (hydrate.tli-hydrate-function (& row))]
+          (ptr-write!
+            (ptr-cast (ptr-addr-of abi) : (MutPtr ast.AstExternAbi))
+            hydrated.abi))))
+    (match abi
+      [(CVarargsTyped (Tuple items))
+        (match (ast.ty-node-get
+          (hydrate.tli-hydrate-type-id (& (array-ref row.params 0).ty)))
+          [(Tuple pooled)
+            (let
+              ;; Compare the box addresses before dereferencing the tail.
+              [pool-owned : bool
+                (unsafe
+                  (=
+                    (ptr-read (ptr-cast (ptr-addr-of items) : (Ptr u64)))
+                    (ptr-read (ptr-cast (ptr-addr-of pooled) : (Ptr u64)))))]
+              (test.assert-true pool-owned "varargs tail uses the pooled box")
+              (when
+                pool-owned
+                (test.assert-i64-eq
+                  (ast.ast-type-list-len (& (deref items)))
+                  1
+                  "varargs tail tuple length after the job ends")
+                (test.assert-true
+                  (ast.ty-node-shallow-eq?
+                    (ast.ast-type-list-get (& (deref items)) 0 0)
+                    (& (ast.AstType.U8)))
+                  "varargs tail tuple member after the job ends")))]
+          [_ (io.panic "expected a pooled varargs tuple")])]
+      [_ (io.panic "expected a hydrated typed varargs tuple")])))
+
 (define (tli-test-selected [selected : sysroot.TliSysroot] [expected : (& str)]) : unit
   (match selected
     [(Found path)

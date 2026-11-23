@@ -17219,6 +17219,7 @@ f:
           (owned_view.compiler-owned-shared-view spans)
           false
           false
+          false
           (profile_state.compiler-profile-state-new)))]
     [object-b1 : be_state.ResultCompilerBackendObject
       (begin
@@ -17230,6 +17231,7 @@ f:
           (be_state.CompilerBackendTarget.Linux)
           (Scalar)
           (owned_view.compiler-owned-shared-view spans)
+          false
           false
           false
           (profile_state.compiler-profile-state-new)))]
@@ -17245,6 +17247,7 @@ f:
           (owned_view.compiler-owned-shared-view spans)
           false
           false
+          false
           (profile_state.compiler-profile-state-new)))]
     [object-b2 : be_state.ResultCompilerBackendObject
       (begin
@@ -17256,6 +17259,7 @@ f:
           (be_state.CompilerBackendTarget.Linux)
           (Scalar)
           (owned_view.compiler-owned-shared-view spans)
+          false
           false
           false
           (profile_state.compiler-profile-state-new)))]
@@ -44856,6 +44860,7 @@ user_fn:
             target
             (Scalar)
             (ir.compiler-source-spans-empty)
+            false
             false
             false
             (profile_state.compiler-profile-state-new))

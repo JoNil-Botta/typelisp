@@ -3816,7 +3816,7 @@
   [plan : be_state.CompilerBackendRuntimePlan]
   [names : be_state.BackendStringSeq]
   [closed : bool]
-  [emit-entry : bool]
+  [internal-runtime? : bool]
   [index : i64]) : object_target.CompilerBackendObjectTargetParts
   (if (>= index names.len)
     parts
@@ -3827,7 +3827,7 @@
           index)]
       [defined? : bool
         (or
-          emit-entry
+          internal-runtime?
           (string.eq (& name) "tl_tlci_call_image_entry")
           (string.eq (& name) "tl_tlci_call_macro_entry"))]
       [referenced? : bool
@@ -3853,7 +3853,7 @@
         plan
         names
         closed
-        emit-entry
+        internal-runtime?
         (+ index 1)))))
 
 (define (compiler-backend-object-image-for-target
@@ -3891,7 +3891,8 @@
   [runtime-index : be_state.CompilerBackendRuntimeIndex]
   [program-index : be_state.CompilerBackendProgramIndex]
   [emit-entry : bool]
-  [crt-entry : bool]) : be_state.ResultCompilerBackendObject
+  [crt-entry : bool]
+  [pic-emit? : bool]) : be_state.ResultCompilerBackendObject
   (let
     [target : be_state.CompilerBackendTarget target-policy.target]
     ;; IAG-1: the object image mirrors the text emitter's inline aggregate
@@ -3989,7 +3990,9 @@
         (compiler-backend-object-runtime-symbols-list)
         (be_state.compiler-backend-state-closed-executable?
           program-index.backend-state)
-        emit-entry
+        ;; The PIC image supplies the relocation model for assembly, where
+        ;; the backend's intrinsic runtime references are treated as internal.
+        (or emit-entry pic-emit?)
         0)]
     (Ok
       (compiler-backend-object-image-for-target
@@ -4719,6 +4722,7 @@
   [_spans : compiler_ir_types.CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]
+  [pic-emit? : bool]
   [profile-state : profile_state.CompilerProfileState]) : be_state.ResultCompilerBackendObject
   ;; Eligibility already routes a shared-object request to assembly
   ;; (`SharedObjectCodeModel`); an object image must never silently use the
@@ -4779,7 +4783,8 @@
                   planned.index
                   program-index
                   emit-entry
-                  crt-entry)]
+                  crt-entry
+                  pic-emit?)]
               [(Err message)
                 (Err
                   (box
@@ -4798,6 +4803,7 @@
   [spans : compiler_ir_types.CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]
+  [pic-emit? : bool]
   [profile-state : profile_state.CompilerProfileState]) : be_state.ResultCompilerBackendObject
   (let
     [_emission-arena : arena.Arena
@@ -4812,6 +4818,7 @@
         spans
         emit-entry
         crt-entry
+        pic-emit?
         profile-state)]
     (be_facts.compiler-backend-clear-function-owned-state! backend-state)
     (be_state.compiler-backend-state-retire-function-state! backend-state)
@@ -4840,6 +4847,7 @@
       spans
       emit-entry
       crt-entry
+      false
       profile-state)))
 
 (define (compiler-backend-emit-program-object-image-target-with-mode-and-crt

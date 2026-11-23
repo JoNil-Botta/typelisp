@@ -22784,11 +22784,12 @@
                                   (be_scalar.compiler-backend-function-symbol-map-comment
                                     program-index
                                     name)
-                                  (if emit-entry
-                                    ""
+                                  (if (be_state.compiler-backend-state-library-object?
+                                    program-index.backend-state)
                                     (be_data.compiler-backend-function-section
                                       target
-                                      (& symbol)))
+                                      (& symbol))
+                                    "")
                                   ".globl "
                                   symbol
                                   "\n"
@@ -24162,7 +24163,7 @@ tl_shared_object_init:
               (compiler-backend-shared-object-target-message target))))))
     (be_state.compiler-backend-state-set-library-object!
       backend-state
-      (not emit-entry))
+      (and (not emit-entry) (not pic-emit?)))
     (compiler-backend-debug-path-remap-load-environment!)
     (be_state.compiler-backend-state-set-emission-target-policy!
       backend-state
@@ -24412,6 +24413,7 @@ tl_shared_object_init:
         spans
         emit-entry
         crt-entry
+        false
         profile-state))))
 
 (define (compiler-backend-peephole-records-retire!
@@ -25511,6 +25513,7 @@ tl_shared_object_init:
           spans
           emit-entry
           crt-entry
+          true
           profile-state))]
     (if (compiler-backend-pic-symbols-have-extern? image.symbols)
       (Err

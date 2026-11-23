@@ -2607,6 +2607,39 @@
     (opt-value-zero-literal? lhs)
     (not (opt-value-int-literal? rhs))))
 
+(define (opt-float-power-of-two-reciprocal
+  [bits : u64]
+  [fraction-width : i64]
+  [bias : u64]) : ir.CompilerIrMaybeValue
+  (let
+    [fraction-mask : u64 (- (shl (cast 1 : u64) fraction-width) 1)]
+    [exponent-mask : u64 (+ (* 2 bias) 1)]
+    [sign : u64 (bit-and bits (shl (+ exponent-mask 1) fraction-width))]
+    [exponent : u64 (bit-and (shr bits fraction-width) exponent-mask)]
+    ;; A normal power of two with a normal reciprocal scales by the same
+    ;; exact amount in either operation, with one rounding even at underflow.
+    (if (and
+      (= (bit-and bits fraction-mask) 0)
+      (>= exponent 1)
+      (< exponent (* 2 bias)))
+      (Some (F64 (bit-or sign (shl (- (* 2 bias) exponent) fraction-width))))
+      (No))))
+
+(define (opt-float-div-reciprocal
+  [op : (& op ir.CompilerIrBinOp)]
+  [rhs : (& rhs ir.CompilerIrValue)]
+  [ty : (& ty ast.AstType)]) : ir.CompilerIrMaybeValue
+  (match op
+    [(or (Div) (SafeDiv))
+      (match rhs
+        [(F64 bits)
+          (match ty
+            [(F32) (opt-float-power-of-two-reciprocal bits 23 127)]
+            [(F64) (opt-float-power-of-two-reciprocal bits 52 1023)]
+            [_ (No)])]
+        [_ (No)])]
+    [_ (No)]))
+
 (define (opt-fold-instr
   [type-segment-bases : i64]
   [env : OptConstEnv]
@@ -2654,11 +2687,13 @@
           (ir.compiler-ir-binop-rhs-type
             (compiler-opt-global-shared-view op)
             (compiler-opt-global-shared-view ty))]
+        [resolved-rhs : OptKnownConst
+          (opt-resolve-known env (& r) rhs-operand-ty)]
         (match (opt-fold-binop
           type-segment-bases
           (& op)
           (& (opt-resolve-known env (& l) ty))
-          (& (opt-resolve-known env (& r) rhs-operand-ty))
+          (& resolved-rhs)
           ty)
           [(Some folded)
             (Result
@@ -2671,13 +2706,18 @@
           [(No)
             (Result
               (opt-const-unbind env dst)
-              (if (or
-                (opt-binop-commute-constant-lhs? op l r ty)
-                (opt-binop-commute-cell-lhs? op l r ty rmw?))
-                (BinOp dst op r l ty)
-                (if (opt-binop-negate-zero-lhs? op l r ty)
-                  (UnOp dst Neg r ty)
-                  instr)))]))]
+              (match (match (& resolved-rhs)
+                [(SomeConst value _) (opt-float-div-reciprocal (& op) value ty)]
+                [(NoConst) (ir.CompilerIrMaybeValue.No)])
+                [(Some reciprocal) (BinOp dst (Mul) l reciprocal ty)]
+                [(No)
+                  (if (or
+                    (opt-binop-commute-constant-lhs? op l r ty)
+                    (opt-binop-commute-cell-lhs? op l r ty rmw?))
+                    (BinOp dst op r l ty)
+                    (if (opt-binop-negate-zero-lhs? op l r ty)
+                      (UnOp dst Neg r ty)
+                      instr))]))]))]
     [(UnOp dst op v ty)
       (match (opt-fold-unop op (& (opt-resolve-known env (& v) ty)) ty)
         [(Some folded)
@@ -48608,12 +48648,18 @@
           (ir.compiler-ir-binop-result-type
             (& op)
             (compiler-opt-global-shared-view ty))
-          (BinOp
-            dst
-            op
-            (opt-global-copy-keep-wide-left lhs resolved-lhs (& resolved-rhs))
-            resolved-rhs
-            ty)))]
+          (match (opt-float-div-reciprocal (& op) (& resolved-rhs) ty)
+            [(Some reciprocal) (BinOp dst (Mul) resolved-lhs reciprocal ty)]
+            [(No)
+              (BinOp
+                dst
+                op
+                (opt-global-copy-keep-wide-left
+                  lhs
+                  resolved-lhs
+                  (& resolved-rhs))
+                resolved-rhs
+                ty)])))]
     [(Branch cond true-label false-label)
       (let
         [rewritten-cond : ir.CompilerIrValue (opt-sccp-rewrite-value env cond)]
@@ -48651,12 +48697,25 @@
         [_ false])]
     [_ false]))
 
+;; Multiplication by +1 quiets a signaling NaN. Its result can safely skip a
+;; second multiplication by +1: even a signed zero or subnormal is unchanged.
+(define (opt-sccp-float-unit-mul?
+  [value : (& value ir.CompilerIrValue)]
+  [ty : (& ty ast.AstType)]) : bool
+  (match value
+    [(F64 bits)
+      (match ty
+        [(F64) (= bits 0x3ff0000000000000)]
+        [(F32) (= bits 0x3f800000)]
+        [_ false])]
+    [_ false]))
+
 ;; Retain-only rewrite (1:1 substitution, minus the bounds checks SCCP proved
 ;; in range), so the output length is not known up front: build it with the
 ;; capacity-managed dense builder seeded at the input length, not a cons
 ;; accumulator. `opt-sccp-rewrite-instr` is a pure function of `env` and the
-;; instruction, so the walk order cannot change the result. Output is fresh;
-;; `instrs` is untouched.
+;; instruction. Track adjacent unit multiplies as constants become visible.
+;; Output is fresh; `instrs` is untouched.
 (define (opt-sccp-rewrite-instr-seq
   [env : (& OptSccpEnv)]
   [instrs : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
@@ -48664,15 +48723,43 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity count)]
+    [unit-mul-dst : i64 -1]
     (for [index (iterator.range 0 count)]
       (let
         [rewritten : ir.CompilerIrInstr
           (opt-sccp-rewrite-instr
             env
             (ir.compiler-ir-instr-seq-ref instrs index))]
-        (if (opt-sccp-bounds-check-in-range? rewritten)
-          unit
-          (ir.compiler-ir-instr-builder-push! (&mut builder) rewritten))))
+        (unless
+          (opt-sccp-bounds-check-in-range? rewritten)
+          (match (& rewritten)
+            [(BinOp dst (Mul) lhs rhs ty)
+              (let
+                [left-unit? : bool (opt-sccp-float-unit-mul? lhs ty)]
+                [right-unit? : bool (opt-sccp-float-unit-mul? rhs ty)]
+                [input
+                  (if left-unit?
+                    rhs
+                    lhs)]
+                [move? : bool
+                  (and
+                    (or left-unit? right-unit?)
+                    (match input
+                      [(Var var) (= var unit-mul-dst)]
+                      [_ false]))]
+                (if move?
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (Mov dst (Var unit-mul-dst) (ast.ty-node-persist ty)))
+                  (ir.compiler-ir-instr-builder-push! (&mut builder) rewritten))
+                (set!
+                  unit-mul-dst
+                  (if (or left-unit? right-unit?)
+                    dst
+                    -1)))]
+            [_
+              (set! unit-mul-dst -1)
+              (ir.compiler-ir-instr-builder-push! (&mut builder) rewritten)]))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (define (opt-sccp-rewrite-block [env : OptSccpEnv] [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
@@ -61244,7 +61331,10 @@
         (if (or
           (opt-binop-commute-constant-lhs? op l r ty)
           (opt-binop-commute-cell-lhs? op l r ty false)
-          (opt-binop-negate-zero-lhs? op l r ty))
+          (opt-binop-negate-zero-lhs? op l r ty)
+          (match (opt-float-div-reciprocal (& op) (& r) ty)
+            [(Some _) true]
+            [(No) false]))
           true
           (opt-scan-strength-identity? (& op) (& l) (& r))))]
     [(UnOp _ _ v _) (opt-scan-literal? v)]

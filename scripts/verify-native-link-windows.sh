@@ -368,8 +368,8 @@ assert_contains "$WORKDIR/build-package-direct-object.stdout" "Built $PACKAGE_BI
     fail "package direct-object build did not preserve its assembly side artifact"
 [ -s "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.obj" ] || \
     fail "package direct-object build did not preserve its object side artifact"
-[ -s "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.tlci" ] || \
-    fail "package direct-object build did not preserve its tlci artifact"
+[ ! -e "$PACKAGE_OUTPUT_DIR/windows_direct_object_pkg.tlci" ] || \
+    fail "package direct-object build wrote an unexpected tlci artifact"
 [ -x "$PACKAGE_BIN" ] || fail "package direct-object build did not write $PACKAGE_BIN"
 PACKAGE_ASSEMBLER=$(find_clang || true)
 if [ -z "$PACKAGE_ASSEMBLER" ]; then

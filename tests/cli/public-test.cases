@@ -130,6 +130,7 @@ file pkg/typelisp.pkg
 (package (name "snippet_pkg") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
 end-file
 file pkg/src/lib.tl
+(cfg check-inline-diagnostics (import inline))
 (define (g) : i64 1)
 end-file
 file pkg/src/inline.tl
@@ -139,7 +140,7 @@ file pkg/src/inline.tl
 end-file
 cwd {{dir}}
 step package-expression-check
-run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+run check --cfg check-inline-diagnostics --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
 stderr contains error[E0206]
 stderr contains --> snippet_pkg/src/inline.tl:2:24
@@ -163,7 +164,7 @@ file pkg/src/inline.tl
 (test uses-f (f) unit)
 end-file
 step package-start-check
-run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+run check --cfg check-inline-diagnostics --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
 stderr contains error[E0201]
 stderr contains --> snippet_pkg/src/inline.tl:1:1
@@ -185,7 +186,7 @@ file pkg/src/inline.tl
 (test bad-body (+ 1 true) unit)
 end-file
 step package-body-check
-run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+run check --cfg check-inline-diagnostics --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
 stderr contains error[E0206]
 stderr contains --> snippet_pkg/src/inline.tl:2:21
@@ -210,7 +211,7 @@ file pkg/src/inline.tl
 (test imported-body (imported.bad) unit)
 end-file
 step package-imported-check
-run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+run check --cfg check-inline-diagnostics --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
 stderr contains error[E0206]
 stderr contains --> snippet_pkg/src/imported.tl:1:26
@@ -236,6 +237,7 @@ file typelisp.pkg
 (package (name "mylib") (version "0.1.0") (kind "lib") (entry "mylib/lib.tl"))
 end-file
 file mylib/lib.tl
+(cfg check-inline-diagnostics (import inl))
 (define (g) : i64 1)
 end-file
 file mylib/imported.tl
@@ -248,7 +250,7 @@ file mylib/inl.tl
 end-file
 cwd {{dir}}
 step physical-root-check
-run check --manifest-path typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+run check --cfg check-inline-diagnostics --manifest-path typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
 stderr contains error[E0206]
 stderr contains --> mylib/imported.tl:2:26
@@ -282,6 +284,7 @@ file a/b/typelisp.pkg
 (package (name "a") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
 end-file
 file a/b/src/lib.tl
+(cfg check-inline-diagnostics (import inl))
 (define (g) : i64 1)
 end-file
 file a/b/src/imported.tl
@@ -294,7 +297,7 @@ file a/b/src/inl.tl
 end-file
 cwd {{dir}}
 step physical-dot-prefix-check
-run check --manifest-path ./a/b/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
+run check --cfg check-inline-diagnostics --manifest-path ./a/b/typelisp.pkg --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
 stderr contains error[E0206]
 stderr contains --> a/b/src/imported.tl:2:26
@@ -317,6 +320,7 @@ file pkg/typelisp.pkg
 (package (name "a") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
 end-file
 file pkg/src/lib.tl
+(cfg check-inline-diagnostics (import inl))
 (define (g) : i64 1)
 end-file
 file pkg/src/inl.tl
@@ -329,7 +333,7 @@ file a/imported.tl
 end-file
 cwd {{dir}}
 step foreign-root-check
-run check --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root a --stdlib-root "{{root}}/stdlib"
+run check --cfg check-inline-diagnostics --manifest-path pkg/typelisp.pkg --target {{host-target}} --stdlib-root a --stdlib-root "{{root}}/stdlib"
 exit 1
 stderr contains error[E0206]
 stderr contains --> a/imported.tl:2:26

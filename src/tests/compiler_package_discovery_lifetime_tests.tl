@@ -266,7 +266,7 @@
     (discovery-test-reuse-storage!)
     (let
       [restored : sym_i64_env.SymI64Env
-        (cfg_core.compiler-cfg-snapshot-to-env snapshot)]
+        (cfg_core.compiler-cfg-snapshot-to-env (& snapshot))]
       [value-key : i64
         (cfg_core.compiler-cfg-key-id
           (cfg_core.compiler-cfg-key-from-name-id

@@ -606,7 +606,9 @@ sh rm "{{dir}}/wrap/vendor/libffi_add7.a" && ar rcs "{{dir}}/wrap/vendor/libffi_
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
 stdout match ^Built .*/app/target/release/wrap_app$
-stdout contains Fresh {{dir}}/app/target/release/wrap_app.tlci
+stdout contains Fresh {{dir}}/wrap/target/release/wrap.tlci
+stdout not-contains wrap_app.tlci
+test ! -e "{{dir}}/app/target/release/wrap_app.tlci"
 step active-archive-run
 exec "{{dir}}/app/target/release/wrap_app"
 exit 43

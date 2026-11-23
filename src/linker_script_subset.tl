@@ -31,6 +31,7 @@
 ;; library; every other name, and every quoted one, is a path. Commas and
 ;; whitespace both separate files, and order is kept exactly. Outside quotes a
 ;; byte must be printable ASCII or whitespace.
+(import stdlib.clone)
 (import stdlib.byte_buf_core as bytes)
 (import stdlib.str_cat_runtime as cat)
 (import stdlib.string)
@@ -64,6 +65,8 @@
   (line i64)
   (column i64))
 
+(stdlib.clone.gen-clone LinkerScriptInput)
+
 (import (vector.vector LinkerScriptInput) as input_vec)
 
 ;: OUTPUT_FORMAT names one BFD target, or three: the default, big-endian and
@@ -76,11 +79,15 @@
   (Group i64 i64)
   (SearchDir String))
 
+(stdlib.clone.gen-clone LinkerScriptCommand)
+
 ;: A command with the line and column of its keyword.
 (defstruct LinkerScriptItem
   (command LinkerScriptCommand)
   (line i64)
   (column i64))
+
+(stdlib.clone.gen-clone LinkerScriptItem)
 
 (import (vector.vector LinkerScriptItem) as item_vec)
 
@@ -159,6 +166,8 @@
   (text String)
   (line i64)
   (column i64))
+
+(stdlib.clone.gen-clone Token)
 
 (import (vector.vector Token) as token_vec)
 

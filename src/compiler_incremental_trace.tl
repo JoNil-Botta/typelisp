@@ -123,6 +123,8 @@
   (observation String)
   (kind i64))
 
+(clone_gen.gen-clone CompilerIncrementalTraceRecord)
+
 (defstruct CompilerIncrementalTraceLogicalKey
   (kind i64)
   (bytes String))
@@ -1387,7 +1389,5 @@
                         index))]
                   (Miss (compiler-trace-kind-miss record.kind) index))
                 (Hit))))])]))
-
-(clone_gen.gen-clone CompilerIncrementalTraceRecord)
 
 (clone_gen.gen-clone CompilerIncrementalTrace)

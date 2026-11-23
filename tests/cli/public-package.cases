@@ -20,6 +20,16 @@ file src/main.tl
 (define (main) : i64 (lib.add-one (math.inc 40)))
 end-file
 file src/math.tl
+(define (inc [x : i64]) : i64 (+ x 1))
+end-file
+file surface/typelisp.pkg
+(package
+  (name "public_tool_surface")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file surface/src/lib.tl
 (define public-tool-value : i64 42)
 (defstruct PublicToolPoint
   (x i64)
@@ -28,7 +38,6 @@ file src/math.tl
   (PublicToolTagA)
   (PublicToolTagB i64))
 (defmacro (public-tool-macro [expr : Expr]) : Expr expr)
-(define (inc [x : i64]) : i64 (+ x 1))
 end-file
 file vendor/math/src/lib.tl
 (define dependency-exported-value : i64 5)
@@ -50,19 +59,24 @@ run build --manifest-path "{{dir}}/typelisp.pkg"
 stderr empty
 test -f "{{dir}}/target/release/public_tool_pkg.s"
 stdout match Built[ ]
+stdout not-contains public_tool_pkg.tlci
+test ! -e "{{dir}}/target/release/public_tool_pkg.tlci"
 step producer-identity
 run --producer-identity
 stdout capture producer ^([0-9a-f]{40})$
-test -s "{{dir}}/target/release/public_tool_pkg.tlci"
 test -s "{{dir}}/vendor/math/target/release/math.tlci"
+step package-build-surface
+run build --manifest-path "{{dir}}/surface/typelisp.pkg"
+stderr empty
+test -s "{{dir}}/surface/target/release/public_tool_surface.tlci"
 step package-inspect-tlci
-run inspect "{{dir}}/target/release/public_tool_pkg.tlci"
+run inspect "{{dir}}/surface/target/release/public_tool_surface.tlci"
 stderr empty
 in stdout
 contains tlci image
 contains host-platform: x86_64-{{host}}
 contains image-classification: code-bearing
-contains package-name: public_tool_pkg
+contains package-name: public_tool_surface
 contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
@@ -233,14 +247,26 @@ file typelisp.pkg
   (entry "src/main.tl")
   (dependencies
     (math "vendor/math")
-    (util "vendor/util")))
+    (util "vendor/util")
+    (surface "vendor/surface")))
 end-file
 file src/main.tl
 (import math.src.lib as math)
 (import util.src.lib as util)
+(import surface.src.lib as surface)
+(define (main) : i64
+  (surface.split-root (+ (math.split-math 0) (util.split-util 0))))
+end-file
+file vendor/surface/typelisp.pkg
+(package
+  (name "split_surface")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "src/lib.tl"))
+end-file
+file vendor/surface/src/lib.tl
 (import stdlib.comptime)
-(define (split-root [x : i64]) : i64
-  (+ (math.split-math x) (util.split-util x)))
+(define (split-root [x : i64]) : i64 x)
 (defmacro (split-wrap [value : Expr]) : Expr
   `(split-root ,value))
 (defmacro (split-all [items : Expr ...]) : bool
@@ -251,7 +277,6 @@ file src/main.tl
     true))
 (defmacro (split-unsupported [value : Expr]) : Expr
   (match value [(comptime.Expr.If c t e) c] [_ value]))
-(define (main) : i64 (split-root 0))
 end-file
 file vendor/math/typelisp.pkg
 (package
@@ -281,7 +306,8 @@ stderr empty
 test -s "{{dir}}/target/release/split_pkg{{exe}}"
 test -s "{{dir}}/vendor/math/target/release/{{lib-prefix}}split_math{{lib-suffix}}"
 test -s "{{dir}}/vendor/util/target/release/{{lib-prefix}}split_util{{lib-suffix}}"
-test -s "{{dir}}/target/release/split_pkg.tlci"
+test ! -e "{{dir}}/target/release/split_pkg.tlci"
+test -s "{{dir}}/vendor/surface/target/release/split_surface.tlci"
 test -s "{{dir}}/vendor/math/target/release/split_math.tlci"
 test -s "{{dir}}/vendor/util/target/release/split_util.tlci"
 in stdout
@@ -290,14 +316,15 @@ contains Built {{native-dir}}/vendor/util/target/release/{{lib-prefix}}split_uti
 contains Built {{native-dir}}/target/release/split_pkg{{exe}}
 contains Built {{native-dir}}/vendor/math/target/release/split_math.tlci
 contains Built {{native-dir}}/vendor/util/target/release/split_util.tlci
-contains Built {{native-dir}}/target/release/split_pkg.tlci
+not-contains split_pkg.tlci
+contains Built {{native-dir}}/vendor/surface/target/release/split_surface.tlci
 step package-host-target-split-inspect
-run inspect "{{dir}}/target/release/split_pkg.tlci"
+run inspect "{{dir}}/vendor/surface/target/release/split_surface.tlci"
 stderr empty
 in stdout
 contains host-platform: x86_64-{{host}}
 contains image-classification: code-bearing
-contains package-name: split_pkg
+contains package-name: split_surface
 contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
@@ -312,7 +339,7 @@ contains surface-trust-policy: exact-producer-and-source-binding-required
 contains code: offset=
 not-contains code: offset=0 bytes=0
 step package-host-target-split-native-verify
-run run "{{root}}/src/tests/compiler_tlci_native_producer_smoke.tl" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src" -- "{{dir}}/target/release/split_pkg.tlci" split_pkg/split-wrap split-root split_pkg/split-all split_pkg/split-unsupported
+run run "{{root}}/src/tests/compiler_tlci_native_producer_smoke.tl" --stdlib-root "{{root}}/stdlib" --stdlib-root "{{root}}/src" -- "{{dir}}/vendor/surface/target/release/split_surface.tlci" split_surface/split-wrap split-root split_surface/split-all split_surface/split-unsupported
 stdout empty
 stderr empty
 step package-host-target-split-dep-inspect
@@ -339,7 +366,9 @@ stderr empty
 test -s "{{dir}}/target/dev/split_pkg{{exe}}"
 test -s "{{dir}}/vendor/math/target/dev/{{lib-prefix}}split_math{{lib-suffix}}"
 test -s "{{dir}}/vendor/util/target/dev/{{lib-prefix}}split_util{{lib-suffix}}"
-test -s "{{dir}}/target/dev/split_pkg.tlci"
+test ! -e "{{dir}}/target/dev/split_pkg.tlci"
+test -s "{{dir}}/vendor/surface/target/dev/split_surface.tlci"
+stdout not-contains split_pkg.tlci
 test -s "{{dir}}/vendor/math/target/dev/split_math.tlci"
 test -s "{{dir}}/vendor/util/target/dev/split_util.tlci"
 

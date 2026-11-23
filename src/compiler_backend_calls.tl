@@ -6119,7 +6119,7 @@
                   (be_scalar.compiler-backend-emit-group-copy
                     type-segment-bases
                     assignments
-                    dst
+                    (& (Var dst))
                     value
                     vars
                     ty
@@ -6129,7 +6129,7 @@
               (be_scalar.compiler-backend-emit-group-copy
                 type-segment-bases
                 assignments
-                dst
+                (& (Var dst))
                 value
                 vars
                 ty
@@ -8088,7 +8088,7 @@
       (be_scalar.compiler-backend-emit-group-copy
         type-segment-bases
         assignments
-        dst
+        (& (Var dst))
         (be_state.compiler-backend-global-shared-view src)
         vars
         ty

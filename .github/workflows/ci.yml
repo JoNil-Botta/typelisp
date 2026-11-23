@@ -23,10 +23,9 @@ jobs:
   # assigns every gate of scripts/ci-gates.tsv to exactly one lane, and each
   # lane runs scripts/ci-verify.sh --gates with its own gates, their needs and
   # its own bootstrap. No compiler passes between jobs. The gate is
-  # fail-closed: Linux and Windows must run every applicable gate. Do not add
-  # skip flags; compiler/runtime capability changes should land first, then a
-  # follow-up PR can use the new capability. Gates run four at a time on the
-  # runners' 4 vCPUs, within 14 GiB of their 16 GiB of memory
+  # fail-closed: Linux and Windows must run every applicable gate. Lane plans
+  # can omit pure CI harness self-tests on PRs that leave their inputs alone.
+  # Gates run four at a time on the runners' 4 vCPUs, within 14 GiB of memory
   # (scripts/README.md, `memory` and `locks`).
   lane:
     name: CI lane ${{ matrix.lane }}
@@ -61,6 +60,9 @@ jobs:
             host_checks: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
 
       # Fails every lane when scripts/ci-lanes.tsv leaves a gate unassigned,
       # assigns one twice or omits a declared duplicate. Only a lane that holds
@@ -198,6 +200,8 @@ jobs:
             target/ci-compiler-artifact-fixtures.json
           if-no-files-found: warn
 
+      # Checkout depth 2 includes the tested merge's base parent for both
+      # the lane scope and the read-only cached self_compile check.
       - name: CI verification
         id: verification
         shell: bash
@@ -205,6 +209,9 @@ jobs:
           TYPELISP_CI_TIMING: '1'
           TYPELISP_CI_COMPILER_ENVELOPES: '1'
           LANE_GATES: ${{ steps.plan.outputs.gates }}
+          GH_TOKEN: ${{ github.token }}
+          TYPELISP_SELF_COMPILE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          TYPELISP_SELF_COMPILE_PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: scripts/ci-verify.sh --gates "$LANE_GATES" --jobs 4 --memory-mib 14336
 
       # The lane receipt: this lane's plan, every gate's result and timing rows
@@ -330,11 +337,9 @@ jobs:
 
       # self_compile has no checked row (#9307, perf/README.md). The
       # linux-self-compile-measurement gate measured the tested merge T; this
-      # gates the PR's own cost M(T) - M(B) against main's CI-owned reference for
-      # the tested base B, after verifying its provenance and identity, or
-      # measures B in place on this runner when there is none. It runs last in
-      # the lane that ran the measurement because that fallback switches the
-      # checkout.
+      # cached-base check gates M(T) - M(B) as soon as main's reference is
+      # usable. This step validates that result or completes the deferred
+      # check. It runs last because measuring B in place switches checkout.
       - name: Check self_compile own cost against main
         if: runner.os == 'Linux' && steps.plan.outputs.self_compile == '1'
         shell: bash
@@ -394,6 +399,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 2
 
       # Every attempt's envelopes: a lane copied by "Re-run failed jobs" is
       # bound to the attempt that executed it.

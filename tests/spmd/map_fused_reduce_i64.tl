@@ -1,6 +1,8 @@
 ;; Map-fused i64 reductions over a contiguous input (#5181). The neutral lane
 ;; term exercises mixed Array/Uniform/LaneIndex plans while keeping scalar,
 ;; AVX2, and AVX-512 results identical across full gangs and scalar tails.
+(import stdlib.iterator)
+
 (define (manual-map-sum
   [values : (& values (__tl_dyn-array i64))]
   [n : i64]
@@ -71,11 +73,22 @@
 
 (define (main) : i64
   (let
-    [values : (__tl_dyn-array i64) (__tl_make-array i64 11)]
+    [values : (__tl_dyn-array i64) (__tl_make-array i64 65)]
     [i : i64 0]
-    (while (< i 11)
+    (while (< i 65)
       (set! (array-ref values i) (+ i 1))
       (set! i (+ i 1)))
+    (for [length (iterator.range 0 66)]
+      (when
+        (!=
+          (reduce-map-fused (& values) length 3)
+          (manual-map-sum (& values) length 3))
+        (return 11))
+      (when
+        (!=
+          (reduce-map-surface (& values) length 3)
+          (manual-surface-sum (& values) length 3))
+        (return 12)))
     (cond
       [(!= (reduce-map-fused (& values) 0 3) 0) 1]
       [(!= (reduce-map-fused (& values) 3 3) 15) 2]

@@ -7,6 +7,7 @@
 ; bare `array-ref` so the purity checker sees the compiler array-read AST.
 (import stdlib.vector)
 (import stdlib.math)
+(import stdlib.iterator)
 (import (vector.vector i64) as i64v)
 (import (vector.vector i32) as i32v)
 (import (vector.vector f64) as f64v)
@@ -33,6 +34,11 @@
   (let
     [xs-slots (i64v.slots xs)]
     (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs-slots i))))
+
+(define (reduce-sum-from [xs : (& xs i64v.Vec)] [start : i64] [end : i64]) : i64
+  (let
+    [slots (i64v.slots xs)]
+    (spmd-reduce sum ([i : i64 start end]) 17 (array-ref slots i))))
 
 (define (manual-max [xs : (& xs i64v.Vec)] [n : i64] [seed : i64]) : i64
   (let
@@ -295,9 +301,35 @@
 (define (check-long-i64-reductions) : i64
   (let
     [long-xs : i64v.Vec (i64z.make 143)]
+    [long-i32 : i32v.Vec (i32z.make 65)]
     [signed-xs : i64v.Vec (i64z.make 9)]
     (fill-i64 (&mut long-xs) 143)
+    (fill-i32 (&mut long-i32) 65)
     (fill-signed-i64 (&mut signed-xs))
+    (for [length (iterator.range 0 66)]
+      (when
+        (!= (reduce-sum (& long-xs) length) (manual-sum (& long-xs) length))
+        (return 63))
+      (when (!= (reduce-max (& long-xs) length 0) length) (return 64))
+      (when
+        (!=
+          (reduce-min (& long-xs) length 999)
+          (if (= length 0)
+            999
+            1))
+        (return 65))
+      (when
+        (!=
+          (reduce-sum-i32 (& long-i32) length)
+          (cast (/ (* length (+ length 1)) 2) : i32))
+        (return 66))
+      (when
+        (!=
+          (reduce-sum-from (& long-xs) 3 length)
+          (if (<= length 3)
+            17
+            (+ 11 (manual-sum (& long-xs) length))))
+        (return 67)))
     (cond
       [(!= (reduce-sum (& long-xs) 143) 10296) 38]
       [(!= (reduce-sum (& long-xs) 143) (manual-sum (& long-xs) 143)) 39]

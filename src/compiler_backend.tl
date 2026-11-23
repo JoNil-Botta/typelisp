@@ -2206,56 +2206,18 @@
               ctx.type-segment-bases
               ctx.program-index
               ty)
-              ;; Storing a register-group into a global writes both words
-              ;; inline (word0 at sym, word1 at sym+8).
-              (let
-                [reg0 : String
-                  (be_scalar.compiler-backend-group-return-reg
-                    ctx.type-segment-bases
-                    ctx.program-index
-                    (be_state.compiler-backend-global-shared-view ty)
-                    0)]
-                [reg1 : String
-                  (be_scalar.compiler-backend-group-return-reg
-                    ctx.type-segment-bases
-                    ctx.program-index
-                    (be_state.compiler-backend-global-shared-view ty)
-                    1)]
-                [sym1 : String (str_cat.str-cat symbol "+8(%rip)" "")]
-                (match (be_scalar.compiler-backend-emit-group-load
+              ;; An internal store must preserve live homes across both words.
+              (compiler-backend-with-instr-diagnostic
+                (be_scalar.compiler-backend-emit-group-copy
                   ctx.type-segment-bases
                   ctx.assignments
+                  (& (Global name))
                   value
-                  reg0
-                  reg1
                   ctx.vars
-                  (be_state.compiler-backend-global-shared-view ty)
+                  ty
                   ctx.program-index
                   ctx.backend-state)
-                  [(Ok load)
-                    (Ok
-                      (str_cat.str-cat
-                        load
-                        (be_scalar.compiler-backend-emit-group-word-move
-                          reg0
-                          addr
-                          (be_facts.compiler-backend-group-word-sse?
-                            ctx.type-segment-bases
-                            ctx.program-index
-                            ty
-                            0))
-                        (be_scalar.compiler-backend-emit-group-word-move
-                          reg1
-                          sym1
-                          (be_facts.compiler-backend-group-word-sse?
-                            ctx.type-segment-bases
-                            ctx.program-index
-                            ty
-                            1))))]
-                  [(Err message)
-                    (be_state.compiler-backend-instr-error-from
-                      instr-diag
-                      message)]))
+                instr-diag)
               (let
                 [no-exclude : (__tl_dyn-array String)
                   (__tl_make-array String 0)]

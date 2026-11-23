@@ -2012,12 +2012,12 @@
             symbols
             "foreign_data_exact"
             (Extern)
-            (Function))
+            (Data))
           (cobj.compiler-object-symbol-list-contains?
             symbols
             "foreign_fn_exact"
             (Extern)
-            (Function))
+            (Data))
           (cobj.compiler-object-symbol-list-contains?
             symbols
             "tl_alloc"
@@ -2045,13 +2045,13 @@
               symbols
               "unused_foreign_data"
               (Extern)
-              (Function)))
+              (Data)))
           (not
             (cobj.compiler-object-symbol-list-contains?
               symbols
               "unused_foreign_fn"
               (Extern)
-              (Function)))
+              (Data)))
           (be_state.backend-and8
             (cobj.compiler-object-section-contains-label?
               sections
@@ -4908,7 +4908,9 @@
           ;; sret ABI: aggregate returns write the caller's sret slot
           ;; instead of arena-allocating a 16-byte object.
           (not (compiler-backend-string-contains-alloc-size? asm 16))
-          (asm-has? asm ".globl _tl___enum_obj_Shape_Nothing\n")
+          (and
+            (asm-has? asm "_tl___enum_obj_Shape_Nothing:\n")
+            (asm-lacks? asm ".globl _tl___enum_obj_Shape_Nothing\n"))
           (asm-has? asm "    movq $1, (%r10)\n")
           (asm-has? asm "    movq $2, (%r10)\n")
           (asm-lacks? asm "    call _tl_Point\n")

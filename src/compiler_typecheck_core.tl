@@ -15597,7 +15597,7 @@
 (defenum TcSelectedCallTarget
   (Ordinary i64 ast.AstType bool bool bool)
   ;; Key -2 denotes a C function pointer, with the callee in child zero.
-  (Foreign i64 ast.AstType TcMaybeExternAbi)
+  (Foreign i64 ast.AstType)
   (Builtin)
   (Clone)
   ;; `arena.make`/`make-atomic`, `phase`, `rewind-safe!` or `destroy-safe!`:
@@ -16277,9 +16277,6 @@
   [func-id : i64]
   [callee : (&mut callee TcSelectedCalleeMemo)]) : TcSelectedCallTarget
   (match (tc-selected-callee-type ctx env func-id callee)
-    ;; Legacy call typing resolves a constructor without typing its name as
-    ;; a value (a macro's variant through its module alias): it decides
-    ;; whether the call is an error.
     [(ResultTcType.Err message) (TcSelectedCallTarget.Err message)]
     [(ResultTcType.Ok fn-ty)
       (match (tc-global-shared-view fn-ty)
@@ -16831,75 +16828,90 @@
     bind)
   (if (not (tc-selected-place-expression? ctx (tc-context-expr-get ctx arg-id)))
     (tc-infer-selected-id ctx env arg-id ast.AstMaybeType.No source sink)
-    (match (tc-infer-selected-place-id
-      ctx
-      env
-      arg-id
-      (ownership.ownership-source-copy (& source))
-      sink)
-      [(TcSelectedPlaceResult.Err message next)
-        (TcSelectedResult.Err message next)]
-      [(TcSelectedPlaceResult.Ok ty place next)
-        (match place
-          [(TcSelectedPlace.Unrepresented)
-            (tc-selected-unrepresented (ResultTcType.Ok ty) next)]
-          [(TcSelectedPlace.Selected id indices)
-            (match (match (tc-resolve-type ctx (clone ty))
-              [(ast.AstType.Region _ _)
-                (tc-selected-place-acquire
-                  ctx
-                  env
-                  true
-                  ast.AstMaybeType.No
-                  (typed.TypedSyntax.Source arg-id)
-                  source
-                  (TcSelectedPlaceResult.Ok
-                    (clone ty)
-                    (TcSelectedPlace.Selected id indices)
-                    next))]
-              [(or (ast.AstType.Array _ _) (ast.AstType.DynArray _))
-                (tc-selected-publish-borrow
-                  (if mutable?
-                    (ast.ast-ty-mut-ref 0 (& (tc-type-strip-region (clone ty))))
-                    (ast.ast-ty-ref 0 (& ty)))
-                  mutable?
-                  id
-                  indices
-                  (typed.TypedSyntax.Source arg-id)
-                  source
-                  next)]
-              [(ast.AstType.MutRef _ inner)
-                (if mutable?
-                  (tc-selected-slice-mutable-source
-                    ctx
-                    (clone ty)
-                    id
-                    indices
-                    arg-id
-                    source
-                    next)
-                  (tc-selected-shared-reborrow-operand
-                    ctx
-                    (clone ty)
-                    inner
-                    id
-                    indices
-                    (typed.TypedSyntax.Source arg-id)
-                    (tc-selected-read-operand-source ctx arg-id source)
-                    next))]
-              [_
-                (tc-selected-place-read
-                  ctx
-                  (clone ty)
-                  id
-                  indices
-                  (typed.TypedSyntax.Source arg-id)
-                  source
-                  next)])
-              [(TcSelectedResult.Err message after)
-                (TcSelectedResult.Err message after)]
-              [(TcSelectedResult.Ok _ occurrence after)
-                (TcSelectedResult.Ok ty occurrence after)])])])))
+    (let
+      [place : (TcSelectedPlaceResult store lease intern bind)
+        (tc-infer-selected-place-id
+          ctx
+          env
+          arg-id
+          (ownership.ownership-source-copy (& source))
+          sink)]
+      (match (if mutable?
+        (tc-selected-view-receiver
+          ctx
+          env
+          (ownership.ownership-source-copy (& source))
+          place)
+        place)
+        [(TcSelectedPlaceResult.Err message next)
+          (TcSelectedResult.Err message next)]
+        [(TcSelectedPlaceResult.Ok ty place next)
+          (match place
+            [(TcSelectedPlace.Unrepresented)
+              (tc-selected-unrepresented (ResultTcType.Ok ty) next)]
+            [(TcSelectedPlace.Selected id indices)
+              (let
+                [resolved : ast.AstType (tc-resolve-type ctx (clone ty))]
+                (match (match (if mutable?
+                  (tc-type-strip-region resolved)
+                  resolved)
+                  [(ast.AstType.Region _ _)
+                    (tc-selected-place-acquire
+                      ctx
+                      env
+                      true
+                      ast.AstMaybeType.No
+                      (typed.TypedSyntax.Source arg-id)
+                      source
+                      (TcSelectedPlaceResult.Ok
+                        (clone ty)
+                        (TcSelectedPlace.Selected id indices)
+                        next))]
+                  [(or (ast.AstType.Array _ _) (ast.AstType.DynArray _))
+                    (tc-selected-publish-borrow
+                      (if mutable?
+                        (ast.ast-ty-mut-ref
+                          0
+                          (& (tc-type-strip-region (clone ty))))
+                        (ast.ast-ty-ref 0 (& ty)))
+                      mutable?
+                      id
+                      indices
+                      (typed.TypedSyntax.Source arg-id)
+                      source
+                      next)]
+                  [(ast.AstType.MutRef _ inner)
+                    (if mutable?
+                      (tc-selected-slice-mutable-source
+                        ctx
+                        (clone ty)
+                        id
+                        indices
+                        arg-id
+                        source
+                        next)
+                      (tc-selected-shared-reborrow-operand
+                        ctx
+                        (clone ty)
+                        inner
+                        id
+                        indices
+                        (typed.TypedSyntax.Source arg-id)
+                        (tc-selected-read-operand-source ctx arg-id source)
+                        next))]
+                  [_
+                    (tc-selected-place-read
+                      ctx
+                      (clone ty)
+                      id
+                      indices
+                      (typed.TypedSyntax.Source arg-id)
+                      source
+                      next)])
+                  [(TcSelectedResult.Err message after)
+                    (TcSelectedResult.Err message after)]
+                  [(TcSelectedResult.Ok _ occurrence after)
+                    (TcSelectedResult.Ok ty occurrence after)]))])]))))
 
 ;; Fixed foreign signatures use the same compatibility walk as ordinary
 ;; calls. Through a pointer the executable call also holds the callee in
@@ -16912,7 +16924,6 @@
   [raw-name : i64]
   [key : i64]
   [fn-ty : ast.AstType]
-  [tail : TcMaybeExternAbi]
   [args : ast.AstExprList]
   [syntax : typed.TypedSyntax]
   [expected : ast.AstMaybeType]
@@ -16925,41 +16936,15 @@
   (match (clone fn-ty)
     [(ast.AstType.Func params-box ret-id)
       (let
-        [declared : ast.AstTypeList
+        [params : ast.AstTypeList
           (ast.ast-type-list-box-shared-view params-box)]
         [ret : ast.AstType (ast.ty-node-get ret-id)]
-        ;; Dynamic tails keep their dedicated expansion and error ordering.
-        ;; The expanded formals are needed to retain their executable call.
-        [fixed? : bool
-          (match (& tail)
-            [(TcMaybeExternAbi.No) true]
-            [_ false])]
-        [params : ast.AstTypeList
-          (match tail
-            [(TcMaybeExternAbi.No) declared]
-            [(TcMaybeExternAbi.Some abi)
-              (match (tc-call-extern-varargs-params
-                ctx
-                env
-                (clone func)
-                (clone args)
-                declared
-                abi)
-                [(ResultTcTypeList.Ok expanded) expanded]
-                [(ResultTcTypeList.Err message)
-                  (return (TcSelectedResult.Err message sink))])])]
-        [fn-ty : ast.AstType
-          (if fixed?
-            fn-ty
-            (ast.ast-ty-func (clone params) (& ret)))]
         [capture? : bool
           (and
             (match (& sink)
               [(TcSelectedSink.Query) false]
               [_ true])
-            (tc-selected-foreign-signature-ok? ctx (clone fn-ty) args.len)
-            (ast.ast-lifetime-list-empty?
-              (& (tc-call-function-lifetimes (clone params) (clone ret)))))]
+            (tc-selected-foreign-signature-ok? ctx (clone fn-ty) args.len))]
         (unless
           capture?
           (return
@@ -18056,6 +18041,30 @@
     (set! callee.ready true))
   (clone callee.result))
 
+(define (tc-selected-foreign-target
+  [ctx : TcContext]
+  [key : i64]
+  [fn-ty : ast.AstType]
+  [arg-count : i64]
+  [allow-region-args : bool]
+  [capture? : bool]) : TcSelectedCallTarget
+  (match (& fn-ty)
+    [(ast.AstType.Func params ret)
+      (if (and
+        capture?
+        (not
+          (tc-name-id-list-empty?
+            (tc-type-collect-reference-lifetimes-into
+              (ast.ty-node-get ret)
+              (tc-type-list-collect-reference-lifetimes-at
+                (& (deref params))
+                TcNameIdList.Nil
+                0))))
+        (tc-selected-foreign-signature-ok? ctx (clone fn-ty) arg-count))
+        (TcSelectedCallTarget.Ordinary key fn-ty false allow-region-args true)
+        (TcSelectedCallTarget.Foreign key fn-ty))]
+    [_ (TcSelectedCallTarget.Err "typecheck: call target is not a function")]))
+
 (define (tc-selected-call-target
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -18143,9 +18152,29 @@
                                  (TcMaybeExternAbi.Some (CVarargsTyped _)))
                               true]
                             [_ false])
-                          (if capture?
-                            (TcSelectedCallTarget.Foreign key fn-ty abi)
-                            (TcSelectedCallTarget.Residual ty))]
+                          (match abi
+                            [(TcMaybeExternAbi.Some varargs)
+                              (if capture?
+                                (match (tc-call-extern-varargs-params
+                                  ctx
+                                  env
+                                  func
+                                  (clone (deref args))
+                                  formals
+                                  varargs)
+                                  [(ResultTcTypeList.Ok expanded)
+                                    (tc-selected-foreign-target
+                                      ctx
+                                      key
+                                      (ast.ast-ty-func expanded (& result))
+                                      args.len
+                                      allow-region-args
+                                      capture?)]
+                                  [(ResultTcTypeList.Err message)
+                                    (TcSelectedCallTarget.Err message)])
+                                (TcSelectedCallTarget.Residual ty))]
+                            [(TcMaybeExternAbi.No)
+                              (TcSelectedCallTarget.Residual ty)])]
                         [(and
                             capture?
                             (match (& abi)
@@ -18160,10 +18189,7 @@
                               (tc-call-function-lifetimes
                                 (tc-global-shared-view formals)
                                 (tc-global-shared-view result))))
-                            (TcSelectedCallTarget.Foreign
-                              key
-                              fn-ty
-                              TcMaybeExternAbi.No)
+                            (TcSelectedCallTarget.Foreign key fn-ty)
                             (TcSelectedCallTarget.Ordinary
                               key
                               fn-ty
@@ -18214,10 +18240,13 @@
                       [(ResultTcType.Err message)
                         (TcSelectedCallTarget.Err message)]
                       [(ResultTcType.Ok signature)
-                        (TcSelectedCallTarget.Foreign
+                        (tc-selected-foreign-target
+                          ctx
                           -2
                           signature
-                          TcMaybeExternAbi.No)])]
+                          args.len
+                          (tc-call-region-args-allowed-for-func ctx env func)
+                          capture?)])]
                   [_ (TcSelectedCallTarget.Residual ty)]))]))])))
 
 ;; A call of its argument type's declared cleanup function: it discharges a
@@ -19267,7 +19296,7 @@
           expected
           source
           sink)]
-      [(TcSelectedCallTarget.Foreign key fn-ty tail)
+      [(TcSelectedCallTarget.Foreign key fn-ty)
         (tc-infer-selected-foreign-call
           ctx
           env
@@ -19276,7 +19305,6 @@
           raw-name
           key
           fn-ty
-          tail
           args
           syntax
           expected
@@ -19568,17 +19596,17 @@
                                                   ;; Key -1 names a constructor (no declaration),
                                                   ;; -2 a call through a function value.
                                                   (cond
-                                                    [foreign?
-                                                      (typed.TypedCallKind.Foreign
-                                                        key)]
-                                                    [(= key -1)
-                                                      typed.TypedCallKind.Construct]
                                                     [(= key -2)
                                                       (typed.TypedCallKind.Indirect
                                                         (tc-selected-effect-callee-id
                                                           ctx
                                                           env
                                                           func-id))]
+                                                    [foreign?
+                                                      (typed.TypedCallKind.Foreign
+                                                        key)]
+                                                    [(= key -1)
+                                                      typed.TypedCallKind.Construct]
                                                     [(tc-selected-discharge-call?
                                                         ctx
                                                         (tc-global-shared-view

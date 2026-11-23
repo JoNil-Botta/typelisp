@@ -19945,9 +19945,10 @@
           capture?
           foreign?
           (tc-selected-foreign-signature-ok? ctx (clone signature) args.len))]
-      ;; Lifetime-bearing foreign calls use the ordinary argument capture so
-      ;; the call carries the operand lifetimes into the ownership graph.
-      [foreign-read? : bool (and foreign-signature? (not lifetime?))]
+      ;; Non-Copy by-value arguments to foreign calls are read rather than moved
+      ;; (SPEC 4.3), including when another parameter carries a lifetime;
+      ;; reference parameters still take the borrow/lifetime capture path.
+      [foreign-read? : bool foreign-signature?]
       [represented? : bool
         (and
           capture?
@@ -20155,7 +20156,7 @@
                               (let
                                 [adapt-before? : bool
                                   (or
-                                    foreign-read?
+                                    (and foreign-signature? (not lifetime?))
                                     (!= owner-kind (tc-arena-owner-kind-none)))]
                                 [result : ResultTcType
                                   (if adapt-before?

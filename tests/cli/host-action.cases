@@ -811,7 +811,7 @@ step test-invalid-opt
 run test "{{work}}/inline-test.tl" --opt-level 3
 exit nonzero
 stdout empty
-stderr contains invalid --opt-level '3'; expected 0, 1, or 2
+stderr contains invalid --opt-level '3'; expected 0, 1, 2, or s
 step test-bad-target
 run test --check "{{work}}/inline-test.tl" --target nope
 exit nonzero

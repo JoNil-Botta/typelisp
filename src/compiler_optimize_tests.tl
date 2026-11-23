@@ -1,6 +1,8 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import stdlib.iterator)
 (import compiler_optimize as opt)
+(import compiler_opt_level as opt_level)
+(import cli_option_core as cli_option)
 (import compiler_regalloc as reg)
 (import compiler_optimize.opt-natural-loop-work-empty-slots)
 (cfg test (import compiler_allocation_profile as allocation_profile))
@@ -874,6 +876,7 @@
       (&mut input)
       type-segment-bases
       functions
+      (& (ir.compiler-ir-extern-seq-empty))
       level
       spans)))
 
@@ -3609,6 +3612,7 @@
         (&mut input)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-input-arena-functions)
+        (& (ir.compiler-ir-extern-seq-empty))
         2
         (ir.compiler-source-spans-empty))]
     [out : ir.CompilerIrFunctionSeq
@@ -3790,6 +3794,7 @@
         (&mut input)
         (ast.ast-node-pool-reader-type-segment-bases)
         (opt-input-arena-functions)
+        (& (ir.compiler-ir-extern-seq-empty))
         1
         (ir.compiler-source-spans-empty))]
     [out : ir.CompilerIrFunctionSeq
@@ -4040,10 +4045,10 @@
       [(Program result _)
         (test.assert-i64-eq
           (array-ref state.calls 0)
-          (if (and authority? (= level 2))
+          (if (and authority? (opt_level.opt-level-full? level))
             1
             0)
-          "only level 2 consumes explicit retirement authority")
+          "full optimization consumes explicit retirement authority")
         (test.assert-true
           (opt-test-program-eq
             (ast.ast-node-pool-context-type-segment-bases pools)
@@ -4070,7 +4075,7 @@
 
 (test
   optimizer-input-retirement-authority-and-levels
-  (for [level (iterator.range 0 3)]
+  (for [level (iterator.range 0 4)]
     (for [authority (iterator.range 0 2)]
       (opt-test-input-retirement
         (ast.ast-node-pool-reader-context-current)
@@ -13579,32 +13584,25 @@
           (return true))]))
   false)
 
-(define (opt-level-parse-ok? [value : String] [expected : i64]) : bool
-  (match (compiler-optimize-parse-level value)
-    [(Ok level) (= level expected)]
-    [(Err) false]))
-
-(define (opt-level-parse-err? [value : String]) : bool
-  (match (compiler-optimize-parse-level value)
-    [(Ok _) false]
-    [(Err) true]))
-
 (define (compiler-optimize-level-policy-ok?) : bool
   (and
     (= (opt.compiler-optimize-default-level) 1)
-    (compiler-optimize-level-valid? 0)
-    (compiler-optimize-level-valid? 1)
-    (compiler-optimize-level-valid? 2)
-    (not (compiler-optimize-level-valid? 3))
-    (not (compiler-optimize-level-valid? (- 0 1)))
-    (not (compiler-optimize-level-valid? 4))
-    (opt-level-parse-ok? "0" 0)
-    (opt-level-parse-ok? "1" 1)
-    (opt-level-parse-ok? "2" 2)
-    (opt-level-parse-err? "3")
-    (opt-level-parse-err? "")
-    (opt-level-parse-err? "4")
-    (opt-level-parse-err? "10")))
+    (not (opt_level.opt-level-full? 0))
+    (not (opt_level.opt-level-full? 1))
+    (opt_level.opt-level-full? 2)
+    (opt_level.opt-level-full? 3)
+    (opt_level.opt-level-speed? 2)
+    (not (opt_level.opt-level-speed? 3))
+    (not (opt_level.opt-level-size? 2))
+    (opt_level.opt-level-size? 3)
+    (= (cli_option.cli-option-opt-level "0") 0)
+    (= (cli_option.cli-option-opt-level "1") 1)
+    (= (cli_option.cli-option-opt-level "2") 2)
+    (= (cli_option.cli-option-opt-level "s") 3)
+    (< (cli_option.cli-option-opt-level "3") 0)
+    (< (cli_option.cli-option-opt-level "") 0)
+    (< (cli_option.cli-option-opt-level "4") 0)
+    (< (cli_option.cli-option-opt-level "10") 0)))
 
 ;; Whole-program structural equality: globals, functions and externs pairwise.
 (define (opt-test-program-eq
@@ -81292,6 +81290,7 @@ done:
       unit)
     (opt.OptProgramSummaries
       false
+      false
       (profile_state.compiler-profile-state-new)
       (opt_i64_i64_map.with-capacity 8)
       call-memory
@@ -84614,18 +84613,6 @@ done:
             (opt.opt-verify-function
               (& (opt.opt-ssa-construct-function 0 (& out))))))
         "loop-carried prefix definitions remain valid after SSA"))))
-
-(define (compiler-optimize-level-valid? [level : i64]) : bool
-  (and (>= level 0) (<= level 2)))
-
-(define (compiler-optimize-parse-level [value : String]) : opt.ResultCompilerOptimizeLevel
-  (if (= (string.string-length value) 1)
-    (let
-      [c : char (string.string-ref value 0)]
-      (if (or (= c '0') (= c '1') (= c '2'))
-        (Ok (string.>int value))
-        (Err)))
-    (Err)))
 
 (define (opt-cfg-index-rpo-label
   [index : (& index opt.OptCfgIndex)]

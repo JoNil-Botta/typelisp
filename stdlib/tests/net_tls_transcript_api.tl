@@ -305,22 +305,25 @@
       (set! retry-index (+ retry-index 1)))))
 
 (define (copy-state [state : (& state transcript.TlsTranscript)]) : transcript.TlsTranscript
-  (transcript.TlsTranscript
-    (sha.Sha256State
-      state.hash.words
-      state.hash.block
-      state.hash.block-length
-      state.hash.byte-length
-      state.hash.finalized)
-    (transcript.TlsTranscriptLimits
-      state.limits.max-frame-body
-      state.limits.max-input)
-    state.input-length
-    (clone state.retry)
-    (clone state.lifecycle)
-    state.last-kind
-    state.last-offset
-    state.last-hello-retry))
+  (match state
+    [(transcript.TlsTranscript
+        hash
+        limits
+        input-length
+        retry
+        lifecycle
+        last-kind
+        last-offset
+        last-hello-retry)
+      (transcript.TlsTranscript
+        hash
+        limits
+        input-length
+        retry
+        lifecycle
+        last-kind
+        last-offset
+        last-hello-retry)]))
 
 ;: Compare every state field, not only its digest, after rejected operations.
 (define (assert-state

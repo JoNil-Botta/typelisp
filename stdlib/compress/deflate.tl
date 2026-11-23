@@ -196,7 +196,8 @@
 
 ;: Copy a failure without retaining any caller storage.
 (define (deflate-error-copy [error : (& error DeflateError)]) : DeflateError
-  (DeflateError (clone error.kind) error.input error.output))
+  (match error
+    [(DeflateError kind input output) (DeflateError kind input output)]))
 
 ;: Enter the sticky failed phase.
 (define (deflate-fail! [state : (&mut state Decoder)] [kind : DeflateErrorKind]) : unit

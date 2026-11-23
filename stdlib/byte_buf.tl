@@ -28,6 +28,7 @@
 ;#       42
 ;#       1)))
 ;# ```
+(import stdlib.clone)
 (import stdlib.format_writer_core)
 (import stdlib.string)
 
@@ -35,6 +36,8 @@
 (defstruct ByteBuf
   (slots (__tl_dyn-array u8))
   (len i64))
+
+(clone.gen-clone ByteBuf)
 
 (unsafe
   (extern (tl_bytes_view_from_str_parts

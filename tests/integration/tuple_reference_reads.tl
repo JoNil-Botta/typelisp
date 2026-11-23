@@ -82,7 +82,7 @@
     [(Line a b) (+ a b)]))
 
 (define (clone-first [value : (& value (Tuple String i64))]) : String
-  (clone (tuple-ref value 0)))
+  (string.copy (& (tuple-ref value 0))))
 
 (define (replace-first [value : (&mut value (Tuple String i64))]) : String
   (replace! (tuple-ref value 0) "new"))

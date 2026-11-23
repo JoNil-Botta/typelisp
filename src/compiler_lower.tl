@@ -22118,14 +22118,19 @@
                                   (lower-type-register-words
                                     ctx
                                     (lower-global-shared-view resolved))]
-                                ;; A borrowed match reads its scrutinee behind a
-                                ;; pointer, and so does the payload walk below.
-                                ;; A two-word register-group enum field would
-                                ;; load as a packed value, so a borrowed match
-                                ;; takes its address instead and reads it like
-                                ;; a memory enum (#8905).
+                                ;; A borrowed match or mutable view match reads
+                                ;; its scrutinee behind a pointer, and so does
+                                ;; the payload walk below. A two-word
+                                ;; register-group enum field would load as a
+                                ;; packed value, so those matches take its
+                                ;; address instead and read it like a memory
+                                ;; enum (#8905, #9296).
                                 [field-in-place? : bool
-                                  (and (not owned?) (= field-words 2))]
+                                  (and
+                                    (or
+                                      (not owned?)
+                                      (= (lower-state-view-match state) 1))
+                                    (= field-words 2))]
                                 [field-base : ir.CompilerIrValue
                                   (lower-global-shared-view base)]
                                 (match (if field-in-place?
@@ -22204,9 +22209,12 @@
                                                   8
                                                   fail-label
                                                   ;; An owned two-word field is
-                                                  ;; read as a register group; a
-                                                  ;; borrowed one is read in place.
-                                                  (and owned? (= field-words 2)))
+                                                  ;; read as a register group;
+                                                  ;; borrowed and view-match
+                                                  ;; ones are read in place.
+                                                  (and
+                                                    (not field-in-place?)
+                                                    (= field-words 2)))
                                                   [(Ok
                                                       nested-state
                                                       nested-env
@@ -46147,7 +46155,9 @@
             env
             root-id
             (csym.compiler-symbols-missing-handle))]
-        (if (csym.compiler-symbols-handle-found? local-id)
+        (if (and
+          (csym.compiler-symbols-handle-found? local-id)
+          (not (lower-state-view-place? state local-id)))
           (match (tc_core.tc-lookup-id type-env root-id)
             [(Ok root-ty)
               (let
@@ -72003,25 +72013,37 @@
         [source : i64 (- sources 1)]
         [ty : ast.AstType
           (lower-global-array-element-shared-view types name-index)]
+        [view-place? : bool (> sources 0)]
         (while (>= source 0)
-          (set!
-            inputs
-            (ir.compiler-ir-phi-input-seq-prepend
-              (ir.CompilerIrValue.Var
-                (array-ref values (+ (* source count) name-index)))
-              (array-ref labels source)
-              inputs))
+          (let
+            [source-var : i64
+              (array-ref values (+ (* source count) name-index))]
+            (unless
+              (lower-state-view-place? current source-var)
+              (set! view-place? false))
+            (set!
+              inputs
+              (ir.compiler-ir-phi-input-seq-prepend
+                (ir.CompilerIrValue.Var source-var)
+                (array-ref labels source)
+                inputs)))
           (-= source 1))
         (match (lower-state-alloc-var current)
           [(LowerAlloc.Alloc allocated var-id)
-            (set!
-              current
-              (lower-state-emit
-                allocated
-                (ir.CompilerIrInstr.Phi
-                  var-id
-                  inputs
-                  (lower-one-word-register-storage-type ctx ty))))
+            (let
+              [phi-ty : ast.AstType
+                (if view-place?
+                  (ast.AstType.U64)
+                  (lower-one-word-register-storage-type ctx ty))]
+              [emitted : LowerState
+                (lower-state-emit
+                  allocated
+                  (ir.CompilerIrInstr.Phi var-id inputs phi-ty))]
+              (set!
+                current
+                (if view-place?
+                  (lower-state-pattern-place-mark emitted var-id 2)
+                  emitted)))
             (set!
               body-env
               (sym_i64_env.sym-i64-bind-id

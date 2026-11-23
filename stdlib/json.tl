@@ -108,6 +108,46 @@
       (stdlib.checked_size.size-abort "json: invalid sequence length\n")
       __json_length)))
 
+;: Clone a JSON value into the active arena.
+(define (clone-json [value : (& Json)]) : Json
+  (match value
+    [(JsonNull) JsonNull]
+    [(JsonBool item) (JsonBool item)]
+    [(JsonNumber text) (JsonNumber (string.copy text))]
+    [(JsonString text) (JsonString (string.copy text))]
+    [(JsonArray items) (JsonArray (box (clone-json-seq items)))]
+    [(JsonObject members) (JsonObject (box (clone-json-member-seq members)))]))
+
+;: Clone a JSON object member into the active arena.
+(define (clone-json-member [member : (& JsonMember)]) : JsonMember
+  (JsonMember (string.copy (& member.key)) (clone-json (& member.value))))
+
+;: Clone the checked live prefix of a JSON array into the active arena.
+(define (clone-json-seq [items : (& JsonSeq)]) : JsonSeq
+  (let
+    [count : i64 (list-count-ref items)]
+    [slots : (__tl_dyn-array Json) (__tl_make-array Json count)]
+    [index : i64 0]
+    (while (< index count)
+      (set!
+        (array-ref slots index)
+        (clone-json (& (array-ref items.slots index))))
+      (set! index (+ index 1)))
+    (JsonSeq slots count)))
+
+;: Clone the checked live prefix of a JSON object into the active arena.
+(define (clone-json-member-seq [items : (& JsonMemberSeq)]) : JsonMemberSeq
+  (let
+    [count : i64 (member-list-count-ref items)]
+    [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember count)]
+    [index : i64 0]
+    (while (< index count)
+      (set!
+        (array-ref slots index)
+        (clone-json-member (& (array-ref items.slots index))))
+      (set! index (+ index 1)))
+    (JsonMemberSeq slots count)))
+
 ;: Return the empty JSON array element sequence.
 (define (list-empty) : JsonSeq
   (JsonSeq (__tl_make-array Json 0) 0))
@@ -413,7 +453,7 @@
     [n : i64 (stdlib.json.list-count-ref items)]
     (if (or (< index 0) (>= index n))
       JsonMissing
-      (JsonFound (clone (array-ref items.slots index))))))
+      (JsonFound (clone-json (& (array-ref items.slots index)))))))
 
 ;: Return `items` without its first element.
 (define (list-rest [items : JsonSeq]) : JsonSeq
@@ -501,7 +541,7 @@
     [found : JsonLookup JsonMissing]
     (while (< i n)
       (let
-        [member : JsonMember (clone (array-ref items.slots i))]
+        [member : JsonMember (clone-json-member (& (array-ref items.slots i)))]
         (if (string.eq (& member.key) key)
           (begin
             (set! found (JsonFound member.value))
@@ -1750,7 +1790,7 @@
       (stdlib.json.stdlib-inline-test-assert-owned-string-eq
         value
         expected
-        (clone message))
+        (string.copy (& message)))
       (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message)]
     [(ErrJsonParseString _) (io.panic message)]))
 
@@ -1765,7 +1805,7 @@
       (stdlib.json.stdlib-inline-test-assert-owned-string-eq
         value
         expected
-        (clone message))
+        (string.copy (& message)))
       (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message)]
     [(ErrJsonParseEscape _) (io.panic message)]))
 
@@ -1847,7 +1887,7 @@
           (stdlib.json.stdlib-inline-test-assert-owned-string-eq
             text
             expected
-            (clone message))
+            (string.copy (& message)))
           (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message)]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
@@ -1865,7 +1905,7 @@
           (stdlib.json.stdlib-inline-test-assert-bool-eq
             actual
             expected
-            (clone message))
+            (string.copy (& message)))
           (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message)]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
@@ -1883,7 +1923,7 @@
           (stdlib.json.stdlib-inline-test-assert-i64-eq
             (stdlib.json.list-count-ref (& (__tl-box-place items)))
             expected-count
-            (clone message))
+            (string.copy (& message)))
           (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message)]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
@@ -1901,7 +1941,7 @@
           (stdlib.json.stdlib-inline-test-assert-i64-eq
             (stdlib.json.member-list-count-ref (& (__tl-box-place members)))
             expected-count
-            (clone message))
+            (string.copy (& message)))
           (stdlib.json.stdlib-inline-test-assert-i64-eq pos next message)]
         [_ (io.panic message)])]
     [(ErrJsonParseValue _) (io.panic message)]))
@@ -2022,7 +2062,8 @@
               5
               "json array count")
             (stdlib.json.stdlib-inline-test-assert-owned-string-eq
-              (stdlib.json.stringify-list (clone (__tl-box-place items)))
+              (stdlib.json.stringify-list
+                (clone-json-seq (& (__tl-box-place items))))
               "1,-2.5e3,true,false,null"
               "json array stringify")]
           [_ (io.panic "json array lookup")])]
@@ -2043,7 +2084,7 @@
             (let
               [key : String "ok"]
               (match (stdlib.json.member-list-get
-                (clone (__tl-box-place members))
+                (clone-json-member-seq (& (__tl-box-place members)))
                 (& key))
                 [(JsonFound ok-value)
                   (match ok-value
@@ -2419,10 +2460,10 @@
       " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"nested\" : { \"ok\" : true, \"empty\" : [] }, \"escaped\" : \"a\\nb\\tc\" } "]
     (match (stdlib.json.parse (& text))
       [(OkJson doc)
-        (stdlib.json.stdlib-inline-test-name (clone doc))
-        (stdlib.json.stdlib-inline-test-numbers (clone doc))
-        (stdlib.json.stdlib-inline-test-nested (clone doc))
-        (stdlib.json.stdlib-inline-test-escaped (clone doc))
+        (stdlib.json.stdlib-inline-test-name (clone-json (& doc)))
+        (stdlib.json.stdlib-inline-test-numbers (clone-json (& doc)))
+        (stdlib.json.stdlib-inline-test-nested (clone-json (& doc)))
+        (stdlib.json.stdlib-inline-test-escaped (clone-json (& doc)))
         (stdlib.json.stdlib-inline-test-assert-owned-string-eq
           (stdlib.json.stringify doc)
           "{\"name\":\"tl\",\"items\":[1,-2.5e3,true,false,null],\"nested\":{\"ok\":true,\"empty\":[]},\"escaped\":\"a\\nb\\tc\"}"
@@ -2437,7 +2478,7 @@
           (match (stdlib.json.parse (& dupe-text))
             [(OkJson dupe-doc)
               (stdlib.json.stdlib-inline-test-assert-found-number
-                (stdlib.json.object-get (clone dupe-doc) (& dupe-key))
+                (stdlib.json.object-get (clone-json (& dupe-doc)) (& dupe-key))
                 "1"
                 "json duplicate key lookup keeps first source member")
               (stdlib.json.stdlib-inline-test-assert-owned-string-eq

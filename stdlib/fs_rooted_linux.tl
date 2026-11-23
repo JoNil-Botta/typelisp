@@ -184,7 +184,8 @@
 ;: Admission status of a source snapshot.
 (define (linux-rooted-source-result
   [source : (& source FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
-  (clone source.result))
+  (match source
+    [(fields result) result]))
 
 ;: Source `st_size` when the snapshot is admitted.
 (define (linux-rooted-source-length
@@ -207,14 +208,15 @@
   [left : (& left FsLinuxRootedSourceSnapshot)]
   [right : (& right FsLinuxRootedSourceSnapshot)]) : bool
   (and
-    (linux-rooted-result-ok? (clone left.result))
-    (linux-rooted-result-ok? (clone right.result))
+    (linux-rooted-result-ok? (linux-rooted-source-result left))
+    (linux-rooted-result-ok? (linux-rooted-source-result right))
     (= left.device right.device)
     (= left.inode right.inode)))
 
 ;: Operation status returned by one bounded read.
 (define (linux-rooted-read-operation [read : (& read FsLinuxRootedReadResult)]) : FsLinuxRootedResult
-  (clone read.operation))
+  (match read
+    [(fields operation) operation]))
 
 ;: Owned bytes returned by one bounded read.
 (define (linux-rooted-read-bytes [read : FsLinuxRootedReadResult]) : byte_buf.ByteBuf
@@ -232,7 +234,8 @@
 ;: Operation status returned by one caller-owned-buffer read.
 (define (linux-rooted-read-into-operation
   [read : (& read FsLinuxRootedReadIntoResult)]) : FsLinuxRootedResult
-  (clone read.operation))
+  (match read
+    [(fields operation) operation]))
 
 ;: True when a caller-owned-buffer read succeeded. This observes the scalar
 ;: operation tag in place so hot read loops need not clone the typed outcome.
@@ -2461,7 +2464,7 @@
 (define (linux-rooted-source-compare
   [admitted : (& admitted FsLinuxRootedSourceSnapshot)]
   [current : (& current FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
-  (match (clone current.result)
+  (match (linux-rooted-source-result current)
     [(LinuxRootedOk)
       (cond
         [(not
@@ -2488,7 +2491,7 @@
               (= admitted.inode current.inode)))
           LinuxRootedIdentityChanged]
         [else LinuxRootedSourceChanged])]
-    [_ (clone current.result)]))
+    [_ (linux-rooted-source-result current)]))
 
 ;: Revalidate `component` below the retained `parent` against an admitted
 ;: snapshot: one `O_PATH` `openat2` with the complete descendant policy, one
@@ -2515,8 +2518,10 @@
             (< parent-state.fd 0)
             (not (linux-rooted-result-ok? parent-state.result)))
           (FsLinuxRootedFinishResult LinuxRootedClosed LinuxRootedClosed)]
-        [(not (linux-rooted-result-ok? (clone admitted.result)))
-          (FsLinuxRootedFinishResult (clone admitted.result) LinuxRootedClosed)]
+        [(not (linux-rooted-result-ok? (linux-rooted-source-result admitted)))
+          (FsLinuxRootedFinishResult
+            (linux-rooted-source-result admitted)
+            LinuxRootedClosed)]
         [(cancel-check)
           (FsLinuxRootedFinishResult LinuxRootedCancelled LinuxRootedClosed)]
         [else
@@ -2573,8 +2578,8 @@
 (define (linux-rooted-guard-sidecar-result
   [sidecar : (& sidecar FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
   (cond
-    [(not (linux-rooted-result-ok? (clone sidecar.result)))
-      (clone sidecar.result)]
+    [(not (linux-rooted-result-ok? (linux-rooted-source-result sidecar)))
+      (linux-rooted-source-result sidecar)]
     [(not (= sidecar.links (cast 1 : u64))) LinuxRootedUnsupported]
     [(not (= sidecar.owner (linux-rooted-effective-user)))
       LinuxRootedUnsupported]
@@ -2734,10 +2739,10 @@
   [inode : u64]
   [current : (& current FsLinuxRootedSourceSnapshot)]) : FsLinuxRootedResult
   (cond
-    [(= current.links (cast 0 : u64)) (clone current.result)]
+    [(= current.links (cast 0 : u64)) (linux-rooted-source-result current)]
     [(not (and (= current.device device) (= current.inode inode)))
       LinuxRootedIdentityChanged]
-    [else (clone current.result)]))
+    [else (linux-rooted-source-result current)]))
 
 ;: Check, before a transaction's first source cutover, that `component` below
 ;: the retained parent still names the sidecar this guard locked: one `O_PATH`
@@ -3280,7 +3285,7 @@
         (let
           [operation : FsLinuxRootedResult
             (if (and
-              (linux-rooted-result-ok? (clone source.result))
+              (linux-rooted-result-ok? (linux-rooted-source-result source))
               (>= source.permissions 0)
               (=
                 (bit-and source.permissions fs-linux-rooted-permission-mask)

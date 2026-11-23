@@ -274,13 +274,12 @@
     (match (scan-text policy (name-identity "example.test" 22) limits)
       [(KnownHostsScanErr _) (fail "selector error escaped record")]
       [(KnownHostsScanOk records)
-        (match (known_hosts.records-ref (& records) 0).selector
-          [(KnownHostsSelectorIndeterminate kind)
-            (test.assert-i64-eq
-              (error-code (clone kind))
-              expected
-              "selector error")]
-          [_ (fail "malformed selector accepted")])])))
+        (let
+          [rec (known_hosts.records-ref (& records) 0)]
+          (match (& rec.selector)
+            [(KnownHostsSelectorIndeterminate kind)
+              (test.assert-i64-eq (error-code kind) expected "selector error")]
+            [_ (fail "malformed selector accepted")]))])))
 
 (define (assert-malformed-records) : unit
   (assert-selector-error "foo," 14)
@@ -304,12 +303,9 @@
           (test.assert-true
             (known_hosts.record-indeterminate? record)
             "unknown marker is indeterminate")
-          (match record.marker
+          (match (& record.marker)
             [(KnownHostsMarkerIndeterminate kind)
-              (test.assert-i64-eq
-                (error-code (clone kind))
-                9
-                "unsupported marker kind")]
+              (test.assert-i64-eq (error-code kind) 9 "unsupported marker kind")]
             [_ (fail "unknown marker status")]))]))
   (let
     [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
@@ -317,13 +313,12 @@
     (match (scan-text policy (name-identity "example.test" 22) limits)
       [(KnownHostsScanErr _) (fail "repeated marker escaped record")]
       [(KnownHostsScanOk records)
-        (match (known_hosts.records-ref (& records) 0).selector
-          [(KnownHostsSelectorIndeterminate kind)
-            (test.assert-i64-eq
-              (error-code (clone kind))
-              11
-              "repeated marker kind")]
-          [_ (fail "repeated marker accepted")])])))
+        (let
+          [rec (known_hosts.records-ref (& records) 0)]
+          (match (& rec.selector)
+            [(KnownHostsSelectorIndeterminate kind)
+              (test.assert-i64-eq (error-code kind) 11 "repeated marker kind")]
+            [_ (fail "repeated marker accepted")]))])))
 
 (define (assert-scan-error
   [policy : String]
@@ -386,10 +381,12 @@
     (match (scan-text policy (name-identity "example.test" 22) limits)
       [(KnownHostsScanErr _) (fail "DP work escaped record")]
       [(KnownHostsScanOk records)
-        (match (known_hosts.records-ref (& records) 0).selector
-          [(KnownHostsSelectorIndeterminate kind)
-            (test.assert-i64-eq (error-code (clone kind)) 17 "DP work bound")]
-          [_ (fail "DP work limit ignored")])])
+        (let
+          [rec (known_hosts.records-ref (& records) 0)]
+          (match (& rec.selector)
+            [(KnownHostsSelectorIndeterminate kind)
+              (test.assert-i64-eq (error-code kind) 17 "DP work bound")]
+            [_ (fail "DP work limit ignored")]))])
     (let
       [limits : known_hosts.KnownHostsLimits (known_hosts.default-limits)]
       [policy : String "a,b,c ssh-ed25519 QUJD"]
@@ -397,13 +394,12 @@
       (match (scan-text policy (name-identity "example.test" 22) limits)
         [(KnownHostsScanErr _) (fail "component limit escaped record")]
         [(KnownHostsScanOk records)
-          (match (known_hosts.records-ref (& records) 0).selector
-            [(KnownHostsSelectorIndeterminate kind)
-              (test.assert-i64-eq
-                (error-code (clone kind))
-                15
-                "component bound")]
-            [_ (fail "component limit ignored")])]))))
+          (let
+            [rec (known_hosts.records-ref (& records) 0)]
+            (match (& rec.selector)
+              [(KnownHostsSelectorIndeterminate kind)
+                (test.assert-i64-eq (error-code kind) 15 "component bound")]
+              [_ (fail "component limit ignored")]))]))))
 
 (define (policy-with-comment-byte [byte : u8]) : String
   (let

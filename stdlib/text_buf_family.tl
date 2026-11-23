@@ -141,6 +141,33 @@
               (ptr-cast (__tl_array-data store.slots) : (Ptr String))
               index)
             : (Ptr String)))))
+    ;: Clone an owned snapshot into the active arena, retaining the store's
+    ;: ownership metadata used by subsequent append and fork decisions.
+    (define (clone-text-buf [buf : (& TextBuf)]) : TextBuf
+      (TextBuf
+        (match (& buf.chunks)
+          [(TextBufChunkNil) TextBufChunkNil]
+          [(TextBufChunkInline chunk) (TextBufChunkInline (string.copy chunk))]
+          [(TextBufChunkDense store visible-count)
+            (let
+              [slots : (__tl_dyn-array String)
+                (__tl_make-array String (array-length store.slots))]
+              [committed : i64 store.len]
+              [index : i64 0]
+              (while (< index committed)
+                (set!
+                  (array-ref slots index)
+                  (string.copy (& (array-ref store.slots index))))
+                (set! index (+ index 1)))
+              (TextBufChunkDense
+                (box
+                  (TextBufStringStore
+                    slots
+                    committed
+                    store.owner-root
+                    store.owner-head))
+                visible-count))])
+        buf.len))
     ;: Allocation, growth, and prefix memcpy are cold.  The same-head commit
     ;: macro above keeps the common direct-write case inline; the generated
     ;: slow helper below reaches this routine only after that check fails.

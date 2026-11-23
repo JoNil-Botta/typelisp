@@ -1370,7 +1370,7 @@
     ;; floor, so the cfgs travel as a snapshot of name strings and are interned
     ;; again here, after the reset (#8663).
     [cfgs : sym_i64_env.SymI64Env
-      (cfg_core.compiler-cfg-snapshot-to-env cfg-snapshot)]
+      (cfg_core.compiler-cfg-snapshot-to-env (& cfg-snapshot))]
     [index : i64
       (doc-test-example-index (owned_view.compiler-owned-shared-view example))]
     [source-line : i64

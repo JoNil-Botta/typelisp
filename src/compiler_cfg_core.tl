@@ -44,7 +44,7 @@
       0)
     (CompilerCfgSnapshot slots values count)))
 
-(define (compiler-cfg-snapshot-to-env [names : CompilerCfgSnapshot]) : sym_i64_env.SymI64Env
+(define (compiler-cfg-snapshot-to-env [names : (& names CompilerCfgSnapshot)]) : sym_i64_env.SymI64Env
   (let
     [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [index : i64 names.len]

@@ -4,6 +4,7 @@
 ;; helpers. Package builds are handled in-process by the selfhost compiler:
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
+(import stdlib.clone as clone_gen)
 (import compiler_backend_program_facts as be_facts)
 (import compiler_backend_state as be_state)
 (import stdlib.iterator)
@@ -356,10 +357,14 @@
   (Dev)
   (Release))
 
+(clone_gen.gen-clone BuildProfile)
+
 (defenum BuildPackageLockPolicy
   (Default)
   (Locked)
   (Update))
+
+(clone_gen.gen-clone BuildPackageLockPolicy)
 
 (defenum BuildPackageLockEntryStatus
   (Matched package_lock_core.PackageLockEntry)
@@ -2939,11 +2944,17 @@
     (build-package-tlci-owner-stdlib-path? owner path)))
 
 (define (build-package-tlci-metadata
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [callables : tlci.TlciSpmdCallables]) : tlci.TlciMetadata
   (if (= (tlci.tlci-spmd-callables-len callables) 0)
-    (tlci.tlci-make-metadata "v1" manifest.name manifest.version)
-    (tlci.tlci-make-metadata-v2 manifest.name manifest.version callables)))
+    (tlci.tlci-make-metadata
+      "v1"
+      (string.copy (& manifest.name))
+      (string.copy (& manifest.version)))
+    (tlci.tlci-make-metadata-v2
+      (string.copy (& manifest.name))
+      (string.copy (& manifest.version))
+      callables)))
 
 (defstruct BuildPackageTlciCallableCollector
   (items tlci.TlciSpmdCallables)
@@ -3355,7 +3366,7 @@
 (define (build-package-tlci-macro-collector
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [source-set : (& source-set package_source_core.PackageSourceSet)]
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : BuildPackageTlciMacroCollector
   (let
@@ -3370,7 +3381,7 @@
       paths
       ""
       ""
-      manifest.name
+      (string.copy (& manifest.name))
       owned-sources
       (&mut out)
       (&mut captures))
@@ -3436,7 +3447,7 @@
 
 (define (build-package-tlci-callable-collector
   [source-set : (& source-set package_source_core.PackageSourceSet)]
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : BuildPackageTlciCallableCollector
@@ -3448,7 +3459,7 @@
       paths
       ""
       ""
-      manifest.name
+      (string.copy (& manifest.name))
       mode
       owned-sources
       (BuildPackageTlciCallableCollector (tlci.tlci-spmd-callables-empty) ""))))
@@ -3516,7 +3527,7 @@
 
 (define (build-package-tlci-capture-exports
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
@@ -3548,7 +3559,7 @@
 
 (define (build-package-tlci-collect-exports
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
-  [manifest : load.CompilerPkgManifest]
+  [manifest : (& manifest load.CompilerPkgManifest)]
   [mode : be_state.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
@@ -3557,7 +3568,7 @@
     [collector : BuildPackageTlciCallableCollector
       (build-package-tlci-callable-collector
         source-set
-        (owned_view.compiler-owned-shared-view manifest)
+        manifest
         mode
         (owned_view.compiler-owned-shared-view decls)
         (owned_view.compiler-owned-shared-view paths))]
@@ -3565,7 +3576,7 @@
       (build-package-tlci-macro-collector
         context
         source-set
-        (owned_view.compiler-owned-shared-view manifest)
+        manifest
         decls
         paths)]
     [names : (__tl_dyn-array String) macro-collector.names]
@@ -5224,7 +5235,7 @@
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-finish-fresh-artifacts-with-surface
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
-    [manifest : load.CompilerPkgManifest]
+    [manifest : (& manifest load.CompilerPkgManifest)]
     [source-inputs : BuildPackageTlciSourceInputs]
     [seen : sym_i64_env.SymI64Env]
     [name : String]
@@ -5481,12 +5492,11 @@
           [inline-status : i64
             (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
               inline-sources
-              (clone request.stdlib-roots)
+              (cli_svec.clone-vec (& request.stdlib-roots))
               (string.copy (& request.manifest-dir))
               (string.copy (& request.manifest.name))
-              (clone request.manifest.deps)
-              (cfg_core.compiler-cfg-snapshot-to-env
-                (clone request.compile-cfgs))
+              (load.clone-compiler-pkg-deps (& request.manifest.deps))
+              (cfg_core.compiler-cfg-snapshot-to-env (& request.compile-cfgs))
               "typecheck-prefix-inline-build-package")]
           (when (not (= inline-status 0)) (return inline-status))
           (compiler_driver_core.compiler-driver-reset-file-state!)
@@ -5499,14 +5509,15 @@
                   (string.copy (& request.manifest.name))
                   (string.copy (& request.entry-path))
                   (string.copy (& request.manifest-path))
-                  (clone request.target)
+                  (be_state.clone-compiler-backend-target (& request.target))
                   request.opt-level
-                  (clone request.profile)
-                  (clone request.mode)
-                  (clone request.lock-policy)
-                  (clone request.manifest.deps)
-                  (load.compiler-pkg-deps-list (clone request.manifest.deps))
-                  (clone request.stdlib-roots)
+                  (clone-build-profile (& request.profile))
+                  (be_state.clone-compiler-backend-mode (& request.mode))
+                  (clone-build-package-lock-policy (& request.lock-policy))
+                  (load.clone-compiler-pkg-deps (& request.manifest.deps))
+                  (load.clone-compiler-pkg-dep-list
+                    (& request.manifest.deps.ordered))
+                  (cli_svec.clone-vec (& request.stdlib-roots))
                   (& request.cfg-names)
                   (string.copy (& request.manifest-dir))
                   request.emit-entry)]
@@ -5528,11 +5539,11 @@
     (match (compiler_driver_core.compiler-driver-package-runtime-load
       (owned_view.compiler-owned-shared-view scope)
       (string.copy (& request.entry-path))
-      (clone request.stdlib-roots)
+      (cli_svec.clone-vec (& request.stdlib-roots))
       (string.copy (& request.manifest-dir))
-      (clone request.manifest.deps)
+      (load.clone-compiler-pkg-deps (& request.manifest.deps))
       request.emit-entry
-      (cfg_core.compiler-cfg-snapshot-to-env (clone request.compile-cfgs)))
+      (cfg_core.compiler-cfg-snapshot-to-env (& request.compile-cfgs)))
       [(Err diag)
         (io.print-error
           (compiler_driver_core.compiler-driver-render-source-diagnostic
@@ -5595,31 +5606,34 @@
               (build_run_core.source-tool-link-inputs-empty))]
           ;; The dependency section keeps each package's raw arguments.
           [effective-link-inputs : build_run_core.SourceToolLinkInputs
-            (clone
-              (build_run_core.source-tool-link-inputs-merge-with
-                (build_run_core.source-tool-link-inputs-merge
-                  (clone request.manifest-link-inputs)
-                  metadata-link-inputs)
-                (clone request.dep-link-inputs)
-                false))]
+            (build_run_core.clone-source-tool-link-inputs
+              (&
+                (build_run_core.source-tool-link-inputs-merge-with
+                  (build_run_core.source-tool-link-inputs-merge
+                    (build_run_core.clone-source-tool-link-inputs
+                      (& request.manifest-link-inputs))
+                    metadata-link-inputs)
+                  (build_run_core.clone-source-tool-link-inputs
+                    (& request.dep-link-inputs))
+                  false)))]
           [crt-entry : bool
             (and
               request.emit-entry
               (build_run_core.source-tool-linux-crt-entry?
-                (clone request.target)
+                (be_state.clone-compiler-backend-target (& request.target))
                 effective-link-inputs))]
           (Finished
             (build-package-finish-fresh-artifacts-with-surface
               scope
-              (clone request.manifest)
+              (& request.manifest)
               source-inputs
               seen
               (string.copy (& request.manifest.name))
-              (clone request.kind)
-              (clone request.target)
+              (load.clone-compiler-pkg-kind (& request.kind))
+              (be_state.clone-compiler-backend-target (& request.target))
               request.opt-level
-              (clone request.profile)
-              (clone request.mode)
+              (clone-build-profile (& request.profile))
+              (be_state.clone-compiler-backend-mode (& request.mode))
               (string.copy (& request.producer-identity))
               (string.copy (& request.entry-path))
               request.emit-entry
@@ -5630,15 +5644,14 @@
               (build-package-output-dir-profile
                 (string.copy (& request.manifest-dir))
                 (string.copy (& request.manifest.name))
-                (clone request.profile))
+                (clone-build-profile (& request.profile)))
               (string.copy (& request.asm-path))
               (string.copy (& request.obj-path))
               (string.copy (& request.artifact-path))
               effective-link-inputs
               (string.copy (& request.tlci-path))
               request.announce
-              (cfg_core.compiler-cfg-snapshot-to-env
-                (clone request.compile-cfgs)))))])))
+              (cfg_core.compiler-cfg-snapshot-to-env (& request.compile-cfgs)))))])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -5762,7 +5775,7 @@
                     cfg-names))
                 announce
                 lock-policy
-                (clone (deref cfg-names))))))))))
+                (cli_svec.clone-vec cfg-names)))))))))
 
 (cfg
   (not

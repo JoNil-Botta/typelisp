@@ -2744,8 +2744,7 @@
                 false]
               [(Continue next)
                 (let
-                  [transport : lsp.LspFrameMemoryState
-                    (clone lsp.lsp-frame-memory-state)]
+                  [stdout : String (lsp.lsp-frame-memory-copy-stdout)]
                   [unchanged : bool
                     (and
                       (= next.owner-arena owner)
@@ -2755,8 +2754,8 @@
                   (and
                     unchanged
                     (if response
-                      (string.contains (& transport.stdout) "\"code\":-32602")
-                      (string.eq transport.stdout ""))))])])]
+                      (string.contains (& stdout) "\"code\":-32602")
+                      (string.eq stdout ""))))])])]
       (lsp.lsp-frame-memory-reset!)
       ok)))
 

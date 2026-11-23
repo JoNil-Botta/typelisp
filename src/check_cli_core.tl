@@ -179,7 +179,7 @@
         [cfgs : sym_i64_env.SymI64Env
           (target_cfg.compiler-target-cfgs-with-names
             options.target
-            (clone options.cfgs))]
+            (svec.clone-vec (& options.cfgs)))]
         [_begin-check : unit
           (compiler_check_core.compiler-check-package-begin! job)]
         [loaded : compiler_load.ResultCompilerLoadWithPaths
@@ -210,28 +210,28 @@
               [status : i64
                 (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
                   sources
-                  (clone options.stdlib-roots)
+                  (svec.clone-vec (& options.stdlib-roots))
                   (string.copy (& manifest-dir))
                   (string.copy (& manifest.name))
-                  (clone manifest.deps)
+                  (compiler_load.clone-compiler-pkg-deps (& manifest.deps))
                   cfgs
                   "typecheck-prefix-inline-check-package")]
               (when (not (= status 0)) (return status))
               ;; Inline preflight resets the loader pools and interned cfg ids.
               (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
                 entry-path
-                (clone options.stdlib-roots)
+                (svec.clone-vec (& options.stdlib-roots))
                 (string.copy (& manifest-dir))
-                (clone manifest.deps)
+                (compiler_load.clone-compiler-pkg-deps (& manifest.deps))
                 emit-entry
                 (target_cfg.compiler-target-cfgs-with-names
                   options.target
-                  (clone options.cfgs))
+                  (svec.clone-vec (& options.cfgs)))
                 job))
             (compiler_check_core.compiler-check-package-loaded
               entry-path
               loaded
-              (clone options.stdlib-roots)
+              (svec.clone-vec (& options.stdlib-roots))
               cfgs
               job))]
         (match checked

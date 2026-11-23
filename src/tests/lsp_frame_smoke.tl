@@ -2150,11 +2150,12 @@
         "X")]
     [machine : lint_core.LintFinding
       (lint_core_tests.lint-finding-with-fix
-        (clone base)
+        (lint_core.clone-lint-finding (& base))
         (cdiag.compiler-diagnostic-fix-new
           "Replace lint token"
           CompilerDiagnosticMachineApplicable
-          (cdiag.compiler-diagnostic-text-edit-single (clone edit))))]
+          (cdiag.compiler-diagnostic-text-edit-single
+            (cdiag.clone-compiler-diagnostic-text-edit (& edit)))))]
     [uncertain : lint_core.LintFinding
       (lint_core_tests.lint-finding-with-fix
         base
@@ -2165,9 +2166,9 @@
     [docs : lsp_document_vec.Vec
       (lsp.lsp-documents-set-versioned
         (lsp_document_vec.new)
-        (clone uri)
-        (clone path)
-        (clone text)
+        (string.copy (& uri))
+        (string.copy (& path))
+        (string.copy (& text))
         version
         (lsp.lsp-diagnostic-uris-empty))]
     [request-range : json.Json
@@ -2178,7 +2179,11 @@
         (lsp.lsp-position 1 2))]
     [context : json.JsonSeq
       (lsp.lsp-json-list-cons
-        (lsp.lsp-lint-finding-diagnostic (clone text) version 0 (clone machine))
+        (lsp.lsp-lint-finding-diagnostic
+          (string.copy (& text))
+          version
+          0
+          (lint_core.clone-lint-finding (& machine)))
         (json.list-empty))]
     [machine-slots : (__tl_dyn-array lint_core.LintFinding)
       (__tl_make-array lint_core.LintFinding 1)]
@@ -2190,19 +2195,17 @@
       [machine-json : String
         (json.stringify
           (lsp.lsp-json-array
-            (let
-              [docs-copy (clone docs)]
-              (lsp.lsp-code-action-lint-from
-                docs-copy
-                (clone uri)
-                (clone path)
-                (clone text)
-                version
-                (lint_core.LintFindings machine-slots 1)
-                (clone request-range)
-                (clone context)
-                0
-                (json.list-empty)))))]
+            (lsp.lsp-code-action-lint-from
+              (& docs)
+              (string.copy (& uri))
+              (string.copy (& path))
+              (string.copy (& text))
+              version
+              (lint_core.LintFindings machine-slots 1)
+              (json.clone-json (& request-range))
+              (json.clone-json-seq (& context))
+              0
+              (json.list-empty))))]
       [uncertain-json : String
         (json.stringify
           (lsp.lsp-json-array

@@ -21232,15 +21232,15 @@ entry:
     (compiler-backend-avx512-mask-reduce-emits?
       (Any)
       8
-      "    kortestw %k1, %k1\n    setne %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")
+      "    kortestw %k1, %k1\n    setne %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-avx512-mask-reduce-emits?
       (All)
       16
-      "    kortestw %k1, %k1\n    setc %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")
+      "    kortestw %k1, %k1\n    setc %r12b\n    movzbl %r12b, %r12d\n")
     (compiler-backend-avx512-mask-reduce-emits?
       (All)
       8
-      "    kmovw %k1, %eax\n    cmpl $255, %eax\n    sete %al\n    movzbl %al, %eax\n    movq %rax, %r12\n")))
+      "    kmovw %k1, %r12d\n    cmpl $255, %r12d\n    sete %r12b\n    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-avx512-mask-spill-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=spill:-8 %1=spill:-16 %2=spill:-24 %3=%r12"))
@@ -21343,7 +21343,8 @@ entry:
     (has
       "    kmovw -8(%rbp), %k7\n"
       "    kortestw %k7, %k7\n"
-      "    movq %rax, %r12\n")))
+      "    setne %r12b\n"
+      "    movzbl %r12b, %r12d\n")))
 
 (define (compiler-backend-avx512-mask-spill-load-store-emits-ok?) : bool
   (match (be_simd.compiler-backend-emit-avx512-mask-load
@@ -46318,6 +46319,176 @@ user_fn:
       (compiler-backend-byte-directives-match-reference?
         (compiler-backend-test-byte-run 11 13 33)))
     (io.panic "the .byte directives differ from the per-byte reference")))
+
+;; #8964: physical float/packed-f32 transfers between GP and XMM registers must
+;; emit `movq` (64-bit, preserving packed `(f32, f32)` lanes and `-0.0`) or
+;; `movd` (32-bit scalar `f32`), never illegal `movsd`/`movss` with GP operands.
+(test
+  backend-cross-bank-float-moves-reject-gp-movsd
+  (let
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-insert
+        (regalloc.compiler-reg-assignment-table-insert
+          (regalloc.compiler-reg-assignment-table-insert
+            (regalloc.compiler-reg-assignment-table-make 3)
+            0
+            (Register cabi.compiler-reg-id-rax))
+          1
+          (Register cabi.compiler-reg-id-r13))
+        2
+        (Register (cabi.compiler-abi-xmm-register-id 5)))]
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [load-packed : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        0
+        (F64)
+        "%xmm4"
+        state)]
+    [store-packed : String
+      (be_operand.compiler-backend-emit-store-float-var
+        assignments
+        1
+        "%xmm2"
+        (& (F64))
+        state)]
+    [load-r13 : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        1
+        (F64)
+        "%xmm3"
+        state)]
+    [load-f32-gp : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        0
+        (F32)
+        "%xmm4"
+        state)]
+    [store-f32-gp : String
+      (be_operand.compiler-backend-emit-store-float-var
+        assignments
+        1
+        "%xmm2"
+        (& (F32))
+        state)]
+    [load-xmm : String
+      (be_operand.compiler-backend-emit-load-float-var
+        assignments
+        2
+        (F64)
+        "%xmm3"
+        state)]
+    [group-cross-a : String
+      (be_scalar.compiler-backend-emit-group-word-move "%rax" "%xmm4" true)]
+    [group-cross-b : String
+      (be_scalar.compiler-backend-emit-group-word-move "%xmm2" "%r13" true)]
+    [group-xmm : String
+      (be_scalar.compiler-backend-emit-group-word-move "%xmm2" "%xmm3" true)]
+    [all : String
+      (str_cat.str-cat
+        (string.copy (& load-packed))
+        (string.copy (& store-packed))
+        (string.copy (& load-r13))
+        (string.copy (& load-f32-gp))
+        (string.copy (& store-f32-gp))
+        (string.copy (& group-cross-a))
+        (string.copy (& group-cross-b)))]
+    (unless
+      (and
+        (string.eq load-packed "    movq %rax, %xmm4\n")
+        (string.eq store-packed "    movq %xmm2, %r13\n")
+        (string.eq load-r13 "    movq %r13, %xmm3\n")
+        (string.eq load-f32-gp "    movd %eax, %xmm4\n")
+        (string.eq store-f32-gp "    movd %xmm2, %r13d\n")
+        (string.eq load-xmm "    movsd %xmm5, %xmm3\n")
+        (string.eq group-cross-a "    movq %rax, %xmm4\n")
+        (string.eq group-cross-b "    movq %xmm2, %r13\n")
+        (string.eq group-xmm "    movsd %xmm2, %xmm3\n")
+        (not (be_operand.compiler-backend-string-contains? (& all) "movsd"))
+        (not (be_operand.compiler-backend-string-contains? (& all) "movss")))
+      (io.panic
+        "cross-bank float moves emitted illegal movsd/movss or wrong width"))))
+
+;; Verify that SIMD GPR scavenges respect live caller-saved GPRs in the
+;; occupancy mask (never blindly clobbering %rax/%r8/%r9/%r10/%r11).
+(test
+  backend-simd-gpr-scavenge-avoids-live-gprs
+  (let
+    [state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [fn-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state state)]
+    [occupied : i64
+      (bit-or
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%rax")
+          (be_operand.compiler-backend-scavenge-reg-bit "%r8"))
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%r9")
+          (bit-or
+            (be_operand.compiler-backend-scavenge-reg-bit "%r10")
+            (be_operand.compiler-backend-scavenge-reg-bit "%r11"))))]
+    [masks : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    (for [i (iterator.range 0 4)]
+      (set! (array-ref masks i) occupied))
+    (be_state.compiler-backend-function-scratch-set-i64-array!
+      fn-state
+      be_state.compiler-backend-scratch-i64-array-scavenge-occupied-masks
+      masks)
+    (be_state.compiler-backend-function-scratch-set-i64!
+      fn-state
+      be_state.compiler-backend-scratch-i64-simd-scratch-bytes
+      256)
+    (let
+      [assignments : regalloc.CompilerRegAssignmentTable
+        (regalloc.compiler-reg-assignment-table-insert
+          (regalloc.compiler-reg-assignment-table-make 4)
+          0
+          (Register (cabi.compiler-abi-vector-register-id 6)))]
+      [diag : cdiag.CompilerDiagnostic
+        (cdiag.compiler-diagnostic-at-start "" "")]
+      (match (be_simd.compiler-backend-emit-avx2-mask-reduce
+        (ast.ast-node-pool-reader-type-segment-bases)
+        assignments
+        1
+        (Any)
+        (Var 0)
+        4
+        (cdiag.compiler-diagnostic-at-start "" "")
+        state)
+        [(Ok asm)
+          (unless
+            (and
+              (not
+                (be_operand.compiler-backend-string-contains? (& asm) "%eax"))
+              (not
+                (be_operand.compiler-backend-string-contains? (& asm) "%rax"))
+              (not (be_operand.compiler-backend-string-contains? (& asm) "%al")))
+            (io.panic "avx2 mask-reduce clobbered occupied %rax"))]
+        [(Err _) (io.panic "avx2 mask-reduce failed")])
+      (match (be_simd.compiler-backend-emit-avx2-tail-mask
+        (ast.ast-node-pool-reader-type-segment-bases)
+        "tail_scav"
+        (ir.compiler-ir-label "entry")
+        assignments
+        2
+        (I64 0)
+        (I64 3)
+        4
+        diag
+        state)
+        [(Ok asm)
+          (unless
+            (and
+              (not (be_operand.compiler-backend-string-contains? (& asm) "%r8"))
+              (not (be_operand.compiler-backend-string-contains? (& asm) "%r9")))
+            (io.panic "avx2 tail-mask clobbered occupied %r8/%r9"))]
+        [(Err _) (io.panic "avx2 tail-mask failed")]))))
 
 (define (compiler-backend-global-pair-store-live-case?
   [mask : i64]

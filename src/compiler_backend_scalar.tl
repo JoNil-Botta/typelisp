@@ -4175,16 +4175,27 @@
   [sse? : bool]) : String
   (if (string.eq src dst)
     ""
-    (str_cat.str-cat
-      "    "
-      (if sse?
-        "movsd"
-        "movq")
-      " "
-      src
-      ", "
-      dst
-      "\n")))
+    (let
+      [cross-gp? : bool
+        (and
+          sse?
+          (or
+            (and
+              (be_operand.compiler-backend-peephole-register-operand? src)
+              (not (string.is-string-prefix-at src "%xmm" 0)))
+            (and
+              (be_operand.compiler-backend-peephole-register-operand? dst)
+              (not (string.is-string-prefix-at dst "%xmm" 0)))))]
+      (str_cat.str-cat
+        "    "
+        (if (and sse? (not cross-gp?))
+          "movsd"
+          "movq")
+        " "
+        src
+        ", "
+        dst
+        "\n"))))
 
 (define (compiler-backend-emit-group-word-copy
   [entry : (&mut entry be_state.CompilerBackendAsmBuf)]

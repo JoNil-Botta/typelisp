@@ -1089,6 +1089,53 @@
       backend-state)
     (be_state.compiler-backend-asm-buf-finish (& line))))
 
+;; Move a float or packed-float value between physical registers, using GP<->XMM
+;; `movq` (64-bit, preserving packed `(f32, f32)` pairs and `-0.0` bit patterns)
+;; or `movd` (32-bit scalar `f32`) whenever either operand is a GP register.
+(define (compiler-backend-emit-float-reg-move
+  [src-id : i64]
+  [src-name : (& str)]
+  [dst-id : i64]
+  [dst-name : (& str)]
+  [ty : (& compiler_ast_types.AstType)]) : String
+  (if (string.eq src-name dst-name)
+    ""
+    (let
+      [src-gp? : bool (mx.compiler-machine-x64-gpr? src-id)]
+      [dst-gp? : bool (mx.compiler-machine-x64-gpr? dst-id)]
+      [f32? : bool
+        (match ty
+          [(F32) true]
+          [_ false])]
+      (cond
+        [(and src-gp? dst-gp?)
+          (str_cat.str-cat "    movq " src-name ", " dst-name "\n")]
+        [(and src-gp? f32?)
+          (str_cat.str-cat
+            "    movd "
+            (compiler-backend-reg-part (string.copy src-name) 4)
+            ", "
+            dst-name
+            "\n")]
+        [(and dst-gp? f32?)
+          (str_cat.str-cat
+            "    movd "
+            src-name
+            ", "
+            (compiler-backend-reg-part (string.copy dst-name) 4)
+            "\n")]
+        [(or src-gp? dst-gp?)
+          (str_cat.str-cat "    movq " src-name ", " dst-name "\n")]
+        [else
+          (str_cat.str-cat
+            "    "
+            (compiler-backend-float-move ty)
+            " "
+            src-name
+            ", "
+            dst-name
+            "\n")]))))
+
 (define (compiler-backend-emit-load-float-var
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var-id : i64]
@@ -1107,9 +1154,14 @@
             (let
               [home-name : String
                 (compiler_abi.compiler-abi-register-spelling home)]
-              (if (string.eq home-name reg)
-                ""
-                (str_cat.str-cat "    " mov " " home-name ", " reg "\n")))]
+              [dst-id : i64
+                (compiler-backend-machine-register (string.copy (& reg)))]
+              (compiler-backend-emit-float-reg-move
+                home
+                (& home-name)
+                dst-id
+                (& reg)
+                (& ty)))]
           [(Spill offset)
             (str_cat.str-cat
               "    "
@@ -1153,9 +1205,14 @@
             (let
               [home-name : String
                 (compiler_abi.compiler-abi-register-spelling home)]
-              (if (string.eq home-name reg)
-                ""
-                (str_cat.str-cat "    " mov " " reg ", " home-name "\n")))]
+              [src-id : i64
+                (compiler-backend-machine-register (string.copy (& reg)))]
+              (compiler-backend-emit-float-reg-move
+                src-id
+                (& reg)
+                home
+                (& home-name)
+                ty))]
           [(Spill offset)
             (str_cat.str-cat
               "    "

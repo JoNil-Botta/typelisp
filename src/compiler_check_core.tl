@@ -441,6 +441,29 @@
             (cdiag.compiler-diagnostic-list-box-single diag)
             (compiler-check-serial-advisories)))])))
 
+(define (compiler-check-package-begin! [job-state : tc.TcJobState]) : unit
+  (begin
+    (compiler-check-reset-pools!)
+    (tc.tc-job-state-reset-advisories! job-state)
+    (cfg compile-profile (compiler-check-profile-start))))
+
+(define (compiler-check-package-loaded
+  [path : String]
+  [loaded : compiler_load.ResultCompilerLoadWithPaths]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
+  (compiler-check-loaded-cache-with-paths
+    path
+    loaded
+    (owned_view.compiler-owned-shared-view stdlib-roots)
+    cfgs
+    (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
+      "typecheck-prefix-check"
+      stdlib-roots
+      cfgs)
+    job-state))
+
 (define (compiler-check-package-entry-file-with-roots-and-cfg
   [path : String]
   [stdlib-roots : svec.Vec]
@@ -449,26 +472,19 @@
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]
   [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
-  (begin
-    (compiler-check-reset-pools!)
-    (tc.tc-job-state-reset-advisories! job-state)
-    (cfg compile-profile (compiler-check-profile-start))
-    (compiler-check-loaded-cache-with-paths
-      (owned_view.compiler-owned-shared-view path)
-      (compiler_load.compiler-load-package-file-with-runtime-cfg
-        (& path)
-        (& stdlib-roots)
-        (& manifest-dir)
-        (& deps)
-        emit-entry
-        cfgs)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
-      cfgs
-      (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
-        "typecheck-prefix-check"
-        stdlib-roots
-        cfgs)
-      job-state)))
+  (compiler-check-package-begin! job-state)
+  (compiler-check-package-loaded
+    (owned_view.compiler-owned-shared-view path)
+    (compiler_load.compiler-load-package-file-with-runtime-cfg
+      (& path)
+      (& stdlib-roots)
+      (& manifest-dir)
+      (& deps)
+      emit-entry
+      cfgs)
+    stdlib-roots
+    cfgs
+    job-state))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (compiler-check-source-with-roots-and-cfg

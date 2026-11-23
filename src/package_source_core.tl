@@ -13,6 +13,7 @@
 (import stdlib.io)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
+(import compiler_ast_types as ast)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_diagnostic)
@@ -719,7 +720,8 @@
 ;; manifest is allowed; a manifest below it is a nested-package boundary.
 (define (package-source-relative-parent-eligible?
   [root : (& root str)]
-  [relative : (& relative str)]) : bool
+  [relative : (& relative str)]
+  [discover : bool]) : bool
   (let
     [end : i64 (fs.last-separator-index relative)]
     [cursor : i64 0]
@@ -732,23 +734,21 @@
         [name : String (string.substring relative cursor (- separator cursor))]
         (if (or
           (= (string.string-length name) 0)
-          (package-source-skip-dir?
-            (owned_view.compiler-owned-shared-view name)))
+          (and discover (package-source-skip-dir? (string.copy (& name)))))
           (set! eligible false)
           (let
             [next-prefix : String (package-source-relative-join prefix name)]
             [parent : String (package-source-root-join root next-prefix)]
             (set! prefix next-prefix)
-            ;; Match recursive discovery: every parent must be a real
-            ;; directory, never a symlink or Windows reparse point.
-            (match (fs.try-file-kind-no-follow (& parent))
-              [(ErrFsFileKind _) (set! eligible false)]
-              [(OkFsFileKind kind)
-                (if (and
-                  (fs.file-kind-directory? kind)
-                  (not (package-source-dir-has-manifest? parent)))
-                  unit
-                  (set! eligible false))])))
+            (set!
+              eligible
+              (and
+                (or
+                  (not discover)
+                  (match (fs.try-file-kind-no-follow (& parent))
+                    [(ErrFsFileKind _) false]
+                    [(OkFsFileKind kind) (fs.file-kind-directory? kind)]))
+                (not (package-source-dir-has-manifest? parent))))))
         (set! cursor (+ separator 1))))
     eligible))
 
@@ -769,7 +769,7 @@
       (not (string.eq relative normalized-path))
       (fs.path-safe-relative? (& relative))
       (package-source-tl-file? normalized-path)
-      (package-source-relative-parent-eligible? normalized-root relative))))
+      (package-source-relative-parent-eligible? normalized-root relative true))))
 
 ;; Fast single-path counterpart to root discovery for file-watcher events.
 ;; The path must additionally be a current regular file.
@@ -784,6 +784,66 @@
         [(OkFsFileKind kind)
           (package-source-include-kind? normalized-path kind)]
         [(ErrFsFileKind _) false]))))
+
+;; The loader's paths are relative to the working directory or already
+;; absolute. Use absolute paths for ownership checks, and retain the loader's
+;; spelling for the later source checks and their diagnostics.
+(define (package-source-absolute-path [cwd : (& str)] [path : (& str)]) : String
+  (compiler_load.compiler-load-normalize-path
+    (if (compiler_load.compiler-load-absolute-path? path)
+      (string.copy path)
+      (package-source-root-join cwd path))))
+
+(define (package-source-reachable-owned-files
+  [paths : (& ast.AstDeclPathList)]
+  [manifest-dir : (& str)]
+  [stdlib-roots : (& svec.Vec)]) : svec.Vec
+  (let
+    [cwd : String (fs.current-dir)]
+    [root : String (package-source-absolute-path (& cwd) manifest-dir)]
+    [stdlib-dir : String (package-source-root-join (& root) "stdlib")]
+    [last-path : String ""]
+    [sources : svec.Vec (svec.new)]
+    (for [index (iterator.range 0 (ast.ast-decl-path-list-len paths))]
+      (let
+        [path : String (ast.ast-decl-path-list-get paths index "")]
+        (unless
+          (string.eq path last-path)
+          (let
+            [absolute : String (package-source-absolute-path (& cwd) (& path))]
+            [relative : String
+              (compiler_load.compiler-load-root-relative-path
+                (& root)
+                (& absolute))]
+            (when
+              (and
+                (not (string.eq relative absolute))
+                (fs.path-safe-relative? (& relative))
+                (not (compiler_load.compiler-load-stdlib-import? path))
+                (not
+                  (compiler_load.compiler-load-path-under-root?
+                    (& absolute)
+                    (& stdlib-dir)))
+                (not
+                  (compiler_load.compiler-load-stdlib-import?
+                    (compiler_load.compiler-load-stdlib-owned-path-from-roots
+                      (string.copy (& path))
+                      stdlib-roots)))
+                (package-source-relative-parent-eligible?
+                  (& root)
+                  (& relative)
+                  false)
+                ;; Reachability can include labels from compiled surfaces.
+                ;; Check filesystem sources and follow their loaded symlinks.
+                (match (fs.try-file-kind (& absolute))
+                  [(OkFsFileKind kind)
+                    (package-source-include-kind? (& absolute) kind)]
+                  [(ErrFsFileKind _) false]))
+              (set!
+                sources
+                (package-source-vec-insert sources (string.copy (& path)))))
+            (set! last-path path)))))
+    sources))
 
 (define (package-source-discover-for
   [command : String]
@@ -991,7 +1051,7 @@
                 (owned_view.compiler-owned-shared-view source-set)
                 path
                 "source paths must be unique and in deterministic order"))]
-          [(not (package-source-relative-parent-eligible? root relative))
+          [(not (package-source-relative-parent-eligible? root relative true))
             (set!
               error
               (package-source-binding-invalid-set-error

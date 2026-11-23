@@ -267,3 +267,14 @@ windows) after the `tl_oob_abort` checks and keeping the loaded values live
 across the checks (swapping `%rax`/`%rsi` on linux and `%rax`/`%rcx` on windows
 for the `sealed` struct copy). No instruction is added and no branch, call,
 table reference, address form or wipe changes.
+
+## Tail merging re-pin
+
+Linux opt2 shares two tails in `construct-key-operation` and one in
+`prepare!`. Each replacement jump enters a byte-identical instruction
+sequence that falls through to the original shared epilogue. Expanding
+each shared suffix at its incoming jump recovered both previous bodies
+exactly. The same loads and stores execute in order, including the result
+copies and tag stores. Conditional branches, calls, wipes and effective
+addresses are identical on each path. Both the original and shared paths
+execute one unconditional jump on the redirected arms.

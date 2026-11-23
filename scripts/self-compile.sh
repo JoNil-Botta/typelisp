@@ -1196,12 +1196,17 @@ sc_ledger_repair_entries() {
                 sc_ledger_reattribute "$_slre_c" "$_slre_dir" || continue
                 _slre_entry=$_slre_dir/reattributed/entry.tsv
                 _slre_how="by re-attributing its PR"
-            elif [ "$(sc_record_get "$_slre_entry" outcome 2>/dev/null || true)" = comparability-failure ]; then
-                sc_ledger_reproduce_repair "$_slre_c" "$_slre_head" "$_slre_dir" || continue
-                _slre_entry=$_slre_dir/reproduced/entry.tsv
-                _slre_how="by reproducing its PR comparison"
             else
-                continue
+                case "$(sc_record_get "$_slre_entry" outcome 2>/dev/null || true)" in
+                    comparability-failure | comparability-failure+numerical-failure)
+                        sc_ledger_reproduce_repair "$_slre_c" "$_slre_head" "$_slre_dir" || continue
+                        _slre_entry=$_slre_dir/reproduced/entry.tsv
+                        _slre_how="by reproducing its PR comparison"
+                        ;;
+                    *)
+                        continue
+                        ;;
+                esac
             fi
         fi
         sc_account_apply "$3" "$_slre_entry" > "$3.next"
@@ -1227,7 +1232,10 @@ sc_ledger_reproduce_repair() {
         sc_log "cannot repair $_slrr_c: measurement tools are not installed"
         return 1
     }
-    [ "$(sc_record_get "$_slrr_old" outcome 2>/dev/null || true)" = comparability-failure ] || return 1
+    case "$(sc_record_get "$_slrr_old" outcome 2>/dev/null || true)" in
+        comparability-failure | comparability-failure+numerical-failure) ;;
+        *) return 1 ;;
+    esac
     [ "$(sc_record_get "$_slrr_old" attribution 2>/dev/null || true)" != missing ] || return 1
     for _slrr_f in landed.tsv parent.tsv pr.tsv pr-head.tsv pr-base.tsv; do
         [ -f "$_slrr_art_in/$_slrr_f" ] || return 1
@@ -1342,6 +1350,14 @@ sc_ledger_reattribute() {
         sc_record_get "$2/reattributed/entry.tsv" own >/dev/null 2>&1
 }
 
+# sc_account_has_repairable_comparability ACCOUNT  ->  succeeds when ACCOUNT
+# carries an entry whose step was measured, whose own cost is missing, and
+# whose outcome is an unreproduced comparability failure (alone or paired with
+# numerical-failure from landed-gate-window).
+sc_account_has_repairable_comparability() {
+    awk -F '\t' '$1 == "entry" && ($5 == "comparability-failure" || $5 == "comparability-failure+numerical-failure") && $6 != "-" && $7 == "-" { found = 1; exit } END { exit found ? 0 : 1 }' "$1"
+}
+
 sc_cmd_ledger_prepare() {
     sc_require_actions ledger
     [ "${GITHUB_EVENT_NAME:-}" = push ] || sc_fail "the ledger runs on pushes to main"
@@ -1397,16 +1413,23 @@ sc_cmd_ledger_prepare() {
     }; then
         _scl_tools=yes
     fi
-    if [ "$_scl_tools" = no ] && [ -z "$_scl_outcome" ]; then
+    if [ "$_scl_tools" = no ] && [ -z "$_scl_outcome" ] &&
+        git cat-file -e "$_scl_p:$SC_REFERENCE_WORKFLOW" 2>/dev/null; then
         sc_fetch_run_artifact ledger "$_scl_p" "$SC_LEDGER_JOB_NAME" "$SC_LEDGER_ARTIFACT" "$_scl_work/parent-ledger"
         if [ "$SC_RUN_STATUS" = ok ] &&
             [ "$(sc_record_get "$_scl_work/parent-ledger/artifact/producer.tsv" commit 2>/dev/null || true)" = "$_scl_p" ] &&
             [ "$(sc_record_get "$_scl_work/parent-ledger/artifact/producer.tsv" run.id 2>/dev/null || true)" = "$SC_RUN_ID" ] &&
             [ "$(sc_record_get "$_scl_work/parent-ledger/artifact/producer.tsv" run.attempt 2>/dev/null || true)" = "$SC_RUN_ATTEMPT" ] &&
             [ -f "$_scl_work/parent-ledger/artifact/account.tsv" ] &&
-            sc_account_valid "$_scl_work/parent-ledger/artifact/account.tsv" "$_scl_p" &&
-            awk -F '\t' '$1 == "entry" && $5 == "comparability-failure" && $6 != "-" && $7 == "-" { found = 1; exit } END { exit found ? 0 : 1 }' \
-                "$_scl_work/parent-ledger/artifact/account.tsv"; then
+            sc_account_valid "$_scl_work/parent-ledger/artifact/account.tsv" "$_scl_p"; then
+            if sc_account_has_repairable_comparability "$_scl_work/parent-ledger/artifact/account.tsv"; then
+                _scl_tools=yes
+            fi
+        else
+            # Parent's ledger is pending, unavailable, or lacks a valid
+            # account.tsv (so completion will wait for it or walk back to an
+            # ancestor / checkpoint); request tools conservatively so any
+            # repairable comparability-failure can be reproduced.
             _scl_tools=yes
         fi
     fi

@@ -1606,6 +1606,111 @@ st_e2e_repro_repair() {
         "1 ok no unresolved 2"
     st_eq "refused repair logs runner identity mismatch" \
         "$(grep -c "cannot repair $ST_REPRO_C0: this runner's measurement identity differs" "$ST_E2E/repro-repair-c1-badrunner/ledger.log" | tr -d ' ')" 1
+
+    # 5. When parent's ledger is pending during --prepare and completes with a
+    #    repairable comparability-failure, --prepare requests tools conservatively
+    #    so completion waits for parent's ledger and repairs the failure.
+    st_e2e_repro_setup repro-pending
+    st_eq "pending-parent test seeds c0 with comparability-failure" \
+        "$(ST_FAIL_HEAD_REPRO=yes st_e2e_ledger c0 "$ST_REPRO_C0" 900 repro-pending)" \
+        "1 comparability-failure no unresolved 1"
+    ST_API=$ST_E2E/repro-pending-api
+    _serp_jobs="repos/$ST_REPO/actions/runs/900/jobs?filter=all&per_page=100"
+    _serp_pending=$(printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}, {"name": "%s", "run_attempt": 1, "status": "in_progress", "conclusion": null, "started_at": "t3", "completed_at": null, "runner_name": "r2"}]}\n' \
+        "$SC_REFERENCE_JOB_NAME" "$SC_LEDGER_JOB_NAME")
+    _serp_done=$(printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}, {"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t3", "completed_at": "t4", "runner_name": "r2"}]}\n' \
+        "$SC_REFERENCE_JOB_NAME" "$SC_LEDGER_JOB_NAME")
+    printf '%s\n' "$_serp_pending" | st_api_put "$_serp_jobs.1"
+    printf '%s\n' "$_serp_pending" | st_api_put "$_serp_jobs.2"
+    printf '%s\n' "$_serp_pending" | st_api_put "$_serp_jobs.3"
+    printf '%s\n' "$_serp_done" | st_api_put "$_serp_jobs.4"
+    st_eq "ledger repairs parent comparability-failure when parent ledger was pending at prepare" \
+        "$(ST_FALLBACK_HEAD_IR=116000050000 st_e2e_ledger c1 "$ST_REPRO_C1" 901 repro-pending)" \
+        "0 ok yes clean 2"
+    st_eq "ledger --prepare sets needs-tools=yes when parent ledger is pending" \
+        "$(cat "$ST_E2E/repro-pending-c1/outputs")" needs-tools=yes
+
+    # 6. When parent's ledger artifact lacks a valid account.tsv (so completion
+    #    walks back to a checkpoint carrying a comparability-failure), --prepare
+    #    requests tools conservatively and completion repairs via the checkpoint.
+    st_e2e_repro_setup repro-checkpoint
+    st_eq "checkpoint test seeds c0 with comparability-failure" \
+        "$(ST_FAIL_HEAD_REPRO=yes st_e2e_ledger c0 "$ST_REPRO_C0" 900 repro-checkpoint)" \
+        "1 comparability-failure no unresolved 1"
+    (
+        cd "$ST_E2E/repro-checkpoint-repo"
+        git checkout -q --detach "$ST_REPRO_C0"
+        mkdir -p perf
+        cp "$ST_E2E/repro-checkpoint-art/id-9002/account.tsv" "$SC_CHECKPOINT_FILE"
+        st_git add "$SC_CHECKPOINT_FILE"
+        st_git commit -qm c1-checkpoint
+        _serc_c1=$(git rev-parse HEAD)
+        printf '%s\n' "$_serc_c1" > "$ST_E2E/repro-checkpoint-c1.sha"
+        ST_API=$ST_E2E/repro-checkpoint-api
+        ST_ART=$ST_E2E/repro-checkpoint-art
+        st_record "$ST_E2E/repro-checkpoint-c1.tsv" commit="$_serc_c1" tree="$(st_tree "$_serc_c1")" ir_count=116000060000 run.id=902
+        st_reference_api "$_serc_c1" 902 "$ST_E2E/repro-checkpoint-c1.tsv"
+        st_e2e_pr_api "$_serc_c1" 52 "$ST_SHA_F" 7052 116000060300 116000050000 "$ST_REPRO_C0"
+    )
+    _serc_c1=$(cat "$ST_E2E/repro-checkpoint-c1.sha")
+    rm -f "$ST_E2E/repro-checkpoint-art/id-9002/account.tsv"
+    st_eq "ledger repairs comparability-failure via checkpoint when parent lacks account.tsv" \
+        "$(ST_FALLBACK_HEAD_IR=116000050000 st_e2e_ledger c1cp "$_serc_c1" 902 repro-checkpoint)" \
+        "0 ok yes clean 2"
+    st_eq "ledger --prepare sets needs-tools=yes when parent lacks account.tsv" \
+        "$(cat "$ST_E2E/repro-checkpoint-c1cp/outputs")" needs-tools=yes
+
+    # 7. When parent predates the reference workflow (anchor commit c0) and its
+    #    reference is already available, --prepare keeps needs-tools=no.
+    st_e2e_ledger_set repro-anchor - 116000050100
+    _sera_p0=$(git -C "$ST_E2E/repro-anchor-repo" rev-parse HEAD~2)
+    (
+        cd "$ST_E2E/repro-anchor-repo"
+        ST_API=$ST_E2E/repro-anchor-api
+        ST_ART=$ST_E2E/repro-anchor-art
+        st_record "$ST_E2E/repro-anchor-p0.tsv" commit="$_sera_p0" tree="$(st_tree "$_sera_p0")" ir_count=116000000000 run.id=899
+        st_reference_api "$_sera_p0" 899 "$ST_E2E/repro-anchor-p0.tsv"
+    )
+    st_eq "anchor commit with parent reference succeeds without tools" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 repro-anchor)" "0 ok yes clean 1"
+    st_eq "anchor commit keeps needs-tools=no when parent predates reference workflow" \
+        "$(cat "$ST_E2E/repro-anchor-c0/outputs")" needs-tools=no
+    st_eq "anchor commit installs and probes nothing when parent reference exists" \
+        "$(cat "$ST_E2E/repro-anchor-c0/events")" ""
+
+    # 8. Compound outcome comparability-failure+numerical-failure (landed-gate-window
+    #    exceeded AND PR reproduction failed) is detected by --prepare and repaired
+    #    on the next merge, leaving numerical-failure with complete quantities.
+    st_e2e_repro_setup repro-compound
+    _serm_h=$(sed -n 1p "$ST_E2E/repro-compound-pr.info")
+    _serm_tt=$(sed -n 2p "$ST_E2E/repro-compound-pr.info")
+    (
+        cd "$ST_E2E/repro-compound-repo"
+        ST_API=$ST_E2E/repro-compound-api
+        ST_ART=$ST_E2E/repro-compound-art
+        st_record "$ST_E2E/repro-compound-c0.tsv" commit="$ST_REPRO_C0" tree="$(st_tree "$ST_REPRO_C0")" ir_count=116700000000 run.id=900
+        st_record "$ST_E2E/repro-compound-c1.tsv" commit="$ST_REPRO_C1" tree="$(st_tree "$ST_REPRO_C1")" ir_count=116710000000 run.id=901
+        st_reference_api "$ST_REPRO_C0" 900 "$ST_E2E/repro-compound-c0.tsv"
+        st_reference_api "$ST_REPRO_C1" 901 "$ST_E2E/repro-compound-c1.tsv"
+        st_e2e_pr_api "$ST_REPRO_C0" 50 "$_serm_h" 7050 116700000100 116000000000 "$ST_REPRO_P0" key.valgrind=valgrind-old
+        st_record "$ST_ART/id-70503/head.tsv" commit="$ST_SHA_D" tree="$_serm_tt" ir_count=116700000100 \
+            run.id=7050 run.event=pull_request key.valgrind=valgrind-old
+        st_e2e_pr_api "$ST_REPRO_C1" 51 "$ST_SHA_F" 7051 116710000300 116700000000 "$ST_REPRO_C0"
+    )
+    st_eq "e2e ledger records comparability-failure+numerical-failure when gate window and reproduction both fail" \
+        "$(ST_FAIL_HEAD_REPRO=yes st_e2e_ledger c0 "$ST_REPRO_C0" 900 repro-compound)" \
+        "1 comparability-failure+numerical-failure no unresolved 1"
+    st_eq "later ledger repairs compound comparability-failure+numerical-failure into complete numerical-failure" \
+        "$(ST_FALLBACK_HEAD_IR=116700000000 st_e2e_ledger c1 "$ST_REPRO_C1" 901 repro-compound)" \
+        "1 ok yes unresolved 2"
+    st_eq "ledger --prepare sets needs-tools=yes for compound comparability-failure+numerical-failure" \
+        "$(cat "$ST_E2E/repro-compound-c1/outputs")" needs-tools=yes
+    st_eq "compound repair reuses uploaded rep-base.tsv" \
+        "$(tr '\n' ' ' < "$ST_E2E/repro-compound-c1/events")" "install identity head-reproduction "
+    _serm_acc=$ST_E2E/repro-compound-c1/repo/target/self-compile/ledger/account.tsv
+    st_eq "repaired compound entry preserves step, populates own, and clears comparability-failure" \
+        "$(awk -F '\t' -v c="$ST_REPRO_C0" '$1 == "entry" && $2 == c { print $3, $5, $6, $7, $12 }' "$_serm_acc")" \
+        "M numerical-failure 700000000 700000100 700000000"
 }
 
 st_e2e() {

@@ -248,7 +248,9 @@
   [result : process.ResultProcessOutput]
   [message : (& message str)]) : unit
   (test.assert-true
-    (process.result-invalid-command? (clone result))
+    (match (& result)
+      [(process.ErrProcessOutput (process.ProcessInvalidCommand _)) true]
+      [_ false])
     (string.copy message))
   (assert-owned-string-eq
     (process.result-error-message-or result "ok")
@@ -259,7 +261,9 @@
   [result : process.ResultProcessChild]
   [message : (& message str)]) : unit
   (test.assert-true
-    (process.child-result-invalid-command? (clone result))
+    (match (& result)
+      [(process.ErrProcessChild (process.ProcessInvalidCommand _)) true]
+      [_ false])
     (string.copy message))
   (assert-owned-string-eq
     (process.child-result-error-message-or result "ok")
@@ -347,14 +351,20 @@
           (process.command-with-stdin
             (process.command-with-cwd
               (process.command-with-args
-                (process.command-with-arg (clone exact) "a")
+                (process.command-with-arg
+                  (process.clone-process-command (& exact))
+                  "a")
                 (process.args-single "b"))
               "target")
             "in")))
       "argv, cwd and stdin builders keep the exact policy")
     (test.assert-true
       (process.command-env-exact?
-        (& (process.command-with-exact-env (clone exact) "A" "1")))
+        (&
+          (process.command-with-exact-env
+            (process.clone-process-command (& exact))
+            "A"
+            "1")))
       "exact env row builder")
     (test.assert-true
       (process.command-env-exact?
@@ -365,11 +375,18 @@
       "exact env vec builder")
     (test.assert-false
       (process.command-env-exact?
-        (& (process.command-with-env (clone exact) "A" "1")))
+        (&
+          (process.command-with-env
+            (process.clone-process-command (& exact))
+            "A"
+            "1")))
       "command-with-env selects the inherited policy")
     (test.assert-false
       (process.command-env-exact?
-        (& (process.command-with-env-list (clone exact) (process.env-empty))))
+        (&
+          (process.command-with-env-list
+            (process.clone-process-command (& exact))
+            (process.env-empty))))
       "command-with-env-list selects the inherited policy")
     (test.assert-true
       (process.command-valid? (& exact))
@@ -470,7 +487,9 @@
         (process.command-with-env
           (process.command-with-stdin
             (process.command-with-cwd
-              (process.command "echo" (clone args))
+              (process.command
+                "echo"
+                (process.clone-process-string-list (& args)))
               "target")
             "stdin")
           "TL_TEST"
@@ -496,7 +515,11 @@
       (process.command-executable command)
       "echo"
       "process executable")
-    (assert-process-string-list (clone args) "hello" "world" "process argv")
+    (assert-process-string-list
+      (process.clone-process-string-list (& args))
+      "hello"
+      "world"
+      "process argv")
     (assert-process-string-list3
       (process.command-argv command)
       "hello"
@@ -528,7 +551,9 @@
       [multi-command : process.ProcessCommand
         (process.command-from-argv-vec "echo" (& multi-argv))]
       [replace-command : process.ProcessCommand
-        (process.command-with-argv-vec (clone command) (& replace-argv))]
+        (process.command-with-argv-vec
+          (process.clone-process-command (& command))
+          (& replace-argv))]
       [append-command : process.ProcessCommand
         (process.command-with-args-vec
           (process.command "echo" (process.args-single "base"))
@@ -590,7 +615,7 @@
     (let
       [replaced-env-command : process.ProcessCommand
         (process.command-with-env-list
-          (clone command)
+          (process.clone-process-command (& command))
           (process.env-cons "TL_REPLACED" "yes" (process.env-empty)))]
       (assert-process-env-head
         (process.command-env replaced-env-command)
@@ -609,7 +634,9 @@
       [bad-live-length : process.ProcessEnvVec
         (process-api-forged-live-length-env-vec)]
       [env-command : process.ProcessCommand
-        (process.command-with-env-vec (clone command) (& env-vec))]
+        (process.command-with-env-vec
+          (process.clone-process-command (& command))
+          (& env-vec))]
       (test.assert-i64-eq
         (process.env-vec-count (& env-vec-empty))
         0
@@ -663,11 +690,15 @@
         "process env vec forged live length")
       (assert-process-invalid-command
         (process.output
-          (process.command-with-env-vec (clone command) (& bad-empty)))
+          (process.command-with-env-vec
+            (process.clone-process-command (& command))
+            (& bad-empty)))
         "process: environment variable name is empty")
       (assert-process-child-invalid-command
         (process.start
-          (process.command-with-env-vec (clone command) (& bad-name)))
+          (process.command-with-env-vec
+            (process.clone-process-command (& command))
+            (& bad-name)))
         "process: environment variable name contains '='"))
     (assert-process-no-string
       (process.command-cwd default-command)
@@ -676,13 +707,24 @@
       (process.output (process.command "" (process.args-empty)))
       "process: executable path is empty")
     (assert-process-invalid-command
-      (process.output (process.command-with-cwd (clone command) ""))
+      (process.output
+        (process.command-with-cwd
+          (process.clone-process-command (& command))
+          ""))
       "process: cwd path is empty")
     (assert-process-invalid-command
-      (process.output (process.command-with-env (clone command) "" "1"))
+      (process.output
+        (process.command-with-env
+          (process.clone-process-command (& command))
+          ""
+          "1"))
       "process: environment variable name is empty")
     (assert-process-invalid-command
-      (process.output (process.command-with-env (clone command) "BAD=NAME" "1"))
+      (process.output
+        (process.command-with-env
+          (process.clone-process-command (& command))
+          "BAD=NAME"
+          "1"))
       "process: environment variable name contains '='")
     (assert-process-invalid-command
       (process.output (process-api-malformed-env-command))
@@ -727,13 +769,24 @@
       (process.start (process.command "" (process.args-empty)))
       "process: executable path is empty")
     (assert-process-child-invalid-command
-      (process.start (process.command-with-cwd (clone command) ""))
+      (process.start
+        (process.command-with-cwd
+          (process.clone-process-command (& command))
+          ""))
       "process: cwd path is empty")
     (assert-process-child-invalid-command
-      (process.start (process.command-with-env (clone command) "" "1"))
+      (process.start
+        (process.command-with-env
+          (process.clone-process-command (& command))
+          ""
+          "1"))
       "process: environment variable name is empty")
     (assert-process-child-invalid-command
-      (process.start (process.command-with-env (clone command) "BAD=NAME" "1"))
+      (process.start
+        (process.command-with-env
+          (process.clone-process-command (& command))
+          "BAD=NAME"
+          "1"))
       "process: environment variable name contains '='")
     (test.assert-true (process.command-valid? command) "process valid command")
     (test.assert-false

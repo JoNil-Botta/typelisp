@@ -1,75 +1,62 @@
-;; Public `(gen-clone T)` coverage. Dependencies are generated in owner order,
-;; and the acronym-bearing root proves deterministic lowercase/kebab naming.
-(module explicit_clone_generation)
-
+;; Exercise clone hooks from named, generated and root owners.
+(import stdlib.clone)
 (import stdlib.string)
-(import stdlib.clone as clone_gen)
+(import explicit_clone_generation_owner as named)
 
-(defstruct Leaf
-  (label String)
+(defmacro (record-owner [T : type]) : Module
+  `(begin
+    (module generated_explicit_clone_record)
+    (import stdlib.clone)
+    (defstruct TLS2Record_Header
+      (value ,T))
+    (stdlib.clone.gen-clone TLS2Record_Header)))
+
+(import (record-owner String) as generated)
+
+(defstruct RootRecord
+  (label String))
+
+(clone.gen-clone RootRecord)
+
+(defstruct CopyCell
   (rank i64))
 
-(clone_gen.gen-clone Leaf)
-
-(defenum Choice
-  (Empty)
-  (Item Leaf String))
-
-(clone_gen.gen-clone Choice)
-
-(defstruct HTTPPacket
-  (leaf Leaf)
-  (choice Choice)
-  (pair (Tuple String i64))
-  (fixed (Array String 2))
-  (items (__tl_dyn-array String))
-  (boxed (Box Leaf)))
-
-(clone_gen.gen-clone HTTPPacket)
-
-(define (make-packet) : HTTPPacket
+(define (generated-and-root-ok?) : bool
   (let
-    [items : (__tl_dyn-array String) (__tl_make-array String 2)]
-    (set! (array-ref items 0) (string.append "dy" "namic"))
-    (set! (array-ref items 1) (string.append "ar" "ray"))
-    (HTTPPacket
-      (Leaf (string.append "le" "af") 7)
-      (Item (Leaf (string.append "en" "um") 9) "payload")
-      (tuple (string.append "tu" "ple") 11)
-      (array (string.append "fi" "xed") "array")
-      items
-      (box (Leaf (string.append "bo" "xed") 13)))))
-
-(define (packet-ok? [packet : (& packet HTTPPacket)]) : bool
-  (and
-    (string.eq packet.leaf.label "leaf")
-    (= packet.leaf.rank 7)
-    (match packet.choice
-      [(Empty) false]
-      [(Item leaf text)
-        (and
-          (string.eq leaf.label "enum")
-          (= leaf.rank 9)
-          (string.eq text "payload"))])
-    (string.eq (tuple-ref packet.pair 0) "tuple")
-    (= (tuple-ref packet.pair 1) 11)
-    (string.eq (array-ref packet.fixed 0) "fixed")
-    (string.eq (array-ref packet.fixed 1) "array")
-    (string.eq (array-ref packet.items 0) "dynamic")
-    (string.eq (array-ref packet.items 1) "array")
-    (string.eq (deref packet.boxed).label "boxed")
-    (= (deref packet.boxed).rank 13)))
+    [record : generated.TLS2Record_Header
+      (generated.TLS2Record_Header (string.append "gen" "erated"))]
+    [record-copy : generated.TLS2Record_Header (clone.deep record)]
+    [record-direct : generated.TLS2Record_Header
+      (generated.clone-tls2-record-header (& record))]
+    [root : RootRecord (RootRecord (string.append "ro" "ot"))]
+    [root-copy : RootRecord (clone-root-record (& root))]
+    [root-deep : RootRecord (clone.deep root)]
+    [cell : CopyCell (CopyCell 42)]
+    [cell-copy : CopyCell (clone.deep cell)]
+    (set! record-copy.value "changed")
+    (set! root-copy.label "changed")
+    (and
+      (string.eq record.value "generated")
+      (string.eq record-copy.value "changed")
+      (string.eq record-direct.value "generated")
+      (string.eq root.label "root")
+      (string.eq root-copy.label "changed")
+      (string.eq root-deep.label "root")
+      (= cell-copy.rank 42))))
 
 (define (main) : i64
   (let
-    [source : HTTPPacket (make-packet)]
-    [copy : HTTPPacket (clone-http-packet (& source))]
-    [copy-started-valid : bool (packet-ok? (& copy))]
+    [source : named.HTTPPacket (named.make-packet)]
+    [copy : named.HTTPPacket (named.clone-http-packet (& source))]
+    [deep-copy : named.HTTPPacket (clone.deep source)]
+    [copy-started-valid : bool (named.packet-ok? (& copy))]
     (set! (array-ref copy.items 0) "changed")
     (set! (deref copy.boxed).rank 99)
     (if (and
       copy-started-valid
-      (packet-ok? (& source))
+      (named.packet-ok? (& source))
+      (named.packet-ok? (& deep-copy))
+      (generated-and-root-ok?)
       (string.eq (array-ref copy.items 0) "changed"))
       42
       1)))

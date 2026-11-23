@@ -25,7 +25,7 @@
   [numbers : (& numbers (Array i64 2))]
   [flag : bool]) : i64
   (let
-    [copy : String (clone (ann (array-ref p 1) : (in p String)))]
+    [copy : String (string.copy (& (array-ref p 1)))]
     (+
       (observe (ann (array-ref p 0) : (in p String)))
       (observe
@@ -33,7 +33,7 @@
           (array-ref p 0)
           (array-ref p 1)))
       (string.string-length (& copy))
-      (keep p (clone (array-ref p 0)))
+      (keep p (string.copy (& (array-ref p 0))))
       (keep-number numbers (array-ref numbers 0)))))
 
 (define (main) : i64

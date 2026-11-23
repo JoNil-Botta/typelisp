@@ -136460,7 +136460,8 @@
   [cache-scope : String]
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
-  [intern-state-input : ci.InternCompatState]) : ResultCompilerTypecheckChecked
+  [intern-state-input : ci.InternCompatState]
+  [retain-global-call-effects : bool]) : ResultCompilerTypecheckChecked
   (tc-typecheck-specialized-program-with-selected-lowering
     load-state
     prefix-cache
@@ -136472,7 +136473,8 @@
     pools
     source-names
     intern-state-input
-    false))
+    false
+    retain-global-call-effects))
 
 (define (tc-typecheck-specialized-program-with-selected-lowering
   [load-state : cload.CompilerLoadSessionState]
@@ -136485,7 +136487,8 @@
   [pools : ast.AstNodePoolContext]
   [source-names : ci.InternSourceNameSessionHandle]
   [intern-state-input : ci.InternCompatState]
-  [capture-lowering? : bool]) : ResultCompilerTypecheckChecked
+  [capture-lowering? : bool]
+  [retain-global-call-effects : bool]) : ResultCompilerTypecheckChecked
   (let
     [intern-state : ci.InternCompatState intern-state-input]
     ;; Publish owner-generated IDs before the legacy body/typecheck state runs.
@@ -136523,7 +136526,9 @@
             job-source-names
             body-state
             semantic-observer)))]
-    (tc-global-call-effects-finish! job-state)
+    (unless
+      retain-global-call-effects
+      (tc-global-call-effects-finish! job-state))
     (ast.ast-node-pool-context-capture-active! pools)
     (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
     (match checked

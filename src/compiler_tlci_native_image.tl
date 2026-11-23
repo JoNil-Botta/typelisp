@@ -42,7 +42,7 @@
   (layout.compiler-object-layout-align-offset offset align))
 
 (define (compiler-tlci-native-section-instrs
-  [image : cobj.CompilerObjectImage]
+  [image : (& cobj.CompilerObjectImage)]
   [kind : cobj.CompilerObjectSectionKind]) : cobj.CompilerObjectX64InstrList
   (match (cobj.compiler-object-section-list-find image.sections kind)
     [(Section _ _ instrs) instrs]))
@@ -120,9 +120,7 @@
   [bases : CompilerTlciNativeBases]) : CompilerTlciNativeSymbolIndex
   (let
     [instrs : cobj.CompilerObjectX64InstrList
-      (compiler-tlci-native-section-instrs
-        (owned_view.compiler-owned-shared-view image)
-        (Text))]
+      (compiler-tlci-native-section-instrs (& image) (Text))]
     [instr-count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [offsets : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ instr-count 16))]
@@ -328,7 +326,7 @@
   [bytes : (__tl_dyn-array u8)]) : bool
   (let
     [instrs : cobj.CompilerObjectX64InstrList
-      (compiler-tlci-native-section-instrs image (Text))]
+      (compiler-tlci-native-section-instrs (& image) (Text))]
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [offset : i64 bases.text]
@@ -538,9 +536,7 @@
 (define (compiler-tlci-native-layout-image [image : cobj.CompilerObjectImage]) : ResultCompilerTlciNativeLayout
   (let
     [text-instrs : cobj.CompilerObjectX64InstrList
-      (compiler-tlci-native-section-instrs
-        (owned_view.compiler-owned-shared-view image)
-        (Text))]
+      (compiler-tlci-native-section-instrs (& image) (Text))]
     [text-size : i64
       (layout.compiler-object-layout-instrs-size (& text-instrs))]
     [rodata-records : cobj.CompilerObjectDataRecordList
@@ -719,7 +715,7 @@
 ;; Region offset of a named text entry. Macro records select the provided C
 ;; export rather than the private Internal body or its compact function label.
 (define (compiler-tlci-native-entry-offset
-  [image : cobj.CompilerObjectImage]
+  [image : (& cobj.CompilerObjectImage)]
   [name : String]) : i64
   (layout.compiler-object-layout-instr-label-offset-from
     (& (compiler-tlci-native-section-instrs image (Text)))

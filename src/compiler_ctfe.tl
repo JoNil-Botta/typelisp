@@ -7,7 +7,6 @@
 ;; Evaluation threads persistent environment snapshots through recursion, and
 ;; the step budget ("fuel") through results, so the evaluator stays
 ;; deterministic without a mutable fuel counter.
-(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
@@ -1245,21 +1244,55 @@
   ;; `svec` names there, wherever the reflecting macro expands (#8474).
   (alias-scope i64))
 
-(clone_gen.gen-clone CtfeReflectField)
+(define (clone-ctfe-reflect-field-list [items : (& CtfeReflectFieldList)]) : CtfeReflectFieldList
+  (let
+    [slots : (__tl_dyn-array CtfeReflectField)
+      (__tl_make-array CtfeReflectField (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (match (& (array-ref items.slots index))
+        [(Field name ty)
+          (set! (array-ref slots index) (Field name (ast.clone-ast-type ty)))
+          unit]))
+    (CtfeReflectFieldList slots items.len)))
 
-(clone_gen.gen-clone CtfeReflectFieldList)
+(define (clone-ctfe-reflect-variant-list [items : (& CtfeReflectVariantList)]) : CtfeReflectVariantList
+  (let
+    [slots : (__tl_dyn-array CtfeReflectVariant)
+      (__tl_make-array CtfeReflectVariant (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (match (& (array-ref items.slots index))
+        [(Variant name payload)
+          (set!
+            (array-ref slots index)
+            (Variant name (ast.clone-ast-type-list payload)))
+          unit]))
+    (CtfeReflectVariantList slots items.len)))
 
-(clone_gen.gen-clone CtfeReflectVariant)
+(define (clone-ctfe-reflect-cleanup [cleanup : (& CtfeReflectCleanup)]) : CtfeReflectCleanup
+  (match cleanup
+    [(No) (No)]
+    [(Fn name id) (Fn (string.copy name) id)]))
 
-(clone_gen.gen-clone CtfeReflectVariantList)
-
-(clone_gen.gen-clone CtfeReflectCleanup)
-
-(clone_gen.gen-clone CtfeReflectInfo)
-
-(clone_gen.gen-clone CtfeReflectAlignTable)
-
-(clone_gen.gen-clone CtfeReflectInfoList)
+(define (clone-ctfe-reflect-info [info : (& CtfeReflectInfo)]) : CtfeReflectInfo
+  (match info
+    [(Struct key module name id cleanup fields markers)
+      (Struct
+        (string.copy key)
+        (string.copy module)
+        (string.copy name)
+        id
+        (clone-ctfe-reflect-cleanup cleanup)
+        (clone-ctfe-reflect-field-list fields)
+        markers)]
+    [(Enum key module name id cleanup variants markers)
+      (Enum
+        (string.copy key)
+        (string.copy module)
+        (string.copy name)
+        id
+        (clone-ctfe-reflect-cleanup cleanup)
+        (clone-ctfe-reflect-variant-list variants)
+        markers)]))
 
 (defenum CtfeMaybeReflectInfo
   (None)
@@ -2223,7 +2256,7 @@
   (ast.ast-node-pool-context-expr-push (ctfe-env-pools env) node))
 
 (define (ctfe-expr-unspan [env : (& env CtfeEnv)] [expr : ast.AstExpr]) : ast.AstExpr
-  (match (ast.clone-ast-expr (& expr))
+  (match (& expr)
     [(or (Spanned inner-id _) (MacroExpansion inner-id _ _))
       (ctfe-expr-unspan env (ctfe-ast-get env inner-id))]
     [_ expr]))
@@ -2915,8 +2948,7 @@
     [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
-        [capacity : i64
-          (ctfe-metadata-decl-capacity (& (ast.clone-ast-decl-list (& decls))))]
+        [capacity : i64 (ctfe-metadata-decl-capacity (& decls))]
         (ctfe-build-seen-reset!)
         (ctfe-reflections-from-decls
           (& decls)
@@ -3895,7 +3927,7 @@
   [expr : (& ast.AstExpr)]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (match (compiler-ctfe-eval (& (ast.clone-ast-expr inner)) env fuel)
+  (match (compiler-ctfe-eval inner env fuel)
     [(Ok value next-fuel)
       (let
         [from-ty : ast.AstType
@@ -4845,10 +4877,7 @@
   [want-struct : bool]) : CtfePatternMatch
   (let
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
-    (match (ctfe-reflect-info-for-type-with-pools
-      (ctfe-env-pools env)
-      infos
-      (& (ast.clone-ast-type ty)))
+    (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
       [(Some info)
         (match info
           [(Struct _ _ _ _ _ fields _)
@@ -4860,9 +4889,7 @@
                     (ctfe-value-list2
                       (&
                         (ctfe-generated-string-value
-                          (ctfe-type-info-key-in-env
-                            env
-                            (& (ast.clone-ast-type ty)))))
+                          (ctfe-type-info-key-in-env env ty)))
                       (& (TypeFieldList fields))))
                   env)
                 (No))
@@ -4877,9 +4904,7 @@
                     (ctfe-value-list2
                       (&
                         (ctfe-generated-string-value
-                          (ctfe-type-info-key-in-env
-                            env
-                            (& (ast.clone-ast-type ty)))))
+                          (ctfe-type-info-key-in-env env ty)))
                       (& (TypeVariantList variants))))
                   env)
                 (No)))])]
@@ -4899,10 +4924,7 @@
         infos
         (owned_view.compiler-owned-reference-shared-view ty))]
     [kind : String
-      (ctfe-type-kind-with-reflections-and-pools
-        pools
-        infos
-        (& (ast.clone-ast-type (& resolved))))]
+      (ctfe-type-kind-with-reflections-and-pools pools infos (& resolved))]
     (match (ast.clone-ast-type (& resolved))
       [(Array elem count)
         (if (ctfe-pattern-variant-name? variant "Array")
@@ -5094,7 +5116,7 @@
         (box
           (ctfe-diagnostic-at-expr
             (ComptimeEvaluation)
-            (& (ast.clone-ast-expr expr))
+            expr
             (str_cat.str-cat
               "'"
               (ctfe-describe-expr expr)
@@ -7871,7 +7893,7 @@
                       (ctfe-caller-origin-expr-node-with-pools
                         pools
                         (ctfe-expr-binding-clause-init (& clause))
-                        (& (ast.clone-ast-type (& produced))))]
+                        (& produced))]
                     [init-ty : ast.AstType
                       (ctfe-caller-origin-expr-type-inner-with-pools
                         pools
@@ -8072,19 +8094,14 @@
 (define (ctfe-expr-if-condition-type-ok?
   [env : (& env CtfeEnv)]
   [ty : (& ast.AstType)]) : bool
-  (or
-    (ctfe-type-eq-in-env env (& (ast.clone-ast-type ty)) (& (Bool)))
-    (ctfe-untyped-expr-type? ty)))
+  (or (ctfe-type-eq-in-env env ty (& (Bool))) (ctfe-untyped-expr-type? ty)))
 
 (define (ctfe-expr-if-branch-types-compatible?
   [env : (& env CtfeEnv)]
   [then-ty : (& ast.AstType)]
   [else-ty : (& ast.AstType)]) : bool
   (or
-    (ctfe-type-eq-in-env
-      env
-      (& (ast.clone-ast-type then-ty))
-      (& (ast.clone-ast-type else-ty)))
+    (ctfe-type-eq-in-env env then-ty else-ty)
     (ctfe-untyped-expr-type? then-ty)
     (ctfe-untyped-expr-type? else-ty)))
 
@@ -8092,7 +8109,7 @@
   [env : (& env CtfeEnv)]
   [then-ty : ast.AstType]
   [else-ty : (& ast.AstType)]) : ast.AstType
-  (if (ctfe-type-eq-in-env env (& (ast.clone-ast-type (& then-ty))) else-ty)
+  (if (ctfe-type-eq-in-env env (& then-ty) else-ty)
     then-ty
     (ctfe-untyped-expr-type)))
 
@@ -8121,8 +8138,8 @@
                               [(Expr else-node else-ty)
                                 (if (ctfe-expr-if-branch-types-compatible?
                                   env
-                                  (& (ast.clone-ast-type (& then-ty)))
-                                  (& (ast.clone-ast-type (& else-ty))))
+                                  (& then-ty)
+                                  (& else-ty))
                                   (Ok
                                     (Expr
                                       (ast.ast-expr-if-with-pools
@@ -8223,8 +8240,8 @@
                               [(CapturedExpr else-node else-ty else-pools)
                                 (if (ctfe-expr-if-branch-types-compatible?
                                   env
-                                  (& (ast.clone-ast-type (& then-ty)))
-                                  (& (ast.clone-ast-type (& else-ty))))
+                                  (& then-ty)
+                                  (& else-ty))
                                   (let
                                     [build-pools : ast.AstNodePoolContext
                                       (ctfe-newest-syntax-pools
@@ -8382,8 +8399,8 @@
             [(Expr when-false-node when-false-ty)
               (if (ctfe-expr-if-branch-types-compatible?
                 env
-                (& (ast.clone-ast-type (& when-true-ty)))
-                (& (ast.clone-ast-type (& when-false-ty))))
+                (& when-true-ty)
+                (& when-false-ty))
                 (let
                   [fold : CtfeFold
                     (ctfe-expr-list-fold-if-node
@@ -8425,8 +8442,8 @@
             [(CapturedExpr when-false-node when-false-ty when-false-pools)
               (if (ctfe-expr-if-branch-types-compatible?
                 env
-                (& (ast.clone-ast-type (& when-true-ty)))
-                (& (ast.clone-ast-type (& when-false-ty))))
+                (& when-true-ty)
+                (& when-false-ty))
                 (let
                   [build-pools : ast.AstNodePoolContext
                     (ctfe-newest-syntax-pools
@@ -10271,7 +10288,7 @@
     (box
       (ctfe-diagnostic-at-expr
         (ComptimeEvaluation)
-        (& (ast.clone-ast-expr expr))
+        expr
         (str_cat.str-cat
           "'"
           (ctfe-describe-expr expr)
@@ -10340,7 +10357,7 @@
             (ctfe-fuel-diagnostic-message))))
       (match (ctfe-eval-dotted-var-source
         (ci.intern-dotted-prefix-id source-id)
-        (& (ast.clone-ast-expr expr))
+        expr
         env
         (- fuel 1))
         [(Ok value next-fuel)
@@ -10504,7 +10521,7 @@
                   (ctfe-caller-origin-expr-node-with-pools
                     pools
                     (ctfe-expr-binding-clause-init (& clause))
-                    (& (ast.clone-ast-type (& produced))))
+                    (& produced))
                   (ctfe-caller-origin-expr-type-inner-with-pools pools produced))
                 fuel))]
           [else (ctfe-comptime-field-error field expr)])]
@@ -10779,7 +10796,7 @@
   [else-branch : (& ast.AstExpr)]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (match (compiler-ctfe-eval (& (ast.clone-ast-expr cond)) env fuel)
+  (match (compiler-ctfe-eval cond env fuel)
     [(Ok cond-value cond-fuel)
       (match cond-value
         [(Bool b)
@@ -10804,7 +10821,7 @@
   [origin : (& ast.AstExpr)]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (match (compiler-ctfe-eval (& (ast.clone-ast-expr cond)) env fuel)
+  (match (compiler-ctfe-eval cond env fuel)
     [(Ok cond-value cond-fuel)
       (match cond-value
         [(Bool keep-going)
@@ -10920,10 +10937,7 @@
       [(Binding name maybe-ty value-expr-box)
         (let
           [value-expr : ast.AstExpr (ctfe-ast-get env value-expr-box)]
-          (match (compiler-ctfe-eval
-            (& (ast.clone-ast-expr (& value-expr)))
-            env
-            fuel)
+          (match (compiler-ctfe-eval (& value-expr) env fuel)
             [(Ok value value-fuel)
               (ctfe-eval-let-at
                 bindings
@@ -11296,7 +11310,7 @@
     (match (ctfe-match-pattern
       (ast.ast-pattern-list-get alternatives index (ast.ast-pattern-fallback))
       (ctfe-value-owned-copy value)
-      (& (ast.clone-ast-type value-ty))
+      value-ty
       env)
       [(Matched matched-env) (return (Matched matched-env))]
       [(No) unit]))
@@ -11324,7 +11338,7 @@
         (match (ctfe-match-pattern
           pattern
           (ctfe-value-owned-copy value)
-          (& (ast.clone-ast-type value-ty))
+          value-ty
           env)
           [(Matched arm-env)
             (return
@@ -11343,7 +11357,7 @@
   [origin : (& ast.AstExpr)]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
-  (match (compiler-ctfe-eval (& (ast.clone-ast-expr scrutinee)) env fuel)
+  (match (compiler-ctfe-eval scrutinee env fuel)
     [(Ok value scrutinee-fuel)
       (ctfe-eval-match-arms
         (& (ctfe-value-owned-copy (& value)))
@@ -11378,9 +11392,7 @@
   [cond-ty : (& ast.AstType)]
   [then-ty : ast.AstType]
   [else-ty : (& ast.AstType)]) : ast.AstType
-  (if (and
-    (ctfe-type-eq cond-ty (& (Bool)))
-    (ctfe-type-eq (& (ast.clone-ast-type (& then-ty))) else-ty))
+  (if (and (ctfe-type-eq cond-ty (& (Bool))) (ctfe-type-eq (& then-ty) else-ty))
     then-ty
     (Expr)))
 
@@ -11810,11 +11822,7 @@
     (let
       [head-expr : ast.AstExpr
         (ctfe-ast-get env (ast.ast-expr-list-get exprs index 0))]
-      (match (ctfe-expr-to-type
-        (& head-expr)
-        (& (ast.clone-ast-expr origin))
-        env
-        fuel)
+      (match (ctfe-expr-to-type (& head-expr) origin env fuel)
         [(Ok head-ty head-fuel)
           (match (ctfe-expr-list-to-type-list-at
             exprs
@@ -11842,11 +11850,7 @@
     (let
       [elem-expr : ast.AstExpr
         (ctfe-ast-get env (ast.ast-expr-list-get args 0 0))]
-      (match (ctfe-expr-to-type
-        (& elem-expr)
-        (& (ast.clone-ast-expr origin))
-        env
-        fuel)
+      (match (ctfe-expr-to-type (& elem-expr) origin env fuel)
         [(Ok elem-ty next-fuel)
           (Ok
             (cond
@@ -11878,11 +11882,7 @@
     (let
       [elem-expr : ast.AstExpr
         (ctfe-ast-get env (ast.ast-expr-list-get args 0 0))]
-      (match (ctfe-expr-to-type
-        (& elem-expr)
-        (& (ast.clone-ast-expr origin))
-        env
-        fuel)
+      (match (ctfe-expr-to-type (& elem-expr) origin env fuel)
         [(Ok elem-ty elem-fuel)
           (if (= args.len 1)
             (Ok
@@ -11931,18 +11931,9 @@
                 (& ret-ty))
               next-fuel)]
           [(Err diag) (Err diag)])
-        (match (ctfe-expr-to-type
-          (& head-expr)
-          (& (ast.clone-ast-expr origin))
-          env
-          fuel)
+        (match (ctfe-expr-to-type (& head-expr) origin env fuel)
           [(Ok arg-ty arg-fuel)
-            (match (ctfe-expr-func-type-at
-              args
-              (+ index 1)
-              (& (ast.clone-ast-expr origin))
-              env
-              arg-fuel)
+            (match (ctfe-expr-func-type-at args (+ index 1) origin env arg-fuel)
               [(Ok tail-fn next-fuel)
                 (match tail-fn
                   [(Func tail-args ret)
@@ -12144,7 +12135,7 @@
         (ctfe-type-expr-error origin)
         (match (ctfe-expr-to-type
           (& (ctfe-ast-get env (ast.ast-expr-list-get args 1 0)))
-          (& (ast.clone-ast-expr origin))
+          origin
           env
           fuel)
           [(Err diag) (Err diag)]
@@ -12309,7 +12300,7 @@
         (ctfe-ty-get
           env
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (match (ctfe-quote-type head env (& (ast.clone-ast-expr origin)) fuel)
+      (match (ctfe-quote-type head env origin fuel)
         [(Ok quoted-head head-fuel)
           (match (ctfe-quote-type-list-at
             types
@@ -12334,11 +12325,7 @@
   [fuel : i64]) : ResultCtfeQuoteType
   (match (ast.clone-ast-type (& ty))
     [(Func args ret)
-      (match (ctfe-quote-type-list
-        (& (deref args))
-        env
-        (& (ast.clone-ast-expr origin))
-        fuel)
+      (match (ctfe-quote-type-list (& (deref args)) env origin fuel)
         [(Ok quoted-args args-fuel)
           (match (ctfe-quote-type (ctfe-ty-get env ret) env origin args-fuel)
             [(Ok quoted-ret ret-fuel)
@@ -12462,7 +12449,7 @@
         [(Err diag) (Err diag)])]))
 
 (define (ctfe-quote-expr-list
-  [exprs : ast.AstExprList]
+  [exprs : (& ast.AstExprList)]
   [env : (& env CtfeEnv)]
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfeQuoteExprList
@@ -12471,10 +12458,12 @@
     (for [index (iterator.range 0 exprs.len)]
       (let
         [head : ast.AstExpr
-          (ctfe-ast-get env (ast.ast-expr-list-get (& exprs) index 0))]
+          (ctfe-ast-get env (ast.ast-expr-list-get exprs index 0))]
         [splice-box : i64
           (if quasiquote
-            (match (ctfe-expr-unspan env (ast.clone-ast-expr (& head)))
+            (match (ast.ast-expr-unspan-with-pools
+              (& (ctfe-env-pools env))
+              (& head))
               [(UnquoteSplicing inner) inner]
               [_ -1])
             -1)]
@@ -12514,7 +12503,7 @@
   (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty comptime?)
-        (match (ctfe-quote-type ty env (& (ast.clone-ast-expr origin)) fuel)
+        (match (ctfe-quote-type ty env origin fuel)
           [(Ok quoted-ty next-fuel)
             (ast.ast-param-list-push
               out
@@ -12620,11 +12609,7 @@
       [(Binding name maybe-ty init-box)
         (let
           [init : ast.AstExpr (ctfe-ast-get env init-box)]
-          (match (ctfe-quote-maybe-type
-            (& maybe-ty)
-            env
-            (& (ast.clone-ast-expr (& init)))
-            fuel)
+          (match (ctfe-quote-maybe-type (& maybe-ty) env (& init) fuel)
             [(Ok quoted-ty type-fuel)
               (match (ctfe-quote-expr init env type-fuel quasiquote)
                 [(Ok quoted-init _ init-fuel)
@@ -12867,15 +12852,11 @@
   [env : (& env CtfeEnv)]
   [fuel : i64]
   [quasiquote : bool]) : ResultCtfeQuoteExpr
-  (match (ast.clone-ast-expr (& expr))
+  (match (& expr)
     [(Spanned inner-box span)
       (let
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
-        (match (ctfe-quote-expr
-          (ast.clone-ast-expr (& inner))
-          env
-          fuel
-          quasiquote)
+        (match (ctfe-quote-expr inner env fuel quasiquote)
           [(Ok node ty next-fuel)
             ;; An unquoted macro argument is already source-spanned at its
             ;; call site. Preserve that origin rather than covering it with
@@ -12883,7 +12864,10 @@
             ;; span for synthetic expressions with no caller origin.
             (if (and
               quasiquote
-              (ctfe-quote-preserve-unquoted-source-span? (& inner) node env))
+              (ctfe-quote-preserve-unquoted-source-span?
+                (& (ctfe-ast-get env inner-box))
+                node
+                env))
               (Ok node ty next-fuel)
               (Ok
                 ;; The pool records this as canonical when `node` has no source
@@ -12910,7 +12894,10 @@
               next-fuel)]
           [(Err diag) (Err diag)]))]
     [(Literal lit)
-      (Ok (ctfe-ast-push env expr) (ctfe-quote-literal-type (& lit)) fuel)]
+      (Ok
+        (ctfe-ast-push env (Literal (ast.clone-ast-literal lit)))
+        (ctfe-quote-literal-type lit)
+        fuel)]
     [(Var name)
       (Ok (ctfe-ast-push env (Var (ctfe-quote-name-id env name))) (Expr) fuel)]
     [(Binary op left-box right-box)
@@ -12977,7 +12964,7 @@
               [(Err diag) (Err diag)])]
           [(Err diag) (Err diag)]))]
     [(Let let-box)
-      (match (__tl-box-place let-box)
+      (match let-box
         [(Let bindings body-box)
           (let
             [body : ast.AstExpr (ctfe-ast-get env body-box)]
@@ -12999,15 +12986,11 @@
                   [(Err diag) (Err diag)])]
               [(Err diag) (Err diag)]))])]
     [(Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
+      (match lambda-box
         [(Lambda params maybe-ret body-box)
           (let
             [body : ast.AstExpr (ctfe-ast-get env body-box)]
-            (match (ctfe-quote-param-list
-              (& params)
-              env
-              (& (ast.clone-ast-expr (& expr)))
-              fuel)
+            (match (ctfe-quote-param-list (& params) env (& expr) fuel)
               [(Ok quoted-params params-fuel)
                 (match (ctfe-quote-maybe-type
                   (& maybe-ret)
@@ -13078,11 +13061,12 @@
         [(Err diag) (Err diag)])]
     [(ForOwnedState payload)
       (match (ctfe-quote-expr-list
-        (ctfe-for-owned-state-exprs
-          (ast.ast-for-owned-state-source-name (& payload))
-          (ast.ast-for-owned-state-index-name (& payload))
-          (ast.ast-for-owned-state-source (& payload))
-          (ast.ast-for-owned-state-body (& payload)))
+        (&
+          (ctfe-for-owned-state-exprs
+            (ast.ast-for-owned-state-source-name (& payload))
+            (ast.ast-for-owned-state-index-name (& payload))
+            (ast.ast-for-owned-state-source (& payload))
+            (ast.ast-for-owned-state-body (& payload))))
         env
         fuel
         quasiquote)
@@ -13101,13 +13085,14 @@
       (let
         [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
         (match (ctfe-quote-expr-list
-          (ctfe-for-owned-step-exprs
-            (ast.ast-for-owned-step-source-name (& payload))
-            (ast.ast-for-owned-step-index-name (& payload))
-            (ast.ast-for-owned-step-binding-name (& payload))
-            expected-type
-            (ast.ast-for-owned-step-done-name (& payload))
-            (ast.ast-for-owned-step-body (& payload)))
+          (&
+            (ctfe-for-owned-step-exprs
+              (ast.ast-for-owned-step-source-name (& payload))
+              (ast.ast-for-owned-step-index-name (& payload))
+              (ast.ast-for-owned-step-binding-name (& payload))
+              expected-type
+              (ast.ast-for-owned-step-done-name (& payload))
+              (ast.ast-for-owned-step-body (& payload))))
           env
           fuel
           quasiquote)
@@ -13159,7 +13144,7 @@
                   (ast.ast-expr-ann-with-pools
                     (ctfe-env-pools env)
                     quoted
-                    (& (ast.clone-ast-type (& quoted-ty))))
+                    (& quoted-ty))
                   quoted-ty
                   next-fuel)]
               [(Err diag) (Err diag)])]
@@ -13179,7 +13164,7 @@
                   (ast.ast-expr-cast-with-pools
                     (ctfe-env-pools env)
                     quoted
-                    (& (ast.clone-ast-type (& quoted-ty))))
+                    (& quoted-ty))
                   quoted-ty
                   next-fuel)]
               [(Err diag) (Err diag)])]
@@ -13202,7 +13187,7 @@
         mutable
         (ast.ast-borrow-lifetime-from-id lifetime-id))]
     [(Match match-box)
-      (match (__tl-box-place match-box)
+      (match match-box
         [(Match scrut-box arms)
           (let
             [scrut : ast.AstExpr (ctfe-ast-get env scrut-box)]
@@ -13220,7 +13205,7 @@
                   [(Err diag) (Err diag)])]
               [(Err diag) (Err diag)]))])]
     [(Foreach fe-box)
-      (match (__tl-box-place fe-box)
+      (match fe-box
         [(Foreach index index-ty start-box end-box body-box)
           (let
             [start : ast.AstExpr (ctfe-ast-get env start-box)]
@@ -13236,7 +13221,7 @@
                           (ast.ast-expr-foreach-id-with-pools
                             (ctfe-env-pools env)
                             (ctfe-quote-name-id env index)
-                            index-ty
+                            (ast.clone-ast-type index-ty)
                             quoted-start
                             quoted-end
                             quoted-body)
@@ -13275,11 +13260,11 @@
                                   (ast.ast-expr-foreach2-id-with-pools
                                     (ctfe-env-pools env)
                                     (ctfe-quote-name-id env outer)
-                                    outer-ty
+                                    (ast.clone-ast-type outer-ty)
                                     quoted-outer-start
                                     quoted-outer-end
                                     (ctfe-quote-name-id env inner)
-                                    inner-ty
+                                    (ast.clone-ast-type inner-ty)
                                     quoted-inner-start
                                     quoted-inner-end
                                     quoted-body)
@@ -13291,7 +13276,7 @@
                   [(Err diag) (Err diag)])]
               [(Err diag) (Err diag)]))])]
     [(SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
+      (match reduce-box
         [(Reduce op index index-ty start-box end-box init-box value-box)
           (let
             [start : ast.AstExpr (ctfe-ast-get env start-box)]
@@ -13311,7 +13296,7 @@
                                 (ctfe-env-pools env)
                                 op
                                 (ctfe-quote-name-id env index)
-                                index-ty
+                                (ast.clone-ast-type index-ty)
                                 quoted-start
                                 quoted-end
                                 quoted-init
@@ -13323,7 +13308,7 @@
                   [(Err diag) (Err diag)])]
               [(Err diag) (Err diag)]))])]
     [(SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
+      (match scan-box
         [(Scan
             op
             index
@@ -13360,11 +13345,11 @@
                                     (ctfe-env-pools env)
                                     op
                                     (ctfe-quote-name-id env index)
-                                    index-ty
+                                    (ast.clone-ast-type index-ty)
                                     quoted-start
                                     quoted-end
                                     (ctfe-quote-name-id env prefix)
-                                    prefix-ty
+                                    (ast.clone-ast-type prefix-ty)
                                     quoted-init
                                     quoted-value
                                     quoted-body)
@@ -13376,7 +13361,7 @@
                   [(Err diag) (Err diag)])]
               [(Err diag) (Err diag)]))])]
     [(SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
+      (match compact-box
         [(Compact
             index
             index-ty
@@ -13411,11 +13396,11 @@
                                   (ast.ast-expr-spmd-compact-id-with-pools
                                     (ctfe-env-pools env)
                                     (ctfe-quote-name-id env index)
-                                    index-ty
+                                    (ast.clone-ast-type index-ty)
                                     quoted-start
                                     quoted-end
                                     (ctfe-quote-name-id env slot)
-                                    slot-ty
+                                    (ast.clone-ast-type slot-ty)
                                     quoted-init
                                     quoted-keep
                                     quoted-body)
@@ -13470,16 +13455,14 @@
         [inner : ast.AstExpr (ctfe-ast-get env inner-box)]
         [value : ast.AstExpr (ctfe-ast-get env value-box)]
         (if (= field (ast.ast-expr-unquote-set-target-field-id))
-          (match (ctfe-expr-unspan env (ast.clone-ast-expr (& inner)))
+          (match (ast.ast-expr-unspan-with-pools
+            (& (ctfe-env-pools env))
+            (& inner))
             [(Unquote target-box)
               (if quasiquote
                 (let
                   [target : ast.AstExpr (ctfe-ast-get env target-box)]
-                  (match (ctfe-eval-unquote-expr
-                    (& target)
-                    (& (ast.clone-ast-expr (& inner)))
-                    env
-                    fuel)
+                  (match (ctfe-eval-unquote-expr (& target) (& inner) env fuel)
                     [(Ok quoted-target _ target-fuel)
                       (match (ctfe-quote-expr value env target-fuel quasiquote)
                         [(Ok quoted-value _ value-fuel)
@@ -13692,7 +13675,7 @@
               [(Err diag) (Err diag)])]
           [(Err diag) (Err diag)]))]
     [(WithResource wr-box)
-      (match (__tl-box-place wr-box)
+      (match wr-box
         [(WithResource bindings body)
           (match (ctfe-quote-resource-binding-list
             (& bindings)
@@ -13885,7 +13868,8 @@
         quasiquote
         ast.ast-expr-array-data-with-pools
         inner-box)]
-    [(BinaryData bytes) (Ok (ctfe-ast-push env (BinaryData bytes)) (Expr) fuel)]
+    [(BinaryData bytes)
+      (Ok (ctfe-ast-push env (BinaryData (string.copy bytes))) (Expr) fuel)]
     [(CpuIdEax leaf-box subleaf-box)
       (ctfe-quote-children-2
         env

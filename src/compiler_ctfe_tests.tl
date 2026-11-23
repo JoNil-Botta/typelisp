@@ -15,7 +15,7 @@
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 
-(define (ctfe-reflect-info-must-use? [info : ctfe.CtfeReflectInfo]) : bool
+(define (ctfe-reflect-info-must-use? [info : (& ctfe.CtfeReflectInfo)]) : bool
   (match info
     [(Struct _ _ _ _ _ _ markers) (not (= (bit-and markers 1) 0))]
     [(Enum _ _ _ _ _ _ markers) (not (= (bit-and markers 1) 0))]))
@@ -313,7 +313,7 @@
     (and
       (match (ctfe.ctfe-expr-to-type
         (& (ctfe.ctfe-ast-get env source-call))
-        (& (ast.clone-ast-expr (& origin)))
+        (& origin)
         env
         (ctfe.ctfe-fuel-limit))
         [(Ok actual _)
@@ -336,23 +336,23 @@
 (define (compiler-ctfe-type-expr-is?
   [env : (& env ctfe.CtfeEnv)]
   [expr-id : i64]
-  [origin : ast.AstExpr]
-  [expected : ast.AstType]) : bool
+  [origin : (& ast.AstExpr)]
+  [expected : (& ast.AstType)]) : bool
   (match (ctfe.ctfe-expr-to-type
     (& (ctfe.ctfe-ast-get env expr-id))
-    (& origin)
+    origin
     (ctfe.ctfe-env-shared-view env)
     (ctfe.ctfe-fuel-limit))
-    [(Ok actual _) (ctfe.ctfe-type-eq-in-env env (& actual) (& expected))]
+    [(Ok actual _) (ctfe.ctfe-type-eq-in-env env (& actual) expected)]
     [(Err _) false]))
 
 (define (compiler-ctfe-type-expr-rejected?
   [env : (& env ctfe.CtfeEnv)]
   [expr-id : i64]
-  [origin : ast.AstExpr]) : bool
+  [origin : (& ast.AstExpr)]) : bool
   (match (ctfe.ctfe-expr-to-type
     (& (ctfe.ctfe-ast-get env expr-id))
-    (& origin)
+    origin
     (ctfe.ctfe-env-shared-view env)
     (ctfe.ctfe-fuel-limit))
     [(Err _) true]
@@ -393,33 +393,19 @@
       (ast.ast-ty-dyn-array-with-pools (ctfe.ctfe-env-pools env) (& (I64)))]
     [fixed-array-ty : ast.AstType
       (ast.ast-ty-array-with-pools (ctfe.ctfe-env-pools env) (& (I64)) 2)]
-    [roundtrip-call : i64
-      (ctfe.ctfe-type-to-expr (& (ast.clone-ast-type (& dyn-array-ty))) env)]
+    [roundtrip-call : i64 (ctfe.ctfe-type-to-expr (& dyn-array-ty) env)]
     [origin : ast.AstExpr (ctfe.ctfe-ast-get env private-call)]
     (and
+      (compiler-ctfe-type-expr-is? env private-call (& origin) (& dyn-array-ty))
+      (compiler-ctfe-type-expr-rejected? env private-empty-call (& origin))
+      (compiler-ctfe-type-expr-rejected? env private-two-call (& origin))
+      (compiler-ctfe-type-expr-is? env fixed-call (& origin) (& fixed-array-ty))
+      (compiler-ctfe-type-expr-rejected? env generated-private-call (& origin))
       (compiler-ctfe-type-expr-is?
         env
-        private-call
-        (ast.clone-ast-expr (& origin))
-        (ast.clone-ast-type (& dyn-array-ty)))
-      (compiler-ctfe-type-expr-rejected?
-        env
-        private-empty-call
-        (ast.clone-ast-expr (& origin)))
-      (compiler-ctfe-type-expr-rejected?
-        env
-        private-two-call
-        (ast.clone-ast-expr (& origin)))
-      (compiler-ctfe-type-expr-is?
-        env
-        fixed-call
-        (ast.clone-ast-expr (& origin))
-        fixed-array-ty)
-      (compiler-ctfe-type-expr-rejected?
-        env
-        generated-private-call
-        (ast.clone-ast-expr (& origin)))
-      (compiler-ctfe-type-expr-is? env roundtrip-call origin dyn-array-ty)
+        roundtrip-call
+        (& origin)
+        (& dyn-array-ty))
       (match (ctfe.ctfe-expr-unspan env (ctfe.ctfe-ast-get env roundtrip-call))
         [(Call func-box args)
           (and
@@ -448,28 +434,14 @@
       (compiler-ctfe-call1-in-env env generated-slice-id i64-expr)]
     [slice-ty : ast.AstType
       (ast.ast-ty-slice-with-pools (ctfe.ctfe-env-pools env) (& (I64)))]
-    [roundtrip-call : i64
-      (ctfe.ctfe-type-to-expr (& (ast.clone-ast-type (& slice-ty))) env)]
+    [roundtrip-call : i64 (ctfe.ctfe-type-to-expr (& slice-ty) env)]
     [origin : ast.AstExpr (ctfe.ctfe-ast-get env slice-call)]
     (and
-      (compiler-ctfe-type-expr-is?
-        env
-        slice-call
-        (ast.clone-ast-expr (& origin))
-        (ast.clone-ast-type (& slice-ty)))
-      (compiler-ctfe-type-expr-rejected?
-        env
-        slice-empty-call
-        (ast.clone-ast-expr (& origin)))
-      (compiler-ctfe-type-expr-rejected?
-        env
-        slice-two-call
-        (ast.clone-ast-expr (& origin)))
-      (compiler-ctfe-type-expr-rejected?
-        env
-        generated-slice-call
-        (ast.clone-ast-expr (& origin)))
-      (compiler-ctfe-type-expr-is? env roundtrip-call origin slice-ty)
+      (compiler-ctfe-type-expr-is? env slice-call (& origin) (& slice-ty))
+      (compiler-ctfe-type-expr-rejected? env slice-empty-call (& origin))
+      (compiler-ctfe-type-expr-rejected? env slice-two-call (& origin))
+      (compiler-ctfe-type-expr-rejected? env generated-slice-call (& origin))
+      (compiler-ctfe-type-expr-is? env roundtrip-call (& origin) (& slice-ty))
       (match (ctfe.ctfe-expr-unspan env (ctfe.ctfe-ast-get env roundtrip-call))
         [(Call func-box args)
           (and
@@ -1351,10 +1323,7 @@
     [call : i64
       (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "type-expr") arg)]
     [origin : ast.AstExpr (ctfe.ctfe-ast-get env call)]
-    (match (ctfe.compiler-ctfe-eval
-      (& (ast.clone-ast-expr (& origin)))
-      env
-      (ctfe.ctfe-fuel-limit))
+    (match (ctfe.compiler-ctfe-eval (& origin) env (ctfe.ctfe-fuel-limit))
       [(Ok value _)
         (match value
           [(Expr node produced)
@@ -1665,25 +1634,27 @@
       infos
       cbi.compiler-builtin-id-fix-Record)
       [(Some info)
-        (unless
-          (ctfe-reflect-info-must-use? (ctfe.clone-ctfe-reflect-info (& info)))
-          (set! ok false))
+        (unless (ctfe-reflect-info-must-use? (& info)) (set! ok false))
         (let
           [alias-infos : ctfe.CtfeReflectInfoList
             (ctfe.ctfe-reflect-info-add-alias
-              (ctfe.clone-ctfe-reflect-info-list (& infos))
+              (ctfe.ctfe-reflections-from-program
+                (& (compiler-ctfe-reflection-program)))
               info
               "RecordAlias"
               alias-id)]
           (match (ctfe.ctfe-reflect-info-lookup-name-id alias-infos alias-id)
             [(Some alias-info)
-              (unless (ctfe-reflect-info-must-use? alias-info) (set! ok false))]
+              (unless
+                (ctfe-reflect-info-must-use? (& alias-info))
+                (set! ok false))]
             [(None) (set! ok false)]))]
       [(None) (set! ok false)])
     (match (ctfe.ctfe-reflect-info-lookup-name-id
       infos
       cbi.compiler-builtin-id-fix-Status)
-      [(Some info) (unless (ctfe-reflect-info-must-use? info) (set! ok false))]
+      [(Some info)
+        (unless (ctfe-reflect-info-must-use? (& info)) (set! ok false))]
       [(None) (set! ok false)])
     (if (compiler-ctfe-eval-i64-ok?
       (compiler-ctfe-call1 (ctfe.ctfe-builtin "struct-field-count") record-ty)
@@ -3282,7 +3253,7 @@
       (ctfe.ctfe-node-pools-share-storage? pools pools)
       (not (ctfe.ctfe-node-pools-share-storage? pools foreign-pools))
       (match (ctfe.ctfe-eval-unquote-expr
-        (& (ast.clone-ast-expr (& expr-var)))
+        (& expr-var)
         (& expr-var)
         env
         (ctfe.ctfe-fuel-limit))
@@ -3290,7 +3261,7 @@
           (and (= node value-node) (ctfe.ctfe-type-eq (& ty) (& (Bool))))]
         [(Err _) false])
       (match (ctfe.ctfe-eval-unquote-splice
-        (& (ast.clone-ast-expr (& list-var)))
+        (& list-var)
         (& list-var)
         env
         (ctfe.ctfe-fuel-limit))

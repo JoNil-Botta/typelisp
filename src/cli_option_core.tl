@@ -17,6 +17,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import compiler_target_cfg_core as target_cfg)
+(import compiler_opt_level as opt_level)
 
 (defstruct CliArgs
   (command String)
@@ -190,7 +191,13 @@
     [(string.eq value "0") 0]
     [(string.eq value "1") 1]
     [(string.eq value "2") 2]
+    [(string.eq value "s") 3]
     [else -1]))
+
+(define (cli-option-opt-level-name [level : i64]) : String
+  (if (opt_level.opt-level-size? level)
+    "s"
+    (string.int->string level)))
 
 (defenum CliBackendMode
   (Scalar)
@@ -235,6 +242,7 @@
     (string.eq name "--target")
     (string.eq name "--backend-mode")
     (string.eq name "--opt-level")
+    (string.eq name "-Os")
     (string.eq name "--stdlib-root")
     (string.eq name "--cfg")
     (string.eq name "--debug")
@@ -296,6 +304,13 @@
           (set! options.debug true)
           (set! options.has-debug true)))
       true]
+    [(string.eq args.name "-Os")
+      (if options.has-opt-level
+        (cli-option-duplicate! args)
+        (begin
+          (set! options.opt-level (cli-option-opt-level "s"))
+          (set! options.has-opt-level true)))
+      true]
     [else
       (let
         [value : String (cli-args-value args)]
@@ -331,7 +346,7 @@
                     (string.concat3-borrowed
                       "invalid --opt-level '"
                       (& value)
-                      "'; expected 0, 1, or 2"))]
+                      "'; expected 0, 1, 2, or s"))]
                 [else
                   (set! options.opt-level level)
                   (set! options.has-opt-level true)]))]

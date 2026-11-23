@@ -4,7 +4,6 @@
 ;; images, and this module also assembles the focused dispatch proof used by
 ;; the loader smoke.
 (import stdlib.clone)
-(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import compiler_owned_view as owned_view)
@@ -38,7 +37,15 @@
   (index-param i64)
   (symbol String))
 
-(clone_gen.gen-clone TlciSpmdSpecialization)
+(define (clone-tlci-spmd-specialization [source : (& TlciSpmdSpecialization)]) : TlciSpmdSpecialization
+  (TlciSpmdSpecialization
+    (string.copy source.abi)
+    (string.copy source.backend)
+    source.lanes
+    (string.copy source.args)
+    (string.copy source.result)
+    source.index-param
+    (string.copy source.symbol)))
 
 (import (vector.vector TlciSpmdSpecialization core) as tlci_specialization_vec)
 
@@ -46,49 +53,33 @@
 (defstruct TlciSpmdSpecializations
   (items tlci_specialization_vec.Vec))
 
-;; The inline-test harness prunes ordinary functions before clone generation
-;; can look up the vector wrapper hooks by name. Emit those hooks as declarations.
-(defmacro (declare-tlci-spmd-specializations-clone) : Decls
-  `(define (clone-tlci-spmd-specializations
-    [source : (& TlciSpmdSpecializations)]) : TlciSpmdSpecializations
-    (let
-      [out : TlciSpmdSpecializations
-        (tlci-spmd-specializations-with-capacity
-          (tlci_specialization_vec.capacity (& source.items)))]
-      (for [index (iterator.range 0 (tlci-spmd-specializations-len source))]
-        (tlci_specialization_vec.push-ref!
-          (&mut out.items)
-          (tlci-spmd-specializations-ref source index)))
-      out)))
-
-(declare-tlci-spmd-specializations-clone)
+(define (clone-tlci-spmd-specializations [source : (& TlciSpmdSpecializations)]) : TlciSpmdSpecializations
+  (let
+    [out : TlciSpmdSpecializations
+      (tlci-spmd-specializations-with-capacity
+        (tlci_specialization_vec.capacity (& source.items)))]
+    (for [index (iterator.range 0 (tlci-spmd-specializations-len source))]
+      (tlci_specialization_vec.push-ref!
+        (&mut out.items)
+        (tlci-spmd-specializations-ref source index)))
+    out))
 
 (defstruct TlciSpmdCallable
   (name String)
   (signature String)
   (specializations TlciSpmdSpecializations))
 
-(clone_gen.gen-clone TlciSpmdCallable)
+(define (clone-tlci-spmd-callable [source : (& TlciSpmdCallable)]) : TlciSpmdCallable
+  (TlciSpmdCallable
+    (string.copy source.name)
+    (string.copy source.signature)
+    (clone-tlci-spmd-specializations (& source.specializations))))
 
 (import (vector.vector TlciSpmdCallable core) as tlci_callable_vec)
 
 ;: Helper records of one metadata block, in metadata order.
 (defstruct TlciSpmdCallables
   (items tlci_callable_vec.Vec))
-
-(defmacro (declare-tlci-spmd-callables-clone) : Decls
-  `(define (clone-tlci-spmd-callables [source : (& TlciSpmdCallables)]) : TlciSpmdCallables
-    (let
-      [out : TlciSpmdCallables
-        (tlci-spmd-callables-with-capacity
-          (tlci_callable_vec.capacity (& source.items)))]
-      (for [index (iterator.range 0 (tlci-spmd-callables-len source))]
-        (tlci_callable_vec.push-ref!
-          (&mut out.items)
-          (tlci-spmd-callables-ref source index)))
-      out)))
-
-(declare-tlci-spmd-callables-clone)
 
 (define (tlci-make-spmd-specialization
   [abi : String]
@@ -177,8 +168,6 @@
   (package-name String)
   (package-version String)
   (spmd-callables TlciSpmdCallables))
-
-(clone_gen.gen-clone TlciMetadata)
 
 (define (tlci-make-metadata
   [version : String]
@@ -335,8 +324,6 @@
   (kind i64)
   (schema-version i64)
   (payload (__tl_dyn-array u8)))
-
-(clone_gen.gen-clone TlciAuxSection)
 
 (defstruct TlciAuxDirectory
   (base-len i64)
@@ -1812,11 +1799,11 @@
         (tlci-append-bytes! (&mut out) base)
         (while (and ok (< index count))
           (let
-            [section : TlciAuxSection
-              (clone-tlci-aux-section (& (array-ref sections index)))]
+            [section : (& sections TlciAuxSection)
+              (& (array-ref sections index))]
             [kind : i64 section.kind]
             [schema-version : i64 section.schema-version]
-            [payload : (__tl_dyn-array u8) (clone.deep section.payload)]
+            [payload : (& sections (__tl_dyn-array u8)) (& section.payload)]
             (cond
               [(<= kind previous-kind)
                 (set! ok false)
@@ -1849,8 +1836,8 @@
             (set! index 0)
             (while (< index count)
               (let
-                [section : TlciAuxSection
-                  (clone-tlci-aux-section (& (array-ref sections index)))]
+                [section : (& sections TlciAuxSection)
+                  (& (array-ref sections index))]
                 (tlci-push-u64! (&mut out) section.kind)
                 (tlci-push-u64! (&mut out) section.schema-version)
                 (tlci-push-u64! (&mut out) (array-ref offsets index))
@@ -2766,12 +2753,9 @@
           (Err "tlci metadata: field `spmd-callables` requires version `v2`")]
         [(not
             (string.eq
-              (tlci-spmd-callables-validation-error
-                (& (clone-tlci-spmd-callables (& spmd-callables))))
+              (tlci-spmd-callables-validation-error (& spmd-callables))
               ""))
-          (Err
-            (tlci-spmd-callables-validation-error
-              (& (clone-tlci-spmd-callables (& spmd-callables)))))]
+          (Err (tlci-spmd-callables-validation-error (& spmd-callables)))]
         [else
           (Ok
             (TlciMetadata version package-name package-version spmd-callables))])]
@@ -2974,16 +2958,19 @@
       (tlci-spmd-callables-emit-items items)
       "  )\n")))
 
-(define (tlci-metadata-validation-error [metadata : TlciMetadata]) : String
+(define (tlci-metadata-validation-error [metadata : (& metadata TlciMetadata)]) : String
   (let
-    [version : String metadata.version]
-    [callables : TlciSpmdCallables metadata.spmd-callables]
+    [version : (& metadata str) (& metadata.version)]
+    [callables : (& metadata TlciSpmdCallables) (& metadata.spmd-callables)]
     (cond
       [(not
           (or
             (string.eq version tlci-metadata-version)
             (string.eq version tlci-metadata-version-v2)))
-        (str_cat.str-cat "tlci metadata: unsupported version `" version "`")]
+        (str_cat.str-cat
+          "tlci metadata: unsupported version `"
+          (string.copy version)
+          "`")]
       [(string.eq metadata.package-name "")
         "tlci metadata: package name must not be empty"]
       [(string.eq metadata.package-version "")
@@ -2992,7 +2979,7 @@
           (string.eq version tlci-metadata-version)
           (> (tlci-spmd-callables-len callables) 0))
         "tlci metadata: field `spmd-callables` requires version `v2`"]
-      [else (tlci-spmd-callables-validation-error (& callables))])))
+      [else (tlci-spmd-callables-validation-error callables)])))
 
 (define (tlci-metadata-emit [metadata : (& TlciMetadata)]) : String
   (let
@@ -3086,14 +3073,8 @@
 
 (define (tlci-emit-image-v2-legacy-compatible [image : (& TlciImage)]) : ResultTlciBytes
   (cond
-    [(not
-        (string.eq
-          (tlci-metadata-validation-error
-            (clone-tlci-metadata (& image.metadata)))
-          ""))
-      (Err
-        (tlci-metadata-validation-error
-          (clone-tlci-metadata (& image.metadata))))]
+    [(not (string.eq (tlci-metadata-validation-error (& image.metadata)) ""))
+      (Err (tlci-metadata-validation-error (& image.metadata)))]
     [(string.eq image.compiler-build-hash "")
       (Err "tlci: compiler build hash must not be empty")]
     [(not (= (% (array-length image.fixups) tlci-section-fixup-record-size) 0))

@@ -1,5 +1,4 @@
 ;; compiler_object.tl - Structured object-image records for backend object emitters.
-(import stdlib.clone as clone_gen)
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import compiler_machine_x64 as mx)
@@ -154,28 +153,6 @@
   (sections CompilerObjectSectionList)
   (symbols CompilerObjectSymbolList)
   (relocations CompilerObjectRelocationList))
-
-(clone_gen.gen-clone CompilerObjectDataRecord)
-
-(clone_gen.gen-clone CompilerObjectDataRecordList)
-
-(clone_gen.gen-clone CompilerObjectX64Instr)
-
-(clone_gen.gen-clone CompilerObjectX64InstrList)
-
-(clone_gen.gen-clone CompilerObjectSymbol)
-
-(clone_gen.gen-clone CompilerObjectSymbolList)
-
-(clone_gen.gen-clone CompilerObjectRelocation)
-
-(clone_gen.gen-clone CompilerObjectRelocationList)
-
-(clone_gen.gen-clone CompilerObjectSection)
-
-(clone_gen.gen-clone CompilerObjectSectionList)
-
-(clone_gen.gen-clone CompilerObjectImage)
 
 (defstruct CompilerObjectDataRecordBuilder
   (slots (__tl_dyn-array CompilerObjectDataRecord))

@@ -23149,33 +23149,12 @@
 (define (lower-symbol-function-value-id?
   [ctx : tc_core.TcContext]
   [name-id : i64]) : bool
-  (let
-    [symbols : (& ctx csym.CompilerSymbols) (tc_core.tc-context-symbols ctx)]
-    [handle : i64
-      (csym.compiler-symbols-lookup-value-id-or
-        symbols
-        name-id
-        (csym.compiler-symbols-missing-handle))]
-    (if (csym.compiler-symbols-handle-found? handle)
-      (let
-        [kind : i64 (csym.compiler-symbol-handle-kind handle)]
-        (or
-          (= kind (csym.compiler-symbol-kind-function-define))
-          (= kind (csym.compiler-symbol-kind-defdispatch))
-          (and
-            (= kind (csym.compiler-symbol-kind-extern))
-            (match (csym.compiler-symbols-decl-at-index
-              symbols
-              (csym.compiler-symbol-handle-index handle))
-              [(Ok decl)
-                (match decl
-                  [(Extern decl-meta _ extern-kind _ _)
-                    (match extern-kind
-                      [(Function) true]
-                      [(Value) false])]
-                  [_ false])]
-              [(Err _) false]))))
-      false)))
+  (tc_core.tc-global-function-symbol?
+    ctx
+    (csym.compiler-symbols-lookup-value-id-or
+      (tc_core.tc-context-symbols ctx)
+      name-id
+      (csym.compiler-symbols-missing-handle))))
 
 (define (lower-extern-value-decl-id? [ctx : tc_core.TcContext] [name-id : i64]) : bool
   (let
@@ -40699,6 +40678,8 @@
                                 raw-name)])
                           (owned_view.compiler-owned-shared-view name))]
                       [name-id : i64 source-key-id]
+                      [cpu-kind : i64
+                        (tc_core.tc-cpu-query-head-kind ctx type-env raw-name)]
                       [builtin-available : bool
                         (or
                           (and
@@ -40950,10 +40931,15 @@
                             args
                             result-ty
                             origin)]
-                        [(and
-                            builtin-available
-                            (cbi.compiler-builtin-lower-xgetbv-id? name-id))
-                          (lower-xgetbv-call ctx state env type-env args origin)]
+                        [(>= cpu-kind 0)
+                          (lower-cpu-query-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            cpu-kind
+                            origin)]
                         [(and
                             builtin-available
                             (cbi.compiler-builtin-c-fn-check-id? name-id))
@@ -41600,36 +41586,39 @@
                           origin)])]))])]))
     (Err (box (lower-diagnostic "lower: cpuid expects two arguments")))))
 
-(define (lower-xgetbv-call
+(define (lower-cpu-query-call
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
+  [kind : i64]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (if (= args.len 1)
-    (lower-xgetbv
-      ctx
-      state
-      env
-      type-env
-      (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0)))
-    (Err
-      (box
-        (lower-diagnostic-at-expr
-          ctx
-          origin
-          "lower: xgetbv expects one argument")))))
+  (cond
+    [(and (= kind 4) (= args.len 1))
+      (lower-xgetbv
+        ctx
+        state
+        env
+        type-env
+        (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0)))]
+    [(and (< kind 4) (= args.len 2))
+      (lower-cpuid-like
+        ctx
+        state
+        env
+        type-env
+        (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))
+        (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 1 0))
+        kind)]
+    [else
+      (Err
+        (box
+          (lower-diagnostic-at-expr
+            ctx
+            origin
+            "lower: wrong number of CPU query arguments")))]))
 
-;; Small emit helpers: allocate a fresh var, emit one instruction, and return a
-;; `LowerExpr` carrying the updated state plus the result value. These flatten
-;; the otherwise deeply-nested alloc/emit chains in the array-access lowering.
-;; The owned-view idiom `(ptr-read (ptr-cast (__tl_array-data (array r)) :
-;; (Ptr u64)))` reads a one-word value's bits back out of a fresh one-element
-;; array. When the read is a 64-bit integer and `r` is a variable or borrow of a
-;; one-word type (a reference, a raw pointer or a 64-bit integer), the read is
-;; `r` itself reinterpreted, so the array, its store and the load are not
-;; emitted. Returns `r`'s expression id, or -1 when the read is not that idiom.
 (define (lower-word-view-item
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
@@ -74858,6 +74847,9 @@
   [bytes : (&mut bytes byte_buf_core.ByteBufBuilder)]) : bool
   (match (tc_core.tc-resolve-type ctx ty)
     [(Array elem-id count)
+      (unless
+        (tc_core.tc-global-static-array? ctx (& values) elem-id count)
+        (return false))
       (let
         [elem-ty : ast.AstType
           (tc_core.tc-resolve-type
@@ -74873,40 +74865,15 @@
             (lower-context-expr-get ctx (ast.ast-expr-list-get values index 0))
             (lower-global-shared-view elem-ty))
             [(Ok value)
-              (if (lower-static-array-element-kind?
-                value
-                (lower-global-shared-view elem-ty))
-                (let
-                  [bits : i64 (lower-static-array-element-bits value)]
-                  (for [byte (iterator.range 0 elem-size)]
-                    (byte_buf_core.byte-buf-builder-push
-                      bytes
-                      (cast (bit-and (shr bits (* 8 byte)) 255) : u8))))
-                (set! ok false))]
+              (let
+                [bits : i64 (lower-static-array-element-bits value)]
+                (for [byte (iterator.range 0 elem-size)]
+                  (byte_buf_core.byte-buf-builder-push
+                    bytes
+                    (cast (bit-and (shr bits (* 8 byte)) 255) : u8))))]
             [(Err _) (set! ok false)])
           (+= index 1))
         ok)]
-    [_ false]))
-
-;; Whether constant `value` is data of scalar type `ty`: integer literals only
-;; for integer elements, float bits (already in `ty`'s width) only for floats.
-(define (lower-static-array-element-kind?
-  [value : (& ir.CompilerIrValue)]
-  [ty : ast.AstType]) : bool
-  (match value
-    [(I64 _) (tc_core.tc-integer-type? ty)]
-    [(F64 _)
-      (match ty
-        [(or (F64) (F32)) true]
-        [_ false])]
-    [(Bool _)
-      (match ty
-        [(Bool) true]
-        [_ false])]
-    [(Char _)
-      (match ty
-        [(Char) true]
-        [_ false])]
     [_ false]))
 
 ;; The element's bits, little-endian from bit 0; only the element size's low

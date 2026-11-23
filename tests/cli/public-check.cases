@@ -3896,3 +3896,93 @@ step package-duplicate-macro
 run check --manifest-path "{{dir}}/typelisp.pkg"
 exit 1
 stderr contains duplicate
+
+case check-global-initializer-order
+target linux-x86_64 windows-x86_64
+file global_init_forward_read_reject.tl
+(define first : i64
+  later)
+(define later : i64
+  (+ 1 2))
+end-file
+file global_init_wrapped_read_reject.tl
+(define first : i64
+  (cast (ann later : i32) : i64))
+(define later : i32
+  (cast (+ 1 2) : i32))
+end-file
+file global_init_self_read_reject.tl
+(define first : i64
+  (+ first 1))
+end-file
+file global_init_cycle_read_reject.tl
+(define first : i64
+  second)
+(define second : i64
+  first)
+end-file
+file global_init_transitive_read_reject.tl
+(define first : i64
+  (read-through-helper))
+(define later : i64
+  (+ 1 2))
+
+(define (read-through-helper) : i64
+  (read-later))
+
+(define (read-later) : i64
+  later)
+end-file
+file global_init_indirect_read_reject.tl
+(define first : i64
+  (let
+    [read
+      (if true
+        read-later
+        read-zero)]
+    (read)))
+(define later : i64
+  (+ 1 2))
+
+(define (read-later) : i64
+  later)
+
+(define (read-zero) : i64
+  0)
+end-file
+step forward
+run check "{{dir}}/global_init_forward_read_reject.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains global_init_forward_read_reject.tl:2:3
+stderr contains typecheck: global initializer may read `later` before it is initialized
+step wrapped
+run check "{{dir}}/global_init_wrapped_read_reject.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains global_init_wrapped_read_reject.tl:2:3
+stderr contains typecheck: global initializer may read `later` before it is initialized
+step self
+run check "{{dir}}/global_init_self_read_reject.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains global_init_self_read_reject.tl:2:3
+stderr contains typecheck: global initializer may read `first` before it is initialized
+step cycle
+run check "{{dir}}/global_init_cycle_read_reject.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains global_init_cycle_read_reject.tl:2:3
+stderr contains typecheck: global initializer may read `second` before it is initialized
+step transitive
+run check "{{dir}}/global_init_transitive_read_reject.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains global_init_transitive_read_reject.tl:2:3
+stderr contains typecheck: global initializer may read `later` before it is initialized
+step indirect
+run check "{{dir}}/global_init_indirect_read_reject.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains global_init_indirect_read_reject.tl:2:3
+stderr contains typecheck: global initializer may read `later` before it is initialized

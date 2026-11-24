@@ -1,0 +1,155 @@
+# Safety corpus cases: borrows, aliasing, reborrows, auto-borrows, two-phase calls, derefs, and nested call loans.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
+shared_view_bridge_reinterpret_reject|check-fail|tests/safety/shared_view_bridge_reinterpret_reject.tl|-|typecheck: unbound name __tl-compiler-owned-shared-view-dyn-ref-as
+shared_view_bridge_alias_reject|check-fail|tests/safety/shared_view_bridge_alias_reject.tl|-|typecheck: unbound name core.__tl-compiler-owned-shared-view-dyn-ref-as
+shared_view_bridge_owner_reject|check-fail|tests/safety/shared_view_bridge_owner_reject.tl|-|typecheck: unbound name __tl-compiler-owned-shared-view-dyn-ref-as
+borrowed_array_explicit_unsafe_data_ok|run-exit|tests/safety/borrowed_array_explicit_unsafe_data_ok.tl|42|-
+mutable_reference_reborrow_subscope_ok|check-ok|tests/safety/mutable_reference_reborrow_subscope_ok.tl|-|-
+mutable_reference_read_disjoint_ok|check-ok|tests/safety/mutable_reference_read_disjoint_ok.tl|-|-
+mutable_reference_read_through_ref_ok|check-ok|tests/safety/mutable_reference_read_through_ref_ok.tl|-|-
+auto_borrow_assignment_after_last_use_ok|check-ok|tests/safety/auto_borrow_assignment_after_last_use_ok.tl|-|-
+auto_borrow_move_after_last_use_ok|check-ok|tests/safety/auto_borrow_move_after_last_use_ok.tl|-|-
+auto_borrow_loop_then_array_consume_ok|check-ok|tests/safety/auto_borrow_loop_then_array_consume_ok.tl|-|-
+mutable_reference_owner_read_after_last_use_ok|check-ok|tests/safety/mutable_reference_owner_read_after_last_use_ok.tl|-|-
+two_phase_mutable_call_read_ok|check-ok|tests/safety/two_phase_mutable_call_read_ok.tl|-|-
+borrow_if_branch_local_after_join_ok|check-ok|tests/safety/borrow_if_branch_local_after_join_ok.tl|-|-
+borrow_match_branch_local_after_join_ok|check-ok|tests/safety/borrow_match_branch_local_after_join_ok.tl|-|-
+borrow_while_body_after_last_use_ok|check-ok|tests/safety/borrow_while_body_after_last_use_ok.tl|-|-
+borrow_foreach_body_after_last_use_ok|check-ok|tests/safety/borrow_foreach_body_after_last_use_ok.tl|-|-
+lending_iterator_after_last_use_ok|check-ok|tests/safety/lending_iterator_after_last_use_ok.tl|-|-
+lending_iterator_loop_after_last_use_ok|check-ok|tests/safety/lending_iterator_loop_after_last_use_ok.tl|-|-
+reborrow_stored_reference_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_reference_item_after_last_use_ok.tl|-|-
+reborrow_stored_mut_reference_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_mut_reference_item_after_last_use_ok.tl|-|-
+reborrow_stored_reference_item_disjoint_sibling_ok|check-ok|tests/safety/reborrow_stored_reference_item_disjoint_sibling_ok.tl|-|-
+reborrow_stored_dead_sibling_after_use_ok|check-ok|tests/safety/reborrow_stored_dead_sibling_after_use_ok.tl|-|-
+reborrow_stored_generated_vector_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_generated_vector_item_after_last_use_ok.tl|-|-
+mutable_reference_reject|check-fail|tests/safety/mutable_reference_reject.tl|-|cannot mutably borrow borrowed place `items[0]`
+mutable_reference_same_field_reject|check-fail|tests/safety/mutable_reference_same_field_reject.tl|-|cannot mutably borrow borrowed place `bags.left`
+mutable_reference_field_element_reject|check-fail|tests/safety/mutable_reference_field_element_reject.tl|-|cannot mutably borrow borrowed place `bags.left[0]`
+mutable_reference_reborrow_outer_live_reject|check-fail|tests/safety/mutable_reference_reborrow_outer_live_reject.tl|-|cannot assign to borrowed place `items[0]`
+mut_to_immut_reborrow_return_live_reject|check-fail|tests/safety/mut_to_immut_reborrow_return_live_reject.tl|-|cannot assign to borrowed place
+mutable_reference_read_array_length_reject|check-fail|tests/safety/mutable_reference_read_array_length_reject.tl|-|cannot immutably borrow mutably borrowed place `items`
+mutable_reference_read_array_ref_reject|check-fail|tests/safety/mutable_reference_read_array_ref_reject.tl|-|cannot read mutably borrowed place `items[0]`
+mutable_reference_read_struct_get_reject|check-fail|tests/safety/mutable_reference_read_struct_get_reject.tl|-|cannot move borrowed place `bag.left`
+mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
+mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
+mutable_reference_wrong_scalar_reject|check-fail|tests/safety/mutable_reference_wrong_scalar_reject.tl|-|typecheck: call `clear-flag!` argument 1
+mutable_reference_lifetime_field_store_ok|run-exit|tests/safety/mutable_reference_lifetime_field_store_ok.tl|42|-
+mutable_reference_lifetime_field_store_shorter_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shorter_reject.tl|-|struct field assignment type mismatch: expected (& a i64), found (& m i64)
+mutable_reference_lifetime_field_store_local_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_local_reject.tl|-|struct field assignment type mismatch: expected (& a i64), found (& x i64)
+mutable_reference_lifetime_field_store_shadow_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_reject.tl|-|cannot store reference into longer-lived struct field
+mutable_reference_lifetime_field_store_shadow_deref_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_deref_reject.tl|-|cannot store reference into longer-lived struct field
+mutable_reference_lifetime_field_store_shadow_whole_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_whole_reject.tl|-|cannot store reference into longer-lived &mut referent
+mutable_reference_lifetime_field_store_param_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_param_reject.tl|-|cannot store reference into longer-lived struct field
+mutable_view_match_value_form_write_ok|run-exit|tests/safety/mutable_view_match_value_form_write_ok.tl|42|-
+auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
+borrow_temporary_call_arg_ok|run-exit|tests/safety/borrow_temporary_call_arg_ok.tl|42|-
+borrow_temporary_cleanup_ok|run-exit|tests/safety/borrow_temporary_cleanup_ok.tl|42|-
+borrow_temporary_result_escape_reject|check-fail|tests/safety/borrow_temporary_result_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_nested_escape_reject|check-fail|tests/safety/borrow_temporary_nested_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_constructor_escape_reject|check-fail|tests/safety/borrow_temporary_constructor_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_mut_param_escape_reject|check-fail|tests/safety/borrow_temporary_mut_param_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_let_reject|check-fail|tests/safety/borrow_temporary_let_reject.tl|-|typecheck: a borrowed temporary must be a direct function-call argument
+borrow_temporary_match_scrutinee_reject|check-fail|tests/safety/borrow_temporary_match_scrutinee_reject.tl|-|typecheck: a borrowed temporary must be a direct function-call argument
+borrow_temporary_named_lifetime_reject|check-fail|tests/safety/borrow_temporary_named_lifetime_reject.tl|-|typecheck: a borrowed temporary has no lifetime to name
+borrow_temporary_moved_operand_reject|check-fail|tests/safety/borrow_temporary_moved_operand_reject.tl|-|use of moved value `name`
+borrow_temporary_cleanup_early_exit_reject|check-fail|tests/safety/borrow_temporary_cleanup_early_exit_reject.tl|-|skip the cleanup of this borrowed cleanup-owning temporary
+borrow_temporary_cleanup_aggregate_reject|check-fail|tests/safety/borrow_temporary_cleanup_aggregate_reject.tl|-|a borrowed temporary that holds a cleanup-owning value must itself declare a cleanup function
+nested_call_loan_enum_reject|check-fail|tests/safety/nested_call_loan_enum_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_struct_reject|check-fail|tests/safety/nested_call_loan_struct_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_match_reject|check-fail|tests/safety/nested_call_loan_match_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_slice_reject|check-fail|tests/safety/nested_call_loan_slice_reject.tl|-|cannot mutably borrow borrowed place `wire`
+nested_call_loan_move_reject|check-fail|tests/safety/nested_call_loan_move_reject.tl|-|cannot move borrowed place `wire`
+nested_call_loan_scoped_ok|check-ok|tests/safety/nested_call_loan_scoped_ok.tl|-|-
+nested_call_loan_unrelated_ok|check-ok|tests/safety/nested_call_loan_unrelated_ok.tl|-|-
+auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|error[E0210]: typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& left-life str), found (& right-life str); source lifetime `right-life` does not outlive required lifetime `left-life`
+auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
+auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move_before_last_use_reject.tl|-|cannot move borrowed place `text`
+two_phase_mutable_call_second_mut_reject|check-fail|tests/safety/two_phase_mutable_call_second_mut_reject.tl|-|typecheck: cannot mutably borrow borrowed place `items`
+two_phase_mutable_call_escape_reject|check-fail|tests/safety/two_phase_mutable_call_escape_reject.tl|-|typecheck: cannot mutably borrow borrowed place `items`
+two_phase_mutable_call_mutate_reject|check-fail|tests/safety/two_phase_mutable_call_mutate_reject.tl|-|typecheck: cannot assign to borrowed place `items`
+lending_iterator_second_next_live_reject|check-fail|tests/safety/lending_iterator_second_next_live_reject.tl|-|cannot mutably borrow borrowed place `iter`
+reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
+reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
+reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
+reborrow_stored_nested_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items[0]`
+reborrow_stored_generated_vector_item_source_live_reject|check-fail|tests/safety/reborrow_stored_generated_vector_item_source_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
+borrow_while_box_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_box_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`
+borrow_call_arg_begin_before_last_use_reject|check-fail|tests/safety/borrow_call_arg_begin_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+borrow_call_arg_nested_write_before_call_reject|check-fail|tests/safety/borrow_call_arg_nested_write_before_call_reject.tl|tests/safety/borrow_call_arg_nested_write_before_call_reject.tl:13:17|cannot assign to borrowed place `n`
+borrow_call_arg_three_pending_reject|check-fail|tests/safety/borrow_call_arg_three_pending_reject.tl|-|cannot assign to borrowed place `n`
+borrow_call_outer_pending_reject|check-fail|tests/safety/borrow_call_outer_pending_reject.tl|-|cannot assign to borrowed place `n`
+borrow_let_final_use_before_owner_write_ok|check-ok|tests/safety/borrow_let_final_use_before_owner_write_ok.tl|-|-
+borrow_let_three_binding_order_ok|check-ok|tests/safety/borrow_let_three_binding_order_ok.tl|-|-
+borrow_let_later_binding_reject|check-fail|tests/safety/borrow_let_later_binding_reject.tl|-|cannot assign to borrowed place `n`
+borrow_let_closure_call_initializer_ok|check-ok|tests/safety/borrow_let_closure_call_initializer_ok.tl|-|-
+borrow_lambda_capture_final_use_ok|check-ok|tests/safety/borrow_lambda_capture_final_use_ok.tl|-|-
+borrow_if_result_before_last_use_reject|check-fail|tests/safety/borrow_if_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+borrow_match_result_before_last_use_reject|check-fail|tests/safety/borrow_match_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+borrow_if_lifetime_aggregate_result_before_last_use_reject|check-fail|tests/safety/borrow_if_lifetime_aggregate_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
+mut_element_reborrow_argument_ok|check-ok|tests/safety/mut_element_reborrow_argument_ok.tl|-|-
+mut_field_reborrow_argument_ok|check-ok|tests/safety/mut_field_reborrow_argument_ok.tl|-|-
+mut_element_shared_array_reborrow_reject|check-fail|tests/safety/mut_element_shared_array_reborrow_reject.tl|tests/safety/mut_element_shared_array_reborrow_reject.tl:8:3|mutable borrow through a shared reference
+mut_element_shared_slice_reborrow_reject|check-fail|tests/safety/mut_element_shared_slice_reborrow_reject.tl|tests/safety/mut_element_shared_slice_reborrow_reject.tl:7:3|mutable borrow through a shared reference
+mut_field_shared_holder_reborrow_reject|check-fail|tests/safety/mut_field_shared_holder_reborrow_reject.tl|tests/safety/mut_field_shared_holder_reborrow_reject.tl:12:3|mutable borrow through a shared reference
+mut_element_twice_one_call_reject|check-fail|tests/safety/mut_element_twice_one_call_reject.tl|tests/safety/mut_element_twice_one_call_reject.tl:12:3|cannot mutably borrow borrowed place `p`
+borrowed_pattern_copy_binding_ok|run-exit|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-
+borrowed_pattern_copy_deferred_ok|run-exit|tests/safety/borrowed_pattern_copy_deferred_ok.tl|42|-
+borrowed_pattern_copy_deref_reject|check-fail|tests/safety/borrowed_pattern_copy_deref_reject.tl|-|deref requires Box or reference type
+borrowed_enum_struct_pattern_arity_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_arity_reject.tl|tests/safety/borrowed_enum_struct_pattern_arity_reject.tl:12:8|typecheck: pattern arity mismatch
+borrowed_enum_struct_pattern_escape_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_escape_reject.tl|tests/safety/borrowed_enum_struct_pattern_escape_reject.tl:8:3|does not outlive required lifetime `outer`
+borrowed_enum_struct_pattern_literal_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_literal_reject.tl|tests/safety/borrowed_enum_struct_pattern_literal_reject.tl:12:8|borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern
+borrowed_enum_struct_pattern_mutation_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_mutation_reject.tl|tests/safety/borrowed_enum_struct_pattern_mutation_reject.tl:12:15|cannot assign to borrowed place `item`
+borrowed_struct_pattern_string_escape_reject|check-fail|tests/safety/borrowed_struct_pattern_string_escape_reject.tl|-|does not outlive required lifetime `outer`
+borrowed_struct_pattern_string_mutation_reject|check-fail|tests/safety/borrowed_struct_pattern_string_mutation_reject.tl|-|cannot assign to borrowed place `items[0]`
+borrowed_struct_match_escape_reject|check-fail|tests/safety/borrowed_struct_match_escape_reject.tl|-|does not outlive required lifetime `outer`
+borrowed_struct_match_mutation_reject|check-fail|tests/safety/borrowed_struct_match_mutation_reject.tl|-|cannot assign to borrowed place `label`
+borrowed_struct_match_pattern_kind_reject|check-fail|tests/safety/borrowed_struct_match_pattern_kind_reject.tl|-|borrowed struct match requires a constructor-shaped struct pattern, binding, or wildcard
+mut_borrow_through_shared_param_reject|check-fail|tests/safety/mut_borrow_through_shared_param_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_let_reject|check-fail|tests/safety/mut_borrow_through_shared_let_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_field_reject|check-fail|tests/safety/mut_borrow_through_shared_field_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_struct_reject|check-fail|tests/safety/mut_borrow_through_shared_struct_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_stored_shared_reject|check-fail|tests/safety/mut_borrow_through_stored_shared_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_slice_reject|check-fail|tests/safety/mut_borrow_through_shared_slice_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_nested_field_reject|check-fail|tests/safety/mut_borrow_through_shared_nested_field_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_tuple_reject|check-fail|tests/safety/mut_borrow_through_shared_tuple_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_deref_array_reject|check-fail|tests/safety/mut_borrow_through_shared_deref_array_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_box_reject|check-fail|tests/safety/mut_borrow_through_shared_box_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_buffer_element_reject|check-fail|tests/safety/mut_borrow_through_shared_buffer_element_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_buffer_handle_reject|check-fail|tests/safety/mut_borrow_through_shared_buffer_handle_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_mutable_paths_ok|run-exit|tests/safety/mut_borrow_mutable_paths_ok.tl|42|-
+deref_shared_noncopy_move_reject|check-fail|tests/safety/deref_shared_noncopy_move_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+deref_immutable_set_reject|check-fail|tests/safety/deref_immutable_set_reject.tl|-|set! deref requires mutable access
+deref_box_use_after_move_reject|check-fail|tests/safety/deref_box_use_after_move_reject.tl|-|use of moved value `outer`
+deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|tests/safety/deref_raw_pointer_reject.tl:2:3|typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!
+mut_param_store_then_write_reject|check-fail|tests/safety/mut_param_store_then_write_reject.tl|tests/safety/mut_param_store_then_write_reject.tl:9:16|borrowed place `p`
+mut_param_whole_store_then_write_reject|check-fail|tests/safety/mut_param_whole_store_then_write_reject.tl|tests/safety/mut_param_whole_store_then_write_reject.tl:10:16|borrowed place `p`
+reborrow_through_mut_holder_bound_reject|check-fail|tests/safety/reborrow_through_mut_holder_bound_reject.tl|tests/safety/reborrow_through_mut_holder_bound_reject.tl:19:3|return type mismatch
+reborrow_through_shared_holder_bound_reject|check-fail|tests/safety/reborrow_through_shared_holder_bound_reject.tl|tests/safety/reborrow_through_shared_holder_bound_reject.tl:13:3|return type mismatch
+reborrow_lending_cursor_reject|check-fail|tests/safety/reborrow_lending_cursor_reject.tl|tests/safety/reborrow_lending_cursor_reject.tl:17:23|cannot assign to borrowed place `xs`
+reborrow_through_mut_holder_bound_ok|run-exit|tests/safety/reborrow_through_mut_holder_bound_ok.tl|42|-
+reborrow_lending_cursor_ok|run-exit|tests/safety/reborrow_lending_cursor_ok.tl|42|-
+reborrow_through_inner_shared_array_reject|check-fail|tests/safety/reborrow_through_inner_shared_array_reject.tl|-|mutable borrow through a shared reference
+deref_computed_shared_reference_mut_reject|check-fail|tests/safety/deref_computed_shared_reference_mut_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_forwarded_diagnostic_location_reject|check-fail|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl:2:3|set! deref requires mutable access
+shared_mut_borrow_location_reject|check-fail|tests/safety/shared_mut_borrow_location_reject.tl|tests/safety/shared_mut_borrow_location_reject.tl:9:27|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_location_reject|check-fail|tests/safety/borrow_lifetime_location_reject.tl|tests/safety/borrow_lifetime_location_reject.tl:8:24|borrow lifetime mismatch
+shared_mut_borrow_initializer_location_reject|check-fail|tests/safety/shared_mut_borrow_initializer_location_reject.tl|tests/safety/shared_mut_borrow_initializer_location_reject.tl:5:12|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_initializer_location_reject|check-fail|tests/safety/borrow_lifetime_initializer_location_reject.tl|tests/safety/borrow_lifetime_initializer_location_reject.tl:4:10|borrow lifetime mismatch
+shared_mut_borrow_call_location_reject|check-fail|tests/safety/shared_mut_borrow_call_location_reject.tl|tests/safety/shared_mut_borrow_call_location_reject.tl:8:12|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_call_location_reject|check-fail|tests/safety/borrow_lifetime_call_location_reject.tl|tests/safety/borrow_lifetime_call_location_reject.tl:7:11|borrow lifetime mismatch
+shared_mut_borrow_replace_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_location_reject.tl|tests/safety/shared_mut_borrow_replace_location_reject.tl:6:20|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+shared_mut_borrow_replace_let_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_let_location_reject.tl|tests/safety/shared_mut_borrow_replace_let_location_reject.tl:9:22|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+shared_mut_borrow_replace_index_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_index_location_reject.tl|tests/safety/shared_mut_borrow_replace_index_location_reject.tl:10:39|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_replace_location_control_reject|check-fail|tests/safety/borrow_lifetime_replace_location_control_reject.tl|tests/safety/borrow_lifetime_replace_location_control_reject.tl:6:3|replace! target must be a storage place
+shared_mut_borrow_macro_location_reject|check-fail|tests/safety/shared_mut_borrow_macro_location_reject.tl|tests/safety/shared_mut_borrow_macro_location_reject.tl:10:31|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_macro_location_reject|check-fail|tests/safety/borrow_lifetime_macro_location_reject.tl|tests/safety/borrow_lifetime_macro_location_reject.tl:12:30|borrow lifetime mismatch
+shared_mut_borrow_replace_macro_location_control_reject|check-fail|tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl|tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl:9:3|replace! target must be a storage place
+shared_mut_borrow_replace_call_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_call_location_reject.tl|tests/safety/shared_mut_borrow_replace_call_location_reject.tl:9:26|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+shared_mut_borrow_replace_index_call_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl|tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl:13:38|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)

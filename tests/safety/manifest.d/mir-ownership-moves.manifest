@@ -1,0 +1,186 @@
+# Safety corpus cases: MIR ownership checks for moves, boxes, arrays, matches, fields, cleanup, and externs.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+mir_macro_move_reject|check-fail|tests/safety/mir_macro_move_reject.tl|tests/safety/mir_macro_move_reject.tl:10:18|use of moved value `text`
+mir_raw_read_ok|run-exit|tests/safety/mir_raw_read_ok.tl|42|-
+mir_field_partial_move_ok|run-exit|tests/safety/mir_field_partial_move_ok.tl|42|-
+mir_field_partial_whole_reject|check-fail|tests/safety/mir_field_partial_whole_reject.tl|tests/safety/mir_field_partial_whole_reject.tl:13:21|use of moved value `h`
+mir_field_branch_move_reject|check-fail|tests/safety/mir_field_branch_move_reject.tl|tests/safety/mir_field_branch_move_reject.tl:14:11|use of moved value `h.items`
+mir_field_mut_through_shared_reject|check-fail|tests/safety/mir_field_mut_through_shared_reject.tl|tests/safety/mir_field_mut_through_shared_reject.tl:10:9|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+mir_field_view_conflict_reject|check-fail|tests/safety/mir_field_view_conflict_reject.tl|tests/safety/mir_field_view_conflict_reject.tl:16:20|cannot mutably borrow borrowed place `h.items`
+mir_match_ok|run-exit|tests/safety/mir_match_ok.tl|42|-
+mir_match_field_twice_reject|check-fail|tests/safety/mir_match_field_twice_reject.tl|tests/safety/mir_match_field_twice_reject.tl:18:5|use of moved value `h.slot`
+mir_match_payload_whole_reject|check-fail|tests/safety/mir_match_payload_whole_reject.tl|tests/safety/mir_match_payload_whole_reject.tl:17:11|use of moved value `s`
+mir_match_borrowed_conflict_reject|check-fail|tests/safety/mir_match_borrowed_conflict_reject.tl|tests/safety/mir_match_borrowed_conflict_reject.tl:14:15|cannot assign to borrowed place `s`
+mir_construct_builtin_ok|run-exit|tests/safety/mir_construct_builtin_ok.tl|42|-
+mir_construct_moved_reject|check-fail|tests/safety/mir_construct_moved_reject.tl|tests/safety/mir_construct_moved_reject.tl:9:30|use of moved value `items`
+mir_builtin_while_mut_reject|check-fail|tests/safety/mir_builtin_while_mut_reject.tl|tests/safety/mir_builtin_while_mut_reject.tl:9:28|cannot immutably borrow mutably borrowed place `items`
+mir_array_forms_ok|run-exit|tests/safety/mir_array_forms_ok.tl|42|-
+mir_array_push_moved_reject|check-fail|tests/safety/mir_array_push_moved_reject.tl|tests/safety/mir_array_push_moved_reject.tl:7:21|use of moved value `name`
+mir_array_set_moved_reject|check-fail|tests/safety/mir_array_set_moved_reject.tl|tests/safety/mir_array_set_moved_reject.tl:7:21|use of moved value `name`
+mir_array_loop_store_reject|check-fail|tests/safety/mir_array_loop_store_reject.tl|tests/safety/mir_array_loop_store_reject.tl:10:39|cannot move loop-carried owner value `value`
+mir_array_ref_while_mut_reject|check-fail|tests/safety/mir_array_ref_while_mut_reject.tl|tests/safety/mir_array_ref_while_mut_reject.tl:9:14|cannot read mutably borrowed place `items[0]`
+mir_array_field_set_through_shared_reject|check-fail|tests/safety/mir_array_field_set_through_shared_reject.tl|tests/safety/mir_array_field_set_through_shared_reject.tl:7:20|cannot mutably borrow `cache.ready` behind a shared reference
+mir_array_element_field_store_reject|check-fail|tests/safety/mir_array_element_field_store_reject.tl|tests/safety/mir_array_element_field_store_reject.tl:19:13|cannot assign to borrowed place `p.r`
+mir_array_element_field_store_ok|run-exit|tests/safety/mir_array_element_field_store_ok.tl|42|-
+mir_array_element_replace_reject|check-fail|tests/safety/mir_array_element_replace_reject.tl|tests/safety/mir_array_element_replace_reject.tl:16:15|cannot assign to borrowed place `p.l`
+mir_qualified_variant_moved_reject|check-fail|tests/safety/mir_qualified_variant_moved_reject.tl|tests/safety/mir_qualified_variant_moved_reject.tl:9:27|use of moved value `name`
+mir_nullary_variant_ok|run-exit|tests/safety/mir_nullary_variant_ok.tl|42|-
+mir_box_ok|run-exit|tests/safety/mir_box_ok.tl|42|-
+mir_box_moved_reject|check-fail|tests/safety/mir_box_moved_reject.tl|tests/safety/mir_box_moved_reject.tl:5:43|use of moved value `items`
+mir_box_construct_moved_reject|check-fail|tests/safety/mir_box_construct_moved_reject.tl|tests/safety/mir_box_construct_moved_reject.tl:5:19|use of moved value `items`
+mir_box_borrow_conflict_reject|check-fail|tests/safety/mir_box_borrow_conflict_reject.tl|tests/safety/mir_box_borrow_conflict_reject.tl:6:20|cannot assign to borrowed place `items`
+mir_array_literal_moved_reject|check-fail|tests/safety/mir_array_literal_moved_reject.tl|tests/safety/mir_array_literal_moved_reject.tl:5:19|use of moved value `items`
+mir_value_field_ok|run-exit|tests/safety/mir_value_field_ok.tl|42|-
+mir_field_set_ok|run-exit|tests/safety/mir_field_set_ok.tl|42|-
+mir_field_set_borrowed_reject|check-fail|tests/safety/mir_field_set_borrowed_reject.tl|tests/safety/mir_field_set_borrowed_reject.tl:10:13|cannot assign to borrowed place `holder.items`
+mir_match_loop_nil_ok|run-exit|tests/safety/mir_match_loop_nil_ok.tl|42|-
+mir_match_loop_moved_reject|check-fail|tests/safety/mir_match_loop_moved_reject.tl|tests/safety/mir_match_loop_moved_reject.tl:14:9|use of moved value `cursor`
+mir_macro_constructor_double_move_reject|check-fail|tests/safety/mir_macro_constructor_double_move_reject.tl|tests/safety/mir_macro_constructor_double_move_reject.tl:13:12|use of moved value `value`
+mir_extern_read_ok|check-ok|tests/safety/mir_extern_read_ok.tl|-|-
+mir_extern_borrow_ok|check-ok|tests/safety/mir_extern_borrow_ok.tl|-|-
+mir_extern_borrow_conflict_reject|check-fail|tests/safety/mir_extern_borrow_conflict_reject.tl|tests/safety/mir_extern_borrow_conflict_reject.tl:10:29|cannot immutably borrow mutably borrowed place `items`
+mir_deref_reference_ok|run-exit|tests/safety/mir_deref_reference_ok.tl|62|-
+mir_deref_borrow_conflict_reject|check-fail|tests/safety/mir_deref_borrow_conflict_reject.tl|tests/safety/mir_deref_borrow_conflict_reject.tl:10:13|cannot mutably borrow borrowed place `n`
+mir_temporary_projection_ok|run-exit|tests/safety/mir_temporary_projection_ok.tl|49|-
+mir_element_operand_ok|run-exit|tests/safety/mir_element_operand_ok.tl|42|-
+mir_element_operand_borrow_conflict_reject|check-fail|tests/safety/mir_element_operand_borrow_conflict_reject.tl|tests/safety/mir_element_operand_borrow_conflict_reject.tl:8:39|cannot immutably borrow mutably borrowed place `names[0]`
+mir_try_ok|run-exit|tests/safety/mir_try_ok.tl|42|-
+mir_try_moved_reject|check-fail|tests/safety/mir_try_moved_reject.tl|tests/safety/mir_try_moved_reject.tl:13:47|use of moved value `items`
+mir_unreachable_tail_ok|check-ok|tests/safety/mir_unreachable_tail_ok.tl|-|-
+mir_element_move_through_ref_reject|check-fail|tests/safety/mir_element_move_through_ref_reject.tl|tests/safety/mir_element_move_through_ref_reject.tl:10:3|cannot move a `Item` out of a shared reference
+mir_element_move_owned_param_reject|check-fail|tests/safety/mir_element_move_owned_param_reject.tl|tests/safety/mir_element_move_owned_param_reject.tl:10:3|cannot move owner-consuming value out of dynamic array element
+mir_element_match_reject|check-fail|tests/safety/mir_element_match_reject.tl|tests/safety/mir_element_match_reject.tl:10:10|cannot move a `Shape` out of a shared reference
+mir_element_field_read_ok|run-exit|tests/safety/mir_element_field_read_ok.tl|42|-
+mir_move_out_of_reference_reject|check-fail|tests/safety/mir_move_out_of_reference_reject.tl|tests/safety/mir_move_out_of_reference_reject.tl:9:3|out of a shared reference; `Item` is not Copy
+mir_by_value_borrow_escape_reject|check-fail|tests/safety/mir_by_value_borrow_escape_reject.tl|tests/safety/mir_by_value_borrow_escape_reject.tl:17:35|mutable borrow of by-value place cannot outlive the call
+mir_by_value_borrow_escape_elided_reject|check-fail|tests/safety/mir_by_value_borrow_escape_elided_reject.tl|tests/safety/mir_by_value_borrow_escape_elided_reject.tl:8:44|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_forwarded_reject|check-fail|tests/safety/mir_by_value_borrow_escape_forwarded_reject.tl|tests/safety/mir_by_value_borrow_escape_forwarded_reject.tl:11:42|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_function_value_reject|check-fail|tests/safety/mir_by_value_borrow_escape_function_value_reject.tl|tests/safety/mir_by_value_borrow_escape_function_value_reject.tl:9:45|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_lambda_reject|check-fail|tests/safety/mir_by_value_borrow_escape_lambda_reject.tl|tests/safety/mir_by_value_borrow_escape_lambda_reject.tl:11:9|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_macro_reject|check-fail|tests/safety/mir_by_value_borrow_escape_macro_reject.tl|tests/safety/mir_by_value_borrow_escape_macro_reject.tl:6:13|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_nominal_reject|check-fail|tests/safety/mir_by_value_borrow_escape_nominal_reject.tl|tests/safety/mir_by_value_borrow_escape_nominal_reject.tl:12:45|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_scalar_reject|check-fail|tests/safety/mir_by_value_borrow_escape_scalar_reject.tl|tests/safety/mir_by_value_borrow_escape_scalar_reject.tl:8:44|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_borrow_escape_tuple_reject|check-fail|tests/safety/mir_by_value_borrow_escape_tuple_reject.tl|tests/safety/mir_by_value_borrow_escape_tuple_reject.tl:11:55|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: the call's result keeps its lifetime
+mir_by_value_immediate_writeback_ok|run-exit|tests/safety/mir_by_value_immediate_writeback_ok.tl|42|-
+mir_by_value_read_only_result_ok|run-exit|tests/safety/mir_by_value_read_only_result_ok.tl|42|-
+mir_storage_backed_borrow_result_ok|run-exit|tests/safety/mir_storage_backed_borrow_result_ok.tl|42|-
+mir_by_value_borrow_retained_aggregate_reject|check-fail|tests/safety/mir_by_value_borrow_retained_aggregate_reject.tl|tests/safety/mir_by_value_borrow_retained_aggregate_reject.tl:19:25|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime
+mir_by_value_borrow_retained_elided_reject|check-fail|tests/safety/mir_by_value_borrow_retained_elided_reject.tl|tests/safety/mir_by_value_borrow_retained_elided_reject.tl:15:25|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime
+mir_by_value_borrow_retained_forwarded_reject|check-fail|tests/safety/mir_by_value_borrow_retained_forwarded_reject.tl|tests/safety/mir_by_value_borrow_retained_forwarded_reject.tl:18:33|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime
+mir_by_value_borrow_retained_lambda_reject|check-fail|tests/safety/mir_by_value_borrow_retained_lambda_reject.tl|tests/safety/mir_by_value_borrow_retained_lambda_reject.tl:15:7|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime
+mir_by_value_borrow_retained_macro_reject|check-fail|tests/safety/mir_by_value_borrow_retained_macro_reject.tl|tests/safety/mir_by_value_borrow_retained_macro_reject.tl:11:18|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime
+mir_by_value_borrow_retained_phantom_reject|check-fail|tests/safety/mir_by_value_borrow_retained_phantom_reject.tl|tests/safety/mir_by_value_borrow_retained_phantom_reject.tl:15:27|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime
+mir_by_value_borrow_retained_scalar_reject|check-fail|tests/safety/mir_by_value_borrow_retained_scalar_reject.tl|tests/safety/mir_by_value_borrow_retained_scalar_reject.tl:15:25|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime
+mir_by_value_borrow_retained_signature_reject|check-fail|tests/safety/mir_by_value_borrow_retained_signature_reject.tl|tests/safety/mir_by_value_borrow_retained_signature_reject.tl:17:24|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime
+mir_by_value_borrow_retained_tuple_reject|check-fail|tests/safety/mir_by_value_borrow_retained_tuple_reject.tl|tests/safety/mir_by_value_borrow_retained_tuple_reject.tl:13:25|error[E0207]: typecheck: mutable borrow of by-value place cannot outlive the call: another mutable argument may keep its lifetime
+mir_by_value_borrow_distinct_lifetime_ok|run-exit|tests/safety/mir_by_value_borrow_distinct_lifetime_ok.tl|42|-
+mir_by_value_borrow_unretained_ok|run-exit|tests/safety/mir_by_value_borrow_unretained_ok.tl|42|-
+mir_storage_backed_borrow_retained_ok|run-exit|tests/safety/mir_storage_backed_borrow_retained_ok.tl|42|-
+mir_struct_pattern_ok|run-exit|tests/safety/mir_struct_pattern_ok.tl|42|-
+mir_struct_pattern_moved_reject|check-fail|tests/safety/mir_struct_pattern_moved_reject.tl|tests/safety/mir_struct_pattern_moved_reject.tl:18:13|use of moved value `pair.name`
+mir_foreach_loop_carried_move_reject|check-fail|tests/safety/mir_foreach_loop_carried_move_reject.tl|tests/safety/mir_foreach_loop_carried_move_reject.tl:13:62|cannot move loop-carried owner value `text`
+mir_foreach_shared_view_ok|run-exit|tests/safety/mir_foreach_shared_view_ok.tl|42|-
+mir_spmd_reduce_borrow_assign_reject|check-fail|tests/safety/mir_spmd_reduce_borrow_assign_reject.tl|tests/safety/mir_spmd_reduce_borrow_assign_reject.tl:8:24|cannot assign to borrowed place `values[0]`
+mir_spmd_reduce_view_last_use_ok|run-exit|tests/safety/mir_spmd_reduce_view_last_use_ok.tl|42|-
+mir_immediate_lambda_ref_capture_ok|run-exit|tests/safety/mir_immediate_lambda_ref_capture_ok.tl|42|-
+mir_immediate_lambda_consumed_capture_reject|check-fail|tests/safety/mir_immediate_lambda_consumed_capture_reject.tl|tests/safety/mir_immediate_lambda_consumed_capture_reject.tl:13:37|use of moved value `text`
+mir_ptr_addr_of_element_ok|run-exit|tests/safety/mir_ptr_addr_of_element_ok.tl|42|-
+mir_tuple_pattern_partial_ok|run-exit|tests/safety/mir_tuple_pattern_partial_ok.tl|42|-
+mir_array_pattern_partial_ok|run-exit|tests/safety/mir_array_pattern_partial_ok.tl|42|-
+mir_array_pattern_moved_element_reject|check-fail|tests/safety/mir_array_pattern_moved_element_reject.tl|tests/safety/mir_array_pattern_moved_element_reject.tl:11:5|use of moved value `items[0]`
+mir_borrowed_tuple_pattern_ok|run-exit|tests/safety/mir_borrowed_tuple_pattern_ok.tl|42|-
+mir_borrowed_array_pattern_conflict_reject|check-fail|tests/safety/mir_borrowed_array_pattern_conflict_reject.tl|tests/safety/mir_borrowed_array_pattern_conflict_reject.tl:15:7|cannot assign to borrowed place `items[1]`
+mir_with_arena_scoped_ok|run-exit|tests/safety/mir_with_arena_scoped_ok.tl|42|-
+mir_with_arena_moved_outer_reject|check-fail|tests/safety/mir_with_arena_moved_outer_reject.tl|tests/safety/mir_with_arena_moved_outer_reject.tl:13:29|use of moved value `owned`
+mir_with_arena_borrow_conflict_reject|check-fail|tests/safety/mir_with_arena_borrow_conflict_reject.tl|tests/safety/mir_with_arena_borrow_conflict_reject.tl:11:28|cannot assign to borrowed place `values[0]`
+mir_cfunc_value_call_ok|check-ok|tests/safety/mir_cfunc_value_call_ok.tl|-|-
+mir_cfunc_unsafe_call_reject|check-fail|tests/safety/mir_cfunc_unsafe_call_reject.tl|tests/safety/mir_cfunc_unsafe_call_reject.tl:7:3|C function pointer requires unsafe context
+mir_cfunc_value_lend_ok|check-ok|tests/safety/mir_cfunc_value_lend_ok.tl|-|-
+mir_cfunc_value_lend_moved_reject|check-fail|tests/safety/mir_cfunc_value_lend_moved_reject.tl|tests/safety/mir_cfunc_value_lend_moved_reject.tl:10:23|use of moved value `s`
+mir_cfunc_value_lend_obligation_reject|check-fail|tests/safety/mir_cfunc_value_lend_obligation_reject.tl|tests/safety/mir_cfunc_value_lend_obligation_reject.tl:11:3|cleanup obligation of `h` is not discharged at the end of its let scope
+mir_array_literal_move_ok|run-exit|tests/safety/mir_array_literal_move_ok.tl|42|-
+mir_array_literal_move_twice_reject|check-fail|tests/safety/mir_array_literal_move_twice_reject.tl|tests/safety/mir_array_literal_move_twice_reject.tl:9:21|use of moved value `items[0]`
+mir_array_literal_move_computed_read_reject|check-fail|tests/safety/mir_array_literal_move_computed_read_reject.tl|tests/safety/mir_array_literal_move_computed_read_reject.tl:10:27|use of moved value `items`
+mir_array_literal_move_computed_store_reject|check-fail|tests/safety/mir_array_literal_move_computed_store_reject.tl|tests/safety/mir_array_literal_move_computed_store_reject.tl:11:24|use of moved value `items`
+mir_box_field_scrutinee_ok|run-exit|tests/safety/mir_box_field_scrutinee_ok.tl|42|-
+mir_box_field_scrutinee_moved_reject|check-fail|tests/safety/mir_box_field_scrutinee_moved_reject.tl|tests/safety/mir_box_field_scrutinee_moved_reject.tl:19:12|use of moved value `boxed`
+mir_raw_spawn_atomic_owner_capture_ok|run-exit|tests/safety/mir_raw_spawn_atomic_owner_capture_ok.tl|42|-
+mir_spawn_named_owner_capture_ok|run-exit|tests/safety/mir_spawn_named_owner_capture_ok.tl|42|-
+mir_cleanup_holder_assign_reject|check-fail|tests/safety/mir_cleanup_holder_assign_reject.tl|-|cannot assign to borrowed place `h`
+mir_cleanup_holder_assign_ok|run-exit|tests/safety/mir_cleanup_holder_assign_ok.tl|6|-
+mir_cleanup_holder_return_reject|check-fail|tests/safety/mir_cleanup_holder_return_reject.tl|-|cannot assign to borrowed place `h`
+mir_cleanup_holder_param_ok|run-exit|tests/safety/mir_cleanup_holder_param_ok.tl|5|-
+mir_cleanup_field_store_through_ref_reject|check-fail|tests/safety/mir_cleanup_field_store_through_ref_reject.tl|-|cannot overwrite initialized cleanup-owning place
+mir_cleanup_store_through_ref_reject|check-fail|tests/safety/mir_cleanup_store_through_ref_reject.tl|-|cannot overwrite initialized cleanup-owning place
+mir_box_pattern_binder_loan_reject|check-fail|tests/safety/mir_box_pattern_binder_loan_reject.tl|-|cannot assign to borrowed place `xs`
+mir_cleanup_slice_store_reject|check-fail|tests/safety/mir_cleanup_slice_store_reject.tl|-|cannot overwrite initialized cleanup-owning place
+mir_comptime_syntax_move_reject|check-fail|tests/safety/mir_comptime_syntax_move_reject.tl|tests/safety/mir_comptime_syntax_move_reject.tl:9:20|use of moved value `item`
+mir_comptime_syntax_match_ok|check-ok|tests/safety/mir_comptime_syntax_match_ok.tl|-|-
+mir_box_bridge_duplicate_reject|check-fail|tests/safety/mir_box_bridge_duplicate_reject.tl|-|use of moved value `boxed`
+mir_box_bridge_shared_write_reject|check-fail|tests/safety/mir_box_bridge_shared_write_reject.tl|tests/safety/mir_box_bridge_shared_write_reject.tl:11:12|cannot mutably borrow `state.storage` behind a shared reference
+mir_extern_view_borrow_reject|check-fail|tests/safety/mir_extern_view_borrow_reject.tl|tests/safety/mir_extern_view_borrow_reject.tl:19:23|cannot move borrowed place `text`
+mir_extern_view_borrow_ok|run-exit|tests/safety/mir_extern_view_borrow_ok.tl|9|-
+mir_string_compare_read_ok|check-ok|tests/safety/mir_string_compare_read_ok.tl|-|-
+mir_string_compare_moved_reject|check-fail|tests/safety/mir_string_compare_moved_reject.tl|tests/safety/mir_string_compare_moved_reject.tl:11:12|use of moved value `text`
+mir_function_array_ok|run-exit|tests/safety/mir_function_array_ok.tl|42|-
+mir_box_pattern_move_reject|check-fail|tests/safety/mir_box_pattern_move_reject.tl|tests/safety/mir_box_pattern_move_reject.tl:11:32|use of moved value `cell`
+mir_box_pattern_copy_ok|run-exit|tests/safety/mir_box_pattern_copy_ok.tl|42|-
+mir_deref_reference_read_ok|run-exit|tests/safety/mir_deref_reference_read_ok.tl|42|-
+mir_holding_array_push_reject|check-fail|tests/safety/mir_holding_array_push_reject.tl|tests/safety/mir_holding_array_push_reject.tl:15:13|cannot mutably borrow borrowed place `value`
+mir_box_reference_borrow_reject|check-fail|tests/safety/mir_box_reference_borrow_reject.tl|tests/safety/mir_box_reference_borrow_reject.tl:15:13|cannot mutably borrow borrowed place `pair`
+mir_match_literal_arm_move_reject|check-fail|tests/safety/mir_match_literal_arm_move_reject.tl|tests/safety/mir_match_literal_arm_move_reject.tl:22:16|use of moved value `c`
+mir_match_literal_arm_ok|run-exit|tests/safety/mir_match_literal_arm_ok.tl|42|-
+mir_macro_operand_location_reject|check-fail|tests/safety/mir_macro_operand_location_reject.tl|tests/safety/mir_macro_operand_location_reject.tl:14:35|use of moved value `s`
+mir_macro_clause_location_reject|check-fail|tests/safety/mir_macro_clause_location_reject.tl|tests/safety/mir_macro_clause_location_reject.tl:13:42|use of moved value `s`
+mir_macro_and_location_reject|check-fail|tests/safety/mir_macro_and_location_reject.tl|tests/safety/mir_macro_and_location_reject.tl:13:40|use of moved value `s`
+mir_nested_reference_array_reject|check-fail|tests/safety/mir_nested_reference_array_reject.tl|tests/safety/mir_nested_reference_array_reject.tl:8:13|cannot assign to borrowed place `x`
+mir_nested_reference_array_copy_reject|check-fail|tests/safety/mir_nested_reference_array_copy_reject.tl|tests/safety/mir_nested_reference_array_copy_reject.tl:8:13|cannot assign to borrowed place `x`
+mir_nested_reference_array_ok|run-exit|tests/safety/mir_nested_reference_array_ok.tl|42|-
+mir_store_receiver_shared_borrow_reject|check-fail|tests/safety/mir_store_receiver_shared_borrow_reject.tl|tests/safety/mir_store_receiver_shared_borrow_reject.tl:12:11|cannot assign to borrowed place `items[0]`
+mir_store_receiver_mut_borrow_reject|check-fail|tests/safety/mir_store_receiver_mut_borrow_reject.tl|tests/safety/mir_store_receiver_mut_borrow_reject.tl:10:11|cannot assign to borrowed place `items[0]`
+mir_store_receiver_moved_reject|check-fail|tests/safety/mir_store_receiver_moved_reject.tl|tests/safety/mir_store_receiver_moved_reject.tl:16:11|use of moved value `items`
+mir_store_receiver_through_shared_reject|check-fail|tests/safety/mir_store_receiver_through_shared_reject.tl|tests/safety/mir_store_receiver_through_shared_reject.tl:9:11|cannot mutably borrow `r` behind a shared reference
+mir_store_receiver_rhs_reads_ok|run-exit|tests/safety/mir_store_receiver_rhs_reads_ok.tl|42|-
+mir_store_receiver_move_only_ok|run-exit|tests/safety/mir_store_receiver_move_only_ok.tl|42|-
+mir_for_owned_source_reuse_reject|check-fail|tests/safety/mir_for_owned_source_reuse_reject.tl|tests/safety/mir_for_owned_source_reuse_reject.tl:11:38|use of moved value `strings`
+mir_for_owned_item_twice_reject|check-fail|tests/safety/mir_for_owned_item_twice_reject.tl|tests/safety/mir_for_owned_item_twice_reject.tl:13:48|use of moved value `s`
+mir_for_owned_borrowed_source_reject|check-fail|tests/safety/mir_for_owned_borrowed_source_reject.tl|tests/safety/mir_for_owned_borrowed_source_reject.tl:10:15|cannot move borrowed place `strings`
+mir_element_reference_mut_reject|check-fail|tests/safety/mir_element_reference_mut_reject.tl|tests/safety/mir_element_reference_mut_reject.tl:14:20|cannot assign to borrowed place `holder`
+mir_for_owned_items_ok|run-exit|tests/safety/mir_for_owned_items_ok.tl|42|-
+mir_for_owned_break_ok|run-exit|tests/safety/mir_for_owned_break_ok.tl|42|-
+mir_element_reference_ok|run-exit|tests/safety/mir_element_reference_ok.tl|42|-
+mir_scalar_widening_ok|run-exit|tests/safety/mir_scalar_widening_ok.tl|42|-
+mir_resource_limit_reject|check-fail|tests/safety/mir_resource_limit_reject.tl|tests/safety/mir_resource_limit_reject.tl:5:3|the ownership checker does not support a construct in this function body
+mir_shift_count_type_ok|run-exit|tests/safety/mir_shift_count_type_ok.tl|42|-
+mir_match_literal_arithmetic_arm_ok|run-exit|tests/safety/mir_match_literal_arithmetic_arm_ok.tl|42|-
+mir_nested_reference_read_ok|check-ok|tests/safety/mir_nested_reference_read_ok.tl|-|-
+mir_nested_reference_move_out_reject|check-fail|tests/safety/mir_nested_reference_move_out_reject.tl|tests/safety/mir_nested_reference_move_out_reject.tl:5:31|cannot move a `(&mut inner i64)` out of a shared reference
+mir_accessor_element_move_reject|check-fail|tests/safety/mir_accessor_element_move_reject.tl|tests/safety/mir_accessor_element_move_reject.tl:14:3|cannot move a `String` out of a shared reference
+mir_varargs_extern_call_ok|check-ok|tests/safety/mir_varargs_extern_call_ok.tl|-|-
+mir_runtime_quasiquote_ok|check-ok|tests/safety/mir_runtime_quasiquote_ok.tl|-|-
+mir_tuple_ref_call_result_ok|run-exit|tests/safety/mir_tuple_ref_call_result_ok.tl|42|-
+mir_free_lifetime_field_escape_reject|check-fail|tests/safety/mir_free_lifetime_field_escape_reject.tl|tests/safety/mir_free_lifetime_field_escape_reject.tl:10:13|source lifetime `x` does not outlive required lifetime `n`
+mir_scalar_var_widening_ok|run-exit|tests/safety/mir_scalar_var_widening_ok.tl|42|-
+mir_free_lifetime_field_reject|check-fail|tests/safety/mir_free_lifetime_field_reject.tl|tests/safety/mir_free_lifetime_field_reject.tl:8:3|holds a reference but declares no lifetimes
+mir_declared_lifetime_field_ok|run-exit|tests/safety/mir_declared_lifetime_field_ok.tl|42|-
+mir_box_holder_read_reject|check-fail|tests/safety/mir_box_holder_read_reject.tl|tests/safety/mir_box_holder_read_reject.tl:13:11|cannot assign to borrowed place `pair.b`
+mir_box_holder_read_ok|run-exit|tests/safety/mir_box_holder_read_ok.tl|42|-
+mir_box_holder_element_push_reject|check-fail|tests/safety/mir_box_holder_element_push_reject.tl|tests/safety/mir_box_holder_element_push_reject.tl:9:23|cannot assign to borrowed place `xs`
+mir_box_holder_store_reject|check-fail|tests/safety/mir_box_holder_store_reject.tl|tests/safety/mir_box_holder_store_reject.tl:19:13|cannot assign to borrowed place `p.r`
+mir_box_holder_nested_store_reject|check-fail|tests/safety/mir_box_holder_nested_store_reject.tl|tests/safety/mir_box_holder_nested_store_reject.tl:19:11|cannot assign to borrowed place `p.r`
+mir_opaque_referent_read_reject|check-fail|tests/safety/mir_opaque_referent_read_reject.tl|tests/safety/mir_opaque_referent_read_reject.tl:22:13|cannot assign to borrowed place `p.l`
+mir_box_holder_move_out_reject|check-fail|tests/safety/mir_box_holder_move_out_reject.tl|tests/safety/mir_box_holder_move_out_reject.tl:9:23|cannot assign to borrowed place `xs`
+mir_box_holder_struct_move_out_reject|check-fail|tests/safety/mir_box_holder_struct_move_out_reject.tl|tests/safety/mir_box_holder_struct_move_out_reject.tl:12:23|cannot assign to borrowed place `xs`
+mir_box_holder_move_out_ok|run-exit|tests/safety/mir_box_holder_move_out_ok.tl|42|-
+mir_nested_param_store_then_grow_reject|check-fail|tests/safety/mir_nested_param_store_then_grow_reject.tl|tests/safety/mir_nested_param_store_then_grow_reject.tl:12:21|cannot assign to borrowed place `xs`
+mir_nested_param_field_store_then_grow_reject|check-fail|tests/safety/mir_nested_param_field_store_then_grow_reject.tl|tests/safety/mir_nested_param_field_store_then_grow_reject.tl:15:21|cannot assign to borrowed place `xs`
+mir_nested_param_store_ok|check-ok|tests/safety/mir_nested_param_store_ok.tl|-|-
+mir_by_value_param_store_then_grow_reject|check-fail|tests/safety/mir_by_value_param_store_then_grow_reject.tl|tests/safety/mir_by_value_param_store_then_grow_reject.tl:16:21|cannot assign to borrowed place `h`
+mir_by_value_param_store_ok|run-exit|tests/safety/mir_by_value_param_store_ok.tl|42|-
+mir_box_param_move_out_store_reject|check-fail|tests/safety/mir_box_param_move_out_store_reject.tl|tests/safety/mir_box_param_move_out_store_reject.tl:13:23|cannot assign to borrowed place `xs`
+mir_job_field_store_after_rebind_reject|check-fail|tests/safety/mir_job_field_store_after_rebind_reject.tl|tests/safety/mir_job_field_store_after_rebind_reject.tl:27:11|cannot assign to borrowed place `p.r`
+mir_by_value_deep_holder_store_then_write_reject|check-fail|tests/safety/mir_by_value_deep_holder_store_then_write_reject.tl|tests/safety/mir_by_value_deep_holder_store_then_write_reject.tl:19:16|cannot assign to borrowed place `h`
+mir_by_value_holder_call_store_then_write_reject|check-fail|tests/safety/mir_by_value_holder_call_store_then_write_reject.tl|tests/safety/mir_by_value_holder_call_store_then_write_reject.tl:17:16|cannot assign to borrowed place `x`
+mir_field_store_uses_holder_reject|check-fail|tests/safety/mir_field_store_uses_holder_reject.tl|tests/safety/mir_field_store_uses_holder_reject.tl:26:15|cannot mutably borrow borrowed place `rb`
+mir_cleanup_holder_array_overwrite_reject|check-fail|tests/safety/mir_cleanup_holder_array_overwrite_reject.tl|-|cannot overwrite initialized cleanup-owning place

@@ -1,0 +1,35 @@
+# Safety corpus cases: lambda expressions and closure captures.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+capture_borrow_return_reject|check-fail|tests/safety/capture_borrow_return_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_return_call_reject|check-fail|tests/safety/capture_borrow_return_call_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
+capture_borrow_field_return_reject|check-fail|tests/safety/capture_borrow_field_return_reject.tl|-|cannot return a reference to captured `p`: a by-value capture is this lambda's own copy
+capture_borrow_with_arena_return_reject|check-fail|tests/safety/capture_borrow_with_arena_return_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_call_in_arena_reject|check-fail|tests/safety/capture_borrow_call_in_arena_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
+capture_borrow_store_reject|check-fail|tests/safety/capture_borrow_store_reject.tl|-|captured `x` does not live long enough: a by-value capture is this lambda's own copy
+capture_borrow_store_with_arena_reject|check-fail|tests/safety/capture_borrow_store_with_arena_reject.tl|-|captured `x` does not live long enough: a by-value capture is this lambda's own copy
+capture_borrow_auto_call_reject|check-fail|tests/safety/capture_borrow_auto_call_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_nested_lambda_reject|check-fail|tests/safety/capture_borrow_nested_lambda_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_lambda_param_nested_reject|check-fail|tests/safety/capture_borrow_lambda_param_nested_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
+capture_borrow_in_arena_destroy_reject|check-fail|tests/safety/capture_borrow_in_arena_destroy_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_string_with_arena_reject|check-fail|tests/safety/capture_borrow_string_with_arena_reject.tl|-|cannot return a reference to captured `s`: a by-value capture is this lambda's own copy
+capture_borrow_inferred_return_reject|check-fail|tests/safety/capture_borrow_inferred_return_reject.tl|-|lambda return value has region-tagged type; region value would escape
+capture_borrow_lambda_param_return_reject|check-fail|tests/safety/capture_borrow_lambda_param_return_reject.tl|-|cannot return a reference to parameter `n`
+lambda_mut_capture_alias_reject|check-fail|tests/safety/lambda_mut_capture_alias_reject.tl|-|reference-capturing closure value would escape lexical scope
+lambda_mut_capture_moved_reference_reject|check-fail|tests/safety/lambda_mut_capture_moved_reference_reject.tl|-|use of moved value `exclusive`
+lambda_mut_capture_owner_read_live_reject|check-fail|tests/safety/lambda_mut_capture_owner_read_live_reject.tl|-|cannot read mutably borrowed place
+lambda_capture_source_reuse_reject|check-fail|tests/safety/lambda_capture_source_reuse_reject.tl|-|use of moved value `owned`
+lambda_noncopy_capture_alias_reuse_reject|check-fail|tests/safety/lambda_noncopy_capture_alias_reuse_reject.tl|-|typecheck: use of moved value `f`
+lambda_noncopy_capture_pass_reject|check-fail|tests/safety/lambda_noncopy_capture_pass_reject.tl|-|non-Copy closure ownership would be erased
+lambda_noncopy_capture_return_reject|check-fail|tests/safety/lambda_noncopy_capture_return_reject.tl|-|non-Copy closure ownership would be erased
+lambda_fnonce_second_call_reject|check-fail|tests/safety/lambda_fnonce_second_call_reject.tl|-|typecheck: use of moved value `take`
+lambda_fnonce_escape_reject|check-fail|tests/safety/lambda_fnonce_escape_reject.tl|-|typecheck: closure capability would be erased by escaping the direct local binding
+lambda_fnonce_argument_escape_reject|check-fail|tests/safety/lambda_fnonce_argument_escape_reject.tl|-|closure capability would be erased
+lambda_fnonce_aggregate_escape_reject|check-fail|tests/safety/lambda_fnonce_aggregate_escape_reject.tl|-|closure capability would be erased
+lambda_fnonce_direct_return_reject|check-fail|tests/safety/lambda_fnonce_direct_return_reject.tl|-|closure capability would be erased
+lambda_fnonce_direct_argument_reject|check-fail|tests/safety/lambda_fnonce_direct_argument_reject.tl|-|closure capability would be erased
+lambda_fnonce_direct_aggregate_reject|check-fail|tests/safety/lambda_fnonce_direct_aggregate_reject.tl|-|closure capability would be erased
+lambda_fnonce_branch_second_call_reject|check-fail|tests/safety/lambda_fnonce_branch_second_call_reject.tl|-|use of moved value `take`
+lambda_fnonce_loop_call_reject|check-fail|tests/safety/lambda_fnonce_loop_call_reject.tl|-|cannot move loop-carried owner value `take`
+lambda_fnonce_result_branch_second_call_reject|check-fail|tests/safety/lambda_fnonce_result_branch_second_call_reject.tl|-|use of moved value `take`
+lambda_nested_mut_capture_return_reject|check-fail|tests/safety/lambda_nested_mut_capture_return_reject.tl|-|lambda cannot capture mutable reference

@@ -1376,7 +1376,7 @@ is deliberate and has a regression twin:
 
 #### Every safety case main accepts and this compiler rejects
 
-These 92 `check-fail` cases of `tests/safety/manifest.txt` pass `check` on
+These 92 `check-fail` cases of `tests/safety/manifest.d/*.manifest` pass `check` on
 main at 63b900cc8 and are rejected here, each with the diagnostic its manifest
 row names; every other `check-fail` case (1293 of 1385) is rejected by main
 too. The storage row (#8890) adds 33 more, against main at bc7db18c1. Each fixture's leading comment states the rule. One of

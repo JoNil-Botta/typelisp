@@ -21,6 +21,7 @@ scripts/ci-affected-inputs.tsv text eol=lf
 tests/fixtures/ci-affected/** text eol=lf
 tests/integration/manifest.d/*.manifest text eol=lf
 src/compile_manifest.d/*.manifest text eol=lf
+tests/safety/manifest.d/*.manifest text eol=lf
 scripts/codegen-target-dispatch.d/*.tsv text eol=lf
 tools/embedded-stdlib-tlci/identity-fixtures.d/*.tsv text eol=lf
 tests/codegen/asm-shape.d/*.cases text eol=lf

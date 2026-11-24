@@ -1,0 +1,114 @@
+# Safety corpus cases: replace!, set!, stores, inline storage, and mutation ordering.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+inline_aggregate_global_live_borrow_reject|check-fail|tests/safety/inline_aggregate_global_live_borrow_reject.tl|stdlib/format.tl|while global `held` is borrowed: it may assign `held` (via observe -> install!)
+storage_spelled_return_reject|check-fail|tests/safety/storage_spelled_return_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`
+storage_dead_param_store_direct_reject|check-fail|tests/safety/storage_dead_param_store_direct_reject.tl|-|`a` does not live long enough
+storage_dead_param_store_field_reject|check-fail|tests/safety/storage_dead_param_store_field_reject.tl|-|`a` does not live long enough
+storage_dead_param_push_reject|check-fail|tests/safety/storage_dead_param_push_reject.tl|-|`a` does not live long enough
+storage_dead_param_store_box_reject|check-fail|tests/safety/storage_dead_param_store_box_reject.tl|-|`a` does not live long enough
+storage_dead_param_store_nested_reject|check-fail|tests/safety/storage_dead_param_store_nested_reject.tl|-|`a` does not live long enough
+storage_dead_overwrite_param_reject|check-fail|tests/safety/storage_dead_overwrite_param_reject.tl|-|`a` does not live long enough
+storage_dead_by_value_param_return_reject|check-fail|tests/safety/storage_dead_by_value_param_return_reject.tl|-|cannot return a reference to parameter `a`
+storage_dead_return_direct_reject|check-fail|tests/safety/storage_dead_return_direct_reject.tl|-|reference value would escape lexical scope
+storage_dead_return_tuple_reject|check-fail|tests/safety/storage_dead_return_tuple_reject.tl|-|reference value would escape lexical scope
+storage_dead_return_struct_reject|check-fail|tests/safety/storage_dead_return_struct_reject.tl|-|reference value would escape lexical scope
+storage_dead_inner_scope_used_reject|check-fail|tests/safety/storage_dead_inner_scope_used_reject.tl|-|cannot store reference into longer-lived binding
+storage_dead_inner_scope_unused_reject|check-fail|tests/safety/storage_dead_inner_scope_unused_reject.tl|-|cannot store reference into longer-lived binding
+storage_dead_loop_binding_reject|check-fail|tests/safety/storage_dead_loop_binding_reject.tl|-|cannot store reference into longer-lived binding
+storage_dead_caller_places_ok|run-exit|tests/safety/storage_dead_caller_places_ok.tl|42|-
+storage_dead_view_binder_return_ok|run-exit|tests/safety/storage_dead_view_binder_return_ok.tl|42|-
+storage_dead_copy_view_binder_return_reject|check-fail|tests/safety/storage_dead_copy_view_binder_return_reject.tl|-|cannot return a reference to local `v`
+storage_dead_copy_view_pattern_return_reject|check-fail|tests/safety/storage_dead_copy_view_pattern_return_reject.tl|-|cannot return a reference to local `x`
+storage_dead_copy_holder_view_return_reject|check-fail|tests/safety/storage_dead_copy_holder_view_return_reject.tl|-|cannot return a reference to local `v`
+storage_dead_by_value_param_loop_store_reject|check-fail|tests/safety/storage_dead_by_value_param_loop_store_reject.tl|-|`items` does not live long enough
+set_bang_rvalue_temporary_ok|check-ok|tests/safety/set_bang_rvalue_temporary_ok.tl|-|-
+replace_reference_lifetime_ok|check-ok|tests/safety/replace_reference_lifetime_ok.tl|-|-
+replace_shared_ref_reject|check-fail|tests/safety/replace_shared_ref_reject.tl|-|set! array element requires mutable array access
+replace_fixed_array_shared_ref_reject|check-fail|tests/safety/replace_fixed_array_shared_ref_reject.tl|-|set! array element requires mutable array access
+replace_raw_pointer_reject|check-fail|tests/safety/replace_raw_pointer_reject.tl|-|typecheck: replace! target cannot be reached through a raw pointer
+replace_temporary_reject|check-fail|tests/safety/replace_temporary_reject.tl|-|parse: replace! target must be a mutable place
+replace_fixed_array_temporary_reject|check-fail|tests/safety/replace_fixed_array_temporary_reject.tl|-|replace! target must be a storage place
+replace_moved_reject|check-fail|tests/safety/replace_moved_reject.tl|-|use of moved value `text`
+replace_partial_root_reject|check-fail|tests/safety/replace_partial_root_reject.tl|-|use of moved value `owners`
+replace_moved_field_reject|check-fail|tests/safety/replace_moved_field_reject.tl|-|use of moved value `owners.left`
+replace_borrow_live_reject|check-fail|tests/safety/replace_borrow_live_reject.tl|-|cannot mutably borrow borrowed place `value`
+replace_fixed_array_borrow_live_reject|check-fail|tests/safety/replace_fixed_array_borrow_live_reject.tl|-|cannot mutably borrow borrowed place `items`
+replace_self_move_reject|check-fail|tests/safety/replace_self_move_reject.tl|-|cannot move borrowed place `text`
+replace_whole_subpath_overlap_reject|check-fail|tests/safety/replace_whole_subpath_overlap_reject.tl|-|cannot move borrowed place `owners.left`
+replace_dynamic_overlap_reject|check-fail|tests/safety/replace_dynamic_overlap_reject.tl|-|cannot move owner-consuming value out of aggregate path
+replace_rhs_mutation_reject|check-fail|tests/safety/replace_rhs_mutation_reject.tl|-|cannot mutably borrow borrowed place `value`
+replace_global_noncopy_reject|check-fail|tests/safety/replace_global_noncopy_reject.tl|-|cannot move out of global `global-text`
+replace_fixed_array_global_noncopy_reject|check-fail|tests/safety/replace_fixed_array_global_noncopy_reject.tl|-|cannot move out of global `global-items`
+replace_cleanup_owner_reject|check-fail|tests/safety/replace_cleanup_owner_reject.tl|-|replace! cannot replace an active cleanup owner
+replace_cleanup_owner_element_reject|check-fail|tests/safety/replace_cleanup_owner_element_reject.tl|-|replace! cannot replace an active cleanup owner
+replace_cleanup_owner_slot_reject|check-fail|tests/safety/replace_cleanup_owner_slot_reject.tl|-|replace! cannot replace an active cleanup owner
+replace_cleanup_owner_nested_reject|check-fail|tests/safety/replace_cleanup_owner_nested_reject.tl|-|replace! cannot replace an active cleanup owner
+replace_fixed_array_cleanup_reject|check-fail|tests/safety/replace_fixed_array_cleanup_reject.tl|-|replace! does not support cleanup-owning places
+replace_spmd_reject|check-fail|tests/safety/replace_spmd_reject.tl|-|replace! is not supported in SPMD
+replace_type_mismatch_reject|check-fail|tests/safety/replace_type_mismatch_reject.tl|-|replace! replacement type mismatch
+replace_lifetime_store_reject|check-fail|tests/safety/replace_lifetime_store_reject.tl|-|source lifetime `short-life` does not outlive required lifetime `long-life`
+replace_comptime_nonlocal_reject|check-fail|tests/safety/replace_comptime_nonlocal_reject.tl|-|comptime replace! requires a mutable local let binding
+replace_equal_bounds_trap|run-trap|tests/safety/replace_equal_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+replace_negative_bounds_trap|run-trap|tests/safety/replace_negative_bounds_trap.tl|134|array index out of bounds: index=-1 length=1
+replace_huge_bounds_trap|run-trap|tests/safety/replace_huge_bounds_trap.tl|134|array index out of bounds: index=9223372036854775807 length=1
+set_place_value_before_bounds_trap|run-trap|tests/safety/set_place_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_unit_place_value_before_bounds_trap|run-trap|tests/safety/set_unit_place_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_place_shared_reject|check-fail|tests/safety/set_place_shared_reject.tl|-|set! array element requires mutable array access
+set_aggregate_value_before_bounds_trap|run-trap|tests/safety/set_aggregate_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_intermediate_bounds_before_value_trap|run-trap|tests/safety/set_intermediate_bounds_before_value_trap.tl|134|array index out of bounds: index=1 length=1
+set_array_field_value_before_bounds_trap|run-trap|tests/safety/set_array_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_array_field_bounds_trap|run-trap|tests/safety/set_array_field_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+set_array_field_shared_reject|check-fail|tests/safety/set_array_field_shared_reject.tl|-|set! struct field requires mutable struct access
+set_unit_array_field_value_before_bounds_trap|run-trap|tests/safety/set_unit_array_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_array_field_indirection_before_value_trap|run-trap|tests/safety/set_array_field_indirection_before_value_trap.tl|134|array index out of bounds: index=0 length=0
+set_fixed_array_field_value_before_bounds_trap|run-trap|tests/safety/set_fixed_array_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_slice_field_value_before_bounds_trap|run-trap|tests/safety/set_slice_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_inline_array_bounds_before_value_trap|run-trap|tests/safety/set_inline_array_bounds_before_value_trap.tl|134|array index out of bounds: index=1 length=0
+set_inline_array_value_before_bounds_trap|run-trap|tests/safety/set_inline_array_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_inline_array_field_value_before_bounds_trap|run-trap|tests/safety/set_inline_array_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_inline_array_bounds_after_growth_trap|run-trap|tests/safety/set_inline_array_bounds_after_growth_trap.tl|134|array index out of bounds: index=3 length=3
+set_inline_array_field_bounds_after_growth_trap|run-trap|tests/safety/set_inline_array_field_bounds_after_growth_trap.tl|134|array index out of bounds: index=3 length=3
+inline_array_field_store_growth|run-exit|tests/integration/inline_array_field_store_growth.tl|42|-
+store_rhs_unreachable_reject|check-fail|tests/safety/store_rhs_unreachable_reject.tl|-|struct field assignment type mismatch
+store_rhs_unreachable_reject-windows|check-fail-windows|tests/safety/store_rhs_unreachable_reject.tl|-|struct field assignment type mismatch
+store_rhs_return_type_reject|check-fail|tests/safety/store_rhs_return_type_reject.tl|-|return type mismatch
+store_rhs_return_type_reject-windows|check-fail-windows|tests/safety/store_rhs_return_type_reject.tl|-|return type mismatch
+store_rhs_immutable_reject|check-fail|tests/safety/store_rhs_immutable_reject.tl|-|set! struct field requires mutable struct access
+store_rhs_immutable_reject-windows|check-fail-windows|tests/safety/store_rhs_immutable_reject.tl|-|set! struct field requires mutable struct access
+replace_place_shared_reject|check-fail|tests/safety/replace_place_shared_reject.tl|-|replace! target must be a storage place
+replace_place_double_mut_reject|check-fail|tests/safety/replace_place_double_mut_reject.tl|-|E0207
+replace_place_prefix_move_reject|check-fail|tests/safety/replace_place_prefix_move_reject.tl|-|E0208
+replace_place_nested_move_reject|check-fail|tests/safety/replace_place_nested_move_reject.tl|-|E0208
+replace_place_through_shared_tuple_reject|check-fail|tests/safety/replace_place_through_shared_tuple_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_ref_reject|check-fail|tests/safety/replace_place_through_shared_ref_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_array_reject|check-fail|tests/safety/replace_place_through_shared_array_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_field_reject|check-fail|tests/safety/replace_place_through_shared_field_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_box_reject|check-fail|tests/safety/replace_place_through_shared_box_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_copy_field_reject|check-fail|tests/safety/replace_place_through_shared_copy_field_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_alias_reject|check-fail|tests/safety/replace_place_through_shared_alias_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_inner_shared_reject|check-fail|tests/safety/replace_place_through_inner_shared_reject.tl|-|mutable borrow through a shared reference
+replace_through_shared_field_reject|check-fail|tests/safety/replace_through_shared_field_reject.tl|-|mutable borrow through a shared reference
+replace_through_shared_stored_field_reject|check-fail|tests/safety/replace_through_shared_stored_field_reject.tl|-|mutable borrow through a shared reference
+replace_through_shared_buffer_reject|check-fail|tests/safety/replace_through_shared_buffer_reject.tl|-|mutable borrow through a shared reference
+set_through_shared_mut_reject|check-fail|tests/safety/set_through_shared_mut_reject.tl|-|mutable borrow through a shared reference
+set_field_through_shared_mut_reject|check-fail|tests/safety/set_field_through_shared_mut_reject.tl|-|mutable borrow through a shared reference
+set_through_shared_holder_field_mut_reject|check-fail|tests/safety/set_through_shared_holder_field_mut_reject.tl|tests/safety/set_through_shared_holder_field_mut_reject.tl:14:16|error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+set_through_shared_nested_holder_field_mut_reject|check-fail|tests/safety/set_through_shared_nested_holder_field_mut_reject.tl|tests/safety/set_through_shared_nested_holder_field_mut_reject.tl:17:16|error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+set_through_shared_array_holder_field_mut_reject|check-fail|tests/safety/set_through_shared_array_holder_field_mut_reject.tl|tests/safety/set_through_shared_array_holder_field_mut_reject.tl:13:3|error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+set_through_mut_holder_field_ok|run-exit|tests/safety/set_through_mut_holder_field_ok.tl|42|-
+replace_arena_box_old_value_reject|check-fail|tests/safety/replace_arena_box_old_value_reject.tl|-|use of moved value `old`
+storage_dead_in_arena_struct_borrow_reject|check-fail|tests/safety/storage_dead_in_arena_struct_borrow_reject.tl|-|error[E0205]: typecheck: `p` does not live long enough
+storage_dead_in_arena_enum_borrow_reject|check-fail|tests/safety/storage_dead_in_arena_enum_borrow_reject.tl|-|error[E0205]: typecheck: `e` does not live long enough
+storage_dead_in_arena_box_slot_borrow_reject|check-fail|tests/safety/storage_dead_in_arena_box_slot_borrow_reject.tl|-|error[E0205]: typecheck: reference value would escape lexical scope
+storage_dead_call_view_struct_borrow_reject|check-fail|tests/safety/storage_dead_call_view_struct_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `v`
+storage_dead_call_view_field_borrow_reject|check-fail|tests/safety/storage_dead_call_view_field_borrow_reject.tl|-|error[E0205]: typecheck: `v` does not live long enough
+storage_dead_call_view_match_borrow_reject|check-fail|tests/safety/storage_dead_call_view_match_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `x`
+storage_dead_call_view_let_match_borrow_reject|check-fail|tests/safety/storage_dead_call_view_let_match_borrow_reject.tl|-|error[E0205]: typecheck: `e` does not live long enough
+storage_dead_call_view_tuple_borrow_reject|check-fail|tests/safety/storage_dead_call_view_tuple_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `t`
+storage_dead_call_view_array_borrow_reject|check-fail|tests/safety/storage_dead_call_view_array_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `xs`
+storage_dead_view_alias_reassign_borrow_reject|check-fail|tests/safety/storage_dead_view_alias_reassign_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `v`
+storage_dead_view_alias_reassign_field_borrow_reject|check-fail|tests/safety/storage_dead_view_alias_reassign_field_borrow_reject.tl|-|error[E0205]: typecheck: `v` does not live long enough
+storage_dead_arena_box_slot_outside_in_arena_reject|check-fail|tests/safety/storage_dead_arena_box_slot_outside_in_arena_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `b`
+storage_dead_arena_box_call_slot_borrow_reject|check-fail|tests/safety/storage_dead_arena_box_call_slot_borrow_reject.tl|-|error[E0205]: typecheck: cannot return a reference to local `cell`
+storage_dead_region_param_field_borrow_reject|check-fail|tests/safety/storage_dead_region_param_field_borrow_reject.tl|-|error[E0205]: typecheck: `v` does not live long enough

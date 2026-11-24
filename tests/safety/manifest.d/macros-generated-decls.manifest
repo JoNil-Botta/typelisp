@@ -1,0 +1,95 @@
+# Safety corpus cases: macros, generated declarations, decls hygiene, comptime, and source selection.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+macro_body_sequence_effect|check-fail|tests/safety/macro_body_sequence_effect.tl|-|first macro body effect
+macro_body_sequence_imported_effect|check-fail|tests/safety/macro_body_sequence_imported_effect.tl|-|second macro body effect
+macro_missing_result_type_reject|check-fail|tests/safety/macro_missing_result_type_reject.tl|-|parse: malformed defmacro
+macro_missing_body_reject|check-fail|tests/safety/macro_missing_body_reject.tl|-|parse: malformed defmacro
+free_name_scan_macro_binding_ok|run-exit|tests/safety/free_name_scan_macro_binding_ok.tl|42|-
+generated_match_pattern_non_exhaustive_reject|check-fail|tests/safety/generated_match_pattern_non_exhaustive_reject.tl|-|match missing arm for variant GeneratedPair
+comptime_mut_borrow_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_borrow_rvalue_temporary_ok.tl|-|-
+comptime_mut_call_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_call_rvalue_temporary_ok.tl|-|-
+gen_clone_missing_dependency_reject|check-fail|tests/safety/gen_clone_missing_dependency_reject.tl|-|gen-clone: missing explicit dependency clone-leaf
+gen_clone_cycle_reject|check-fail|tests/safety/gen_clone_cycle_reject.tl|-|gen-clone: cyclic clone dependency reaches
+gen_clone_name_collision_reject|check-fail|tests/safety/gen_clone_name_collision_reject.tl|-|gen-clone: generated name collision for clone-point
+gen_clone_foreign_owner_reject|check-fail|tests/safety/gen_clone_foreign_owner_reject.tl|-|gen-clone: Leaf must be generated in its canonical owner module clone_deep_missing_owner (current module <root>)
+macro_local_lifetime_coercion_reject|check-fail|tests/safety/macro_local_lifetime_coercion_reject.tl|-|source lifetime `shadowed` does not outlive required lifetime `keep`
+macro_local_lifetime_incoming_ok|run-exit|tests/safety/macro_local_lifetime_incoming_ok.tl|42|-
+decls_module_env_carry_unsafe_reject|check-fail|tests/safety/decls_module_env_carry_unsafe_reject.tl|-|requires unsafe context
+macro_body_splice_non_list_reject|check-fail|tests/safety/macro_body_splice_non_list_reject.tl|-|unquote-splicing expects ExprList
+macro_body_splice_scalar_position_reject|check-fail|tests/safety/macro_body_splice_scalar_position_reject.tl|-|unquote-splicing is only valid in a quasiquote list
+macro_body_splice_unquoted_reject|check-fail|tests/safety/macro_body_splice_unquoted_reject.tl|-|unquote-splicing is only valid inside quasiquote
+macro_struct_pattern_arity_reject|check-fail|tests/safety/macro_struct_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
+macro_struct_pattern_wrong_head_reject|check-fail|tests/safety/macro_struct_pattern_wrong_head_reject.tl|-|struct pattern head Other does not match struct Pair
+macro_struct_pattern_nested_reject|check-fail|tests/safety/macro_struct_pattern_nested_reject.tl|-|typecheck: pattern arity mismatch
+macro_struct_pattern_unknown_field_reject|check-fail|tests/safety/macro_struct_pattern_unknown_field_reject.tl|-|unknown struct field Pair.missing
+macro_template_field_hygiene_ok|run-exit|tests/safety/macro_template_field_hygiene_ok.tl|42|-
+macro_template_field_hygiene_unknown_reject|check-fail|tests/safety/macro_template_field_hygiene_unknown_reject.tl|tests/safety/macro_template_field_hygiene_unknown_reject.tl:10:4|unknown struct field Span.len; available fields: owner, size
+macro_struct_pattern_duplicate_field_reject|check-fail|tests/safety/macro_struct_pattern_duplicate_field_reject.tl|-|(fields ...) pattern names field `left` twice
+macro_struct_pattern_unreachable_reject|check-fail|tests/safety/macro_struct_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
+macro_struct_pattern_owner_reject|check-fail|tests/safety/macro_struct_pattern_owner_reject.tl|@loc{tests/integration/macro_struct_pattern_defs.tl;6;    [(Pair _ a b) (+ a b)]))}|does not match struct macro_struct_pattern_owner_reject/Pair
+macro_struct_pattern_root_owner_reject|check-fail|tests/safety/macro_struct_pattern_root_owner_reject.tl|-|does not match struct macro_struct_pattern_defs/Pair
+generated_module_unused_invalid_reject|check-fail|tests/safety/generated_module_unused_invalid_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
+generated_module_literal_narrowing_reject|check-fail|tests/safety/generated_module_literal_narrowing_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
+generated_module_bool_arithmetic_reject|check-fail|tests/safety/generated_module_bool_arithmetic_reject.tl|-|typecheck: integer operator expects matching integer operands
+generated_module_uncloneable_clone_reject|check-fail|tests/safety/generated_module_uncloneable_clone_reject.tl|-|typecheck: clone unsupported type (-> i64 i64)
+generated_module_equality_ok|check-ok|tests/safety/generated_module_equality_ok.tl|-|-
+generated_module_cleanup_ownership_reject|check-fail|tests/safety/generated_module_cleanup_ownership_reject.tl|-|field value stores cleanup-owning type FileHandle without :owned
+generated_module_reflection_fixed_shape_reject|check-fail|tests/safety/generated_module_reflection_fixed_shape_reject.tl|-|typecheck: array elements must have same type: expected i64, found bool
+generated_module_nested_unused_invalid_reject|check-fail|tests/safety/generated_module_nested_unused_invalid_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
+generated_module_fixed_callee_reject|check-fail|tests/safety/generated_module_fixed_callee_reject.tl|-|typecheck: call `fixed-callee-only-i64` argument 1 (parameter `x`) type mismatch: expected i64, found u8
+generated_module_fixed_value_reject|check-fail|tests/safety/generated_module_fixed_value_reject.tl|-|typecheck: return type mismatch: expected u8, found i64
+generated_module_fixed_local_annotation_reject|check-fail|tests/safety/generated_module_fixed_local_annotation_reject.tl|-|typecheck: let binding `y` type mismatch: expected i64, found u8
+generated_module_fixed_return_reject|check-fail|tests/safety/generated_module_fixed_return_reject.tl|-|typecheck: return type mismatch: expected i64, found u8
+generated_module_fixed_field_access_reject|check-fail|tests/safety/generated_module_fixed_field_access_reject.tl|-|typecheck: return type mismatch: expected u8, found i64
+generated_module_substituted_condition_reject|check-fail|tests/safety/generated_module_substituted_condition_reject.tl|-|typecheck: if condition must be bool: expected bool, found u8
+generated_module_fixed_constructor_argument_reject|check-fail|tests/safety/generated_module_fixed_constructor_argument_reject.tl|-|typecheck: call `Box` argument 1 (parameter `fixed`) type mismatch: expected i64, found u8
+generated_module_partial_catalog_ok|check-ok|tests/safety/generated_module_partial_catalog_ok.tl|-|-
+generated_module_sibling_value_dependency_reject|check-fail|tests/safety/generated_module_sibling_value_dependency_reject.tl|tests/safety/generated_module_sibling_value_dependency_reject.tl:27:11|error[E0206]: typecheck: integer operator expects matching integer operands
+generated_module_sibling_value_dependency_reject_message|check-fail|tests/safety/generated_module_sibling_value_dependency_reject.tl|-|error[E0206]: typecheck: integer operator expects matching integer operands
+comptime_lambda_package_temporary_escape_reject|check-fail|tests/safety/comptime_lambda_package_temporary_escape_reject.tl|-|reference value would escape lexical scope
+comptime_lambda_reference_escape_reject|check-fail|tests/safety/comptime_lambda_reference_escape_reject.tl|-|lambda cannot capture immutable reference; reference value would escape lexical scope
+macro_reference_type_unquote_ok|run-exit|tests/safety/macro_reference_type_unquote_ok.tl|42|-
+generated_cfg_missing_module_import_reject|check-fail|tests/safety/generated_cfg_missing_module_import_reject.tl|tests/safety/nonexistent_cfg_active_dependency.tl:1:1|cannot read import
+generated_cfg_invalid_predicate_reject|check-fail|tests/safety/generated_cfg_invalid_predicate_reject.tl|-|cfg not expects exactly one predicate
+decls_generated_missing_import_reject|check-fail|tests/safety/decls_generated_missing_import_reject.tl|tests/safety/nonexistent_decls_generated_dependency.tl:1:1|compiler-load: cannot read import tests/safety/nonexistent_decls_generated_dependency.tl
+decls_generated_conflicting_import_reject|check-fail|tests/safety/decls_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
+generated_import_alias_source_first_reject|check-fail|tests/safety/generated_import_alias_source_first_reject.tl|-|ambiguous import alias 'dep'
+generated_import_alias_source_last_reject|check-fail|tests/safety/generated_import_alias_source_last_reject.tl|-|ambiguous import alias 'dep'
+generated_import_alias_empty_reject|check-fail|tests/safety/generated_import_alias_empty_reject.tl|-|ambiguous import alias 'dep'
+decls_generated_missing_selected_import_reject|check-fail|tests/safety/decls_generated_missing_selected_import_reject.tl|-|has no selected item 'missing'
+decls_generated_selected_conflict_reject|check-fail|tests/safety/decls_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
+macro_operand_unbound_suggestion_reject|check-fail|tests/safety/macro_operand_unbound_suggestion_reject.tl|-|did you mean alpha?
+source_selected_generated_ok|check-ok|tests/safety/source_selected_generated_ok.tl|-|-
+source_selected_generated_missing_reject|check-fail|tests/safety/source_selected_generated_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
+source_selected_generated_seen_missing_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
+source_selected_generated_seen_missing_span_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|tests/safety/source_selected_generated_seen_missing_reject.tl:3:1|module 'source_selected_generated_provider' has no selected item 'nothing'
+source_selected_generated_macro_missing_reject|check-fail|tests/safety/source_selected_generated_macro_missing_reject.tl|-|has no selected item 'missing-macro'
+source_selected_generated_macro_missing_span_reject|check-fail|tests/safety/source_selected_generated_macro_missing_reject.tl|tests/safety/source_selected_generated_macro_missing_reject.tl:2:1|module 'source_selected_generated_provider' has no selected item 'missing-macro'
+source_selected_generated_macro_conflict_reject|check-fail|tests/safety/source_selected_generated_macro_conflict_reject.tl|-|ambiguous import alias 'selected'
+source_selected_generated_macro_local_conflict_reject|check-fail|tests/safety/source_selected_generated_macro_local_conflict_reject.tl|-|collides with the declaration of 'selected' in the entry module
+source_selected_plain_missing_reject|check-fail|tests/safety/source_selected_plain_missing_reject.tl|-|module 'decls_generated_conflict_left' has no selected item 'missing'
+decls_generated_wildcard_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
+decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
+generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_missing_decls_import_reject.tl|tests/safety/nonexistent_cfg_active_dependency.tl:1:1|cannot read import
+macro_dotted_global|check-ok|tests/integration/macro_dotted_global.tl|-|-
+macro_dotted_global_inside|check-ok|tests/integration/macro_dotted_global_inside.tl|-|-
+macro_dotted_global_matrix|check-ok|tests/integration/macro_dotted_global_matrix.tl|-|-
+macro_dotted_global_borrow_reject|check-fail|tests/safety/macro_dotted_global_borrow_reject.tl|tests/safety/macro_dotted_global_dep.tl:12:13|cannot mutably borrow global `state` owned by module `macro_dotted_global_dep`
+macro_dotted_global_write_reject|check-fail|tests/safety/macro_dotted_global_write_reject.tl|tests/safety/macro_dotted_global_dep.tl:15:10|cannot assign to part of global `state` owned by module `macro_dotted_global_dep`
+macro_nested_frame_template_reject|check-fail|tests/safety/macro_nested_frame_template_reject.tl|tests/safety/macro_nested_frame_dep.tl:5:4|tests/safety/macro_nested_frame_dep.tl:8:4
+macro_nested_frame_caller_reject|check-fail|tests/safety/macro_nested_frame_caller_reject.tl|tests/safety/macro_nested_frame_caller_reject.tl:9:21|tests/safety/macro_nested_frame_dep.tl:14:4
+macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_type_reject.tl|-|typecheck: array elements must have same type: expected i32, found i64
+macro_diagnostic_duplicate|check-fail|tests/safety/macro_diagnostic_duplicate.tl|-|error[E0501]:
+macro_diagnostic_clause|check-fail|tests/safety/macro_diagnostic_clause.tl|-|error[E0502]:
+macro_diagnostic_module|check-fail|tests/safety/macro_diagnostic_module.tl|-|error[E0503]:
+macro_diagnostic_depth|check-fail|tests/safety/macro_diagnostic_depth.tl|-|error[E0504]:
+macro_diagnostic_author|check-fail|tests/safety/macro_diagnostic_author.tl|-|error[E0505]:
+macro_diagnostic_division|check-fail|tests/safety/macro_diagnostic_division.tl|-|error[E0506]:
+macro_diagnostic_fuel|check-fail|tests/safety/macro_diagnostic_fuel.tl|-|error[E0507]:
+macro_table_cycle_reject|check-fail|tests/safety/macro_table_cycle/main.tl|-|error[E0501]: typecheck: missing macro
+macro_table_cycle_control|check-ok|tests/safety/macro_table_cycle_control/main.tl|-|-
+decls_same_scope_incompatible|check-fail|tests/safety/decls_same_scope_incompatible.tl|-|has incompatible payload
+decls_explicit_module_tail_conflict|check-fail|tests/safety/decls_explicit_module_tail_conflict.tl|-|duplicate value declaration generated.decls_explicit_global/value
+decls_explicit_target_incompatible|check-fail|tests/safety/decls_explicit_target_incompatible.tl|-|duplicate generated key for answer has incompatible payload
+comptime_current_module_args_reject|check-fail|tests/safety/comptime_current_module_args_reject.tl|-|current-module expects no arguments

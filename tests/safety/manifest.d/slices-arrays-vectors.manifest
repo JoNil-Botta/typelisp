@@ -1,0 +1,152 @@
+# Safety corpus cases: slices, arrays, fixed arrays, vectors, hashmaps, and queues.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+fixed_make_array_runtime_count_reject|check-fail|tests/safety/fixed_make_array_runtime_count_reject.tl|tests/safety/fixed_make_array_runtime_count_reject.tl:2:3|make-array length must be a non-negative compile-time integer
+fixed_make_array_negative_count_reject|check-fail|tests/safety/fixed_make_array_negative_count_reject.tl|-|make-array length must be a non-negative compile-time integer
+array_bounds_trap|run-trap|tests/safety/array_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+array_set_bounds_trap|run-trap|tests/safety/array_set_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+make_array_negative_trap|run-trap|tests/safety/make_array_negative_trap.tl|134|tl: array index out of bounds
+vector_iter_mut_after_last_use_ok|check-ok|tests/safety/vector_iter_mut_after_last_use_ok.tl|-|-
+vector_iter_shared_after_last_use_ok|check-ok|tests/safety/vector_iter_shared_after_last_use_ok.tl|-|-
+vector_iter_shared_item_after_last_use_ok|check-ok|tests/safety/vector_iter_shared_item_after_last_use_ok.tl|-|-
+slice_bare_value_reject|check-fail|tests/safety/slice_bare_value_reject.tl|-|bare Slice
+slice_invalid_element_reject|check-fail|tests/safety/slice_invalid_element_reject.tl|-|bare Slice
+slice_bare_array_argument_reject|check-fail|tests/safety/slice_bare_array_argument_reject.tl|-|typecheck:
+slice_cross_mutability_reject|check-fail|tests/safety/slice_cross_mutability_reject.tl|-|typecheck:
+slice_shared_write_reject|check-fail|tests/safety/slice_shared_write_reject.tl|-|mutable array access
+slice_extern_ref_reject|check-fail|tests/safety/slice_extern_ref_reject.tl|-|extern/native Slice references are unsupported
+slice_explicit_unsize_ok|check-ok|tests/safety/slice_explicit_unsize_ok.tl|-|-
+slice_record_shared_borrow_ok|run-exit|tests/safety/slice_record_shared_borrow_ok.tl|1|-
+slice_scalar_refs_ok|run-exit|tests/safety/slice_scalar_refs_ok.tl|42|-
+slice_record_view_escape_reject|check-fail|tests/safety/slice_record_view_escape_reject.tl|-|reference value would escape lexical scope
+slice_record_text_escape_reject|check-fail|tests/safety/slice_record_text_escape_reject.tl|-|reference value would escape lexical scope
+slice_record_mut_alias_reject|check-fail|tests/safety/slice_record_mut_alias_reject.tl|-|cannot immutably borrow mutably borrowed place `items`
+slice_record_mut_shorten_reject|check-fail|tests/safety/slice_record_mut_shorten_reject.tl|-|mutable reference referent type is invariant
+slice_macro_kind_reject|check-fail|tests/safety/slice_macro_kind_reject.tl|-|macro slice-only type operand S rejects i64: expected one of :kind slice
+slice_macro_nested_element_reject|check-fail|tests/safety/slice_macro_nested_element_reject.tl|-|bare Slice type is unsized; borrow it
+slice_negative_index_trap|run-trap|tests/safety/slice_negative_index_trap.tl|134|array index out of bounds
+slice_out_of_range_index_trap|run-trap|tests/safety/slice_out_of_range_index_trap.tl|134|array index out of bounds
+slice_view_negative_start_trap|run-trap|tests/safety/slice_view_negative_start_trap.tl|134|array index out of bounds
+slice_view_negative_length_trap|run-trap|tests/safety/slice_view_negative_length_trap.tl|134|array index out of bounds
+slice_view_start_past_end_trap|run-trap|tests/safety/slice_view_start_past_end_trap.tl|134|array index out of bounds
+slice_view_length_past_remaining_trap|run-trap|tests/safety/slice_view_length_past_remaining_trap.tl|134|array index out of bounds
+slice_view_length_huge_trap|run-trap|tests/safety/slice_view_length_huge_trap.tl|134|array index out of bounds
+slice_view_invalid_source_reject|check-fail|tests/safety/slice_view_invalid_source_reject.tl|-|slice-view source must be a fixed array
+slice_view_mut_shared_ref_reject|check-fail|tests/safety/slice_view_mut_shared_ref_reject.tl|-|slice-mut-view requires a mutable borrowed source
+slice_view_mut_temporary_reject|check-fail|tests/safety/slice_view_mut_temporary_reject.tl|-|borrow requires a local, parameter, or aggregate place
+slice_view_noninteger_start_reject|check-fail|tests/safety/slice_view_noninteger_start_reject.tl|-|argument 2 type mismatch: expected integer
+slice_view_noninteger_length_reject|check-fail|tests/safety/slice_view_noninteger_length_reject.tl|-|argument 3 type mismatch: expected integer
+slice_view_arity_reject|check-fail|tests/safety/slice_view_arity_reject.tl|-|slice-view expected 3 arguments
+slice_view_shadow_check_ok|check-ok|tests/safety/slice_view_shadow_check_ok.tl|-|-
+slice_view_shared_copy_live_ok|check-ok|tests/safety/slice_view_shared_copy_live_ok.tl|-|-
+slice_view_shared_noncopy_array_move_live_reject|check-fail|tests/safety/slice_view_shared_noncopy_array_move_live_reject.tl|-|cannot move borrowed place `items`
+slice_view_shared_dynarray_move_live_reject|check-fail|tests/safety/slice_view_shared_dynarray_move_live_reject.tl|-|cannot move borrowed place `items`
+slice_view_shared_write_live_reject|check-fail|tests/safety/slice_view_shared_write_live_reject.tl|-|cannot assign to borrowed place `items[0]`
+slice_view_shared_dynarray_push_reject|check-fail|tests/safety/slice_view_shared_dynarray_push_reject.tl|-|cannot assign to borrowed place `items`
+slice_view_shared_mut_view_reject|check-fail|tests/safety/slice_view_shared_mut_view_reject.tl|-|cannot mutably borrow borrowed place `items`
+slice_view_mut_owner_read_reject|check-fail|tests/safety/slice_view_mut_owner_read_reject.tl|-|cannot read mutably borrowed place `items[0]`
+slice_view_mut_owner_write_reject|check-fail|tests/safety/slice_view_mut_owner_write_reject.tl|-|cannot assign to borrowed place `items[0]`
+slice_view_mut_shared_subview_reject|check-fail|tests/safety/slice_view_mut_shared_subview_reject.tl|-|cannot immutably borrow mutably borrowed place `items`
+slice_view_mut_double_reject|check-fail|tests/safety/slice_view_mut_double_reject.tl|-|cannot mutably borrow borrowed place `items`
+slice_view_mut_arena_dynarray_reject|check-fail|tests/safety/slice_view_mut_arena_dynarray_reject.tl|-|cannot mutably borrow borrowed place `items`
+slice_view_mut_arena_array_reject|check-fail|tests/safety/slice_view_mut_arena_array_reject.tl|-|cannot mutably borrow borrowed place `items`
+slice_view_mut_projected_array_reject|check-fail|tests/safety/slice_view_mut_projected_array_reject.tl|-|cannot mutably borrow borrowed place `b.items`
+slice_view_parent_child_shared_reject|check-fail|tests/safety/slice_view_parent_child_shared_reject.tl|-|cannot assign to borrowed place `parent[0]`
+slice_view_parent_call_child_live_reject|check-fail|tests/safety/slice_view_parent_call_child_live_reject.tl|tests/safety/slice_view_parent_call_child_live_reject.tl:14:14|error[E0207]: typecheck: cannot mutably borrow borrowed place `parent`
+slice_view_str_source_reject|check-fail|tests/safety/slice_view_str_source_reject.tl|-|slice-view source must be a fixed array
+slice_view_parent_child_mut_reject|check-fail|tests/safety/slice_view_parent_child_mut_reject.tl|-|cannot read mutably borrowed place `parent[0]`
+slice_view_parent_child_shared_dead_parent_reject|check-fail|tests/safety/slice_view_parent_child_shared_dead_parent_reject.tl|-|cannot assign to borrowed place `items[0]`
+slice_view_parent_child_mut_dead_parent_reject|check-fail|tests/safety/slice_view_parent_child_mut_dead_parent_reject.tl|-|cannot assign to borrowed place `items[0]`
+slice_view_nested_last_use_ok|run-exit|tests/safety/slice_view_nested_last_use_ok.tl|42|-
+slice_view_dynarray_nested_last_use_push_ok|run-exit|tests/safety/slice_view_dynarray_nested_last_use_push_ok.tl|42|-
+slice_view_fixed_escape_reject|check-fail|tests/safety/slice_view_fixed_escape_reject.tl|-|reference value would escape lexical scope
+slice_view_arena_dynarray_escape_reject|check-fail|tests/safety/slice_view_arena_dynarray_escape_reject.tl|-|region-tagged value cannot escape with-arena
+slice_split_at_negative_trap|run-trap|tests/safety/slice_split_at_negative_trap.tl|134|array index out of bounds
+slice_split_at_past_end_trap|run-trap|tests/safety/slice_split_at_past_end_trap.tl|134|array index out of bounds
+slice_split_at_invalid_source_reject|check-fail|tests/safety/slice_split_at_invalid_source_reject.tl|-|slice-split-at source must be a borrowed Slice
+slice_split_at_mut_shared_reject|check-fail|tests/safety/slice_split_at_mut_shared_reject.tl|-|slice-split-at-mut requires a mutable borrowed Slice
+slice_split_at_noninteger_reject|check-fail|tests/safety/slice_split_at_noninteger_reject.tl|-|argument 2 type mismatch: expected integer
+slice_split_at_arity_reject|check-fail|tests/safety/slice_split_at_arity_reject.tl|-|slice-split-at expected 2 arguments
+slice_split_at_source_live_reject|check-fail|tests/safety/slice_split_at_source_live_reject.tl|-|cannot read mutably borrowed place `items[0]`
+slice_split_at_parent_live_reject|check-fail|tests/safety/slice_split_at_parent_live_reject.tl|-|cannot read mutably borrowed place `view[0]`
+slice_split_at_child_parent_live_reject|check-fail|tests/safety/slice_split_at_child_parent_live_reject.tl|-|cannot read mutably borrowed place `left[0]`
+slice_split_at_escape_reject|check-fail|tests/safety/slice_split_at_escape_reject.tl|-|reference value would escape lexical scope
+slice_split_at_forge_reject|check-fail|tests/safety/slice_split_at_forge_reject.tl|-|cannot mutably borrow borrowed place `view`
+slice_split_at_tuple_forge_reject|check-fail|tests/safety/slice_split_at_tuple_forge_reject.tl|-|use of moved value `view`
+slice_split_at_shadow_check_ok|check-ok|tests/safety/slice_split_at_shadow_check_ok.tl|-|-
+vector_unsupported_equality_reject|check-fail|tests/safety/vector_unsupported_equality_reject.tl|-|eq: unsupported type
+vector_invalid_capability_reject|check-fail|tests/safety/vector_invalid_capability_reject.tl|-|vector: optional capability must be bare `core`
+queue_bang_rvalue_temporary_ok|check-ok|tests/safety/queue_bang_rvalue_temporary_ok.tl|-|-
+hashmap_bang_rvalue_temporary_ok|check-ok|tests/safety/hashmap_bang_rvalue_temporary_ok.tl|-|-
+vector_bang_rvalue_temporary_ok|check-ok|tests/safety/vector_bang_rvalue_temporary_ok.tl|-|-
+hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
+hashmap_bang_projected_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_projected_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `holder.map`
+hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nominal_value_noncloneable_reject.tl|-|gen-clone: unsupported type ptr_i64 at HashmapNoncloneableValue.choice.Raw[0].raw
+hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
+hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
+vector_iter_mut_second_next_live_reject|check-fail|tests/safety/vector_iter_mut_second_next_live_reject.tl|-|cannot mutably borrow borrowed place `iter`
+vector_iter_mut_push_live_reject|check-fail|tests/safety/vector_iter_mut_push_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+vector_iter_mut_set_live_reject|check-fail|tests/safety/vector_iter_mut_set_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+vector_iter_mut_pop_live_reject|check-fail|tests/safety/vector_iter_mut_pop_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+vector_iter_mut_escape_reject|check-fail|tests/safety/vector_iter_mut_escape_reject.tl|-|reference value would escape lexical scope
+vector_iter_shared_push_live_reject|check-fail|tests/safety/vector_iter_shared_push_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+vector_iter_shared_set_live_reject|check-fail|tests/safety/vector_iter_shared_set_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+vector_iter_shared_item_source_live_reject|check-fail|tests/safety/vector_iter_shared_item_source_live_reject.tl|-|cannot mutably borrow borrowed place `values`
+vector_iter_shared_move_live_reject|check-fail|tests/safety/vector_iter_shared_move_live_reject.tl|-|cannot move borrowed place `values`
+vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_escape_reject.tl|-|reference value would escape lexical scope
+vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact.pop
+vector_full_unsupported_equality_nested_reject|check-fail|tests/safety/vector_full_unsupported_equality_nested_reject.tl|-|eq: unsupported type mutptr_i64
+vector_iter_mut_item_outlives_iterator_reject|check-fail|tests/safety/vector_iter_mut_item_outlives_iterator_reject.tl|-|reference value would escape lexical scope
+array_shared_element_move_reject|check-fail|tests/safety/array_shared_element_move_reject.tl|-|cannot move a `String` out of a shared reference
+slice_shared_element_move_reject|check-fail|tests/safety/slice_shared_element_move_reject.tl|-|cannot move a `String` out of a shared reference
+slice_shared_element_bind_move_reject|check-fail|tests/safety/slice_shared_element_bind_move_reject.tl|-|cannot move a `String` out of a shared reference
+slice_mut_element_move_reject|check-fail|tests/safety/slice_mut_element_move_reject.tl|-|cannot move a `String` out of a mutable reference
+slice_shared_element_match_move_reject|check-fail|tests/safety/slice_shared_element_match_move_reject.tl|-|cannot move a `MaybeText` out of a shared reference
+fixed_array_match_pattern_arity_reject|check-fail|tests/safety/fixed_array_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
+fixed_array_match_pattern_wrong_type_reject|check-fail|tests/safety/fixed_array_match_pattern_wrong_type_reject.tl|-|tuple match requires (tuple ...)
+fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_array_match_pattern_refutable_nested_reject.tl|-|requires binding, wildcard, or nested tuple, struct, or box pattern
+fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items[0]`
+fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
+slice_match_pattern_exhaustive_ok|check-ok|tests/safety/slice_match_pattern_exhaustive_ok.tl|-|-
+slice_match_pattern_scrutinee_reject|check-fail|tests/safety/slice_match_pattern_scrutinee_reject.tl|-|slice pattern requires a borrowed Slice or fixed-array scrutinee
+slice_match_pattern_element_type_reject|check-fail|tests/safety/slice_match_pattern_element_type_reject.tl|-|typecheck: literal pattern type mismatch
+slice_match_pattern_missing_length_reject|check-fail|tests/safety/slice_match_pattern_missing_length_reject.tl|-|typecheck: match missing arm for slices of length 1
+slice_match_pattern_open_length_reject|check-fail|tests/safety/slice_match_pattern_open_length_reject.tl|-|typecheck: match missing arm for slices of length 2 or more
+slice_match_pattern_refutable_coverage_reject|check-fail|tests/safety/slice_match_pattern_refutable_coverage_reject.tl|-|typecheck: match missing arm for slices of length 1 or more
+slice_match_pattern_unreachable_reject|check-fail|tests/safety/slice_match_pattern_unreachable_reject.tl|-|earlier slice patterns already match every length it matches
+slice_match_pattern_after_catchall_reject|check-fail|tests/safety/slice_match_pattern_after_catchall_reject.tl|-|unreachable match arm after a slice pattern that matches every length
+slice_match_pattern_array_length_reject|check-fail|tests/safety/slice_match_pattern_array_length_reject.tl|-|slice pattern matches exactly 2 elements, but the fixed array has 3
+slice_match_pattern_rest_shared_reject|check-fail|tests/safety/slice_match_pattern_rest_shared_reject.tl|-|set! array element requires mutable array access
+slice_match_pattern_rest_mut_param_reject|check-fail|tests/safety/slice_match_pattern_rest_mut_param_reject.tl|-|expected (&mut (Slice i64)), found (& (Slice i64))
+slice_match_pattern_borrow_escape_reject|check-fail|tests/safety/slice_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+slice_match_pattern_borrow_conflict_reject|check-fail|tests/safety/slice_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[1]`
+slice_match_pattern_mut_borrow_conflict_reject|check-fail|tests/safety/slice_match_pattern_mut_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[1]`
+slice_match_pattern_mut_destructure_reject|check-fail|tests/safety/slice_match_pattern_mut_destructure_reject.tl|-|a mutable slice pattern binds a non-Copy element only to a name or `_`
+slice_match_pattern_rest_marker_reject|check-fail|tests/safety/slice_match_pattern_rest_marker_reject.tl|-|slice pattern `&` must be followed by exactly one rest binding or `_`
+slice_match_pattern_two_rest_reject|check-fail|tests/safety/slice_match_pattern_two_rest_reject.tl|-|slice pattern takes at most one `&` rest binding
+slice_match_pattern_glued_rest_reject|check-fail|tests/safety/slice_match_pattern_glued_rest_reject.tl|-|slice pattern rest needs a space after `&`
+vector_aggregate_ref_rvalue_call_reject|check-fail|tests/safety/vector_aggregate_ref_rvalue_call_reject.tl|-|borrow slots from a vector place or use the generated vector get helper
+vector_aggregate_ref_rvalue_workarounds_ok|check-ok|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|-|-
+vector_into_iterator_source_reuse_reject|check-fail|tests/safety/vector_into_iterator_source_reuse_reject.tl|-|use of moved value `values`
+vector_into_iterator_borrow_live_reject|check-fail|tests/safety/vector_into_iterator_borrow_live_reject.tl|-|cannot move borrowed place `values`
+vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_iterator_mutate_after_reject.tl|-|use of moved value `values`
+vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`
+vector_cleanup_owner_let_reject|check-fail|tests/safety/vector_cleanup_owner_let_reject.tl|-|cleanup obligation of `items` is not discharged at the end of its let scope
+vector_cleanup_into_next_let_reject|check-fail|tests/safety/vector_cleanup_into_next_let_reject.tl|-|cleanup obligation of `step` is not discharged at the end of its let scope
+vector_cleanup_slots_mut_reject|check-fail|tests/safety/vector_cleanup_slots_mut_reject.tl|-|typecheck: unbound name tokens.slots-mut
+vector_cleanup_into_iter_vec_projection_reject|check-fail|tests/safety/vector_cleanup_into_iter_vec_projection_reject.tl|-|IntoIter.vec; available fields: state
+vector_cleanup_into_iter_state_projection_reject|check-fail|tests/safety/vector_cleanup_into_iter_state_projection_reject.tl|-|field projection .slots requires struct, got (MutPtr
+vector_cleanup_into_iter_view_alias_reject|check-fail|tests/safety/vector_cleanup_into_iter_view_alias_reject.tl|-|IntoIter.vec; available fields: state
+vector_cleanup_move_before_exit_reject|check-fail|tests/safety/vector_cleanup_move_before_exit_reject.tl|-|cleanup owner `items` moved before with scope exit
+vector_cleanup_borrow_live_reject|check-fail|tests/safety/vector_cleanup_borrow_live_reject.tl|-|cannot mutably borrow borrowed place `items`
+vector_cleanup_escape_reject|check-fail|tests/safety/vector_cleanup_escape_reject.tl|-|cleanup-required resource would escape with scope
+hash_generated_float_reject|check-fail|tests/safety/hash_generated_float_reject.tl|-|hash: unsupported type f64 at value
+hash_generated_box_reject|check-fail|tests/safety/hash_generated_box_reject.tl|-|hash: unsupported type box_i64 at value.indirect
+hashmap_generated_float_key_reject|check-fail|tests/safety/hashmap_generated_float_key_reject.tl|-|hash: unsupported type f64 at value
+hashmap_generated_nested_box_key_reject|check-fail|tests/safety/hashmap_generated_nested_box_key_reject.tl|-|eq: unsupported type box_i64
+array_take_removed_reject|check-fail|tests/safety/array_take_removed_reject.tl|-|parse: array-take! was removed; use (replace! (array-ref array index) replacement)
+slice_rest_element_update_ok|check-ok|tests/safety/slice_rest_element_update_ok.tl|-|-
+slice_element_borrow_with_mut_slice_reject|check-fail|tests/safety/slice_element_borrow_with_mut_slice_reject.tl|-|cannot mutably borrow borrowed place `rest`
+slice_element_borrow_with_mut_param_reject|check-fail|tests/safety/slice_element_borrow_with_mut_param_reject.tl|-|cannot mutably borrow borrowed place `xs`
+array_field_store_growth|run-exit|tests/integration/array_field_store_growth.tl|42|-

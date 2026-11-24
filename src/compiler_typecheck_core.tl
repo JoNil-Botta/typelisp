@@ -101107,7 +101107,11 @@
   ;; with no expected type, so an enclosing lazy-expected or call-arg site can
   ;; retry once with the resolved expected type while nested genuine errors
   ;; stay linear.
-  (scratch-error-without-expected bool))
+  (scratch-error-without-expected bool)
+  ;; Set during an Err-triggered scratch expected-type retry so nested call-arg
+  ;; sites with an outer expected type go straight to target-directed expansion
+  ;; instead of repeating the speculative (No) pass.
+  (scratch-error-retrying bool))
 
 ;; Cold compile-profile census of the five independently reclaimed macro owner
 ;; classes. Sample only at generation handoffs and the final detach boundary;
@@ -101238,6 +101242,7 @@
     (MacroHygieneCallee.No)
     -1
     0
+    false
     false))
 
 (define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
@@ -121997,6 +122002,14 @@
   [flag : bool]) : unit
   (tc-macro-walk-set! state scratch-error-without-expected flag))
 
+(define (tc-macro-scratch-error-retrying? [state : TcMacroState]) : bool
+  (tc-macro-walk-field state scratch-error-retrying))
+
+(define (tc-macro-scratch-error-retrying-set!
+  [state : TcMacroState]
+  [flag : bool]) : unit
+  (tc-macro-walk-set! state scratch-error-retrying flag))
+
 (define (tc-macro-scratch-without-expected-restore!
   [state : TcMacroState]
   [count : i64]) : unit
@@ -123432,13 +123445,25 @@
                         (match (& resolved-expected)
                           [(No) (Err diag)]
                           [(Some _)
-                            (macro-expand-node-fire-expected
-                              ctx
-                              env
-                              decls
-                              depth
-                              expr-id
-                              resolved-expected)]))))])))]
+                            (let
+                              [saved-retrying : bool
+                                (tc-macro-scratch-error-retrying? macro-state)]
+                              (tc-macro-scratch-error-retrying-set!
+                                macro-state
+                                true)
+                              (let
+                                [retry-result : ResultMacroExpr
+                                  (macro-expand-node-fire-expected
+                                    ctx
+                                    env
+                                    decls
+                                    depth
+                                    expr-id
+                                    resolved-expected)]
+                                (tc-macro-scratch-error-retrying-set!
+                                  macro-state
+                                  saved-retrying)
+                                retry-result))]))))])))]
         (tc-macro-scratch-without-expected-restore! macro-state scratch-mark)
         result))))
 
@@ -123448,6 +123473,34 @@
     (& (tc-context-expr-get ctx func-id)))
     [(Var name-id) (tc-bare-variant-declared-name? ctx name-id)]
     [_ false]))
+
+(define (macro-call-callee-unshadowed-bare-variant?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func-id : i64]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    (& (tc-context-expr-get ctx func-id)))
+    [(Var name-id)
+      (and
+        (tc-bare-variant-declared-name? ctx name-id)
+        (not (tc-bare-variant-local-binding? env name-id)))]
+    [_ false]))
+
+(define (macro-call-retry-needs-outer-expected?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [nfunc : i64]
+  [call-expected-absent? : bool]
+  [fn-ty-result : (& fn-ty-result ResultTcType)]) : bool
+  (and
+    call-expected-absent?
+    (match fn-ty-result
+      [(Err _) (macro-call-callee-bare-variant? ctx nfunc)]
+      [(Ok fn-ty)
+        (and
+          (macro-call-callee-unshadowed-bare-variant? ctx env nfunc)
+          (tc-variant-constructor-shaped-type? ctx (clone (deref fn-ty))))])))
 
 (define (macro-expand-call-args-with-params
   [ctx : TcContext]
@@ -123524,11 +123577,12 @@
       (tc-dotted-macro-journal-restore-to! macro-state journal-mark)]
     [_publish : unit (tc-context-publish-newer-pools! ctx)]
     [retry-needs-outer-expected? : bool
-      (and
+      (macro-call-retry-needs-outer-expected?
+        ctx
+        env
+        nfunc
         call-expected-absent?
-        (match (& fn-ty-result)
-          [(Err _) (macro-call-callee-bare-variant? ctx nfunc)]
-          [(Ok _) false]))]
+        (& fn-ty-result))]
     [repaired : ResultMacroExprList
       (match fn-ty-result
         [(Ok fn-ty)
@@ -123613,11 +123667,12 @@
       (tc-dotted-macro-journal-restore-to! macro-state journal-mark)]
     [_publish : unit (tc-context-publish-newer-pools! ctx)]
     [retry-needs-outer-expected? : bool
-      (and
+      (macro-call-retry-needs-outer-expected?
+        ctx
+        env
+        nfunc
         call-expected-absent?
-        (match (& fn-ty-result)
-          [(Err _) (macro-call-callee-bare-variant? ctx nfunc)]
-          [(Ok _) false]))]
+        (& fn-ty-result))]
     [retry-result : ResultMacroExprList
       (match fn-ty-result
         [(Ok fn-ty)
@@ -123697,11 +123752,18 @@
       (let
         [scratch-mark : i64
           (tc-macro-scratch-without-expected-count macro-state)]
-        (if (not
-          (macro-expr-list-tail-contains-scratch-at?
-            expr-bases
-            (& args)
-            first-fire-index))
+        [skip-fast-path? : bool
+          (or
+            (macro-expr-list-tail-contains-scratch-at?
+              expr-bases
+              (& args)
+              first-fire-index)
+            (and
+              (tc-macro-scratch-error-retrying? macro-state)
+              (match (& call-expected)
+                [(Some _) true]
+                [(No) false])))]
+        (if (not skip-fast-path?)
           (let
             [fast-out : ast.AstExprList
               (ast.ast-expr-list-with-capacity args.len)]
@@ -123726,17 +123788,27 @@
                     macro-state
                     scratch-mark)
                   (if retry?
-                    (macro-expand-call-args-with-target
-                      ctx
-                      env
-                      decls
-                      depth
-                      nfunc
-                      (& args)
-                      call-expected
-                      first-fire-index
-                      scratch-mark
-                      (ResultMacroCheck.Err diag))
+                    (let
+                      [saved-retrying : bool
+                        (tc-macro-scratch-error-retrying? macro-state)]
+                      (tc-macro-scratch-error-retrying-set! macro-state true)
+                      (let
+                        [retry-result : ResultMacroExprList
+                          (macro-expand-call-args-with-target
+                            ctx
+                            env
+                            decls
+                            depth
+                            nfunc
+                            (& args)
+                            call-expected
+                            first-fire-index
+                            scratch-mark
+                            (ResultMacroCheck.Err diag))]
+                        (tc-macro-scratch-error-retrying-set!
+                          macro-state
+                          saved-retrying)
+                        retry-result))
                     (Err diag)))]
               [(Ok)
                 (if (= dirty-mask 0)

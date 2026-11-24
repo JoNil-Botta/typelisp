@@ -3150,6 +3150,43 @@
 (define (compiler-typecheck-with-escape-stdlib-source [src : String]) : String
   (str_cat.str-cat "(import stdlib.arena)\n(import stdlib.string)\n" src))
 
+(define (compiler-typecheck-with-escape-shadowed-ok-reapply-ok?) : bool
+  (compiler-typecheck-write-text
+    "target/tc_scratch_shadow_ok_dep.tl"
+    "(module tc_scratch_shadow_ok_dep)
+(import stdlib.clone as clone_gen)
+(defenum Inner (Wrap String))
+(clone_gen.gen-clone Inner)
+(defenum Outer (BoxInner Inner))")
+  (compiler-typecheck-write-text
+    "target/tc_scratch_shadow_ok_entry.tl"
+    "(module tc_scratch_shadow_ok_entry)
+(import tc_scratch_shadow_ok_dep as d)
+(import stdlib.string)
+(defenum LocalInner (Wrap i64))
+(defenum LocalOuter (BoxInner LocalInner))
+(define (take-outer [x : d.Outer]) : i64
+  (match x [(d.Outer.BoxInner (d.Inner.Wrap s)) (string.string-length s)]))
+(define (main) : i64
+  (take-outer (BoxInner (with-scratch (Wrap (string.int->string 42))))))")
+  (tc_core.tc-prefix-snapshot-cache-clear!)
+  (ast.ty-node-dedup-clear!)
+  (tc_core.compiler-typecheck-reset-file-state!)
+  (let
+    [ok : bool
+      (match (load_tests.compiler-load-file-with-paths
+        "target/tc_scratch_shadow_ok_entry.tl"
+        (sym_i64_env.sym-i64-empty))
+        [(Ok decls paths _ _)
+          (match (tc_api.typecheck-compiler-program-with-paths
+            (ast.ast-program decls)
+            paths)
+            [(Ok _) true]
+            [(Err _) false])]
+        [(Err _) false])]
+    (tc_core.compiler-typecheck-reset-file-state!)
+    ok))
+
 (define (compiler-typecheck-with-escape-string-source) : String
   (compiler-typecheck-with-escape-stdlib-source
     "(define (main) : String
@@ -3554,6 +3591,45 @@
     [out : d.Other (d.Other.Wrap 0)]
     (set! out (if true (with-scratch (Wrap 1)) (d.Other.Wrap 0)))
     (+ (take (if true (with-scratch (Wrap 1)) (d.Other.Wrap 0))) (take out))))")
+    ;; Shadowed outer bare variant wrapping a scratch form must still propagate
+    ;; outer expected types on both the Err-retry and Ok-reapply paths, and
+    ;; depth-25 nested shadowed bare-variant genuine errors must stay linear.
+    (compiler-typecheck-ok?
+      "(module dep)
+(defenum Inner (Wrap i64))
+(defenum Outer (BoxInner Inner))
+(module main)
+(import dep as d)
+(defenum LocalInner (Wrap i64) (Fn (-> i64 i64)))
+(defenum LocalOuter (BoxInner LocalInner))
+(define (take-outer [x : d.Outer]) : i64
+  (match x [(d.Outer.BoxInner (d.Inner.Wrap n)) n]))
+(define (main) : i64
+  (let
+    [out : d.Outer (d.Outer.BoxInner (d.Inner.Wrap 0))]
+    (set! out (BoxInner (if true (with-scratch (Wrap 1)) (d.Inner.Wrap 0))))
+    (+
+      (take-outer (BoxInner (if true (with-scratch (Wrap 1)) (d.Inner.Wrap 0))))
+      (take-outer out))))")
+    (compiler-typecheck-with-escape-shadowed-ok-reapply-ok?)
+    (compiler-typecheck-error-ok?
+      "(module dep)
+(defenum Outer (Step (Box Outer)) (Leaf i64))
+(module main)
+(import dep as d)
+(defenum LocalBad (Wrap i64) (Fn (-> i64 i64)))
+(defenum LocalOuter (Step (Box LocalOuter)) (Leaf LocalBad))
+(define (take-local [x : LocalOuter]) : i64 0)
+(define (main) : i64
+  (take-local
+    (Step (box (Step (box (Step (box (Step (box (Step (box
+    (Step (box (Step (box (Step (box (Step (box (Step (box
+    (Step (box (Step (box (Step (box (Step (box (Step (box
+    (Step (box (Step (box (Step (box (Step (box (Step (box
+    (Step (box (Step (box (Step (box (Step (box (Step (box
+      (Leaf (if true (with-scratch (Wrap 1)) (LocalBad.Wrap 0)))
+    ))))))))))))))))))))))))))))))))))))))))))))))))))))"
+      "typecheck: with-scratch clone-out of main/LocalBad: result cannot contain a function, arena handle, or reference")
     (compiler-typecheck-error-ok?
       "(module dep)
 (defenum Other (Wrap i64))

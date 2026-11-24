@@ -93507,13 +93507,12 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]
-  [stack : TcNameIdList]) : bool
+  [visited : (&mut visited TcNameIdList)]
+  [cleared : (&mut cleared TcNameIdList)]) : bool
   (let
-    [nominal-state : TcNominalCacheState
-      (tc-job-state-nominal-cache (tc-context-job-state ctx))]
     [cached : i64
       (tc-type-handle-cache-sealed-handle
-        nominal-state
+        (tc-job-state-nominal-cache (tc-context-job-state ctx))
         (tc-context-symbols-ref (& ctx))
         name-id)]
     (cond
@@ -93521,29 +93520,63 @@
       [(= cached 32) false]
       [else
         (let
-          [answer : bool (tc-sealed-handle-walk ctx env name-id stack)]
-          ;; A yes holds on every path; a no is final only for a walk from no
-          ;; enclosing nominal, since one cut off by `stack` is partial.
-          (when
-            (or
-              answer
-              (match stack
-                [(Nil) true]
-                [_ false]))
-            (tc-type-handle-cache-sealed-handle-set!
-              nominal-state
-              (tc-context-symbols-ref (& ctx))
-              name-id
-              (if answer
-                16
-                32)))
+          [answer : bool
+            (tc-sealed-handle-walk ctx env name-id visited cleared)]
+          ;; A yes holds on every path. A no is final only once the root walk
+          ;; answers no, so CLEARED defers it to `tc-sealed-handle-name?`.
+          (if answer
+            (tc-sealed-handle-cache! ctx name-id 16)
+            (set!
+              (deref cleared)
+              (tc-name-id-list-cons (tc-clone-name-id-list cleared) name-id)))
           answer)])))
+
+;; Whether the struct or enum NAME is sealed. One walk visits each nominal
+;; once: a yes ends the walk at once, so a nominal seen earlier in it has
+;; answered no or is still open, and a revisit adds nothing. When the root
+;; answers no, no nominal it reaches is sealed, so every lookup the walk
+;; cleared is cached as no.
+(define (tc-sealed-handle-name?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]) : bool
+  (let
+    [visited : TcNameIdList Nil]
+    [cleared : TcNameIdList Nil]
+    [answer : bool
+      (tc-sealed-handle-nominal? ctx env name (&mut visited) (&mut cleared))]
+    (if answer
+      true
+      (begin
+        (while (not (tc-name-id-list-empty? cleared))
+          (tc-sealed-handle-cache! ctx (tc-name-id-list-head cleared) 32)
+          (set! cleared (tc-name-id-list-rest cleared)))
+        false))))
+
+;; Record the sealed-handle FACT of the lookup NAME-ID, binding its cache slot
+;; first since walks through other nominals may have displaced it.
+(define (tc-sealed-handle-cache! [ctx : TcContext] [name-id : i64] [fact : i64]) : unit
+  (let
+    [nominal-state : TcNominalCacheState
+      (tc-job-state-nominal-cache (tc-context-job-state ctx))]
+    [_ : i64
+      (tc-type-handle-lookup-id
+        nominal-state
+        (tc-context-symbols-ref (& ctx))
+        name-id
+        tc-type-handle-lookup-caller-aggregate-layout)]
+    (tc-type-handle-cache-sealed-handle-set!
+      nominal-state
+      (tc-context-symbols-ref (& ctx))
+      name-id
+      fact)))
 
 (define (tc-sealed-handle-walk
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]
-  [stack : TcNameIdList]) : bool
+  [visited : (&mut visited TcNameIdList)]
+  [cleared : (&mut cleared TcNameIdList)]) : bool
   (let
     [handle : i64
       (tc-type-handle-lookup-id
@@ -93555,14 +93588,18 @@
       (if (csym.compiler-symbols-handle-found? handle)
         (tc-nominal-owner-id-or ctx handle name-id)
         -1)]
-    (if (or (< nominal-id 0) (tc-name-id-list-contains stack nominal-id))
+    (if (or
+      (< nominal-id 0)
+      (tc-name-id-list-contains (tc-clone-name-id-list visited) nominal-id))
       false
       (let
         [owner-ctx : TcContext
           (tc-context-with-nominal-owner-index-module
             ctx
             (csym.compiler-symbol-handle-index handle))]
-        [next : TcNameIdList (tc-name-id-list-add stack nominal-id)]
+        (set!
+          (deref visited)
+          (tc-name-id-list-cons (tc-clone-name-id-list visited) nominal-id))
         (match (csym.compiler-symbols-decl-at-index
           (tc-context-symbols-ref (& owner-ctx))
           (csym.compiler-symbol-handle-index handle))
@@ -93575,7 +93612,8 @@
                   env
                   nominal-id
                   (& fields)
-                  next
+                  visited
+                  cleared
                   0)]
               [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
                 (tc-sealed-handle-variants?
@@ -93583,7 +93621,8 @@
                   env
                   nominal-id
                   (& variants)
-                  next
+                  visited
+                  cleared
                   0)]
               [_ false])]
           [(Err _) false])))))
@@ -93593,7 +93632,8 @@
   [env : TcTypeEnv]
   [owner-id : i64]
   [fields : (& fields ast.AstFieldDefList)]
-  [stack : TcNameIdList]
+  [visited : (&mut visited TcNameIdList)]
+  [cleared : (&mut cleared TcNameIdList)]
   [index : i64]) : bool
   (if (>= index (ast.ast-field-def-list-len fields))
     false
@@ -93607,17 +93647,25 @@
             [(Fn hook)
               (or
                 (tc-sealed-handle-hook-unsafe? ctx env owner-id hook)
-                (tc-sealed-handle-type? ctx env ty stack))]
+                (tc-sealed-handle-type? ctx env ty visited cleared))]
             [(Owned) false]
-            [(No) (tc-sealed-handle-type? ctx env ty stack)])])
-      (tc-sealed-handle-fields? ctx env owner-id fields stack (+ index 1)))))
+            [(No) (tc-sealed-handle-type? ctx env ty visited cleared)])])
+      (tc-sealed-handle-fields?
+        ctx
+        env
+        owner-id
+        fields
+        visited
+        cleared
+        (+ index 1)))))
 
 (define (tc-sealed-handle-variants?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [owner-id : i64]
   [variants : (& variants ast.AstVariantDefList)]
-  [stack : TcNameIdList]
+  [visited : (&mut visited TcNameIdList)]
+  [cleared : (&mut cleared TcNameIdList)]
   [index : i64]) : bool
   (if (>= index (ast.ast-variant-def-list-len variants))
     false
@@ -93633,9 +93681,17 @@
             owner-id
             (& payloads)
             (& cleanups)
-            stack
+            visited
+            cleared
             0)])
-      (tc-sealed-handle-variants? ctx env owner-id variants stack (+ index 1)))))
+      (tc-sealed-handle-variants?
+        ctx
+        env
+        owner-id
+        variants
+        visited
+        cleared
+        (+ index 1)))))
 
 (define (tc-sealed-handle-payloads?
   [ctx : TcContext]
@@ -93643,7 +93699,8 @@
   [owner-id : i64]
   [payloads : (& payloads ast.AstTypeList)]
   [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
-  [stack : TcNameIdList]
+  [visited : (&mut visited TcNameIdList)]
+  [cleared : (&mut cleared TcNameIdList)]
   [index : i64]) : bool
   (if (>= index (ast.ast-type-list-len payloads))
     false
@@ -93662,16 +93719,17 @@
           [(Fn hook)
             (or
               (tc-sealed-handle-hook-unsafe? ctx env owner-id hook)
-              (tc-sealed-handle-type? ctx env ty stack))]
+              (tc-sealed-handle-type? ctx env ty visited cleared))]
           [(Owned) false]
-          [(No) (tc-sealed-handle-type? ctx env ty stack)]))
+          [(No) (tc-sealed-handle-type? ctx env ty visited cleared)]))
       (tc-sealed-handle-payloads?
         ctx
         env
         owner-id
         payloads
         cleanups
-        stack
+        visited
+        cleared
         (+ index 1)))))
 
 ;; Whether the cleanup HOOK a field or payload of OWNER-ID names is an unsafe
@@ -93698,7 +93756,8 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [ty : ast.AstType]
-  [stack : TcNameIdList]) : bool
+  [visited : (&mut visited TcNameIdList)]
+  [cleared : (&mut cleared TcNameIdList)]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(or (Ptr inner) (MutPtr inner))
       (match (tc-type-strip-region
@@ -93707,18 +93766,24 @@
           (>= (tc-opaque-decl-index ctx name) 0)]
         [_ false])]
     [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
-      (tc-sealed-handle-nominal? ctx env name stack)]
+      (tc-sealed-handle-nominal? ctx env name visited cleared)]
     [(Tuple elems)
-      (tc-sealed-handle-type-list? ctx env (& (deref elems)) stack 0)]
+      (tc-sealed-handle-type-list? ctx env (& (deref elems)) visited cleared 0)]
     [(or (Array inner _) (DynArray inner) (Box inner))
-      (tc-sealed-handle-type? ctx env (tc-context-type-get ctx inner) stack)]
+      (tc-sealed-handle-type?
+        ctx
+        env
+        (tc-context-type-get ctx inner)
+        visited
+        cleared)]
     [_ false]))
 
 (define (tc-sealed-handle-type-list?
   [ctx : TcContext]
   [env : TcTypeEnv]
   [types : (& types ast.AstTypeList)]
-  [stack : TcNameIdList]
+  [visited : (&mut visited TcNameIdList)]
+  [cleared : (&mut cleared TcNameIdList)]
   [index : i64]) : bool
   (and
     (< index (ast.ast-type-list-len types))
@@ -93729,8 +93794,9 @@
         (tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-        stack)
-      (tc-sealed-handle-type-list? ctx env types stack (+ index 1)))))
+        visited
+        cleared)
+      (tc-sealed-handle-type-list? ctx env types visited cleared (+ index 1)))))
 
 ;; Whether NAME is a sealed struct or enum whose module family excludes the
 ;; code CTX checks.
@@ -93746,7 +93812,7 @@
         (csym.compiler-symbols-missing-handle))]
     (and
       (csym.compiler-symbols-handle-found? handle)
-      (tc-sealed-handle-nominal? ctx env name Nil)
+      (tc-sealed-handle-name? ctx env name)
       (tc-opaque-foreign-index? ctx (csym.compiler-symbol-handle-index handle)))))
 
 ;; E0209 unless ENV is an unsafe context; USE names the operation on the

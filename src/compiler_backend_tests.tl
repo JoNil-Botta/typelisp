@@ -42518,12 +42518,13 @@ b_keep:
                 (when
                   active
                   (begin
-                    (text_buf_borrowed.copy-byte-range-into
-                      data
-                      run-start
-                      (- run-end run-start)
-                      dst
-                      pos)
+                    (unsafe
+                      (text_buf_borrowed.copy-byte-range-into
+                        data
+                        run-start
+                        (- run-end run-start)
+                        dst
+                        pos))
                     (+= pos (- run-end run-start))))
                 (set! active true)
                 (set! run-start s)
@@ -42531,12 +42532,13 @@ b_keep:
         (when
           active
           (begin
-            (text_buf_borrowed.copy-byte-range-into
-              data
-              run-start
-              (- run-end run-start)
-              dst
-              pos)
+            (unsafe
+              (text_buf_borrowed.copy-byte-range-into
+                data
+                run-start
+                (- run-end run-start)
+                dst
+                pos))
             (+= pos (- run-end run-start))))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))

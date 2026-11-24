@@ -107,7 +107,12 @@
 (define (doc-site-module-list-ref
   [modules : (& modules doc_site_modules.Vec)]
   [index : i64]) : DocSiteModule
-  (doc_site_modules.get modules index (Module "" "")))
+  (if (and (>= index 0) (< index (doc_site_modules.len modules)))
+    (let
+      [view : (& modules (Slice DocSiteModule)) (doc_site_modules.view modules)]
+      (match (& (array-ref view index))
+        [(Module name title) (Module (string.copy name) (string.copy title))]))
+    (Module "" "")))
 
 (define (doc-site-guide-page-list-empty) : doc_site_guides.Vec
   (doc_site_guides.new))
@@ -119,7 +124,17 @@
 (define (doc-site-guide-page-list-ref
   [guides : (& guides doc_site_guides.Vec)]
   [index : i64]) : DocSiteGuidePage
-  (doc_site_guides.get guides index (GuidePage "" "" "" "")))
+  (if (and (>= index 0) (< index (doc_site_guides.len guides)))
+    (let
+      [view : (& guides (Slice DocSiteGuidePage)) (doc_site_guides.view guides)]
+      (match (& (array-ref view index))
+        [(GuidePage slug title source summary)
+          (GuidePage
+            (string.copy slug)
+            (string.copy title)
+            (string.copy source)
+            (string.copy summary))]))
+    (GuidePage "" "" "" "")))
 
 (define (doc-site-section-list-count
   [sections : (& sections doc_site_sections.Vec)]) : i64
@@ -128,9 +143,36 @@
 (define (doc-site-section-list-ref
   [sections : (& sections doc_site_sections.Vec)]
   [index : i64]) : DocSiteSection
-  (doc_site_sections.get
-    sections
-    index
+  (if (and (>= index 0) (< index (doc_site_sections.len sections)))
+    (let
+      [view : (& sections (Slice DocSiteSection))
+        (doc_site_sections.view sections)]
+      (match (& (array-ref view index))
+        [(Guide title guides)
+          (let
+            [count : i64 (doc_site_guides.len guides)]
+            [out : doc_site_guides.Vec (doc_site_guides.with-capacity count)]
+            [i : i64 0]
+            (while (< i count)
+              (doc_site_guides.push-ref!
+                (&mut out)
+                (doc-site-guide-page-list-ref guides i))
+              (set! i (+ i 1)))
+            (Guide (string.copy title) out))]
+        [(ApiTree tree)
+          (match tree
+            [(ApiTree slug title modules)
+              (let
+                [count : i64 (doc_site_modules.len modules)]
+                [out : doc_site_modules.Vec
+                  (doc_site_modules.with-capacity count)]
+                [i : i64 0]
+                (while (< i count)
+                  (doc_site_modules.push-ref!
+                    (&mut out)
+                    (doc-site-module-list-ref modules i))
+                  (set! i (+ i 1)))
+                (ApiTree (ApiTree (string.copy slug) (string.copy title) out)))])]))
     (Guide "" (doc-site-guide-page-list-empty))))
 
 (define (doc-site-section-guide-title-eq?

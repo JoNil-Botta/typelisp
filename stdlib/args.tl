@@ -168,20 +168,21 @@
 ;: Move `count` occurrences from the old backing at `src` into `dst` starting
 ;: at `offset`: each is read bitwise exactly once, and the caller replaces the
 ;: old backing without reading it again.
-(define (option-list-copy!
-  [dst : (&mut dst (__tl_dyn-array ArgsOption))]
-  [src : (MutPtr ArgsOption)]
-  [offset : i64]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set!
-          (array-ref dst (+ index offset))
-          (unsafe
-            (ptr-read (ptr-offset src index))))
-        (set! index (+ index 1))))))
+(unsafe
+  (define (option-list-copy!
+    [dst : (&mut dst (__tl_dyn-array ArgsOption))]
+    [src : (MutPtr ArgsOption)]
+    [offset : i64]
+    [count : i64]) : unit
+    (let
+      [index : i64 0]
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref dst (+ index offset))
+            (unsafe
+              (ptr-read (ptr-offset src index))))
+          (set! index (+ index 1)))))))
 
 ;: Return an empty parsed option list.
 (define (option-list-empty) : ArgsOptionList
@@ -203,12 +204,8 @@
             (if (< capacity 1)
               4
               (* capacity 2)))]
-        (option-list-copy!
-          (&mut bigger)
-          (unsafe
-            (__tl_array-data slots))
-          0
-          len)
+        (unsafe
+          (option-list-copy! (&mut bigger) (__tl_array-data slots) 0 len))
         (set! slots bigger)))
     (set! (array-ref slots len) option)
     (ArgsOptionList slots (+ len 1))))

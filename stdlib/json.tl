@@ -176,7 +176,7 @@
     [slots : (__tl_dyn-array Json) (__tl_make-array Json n)]
     [i : i64 0]
     (while (< i n)
-      (set! (array-ref slots i) (jvec.get (& items) i JsonNull))
+      (set! (array-ref slots i) (clone-json (& (array-ref items.slots i))))
       (set! i (+ i 1)))
     (JsonSeq slots n)))
 
@@ -192,7 +192,7 @@
     (while (< i n)
       (set!
         (array-ref slots i)
-        (jmvec.get (& items) i (JsonMember "" JsonNull)))
+        (clone-json-member (& (array-ref items.slots i))))
       (set! i (+ i 1)))
     (JsonMemberSeq slots n)))
 

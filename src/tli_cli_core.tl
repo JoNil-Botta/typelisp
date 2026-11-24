@@ -213,6 +213,33 @@
               (tli-sysroot-dir-overrides-stdlib? (& root))
               (tli-sysroot-dir-overrides-stdlib? (& sub)))))])))
 
+;; SPMD `foreach` may inline stdlib helper bodies (`math.f64-clamp`, `min`,
+;; ...), which stdlib.tli omits until it carries compact IR. An entry program
+;; that spells a `foreach` form therefore keeps the source stdlib.
+;; The bytes of `(foreach`.
+(define tli-foreach-form : (Array u8 8)
+  (array 40 102 111 114 101 97 99 104))
+
+(define (tli-sysroot-entry-uses-foreach? [entry-path : (& str)]) : bool
+  (match (tli-inspect-read-file entry-path)
+    [(Err _) false]
+    [(Ok bytes)
+      (let
+        [last : i64 (- (array-length bytes) 8)]
+        [start : i64 0]
+        (while (<= start last)
+          (let
+            [index : i64 0]
+            (while (and
+              (< index 8)
+              (=
+                (array-ref bytes (+ start index))
+                (array-ref tli-foreach-form index)))
+              (+= index 1))
+            (when (= index 8) (return true)))
+          (+= start 1))
+        false)]))
+
 (defenum TliSysrootOpenCatalog
   (Active hydrate.TliCatalog String String)
   (Inactive)
@@ -224,6 +251,7 @@
 ;; sysroot).
 (define (tli-sysroot-open-catalog
   [options : (& TliSysrootOptions)]
+  [entry-path : (& str)]
   [target : target_cfg.CompilerTargetCfg]
   [stdlib-roots : (& svec.Vec)]
   [cfgs : sym_i64_env.SymI64Env]
@@ -237,6 +265,7 @@
     [(Missing) Inactive]
     [(Found dir)
       (when (tli-sysroot-stdlib-roots-override? stdlib-roots) (return Inactive))
+      (when (tli-sysroot-entry-uses-foreach? entry-path) (return Inactive))
       (let
         [explicit? : bool (tli-sysroot-options-explicit? options)]
         [bundle-path : String (tli-sysroot-bundle-path (& dir))]
@@ -342,6 +371,7 @@
 ;; leave the session without one when prebuilt stdlib is inactive.
 (define (tli-open-catalog-for-session!
   [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [entry-path : (& str)]
   [target : target_cfg.CompilerTargetCfg]
   [stdlib-roots : (& svec.Vec)]
   [cfgs : sym_i64_env.SymI64Env]
@@ -358,6 +388,7 @@
       [opened : TliSysrootOpenCatalog
         (tli-sysroot-open-catalog
           (& tli-active-sysroot-options-state)
+          entry-path
           target
           stdlib-roots
           cfgs

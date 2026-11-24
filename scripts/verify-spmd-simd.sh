@@ -312,7 +312,7 @@ run_spmd_mode() {
             return
         fi
         _entry=$(linux_entry_symbol_for_asm "$_asm") || exit $?
-        _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "$COMPILER")
+        _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
         if [ -n "$_stdlib_archive" ]; then
             set -- --gc-sections --start-group "$_stdlib_archive" --end-group
         else

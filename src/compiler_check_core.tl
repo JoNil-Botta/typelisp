@@ -423,6 +423,7 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (tli_cli.tli-open-catalog-for-session!
       (& (compiler_load.compiler-load-serial-test-session-state))
+      (& path)
       (compiler-check-target-from-cfgs cfgs)
       (& stdlib-roots)
       cfgs
@@ -498,6 +499,7 @@
   (compiler-check-package-begin! job-state)
   (match (tli_cli.tli-open-catalog-for-session!
     (& (compiler_load.compiler-load-serial-test-session-state))
+    (& path)
     (compiler-check-target-from-cfgs cfgs)
     (& stdlib-roots)
     cfgs
@@ -592,6 +594,7 @@
     (cfg compile-profile (compiler-check-profile-start))
     (match (tli_cli.tli-open-catalog-for-session!
       (& (compiler_load.compiler-load-serial-test-session-state))
+      (& path)
       (compiler-check-target-from-cfgs cfgs)
       (& stdlib-roots)
       cfgs

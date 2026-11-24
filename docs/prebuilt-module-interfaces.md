@@ -282,6 +282,13 @@ bundle's compiler build and target and prints
 the directory with no record decoding. Hydration validates the configuration
 fingerprint and module and import digests as each closure is loaded.
 
+A compile job keeps the source stdlib, with no prebuilt interface, at
+`--opt-level 2`, when a stdlib root overrides the embedded stdlib, and when the
+entry program spells a `(foreach` form: SPMD `foreach` inlines stdlib helper
+bodies such as `math.f64-clamp`, which `stdlib.tli` omits. The `foreach`
+condition retires once the compact IR section carries vectorizable helper
+bodies.
+
 ## Staged delivery and retirement conditions
 
 1. **Stage 1 — format and codec.** This document, a standalone `.tli`

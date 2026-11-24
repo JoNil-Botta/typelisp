@@ -1380,6 +1380,7 @@
 
 (define (compiler-driver-open-tli-catalog-for-session!
   [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [entry-path : (& str)]
   [target : target_cfg.CompilerTargetCfg]
   [stdlib-roots : (& svec.Vec)]
   [cfgs : sym_i64_env.SymI64Env]
@@ -1388,6 +1389,7 @@
   (set! compiler-driver-last-hydrated-archive-path-state "")
   (tli_cli.tli-open-catalog-for-session!
     load-state
+    entry-path
     target
     stdlib-roots
     cfgs
@@ -4138,6 +4140,7 @@
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
   (match (compiler-driver-open-tli-catalog-for-session!
     (& (compiler_load.compiler-load-serial-test-session-state))
+    (& input-path)
     (compiler-driver-target-cfg-from-backend target)
     (& stdlib-roots)
     cfgs
@@ -4524,6 +4527,7 @@
       (compiler_parse_core.compiler-parse-state-cfgs (& parser-state) cfgs)]
     (match (compiler-driver-open-tli-catalog-for-session!
       (& state.load-session)
+      (& input-path)
       (compiler-driver-target-cfg-from-backend target)
       (& stdlib-roots)
       cfgs

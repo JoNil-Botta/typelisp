@@ -411,6 +411,154 @@
       (set! i (+ i 1)))
     (bbc.byte-buf-builder-finish-string (& out))))
 
+;; Trim trailing slashes from a directory prefix while keeping roots (`/` or `C:/`) intact.
+(define (trim-trailing-slashes [path : (& path str)]) : String
+  (let
+    [n : i64 (string.string-length path)]
+    [end : i64 n]
+    (while (and
+      (> end 1)
+      (not
+        (and
+          (= end 3)
+          (is-alpha-byte? (byte-at path 0))
+          (= (byte-at path 1) 58)))
+      (or (= (byte-at path (- end 1)) 47) (= (byte-at path (- end 1)) 92)))
+      (set! end (- end 1)))
+    (string.substring path 0 end)))
+
+(define (is-win-drive-path? [path : (& path str)]) : bool
+  (let
+    [n : i64 (string.string-length path)]
+    (and (>= n 2) (is-alpha-byte? (byte-at path 0)) (= (byte-at path 1) 58))))
+
+(define (is-msys-drive-path? [path : (& path str)]) : bool
+  (let
+    [n : i64 (string.string-length path)]
+    (and
+      (>= n 2)
+      (= (byte-at path 0) 47)
+      (is-alpha-byte? (byte-at path 1))
+      (or (= n 2) (= (byte-at path 2) 47)))))
+
+;; Pure-string equivalent of `cygpath -m`, including MSYS2 `/tmp`, `/dev/null`,
+;; `/<drive>/...`, and virtual root prefixes (`/usr/`, `/bin/`, `/etc/`, `/var/`).
+;; Host-independent so `--self-test` verifies every mapping on Linux as well.
+(define (msys-path-to-windows
+  [path : (& path str)]
+  [root : (& root str)]
+  [native-root : (& native-root str)]
+  [msys-tmp : (& msys-tmp str)]
+  [msys-root : (& msys-root str)]) : String
+  (let
+    [rlen : i64 (string.string-length root)]
+    [plen : i64 (string.string-length path)]
+    (cond
+      [(and
+          (> rlen 0)
+          (starts-with? path root)
+          (or
+            (= plen rlen)
+            (= (byte-at path rlen) 47)
+            (= (byte-at path rlen) 92)))
+        (let
+          [tail : String (string.substring path rlen (- plen rlen))]
+          [norm-tail : String (slashes-to-forward (& tail))]
+          (str_cat.str-cat (string.copy native-root) norm-tail))]
+      [(and
+          (> (string.string-length msys-tmp) 0)
+          (or (string.eq path "/tmp") (starts-with? path "/tmp/")))
+        (let
+          [base : String (trim-trailing-slashes (slashes-to-forward msys-tmp))]
+          (if (= plen 4)
+            base
+            (let
+              [tail : String (string.substring path 4 (- plen 4))]
+              (str_cat.str-cat base (slashes-to-forward (& tail))))))]
+      [(string.eq path "/dev/null") "NUL"]
+      [(is-msys-drive-path? path)
+        ;; /d/a/... -> D:/a/...
+        (let
+          [out : bbc.ByteBufBuilder
+            (bbc.byte-buf-builder-with-capacity (+ plen 1))]
+          [drive : i64 (ascii-upper-byte (byte-at path 1))]
+          (bbc.byte-buf-builder-push (&mut out) (cast drive : u8))
+          (bbc.byte-buf-builder-push (&mut out) (cast 58 : u8))
+          (if (= plen 2)
+            (bbc.byte-buf-builder-push (&mut out) (cast 47 : u8))
+            (let
+              [i : i64 2]
+              (while (< i plen)
+                (let
+                  [b : i64 (byte-at path i)]
+                  (bbc.byte-buf-builder-push
+                    (&mut out)
+                    (cast
+                      (if (= b 92)
+                        47
+                        b)
+                      : u8)))
+                (set! i (+ i 1)))))
+          (bbc.byte-buf-builder-finish-string (& out)))]
+      [(and
+          (> (string.string-length msys-root) 0)
+          (or
+            (starts-with? path "/usr/")
+            (starts-with? path "/bin/")
+            (starts-with? path "/etc/")
+            (starts-with? path "/var/")))
+        (let
+          [base : String (trim-trailing-slashes (slashes-to-forward msys-root))]
+          (str_cat.str-cat base (slashes-to-forward path)))]
+      [(is-win-drive-path? path)
+        ;; D:\a\... -> D:/a/...
+        (slashes-to-forward path)]
+      [else (slashes-to-forward path)])))
+
+(define (windows-msys-tmp-dir) : String
+  (match (env.get "TYPELISP_CODEGEN_CASES_MSYS_TMP")
+    [(env.EnvSomeString v)
+      (if (> (string.string-length (& v)) 0)
+        (slashes-to-forward (& v))
+        (windows-temp-env-fallback))]
+    [(env.EnvNoString) (windows-temp-env-fallback)]))
+
+(define (windows-temp-env-fallback) : String
+  (let
+    [t1 : String
+      (match (env.get "TEMP")
+        [(env.EnvSomeString v)
+          (if (is-win-drive-path? (& v))
+            (slashes-to-forward (& v))
+            "")]
+        [(env.EnvNoString) ""])]
+    (if (> (string.string-length (& t1)) 0)
+      t1
+      (let
+        [t2 : String
+          (match (env.get "TMP")
+            [(env.EnvSomeString v)
+              (if (is-win-drive-path? (& v))
+                (slashes-to-forward (& v))
+                "")]
+            [(env.EnvNoString) ""])]
+        (if (> (string.string-length (& t2)) 0)
+          t2
+          (match (env.get "TMPDIR")
+            [(env.EnvSomeString v)
+              (if (is-win-drive-path? (& v))
+                (slashes-to-forward (& v))
+                "")]
+            [(env.EnvNoString) ""]))))))
+
+(define (windows-msys-root-dir) : String
+  (match (env.get "TYPELISP_CODEGEN_CASES_MSYS_ROOT")
+    [(env.EnvSomeString v)
+      (if (> (string.string-length (& v)) 0)
+        (slashes-to-forward (& v))
+        "")]
+    [(env.EnvNoString) ""]))
+
 ;; Pure-string equivalent of `cygpath -m` on Windows, identity on Linux.
 ;; Uses root -> native-root prefix mapping first so MSYS2 mounts match exactly.
 (define (to-native-path
@@ -420,55 +568,28 @@
   (if (not (host-is-windows?))
     (string.copy path)
     (let
-      [rlen : i64 (string.string-length root)]
-      [plen : i64 (string.string-length path)]
-      (cond
-        [(and
-            (> rlen 0)
-            (starts-with? path root)
-            (or
-              (= plen rlen)
-              (= (byte-at path rlen) 47)
-              (= (byte-at path rlen) 92)))
-          (let
-            [tail : String (string.substring path rlen (- plen rlen))]
-            [norm-tail : String (slashes-to-forward (& tail))]
-            (str_cat.str-cat (string.copy native-root) norm-tail))]
-        [(and
-            (>= plen 2)
-            (= (byte-at path 0) 47)
-            (is-alpha-byte? (byte-at path 1))
-            (or (= plen 2) (= (byte-at path 2) 47)))
-          ;; /d/a/... -> D:/a/...
-          (let
-            [out : bbc.ByteBufBuilder
-              (bbc.byte-buf-builder-with-capacity (+ plen 1))]
-            [drive : i64 (ascii-upper-byte (byte-at path 1))]
-            (bbc.byte-buf-builder-push (&mut out) (cast drive : u8))
-            (bbc.byte-buf-builder-push (&mut out) (cast 58 : u8))
-            (if (= plen 2)
-              (bbc.byte-buf-builder-push (&mut out) (cast 47 : u8))
-              (let
-                [i : i64 2]
-                (while (< i plen)
-                  (let
-                    [b : i64 (byte-at path i)]
-                    (bbc.byte-buf-builder-push
-                      (&mut out)
-                      (cast
-                        (if (= b 92)
-                          47
-                          b)
-                        : u8)))
-                  (set! i (+ i 1)))))
-            (bbc.byte-buf-builder-finish-string (& out)))]
-        [(and
-            (>= plen 2)
-            (is-alpha-byte? (byte-at path 0))
-            (= (byte-at path 1) 58))
-          ;; D:\a\... -> D:/a/...
-          (slashes-to-forward path)]
-        [else (slashes-to-forward path)]))))
+      [mtmp : String (windows-msys-tmp-dir)]
+      [mroot : String (windows-msys-root-dir)]
+      (msys-path-to-windows path root native-root (& mtmp) (& mroot)))))
+
+;; Normalize MSYS2 temp/drive paths synced back from `sh` CCV_* variables on Windows
+;; so subsequent native `cwd`, CLI arguments, `test`, and `rm -rf` see native Win32 paths.
+(define (normalize-sh-synced-var
+  [val : (& val str)]
+  [root : (& root str)]
+  [native-root : (& native-root str)]) : String
+  (if (not (host-is-windows?))
+    (string.copy val)
+    (cond
+      [(or (string.eq val "/tmp") (starts-with? val "/tmp/"))
+        (to-native-path val root native-root)]
+      [(is-msys-drive-path? val)
+        (let
+          [cand : String (to-native-path val root native-root)]
+          (if (file-exists? (& cand))
+            cand
+            (string.copy val)))]
+      [else (string.copy val)])))
 
 (define (to-win-backslash-path
   [path : (& path str)]

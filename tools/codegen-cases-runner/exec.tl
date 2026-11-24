@@ -1399,8 +1399,13 @@
                             [vstart : i64 (+ nl 1)]
                             (if (<= (+ vstart vlen) tlen)
                               (let
-                                [vval : String
+                                [raw-vval : String
                                   (string.substring (& rf.text) vstart vlen)]
+                                [vval : String
+                                  (util.normalize-sh-synced-var
+                                    (& raw-vval)
+                                    (& cfg.root)
+                                    (& cfg.native-root))]
                                 (util.var-table-set!
                                   (&mut st.vars)
                                   (& vname)

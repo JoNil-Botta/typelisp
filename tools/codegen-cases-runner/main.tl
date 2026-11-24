@@ -588,6 +588,97 @@
           "normalize-win-path-env-msys"
           (util.normalize-windows-path-env "/d/a/typelisp/bin:/c/Windows")
           "D:/a/typelisp/bin;C:/Windows")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "msys-path-tmp-dir"
+          (util.msys-path-to-windows
+            "/tmp/typelisp-public-doc-nopkg.abc123"
+            "/d/a/typelisp"
+            "D:/a/typelisp"
+            "C:/Users/runneradmin/AppData/Local/Temp/"
+            "C:/Program Files/Git/")
+          "C:/Users/runneradmin/AppData/Local/Temp/typelisp-public-doc-nopkg.abc123")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "msys-path-tmp-exact"
+          (util.msys-path-to-windows
+            "/tmp"
+            ""
+            ""
+            "C:/Users/runneradmin/AppData/Local/Temp"
+            "")
+          "C:/Users/runneradmin/AppData/Local/Temp")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "msys-path-drive"
+          (util.msys-path-to-windows
+            "/d/a/typelisp/out.s"
+            ""
+            ""
+            "C:/Users/runneradmin/AppData/Local/Temp"
+            "C:/Program Files/Git")
+          "D:/a/typelisp/out.s")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "msys-path-dev-null"
+          (util.msys-path-to-windows
+            "/dev/null"
+            ""
+            ""
+            "C:/Users/runneradmin/AppData/Local/Temp"
+            "C:/Program Files/Git")
+          "NUL")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "msys-path-usr-bin"
+          (util.msys-path-to-windows
+            "/usr/bin/env"
+            ""
+            ""
+            "C:/Users/runneradmin/AppData/Local/Temp"
+            "C:/Program Files/Git")
+          "C:/Program Files/Git/usr/bin/env")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "msys-path-root-prefix"
+          (util.msys-path-to-windows
+            "/d/a/typelisp/src/main.tl"
+            "/d/a/typelisp"
+            "D:/a/typelisp"
+            "C:/Users/runneradmin/AppData/Local/Temp"
+            "C:/Program Files/Git")
+          "D:/a/typelisp/src/main.tl")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "msys-path-non-msys-unchanged"
+          (util.msys-path-to-windows
+            "/OUT:foo.exe"
+            ""
+            ""
+            "C:/Users/runneradmin/AppData/Local/Temp"
+            "C:/Program Files/Git")
+          "/OUT:foo.exe")))
     (if (= fails 0)
       (begin
         (io.stdout-write

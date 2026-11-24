@@ -10440,20 +10440,14 @@
     [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
       (owned_view.compiler-owned-shared-view docs.slots)]
     [idx : i64 (lsp-documents-find-index docs uri)]
+    ;; `doc` may be a request-arena copy; only the decls scanned on the cache
+    ;; arena may be stored back into the persistent slot.
     (when
       (>= idx 0)
       (set!
-        (array-ref slots idx)
-        (lsp_vector_families.LspDocument
-          uri
-          doc.path
-          text
-          doc.version
-          doc.diagnostic-uris
-          (owned_view.compiler-owned-shared-view scanned)
-          true
-          doc.check-cache
-          doc.semantic))
+        (array-ref slots idx).decls
+        (owned_view.compiler-owned-shared-view scanned))
+      (set! (array-ref slots idx).decls-valid true)
       unit)
     scanned))
 

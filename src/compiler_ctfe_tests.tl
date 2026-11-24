@@ -15,7 +15,7 @@
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 
-(define (ctfe-reflect-info-must-use? [info : ctfe.CtfeReflectInfo]) : bool
+(define (ctfe-reflect-info-must-use? [info : (& ctfe.CtfeReflectInfo)]) : bool
   (match info
     [(Struct _ _ _ _ _ _ markers) (not (= (bit-and markers 1) 0))]
     [(Enum _ _ _ _ _ _ markers) (not (= (bit-and markers 1) 0))]))
@@ -167,7 +167,7 @@
     [want : ast.AstType (ast.ast-ty-array (& (I64)) 4)]
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     (match (ctfe.compiler-ctfe-eval
-      (& (TypeLiteral (ast.ty-node-push (& (clone want)))))
+      (& (TypeLiteral (ast.ty-node-push (& (ast.clone-ast-type (& want))))))
       env
       (ctfe.ctfe-fuel-limit))
       [(Ok value _)
@@ -313,7 +313,7 @@
     (and
       (match (ctfe.ctfe-expr-to-type
         (& (ctfe.ctfe-ast-get env source-call))
-        (& (clone origin))
+        (& origin)
         env
         (ctfe.ctfe-fuel-limit))
         [(Ok actual _)
@@ -336,23 +336,23 @@
 (define (compiler-ctfe-type-expr-is?
   [env : (& env ctfe.CtfeEnv)]
   [expr-id : i64]
-  [origin : ast.AstExpr]
-  [expected : ast.AstType]) : bool
+  [origin : (& ast.AstExpr)]
+  [expected : (& ast.AstType)]) : bool
   (match (ctfe.ctfe-expr-to-type
     (& (ctfe.ctfe-ast-get env expr-id))
-    (& origin)
+    origin
     (ctfe.ctfe-env-shared-view env)
     (ctfe.ctfe-fuel-limit))
-    [(Ok actual _) (ctfe.ctfe-type-eq-in-env env (& actual) (& expected))]
+    [(Ok actual _) (ctfe.ctfe-type-eq-in-env env (& actual) expected)]
     [(Err _) false]))
 
 (define (compiler-ctfe-type-expr-rejected?
   [env : (& env ctfe.CtfeEnv)]
   [expr-id : i64]
-  [origin : ast.AstExpr]) : bool
+  [origin : (& ast.AstExpr)]) : bool
   (match (ctfe.ctfe-expr-to-type
     (& (ctfe.ctfe-ast-get env expr-id))
-    (& origin)
+    origin
     (ctfe.ctfe-env-shared-view env)
     (ctfe.ctfe-fuel-limit))
     [(Err _) true]
@@ -393,22 +393,19 @@
       (ast.ast-ty-dyn-array-with-pools (ctfe.ctfe-env-pools env) (& (I64)))]
     [fixed-array-ty : ast.AstType
       (ast.ast-ty-array-with-pools (ctfe.ctfe-env-pools env) (& (I64)) 2)]
-    [roundtrip-call : i64 (ctfe.ctfe-type-to-expr (& (clone dyn-array-ty)) env)]
+    [roundtrip-call : i64 (ctfe.ctfe-type-to-expr (& dyn-array-ty) env)]
     [origin : ast.AstExpr (ctfe.ctfe-ast-get env private-call)]
     (and
+      (compiler-ctfe-type-expr-is? env private-call (& origin) (& dyn-array-ty))
+      (compiler-ctfe-type-expr-rejected? env private-empty-call (& origin))
+      (compiler-ctfe-type-expr-rejected? env private-two-call (& origin))
+      (compiler-ctfe-type-expr-is? env fixed-call (& origin) (& fixed-array-ty))
+      (compiler-ctfe-type-expr-rejected? env generated-private-call (& origin))
       (compiler-ctfe-type-expr-is?
         env
-        private-call
-        (clone origin)
-        (clone dyn-array-ty))
-      (compiler-ctfe-type-expr-rejected? env private-empty-call (clone origin))
-      (compiler-ctfe-type-expr-rejected? env private-two-call (clone origin))
-      (compiler-ctfe-type-expr-is? env fixed-call (clone origin) fixed-array-ty)
-      (compiler-ctfe-type-expr-rejected?
-        env
-        generated-private-call
-        (clone origin))
-      (compiler-ctfe-type-expr-is? env roundtrip-call origin dyn-array-ty)
+        roundtrip-call
+        (& origin)
+        (& dyn-array-ty))
       (match (ctfe.ctfe-expr-unspan env (ctfe.ctfe-ast-get env roundtrip-call))
         [(Call func-box args)
           (and
@@ -437,21 +434,14 @@
       (compiler-ctfe-call1-in-env env generated-slice-id i64-expr)]
     [slice-ty : ast.AstType
       (ast.ast-ty-slice-with-pools (ctfe.ctfe-env-pools env) (& (I64)))]
-    [roundtrip-call : i64 (ctfe.ctfe-type-to-expr (& (clone slice-ty)) env)]
+    [roundtrip-call : i64 (ctfe.ctfe-type-to-expr (& slice-ty) env)]
     [origin : ast.AstExpr (ctfe.ctfe-ast-get env slice-call)]
     (and
-      (compiler-ctfe-type-expr-is?
-        env
-        slice-call
-        (clone origin)
-        (clone slice-ty))
-      (compiler-ctfe-type-expr-rejected? env slice-empty-call (clone origin))
-      (compiler-ctfe-type-expr-rejected? env slice-two-call (clone origin))
-      (compiler-ctfe-type-expr-rejected?
-        env
-        generated-slice-call
-        (clone origin))
-      (compiler-ctfe-type-expr-is? env roundtrip-call origin slice-ty)
+      (compiler-ctfe-type-expr-is? env slice-call (& origin) (& slice-ty))
+      (compiler-ctfe-type-expr-rejected? env slice-empty-call (& origin))
+      (compiler-ctfe-type-expr-rejected? env slice-two-call (& origin))
+      (compiler-ctfe-type-expr-rejected? env generated-slice-call (& origin))
+      (compiler-ctfe-type-expr-is? env roundtrip-call (& origin) (& slice-ty))
       (match (ctfe.ctfe-expr-unspan env (ctfe.ctfe-ast-get env roundtrip-call))
         [(Call func-box args)
           (and
@@ -876,7 +866,7 @@
             "Maybe"
             cbi.compiler-builtin-id-fix-Maybe
             No
-            (clone maybe-variants)
+            (ctfe.clone-ctfe-reflect-variant-list (& maybe-variants))
             0)
           cbi.compiler-builtin-id-fix-Maybe)
         (Enum
@@ -1220,13 +1210,16 @@
             (&
               (ast.ast-ty-ref
                 (ci.intern "outer_query_region")
-                (& (clone nested-referent)))))))]
+                (& (ast.clone-ast-type (& nested-referent))))))))]
     [non-ref : i64
       (ast.ast-node-push (TypeLiteral (ast.ty-node-push (& (Bool)))))]
     [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
     (ctfe-module-value-reflection-enable! true)
     (ctfe-module-value-reset!)
-    (ctfe-module-value-add-id! module-id make-id (clone signature))
+    (ctfe-module-value-add-id!
+      module-id
+      make-id
+      (ast.clone-ast-type (& signature)))
     (let
       [ok : bool
         (and
@@ -1322,15 +1315,15 @@
     [pools : ast.AstNodePoolContext (ctfe.ctfe-env-pools env)]
     [infos : ctfe.CtfeReflectInfoList (ctfe.ctfe-env-reflections env)]
     [resolved : ast.AstType
-      (ctfe.ctfe-reflect-resolve-type-with-pools pools infos (clone ty))]
+      (ctfe.ctfe-reflect-resolve-type-with-pools
+        pools
+        infos
+        (ast.clone-ast-type (& ty)))]
     [arg : i64 (ast.ast-expr-type-literal-with-pools pools (& ty))]
     [call : i64
       (compiler-ctfe-call1-in-env env (ctfe.ctfe-builtin "type-expr") arg)]
     [origin : ast.AstExpr (ctfe.ctfe-ast-get env call)]
-    (match (ctfe.compiler-ctfe-eval
-      (& (clone origin))
-      env
-      (ctfe.ctfe-fuel-limit))
+    (match (ctfe.compiler-ctfe-eval (& origin) env (ctfe.ctfe-fuel-limit))
       [(Ok value _)
         (match value
           [(Expr node produced)
@@ -1341,7 +1334,7 @@
                   (ctfe.ctfe-type-eq-in-env
                     env
                     (& (ast.ast-node-pool-context-type-get (& pools) ty-id))
-                    (& (clone resolved)))]
+                    (& (ast.clone-ast-type (& resolved))))]
                 [_ false])
               (match (ctfe.ctfe-expr-list-type-nth
                 (&
@@ -1496,7 +1489,10 @@
       (compiler-ctfe-type-expr-roundtrip-one? env (ExprList))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-func-with-pools pools (clone pair) (& (String))))
+        (ast.ast-ty-func-with-pools
+          pools
+          (ast.clone-ast-type-list (& pair))
+          (& (String))))
       (compiler-ctfe-type-expr-roundtrip-one? env (Tuple (box pair)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
@@ -1533,10 +1529,14 @@
         (Enum cbi.compiler-builtin-id-fix-Maybe))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (StructArgs cbi.compiler-builtin-id-fix-Point (box (clone lifetimes))))
+        (StructArgs
+          cbi.compiler-builtin-id-fix-Point
+          (box (ast.clone-ast-lifetime-list (& lifetimes)))))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (EnumArgs cbi.compiler-builtin-id-fix-Maybe (box (clone lifetimes))))
+        (EnumArgs
+          cbi.compiler-builtin-id-fix-Maybe
+          (box (ast.clone-ast-lifetime-list (& lifetimes)))))
       (compiler-ctfe-type-expr-roundtrip-one? env (Var unknown))
       (compiler-ctfe-type-expr-roundtrip-one? env (Var qualified-status))
       (compiler-ctfe-type-expr-roundtrip-one?
@@ -1634,23 +1634,27 @@
       infos
       cbi.compiler-builtin-id-fix-Record)
       [(Some info)
-        (unless (ctfe-reflect-info-must-use? (clone info)) (set! ok false))
+        (unless (ctfe-reflect-info-must-use? (& info)) (set! ok false))
         (let
           [alias-infos : ctfe.CtfeReflectInfoList
             (ctfe.ctfe-reflect-info-add-alias
-              (clone infos)
+              (ctfe.ctfe-reflections-from-program
+                (& (compiler-ctfe-reflection-program)))
               info
               "RecordAlias"
               alias-id)]
           (match (ctfe.ctfe-reflect-info-lookup-name-id alias-infos alias-id)
             [(Some alias-info)
-              (unless (ctfe-reflect-info-must-use? alias-info) (set! ok false))]
+              (unless
+                (ctfe-reflect-info-must-use? (& alias-info))
+                (set! ok false))]
             [(None) (set! ok false)]))]
       [(None) (set! ok false)])
     (match (ctfe.ctfe-reflect-info-lookup-name-id
       infos
       cbi.compiler-builtin-id-fix-Status)
-      [(Some info) (unless (ctfe-reflect-info-must-use? info) (set! ok false))]
+      [(Some info)
+        (unless (ctfe-reflect-info-must-use? (& info)) (set! ok false))]
       [(None) (set! ok false)])
     (if (compiler-ctfe-eval-i64-ok?
       (compiler-ctfe-call1 (ctfe.ctfe-builtin "struct-field-count") record-ty)
@@ -2001,7 +2005,7 @@
                       (&
                         (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-len))
                       (& (ast.ast-pattern-list-new))))))
-              (& (clone ty))
+              (& (ast.clone-ast-type (& ty)))
               env)
               [(Matched matched)
                 (if (and
@@ -2225,7 +2229,7 @@
                     (ast.ast-pattern-cons
                       (& (ast.ast-pat-binding-id fields-id))
                       (& (ast.ast-pattern-list-new))))))
-              (& (clone ty))
+              (& (ast.clone-ast-type (& ty)))
               env)
               [(Matched matched)
                 (if (and
@@ -2266,7 +2270,7 @@
                     (ast.ast-pattern-cons
                       (& (ast.ast-pat-binding-id variants-id))
                       (& (ast.ast-pattern-list-new))))))
-              (& (clone ty))
+              (& (ast.clone-ast-type (& ty)))
               env)
               [(Matched matched)
                 (if (and
@@ -2338,13 +2342,18 @@
       (ctfe-expr-list-cons a (ctfe-expr-list-singleton b))]
     [lst3 : ast.AstExprList (ctfe-expr-list-singleton a)]
     (and
-      (ctfe-expr-list-eq (clone lst1) (clone lst2))
-      (not (ctfe-expr-list-eq (clone lst1) lst3))
+      (ctfe-expr-list-eq
+        (ast.clone-ast-expr-list (& lst1))
+        (ast.clone-ast-expr-list (& lst2)))
+      (not (ctfe-expr-list-eq (ast.clone-ast-expr-list (& lst1)) lst3))
       (= (ctfe.ctfe-expr-list-length lst1) 2)
       (not (ctfe-expr-list-empty? lst1))
-      (ctfe-test-expr-eq (ctfe-expr-list-head (clone lst1)) a)
       (ctfe-test-expr-eq
-        (ctfe-expr-list-head (ctfe-expr-list-tail (clone lst1)))
+        (ctfe-expr-list-head (ast.clone-ast-expr-list (& lst1)))
+        a)
+      (ctfe-test-expr-eq
+        (ctfe-expr-list-head
+          (ctfe-expr-list-tail (ast.clone-ast-expr-list (& lst1))))
         b)
       (ctfe-test-expr-eq (ctfe.ctfe-expr-list-nth lst1 1) b))))
 
@@ -2916,7 +2925,7 @@
           cbi.compiler-builtin-id-fix-cond
           (& (Expr flag-var (Bool))))
         cbi.compiler-builtin-id-fix-xs
-        (& (ExprList (clone spliced))))]
+        (& (ExprList (ast.clone-ast-expr-list (& spliced)))))]
     [quoted-bool : i64
       (ast.ast-expr-quote-with-pools (ctfe.ctfe-env-pools env) true-lit)]
     [cond-var : i64
@@ -3046,7 +3055,10 @@
               (& (ast.ast-ty-ref-with-pools pools text-region (& (Str))))
               (& (ast.ast-type-list-new))))))]
     [env : ctfe.CtfeEnv
-      (ctfe.ctfe-env-extend-id base-env type-name (& (Type (clone expected))))]
+      (ctfe.ctfe-env-extend-id
+        base-env
+        type-name
+        (& (Type (ast.clone-ast-type (& expected)))))]
     [type-unquote : ast.AstType
       (ast.ast-ty-var-args
         cbi.compiler-builtin-id-fix-unquote
@@ -3056,7 +3068,7 @@
       (ast.ast-expr-lambda-with-pools
         pools
         (ast.ast-param-cons
-          (& (Param param-name (clone type-unquote) false))
+          (& (Param param-name (ast.clone-ast-type (& type-unquote)) false))
           (& (ast.ast-param-list-new)))
         (Some type-unquote)
         body)]
@@ -3082,7 +3094,7 @@
                           (ctfe.ctfe-type-eq-in-env
                             env
                             (& actual)
-                            (& (clone expected)))]
+                            (& (ast.clone-ast-type (& expected))))]
                         [_ false])
                       (match maybe-ret
                         [(Some actual)
@@ -3128,7 +3140,7 @@
           name-binding
           (& (Name "lambda1-values" parameter-name)))
         type-binding
-        (& (Type (clone parameter-type))))]
+        (& (Type (ast.clone-ast-type (& parameter-type)))))]
     [name-value : i64 (ctfe.ctfe-ast-push env (Var name-binding))]
     [type-value : i64 (ctfe.ctfe-ast-push env (Var type-binding))]
     [target : i64
@@ -3241,7 +3253,7 @@
       (ctfe.ctfe-node-pools-share-storage? pools pools)
       (not (ctfe.ctfe-node-pools-share-storage? pools foreign-pools))
       (match (ctfe.ctfe-eval-unquote-expr
-        (& (clone expr-var))
+        (& expr-var)
         (& expr-var)
         env
         (ctfe.ctfe-fuel-limit))
@@ -3249,7 +3261,7 @@
           (and (= node value-node) (ctfe.ctfe-type-eq (& ty) (& (Bool))))]
         [(Err _) false])
       (match (ctfe.ctfe-eval-unquote-splice
-        (& (clone list-var))
+        (& list-var)
         (& list-var)
         env
         (ctfe.ctfe-fuel-limit))
@@ -3784,122 +3796,121 @@
       [generated-items : i64 (ci.intern-generated-canonical-name "items")]
       (and
         (ci.intern-syntax-id-eq?
-          (ctfe.ctfe-expr-binding-clause-name-id (clone binding))
+          (ctfe.ctfe-expr-binding-clause-name-id
+            (ast.clone-ast-expr-binding-clause (& binding)))
           (ci.intern-syntax-id-from-raw cbi.compiler-builtin-id-fix-name))
         (compiler-ctfe-structural-field-ok?
-          (ExprList (clone exprs))
+          (ExprList (ast.clone-ast-expr-list (& exprs)))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprList (clone exprs))
+          (ExprList (ast.clone-ast-expr-list (& exprs)))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
           (CapturedExprList
-            (clone exprs)
+            (ast.clone-ast-expr-list (& exprs))
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
           (CapturedExprList
-            (clone exprs)
+            (ast.clone-ast-expr-list (& exprs))
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprClause (clone clause))
+          (ExprClause clause)
           cbi.compiler-builtin-id-fix-first
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprClause (clone clause))
+          (ExprClause clause)
           cbi.compiler-builtin-id-fix-second
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CapturedExprClause
-            (clone clause)
-            (ast.ast-node-pool-context-clone pools))
+          (CapturedExprClause clause (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-first
           expr)
         (compiler-ctfe-structural-field-ok?
-          (CapturedExprClause
-            (clone clause)
-            (ast.ast-node-pool-context-clone pools))
+          (CapturedExprClause clause (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-second
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprClauseList (clone clauses))
+          (ExprClauseList (ast.clone-ast-expr-clause-list (& clauses)))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprClauseList (clone clauses))
+          (ExprClauseList (ast.clone-ast-expr-clause-list (& clauses)))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
           (CapturedExprClauseList
-            (clone clauses)
+            (ast.clone-ast-expr-clause-list (& clauses))
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
           (CapturedExprClauseList
-            (clone clauses)
+            (ast.clone-ast-expr-clause-list (& clauses))
             (ast.ast-node-pool-context-clone pools))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprBindingClause (clone binding))
+          (ExprBindingClause (ast.clone-ast-expr-binding-clause (& binding)))
           cbi.compiler-builtin-id-fix-name
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprBindingClause (clone binding))
+          (ExprBindingClause (ast.clone-ast-expr-binding-clause (& binding)))
           cbi.compiler-builtin-id-fix-has_type
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprBindingClause (clone binding))
+          (ExprBindingClause (ast.clone-ast-expr-binding-clause (& binding)))
           cbi.compiler-builtin-id-fix-ty
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprBindingClause (clone binding))
+          (ExprBindingClause (ast.clone-ast-expr-binding-clause (& binding)))
           cbi.compiler-builtin-id-fix-init
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprBindingClauseList (clone bindings))
+          (ExprBindingClauseList
+            (ast.clone-ast-expr-binding-clause-list (& bindings)))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (ExprBindingClauseList (clone bindings))
+          (ExprBindingClauseList
+            (ast.clone-ast-expr-binding-clause-list (& bindings)))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (PatternList (clone patterns))
+          (PatternList (ast.clone-ast-pattern-list (& patterns)))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (PatternList (clone patterns))
+          (PatternList (ast.clone-ast-pattern-list (& patterns)))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (MatchArm (clone arm))
+          (MatchArm (ast.clone-ast-match-arm (& arm)))
           cbi.compiler-builtin-id-fix-pattern
           expr)
         (compiler-ctfe-structural-field-ok?
-          (MatchArm (clone arm))
+          (MatchArm (ast.clone-ast-match-arm (& arm)))
           cbi.compiler-builtin-id-fix-body
           expr)
         (compiler-ctfe-structural-field-ok?
-          (MatchArmList (clone arms))
+          (MatchArmList (ast.clone-ast-match-arm-list (& arms)))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (MatchArmList (clone arms))
+          (MatchArmList (ast.clone-ast-match-arm-list (& arms)))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeInfoList (clone types))
+          (TypeInfoList (ast.clone-ast-type-list (& types)))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeInfoList (clone types))
+          (TypeInfoList (ast.clone-ast-type-list (& types)))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
@@ -3911,11 +3922,11 @@
           cbi.compiler-builtin-id-fix-ty
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeFieldList (clone fields))
+          (TypeFieldList (ctfe.clone-ctfe-reflect-field-list (& fields)))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeFieldList (clone fields))
+          (TypeFieldList (ctfe.clone-ctfe-reflect-field-list (& fields)))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
@@ -3923,27 +3934,27 @@
           cbi.compiler-builtin-id-fix-ty
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeVariantPayloadList (clone types))
+          (TypeVariantPayloadList (ast.clone-ast-type-list (& types)))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeVariantPayloadList (clone types))
+          (TypeVariantPayloadList (ast.clone-ast-type-list (& types)))
           cbi.compiler-builtin-id-fix-len
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeVariant "Some" (clone types))
+          (TypeVariant "Some" (ast.clone-ast-type-list (& types)))
           cbi.compiler-builtin-id-fix-name
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeVariant "Some" (clone types))
+          (TypeVariant "Some" (ast.clone-ast-type-list (& types)))
           cbi.compiler-builtin-id-fix-payloads
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeVariantList (clone variants))
+          (TypeVariantList (ctfe.clone-ctfe-reflect-variant-list (& variants)))
           cbi.compiler-builtin-id-fix-items
           expr)
         (compiler-ctfe-structural-field-ok?
-          (TypeVariantList (clone variants))
+          (TypeVariantList (ctfe.clone-ctfe-reflect-variant-list (& variants)))
           cbi.compiler-builtin-id-fix-len
           expr)
         (match (ctfe.ctfe-eval-struct-get-value
@@ -4014,9 +4025,13 @@
     [gap : i64 (- 4096 (string.string-length marker))]
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 8400)]
-    (byte_buf_core.byte-buf-builder-append-string (&mut out) (clone marker))
+    (byte_buf_core.byte-buf-builder-append-string
+      (&mut out)
+      (string.copy (& marker)))
     (compiler-ctfe-lzss-push-noise! (&mut out) gap 256 7)
-    (byte_buf_core.byte-buf-builder-append-string (&mut out) (clone marker))
+    (byte_buf_core.byte-buf-builder-append-string
+      (&mut out)
+      (string.copy (& marker)))
     (compiler-ctfe-lzss-push-noise! (&mut out) (+ gap 1) 256 11)
     (byte_buf_core.byte-buf-builder-append-string (&mut out) marker)
     (byte_buf_core.byte-buf-builder-to-string (& out))))
@@ -4103,7 +4118,7 @@
             tail-name
             (&
               (CapturedExprList
-                (clone items)
+                (ast.clone-ast-expr-list (& items))
                 (ast.ast-node-pool-context-snapshot pools))))]
         [head-var : i64 (ctfe.ctfe-ast-push env (Var head-name))]
         [tail-var : i64 (ctfe.ctfe-ast-push env (Var tail-name))]

@@ -5319,6 +5319,14 @@
   [diag : (Box cdiag.CompilerDiagnostic)]) : unit
   (unless (spec-subst-holding? held) (set! (deref held) (Held diag))))
 
+(define (spec-substitute-keep-or-push
+  [owner : (& owner SpecOwnerContext)]
+  [expr-id : i64]
+  [expr : (& ast.AstExpr)]) : i64
+  (if (>= expr-id 0)
+    expr-id
+    (spec-owner-expr-push owner expr)))
+
 ;: Applies a specialization's type and value bindings to `expr` in one walk
 ;: that rebuilds each node once. A type failure ends the walk. A value failure
 ;: is held while the walk goes on checking types, because a type failure
@@ -5330,9 +5338,9 @@
   [subs : (& subs SpecSubst)]) : ResultSpecSubExpr
   (let
     [held : SpecHeldFailure (None)]
-    [root-id : i64 (spec-owner-expr-push owner expr)]
     [rewritten : i64
-      (try (spec-substitute-walk-with-owner owner subs (&mut held) root-id))]
+      (try
+        (spec-substitute-walk-node-with-owner owner subs (&mut held) -1 expr))]
     (match held
       [(None) (Ok rewritten)]
       [(Held diag) (Err diag)])))
@@ -5340,8 +5348,9 @@
 (define (spec-substitute-walk-resource-with-owner
   [owner : (& owner SpecOwnerContext)]
   [expr-id : i64]
-  [bindings : ast.AstResourceBindingList]
-  [body : ast.AstExprList]
+  [expr : (& expr ast.AstExpr)]
+  [bindings : (& bindings ast.AstResourceBindingList)]
+  [body : (& body ast.AstExprList)]
   [subs : (& subs SpecSubst)]
   [held : (&mut held SpecHeldFailure)]) : ResultSpecSubExpr
   (let
@@ -5351,7 +5360,7 @@
     [bindings-changed? : bool false]
     (for [index (iterator.range 0 bindings.len)]
       (match (ast.ast-resource-binding-list-get
-        (& bindings)
+        bindings
         index
         (ast.ast-resource-binding-fallback))
         [(Binding name init cleanup move-aware?)
@@ -5375,7 +5384,7 @@
                 (set!
                   out
                   (ast.ast-resource-binding-list-fork-prefix
-                    (& bindings)
+                    bindings
                     index
                     (ast.AstResourceBinding.Binding
                       name
@@ -5386,7 +5395,7 @@
     (let
       [body-changed? : bool false]
       [next-body : ast.AstExprList
-        (ast.ast-expr-list-map-try-if-changed
+        (ast.ast-expr-list-map-try-if-changed-ref
           body
           body-changed?
           spec-substitute-walk-with-owner
@@ -5403,9 +5412,11 @@
                   (ast.AstWithResource.WithResource
                     (if bindings-changed?
                       out
-                      bindings)
-                    next-body))))))
-        (Ok expr-id)))))
+                      (ast.clone-ast-resource-binding-list bindings))
+                    (if body-changed?
+                      next-body
+                      (ast.clone-ast-expr-list body))))))))
+        (Ok (spec-substitute-keep-or-push owner expr-id expr))))))
 
 (define (spec-substitute-type-id-hook
   [owner : (& owner SpecOwnerContext)]
@@ -5424,13 +5435,20 @@
 (define (spec-substitute-type-step
   [owner : (& owner SpecOwnerContext)]
   [subs : (& subs SpecTypeSubst)]
-  [ty : ast.AstType]
-  [changed? : (&mut ch bool)]) : ast.AstType
-  (match (spec-substitute-type-if-changed-with-owner owner (& ty) subs)
-    [(No) ty]
-    [(Some mapped)
-      (set! (deref changed?) true)
-      mapped]))
+  [ty : (& ast.AstType)]
+  [changed? : (&mut ch bool)]) : ast.AstMaybeType
+  (let
+    [mapped : ast.AstMaybeType
+      (spec-substitute-type-if-changed-with-owner owner ty subs)]
+    (when (ast.ast-maybe-type-some? (& mapped)) (set! (deref changed?) true))
+    mapped))
+
+(define (spec-substitute-type-or-clone
+  [mapped : ast.AstMaybeType]
+  [orig : (& ast.AstType)]) : ast.AstType
+  (match mapped
+    [(Some next) next]
+    [(No) (ast.clone-ast-type orig)]))
 
 (define (spec-substitute-walk-default-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -5455,7 +5473,7 @@
         held)]
     (if changed?
       (Ok (spec-owner-expr-push owner (& mapped)))
-      (Ok expr-id))))
+      (Ok (spec-substitute-keep-or-push owner expr-id (& mapped))))))
 
 (define (spec-substitute-walk-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -5464,14 +5482,25 @@
   [expr-id : i64]) : ResultSpecSubExpr
   (let
     [expr : ast.AstExpr (spec-owner-expr-get owner expr-id)]
-    (match (ast.ast-place-shared-view expr)
+    (spec-substitute-walk-node-with-owner owner subs held expr-id (& expr))))
+
+(define (spec-substitute-walk-node-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [subs : (& subs SpecSubst)]
+  [held : (&mut held SpecHeldFailure)]
+  [expr-id : i64]
+  [expr : (& ast.AstExpr)]) : ResultSpecSubExpr
+  (let
+    [expr-view : ast.AstExpr
+      (owned_view.compiler-owned-reference-shared-view expr)]
+    (match expr-view
       [(Var name)
         (match (spec-type-subst-lookup (& subs.types) name)
           [(Some _)
             (Err
               (box
                 (spec-diagnostic-at-expr
-                  (& expr)
+                  expr
                   (str_cat.str-cat
                     "type-valued comptime parameter '"
                     (spec_ci.intern-compat-state-str
@@ -5484,14 +5513,14 @@
                 (match (spec-ctfe-value-to-expr-with-owner
                   owner
                   (& (spec-value-subst-value (& subs.values) name))
-                  (& expr))
+                  expr)
                   [(Ok literal) (Ok literal)]
                   [(Err diag)
                     (spec-subst-hold-value-failure! held diag)
-                    (Ok expr-id)])]
-              [(None) (Ok expr-id)])])]
+                    (Ok (spec-substitute-keep-or-push owner expr-id expr))])]
+              [(None) (Ok (spec-substitute-keep-or-push owner expr-id expr))])])]
       [(Lambda lambda-box)
-        (match (__tl-box-place lambda-box)
+        (match (& (__tl-box-place lambda-box))
           [(Lambda params ret body-box)
             (let
               [p-ch : bool false]
@@ -5499,7 +5528,7 @@
               [b-ch : bool false]
               [mp : ast.AstParamList
                 (ast.ast-param-list-map-if-changed-ref
-                  (& params)
+                  params
                   p-ch
                   spec-substitute-type-hook
                   owner
@@ -5507,7 +5536,7 @@
                   held)]
               [mr : ast.AstMaybeType
                 (ast.ast-maybe-type-map-if-changed-ref
-                  (& ret)
+                  ret
                   r-ch
                   spec-substitute-type-hook
                   owner
@@ -5521,18 +5550,18 @@
                     (spec-owner-pools owner)
                     (if p-ch
                       mp
-                      params)
+                      (ast.clone-ast-param-list params))
                     (if r-ch
                       mr
-                      ret)
+                      (ast.clone-ast-maybe-type ret))
                     mb))
-                (Ok expr-id)))])]
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
       [(Foreach fe-box)
-        (match (__tl-box-place fe-box)
+        (match (& (__tl-box-place fe-box))
           [(Foreach index index-ty s e b)
             (let
               [ch : bool false]
-              [mt : ast.AstType
+              [mt : ast.AstMaybeType
                 (spec-substitute-type-step
                   owner
                   (& subs.types)
@@ -5547,17 +5576,17 @@
                   (ast.ast-expr-foreach-id-with-pools
                     (spec-owner-pools owner)
                     index
-                    mt
+                    (spec-substitute-type-or-clone mt index-ty)
                     ms
                     me
                     mb))
-                (Ok expr-id)))]
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
           [(Foreach2 outer o-ty os oe inner i-ty is ie b)
             (let
               [ch : bool false]
-              [mt0 : ast.AstType
+              [mt0 : ast.AstMaybeType
                 (spec-substitute-type-step owner (& subs.types) o-ty (&mut ch))]
-              [mt1 : ast.AstType
+              [mt1 : ast.AstMaybeType
                 (spec-substitute-type-step owner (& subs.types) i-ty (&mut ch))]
               [osubs : SpecSubst (spec-subst-remove-name subs outer)]
               [bsubs : SpecSubst (spec-subst-remove-name (& osubs) inner)]
@@ -5571,15 +5600,15 @@
                   (ast.ast-expr-foreach2-id-with-pools
                     (spec-owner-pools owner)
                     outer
-                    mt0
+                    (spec-substitute-type-or-clone mt0 o-ty)
                     ms0
                     me0
                     inner
-                    mt1
+                    (spec-substitute-type-or-clone mt1 i-ty)
                     ms1
                     me1
                     mb))
-                (Ok expr-id)))])]
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
       ;; A lane name shadows the parameter of that name in the body, a type
       ;; parameter as much as a value parameter, like every other binder (#8704).
       [(ForeachActive lane body-box)
@@ -5593,13 +5622,13 @@
                 (spec-owner-pools owner)
                 lane
                 mb))
-            (Ok expr-id)))]
+            (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
       [(SpmdReduce reduce-box)
-        (match (__tl-box-place reduce-box)
+        (match (& (__tl-box-place reduce-box))
           [(Reduce op index ty s e init val)
             (let
               [ch : bool false]
-              [mt : ast.AstType
+              [mt : ast.AstMaybeType
                 (spec-substitute-type-step owner (& subs.types) ty (&mut ch))]
               [vs : SpecSubst (spec-subst-remove-name subs index)]
               [ms : i64 (spec-sub-step ch owner subs held s)]
@@ -5612,20 +5641,20 @@
                     (spec-owner-pools owner)
                     op
                     index
-                    mt
+                    (spec-substitute-type-or-clone mt ty)
                     ms
                     me
                     mi
                     mv))
-                (Ok expr-id)))])]
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
       [(SpmdScan scan-box)
-        (match (__tl-box-place scan-box)
+        (match (& (__tl-box-place scan-box))
           [(Scan op index ty s e prefix p-ty init val body)
             (let
               [ch : bool false]
-              [mt0 : ast.AstType
+              [mt0 : ast.AstMaybeType
                 (spec-substitute-type-step owner (& subs.types) ty (&mut ch))]
-              [mt1 : ast.AstType
+              [mt1 : ast.AstMaybeType
                 (spec-substitute-type-step owner (& subs.types) p-ty (&mut ch))]
               [vs : SpecSubst (spec-subst-remove-name subs index)]
               [bs : SpecSubst (spec-subst-remove-name (& vs) prefix)]
@@ -5640,23 +5669,23 @@
                     (spec-owner-pools owner)
                     op
                     index
-                    mt0
+                    (spec-substitute-type-or-clone mt0 ty)
                     ms
                     me
                     prefix
-                    mt1
+                    (spec-substitute-type-or-clone mt1 p-ty)
                     mi
                     mv
                     mb))
-                (Ok expr-id)))])]
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
       [(SpmdCompact compact-box)
-        (match (__tl-box-place compact-box)
+        (match (& (__tl-box-place compact-box))
           [(Compact index ty s e slot s-ty init keep body)
             (let
               [ch : bool false]
-              [mt0 : ast.AstType
+              [mt0 : ast.AstMaybeType
                 (spec-substitute-type-step owner (& subs.types) ty (&mut ch))]
-              [mt1 : ast.AstType
+              [mt1 : ast.AstMaybeType
                 (spec-substitute-type-step owner (& subs.types) s-ty (&mut ch))]
               [ks : SpecSubst (spec-subst-remove-name subs index)]
               [bs : SpecSubst (spec-subst-remove-name (& ks) slot)]
@@ -5670,22 +5699,22 @@
                   (ast.ast-expr-spmd-compact-id-with-pools
                     (spec-owner-pools owner)
                     index
-                    mt0
+                    (spec-substitute-type-or-clone mt0 ty)
                     ms
                     me
                     slot
-                    mt1
+                    (spec-substitute-type-or-clone mt1 s-ty)
                     mi
                     mk
                     mb))
-                (Ok expr-id)))])]
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
       [(Let let-box)
-        (match (__tl-box-place let-box)
+        (match (& (__tl-box-place let-box))
           [(Let bindings body-box)
             (let
-              [ch : bool false]
+              [b-ch : bool false]
               [bs : SpecSubst
-                (spec-subst-remove-let-binding-names subs (& bindings))]
+                (spec-subst-remove-let-binding-names subs bindings)]
               [rb : ast.AstLetBindingList
                 (try
                   (spec-substitute-walk-let-bindings-with-owner
@@ -5693,15 +5722,18 @@
                     bindings
                     subs
                     held
-                    (&mut ch)))]
+                    (&mut b-ch)))]
+              [ch : bool b-ch]
               [rbody : i64 (spec-sub-step ch owner (& bs) held body-box)]
               (if ch
                 (Ok
                   (ast.ast-expr-let-with-pools
                     (spec-owner-pools owner)
-                    rb
+                    (if b-ch
+                      rb
+                      (ast.clone-ast-let-binding-list bindings))
                     rbody))
-                (Ok expr-id)))])]
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
       ;; The loop's source and index names bind in its body; only the source
       ;; expression is evaluated outside them. The name slots are binders, never
       ;; substituted, so a binder named like a parameter shadows it (#8704).
@@ -5736,7 +5768,7 @@
                 min
                 msrc
                 mbody))
-            (Ok expr-id)))]
+            (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
       ;; A step binds its item and done names in its body. Its source and index
       ;; names are uses of the enclosing state's binders, and its expected type
       ;; is read outside the binding, so those keep the outer substitution
@@ -5786,14 +5818,14 @@
                 met
                 mdn
                 mbody))
-            (Ok expr-id)))]
+            (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
       [(Set name value-box)
         (match (spec-type-subst-lookup (& subs.types) name)
           [(Some _)
             (Err
               (box
                 (spec-diagnostic-at-expr
-                  (& expr)
+                  expr
                   (str_cat.str-cat
                     "type-valued comptime parameter '"
                     (spec_ci.intern-compat-state-str
@@ -5807,7 +5839,7 @@
                   held
                   (box
                     (spec-diagnostic-at-expr
-                      (& expr)
+                      expr
                       (str_cat.str-cat
                         "cannot assign to comptime parameter '"
                         (spec_ci.intern-compat-state-str
@@ -5825,9 +5857,9 @@
                     (spec-owner-pools owner)
                     name
                     rewritten))
-                (Ok expr-id)))])]
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
       [(Match match-box)
-        (match (__tl-box-place match-box)
+        (match (& (__tl-box-place match-box))
           [(Match scrutinee-box arms)
             (let
               [arms-changed? : bool false]
@@ -5851,14 +5883,17 @@
                   (ast.ast-expr-match-with-pools
                     (spec-owner-pools owner)
                     rewritten-scrutinee
-                    rewritten-arms))
-                (Ok expr-id)))])]
+                    (if arms-changed?
+                      rewritten-arms
+                      (ast.clone-ast-match-arm-list arms))))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
       [(WithResource wr-box)
-        (match (__tl-box-place wr-box)
+        (match (& (__tl-box-place wr-box))
           [(WithResource bindings body)
             (spec-substitute-walk-resource-with-owner
               owner
               expr-id
+              expr
               bindings
               body
               subs
@@ -5875,7 +5910,7 @@
                 held
                 (box
                   (spec-diagnostic-at-expr
-                    (& expr)
+                    expr
                     (str_cat.str-cat
                       "cannot take address of comptime value parameter '"
                       (spec_ci.intern-compat-state-str
@@ -5891,24 +5926,30 @@
                 (ast.ast-expr-ptr-addr-of-id-with-pools
                   (spec-owner-pools owner)
                   rewritten))
-              (Ok expr-id))))]
-      [(Borrow _ _ _) (Ok expr-id)]
-      [_ (spec-substitute-walk-default-with-owner owner subs held expr-id expr)])))
+              (Ok (spec-substitute-keep-or-push owner expr-id expr)))))]
+      [(Borrow _ _ _) (Ok (spec-substitute-keep-or-push owner expr-id expr))]
+      [_
+        (spec-substitute-walk-default-with-owner
+          owner
+          subs
+          held
+          expr-id
+          expr-view)])))
 
 (define (spec-substitute-walk-let-bindings-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [bindings : ast.AstLetBindingList]
+  [bindings : (& ast.AstLetBindingList)]
   [subs : (& subs SpecSubst)]
   [held : (&mut held SpecHeldFailure)]
   [changed? : (&mut ch bool)]) : ResultSpecSubLetBindingList
   (let
-    [len : i64 (ast.ast-let-binding-list-len (& bindings))]
+    [len : i64 (ast.ast-let-binding-list-len bindings)]
     [scope : SpecSubst (deref subs)]
     [out : ast.AstLetBindingList (ast.ast-let-binding-list-empty-shared)]
     [list-changed? : bool false]
     (for [index (iterator.range 0 len)]
       (match (ast.ast-let-binding-list-get
-        (& bindings)
+        bindings
         index
         (ast.ast-let-binding-fallback))
         [(Binding name ty value-box)
@@ -5940,7 +5981,7 @@
                 (set!
                   out
                   (ast.ast-let-binding-list-fork-prefix
-                    (& bindings)
+                    bindings
                     index
                     (ast.ast-let-binding-id
                       name
@@ -5949,15 +5990,12 @@
                         ty)
                       rewritten)))
                 (set! list-changed? true))))]))
-    (if list-changed?
-      (begin
-        (set! (deref changed?) true)
-        (Ok out))
-      (Ok bindings))))
+    (when list-changed? (set! (deref changed?) true))
+    (Ok out)))
 
 (define (spec-substitute-walk-match-arms-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [arms : ast.AstMatchArmList]
+  [arms : (& ast.AstMatchArmList)]
   [subs : (& subs SpecSubst)]
   [held : (&mut held SpecHeldFailure)]
   [changed? : (&mut ch bool)]) : ResultSpecSubMatchArmList
@@ -5967,7 +6005,7 @@
     [list-changed? : bool false]
     (for [index (iterator.range 0 len)]
       (match (ast.ast-match-arm-list-get
-        (& arms)
+        arms
         index
         (ast.ast-match-arm-fallback))
         [(Arm pattern body-box)
@@ -5989,15 +6027,12 @@
                 (set!
                   out
                   (ast.ast-match-arm-list-fork-prefix
-                    (& arms)
+                    arms
                     index
                     (ast.ast-match-arm pattern rewritten)))
                 (set! list-changed? true))))]))
-    (if list-changed?
-      (begin
-        (set! (deref changed?) true)
-        (Ok out))
-      (Ok arms))))
+    (when list-changed? (set! (deref changed?) true))
+    (Ok out)))
 
 (define (spec-rewrite-decl-with-owner
   [owner : (& owner SpecOwnerContext)]

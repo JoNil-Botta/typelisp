@@ -112555,8 +112555,8 @@
 
 ;; Non-loop cyclic sole-site absorption for `-O2`: when the caller itself has
 ;; no loops, is not a single-site callee (avoiding cascade loss of the caller's
-;; own absorption), and has not already absorbed a cyclic body, admit a
-;; call-free cyclic leaf when either:
+;; own absorption), and has not already imported a cyclic body during this walk,
+;; admit a call-free cyclic leaf when either:
 ;;   - the call sits unconditionally in the caller's entry block (cannot widen
 ;;     a hot fast-path prologue for a cold conditional helper like `grow!`), or
 ;;   - the caller is cold (synthetic entry count <= 1, never reached from a loop).
@@ -112578,6 +112578,7 @@
     (not staging.values?)
     (not opt-inline-caller-single-site?)
     (not opt-inline-caller-cyclic-absorbed?)
+    (= opt-inline-caller-hot-loop-blocks 0)
     (<= callee-instrs (opt-inline-sole-call-cyclic-max-body))
     (<=
       (ir.compiler-ir-block-list-count blocks)
@@ -118053,9 +118054,15 @@
                 (not branch-chain?))]
             [cyclic-absorb? : bool
               (and
-                absorb-import?
-                (not
-                  (opt-inline-tiny-predicate-acyclic-reclaiming? (& cblocks))))]
+                inline?
+                (or
+                  hot-loop-leaf?
+                  (and
+                    (not tail-site?)
+                    single-site-absorb?
+                    (not
+                      (opt-inline-tiny-predicate-acyclic-reclaiming?
+                        (& cblocks))))))]
             (if inline?
               (SitePlan
                 (OptInlineSitePlan
@@ -118118,10 +118125,9 @@
     [_absorb-bump : unit
       (when
         plan.absorb-import?
-        (+= opt-inline-caller-absorb-blocks plan.added-blocks)
-        (when
-          plan.cyclic-absorb?
-          (set! opt-inline-caller-cyclic-absorbed? true)))]
+        (+= opt-inline-caller-absorb-blocks plan.added-blocks))]
+    [_cyclic-bump : unit
+      (when plan.cyclic-absorb? (set! opt-inline-caller-cyclic-absorbed? true))]
     [_accessor-bump : unit
       (if plan.accessor-import?
         (+= opt-inline-caller-accessor-blocks plan.added-blocks)

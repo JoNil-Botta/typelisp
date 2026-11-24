@@ -82,11 +82,27 @@ case "$INLINE_TEST_WORKERS" in
 esac
 INLINE_TEST_CHUNK_FILES=12
 INLINE_TEST_CHUNK_TARGET_COUNT=32
+# Linux cgroup MemoryMax bounds resident pages (RSS); Windows Job Objects bound
+# committed virtual memory across the compiler and child test binary (~1.5-1.7x
+# Linux RSS on the largest compiler test suites). Heavy 1-2 file compiler chunks
+# keep the full per-chunk cap while lighter >=3-file chunks take a lower cap so
+# the 3-worker pool budget admits at most two heavy chunks plus one light chunk
+# at once, preventing three heavy chunks from stacking peak memory together.
 INLINE_TEST_CHUNK_CAP_MIB=4096
-INLINE_TEST_POOL_BUDGET_MIB=$((INLINE_TEST_WORKERS * INLINE_TEST_CHUNK_CAP_MIB))
+INLINE_TEST_LIGHT_CHUNK_CAP_MIB=3072
+if [ "$HOST_OS" = windows ]; then
+    INLINE_TEST_CHUNK_CAP_MIB=6144
+    INLINE_TEST_LIGHT_CHUNK_CAP_MIB=5120
+fi
+if [ "$INLINE_TEST_WORKERS" -le 2 ]; then
+    INLINE_TEST_POOL_BUDGET_MIB=$((INLINE_TEST_WORKERS * INLINE_TEST_CHUNK_CAP_MIB))
+else
+    INLINE_TEST_POOL_BUDGET_MIB=$((2 * INLINE_TEST_CHUNK_CAP_MIB + (INLINE_TEST_WORKERS - 2) * INLINE_TEST_LIGHT_CHUNK_CAP_MIB))
+fi
 INLINE_TEST_JOB_TIMEOUT_SECONDS=1800
 INLINE_TEST_PEAK_BYTES=0
 INLINE_TEST_PEAK_JOB=
+INLINE_TEST_PEAK_CAP_MIB=$INLINE_TEST_CHUNK_CAP_MIB
 
 show_streams() {
     _stdout=$1
@@ -115,7 +131,14 @@ inline_test_plan_chunks() {
         -v target_chunks="$INLINE_TEST_CHUNK_TARGET_COUNT" \
         -v dir="$_plan_dir" \
         -v cap="$INLINE_TEST_CHUNK_CAP_MIB" \
+        -v light_cap="$INLINE_TEST_LIGHT_CHUNK_CAP_MIB" \
         -v queue="$_plan_queue" '
+        function flush_chunk(    chunk_cap) {
+            if (last == "") return
+            close(dir "/" last ".list")
+            chunk_cap = (cf <= 2 && (target_w == 0 || cw * 2 >= target_w)) ? cap : light_cap
+            print last "|" chunk_cap >> queue
+        }
         function resolve_mod(mod,    p, _line) {
             p = "src/" mod ".tl"
             if ((getline _line < p) >= 0) {
@@ -177,6 +200,7 @@ inline_test_plan_chunks() {
             return tot + lines[root] * 16 + 1000
         }
         {
+            sub(/\r$/, "")
             if ($0 == "") next
             files[++nfiles] = $0
             scan_file($0)
@@ -208,11 +232,9 @@ inline_test_plan_chunks() {
                 f = files[i]
                 fw = w[f]
                 if (cf == 0 || cf >= size || (target_w > 0 && cw + fw > target_w)) {
-                    if (last != "") close(dir "/" last ".list")
+                    flush_chunk()
                     c++
-                    job = sprintf("chunk-%03d", c)
-                    print job "|" cap >> queue
-                    last = job
+                    last = sprintf("chunk-%03d", c)
                     cf = 0
                     cw = 0
                 }
@@ -220,7 +242,7 @@ inline_test_plan_chunks() {
                 cf++
                 cw += fw
             }
-            if (last != "") close(dir "/" last ".list")
+            flush_chunk()
         }
     ' "$_plan_sources"
 }
@@ -233,6 +255,7 @@ inline_test_settle_chunk() {
     _settle_dir=$2
     _settle_combined_stdout=$3
     _settle_combined_stderr=$4
+    _settle_cap=${5:-$INLINE_TEST_CHUNK_CAP_MIB}
     _settle_list="$_settle_dir/$_settle_job.list"
     _settle_stdout="$_settle_dir/$_settle_job.stdout"
     _settle_stderr="$_settle_dir/$_settle_job.stderr"
@@ -243,10 +266,10 @@ inline_test_settle_chunk() {
         exit 1
     fi
     _settle_rc=$(cat "$_settle_status")
-    if ! bounded_pool_read_report "$_settle_report" "$_settle_rc" "$INLINE_TEST_CHUNK_CAP_MIB" "$HOST_OS"; then
+    if ! bounded_pool_read_report "$_settle_report" "$_settle_rc" "$_settle_cap" "$HOST_OS"; then
         echo "inline test $_settle_job $BOUNDED_POOL_REPORT_FAILURE" \
             "(reason=$BOUNDED_POOL_REPORT_REASON," \
-            "cap $INLINE_TEST_CHUNK_CAP_MIB MiB," \
+            "cap $_settle_cap MiB," \
             "timeout $INLINE_TEST_JOB_TIMEOUT_SECONDS s)" >&2
         show_streams "$_settle_stdout" "$_settle_stderr"
         exit 1
@@ -255,6 +278,7 @@ inline_test_settle_chunk() {
     if [ "$_settle_peak" -gt "$INLINE_TEST_PEAK_BYTES" ]; then
         INLINE_TEST_PEAK_BYTES=$_settle_peak
         INLINE_TEST_PEAK_JOB=$_settle_job
+        INLINE_TEST_PEAK_CAP_MIB=$_settle_cap
     fi
     if [ "$_settle_rc" != 0 ]; then
         echo "inline test batch execution failed in $_settle_job" >&2
@@ -366,7 +390,7 @@ inline_test_self_test_settle_all() {
     : > "$_all_dir/combined.stderr"
     while IFS='|' read -r _all_job _all_cap; do
         inline_test_settle_chunk "$_all_job" "$_all_dir" \
-            "$_all_dir/combined.stdout" "$_all_dir/combined.stderr"
+            "$_all_dir/combined.stdout" "$_all_dir/combined.stderr" "$_all_cap"
     done < "$_all_dir/queue"
     inline_test_check_combined "$_all_dir/discovered.txt" \
         "$_all_dir/combined.stdout" "$_all_dir/combined.stderr" \
@@ -427,6 +451,23 @@ inline_test_self_test_chunks() {
     if ! ( inline_test_self_test_settle_all "$_self_dir" ) > "$_self_dir/out" 2>&1; then
         echo "inline test chunk self-test: well-formed chunks were rejected" >&2
         sed 's/^/  /' "$_self_dir/out" >&2
+        exit 1
+    fi
+
+    _tier_dir=$(mktemp -d "$INLINE_TEST_SELF_TEST_ROOT/tier.XXXXXX")
+    printf ';; light\n' > "$_tier_dir/l1.tl"
+    printf ';; light\n' > "$_tier_dir/l2.tl"
+    printf ';; light\n' > "$_tier_dir/l3.tl"
+    printf '%s\n' "$_tier_dir/l1.tl" "$_tier_dir/l2.tl" "$_tier_dir/l3.tl" > "$_tier_dir/discovered.txt"
+    _tier_saved_size=$INLINE_TEST_CHUNK_FILES
+    _tier_saved_target=$INLINE_TEST_CHUNK_TARGET_COUNT
+    INLINE_TEST_CHUNK_FILES=3
+    INLINE_TEST_CHUNK_TARGET_COUNT=0
+    inline_test_plan_chunks "$_tier_dir/discovered.txt" "$_tier_dir" "$_tier_dir/queue"
+    INLINE_TEST_CHUNK_FILES=$_tier_saved_size
+    INLINE_TEST_CHUNK_TARGET_COUNT=$_tier_saved_target
+    if [ "$(cat "$_tier_dir/queue")" != "chunk-001|$INLINE_TEST_LIGHT_CHUNK_CAP_MIB" ]; then
+        echo "inline test chunk self-test: >=3-file light chunk did not get light cap" >&2
         exit 1
     fi
 
@@ -657,7 +698,7 @@ inline_test_merge_pool_timing required
 : > "$run_stdout"
 : > "$run_stderr"
 while IFS='|' read -r settle_job settle_cap; do
-    inline_test_settle_chunk "$settle_job" "$WORKDIR" "$run_stdout" "$run_stderr"
+    inline_test_settle_chunk "$settle_job" "$WORKDIR" "$run_stdout" "$run_stderr" "$settle_cap"
 done < "$INLINE_TEST_QUEUE"
 inline_test_check_combined "$DISCOVERED" "$run_stdout" "$run_stderr" \
     "$run_counts" "$run_paths"
@@ -665,5 +706,5 @@ inline_test_check_combined "$DISCOVERED" "$run_stdout" "$run_stderr" \
 test_count=$(awk '{ total += $1 } END { print total + 0 }' "$run_counts")
 echo "[inline-tests] $chunk_count chunk(s) in $pool_wall_ms ms;" \
     "peak $((INLINE_TEST_PEAK_BYTES / 1048576)) MiB ($INLINE_TEST_PEAK_JOB)" \
-    "of a $INLINE_TEST_CHUNK_CAP_MIB MiB cap"
+    "of a $INLINE_TEST_PEAK_CAP_MIB MiB cap"
 echo "inline test verification passed for $test_count test(s) in $discovered_file_count file(s)"

@@ -1543,7 +1543,6 @@
         runtime-names)]
     (cond
       [(or
-          (= base-id cbi.compiler-builtin-id-clone)
           (= base-id cbi.compiler-builtin-id-runtime-substring)
           (= base-id (cbi.compiler-builtin-ctfe-ref 93)))
         (tltest-reach-mark-string-snapshot-runtime clone-names)]

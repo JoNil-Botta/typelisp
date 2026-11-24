@@ -62482,7 +62482,7 @@
   0)
 
 ;; True when the pre-scan proves no fold stage can fire for this block, so the
-;; fold pipeline (clone + four stage walks) can be skipped and the input block
+;; fold pipeline (block copy + four stage walks) can be skipped and the input block
 ;; returned unchanged. A length-zero work array disables scanning (cold entry
 ;; points have no frame), forcing the full path.
 (define (opt-block-scan-skippable?

@@ -21,7 +21,6 @@
 (import compiler_float as cfloat)
 (import compiler_ctfe as ctfe_support)
 (import compiler_specialize as spec)
-(import compiler_clone as clone_support)
 (import compiler_allocation_profile as allocation_profile)
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_surface_facts as surface_facts)
@@ -448,22 +447,6 @@
   (type-handles TcTypeHandleCacheState))
 
 (defstruct TcNominalCacheState
-  (address i64))
-
-;; Cloneability and clone-root collection share the whole-program declaration
-;; view and reset boundary. The able-set lives in the stable AST-pool arena;
-;; the selected declaration map and resolved root closure use a separately
-;; destroyable arena owned only by this job.
-(defstruct TcCloneStateData
-  (able-ready bool)
-  (able-cache clone_support.CloneNameSet)
-  (root-active bool)
-  (root-current-decl bool)
-  (root-selected tc_i64_i64_map.Map)
-  (root-roots clone_support.CloneRootEntries)
-  (root-arena i64))
-
-(defstruct TcCloneState
   (address i64))
 
 (defstruct TcMacroCallSiteActiveDecl
@@ -1143,8 +1126,6 @@
   14)
 (define tc-macro-state-slot-nominal-cache : i64
   15)
-(define tc-macro-state-slot-clone : i64
-  16)
 (define tc-macro-state-slot-module-decl-index : i64
   18)
 (cfg
@@ -1801,20 +1782,6 @@
 (define (tc-type-handle-cache-state-data [state : TcTypeHandleCacheState]) : TcTypeHandleCacheStateData
   (tc-state-cell-read state.address TcTypeHandleCacheStateData))
 
-(define (tc-clone-state-ptr [state : TcCloneState]) : (MutPtr TcCloneStateData)
-  (tc-state-cell-ptr state.address TcCloneStateData))
-
-(define (tc-clone-state-view [state : TcCloneState]) : (Ptr TcCloneStateData)
-  (tc-state-cell-view state.address TcCloneStateData))
-
-(define (tc-clone-state-data [state : TcCloneState]) : TcCloneStateData
-  (tc-state-cell-read state.address TcCloneStateData))
-
-(define (tc-clone-state-data-set!
-  [state : TcCloneState]
-  [data : TcCloneStateData]) : unit
-  (tc-state-cell-write! state.address TcCloneStateData data))
-
 (define (tc-type-handle-cache-state-new [owner : i64]) : TcTypeHandleCacheState
   (in-arena
     (unsafe
@@ -1863,30 +1830,6 @@
               (ptr-cast (__tl_array-data cell) : (Ptr TcNominalCacheStateData))))
           : i64)))))
 
-(define (tc-clone-state-new [owner : i64]) : TcCloneState
-  (in-arena
-    (unsafe
-      (arena.Arena owner))
-    (let
-      [cell : (__tl_dyn-array TcCloneStateData)
-        (__tl_make-array TcCloneStateData 1)]
-      (set!
-        (array-ref cell 0)
-        (TcCloneStateData
-          false
-          (clone_support.clone-name-set-empty)
-          false
-          false
-          (tc_i64_i64_map.with-capacity 8)
-          (Empty)
-          0))
-      (TcCloneState
-        (cast
-          (unsafe
-            (ptr->int
-              (ptr-cast (__tl_array-data cell) : (Ptr TcCloneStateData))))
-          : i64)))))
-
 (define (tc-macro-state-nominal-cache-address-initialize [state : TcMacroState]) : i64
   (let
     [cache : TcNominalCacheState
@@ -1897,16 +1840,6 @@
       cache.address)
     cache.address))
 
-(define (tc-macro-state-clone-address-initialize [state : TcMacroState]) : i64
-  (let
-    [clone-state : TcCloneState
-      (tc-clone-state-new (tc-macro-state-owner-arena state))]
-    (tc-macro-state-slot-address-set!
-      state
-      tc-macro-state-slot-clone
-      clone-state.address)
-    clone-state.address))
-
 (define (tc-macro-state-nominal-cache [state : TcMacroState]) : TcNominalCacheState
   (TcNominalCacheState
     (tc-macro-state-address-fast
@@ -1914,18 +1847,8 @@
       tc-macro-state-slot-nominal-cache
       tc-macro-state-nominal-cache-address-initialize)))
 
-(define (tc-macro-state-clone [state : TcMacroState]) : TcCloneState
-  (TcCloneState
-    (tc-macro-state-address-fast
-      state
-      tc-macro-state-slot-clone
-      tc-macro-state-clone-address-initialize)))
-
 (define (tc-job-state-nominal-cache [state : TcJobState]) : TcNominalCacheState
   (tc-macro-state-nominal-cache (tc-job-state-macro-state state)))
-
-(define (tc-job-state-clone [state : TcJobState]) : TcCloneState
-  (tc-macro-state-clone (tc-job-state-macro-state state)))
 
 (define (tc-job-state-source-key-cache [state : TcJobState]) : TcSourceKeyCacheState
   (tc-job-state-field state source-key-cache TcSourceKeyCacheState))
@@ -3259,9 +3182,6 @@
     (if (> layout-address 0)
       (tc-agg-layout-cache-storage-reset-for-state!
         (TcAggLayoutCacheState layout-address))
-      unit)
-    (if (> (tc-macro-state-slot-address state tc-macro-state-slot-clone) 0)
-      (tc-clone-root-collection-abort! job)
       unit)
     (if (> (tc-macro-state-slot-address state tc-macro-state-slot-module-env) 0)
       (tc-hygiene-module-env-cache-release! state)
@@ -16228,7 +16148,6 @@
 (defenum TcSelectedCallTarget
   (Signature ast.AstType bool bool)
   (Builtin)
-  (Clone)
   (ArenaForm)
   (Err String))
 
@@ -17215,78 +17134,6 @@
                     source
                     next)]))])))))
 
-(define (tc-infer-selected-clone-call
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [args : ast.AstExprList]
-  [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]
-  [source : ownership.OwnershipSource]
-  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
-    store
-    lease
-    intern
-    bind)
-  (match (tc-call-contextual-type
-    ctx
-    env
-    expected
-    (tc-clone-call ctx env (ast.clone-ast-expr-list (& args))))
-    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcType.Ok ty)
-      (match sink
-        [(TcSelectedSink.Query)
-          (tc-selected-unrepresented (ResultTcType.Ok ty) TcSelectedSink.Query)]
-        [(TcSelectedSink.Capture _ _ _)
-          (match (tc-infer-selected-clone-operands
-            ctx
-            env
-            (& args)
-            (ownership.ownership-source-copy (& source))
-            sink)
-            [(TcSelectedArgsResult.Err message next)
-              (TcSelectedResult.Err message next)]
-            [(TcSelectedArgsResult.Ok children represented? next)
-              (if represented?
-                (tc-selected-publish
-                  (ResultTcType.Ok ty)
-                  syntax
-                  source
-                  (typed.TypedOperation.Primitive
-                    (typed.TypedPrimitive.Builtin 23 1))
-                  children
-                  next)
-                (tc-selected-unrepresented (ResultTcType.Ok ty) next))])])]))
-
-;; The compiler-special `clone`'s one operand, read (`tc-infer-selected-read`).
-(define (tc-infer-selected-clone-operands
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [args : (& args ast.AstExprList)]
-  [source : ownership.OwnershipSource]
-  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedArgsResult
-    store
-    lease
-    intern
-    bind)
-  (match (tc-infer-selected-read-operand
-    ctx
-    env
-    (ast.ast-expr-list-get args 0 0)
-    source
-    sink)
-    [(TcSelectedResult.Err message next)
-      (TcSelectedArgsResult.Err message next)]
-    [(TcSelectedResult.Ok _ occurrence next)
-      (match occurrence
-        [(TcSelectedOccurrence.Selected child)
-          (TcSelectedArgsResult.Ok (__tl_make-array child) true next)]
-        [(TcSelectedOccurrence.Unrepresented)
-          (TcSelectedArgsResult.Ok
-            (__tl_make-array typed.TypedOccurrenceId 1)
-            false
-            next)])]))
-
 (define (tc-selected-form-code-slice-split) : i64
   144)
 
@@ -17770,9 +17617,9 @@
         true
         sink))))
 
-;; --- Clone reads (SPEC 7.6) ---------------------------------------------------
+;; --- Shared-read spine (SPEC 7.6) ---------------------------------------------
 ;;
-;; The compiler-special `(clone value)` reads its operand without moving it.
+;; Shared-reference auto-borrow reads its operand without moving it.
 ;; The read reaches the operand's result positions: through annotation, `cast`
 ;; and expansion wrappers, both `if` branches, every match arm body, the `let`
 ;; body, the last form of a `begin` or `unsafe` block, and the receivers of
@@ -18528,7 +18375,6 @@
     (unless
       constructor?
       (cond
-        [(= arm 23) (return TcSelectedCallTarget.Clone)]
         [(and (>= arm 9) (<= arm 12)) (return TcSelectedCallTarget.ArenaForm)]
         [(> arm 0) (return TcSelectedCallTarget.Builtin)]
         [else unit]))
@@ -19694,8 +19540,6 @@
           expected
           source
           sink)]
-      [(TcSelectedCallTarget.Clone)
-        (tc-infer-selected-clone-call ctx env args syntax expected source sink)]
       [(TcSelectedCallTarget.ArenaForm)
         (tc-infer-selected-arena-call
           ctx
@@ -28057,11 +27901,25 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-macro-profile-entry-clone
+    [entries : (& entries CompilerTcMacroProfileEntries)]
+    [index : i64]) : CompilerTcMacroProfileEntry
+    (let
+      [entry : (& entries CompilerTcMacroProfileEntry)
+        (& (array-ref entries.slots index))]
+      (CompilerTcMacroProfileEntry
+        entry.macro-id
+        (string.copy (& entry.macro-name))
+        entry.arity
+        entry.calls
+        entry.total-ms))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-macro-profile-current-entry [index : i64]) : CompilerTcMacroProfileEntry
-    (clone
-      (array-ref
-        (__tl-project-field compiler-tc-macro-profile-entries slots)
-        index))))
+    (compiler-tc-macro-profile-entry-clone
+      (& compiler-tc-macro-profile-entries)
+      index)))
 
 (cfg
   compile-profile
@@ -65694,711 +65552,6 @@
               (tc-global-shared-view name))
             name))))))
 
-;; The clone-able type set is a whole-program fixpoint (O(types*fields) plus a
-;; type-name map build). It is invariant across a compile, but `tc-clone-able-
-;; type?` is invoked once per `(clone ...)` / `with-escape` body in the program,
-;; so recomputing it each time was a large repeated cost. Cache it per compile:
-;; populated eagerly in the typecheck entry and reset per compile in macro-
-;; expand-program / the REPL entry. Clone checks can also run while the segmented
-;; macro program is still active. Those checks populate the same cache in the
-;; stable AST-pool arena, and a splice invalidates it only when module/import/type
-;; declarations changed. Function-body expression expansion can therefore reuse
-;; the whole-program fixpoint without retaining scratch-arena storage or hiding a
-;; generated nominal declaration.
-;; Clone helper discovery is a semantic observation of the real declaration
-;; typecheck, not a reason to run a second partial typechecker. Lowering installs
-;; the reachability pass's retained value/function names before checking the
-;; specialized source program. Stable canonical names, rather than declaration
-;; positions, survive pool compaction and generated-module reshaping. While a
-;; retained declaration is checked, clone/with-scratch forms fold their resolved
-;; result type directly into the nominal root closure. The root list and name set
-;; live in a dedicated arena because function bodies use rewindable scratch.
-(define (tc-clone-root-collection-decl-key
-  [module-id : i64]
-  [decl : ast.AstDecl]) : i64
-  (match (ast.ast-decl-unwrapped (& decl))
-    [(or (Def _ name _ _) (DefFn _ name _ _ _ _))
-      (csym.compiler-symbol-module-key-id-by-id module-id name)]
-    [_ -1]))
-
-(define (tc-clone-root-collection-selected-from-program
-  [program : ast.AstProgram]) : tc_i64_i64_map.Map
-  (match program
-    [(Program decls-box)
-      (let
-        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
-        [selected : tc_i64_i64_map.Map
-          (tc_i64_i64_map.with-capacity
-            (if (< (ast.ast-decl-list-len decls) 8)
-              8
-              (ast.ast-decl-list-len decls)))]
-        [module-id : i64 cbi.compiler-builtin-id-fix-empty]
-        [count : i64 (ast.ast-decl-list-len decls)]
-        ;; The row was read by value and then peeled twice more (once inside
-        ;; `-decl-key`, once here) -- three 104 B copies per declaration to read
-        ;; a name id and a module id. The backing slot is matched in place, and
-        ;; the wrapper peel now runs only on an `AstDecl.Unsafe` row.
-        [decl-offset : i64 decls.offset]
-        (for [index (iterator.range 0 count)]
-          (let
-            [key : i64
-              (tc-clone-root-collection-decl-key
-                module-id
-                (tc-global-array-element-shared-view
-                  decls.slots
-                  (+ decl-offset index)))]
-            (if (>= key 0)
-              (tc_i64_i64_map.insert-ref! (&mut selected) key 1)
-              unit)
-            (match (tc-global-array-element-shared-view
-              decls.slots
-              (+ decl-offset index))
-              [(Module next-module) (set! module-id next-module)]
-              [(Unsafe inner-box)
-                (match (ast.ast-decl-box-shared-view inner-box)
-                  [(Module next-module) (set! module-id next-module)]
-                  [_ unit])]
-              [_ unit])))
-        selected)]))
-
-(define (tc-clone-root-collection-use!
-  [job-state : TcJobState]
-  [retained : ast.AstProgram]) : unit
-  (let
-    [state : TcCloneState (tc-job-state-clone job-state)]
-    [data : (MutPtr TcCloneStateData) (tc-clone-state-ptr state)]
-    [arena-handle : i64 (arena.tl_arena_make)]
-    (unsafe
-      (in-arena
-        (unsafe
-          (arena.Arena arena-handle))
-        (set!
-          (deref data).root-selected
-          (tc-clone-root-collection-selected-from-program retained)))
-      (set! (deref data).root-roots (clone_support.CloneRootEntries.Empty))
-      (set! (deref data).root-current-decl false)
-      (set! (deref data).root-arena arena-handle)
-      (set! (deref data).root-active true))))
-
-(define (tc-clone-root-collection-select-decl!
-  [ctx : TcContext]
-  [decl : ast.AstDecl]
-  [module-id : i64]) : unit
-  (let
-    [state : TcCloneState (tc-job-state-clone (tc-context-job-state ctx))]
-    [data : TcCloneStateData (tc-clone-state-data state)]
-    (if data.root-active
-      (let
-        [key : i64 (tc-clone-root-collection-decl-key module-id decl)]
-        [selected : bool
-          (and (>= key 0) (tc_i64_i64_map.contains? (& data.root-selected) key))]
-        (begin
-          (set! data.root-current-decl selected)
-          (tc-clone-state-data-set! state data)
-          (cfg
-            (any
-              compiler-surface-producer
-              compiler-build-identity
-              embedded-stdlib-tlci)
-            (surface_facts.surface-typecheck-facts-recording-select-decl! key)
-            unit)))
-      unit)))
-
-(cfg
-  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (tc-clone-root-collection-record-surface-roots!
-    [roots : clone_support.CloneRootEntries]) : unit
-    (let
-      [index : i64 0]
-      [count : i64 (clone_support.clone-root-entries-len roots)]
-      (surface_facts.surface-typecheck-facts-recording-start-clone-call!)
-      (while (< index count)
-        (surface_facts.surface-typecheck-facts-recording-note-clone-root!
-          (clone_support.clone-root-entries-key-id-at-or roots index -1))
-        (set! index (+ index 1))))))
-
-(define (tc-clone-root-collection-note! [ctx : TcContext] [ty : ast.AstType]) : unit
-  (let
-    [state : TcCloneState (tc-job-state-clone (tc-context-job-state ctx))]
-    [initial : (Ptr TcCloneStateData) (tc-clone-state-view state)]
-    (if (and
-      (unsafe
-        (deref initial).root-active)
-      (unsafe
-        (deref initial).root-current-decl))
-      (match (tc-context-program ctx)
-        [(Program decls-box)
-          (let
-            [decls : ast.AstDeclList
-              (ast.ast-decl-list-box-shared-view decls-box)]
-            [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-            [able-set : clone_support.CloneNameSet (tc-clone-able-set ctx)]
-            ;; Building the able set may have updated this same job-owned cell.
-            [data : TcCloneStateData (tc-clone-state-data state)]
-            [prev-arena : i64 (arena.tl_arena_current)]
-            [_switch : unit
-              (unsafe
-                (arena.tl_arena_set data.root-arena))]
-            [resolved : ast.AstType
-              (tc-type-without-regions (tc-resolve-type ctx ty))]
-            (begin
-              (cfg
-                compiler-surface-producer
-                (tc-clone-root-collection-record-surface-roots!
-                  (if (surface_facts.surface-typecheck-facts-recording?)
-                    (clone_support.clone-root-add-type
-                      (& pools)
-                      (& decls)
-                      (& able-set)
-                      (Empty)
-                      (tc-global-shared-view resolved)
-                      cbi.compiler-builtin-id-fix-empty)
-                    (Empty)))
-                unit)
-              ;; Resolve the nominal closure while `ty` and all nested type-pool
-              ;; ids are still live in this function's semantic scratch scope.
-              ;; Retaining the shallow AstType until the declaration walk ends
-              ;; would leave those nested ids pointing past a pool rewind.
-              (set!
-                data.root-roots
-                (clone_support.clone-root-add-type
-                  (& pools)
-                  (& decls)
-                  (& able-set)
-                  data.root-roots
-                  resolved
-                  cbi.compiler-builtin-id-fix-empty))
-              (set! data.root-arena (arena.tl_arena_current))
-              (tc-clone-state-data-set! state data)
-              (unsafe
-                (arena.tl_arena_set prev-arena))))])
-      unit)))
-
-(define (tc-clone-root-collection-copy-roots
-  [roots : clone_support.CloneRootEntries]) : clone_support.CloneRootEntries
-  (clone_support.clone-root-entries-copy roots))
-
-(define (tc-clone-root-collection-clear-state! [state : TcCloneState]) : unit
-  (let
-    [data : (MutPtr TcCloneStateData) (tc-clone-state-ptr state)]
-    (unsafe
-      (set! (deref data).root-active false)
-      (set! (deref data).root-current-decl false)
-      (set! (deref data).root-roots (clone_support.CloneRootEntries.Empty))
-      (set! (deref data).root-arena 0))))
-
-(define (tc-clone-root-collection-finish! [ctx : TcContext]) : clone_support.CloneRootEntries
-  (let
-    [state : TcCloneState (tc-job-state-clone (tc-context-job-state ctx))]
-    [data : TcCloneStateData (tc-clone-state-data state)]
-    (if data.root-active
-      (let
-        [roots : clone_support.CloneRootEntries
-          (tc-clone-root-collection-copy-roots data.root-roots)]
-        [arena-handle : i64 data.root-arena]
-        (tc-clone-root-collection-clear-state! state)
-        (unsafe
-          (arena.tl_arena_destroy arena-handle))
-        roots)
-      (Empty))))
-
-(define (tc-clone-root-collection-abort! [job-state : TcJobState]) : unit
-  (let
-    [state : TcCloneState (tc-job-state-clone job-state)]
-    [data : (Ptr TcCloneStateData) (tc-clone-state-view state)]
-    (unsafe
-      (if (deref data).root-active
-        (let
-          [arena-handle : i64 (deref data).root-arena]
-          (tc-clone-root-collection-clear-state! state)
-          (arena.tl_arena_destroy arena-handle))
-        unit))))
-
-(define (tc-clone-root-collection-apply-surface-facts! [ctx : TcContext]) : unit
-  (let
-    [state : TcCloneState (tc-job-state-clone (tc-context-job-state ctx))]
-    [data : TcCloneStateData (tc-clone-state-data state)]
-    (if (and data.root-active (surface_facts.surface-typecheck-facts-active?))
-      (let
-        [facts : surface_facts.SurfaceTypecheckFacts
-          (surface_facts.surface-typecheck-facts-current)]
-        [decl-keys : (__tl_dyn-array i64) facts.clone-decl-keys]
-        [root-keys : (__tl_dyn-array i64) facts.clone-root-keys]
-        [call-indices : (__tl_dyn-array i64) facts.clone-call-indices]
-        [count : i64 (array-length decl-keys)]
-        [index : i64 0]
-        (in-arena
-          (unsafe
-            (arena.Arena data.root-arena))
-          (while (< index count)
-            (let
-              [call-index : i64 (array-ref call-indices index)]
-              [decl-key : i64 (array-ref decl-keys index)]
-              [end : i64 (+ index 1)]
-              (while (and
-                (< end count)
-                (= (array-ref call-indices end) call-index))
-                (set! end (+ end 1)))
-              (if (tc_i64_i64_map.contains? (& data.root-selected) decl-key)
-                (let
-                  [cursor : i64 (- end 1)]
-                  (while (>= cursor index)
-                    (let
-                      [root-key : i64 (array-ref root-keys cursor)]
-                      (if (clone_support.clone-root-entries-contains-id?
-                        data.root-roots
-                        root-key)
-                        unit
-                        (set!
-                          data.root-roots
-                          (clone_support.clone-root-entries-add-id
-                            data.root-roots
-                            root-key)))
-                      (set! cursor (- cursor 1)))))
-                unit)
-              (set! index end))))
-        (tc-clone-state-data-set! state data))
-      unit)))
-
-(define (tc-clone-able-cache-reset-for-state! [state : TcCloneState]) : unit
-  (let
-    [data : (MutPtr TcCloneStateData) (tc-clone-state-ptr state)]
-    (unsafe
-      (set! (deref data).able-ready false)
-      (set! (deref data).able-cache (clone_support.clone-name-set-empty)))))
-
-(define (tc-clone-able-cache-reset-for-job! [state : TcJobState]) : unit
-  (tc-clone-able-cache-reset-for-state! (tc-job-state-clone state)))
-
-(define (tc-clone-root-collection-active-for-job? [state : TcJobState]) : bool
-  (unsafe
-    (deref (tc-clone-state-view (tc-job-state-clone state))).root-active))
-
-(define (tc-clone-root-collection-arena-for-macro-state [state : TcMacroState]) : i64
-  (unsafe
-    (deref (tc-clone-state-view (tc-macro-state-clone state))).root-arena))
-
-(define (tc-clone-able-set-build [ctx : TcContext]) : clone_support.CloneNameSet
-  (if (macro-segmented-program-active? (tc-context-job-state ctx))
-    (macro-segmented-clone-able-set-build
-      (tc-context-job-state ctx)
-      (tc-context-pools ctx))
-    (match (tc-context-program ctx)
-      [(Program decls-box)
-        (let
-          [decls : ast.AstDeclList
-            (ast.ast-decl-list-box-shared-view decls-box)]
-          [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-          [all-type-names : clone_support.CloneNameSet
-            (clone_support.clone-all-type-names
-              (& decls)
-              (clone_support.clone-name-set-for-decls (& decls)))]
-          (clone_support.clone-fixpoint (& pools) (& decls) (& all-type-names)))])))
-
-(define (tc-clone-able-cache-populate! [ctx : TcContext]) : unit
-  (let
-    [state : TcCloneState (tc-job-state-clone (tc-context-job-state ctx))]
-    [data : (MutPtr TcCloneStateData) (tc-clone-state-ptr state)]
-    [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-    ;; The pool base owns the cached fixpoint for the context lifetime; the
-    ;; lexical extent restores the caller only after the cache is complete.
-    [cache-arena : arena.Arena
-      (unsafe
-        (arena.Arena (ast.ast-node-pool-context-base-arena pools)))]
-    [able-cache : clone_support.CloneNameSet
-      (in-arena cache-arena (tc-clone-able-set-build ctx))]
-    (unsafe
-      (set! (deref data).able-cache able-cache)
-      (set! (deref data).able-ready true))))
-
-(define (tc-clone-able-set [ctx : TcContext]) : clone_support.CloneNameSet
-  (let
-    [state : TcCloneState (tc-job-state-clone (tc-context-job-state ctx))]
-    [data : (Ptr TcCloneStateData) (tc-clone-state-view state)]
-    (unsafe
-      (if (deref data).able-ready
-        (deref data).able-cache
-        (begin
-          (tc-clone-able-cache-populate! ctx)
-          (deref (tc-clone-state-view state)).able-cache)))))
-
-(define (tc-clone-unsupported-path-type
-  [pools : (& pools ast.AstNodePoolContext)]
-  [decls : (& decls ast.AstDeclList)]
-  [able : (& able clone_support.CloneNameSet)]
-  [names : (& names clone_support.CloneNameSet)]
-  [seen : (& seen clone_support.CloneNameSet)]
-  [ty : ast.AstType]
-  [module-id : i64]
-  [path : String]) : String
-  (if (clone_support.clone-field-type-able-id?
-    pools
-    (tc-global-shared-view ty)
-    able
-    module-id)
-    ""
-    (match (tc-global-shared-view ty)
-      [(Tuple elems)
-        (tc-clone-unsupported-path-type-list-at
-          pools
-          decls
-          able
-          names
-          seen
-          (& (__tl-box-place elems))
-          module-id
-          path
-          0)]
-      [(or (Array elem _) (DynArray elem) (Slice elem))
-        (tc-clone-unsupported-path-type
-          pools
-          decls
-          able
-          names
-          seen
-          (clone_support.clone-type-get pools elem)
-          module-id
-          (str_cat.str-cat path "[]"))]
-      [(Box elem)
-        (tc-clone-unsupported-path-type
-          pools
-          decls
-          able
-          names
-          seen
-          (clone_support.clone-type-get pools elem)
-          module-id
-          (str_cat.str-cat path ".*"))]
-      [(Region _ inner)
-        (tc-clone-unsupported-path-type
-          pools
-          decls
-          able
-          names
-          seen
-          (clone_support.clone-type-get pools inner)
-          module-id
-          path)]
-      [(or (Var name) (VarArgs name _) (Enum name) (EnumArgs name _)
-           (Struct name) (StructArgs name _))
-        (tc-clone-unsupported-path-nominal
-          pools
-          decls
-          able
-          names
-          seen
-          name
-          module-id
-          path)]
-      [_
-        (str_cat.str-cat
-          path
-          ": "
-          (tc-type-render ty)
-          " has no clone capability")])))
-
-(define (tc-clone-unsupported-path-type-list-at
-  [pools : (& pools ast.AstNodePoolContext)]
-  [decls : (& decls ast.AstDeclList)]
-  [able : (& able clone_support.CloneNameSet)]
-  [names : (& names clone_support.CloneNameSet)]
-  [seen : (& seen clone_support.CloneNameSet)]
-  [types : (& types ast.AstTypeList)]
-  [module-id : i64]
-  [path : String]
-  [index : i64]) : String
-  (if (>= index (ast.ast-type-list-len types))
-    ""
-    (let
-      [ty : ast.AstType
-        (clone_support.clone-type-get
-          pools
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      [candidate : String
-        (tc-clone-unsupported-path-type
-          pools
-          decls
-          able
-          names
-          seen
-          ty
-          module-id
-          (str_cat.str-cat
-            (tc-global-shared-view path)
-            "["
-            (string.int->string index)
-            "]"))]
-      (if (string.eq candidate "")
-        (tc-clone-unsupported-path-type-list-at
-          pools
-          decls
-          able
-          names
-          seen
-          types
-          module-id
-          path
-          (+ index 1))
-        candidate))))
-
-(define (tc-clone-unsupported-path-fields-at
-  [pools : (& pools ast.AstNodePoolContext)]
-  [decls : (& decls ast.AstDeclList)]
-  [able : (& able clone_support.CloneNameSet)]
-  [names : (& names clone_support.CloneNameSet)]
-  [seen : (& seen clone_support.CloneNameSet)]
-  [fields : (& fields ast.AstFieldDefList)]
-  [module-id : i64]
-  [path : String]
-  [index : i64]) : String
-  (if (>= index (ast.ast-field-def-list-len fields))
-    ""
-    (match (ast.ast-field-def-list-get
-      fields
-      index
-      (ast.ast-field-def-fallback))
-      [(Def name ty _)
-        (let
-          [candidate : String
-            (tc-clone-unsupported-path-type
-              pools
-              decls
-              able
-              names
-              seen
-              ty
-              module-id
-              (str_cat.str-cat
-                (tc-global-shared-view path)
-                "."
-                (ci.intern-str (ci.intern-syntax-id-value name))))]
-          (if (string.eq candidate "")
-            (tc-clone-unsupported-path-fields-at
-              pools
-              decls
-              able
-              names
-              seen
-              fields
-              module-id
-              path
-              (+ index 1))
-            candidate))])))
-
-(define (tc-clone-unsupported-path-variants-at
-  [pools : (& pools ast.AstNodePoolContext)]
-  [decls : (& decls ast.AstDeclList)]
-  [able : (& able clone_support.CloneNameSet)]
-  [names : (& names clone_support.CloneNameSet)]
-  [seen : (& seen clone_support.CloneNameSet)]
-  [variants : (& variants ast.AstVariantDefList)]
-  [module-id : i64]
-  [path : String]
-  [index : i64]) : String
-  (if (>= index (ast.ast-variant-def-list-len variants))
-    ""
-    (match (ast.ast-variant-def-list-get
-      variants
-      index
-      (ast.ast-variant-def-fallback))
-      [(Def name payloads _)
-        (let
-          [candidate : String
-            (tc-clone-unsupported-path-type-list-at
-              pools
-              decls
-              able
-              names
-              seen
-              (& payloads)
-              module-id
-              (str_cat.str-cat
-                (tc-global-shared-view path)
-                "."
-                (ci.intern-str name))
-              0)]
-          (if (string.eq candidate "")
-            (tc-clone-unsupported-path-variants-at
-              pools
-              decls
-              able
-              names
-              seen
-              variants
-              module-id
-              path
-              (+ index 1))
-            candidate))])))
-
-(define (tc-clone-unsupported-path-nominal
-  [pools : (& pools ast.AstNodePoolContext)]
-  [decls : (& decls ast.AstDeclList)]
-  [able : (& able clone_support.CloneNameSet)]
-  [names : (& names clone_support.CloneNameSet)]
-  [seen : (& seen clone_support.CloneNameSet)]
-  [name : i64]
-  [module-id : i64]
-  [path : String]) : String
-  (let
-    [resolved-key : i64
-      (clone_support.clone-type-name-resolve-id names module-id name)]
-    [root-fallback : bool
-      (clone_support.clone-name-root-fallback-eligible? module-id name)]
-    [root-key : i64 (clone_support.clone-name-key-id name)]
-    [current-module-id : i64 (clone_support.clone-root-module-id)]
-    [index : i64 0]
-    [count : i64 (ast.ast-decl-list-len decls)]
-    [found : bool false]
-    [out : String ""]
-    (while (and (not found) (< index count))
-      (if (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-        decls
-        index)
-        (match (ast.ast-decl-unwrapped
-          (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
-          [(Module next-module) (set! current-module-id next-module)]
-          [(DefEnum _ decl-name cleanup variants)
-            (let
-              [decl-key : i64
-                (clone_support.clone-name-key-id-in-module
-                  current-module-id
-                  decl-name)]
-              (when
-                (or
-                  (= decl-key resolved-key)
-                  (and root-fallback (= decl-key root-key)))
-                (set! found true)
-                (cond
-                  [(ast.ast-enum-cleanup? cleanup)
-                    (set!
-                      out
-                      (str_cat.str-cat
-                        (string.copy (& path))
-                        ": cleanup-owning type "
-                        (ci.intern-str decl-name)
-                        " cannot be cloned"))]
-                  [(clone_support.clone-name-set-contains-id? seen decl-key)
-                    unit]
-                  [else
-                    (let
-                      [next-seen : clone_support.CloneNameSet
-                        (clone_support.clone-name-set-insert-id
-                          (owned_view.compiler-owned-reference-shared-view seen)
-                          decl-key)]
-                      (set!
-                        out
-                        (tc-clone-unsupported-path-variants-at
-                          pools
-                          decls
-                          able
-                          names
-                          (& next-seen)
-                          (& variants)
-                          current-module-id
-                          (tc-global-shared-view path)
-                          0)))])))]
-          [(DefStruct _ decl-name _ cleanup fields)
-            (let
-              [decl-key : i64
-                (clone_support.clone-name-key-id-in-module
-                  current-module-id
-                  decl-name)]
-              (when
-                (or
-                  (= decl-key resolved-key)
-                  (and root-fallback (= decl-key root-key)))
-                (set! found true)
-                (cond
-                  [(ast.ast-struct-cleanup? cleanup)
-                    (set!
-                      out
-                      (str_cat.str-cat
-                        (string.copy (& path))
-                        ": cleanup-owning type "
-                        (ci.intern-str decl-name)
-                        " cannot be cloned"))]
-                  [(clone_support.clone-name-set-contains-id? seen decl-key)
-                    unit]
-                  [else
-                    (let
-                      [next-seen : clone_support.CloneNameSet
-                        (clone_support.clone-name-set-insert-id
-                          (owned_view.compiler-owned-reference-shared-view seen)
-                          decl-key)]
-                      (set!
-                        out
-                        (tc-clone-unsupported-path-fields-at
-                          pools
-                          decls
-                          able
-                          names
-                          (& next-seen)
-                          (& fields)
-                          current-module-id
-                          (tc-global-shared-view path)
-                          0)))])))]
-          [_ unit])
-        unit)
-      (set! index (+ index 1)))
-    (if found
-      out
-      (str_cat.str-cat
-        path
-        ": nominal declaration is unavailable to clone validation"))))
-
-(define (tc-clone-unsupported-detail [ctx : TcContext] [ty : ast.AstType]) : String
-  (let
-    [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-    [decls : ast.AstDeclList
-      (if (macro-segmented-program-active? (tc-context-job-state ctx))
-        (match (macro-segmented-program-flatten-raw (tc-context-job-state ctx))
-          [(MacroSegmentedProgramFlatView flattened _paths) flattened])
-        (match (tc-context-program ctx)
-          [(Program decls-box) (__tl-box-place decls-box)]))]
-    [able : clone_support.CloneNameSet (tc-clone-able-set ctx)]
-    [names : clone_support.CloneNameSet
-      (clone_support.clone-all-type-names
-        (& decls)
-        (clone_support.clone-name-set-for-decls (& decls)))]
-    [seen : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
-    [root : String (tc-type-render (tc-global-shared-view ty))]
-    [nominal-root : bool
-      (match (& ty)
-        [(or (Var _) (VarArgs _ _) (Enum _) (EnumArgs _ _) (Struct _)
-             (StructArgs _ _))
-          true]
-        [_ false])]
-    [path : String
-      (if nominal-root
-        (tc-clone-unsupported-path-type
-          (& pools)
-          (& decls)
-          (& able)
-          (& names)
-          (& seen)
-          ty
-          (tc-context-module-id ctx)
-          root)
-        "")]
-    (if (string.eq path "")
-      ""
-      (str_cat.str-cat " at " path))))
-
-(define (tc-clone-able-type? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (let
-    [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-    [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
-    [able-set : clone_support.CloneNameSet (tc-clone-able-set ctx)]
-    (clone_support.clone-field-type-able-id?
-      (& pools)
-      resolved
-      able-set
-      (tc-context-module-id ctx))))
-
-;; `(clone x)` deep-copies x into the current arena. Type-directed: the
-;; result is the argument's type, stripped of any inner-region tag (the copy
-;; lands in the enclosing arena, not the source's region). Unsupported types are
-;; rejected here so no heap-backed value silently lowers as a shallow handle copy.
 (define (tc-c-fn-check-call [ctx : TcContext] [ty : ast.AstType]) : ResultTcType
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(CFunc signature mode)
@@ -66412,35 +65565,6 @@
               UnsafeNonNull
               NonNull))))]
     [_ (Err "typecheck: c-fn-check requires a typed C function pointer")]))
-
-(define (tc-clone-call
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [args : ast.AstExprList]) : ResultTcType
-  (if (= args.len 1)
-    (let
-      [arg : ast.AstExpr
-        (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      [arg-ty (try (tc-expr ctx env arg))]
-      [clone-ty : ast.AstType
-        (tc-type-without-regions (tc-global-shared-view arg-ty))]
-      (if (tc-clone-able-type? ctx (tc-global-shared-view clone-ty))
-        (begin
-          (tc-clone-root-collection-note! ctx (tc-global-shared-view clone-ty))
-          ;; The copy is allocated in the active arena (SPEC 3.4.1): it
-          ;; carries that region, not the source's.
-          (Ok (tc-tag-active-region env clone-ty)))
-        (Err
-          (str_cat.str-cat
-            (cdiag.compiler-diagnostic-typecheck-tag (TypeMismatch))
-            "typecheck: clone unsupported type "
-            (tc-type-render
-              (tc-type-without-regions (tc-resolve-type ctx arg-ty)))
-            (tc-clone-unsupported-detail ctx clone-ty)))))
-    (Err
-      (tc-kind-message
-        (ArityMismatch)
-        "typecheck: clone expects exactly one argument"))))
 
 (define (tc-float-sqrt-call
   [ctx : TcContext]
@@ -67114,10 +66238,6 @@
                 (cbi.compiler-builtin-c-fn-check-id? name-id)
                 (not (tc-source-value-bound-id? ctx env name-id)))
               22]
-            [(and
-                (cbi.compiler-builtin-typecheck-clone-id? name-id)
-                (not (tc-source-value-bound-id? ctx env name-id)))
-              23]
             [(>= (tc-cpu-query-spelling-kind name-id) 0)
               (let
                 [cpu-kind : i64 (tc-cpu-query-kind ctx env raw-name name-id)]
@@ -94781,7 +93901,6 @@
               (cbi.compiler-builtin-typecheck-length-call-id? builtin)
               (cbi.compiler-builtin-typecheck-string-ref-call-id? builtin)
               (cbi.compiler-builtin-typecheck-public-string-ref-id? builtin)
-              (cbi.compiler-builtin-typecheck-clone-id? builtin)
               (cbi.compiler-builtin-private-intrinsic-id? builtin)
               (cbi.compiler-builtin-typecheck-syntactic-unsafe-call-id? builtin)
               (let
@@ -100429,11 +99548,6 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         "typecheck.macro.peak"
-        "typecheck-clone-roots"
-        (tc-clone-root-collection-arena-for-macro-state state))
-      (allocation_profile.compiler-allocation-profile-control!
-        2
-        "typecheck.macro.peak"
         "compiler-entry"
         (allocation_profile.compiler-allocation-profile-entry-arena-handle))
       (allocation_profile.compiler-allocation-profile-control!
@@ -101569,21 +100683,6 @@
           cbi.compiler-builtin-id-fix-empty)))
     (ast.AstDeclPathList slots owner-ids 0 decl-count true)))
 
-(define (macro-segmented-decl-list-affects-clone-set?
-  [decls : (& decls ast.AstDeclList)]) : bool
-  (let
-    [index : i64 0]
-    [count : i64 (ast.ast-decl-list-len decls)]
-    [found : bool false]
-    (while (and (not found) (< index count))
-      (if (or
-        (ast.ast-decl-list-unwrapped-module-or-import-at? decls index)
-        (ast.ast-decl-list-unwrapped-module-or-type-definition-at? decls index))
-        (set! found true)
-        unit)
-      (+= index 1))
-    found))
-
 (define (macro-segmented-program-splice-current-in-scratch!
   [state : TcJobState]
   [middle : ast.AstDeclList]
@@ -101598,15 +100697,6 @@
     [node-decls : ast.AstDeclList node.decls]
     [node-paths : ast.AstDeclPathList node.paths]
     [node-count : i64 (ast.ast-decl-list-len (& node-decls))]
-    [clone-set-changed : bool
-      (or
-        (ast.ast-decl-list-unwrapped-module-or-import-at?
-          (& node-decls)
-          data.cursor)
-        (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-          (& node-decls)
-          data.cursor)
-        (macro-segmented-decl-list-affects-clone-set? (& middle)))]
     [suffix-count : i64 (- node-count next-index)]
     [suffix-head : i64
       (if (> suffix-count 0)
@@ -101635,9 +100725,6 @@
           suffix-head)
         suffix-head)]
     (begin
-      (if clone-set-changed
-        (tc-clone-able-cache-reset-for-job! state)
-        unit)
       (cfg
         compile-profile
         (begin
@@ -101772,199 +100859,6 @@
         (if (< iter.node-index (ast.ast-decl-list-len (& iter.decls)))
           (set! iter.index iter.node-index)
           (macro-segmented-program-iter-normalize-node! iter))))))
-
-(define (macro-segmented-clone-name-set-note-decl
-  [names : clone_support.CloneNameSet]
-  [module-id : i64]
-  [decl : ast.AstDecl]) : clone_support.CloneNameSet
-  (match (ast.ast-decl-unwrapped (& decl))
-    [(Import _ (Spec _ _ (Some target) (Some alias) _))
-      (clone_support.clone-name-set-insert-alias-id
-        names
-        module-id
-        alias
-        target)]
-    [(or (DefEnum _ name _ _) (DefStruct _ name _ _ _))
-      (clone_support.clone-name-set-insert-id
-        names
-        (clone_support.clone-name-key-id-in-module module-id name))]
-    [_ names]))
-
-;; The rows the clone-able fixpoint reads -- module markers and type
-;; definitions -- in program order, recorded by the one walk that seeds the
-;; fixpoint. Each step then visits only these rows instead of walking every
-;; declaration of the segmented program again. A row is kept as its segment's
-;; declaration list (`runs`) and the index inside it, packed run-high.
-(defstruct MacroSegmentedCloneRows
-  (runs (__tl_dyn-array ast.AstDeclList))
-  (run-count i64)
-  (rows (__tl_dyn-array i64))
-  (row-count i64))
-
-;; Both columns live in the clone cache's long-lived arena and are rebuilt for
-;; every clone set, so they grow by doubling: `__tl_array-push!` would copy the
-;; whole column on every row and leave each copy behind.
-(define (macro-segmented-clone-rows-add-run!
-  [rows : (&mut rows MacroSegmentedCloneRows)]
-  [decls : ast.AstDeclList]) : unit
-  (when
-    (= rows.run-count (array-length rows.runs))
-    (let
-      [bigger : (__tl_dyn-array ast.AstDeclList)
-        (__tl_make-array ast.AstDeclList (* 2 (array-length rows.runs)))]
-      (for [index (iterator.range 0 rows.run-count)]
-        (set!
-          (array-ref bigger index)
-          (tc-global-array-element-shared-view rows.runs index)))
-      (set! rows.runs bigger)))
-  (set! (array-ref rows.runs rows.run-count) decls)
-  (+= rows.run-count 1))
-
-(define (macro-segmented-clone-rows-add-row!
-  [rows : (&mut rows MacroSegmentedCloneRows)]
-  [index : i64]) : unit
-  (when
-    (= rows.row-count (array-length rows.rows))
-    (let
-      [bigger : (__tl_dyn-array i64)
-        (__tl_make-array i64 (* 2 (array-length rows.rows)))]
-      (for [cursor (iterator.range 0 rows.row-count)]
-        (set! (array-ref bigger cursor) (array-ref rows.rows cursor)))
-      (set! rows.rows bigger)))
-  (set!
-    (array-ref rows.rows rows.row-count)
-    (bit-or (shl (- rows.run-count 1) 32) index))
-  (+= rows.row-count 1))
-
-(defstruct MacroSegmentedCloneSeed
-  (names clone_support.CloneNameSet)
-  (rows MacroSegmentedCloneRows))
-
-(define macro-segmented-clone-row-index-mask : i64
-  4294967295)
-
-(define (macro-segmented-clone-seed-for-program [state : TcJobState]) : MacroSegmentedCloneSeed
-  (let
-    [names : clone_support.CloneNameSet (clone_support.clone-name-set-empty)]
-    [rows : MacroSegmentedCloneRows
-      (MacroSegmentedCloneRows
-        (__tl_make-array ast.AstDeclList 16)
-        0
-        (__tl_make-array i64 256)
-        0)]
-    ;; The reversed prefix is one run; every segment node is another.
-    [run-key : i64 -2]
-    [module-id : i64 (clone_support.clone-root-module-id)]
-    [iter : MacroSegmentedProgramIter (macro-segmented-program-iter state)]
-    (while iter.has-current
-      (let
-        [type-row? : bool
-          (ast.ast-decl-list-unwrapped-module-or-type-definition-at?
-            (& iter.decls)
-            iter.index)]
-        (when
-          type-row?
-          (let
-            [key : i64
-              (if (>= iter.prefix-index 0)
-                -1
-                iter.node-address)]
-            (unless
-              (= key run-key)
-              (macro-segmented-clone-rows-add-run!
-                (&mut rows)
-                (tc-global-shared-view iter.decls))
-              (set! run-key key))
-            (macro-segmented-clone-rows-add-row! (&mut rows) iter.index)))
-        (if (or
-          type-row?
-          (ast.ast-decl-list-unwrapped-module-or-import-at?
-            (& iter.decls)
-            iter.index))
-          (let
-            [decl : ast.AstDecl
-              (ast.ast-decl-unwrapped
-                (& (macro-segmented-program-iter-current-decl (& iter))))]
-            (match (tc-global-shared-view decl)
-              [(Module next-module) (set! module-id next-module)]
-              [_
-                (set!
-                  names
-                  (macro-segmented-clone-name-set-note-decl
-                    names
-                    module-id
-                    decl))]))
-          unit))
-      (macro-segmented-program-iter-advance! (&mut iter)))
-    (MacroSegmentedCloneSeed names rows)))
-
-(define (macro-segmented-clone-fixpoint-step
-  [pools : ast.AstNodePoolContext]
-  [rows : (& rows MacroSegmentedCloneRows)]
-  [names : (& names clone_support.CloneNameSet)]) : clone_support.CloneNameSet
-  (let
-    [out : clone_support.CloneNameSet
-      (clone_support.clone-name-set-with-capacity
-        (clone_support.clone-name-set-capacity names)
-        (tc-clone-id-map (& names.aliases)))]
-    [module-id : i64 (clone_support.clone-root-module-id)]
-    (for [cursor (iterator.range 0 rows.row-count)]
-      (let
-        [packed : i64 (array-ref rows.rows cursor)]
-        [decls : ast.AstDeclList
-          (tc-global-array-element-shared-view rows.runs (shr packed 32))]
-        (match (ast.ast-decl-unwrapped
-          (ast.ast-decl-list-ref-borrowed
-            (& decls)
-            (bit-and packed macro-segmented-clone-row-index-mask)))
-          [(Module next-module) (set! module-id next-module)]
-          [(DefEnum _ name _ variants)
-            (if (clone_support.clone-variant-list-able?
-              pools
-              variants
-              names
-              module-id)
-              (set!
-                out
-                (clone_support.clone-name-set-insert-id
-                  out
-                  (clone_support.clone-name-key-id-in-module module-id name)))
-              unit)]
-          [(DefStruct _ name _ _ fields)
-            (if (clone_support.clone-struct-fields-able?
-              pools
-              fields
-              names
-              module-id)
-              (set!
-                out
-                (clone_support.clone-name-set-insert-id
-                  out
-                  (clone_support.clone-name-key-id-in-module module-id name)))
-              unit)]
-          [_ unit])))
-    out))
-
-(define (macro-segmented-clone-able-set-build
-  [state : TcJobState]
-  [pools : ast.AstNodePoolContext]) : clone_support.CloneNameSet
-  (let
-    [seed : MacroSegmentedCloneSeed
-      (macro-segmented-clone-seed-for-program state)]
-    [names : clone_support.CloneNameSet seed.names]
-    [done : bool false]
-    (while (not done)
-      (let
-        [next : clone_support.CloneNameSet
-          (macro-segmented-clone-fixpoint-step pools (& seed.rows) (& names))]
-        (if (=
-          (clone_support.clone-name-set-len next)
-          (clone_support.clone-name-set-len names))
-          (begin
-            (set! names next)
-            (set! done true))
-          (set! names next))))
-    names))
 
 (defstruct MacroSegmentedProgramFlatView
   (decls ast.AstDeclList)
@@ -126606,8 +125500,6 @@
           ;; the active pools) across every in-pass splice rebuild.
           (cfg compile-profile (compiler-tc-macro-profile-reset))
           (cfg compile-profile (compiler-tc-env-profile-reset))
-          ;; Same per-compile reset for the clone-able type set cache.
-          (tc-clone-able-cache-reset-for-job! job-state)
           ;; Type-name misses are keyed only by lookup text; in-pass splice
           ;; rebuilds swap in a different expanded program, so a miss recorded
           ;; against an earlier view must not hide generated module-local
@@ -132332,7 +131224,7 @@
     (if (and through-view (!= context 1))
       (str_cat.str-cat
         help
-        "; or bind a borrow `(& ...)` or an owned `(clone ...)` in place of this view")
+        "; or bind a borrow `(& ...)` or an owned clone in place of this view")
       help)))
 
 ;; The E0208 for a move-only value read through a shared (kind 1) or mutable
@@ -134089,7 +132981,6 @@
         (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
           load-state
           count))
-      (tc-clone-root-collection-apply-surface-facts! ctx)
       (cfg compile-profile (tc-profile-surface-prefix-hit))
       (cfg
         compile-profile
@@ -134148,7 +133039,7 @@
   ;; A cached prefix contains only its summary, not semantic observations from
   ;; the declarations it skipped. Consumers requiring complete let facts take
   ;; the ordinary walk. Lowering may infer missing facts after trusted surface
-  ;; hydration; clone-root collection retains its interactive-cache guard below.
+  ;; hydration.
   (cond
     [(or
         (not
@@ -134208,10 +133099,7 @@
         [(No)
           (surface_facts.surface-typecheck-facts-clear!)
           (tc-check-decls-with-paths-cold ctx top-env decls paths summary)])]
-    [(and
-        prefix-cache-active
-        (not
-          (tc-clone-root-collection-active-for-job? (tc-context-job-state ctx))))
+    [prefix-cache-active
       (match (tc-prefix-candidate
         (tc-global-shared-view decls)
         (tc-global-shared-view paths)
@@ -134285,16 +133173,6 @@
     decl
     path
     message))
-
-;; A generated hashmap family repeats its value clone in several public
-;; operations. Every site remains a semantic error for an unsupported V, but
-;; one macro request should report the identical capability failure only once.
-(define (tc-generated-hashmap-clone-diagnostic?
-  [module : (& module str)]
-  [message : (& message str)]) : bool
-  (and
-    (tc-diag-string-prefix? module "stdlib.hashmap.generated.")
-    (tc-message-text-prefix? message "typecheck: clone unsupported type ")))
 
 ;; Direct declaration typechecking stays below the self-build memory budget and
 ;; avoids the per-declaration scratch arena overhead.
@@ -134508,22 +133386,6 @@
           (set! (array-ref next len) name)
           (TcPoisonNameList next (+ len 1))))]))
 
-;; Generated clone-root helper declarations are already proven by the clone
-;; pipeline and deliberately bypass the ordinary declaration checker. Tooling
-;; uses the same predicate to avoid demanding checked body facts that cannot
-;; exist for this lane.
-(define (tc-decl-unchecked-clone? [path : String] [decl : ast.AstDecl]) : bool
-  (and
-    (string.eq path "")
-    (match decl
-      [(DefFn _ name _ _ _ _)
-        (let
-          [name-text : String (tc-env-key-name-text name)]
-          (and
-            (>= (string.string-length name-text) 6)
-            (string.eq (string.substring name-text 0 6) "clone$")))]
-      [_ false])))
-
 (define (tc-check-decls-with-paths-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -134587,11 +133449,6 @@
     [poison-module-envs : TcPoisonModuleEnvs (tc-poison-module-envs-new)]
     [diagnostics : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-empty)]
-    ;; Generated modules are walked contiguously. Retain the latest clone
-    ;; failure's stable list index so duplicate clone sites are collapsed only
-    ;; within the same generated family, never across two macro requests.
-    [last-hashmap-clone-module-id : i64 -1]
-    [last-hashmap-clone-diagnostic-index : i64 -1]
     [type-module-cache-valid : bool false]
     [type-module-cache-path-owner-id : i64 -1]
     [type-module-cache-id : i64 -1]
@@ -134632,11 +133489,6 @@
                     [path-rest : ast.AstDeclPathList path-rest]
                     path-rest)]
                 [(Nil) (ast.ast-decl-path-list-new)])]
-            [_select-clone-root-decl : unit
-              (tc-clone-root-collection-select-decl!
-                ctx
-                (tc-global-shared-view decl)
-                cur-module-id)]
             [_select-checked-let-declaration : unit
               (tc-checked-let-binding-facts-set-current-declaration!
                 (tc-job-state-checked-let-binding-facts
@@ -134707,194 +133559,151 @@
                       (Err (box (tc-global-shared-view diagnostics))))
                     (set! done true)])]
               [_
-                (if (tc-decl-unchecked-clone?
-                  (tc-global-shared-view decl-path)
-                  (tc-global-shared-view decl))
-                  (begin
-                    (set! cur-decls rest)
-                    (set! cur-paths rest-paths)
-                    (set! cur-summary (tc-summary-add-decl cur-summary decl)))
-                  (let
-                    [decl-base-ctx : TcContext
-                      (tc-context-with-module-id
-                        ctx
-                        (tc-global-shared-view cur-module)
-                        cur-module-id)]
-                    [path-owner-id : i64
-                      (ast.ast-decl-path-list-owner-id
-                        (& cur-paths)
-                        0
-                        cbi.compiler-builtin-id-fix-empty)]
-                    [type-module-id : i64
+                (let
+                  [decl-base-ctx : TcContext
+                    (tc-context-with-module-id
+                      ctx
+                      (tc-global-shared-view cur-module)
+                      cur-module-id)]
+                  [path-owner-id : i64
+                    (ast.ast-decl-path-list-owner-id
+                      (& cur-paths)
+                      0
+                      cbi.compiler-builtin-id-fix-empty)]
+                  [type-module-id : i64
+                    (if (and
+                      (csym.compiler-symbol-root-module-id? cur-module-id)
+                      (not (ast.ast-decl-comptime-only? decl))
+                      (not (macro-decl-generated? decl)))
                       (if (and
-                        (csym.compiler-symbol-root-module-id? cur-module-id)
-                        (not (ast.ast-decl-comptime-only? decl))
-                        (not (macro-decl-generated? decl)))
-                        (if (and
-                          type-module-cache-valid
-                          (= path-owner-id type-module-cache-path-owner-id))
-                          type-module-cache-id
-                          (let
-                            [resolved-type-module-id : i64
-                              (tc-context-type-module-id-for-path-owner
-                                dotted-modules
-                                decl-path
-                                path-owner-id)]
-                            (set! type-module-cache-valid true)
-                            (set! type-module-cache-path-owner-id path-owner-id)
-                            (set! type-module-cache-id resolved-type-module-id)
-                            resolved-type-module-id))
-                        -1)]
-                    [decl-ctx : TcContext
-                      (if (>= type-module-id 0)
-                        (tc-context-with-type-module-id
-                          decl-base-ctx
-                          type-module-id)
-                        decl-base-ctx)]
-                    [unused-unsafe : TcUnusedUnsafeState
-                      (tc-job-state-unused-unsafe
-                        (tc-context-job-state decl-ctx))]
-                    [prev-path : String
-                      (tc-unused-unsafe-set-current-path!
-                        unused-unsafe
-                        (tc-global-shared-view decl-path))]
-                    [prev-selected-path : String
-                      (tc-selected-source-path-set!
-                        decl-ctx
-                        (tc-global-shared-view decl-path))]
-                    (tc-context-capture-active-pools! decl-ctx)
-                    (tc-poison-observation-reset!)
-                    (when
-                      (!= (tc-context-semantic-observer decl-ctx).address 0)
-                      (tc-body-type-facts-start-recording!
-                        (tc-context-body-state decl-ctx))
-                      (tc-semantic-observer-send!
-                        (tc-context-semantic-observer decl-ctx)
+                        type-module-cache-valid
+                        (= path-owner-id type-module-cache-path-owner-id))
+                        type-module-cache-id
+                        (let
+                          [resolved-type-module-id : i64
+                            (tc-context-type-module-id-for-path-owner
+                              dotted-modules
+                              decl-path
+                              path-owner-id)]
+                          (set! type-module-cache-valid true)
+                          (set! type-module-cache-path-owner-id path-owner-id)
+                          (set! type-module-cache-id resolved-type-module-id)
+                          resolved-type-module-id))
+                      -1)]
+                  [decl-ctx : TcContext
+                    (if (>= type-module-id 0)
+                      (tc-context-with-type-module-id
+                        decl-base-ctx
+                        type-module-id)
+                      decl-base-ctx)]
+                  [unused-unsafe : TcUnusedUnsafeState
+                    (tc-job-state-unused-unsafe (tc-context-job-state decl-ctx))]
+                  [prev-path : String
+                    (tc-unused-unsafe-set-current-path!
+                      unused-unsafe
+                      (tc-global-shared-view decl-path))]
+                  [prev-selected-path : String
+                    (tc-selected-source-path-set!
+                      decl-ctx
+                      (tc-global-shared-view decl-path))]
+                  (tc-context-capture-active-pools! decl-ctx)
+                  (tc-poison-observation-reset!)
+                  (when
+                    (!= (tc-context-semantic-observer decl-ctx).address 0)
+                    (tc-body-type-facts-start-recording!
+                      (tc-context-body-state decl-ctx))
+                    (tc-semantic-observer-send!
+                      (tc-context-semantic-observer decl-ctx)
+                      decl-ctx
+                      cur-local-env
+                      (Declaration
+                        (parser.compiler-parse-decl-list-storage-key
+                          (& cur-decls))
+                        cur-decls.offset
+                        (tc-global-shared-view decl-path)
+                        (tc-global-shared-view decl))))
+                  (match (let
+                    [checked : ResultTcUnit
+                      (tc-check-decl-with-global-env
                         decl-ctx
                         cur-local-env
-                        (Declaration
-                          (parser.compiler-parse-decl-list-storage-key
-                            (& cur-decls))
-                          cur-decls.offset
-                          (tc-global-shared-view decl-path)
-                          (tc-global-shared-view decl))))
-                    (match (let
-                      [checked : ResultTcUnit
-                        (tc-check-decl-with-global-env
-                          decl-ctx
-                          cur-local-env
-                          cur-global-env
-                          (tc-global-shared-view decl))]
-                      (tc-global-effect-bind-query-path!
-                        decl-ctx
-                        (tc-global-shared-view decl-path))
-                      checked)
-                      [(Ok)
-                        (tc-selected-source-path-set!
-                          decl-ctx
-                          prev-selected-path)
-                        (tc-unused-unsafe-restore-current-path!
-                          unused-unsafe
-                          prev-path)
-                        (set! cur-decls rest)
-                        (set! cur-paths rest-paths)
-                        (if tc-poison-observed
-                          (begin
-                            (set!
-                              cur-local-env
-                              (tc-poison-decl-env
-                                cur-local-env
-                                cur-module-id
-                                (tc-global-shared-view decl)))
-                            (set!
-                              cur-global-env
-                              (tc-poison-decl-env
-                                cur-global-env
-                                cur-module-id
-                                (tc-global-shared-view decl)))
-                            (set!
-                              poison-names
-                              (tc-poison-name-list-add-decl
-                                poison-names
-                                cur-module-id
-                                decl)))
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-tc-decl-profile-record
-                                (tc-context-macro-state ctx)
-                                (tc-global-shared-view decl)))
-                            (set!
-                              cur-summary
-                              (tc-summary-add-decl cur-summary decl))))]
-                      [(Err message)
-                        (tc-selected-source-path-set!
-                          decl-ctx
-                          prev-selected-path)
-                        (tc-unused-unsafe-restore-current-path!
-                          unused-unsafe
-                          prev-path)
-                        (if tc-poison-observed
-                          unit
-                          (let
-                            [decl-diag : cdiag.CompilerDiagnostic
-                              (tc-typecheck-diag-with-rest-path
-                                (tc-context-expr-bases ctx)
-                                (& rest)
-                                (tc-global-shared-view decl)
-                                decl-path
-                                message)]
-                            [diag-message : String
-                              (cdiag.compiler-diagnostic-message (& decl-diag))]
-                            [hashmap-clone : bool
-                              (tc-generated-hashmap-clone-diagnostic?
-                                cur-module
-                                diag-message)]
-                            [duplicate-hashmap-clone : bool
-                              (and
-                                hashmap-clone
-                                (= cur-module-id last-hashmap-clone-module-id)
-                                (>= last-hashmap-clone-diagnostic-index 0)
-                                (string.eq
-                                  (cdiag.compiler-diagnostic-message-ref
-                                    (cdiag.compiler-diagnostic-list-ref
-                                      (& diagnostics)
-                                      last-hashmap-clone-diagnostic-index))
-                                  (& diag-message)))]
-                            (unless
-                              duplicate-hashmap-clone
-                              (when
-                                hashmap-clone
-                                (set!
-                                  last-hashmap-clone-module-id
-                                  cur-module-id)
-                                (set!
-                                  last-hashmap-clone-diagnostic-index
-                                  (cdiag.compiler-diagnostic-list-count
-                                    diagnostics)))
-                              (cdiag.compiler-diagnostic-list-push!
-                                (&mut diagnostics)
-                                decl-diag))))
-                        (set!
-                          cur-local-env
-                          (tc-poison-decl-env
+                        cur-global-env
+                        (tc-global-shared-view decl))]
+                    (tc-global-effect-bind-query-path!
+                      decl-ctx
+                      (tc-global-shared-view decl-path))
+                    checked)
+                    [(Ok)
+                      (tc-selected-source-path-set! decl-ctx prev-selected-path)
+                      (tc-unused-unsafe-restore-current-path!
+                        unused-unsafe
+                        prev-path)
+                      (set! cur-decls rest)
+                      (set! cur-paths rest-paths)
+                      (if tc-poison-observed
+                        (begin
+                          (set!
                             cur-local-env
-                            cur-module-id
-                            (tc-global-shared-view decl)))
-                        (set!
-                          cur-global-env
-                          (tc-poison-decl-env
+                            (tc-poison-decl-env
+                              cur-local-env
+                              cur-module-id
+                              (tc-global-shared-view decl)))
+                          (set!
                             cur-global-env
-                            cur-module-id
-                            (tc-global-shared-view decl)))
-                        (set!
-                          poison-names
-                          (tc-poison-name-list-add-decl
+                            (tc-poison-decl-env
+                              cur-global-env
+                              cur-module-id
+                              (tc-global-shared-view decl)))
+                          (set!
                             poison-names
-                            cur-module-id
-                            decl))
-                        (set! cur-decls rest)
-                        (set! cur-paths rest-paths)])))]))]))
+                            (tc-poison-name-list-add-decl
+                              poison-names
+                              cur-module-id
+                              decl)))
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-tc-decl-profile-record
+                              (tc-context-macro-state ctx)
+                              (tc-global-shared-view decl)))
+                          (set!
+                            cur-summary
+                            (tc-summary-add-decl cur-summary decl))))]
+                    [(Err message)
+                      (tc-selected-source-path-set! decl-ctx prev-selected-path)
+                      (tc-unused-unsafe-restore-current-path!
+                        unused-unsafe
+                        prev-path)
+                      (if tc-poison-observed
+                        unit
+                        (cdiag.compiler-diagnostic-list-push!
+                          (&mut diagnostics)
+                          (tc-typecheck-diag-with-rest-path
+                            (tc-context-expr-bases ctx)
+                            (& rest)
+                            (tc-global-shared-view decl)
+                            decl-path
+                            message)))
+                      (set!
+                        cur-local-env
+                        (tc-poison-decl-env
+                          cur-local-env
+                          cur-module-id
+                          (tc-global-shared-view decl)))
+                      (set!
+                        cur-global-env
+                        (tc-poison-decl-env
+                          cur-global-env
+                          cur-module-id
+                          (tc-global-shared-view decl)))
+                      (set!
+                        poison-names
+                        (tc-poison-name-list-add-decl
+                          poison-names
+                          cur-module-id
+                          decl))
+                      (set! cur-decls rest)
+                      (set! cur-paths rest-paths)]))]))]))
     result))
 
 ;; The job's type-walk table is bound for the whole check and restored on
@@ -134989,7 +133798,6 @@
                                 (tc-context-macro-state ctx)
                                 top-env)
                               (tc-context-capture-active-pools! ctx)
-                              (tc-clone-able-cache-populate! ctx)
                               (tc-macro-helper-env-cache-reset!
                                 (tc-context-macro-state ctx))
                               (match (tc-check-decls-with-paths
@@ -135156,7 +133964,6 @@
     ;; into the id-only stub table while the summary strings are alive.
     (tc-lazy-import-surface-stubs-record-for-job! job-state)
     (tc-unbound-suggestion-snapshot-reset!)
-    (tc-clone-able-cache-reset-for-job! job-state)
     (tc-macro-helper-env-cache-reset! macro-state)
     (tc-macro-module-env-cache-clear! macro-state)
     (tc-spmd-inline-helper-stack-reset-for-job! job-state)
@@ -135207,7 +134014,6 @@
       (tc-job-state-release-scratch-arenas! job-state)
       (tc-job-state-release-type-env-scoped-state! job-state)
       (ctfe_support.ctfe-builtin-reset!)
-      (tc-clone-able-cache-reset-for-job! job-state)
       (tc-macro-helper-env-cache-reset! macro-state)
       (tc-macro-module-env-cache-clear! macro-state)
       (tc-spmd-inline-helper-stack-reset-for-job! job-state)

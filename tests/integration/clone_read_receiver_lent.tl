@@ -1,27 +1,22 @@
 ;; The twin of `clone_read_receiver_retained.tl` where nothing after the
 ;; receiver writes what it selects: the receiver is lent for the read, not
-;; moved or copied, so both arrays stay usable after the clone, and the copy is
-;; independent of the element it was cloned from.
-(defstruct Cell
-  (items (__tl_dyn-array i64)))
+;; moved or copied, so both arrays stay usable after the call, and the copy is
+;; the element of the array the condition selected.
+(import stdlib.string)
 
-(define (take-first [cells : (Array Cell 1)]) : i64
-  (array-ref (array-ref cells 0).items 0))
+(define (take-first [texts : (Array String 1)]) : i64
+  (string-length (array-ref texts 0)))
 
-(define (copy-lent [a : (Array Cell 1)] [b : (Array Cell 1)] [flag : bool]) : i64
+(define (copy-lent [a : (Array String 1)] [b : (Array String 1)] [flag : bool]) : i64
   (let
-    [copy : Cell
-      (clone
+    [copy : String
+      (string.copy
         (array-ref
           (if flag
             a
             b)
           0))]
-    (set! (array-ref copy.items 0) 30)
-    (+ (array-ref copy.items 0) (take-first a) (take-first b))))
+    (+ (* 10 (string-length copy)) (take-first a) (take-first b))))
 
 (define (main) : i64
-  (copy-lent
-    (array (Cell (__tl_make-array 4)))
-    (array (Cell (__tl_make-array 8)))
-    true))
+  (copy-lent (array "abc") (array "ninechars") true))

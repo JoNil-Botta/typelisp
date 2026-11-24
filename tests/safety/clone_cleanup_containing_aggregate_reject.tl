@@ -1,5 +1,7 @@
 ;; #9053: a struct containing a cleanup-owning field is transitively
-;; non-cloneable and must fail E0206 naming the cleanup-owning type.
+;; non-cloneable and must be rejected naming the cleanup-owning type.
+(import stdlib.clone)
+
 (define closes : i64
   0)
 
@@ -16,7 +18,7 @@
   (tag i64))
 
 (define (dup [r : (& r Wrapper)]) : Wrapper
-  (clone (deref r)))
+  (clone.deep (deref r)))
 
 (define (main) : i64
   (with

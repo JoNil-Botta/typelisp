@@ -5077,6 +5077,15 @@
     (ir_i64_i64_map.with-capacity 1)
     (compiler-ir-return-storage-index-empty)))
 
+(define (compiler-ir-clone-representation-index
+  [pools : ast.AstNodePoolContext]
+  [index : (& index CompilerIrRepresentationIndex)]) : CompilerIrRepresentationIndex
+  (CompilerIrRepresentationIndex
+    (ir_i64_i64_map.clone-map (& index.word-counts))
+    (ir_i64_i64_map.clone-map (& index.class-masks))
+    (ir_i64_i64_map.clone-map (& index.stable-word-masks))
+    (compiler-ir-clone-return-storage-index pools (& index.return-storage))))
+
 (define (compiler-ir-representation-index-stable-mask-known?
   [index : (& index CompilerIrRepresentationIndex)]
   [key : i64]) : bool
@@ -6567,6 +6576,16 @@
         compiler-ir-clone-label
         pools)]))
 
+(define (compiler-ir-clone-instr-at
+  [pools : ast.AstNodePoolContext]
+  [src : (& (__tl_dyn-array CompilerIrInstr))]
+  [index : i64]) : CompilerIrInstr
+  (compiler-ir-clone-instr
+    pools
+    (compiler-ir-array-shared-view
+      (owned_view.compiler-owned-reference-shared-view src)
+      index)))
+
 (define (compiler-ir-clone-instr-seq-fill
   [pools : ast.AstNodePoolContext]
   [src : (& (__tl_dyn-array CompilerIrInstr))]
@@ -6574,13 +6593,7 @@
   [index : i64]
   [count : i64]) : unit
   (for [cursor (iterator.range index count)]
-    (set!
-      (array-ref dst cursor)
-      (compiler-ir-clone-instr
-        pools
-        (compiler-ir-array-shared-view
-          (owned_view.compiler-owned-reference-shared-view src)
-          cursor))))
+    (set! (array-ref dst cursor) (compiler-ir-clone-instr-at pools src cursor)))
   unit)
 
 (define (compiler-ir-clone-instr-seq

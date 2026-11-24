@@ -2,7 +2,6 @@
 ;; builder used by the embedded-stdlib TLCI tool.
 (import compiler_load as load)
 (import compiler_ast_types as ast)
-(import compiler_clone as clone)
 (import compiler_diagnostic as cdiag)
 (import compiler_prelude_surface_producer as prelude_shared)
 (import compiler_specialize as spec)
@@ -111,10 +110,6 @@
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
             (ast.ast-decl-list-len (& decls)))])]
-    [_select-all-clone-roots : unit
-      (tc.tc-clone-root-collection-use!
-        job-state
-        (ast.ast-place-shared-view program))]
     [_start-fact-recording : unit
       (surface_facts.surface-typecheck-facts-recording-start!
         (arena.tl_arena_current))]
@@ -133,33 +128,28 @@
         false)]
     (match checked
       [(Partial diag _ _ _)
-        (tc.tc-clone-root-collection-abort! job-state)
         (surface_facts.surface-typecheck-facts-recording-abort!)
         (prelude-surface-facts-error
           "prelude surface typecheck failed: "
           (box (cdiag.compiler-diagnostic-list-first (deref diag))))]
       [(Err diag)
-        (tc.tc-clone-root-collection-abort! job-state)
         (surface_facts.surface-typecheck-facts-recording-abort!)
         (prelude-surface-facts-error
           "prelude surface typecheck failed: "
           (box (cdiag.compiler-diagnostic-list-first (deref diag))))]
-      [(Ok summary ctx _ _)
-        (let
-          [_finish-clone-roots : clone.CloneRootEntries
-            (tc.tc-clone-root-collection-finish! ctx)]
-          (match summary
-            [(CompilerTypecheckSummary values functions externs)
-              (Ok
-                (surface_facts.surface-typecheck-facts-recording-finish
-                  macro-decl-count
-                  decl-count
-                  values
-                  functions
-                  externs)
-                surface-program
-                surface-paths
-                source-names)]))])))
+      [(Ok summary _ _ _)
+        (match summary
+          [(CompilerTypecheckSummary values functions externs)
+            (Ok
+              (surface_facts.surface-typecheck-facts-recording-finish
+                macro-decl-count
+                decl-count
+                values
+                functions
+                externs)
+              surface-program
+              surface-paths
+              source-names)])])))
 
 (define (prelude-surface-typecheck-facts-expanded
   [load-state : load.CompilerLoadSessionState]

@@ -1,5 +1,7 @@
-;; #9053: `(clone a)` on a cleanup-owning struct would duplicate its cleanup
-;; obligation (double-close / double-free) and must fail E0206.
+;; #9053: `(clone.deep a)` on a cleanup-owning struct would duplicate its
+;; cleanup obligation (double-close / double-free) and must be rejected.
+(import stdlib.clone)
+
 (define closes : i64
   0)
 
@@ -11,7 +13,7 @@
   (fd i64 (:cleanup close-fd)))
 
 (define (run) : i64
-  (with ([a (Res 7) close-res]) (with ([b (clone a) close-res]) b.fd)))
+  (with ([a (Res 7) close-res]) (with ([b (clone.deep a) close-res]) b.fd)))
 
 (define (main) : i64
   (run)

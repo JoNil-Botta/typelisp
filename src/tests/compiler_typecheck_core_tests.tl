@@ -18,7 +18,6 @@
 (import compiler_diagnostic as cdiag)
 (import compiler_ctfe as ctfe_support)
 (import compiler_specialize as spec)
-(import compiler_clone as clone_support)
 (import (hashmap.hashmap i64 i64) as tc_i64_i64_map)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
@@ -8516,11 +8515,8 @@
       (tc_core.tc-job-state-nominal-cache job-a)]
     [nominal-b : tc_core.TcNominalCacheState
       (tc_core.tc-job-state-nominal-cache job-b)]
-    [clone-a : tc_core.TcCloneState (tc_core.tc-job-state-clone job-a)]
-    [clone-b : tc_core.TcCloneState (tc_core.tc-job-state-clone job-b)]
     [owner-handle : i64 73]
     [owner-slot : i64 (tc_core.tc-nominal-owner-cache-slot owner-handle)]
-    [program : ast.AstProgram (ast.ast-program (ast.ast-decl-list-new))]
     ;; The same numeric lookup key and symbol handle deliberately carry
     ;; different answers in the two jobs.
     (tc_core.tc-resolve-type-name-cache-store! nominal-a 41 true 101)
@@ -8533,95 +8529,31 @@
       nominal-b
       owner-handle
       "owner-b")
+    (tc_core.tc-nominal-owner-cache-reset-for-job! job-a)
     (let
-      [data-a : tc_core.TcCloneStateData (tc_core.tc-clone-state-data clone-a)]
-      [data-b : tc_core.TcCloneStateData (tc_core.tc-clone-state-data clone-b)]
-      (set!
-        data-a.able-cache
-        (clone_support.clone-name-set-insert-id data-a.able-cache 111))
-      (set! data-a.able-ready true)
-      (tc_core.tc-clone-state-data-set! clone-a data-a)
-      (set!
-        data-b.able-cache
-        (clone_support.clone-name-set-insert-id data-b.able-cache 222))
-      (set! data-b.able-ready true)
-      (tc_core.tc-clone-state-data-set! clone-b data-b))
-    ;; Each active traversal owns an independent arena even when both jobs
-    ;; were constructed in the same driver lifetime arena.
-    (tc_core.tc-clone-root-collection-use!
-      job-a
-      (tc_core.tc-global-shared-view program))
-    (tc_core.tc-clone-root-collection-use! job-b program)
-    (let
-      [root-a-before : tc_core.TcCloneStateData
-        (tc_core.tc-clone-state-data clone-a)]
-      [root-b-before : tc_core.TcCloneStateData
-        (tc_core.tc-clone-state-data clone-b)]
-      [root-b-arena : i64 root-b-before.root-arena]
-      (tc_core.tc-nominal-owner-cache-reset-for-job! job-a)
-      (tc_core.tc-clone-able-cache-reset-for-job! job-a)
-      (let
-        [nominal-a-after : tc_core.TcNominalCacheStateData
-          (tc_core.tc-nominal-cache-state-data nominal-a)]
-        [nominal-b-after : tc_core.TcNominalCacheStateData
-          (tc_core.tc-nominal-cache-state-data nominal-b)]
-        [clone-a-after : tc_core.TcCloneStateData
-          (tc_core.tc-clone-state-data clone-a)]
-        [clone-b-after : tc_core.TcCloneStateData
-          (tc_core.tc-clone-state-data clone-b)]
-        [isolated : bool
-          (and
-            root-a-before.root-active
-            root-b-before.root-active
-            (> root-a-before.root-arena 0)
-            (> root-b-arena 0)
-            (not (= root-a-before.root-arena root-b-arena))
-            (match (tc_core.tc-resolve-type-name-cache-lookup nominal-a 41)
-              [(Miss) true]
-              [_ false])
-            (match (tc_core.tc-resolve-type-name-cache-lookup nominal-b 41)
-              [(Missing) true]
-              [_ false])
-            (= (array-ref nominal-a-after.owner-handles owner-slot) -1)
-            (string.eq
-              (tc_core.tc-global-array-element-shared-view
-                nominal-a-after.owner-names
-                owner-slot)
-              "")
-            (=
-              (array-ref nominal-b-after.owner-handles owner-slot)
-              owner-handle)
-            (string.eq
-              (tc_core.tc-global-array-element-shared-view
-                nominal-b-after.owner-names
-                owner-slot)
-              "owner-b")
-            (not clone-a-after.able-ready)
-            clone-b-after.able-ready
-            (clone_support.clone-name-set-contains-id?
-              (& clone-b-after.able-cache)
-              222))]
-        (tc_core.tc-clone-root-collection-abort! job-a)
-        (let
-          [root-a-after : tc_core.TcCloneStateData
-            (tc_core.tc-clone-state-data clone-a)]
-          [root-b-after : tc_core.TcCloneStateData
-            (tc_core.tc-clone-state-data clone-b)]
-          [root-isolated : bool
-            (and
-              (not root-a-after.root-active)
-              (= root-a-after.root-arena 0)
-              root-b-after.root-active
-              (= root-b-after.root-arena root-b-arena)
-              root-b-after.able-ready
-              (clone_support.clone-name-set-contains-id?
-                (& root-b-after.able-cache)
-                222))]
-          (tc_core.tc-clone-root-collection-abort! job-b)
-          (and
-            isolated
-            root-isolated
-            (not (tc_core.tc-clone-root-collection-active-for-job? job-b))))))))
+      [nominal-a-after : tc_core.TcNominalCacheStateData
+        (tc_core.tc-nominal-cache-state-data nominal-a)]
+      [nominal-b-after : tc_core.TcNominalCacheStateData
+        (tc_core.tc-nominal-cache-state-data nominal-b)]
+      (and
+        (match (tc_core.tc-resolve-type-name-cache-lookup nominal-a 41)
+          [(Miss) true]
+          [_ false])
+        (match (tc_core.tc-resolve-type-name-cache-lookup nominal-b 41)
+          [(Missing) true]
+          [_ false])
+        (= (array-ref nominal-a-after.owner-handles owner-slot) -1)
+        (string.eq
+          (tc_core.tc-global-array-element-shared-view
+            nominal-a-after.owner-names
+            owner-slot)
+          "")
+        (= (array-ref nominal-b-after.owner-handles owner-slot) owner-handle)
+        (string.eq
+          (tc_core.tc-global-array-element-shared-view
+            nominal-b-after.owner-names
+            owner-slot)
+          "owner-b")))))
 
 (cfg
   test

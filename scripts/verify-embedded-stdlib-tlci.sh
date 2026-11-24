@@ -77,7 +77,6 @@ required_native_identities() {
         stdlib.clone/nominal-hook-name \
         stdlib.clone/gen-clone \
         stdlib.clone/gen-clone-named \
-        stdlib.clone/synthesize-helpers \
         stdlib.dense_list/compiler-dense-list-operations \
         stdlib.serialize/serialize \
         stdlib.sort/vec \

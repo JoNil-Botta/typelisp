@@ -47,7 +47,7 @@ box_field_shared_tuple_reject_windows|check-fail-windows|tests/safety/box_field_
 box_field_shared_region_reject_windows|check-fail-windows|tests/safety/box_field_shared_region_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
 box_field_shared_alias_reject_windows|check-fail-windows|tests/safety/box_field_shared_alias_reject.tl|-|error[E0207]: typecheck: cannot mutably borrow `alias.b` behind a shared reference
 box_field_shared_store_reject_windows|check-fail-windows|tests/safety/box_field_shared_store_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
-box_field_shared_view_call_arg_help_reject|check-fail|tests/safety/box_field_shared_view_call_arg_reject.tl|-|; or bind a borrow `(& ...)` or an owned `(clone ...)` in place of this view
+box_field_shared_view_call_arg_help_reject|check-fail|tests/safety/box_field_shared_view_call_arg_reject.tl|-|; or bind a borrow `(& ...)` or an owned clone in place of this view
 raw_pointer_field_set_safe_reject|check-fail|tests/safety/raw_pointer_field_set_safe_reject.tl|-|typecheck: deref of a raw pointer requires unsafe context
 raw_pointer_field_read_safe_reject|check-fail|tests/safety/raw_pointer_field_read_safe_reject.tl|-|typecheck: deref of a raw pointer requires unsafe context
 raw_pointer_field_set_read_only_reject|check-fail|tests/safety/raw_pointer_field_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)

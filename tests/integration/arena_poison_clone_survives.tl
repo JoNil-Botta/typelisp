@@ -1,4 +1,5 @@
 (import stdlib.arena)
+(import stdlib.clone)
 (import stdlib.string)
 
 (extern (tl_arena_poison_enable) : unit)
@@ -6,6 +7,8 @@
 (defstruct PoisonPayload
   (label String)
   (value i64))
+
+(clone.gen-clone PoisonPayload)
 
 (define (main) : i64
   (let
@@ -19,7 +22,7 @@
       (unsafe
         (arena.set! outer))
       (let
-        [copy : PoisonPayload (clone source)]
+        [copy : PoisonPayload (clone.deep source)]
         (unsafe
           (arena.destroy scratch))
         (+ (string-length copy.label) copy.value)))))

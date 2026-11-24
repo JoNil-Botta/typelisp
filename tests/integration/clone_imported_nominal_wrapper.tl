@@ -55,7 +55,7 @@
 (define (main) : i64
   (let
     [value : Wrapper (make-wrapper "clone-imported")]
-    [copied : Wrapper (clone value)]
+    [copied : Wrapper (clone_gen.deep value)]
     [scratch : LocalOutcome (scratch-outcome "scratch-imported")]
     (if (and
       (wrapper-ok? copied "clone-imported")

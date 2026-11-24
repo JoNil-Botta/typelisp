@@ -51326,7 +51326,7 @@
   [x0 : i64]
   [x1 : i64]
   [body : i64]
-  [inlined-body : ast.AstExpr]
+  [inlined-id : i64]
   [plan : LowerRowOriginPlan]
   [strides : (& strides (__tl_dyn-array LowerRowOriginYStride))]
   [exit-label : i64]) : ResultLowerExpr
@@ -51354,13 +51354,14 @@
     [y-span-m1-var : i64
       (lower-row-origin-binop s Sub (Var y-span-var) (I64 1) (I64))]
     [x-span-var : i64 (lower-row-origin-binop s Sub (Var x1) (Var x0) (I64))]
-    ;; Keep x_span <= INT64_MAX - 16 so vector headers (index + lanes) cannot overflow.
+    ;; Keep x_span <= INT64_MAX - 64 so vector headers (index + lanes, up to
+    ;; 64 narrow lanes) cannot overflow.
     [rect-ok-var : i64
       (lower-row-origin-binop
         s
         Le
         (Var x-span-var)
-        (I64 9223372036854775791)
+        (I64 9223372036854775743)
         (I64))]
     (for [item-index (iterator.range 0 count)]
       (let
@@ -51605,7 +51606,7 @@
             (& view-ids)
             row-index
             row-start
-            (lower-context-expr-push ctx inlined-body))]
+            inlined-id)]
         [row-lowered
           (try
             (lower-foreach-lowered-inlined
@@ -51658,7 +51659,7 @@
               (I64)
               (Var x0)
               (Var x1)
-              (lower-context-expr-get ctx body)))]
+              (lower-context-expr-get ctx inlined-id)))]
         (match checked-row
           [(Expr row-state _ _)
             (set! s row-state)
@@ -51791,61 +51792,56 @@
                     subst
                     shadowed)))]
             [inlined-id : i64 (lower-context-expr-push ctx inlined-body)]
-            [views
-              (try
+            ;; Plan before the views: a declined plan leaves `s` untouched.
+            ;; Array views keep each name's element type, so the plan is
+            ;; the same under the pre-view environment.
+            [plan : LowerRowOriginPlan
+              (lower-row-origin-plan
+                ctx
+                probe-env
+                probe-type-env
+                inner-id
+                (lower-context-expr-get ctx inlined-id))]
+            [strides : (__tl_dyn-array LowerRowOriginYStride)
+              (__tl_make-array LowerRowOriginYStride 0)]
+            [all-affine? : bool (> plan.count 0)]
+            (for [idx (iterator.range 0 plan.count)]
+              (let
+                [item : LowerRowOrigin (array-ref plan.items idx)]
+                [st : LowerRowOriginYStride
+                  (lower-row-origin-y-stride ctx outer-id item.origin)]
+                (match (& st)
+                  [(StrideUnsupported) (set! all-affine? false)]
+                  [_ unit])
+                (__tl_array-push! strides st)))
+            (when
+              all-affine?
+              (match (try
                 (lower-spmd-array-views
                   ctx
                   s
                   env
                   type-env
                   (I64)
-                  (lower-context-expr-get ctx inlined-id)))]
-            (match views
-              [(Views view-state view-env view-type-env)
-                (let
-                  [plan : LowerRowOriginPlan
-                    (lower-row-origin-plan
+                  (lower-context-expr-get ctx inlined-id)))
+                [(Views view-state view-env view-type-env)
+                  (return
+                    (lower-foreach2-rect-domain
                       ctx
-                      (sym_i64_env.sym-i64-bind-id view-env outer-id y0)
-                      (tc_core.tc-bind-id view-type-env outer-id (I64))
+                      view-state
+                      view-env
+                      view-type-env
+                      outer-id
                       inner-id
-                      (lower-context-expr-get ctx inlined-id))]
-                  (when
-                    (and
-                      (> plan.count 0)
-                      (lower_i64_i64_map.is-empty? (& plan.dropped)))
-                    (let
-                      [strides : (__tl_dyn-array LowerRowOriginYStride)
-                        (__tl_make-array LowerRowOriginYStride 0)]
-                      [all-affine? : bool true]
-                      (for [idx (iterator.range 0 plan.count)]
-                        (let
-                          [item : LowerRowOrigin (array-ref plan.items idx)]
-                          [st : LowerRowOriginYStride
-                            (lower-row-origin-y-stride ctx outer-id item.origin)]
-                          (match (& st)
-                            [(StrideUnsupported) (set! all-affine? false)]
-                            [_ unit])
-                          (__tl_array-push! strides st)))
-                      (when
-                        all-affine?
-                        (return
-                          (lower-foreach2-rect-domain
-                            ctx
-                            view-state
-                            view-env
-                            view-type-env
-                            outer-id
-                            inner-id
-                            y0
-                            y1
-                            x0
-                            x1
-                            body
-                            (lower-context-expr-get ctx inlined-id)
-                            plan
-                            (& strides)
-                            exit-label))))))])))))
+                      y0
+                      y1
+                      x0
+                      x1
+                      body
+                      inlined-id
+                      plan
+                      (& strides)
+                      exit-label))]))))))
     (match (lower-state-fresh-label s "foreach2_header")
       [(Label next-s label)
         (set! s next-s)

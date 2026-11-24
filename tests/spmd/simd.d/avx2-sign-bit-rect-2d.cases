@@ -75,3 +75,29 @@ mode scalar avx2 avx512
 exit 134
 in stderr
 contains array index out of bounds
+
+case avx2-sign-bit-dual-load-run
+source tests/spmd/avx2_sign_bit_dual_load.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case foreach-2d-rect-fixed-array-fallback-run
+source tests/spmd/foreach_2d_rect_fixed_array_fallback.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case foreach-2d-rect-fixed-array-fallback-shape
+source tests/spmd/foreach_2d_rect_fixed_array_fallback.tl
+mode avx2
+opt 2
+in fn _tl_foreach_2d_rect_fixed_array_fallback_check_lut
+contains foreach2_rect_stride_fast
+contains foreach2_checked_row

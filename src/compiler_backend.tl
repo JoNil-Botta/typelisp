@@ -11129,6 +11129,109 @@
         cursor
         out))))
 
+;; The register operand of a dual-load memory fold: the single-use loads
+;; LOAD-DST (the current instruction) and LOAD2-DST (at CURSOR) feed one
+;; associative, commutative integer op at CURSOR + 1, whose single-use result
+;; feeds the same op at CURSOR + 2 with that operand. No when the shape fails,
+;; or when the outer op is a `bit_and` whose compare at CURSOR + 3 the AVX2
+;; sign-bit plan rewrote: that compare is emitted by the `bit_and` step.
+(define (compiler-backend-vector-dual-load-fold-value
+  [backend-state : be_state.CompilerBackendState]
+  [type-segment-bases : i64]
+  [use-counts : (& use-counts (__tl_dyn-array i64))]
+  [load-dst : i64]
+  [load2-dst : i64]
+  [lanes : i64]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [cursor : i64]) : be_state.CompilerBackendVectorMemFold
+  (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs (+ cursor 1))
+    [(VectorBinOp
+        (box
+          (fields
+            [t1-dst dst]
+            [op1 op]
+            [t1-lhs lhs]
+            [t1-rhs rhs]
+            [t1-lanes lanes]
+            [t1-ty ty])))
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs (+ cursor 2))
+        [(VectorBinOp
+            (box
+              (fields
+                [op2 op]
+                [t2-lhs lhs]
+                [t2-rhs rhs]
+                [t2-lanes lanes]
+                [t2-ty ty])))
+          (let
+            [t2-other : be_state.CompilerBackendVectorMemFold
+              (if (be_operand.compiler-backend-branch-uses-var? t2-lhs t1-dst)
+                (Some t2-rhs)
+                (if (be_operand.compiler-backend-branch-uses-var? t2-rhs t1-dst)
+                  (Some t2-lhs)
+                  (No)))]
+            (if (and
+              (or
+                (and
+                  (be_operand.compiler-backend-branch-uses-var? t1-lhs load-dst)
+                  (be_operand.compiler-backend-branch-uses-var?
+                    t1-rhs
+                    load2-dst))
+                (and
+                  (be_operand.compiler-backend-branch-uses-var?
+                    t1-lhs
+                    load2-dst)
+                  (be_operand.compiler-backend-branch-uses-var? t1-rhs load-dst)))
+              (= t1-lanes lanes)
+              (= t2-lanes lanes)
+              (be_simd.compiler-backend-var-single-use? use-counts t1-dst)
+              (be_simd.compiler-backend-vector-binop-assoc-comm-int?
+                (& op1)
+                (& t1-ty))
+              (be_simd.compiler-backend-vector-binop-op-eq? (& op1) (& op2))
+              (compiler_optimize.opt-type-eq
+                type-segment-bases
+                elem-ty
+                (& t1-ty))
+              (compiler_optimize.opt-type-eq
+                type-segment-bases
+                elem-ty
+                (& t2-ty))
+              (be_simd.compiler-backend-vector-binop-memory-source-supported?
+                (& op1)
+                t2-lanes
+                (be_simd.compiler-backend-copy-int-ast-type (& t2-ty)))
+              (not
+                (and
+                  (match (& op2)
+                    [(BitAnd) true]
+                    [_ false])
+                  (>
+                    (compiler-backend-vector-sign-bit-mode-at
+                      backend-state
+                      instrs
+                      (+ cursor 3))
+                    0))))
+              (match t2-other
+                [(Some reg-value)
+                  (if (or
+                    (be_operand.compiler-backend-branch-uses-var?
+                      reg-value
+                      load-dst)
+                    (be_operand.compiler-backend-branch-uses-var?
+                      reg-value
+                      load2-dst)
+                    (be_operand.compiler-backend-branch-uses-var?
+                      reg-value
+                      t1-dst))
+                    (No)
+                    (Some reg-value))]
+                [(No) (No)])
+              (No)))]
+        [_ (No)])]
+    [_ (No)]))
+
 (define (compiler-backend-emit-vector-load-step
   [ctx : be_state.CompilerBackendEmissionContext]
   [fallthrough : be_state.CompilerBackendMaybeLabel]
@@ -11147,7 +11250,7 @@
       [after-binop : i64 (+ cursor 1)]
       (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)
         [(VectorLoad load2-dst base2 index2 lanes2 elem-ty2)
-          (if (and
+          (match (if (and
             (< (+ cursor 2) instrs.len)
             (= lanes lanes2)
             (be_simd.compiler-backend-var-single-use? ctx.use-counts load-dst)
@@ -11156,177 +11259,73 @@
               ctx.type-segment-bases
               elem-ty
               (& elem-ty2)))
-            (let
-              [op2-instr
-                (compiler_ir_types.compiler-ir-instr-seq-ref
-                  instrs
-                  (+ cursor 2))]
-              (match (compiler_ir_types.compiler-ir-instr-seq-ref
-                instrs
-                (+ cursor 1))
-                [(VectorBinOp
-                    (box
-                      (fields
-                        [t1-dst dst]
-                        [op1 op]
-                        [t1-lhs lhs]
-                        [t1-rhs rhs]
-                        [t1-lanes lanes]
-                        [t1-ty ty])))
-                  (match (compiler_ir_types.compiler-ir-instr-seq-ref
+            (compiler-backend-vector-dual-load-fold-value
+              ctx.backend-state
+              ctx.type-segment-bases
+              ctx.use-counts
+              load-dst
+              load2-dst
+              lanes
+              (& elem-ty)
+              (& instrs)
+              cursor)
+            (be_state.CompilerBackendVectorMemFold.No))
+            [(Some reg-value)
+              (let
+                [op2-instr
+                  (compiler_ir_types.compiler-ir-instr-seq-ref
                     instrs
-                    (+ cursor 2))
-                    [(VectorBinOp
-                        (box
-                          (fields
-                            [t2-dst dst]
-                            [op2 op]
-                            [t2-lhs lhs]
-                            [t2-rhs rhs]
-                            [t2-lanes lanes]
-                            [t2-ty ty])))
-                      (let
-                        [loads-match? : bool
-                          (or
-                            (and
-                              (be_operand.compiler-backend-branch-uses-var?
-                                t1-lhs
-                                load-dst)
-                              (be_operand.compiler-backend-branch-uses-var?
-                                t1-rhs
-                                load2-dst))
-                            (and
-                              (be_operand.compiler-backend-branch-uses-var?
-                                t1-lhs
-                                load2-dst)
-                              (be_operand.compiler-backend-branch-uses-var?
-                                t1-rhs
-                                load-dst)))]
-                        [t2-other : be_state.CompilerBackendVectorMemFold
-                          (if (be_operand.compiler-backend-branch-uses-var?
-                            t2-lhs
-                            t1-dst)
-                            (Some t2-rhs)
-                            (if (be_operand.compiler-backend-branch-uses-var?
-                              t2-rhs
-                              t1-dst)
-                              (Some t2-lhs)
-                              (No)))]
-                        (if (and
-                          loads-match?
-                          (= t1-lanes lanes)
-                          (= t2-lanes lanes)
-                          (be_simd.compiler-backend-var-single-use?
-                            ctx.use-counts
-                            t1-dst)
-                          (be_simd.compiler-backend-vector-binop-assoc-comm-int?
-                            (& op1)
-                            (& t1-ty))
-                          (be_simd.compiler-backend-vector-binop-op-eq?
-                            (& op1)
-                            (& op2))
-                          (compiler_optimize.opt-type-eq
-                            ctx.type-segment-bases
-                            elem-ty
-                            (& t1-ty))
-                          (compiler_optimize.opt-type-eq
-                            ctx.type-segment-bases
-                            elem-ty
-                            (& t2-ty))
-                          (be_simd.compiler-backend-vector-binop-memory-source-supported?
-                            (& op1)
-                            t2-lanes
-                            (be_simd.compiler-backend-copy-int-ast-type
-                              (& t2-ty))))
-                          (match t2-other
-                            [(Some reg-value)
-                              (if (and
-                                (not
-                                  (be_operand.compiler-backend-branch-uses-var?
-                                    reg-value
-                                    load-dst))
-                                (not
-                                  (be_operand.compiler-backend-branch-uses-var?
-                                    reg-value
-                                    load2-dst))
-                                (not
-                                  (be_operand.compiler-backend-branch-uses-var?
-                                    reg-value
-                                    t1-dst)))
-                                (let
-                                  [fused : be_state.ResultCompilerBackend
-                                    (be_simd.compiler-backend-emit-vector-binop-dual-memory-source
-                                      (be_operand.compiler-backend-vector-mode
-                                        (& t2-ty)
-                                        t2-lanes)
-                                      ctx.type-segment-bases
-                                      ctx.assignments
-                                      t2-dst
-                                      op2
-                                      reg-value
-                                      base
-                                      index
-                                      base2
-                                      index2
-                                      t2-lanes
-                                      t2-ty
-                                      (be_state.compiler-backend-instr-diagnostic-ref
-                                        (& ctx.spans)
-                                        ctx.source-function
-                                        (& op2-instr))
-                                      ctx.backend-state)]
-                                  (compiler-backend-emit-fused-result-rest
-                                    ctx
-                                    fallthrough
-                                    fused
-                                    instrs
-                                    (+ cursor 3)
-                                    out))
-                                (compiler-backend-emit-instrs-normal
-                                  ctx
-                                  fallthrough
-                                  instr
-                                  instrs
-                                  cursor
-                                  out))]
-                            [(No)
-                              (compiler-backend-emit-instrs-normal
-                                ctx
-                                fallthrough
-                                instr
-                                instrs
-                                cursor
-                                out)])
-                          (compiler-backend-emit-instrs-normal
-                            ctx
-                            fallthrough
-                            instr
-                            instrs
-                            cursor
-                            out)))]
-                    [_
-                      (compiler-backend-emit-instrs-normal
+                    (+ cursor 2))]
+                (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                  instrs
+                  (+ cursor 2))
+                  [(VectorBinOp
+                      (box (fields [t2-dst dst] op [t2-lanes lanes] ty)))
+                    (let
+                      [fused : be_state.ResultCompilerBackend
+                        (be_simd.compiler-backend-emit-vector-binop-dual-memory-source
+                          (be_operand.compiler-backend-vector-mode
+                            (& ty)
+                            t2-lanes)
+                          ctx.type-segment-bases
+                          ctx.assignments
+                          t2-dst
+                          op
+                          reg-value
+                          base
+                          index
+                          base2
+                          index2
+                          t2-lanes
+                          ty
+                          (be_state.compiler-backend-instr-diagnostic-ref
+                            (& ctx.spans)
+                            ctx.source-function
+                            (& op2-instr))
+                          ctx.backend-state)]
+                      (compiler-backend-emit-fused-result-rest
                         ctx
                         fallthrough
-                        instr
+                        fused
                         instrs
-                        cursor
-                        out)])]
-                [_
-                  (compiler-backend-emit-instrs-normal
-                    ctx
-                    fallthrough
-                    instr
-                    instrs
-                    cursor
-                    out)]))
-            (compiler-backend-emit-instrs-normal
-              ctx
-              fallthrough
-              instr
-              instrs
-              cursor
-              out))]
+                        (+ cursor 3)
+                        out))]
+                  [_
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      instrs
+                      cursor
+                      out)]))]
+            [(No)
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                instrs
+                cursor
+                out)])]
         [(VectorBinOp
             (box
               (fields
@@ -11336,7 +11335,7 @@
                 rhs
                 [bin-lanes lanes]
                 [bin-elem-ty ty])))
-          (if (and
+          (match (if (and
             (not
               (and
                 (match (& op)
@@ -11359,52 +11358,46 @@
               (be_state.compiler-backend-global-shared-view rhs)
               bin-lanes
               (be_state.compiler-backend-global-shared-view bin-elem-ty)))
-            (match (be_simd.compiler-backend-vector-load-binop-fold-value
+            (be_simd.compiler-backend-vector-load-binop-fold-value
               load-dst
               op
               lhs
               rhs)
-              [(Some reg-value)
-                (compiler-backend-emit-fused-result-rest
-                  (be_state.compiler-backend-global-shared-view ctx)
-                  fallthrough
-                  (be_simd.compiler-backend-emit-vector-binop-memory-source
-                    (be_operand.compiler-backend-vector-mode
-                      bin-elem-ty
-                      bin-lanes)
-                    ctx.type-segment-bases
-                    ctx.assignments
-                    bin-dst
-                    op
-                    reg-value
-                    base
-                    index
-                    bin-lanes
+            (be_state.CompilerBackendVectorMemFold.No))
+            [(Some reg-value)
+              (compiler-backend-emit-fused-result-rest
+                (be_state.compiler-backend-global-shared-view ctx)
+                fallthrough
+                (be_simd.compiler-backend-emit-vector-binop-memory-source
+                  (be_operand.compiler-backend-vector-mode
                     bin-elem-ty
-                    (be_state.compiler-backend-instr-diagnostic
-                      ctx.spans
-                      ctx.source-function
-                      next
-                      ctx.func-diag)
-                    ctx.backend-state)
-                  instrs
-                  after-binop
-                  out)]
-              [(No)
-                (compiler-backend-emit-instrs-normal
-                  ctx
-                  fallthrough
-                  instr
-                  instrs
-                  cursor
-                  out)])
-            (compiler-backend-emit-instrs-normal
-              ctx
-              fallthrough
-              instr
-              instrs
-              cursor
-              out))]
+                    bin-lanes)
+                  ctx.type-segment-bases
+                  ctx.assignments
+                  bin-dst
+                  op
+                  reg-value
+                  base
+                  index
+                  bin-lanes
+                  bin-elem-ty
+                  (be_state.compiler-backend-instr-diagnostic
+                    ctx.spans
+                    ctx.source-function
+                    next
+                    ctx.func-diag)
+                  ctx.backend-state)
+                instrs
+                after-binop
+                out)]
+            [(No)
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                instrs
+                cursor
+                out)])]
         [_
           (compiler-backend-emit-instrs-normal
             ctx

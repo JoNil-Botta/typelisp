@@ -8117,10 +8117,18 @@
   [vars : i64]
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
   [use-counts : (& use-counts (__tl_dyn-array i64))]) : unit
-  (be_state.compiler-backend-function-state-set-i64-array!
-    function-state
-    be_state.compiler-backend-function-i64-array-avx2-sign-bit-masks
-    (__tl_make-array i64 0))
+  ;; Drop a previous function's table; an already empty one is kept.
+  (when
+    (>
+      (array-length
+        (be_state.compiler-backend-function-state-i64-array
+          function-state
+          be_state.compiler-backend-function-i64-array-avx2-sign-bit-masks))
+      0)
+    (be_state.compiler-backend-function-state-set-i64-array!
+      function-state
+      be_state.compiler-backend-function-i64-array-avx2-sign-bit-masks
+      (__tl_make-array i64 0)))
   (let
     [use-len : i64 (array-length use-counts)]
     [var-count : i64

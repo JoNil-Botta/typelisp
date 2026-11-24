@@ -86,6 +86,105 @@
   (early-exit-allowed bool)
   (try-fact CompilerSemanticTryFact))
 
+(define (clone-compiler-semantic-try-fact [fact : (& CompilerSemanticTryFact)]) : CompilerSemanticTryFact
+  (match fact
+    [(CompilerSemanticTryFact.NotTry) CompilerSemanticTryFact.NotTry]
+    [(CompilerSemanticTryFact.Compatible) CompilerSemanticTryFact.Compatible]
+    [(CompilerSemanticTryFact.Incompatible text)
+      (CompilerSemanticTryFact.Incompatible (string.copy text))]
+    [(CompilerSemanticTryFact.Missing) CompilerSemanticTryFact.Missing]))
+
+(define (clone-compiler-semantic-fact-identity-kind
+  [kind : (& CompilerSemanticFactIdentityKind)]) : CompilerSemanticFactIdentityKind
+  (match kind
+    [(CompilerSemanticFactIdentityKind.None)
+      CompilerSemanticFactIdentityKind.None]
+    [(CompilerSemanticFactIdentityKind.Value)
+      CompilerSemanticFactIdentityKind.Value]
+    [(CompilerSemanticFactIdentityKind.Function)
+      CompilerSemanticFactIdentityKind.Function]
+    [(CompilerSemanticFactIdentityKind.Variant)
+      CompilerSemanticFactIdentityKind.Variant]
+    [(CompilerSemanticFactIdentityKind.CoreOperation)
+      CompilerSemanticFactIdentityKind.CoreOperation]
+    [(CompilerSemanticFactIdentityKind.Parameter)
+      CompilerSemanticFactIdentityKind.Parameter]
+    [(CompilerSemanticFactIdentityKind.Local)
+      CompilerSemanticFactIdentityKind.Local]
+    [(CompilerSemanticFactIdentityKind.Field)
+      CompilerSemanticFactIdentityKind.Field]
+    [(CompilerSemanticFactIdentityKind.Struct)
+      CompilerSemanticFactIdentityKind.Struct]
+    [(CompilerSemanticFactIdentityKind.Enum)
+      CompilerSemanticFactIdentityKind.Enum]))
+
+(define (clone-compiler-semantic-fact-provenance
+  [provenance : (& CompilerSemanticFactProvenance)]) : CompilerSemanticFactProvenance
+  (match provenance
+    [(CompilerSemanticFactProvenance.Unknown)
+      CompilerSemanticFactProvenance.Unknown]
+    [(CompilerSemanticFactProvenance.Source)
+      CompilerSemanticFactProvenance.Source]
+    [(CompilerSemanticFactProvenance.MacroArgument)
+      CompilerSemanticFactProvenance.MacroArgument]
+    [(CompilerSemanticFactProvenance.Synthetic)
+      CompilerSemanticFactProvenance.Synthetic]
+    [(CompilerSemanticFactProvenance.CheckedGenerated)
+      CompilerSemanticFactProvenance.CheckedGenerated]))
+
+(define (clone-compiler-semantic-fact-reliability
+  [reliability : (& CompilerSemanticFactReliability)]) : CompilerSemanticFactReliability
+  (match reliability
+    [(CompilerSemanticFactReliability.Reliable)
+      CompilerSemanticFactReliability.Reliable]
+    [(CompilerSemanticFactReliability.Unresolved)
+      CompilerSemanticFactReliability.Unresolved]
+    [(CompilerSemanticFactReliability.Poisoned)
+      CompilerSemanticFactReliability.Poisoned]
+    [(CompilerSemanticFactReliability.Dependent)
+      CompilerSemanticFactReliability.Dependent]))
+
+(define (clone-compiler-semantic-fact-identity
+  [identity : (& CompilerSemanticFactIdentity)]) : CompilerSemanticFactIdentity
+  (CompilerSemanticFactIdentity
+    (clone-compiler-semantic-fact-identity-kind (& identity.kind))
+    (string.copy (& identity.module))
+    (string.copy (& identity.name))
+    (string.copy (& identity.path))
+    identity.declaration
+    identity.local
+    identity.scope
+    (ast.clone-ast-source-span (& identity.span))
+    identity.handle
+    identity.function))
+
+(define (clone-compiler-semantic-fact-type [ty : (& CompilerSemanticFactType)]) : CompilerSemanticFactType
+  (CompilerSemanticFactType
+    (string.copy (& ty.text))
+    (clone-compiler-semantic-fact-identity (& ty.nominal))))
+
+(define (clone-compiler-semantic-fact-function
+  [func : (& CompilerSemanticFactFunction)]) : CompilerSemanticFactFunction
+  (CompilerSemanticFactFunction
+    (clone-compiler-semantic-fact-identity (& func.identity))
+    func.body
+    (clone-compiler-semantic-fact-type (& func.return-type))))
+
+(define (clone-compiler-semantic-expression-fact
+  [fact : (& CompilerSemanticExpressionFact)]) : CompilerSemanticExpressionFact
+  (CompilerSemanticExpressionFact
+    fact.expression
+    (clone-compiler-semantic-fact-type (& fact.resolved-type))
+    (clone-compiler-semantic-fact-identity (& fact.resolved-value))
+    fact.function
+    fact.scope
+    (string.copy (& fact.path))
+    (ast.clone-ast-source-span (& fact.span))
+    (clone-compiler-semantic-fact-provenance (& fact.provenance))
+    (clone-compiler-semantic-fact-reliability (& fact.reliability))
+    fact.early-exit-allowed
+    (clone-compiler-semantic-try-fact (& fact.try-fact))))
+
 ;; Only owned text, scalar identities and immutable source spans cross the
 ;; callback boundary. No AstType node ids, TcContext, TcTypeEnv or parser
 ;; sidecars are stored in the consumer-facing value.
@@ -282,7 +381,8 @@
         (compiler-semantic-facts-storage facts))]
     (if (and (>= index 0) (< index storage.expression-count))
       (CompilerSemanticFactLookup.Found
-        (clone (array-ref storage.expressions index)))
+        (clone-compiler-semantic-expression-fact
+          (& (array-ref storage.expressions index))))
       CompilerSemanticFactLookup.Missing)))
 
 (define (compiler-semantic-facts-lookup
@@ -305,7 +405,8 @@
         (compiler-semantic-facts-storage facts))]
     (if (and (>= index 0) (< index storage.function-count))
       (CompilerSemanticFunctionLookup.Found
-        (clone (array-ref storage.functions index)))
+        (clone-compiler-semantic-fact-function
+          (& (array-ref storage.functions index))))
       CompilerSemanticFunctionLookup.Missing)))
 
 (define (compiler-semantic-facts-binding-at
@@ -317,7 +418,8 @@
         (compiler-semantic-facts-storage facts))]
     (if (and (>= index 0) (< index storage.binding-count))
       (CompilerSemanticBindingLookup.Found
-        (clone (array-ref storage.bindings index)))
+        (clone-compiler-semantic-fact-identity
+          (& (array-ref storage.bindings index))))
       CompilerSemanticBindingLookup.Missing)))
 
 (define (compiler-semantic-fact-editable?
@@ -649,7 +751,7 @@
                         [index : i64 (array-length data.declaration-origins)]
                         (__tl_array-push!
                           data.declaration-origins
-                          (clone identity))
+                          (clone-compiler-semantic-fact-identity (& identity)))
                         (fact_index.insert-ref!
                           (&mut data.declaration-origin-index)
                           origin-handle
@@ -947,14 +1049,16 @@
       [(and
           (>= frame.reference-binding 0)
           (< frame.reference-binding data.facts.binding-count))
-        (clone (array-ref data.facts.bindings frame.reference-binding))]
+        (clone-compiler-semantic-fact-identity
+          (& (array-ref data.facts.bindings frame.reference-binding)))]
       [(>= frame.member-handle 0)
         (compiler-semantic-fact-handle-identity
           ctx
           frame.member-handle
           (owned_view.compiler-owned-shared-view data.current-path))]
       [(and (>= slot 0) (>= binding 0) (< binding data.facts.binding-count))
-        (clone (array-ref data.facts.bindings binding))]
+        (clone-compiler-semantic-fact-identity
+          (& (array-ref data.facts.bindings binding)))]
       [(>= slot 0) (compiler-semantic-fact-identity-empty)]
       [(>= key 0)
         (match (csym.compiler-symbols-lookup-value-id
@@ -1122,9 +1226,9 @@
         (set!
           (array-ref data.facts.functions data.facts.function-count)
           (CompilerSemanticFactFunction
-            (clone identity)
+            (clone-compiler-semantic-fact-identity (& identity))
             body
-            (clone return-type)))
+            (clone-compiler-semantic-fact-type (& return-type))))
         (+= data.facts.function-count 1)
         (when
           (>= key 0)
@@ -1156,7 +1260,7 @@
                 data.owner
                 (set!
                   (array-ref data.facts.functions data.current-function).return-type
-                  (clone ret))))]
+                  (clone-compiler-semantic-fact-type (& ret)))))]
           [_ unit])
         (-= data.function-depth 1)
         (set!
@@ -1585,7 +1689,8 @@
         identity.handle
         -1)]
     (if (and (>= index 0) (< index (array-length data.declaration-origins)))
-      (clone (array-ref data.declaration-origins index))
+      (clone-compiler-semantic-fact-identity
+        (& (array-ref data.declaration-origins index)))
       identity)))
 
 (define (compiler-semantic-fact-complete-identities!
@@ -1731,8 +1836,8 @@
         [fact : CompilerSemanticExpressionFact
           (CompilerSemanticExpressionFact
             expression
-            (clone ty)
-            (clone value)
+            (clone-compiler-semantic-fact-type (& ty))
+            (clone-compiler-semantic-fact-identity (& value))
             frame.function
             frame.scope
             (string.copy (& frame.path))
@@ -1740,7 +1845,7 @@
             provenance
             reliability
             (and (>= frame.function 0) (not frame.forbidden))
-            (clone try-fact))]
+            (clone-compiler-semantic-try-fact (& try-fact)))]
         (compiler-semantic-fact-recorder-store!
           recorder
           (owned_view.compiler-owned-shared-view fact))
@@ -1806,7 +1911,7 @@
       (in-arena
         request.facts-arena
         (compiler-semantic-fact-recorder-new
-          (clone entry-path)
+          (string.copy (& entry-path))
           request.checked-generated-source))]
     [observer : tc.TcSemanticObserver
       (in-arena

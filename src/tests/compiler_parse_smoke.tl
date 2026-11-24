@@ -1128,7 +1128,8 @@
   [edit : diagnostic.CompilerDiagnosticTextEdit]) : diagnostic.CompilerDiagnosticMaybeString
   (let
     [span : diagnostic.CompilerDiagnosticSpan
-      (diagnostic.compiler-diagnostic-text-edit-span (clone edit))]
+      (diagnostic.compiler-diagnostic-text-edit-span
+        (diagnostic.clone-compiler-diagnostic-text-edit (& edit)))]
     [start : i64
       (compiler-diagnostic-test-source-position-index
         (string.copy source)
@@ -1176,7 +1177,9 @@
             (diagnostic.CompilerDiagnosticSpan "other.tl" 2 3 2 5)
             "λ")))]
     [diag : diagnostic.CompilerDiagnostic
-      (diagnostic.compiler-diagnostic-with-fix (clone plain) (& fix))]
+      (diagnostic.compiler-diagnostic-with-fix
+        (diagnostic.compiler-diagnostic-copy-ref (& plain))
+        (& fix))]
     [copied : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-copy diag)]
     [moved : diagnostic.CompilerDiagnostic
@@ -1215,9 +1218,11 @@
                 edits.slots
                 1)]
             [first-span : diagnostic.CompilerDiagnosticSpan
-              (diagnostic.compiler-diagnostic-text-edit-span (clone first))]
+              (diagnostic.compiler-diagnostic-text-edit-span
+                (diagnostic.clone-compiler-diagnostic-text-edit (& first)))]
             [second-span : diagnostic.CompilerDiagnosticSpan
-              (diagnostic.compiler-diagnostic-text-edit-span (clone second))]
+              (diagnostic.compiler-diagnostic-text-edit-span
+                (diagnostic.clone-compiler-diagnostic-text-edit (& second)))]
             (and
               (string.eq
                 (diagnostic.compiler-diagnostic-span-path first-span)
@@ -1240,7 +1245,7 @@
       (diagnostic.compiler-diagnostic-simple "invalid.tl" 1 1 "invalid")]
     [unknown : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-with-fix
-        (clone base)
+        (diagnostic.compiler-diagnostic-copy-ref (& base))
         (&
           (diagnostic.compiler-diagnostic-fix-new
             "Unknown span"

@@ -101,7 +101,9 @@
     [located : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-simple "leaf.tl" 7 22 "source")]
     [fallback : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-fallback-path (clone unlocated) "root.tl")]
+      (cdiag.compiler-diagnostic-with-fallback-path
+        (cdiag.compiler-diagnostic-copy-ref (& unlocated))
+        "root.tl")]
     [preserved : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-fallback-path located "root.tl")]
     [empty-fallback : cdiag.CompilerDiagnostic
@@ -244,7 +246,9 @@
         (cdiag.compiler-diagnostic-simple "note.tl" 2 3 "has note")
         "generated identity: generated:demo")]
     [source-out : String
-      (cdiag.compiler-diagnostic-render-source (clone diag) "a\nb\n")]
+      (cdiag.compiler-diagnostic-render-source
+        (cdiag.compiler-diagnostic-copy-ref (& diag))
+        "a\nb\n")]
     (and
       (string.eq
         (cdiag.compiler-diagnostic-render diag)
@@ -419,7 +423,7 @@
     [uncoded : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-simple "none.tl" 1 1 "none")]
     [coded : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-code (& (clone uncoded)) "E1234")]
+      (cdiag.compiler-diagnostic-with-code (& uncoded) "E1234")]
     (and
       (string.eq (cdiag.compiler-diagnostic-code-or-empty uncoded) "")
       (string.eq (cdiag.compiler-diagnostic-code-or-empty coded) "E1234"))))
@@ -429,17 +433,21 @@
     [base : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-simple "dense.tl" 1 1 "base")]
     [note-one : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-note (clone base) "one")]
+      (cdiag.compiler-diagnostic-with-note
+        (cdiag.compiler-diagnostic-copy-ref (& base))
+        "one")]
     [note-two : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-note (clone note-one) "two")]
+      (cdiag.compiler-diagnostic-with-note
+        (cdiag.compiler-diagnostic-copy-ref (& note-one))
+        "two")]
     [label-one : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-secondary
-        (& (clone base))
+        (& base)
         (cdiag.CompilerDiagnosticSpan "one.tl" 1 1 1 2)
         CompilerDiagnosticNoString)]
     [label-two : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-secondary
-        (& (clone label-one))
+        (& label-one)
         (cdiag.CompilerDiagnosticSpan "two.tl" 2 1 2 2)
         CompilerDiagnosticNoString)]
     [base-notes : cdiag.CompilerDiagnosticNoteList

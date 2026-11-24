@@ -167,6 +167,40 @@
 (define (surface-typecheck-facts-current) : SurfaceTypecheckFacts
   (surface-typecheck-facts-installed-shared-view))
 
+(define (surface-clone-i64-array [src : (& (__tl_dyn-array i64))]) : (__tl_dyn-array
+    i64)
+  (let
+    [count : i64 (array-length src)]
+    [dst : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref dst index) (array-ref src index)))
+    dst))
+
+(define (clone-surface-typecheck-facts [facts : (& SurfaceTypecheckFacts)]) : SurfaceTypecheckFacts
+  (SurfaceTypecheckFacts
+    facts.macro-prefix-decl-count
+    facts.prefix-decl-count
+    facts.summary-values
+    facts.summary-functions
+    facts.summary-externs
+    (surface-clone-i64-array (& facts.clone-decl-keys))
+    (surface-clone-i64-array (& facts.clone-root-keys))
+    (surface-clone-i64-array (& facts.clone-call-indices))))
+
+(define (clone-surface-typecheck-facts-builder
+  [builder : (& SurfaceTypecheckFactsBuilder)]) : SurfaceTypecheckFactsBuilder
+  (SurfaceTypecheckFactsBuilder
+    builder.fragment-count
+    builder.macro-prefix-decl-count
+    builder.prefix-decl-count
+    builder.summary-values
+    builder.summary-functions
+    builder.summary-externs
+    (surface-clone-i64-array (& builder.clone-decl-keys))
+    (surface-clone-i64-array (& builder.clone-root-keys))
+    (surface-clone-i64-array (& builder.clone-call-indices))
+    builder.next-clone-call-index))
+
 ;; Transfer the installed publication into the caller's current arena before
 ;; its source frontend is retired. Keep both activation and composite status;
 ;; prefix rebasing still belongs to macro expansion/typechecking. The caller
@@ -175,7 +209,8 @@
   (if surface-typecheck-facts-installed
     (set!
       (array-ref surface-typecheck-facts-installed-value 0)
-      (clone (surface-typecheck-facts-installed-shared-view)))
+      (clone-surface-typecheck-facts
+        (& (array-ref surface-typecheck-facts-installed-value 0))))
     unit))
 
 (define (surface-typecheck-facts-composite-active?) : bool

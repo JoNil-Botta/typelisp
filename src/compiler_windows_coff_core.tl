@@ -4,6 +4,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (cfg test (import stdlib.io))
+(import stdlib.iterator)
 (import stdlib.text_buf)
 (import stdlib.string)
 (import stdlib.vector)
@@ -464,6 +465,61 @@
         typecheck-state
         lower-state)]))
 
+(define (compiler-windows-coff-clone-source-spans
+  [spans : (& spans compiler_ir_types.CompilerSourceSpans)]) : compiler_ir_types.CompilerSourceSpans
+  (match spans
+    [(Spans entries instructions count facts)
+      (let
+        [entry-slots : (__tl_dyn-array
+          compiler_ir_types.CompilerSourceSpansEntry)
+          (__tl_make-array
+            compiler_ir_types.CompilerSourceSpansEntry
+            entries.len)]
+        [instr-slots : (__tl_dyn-array
+          compiler_ir_types.CompilerSourceSpansInstrEntry)
+          (__tl_make-array
+            compiler_ir_types.CompilerSourceSpansInstrEntry
+            instructions.len)]
+        (for [index (iterator.range 0 entries.len)]
+          (let
+            [item : (& spans compiler_ir_types.CompilerSourceSpansEntry)
+              (& (array-ref entries.slots index))]
+            (set!
+              (array-ref entry-slots index)
+              (compiler_ir_types.CompilerSourceSpansEntry
+                (compiler_ir_types.CompilerIrSymbolId item.name.value)
+                item.path-id
+                (compiler_ast_types.AstSourceSpan
+                  item.span.start-line
+                  item.span.start-col
+                  item.span.end-line
+                  item.span.end-col)))))
+        (for [index (iterator.range 0 instructions.len)]
+          (let
+            [item : (& spans compiler_ir_types.CompilerSourceSpansInstrEntry)
+              (& (array-ref instructions.slots index))]
+            (set!
+              (array-ref instr-slots index)
+              (compiler_ir_types.CompilerSourceSpansInstrEntry
+                (compiler_ir_types.CompilerIrSymbolId item.function.value)
+                item.id
+                item.path-id
+                (compiler_ast_types.AstSourceSpan
+                  item.span.start-line
+                  item.span.start-col
+                  item.span.end-line
+                  item.span.end-col)
+                item.kind))))
+        (compiler_ir_types.CompilerSourceSpans.Spans
+          (compiler_ir_types.CompilerSourceSpansEntryList
+            entry-slots
+            entries.len)
+          (compiler_ir_types.CompilerSourceSpansInstrEntryList
+            instr-slots
+            instructions.len)
+          count
+          (compiler_ir_types.compiler-spmd-decisions-escape facts)))]))
+
 (define (compiler-windows-batch-emit-lowered-result
   [input-path : String]
   [lowered : compiler_driver_core.ResultCompilerDriverLowered]
@@ -492,7 +548,7 @@
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
             opt-level)
-            (clone spans)
+            (compiler-windows-coff-clone-source-spans (& spans))
             spans)]
         [out : ResultCompilerWindowsBatchArtifact
           (begin

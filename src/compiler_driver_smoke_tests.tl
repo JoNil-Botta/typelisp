@@ -1146,7 +1146,7 @@
                         externs
                         authority)])]
                 [spans-b : compiler_ir_types.CompilerSourceSpans
-                  (clone spans-a)]
+                  (driver.clone-compiler-source-spans (& spans-a))]
                 (driver.compiler-driver-state-adopt-pools! state-b pools-b)
                 (compiler-driver-reader-context-smoke-lowered-ok?
                   lowered-a
@@ -2432,25 +2432,37 @@
           "compiler_driver_diagnostic_source_b.tl"
           "(define c 3)")]
       [a-second : cdiag.CompilerDiagnostic
-        (cdiag.compiler-diagnostic-simple (clone path-a) 2 9 "second line of a")]
+        (cdiag.compiler-diagnostic-simple
+          (string.copy (& path-a))
+          2
+          9
+          "second line of a")]
       [b-first : cdiag.CompilerDiagnostic
-        (cdiag.compiler-diagnostic-simple (clone path-b) 1 9 "first line of b")]
+        (cdiag.compiler-diagnostic-simple
+          (string.copy (& path-b))
+          1
+          9
+          "first line of b")]
       [a-first : cdiag.CompilerDiagnostic
-        (cdiag.compiler-diagnostic-simple (clone path-a) 1 9 "first line of a")]
+        (cdiag.compiler-diagnostic-simple
+          (string.copy (& path-a))
+          1
+          9
+          "first line of a")]
       [sources : driver.CompilerDriverDiagnosticSources
         (driver.compiler-driver-diagnostic-sources-new)]
       [out-a-second : String
         (driver.compiler-driver-render-source-diagnostic-from
           (&mut sources)
-          (clone a-second))]
+          (cdiag.compiler-diagnostic-copy-ref (& a-second)))]
       [out-b-first : String
         (driver.compiler-driver-render-source-diagnostic-from
           (&mut sources)
-          (clone b-first))]
+          (cdiag.compiler-diagnostic-copy-ref (& b-first)))]
       [out-a-first : String
         (driver.compiler-driver-render-source-diagnostic-from
           (&mut sources)
-          (clone a-first))]
+          (cdiag.compiler-diagnostic-copy-ref (& a-first)))]
       (test.assert-owned-string-eq
         out-a-second
         (driver.compiler-driver-render-source-diagnostic a-second)

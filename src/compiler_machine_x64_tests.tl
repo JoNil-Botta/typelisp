@@ -39,11 +39,11 @@
 
 (define (mx-golden! [instr : mx.MachineInstr] [text : String] [hex : String]) : unit
   (test.assert-owned-string-eq
-    (mx.compiler-machine-x64-asm-line (clone instr))
+    (mx.compiler-machine-x64-asm-line instr)
     (str_cat.str-cat "    " (string.copy text) "\n")
     (str_cat.str-cat "machine x64 text: " (string.copy text)))
   (test.assert-owned-string-eq
-    (mx-hex (clone instr))
+    (mx-hex instr)
     (string.copy hex)
     (str_cat.str-cat "machine x64 bytes: " (string.copy text)))
   (test.assert-i64-eq
@@ -145,11 +145,11 @@
         [wide : mx.MachineInstr (mx.MachineInstr.MovRR (W64) dst src)]
         [narrow : mx.MachineInstr (mx.MachineInstr.MovRR (W32) dst src)]
         (test.assert-i64-eq
-          (mx.compiler-machine-x64-size (clone wide))
+          (mx.compiler-machine-x64-size wide)
           (/ (+ (string.string-length (mx-hex wide)) 1) 3)
           "machine x64 movq size")
         (test.assert-i64-eq
-          (mx.compiler-machine-x64-size (clone narrow))
+          (mx.compiler-machine-x64-size narrow)
           (/ (+ (string.string-length (mx-hex narrow)) 1) 3)
           "machine x64 movl size")))))
 

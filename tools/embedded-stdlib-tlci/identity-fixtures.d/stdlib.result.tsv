@@ -1,0 +1,2 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.result/result	2	fixed	module	tests/integration/generated_option_result_families.tl	ok	default	assembly

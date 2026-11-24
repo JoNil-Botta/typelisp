@@ -1,0 +1,6 @@
+# Codegen target-dispatch boundary inventory (#5347); see scripts/check-codegen-target-dispatch.sh.
+# file	scope	boundary	category	token-regex	count	rationale
+src/compiler_backend_object.tl	compiler-backend-emit-program-object-image-linux	policy	entry	CompilerBackendTarget[.]Linux	1	Named Linux object-image entry point for tools and tests.
+src/compiler_backend_object.tl	compiler-backend-unsupported-object-abi-category	policy	object-format	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|linux-x86_64|windows-x86_64	8	Fixed fallback category names per target and ABI context, literals because callers keep them past their scratch.
+src/compiler_backend_object.tl	compiler-backend-object-image-for-target	adapter	object-format	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|target-linux|target-windows	4	Selects the ELF or COFF object-image leaf.
+src/compiler_backend_object.tl	compiler-backend-object-instr	adapter	abi	CompilerBackendTarget[.]Linux	1	The object encoder encodes a raw syscall only under the Linux kernel ABI.

@@ -881,9 +881,11 @@ A `(type T)` operand may name the type itself. Compile-time code there may ask
 for its `type-kind`, `type-nominal-name`, `type-nominal-module` and `type-key`,
 but `size-of`, `align-of`, `offset-of`, `type-declared-align` and the
 `struct-field-*` and `enum-variant-*` queries fail with E0221 on the type, and
-on a tuple or array holding it by value, whether the operand is written or
-derived from an allowed type, such as the `reference-element-type` of
-`(& a T)`. `type-info` reports the type as `Opaque`.
+on a tuple or array holding it by value, whether the operand is written,
+named through an import alias or derived from an allowed type, such as the
+`reference-element-type` of `(& a T)`. A macro body runs as code of the module
+it expands into, under the same rule. `type-info` reports the type as
+`Opaque`.
 
 ```lisp test=ignore name=opaque-aggregate reason="cross-module example"
 (module db)
@@ -910,9 +912,11 @@ A struct or enum is a **sealed handle type** when one of its fields or variant
 payloads names an `unsafe` cleanup hook (§4.3.1), holds a `Ptr` or `MutPtr` to
 an `(:opaque)` aggregate, or embeds a sealed handle type other than through an
 `(:owned)` field. Such a value owns a resource that safe code must not mint:
-outside the type's module family (§3.5.4), a constructor call or nullary
-variant of it, and a `set!`, `&mut` borrow or `replace` of one of its fields,
-require an `unsafe` context (E0209). Holding, passing, returning and moving a
+outside the type's module family (§3.5.4), a constructor call, a constructor
+or nullary variant named as a value, `make-array` storage holding it by value,
+and a `set!`, `&mut` borrow or `replace!` of one of its fields or of storage
+nested in one, such as a field of a struct it holds or an array or tuple
+element, require an `unsafe` context (E0209). Holding, passing, returning and moving a
 value, reading its fields, and its implicit cleanup stay safe. There is no
 marker: the rule follows from the declarations, so a module seals a handle by
 marking its storage `(:opaque)` or its cleanup hook `unsafe`.
@@ -4602,12 +4606,14 @@ type:
 
 - `(:cleanup field-cleanup-fn)` marks a direct resource field and names the
   cleanup function for that field. The function must have type `(-> F unit)`,
-  where `F` is the field type. It may be an unsafe declaration (§4.3.1), such
-  as a hook that releases a raw pointer or handle: the compiler still calls it
-  implicitly where the owner's scope ends, in safe code too, and the owning
-  type is then a sealed handle type (§3.5.5), so outside its module family only
-  unsafe code can build a value whose cleanup runs the hook. The same applies
-  to an enum payload's `(:cleanup ...)` metadata.
+  where `F` is the field type. It may be an unsafe declaration (§4.3.1) of the
+  owning type's own module family (§3.5.4), such as a hook that releases a raw
+  pointer or handle: the compiler still calls it implicitly where the owner's
+  scope ends, in safe code too, and the owning type is then a sealed handle
+  type (§3.5.5), so outside its module family only unsafe code can build a
+  value whose cleanup runs the hook. A hook naming another family's unsafe
+  declaration is rejected with E0209, since any module could then run it from
+  safe code. The same applies to an enum payload's `(:cleanup ...)` metadata.
 - `(:owned)` marks a field whose type is itself cleanup-owning. The field uses
   that type's declared cleanup function.
 

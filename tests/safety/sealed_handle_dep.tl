@@ -41,3 +41,22 @@
 
 (define (make-hooked [fd : i64]) : Hooked
   (Hooked fd))
+
+;; Sealed: unsealed parts nested in a sealed handle are its storage too.
+(defstruct Meta
+  (gen i64))
+
+(defstruct Nested
+  (storage (MutPtr Storage))
+  (meta Meta)
+  (buf (Array i64 4))
+  (pair (Tuple i64 i64)))
+
+(define (null-nested) : Nested
+  (Nested (ptr-null : (MutPtr Storage)) (Meta 0) (make-array i64 4) (tuple 0 0)))
+
+;; Sealed: a payload names an unsafe cleanup hook.
+(defenum Res
+  (:cleanup close-res)
+  (Open i64 (:cleanup raw-close))
+  (Closed))

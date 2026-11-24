@@ -26,3 +26,18 @@ opaque_reflect_written_size_reject|check-fail|tests/safety/opaque_reflect_writte
 opaque_reflect_offset_reject|check-fail|tests/safety/opaque_reflect_offset_reject.tl|-|offset-of cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
 opaque_reflect_name_ok|run-exit|tests/safety/opaque_reflect_name_ok.tl|42|-
 opaque_reflect_family_ok|run-exit|tests/safety/opaque_reflect_family_ok.tl|42|-
+cleanup_hook_unsafe_foreign_sealed_reject|check-fail|tests/safety/cleanup_hook_unsafe_foreign_sealed_reject.tl|-|struct Trigger field h cleanup function secret/storage-close is an unsafe declaration outside the module family of its owner
+sealed_handle_flat_import_value_reject|check-fail|tests/safety/sealed_handle_flat_import_value_reject.tl|-|construction of sealed handle type stdlib.crypto_secret/SecretHandle outside its module family requires unsafe context
+sealed_handle_nullary_variant_reject|check-fail|tests/safety/sealed_handle_nullary_variant_reject.tl|-|construction of sealed handle type sealed_handle_dep/Res outside its module family requires unsafe context
+sealed_handle_alias_variant_reject|check-fail|tests/safety/sealed_handle_alias_variant_reject.tl|-|construction of sealed handle type sealed_handle_dep/Res outside its module family requires unsafe context
+sealed_handle_make_array_reject|check-fail|tests/safety/sealed_handle_make_array_reject.tl|-|construction of sealed handle type sealed_handle_dep/Handle outside its module family requires unsafe context
+stdlib_secret_make_array_reject|check-fail|tests/safety/stdlib_secret_make_array_reject.tl|-|construction of sealed handle type stdlib.crypto_secret/SecretHandle outside its module family requires unsafe context
+sealed_handle_nested_struct_set_reject|check-fail|tests/safety/sealed_handle_nested_struct_set_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Nested outside its module family requires unsafe context
+sealed_handle_nested_array_set_reject|check-fail|tests/safety/sealed_handle_nested_array_set_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Nested outside its module family requires unsafe context
+sealed_handle_nested_tuple_set_reject|check-fail|tests/safety/sealed_handle_nested_tuple_set_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Nested outside its module family requires unsafe context
+sealed_handle_nested_array_replace_reject|check-fail|tests/safety/sealed_handle_nested_array_replace_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Nested outside its module family requires unsafe context
+opaque_reflect_macro_size_reject|check-fail|tests/safety/opaque_reflect_macro_size_reject.tl|-|size-of cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+opaque_reflect_macro_derived_reject|check-fail|tests/safety/opaque_reflect_macro_derived_reject.tl|-|struct-field-count cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+opaque_reflect_alias_reject|check-fail|tests/safety/opaque_reflect_alias_reject.tl|-|size-of cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+stdlib_vector_into_iter_forge_reject|check-fail|tests/safety/stdlib_vector_into_iter_forge_reject.tl|-|construction of sealed handle type stdlib.vector.generated.struct_Token/IntoIter outside its module family requires unsafe context
+stdlib_vector_into_iter_state_null_reject|check-fail|tests/safety/stdlib_vector_into_iter_state_null_reject.tl|-|tokens/into-iter-state-null? requires unsafe context

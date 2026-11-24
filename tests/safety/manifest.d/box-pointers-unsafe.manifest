@@ -59,7 +59,7 @@ raw_pointer_field_replace_reject|check-fail|tests/safety/raw_pointer_field_repla
 raw_pointer_field_borrow_reject|check-fail|tests/safety/raw_pointer_field_borrow_reject.tl|-|typecheck: deref borrow requires Box or reference place
 cleanup_hook_unsafe_field_ok|check-ok|tests/safety/cleanup_hook_unsafe_field_ok.tl|-|-
 cleanup_hook_unsafe_payload_ok|check-ok|tests/safety/cleanup_hook_unsafe_payload_ok.tl|-|-
-cleanup_hook_unsafe_imported_ok|check-ok|tests/safety/cleanup_hook_unsafe_imported_ok.tl|-|-
+cleanup_hook_unsafe_imported_reject|check-fail|tests/safety/cleanup_hook_unsafe_imported_reject.tl|-|struct Handle field fd cleanup function dep/raw-close is an unsafe declaration outside the module family of its owner
 cleanup_hook_imported_safe_ok|check-ok|tests/safety/cleanup_hook_imported_safe_ok.tl|-|-
 cleanup_hook_safe_validating_ok|run-exit|tests/safety/cleanup_hook_safe_validating_ok.tl|42|-
 extern_data_address_safe_reject|check-fail|tests/safety/extern_data_address_safe_reject.tl|-|ptr-addr-of requires unsafe context

@@ -82,6 +82,9 @@ function instrument_call(line,n,kind,required,high,  top,d,badphase,after,origin
         if (v>reserve[current]) reserve[current]=v
         if (s ~ /^addq/) { last_add[current]=v; final_pops[current]=0 }
     }
+    # A lowered `__chkstk` frame reserves the size loaded into %eax.
+    if (s ~ /^movl [$][0-9]+, %eax$/) probe_size[current]=immediate(s)
+    if (s ~ /^callq? __chkstk$/ && probe_size[current]>reserve[current]) reserve[current]=probe_size[current]
     if (s ~ /^popq / && last_add[current]) final_pops[current]++
     if (s ~ /, -[0-9]+\(%rsp\)$/) {
         t=s; sub(/^.*, -/, "", t); sub(/\(.*/, "", t)

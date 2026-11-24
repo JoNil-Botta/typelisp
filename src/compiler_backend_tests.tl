@@ -16399,6 +16399,46 @@ f:
     (backend.compiler-backend-state-release-final-arenas! state)))
 
 (test
+  win64-unwind-lowering-associates-comdat-pdata
+  (let
+    [state
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [stream (be_state.compiler-backend-state-stream-state state)]
+    [body : String
+      "    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    call g\n    addq $40, %rsp\n    ret\n    .seh_endproc\n"]
+    [text : String
+      (str_cat.str-cat
+        ".section .text,\"xr\",one_only,a\n.globl a\n.seh_proc a\na:\n"
+        body
+        ".section .text,\"xr\",one_only,b\n.globl b\n.seh_proc b\nb:\n"
+        body
+        "    .text\n.seh_proc c\nc:\n"
+        body)]
+    [lowered : String
+      (be_peephole.compiler-backend-win64-lower-unwind
+        stream
+        text
+        (arena.current))]
+    [plain-body : String
+      "    subq $40, %rsp\n    call g\n    addq $40, %rsp\n    ret\n"]
+    (test.assert-owned-string-eq
+      lowered
+      (str_cat.str-cat
+        ".section .text,\"xr\",one_only,a\n.globl a\na:\n"
+        plain-body
+        ".L_tl_seh_end_0:\n    .pushsection .xdata,\"dr\"\n    .p2align 2\n.L_tl_xdata_0:\n    .byte 1, 4, 1, 0\n    .byte 4, 66    # UWOP_ALLOC_SMALL 40\n    .byte 0, 0\n    .popsection\n"
+        "    .pushsection .pdata,\"dr\",associative,a\n    .rva a, .L_tl_seh_end_0, .L_tl_xdata_0\n    .popsection\n"
+        ".section .text,\"xr\",one_only,b\n.globl b\nb:\n"
+        plain-body
+        ".L_tl_seh_end_1:\n    .pushsection .pdata,\"dr\",associative,b\n    .rva b, .L_tl_seh_end_1, .L_tl_xdata_0\n    .popsection\n"
+        "    .text\nc:\n"
+        plain-body
+        ".L_tl_seh_end_2:\n    .pushsection .pdata,\"dr\"\n    .rva c, .L_tl_seh_end_2, .L_tl_xdata_0\n    .popsection\n")
+      "COMDAT functions get associative .pdata rows; plain .text keeps a plain row")
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
   win64-object-unwind-shares-identical-records
   (let
     [bytes : String

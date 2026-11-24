@@ -10200,10 +10200,14 @@
           (tuple id true))])))
 
 ;; The text that replaces a lowered function's `.seh_endproc` line: its end
-;; label, the record on first use, and its `.pdata` row.
+;; label, the record on first use, and its `.pdata` row. A function in a
+;; `one_only` COMDAT (`comdat` non-empty) gets its row in a `.pdata` section
+;; associative to that COMDAT, so the linker drops or folds the row with the
+;; function; the shared `.xdata` record stays plain for every survivor.
 (define (compiler-backend-win64-unwind-close-text
   [stream : be_state.CompilerBackendStreamState]
   [symbol : String]
+  [comdat : (& str)]
   [pro : (& pro CompilerBackendWin64Prologue)]
   [home : arena.Arena]) : String
   (let
@@ -10237,7 +10241,11 @@
           (string.copy (& pro.record))
           "    .popsection\n")
         "")
-      "    .pushsection .pdata,\"dr\"\n    .rva "
+      "    .pushsection .pdata,\"dr\""
+      (if (= (string.string-length comdat) 0)
+        ""
+        (str_cat.str-cat ",associative," comdat))
+      "\n    .rva "
       symbol
       ", "
       end
@@ -10259,12 +10267,37 @@
     [n : i64 (string.string-length (& text))]
     [edits : win64_unwind_edits.Vec (win64_unwind_edits.new)]
     [delta : i64 0]
+    ;; The `one_only` COMDAT symbol of the active `.text` section, or "".
+    [comdat : String ""]
     [i : i64 0]
     (while (< i n)
       (let
         [e : i64 (compiler-backend-win64-line-end data i n)]
         [first : i64 (compiler-backend-cold-line-first data i e)]
         [next : i64 (+ e 1)]
+        (when
+          (and
+            (< first e)
+            (= (be_state.compiler-backend-peephole-byte-at data first) 46)
+            (or
+              (compiler-backend-cold-prefix? data first e ".section")
+              (compiler-backend-cold-prefix? data first e ".text")
+              (compiler-backend-cold-prefix? data first e ".data")
+              (compiler-backend-cold-prefix? data first e ".bss")))
+          (set!
+            comdat
+            (if (compiler-backend-cold-prefix?
+              data
+              first
+              e
+              ".section .text,\"xr\",one_only,")
+              (string.substring
+                (& text)
+                (+ first 29)
+                (-
+                  (compiler-backend-cold-line-last data (+ first 29) e)
+                  (+ first 29)))
+              "")))
         (when
           (and
             (< first e)
@@ -10294,6 +10327,7 @@
                         (compiler-backend-win64-unwind-close-text
                           stream
                           symbol
+                          (& comdat)
                           (& pro)
                           home))]
                     [j : i64 i]

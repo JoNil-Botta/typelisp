@@ -9794,6 +9794,654 @@
       rendered)))
 
 ;; ---------------------------------------------------------------------------
+;; Win64 unwind lowering: shared `.xdata` records and leaf omission.
+;;
+;; A `.seh_proc` function gets one UNWIND_INFO record from the assembler, and
+;; most functions spell one of a few hundred prologues. On the group's final
+;; text -- after the stack rebase, the save splice and COLD-1 have placed every
+;; prologue byte and every out-of-line stub -- a prologue made only of pushes,
+;; a stack allocation and the `__chkstk` probe is encoded here, byte for byte
+;; as the assembler encodes its `.seh_*` directives, and interned per emission:
+;; the function keeps its `.pdata` row (`.rva start, end, record`) and names
+;; the emission's single copy of its record. A function whose record would hold
+;; no codes and whose body neither calls nor moves %rsp is a Win64 leaf: the
+;; unwinder treats a function without a `.pdata` row exactly so, and the row is
+;; dropped. Any other prologue (frame register, register or XMM saves, unknown
+;; bytes) keeps its directives for the assembler.
+;; The UNWIND_INFO bytes of one encodable prologue: `info` is their `.byte`
+;; operand text (the intern key), `record` the same bytes as `.byte` lines, one
+;; per unwind code and named in its comment. `body` is the first byte after
+;; `.seh_endprologue`, or -1 when the prologue is not encodable; `empty` marks
+;; a record with no prologue bytes and no codes.
+(defstruct CompilerBackendWin64Prologue
+  (body i64)
+  (info String)
+  (record String)
+  (empty bool))
+
+;; The `.seh_endproc` line that closes a function body (-1 when the body holds
+;; another `.seh_` directive or never closes), and whether the body calls or
+;; moves %rsp.
+(defstruct CompilerBackendWin64UnwindBody
+  (close i64)
+  (close-end i64)
+  (stack? bool))
+
+;; One span of the group text the lowering replaces.
+(defstruct CompilerBackendWin64UnwindEdit
+  (start i64)
+  (end i64)
+  (text String))
+
+(import (vector.vector CompilerBackendWin64UnwindEdit core) as win64_unwind_edits)
+
+(define (compiler-backend-win64-line-end
+  [data : (Ptr u8)]
+  [start : i64]
+  [n : i64]) : i64
+  (let
+    [i : i64 start]
+    (while (and
+      (< i n)
+      (not (= (be_state.compiler-backend-peephole-byte-at data i) 10)))
+      (+= i 1))
+    i))
+
+;; Hardware number of the 64-bit GP register spelled in [s,e), or -1.
+(define (compiler-backend-win64-unwind-reg
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : i64
+  (let
+    [names : (Array String 16)
+      (array
+        "%rax"
+        "%rcx"
+        "%rdx"
+        "%rbx"
+        "%rsp"
+        "%rbp"
+        "%rsi"
+        "%rdi"
+        "%r8"
+        "%r9"
+        "%r10"
+        "%r11"
+        "%r12"
+        "%r13"
+        "%r14"
+        "%r15")]
+    [found : i64 -1]
+    (for [r (iterator.range 0 16)]
+      (when
+        (and
+          (< found 0)
+          (be_operand.compiler-backend-peephole-range-eq?
+            data
+            s
+            e
+            (& (array-ref names r))))
+        (set! found r)))
+    found))
+
+;; The unsigned decimal in [s,e), or -1 when it is empty, not all digits, or
+;; does not fit a 32-bit immediate.
+(define (compiler-backend-win64-unwind-int
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : i64
+  (let
+    [v : i64
+      (if (< s e)
+        0
+        -1)]
+    (for [j (iterator.range s e)]
+      (let
+        [b : i64 (be_state.compiler-backend-peephole-byte-at data j)]
+        (if (and (>= v 0) (>= b 48) (<= b 57) (< v 214748364))
+          (set! v (+ (* v 10) (- b 48)))
+          (set! v -1))))
+    v))
+
+;; The immediate of `PREFIX$N, SUFFIX` spelled in [first,last), or -1.
+(define (compiler-backend-win64-unwind-imm
+  [data : (Ptr u8)]
+  [first : i64]
+  [last : i64]
+  [prefix : String]
+  [suffix : String]) : i64
+  (let
+    [p : i64 (string.string-length (& prefix))]
+    [q : i64 (string.string-length (& suffix))]
+    (if (and
+      (<= (+ first p q) last)
+      (compiler-backend-cold-prefix? data first last prefix)
+      (be_operand.compiler-backend-peephole-range-eq?
+        data
+        (- last q)
+        last
+        (& suffix)))
+      (compiler-backend-win64-unwind-int data (+ first p) (- last q))
+      -1)))
+
+;; Encoded size of the prologue instruction in [first,last), or -1 for any
+;; instruction the lowering does not encode.
+(define (compiler-backend-win64-unwind-instr-size
+  [data : (Ptr u8)]
+  [first : i64]
+  [last : i64]) : i64
+  (cond
+    [(compiler-backend-cold-prefix? data first last "pushq ")
+      (let
+        [reg : i64 (compiler-backend-win64-unwind-reg data (+ first 6) last)]
+        (cond [(< reg 0) -1] [(>= reg 8) 2] [else 1]))]
+    [(be_operand.compiler-backend-peephole-range-eq?
+        data
+        first
+        last
+        "subq %rax, %rsp")
+      3]
+    [(or
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          first
+          last
+          "callq __chkstk")
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          first
+          last
+          "call __chkstk"))
+      5]
+    [(>=
+        (compiler-backend-win64-unwind-imm data first last "movl $" ", %eax")
+        0)
+      5]
+    [else
+      (let
+        [amount : i64
+          (compiler-backend-win64-unwind-imm data first last "subq $" ", %rsp")]
+        (cond [(< amount 0) -1] [(< amount 128) 4] [else 7]))]))
+
+(define (compiler-backend-win64-unwind-slot-text [slot : i64]) : String
+  (str_cat.str-cat
+    ", "
+    (string.int->string (bit-and slot 255))
+    ", "
+    (string.int->string (shr slot 8))))
+
+;; Record one unwind code of 1-3 slots and the comment that names it.
+(define (compiler-backend-win64-unwind-code!
+  [slots : (&mut slots (__tl_dyn-array i64))]
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [names : (&mut names (__tl_dyn-array String))]
+  [first : i64]
+  [second : i64]
+  [third : i64]
+  [name : String]) : unit
+  (__tl_array-push! starts (array-length slots))
+  (__tl_array-push! names name)
+  (__tl_array-push! slots first)
+  (when (>= second 0) (__tl_array-push! slots second))
+  (when (>= third 0) (__tl_array-push! slots third)))
+
+;; Parse the prologue of the `.seh_proc` line [proc-first,proc-end): the
+;; function label must follow it, then only encodable instructions,
+;; `.seh_pushreg` and `.seh_stackalloc` up to `.seh_endprologue`. Codes are
+;; recorded as 16-bit slots in prologue order, each at the offset just past
+;; the instruction it describes; UNWIND_INFO lists them newest first.
+(define (compiler-backend-win64-unwind-prologue
+  [data : (Ptr u8)]
+  [text : (& text str)]
+  [proc-first : i64]
+  [proc-end : i64]
+  [n : i64]) : CompilerBackendWin64Prologue
+  (let
+    [fail : CompilerBackendWin64Prologue
+      (CompilerBackendWin64Prologue -1 "" "" false)]
+    [sym : i64 (+ proc-first 10)]
+    [sym-end : i64 (compiler-backend-cold-line-last data sym proc-end)]
+    [label : i64 (+ proc-end 1)]
+    [label-end : i64 (compiler-backend-win64-line-end data label n)]
+    (unless
+      (and
+        (< sym sym-end)
+        (= (- label-end label) (+ (- sym-end sym) 1))
+        (= (be_state.compiler-backend-peephole-byte-at data (- label-end 1)) 58)
+        (let
+          [same : bool true]
+          (for [k (iterator.range 0 (- sym-end sym))]
+            (unless
+              (=
+                (be_state.compiler-backend-peephole-byte-at data (+ sym k))
+                (be_state.compiler-backend-peephole-byte-at data (+ label k)))
+              (set! same false)))
+          same))
+      (return fail))
+    (let
+      [slots : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+      [names : (__tl_dyn-array String) (__tl_make-array String 0)]
+      [offset : i64 0]
+      [body : i64 -1]
+      [ok : bool true]
+      [i : i64 (+ label-end 1)]
+      (while (and ok (< body 0) (< i n))
+        (let
+          [e : i64 (compiler-backend-win64-line-end data i n)]
+          [first : i64 (compiler-backend-cold-line-first data i e)]
+          [last : i64 (compiler-backend-cold-line-last data first e)]
+          (cond
+            [(or
+                (= first last)
+                (= (be_state.compiler-backend-peephole-byte-at data first) 35))
+              unit]
+            [(compiler-backend-cold-prefix? data first last ".seh_endprologue")
+              (set! body (+ e 1))]
+            [(compiler-backend-cold-prefix? data first last ".seh_pushreg ")
+              (let
+                [reg : i64
+                  (compiler-backend-win64-unwind-reg data (+ first 13) last)]
+                (if (< reg 0)
+                  (set! ok false)
+                  (compiler-backend-win64-unwind-code!
+                    (&mut slots)
+                    (&mut starts)
+                    (&mut names)
+                    (+ offset (shl reg 12))
+                    -1
+                    -1
+                    (str_cat.str-cat
+                      "UWOP_PUSH_NONVOL "
+                      (string.substring text (+ first 13) (- last (+ first 13)))))))]
+            [(compiler-backend-cold-prefix? data first last ".seh_stackalloc ")
+              (let
+                [size : i64
+                  (compiler-backend-win64-unwind-int data (+ first 16) last)]
+                [amount : String (string.int->string size)]
+                (cond
+                  [(or (<= size 0) (not (= (% size 8) 0))) (set! ok false)]
+                  [(<= size 128)
+                    (compiler-backend-win64-unwind-code!
+                      (&mut slots)
+                      (&mut starts)
+                      (&mut names)
+                      (+ offset (shl (+ 2 (shl (- (/ size 8) 1) 4)) 8))
+                      -1
+                      -1
+                      (str_cat.str-cat "UWOP_ALLOC_SMALL " amount))]
+                  [(<= size 524280)
+                    (compiler-backend-win64-unwind-code!
+                      (&mut slots)
+                      (&mut starts)
+                      (&mut names)
+                      (+ offset (shl 1 8))
+                      (/ size 8)
+                      -1
+                      (str_cat.str-cat "UWOP_ALLOC_LARGE " amount))]
+                  [else
+                    (compiler-backend-win64-unwind-code!
+                      (&mut slots)
+                      (&mut starts)
+                      (&mut names)
+                      (+ offset (shl 17 8))
+                      (bit-and size 65535)
+                      (shr size 16)
+                      (str_cat.str-cat "UWOP_ALLOC_LARGE " amount))]))]
+            [else
+              (let
+                [size : i64
+                  (if (compiler-backend-cold-prefix? data first last ".seh_")
+                    -1
+                    (compiler-backend-win64-unwind-instr-size data first last))]
+                (if (< size 0)
+                  (set! ok false)
+                  (+= offset size)))])
+          (set! i (+ e 1))))
+      (let
+        [count : i64 (array-length slots)]
+        (if (or (not ok) (< body 0) (> offset 255) (> count 255))
+          fail
+          (let
+            [header : String
+              (str_cat.str-cat
+                "1, "
+                (string.int->string offset)
+                ", "
+                (string.int->string count)
+                ", 0")]
+            [info : String (string.copy (& header))]
+            [record : String (str_cat.str-cat "    .byte " header "\n")]
+            [code : i64 (- (array-length starts) 1)]
+            (while (>= code 0)
+              (let
+                [lo : i64 (array-ref starts code)]
+                [hi : i64
+                  (if (= code (- (array-length starts) 1))
+                    count
+                    (array-ref starts (+ code 1)))]
+                [line : String ""]
+                (for [k (iterator.range lo hi)]
+                  (set!
+                    line
+                    (str_cat.str-cat
+                      line
+                      (compiler-backend-win64-unwind-slot-text
+                        (array-ref slots k)))))
+                (set! info (str_cat.str-cat info line))
+                ;; `line` starts with ", ": the record line drops that comma.
+                (set!
+                  record
+                  (str_cat.str-cat
+                    record
+                    "    .byte "
+                    (string.substring
+                      (& line)
+                      2
+                      (- (string.string-length (& line)) 2))
+                    "    # "
+                    (string.copy (& (array-ref names code)))
+                    "\n")))
+              (-= code 1))
+            ;; Even slot count; a record without codes still spans 8 bytes.
+            (cond
+              [(= count 0)
+                (set! info (str_cat.str-cat info ", 0, 0, 0, 0"))
+                (set! record (str_cat.str-cat record "    .byte 0, 0, 0, 0\n"))]
+              [(= (% count 2) 1)
+                (set! info (str_cat.str-cat info ", 0, 0"))
+                (set! record (str_cat.str-cat record "    .byte 0, 0\n"))]
+              [else unit])
+            (CompilerBackendWin64Prologue
+              body
+              info
+              record
+              (and (= offset 0) (= count 0)))))))))
+
+;; Scan the body from `start` to its `.seh_endproc` line; `leaf-check?` also
+;; asks whether any line calls, pushes, pops or writes %rsp.
+(define (compiler-backend-win64-unwind-body
+  [data : (Ptr u8)]
+  [start : i64]
+  [n : i64]
+  [leaf-check? : bool]) : CompilerBackendWin64UnwindBody
+  (let
+    [close : i64 -1]
+    [close-end : i64 -1]
+    [stack? : bool false]
+    [done : bool false]
+    [i : i64 start]
+    (while (and (not done) (< i n))
+      (let
+        [e : i64 (compiler-backend-win64-line-end data i n)]
+        [first : i64 (compiler-backend-cold-line-first data i e)]
+        (when
+          (< first e)
+          (if (= (be_state.compiler-backend-peephole-byte-at data first) 46)
+            (when
+              (compiler-backend-cold-prefix? data first e ".seh_")
+              (set! done true)
+              (when
+                (compiler-backend-cold-prefix? data first e ".seh_endproc")
+                (set! close i)
+                (set!
+                  close-end
+                  (if (< e n)
+                    (+ e 1)
+                    n))))
+            (when
+              (and leaf-check? (not stack?))
+              (let
+                [last : i64 (compiler-backend-cold-line-last data first e)]
+                (when
+                  (or
+                    (compiler-backend-cold-prefix? data first last "call")
+                    (compiler-backend-cold-prefix? data first last "push")
+                    (compiler-backend-cold-prefix? data first last "pop")
+                    (compiler-backend-cold-prefix? data first last "leave")
+                    (compiler-backend-cold-prefix? data first last "enter")
+                    (and
+                      (>= (- last first) 4)
+                      (be_operand.compiler-backend-peephole-range-eq?
+                        data
+                        (- last 4)
+                        last
+                        "%rsp")))
+                  (set! stack? true))))))
+        (set! i (+ e 1))))
+    (CompilerBackendWin64UnwindBody close close-end stack?)))
+
+;; The `.xdata` label of `info`, interning it in the emission's table on first
+;; use; the returned flag says the record is new and must be emitted.
+(define (compiler-backend-win64-unwind-intern!
+  [stream : be_state.CompilerBackendStreamState]
+  [info : String]
+  [home : arena.Arena]) : (Tuple i64 bool)
+  (let
+    [data : (MutPtr be_state.CompilerBackendStreamStateData)
+      (be_state.compiler-backend-stream-state-ptr stream)]
+    [ids : backend_string_i64_map.Map
+      (unsafe
+        (deref data).win64-xdata-ids)]
+    (match (backend_string_i64_map.get-borrowed (& ids) (& info))
+      [(LookupFound id) (tuple id false)]
+      [(LookupMissing)
+        (let
+          [id : i64
+            (unsafe
+              (deref data).win64-xdata-count)]
+          (unsafe
+            (in-arena
+              (arena.Arena (arena.raw-handle home))
+              (backend_string_i64_map.insert-ref!
+                (&mut ids)
+                (string.copy (& info))
+                id))
+            (set! (deref data).win64-xdata-ids ids)
+            (set! (deref data).win64-xdata-count (+ id 1)))
+          (tuple id true))])))
+
+;; The text that replaces a lowered function's `.seh_endproc` line: its end
+;; label, the record on first use, and its `.pdata` row. A function in a
+;; `one_only` COMDAT (`comdat` non-empty) gets its row in a `.pdata` section
+;; associative to that COMDAT, so the linker drops or folds the row with the
+;; function; the shared `.xdata` record stays plain for every survivor.
+(define (compiler-backend-win64-unwind-close-text
+  [stream : be_state.CompilerBackendStreamState]
+  [symbol : String]
+  [comdat : (& str)]
+  [pro : (& pro CompilerBackendWin64Prologue)]
+  [home : arena.Arena]) : String
+  (let
+    [data : (MutPtr be_state.CompilerBackendStreamStateData)
+      (be_state.compiler-backend-stream-state-ptr stream)]
+    [end-id : i64
+      (unsafe
+        (deref data).win64-unwind-end-count)]
+    [_count : unit
+      (unsafe
+        (set! (deref data).win64-unwind-end-count (+ end-id 1)))]
+    [end : String
+      (str_cat.str-cat ".L_tl_seh_end_" (string.int->string end-id))]
+    [interned : (Tuple i64 bool)
+      (compiler-backend-win64-unwind-intern!
+        stream
+        (string.copy (& pro.info))
+        home)]
+    [xdata : String
+      (str_cat.str-cat
+        ".L_tl_xdata_"
+        (string.int->string (tuple-ref interned 0)))]
+    (str_cat.str-cat
+      end
+      ":\n"
+      (if (tuple-ref interned 1)
+        (str_cat.str-cat
+          "    .pushsection .xdata,\"dr\"\n    .p2align 2\n"
+          xdata
+          ":\n"
+          (string.copy (& pro.record))
+          "    .popsection\n")
+        "")
+      "    .pushsection .pdata,\"dr\""
+      (if (= (string.string-length comdat) 0)
+        ""
+        (str_cat.str-cat ",associative," comdat))
+      "\n    .rva "
+      symbol
+      ", "
+      end
+      ", "
+      xdata
+      "\n    .popsection\n")))
+
+;; Lower every encodable `.seh_proc` function of the rendered group `text`.
+;; The edits are planned in the active (scratch) arena; the lowered group is
+;; one allocation in `home`, written once.
+(define (compiler-backend-win64-lower-unwind
+  [stream : be_state.CompilerBackendStreamState]
+  [text : String]
+  [home : arena.Arena]) : String
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& text)))]
+    [n : i64 (string.string-length (& text))]
+    [edits : win64_unwind_edits.Vec (win64_unwind_edits.new)]
+    [delta : i64 0]
+    ;; The `one_only` COMDAT symbol of the active `.text` section, or "".
+    [comdat : String ""]
+    [i : i64 0]
+    (while (< i n)
+      (let
+        [e : i64 (compiler-backend-win64-line-end data i n)]
+        [first : i64 (compiler-backend-cold-line-first data i e)]
+        [next : i64 (+ e 1)]
+        (when
+          (and
+            (< first e)
+            (= (be_state.compiler-backend-peephole-byte-at data first) 46)
+            (or
+              (compiler-backend-cold-prefix? data first e ".section")
+              (compiler-backend-cold-prefix? data first e ".text")
+              (compiler-backend-cold-prefix? data first e ".data")
+              (compiler-backend-cold-prefix? data first e ".bss")))
+          (set!
+            comdat
+            (if (compiler-backend-cold-prefix?
+              data
+              first
+              e
+              ".section .text,\"xr\",one_only,")
+              (string.substring
+                (& text)
+                (+ first 29)
+                (-
+                  (compiler-backend-cold-line-last data (+ first 29) e)
+                  (+ first 29)))
+              "")))
+        (when
+          (and
+            (< first e)
+            (= (be_state.compiler-backend-peephole-byte-at data first) 46)
+            (compiler-backend-cold-prefix? data first e ".seh_proc "))
+          (let
+            [pro : CompilerBackendWin64Prologue
+              (compiler-backend-win64-unwind-prologue data (& text) first e n)]
+            (when
+              (>= pro.body 0)
+              (let
+                [body : CompilerBackendWin64UnwindBody
+                  (compiler-backend-win64-unwind-body data pro.body n pro.empty)]
+                (when
+                  (>= body.close 0)
+                  (let
+                    [symbol : String
+                      (string.substring
+                        (& text)
+                        (+ first 10)
+                        (-
+                          (compiler-backend-cold-line-last data (+ first 10) e)
+                          (+ first 10)))]
+                    [close-text : String
+                      (if (and pro.empty (not body.stack?))
+                        ""
+                        (compiler-backend-win64-unwind-close-text
+                          stream
+                          symbol
+                          (& comdat)
+                          (& pro)
+                          home))]
+                    [j : i64 i]
+                    ;; Drop every `.seh_` line of the prologue.
+                    (while (< j pro.body)
+                      (let
+                        [je : i64 (compiler-backend-win64-line-end data j n)]
+                        [jf : i64 (compiler-backend-cold-line-first data j je)]
+                        [jn : i64
+                          (if (< je n)
+                            (+ je 1)
+                            n)]
+                        (when
+                          (compiler-backend-cold-prefix? data jf je ".seh_")
+                          (win64_unwind_edits.push-ref!
+                            (&mut edits)
+                            (CompilerBackendWin64UnwindEdit j jn ""))
+                          (-= delta (- jn j)))
+                        (set! j jn)))
+                    (+=
+                      delta
+                      (-
+                        (string.string-length (& close-text))
+                        (- body.close-end body.close)))
+                    (win64_unwind_edits.push-ref!
+                      (&mut edits)
+                      (CompilerBackendWin64UnwindEdit
+                        body.close
+                        body.close-end
+                        close-text))
+                    (set! next body.close-end)))))))
+        (set! i next)))
+    (unsafe
+      (in-arena
+        (arena.Arena (arena.raw-handle home))
+        (let
+          [total : i64 (+ n delta)]
+          [out : (__tl_dyn-array u8)
+            (__tl_make-array
+              u8
+              (if (< total 1)
+                1
+                total))]
+          [dst : (MutPtr u8) (__tl_array-data out)]
+          [from : i64 0]
+          [pos : i64 0]
+          [slots : (& edits (__tl_dyn-array CompilerBackendWin64UnwindEdit))
+            (win64_unwind_edits.slots (& edits))]
+          (for [k (iterator.range 0 edits.len)]
+            (let
+              [edit : (& edits CompilerBackendWin64UnwindEdit)
+                (& (array-ref slots k))]
+              [len : i64 (string.string-length (& edit.text))]
+              (text_buf_borrowed.copy-byte-range-into
+                data
+                from
+                (- edit.start from)
+                dst
+                pos)
+              (+= pos (- edit.start from))
+              (text_buf_borrowed.copy-byte-range-into
+                (string-data (& edit.text))
+                0
+                len
+                dst
+                pos)
+              (+= pos len)
+              (set! from edit.end)))
+          (text_buf_borrowed.copy-byte-range-into data from (- n from) dst pos)
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
+
+;; ---------------------------------------------------------------------------
 ;; RMW-2/RMW-3: fold an adjacent load / ALU / store of ONE memory location into
 ;; a memory-operand ALU instruction, with a reload when the result register
 ;; remains live.

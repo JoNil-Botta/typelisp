@@ -591,7 +591,7 @@ for _metadata in "$ROOT"/benchmarks/*/optimization.tsv; do
                 awk -v label="_tl_${_name}_" '
                     index($0, label) == 1 { show = 1; count = 0 }
                     show && count < 220 { print; count++ }
-                    show && /^[[:space:]]*\.seh_endproc/ { show = 0 }
+                    show && /^([[:space:]]*\.seh_endproc|\.L_tl_seh_end_[0-9]+:)/ { show = 0 }
                     show && /^[[:space:]]*\.size/ { show = 0 }
                 ' "$_tl_asm" >&2 || true
             fi

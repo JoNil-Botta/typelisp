@@ -25600,6 +25600,9 @@ tl_shared_object_init:
           (be_peephole.compiler-backend-peephole-compact-records!
             backend-state
             (&mut records)))]
+      [scratch-arena : arena.Arena (arena.current)]
+      [merge? : bool
+        (be_state.compiler-backend-state-tail-merging-enabled? backend-state)]
       [finished : be_state.CompilerBackendPeepholeSweepChunkState
         (unsafe
           ;; unsafe: a bare handle to the same home arena keeps an `in-arena`
@@ -25612,13 +25615,24 @@ tl_shared_object_init:
                 (be_peephole.compiler-backend-expand-stack-probes!
                   backend-state
                   (&mut records))]
+              ;; Win64 renders into scratch: the unwind lowering writes the
+              ;; group's only home copy.
               [kept : String
-                (be_peephole.compiler-backend-peephole-records-render
-                  records
-                  (be_state.compiler-backend-state-tail-merging-enabled?
-                    backend-state)
-                  (be_state.compiler-backend-state-tail-merging-enabled?
-                    backend-state))]
+                (if (be_state.compiler-backend-state-emission-target-policy
+                  backend-state).seh-unwind
+                  (in-arena
+                    (arena.Arena (arena.raw-handle scratch-arena))
+                    (be_peephole.compiler-backend-win64-lower-unwind
+                      stream
+                      (be_peephole.compiler-backend-peephole-records-render
+                        records
+                        merge?
+                        merge?)
+                      (arena.Arena (arena.raw-handle home-arena))))
+                  (be_peephole.compiler-backend-peephole-records-render
+                    records
+                    merge?
+                    merge?))]
               (be_state.CompilerBackendPeepholeSweepChunkState
                 (text_buf.append state.out kept)
                 (text_buf.empty)
@@ -25653,6 +25667,13 @@ tl_shared_object_init:
       (set!
         (deref data).assembly-out
         (in-arena (arena.Arena (arena.raw-handle home-arena)) (text_buf.empty)))
+      (set!
+        (deref data).win64-xdata-ids
+        (in-arena
+          (arena.Arena (arena.raw-handle home-arena))
+          (backend_string_i64_map.with-capacity 16)))
+      (set! (deref data).win64-xdata-count 0)
+      (set! (deref data).win64-unwind-end-count 0)
       (set! (deref data).assembly-home-arena home-arena)
       (set! (deref data).assembly-sweep-cursor 0)
       (set! (deref data).assembly-batch batch)

@@ -112,8 +112,9 @@ in stderr
 contains array index out of bounds: index=7 length=4
 
 # Win64 Internal calls reserve no shadow space (#8438), so a tail-call-only
-# Internal forwarder drops its dead stack adjustment while abort-only and
-# returning callers keep valid SEH frames and 16-byte call alignment.
+# Internal forwarder drops its dead stack adjustment, and with it its .pdata
+# row (#9981 omits leaf rows), while abort-only and returning callers keep
+# valid SEH frames and 16-byte call alignment.
 case dead-frame-boundary-win64
 source tests/integration/dead_frame_boundary.tl
 target windows-x86_64
@@ -129,6 +130,9 @@ match \.seh_stackalloc[ ]
 in fn _tl_dead_frame_boundary_dfb_returning
 contains call _tl_dead_frame_boundary_dfb_probe
 metric call-alignment:pushes = ok
+in asm
+match ^[[:space:]]+\.rva _tl_dead_frame_boundary_dfb_returning, \.L_tl_seh_end_[0-9]+, \.L_tl_xdata_[0-9]+$
+count = 0 ^[[:space:]]+\.rva tl_dfb_forward[$]typelisp[,]
 
 # Red zone: a call-free leaf with a small frame uses the 128 bytes below %rsp
 # instead of adjusting it; a big frame, a call or Win64 still adjust.

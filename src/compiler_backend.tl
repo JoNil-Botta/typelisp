@@ -26098,8 +26098,24 @@ tl_shared_object_init:
     [asm : String (text_buf.render buf)]
     (Ok
       (if (be_state.compiler-backend-state-closed-executable? backend-state)
-        (runtime_prune.prune asm)
+        (compiler-backend-closed-executable-finish backend-state target asm)
         asm))))
+
+;; The closed program is the whole text, so only now are helper fragments
+;; known dead and every surviving return tail known. Interning runs after the
+;; prune: a shared tail must not live in a fragment the prune removes.
+(define (compiler-backend-closed-executable-finish
+  [backend-state : be_state.CompilerBackendState]
+  [target : be_state.CompilerBackendTarget]
+  [asm : String]) : String
+  (let
+    [kept : String (runtime_prune.prune asm)]
+    (if (and
+      (be_state.compiler-backend-state-optimize-for-size? backend-state)
+      (not (be_state.compiler-backend-target-coff? target))
+      (not (compiler_ir_types.compiler-debug-info-enabled?)))
+      (runtime_prune.intern-epilogues kept)
+      kept)))
 
 (define (compiler-backend-lower-mode-for-target
   [target : be_state.CompilerBackendTarget]

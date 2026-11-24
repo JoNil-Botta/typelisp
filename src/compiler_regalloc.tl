@@ -28584,32 +28584,55 @@
         assignments)
       (compiler-reg-assignment-table-new present items))))
 
+;; True when `var` is a read-only incoming stack parameter homed directly in
+;; its caller-frame stack slot rather than copied into a local frame slot.
+(define (compiler-reg-direct-stack-param?
+  [direct-stack-params : (& (__tl_dyn-array i64))]
+  [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (array-length direct-stack-params))
+    (> (array-ref direct-stack-params var) 0)))
+
 ;; Identity-pin scalar parameter variables: the prologue's param spill writes
 ;; each parameter to its remapped formula slot. Ordinary parameters keep
 ;; private ids during coloring, then can move with the frame permutation.
 ;; Wide private SPMD parameters need a complete YMM/ZMM range from the
-;; private-range pass.
+;; private-range pass, and direct-home incoming stack parameters stay in the
+;; caller's stack frame and consume no local formula slot.
 (define (compiler-reg-color-param-pins
   [params : (& ir.CompilerIrParamSeq)]
+  [direct-stack-params : (& (__tl_dyn-array i64))]
   [remap : (&mut remap (__tl_dyn-array i64))]
   [slot-ends : (&mut slot-ends (__tl_dyn-array i64))]
   [ref-counts : (&mut ref-counts (__tl_dyn-array i64))]
   [highest : i64]) : i64
   (let
+    [compact? : bool (> (array-length direct-stack-params) 0)]
     [out : i64 highest]
     (for [position (iterator.range 0 params.len)]
       (match (ir.compiler-ir-param-seq-borrow params position)
         [(Param name _ var-id)
-          (when
-            (and
-              (not (compiler-reg-spmd-wide-param? name))
-              (< var-id (array-length remap)))
-            (+= (array-ref ref-counts var-id) 1)
-            (set! (array-ref remap var-id) var-id)
-            (set! (array-ref slot-ends var-id) 9223372036854775807))
-          (if (compiler-reg-spmd-wide-param? name)
-            unit
-            (set! out (compiler-reg-max out (+ var-id 1))))]))
+          (let
+            [skip? : bool
+              (or
+                (compiler-reg-spmd-wide-param? name)
+                (compiler-reg-direct-stack-param? direct-stack-params var-id))]
+            (unless
+              skip?
+              (let
+                [pin-slot : i64
+                  (if compact?
+                    out
+                    var-id)]
+                (when
+                  (and
+                    (< var-id (array-length remap))
+                    (< pin-slot (array-length slot-ends)))
+                  (+= (array-ref ref-counts var-id) 1)
+                  (set! (array-ref remap var-id) pin-slot)
+                  (set! (array-ref slot-ends pin-slot) 9223372036854775807))
+                (set! out (compiler-reg-max out (+ pin-slot 1))))))]))
     out))
 
 ;; --- M-B: stack-homed register-group Mov coalescing -------------------------
@@ -28962,6 +28985,7 @@
   [assignment-index : CompilerRegAssignmentTable]
   [colorable : (& colorable (__tl_dyn-array bool))]
   [vector-stack-words : (& vector-stack-words (__tl_dyn-array i64))]
+  [direct-stack-params : (& (__tl_dyn-array i64))]
   [remap : (& remap (__tl_dyn-array i64))]) : unit
   (for [i (iterator.range 0 vars)]
     (set!
@@ -28973,6 +28997,7 @@
         (= (compiler-reg-vector-stack-words-for-var vector-stack-words i) 1)
         (not (live.compiler-live-set-contains? group-vars i))
         (not (live.compiler-live-set-contains? ineligible i))
+        (not (compiler-reg-direct-stack-param? direct-stack-params i))
         (< (array-ref remap i) 0)
         (match (compiler-reg-assignment-table-lookup assignment-index i)
           [(Some location)
@@ -29999,6 +30024,7 @@
   [vars : i64]
   [slot-candidate-vars : i64]
   [identity-pinned : (& live.CompilerLiveI64Set)]
+  [direct-stack-params : (& (__tl_dyn-array i64))]
   [stack-only? : bool]) : CompilerRegColoring
   (compiler-reg-with-analysis-scratch
     vars
@@ -30014,6 +30040,7 @@
         vars
         slot-candidate-vars
         identity-pinned
+        direct-stack-params
         stack-only?))))
 
 ;; Only the result-owning wrapper above calls this analysis implementation.
@@ -30026,6 +30053,7 @@
   [vars : i64]
   [slot-candidate-vars : i64]
   [identity-pinned : (& live.CompilerLiveI64Set)]
+  [direct-stack-params : (& (__tl_dyn-array i64))]
   [stack-only? : bool]) : CompilerRegColoring
   (let
     [intervals : CompilerRegIntervalSeq
@@ -30145,6 +30173,7 @@
         [param-floor : i64
           (compiler-reg-color-param-pins
             (compiler-reg-global-shared-view params)
+            direct-stack-params
             (&mut remap)
             (&mut slot-ends)
             (&mut ref-counts)
@@ -30163,6 +30192,7 @@
             assignment-index
             colorable
             vector-stack-words
+            direct-stack-params
             remap)]
         ;; Conservative per-var hulls of the plan intervals, shared by the
         ;; scalar-web membership gate below and the group-Mov overlay further
@@ -30285,7 +30315,10 @@
             [next : i64 storage-prefix]
             [i : i64 0]
             (while (and (< i vars) (< i slot-candidate-vars))
-              (if (or (not (array-ref references i)) (>= (array-ref remap i) 0))
+              (if (or
+                (not (array-ref references i))
+                (>= (array-ref remap i) 0)
+                (compiler-reg-direct-stack-param? direct-stack-params i))
                 unit
                 (let
                   [root : i64
@@ -30350,6 +30383,7 @@
                 unit)
               (+= i 1))
             next)]
+        [frame-slots : i64 (compiler-reg-max slot-count param-floor)]
         [_renumbered
           : unit
           ;; Register-homed and unmentioned variables take the remaining FREE
@@ -30363,10 +30397,30 @@
           (let
             [taken : (__tl_dyn-array bool) (__tl_make-array bool vars)]
             [free : i64 0]
+            [free-high : i64 frame-slots]
             (for [i (iterator.range 0 vars)]
               (if (and (>= (array-ref remap i) 0) (< (array-ref remap i) vars))
                 (set! (array-ref taken (array-ref remap i)) true)
                 unit))
+            ;; Place direct-home incoming stack params at free ids >= frame-slots
+            ;; when available so the slot-order pass leaves them outside the
+            ;; local frame slot domain.
+            (when
+              (> (array-length direct-stack-params) 0)
+              (for [i (iterator.range 0 vars)]
+                (when
+                  (and
+                    (< (array-ref remap i) 0)
+                    (compiler-reg-direct-stack-param? direct-stack-params i))
+                  (while (if (< free-high vars)
+                    (array-ref taken free-high)
+                    false)
+                    (+= free-high 1))
+                  (when
+                    (< free-high vars)
+                    (set! (array-ref remap i) free-high)
+                    (set! (array-ref taken free-high) true)
+                    (+= free-high 1)))))
             (for [i (iterator.range 0 vars)]
               (when
                 (< (array-ref remap i) 0)
@@ -30376,7 +30430,6 @@
                   (+= free 1))
                 (set! (array-ref remap i) free)
                 (+= free 1))))]
-        [frame-slots : i64 (compiler-reg-max slot-count param-floor)]
         ;; Keep potentially red-zone slot regions in their original order.
         [_slot-order : unit
           (if (<= frame-slots 16)
@@ -30385,6 +30438,7 @@
               group-vars
               vector-stack-words
               assignment-index
+              direct-stack-params
               (& addressed)
               (& ref-counts)
               (not empty-assignments?)
@@ -30503,6 +30557,7 @@
   [group-vars : (& live.CompilerLiveI64Set)]
   [vector-stack-words : (& vector-stack-words (__tl_dyn-array i64))]
   [assignment-index : CompilerRegAssignmentTable]
+  [direct-stack-params : (& (__tl_dyn-array i64))]
   [addressed : (& addressed (__tl_dyn-array i64))]
   [ref-counts : (& ref-counts (__tl_dyn-array i64))]
   [has-assignments : bool]
@@ -30525,7 +30580,10 @@
       (let
         [id : i64 (array-ref remap var)]
         (when
-          (and (>= id 0) (< id slot-count))
+          (and
+            (>= id 0)
+            (< id slot-count)
+            (not (compiler-reg-direct-stack-param? direct-stack-params var)))
           (let
             [span : i64 (array-ref addressed var)]
             [words : i64 (array-ref vector-stack-words var)]

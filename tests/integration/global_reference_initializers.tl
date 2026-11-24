@@ -61,8 +61,12 @@
   enabled)
 (define early : i64
   later)
+(define early-element : i64
+  (array-ref later-array 1))
 (define later : i64
   5)
+(define later-array : (Array i64 2)
+  (array 19 23))
 (define computed : i64
   (+ 40 2))
 (define computed-copy : i64
@@ -85,6 +89,12 @@
   inc)
 (define callback-copy : (-> i64 i64)
   callback)
+(define function-from-later : (-> i64 i64)
+  later-function)
+(define later-function : (-> i64 i64)
+  inc)
+(define callback-result : i64
+  (function-from-later 41))
 
 (define (check [index : i64] [ok : bool] [first-failure : i64]) : i64
   (if (or ok (not (= first-failure 0)))
@@ -119,6 +129,9 @@
     (set! failure (check 19 (= (callback 43) 42) failure))
     (set! failure (check 20 (= base 99) failure))
     (set! failure (check 21 (= dep.answer 99) failure))
+    (set! failure (check 22 (= early-element 23) failure))
+    (set! failure (check 23 (= (function-from-later 41) 42) failure))
+    (set! failure (check 24 (= callback-result 42) failure))
     (if (= failure 0)
       42
       failure)))

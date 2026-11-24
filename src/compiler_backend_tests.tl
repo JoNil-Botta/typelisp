@@ -47077,3 +47077,319 @@ user_fn:
             "non-overlapping stack slot Memory param tailcall must keep jmp")))]
     [(be_state.ResultCompilerBackend.Err _)
       (io.panic "authored-IR mode 2 emission failed")]))
+
+(define (compiler-backend-direct-stack-params-source) : String
+  "(extern (ext_sink [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : i64)
+(extern (ext_ref_sink [p : (MutPtr i64)]) : i64)
+(define (dsp_leaf [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (+ g h))
+(define (dsp_reader [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (let [r : i64 (ext_sink a b c d e f)]
+    (+ (+ (+ a b) (+ c d)) (+ (+ e f) (+ r (+ g h))))))
+(define (dsp_mut [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (let [r : i64 (ext_sink a b c d e f)]
+    (when (> r 0) (set! g (+ g 1)))
+    (+ (+ (+ a b) (+ c d)) (+ (+ e f) (+ r (+ g h))))))
+(define (dsp_addr [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (let [p : (MutPtr i64) (unsafe (ptr-addr-of g))]
+    (let [r : i64 (ext_ref_sink p)]
+      (+ (+ (+ a b) (+ c d)) (+ (+ e f) (+ r h))))))
+(define (dsp_narrow [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i32] [h : bool]) : i64
+  (let [r : i64 (ext_sink a b c d e f)]
+    (+ (+ (+ a b) (+ c d)) (+ (+ e f) (+ r (+ (cast g : i64) (if h 1 0)))))))
+(define (dsp_tc_cal [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (let [r : i64 (ext_sink a b c d e f)]
+    (if (= r -999)
+      (dsp_tc_cal a b c d e f g h)
+      (+ r (+ g h)))))
+(define (dsp_tc_stk [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (let [r : i64 (ext_sink a b c d e f)]
+    (dsp_tc_cal (+ r a) b c d e f h g)))
+(define (dsp_tr_cal [x : i64]) : i64
+  (let [r : i64 (ext_sink x x x x x x)]
+    (if (= r -999) (dsp_tr_cal r) (+ r 1))))
+(define (dsp_tr_reg [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (let [r : i64 (ext_sink a b c d e f)]
+    (dsp_tr_cal (+ (+ (+ a b) (+ c d)) (+ (+ e f) (+ r (+ g h)))))))
+(define keep0 : (-> i64 i64 i64 i64 i64 i64 i64 i64 i64) dsp_leaf)
+(define keep1 : (-> i64 i64 i64 i64 i64 i64 i64 i64 i64) dsp_reader)
+(define keep2 : (-> i64 i64 i64 i64 i64 i64 i64 i64 i64) dsp_mut)
+(define keep3 : (-> i64 i64 i64 i64 i64 i64 i64 i64 i64) dsp_addr)
+(define keep4 : (-> i64 i64 i64 i64 i64 i64 i32 bool i64) dsp_narrow)
+(define keep5 : (-> i64 i64 i64 i64 i64 i64 i64 i64 i64) dsp_tc_stk)
+(define keep6 : (-> i64 i64 i64 i64 i64 i64 i64 i64 i64) dsp_tr_reg)
+(define (main) : i64 0)")
+
+(define (compiler-backend-direct-stack-params-ir-params8 [win-mix? : bool]) : ir.CompilerIrParamSeq
+  (let
+    [params8 : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity 8)]
+    (for [i (iterator.range 0 6)]
+      (ir.compiler-ir-param-builder-push!
+        (&mut params8)
+        (ir.CompilerIrParam.Param
+          "a"
+          (if (and win-mix? (= i 2))
+            (ast.AstType.F64)
+            (ast.AstType.I64))
+          i)))
+    (ir.compiler-ir-param-builder-push!
+      (&mut params8)
+      (ir.CompilerIrParam.Param
+        "g"
+        (if win-mix?
+          (ast.AstType.Bytes)
+          (ast.AstType.I64))
+        6))
+    (ir.compiler-ir-param-builder-push!
+      (&mut params8)
+      (ir.CompilerIrParam.Param
+        "h"
+        (if win-mix?
+          (ast.AstType.Bytes)
+          (ast.AstType.I64))
+        7))
+    (ir.compiler-ir-param-builder-to-seq params8)))
+
+(define (compiler-backend-direct-stack-params-ir-program) : ir.CompilerIrProgram
+  (let
+    [ext-tc-fn : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "dsp_ext_tc")
+        (compiler-backend-direct-stack-params-ir-params8 false)
+        (ast.AstType.Unit)
+        13
+        (irt.blocks
+          "entry:
+            %8 = add %4, %0 : i64
+            %9 = add %4, %1 : i64
+            %10 = add %2, %3 : i64
+            %11 = add %5, %10 : i64
+            %12 = add %6, %7 : i64
+            tailcall ext_tc_sink(%8, %9, %11, %12) : unit")
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [win-bare-fn : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "dsp_win_bare")
+        (compiler-backend-direct-stack-params-ir-params8 true)
+        (ast.AstType.Bytes)
+        12
+        (irt.blocks
+          "entry:
+            %8 = add %0, %1 : i64
+            %8 = add %8, %3 : i64
+            %8 = add %8, %4 : i64
+            %8 = add %8, %5 : i64
+            %9 = cast %2 : f64 to i64
+            %10 = add %8, %9 : i64
+            %11 = gt %10, 0 : i64
+            branch %11, then, else
+           then:
+            return %6
+           else:
+            return %7")
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [main-fn : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "main")
+        (ir.compiler-ir-param-seq-empty)
+        (ast.AstType.I64)
+        0
+        (irt.blocks "entry:
+          return 0")
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [fns : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& ext-tc-fn)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& win-bare-fn)
+            (& (ir.compiler-ir-function-seq1 (& main-fn))))))]
+    (ir.CompilerIrProgram.Program
+      (ir.compiler-ir-global-seq-empty)
+      fns
+      (ir.compiler-ir-extern-seq-empty)
+      (ir.CompilerIrReturnStorageAuthority.None))))
+
+(define (compiler-backend-direct-stack-params-emit-ir
+  [target : be_state.CompilerBackendTarget]) : String
+  (let
+    [program : ir.CompilerIrProgram
+      (compiler-backend-direct-stack-params-ir-program)]
+    [spans : ir.CompilerSourceSpans (ir.compiler-source-spans-empty)]
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-state-set-scalar-registers-enabled!
+      backend-state
+      true)
+    (match (compiler-backend-test-emit-program-with-state
+      backend-state
+      target
+      program
+      spans
+      true)
+      [(Ok asm) asm]
+      [(Err _) ""])))
+
+(define (compiler-backend-direct-stack-params-emit-opt2
+  [target : be_state.CompilerBackendTarget]) : String
+  (match (compiler-backend-emit-source-opt2-for-target
+    (compiler-backend-direct-stack-params-source)
+    target)
+    [(Ok asm) asm]
+    [(Err _) ""]))
+
+(test
+  backend-direct-stack-params-linux-and-windows-asm
+  ;; Direct param-spill elision for both scalar and f64 positive Spill homes.
+  (let
+    [params : ir.CompilerIrParamSeq
+      (irt.params
+        "a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:f64")]
+    [linux-homes : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        "%0=%rdi %1=%rsi %2=%rdx %3=%rcx %4=%r8 %5=%r9 %6=spill:16 %7=%xmm0")]
+    [win-params : ir.CompilerIrParamSeq
+      (irt.params
+        "a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:f64")]
+    [win-homes : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        "%0=%rcx %1=%rdx %2=%r8 %3=%r9 %4=%rsi %5=%rdi %6=spill:48 %7=spill:56")]
+    [index : be_state.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    (test.assert-true
+      (asm-ok?
+        (backend.compiler-backend-emit-param-spills
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (be_state.CompilerBackendTarget.Linux)
+          linux-homes
+          params
+          0
+          0
+          0
+          0
+          index
+          8
+          index.backend-state)
+        (lacks "16(%rbp)"))
+      "Linux direct-home scalar incoming stack param emits no prologue copy")
+    (test.assert-true
+      (asm-ok?
+        (backend.compiler-backend-emit-param-spills
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (be_state.CompilerBackendTarget.Windows)
+          win-homes
+          win-params
+          0
+          0
+          0
+          0
+          index
+          8
+          index.backend-state)
+        (lacks "48(%rbp)" "56(%rbp)"))
+      "Windows direct-home scalar and f64 incoming stack params emit no prologue copy")
+    (test.assert-true
+      (=
+        (be_peephole.compiler-backend-frame-bias-pos
+          index.backend-state
+          true
+          0
+          0)
+        -8)
+      "bare FPO leaf rebases incoming stack params by -8 (16->8 SysV, 48->40 Win64)"))
+  ;; End-to-end Linux SysV opt2 checks.
+  (let
+    [linux-target : be_state.CompilerBackendTarget
+      (be_state.CompilerBackendTarget.Linux)]
+    [linux-asm : String
+      (compiler-backend-direct-stack-params-emit-opt2 linux-target)]
+    [linux-ir-asm : String
+      (compiler-backend-direct-stack-params-emit-ir linux-target)]
+    [bare : String
+      (compiler-backend-asm-function-body linux-asm "_tl_dsp_leaf")]
+    [reader : String
+      (compiler-backend-asm-function-body linux-asm "_tl_dsp_reader")]
+    [mutated : String
+      (compiler-backend-asm-function-body linux-asm "_tl_dsp_mut")]
+    [addr : String
+      (compiler-backend-asm-function-body linux-asm "_tl_dsp_addr")]
+    [narrow : String
+      (compiler-backend-asm-function-body linux-asm "_tl_dsp_narrow")]
+    [tail-stack : String
+      (compiler-backend-asm-function-body linux-asm "_tl_dsp_tc_stk")]
+    [tail-reg : String
+      (compiler-backend-asm-function-body linux-asm "_tl_dsp_tr_reg")]
+    [ext-tc : String
+      (compiler-backend-asm-function-body linux-ir-asm "_tl_dsp_ext_tc")]
+    (test.assert-true
+      (and
+        (asm-has? bare "8(%rsp)" "16(%rsp)")
+        (asm-lacks? bare "subq $" "pushq "))
+      "Linux bare FPO leaf reads incoming stack params at 8/16(%rsp) with no frame")
+    (test.assert-true
+      (and
+        (asm-has?
+          ext-tc
+          "    subq $8, %rsp\n"
+          "    call _tl_ext_tc_sink\n"
+          "    addq $8, %rsp\n")
+        (asm-has? ext-tc "16(%rsp)" "24(%rsp)"))
+      "Linux fallback-TailCall direct-stack-param function aligns %rsp with subq $8, %rsp")
+    (test.assert-true
+      (and
+        (asm-has? reader "    movq 176(%rsp), %r8\n    addq 184(%rsp), %r8\n")
+        (asm-lacks? reader "movq 176(%rsp), %r8\n    movq %r8, ")
+        (asm-has? tail-reg "    movq 176(%rsp), %r8\n    addq 184(%rsp), %r8\n")
+        (asm-has? tail-reg "    jmp _tl_dsp_tr_cal\n"))
+      "Linux direct stack params and 0-stack-arg tail caller read caller frame directly")
+    (test.assert-true
+      (and
+        (asm-has? addr "    movq 176(%rsp), %r8\n    movq %r8, 64(%rsp)\n")
+        (asm-has? addr "    leaq 64(%rsp), %rdi\n")
+        (asm-has? addr "    addq 184(%rsp), %rax\n")
+        (asm-has? narrow "    movslq 176(%rsp), %r8\n")
+        (asm-has? narrow "    movzbl 184(%rsp), %r8d\n")
+        (asm-has?
+          tail-stack
+          "    movq 144(%rsp), %r8\n    movq %r8, 72(%rsp)\n")
+        (asm-has? tail-stack "    jmp _tl_dsp_tc_cal\n")
+        (asm-lacks? mutated ", 176(%rsp)" ", 184(%rsp)"))
+      "Linux excludes AddrOf, narrow <8-byte, and stack-arg tail-call params and never mutates caller slots"))
+  ;; End-to-end Windows x64 opt2 checks.
+  (let
+    [win-target : be_state.CompilerBackendTarget
+      (be_state.CompilerBackendTarget.Windows)]
+    [win-asm : String
+      (compiler-backend-direct-stack-params-emit-opt2 win-target)]
+    [win-ir-asm : String
+      (compiler-backend-direct-stack-params-emit-ir win-target)]
+    [win-bare : String
+      (compiler-backend-asm-function-body win-ir-asm "_tl_dsp_win_bare")]
+    [win-reader : String
+      (compiler-backend-asm-function-body win-asm "_tl_dsp_reader")]
+    [win-narrow : String
+      (compiler-backend-asm-function-body win-asm "_tl_dsp_narrow")]
+    (test.assert-true
+      (and
+        (asm-has? win-bare "40(%rsp)" "48(%rsp)")
+        (asm-lacks? win-bare "subq $" "pushq "))
+      "Windows bare FPO leaf reads incoming stack params at 40/48(%rsp) with no frame")
+    (test.assert-true
+      (and
+        (asm-has? win-reader ".seh_stackalloc " ".seh_endprologue")
+        (asm-has?
+          win-reader
+          "    movq 256(%rsp), %r8\n    addq 264(%rsp), %r8\n")
+        (asm-lacks? win-reader "movq 256(%rsp), %r8\n    movq %r8, "))
+      "Windows direct stack reader reads incoming caller slots directly with valid SEH")
+    (test.assert-true
+      (and
+        (asm-has? win-narrow ".seh_stackalloc " ".seh_endprologue")
+        (asm-has? win-narrow "    movslq 256(%rsp), %r8\n")
+        (asm-has? win-narrow "    movzbl 264(%rsp), %r8d\n"))
+      "Windows excludes narrow <8-byte incoming stack params with valid SEH")))

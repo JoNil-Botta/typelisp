@@ -1708,14 +1708,19 @@
 (define (compiler-backend-frame-offset-with-backend-state
   [state : be_state.CompilerBackendState]
   [offset : i64]) : String
-  (be_state.compiler-backend-function-state-set-bool!
-    (be_state.compiler-backend-state-function-state state)
-    be_state.compiler-backend-function-bool-frame-slot-referenced
-    true)
-  (be_state.compiler-backend-function-state-set-bool!
-    (be_state.compiler-backend-state-function-state state)
-    be_state.compiler-backend-function-bool-nonsave-frame-slot-referenced
-    true)
+  ;; Only negative offsets reference local frame slots; positive offsets
+  ;; reference caller-frame incoming stack arguments and do not demand a
+  ;; local frame allocation.
+  (when
+    (< offset 0)
+    (be_state.compiler-backend-function-state-set-bool!
+      (be_state.compiler-backend-state-function-state state)
+      be_state.compiler-backend-function-bool-frame-slot-referenced
+      true)
+    (be_state.compiler-backend-function-state-set-bool!
+      (be_state.compiler-backend-state-function-state state)
+      be_state.compiler-backend-function-bool-nonsave-frame-slot-referenced
+      true))
   (compiler-backend-frame-offset-render state offset))
 
 (define (compiler-backend-state-immediate-render
@@ -1909,6 +1914,25 @@
         "__tl_spmd_ret_mask___tl_spmd_pkg_"
         0))
     (not (compiler-backend-public-function-symbol? name))))
+
+(define (compiler-backend-elf-symbol-section
+  [section : (& str)]
+  [symbol : (& str)]
+  [attributes : (& str)]) : String
+  (let
+    [suffix : String
+      (if (string.is-string-prefix-at symbol "\"" 0)
+        (string.substring symbol 1 (- (string.string-length symbol) 2))
+        (string.copy symbol))]
+    (str_cat.str-cat ".section \"" section "." suffix "\"," attributes "\n")))
+
+(define (compiler-backend-function-section
+  [target : be_state.CompilerBackendTarget]
+  [symbol : (& str)]) : String
+  (match target
+    [(Linux)
+      (compiler-backend-elf-symbol-section ".text" symbol "\"ax\",@progbits")]
+    [(Windows) (str_cat.str-cat ".section .text,\"xr\",one_only," symbol "\n")]))
 
 (define (compiler-backend-function-symbol-index
   [index : be_state.CompilerBackendProgramIndex]

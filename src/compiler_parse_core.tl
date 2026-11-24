@@ -3361,21 +3361,6 @@
 (define (compiler-parse-tag-expr-program-envp) : i64
   281)
 
-(define (compiler-parse-tag-expr-cpuid-eax) : i64
-  282)
-
-(define (compiler-parse-tag-expr-cpuid-ebx) : i64
-  283)
-
-(define (compiler-parse-tag-expr-cpuid-ecx) : i64
-  284)
-
-(define (compiler-parse-tag-expr-cpuid-edx) : i64
-  285)
-
-(define (compiler-parse-tag-expr-xgetbv) : i64
-  286)
-
 (define (compiler-parse-tag-expr-syscall) : i64
   287)
 
@@ -4243,36 +4228,6 @@
         out
         "program-envp"
         (compiler-parse-tag-expr-program-envp)))
-    (set!
-      out
-      (compiler-parse-dispatch-bind
-        out
-        "cpuid-eax"
-        (compiler-parse-tag-expr-cpuid-eax)))
-    (set!
-      out
-      (compiler-parse-dispatch-bind
-        out
-        "cpuid-ebx"
-        (compiler-parse-tag-expr-cpuid-ebx)))
-    (set!
-      out
-      (compiler-parse-dispatch-bind
-        out
-        "cpuid-ecx"
-        (compiler-parse-tag-expr-cpuid-ecx)))
-    (set!
-      out
-      (compiler-parse-dispatch-bind
-        out
-        "cpuid-edx"
-        (compiler-parse-tag-expr-cpuid-edx)))
-    (set!
-      out
-      (compiler-parse-dispatch-bind
-        out
-        "xgetbv"
-        (compiler-parse-tag-expr-xgetbv)))
     (set!
       out
       (compiler-parse-dispatch-bind
@@ -8823,32 +8778,6 @@
     [(List (slice) _) (Ok expr)]
     [_ (Err (str_cat.str-cat "parse: " name " expects no arguments"))]))
 
-(define (parse-ast-cpuid-like
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]
-  [tag : i64]
-  [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (let
-    [pair (try (parse-ast-two-exprs dispatch pools rest "cpuid"))]
-    [leaf : i64 pair.first]
-    [subleaf : i64 pair.second]
-    (cond
-      [(= tag (compiler-parse-tag-expr-cpuid-eax))
-        (Ok (ast.ast-expr-cpuid-eax-with-pools pools leaf subleaf))]
-      [(= tag (compiler-parse-tag-expr-cpuid-ebx))
-        (Ok (ast.ast-expr-cpuid-ebx-with-pools pools leaf subleaf))]
-      [(= tag (compiler-parse-tag-expr-cpuid-ecx))
-        (Ok (ast.ast-expr-cpuid-ecx-with-pools pools leaf subleaf))]
-      [else (Ok (ast.ast-expr-cpuid-edx-with-pools pools leaf subleaf))])))
-
-(define (parse-ast-xgetbv
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]
-  [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (let
-    [expr (try (parse-ast-one-expr dispatch pools rest "xgetbv"))]
-    (Ok (ast.ast-expr-xgetbv-with-pools pools expr))))
-
 (define (parse-ast-syscall-count [args : (& args ast.AstExprList)]) : i64
   args.len)
 
@@ -9671,16 +9600,6 @@
         rest
         "program-envp"
         (ast.ast-node-pool-context-expr-push pools (ProgramEnvp)))]
-    [(= tag (compiler-parse-tag-expr-cpuid-eax))
-      (parse-ast-cpuid-like dispatch pools tag rest)]
-    [(= tag (compiler-parse-tag-expr-cpuid-ebx))
-      (parse-ast-cpuid-like dispatch pools tag rest)]
-    [(= tag (compiler-parse-tag-expr-cpuid-ecx))
-      (parse-ast-cpuid-like dispatch pools tag rest)]
-    [(= tag (compiler-parse-tag-expr-cpuid-edx))
-      (parse-ast-cpuid-like dispatch pools tag rest)]
-    [(= tag (compiler-parse-tag-expr-xgetbv))
-      (parse-ast-xgetbv dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-syscall))
       (parse-ast-syscall dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null))

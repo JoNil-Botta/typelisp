@@ -14,6 +14,7 @@
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.cpu)
+(import stdlib.fs)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.random)
@@ -2828,7 +2829,10 @@
   (let
     [integration-prefix : String
       (tltest-package-tests-subdir-prefix tests-prefix "integration")]
-    (io.file-exists? (str_cat.str-cat integration-prefix "native.manifest"))))
+    [manifest-dir : String (str_cat.str-cat integration-prefix "manifest.d")]
+    (match (fs.try-file-kind (& manifest-dir))
+      [(OkFsFileKind kind) (fs.file-kind-directory? kind)]
+      [(ErrFsFileKind _) false])))
 
 (define (tltest-package-manifest-managed-integration-source-with?
   [normalized : (& normalized str)]

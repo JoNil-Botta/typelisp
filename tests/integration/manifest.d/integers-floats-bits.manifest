@@ -1,0 +1,47 @@
+# Native integration cases: integer, float, bitwise, and cast operations.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+rotate_multi_exit_live_out|all|-|tests/integration/rotate_multi_exit_live_out.tl|42|-|-|stdlib/io.tl|-
+rotate_multi_exit_trap_parity|all|-|tests/integration/rotate_multi_exit_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:36:42: array index out of bounds: index=4 length=4\n
+arithmetic|all|-|tests/integration/arithmetic.tl|47|-|-|-|-
+f32_scalar|all|-|tests/integration/f32_scalar.tl|42|-|-|-|-
+f64_negation|all|-|tests/integration/f64_negation.tl|42|-|-|-|-
+f32_negation|all|-|tests/integration/f32_negation.tl|42|-|6|stdlib/io.tl stdlib/string.tl|-
+i16_min_div_neg1_trap|all|-|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
+i16_min_rem_neg1_trap|all|-|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
+mixed_global_annotation|all|-|tests/integration/mixed_global_annotation_main.tl|42|-|-|mixed_global_annotation_bridge.tl mixed_global_annotation_provider.tl|-
+narrow_div_mod|all|-|tests/integration/narrow_div_mod.tl|30|-|-|-|-
+integer_literal_default_i32|all|-|tests/integration/integer_literal_default_i32.tl|42|-|-|-|-
+integer_literal_default_i32_and_wide_cast|all|-|tests/integration/integer_literal_default_i32_and_wide_cast.tl|42|-|-|-|-
+integer_literal_boundary_matrix|all|-,0,2|tests/integration/integer_literal_boundary_matrix.tl|42|-|-|stdlib/comptime.tl|-
+integer_literal_u64_full_range|all|-|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-|-
+float_exponent_literals|all|-|tests/integration/float_exponent_literals.tl|42|-|-|stdlib/math.tl|-
+u16_div_zero_trap|all|-|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=1 divisor=0\n
+u64_float_casts|all|-,0,1,2|tests/integration/u64_float_casts.tl|0|-|-|stdlib/math.tl|-
+u64_high_bit_load_compare|all|-|tests/integration/u64_high_bit_load_compare.tl|42|-|-|-|-
+bit_test_mask_admission|all|-|tests/integration/bit_test_mask_admission.tl|42|-|-|-|-
+bit_test_phi_edge|all|-,0,1,2|tests/integration/bit_test_phi_edge.tl|42|-|-|-|-
+float_phi_swap_cycle|all|-|tests/integration/float_phi_swap_cycle.tl|42|-|-|-|-
+mixed_group_stack_homes|all|0,1,2|tests/integration/mixed_group_stack_homes.tl|42|-|-|stdlib/io.tl|stage-stdlib
+float_comparisons_embedded|all|-|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|-
+float_comparisons_source|all|0,1,2|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|stage-stdlib
+lagged_phi_across_call|all|-|tests/integration/lagged_phi_across_call.tl|42|997\n1\n101\n|3|stdlib/io.tl stdlib/string.tl|-
+lagged_phi_across_call|all|0,2|tests/integration/lagged_phi_across_call.tl|42|997\n1\n101\n|3|stdlib/io.tl stdlib/string.tl|stage-stdlib
+masked_shift_count|all|-|tests/integration/masked_shift_count.tl|43|0 43690 1 1 3\n1 21845 131072 131072 393216\n1 21845 -9223372036854775808 2147483648 -9223372036854775808\n0 43690 1 1 3\n0 43690 1099511627776 256 3298534883328\n1 21845 2305843009213693952 536870912 6917529027641081856\n-192153584101141163 96\n|-|stdlib/io.tl|-
+masked_shift_count|all|0,2|tests/integration/masked_shift_count.tl|43|0 43690 1 1 3\n1 21845 131072 131072 393216\n1 21845 -9223372036854775808 2147483648 -9223372036854775808\n0 43690 1 1 3\n0 43690 1099511627776 256 3298534883328\n1 21845 2305843009213693952 536870912 6917529027641081856\n-192153584101141163 96\n|-|stdlib/io.tl|stage-stdlib
+literal_loop_call|all|0,2|tests/integration/literal_loop_call.tl|0|0 0 54 190 215 0 0\n|-|-|stage-stdlib
+bit_length_loop|all|-|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|-
+bit_length_loop|all|0,2|tests/integration/bit_length_loop.tl|42|0\n1\n2\n2\n3\n4\n10\n0\n0\n63\n63\n|0 1 2 3 7 8 1000 -1 -9223372036854775808 9223372036854775807 4611686018427387904|stdlib/io.tl stdlib/string.tl|stage-stdlib
+bit_length_order|all|0,1,2|tests/integration/bit_length_order.tl|0|104\n104\n|100 8|stdlib/io.tl stdlib/string.tl|stage-stdlib
+bit_length_order_zero|all|2|tests/integration/bit_length_order.tl|0|0\n64\n|0 -1|stdlib/io.tl stdlib/string.tl|stage-stdlib
+bit_length_order_signed_wrap|all|2|tests/integration/bit_length_order.tl|0|-9223372036854775805\n9223372036854775811\n|9223372036854775807 8|stdlib/io.tl stdlib/string.tl|stage-stdlib
+bit_length_order_unsigned_wrap|all|2|tests/integration/bit_length_order.tl|0|-1\n63\n|-1 -9223372036854775808|stdlib/io.tl stdlib/string.tl|stage-stdlib
+mul_near_power_zero|all|0,1,2|tests/integration/mul_near_power.tl|0|4145518161272886947 1737046605924864488\n|0|-|stage-stdlib
+mul_near_power_one|all|0,1,2|tests/integration/mul_near_power.tl|0|735075253528713822 14309744142121583456\n|1|-|stage-stdlib
+mul_near_power_negative|all|0,1,2|tests/integration/mul_near_power.tl|0|6665283474596016352 7019787720678018336\n|-1|-|stage-stdlib
+mul_near_power_max|all|0,1,2|tests/integration/mul_near_power.tl|0|15888655511450792160 7019787720678018336\n|9223372036854775807|-|stage-stdlib
+mul_near_power_min|all|0,1,2|tests/integration/mul_near_power.tl|0|13368890198127662755 1737046605924864488\n|-9223372036854775808|-|stage-stdlib
+literal_constructor_exits|all|0,1,2|tests/integration/literal_constructor_exits.tl|42|-|-|stdlib/test.tl|-
+mul_shift_addr_taken|all|0,1,2|tests/integration/mul_shift_addr_taken.tl|3|-|-|stdlib/io.tl stdlib/string.tl|-
+float_neg_mixed_f64_first|all|0,1,2|tests/integration/float_neg_mixed_f64_first.tl|42|-|-|-|-
+float_neg_mixed_f32_first|all|0,1,2|tests/integration/float_neg_mixed_f32_first.tl|42|-|-|-|-

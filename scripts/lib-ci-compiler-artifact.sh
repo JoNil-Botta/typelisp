@@ -5,6 +5,8 @@
 # sealed receipt of that plan's results. No transported compiler is consumed;
 # the lane aggregator compares the lanes' independently built compilers.
 
+[ -z "${ROOT:-}" ] || . "$ROOT/scripts/lib-manifest.sh"
+
 ci_compiler_artifact_error() {
     echo "[ci-compiler-artifact] $*" >&2
     return 1
@@ -227,13 +229,20 @@ cica_hash_map() (
     cica_jq -RsS 'split("\n")[:-1]|map(split("\t")|{key:.[0],value:.[1]})|from_entries' "$CICA_SCRATCH/hash-map-entries"
 )
 cica_inventory() {
-    cica_hash_map <<'PATHS'
+    _ci_manifests=$(manifest_list_dir "$CICA_ROOT/tests/integration/manifest.d") || return 1
+    {
+        cat <<'PATHS'
 scripts/ci-gates.tsv
 scripts/ci-lanes.tsv
 scripts/ci-compiler-artifacts.tsv
 scripts/expand-integration-manifest.awk
-tests/integration/native.manifest
 PATHS
+        while IFS= read -r _ci_path; do
+            printf '%s\n' "${_ci_path#"$CICA_ROOT"/}"
+        done <<EOF
+$_ci_manifests
+EOF
+    } | cica_hash_map
 }
 cica_recipes() {
     cica_hash_map <<'PATHS'
@@ -241,6 +250,7 @@ scripts/ci-verify.sh
 scripts/check-bootstrap-fixpoint.sh
 scripts/lib-native-link.sh
 scripts/lib-linux-entry.sh
+scripts/lib-manifest.sh
 scripts/lib-build-provenance.sh
 scripts/check-build-invariance.sh
 scripts/lib-build-invariance-batch.sh
@@ -262,7 +272,8 @@ cica_generated() {
 }
 cica_corpus() {
     printf '%s\n' 'selfhost_main_opt1|src/main.tl|1' 'selfhost_main_opt2|src/main.tl|2'
-    awk -v host=linux -f "$CICA_ROOT/scripts/expand-integration-manifest.awk" "$CICA_ROOT/tests/integration/native.manifest" > "$CICA_SCRATCH/expanded"
+    manifest_concat_dir "$CICA_ROOT/tests/integration/manifest.d" > "$CICA_SCRATCH/manifest.combined" || return 1
+    awk -v host=linux -f "$CICA_ROOT/scripts/expand-integration-manifest.awk" "$CICA_SCRATCH/manifest.combined" > "$CICA_SCRATCH/expanded"
     awk -F'|' 'NF>=2 {print "integration_" $1 "|" $2 "|2"; next} {exit 1}' "$CICA_SCRATCH/expanded"
 }
 # cica_roles PLAN: the roles (scripts/ci-compiler-artifacts.tsv) whose

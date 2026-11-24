@@ -1,0 +1,141 @@
+# Native integration cases: bounds-check elimination, LICM, GEP folding, and loop optimizations.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+ubound_self_call_inbounds|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|6\n|3 3 2 1 1|stdlib/io.tl stdlib/string.tl|-
+ubound_self_call_first_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|0 1 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=0 length=0\n
+ubound_self_call_mid_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|2 3 2 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=2 length=2\n
+ubound_self_call_negative_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|2 2 2 -1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=-1 length=2\n
+ubound_self_call_zero|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|0\n|0 0 2 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_self_call_negative_bound|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|0\n|0 -1 2 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_self_call_division|all|0,1,2|tests/integration/ubound_self_loop_call.tl|135|-|3 2 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:13:8: integer division or remainder error: dividend=2 divisor=0\n
+ubound_entry_inbounds|all|0,1,2|tests/integration/ubound_entry_location.tl|42|2\n|3 3 1 1|stdlib/io.tl stdlib/string.tl|-
+ubound_entry_first_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|0 1 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=0 length=0\n
+ubound_entry_mid_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|2 3 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=2 length=2\n
+ubound_entry_negative_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|2 2 -1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=-2 length=2\n
+ubound_entry_zero|all|0,1,2|tests/integration/ubound_entry_location.tl|42|0\n|0 0 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_entry_negative_bound|all|0,1,2|tests/integration/ubound_entry_location.tl|42|0\n|0 -1 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_entry_division|all|0,1,2|tests/integration/ubound_entry_location.tl|135|-|3 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:31: integer division or remainder error: dividend=0 divisor=0\n
+invariant_loop_call_negative|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|stage-stdlib
+invariant_loop_call_zero|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|stage-stdlib
+invariant_loop_call_skipped|all|0,2|tests/integration/invariant_loop_call.tl|0|5\n|2|-|stage-stdlib
+invariant_loop_call_delayed|all|0,2|tests/integration/invariant_loop_call.tl|0|59\n|3|-|stage-stdlib
+invariant_loop_call_division|all|0,2|tests/integration/invariant_loop_call.tl|135|-|4|-|stage-stdlib+expected-stderr:tl: $SRC:15:10: integer division or remainder error: dividend=36 divisor=0\n
+invariant_loop_call_trap_order|all|0,2|tests/integration/invariant_loop_call.tl|129|-|5|-|stage-stdlib+expected-stderr:tl: $SRC:29:32: shift count out of range: count=-1 width=64\n
+invariant_loop_call_write|all|0,2|tests/integration/invariant_loop_call.tl|0|190\n|6|-|stage-stdlib
+invariant_loop_call_nested|all|0,2|tests/integration/invariant_loop_call.tl|0|438\n|7|-|stage-stdlib
+invariant_loop_call_varying|all|0,2|tests/integration/invariant_loop_call.tl|0|75\n|8|-|stage-stdlib
+guard_sink_invalidate_walk|all|-|tests/integration/guard_sink_invalidate_walk.tl|42|0\n0\n2\n13\n|-|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+guard_sink_store_across_guard|all|-|tests/integration/guard_sink_store_across_guard.tl|42|25\n210\n-1\n|-|stdlib/io.tl stdlib/string.tl|-
+bounds_group_stack_pair|all|0,2|tests/integration/bounds_group_stack_pair.tl|42|-|2|stdlib/io.tl stdlib/string.tl|-
+bounds_group_stack_pair_first_abort|all|0,2|tests/integration/bounds_group_stack_pair.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:31: array index out of bounds: index=-1 length=2\n
+bounds_group_stack_pair_second_abort|all|0,2|tests/integration/bounds_group_stack_pair.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:13:31: array index out of bounds: index=-1 length=2\n
+ck_local_len_eq|all|-|tests/integration/ck_local_len_eq.tl|42|272\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+ck_local_len_eq_abort|all|-|tests/integration/ck_local_len_eq_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:30:63: array index out of bounds: index=8 length=8\n
+guard_dedup_bypass_descriptor|all|-|tests/integration/guard_dedup_bypass_descriptor.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+guard_dedup_bypass_descriptor|linux|0,1,2|tests/integration/guard_dedup_bypass_descriptor.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+guard_dedup_mutated_slice|all|-|tests/integration/guard_dedup_mutated_slice.tl|42|172085089044\n|20 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+guard_dedup_mutated_slice|linux|0,1,2|tests/integration/guard_dedup_mutated_slice.tl|42|172085089044\n|20 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+guard_dedup_mutated_slice_abort|all|-|tests/integration/guard_dedup_mutated_slice.tl|134|-|20 17|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:62:57: array index out of bounds: index=17 length=17\n
+guard_imply_dominated|all|-|tests/integration/guard_imply_dominated.tl|42|-3741803676297662851\n|20 5 3|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+guard_imply_dominated_abort|all|-|tests/integration/guard_imply_dominated.tl|134|-|20 5 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:75:52: array index out of bounds: index=20 length=20\n
+guard_hoist_predication|all|-|tests/integration/guard_hoist_predication.tl|42|-7026568991372851604\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+guard_hoist_predication_abort|all|-|tests/integration/guard_hoist_predication.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:45:49: array index out of bounds: index=8 length=8\n
+guard_tighten_predication|all|-|tests/integration/guard_tighten_predication.tl|42|-4662016400569783832\n|8 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+guard_tighten_predication_abort|all|-|tests/integration/guard_tighten_predication.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:56:36: array index out of bounds: index=8 length=8\n
+bce_range_two_loops|all|-|tests/integration/bce_range_two_loops.tl|42|-5915004525821994045\n|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+bce_range_negative_span|all|-|tests/integration/bce_range_negative_span.tl|134|-|24|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:15:36: array index out of bounds: index=-17 length=24\n
+unrolled_sum_chains|all|0,1,2|tests/integration/unrolled_sum_chains.tl|42|-|-|-|stage-stdlib
+unrolled_sum_chains_trap|all|2|tests/integration/unrolled_sum_chains.tl|134|-|130|-|stage-stdlib+expected-stderr:tl: $SRC:12:42: array index out of bounds: index=129 length=129\n
+unrolled_sum_floor_headroom|all|0,1,2|tests/integration/unrolled_sum_floor_headroom.tl|42|0\n1\n1\n2\n2\n3\n3\n4\n4\n5\n5\n6\n6\n7\n7\n8\n8\n9\n9\n10\n10\n|20|-|stage-stdlib
+gep_pair_spill_sibling_home|all|-|tests/integration/gep_pair_spill_sibling_home.tl|42|-|-|stdlib/string.tl|-
+gep_direct_base|all|-|tests/integration/gep_direct_base.tl|42|-|-|stdlib/io.tl|-
+gep_copy_sib_shape|all|-|tests/integration/gep_copy_sib_shape.tl|42|-|-|-|-
+gep_fold_ordinal_store_pair_clone|all|-,2|tests/integration/gep_fold_ordinal_store_pair_clone.tl|42|-|-|-|-
+licm_desc_hoist|all|-|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl|-
+licm_memclean_global_promote|all|-|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl|-
+lftr_counter_retire|all|-|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl|-
+licm_alias_stress|all|-|tests/integration/licm_alias_stress.tl|42|-|-|stdlib/io.tl|-
+licm_element_bound|all|-|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+licm_element_bound_opt2|all|2|tests/integration/licm_element_bound.tl|42|0\n0\n0\n0\n|4 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|stage-stdlib
+licm_addr_taken_local|all|0,1,2|tests/integration/licm_addr_taken_local.tl|42|-|-|-|-
+licm_addr_taken_reset|all|0,1,2|tests/integration/licm_addr_taken_reset.tl|42|-|-|-|-
+guard_dedup_addr_taken|all|0,1,2|tests/integration/guard_dedup_addr_taken.tl|42|-|-|-|-
+bounds_dom_addr_taken_local|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|42|-|0 2 0|stdlib/io.tl stdlib/string.tl|-
+bounds_dom_addr_taken_local_last|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|43|-|0 3 1|stdlib/io.tl stdlib/string.tl|-
+bounds_dom_addr_taken_local_check_abort|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|134|-|0 4 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:77:31: array index out of bounds: index=4 length=4\n
+bounds_dom_addr_taken_local_copy_abort|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|134|-|0 4 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:90:31: array index out of bounds: index=4 length=4\n
+bounds_dom_addr_taken_local_check_below_abort|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|134|-|3 -1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:77:31: array index out of bounds: index=-1 length=4\n
+bounds_dom_addr_taken_local_copy_below_abort|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|134|-|3 -1 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:90:31: array index out of bounds: index=-1 length=4\n
+licm_element_bound_abort_opt2|all|2|tests/integration/licm_element_bound.tl|134|0\n0\n0\n|4 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:88:62: array index out of bounds: index=4398046511104 length=4\n
+licm_guarded_read|all|-|tests/integration/licm_guarded_read.tl|42|254\n122\n0\n122\n|1 3 8|stdlib/io.tl stdlib/string.tl|-
+licm_guarded_read_opt2|all|2|tests/integration/licm_guarded_read.tl|42|254\n122\n0\n122\n|1 3 8|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_guarded_read_abort_opt2|all|2|tests/integration/licm_guarded_read.tl|134|254\n122\n0\n|9 3 8|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:49:44: array index out of bounds: index=9 length=8\n
+licm_disjoint_fields|all|0,1,2|tests/integration/licm_disjoint_fields.tl|42|-|257 -7|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_raw_deref|all|-|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|-
+licm_raw_deref|all|0,1,2|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_payload_other|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 0|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_payload_other_late|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 5|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_payload_taken_late|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|1 5|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_payload_skipped|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 20|stdlib/io.tl stdlib/string.tl|stage-stdlib
+gep_load_cmp_spilled_stage|all|-|tests/integration/gep_load_cmp_spilled_stage.tl|42|-|-|-|-
+rmw_mem_operand_fold|all|-|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl|-
+rmw_mem_operand_fold|linux|0,1,2|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl|-
+gep_value_direct|all|-|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+range_merge_unsigned|all|-|tests/integration/range_merge_unsigned.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+bce_paired_underflow_sp0_trap|all|-|tests/integration/bce_paired_underflow_trap.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:41:47: array index out of bounds: index=-1 length=4\n
+bce_paired_underflow_sp1_trap|all|-|tests/integration/bce_paired_underflow_trap.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:42:46: array index out of bounds: index=-1 length=4\n
+bce_descending_counted_loop|all|-|tests/integration/bce_descending_counted_loop.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+unroll_load_store_remainder|all|-|tests/integration/unroll_load_store_remainder.tl|42|-|-|-|-
+unroll_load_store_even_trap|all|-|tests/integration/unroll_load_store_trap.tl|134|7000056000120\n|4|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:27:56: array index out of bounds: index=4 length=4\n
+unroll_load_store_odd_trap|all|-|tests/integration/unroll_load_store_trap.tl|134|7000077000288000388\n|5|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:27:56: array index out of bounds: index=5 length=5\n
+bce_call_carrying_versioned_loop|all|-|tests/integration/bce_call_carrying_versioned_loop.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+bce_call_carrying_fast_trap|all|-|tests/integration/bce_call_carrying_trap.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:40:57: array index out of bounds: index=4 length=4\n
+bce_call_carrying_slow_trap|all|-|tests/integration/bce_call_carrying_trap.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:40:57: array index out of bounds: index=4 length=4\n
+bce_affine_versioning|all|-|tests/integration/bce_affine_versioning.tl|42|-|0|stdlib/io.tl stdlib/string.tl|-
+bce_monotone_cursor|all|-,2|tests/integration/bce_monotone_cursor.tl|42|-|0|stdlib/io.tl stdlib/string.tl|-
+bce_monotone_cursor_guard_trap|all|-,2|tests/integration/bce_monotone_cursor.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:54:35: array index out of bounds: index=24 length=24\n
+bce_monotone_cursor_stall_trap|all|-,2|tests/integration/bce_monotone_cursor.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:76:47: array index out of bounds: index=24 length=24\n
+bce_binary_interval|all|0,1,2|tests/integration/bce_binary_interval.tl|42|-|0|stdlib/io.tl stdlib/string.tl|-
+bce_binary_interval_extent_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:34: array index out of bounds: index=32 length=32\n
+bce_binary_interval_negative_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:36:34: array index out of bounds: index=-5 length=32\n
+bce_binary_interval_overflow_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|3|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:34: array index out of bounds: index=-1 length=32\n
+bce_binary_interval_base_trap|all|0,1,2|tests/integration/bce_binary_interval.tl|134|-|4|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:36:34: array index out of bounds: index=32 length=32\n
+bce_affine_overflow_trap|all|-|tests/integration/bce_affine_versioning.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:45: array index out of bounds: index=-9223372036854775807 length=8\n
+bce_affine_underflow_trap|all|-|tests/integration/bce_affine_versioning.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:34:45: array index out of bounds: index=-2 length=8\n
+gep_large_displacement|all|0,1,2|tests/integration/gep_large_displacement.tl|42|-|-|-|-
+unroll_descending_shift|all|-|tests/integration/unroll_descending_shift.tl|42|1097881888941945712\n-7018435674265511601\n|40 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+unroll_descending_shift_abort|all|-,2|tests/integration/unroll_descending_shift.tl|134|-|40 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:47:55: array index out of bounds: index=120 length=120\n
+range_loop_shapes|all|-|tests/integration/range_loop_shapes.tl|42|80 76 77 77 76\n|16 0|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|-
+range_loop_shapes_protocol_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 1|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:35:69: array index out of bounds: index=16 length=16\n
+range_loop_shapes_fields_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 2|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:55:46: array index out of bounds: index=16 length=16\n
+range_loop_shapes_advance_first_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 3|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:116:48: array index out of bounds: index=16 length=16\n
+guarded_loop_call|all|0,2|tests/integration/guarded_loop_call.tl|0|0 0 37 78957 5040933774284876412\n|-|-|stage-stdlib
+invariant_call_sum|all|0,2,1|tests/integration/invariant_call_sum.tl|0|-6073119532877662048 7 9 171 192 132\n|-|-|stage-stdlib
+invariant_call_sum_trap|all|0,1,2|tests/integration/invariant_call_sum.tl|135|-|trap|-|stage-stdlib+expected-stderr:tl: $SRC:12:10: integer division or remainder error: dividend=44 divisor=0\n
+guarded_call_div_first|all|0,1,2|tests/integration/guarded_loop_call_traps.tl|135|-|0 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:21:17: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_div_later|all|0,1,2|tests/integration/guarded_loop_call_traps.tl|135|-|0 3|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:21:17: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_rem_first|all|0,1,2|tests/integration/guarded_loop_call_traps.tl|135|-|1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:31:18: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_rem_later|all|0,1,2|tests/integration/guarded_loop_call_traps.tl|135|-|1 3|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:31:18: integer division or remainder error: dividend=60 divisor=0\n
+guarded_call_shl_first|all|0,1,2|tests/integration/guarded_loop_call_traps.tl|129|-|2 -1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:41:17: shift count out of range: count=-1 width=64\n
+guarded_call_shl_later|all|0,1,2|tests/integration/guarded_loop_call_traps.tl|129|-|2 3|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:41:17: shift count out of range: count=-1 width=64\n
+guarded_call_shr_first|all|0,1,2|tests/integration/guarded_loop_call_traps.tl|129|-|3 -1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:51:18: shift count out of range: count=-1 width=64\n
+guarded_call_shr_later|all|0,1,2|tests/integration/guarded_loop_call_traps.tl|129|-|3 3|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:51:18: shift count out of range: count=-1 width=64\n
+gep_global_capture|all|0,1,2|tests/integration/gep_global_capture.tl|42|-|-|stdlib/test.tl|-
+bce_addr_taken_bound|all|0,1,2|tests/integration/bce_addr_taken_bound.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_index|all|0,1,2|tests/integration/bce_addr_taken_index.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:13:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_snapshot_base|all|0,1,2|tests/integration/bce_addr_taken_snapshot_base.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:18:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_snapshot_base_mb|all|0,1,2|tests/integration/bce_addr_taken_snapshot_base_mb.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:43: array index out of bounds: index=8 length=8\n
+bce_addr_taken_snapshot_seed|all|0,1,2|tests/integration/bce_addr_taken_snapshot_seed.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:41: array index out of bounds: index=-1 length=8\n
+bce_addr_taken_fusion|all|0,1,2|tests/integration/bce_addr_taken_fusion.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:25:37: array index out of bounds: index=8 length=8\n
+bce_addr_taken_tighten|all|0,1,2|tests/integration/bce_addr_taken_tighten.tl|4|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:....
+bce_addr_taken_tighten_raise|all|0,1,2|tests/integration/bce_addr_taken_tighten_raise.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_tighten_lower|all|0,1,2|tests/integration/bce_addr_taken_tighten_lower.tl|4|-|-|stdlib/io.tl stdlib/string.tl|-
+unroll_addr_taken_bound|all|0,1,2|tests/integration/unroll_addr_taken_bound.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+lftr_addr_taken_bound|all|0,1,2|tests/integration/lftr_addr_taken_bound.tl|56|-|-|stdlib/io.tl stdlib/string.tl|-
+gep_offset_addr_taken|all|0,1,2|tests/integration/gep_offset_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+gep_offset_exit_base|all|0,1,2|tests/integration/gep_offset_exit_base.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+gep_fold_addr_taken_store|all|0,1,2|tests/integration/gep_fold_addr_taken_store.tl|39|-|-|-|-
+gep_fold_addr_taken_callee|all|0,1,2|tests/integration/gep_fold_addr_taken_callee.tl|39|-|-|-|-
+gep_fold_addr_taken_plus2|all|0,1,2|tests/integration/gep_fold_addr_taken_plus2.tl|40|-|-|-|-
+gep_fold_addr_taken_struct_base|all|0,1,2|tests/integration/gep_fold_addr_taken_struct_base.tl|39|-|-|-|-
+range_pair_bounds|all|0,2|tests/integration/range_pair_bounds.tl|42|47 0 0 1 1 0 1 0 0\n48 1 1 0 0 0 1 0 0\n57 1 1 0 0 0 1 0 0\n58 0 0 1 1 0 1 0 0\n-9223372036854775808 0 0 1 1 0 1 0 1\n9223372036854775807 0 0 1 1 0 1 1 0\n-6 0 0 1 1 0 1 0 0\n-5 0 0 1 1 1 1 0 0\n5 0 0 1 1 1 1 0 0\n6 0 0 1 1 0 1 0 0\n0 0 0 1 1 1 1 0 0\n|47 48 57 58 -9223372036854775808 9223372036854775807 -6 -5 5 6 0|stdlib/io.tl stdlib/string.tl|-

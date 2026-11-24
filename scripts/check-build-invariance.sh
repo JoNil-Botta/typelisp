@@ -13,6 +13,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-timing.sh"
+. "$ROOT/scripts/lib-manifest.sh"
 . "$ROOT/scripts/lib-build-invariance-batch.sh"
 BOUNDED_POOL_LABEL=build-invariance
 . "$ROOT/scripts/lib-bounded-pool.sh"
@@ -284,19 +285,21 @@ check_backend_memory() {
 
 write_corpus() {
     corpus_file=$1
+    manifest_concat_dir "$ROOT/tests/integration/manifest.d" > "$corpus_file.manifest"
+    awk -v host=linux -f scripts/expand-integration-manifest.awk \
+        "$corpus_file.manifest" > "$corpus_file.expanded"
     {
         printf '%s\n' "selfhost_main_opt1|src/main.tl|1"
         printf '%s\n' "selfhost_main_opt2|src/main.tl|2"
-        awk -v host=linux -f scripts/expand-integration-manifest.awk \
-            tests/integration/native.manifest |
-            awk -F'|' '
-                NF < 2 { next }
-                $1 == "" || $2 == "" { next }
-                {
-                    print "integration_" $1 "|" $2 "|2"
-                }
-            '
+        awk -F'|' '
+            NF < 2 { next }
+            $1 == "" || $2 == "" { next }
+            {
+                print "integration_" $1 "|" $2 "|2"
+            }
+        ' "$corpus_file.expanded"
     } > "$corpus_file"
+    rm -f "$corpus_file.manifest" "$corpus_file.expanded"
 }
 
 write_batch_chunks() {

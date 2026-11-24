@@ -1,0 +1,15 @@
+# Selfhost compile manifest: archive, ELF object, and COFF import readers.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|selfhost_linker_archive_core_tests|src/linker_archive_core_tests.tl|assembly|exactly-one|direct
+contains|main:
+end
+
+case|selfhost_linker_ar_dialect_reader|src/linker_ar_dialect_reader.tl|assembly|none|direct
+end
+
+case|selfhost_linker_elf_object_reader|src/linker_elf_object_reader.tl|assembly|none|direct
+end
+
+case|selfhost_linker_coff_import_reader|src/linker_coff_import_reader.tl|assembly|none|direct
+end

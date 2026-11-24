@@ -1,0 +1,59 @@
+# Native integration cases: standard library modules and embedded examples.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+stdlib_deflate|all|0,1,2|tests/integration/stdlib_deflate.tl|42|-|-|-|stage-stdlib
+deflate_embedded_example|all|0,1,2|examples/deflate_decode.tl|42|deflate decode score: 42\n|-|-|-
+stdlib_zlib|all|0,1,2|tests/integration/stdlib_zlib.tl|42|-|-|-|stage-stdlib
+stdlib_net|all|0,1,2|tests/integration/stdlib_net.tl|42|-|-|-|stage-stdlib
+stdlib_net_owner|all|0,1,2|tests/integration/stdlib_net_owner.tl|42|-|-|-|stage-stdlib
+stdlib_net_parity|all|0,1,2|tests/integration/stdlib_net_parity.tl|42|-|-|-|stage-stdlib
+stdlib_net_owner_parity|all|0,1,2|tests/integration/stdlib_net_owner_parity.tl|42|-|-|-|stage-stdlib
+zlib_embedded_example|all|0,1,2|examples/zlib_decode.tl|42|zlib decode score: 42\n|-|-|-
+process_empty_step|all|0,1,2|tests/integration/process_empty_step.tl|42|-|-|-|stage-stdlib
+process_empty_step_sequence|all|0,1,2|tests/integration/process_empty_step_sequence.tl|42|-|-|-|stage-stdlib
+git_object_smoke|all|0,1,2|tests/integration/git_object_smoke.tl|42|-|-|git_object_core.tl git_object_tests.tl|stage-stdlib
+hash_length_chain|all|2|tests/integration/hash_length_chain.tl|42|-|-|-|stage-stdlib
+hashmap_slot_update_shape|all|-|tests/integration/hashmap_slot_update_shape.tl|42|-|-|stdlib/hashmap.tl|-
+hashmap_nominal_value_local_smoke|all|-|tests/integration/hashmap_nominal_value_local_smoke.tl|42|-|-|stdlib/hashmap.tl|-
+hashmap_clone_escape|all|-|tests/integration/hashmap_clone_escape.tl|42|-|-|stdlib/arena.tl stdlib/hashmap.tl|-
+stdlib_time_sleep|all|-|tests/integration/stdlib_time_sleep.tl|42|-|-|stdlib/time.tl|-
+stdlib_time_allocation|all|-|tests/integration/stdlib_time_allocation.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/string.tl stdlib/thread.tl stdlib/time.tl|-
+stdlib_crypto_random|all|-|tests/integration/stdlib_crypto_random.tl|42|-|-|stdlib/crypto_random.tl stdlib/byte_buf.tl stdlib/string.tl|stage-stdlib
+stdlib_string_to_int|all|-|tests/integration/stdlib_string_to_int.tl|42|-|-|stdlib/string.tl|-
+dense_list_generated|all|-|tests/integration/dense_list_generated.tl|42|-|-|stdlib/dense_list.tl|-
+process_runtime|all|-|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n
+io_format_print|all|-|tests/integration/io_format_print.tl|0|Ada:-7:true:x:1.5 {done}\n42\n|-|-|-
+stdlib_io|all|-|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+stdlib_eq_aggregate|all|-|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl stdlib/comptime.tl|-
+stdlib_hash_generated|all|-|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl|-
+stdlib_json|all|-|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl|-
+json_control_escapes|all|0,1,2|tests/integration/json_control_escapes.tl|42|-|-|-|stage-stdlib
+json_unicode_escapes|all|0,1,2|tests/integration/json_unicode_escapes.tl|42|-|-|-|stage-stdlib
+json_unicode_escapes_embedded|all|0,1,2|tests/integration/json_unicode_escapes.tl|42|-|-|-|-
+stdlib_serialize_json|all|-|tests/integration/stdlib_serialize_json.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl serialize_enum_fixture.tl|-
+stdlib_serialize|all|-|tests/integration/stdlib_serialize.tl|42|-|-|stdlib/comptime.tl stdlib/option.tl stdlib/result.tl stdlib/serialize.tl stdlib/string.tl serialize_toy_format.tl serialize_enum_fixture.tl|-
+stdlib_byte_copy|all|-|tests/integration/stdlib_byte_copy.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/io.tl|-
+stdlib_text_buf|all|-|tests/integration/stdlib_text_buf.tl|42|-|-|stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/text_buf_borrowed.tl stdlib/io.tl stdlib/string.tl stdlib/profile.tl|-
+stdlib_string|all|-|tests/integration/stdlib_string.tl|42|hello\174\nhello\174\nhello\174\nfound\n\174empty-left\n\174empty-right\n\174all-space\ncontains\nmissing\nhippo\nabx\n0\n123456789\n-42\n9223372036854775807\n-9223372036854775808\n|-|stdlib/io.tl stdlib/string.tl|-
+stdlib_str_cat_fixed_arity|all|-|tests/integration/stdlib_str_cat_fixed_arity.tl|42|-|-|stdlib/string.tl stdlib/str_cat.tl|-
+stdlib_substring_negative_len_trap|all|-|tests/integration/stdlib_substring_negative_len_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
+stdlib_substring_negative_start_trap|all|-|tests/integration/stdlib_substring_negative_start_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
+stdlib_substring_range_overflow_trap|all|-|tests/integration/stdlib_substring_range_overflow_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
+stdlib_substring_start_past_end_trap|all|-|tests/integration/stdlib_substring_start_past_end_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
+stdlib_test|all|-|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl stdlib/io.tl stdlib/string.tl|-
+stdlib_test_bool_failure|all|-|tests/integration/stdlib_test.tl|134|-|bool|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:bool mismatch: expected false, found true
+stdlib_test_i64_failure|all|-|tests/integration/stdlib_test.tl|134|-|i64|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:score mismatch: expected 27, found 26
+stdlib_test_i32_failure|all|-|tests/integration/stdlib_test.tl|134|-|i32|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:offset mismatch: expected 4, found -3
+stdlib_test_f64_failure|all|-|tests/integration/stdlib_test.tl|134|-|f64|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:ratio mismatch: expected 2.5, found 1.25
+stdlib_test_char_failure|all|-|tests/integration/stdlib_test.tl|134|-|char|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:mark mismatch: expected 'y', found 'x'
+stdlib_test_string_failure|all|-|tests/integration/stdlib_test.tl|134|-|string|stdlib/test.tl stdlib/io.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl|expected-stderr:name mismatch: expected "right", found "left"
+stdlib_math_ieee|all|-,0,1,2|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl|-
+stdlib_math_table_payloads|all|0,1,2|tests/integration/stdlib_math_table_payloads.tl|42|-|-|stdlib/math.tl stdlib/byte_buf.tl stdlib/crypto_sha256.tl stdlib/iterator.tl stdlib/string.tl|-
+crypto_p256_ecdsa|all|0,1,2|tests/integration/crypto_p256_ecdsa.tl|42|-|-|stdlib/tests/crypto_p256_ecdsa_api.tl stdlib/crypto_p256_ecdsa.tl stdlib/crypto_p256.tl stdlib/crypto_sha256.tl stdlib/byte_buf.tl stdlib/string.tl stdlib/test.tl|-
+stdlib_math_exp|all|-,0,1,2|tests/integration/stdlib_math_exp.tl|0|-|-|stdlib/math.tl|-
+stdlib_math_log|all|-,0,1,2|tests/integration/stdlib_math_log.tl|0|-|-|stdlib/math.tl|-
+stdlib_math_pow|all|-,0,1,2|tests/integration/stdlib_math_pow.tl|0|-|-|stdlib/math.tl|-
+stdlib_math_mul_add|all|-,0,1,2|tests/integration/stdlib_math_mul_add.tl|42|-|-|stdlib/math.tl|-
+stdlib_math_trig|all|-,0,1,2|tests/integration/stdlib_math_trig.tl|0|-|-|stdlib/math.tl|-
+env_thread_sync|all|-|tests/integration/env_thread_sync.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/env.tl stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/str_cat.tl stdlib/vector.tl stdlib/string.tl|-
+env_arena_publication|all|0,1,2|tests/integration/env_arena_publication.tl|42|-|-|stdlib/arena.tl stdlib/env.tl stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/str_cat.tl stdlib/vector.tl stdlib/string.tl|-

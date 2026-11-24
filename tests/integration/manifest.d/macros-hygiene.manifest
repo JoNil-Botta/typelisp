@@ -1,0 +1,71 @@
+# Native integration cases: macros, hygiene, splicing, core prelude, and generated declarations.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+macro_body_splice|all|0,1,2|tests/integration/macro_body_splice.tl|42|-|-|-|stage-stdlib
+macro_struct_pattern|all|0,1,2|tests/integration/macro_struct_pattern.tl|42|-|-|macro_struct_pattern_defs.tl stdlib/string.tl|stage-stdlib
+macro_struct_pattern_root|all|0,1,2|tests/integration/macro_struct_pattern_root.tl|42|-|-|stdlib/string.tl|stage-stdlib
+generated_hashmap_global_mutation|all|-|tests/integration/generated_hashmap_global_mutation.tl|42|-|-|stdlib/hashmap.tl|-
+core_macros_compound_assign|all|-,0,2|tests/integration/core_macros_compound_assign.tl|42|-|-|-|-
+core_macros_any_all|all|-|tests/integration/core_macros_any_all.tl|42|-|-|stdlib/iterator.tl|-
+core_macros_any_all_macro_predicates|all|-|tests/integration/core_macros_any_all_macro_predicates.tl|42|-|-|stdlib/iterator.tl|-
+macro_clause_capture_slice_view|all|-|tests/integration/macro_clause_capture_slice_view.tl|42|-|-|-|-
+macro_binder_pool_publication|all|-|tests/integration/macro_binder_pool_publication.tl|42|-|-|-|-
+macro_loop_control_operand|all|-|tests/integration/macro_loop_control_operand.tl|42|-|-|stdlib/iterator.tl|-
+implicit_core_prelude|all|-|tests/integration/implicit_core_prelude.tl|42|-|-|-|-
+core_macros_headerless_prelude_import|all|-|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-|-
+macro_forward_order|all|-|tests/integration/macro_forward_order.tl|42|-|-|-|-
+macro_body_sequence|all|0,1,2|tests/integration/macro_body_sequence.tl|42|-|-|macro_body_sequence_dep.tl|-
+macro_replace_hygiene|all|0,1,2|tests/integration/macro_replace_hygiene.tl|42|-|-|stdlib/comptime.tl|-
+macro_binding_clause_hygiene|all|-,0,2|tests/integration/macro_binding_clause_hygiene.tl|42|-|-|stdlib/comptime.tl stdlib/iterator.tl|-
+macro_binding_clause_callee|all|-,0,2|tests/integration/macro_binding_clause_callee.tl|42|-|-|stdlib/comptime.tl|-
+macro_free_template_name|all|-,0,2|tests/integration/macro_free_template_name.tl|42|-|-|stdlib/comptime.tl stdlib/iterator.tl|-
+macro_native_literal_name|all|-,0,2|tests/integration/macro_native_literal_name.tl|42|-|-|stdlib/string.tl stdlib/clone.tl|-
+macro_dotted_global|all|0,1,2|tests/integration/macro_dotted_global.tl|2|-|-|global_field_macro_dep.tl|-
+macro_dotted_global_inside|all|0,1,2|tests/integration/macro_dotted_global_inside.tl|2|-|-|global_field_macro_dep.tl|-
+macro_dotted_global_matrix|all|0,1,2|tests/integration/macro_dotted_global_matrix.tl|42|-|-|global_field_macro_dep.tl|-
+macro_dotted_root_borrow|all|0,1,2|tests/integration/macro_dotted_root_borrow.tl|2|-|-|-|-
+macro_dotted_root_layout|all|0,1,2|tests/integration/macro_dotted_root_layout.tl|2|-|-|-|-
+macro_dotted_root_mut_borrow|all|0,1,2|tests/integration/macro_dotted_root_mut_borrow.tl|2|-|-|-|-
+macro_dotted_root_nested|all|0,1,2|tests/integration/macro_dotted_root_nested.tl|6|-|-|-|-
+macro_dotted_root_nested_borrow|all|0,1,2|tests/integration/macro_dotted_root_nested_borrow.tl|6|-|-|-|-
+macro_dotted_root_ref_borrow|all|0,1,2|tests/integration/macro_dotted_root_ref_borrow.tl|2|-|-|-|-
+macro_dotted_root_same|all|0,1,2|tests/integration/macro_dotted_root_same.tl|2|-|-|-|-
+macro_dotted_root_scalar|all|0,1,2|tests/integration/macro_dotted_root_scalar.tl|2|-|-|-|-
+macro_dotted_root_small|all|0,1,2|tests/integration/macro_dotted_root_small.tl|2|-|-|-|-
+macro_dotted_root_narrow_borrow|all|0,1,2|tests/integration/macro_dotted_root_narrow_borrow.tl|42|-|-|-|-
+macro_dotted_root_wide_borrow|all|0,1,2|tests/integration/macro_dotted_root_wide_borrow.tl|42|-|-|-|-
+macro_dotted_root_write_borrow|all|0,1,2|tests/integration/macro_dotted_root_write_borrow.tl|42|-|-|-|-
+macro_dotted_root_scalar_borrow|all|0,1,2|tests/integration/macro_dotted_root_scalar_borrow.tl|42|-|-|-|-
+macro_dotted_root_noncall_borrow|all|0,1,2|tests/integration/macro_dotted_root_noncall_borrow.tl|42|-|-|-|-
+macro_dotted_root_replace|all|0,1,2|tests/integration/macro_dotted_root_replace.tl|42|-|-|-|-
+macro_try_operand|all|0,1,2|tests/integration/macro_try_operand.tl|42|-|-|stdlib/comptime.tl|-
+macro_value_same_spelling|all|-|tests/integration/macro_value_same_spelling.tl|42|-|-|-|-
+macro_module_local_shadow_provider|all|-|tests/integration/macro_module_local_shadow_provider.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl|-
+macro_module_local_shadow|all|-|tests/integration/macro_module_local_shadow.tl|42|-|-|macro_module_local_shadow_provider.tl stdlib/io.tl stdlib/string.tl stdlib/arena.tl stdlib/hash.tl stdlib/byte_buf_core.tl stdlib/option.tl stdlib/text_buf.tl stdlib/str_cat_runtime.tl|-
+macro_template_variant_provider|all|-|tests/integration/macro_template_variant_provider.tl|42|-|-|-|-
+macro_template_variant|all|-|tests/integration/macro_template_variant.tl|42|-|-|macro_template_variant_provider.tl|-
+macro_qualified_helpers|all|-,0,2|tests/integration/macro_qualified_helpers.tl|42|-|-|macro_qualified_helper_defs.tl macro_qualified_helper_int_defs.tl macro_qualified_helper_macros.tl|-
+macro_qualified_helpers_no_string_import|all|-|tests/integration/macro_qualified_helpers_no_string_import.tl|42|-|-|macro_qualified_helper_defs.tl macro_qualified_helper_int_defs.tl macro_qualified_helper_macros.tl|-
+macro_template_pattern|all|-|tests/integration/macro_template_pattern.tl|42|-|-|macro_template_pattern_user.tl macro_template_variant_provider.tl|-
+decls_macro_scoped_forms|all|-,0,2|tests/integration/decls_macro_scoped_forms.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+decls_macro_nested_arguments|all|-|tests/integration/decls_macro_nested_arguments.tl|42|-|-|stdlib/comptime.tl|-
+generated_macro_clone_handoff|all|-|tests/integration/generated_macro_clone_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
+generated_cfg|all|-|tests/integration/generated_cfg.tl|42|-|-|-|-
+generated_cfg|all|0,1,2|tests/integration/generated_cfg.tl|42|-|-|-|stage-stdlib
+macro_layout_operand|all|0,1,2|tests/integration/macro_layout_operand.tl|42|-|-|macro_layout_operand_dep.tl stdlib/comptime.tl|-
+macro_layout_literal|all|0,1,2|tests/integration/macro_layout_literal.tl|42|-|-|comptime_layout_imported_dep.tl comptime_layout_imported_other.tl stdlib/comptime.tl|-
+generated_option_result_families|all|-|tests/integration/generated_option_result_families.tl|146|-|-|stdlib/string.tl stdlib/option.tl stdlib/result.tl|-
+generated_string_vector_private_intrinsics|all|-|tests/integration/generated_string_vector_private_intrinsics.tl|42|-|-|stdlib/vector.tl stdlib/string.tl|-
+macro_view_root_shadow|all|-,0|tests/integration/macro_view_root_shadow.tl|42|-|-|macro_view_root_shadow_lib.tl|-
+macro_import_order_json_first|all|-|tests/integration/macro_import_order_repro.tl|42|-|-|stdlib/json.tl stdlib/format.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl|-
+macro_import_order_format_first|all|-|tests/integration/macro_import_order_format_first.tl|42|-|-|stdlib/json.tl stdlib/format.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl|-
+macro_untaken_comptime_error|all|-|tests/integration/macro_untaken_comptime_error.tl|42|-|-|stdlib/comptime.tl|-
+decls_generated_imports|all|-|tests/integration/decls_generated_imports.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl decls_generated_import_macro_dep.tl|-
+decls_generated_import_nested|all|-|tests/integration/decls_generated_import_nested.tl|42|-|-|decls_generated_import_dep.tl|-
+generated_import_alias_scopes|all|-|tests/integration/generated_import_alias_scopes.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|-
+generated_import_global_initializers|all|-|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|-
+generated_import_global_initializers|all|0,2|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|stage-stdlib
+decls_module_scopes|all|0,1,2|tests/integration/decls_module_scopes.tl|42|-|-|decls_generated_import_dep.tl|-
+decls_module_env_carry|all|0,1,2|tests/integration/decls_module_env_carry.tl|42|-|-|decls_module_env_carry_dep.tl|-
+decls_explicit_module_scopes|all|0,1,2|tests/integration/decls_explicit_module_scopes.tl|42|-|-|-|-
+decls_self_target_scopes|all|0,1,2|tests/integration/decls_self_target_scopes.tl|42|-|-|-|-

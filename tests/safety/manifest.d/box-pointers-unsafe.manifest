@@ -1,0 +1,78 @@
+# Safety corpus cases: Box ownership, raw pointers, unsafe/safe boundaries, externs, cleanup hooks, and casts.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+dead_frame_abort_only_trap|run-trap|tests/safety/dead_frame_abort_only_trap.tl|134|array index out of bounds: index=7 length=4
+raw_pointer_values_defined|check-ok|tests/safety/raw_pointer_values_defined.tl|-|-
+private_array_data_safe_reject|check-fail|tests/safety/private_array_data_safe_reject.tl|-|typecheck: __tl_array-data requires unsafe context
+unsafe_syscall_defined|check-ok|tests/safety/unsafe_syscall_defined.tl|-|-
+unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|typecheck: cast requires scalar numeric (integer/char/float) source and target
+safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|typecheck: ptr-read requires unsafe context
+unsafe_callable_value_launder_reject|check-fail|tests/safety/unsafe_callable_value_launder_reject.tl|-|danger is an unsafe callable and cannot be used as a plain function value
+safe_syscall_reject|check-fail|tests/safety/safe_syscall_reject.tl|-|typecheck: syscall requires unsafe context
+box_take_use_after_move_reject|check-fail|tests/safety/box_take_use_after_move_reject.tl|-|use of moved value `cell`
+box_set_temporary_reject|check-fail|tests/safety/box_set_temporary_reject.tl|-|expression is not a storage place
+box_set_borrow_live_reject|check-fail|tests/safety/box_set_borrow_live_reject.tl|-|cannot assign to borrowed place `cell`
+box_pattern_wrong_arity_reject|check-fail|tests/safety/box_pattern_wrong_arity_reject.tl|-|box pattern expects exactly one inner pattern
+box_pattern_non_box_reject|check-fail|tests/safety/box_pattern_non_box_reject.tl|-|box pattern requires Box scrutinee
+box_pattern_refutable_inner_reject|check-fail|tests/safety/box_pattern_refutable_inner_reject.tl|-|box pattern only supports irrefutable binding, wildcard, or nested box patterns
+box_pattern_borrowed_reject|check-fail|tests/safety/box_pattern_borrowed_reject.tl|-|borrowed box patterns are not supported
+box_deref_copy_projection_reuse_ok|run-exit|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-
+box_deref_non_copy_projection_move_reject|check-ok|tests/safety/box_deref_non_copy_projection_move_reject.tl|-|-
+box_deref_projection_move_consumes_box_reject|check-fail|tests/safety/box_deref_projection_move_consumes_box_reject.tl|-|use of moved value `b`
+box_shortened_reference_element_reject|check-fail|tests/safety/box_shortened_reference_element_reject.tl|-|let binding `b` type mismatch: expected (Box (& k i64)), found (Box (& r i64))
+box_field_shared_let_reject|check-fail|tests/safety/box_field_shared_let_reject.tl|tests/safety/box_field_shared_let_reject.tl:10:18|error[E0207]: typecheck: cannot mutably borrow `r.b` behind a shared reference
+box_field_shared_nested_let_reject|check-fail|tests/safety/box_field_shared_nested_let_reject.tl|tests/safety/box_field_shared_nested_let_reject.tl:12:18|error[E0207]: typecheck: cannot mutably borrow `r.inner.b` behind a shared reference
+box_field_shared_local_ref_reject|check-fail|tests/safety/box_field_shared_local_ref_reject.tl|tests/safety/box_field_shared_local_ref_reject.tl:13:22|error[E0207]: typecheck: cannot mutably borrow `h.b` behind a shared reference
+box_field_shared_macro_let_reject|check-fail|tests/safety/box_field_shared_macro_let_reject.tl|tests/safety/box_field_shared_macro_let_reject.tl:9:18|error[E0207]: typecheck: cannot mutably borrow `r.b` behind a shared reference
+box_field_shared_view_write_reject|check-fail|tests/safety/box_field_shared_view_write_reject.tl|tests/safety/box_field_shared_view_write_reject.tl:10:18|error[E0207]: typecheck: cannot mutably borrow `r.b` behind a shared reference
+box_field_shared_view_mut_borrow_reject|check-fail|tests/safety/box_field_shared_view_mut_borrow_reject.tl|tests/safety/box_field_shared_view_mut_borrow_reject.tl:12:12|error[E0207]: typecheck: cannot mutably borrow `r.b` behind a shared reference
+box_field_shared_struct_payload_write_reject|check-fail|tests/safety/box_field_shared_struct_payload_write_reject.tl|tests/safety/box_field_shared_struct_payload_write_reject.tl:13:5|error[E0207]: typecheck: cannot mutably borrow `r.b` behind a shared reference
+box_field_shared_view_call_arg_reject|check-fail|tests/safety/box_field_shared_view_call_arg_reject.tl|tests/safety/box_field_shared_view_call_arg_reject.tl:12:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_view_return_reject|check-fail|tests/safety/box_field_shared_view_return_reject.tl|tests/safety/box_field_shared_view_return_reject.tl:9:5|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_let_origin_reject|check-fail|tests/safety/box_field_shared_let_reject.tl|tests/safety/box_field_shared_let_reject.tl:10:18|tests/safety/box_field_shared_let_reject.tl:9:20
+box_field_shared_let_windows_reject|check-fail-windows|tests/safety/box_field_shared_let_reject.tl|-|error[E0207]: typecheck: cannot mutably borrow `r.b` behind a shared reference
+box_field_shared_origin_ok|run-exit|tests/safety/box_field_shared_origin_ok.tl|42|-
+box_field_shared_nested_view_take_reject|check-fail|tests/safety/box_field_shared_nested_view_take_reject.tl|tests/safety/box_field_shared_nested_view_take_reject.tl:13:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_view_contents_take_reject|check-fail|tests/safety/box_field_shared_view_contents_take_reject.tl|tests/safety/box_field_shared_view_contents_take_reject.tl:14:14|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+box_field_shared_view_construct_reject|check-fail|tests/safety/box_field_shared_view_construct_reject.tl|tests/safety/box_field_shared_view_construct_reject.tl:9:13|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_match_binder_write_reject|check-fail|tests/safety/box_field_shared_match_binder_write_reject.tl|tests/safety/box_field_shared_match_binder_write_reject.tl:12:33|error[E0207]: typecheck: cannot mutably borrow `b` behind a shared reference
+box_field_shared_nested_view_ok|run-exit|tests/safety/box_field_shared_nested_view_ok.tl|42|-
+box_field_shared_branch_reject|check-fail|tests/safety/box_field_shared_branch_reject.tl|tests/safety/box_field_shared_branch_reject.tl:11:9|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_tuple_reject|check-fail|tests/safety/box_field_shared_tuple_reject.tl|tests/safety/box_field_shared_tuple_reject.tl:9:18|error[E0207]: typecheck: cannot mutably borrow `r.pair.0` behind a shared reference
+box_field_shared_region_reject|check-fail|tests/safety/box_field_shared_region_reject.tl|tests/safety/box_field_shared_region_reject.tl:14:14|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_alias_reject|check-fail|tests/safety/box_field_shared_alias_reject.tl|tests/safety/box_field_shared_alias_reject.tl:12:18|error[E0207]: typecheck: cannot mutably borrow `alias.b` behind a shared reference
+box_field_shared_store_reject|check-fail|tests/safety/box_field_shared_store_reject.tl|tests/safety/box_field_shared_store_reject.tl:10:17|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_branch_reject_windows|check-fail-windows|tests/safety/box_field_shared_branch_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_tuple_reject_windows|check-fail-windows|tests/safety/box_field_shared_tuple_reject.tl|-|error[E0207]: typecheck: cannot mutably borrow `r.pair.0` behind a shared reference
+box_field_shared_region_reject_windows|check-fail-windows|tests/safety/box_field_shared_region_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_alias_reject_windows|check-fail-windows|tests/safety/box_field_shared_alias_reject.tl|-|error[E0207]: typecheck: cannot mutably borrow `alias.b` behind a shared reference
+box_field_shared_store_reject_windows|check-fail-windows|tests/safety/box_field_shared_store_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+box_field_shared_view_call_arg_help_reject|check-fail|tests/safety/box_field_shared_view_call_arg_reject.tl|-|; or bind a borrow `(& ...)` or an owned `(clone ...)` in place of this view
+raw_pointer_field_set_safe_reject|check-fail|tests/safety/raw_pointer_field_set_safe_reject.tl|-|typecheck: deref of a raw pointer requires unsafe context
+raw_pointer_field_read_safe_reject|check-fail|tests/safety/raw_pointer_field_read_safe_reject.tl|-|typecheck: deref of a raw pointer requires unsafe context
+raw_pointer_field_set_read_only_reject|check-fail|tests/safety/raw_pointer_field_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)
+raw_pointer_nested_field_set_read_only_reject|check-fail|tests/safety/raw_pointer_nested_field_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)
+raw_pointer_field_element_set_read_only_reject|check-fail|tests/safety/raw_pointer_field_element_set_read_only_reject.tl|-|typecheck: cannot assign through a (Ptr T), whose pointee is read-only; use a (MutPtr T)
+raw_pointer_whole_deref_read_reject|check-fail|tests/safety/raw_pointer_whole_deref_read_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field
+raw_pointer_whole_deref_set_reject|check-fail|tests/safety/raw_pointer_whole_deref_set_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field
+raw_pointer_field_replace_reject|check-fail|tests/safety/raw_pointer_field_replace_reject.tl|-|typecheck: replace! target cannot be reached through a raw pointer
+raw_pointer_field_borrow_reject|check-fail|tests/safety/raw_pointer_field_borrow_reject.tl|-|typecheck: deref borrow requires Box or reference place
+cleanup_hook_unsafe_field_reject|check-fail|tests/safety/cleanup_hook_unsafe_field_reject.tl|-|struct Handle field fd cleanup function raw-close is an unsafe declaration
+cleanup_hook_unsafe_payload_reject|check-fail|tests/safety/cleanup_hook_unsafe_payload_reject.tl|-|enum Res variant Open cleanup function raw-close is an unsafe declaration
+cleanup_hook_unsafe_imported_reject|check-fail|tests/safety/cleanup_hook_unsafe_imported_reject.tl|-|cleanup function dep/raw-close is an unsafe declaration
+cleanup_hook_imported_safe_ok|check-ok|tests/safety/cleanup_hook_imported_safe_ok.tl|-|-
+cleanup_hook_safe_validating_ok|run-exit|tests/safety/cleanup_hook_safe_validating_ok.tl|42|-
+extern_data_address_safe_reject|check-fail|tests/safety/extern_data_address_safe_reject.tl|-|ptr-addr-of requires unsafe context
+extern_data_store_type_reject|check-fail|tests/safety/extern_data_store_type_reject.tl|-|type mismatch
+box_set_through_reference_borrow_live_reject|check-fail|tests/safety/box_set_through_reference_borrow_live_reject.tl|tests/safety/box_set_through_reference_borrow_live_reject.tl:10:20|cannot assign to borrowed place `p`
+cleanup_array_overwrite_reject|check-fail|tests/safety/cleanup_array_overwrite_reject.tl|-|cannot overwrite initialized cleanup-owning place
+packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
+packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+cast_exit_unsupported_reject|check-fail|tests/safety/cast_exit_unsupported_reject.tl|-|cast requires scalar numeric
+cast_exit_unsupported_reject-windows|check-fail-windows|tests/safety/cast_exit_unsupported_reject.tl|-|cast requires scalar numeric
+legacy_box_get_ref_match_reject|check-fail|tests/safety/legacy_box_get_ref_match_reject.tl|tests/safety/legacy_box_get_ref_match_reject.tl:16:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_shared_box_reject|check-fail|tests/safety/legacy_box_get_shared_box_reject.tl|tests/safety/legacy_box_get_shared_box_reject.tl:5:27|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_store_ref_reject|check-fail|tests/safety/legacy_box_get_store_ref_reject.tl|tests/safety/legacy_box_get_store_ref_reject.tl:14:15|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_mut_box_reject|check-fail|tests/safety/legacy_box_get_mut_box_reject.tl|tests/safety/legacy_box_get_mut_box_reject.tl:5:30|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_nested_match_reject|check-fail|tests/safety/legacy_box_get_nested_match_reject.tl|tests/safety/legacy_box_get_nested_match_reject.tl:12:24|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_ref_match_clone_reject|check-fail|tests/safety/legacy_box_get_ref_match_clone_reject.tl|tests/safety/legacy_box_get_ref_match_clone_reject.tl:17:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference

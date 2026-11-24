@@ -270,6 +270,107 @@
     (io.panic "binding not restored after a failing check"))
   (canon-eq-expect-no-table "a failing check"))
 
+(define (canon-eq-selected-expect
+  [label : String]
+  [want : bool]
+  [a : i64]
+  [b : i64]) : unit
+  (unless
+    (= (tc.tc-selected-same-type? (ast.ty-node-get a) (ast.ty-node-get b)) want)
+    (io.panic label)))
+
+(define (canon-eq-lifetimes1 [r : i64]) : ast.AstLifetimeList
+  (let
+    [out : ast.AstLifetimeList (ast.ast-lifetime-list-with-capacity 1)]
+    (ast.ast-lifetime-list-push (&mut out) r)
+    out))
+
+;; Selected-type identity: ignores lifetime/region names, distinguishes
+;; Ref/MutRef/Region from plain types, handles nested poison, and stays linear
+;; on deep loan-bearing binary DAGs and after pool truncation.
+(define (canon-eq-selected-same-type-test) : unit
+  (let
+    [r1 : i64 (ci.intern "sel-r1")]
+    [r2 : i64 (ci.intern "sel-r2")]
+    [leaf-name : i64 (ci.intern "SelLeaf")]
+    [other-name : i64 (ci.intern "SelOther")]
+    [i64-id : i64 (canon-eq-push ast.AstType.I64)]
+    [bool-id : i64 (canon-eq-push ast.AstType.Bool)]
+    [poison : i64 (canon-eq-push (ast.AstType.Var tc.tc-poison-type-name-id))]
+    [ref-r1 : i64 (canon-eq-push (ast.AstType.Ref r1 i64-id))]
+    [ref-r2 : i64 (canon-eq-push (ast.AstType.Ref r2 i64-id))]
+    [mutref-r1 : i64 (canon-eq-push (ast.AstType.MutRef r1 i64-id))]
+    [mutref-r2 : i64 (canon-eq-push (ast.AstType.MutRef r2 i64-id))]
+    [reg-r1 : i64 (canon-eq-push (ast.AstType.Region r1 i64-id))]
+    [reg-r2 : i64 (canon-eq-push (ast.AstType.Region r2 i64-id))]
+    [leaf-r1 : i64
+      (canon-eq-push
+        (ast.ast-ty-struct-args leaf-name (canon-eq-lifetimes1 r1)))]
+    [leaf-r2 : i64
+      (canon-eq-push
+        (ast.ast-ty-struct-args leaf-name (canon-eq-lifetimes1 r2)))]
+    [other-r1 : i64
+      (canon-eq-push
+        (ast.ast-ty-struct-args other-name (canon-eq-lifetimes1 r1)))]
+    [dag-r1 : i64
+      (canon-eq-raw-dag
+        40
+        (ast.ast-ty-struct-args leaf-name (canon-eq-lifetimes1 r1)))]
+    [dag-r2 : i64
+      (canon-eq-raw-dag
+        40
+        (ast.ast-ty-struct-args leaf-name (canon-eq-lifetimes1 r2)))]
+    [dag-other : i64
+      (canon-eq-raw-dag
+        40
+        (ast.ast-ty-struct-args other-name (canon-eq-lifetimes1 r1)))]
+    (canon-eq-selected-expect "ref ignores lifetime" true ref-r1 ref-r2)
+    (canon-eq-selected-expect
+      "mutref ignores lifetime"
+      true
+      mutref-r1
+      mutref-r2)
+    (canon-eq-selected-expect "ref vs mutref" false ref-r1 mutref-r1)
+    (canon-eq-selected-expect "region ignores name" true reg-r1 reg-r2)
+    (canon-eq-selected-expect "region vs plain" false reg-r1 i64-id)
+    (canon-eq-selected-expect "ref vs poison" false ref-r1 poison)
+    (canon-eq-selected-expect "poison vs ref" false poison ref-r1)
+    (canon-eq-selected-expect
+      "ref poison vs ref i64"
+      true
+      (canon-eq-push (ast.AstType.Ref r1 poison))
+      ref-r2)
+    (canon-eq-selected-expect
+      "tuple poison vs tuple bool"
+      true
+      (canon-eq-pair poison i64-id)
+      (canon-eq-pair bool-id i64-id))
+    (canon-eq-selected-expect
+      "struct args ignore lifetime"
+      true
+      leaf-r1
+      leaf-r2)
+    (canon-eq-selected-expect
+      "struct args different name"
+      false
+      leaf-r1
+      other-r1)
+    (canon-eq-selected-expect "deep loan DAG equal" true dag-r1 dag-r2)
+    (canon-eq-selected-expect "deep loan DAG distinct" false dag-r1 dag-other)
+    ;; Truncate and reuse IDs: selected-hash and pair memo must clear.
+    (let
+      [mark : i64 (ast.ty-node-pool-len)]
+      [a : i64 (canon-eq-raw-dag 4 (ast.AstType.Ref r1 i64-id))]
+      [b : i64 (canon-eq-raw-dag 4 (ast.AstType.Ref r2 i64-id))]
+      (canon-eq-selected-expect "selected before truncate" true a b)
+      (ast.ty-node-pool-truncate! mark)
+      (let
+        [a2 : i64 (canon-eq-raw-dag 4 (ast.AstType.Ref r1 i64-id))]
+        [b2 : i64 (canon-eq-raw-dag 4 (ast.AstType.MutRef r2 i64-id))]
+        (when (!= a2 a) (io.panic "selected truncate did not reuse a"))
+        (when (!= b2 b) (io.panic "selected truncate did not reuse b"))
+        (canon-eq-selected-expect "selected after truncate" false a2 b2)))))
+
 (cfg
   test
   (define (canon-eq-self-test) : unit
@@ -282,6 +383,7 @@
       (canon-eq-raw-test)
       (canon-eq-region-test)
       (canon-eq-poison-test)
+      (canon-eq-selected-same-type-test)
       (canon-eq-truncate-test)
       (canon-eq-pools-test)
       (canon-eq-context-reset-test)

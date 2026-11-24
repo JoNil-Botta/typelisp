@@ -1,0 +1,6 @@
+# Codegen target-dispatch boundary inventory (#5347); see scripts/check-codegen-target-dispatch.sh.
+# file	scope	boundary	category	token-regex	count	rationale
+src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs	policy	target-cfg	target-linux	1	Shared target cfg preset used by CLI and backend source requests.
+src/compiler_target_cfg_core.tl	compiler-target-enable-windows-cfgs	policy	target-cfg	target-windows	1	Shared target cfg preset used by CLI and backend source requests.
+src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs-with-intern-state	policy	target-cfg	target-linux	1	Shared target cfg preset used by CLI and backend source requests.
+src/compiler_target_cfg_core.tl	compiler-target-enable-windows-cfgs-with-intern-state	policy	target-cfg	target-windows	1	Shared target cfg preset used by CLI and backend source requests.

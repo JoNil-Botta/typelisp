@@ -867,7 +867,8 @@
              return %4
              }"))]
       [blocks (opt.opt-function-blocks func)]
-      [context (opt.opt-cfg-context-build (clone blocks))]
+      [context
+        (opt.opt-cfg-context-build (ir.clone-compiler-ir-block-list (& blocks)))]
       [state
         (opt.OptLoopCallRewriteState
           16

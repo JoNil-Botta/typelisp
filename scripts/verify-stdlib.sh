@@ -114,6 +114,17 @@ stdlib_run_fixture_binary() {
 . "$ROOT/scripts/lib-gate.sh"
 gate_compiler
 gate_require_compiler
+BOUNDED_POOL_LABEL=stdlib
+. "$ROOT/scripts/lib-bounded-pool.sh"
+
+STDLIB_WORKERS=${TYPELISP_STDLIB_WORKERS:-4}
+case "$STDLIB_WORKERS" in
+    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) ;;
+    *)
+        echo "invalid TYPELISP_STDLIB_WORKERS: $STDLIB_WORKERS (expected 1-8)" >&2
+        exit 2
+        ;;
+esac
 
 TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh tests/codegen/for-source-macro.cases
 TYPELISP_BIN="$COMPILER" scripts/verify-codegen-cases.sh --only 'secret-generation-*' tests/codegen/crypto-secret.cases
@@ -669,9 +680,9 @@ compare_stream() {
         if [ -s "$_actual" ]; then
             echo "FAIL: $_case wrote unexpected $_kind" >&2
             show_streams "$_stdout" "$_stderr"
-            exit 1
+            return 1
         fi
-        return
+        return 0
     fi
 
     case "$_spec" in
@@ -680,18 +691,18 @@ compare_stream() {
             if ! printf '%s' "$_expected_literal" | cmp -s - "$_actual"; then
                 echo "FAIL: $_case $_kind differed from inline literal expectation" >&2
                 show_streams "$_stdout" "$_stderr"
-                exit 1
+                return 1
             fi
-            return
+            return 0
             ;;
         printf:*)
             _expected_printf=${_spec#printf:}
             if ! printf '%b' "$_expected_printf" | cmp -s - "$_actual"; then
                 echo "FAIL: $_case $_kind differed from inline printf expectation" >&2
                 show_streams "$_stdout" "$_stderr"
-                exit 1
+                return 1
             fi
-            return
+            return 0
             ;;
         host-line:*)
             _expected_line=${_spec#host-line:}
@@ -699,23 +710,23 @@ compare_stream() {
                 if ! printf '%s\r\n' "$_expected_line" | cmp -s - "$_actual"; then
                     echo "FAIL: $_case $_kind differed from host-line expectation" >&2
                     show_streams "$_stdout" "$_stderr"
-                    exit 1
+                    return 1
                 fi
             else
                 if ! printf '%s\n' "$_expected_line" | cmp -s - "$_actual"; then
                     echo "FAIL: $_case $_kind differed from host-line expectation" >&2
                     show_streams "$_stdout" "$_stderr"
-                    exit 1
+                    return 1
                 fi
             fi
-            return
+            return 0
             ;;
     esac
 
     _expected="$ROOT/$_spec"
     if [ ! -f "$_expected" ]; then
         echo "FAIL: $_case expected $_kind fixture is missing: $_spec" >&2
-        exit 1
+        return 1
     fi
 
     if ! cmp -s "$_expected" "$_actual"; then
@@ -725,7 +736,7 @@ compare_stream() {
         else
             show_streams "$_stdout" "$_stderr"
         fi
-        exit 1
+        return 1
     fi
 }
 
@@ -737,17 +748,17 @@ materialize_stream() {
 
     if [ "$_spec" = "-" ]; then
         : > "$_output"
-        return
+        return 0
     fi
 
     case "$_spec" in
         literal:*)
             printf '%s' "${_spec#literal:}" > "$_output"
-            return
+            return 0
             ;;
         printf:*)
             printf '%b' "${_spec#printf:}" > "$_output"
-            return
+            return 0
             ;;
         host-line:*)
             if [ "$HOST_OS" = windows ]; then
@@ -755,21 +766,28 @@ materialize_stream() {
             else
                 printf '%s\n' "${_spec#host-line:}" > "$_output"
             fi
-            return
+            return 0
             ;;
     esac
 
     _source="$ROOT/$_spec"
     if [ ! -f "$_source" ]; then
         echo "FAIL: $_case $_kind fixture is missing: $_spec" >&2
-        exit 1
+        return 1
     fi
     cp "$_source" "$_output"
 }
 
-TEST_COPY_ROOT="$WORKDIR/fixtures"
 RUN_ROOT="$WORKDIR/run"
-mkdir -p "$TEST_COPY_ROOT" "$RUN_ROOT"
+POOL_DIR="$WORKDIR/pool"
+POOL_JOBS_DIR="$WORKDIR/pool-jobs"
+POOL_QUEUE="$WORKDIR/pool.queue"
+mkdir -p "$RUN_ROOT" "$POOL_JOBS_DIR"
+: > "$POOL_QUEUE"
+
+# Hoist toolchain discovery once before launching workers so Windows does not
+# re-probe clang/lld-link inside each worker subshell.
+stdlib_configure_native_link
 
 PATH_SEP=:
 [ "$HOST_OS" = windows ] && PATH_SEP=';'
@@ -794,7 +812,7 @@ else
 fi
 export WindowsSDKVersion="$SDK_VERSION"
 
-passed=0
+run_count=0
 while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
     case "$fixture" in
         '' | \#*) continue ;;
@@ -851,79 +869,18 @@ while IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec extra; do
         exit 1
     fi
 
-    case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
-    copied="$TEST_COPY_ROOT/$fixture"
-    mkdir -p "$(dirname "$copied")"
-    cp "$fixture" "$copied"
-
-    stem="$RUN_ROOT/$case_id"
-    stdout="$stem.stdout"
-    stderr="$stem.stderr"
-    stdin="$stem.stdin"
-    materialize_stream "$fixture" stdin "$stdin_spec" "$stdin"
-
-    echo "[stdlib] building+running $fixture (--stdlib-root)"
-    stdlib_build_run "$copied" "$stem" "$stdin"
-
-    if [ "$build_status" -ne 0 ]; then
-        echo "FAIL: $fixture failed to build" >&2
-        sed 's/^/  /' "$stem.build.err" >&2 || true
-        exit 1
-    fi
-
-    if [ "$got" -ne "$want" ]; then
-        echo "FAIL: $fixture expected exit $want, got $got" >&2
-        show_streams "$stdout" "$stderr"
-        exit 1
-    fi
-
-    compare_stream "$fixture" stdout "$stdout_spec" "$stdout" "$stdout" "$stderr"
-    compare_stream "$fixture" stderr "$stderr_spec" "$stderr" "$stdout" "$stderr"
-    if [ -n "$runtime_gap_issue" ] && stdlib_runtime_gap_applies "$runtime_gap_host" "$HOST_OS"; then
-        echo "[stdlib] NOTE: $fixture passed with known runtime gap marker $runtime_gap_issue; remove the requires-runtime-gap marker" >&2
-    fi
-
-    passed=$((passed + 1))
+    run_count=$((run_count + 1))
+    job_id=$(printf 'run-%03d' "$run_count")
+    printf '%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$fixture" "$want" "$stdout_spec" "$stderr_spec" "$stdin_spec" \
+        "$runtime_gap_host" "$runtime_gap_issue" "$runtime_gap_stderr" \
+        > "$POOL_JOBS_DIR/$job_id.row"
+    printf '%s|1\n' "$job_id" >> "$POOL_QUEUE"
 done < "$TEST_MANIFEST"
 
-pipe_regressions=0
-fixture=stdlib/tests/io_stdio_pipe_short_read.tl
-copied="$TEST_COPY_ROOT/$fixture"
-stem="$RUN_ROOT/stdlib_tests_io_stdio_pipe_short_read.pipe"
-stdout="$stem.stdout"
-stderr="$stem.stderr"
+printf 'pipe-001|1\n' >> "$POOL_QUEUE"
 
-mkdir -p "$(dirname "$copied")"
-cp "$fixture" "$copied"
-
-echo "[stdlib] building+running $fixture through native pipe (--stdlib-root)"
-stdlib_build_fixture "$copied" "$stem"
-if [ "$build_status" -ne 0 ]; then
-    echo "FAIL: $fixture pipe regression failed to build" >&2
-    sed 's/^/  /' "$stem.build.err" >&2 || true
-    exit 1
-fi
-
-set +e
-dd if=/dev/zero bs=4096 count=512 2>/dev/null |
-    tr '\000' x |
-    (
-        stdlib_restore_fixture_tool_env
-        "$stem$NL_BIN_EXT" > "$stdout" 2> "$stderr"
-    )
-got=$?
-set -e
-
-if [ "$got" -ne 42 ]; then
-    echo "FAIL: $fixture pipe regression expected exit 42, got $got" >&2
-    show_streams "$stdout" "$stderr"
-    exit 1
-fi
-compare_stream "$fixture pipe regression" stdout "-" "$stdout" "$stdout" "$stderr"
-compare_stream "$fixture pipe regression" stderr "-" "$stderr" "$stdout" "$stderr"
-pipe_regressions=1
-
-checked=0
+check_count=0
 while IFS='|' read -r fixture want stderr_snippet extra; do
     case "$fixture" in
         '' | \#*) continue ;;
@@ -969,16 +926,123 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
         exit 1
     fi
 
+    check_count=$((check_count + 1))
+    job_id=$(printf 'chk-%03d' "$check_count")
+    printf '%s|%s|%s\n' "$fixture" "$want" "$stderr_snippet" > "$POOL_JOBS_DIR/$job_id.row"
+    printf '%s|1\n' "$job_id" >> "$POOL_QUEUE"
+done < "$CHECK_MANIFEST"
+
+run_stdlib_runnable_job() {
+    _job=$1
+    _job_out="$POOL_JOBS_DIR/$_job.stdout"
+    _job_err="$POOL_JOBS_DIR/$_job.stderr"
+    IFS='|' read -r fixture want stdout_spec stderr_spec stdin_spec \
+        runtime_gap_host runtime_gap_issue runtime_gap_stderr < "$POOL_JOBS_DIR/$_job.row"
+
     case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
-    copied="$TEST_COPY_ROOT/$fixture"
+    _job_dir="$RUN_ROOT/$_job"
+    copied="$_job_dir/$fixture"
     mkdir -p "$(dirname "$copied")"
     cp "$fixture" "$copied"
 
-    stem="$RUN_ROOT/$case_id.check"
+    stem="$_job_dir/$case_id"
+    stdout="$stem.stdout"
+    stderr="$stem.stderr"
+    stdin="$stem.stdin"
+    if ! materialize_stream "$fixture" stdin "$stdin_spec" "$stdin" >> "$_job_out" 2>> "$_job_err"; then
+        return 1
+    fi
+
+    echo "[stdlib] building+running $fixture (--stdlib-root)" >> "$_job_out"
+    stdlib_build_run "$copied" "$stem" "$stdin" >> "$_job_out" 2>> "$_job_err"
+
+    if [ "$build_status" -ne 0 ]; then
+        {
+            echo "FAIL: $fixture failed to build"
+            sed 's/^/  /' "$stem.build.err" || true
+        } >> "$_job_err"
+        return 1
+    fi
+
+    if [ "$got" -ne "$want" ]; then
+        {
+            echo "FAIL: $fixture expected exit $want, got $got"
+            show_streams "$stdout" "$stderr"
+        } >> "$_job_err" 2>&1
+        return 1
+    fi
+
+    compare_stream "$fixture" stdout "$stdout_spec" "$stdout" "$stdout" "$stderr" >> "$_job_out" 2>> "$_job_err" || return 1
+    compare_stream "$fixture" stderr "$stderr_spec" "$stderr" "$stdout" "$stderr" >> "$_job_out" 2>> "$_job_err" || return 1
+    if [ -n "$runtime_gap_issue" ] && stdlib_runtime_gap_applies "$runtime_gap_host" "$HOST_OS"; then
+        echo "[stdlib] NOTE: $fixture passed with known runtime gap marker $runtime_gap_issue; remove the requires-runtime-gap marker" >> "$_job_err"
+    fi
+    return 0
+}
+
+run_stdlib_pipe_job() {
+    _job=$1
+    _job_out="$POOL_JOBS_DIR/$_job.stdout"
+    _job_err="$POOL_JOBS_DIR/$_job.stderr"
+    fixture=stdlib/tests/io_stdio_pipe_short_read.tl
+    _job_dir="$RUN_ROOT/$_job"
+    copied="$_job_dir/$fixture"
+    stem="$_job_dir/stdlib_tests_io_stdio_pipe_short_read.pipe"
     stdout="$stem.stdout"
     stderr="$stem.stderr"
 
-    echo "[stdlib] checking $fixture (--stdlib-root)"
+    mkdir -p "$(dirname "$copied")"
+    cp "$fixture" "$copied"
+
+    echo "[stdlib] building+running $fixture through native pipe (--stdlib-root)" >> "$_job_out"
+    stdlib_build_fixture "$copied" "$stem" >> "$_job_out" 2>> "$_job_err"
+    if [ "$build_status" -ne 0 ]; then
+        {
+            echo "FAIL: $fixture pipe regression failed to build"
+            sed 's/^/  /' "$stem.build.err" || true
+        } >> "$_job_err"
+        return 1
+    fi
+
+    set +e
+    dd if=/dev/zero bs=4096 count=512 2>/dev/null |
+        tr '\000' x |
+        (
+            stdlib_restore_fixture_tool_env
+            "$stem$NL_BIN_EXT" > "$stdout" 2> "$stderr"
+        )
+    got=$?
+    set -e
+
+    if [ "$got" -ne 42 ]; then
+        {
+            echo "FAIL: $fixture pipe regression expected exit 42, got $got"
+            show_streams "$stdout" "$stderr"
+        } >> "$_job_err" 2>&1
+        return 1
+    fi
+    compare_stream "$fixture pipe regression" stdout "-" "$stdout" "$stdout" "$stderr" >> "$_job_out" 2>> "$_job_err" || return 1
+    compare_stream "$fixture pipe regression" stderr "-" "$stderr" "$stdout" "$stderr" >> "$_job_out" 2>> "$_job_err" || return 1
+    return 0
+}
+
+run_stdlib_check_job() {
+    _job=$1
+    _job_out="$POOL_JOBS_DIR/$_job.stdout"
+    _job_err="$POOL_JOBS_DIR/$_job.stderr"
+    IFS='|' read -r fixture want stderr_snippet < "$POOL_JOBS_DIR/$_job.row"
+
+    case_id=$(printf '%s' "$fixture" | sed 's#/#_#g;s#\.tl$##')
+    _job_dir="$RUN_ROOT/$_job"
+    copied="$_job_dir/$fixture"
+    mkdir -p "$(dirname "$copied")"
+    cp "$fixture" "$copied"
+
+    stem="$_job_dir/$case_id.check"
+    stdout="$stem.stdout"
+    stderr="$stem.stderr"
+
+    echo "[stdlib] checking $fixture (--stdlib-root)" >> "$_job_out"
     set +e
     "$COMPILER" check "$copied" --stdlib-root "$ROOT/stdlib" \
         > "$stdout" 2> "$stderr"
@@ -987,26 +1051,97 @@ while IFS='|' read -r fixture want stderr_snippet extra; do
 
     if [ "$want" = pass ]; then
         if [ "$got" -ne 0 ]; then
-            echo "FAIL: $fixture expected check success, got exit $got" >&2
-            show_streams "$stdout" "$stderr"
-            exit 1
+            {
+                echo "FAIL: $fixture expected check success, got exit $got"
+                show_streams "$stdout" "$stderr"
+            } >> "$_job_err" 2>&1
+            return 1
         fi
     else
         if [ "$got" -eq 0 ]; then
-            echo "FAIL: $fixture expected check failure, got success" >&2
-            show_streams "$stdout" "$stderr"
-            exit 1
+            {
+                echo "FAIL: $fixture expected check failure, got success"
+                show_streams "$stdout" "$stderr"
+            } >> "$_job_err" 2>&1
+            return 1
         fi
         if ! grep -F "$stderr_snippet" "$stderr" >/dev/null 2>&1; then
-            echo "FAIL: $fixture stderr did not contain expected diagnostic" >&2
-            echo "expected substring: $stderr_snippet" >&2
-            show_streams "$stdout" "$stderr"
-            exit 1
+            {
+                echo "FAIL: $fixture stderr did not contain expected diagnostic"
+                echo "expected substring: $stderr_snippet"
+                show_streams "$stdout" "$stderr"
+            } >> "$_job_err" 2>&1
+            return 1
         fi
     fi
+    return 0
+}
 
-    checked=$((checked + 1))
-done < "$CHECK_MANIFEST"
+bounded_pool_run_job() {
+    _bp_job=$1
+    : > "$POOL_JOBS_DIR/$_bp_job.stdout"
+    : > "$POOL_JOBS_DIR/$_bp_job.stderr"
+    _job_rc=0
+    case "$_bp_job" in
+        run-*) run_stdlib_runnable_job "$_bp_job" || _job_rc=$? ;;
+        pipe-001) run_stdlib_pipe_job "$_bp_job" || _job_rc=$? ;;
+        chk-*) run_stdlib_check_job "$_bp_job" || _job_rc=$? ;;
+        *)
+            echo "FAIL: unknown stdlib pool job: $_bp_job" >> "$POOL_JOBS_DIR/$_bp_job.stderr"
+            _job_rc=1
+            ;;
+    esac
+    printf '%s\n' "$_job_rc" > "$POOL_JOBS_DIR/$_bp_job.status"
+    return "$_job_rc"
+}
+
+echo "[stdlib] running $run_count runnable fixture(s), 1 pipe regression, and $check_count check fixture(s) with $STDLIB_WORKERS worker(s)"
+bounded_pool_init "$POOL_DIR" "$STDLIB_WORKERS" "$POOL_QUEUE" || exit 1
+bounded_pool_start "$POOL_DIR" "$STDLIB_WORKERS"
+pool_status=0
+bounded_pool_join "$POOL_DIR" || pool_status=$?
+
+passed=0
+replay_idx=0
+while [ "$replay_idx" -lt "$run_count" ]; do
+    replay_idx=$((replay_idx + 1))
+    job_id=$(printf 'run-%03d' "$replay_idx")
+    [ ! -s "$POOL_JOBS_DIR/$job_id.stdout" ] || cat "$POOL_JOBS_DIR/$job_id.stdout"
+    [ ! -s "$POOL_JOBS_DIR/$job_id.stderr" ] || cat "$POOL_JOBS_DIR/$job_id.stderr" >&2
+    if [ -f "$POOL_JOBS_DIR/$job_id.status" ]; then
+        read -r _rc < "$POOL_JOBS_DIR/$job_id.status"
+        [ "$_rc" -eq 0 ] || exit 1
+        passed=$((passed + 1))
+    fi
+done
+
+pipe_regressions=0
+[ ! -s "$POOL_JOBS_DIR/pipe-001.stdout" ] || cat "$POOL_JOBS_DIR/pipe-001.stdout"
+[ ! -s "$POOL_JOBS_DIR/pipe-001.stderr" ] || cat "$POOL_JOBS_DIR/pipe-001.stderr" >&2
+if [ -f "$POOL_JOBS_DIR/pipe-001.status" ]; then
+    read -r _rc < "$POOL_JOBS_DIR/pipe-001.status"
+    [ "$_rc" -eq 0 ] || exit 1
+    pipe_regressions=1
+fi
+
+checked=0
+replay_idx=0
+while [ "$replay_idx" -lt "$check_count" ]; do
+    replay_idx=$((replay_idx + 1))
+    job_id=$(printf 'chk-%03d' "$replay_idx")
+    [ ! -s "$POOL_JOBS_DIR/$job_id.stdout" ] || cat "$POOL_JOBS_DIR/$job_id.stdout"
+    [ ! -s "$POOL_JOBS_DIR/$job_id.stderr" ] || cat "$POOL_JOBS_DIR/$job_id.stderr" >&2
+    if [ -f "$POOL_JOBS_DIR/$job_id.status" ]; then
+        read -r _rc < "$POOL_JOBS_DIR/$job_id.status"
+        [ "$_rc" -eq 0 ] || exit 1
+        checked=$((checked + 1))
+    fi
+done
+
+if [ "$pool_status" -ne 0 ] || [ "$passed" -ne "$run_count" ] || [ "$pipe_regressions" -ne 1 ] || [ "$checked" -ne "$check_count" ]; then
+    echo "FAIL: stdlib worker pool did not complete all fixtures ($passed/$run_count runnable, $pipe_regressions/1 pipe, $checked/$check_count check)" >&2
+    exit 1
+fi
 
 module_count=$(wc -l < "$EXPECTED" | tr -d ' ')
 

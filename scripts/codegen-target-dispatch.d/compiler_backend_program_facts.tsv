@@ -1,0 +1,7 @@
+# Codegen target-dispatch boundary inventory (#5347); see scripts/check-codegen-target-dispatch.sh.
+# file	scope	boundary	category	token-regex	count	rationale
+src/compiler_backend_program_facts.tl	compiler-backend-target-linux?	policy	backend-mode	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-linux[?]	3	Target predicate for policy construction and leaf selection.
+src/compiler_backend_program_facts.tl	compiler-backend-target-windows?	policy	backend-mode	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-windows[?]	3	Target predicate for policy construction and leaf selection.
+src/compiler_backend_program_facts.tl	compiler-backend-current-arena-load	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's thread-local arena load.
+src/compiler_backend_program_facts.tl	compiler-backend-current-arena-store	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's thread-local arena store.
+src/compiler_backend_program_facts.tl	compiler-backend-runtime-usable-end-offset	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's segment bound for inline allocation.

@@ -25576,6 +25576,12 @@ tl_shared_object_init:
       [_compact : unit
         (be_peephole.compiler-backend-peephole-compact-stack-addresses!
           (&mut records))]
+      [_compact-opt2 : unit
+        (when
+          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)
+          (be_peephole.compiler-backend-peephole-compact-records!
+            backend-state
+            (&mut records)))]
       [finished : be_state.CompilerBackendPeepholeSweepChunkState
         (unsafe
           ;; unsafe: a bare handle to the same home arena keeps an `in-arena`
@@ -25591,6 +25597,8 @@ tl_shared_object_init:
               [kept : String
                 (be_peephole.compiler-backend-peephole-records-render
                   records
+                  (be_state.compiler-backend-state-tail-merging-enabled?
+                    backend-state)
                   (be_state.compiler-backend-state-tail-merging-enabled?
                     backend-state))]
               (be_state.CompilerBackendPeepholeSweepChunkState
@@ -25853,16 +25861,24 @@ tl_shared_object_init:
         backend-state
         stream
         (be_state.compiler-backend-global-shared-view records))]
+    [_compact : unit
+      (when
+        probe-final?
+        (be_peephole.compiler-backend-peephole-compact-stack-addresses!
+          (&mut records)))]
+    [_compact-opt2 : unit
+      (when
+        (and
+          probe-final?
+          (be_state.compiler-backend-state-tail-merging-enabled? backend-state))
+        (be_peephole.compiler-backend-peephole-compact-records!
+          backend-state
+          (&mut records)))]
     [_probed : unit
       (when
         probe-final?
         (be_peephole.compiler-backend-expand-stack-probes!
           backend-state
-          (&mut records)))]
-    [_compact : unit
-      (when
-        probe-final?
-        (be_peephole.compiler-backend-peephole-compact-stack-addresses!
           (&mut records)))]
     [buf : text_buf.TextBuf
       (compiler-backend-borrowed-copy-to-owned
@@ -25870,7 +25886,11 @@ tl_shared_object_init:
           (text_buf_borrowed.empty-like (& asm))
           records
           asm
-          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)))]
+          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)
+          (and
+            probe-final?
+            (be_state.compiler-backend-state-tail-merging-enabled?
+              backend-state))))]
     (compiler-backend-peephole-records-retire! stream)
     (compiler-backend-sweep-reset! backend-state stream)
     buf))

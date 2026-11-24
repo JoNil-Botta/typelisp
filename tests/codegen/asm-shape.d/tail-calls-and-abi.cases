@@ -1,0 +1,453 @@
+# opt2 assembly-shape gates for the regalloc/backend/optimizer fixtures (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+
+# A `try` error exit returns the enclosing family's Err like a returned
+# constructor: the 32-byte family is written straight into the caller's sret
+# slot (one tag store per exit) and the 16-byte family travels in the register
+# group, with no arena allocation on either path.
+case try-err-return-slot
+source tests/integration/try_propagation.tl
+opt 0 2
+in fn _tl_try_propagation_validate
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc
+count = 2 ^[[:space:]]+movq \$1, \(%r[a-z0-9]+\)$
+in fn _tl_try_propagation_word_sum
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc
+
+# A function that uses `try` still takes its caller's sret slot: the try error
+# exit builds its Err in that slot (#8563), so `forward` tail-jumps into
+# `checked` instead of calling into a temporary and copying the 32-byte result.
+case try-sret-forward
+source tests/integration/try_sret_forward.tl
+opt 0 1
+in fn _tl_try_sret_forward_forward
+match ^[[:space:]]+jmp _tl_try_sret_forward_checked$
+not-contains movups
+not-match ^[[:space:]]+call[[:space:]]
+
+# A tail call whose argument re-borrows a reference parameter, `(& l)` or
+# `(&mut l)` with `l` already a reference, passes that same pointer, so it jumps
+# like the direct form (#9137); a borrow of a frame local, directly or through a
+# local reference, keeps its call. At opt 2 the wrappers inline into `main`.
+case tail-reborrow-param
+source tests/integration/tail_reborrow_param.tl
+opt 0 1
+in fn _tl_tail_reborrow_param_wrap_reborrow
+match ^[[:space:]]+jmp _tl_tail_reborrow_param_inner$
+not-match ^[[:space:]]+call[[:space:]]
+in fn _tl_tail_reborrow_param_wrap_shared_of_mut
+match ^[[:space:]]+jmp _tl_tail_reborrow_param_inner$
+not-match ^[[:space:]]+call[[:space:]]
+in fn _tl_tail_reborrow_param_wrap_mut_reborrow
+match ^[[:space:]]+jmp _tl_tail_reborrow_param_bump$
+not-match ^[[:space:]]+call[[:space:]]
+in fn _tl_tail_reborrow_param_wrap_local
+count = 1 ^[[:space:]]+call _tl_tail_reborrow_param_inner$
+not-match ^[[:space:]]+jmp _tl_tail_reborrow_param_inner$
+in fn _tl_tail_reborrow_param_wrap_local_ref
+count = 1 ^[[:space:]]+call _tl_tail_reborrow_param_inner$
+not-match ^[[:space:]]+jmp _tl_tail_reborrow_param_inner$
+
+# References and views into released frames must retain a call (#9183).
+# At opt0 these checks observe lowering before inlining; the native corpus
+# also runs all cases at opt1 and opt2 on both operating systems.
+case tail-call-frame-provenance
+source tests/integration/tail_call_frame_provenance.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_tail_call_frame_provenance_local_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_implicit_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_array_element
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_tuple
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_slice
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_local_call_ref
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_ref_scrutinee
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_ref_direct
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_ref_reborrow
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_slice_view
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_local_lst_reborrow
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_lst_len$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_lst_len$
+in fn _tl_tail_call_frame_provenance_scalar_copy
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_shadowed_ref
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_heap_copy_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_param_ref
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_param_reborrow
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_param_field
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_param_slice_rest
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_sibling_slice_rest
+count = 1 ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+count = 1 ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_walk_slice
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_walk_slice$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_walk_slice$
+in fn _tl_tail_call_frame_provenance_rebound_slice_rest
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_heap_element
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_heap_slice
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_handle_borrow
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_handle$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_handle$
+in fn _tl_tail_call_frame_provenance_string_borrow
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_str$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_str$
+in fn _tl_tail_call_frame_provenance_heap_projected_field
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_global_pair
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_global_pair_target$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_global_pair_target$
+in fn _tl_tail_call_frame_provenance_global_shadow
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_indirect_field
+match ^[[:space:]]+call \*
+not-match ^[[:space:]]+jmp \*
+
+# A shared borrow of a scalar or register-resident local copies it into a
+# frame slot of the borrowing function, never into the current arena (#9297).
+case borrow-local-no-alloc
+source tests/integration/borrow_local_frame_storage.tl
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+in fn _tl_borrow_local_frame_storage_case_no_alloc
+not-match call[[:space:]]+.*tl_alloc
+
+# A self tail call in an arm of a match on a borrowed enum place jumps (#9044):
+# an element through a reference parameter, a field through one, and a two-word
+# enum the match spills to a slot. At opt 2 tailrec makes each walker a loop. A
+# binding that borrows a frame local's aggregate payload keeps its call.
+case tail-borrowed-enum-match
+source tests/integration/tail_borrowed_enum_match.tl
+target linux-x86_64 windows-x86_64
+opt 0 1
+in fn _tl_tail_borrowed_enum_match_walk_borrow
+count = 2 ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_walk_borrow$
+not-match ^[[:space:]]+call _tl_tail_borrowed_enum_match_walk_borrow$
+in fn _tl_tail_borrowed_enum_match_count_field
+count = 2 ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_count_field$
+not-match ^[[:space:]]+call _tl_tail_borrowed_enum_match_count_field$
+in fn _tl_tail_borrowed_enum_match_sum_on
+count = 2 ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_sum_on$
+not-match ^[[:space:]]+call _tl_tail_borrowed_enum_match_sum_on$
+
+case tail-borrowed-enum-match-loop
+source tests/integration/tail_borrowed_enum_match.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_tail_borrowed_enum_match_walk_borrow
+not-match ^[[:space:]]+(call|jmp) _tl_tail_borrowed_enum_match_walk_borrow$
+in fn _tl_tail_borrowed_enum_match_count_field
+not-match ^[[:space:]]+(call|jmp) _tl_tail_borrowed_enum_match_count_field$
+in fn _tl_tail_borrowed_enum_match_sum_on
+not-match ^[[:space:]]+(call|jmp) _tl_tail_borrowed_enum_match_sum_on$
+
+case tail-borrowed-enum-match-frame-local
+source tests/integration/tail_borrowed_enum_match.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_tail_borrowed_enum_match_local_shape
+count = 1 ^[[:space:]]+call _tl_tail_borrowed_enum_match_pt_sum$
+not-match ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_pt_sum$
+
+# Borrowed enum arms use the shared frame-provenance check at both low levels.
+# The native manifest exercises these same runtime cases at opt0/1/2.
+case tail-borrowed-enum-frame-provenance
+source tests/integration/tail_call_frame_provenance.tl
+target linux-x86_64 windows-x86_64
+opt 0 1
+in fn _tl_tail_call_frame_provenance_borrowed_enum_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_implicit_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_copy_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_call_ref
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_tuple
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_slice
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_nested
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_reassigned
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_shadowed
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+
+case extern-data-memory-symbols
+source tests/integration/extern_data_memory.tl
+target linux-x86_64 windows-x86_64
+not-contains _tl_foreign_word
+not-contains _tl_foreign_float
+not-contains _tl_foreign_byte
+in fn _tl_extern_data_memory_left
+count = 1 ^[[:space:]]+cmpq %r[a-z0-9]+, tl_data_word\(%rip\)$
+in fn _tl_extern_data_memory_right
+count = 1 ^[[:space:]]+cmpq tl_data_word\(%rip\), %r[a-z0-9]+$
+in fn _tl_extern_data_memory_add
+match ^[[:space:]]+addq tl_data_word\(%rip\), %r
+in fn _tl_extern_data_memory_fraction
+contains tl_data_float(%rip)
+in fn _tl_extern_data_memory_byte
+contains tl_data_byte(%rip)
+
+case extern-data-place-symbols
+source tests/integration/extern_data_places.tl
+target linux-x86_64 windows-x86_64
+not-contains _tl_foreign_word
+not-contains _tl_foreign_float
+not-contains _tl_foreign_byte
+not-contains _tl_plain
+in fn _tl_extern_data_places_store
+match ^[[:space:]]+movq %r[a-z0-9]+, tl_data_word\(%rip\)$
+match ^[[:space:]]+movss %xmm[0-9]+, tl_data_float\(%rip\)$
+contains tl_data_byte(%rip)
+contains plain(%rip)
+in fn _tl_extern_data_places_address
+match ^[[:space:]]+leaq tl_data_word\(%rip\), %r
+
+case fixed-array-result-tailrec
+source tests/integration/fixed_array_result_tailrec.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_fixed_array_result_tailrec_make_fixed_array
+not-contains call
+not-contains movups
+metric backward-branches >= 1
+in fn _tl_fixed_array_result_tailrec_make_four
+not-contains call
+not-contains movups
+metric backward-branches >= 1
+in fn _tl_fixed_array_result_tailrec_frame_held
+count = 1 ^[[:space:]]+call _tl_fixed_array_result_tailrec_frame_held$
+in fn _tl_fixed_array_result_tailrec_post_call
+count = 1 ^[[:space:]]+call _tl_fixed_array_result_tailrec_post_call$
+in fn main
+count = 1 ^[[:space:]]+call _tl_fixed_array_result_tailrec_frame_refused_loop$
+
+# The native fixture must execute all three out-of-line forwarding paths.
+case tail-stack-forward-preserves-calls
+source tests/integration/tail_call_stack_forward.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_tail_call_stack_forward_fallback
+count = 1 ^[[:space:]]+call _tl_tail_call_stack_forward_weighted$
+in fn _tl_tail_call_stack_forward_jump
+count = 1 ^[[:space:]]+jmp _tl_tail_call_stack_forward_weighted$
+in fn _tl_tail_call_stack_forward_forward_wide
+count = 1 ^[[:space:]]+call _tl_tail_call_stack_forward_make_wide$
+
+# Branded Arena is already the root word: capture it without a struct snapshot.
+# Native opt0/1/2 rows in native.manifest also cover both operations.
+case lambda-capture-atomic-arena-alloc
+source tests/integration/lambda_capture_atomic_arena_alloc.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn main
+# Environment (8 bytes) and descriptor (16 bytes), with no third allocation.
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+case lambda-capture-atomic-arena-destroy
+source tests/integration/lambda_capture_atomic_arena_destroy.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn main
+# Root plus expected scalar (16 bytes), then descriptor (16 bytes).
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+# Lifetime arguments preserve the enum's packed representation at capture.
+case lambda-capture-lifetime-enum-packed
+source tests/integration/lambda_capture_lifetime_enum.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn main
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+case lambda-capture-lifetime-enum-one-word
+source tests/integration/lambda_capture_lifetime_enum_variants.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_lambda_capture_lifetime_enum_variants_case_one_word
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+case lambda-capture-lifetime-enum-nested
+source tests/integration/lambda_capture_lifetime_enum_variants.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_lambda_capture_lifetime_enum_variants_case_nested
+# Environment and descriptor; the containing Holder has its own 24-byte copy.
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+case lambda-capture-lifetime-enum-memory
+source tests/integration/lambda_capture_lifetime_enum_variants.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_lambda_capture_lifetime_enum_variants_case_memory
+count = 1 ^[[:space:]]+call tl_substring$
+
+# The byte matrix must reach select-on-flags, as well as setcc and branches.
+case char-comparison-select-flags
+source tests/integration/char_comparisons.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_char_comparisons_select_eq
+match ^[[:space:]]+cmove[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_ne
+match ^[[:space:]]+cmovne[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_lt
+match ^[[:space:]]+cmovb[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_le
+match ^[[:space:]]+cmovbe[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_gt
+match ^[[:space:]]+cmova[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+in fn _tl_char_comparisons_select_ge
+match ^[[:space:]]+cmovae[ ]
+count = 0 ^[[:space:]]+cmov(l|le|g|ge)[ ]
+
+# Refs #9695: the null path was already bare on SysV. Wrapping the CAS path
+# must not replace its red-zone spill with a new stack allocation.
+case shrinkwrap-red-zone-linux
+source tests/integration/shrinkwrap_red_zone.tl
+target linux-x86_64
+in fn tl_rz_claim
+contains lock cmpxchgq
+match [-][0-9]+\(%rsp\)
+not-match ^[[:space:]]+(subq|addq) \$[0-9]+, %rsp$
+not-match ^[[:space:]]+(pushq|popq)[ ]
+not-contains __shrinkwrap
+in fn tl_rz_empty
+contains __shrinkwrap
+not-match %(rsp|rbp)
+
+# Win64 has no red zone: bypassing the frame on the null path remains useful.
+case shrinkwrap-red-zone-win64
+source tests/integration/shrinkwrap_red_zone.tl
+target windows-x86_64
+in fn tl_rz_claim$typelisp
+contains lock cmpxchgq
+contains __shrinkwrap_save
+order testq || __shrinkwrap_bare0: || ret || __shrinkwrap_save: || subq
+not-match [-][0-9]+\(%rsp\)
+
+# GAP5 precise leaq poison: a frame object whose address is taken keeps every
+# store into its own slots, including a field address (base+8) and an element
+# array whose callee reads every element. The stores are unread in the
+# caller's text, so only the addressed object's extent may protect them.
+case addr-taken-stack-aggregates
+source tests/integration/addr_taken_stack_aggregates.tl
+target linux-x86_64
+opt 2
+in fn _tl_addr_taken_stack_aggregates_array_case
+count >= 1 ^[[:space:]]+leaq [0-9]+\(%rsp\), %r
+count >= 4 ^[[:space:]]+movq %r[a-z0-9]+, .*\(%r[a-z0-9]+\)$
+count = 1 ^[[:space:]]+call _tl_addr_taken_stack_aggregates_sum_all
+in fn _tl_addr_taken_stack_aggregates_struct_case
+count >= 1 ^[[:space:]]+leaq [0-9]+\(%rsp\), %r
+count >= 2 ^[[:space:]]+movq %r[a-z0-9]+, [0-9]+\(%rsp\)$
+count >= 1 ^[[:space:]]+addq \$8, %r
+count = 1 ^[[:space:]]+call _tl_addr_taken_stack_aggregates_read_slot
+in fn _tl_addr_taken_stack_aggregates_scalar_case
+count >= 1 ^[[:space:]]+(leaq [0-9]+\(%rsp\)|movq %rsp), %r
+count >= 1 ^[[:space:]]+movq %r[a-z0-9]+, [0-9]+\(%rsp\)$
+count = 1 ^[[:space:]]+call _tl_addr_taken_stack_aggregates_read_slot
+
+# Two copies of the same saved value move ahead of a later argument setup.
+# The different saved register and the single-site callee keep normal calls.
+case arg-entry-linux
+source tests/fixtures/arg_entry.tl
+target linux-x86_64
+opt 2
+assemble
+in asm
+narrow ranges:^[[:space:]]+\.type _tl_arg_entry_record,@function$~^_tl_arg_entry_record:$
+count = 1 ^[[:space:]]+\.local "__tl_arg_entry:[0-9]+"$
+capture entry ^("__tl_arg_entry:[0-9]+"):$
+order {{entry}}: || movq %r12, %rdi || .size {{entry}}, . - {{entry}} || _tl_arg_entry_record:
+in fn main
+count = 3 ^[[:space:]]+call {{entry}}$
+count = 1 ^[[:space:]]+call _tl_arg_entry_record$
+order movq %r15, %rdi || movl $4, %esi || call _tl_arg_entry_record
+order movq %r12, %rdi || movl $7, %esi || call _tl_arg_entry_single
+order movq %r12, %rsi || movl $4, %edx || call *(%r10)
+
+case arg-entry-win64
+source tests/fixtures/arg_entry.tl
+target windows-x86_64
+opt 2
+assemble
+not-contains __tl_arg_entry:
+contains call _tl_arg_entry_record
+contains call _tl_arg_entry_single
+
+# A by-value array's lowered register copy can use the same alternate entry.
+case arg-entry-by-value-array
+source tests/fixtures/arg_entry_value.tl
+target linux-x86_64
+opt 2
+assemble
+in asm
+narrow ranges:^[[:space:]]+\.type _tl_arg_entry_value_record,@function$~^_tl_arg_entry_value_record:$
+capture entry ^("__tl_arg_entry:[0-9]+"):$
+order {{entry}}: || movq %r12, %rdi || .size {{entry}}, . - {{entry}} || _tl_arg_entry_value_record:
+in fn main
+count = 2 ^[[:space:]]+call {{entry}}$
+not-contains call _tl_arg_entry_value_record
+not-match ^[[:space:]]+movq %r12, %rdi$

@@ -1,0 +1,4 @@
+# Codegen target-dispatch boundary inventory (#5347); see scripts/check-codegen-target-dispatch.sh.
+# file	scope	boundary	category	token-regex	count	rationale
+src/compiler_backend_tests.tl	*	test	test-only	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-windows[?]|linux-x86_64|target-linux|target-windows|windows-x86_64	*	Backend tests name the targets they exercise.
+src/compiler_backend_tests.tl	compiler-backend-spmd-source-site-retention-ok?	test	test-only	CompilerLowerMode[.]LinuxAvx2	*	SPMD source-site retention fixture exercises SIMD backend register remapping.

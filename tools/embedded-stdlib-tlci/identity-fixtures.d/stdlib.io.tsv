@@ -1,0 +1,8 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.io/array-ptr	1	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
+stdlib.io/array-const-ptr	1	fixed	expr	tests/integration/tlci_native_index_folds.tl	ok	default	assembly
+stdlib.io/print	2	variadic	expr	tests/integration/format_stdio_family.tl	ok	default	assembly
+stdlib.io/println	1	variadic	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly
+stdlib.io/eprint	2	variadic	expr	tests/integration/format_stdio_family.tl	ok	default	assembly
+stdlib.io/eprintln	1	variadic	expr	tests/integration/format_stdio_family.tl	ok	default	assembly
+stdlib.io/print-format	2	variadic	expr	tests/integration/tlci_native_format_scanner.tl	ok	default	assembly

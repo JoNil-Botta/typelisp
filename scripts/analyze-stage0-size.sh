@@ -352,31 +352,28 @@ expected_lzss_streams=$(wc -l < "$lzss_declarations" | tr -d ' ')
 manifest_lzss_streams=$(awk -F '\t' '$1 == "embedded_stdlib_manifest" { n++ } END { print n + 0 }' "$lzss_declarations")
 other_lzss_streams=$(awk -F '\t' '$1 == "other_compiler_owned" { n++ } END { print n + 0 }' "$lzss_declarations")
 
-# Recover each bounded static LZSS stream directly from the linked binary;
-# there is no base64/generated source to read instead.
+# Recover every bounded static LZSS source frame and TLCH catalog envelope in
+# one pass over the linked binary; there is no base64/generated source to read
+# instead.
 . "$ROOT/scripts/lib-stage0-lzss.sh"
-lzss_counts=$(scan_stage0_lzss "$BINARY") || exit 1
-set -- $lzss_counts
+. "$ROOT/scripts/lib-stage0-tlch.sh"
+payload_counts=$(scan_stage0_payloads "$BINARY" both) || exit 1
+set -- $payload_counts
 payload_streams=$1
 compressed_payload_bytes=$2
 static_payload_bytes=$3
 lzss_v3_streams=$4
 lzss_raw_bytes=$5
+tlch_payload_streams=$6
+tlch_raw_bytes=$7
+tlch_bitstream_bytes=$8
+tlch_static_bytes=$9
 encoded_payload_bytes=0
 [ "$payload_streams" -eq "$expected_lzss_streams" ] || {
     echo "expected $expected_lzss_streams compiler-owned LZSS payloads from source declarations ($manifest_lzss_streams embedded stdlib, $other_lzss_streams other), found $payload_streams" >&2
     echo "binary and source declaration sets must match; use the source checkout that built the binary" >&2
     exit 1
 }
-
-# Recover both deployment versions without losing declaration-derived counts.
-. "$ROOT/scripts/lib-stage0-tlch.sh"
-tlch_counts=$(scan_stage0_tlch "$BINARY") || exit 1
-set -- $tlch_counts
-tlch_payload_streams=$1
-tlch_raw_bytes=$2
-tlch_bitstream_bytes=$3
-tlch_static_bytes=$4
 [ "$tlch_payload_streams" -eq "$expected_tlch_streams" ] || {
     echo "expected $expected_tlch_streams embedded stdlib TLCH payloads in binary, found $tlch_payload_streams" >&2
     exit 1

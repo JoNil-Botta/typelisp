@@ -157,7 +157,7 @@ exercise_sampled_observation_races() (
     cat > "$WORKDIR/rss-race-bin/ps" <<'EOF'
 #!/bin/sh
 set -eu
-[ "$*" = '-e -o pid= -o pgid= -o rss=' ] || exec "$TYPELISP_MEMORY_RACE_PS" "$@"
+[ "$*" = '-eL -o pid= -o ppid= -o pgid= -o rss= -o s= -o f= -o wchan:32=' ] || exec "$TYPELISP_MEMORY_RACE_PS" "$@"
 while read -r line; do
     case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}" ;; esac
 done < /proc/self/cgroup
@@ -194,10 +194,10 @@ fi
 read -r pgid < "$TYPELISP_MEMORY_RACE_DIR/pgid"
 if [ "$TYPELISP_MEMORY_RACE_MODE" = transient ] &&
     [ -e "$TYPELISP_MEMORY_RACE_DIR/excess-sampled" ]; then
-    printf '%s %s 0\n' "$pgid" "$pgid"
+    printf '%s 1 %s 0 S 0 -\n' "$pgid" "$pgid"
 else
     : > "$TYPELISP_MEMORY_RACE_DIR/excess-sampled"
-    printf '%s %s 65536\n' "$pgid" "$pgid"
+    printf '%s 1 %s 65536 S 0 -\n' "$pgid" "$pgid"
 fi
 EOF
     cat > "$WORKDIR/rss-race-bin/awk" <<'EOF'
@@ -1025,10 +1025,239 @@ if [ -n "$_linux_memory_limit_node" ]; then
     SELF_TEST_NESTED=1
     echo "[linux-memory-limit] running nested inside $_linux_memory_limit_node"
 fi
+# #9953: vfork() shares mm_struct with its parent until execve/_exit, so the
+# process-group RSS sampler must never double-count it, while real multi-process
+# and dirty-COW fork() workloads exceeding the cap still fail with exit 137.
+exercise_vfork_rss_accounting() {
+    command -v cc >/dev/null 2>&1 ||
+        fail "vfork RSS regression test requires cc"
+    _vfork_dir="$WORKDIR/vfork-rss"
+    mkdir -p "$_vfork_dir"
+    cat > "$_vfork_dir/fixture.c" <<'EOF'
+#define _GNU_SOURCE
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+static const struct timespec vfork_hold_ts = {0, 450000000};
+
+static volatile unsigned char *alloc_mib(size_t mib) {
+    size_t sz = mib * 1024UL * 1024UL;
+    volatile unsigned char *buf = mmap(
+        NULL, sz, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (buf == MAP_FAILED) {
+        return NULL;
+    }
+    for (size_t i = 0; i < sz; i += 4096) {
+        buf[i] = 42;
+    }
+    return buf;
+}
+
+static void *mt_vfork_worker(void *arg) {
+    (void)arg;
+    pid_t child = vfork();
+    if (child == 0) {
+        syscall(SYS_nanosleep, &vfork_hold_ts, NULL);
+        _exit(0);
+    }
+    if (child < 0) {
+        _exit(2);
+    }
+    int status = 0;
+    if (waitpid(child, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        _exit(3);
+    }
+    return NULL;
+}
+
+int main(int argc, char **argv) {
+    if (argc < 3) {
+        return 2;
+    }
+    const char *mode = argv[1];
+    size_t mib = (size_t)strtoul(argv[2], NULL, 10);
+    if (mib == 0) {
+        return 2;
+    }
+    if (strcmp(mode, "hold") == 0) {
+        if (!alloc_mib(mib)) {
+            return 1;
+        }
+        if (argc > 3) {
+            FILE *f = fopen(argv[3], "w");
+            if (f) {
+                fputs("ready\n", f);
+                fclose(f);
+            }
+        }
+        sleep(10);
+        return 0;
+    }
+    volatile unsigned char *buf = alloc_mib(mib);
+    if (!buf) {
+        return 1;
+    }
+    if (strcmp(mode, "vfork") == 0) {
+        pid_t child = vfork();
+        if (child == 0) {
+            syscall(SYS_nanosleep, &vfork_hold_ts, NULL);
+            _exit(0);
+        }
+        if (child < 0) {
+            return 2;
+        }
+        int status = 0;
+        if (waitpid(child, &status, 0) < 0 || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            return 3;
+        }
+        return 0;
+    }
+    if (strcmp(mode, "mt-vfork") == 0) {
+        pthread_t th;
+        if (pthread_create(&th, NULL, mt_vfork_worker, NULL) != 0) {
+            return 2;
+        }
+        pthread_join(th, NULL);
+        return 0;
+    }
+    if (strcmp(mode, "fork-dirty") == 0) {
+        size_t sz = mib * 1024UL * 1024UL;
+        pid_t child = fork();
+        if (child == 0) {
+            for (size_t i = 0; i < sz; i += 4096) {
+                buf[i] = 99;
+            }
+            sleep(10);
+            _exit(0);
+        }
+        if (child < 0) {
+            return 2;
+        }
+        int status = 0;
+        waitpid(child, &status, 0);
+        return 0;
+    }
+    if (strcmp(mode, "two-procs") == 0) {
+        pid_t child = fork();
+        if (child == 0) {
+            execl(argv[0], argv[0], "hold", argv[2], (char *)NULL);
+            _exit(127);
+        }
+        if (child < 0) {
+            return 2;
+        }
+        int status = 0;
+        waitpid(child, &status, 0);
+        return 0;
+    }
+    return 2;
+}
+EOF
+    cc -O2 -Wall -Wextra -pthread "$_vfork_dir/fixture.c" -o "$_vfork_dir/fixture" ||
+        fail "failed to compile vfork RSS regression fixture"
+
+    # 96 MiB under a 128 MiB cap: double-counting yields ~192 MiB > 128 MiB.
+    for _vfork_mode in vfork mt-vfork; do
+        _vfork_status=0
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 128 --timeout-seconds 15 \
+            --report "$_vfork_dir/$_vfork_mode.report" -- \
+            "$_vfork_dir/fixture" "$_vfork_mode" 96 \
+            > "$_vfork_dir/$_vfork_mode.stdout" 2> "$_vfork_dir/$_vfork_mode.stderr" ||
+            _vfork_status=$?
+        [ "$_vfork_status" -eq 0 ] || {
+            cat "$_vfork_dir/$_vfork_mode.stderr" >&2 || true
+            fail "$_vfork_mode 96 MiB under 128 MiB cap failed with exit $_vfork_status"
+        }
+        grep -Fxq 'reason=success' "$_vfork_dir/$_vfork_mode.report" ||
+            fail "$_vfork_mode report lost reason=success"
+        _vfork_peak=$(sed -n 's/^peak_memory_bytes=//p' "$_vfork_dir/$_vfork_mode.report")
+        case "$_vfork_peak" in
+            '' | *[!0-9]* | 0) fail "$_vfork_mode lost peak evidence" ;;
+        esac
+        [ "$_vfork_peak" -ge 96468992 ] && [ "$_vfork_peak" -le 134217728 ] ||
+            fail "$_vfork_mode peak $_vfork_peak bytes outside [92 MiB, 128 MiB] (possible double-count)"
+    done
+
+    # Pure ps fallback (without cgroup dir) must also deduplicate vfork().
+    setsid "$_vfork_dir/fixture" vfork 96 >/dev/null 2>&1 &
+    _vfork_probe_pid=$!
+    _vfork_seen_sample=0
+    _vfork_max_kib=0
+    _vfork_wait=0
+    while kill -0 "$_vfork_probe_pid" 2>/dev/null && [ "$_vfork_wait" -lt 60 ]; do
+        _vfork_sample=$(linux_memory_limit_process_group_rss_kib "$_vfork_probe_pid")
+        if [ "$_vfork_sample" -gt "$_vfork_max_kib" ]; then
+            _vfork_max_kib=$_vfork_sample
+        fi
+        if [ "$_vfork_sample" -ge 94208 ]; then
+            _vfork_seen_sample=1
+        fi
+        _vfork_wait=$((_vfork_wait + 1))
+        sleep 0.02
+    done
+    wait "$_vfork_probe_pid" || fail "vfork ps-fallback probe exited non-zero"
+    [ "$_vfork_seen_sample" -eq 1 ] && [ "$_vfork_max_kib" -le 131072 ] ||
+        fail "pure ps fallback double-counted or missed vfork() RSS: max ${_vfork_max_kib} KiB"
+
+    # Distinct processes and dirty-COW fork() exceeding 128 MiB must fail 137.
+    for _vfork_mode in fork-dirty two-procs; do
+        _vfork_status=0
+        "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 128 --timeout-seconds 15 \
+            --report "$_vfork_dir/$_vfork_mode.report" -- \
+            "$_vfork_dir/fixture" "$_vfork_mode" 96 \
+            > "$_vfork_dir/$_vfork_mode.stdout" 2> "$_vfork_dir/$_vfork_mode.stderr" ||
+            _vfork_status=$?
+        [ "$_vfork_status" -eq 137 ] || {
+            cat "$_vfork_dir/$_vfork_mode.stderr" >&2 || true
+            fail "$_vfork_mode exceeding 128 MiB cap expected exit 137, got $_vfork_status"
+        }
+        grep -Fxq 'reason=memory-limit' "$_vfork_dir/$_vfork_mode.report" ||
+            fail "$_vfork_mode report lost reason=memory-limit"
+    done
+
+    # Cgroup v2 memory.current fallback bounds pre-exec overlap (e.g. PID-order
+    # race or unrecognized wchan) while never suppressing distinct processes.
+    mkdir -p "$_vfork_dir/mock-cgroup" "$_vfork_dir/mock-bin"
+    printf '%s\n' 167772160 > "$_vfork_dir/mock-cgroup/memory.current"
+    cat > "$_vfork_dir/mock-bin/ps" <<'EOF'
+#!/bin/sh
+cat <<'OUT'
+  500     1   500 163840 S 0 do_wait
+  501   500   500 163840 S 1 -
+OUT
+EOF
+    chmod +x "$_vfork_dir/mock-bin/ps"
+    _vfork_capped=$(PATH="$_vfork_dir/mock-bin:$PATH" \
+        linux_memory_limit_process_group_rss_kib 500 "$_vfork_dir/mock-cgroup")
+    [ "$_vfork_capped" -eq 163840 ] ||
+        fail "cgroup v2 overlap cap expected 163840 KiB, got $_vfork_capped KiB"
+    cat > "$_vfork_dir/mock-bin/ps" <<'EOF'
+#!/bin/sh
+cat <<'OUT'
+  500     1   500 163840 S 0 do_wait
+  501   500   500 163840 S 0 -
+OUT
+EOF
+    _vfork_distinct=$(PATH="$_vfork_dir/mock-bin:$PATH" \
+        linux_memory_limit_process_group_rss_kib 500 "$_vfork_dir/mock-cgroup")
+    [ "$_vfork_distinct" -eq 327680 ] ||
+        fail "distinct exec'd processes must sum to 327680 KiB, got $_vfork_distinct KiB"
+
+    echo "[linux-memory-limit] vfork RSS deduplication and real over-limit enforcement passed"
+}
+
 exercise_backend systemd-user-cgroup
 exercise_sampled_observation_races
 exercise_delayed_process_group
 exercise_sampled_backend
+exercise_vfork_rss_accounting
 exercise_nested_backend systemd-user-cgroup
 exercise_hierarchy
 

@@ -1,0 +1,10 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.eq/eq-ref	1	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
+stdlib.eq/eq-value	1	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
+stdlib.eq/struct-eq-fields	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.eq/tuple-eq-elements	4	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
+stdlib.eq/inline-fixed-array-eq	4	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
+stdlib.eq/inline-eq	3	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.eq/enum-eq-payloads	3	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.eq/enum-eq-dispatch	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.eq/eq	1	fixed	module	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly

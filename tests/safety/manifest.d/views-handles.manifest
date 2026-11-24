@@ -1,0 +1,84 @@
+# Safety corpus cases: views, handles, and view-backed slices and readers.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+reader_view_raw_symbol_reject|check-fail|tests/safety/reader_view_raw_symbol_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
+view_early_return_move_out_reject|check-fail|tests/safety/view_early_return_move_out_reject.tl|tests/safety/view_early_return_move_out_reject.tl:14:21|cannot move a `String` out of a shared reference
+view_cond_move_out_reject|check-fail|tests/safety/view_cond_move_out_reject.tl|tests/safety/view_cond_move_out_reject.tl:14:12|cannot move a `String` out of a shared reference
+view_match_binder_move_out_reject|check-fail|tests/safety/view_match_binder_move_out_reject.tl|tests/safety/view_match_binder_move_out_reject.tl:14:8|cannot move a `String` out of a shared reference
+view_if_let_init_move_out_reject|check-fail|tests/safety/view_if_let_init_move_out_reject.tl|tests/safety/view_if_let_init_move_out_reject.tl:16:9|cannot move a `String` out of a shared reference
+view_array_plain_binding_reject|check-fail|tests/safety/view_array_plain_binding_reject.tl|tests/safety/view_array_plain_binding_reject.tl:4:21|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+view_array_plain_binding_reject_windows|check-fail-windows|tests/safety/view_array_plain_binding_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+view_array_unannotated_binding_reject|check-fail|tests/safety/view_array_unannotated_binding_reject.tl|tests/safety/view_array_unannotated_binding_reject.tl:4:12|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+view_array_unannotated_binding_reject_windows|check-fail-windows|tests/safety/view_array_unannotated_binding_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+view_mut_array_plain_binding_reject|check-fail|tests/safety/view_mut_array_plain_binding_reject.tl|tests/safety/view_mut_array_plain_binding_reject.tl:4:21|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+view_mut_array_plain_binding_reject_windows|check-fail-windows|tests/safety/view_mut_array_plain_binding_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+view_mut_array_unannotated_binding_reject|check-fail|tests/safety/view_mut_array_unannotated_binding_reject.tl|tests/safety/view_mut_array_unannotated_binding_reject.tl:4:12|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+view_mut_array_unannotated_binding_reject_windows|check-fail-windows|tests/safety/view_mut_array_unannotated_binding_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+view_mut_tuple_plain_binding_reject|check-fail|tests/safety/view_mut_tuple_plain_binding_reject.tl|tests/safety/view_mut_tuple_plain_binding_reject.tl:4:21|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+view_mut_tuple_plain_binding_reject_windows|check-fail-windows|tests/safety/view_mut_tuple_plain_binding_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+view_mut_tuple_unannotated_binding_reject|check-fail|tests/safety/view_mut_tuple_unannotated_binding_reject.tl|tests/safety/view_mut_tuple_unannotated_binding_reject.tl:4:12|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+view_mut_tuple_unannotated_binding_reject_windows|check-fail-windows|tests/safety/view_mut_tuple_unannotated_binding_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+view_mut_field_call_arg_reject|check-fail|tests/safety/view_mut_field_call_arg_reject.tl|tests/safety/view_mut_field_call_arg_reject.tl:12:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_call_arg_help_reject|check-fail|tests/safety/view_mut_field_call_arg_reject.tl|-|help: pass an owned clone, or make the parameter a reference and pass `(& ...)`; or bind a borrow `(& ...)` or an owned `(clone ...)` in place of this view
+view_mut_field_call_arg_reject_windows|check-fail-windows|tests/safety/view_mut_field_call_arg_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_return_reject|check-fail|tests/safety/view_mut_field_return_reject.tl|tests/safety/view_mut_field_return_reject.tl:8:5|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_return_reject_windows|check-fail-windows|tests/safety/view_mut_field_return_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_construct_reject|check-fail|tests/safety/view_mut_field_construct_reject.tl|tests/safety/view_mut_field_construct_reject.tl:11:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_field_construct_reject_windows|check-fail-windows|tests/safety/view_mut_field_construct_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_name_chain_reject|check-fail|tests/safety/view_mut_name_chain_reject.tl|tests/safety/view_mut_name_chain_reject.tl:13:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_name_chain_reject_windows|check-fail-windows|tests/safety/view_mut_name_chain_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_match_binder_reject|check-fail|tests/safety/view_mut_match_binder_reject.tl|tests/safety/view_mut_match_binder_reject.tl:15:30|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_match_binder_reject_windows|check-fail-windows|tests/safety/view_mut_match_binder_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_shared_reborrow_of_mut_reject|check-fail|tests/safety/view_shared_reborrow_of_mut_reject.tl|tests/safety/view_shared_reborrow_of_mut_reject.tl:13:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_reborrow_of_mut_reject_windows|check-fail-windows|tests/safety/view_shared_reborrow_of_mut_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_mut_held_reference_reject|check-fail|tests/safety/view_mut_held_reference_reject.tl|tests/safety/view_mut_held_reference_reject.tl:16:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_mut_held_reference_reject_windows|check-fail-windows|tests/safety/view_mut_held_reference_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a mutable reference; `(Box i64)` is not Copy
+view_shared_held_reference_reject|check-fail|tests/safety/view_shared_held_reference_reject.tl|tests/safety/view_shared_held_reference_reject.tl:16:11|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_held_reference_reject_windows|check-fail-windows|tests/safety/view_shared_held_reference_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_payload_mut_root_reject|check-fail|tests/safety/view_shared_payload_mut_root_reject.tl|tests/safety/view_shared_payload_mut_root_reject.tl:18:32|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_payload_mut_root_reject_windows|check-fail-windows|tests/safety/view_shared_payload_mut_root_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_payload_mut_view_reject|check-fail|tests/safety/view_shared_payload_mut_view_reject.tl|tests/safety/view_shared_payload_mut_view_reject.tl:20:34|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_shared_payload_mut_view_reject_windows|check-fail-windows|tests/safety/view_shared_payload_mut_view_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_field_name_chain_ok|run-exit|tests/safety/view_plain_field_name_chain_ok.tl|42|-
+view_plain_if_owned_reject|check-fail|tests/safety/view_plain_if_owned_reject.tl|tests/safety/view_plain_if_owned_reject.tl:9:9|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_if_owned_reject_windows|check-fail-windows|tests/safety/view_plain_if_owned_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_if_views_reject|check-fail|tests/safety/view_plain_if_views_reject.tl|tests/safety/view_plain_if_views_reject.tl:10:9|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_if_views_reject_windows|check-fail-windows|tests/safety/view_plain_if_views_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_mut_box_conflict_reject|check-fail|tests/safety/view_plain_mut_box_conflict_reject.tl|tests/safety/view_plain_mut_box_conflict_reject.tl:8:25|error[E0207]: typecheck: cannot mutably borrow borrowed place `r.b`
+view_plain_mut_box_conflict_reject_windows|check-fail-windows|tests/safety/view_plain_mut_box_conflict_reject.tl|-|error[E0207]: typecheck: cannot mutably borrow borrowed place `r.b`
+view_plain_mut_box_write_ok|run-exit|tests/safety/view_plain_mut_box_write_ok.tl|42|-
+view_plain_mut_name_argument_reject|check-fail|tests/safety/view_plain_mut_name_argument_reject.tl|tests/safety/view_plain_mut_name_argument_reject.tl:12:14|error[E0208]: typecheck: cannot move a `(Box i64)`
+view_plain_mut_name_argument_reject_windows|check-fail-windows|tests/safety/view_plain_mut_name_argument_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)`
+view_plain_name_argument_reject|check-fail|tests/safety/view_plain_name_argument_reject.tl|tests/safety/view_plain_name_argument_reject.tl:12:14|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_name_argument_reject_windows|check-fail-windows|tests/safety/view_plain_name_argument_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_name_return_reject|check-fail|tests/safety/view_plain_name_return_reject.tl|tests/safety/view_plain_name_return_reject.tl:9:5|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_name_return_reject_windows|check-fail-windows|tests/safety/view_plain_name_return_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_name_write_reject|check-fail|tests/safety/view_plain_name_write_reject.tl|tests/safety/view_plain_name_write_reject.tl:9:18|error[E0207]: typecheck: cannot mutably borrow `r.b` behind a shared reference
+view_plain_name_write_reject_windows|check-fail-windows|tests/safety/view_plain_name_write_reject.tl|-|error[E0207]: typecheck: cannot mutably borrow `r.b` behind a shared reference
+view_plain_nested_scope_reject|check-fail|tests/safety/view_plain_nested_scope_reject.tl|tests/safety/view_plain_nested_scope_reject.tl:11:9|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_plain_nested_scope_reject_windows|check-fail-windows|tests/safety/view_plain_nested_scope_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
+view_reference_copy_elements_ok|run-exit|tests/safety/view_reference_copy_elements_ok.tl|42|-
+view_tuple_unannotated_binding_reject|check-fail|tests/safety/view_tuple_unannotated_binding_reject.tl|tests/safety/view_tuple_unannotated_binding_reject.tl:4:12|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+view_tuple_unannotated_binding_reject_windows|check-fail-windows|tests/safety/view_tuple_unannotated_binding_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+view_plain_name_write_origin_reject|check-fail|tests/safety/view_plain_name_write_reject.tl|tests/safety/view_plain_name_write_reject.tl:9:18|tests/safety/view_plain_name_write_reject.tl:7:20
+lower_word_view_slice_reference_ok|run-exit|tests/safety/lower_word_view_slice_reference_ok.tl|3|-
+view_mut_replace_ok|run-exit|tests/safety/view_mut_replace_ok.tl|2|-
+view_mut_set_ok|run-exit|tests/safety/view_mut_set_ok.tl|2|-
+view_mut_field_ok|run-exit|tests/safety/view_mut_field_ok.tl|7|-
+view_mut_borrow_ok|run-exit|tests/safety/view_mut_borrow_ok.tl|2|-
+view_of_view_mut_ok|run-exit|tests/safety/view_of_view_mut_ok.tl|9|-
+view_mut_owner_use_reject|check-fail|tests/safety/view_mut_owner_use_reject.tl|-|cannot mutably borrow borrowed place `p`
+view_mut_second_view_reject|check-fail|tests/safety/view_mut_second_view_reject.tl|-|cannot mutably borrow borrowed place `p.s`
+view_shared_field_set_reject|check-fail|tests/safety/view_shared_field_set_reject.tl|-|cannot mutably borrow `p.s.n` behind a shared reference
+view_of_view_shared_reject|check-fail|tests/safety/view_of_view_shared_reject.tl|-|cannot mutably borrow `p.m.i.b` behind a shared reference
+view_match_binder_set_ok|run-exit|tests/safety/view_match_binder_set_ok.tl|8|-
+view_match_binder_let_view_ok|run-exit|tests/safety/view_match_binder_let_view_ok.tl|8|-
+view_match_binder_box_ok|run-exit|tests/safety/view_match_binder_box_ok.tl|4|-
+view_match_binder_replace_ok|run-exit|tests/safety/view_match_binder_replace_ok.tl|21|-
+view_match_binder_borrow_ok|run-exit|tests/safety/view_match_binder_borrow_ok.tl|3|-
+view_match_binder_loop_ok|run-exit|tests/safety/view_match_binder_loop_ok.tl|6|-
+view_match_binder_shared_reject|check-fail|tests/safety/view_match_binder_shared_reject.tl|-|cannot mutably borrow `x.n` behind a shared reference
+view_match_binder_owner_use_reject|check-fail|tests/safety/view_match_binder_owner_use_reject.tl|-|cannot mutably borrow borrowed place `p`
+view_match_binder_second_view_reject|check-fail|tests/safety/view_match_binder_second_view_reject.tl|-|cannot mutably borrow borrowed place `p.e`
+view_match_binder_alias_reject|check-fail|tests/safety/view_match_binder_alias_reject.tl|-|cannot mutably borrow borrowed place `p.e`
+register_view_match_shared_reject|check-fail|tests/safety/register_view_match_shared_reject.tl|-|cannot mutably borrow `token.id` behind a shared reference

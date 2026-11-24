@@ -31,7 +31,7 @@ param(
     [string]$SummaryPath,
 
     [ValidateRange(1, 64)]
-    [int]$Jobs = 4
+    [int]$Jobs = 8
 )
 
 Set-StrictMode -Version Latest

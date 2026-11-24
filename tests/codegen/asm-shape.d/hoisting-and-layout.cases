@@ -1,0 +1,90 @@
+# opt2 assembly-shape gates for the regalloc/backend/optimizer fixtures (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+
+# Divisor magic hoisting: constant multiplies fold into imm32 imuls; the /7
+# quotient reads the live dividend through %rax (one irreducible copy chain).
+case divmagic-hoist
+source tests/integration/divmagic_hoist.tl
+in fn _tl_divmagic_hoist_modsum
+not-contains movabsq $1000000007
+count >= 1 ^[[:space:]]+imulq \$1000000007, %r[a-z0-9]+, %r[a-z0-9]+$
+in fn _tl_divmagic_hoist_digitsum
+count-fixed = 1 movabsq $7378697629483820647
+not-contains movabsq $10
+count >= 1 ^[[:space:]]+imulq \$10, %r[a-z0-9]+, %r[a-z0-9]+$
+in fn _tl_divmagic_hoist_dividend_copy_pair
+metric copy-chains-to-rax = 1
+
+# A36 hoist priority: registers are awarded by site count (the three-site magic
+# beats six one-site literals); ties fall back to program order.
+case hoist-priority
+source tests/integration/hoist_priority.tl
+in fn _tl_hoist_priority_spread
+count-fixed = 1 movabsq $-8543223828751151131
+count >= 3 ^[[:space:]]+imulq \$1000000007, %r[a-z0-9]+, %r[a-z0-9]+$
+count >= 1 ^[[:space:]]+movl \$26544357[0-9]+, %(e[a-z]+|r[0-9]+d)$
+in fn _tl_hoist_priority_tie
+count-fixed = 1 movabsq $3141592653589
+count-fixed = 2 movabsq $-8543223828751151131
+
+# LFTR retires the index counter: `walk` is absorbed into main, the loop steps
+# a 16-byte pointer with one compare, and the end address is scaled once.
+case lftr-counter-retire
+source tests/integration/lftr_counter_retire.tl
+not-contains _tl_lftr_counter_retire_walk:
+in fn main
+not-match ^[[:space:]]+addq \$1, %r[a-z0-9]+$
+count = 1 ^[[:space:]]+leaq 16\(%r[a-z0-9]+\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$
+match ^[[:space:]]+(shlq \$4, %r[a-z0-9]+|imulq \$16, %r[a-z0-9]+, %r[a-z0-9]+)$
+not-match call (\.L_tl_abort_)?tl_oob_abort
+
+# No jmp may target a label reached by falling through label definitions only;
+# a then-only branch loses its merge jump, a two-armed one keeps it, and the
+# tail-recursive loop keeps its backward branch.
+case fallthrough-jmp-chain
+source tests/integration/fallthrough_jmp_chain.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_fallthrough_jmp_chain_chain_drop_probe
+metric fallthrough-jmps = 0
+in fn _tl_fallthrough_jmp_chain_chain_keep_probe
+metric fallthrough-jmps = 0
+in fn main
+metric fallthrough-jmps = 0
+in fn _tl_fallthrough_jmp_chain_chain_drop_probe
+match ^\.L[^ ]*_if_then\.[0-9.]+:$
+match ^\.L[^ ]*_if_else\.[0-9.]+:$
+match ^\.L[^ ]*_if_merge\.[0-9.]+:$
+count = 0 ^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$
+metric backward-branches >= 1
+in fn _tl_fallthrough_jmp_chain_chain_keep_probe
+count = 1 ^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$
+metric backward-branches >= 1
+
+# Backend block layout: a cold arm sinks behind the body, a small exit block is
+# duplicated into the arm that jumps to it, and a register compare keeps IR order.
+case block-layout
+source tests/integration/block_layout.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_block_layout_sink_probe
+metric fallthrough-jmps = 0
+in fn _tl_block_layout_dup_probe
+metric fallthrough-jmps = 0
+in fn _tl_block_layout_keep_probe
+metric fallthrough-jmps = 0
+in fn _tl_block_layout_sink_probe
+after ^[[:space:]]+movzbl .*, %(e[a-z]+|r[0-9]+d)$
+next-line ^[.]L.*_if_merge[.][0-9.]+
+after ^[[:space:]]+movq [$]-1, %r[a-z0-9]+$
+next-line ^[[:space:]]+jmp [.]L.*_if_merge[.][0-9]
+count >= 2 ^[[:space:]]+j[a-z]+ \.L[^ ]*_if_else\.[0-9.]+$
+in fn _tl_block_layout_dup_probe
+count = 0 ^[[:space:]]+jmp \.L[^ ]*_while_exit\.[0-9.]+$
+match ^\.L[^ ]*_while_exit\.[0-9.]+:$
+count = 2 ^[[:space:]]+leaq (-?[0-9]+)?\(,%r[a-z0-9]+,2\), %r[a-z0-9]+$
+in fn _tl_block_layout_keep_probe
+count = 1 ^[[:space:]]+jmp \.L[^ ]*_if_merge\.[0-9.]+$
+match ^\.L[^ ]*_if_else\.[0-9.]+:$

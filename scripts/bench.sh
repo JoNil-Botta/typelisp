@@ -7,7 +7,7 @@ export LC_ALL
 #
 # Required CI uses --correctness to build comparison pairs and compare exact
 # stdout, stderr, and exit status without collecting timings. Linux CI passes
-# the positive benchmark suite from perf/benchmark-ci-cases.tsv; instruction
+# the positive benchmark suite from perf/benchmarks/*.tsv; instruction
 # suites validate their output parity while collecting cachegrind counts.
 #
 # Manual timing builds three fixed optimization legs, warms each binary once,

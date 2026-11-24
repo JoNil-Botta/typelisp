@@ -298,8 +298,12 @@ tl_profile_alloc_peak_bytes:
 (define (compiler-backend-runtime-argv-data) : String
   "    .data
     .balign 8
+    .globl __tl_argc
+__tl_argc:
 .L_tl_argc:
     .quad 0
+    .globl __tl_argv
+__tl_argv:
 .L_tl_argv:
     .quad 0
 
@@ -308,6 +312,8 @@ tl_profile_alloc_peak_bytes:
 (define (compiler-backend-runtime-env-data) : String
   "    .data
     .balign 8
+    .globl __tl_envp
+__tl_envp:
 .L_tl_envp:
     .quad 0
 
@@ -519,6 +525,8 @@ tl_startup_profile_process_entry_tick:
 (define (compiler-backend-runtime-null-arena-data) : String
   "    .section .rodata
     .balign 8
+    .globl __tl_null_arena
+__tl_null_arena:
 .L_tl_null_arena:
     .quad 0, 0, 0, 0, 0, 0, 17, 0
 

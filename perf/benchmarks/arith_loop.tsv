@@ -1,0 +1,2 @@
+suites	benchmark,instruction-main
+benchmark/c-scalar/arith_loop	500001469

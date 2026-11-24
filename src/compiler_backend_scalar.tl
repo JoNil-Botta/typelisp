@@ -2912,6 +2912,8 @@
     [name-text : String
       (be_state.compiler-backend-symbol-text-index index name)]
     (if (and
+      (not
+        (be_state.compiler-backend-state-library-object? index.backend-state))
       (be_operand.compiler-backend-compact-function-symbol? name-text)
       (not (be_operand.compiler-backend-index-extern-provided? index name)))
       (str_cat.str-cat

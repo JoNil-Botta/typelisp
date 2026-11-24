@@ -18174,3 +18174,292 @@
         (tc_core.tc-job-state-set-semantic-observer!
           (tc_core.tc-context-job-state ctx)
           (tc_core.TcSemanticObserver 0))))))
+
+(cfg
+  test
+  (test
+    tc-call-length-fallback-preserves-region-and-temp-borrow
+    (ast_tests.with-test-interns
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+        [source : ownership.OwnershipSource
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))]
+        [func-expr : ast.AstExpr (ast.AstExpr.Var (ci.intern "length"))]
+        [func-id : i64
+          (ast.ast-node-pool-context-expr-push pools (clone func-expr))]
+        [arg-var : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Var (ci.intern "s")))]
+        [region-args : ast.AstExprList (ast.ast-expr-list-new)]
+        [_ (ast.ast-expr-list-push (&mut region-args) arg-var)]
+        [region-id : i64 (ci.intern "r")]
+        [str-ty : ast.AstType ast.AstType.String]
+        [i64-ty : ast.AstType ast.AstType.I64]
+        [empty-types : ast.AstTypeList (ast.ast-type-list-new)]
+        [tagged : ast.AstType
+          (ast.ast-ty-region-with-pools pools region-id (& str-ty))]
+        [region-env : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env)
+            (ci.intern "s")
+            (clone tagged))]
+        [str-fn : ast.AstType
+          (ast.ast-ty-func-with-pools
+            pools
+            (ast.ast-type-cons-with-pools pools (& str-ty) (& empty-types))
+            (& i64-ty))]
+        (match (tc_core.tc-infer-selected-call-signature
+          ctx
+          region-env
+          (clone func-expr)
+          func-id
+          -1
+          str-fn
+          false
+          false
+          (tc_core.tc-arena-owner-kind-none)
+          (& region-args)
+          typed.TypedSyntax.Generated
+          ast.AstMaybeType.No
+          (ast.AstMaybeType.Some tagged)
+          (ownership.ownership-source-copy (& source))
+          tc_core.TcSelectedSink.Query)
+          [(tc_core.TcSelectedResult.Err message _)
+            (let
+              [diag : cdiag.CompilerDiagnostic
+                (tc_core.tc-diag-at-start message)]
+              (test.assert-true
+                (string.eq
+                  (cdiag.compiler-diagnostic-code-or-empty (& diag))
+                  "E0205")
+                "length fallback must reject region-tagged arg with RegionEscape"))]
+          [_
+            (test.assert-true
+              false
+              "length fallback must preserve arg 0 region tag and reject unannotated formal")])
+        (let
+          [lit-id : i64
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
+          [temp-borrow-id : i64
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.Borrow false (ci.intern "x") lit-id))]
+          [temp-args : ast.AstExprList (ast.ast-expr-list-new)]
+          [_ (ast.ast-expr-list-push (&mut temp-args) temp-borrow-id)]
+          [ref-a : ast.AstType
+            (ast.ast-ty-ref-with-pools pools (ci.intern "a") (& i64-ty))]
+          [ref-temp : ast.AstType
+            (ast.ast-ty-ref-with-pools
+              pools
+              (tc_core.tc-call-temporary-lifetime-id)
+              (& i64-ty))]
+          [ref-fn : ast.AstType
+            (ast.ast-ty-func-with-pools
+              pools
+              (ast.ast-type-cons-with-pools pools (& ref-a) (& empty-types))
+              (& i64-ty))]
+          (match (tc_core.tc-infer-selected-call-signature
+            ctx
+            (tc_core.tc-empty-env)
+            func-expr
+            func-id
+            -1
+            ref-fn
+            false
+            false
+            (tc_core.tc-arena-owner-kind-none)
+            (& temp-args)
+            typed.TypedSyntax.Generated
+            ast.AstMaybeType.No
+            (ast.AstMaybeType.Some ref-temp)
+            source
+            tc_core.TcSelectedSink.Query)
+            [(tc_core.TcSelectedResult.Err message _)
+              (let
+                [diag : cdiag.CompilerDiagnostic
+                  (tc_core.tc-diag-at-start message)]
+                (test.assert-true
+                  (string.eq
+                    (cdiag.compiler-diagnostic-code-or-empty (& diag))
+                    "E0210")
+                  "length fallback must reject named-lifetime temporary borrow with LifetimeMismatch"))]
+            [_
+              (test.assert-true
+                false
+                "length fallback must skip first shortcut for temporary borrow args")]))))))
+
+(cfg
+  test
+  (test
+    tc-call-query-constructor-rejects-unparameterized-ref-struct
+    (ast_tests.with-test-interns
+      (let
+        [previous : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [reader-explicit : bool ast.ast-node-pool-reader-explicit?]
+        [reader : ast.AstNodePoolContext
+          (ast.ast-node-pool-reader-context-current)]
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 64 64)]
+        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [_reader : unit (ast.ast-node-pool-reader-use! pools)]
+        [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+        [i64-ty : ast.AstType ast.AstType.I64]
+        [ref-x-i64 : ast.AstType
+          (ast.ast-ty-ref-with-pools pools (ci.intern "x") (& i64-ty))]
+        [fields : ast.AstFieldDefList (ast.ast-field-def-list-new)]
+        [_
+          (ast.ast-field-def-list-push
+            (&mut fields)
+            (ast.AstFieldDef.Def
+              (ci.InternSyntaxId (cast (ci.intern "value") : u64))
+              ref-x-i64
+              ast.AstFieldCleanup.No))]
+        [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+        [_
+          (ast.ast-decl-list-push
+            (&mut decls)
+            (ast.ast-decl-def-struct-id
+              (ci.intern "QueryRefBox")
+              ast.AstStructRepr.Default
+              ast.AstStructCleanup.No
+              fields))]
+        [program : ast.AstProgram (ast.ast-program decls)]
+        [symbols : csym.CompilerSymbols
+          (match (csym.build-compiler-symbols (& program))
+            [(Ok value) value]
+            [(Err message) (io.panic message)])]
+        [registries : csym.CompilerRegistries
+          (match (csym.build-compiler-registries-with-symbols
+            (& program)
+            (& symbols))
+            [(Ok value) value]
+            [(Err message) (io.panic message)])]
+        [ctx : tc_core.TcContext
+          (tc_core.tc-context-new-with-source-names-and-job-state
+            program
+            symbols
+            registries
+            ""
+            cbi.compiler-builtin-id-fix-empty
+            pools
+            (ci.intern-source-name-session-capture-active-handle)
+            job)]
+        [top-env : tc_core.TcTypeEnv
+          (match (tc_core.tc-build-top-env ctx (tc_core.tc-context-program ctx))
+            [(Ok env) env]
+            [(Err message) (io.panic message)])]
+        [env : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id top-env (ci.intern "x") ast.AstType.I64)]
+        [func-id : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Var (ci.intern "QueryRefBox")))]
+        [x-id : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Var (ci.intern "x")))]
+        [borrow-id : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Borrow false -1 x-id))]
+        [args : ast.AstExprList (ast.ast-expr-list-new)]
+        [_ (ast.ast-expr-list-push (&mut args) borrow-id)]
+        [call-id : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Call func-id args))]
+        [source : ownership.OwnershipSource
+          (ownership.OwnershipSource
+            (ownership.ownership-path-none)
+            0
+            0
+            (ownership.ownership-expansion-none))]
+        [status : String
+          (match (tc_core.tc-infer-selected-id
+            ctx
+            env
+            call-id
+            ast.AstMaybeType.No
+            source
+            tc_core.TcSelectedSink.Query)
+            [(tc_core.TcSelectedResult.Err message _)
+              (let
+                [diag : cdiag.CompilerDiagnostic
+                  (tc_core.tc-diag-at-start (clone message))]
+                (if (string.eq
+                  (cdiag.compiler-diagnostic-code-or-empty (& diag))
+                  "E0210")
+                  ""
+                  message))]
+            [_ "UNEXPECTED_OK"])]
+        (ast.ast-node-pool-context-install! previous)
+        (if reader-explicit
+          (ast.ast-node-pool-reader-use! reader)
+          (ast.ast-node-pool-reader-clear!))
+        (ast.ast-node-pool-context-destroy-storage! pools)
+        (test.assert-true (string.eq (& status) "") status)))))
+
+(cfg
+  test
+  (test
+    tc-call-arena-owner-undeclared-key-stays-unrepresented
+    (ast_tests.with-test-interns
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+        [intern-state : ci.InternCompatState
+          (ci.intern-compat-state-capture-active)]
+        [lease : (typed.TypedBodyLease intern-state)
+          (tc-selected-test-lease ctx (& intern-state))]
+        [bindings : tc_core.TcSelectedBindings
+          (tc_core.tc-selected-bindings-new (& lease))]
+        [store : typed.TypedStore (tc-selected-test-store (& lease))]
+        [func-expr : ast.AstExpr (ast.AstExpr.Var (ci.intern "arena.make"))]
+        [func-id : i64
+          (ast.ast-node-pool-context-expr-push pools (clone func-expr))]
+        [args : ast.AstExprList (ast.ast-expr-list-new)]
+        [i64-ty : ast.AstType ast.AstType.I64]
+        [fn-ty : ast.AstType
+          (ast.ast-ty-func-with-pools pools (ast.ast-type-list-new) (& i64-ty))]
+        [source : ownership.OwnershipSource
+          (ownership.OwnershipSource
+            (ownership.ownership-body-path "selected.tl")
+            1
+            1
+            (ownership.ownership-expansion-none))]
+        (match (tc_core.tc-infer-selected-call-signature
+          ctx
+          (tc_core.tc-empty-env)
+          func-expr
+          func-id
+          -1
+          fn-ty
+          false
+          false
+          (tc_core.tc-arena-owner-kind-ordinary)
+          (& args)
+          (typed.TypedSyntax.Source func-id)
+          ast.AstMaybeType.No
+          ast.AstMaybeType.No
+          source
+          (tc_core.tc-selected-capture (&mut store) (& lease) (&mut bindings)))
+          [(tc_core.TcSelectedResult.Ok _ occurrence _)
+            (match occurrence
+              [(tc_core.TcSelectedOccurrence.Unrepresented) unit]
+              [_
+                (test.assert-true
+                  false
+                  "undeclared arena owner call must stay unrepresented")])]
+          [(tc_core.TcSelectedResult.Err message _)
+            (test.assert-true false message)])))))

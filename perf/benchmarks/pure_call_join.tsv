@@ -1,0 +1,2 @@
+suites	instruction-main
+benchmark/c-scalar/pure_call_join	218406456

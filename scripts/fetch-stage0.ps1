@@ -28,12 +28,16 @@ $IsLinuxHost = ((Get-Variable IsLinux -ValueOnly -ErrorAction SilentlyContinue) 
 if ($IsWindowsHost) {
     $SingleAsset = "typelisp-stage0-windows.exe"
     $Output = "typelisp.exe"
+    $SysrootTriple = "x86_64-pc-windows-msvc"
 } elseif ($IsLinuxHost) {
     $SingleAsset = "typelisp-stage0-linux"
     $Output = "typelisp"
+    $SysrootTriple = "x86_64-unknown-linux-gnu"
 } else {
     throw "stage0 fetch is unsupported on this host"
 }
+$SysrootTliAsset = "typelisp-stdlib-$SysrootTriple.tli"
+$SysrootLibAsset = "libstdlib-$SysrootTriple.a"
 
 $Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $OutputDirPath = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
@@ -110,6 +114,8 @@ try {
     $Dest = Join-Path $OutputDirFull $Output
     $Asset = $null
     $AssetTmp = $null
+    $SysrootTliTmp = $null
+    $SysrootLibTmp = $null
 
     function Download-Stage0Asset {
         param([Parameter(Mandatory = $true)] [string] $AssetName)
@@ -128,12 +134,57 @@ try {
         }
     }
 
+    function Try-DownloadOptionalAsset {
+        param([Parameter(Mandatory = $true)] [string] $AssetName)
+
+        $Target = Join-Path $TempDir $AssetName
+        try {
+            Invoke-WebRequest -Uri "$BaseUrl/$AssetName" -OutFile $Target -UseBasicParsing
+            if ((Get-Item -LiteralPath $Target).Length -le 0) {
+                Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
+                throw "downloaded optional asset is empty: $AssetName"
+            }
+            $Target
+        } catch {
+            Remove-Item -LiteralPath $Target -Force -ErrorAction SilentlyContinue
+            if (Test-Stage0NotFound $_) { return $null }
+            throw
+        }
+    }
+
+    function Verify-OptionalAssetSum {
+        param(
+            [Parameter(Mandatory = $true)] [string] $AssetName,
+            [Parameter(Mandatory = $true)] [string] $AssetPath,
+            [Parameter(Mandatory = $true)] [bool] $HaveSums
+        )
+
+        if (-not $HaveSums) { return }
+        $AssetPattern = [regex]::Escape($AssetName)
+        $Selected = Get-Content -LiteralPath $SumsTmp |
+            Where-Object { $_ -match "^\s*[0-9A-Fa-f]{64}\s+$AssetPattern\s*$" } |
+            Select-Object -First 1
+        if (-not $Selected) { return }
+        if ($Selected -notmatch "^\s*([0-9A-Fa-f]{64})\s+") {
+            throw "invalid SHA256SUMS entry for $AssetName"
+        }
+        $ExpectedHash = $Matches[1].ToLowerInvariant()
+        $ActualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $AssetPath).Hash.ToLowerInvariant()
+        if ($ActualHash -ne $ExpectedHash) {
+            throw "sha256 mismatch for $AssetName`: expected $ExpectedHash, got $ActualHash"
+        }
+    }
+
     $FetchSucceeded = $false
     for ($Attempt = 1; $Attempt -le $FetchAttempts; $Attempt++) {
         $Asset = $SingleAsset
         $script:ReleaseUnavailable = $false
         $AssetTmp = $null
+        $SysrootTliTmp = $null
+        $SysrootLibTmp = $null
         Remove-Item -LiteralPath (Join-Path $TempDir $SingleAsset) -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $TempDir $SysrootTliAsset) -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $TempDir $SysrootLibAsset) -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $SumsTmp -Force -ErrorAction SilentlyContinue
         try {
             Write-Host "[stage0] downloading $SingleAsset from $Repo@$Tag"
@@ -169,6 +220,28 @@ try {
                 if ($ActualHash -ne $ExpectedHash) {
                     throw "sha256 mismatch for $Asset`: expected $ExpectedHash, got $ActualHash"
                 }
+            }
+
+            $CandidateTli = Try-DownloadOptionalAsset -AssetName $SysrootTliAsset
+            $CandidateLib = Try-DownloadOptionalAsset -AssetName $SysrootLibAsset
+            if ($CandidateTli -and $CandidateLib) {
+                Verify-OptionalAssetSum -AssetName $SysrootTliAsset -AssetPath $CandidateTli -HaveSums $HaveSums
+                Verify-OptionalAssetSum -AssetName $SysrootLibAsset -AssetPath $CandidateLib -HaveSums $HaveSums
+                $SysrootTliTmp = $CandidateTli
+                $SysrootLibTmp = $CandidateLib
+            } elseif (-not $CandidateTli -and -not $CandidateLib) {
+                if ($HaveSums) {
+                    $TliPat = [regex]::Escape($SysrootTliAsset)
+                    $LibPat = [regex]::Escape($SysrootLibAsset)
+                    $ExpectedSysroot = Get-Content -LiteralPath $SumsTmp |
+                        Where-Object { $_ -match "^\s*[0-9A-Fa-f]{64}\s+($TliPat|$LibPat)\s*$" } |
+                        Select-Object -First 1
+                    if ($ExpectedSysroot) {
+                        throw "SHA256SUMS lists sysroot assets that are not visible yet"
+                    }
+                }
+            } else {
+                throw "inconsistent prebuilt stdlib sysroot download"
             }
 
             $FetchSucceeded = $true
@@ -216,6 +289,17 @@ try {
 
     if ((Get-Item -LiteralPath $Dest).Length -le 0) {
         throw "stage0 compiler is empty after install: $Dest"
+    }
+
+    $SysrootDir = Join-Path (Join-Path $OutputDirFull "lib") $SysrootTriple
+    if ($SysrootTliTmp -and $SysrootLibTmp) {
+        New-Item -ItemType Directory -Path $SysrootDir -Force -Confirm:$false | Out-Null
+        Move-Item -LiteralPath $SysrootTliTmp -Destination (Join-Path $SysrootDir "stdlib.tli") -Force -Confirm:$false
+        Move-Item -LiteralPath $SysrootLibTmp -Destination (Join-Path $SysrootDir "libstdlib.a") -Force -Confirm:$false
+        Write-Host "[stage0] installed sysroot in $SysrootDir"
+    } else {
+        Remove-Item -LiteralPath (Join-Path $SysrootDir "stdlib.tli") -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath (Join-Path $SysrootDir "libstdlib.a") -Force -ErrorAction SilentlyContinue
     }
 
     Write-Host "[stage0] installed $Dest"

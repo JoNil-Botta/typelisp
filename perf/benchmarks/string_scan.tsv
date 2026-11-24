@@ -1,0 +1,3 @@
+suites	instruction-heavy
+benchmark/c/string_scan	4850001652
+benchmark/c-scalar/string_scan	4850001652

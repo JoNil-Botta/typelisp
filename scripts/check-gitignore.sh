@@ -86,7 +86,8 @@ benchmarks/arith_loop/bench.tl
 benchmarks/arith_loop/baseline.c
 scripts/check-gitignore.sh
 scripts/fetch-stage0.ps1
-perf/insn-exec-baseline.tsv
+perf/benchmarks/arith_loop.tsv
+perf/benchmarks/arith_loop.provenance.json
 tests/tlci/corpus/SHA256SUMS
 tests/tlci/corpus/malformed-bad-magic.tlci
 tests/integration/include_bin_payload.bin

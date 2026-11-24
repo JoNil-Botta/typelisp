@@ -64995,12 +64995,25 @@ done:
     (opt-gc-test-while-blocks symbols)
     Ordinary))
 
+(define (opt-test-closed-world-main) : ir.CompilerIrFunction
+  (Function
+    (opt-test-symbol "main")
+    (ir.compiler-ir-param-seq-empty)
+    (I64)
+    0
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (opt-test-instrs (irt.instr "return 0"))))
+    Ordinary))
+
 (define (compiler-optimize-global-cell-pipeline-self-test) : i64
   (let
     [symbols : OptGcTestSymbols (opt-gc-test-symbols)]
     [type-segment-bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     [fixture : ir.CompilerIrFunction (opt-gc-test-while-function symbols)]
-    [functions : ir.CompilerIrFunctionSeq (opt-gc-test-functions1 fixture)]
+    [functions : ir.CompilerIrFunctionSeq
+      (opt-gc-test-functions2 fixture (opt-test-closed-world-main))]
     [summaries : opt.OptProgramSummaries
       (opt.opt-build-program-summaries
         type-segment-bases
@@ -67267,11 +67280,14 @@ done:
     [fixture (opt-snapshot-test-function before)]
     [functions
       (ir.compiler-ir-function-seq-prepend
-        (& fixture)
+        (& (opt-test-closed-world-main))
         (&
-          (if address-taken
-            (opt-mr-addr-functions symbols)
-            (opt-mr-test-functions symbols))))]
+          (ir.compiler-ir-function-seq-prepend
+            (& fixture)
+            (&
+              (if address-taken
+                (opt-mr-addr-functions symbols)
+                (opt-mr-test-functions symbols))))))]
     [bases (ast.ast-node-pool-reader-type-segment-bases)]
     [summaries
       (opt.opt-build-program-summaries
@@ -67641,7 +67657,10 @@ done:
     [functions
       (ir.compiler-ir-function-seq-prepend
         (& fixture)
-        (& (opt-cl-test-functions symbols)))]
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-test-closed-world-main))
+            (& (opt-cl-test-functions symbols)))))]
     [before-inline
       (opt.opt-pure-call-inline-memory-install!
         (ast.ast-node-pool-reader-context-current)
@@ -68165,6 +68184,10 @@ return 0" true)
                entry:
                  store @cell, 7 : i64
                  return 0
+               }
+               function @main() -> i64 vars 0 {
+               entry:
+                 return 0
                }"))]
         (match program
           [(Program globals functions _ _authority)
@@ -68268,8 +68291,11 @@ return 0" true)
     (& externs)
     (&
       (ir.compiler-ir-function-seq-prepend
-        (& (opt-alias-test-wrapper wrapper))
-        (& (opt-mr-test-functions symbols))))
+        (& (opt-test-closed-world-main))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-alias-test-wrapper wrapper))
+            (& (opt-mr-test-functions symbols))))))
     2))
 
 ;; `blocks` after load GVN under the program's summaries.
@@ -68433,6 +68459,10 @@ return 0" true)
         "         %1 = call esc_sink(0) : i64
 ")
       "         return %1
+       }
+       function @main() -> i64 vars 0 {
+       entry:
+         return 0
        }")))
 
 ;; Escaped storage stays writable through a runtime-linked extern's pointer
@@ -68526,6 +68556,10 @@ return 0" true)
              store @conflict_cell, 1 : i64
              %0 = call conflict_alias() : i64
              return %0
+           }
+           function @main() -> i64 vars 0 {
+           entry:
+             return 0
            }")
           [(Program globals functions _ _authority)
             (let
@@ -70202,7 +70236,9 @@ return 0" true)
     (ast.ast-node-pool-reader-type-segment-bases)
     (& (opt-lga-test-globals symbols))
     (& (ir.compiler-ir-extern-seq-empty))
-    (opt-lga-test-functions symbols)
+    (ir.compiler-ir-function-seq-prepend
+      (& (opt-test-closed-world-main))
+      (& (opt-lga-test-functions symbols)))
     level))
 
 (define (opt-lga-find
@@ -70740,7 +70776,10 @@ return 0" true)
         type-segment-bases
         (& (opt-lp-test-globals symbols))
         (& (ir.compiler-ir-extern-seq-empty))
-        version-functions
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-test-closed-world-main))
+            (& version-functions)))
         2)]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
     [versioned : ir.CompilerIrBlockList
@@ -88581,3 +88620,130 @@ inl.entry.0.cont:
                       (array-ref expected (+ (* body 3) ty)))
                     "cell facts spare word and reference values; payload copies and escaped cells retain snapshots")))
               (opt.opt-inline-owned-state-reset! true))])))))
+
+(test
+  library-object-no-main-skips-closed-world-opt
+  ;; Without `main`, the program is an open-world library object:
+  ;; (1) `opt-lga-specialize-program` must NOT drop ABI params from exported fns,
+  ;; (2) `opt-build-program-summaries` must NOT assume exported globals are
+  ;;     unmutated constants or build closed-world global-cell facts,
+  ;; (3) `opt.optimize-program` at --opt-level 2 preserves both, while adding
+  ;;     `main` still allows closed-world specialization/const-global folding.
+  (let
+    [symbols : OptLgaTestSymbols (opt-lga-test-symbols)]
+    [lib-lga : ir.CompilerIrFunctionSeq
+      (opt.opt-lga-specialize-program
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& (opt-lga-test-globals symbols))
+        (& (ir.compiler-ir-extern-seq-empty))
+        (opt-lga-test-functions symbols)
+        2)]
+    (test.assert-i64-eq
+      (opt-lga-params (& lib-lga) symbols.helper)
+      1
+      "library module without main keeps helper ABI parameter under LGA")
+    (test.assert-i64-eq
+      (opt-lga-site-args (& lib-lga) symbols.helper-one)
+      1
+      "library module without main keeps internal call-site argument under LGA")
+    (let
+      [lib-src : String
+        "global @lib_const_cell : i64 = 7
+         global @lib_arr : (__tl_dyn-array i64) = unit
+         function @lib_helper(p=%0:(& r (__tl_dyn-array i64))) -> i64 vars 3 {
+         entry:
+           %1 = gep %0, 1 : i64
+           %2 = load %1 : i64
+           return %2
+         }
+         function @lib_caller() -> i64 vars 1 {
+         entry:
+           %0 = call lib_helper(@lib_arr) : i64
+           return %0
+         }
+         function @lib_read_global() -> i64 vars 1 {
+         entry:
+           %0 = add @lib_const_cell, 1 : i64
+           return %0
+         }"]
+      [lib-prog : ir.CompilerIrProgram (irt.program (string.copy (& lib-src)))]
+      [exe-prog : ir.CompilerIrProgram
+        (irt.program
+          (str_cat.str-cat
+            lib-src
+            "\nfunction @main() -> i64 vars 2 {\nentry:\n  %0 = call lib_caller() : i64\n  %1 = call lib_read_global() : i64\n  %0 = add %0, %1 : i64\n  return %0\n}"))]
+      (match (& lib-prog)
+        [(Program lib-globals lib-functions lib-externs _)
+          (let
+            [lib-summaries : opt.OptProgramSummaries
+              (opt.opt-build-program-summaries
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (& lib-globals)
+                (& lib-externs)
+                (& lib-functions)
+                2)]
+            (test.assert-i64-eq
+              (opt_i64_i64_map.len (& lib-summaries.const-divisors))
+              0
+              "library module without main builds no closed-world const-divisor facts")
+            (test.assert-true
+              (not lib-summaries.global-cell.mod-ref.built?)
+              "library module without main builds no closed-world global-cell mod-ref"))])
+      (match (opt.optimize-program-with-spans-and-level
+        (& lib-prog)
+        (ir.compiler-source-spans-empty)
+        2)
+        [(opt.CompilerOptimizedProgram.Program opt-lib _)
+          (match (& opt-lib)
+            [(Program _ opt-fns _ _)
+              (let
+                [helper-sym : i64
+                  (ir.compiler-ir-symbol-id (opt-test-symbol "lib_helper"))]
+                [reader-sym : i64
+                  (ir.compiler-ir-symbol-id (opt-test-symbol "lib_read_global"))]
+                [reader-idx : i64 (opt-lga-find (& opt-fns) reader-sym)]
+                (test.assert-i64-eq
+                  (opt-lga-params (& opt-fns) helper-sym)
+                  1
+                  "optimize-program at --opt-level 2 preserves library fn ABI params without main")
+                (test.assert-true
+                  (>= reader-idx 0)
+                  "library reader function survives optimize-program without main")
+                (let
+                  [reader-text : String
+                    (ir.compiler-ir-function-render
+                      (cis.InternStructuralSessionHandle 0)
+                      (ast.ast-node-pool-reader-type-segment-bases)
+                      (& (array-ref opt-fns.slots reader-idx)))]
+                  (test.assert-true
+                    (string.contains (& reader-text) "@lib_const_cell")
+                    "library reader keeps global load instead of closed-world constant folding")))])])
+      (match (opt.optimize-program-with-spans-and-level
+        (& exe-prog)
+        (ir.compiler-source-spans-empty)
+        2)
+        [(opt.CompilerOptimizedProgram.Program opt-exe _)
+          (match (& opt-exe)
+            [(Program _ opt-fns _ _)
+              (let
+                [helper-sym : i64
+                  (ir.compiler-ir-symbol-id (opt-test-symbol "lib_helper"))]
+                [reader-sym : i64
+                  (ir.compiler-ir-symbol-id (opt-test-symbol "lib_read_global"))]
+                [reader-idx : i64 (opt-lga-find (& opt-fns) reader-sym)]
+                (test.assert-true
+                  (or
+                    (< (opt-lga-find (& opt-fns) helper-sym) 0)
+                    (= (opt-lga-params (& opt-fns) helper-sym) 0))
+                  "executable with main still allows closed-world specialization/inlining")
+                (when
+                  (>= reader-idx 0)
+                  (let
+                    [reader-text : String
+                      (ir.compiler-ir-function-render
+                        (cis.InternStructuralSessionHandle 0)
+                        (ast.ast-node-pool-reader-type-segment-bases)
+                        (& (array-ref opt-fns.slots reader-idx)))]
+                    (test.assert-true
+                      (not (string.contains (& reader-text) "@lib_const_cell"))
+                      "executable with main still folds constant global"))))])]))))

@@ -29,6 +29,12 @@ on:
       - 'scripts/self-compile.sh'
       - 'scripts/lib-self-compile.sh'
       - 'scripts/self-compile-self-test.sh'
+      - 'scripts/check-instruction-counts.sh'
+      - 'scripts/measure-instruction-counts.sh'
+      - 'scripts/lib-benchmark.sh'
+      - 'scripts/lib-c-provenance.sh'
+      - 'perf/benchmarks/**'
+      - 'perf/insn-exec-declarations/**'
       - 'src/compiler_build_identity.tl'
       - 'scripts/check-bootstrap-fixpoint.sh'
       - 'scripts/build-stage0.sh'
@@ -79,6 +85,12 @@ jobs:
         shell: bash
         run: scripts/self-compile.sh reference
 
+      - name: Measure and publish insn-exec reference
+        shell: bash
+        run: |
+          stage2=$(cat target/ci-verify-stage2.path)
+          scripts/check-instruction-counts.sh reference --compiler "$stage2" --jobs 4
+
       - name: Prove identical-tree commit stamp invariance
         if: github.event_name == 'pull_request'
         shell: bash
@@ -115,6 +127,15 @@ jobs:
           retention-days: 90
           overwrite: true
 
+      - name: Upload insn-exec reference record
+        uses: actions/upload-artifact@v4
+        with:
+          name: insn-exec-reference
+          path: target/insn-exec/reference/record.tsv
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
   ledger:
     name: Self-compile ledger
     needs: measure
@@ -138,9 +159,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/self-compile.sh ledger --prepare
 
+      - name: Prepare insn-exec main-check
+        id: insn-records
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-instruction-counts.sh main-check --prepare
+
       - name: Install Linux instruction-count tools when measurement is needed
         id: ledger-tools
-        if: steps.ledger-records.outputs.needs-tools == 'yes'
+        if: steps.ledger-records.outputs.needs-tools == 'yes' || steps.insn-records.outputs.needs-tools == 'yes'
         uses: ./.github/actions/linux-instruction-count-tools
 
       - name: Enable Linux kernel memory limits
@@ -174,3 +202,11 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           overwrite: true
+
+      - name: Check insn-exec main vs main^1
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TYPELISP_SELF_COMPILE_TOOLS_READY: ${{ steps.ledger-tools.outcome == 'success' }}
+        run: scripts/check-instruction-counts.sh main-check

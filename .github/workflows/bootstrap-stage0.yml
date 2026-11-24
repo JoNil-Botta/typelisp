@@ -37,7 +37,9 @@ on:
     paths:
       - '.github/workflows/bootstrap-stage0.yml'
       - 'scripts/*stage0*.sh'
+      - 'scripts/build-stdlib-sysroot.sh'
       - 'scripts/lib-build-provenance.sh'
+      - 'tools/build-stdlib-sysroot/**'
       - 'src/compiler_build_identity.tl'
       - 'src/compiler_ctfe.tl'
       - 'src/compiler_lzss.tl'
@@ -72,8 +74,10 @@ jobs:
       - name: Build the new stage0 binary from the previous stage0
         run: |
           scripts/build-stage0.sh target/stage0/typelisp typelisp-stage0-linux
+          cp lib/x86_64-unknown-linux-gnu/stdlib.tli typelisp-stdlib-x86_64-unknown-linux-gnu.tli
+          cp lib/x86_64-unknown-linux-gnu/libstdlib.a libstdlib-x86_64-unknown-linux-gnu.a
           file typelisp-stage0-linux
-          ls -lh typelisp-stage0-linux
+          ls -lh typelisp-stage0-linux typelisp-stdlib-x86_64-unknown-linux-gnu.tli libstdlib-x86_64-unknown-linux-gnu.a
 
       - name: Smoke-check the new stage0 binary
         run: |
@@ -95,7 +99,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: stage0-linux
-          path: typelisp-stage0-linux
+          path: |
+            typelisp-stage0-linux
+            typelisp-stdlib-x86_64-unknown-linux-gnu.tli
+            libstdlib-x86_64-unknown-linux-gnu.a
           if-no-files-found: error
 
   build-windows:
@@ -116,7 +123,9 @@ jobs:
           # build-stage0.sh discovers clang + MSVC link.exe + the Windows SDK the
           # same way the bootstrap fixpoint gate does (scripts/lib-native-link.sh).
           scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe
-          ls -l typelisp-stage0-windows.exe
+          cp lib/x86_64-pc-windows-msvc/stdlib.tli typelisp-stdlib-x86_64-pc-windows-msvc.tli
+          cp lib/x86_64-pc-windows-msvc/libstdlib.a libstdlib-x86_64-pc-windows-msvc.a
+          ls -l typelisp-stage0-windows.exe typelisp-stdlib-x86_64-pc-windows-msvc.tli libstdlib-x86_64-pc-windows-msvc.a
 
       - name: Smoke-check the new stage0 binary
         shell: bash
@@ -153,7 +162,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: stage0-windows
-          path: typelisp-stage0-windows.exe
+          path: |
+            typelisp-stage0-windows.exe
+            typelisp-stdlib-x86_64-pc-windows-msvc.tli
+            libstdlib-x86_64-pc-windows-msvc.a
           if-no-files-found: error
 
   publish:
@@ -193,11 +205,22 @@ jobs:
         run: |
           test -s stage0-artifacts/typelisp-stage0-linux
           test -s stage0-artifacts/typelisp-stage0-windows.exe
+          test -s stage0-artifacts/typelisp-stdlib-x86_64-unknown-linux-gnu.tli
+          test -s stage0-artifacts/libstdlib-x86_64-unknown-linux-gnu.a
+          test -s stage0-artifacts/typelisp-stdlib-x86_64-pc-windows-msvc.tli
+          test -s stage0-artifacts/libstdlib-x86_64-pc-windows-msvc.a
           test -s stage0-artifacts/typelisp.vsix
           chmod +x stage0-artifacts/typelisp-stage0-linux
           (
             cd stage0-artifacts
-            sha256sum typelisp-stage0-linux typelisp-stage0-windows.exe typelisp.vsix > SHA256SUMS
+            sha256sum \
+              typelisp-stage0-linux \
+              typelisp-stage0-windows.exe \
+              typelisp-stdlib-x86_64-unknown-linux-gnu.tli \
+              libstdlib-x86_64-unknown-linux-gnu.a \
+              typelisp-stdlib-x86_64-pc-windows-msvc.tli \
+              libstdlib-x86_64-pc-windows-msvc.a \
+              typelisp.vsix > SHA256SUMS
             sha256sum -c SHA256SUMS
           )
           file stage0-artifacts/typelisp-stage0-linux
@@ -214,6 +237,10 @@ jobs:
           Assets:
           - typelisp-stage0-linux
           - typelisp-stage0-windows.exe
+          - typelisp-stdlib-x86_64-unknown-linux-gnu.tli
+          - libstdlib-x86_64-unknown-linux-gnu.a
+          - typelisp-stdlib-x86_64-pc-windows-msvc.tli
+          - libstdlib-x86_64-pc-windows-msvc.a
           - typelisp.vsix (VS Code extension)
           - SHA256SUMS
           EOF
@@ -226,6 +253,10 @@ jobs:
             --target "${{ github.sha }}" \
             stage0-artifacts/typelisp-stage0-linux \
             stage0-artifacts/typelisp-stage0-windows.exe \
+            stage0-artifacts/typelisp-stdlib-x86_64-unknown-linux-gnu.tli \
+            stage0-artifacts/libstdlib-x86_64-unknown-linux-gnu.a \
+            stage0-artifacts/typelisp-stdlib-x86_64-pc-windows-msvc.tli \
+            stage0-artifacts/libstdlib-x86_64-pc-windows-msvc.a \
             stage0-artifacts/typelisp.vsix \
             stage0-artifacts/SHA256SUMS
 
@@ -244,6 +275,10 @@ jobs:
           Stable asset URLs:
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-linux
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stage0-windows.exe
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stdlib-x86_64-unknown-linux-gnu.tli
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/libstdlib-x86_64-unknown-linux-gnu.a
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp-stdlib-x86_64-pc-windows-msvc.tli
+          - https://github.com/${{ github.repository }}/releases/download/stage0-latest/libstdlib-x86_64-pc-windows-msvc.a
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/typelisp.vsix
           - https://github.com/${{ github.repository }}/releases/download/stage0-latest/SHA256SUMS
           EOF
@@ -264,6 +299,10 @@ jobs:
             "$notes_file" \
             stage0-artifacts/typelisp-stage0-linux \
             stage0-artifacts/typelisp-stage0-windows.exe \
+            stage0-artifacts/typelisp-stdlib-x86_64-unknown-linux-gnu.tli \
+            stage0-artifacts/libstdlib-x86_64-unknown-linux-gnu.a \
+            stage0-artifacts/typelisp-stdlib-x86_64-pc-windows-msvc.tli \
+            stage0-artifacts/libstdlib-x86_64-pc-windows-msvc.a \
             stage0-artifacts/typelisp.vsix \
             stage0-artifacts/SHA256SUMS
           publish_status=$?
@@ -282,5 +321,9 @@ jobs:
             "${{ github.sha }}" \
             typelisp-stage0-linux \
             typelisp-stage0-windows.exe \
+            typelisp-stdlib-x86_64-unknown-linux-gnu.tli \
+            libstdlib-x86_64-unknown-linux-gnu.a \
+            typelisp-stdlib-x86_64-pc-windows-msvc.tli \
+            libstdlib-x86_64-pc-windows-msvc.a \
             typelisp.vsix \
             SHA256SUMS

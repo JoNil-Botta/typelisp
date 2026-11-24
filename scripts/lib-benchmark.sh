@@ -121,101 +121,273 @@ bench_cachegrind() {
     esac
 }
 
-# benchmark_ci_case_csv ROOT SUITE
-#   Print SUITE's cases from perf/benchmark-ci-cases.tsv, the positive case
-#   membership of the Linux benchmark-related CI suites and realistic-kernel
-#   report, as a CSV.
-#
-#   An instruction-main case may also belong to benchmark or optimization-opt2:
-#   each suite checks something the others do not. The benchmark suite builds
-#   TypeLisp at the default level (opt1), the opt2 corpus refuses compiler
-#   stderr and links through its own assembler path, and the instruction gate
-#   checks opt2 parity across TypeLisp, auto and scalar C and pins the counts.
-#   An instruction-heavy case must not also belong to benchmark.
-benchmark_ci_case_csv() {
-    _bccc_root=$1
-    _bccc_suite=$2
-    _bccc_file="$_bccc_root/perf/benchmark-ci-cases.tsv"
+# benchmark_manifest_dir ROOT
+#   Print the directory of per-benchmark manifests (`perf/benchmarks`).
+benchmark_manifest_dir() {
+    printf '%s/perf/benchmarks\n' "$1"
+}
 
-    [ -f "$_bccc_file" ] || {
-        echo "missing benchmark CI case manifest: $_bccc_file" >&2
+# benchmark_manifest_read DIR SUITE [CASES_CSV] [OUT_C_ROWS]
+#   Validate every per-benchmark manifest `<case>.tsv` under DIR:
+#     - `suites<TAB>csv` from {benchmark, optimization-opt2, instruction-main,
+#       instruction-heavy, realistic-kernel}, non-empty, no duplicates
+#     - optional `benchmark/c-scalar/<case><TAB><ir>` (required iff the case
+#       belongs to instruction-main or instruction-heavy)
+#     - optional `benchmark/c/<case><TAB><ir>`
+#     - no `benchmark/typelisp/*` or `self_compile/*` rows (TypeLisp Ir is
+#       owned by CI's `insn-exec-reference` artifact, never checked in)
+#     - instruction-main and instruction-heavy are disjoint
+#     - instruction-heavy is disjoint from benchmark
+#     - realistic-kernel is a subset of instruction-main
+#   When SUITE is non-empty, prints SUITE's cases as a deterministic LC_ALL=C
+#   CSV. When OUT_C_ROWS is non-empty, writes the C baseline TSV (`name\tir_count`)
+#   for CASES_CSV (requiring every selected case to have a manifest and a
+#   benchmark/c-scalar/<case> row).
+benchmark_manifest_read() {
+    _bmr_dir=$1
+    _bmr_suite=${2:-}
+    _bmr_cases=${3:-}
+    _bmr_out=${4:-}
+
+    [ -d "$_bmr_dir" ] || {
+        echo "missing benchmark manifest directory: $_bmr_dir" >&2
         return 1
     }
 
-    awk -F '\t' -v file="$_bccc_file" -v wanted="$_bccc_suite" '
-        function problem(message) {
+    set --
+    for _bmr_file in $(LC_ALL=C; for _bmr_f in "$_bmr_dir"/*.tsv; do [ -f "$_bmr_f" ] && printf '%s\n' "$_bmr_f"; done | LC_ALL=C sort); do
+        set -- "$@" "$_bmr_file"
+    done
+    [ "$#" -gt 0 ] || {
+        echo "no benchmark manifests found in $_bmr_dir" >&2
+        return 1
+    }
+
+    LC_ALL=C awk -F '\t' \
+        -v wanted="$_bmr_suite" \
+        -v cases_csv="$_bmr_cases" \
+        -v out_c_rows="$_bmr_out" '
+        function problem(file, message) {
             print file ": " message > "/dev/stderr"
             failed = 1
         }
-        NR == 1 {
-            if (NF != 2 || $1 != "suite" || $2 != "case") {
-                problem("invalid header; expected suite<TAB>case")
+        function base_case(path,    s) {
+            s = path
+            sub(/^.*\//, "", s)
+            sub(/\.tsv$/, "", s)
+            return s
+        }
+        function finish_file(    s) {
+            if (cur_file == "") return
+            if (!has_suites) {
+                problem(cur_file, "missing suites row")
             }
-            next
+            if (cur_suite["instruction-main"] && cur_suite["instruction-heavy"]) {
+                problem(cur_file, "case belongs to both instruction-main and instruction-heavy: " cur_case)
+            }
+            if (cur_suite["instruction-heavy"] && cur_suite["benchmark"]) {
+                problem(cur_file, "instruction-heavy case also belongs to benchmark: " cur_case)
+            }
+            if (cur_suite["realistic-kernel"] && !cur_suite["instruction-main"]) {
+                problem(cur_file, "realistic kernel missing from instruction-main: " cur_case)
+            }
+            if ((cur_suite["instruction-main"] || cur_suite["instruction-heavy"]) && !has_c_scalar) {
+                problem(cur_file, "instruction-gated case lacks benchmark/c-scalar/" cur_case)
+            }
+            if (!(cur_suite["instruction-main"] || cur_suite["instruction-heavy"]) && (has_c_scalar || has_c_auto)) {
+                problem(cur_file, "non-instruction case carries C instruction counts: " cur_case)
+            }
+            for (s in cur_suite) delete cur_suite[s]
         }
-        NF != 2 {
-            problem("row " NR " must have exactly two fields")
-            next
-        }
-        $1 != "benchmark" &&
-        $1 != "optimization-opt2" &&
-        $1 != "instruction-main" &&
-        $1 != "instruction-heavy" &&
-        $1 != "realistic-kernel" {
-            problem("row " NR " has unknown suite: " $1)
-            next
-        }
-        $2 !~ /^[A-Za-z0-9_.-]+$/ {
-            problem("row " NR " has invalid case name: " $2)
-            next
-        }
-        seen[$1 SUBSEP $2]++ {
-            problem("duplicate case in suite " $1 ": " $2)
-            next
+        FNR == 1 {
+            finish_file()
+            cur_file = FILENAME
+            cur_case = base_case(FILENAME)
+            has_suites = 0
+            has_c_scalar = 0
+            has_c_auto = 0
+            if (cur_case !~ /^[A-Za-z0-9_.-]+$/) {
+                problem(cur_file, "invalid case name: " cur_case)
+            }
+            if (seen_case[cur_case]++) {
+                problem(cur_file, "duplicate case manifest: " cur_case)
+            }
+            case_order[++case_count] = cur_case
         }
         {
-            membership[$1 SUBSEP $2] = 1
-            if ($1 == "instruction-heavy") {
-                heavy_instruction[$2] = 1
+            sub(/\r$/, "")
+            if ($0 == "") next
+            if (NF != 2) {
+                problem(cur_file, "row " FNR " must have exactly two tab-separated fields")
+                next
             }
-            if ($1 == "realistic-kernel") {
-                realistic_kernel[$2] = 1
+            if ($1 == "suites") {
+                if (has_suites) {
+                    problem(cur_file, "duplicate suites row")
+                    next
+                }
+                has_suites = 1
+                n = split($2, sarr, ",")
+                if (n == 0 || $2 == "") {
+                    problem(cur_file, "empty suites list")
+                    next
+                }
+                for (i = 1; i <= n; i++) {
+                    s = sarr[i]
+                    if (s != "benchmark" &&
+                        s != "optimization-opt2" &&
+                        s != "instruction-main" &&
+                        s != "instruction-heavy" &&
+                        s != "realistic-kernel") {
+                        problem(cur_file, "unknown suite: " s)
+                        continue
+                    }
+                    if (cur_suite[s]++) {
+                        problem(cur_file, "duplicate suite " s)
+                        continue
+                    }
+                    membership[s SUBSEP cur_case] = 1
+                    if (s == wanted) {
+                        selected[++selected_count] = cur_case
+                    }
+                }
+                next
             }
-        }
-        $1 == wanted {
-            selected[++count] = $2
+            if ($1 ~ /^benchmark\/typelisp\//) {
+                problem(cur_file, "checked-in TypeLisp row is forbidden (" $1 "); TypeLisp Ir is owned by CI insn-exec-reference")
+                next
+            }
+            if ($1 ~ /^self_compile\//) {
+                problem(cur_file, "self_compile row is forbidden (" $1 "); see scripts/self-compile.sh")
+                next
+            }
+            if ($1 == "benchmark/c-scalar/" cur_case) {
+                if (has_c_scalar) {
+                    problem(cur_file, "duplicate row: " $1)
+                    next
+                }
+                if ($2 !~ /^[1-9][0-9]*$/) {
+                    problem(cur_file, "non-positive Ir count for " $1 ": " $2)
+                    next
+                }
+                has_c_scalar = 1
+                c_scalar[cur_case] = $2
+                next
+            }
+            if ($1 == "benchmark/c/" cur_case) {
+                if (has_c_auto) {
+                    problem(cur_file, "duplicate row: " $1)
+                    next
+                }
+                if ($2 !~ /^[1-9][0-9]*$/) {
+                    problem(cur_file, "non-positive Ir count for " $1 ": " $2)
+                    next
+                }
+                has_c_auto = 1
+                c_auto[cur_case] = $2
+                next
+            }
+            problem(cur_file, "unexpected or mismatched key on row " FNR ": " $1)
         }
         END {
-            if (NR < 2) {
-                problem("manifest has no cases")
-            }
-            if (wanted != "benchmark" &&
-                wanted != "optimization-opt2" &&
-                wanted != "instruction-main" &&
-                wanted != "instruction-heavy" &&
-                wanted != "realistic-kernel") {
-                problem("unknown requested suite: " wanted)
-            }
-            for (case_name in heavy_instruction) {
-                if (membership["benchmark" SUBSEP case_name]) {
-                    problem("instruction-heavy case also belongs to benchmark: " case_name)
+            finish_file()
+            if (wanted != "") {
+                if (wanted != "benchmark" &&
+                    wanted != "optimization-opt2" &&
+                    wanted != "instruction-main" &&
+                    wanted != "instruction-heavy" &&
+                    wanted != "realistic-kernel") {
+                    problem("benchmark_ci_case_csv", "unknown requested suite: " wanted)
+                } else if (!failed && selected_count == 0) {
+                    problem("benchmark_ci_case_csv", "no cases for suite: " wanted)
                 }
             }
-            for (case_name in realistic_kernel) {
-                if (!membership["instruction-main" SUBSEP case_name]) {
-                    problem("realistic kernel missing from instruction-main: " case_name)
+            if (out_c_rows != "") {
+                if (cases_csv == "") {
+                    problem("benchmark_manifest_c_rows", "empty case list")
+                } else {
+                    nc = split(cases_csv, carr, ",")
+                    for (i = 1; i <= nc; i++) {
+                        cname = carr[i]
+                        if (cname == "") continue
+                        if (!(cname in seen_case)) {
+                            problem("benchmark_manifest_c_rows", "missing manifest for case: " cname)
+                        } else if (!(cname in c_scalar)) {
+                            problem("benchmark_manifest_c_rows", "case lacks benchmark/c-scalar row: " cname)
+                        }
+                    }
                 }
             }
-            if (!failed && count == 0) {
-                problem("no cases for suite: " wanted)
+            if (failed) exit 1
+            if (out_c_rows != "") {
+                printf "name\tir_count\n" > out_c_rows
+                nc = split(cases_csv, carr, ",")
+                for (i = 1; i <= nc; i++) {
+                    cname = carr[i]
+                    if (cname == "" || emitted[cname]++) continue
+                    if (cname in c_auto) {
+                        printf "benchmark/c/%s\t%s\n", cname, c_auto[cname] > out_c_rows
+                    }
+                    printf "benchmark/c-scalar/%s\t%s\n", cname, c_scalar[cname] > out_c_rows
+                }
+                close(out_c_rows)
             }
-            if (failed) {
-                exit 1
+            if (wanted != "") {
+                for (i = 1; i <= selected_count; i++) {
+                    printf "%s%s", i == 1 ? "" : ",", selected[i]
+                }
+                print ""
             }
-            for (i = 1; i <= count; i++) {
-                printf "%s%s", i == 1 ? "" : ",", selected[i]
-            }
-            print ""
         }
-    ' "$_bccc_file"
+    ' "$@"
+}
+
+# benchmark_ci_case_csv ROOT SUITE
+#   Print SUITE's cases from per-benchmark manifests under perf/benchmarks/*.tsv
+#   as a deterministic LC_ALL=C CSV.
+benchmark_ci_case_csv() {
+    benchmark_manifest_read "$(benchmark_manifest_dir "$1")" "$2" "" ""
+}
+
+# benchmark_manifest_c_rows DIR CASES_CSV OUT_FILE
+#   Validate manifests in DIR and write C baseline rows (`benchmark/c-scalar/*`
+#   plus optional `benchmark/c/*`) for CASES_CSV to OUT_FILE.
+benchmark_manifest_c_rows() {
+    benchmark_manifest_read "$1" "" "$2" "$3"
+}
+
+# benchmark_manifest_update_c DIR CASE C_SCALAR_IR [C_IR]
+#   Rewrite only the C Ir rows in DIR/CASE.tsv, preserving `suites`. Never
+#   writes benchmark/typelisp or self_compile rows.
+benchmark_manifest_update_c() {
+    _bmuc_dir=$1
+    _bmuc_case=$2
+    _bmuc_scalar=$3
+    _bmuc_auto=${4:-}
+    _bmuc_file="$_bmuc_dir/$_bmuc_case.tsv"
+    [ -f "$_bmuc_file" ] || {
+        echo "missing benchmark manifest: $_bmuc_file" >&2
+        return 1
+    }
+    _bmuc_suites=$(awk -F '\t' '$1 == "suites" { print $2; exit }' "$_bmuc_file")
+    [ -n "$_bmuc_suites" ] || {
+        echo "missing suites row in $_bmuc_file" >&2
+        return 1
+    }
+    _bmuc_has_auto=0
+    if awk -F '\t' -v key="benchmark/c/$_bmuc_case" '$1 == key { found = 1 } END { exit found ? 0 : 1 }' "$_bmuc_file"; then
+        _bmuc_has_auto=1
+    fi
+    {
+        printf 'suites\t%s\n' "$_bmuc_suites"
+        if [ "$_bmuc_has_auto" -eq 1 ]; then
+            [ -n "$_bmuc_auto" ] || {
+                echo "missing benchmark/c/$_bmuc_case count for auto-C gated manifest $_bmuc_file" >&2
+                return 1
+            }
+            printf 'benchmark/c/%s\t%s\n' "$_bmuc_case" "$_bmuc_auto"
+        fi
+        printf 'benchmark/c-scalar/%s\t%s\n' "$_bmuc_case" "$_bmuc_scalar"
+    } > "$_bmuc_file.tmp"
+    mv "$_bmuc_file.tmp" "$_bmuc_file"
 }

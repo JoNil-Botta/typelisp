@@ -123725,7 +123725,9 @@
   [externs : (& ir.CompilerIrExternSeq)]
   [reachable-functions : (& reachable-functions ir.CompilerIrFunctionSeq)]
   [level : i64]) : OptProgramSummaries
-  (if (not (opt_level.opt-level-full? level))
+  (if (or
+    (not (opt_level.opt-level-full? level))
+    (not (opt-function-seq-defines? reachable-functions "main")))
     (opt-program-summaries-empty)
     (let
       [count : i64 (opt-function-seq-count reachable-functions)]
@@ -129016,6 +129018,7 @@
     [count : i64 (opt-function-seq-count functions)]
     (if (or
       (not (opt_level.opt-level-full? level))
+      (not (opt-function-seq-defines? (& functions) "main"))
       (<= count 0)
       (> count (opt-summary-function-limit))
       (= (ir.compiler-ir-global-seq-count globals) 0))

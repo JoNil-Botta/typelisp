@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+x64-executable-template-registry-coverage	1140	all	x64 executable template registry coverage	-	-	256	-	scripts/check-x64-executable-template-registry.sh	linux-2	windows-2	compiler,corpus	Reads compiler source structure directly; retain for source and corpus recommendations.

@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+ispc-mandelbrot-corpus-contract	650	all	ISPC Mandelbrot corpus contract	bootstrap-compiler	stage2	256	-	scripts/verify-codegen-cases.sh --only 'mandelbrot-*' tests/codegen/ispc.cases	linux-2	windows-2	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

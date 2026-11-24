@@ -624,46 +624,46 @@
           ok
           (compiler-typecheck-ok?
             (str_cat.str-cat
-              (clone prefix)
+              (string.copy (& prefix))
               "(define (copy [r : (& r Value)] [flag : bool]) : Value (clone "
-              (clone (array-ref flows index))
+              (string.copy (& (array-ref flows index)))
               "))")))))
     (and
       ok
       (compiler-typecheck-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [r : (&mut r Value)]) : Value (clone (deref r)))"))
       (compiler-typecheck-error-code-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [r : (& r Value)]) : Value (deref r))")
         "E0208"
         "typecheck")
       (compiler-typecheck-error-code-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [r : (& r Value)]) : Value
   (clone (begin (take (deref r)) (deref r))))")
         "E0208"
         "typecheck")
       (compiler-typecheck-error-code-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [r : (& r Value)]) : Value
   (clone (let [value (deref r)] value)))")
         "E0208"
         "typecheck")
       (compiler-typecheck-error-code-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (clone [value : Value]) : Value value)
 (define (copy [r : (& r Value)]) : Value (clone (deref r)))")
         "E0208"
         "typecheck")
       (compiler-typecheck-error-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [r : (& r Value)]) : (& r Value) (clone r))")
         "typecheck: clone unsupported type (& r Value)"))))
 
@@ -683,7 +683,7 @@
     (and
       (compiler-typecheck-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [a : Value] [b : Value] [flag : bool]) : Value
   (let [copy (clone (match flag [true (if flag a b)] [false (begin 0 b)]))]
     (take a)
@@ -691,19 +691,19 @@
     copy))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [h : (& h Holder)] [a : (& a (Array Value 2))] [flag : bool]) : Value
   (begin
     (take (clone (if flag (deref h) (deref h)).cell))
     (clone (array-ref (if flag (deref a) (deref a)) 0))))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [r : (& r Value)] [flag : bool]) : Value
   (clone (if flag (deref r) (Value.Empty))))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [a : (Array Value 1)] [b : (Array Value 1)] [flag : bool]) : Value
   (let [copy (clone (array-ref (if flag a b) 0))]
     (take (array-ref a 0))
@@ -711,12 +711,12 @@
     copy))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [a : (Array Value 1)] [b : (Array Value 1)] [flag : bool]) : Value
   (clone (array-ref (if flag a b) (begin (set! a (array (Value.Empty))) 0))))"))
       (compiler-typecheck-error-ok?
         (str_cat.str-cat
-          (clone prefix)
+          (string.copy (& prefix))
           "(define (copy [a : Value] [b : Value]) : Value
   (let [copy (clone (if (taken? a) b b))] (take a) copy))")
         "typecheck: use of moved value `a`"))))
@@ -757,11 +757,15 @@
         (and
           ok
           (compiler-typecheck-error-code-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref moves index)))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref moves index))))
             "E0208"
             "typecheck")
           (compiler-typecheck-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref reads index)))))))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref reads index))))))))
     ok))
 
 (define (compiler-typecheck-clone-tests-ok?) : bool
@@ -1648,7 +1652,7 @@
   (let
     [class : String
       (compiler-typecheck-zii-class-name
-        (tc_core.tc-type-zii-class ctx (clone ty)))]
+        (tc_core.tc-type-zii-class ctx (ast.clone-ast-type (& ty))))]
     [init-ok : bool
       (match (tc_core.tc-init-type-supported
         ctx
@@ -5145,7 +5149,7 @@
               " (f"
               (string.int->string field)
               " "
-              (clone child)
+              (string.copy (& child))
               ")")))
         (set!
           source
@@ -5197,7 +5201,7 @@
                 job)]
             [name : String
               (str_cat.str-cat "RawDag" (string.int->string depth))]
-            [name-id : i64 (ci.intern (clone name))]
+            [name-id : i64 (ci.intern (string.copy (& name)))]
             [ty : ast.AstType
               (if applied
                 (ast.ast-ty-struct-args
@@ -10856,15 +10860,19 @@
         (and
           ok
           (compiler-typecheck-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref valid index))))))))
     (for [index (iterator.range 0 (array-length invalid))]
       (set!
         ok
         (and
           ok
           (compiler-typecheck-error-code-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
-            (clone (array-ref codes index))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref invalid index))))
+            (string.copy (& (array-ref codes index)))
             "typecheck"))))
     ok))
 
@@ -10904,16 +10912,23 @@
         (and
           ok
           (compiler-typecheck-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref valid index))))))))
     (for [index (iterator.range 0 (array-length invalid))]
       (let
         [src : String
-          (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))]
+          (str_cat.str-cat
+            (string.copy (& prefix))
+            (string.copy (& (array-ref invalid index))))]
         (set!
           ok
           (and
             ok
-            (compiler-typecheck-error-code-ok? (clone src) "E0207" "typecheck")
+            (compiler-typecheck-error-code-ok?
+              (string.copy (& src))
+              "E0207"
+              "typecheck")
             (compiler-typecheck-error-ok?
               src
               "typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)")))))
@@ -10952,15 +10967,19 @@
         (and
           ok
           (compiler-typecheck-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref valid index))))))))
     (for [index (iterator.range 0 (array-length invalid))]
       (set!
         ok
         (and
           ok
           (compiler-typecheck-error-code-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
-            (clone (array-ref codes index))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref invalid index))))
+            (string.copy (& (array-ref codes index)))
             "typecheck"))))
     ok))
 
@@ -11002,15 +11021,19 @@
         (and
           ok
           (compiler-typecheck-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref valid index))))))))
     (for [index (iterator.range 0 (array-length invalid))]
       (set!
         ok
         (and
           ok
           (compiler-typecheck-error-code-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
-            (clone (array-ref codes index))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref invalid index))))
+            (string.copy (& (array-ref codes index)))
             "typecheck"))))
     ok))
 
@@ -11044,15 +11067,15 @@
           ok
           (compiler-typecheck-error-ok?
             (str_cat.str-cat
-              (clone prefix)
+              (string.copy (& prefix))
               "(define (sneak [h : (& h "
-              (clone (array-ref shapes index)))
+              (string.copy (& (array-ref shapes index))))
             "typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)")
           (compiler-typecheck-ok?
             (str_cat.str-cat
-              (clone prefix)
+              (string.copy (& prefix))
               "(define (sneak [h : (&mut h "
-              (clone (array-ref shapes index)))))))
+              (string.copy (& (array-ref shapes index))))))))
     ok))
 
 ;; A view's writability follows the references it was read through (SPEC:
@@ -11091,14 +11114,18 @@
         (and
           ok
           (compiler-typecheck-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref valid index))))))))
     (for [index (iterator.range 0 (array-length invalid))]
       (set!
         ok
         (and
           ok
           (compiler-typecheck-error-code-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref invalid index))))
             "E0207"
             "typecheck"))))
     ok))
@@ -11139,14 +11166,18 @@
         (and
           ok
           (compiler-typecheck-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref valid index))))))))
     (for [index (iterator.range 0 (array-length invalid))]
       (set!
         ok
         (and
           ok
           (compiler-typecheck-error-code-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref invalid index))))
             "E0207"
             "typecheck"))))
     ok))
@@ -11185,15 +11216,19 @@
         (and
           ok
           (compiler-typecheck-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref valid index))))))))
     (for [index (iterator.range 0 (array-length invalid))]
       (set!
         ok
         (and
           ok
           (compiler-typecheck-error-code-ok?
-            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
-            (clone (array-ref codes index))
+            (str_cat.str-cat
+              (string.copy (& prefix))
+              (string.copy (& (array-ref invalid index))))
+            (string.copy (& (array-ref codes index)))
             "typecheck"))))
     ok))
 

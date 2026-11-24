@@ -403,7 +403,7 @@ Disposable output directories must remain inside the checkout's `target/`;
 the scripts validate that boundary before clearing a previous output.
 
 The required CI lane that runs the Linux instruction-count gates
-(`scripts/ci-lanes.tsv`; today `CI lane linux-2`) uploads
+(`scripts/ci-gates.d/*.tsv`; today `CI lane linux-2`) uploads
 `c-comparison-provenance-<lane>-r<run>-a<attempt>` on success or failure, with
 both suites' records, summaries, checked rows and numerical diffs. Its
 recorded repository, workflow, run ID, attempt, job and commit identify the

@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+integration-batch-observability	1060	all	integration batch observability	-	-	256	-	scripts/verify-integration.sh --self-test-batch-observability	linux-2	windows-1	corpus	Corpus metadata, including the exit-139 and transcript entry-helper controls, source-fixture or integration observation coverage; conservatively retain with test inputs.

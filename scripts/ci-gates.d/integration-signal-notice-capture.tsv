@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+integration-signal-notice-capture	450	linux	integration signal notice capture	-	-	256	-	scripts/verify-integration.sh --self-test-signal-notice-capture	linux-2	-	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.

@@ -68,7 +68,8 @@ function instrument_call(line,n,kind,required,high,  top,d,badphase,after,origin
         if (pending ~ /_probe_phase$/) { phase=pending; phase_count++ }
     }
     if (s==pending ":") { current=pending; defined[current]=1; pending=""; delete zero_xmm; delete zero_gp; next }
-    if (s ~ /^\.(size|section|seh_endproc)( |$)/) { current=""; delete zero_xmm; delete zero_gp; next }
+    # A lowered Win64 unwind replaces `.seh_endproc` with its end label.
+    if (s ~ /^\.(size|section|seh_endproc)( |$)/ || s ~ /^\.L_tl_seh_end_[0-9]+:$/) { current=""; delete zero_xmm; delete zero_gp; next }
     owner[NR]=current
     if (current=="") next
     if (s ~ /^\.seh_stackalloc /) { split(s,a,/ +/); if (a[2]+0>reserve[current]) reserve[current]=a[2]+0 }

@@ -75983,7 +75983,8 @@
           (lower-return-storage-extern
             decl-ctx
             mode
-            (tc_core.tc-type-without-regions (ast.clone-ast-type (& resolved-ty)))
+            (tc_core.tc-type-without-regions
+              (ast.clone-ast-type (& resolved-ty)))
             (ast.AstExternAbi.TypeLisp))]
         [logical-text : String (ir.compiler-ir-symbol-text logical-name)]
         [archive-sym : String

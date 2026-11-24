@@ -2080,20 +2080,24 @@
     (& paths)
     (& (tltest-generated-typecheck-paths tests))))
 
-(define (tltest-inline-typecheck-loaded
+(defenum ResultTlTestInlineCheck
+  (Ok)
+  (Err String))
+
+(define (tltest-inline-typecheck-loaded-result
   [source : String]
   [diagnostic-source : TlTestDiagnosticSource]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope-prefix : String]) : i64
+  [cache-scope-prefix : String]) : ResultTlTestInlineCheck
   (match (tltest-collect source decls paths)
     [(Collect runtime-decls runtime-paths tests)
       (let
         [count : i64 (array-length tests)]
         (if (= count 0)
-          0
+          (ResultTlTestInlineCheck.Ok)
           (match (tltest-prune-runtime-decls
             (tltest-active-structural-session)
             source
@@ -2114,14 +2118,34 @@
                     cache-scope-prefix
                     legacy-roots
                     cfgs))
-                  [(ResultCompilerTypecheck.Ok _) 0]
+                  [(ResultCompilerTypecheck.Ok _) (ResultTlTestInlineCheck.Ok)]
                   [(ResultCompilerTypecheck.Err diag)
-                    (io.print-error
+                    (ResultTlTestInlineCheck.Err
                       (tltest-render-source-diagnostic
                         source
                         diagnostic-source
-                        (cdiag.compiler-diagnostic-list-first (deref diag))))
-                    1]))])))]))
+                        (cdiag.compiler-diagnostic-list-first (deref diag))))]))])))]))
+
+(define (tltest-inline-typecheck-loaded
+  [source : String]
+  [diagnostic-source : TlTestDiagnosticSource]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [roots : cli_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [cache-scope-prefix : String]) : i64
+  (match (tltest-inline-typecheck-loaded-result
+    source
+    diagnostic-source
+    decls
+    paths
+    roots
+    cfgs
+    cache-scope-prefix)
+    [(ResultTlTestInlineCheck.Ok) 0]
+    [(ResultTlTestInlineCheck.Err message)
+      (io.print-error message)
+      1]))
 
 (define (tltest-inline-stdlib-source?
   [source : (& source str)]
@@ -2155,18 +2179,18 @@
   (compiler_load.compiler-load-session-reset-pools!)
   (driver.compiler-driver-reset-analysis-state!))
 
-(define (tltest-inline-typecheck-file-with-cfg
+(define (tltest-inline-typecheck-file-with-cfg-result
   [source : String]
   [roots : cli_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope-prefix : String]) : i64
+  [cache-scope-prefix : String]) : ResultTlTestInlineCheck
   (if (or
     (tltest-inline-stdlib-source? source (cli_svec.clone-vec (& roots)))
     (not (io.file-exists? (owned_view.compiler-owned-shared-view source)))
     (not
       (tltest-source-has-inline-tests?
         (owned_view.compiler-owned-shared-view source))))
-    0
+    (ResultTlTestInlineCheck.Ok)
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
       [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
@@ -2176,7 +2200,7 @@
         legacy-roots
         test-cfgs)
         [(Ok decls paths _ _)
-          (tltest-inline-typecheck-loaded
+          (tltest-inline-typecheck-loaded-result
             (string.copy (& source))
             (tltest-diagnostic-source source (& decls) (& paths))
             decls
@@ -2185,10 +2209,24 @@
             test-cfgs
             cache-scope-prefix)]
         [(Err diag)
-          (io.print-error
+          (ResultTlTestInlineCheck.Err
             (driver.compiler-driver-render-source-diagnostic
-              (tltest-diagnostic-with-source-fallback source (deref diag))))
-          1]))))
+              (tltest-diagnostic-with-source-fallback source (deref diag))))]))))
+
+(define (tltest-inline-typecheck-file-with-cfg
+  [source : String]
+  [roots : cli_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [cache-scope-prefix : String]) : i64
+  (match (tltest-inline-typecheck-file-with-cfg-result
+    source
+    roots
+    cfgs
+    cache-scope-prefix)
+    [(ResultTlTestInlineCheck.Ok) 0]
+    [(ResultTlTestInlineCheck.Err message)
+      (io.print-error message)
+      1]))
 
 (define (tltest-inline-typecheck-package-source-with-cfg
   [source : String]
@@ -3241,6 +3279,9 @@
       ;; Reset walkers can inspect entry-owned values. Their replacement
       ;; empty carriers also belong here; no selector retains them below.
       (driver.compiler-driver-reset-file-state!)
+      ;; `compiler-driver-reset-file-state!` recreates `tc-entry-hidden-arena`;
+      ;; release it immediately so isolated batch entries retain no hidden arena.
+      (tc_core.tc-entry-hidden-names-release!)
       (compiler_load.compiler-load-session-state-dotted-path-cache-reset!
         (compiler_load.compiler-load-serial-test-session-state))
       (compiler_load.compiler-load-session-fresh-reset!)

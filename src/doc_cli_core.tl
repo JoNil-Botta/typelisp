@@ -551,6 +551,10 @@
   (let
     [report : doc_test.DocTestRunReport
       (doc_test.doc-test-run-file-with-roots input-path stdlib-roots)]
+    [advisories : String (doc_test.doc-test-run-report-advisories (& report))]
+    (when
+      (> (string.string-length (& advisories)) 0)
+      (io.print-error advisories))
     (if (doc_test.doc-test-run-report-ok?
       (owned_view.compiler-owned-shared-view report))
       (io.print-format

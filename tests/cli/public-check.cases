@@ -2091,12 +2091,13 @@ exit 42
 
 # A runtime-owned identity also arrives through the ordinary definition-site
 # route: a template calling a function its module flat-imports from the runtime.
+# The runtime `ptr-arg` is an unsafe define, so the template supplies the context.
 case run-macro-template-runtime-owned-definition-route
 file mac.tl
 (import stdlib.runtime.*)
 
 (defmacro (addr-of [p : Expr]) : i64
-  `(ptr-arg ,p))
+  `(unsafe (ptr-arg ,p)))
 end-file
 file main.tl
 (import mac)

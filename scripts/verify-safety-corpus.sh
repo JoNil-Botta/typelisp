@@ -981,56 +981,56 @@ run_exec_chunk_job() {
     _job=$1
     _meta="$JOBS_DIR/$_job.meta"
     _done=0
-    while IFS='|' read -r _cid _mode _sname _expected_code _stderr_contains || [ -n "$_cid" ]; do
-        [ -n "$_cid" ] || continue
-        _asm="$RUN_DIR/$_sname.s"
-        _build_out="$RUN_DIR/$_sname.build.out"
-        _build_err="$RUN_DIR/$_sname.build.err"
+    while IFS='|' read -r case_id _mode _sname _expected_code _stderr_contains || [ -n "$case_id" ]; do
+        [ -n "$case_id" ] || continue
+        asm="$RUN_DIR/$_sname.s"
+        build_out="$RUN_DIR/$_sname.build.out"
+        build_err="$RUN_DIR/$_sname.build.err"
         _out="$RUN_DIR/$_sname.out"
         _err="$RUN_DIR/$_sname.err"
-        : > "$_build_out"
-        : > "$_build_err"
+        : > "$build_out"
+        : > "$build_err"
         if [ "$HOST_OS" = windows ]; then
-            _obj="$RUN_DIR/$_sname.obj"
-            _program="$RUN_DIR/$_sname.exe"
-            assemble_link_windows "$_asm" "$_obj" "$_program" "$_cid" "$_build_out" "$_build_err"
+            obj="$RUN_DIR/$_sname.obj"
+            program="$RUN_DIR/$_sname.exe"
+            assemble_link_windows "$asm" "$obj" "$program" "$case_id" "$build_out" "$build_err"
         else
-            _obj="$RUN_DIR/$_sname.o"
-            _program="$RUN_DIR/$_sname"
-            if ! as "$_asm" -o "$_obj" < /dev/null >> "$_build_out" 2>> "$_build_err"; then
-                show_stream_if_nonempty stdout "$_build_out"
-                show_stream_if_nonempty stderr "$_build_err"
-                fail "$_cid assemble failed"
+            obj="$RUN_DIR/$_sname.o"
+            program="$RUN_DIR/$_sname"
+            if ! as "$asm" -o "$obj" < /dev/null >> "$build_out" 2>> "$build_err"; then
+                show_stream_if_nonempty stdout "$build_out"
+                show_stream_if_nonempty stderr "$build_err"
+                fail "$case_id assemble failed"
             fi
-            _entry=$(linux_entry_symbol_for_asm "$_asm") || return $?
-            if ! ld "$_obj" -o "$_program" -static -e "$_entry" \
-                < /dev/null >> "$_build_out" 2>> "$_build_err"; then
-                show_stream_if_nonempty stdout "$_build_out"
-                show_stream_if_nonempty stderr "$_build_err"
-                fail "$_cid link failed"
+            entry=$(linux_entry_symbol_for_asm "$asm") || return $?
+            if ! ld "$obj" -o "$program" -static -e "$entry" \
+                < /dev/null >> "$build_out" 2>> "$build_err"; then
+                show_stream_if_nonempty stdout "$build_out"
+                show_stream_if_nonempty stderr "$build_err"
+                fail "$case_id link failed"
             fi
         fi
-        run_case "$_out" "$_err" "$_expected_code" "$_program"
+        run_case "$_out" "$_err" "$_expected_code" "$program"
         case "$_mode" in
             run-exit)
                 if [ "$code" -ne "$_expected_code" ]; then
                     show_stream_if_nonempty stdout "$_out"
                     show_stream_if_nonempty stderr "$_err"
-                    fail "$_cid expected run exit $_expected_code, got $code"
+                    fail "$case_id expected run exit $_expected_code, got $code"
                 fi
-                assert_empty "$_err" || fail "$_cid expected empty stderr"
+                assert_empty "$_err" || fail "$case_id expected empty stderr"
                 ;;
             run-trap)
                 if [ "$code" -ne "$_expected_code" ]; then
                     show_stream_if_nonempty stdout "$_out"
                     show_stream_if_nonempty stderr "$_err"
-                    fail "$_cid expected trap exit $_expected_code, got $code"
+                    fail "$case_id expected trap exit $_expected_code, got $code"
                 fi
                 assert_contains "$_err" "$_stderr_contains" ||
-                    fail "$_cid trap stderr did not match expectation"
+                    fail "$case_id trap stderr did not match expectation"
                 ;;
             *)
-                fail "$_cid unexpected mode in run-exec chunk: $_mode"
+                fail "$case_id unexpected mode in run-exec chunk: $_mode"
                 ;;
         esac
         _done=$((_done + 1))

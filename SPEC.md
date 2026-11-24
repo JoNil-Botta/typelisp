@@ -558,10 +558,9 @@ lifetime provenance retained where applicable). Copyable values are read
 without consuming the receiver. Moving a non-Copy value from an owned Box
 consumes the Box handle; moving a non-Copy value through either reference kind
 is rejected unless a future replacement operation explicitly supports it. The
-operand of the compiler-special `clone` is the exception: there a non-Copy
-`(deref value)` is read, not moved, and keeps its receiver (section 7.6). The
 same rule covers an element read through a fixed-array or `Slice` reference
-(section 4.7.2).
+(section 4.7.2). To copy such a value, pass the reference to an explicit
+clone function (section 7.6).
 
 `(set! (deref value) replacement)` writes through an owned Box or mutable
 reference storage place. Shared references are read-only. The replacement must

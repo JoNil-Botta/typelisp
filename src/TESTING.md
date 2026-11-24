@@ -1352,27 +1352,12 @@ the prelude `for` body does; it composes nested macros, list inspection, begin
 bodies, quasiquote splicing and reuse of an operand list after a call at
 opt0/1/2.
 
-## Late clone helper syntax
+## Missing declaration macros
 
-`compiler-lower-missing-declaration-macro-diagnostic` checks nominal clone
-lowering without the clone prelude, a generated missing macro, an ordinary
-unknown macro and a function used as a declaration macro in Linux and Windows
-modes. All retain source spelling and available location; ordinary declaration
-macro expansion also retains E0501.
-Keep the valid `compiler-lower-clone-source-with-prelude` cases alongside it.
-
-`compiler-clone-late-tail-template` evaluates the stdlib producer's actual
-self-tail template with both boxing choices and requires ordinary syntax.
-Synthesized clone helpers are installed after macro expansion, so a macro call
-in their body otherwise reaches the native linker as an unresolved function.
-The test uses the shared AST child traversal and adds no list-shaped schema to
-the repository's zero-cons corpus.
-
-`compiler-clone-boxed-production-tail` reuses the optimizer's existing
-`OptNonnegPhis` type for empty, single and 30,000-element clones. It validates
-every element after source-arena retirement and checks tail mutation isolation.
-The three `clone-boxed-production-tail-opt{0,1,2}` public-tool cases compile,
-link and execute both clone tests on Linux and Windows without a test filter.
+`compiler-lower-missing-declaration-macro-diagnostic` checks an ordinary
+unknown macro, a generated missing macro and a function used as a declaration
+macro in Linux and Windows modes. All retain source spelling, E0501 and
+available location.
 
 ## IR sequence borrows
 

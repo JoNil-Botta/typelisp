@@ -151,10 +151,6 @@
         (tuple
           "(Array String 2)"
           "i64"
-          "(let [alias consume] (alias (array-ref p 0)))")
-        (tuple
-          "(Array String 2)"
-          "i64"
           "(observe (if (= (consume (array-ref p 0)) 0) (array-ref p 1) \"owned\"))")
         (tuple
           "(Array String 2)"

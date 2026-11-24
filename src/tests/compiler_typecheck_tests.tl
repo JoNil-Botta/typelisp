@@ -658,65 +658,62 @@
         "E0208"
         "typecheck"))))
 
-;; Shared-reference borrowing through control-flow result positions and
-;; projections: borrowed places stay usable, temporary borrows stay direct
-;; call arguments, and ordinary moves in conditions still consume.
+;; Shared-reference borrowing of a compound argument read through control-flow
+;; result positions and projections: borrowed places stay usable; an array
+;; projection's receiver is lent unless an index evaluated after it can write
+;; a root it may select, when it is retained by value (moved) instead; and
+;; ordinary moves in conditions still consume.
 (define (compiler-typecheck-clone-read-tests-ok?) : bool
   (let
     [prefix : String
-      "(defenum Value (Empty) (Text String))
-(defstruct Holder (cell Value))
-(define (take [value : Value]) : unit unit)
-(define (taken? [value : Value]) : bool true)
-(define (read-val [value : (& value Value)]) : i64 0)
+      "(defstruct Holder (cell String))
+(define (observe [text : (& str)]) : i64 7)
+(define (consume [text : String]) : i64 7)
+(define (taken? [text : String]) : bool true)
 "]
     (and
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [a : Value] [b : Value] [flag : bool]) : i64
-  (let [n (read-val (match flag [true (if flag (& a) (& b))] [false (begin 0 (& b))]))]
-    (take a)
-    (take b)
-    n))"))
+          "(define (copy [a : String] [b : String] [flag : bool]) : i64
+  (let [n (observe (match flag [true (if flag a b)] [false (begin 0 b)]))]
+    (+ n (consume a) (consume b))))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [h : (& h Holder)] [a : (& a (Array Value 2))] [flag : bool]) : i64
-  (let
-    [hr (if flag h h)]
-    [ar (if flag a a)]
-    (begin
-      (read-val (& hr.cell))
-      (read-val (& (array-ref (deref ar) 0))))))"))
+          "(define (copy [h : (& h Holder)] [a : (& a (Array String 2))] [flag : bool]) : i64
+  (+
+    (observe (if flag h h).cell)
+    (observe (array-ref (if flag (deref a) (deref a)) 0))))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [r : (& r Value)] [flag : bool]) : i64
-  (if flag (read-val r) (read-val (& (Value.Empty)))))"))
+          "(define (copy [r : (& r String)] [flag : bool]) : i64
+  (observe (if flag (deref r) \"owned\")))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [a : (Array Value 1)] [b : (Array Value 1)] [flag : bool]) : i64
-  (let
-    [ar (if flag (& a) (& b))]
-    [n (read-val (& (array-ref (deref ar) 0)))]
-    (take (array-ref a 0))
-    (take (array-ref b 0))
-    n))"))
+          "(define (copy [a : (Array String 1)] [b : (Array String 1)] [flag : bool]) : i64
+  (let [n (observe (array-ref (if flag a b) 0))]
+    (+ n (consume (array-ref a 0)) (consume (array-ref b 0)))))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [a : (Array Value 1)] [b : (Array Value 1)] [flag : bool]) : i64
-  (let
-    [chosen : (Array Value 1) (if flag a b)]
-    [idx : i64 (begin (set! a (array (Value.Empty))) 0)]
-    (read-val (& (array-ref chosen idx)))))"))
+          "(define (copy [a : (Array String 1)] [b : (Array String 1)] [flag : bool]) : i64
+  (let [n (observe (array-ref (if flag a b) (begin (set! a (array \"99\")) 0)))]
+    (+ n (consume (array-ref a 0)))))"))
       (compiler-typecheck-error-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [a : Value] [b : Value]) : i64
-  (let [n (read-val (if (taken? a) (& b) (& b)))] (take a) n))")
+          "(define (copy [a : (Array String 1)] [b : (Array String 1)] [flag : bool]) : i64
+  (let [n (observe (array-ref (if flag a b) (begin (set! a (array \"99\")) 0)))]
+    (+ n (consume (array-ref b 0)))))")
+        "typecheck: use of moved value `b`")
+      (compiler-typecheck-error-ok?
+        (str_cat.str-cat
+          (string.copy (& prefix))
+          "(define (copy [a : String] [b : String]) : i64
+  (let [n (observe (if (taken? a) b b))] (+ n (consume a))))")
         "typecheck: use of moved value `a`"))))
 
 ;; A value read through a reference where its region-tagged type `(in p T)` is

@@ -27,8 +27,8 @@ copy_call_shifted_step_four|all|0,1,2|tests/integration/copy_call_shifted_step.t
 copy_call_shifted_step_nine|all|0,1,2|tests/integration/copy_call_shifted_step.tl|42|-|9|-|-
 copy_call_next_index|all|-,2|tests/integration/copy_call_next_index.tl|42|-|-|-|-
 clone_reference_referent|all|0,1,2|tests/integration/clone_reference_referent.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl|-
-clone_read_receiver_retained|all|0,1,2|tests/integration/clone_read_receiver_retained.tl|7|-|-|stdlib/clone.tl stdlib/comptime.tl|-
-clone_read_receiver_lent|all|0,1,2|tests/integration/clone_read_receiver_lent.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl|-
+clone_read_receiver_retained|all|0,1,2|tests/integration/clone_read_receiver_retained.tl|7|-|-|stdlib/string.tl|-
+clone_read_receiver_lent|all|0,1,2|tests/integration/clone_read_receiver_lent.tl|42|-|-|stdlib/string.tl|-
 clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 clone_deep_expression|all|-,0,1,2|tests/integration/clone_deep_expression.tl|42|-|-|clone_deep_expression_owner.tl stdlib/arena.tl stdlib/clone.tl stdlib/comptime.tl stdlib/hashmap.tl stdlib/string.tl stdlib/vector.tl|-
 clone_dynarray_scalar_bulk|all|-|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-

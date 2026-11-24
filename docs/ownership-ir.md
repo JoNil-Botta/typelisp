@@ -446,7 +446,7 @@ plain `T` still consume their selected value, even when both alternatives are
 views. A non-Copy `array-ref` or `tuple-ref` element read through a shared or
 mutable reference is also a take when bound by value, annotated or not; it has
 no field/name kept-view exception (SPEC sections 3.10 and 4.7).
-Reads that only lend stay reads: `&`, `clone` and other
+Reads that only lend stay reads: `&` and other
 builtin read operands, a field projection, an argument of a shared-reference
 formal. A `&mut` element or field passed where a `&mut` is expected is
 reborrowed (`&mut *p[i]`, `&mut *h.r`, Rust's reborrow coercion), not moved
@@ -1432,7 +1432,7 @@ because these compiler modules change frequently.
 | Closures | `tc-lambda-call-capability-with-locals`, capture scans, closure codes in `TcBodyState` | Normalize nested bodies independently; infer capture transfers and callable contracts from checked bodies. Do not derive a successful contract from a discarded analysis error. |
 | Cleanup metadata | `tc-check-struct-field-cleanup-fn`, `tc-check-enum-payload-cleanup-fn`, resource expression checking | Instantiate ordinary callable contracts for implicit calls, including unsafe effects and retained references. |
 | Source-to-machine lowering | `compiler_lower.tl`, `lower-function`, `lower-call-args-as`, `lower-cleanup-stack-push-move-aware`, `lower-with-resource`, `lower-with-arena` | Consume checked value/place transfers and cleanup plans before removing regions or choosing ABI storage. |
-| Generated functions | clone handoff, `lower-function-with-captures`, global initializer and cleanup synthesis, SPMD helpers | Admit every generated body or verify a narrowly specified primitive template. Compiler origin alone is not a certificate. |
+| Generated functions | `lower-function-with-captures`, global initializer and cleanup synthesis, SPMD helpers | Admit every generated body or verify a narrowly specified primitive template. Compiler origin alone is not a certificate. |
 | Optimizer and backend | `compiler_ir_types.tl` effect classification; `compiler_optimize.tl` CFG, verification, call-memory and alias analyses; backend ABI/frame validation | Keep separate machine-level verification. Couple derived analyses to the exact IR revision and invalidate them on mutation. |
 | Runtime and libraries | `stdlib/arena.tl`, ownership-bearing collections, thread/task/channel/sync wrappers, runtime primitive declarations | Keep explicit trusted contracts; reuse the concurrency authority registry and mutex validation. Static checking cannot establish an unsafe implementation's actual bounds or synchronization. |
 
@@ -1935,9 +1935,7 @@ module/name and expression identity, pool/interner identities and a type-pool
 stamp; lowering looks every body up and rejects a missing or stale entry.
 Append-only pool growth preserves entries; reset and retirement invalidate
 them. An entry's `Legacy` route means the ordinary lowerer emits the certified
-body from its AST; it is a lowering route, not an ownership verdict. Named
-clone declarations appended by the checked clone handoff receive explicit
-`Legacy` entries.
+body from its AST; it is a lowering route, not an ownership verdict.
 
 The MIR-to-IR emitter (`compiler_ownership_lower.tl`), its exact source
 witness and the retained normalized bodies were removed at the cutover: the
@@ -2075,7 +2073,6 @@ delegating all ownership decisions to the core. In either arrangement:
 | REPL | `typecheck-compiler-repl-expr` currently checks declarations and then calls `tc-expr` directly for the expression. Wrap the expression as a body and consume full checking before evaluation. |
 | Source/native comptime and macros | Check executable transformers before execution and check expanded Expr/Decls/Module bodies afterward. Phase and pool ownership must accompany the contract. |
 | Lambdas and global initializers | Today lambdas are visited inside AST walkers and globals have a separate move-initializer path. Give each an explicit body and appropriate environment/result contract. |
-| Generated Clone helpers | Lowering explicitly treats appended clone declarations as trusted compiler output and extends only signatures. They require checked bodies or a verified closed-template admission contract. |
 | Generated cleanup, dispatch and SPMD functions | Inventory each synthesis site and check its typed semantic operations before ABI lowering. |
 
 The first source vertical slice should cover literals, parameters, lexical

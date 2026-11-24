@@ -11,6 +11,8 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-source-location.sh"
+BOUNDED_POOL_LABEL=safety-corpus
+. "$ROOT/scripts/lib-bounded-pool.sh"
 
 HOST_OS=linux
 case "$(uname -s)" in
@@ -32,6 +34,16 @@ case "${1:-}" in
     *) fail "usage: scripts/verify-safety-corpus.sh [--self-test]" ;;
 esac
 [ "$#" -eq 0 ] || fail "unexpected arguments"
+
+SAFETY_WORKERS=${TYPELISP_SAFETY_WORKERS:-4}
+case "$SAFETY_WORKERS" in
+    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) ;;
+    *) fail "invalid TYPELISP_SAFETY_WORKERS: $SAFETY_WORKERS (expected 1-8)" ;;
+esac
+SAFETY_CHECK_CHUNK_SIZE=${TYPELISP_SAFETY_CHECK_CHUNK_SIZE:-96}
+SAFETY_RUN_CHUNK_SIZE=${TYPELISP_SAFETY_RUN_CHUNK_SIZE:-48}
+SAFETY_JOB_CAP_MIB=384
+SAFETY_POOL_BUDGET_MIB=$((SAFETY_WORKERS * SAFETY_JOB_CAP_MIB))
 
 prepare_tools() {
     gate_compiler
@@ -74,28 +86,11 @@ case "$WORKDIR" in
     *) WORKDIR_ABS=$ROOT/$WORKDIR ;;
 esac
 
-# Windows-target check-only rows run from either host and never execute. Each
-# fixture is checked against the source stdlib roots, and again from a
-# directory without `stdlib/`, where imports resolve from the compiler's
-# embedded stdlib; both routes must give the expected result.
-windows_target_check() {
-    _out=$1
-    _err=$2
-    _source=$3
-    _route=$4
-    if [ "$_route" = source ]; then
-        run_case "$_out" "$_err" - \
-            "$COMPILER" check "$_source" --target windows-x86_64 \
-            --stdlib-root "$ROOT/stdlib" \
-            --stdlib-root "$ROOT/src" \
-            --stdlib-root "$ROOT/tests/integration"
+host_path() {
+    if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
     else
-        mkdir -p "$WORKDIR_ABS/embedded-stdlib-cwd"
-        run_case "$_out" "$_err" - \
-            sh -c 'cd "$1" && shift && exec "$@"' windows-embedded-check \
-            "$WORKDIR_ABS/embedded-stdlib-cwd" \
-            "$COMPILER" check "$ROOT/$_source" \
-            --target windows-x86_64
+        printf '%s\n' "$1"
     fi
 }
 
@@ -234,6 +229,246 @@ classify_check_rejection() {
     ' "$rejection_err"
 }
 
+# Single-pass CRLF-safe classifier for one `typelisp check --batch` stream.
+# Meta rows are `row_order|case_id|mode|source|diagnostic_source|stderr_contains`.
+# Each entry in BATCH_OUT is framed by line counts:
+#   CHECK_BATCH_ENTRY|<index>|<status>|<out_lines>|<err_lines>|<path>
+# followed by exact <out_lines> stdout lines and <err_lines> stderr lines,
+# terminated by `CHECK_BATCH_END|<count>`.
+classify_check_batch_stream() {
+    _ccb_meta=$1
+    _ccb_out=$2
+    _ccb_err=$3
+    _ccb_rc=$4
+    _ccb_route=$5
+    _ccb_rej=$6
+    _ccb_label=$7
+
+    _ccb_status=$(classify_check_status "$_ccb_rc")
+    if [ "$_ccb_status" != normal ]; then
+        show_stream_if_nonempty stderr "$_ccb_err"
+        echo "FAIL: batch chunk $_ccb_label $_ccb_status (exit $_ccb_rc)" >&2
+        return 1
+    fi
+    if [ "$_ccb_rc" -ne 0 ]; then
+        show_stream_if_nonempty stdout "$_ccb_out"
+        show_stream_if_nonempty stderr "$_ccb_err"
+        echo "FAIL: batch chunk $_ccb_label check --batch failed with exit $_ccb_rc" >&2
+        return 1
+    fi
+    if [ -s "$_ccb_err" ]; then
+        show_stream_if_nonempty stderr "$_ccb_err"
+        echo "FAIL: batch chunk $_ccb_label emitted unexpected batch stderr" >&2
+        return 1
+    fi
+
+    : > "$_ccb_rej"
+    awk -v meta_file="$_ccb_meta" \
+        -v route="$_ccb_route" \
+        -v rej_file="$_ccb_rej" \
+        -v label="$_ccb_label" '
+        function fail_entry(msg, out_n, err_n,    k) {
+            if (out_n > 0) {
+                print "stdout:" > "/dev/stderr"
+                for (k = 1; k <= out_n; k++) print "  " out_buf[k] > "/dev/stderr"
+            }
+            if (err_n > 0) {
+                print "stderr:" > "/dev/stderr"
+                for (k = 1; k <= err_n; k++) print "  " err_buf[k] > "/dev/stderr"
+            }
+            print "FAIL: " msg > "/dev/stderr"
+            failed = 1
+            exit 1
+        }
+        function classify_status(c) {
+            if (c == 0 || c == 1) return "normal"
+            if (c == 124 || c == 125 || c == 126 || c == 127 || c == 130 || c == 137 || c == 143)
+                return "infrastructure-resource-failure"
+            if (c > 128) return "compiler-crash"
+            return "infrastructure-resource-failure"
+        }
+        function same_path(actual, expected) {
+            return actual == expected ||
+                (length(actual) > length(expected) &&
+                 substr(actual, length(actual) - length(expected)) == "/" expected)
+        }
+        function diag_finish() {
+            if (d_is_error && !d_primary) d_malformed = 1
+            if (d_is_error && d_intended && d_located) d_matched = 1
+        }
+        function classify_rejection(code, out_n, err_n, diag_src, needle,    k, line, loc, path, st) {
+            st = classify_status(code)
+            if (st != "normal") return st
+            if (code == 0) return "accepted-invalid"
+            if (out_n > 0) return "malformed-output"
+            d_header = 0
+            d_is_error = 0
+            d_primary = 0
+            d_located = 0
+            d_intended = 0
+            d_matched = 0
+            d_malformed = 0
+            d_wrong = 0
+            for (k = 1; k <= err_n; k++) {
+                line = err_buf[k]
+                if (index(line, "__tl_tc_") > 0) d_wrong = 1
+                if (line ~ /^(error|warning|note)(\[[A-Z][0-9]+\])?: /) {
+                    diag_finish()
+                    d_header = 1
+                    d_is_error = (line ~ /^error(\[E[0-9][0-9][0-9][0-9]\])?: /)
+                    if (line ~ /^error/ && !d_is_error) d_malformed = 1
+                    d_primary = 0
+                    d_located = 0
+                    d_intended = (index(line, needle) > 0)
+                    if (line ~ /^error\[E0200\]: /) d_wrong = 1
+                } else if (line ~ /^  --> /) {
+                    if (!d_header) d_malformed = 1
+                    loc = substr(line, 7)
+                    gsub(/\\/, "/", loc)
+                    if (loc !~ /:[1-9][0-9]*:[1-9][0-9]*$/) d_malformed = 1
+                    if (d_primary && needle ~ /:[1-9][0-9]*:[1-9][0-9]*$/ && same_path(loc, needle))
+                        d_intended = 1
+                    if (!d_primary) {
+                        d_primary = 1
+                        path = loc
+                        if (diag_src !~ /:[1-9][0-9]*:[1-9][0-9]*$/)
+                            sub(/:[0-9]+:[0-9]+$/, "", path)
+                        d_located = same_path(path, diag_src)
+                    }
+                } else if (line ~ /^   = (help|note|label): /) {
+                    if (!d_header) d_malformed = 1
+                    if (index(line, needle) > 0) d_intended = 1
+                } else if (line ~ /^ *([0-9]+ )?\|/) {
+                    if (!d_header) d_malformed = 1
+                } else if (line ~ /^$/) {
+                    continue
+                } else {
+                    d_malformed = 1
+                }
+            }
+            diag_finish()
+            if (d_malformed) return "malformed-output"
+            if (d_wrong || !d_matched) return "wrong-diagnostic"
+            return "rejected-invalid"
+        }
+        function check_decoded(case_label, err_n, out_n,    k) {
+            for (k = 1; k <= err_n; k++) {
+                if (index(err_buf[k], "error[E0200]") > 0)
+                    fail_entry(case_label " regressed to generic E0200; assign a specific code or update the taxonomy", out_n, err_n)
+                if (index(err_buf[k], "__tl_tc_") > 0)
+                    fail_entry(case_label " rendered an internal typecheck error transport instead of decoding it", out_n, err_n)
+            }
+        }
+        BEGIN {
+            total = 0
+            while ((getline mline < meta_file) > 0) {
+                sub(/\r$/, "", mline)
+                n = split(mline, f, "|")
+                if (n < 6) {
+                    print "FAIL: malformed batch meta row in " label > "/dev/stderr"
+                    failed = 1
+                    exit 1
+                }
+                m_order[total] = f[1]
+                m_id[total] = f[2]
+                m_mode[total] = f[3]
+                m_src[total] = f[4]
+                m_diag[total] = f[5]
+                gsub(/\\/, "/", m_diag[total])
+                # Reconstruct field 6 verbatim (in case stderr needle ever had more fields)
+                needle_text = f[6]
+                for (j = 7; j <= n; j++) needle_text = needle_text "|" f[j]
+                m_needle[total] = needle_text
+                total++
+            }
+            close(meta_file)
+            if (total == 0) {
+                print "FAIL: empty batch meta in " label > "/dev/stderr"
+                failed = 1
+                exit 1
+            }
+
+            for (i = 0; i < total; i++) {
+                if ((getline hdr) <= 0)
+                    fail_entry(label " truncated before entry " i " (" m_id[i] ")", 0, 0)
+                sub(/\r$/, "", hdr)
+                if (hdr !~ /^CHECK_BATCH_ENTRY\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|/)
+                    fail_entry(label " malformed batch header at entry " i ": " hdr, 0, 0)
+                split(hdr, hf, "|")
+                if ((hf[2] + 0) != i)
+                    fail_entry(label " entry index mismatch: expected " i ", got " hf[2], 0, 0)
+                code = hf[3] + 0
+                out_n = hf[4] + 0
+                err_n = hf[5] + 0
+                delete out_buf
+                delete err_buf
+                for (k = 1; k <= out_n; k++) {
+                    if ((getline line) <= 0)
+                        fail_entry(m_id[i] " truncated batch stdout", k - 1, 0)
+                    sub(/\r$/, "", line)
+                    out_buf[k] = line
+                }
+                for (k = 1; k <= err_n; k++) {
+                    if ((getline line) <= 0)
+                        fail_entry(m_id[i] " truncated batch stderr", out_n, k - 1)
+                    sub(/\r$/, "", line)
+                    err_buf[k] = line
+                }
+
+                cid = m_id[i]
+                mode = m_mode[i]
+                if (mode == "check-ok") {
+                    obs = classify_status(code)
+                    if (obs != "normal")
+                        fail_entry(cid " " obs " (exit " code ")", out_n, err_n)
+                    if (code != 0)
+                        fail_entry(cid " rejected-valid (exit " code ")", out_n, err_n)
+                    if (err_n != 0)
+                        fail_entry(cid " expected empty check stderr", out_n, err_n)
+                    if (out_n != 1 || out_buf[1] != "Type checking passed!")
+                        fail_entry(cid " malformed-output: missing check success record", out_n, err_n)
+                } else if (mode == "check-fail") {
+                    obs = classify_rejection(code, out_n, err_n, m_diag[i], m_needle[i])
+                    printf "%s\t%s\t%d\t%s\n", m_order[i], cid, code, obs >> rej_file
+                    if (obs != "rejected-invalid")
+                        fail_entry(cid " " obs " (exit " code "; expected located diagnostic: " m_needle[i] ")", out_n, err_n)
+                    check_decoded(cid, err_n, out_n)
+                } else if (mode == "check-ok-windows") {
+                    if (code != 0)
+                        fail_entry(cid " expected Windows-target check success (" route " stdlib), got " code, out_n, err_n)
+                    if (err_n != 0)
+                        fail_entry(cid " expected empty Windows-target check stderr (" route " stdlib)", out_n, err_n)
+                } else if (mode == "check-fail-windows") {
+                    if (code == 0)
+                        fail_entry(cid " expected Windows-target check failure (" route " stdlib)", out_n, err_n)
+                    found_needle = 0
+                    for (k = 1; k <= err_n; k++) {
+                        if (index(err_buf[k], m_needle[i]) > 0) {
+                            found_needle = 1
+                            break
+                        }
+                    }
+                    if (!found_needle)
+                        fail_entry(cid " Windows-target stderr did not match expectation (" route " stdlib): " m_needle[i], out_n, err_n)
+                    check_decoded(cid " (" route " stdlib)", err_n, out_n)
+                } else {
+                    fail_entry(cid " unexpected mode in check batch: " mode, out_n, err_n)
+                }
+            }
+
+            if ((getline end_line) <= 0)
+                fail_entry(label " missing CHECK_BATCH_END sentinel", 0, 0)
+            sub(/\r$/, "", end_line)
+            if (end_line != "CHECK_BATCH_END|" total)
+                fail_entry(label " unexpected CHECK_BATCH_END sentinel: " end_line " (expected " total ")", 0, 0)
+            if ((getline trailing) > 0)
+                fail_entry(label " unexpected trailing line after CHECK_BATCH_END: " trailing, 0, 0)
+            close(rej_file)
+            exit 0
+        }
+    ' < "$_ccb_out"
+}
+
 run_case() {
     out=$1
     err=$2
@@ -291,180 +526,6 @@ show_stream_if_nonempty() {
         echo "$label:" >&2
         sed 's/^/  /' "$file" >&2 || true
     fi
-}
-
-build_case_program() {
-    case_id=$1
-    case_name=$2
-    source=$3
-    case_dir="$WORKDIR/$case_name"
-    mkdir -p "$case_dir"
-    build_out="$case_dir/build.out"
-    build_err="$case_dir/build.err"
-
-    if [ "$HOST_OS" = windows ]; then
-        case_source="$case_dir/$(basename "$source")"
-        cp "$source" "$case_source"
-        # The copy no longer sits beside the fixture's sibling modules (e.g.
-        # `foreign_global_dep.tl`), which Linux resolves by compiling the source
-        # in place. Name the fixture's own directory as the last root so those
-        # imports resolve here too without shadowing stdlib or compiler modules.
-        source_dir=$(CDPATH= cd -- "$(dirname -- "$source")" && pwd)
-        asm="$case_dir/$case_name.s"
-        obj="$case_dir/$case_name.obj"
-        program="$case_dir/$case_name.exe"
-        run_case "$build_out" "$build_err" 0 \
-            "$COMPILER" compile "$case_source" \
-            --target "$BUILD_TARGET" \
-            $TARGET_CFG_ARGS \
-            --stdlib-root "$ROOT/stdlib" \
-            --stdlib-root "$ROOT/src" \
-            --stdlib-root "$ROOT/tests/integration" \
-            --stdlib-root "$source_dir" \
-            -o "$asm"
-        if [ "$code" -ne 0 ]; then
-            show_stream_if_nonempty stdout "$build_out"
-            show_stream_if_nonempty stderr "$build_err"
-            fail "$case_id compile failed with exit $code"
-        fi
-        assemble_link_windows "$asm" "$obj" "$program" "$case_id" "$build_out" "$build_err"
-    else
-        asm="$case_dir/$case_name.s"
-        obj="$case_dir/$case_name.o"
-        program="$case_dir/$case_name"
-        run_case "$build_out" "$build_err" 0 \
-            "$COMPILER" compile "$source" \
-            --target "$BUILD_TARGET" \
-            $TARGET_CFG_ARGS \
-            --stdlib-root "$ROOT/stdlib" \
-            --stdlib-root "$ROOT/src" \
-            --stdlib-root "$ROOT/tests/integration" \
-            -o "$asm"
-        if [ "$code" -ne 0 ]; then
-            show_stream_if_nonempty stdout "$build_out"
-            show_stream_if_nonempty stderr "$build_err"
-            fail "$case_id compile failed with exit $code"
-        fi
-        if ! as "$asm" -o "$obj" < /dev/null >> "$build_out" 2>> "$build_err"; then
-            show_stream_if_nonempty stdout "$build_out"
-            show_stream_if_nonempty stderr "$build_err"
-            fail "$case_id assemble failed"
-        fi
-        entry=$(linux_entry_symbol_for_asm "$asm") || exit $?
-        if ! ld "$obj" -o "$program" -static -e "$entry" \
-            < /dev/null >> "$build_out" 2>> "$build_err"; then
-            show_stream_if_nonempty stdout "$build_out"
-            show_stream_if_nonempty stderr "$build_err"
-            fail "$case_id link failed"
-        fi
-    fi
-}
-
-run_program_case() {
-    case_id=$1
-    case_name=$2
-    source=$3
-    out=$4
-    err=$5
-    expected_code=$6
-    build_case_program "$case_id" "$case_name" "$source"
-    run_case "$out" "$err" "$expected_code" "$program"
-}
-
-checked=0
-run_manifest_case() {
-    case_id=$1
-    mode=$2
-    source=$3
-    expected_code=$4
-    stderr_contains=$5
-
-    case "$case_id" in
-        "" | \#*) return ;;
-    esac
-    [ -n "$mode" ] || fail "$case_id missing mode"
-    [ -n "$source" ] || fail "$case_id missing source"
-    [ -f "$source" ] || fail "$case_id source does not exist: $source"
-
-    safe_name "$case_id"
-    out="$WORKDIR/$case_name.out"
-    err="$WORKDIR/$case_name.err"
-
-    case "$mode" in
-        check-ok)
-            echo "[safety-corpus] check-ok $case_id"
-            run_case "$out" "$err" 0 \
-                "$COMPILER" check "$source" \
-                --stdlib-root "$ROOT/stdlib" \
-                --stdlib-root "$ROOT/src" \
-                --stdlib-root "$ROOT/tests/integration"
-            observation=$(classify_check_status "$code")
-            [ "$observation" = normal ] || fail "$case_id $observation (exit $code)"
-            [ "$code" -eq 0 ] || fail "$case_id rejected-valid (exit $code)"
-            assert_empty "$err" || fail "$case_id expected empty check stderr"
-            [ "$(cat "$out")" = 'Type checking passed!' ] || fail "$case_id malformed-output: missing check success record"
-            ;;
-        check-fail)
-            echo "[safety-corpus] check-fail $case_id"
-            run_case "$out" "$err" - \
-                "$COMPILER" check "$source" \
-                --stdlib-root "$ROOT/stdlib" \
-                --stdlib-root "$ROOT/src" \
-                --stdlib-root "$ROOT/tests/integration"
-            [ -n "$stderr_contains" ] && [ "$stderr_contains" != "-" ] || fail "$case_id check-fail missing stderr expectation"
-            diagnostic_source=$source
-            if [ "$expected_code" != "-" ]; then
-                diagnostic_source=$expected_code
-                case "$diagnostic_source" in
-                    *'@loc{'*) diagnostic_source=$(resolve_source_locations "$diagnostic_source") || fail "$case_id invalid diagnostic location" ;;
-                esac
-            fi
-            observation=$(classify_check_rejection "$code" "$out" "$err" \
-                "$diagnostic_source" "$stderr_contains")
-            printf '%s\t%s\t%s\n' "$case_id" "$code" "$observation" >> "$WORKDIR/rejections.tsv"
-            if [ "$observation" != rejected-invalid ]; then
-                show_stream_if_nonempty stdout "$out"
-                show_stream_if_nonempty stderr "$err"
-                fail "$case_id $observation (exit $code; expected located diagnostic: $stderr_contains)"
-            fi
-            assert_check_failure_decoded "$case_id" "$err"
-            ;;
-        check-ok-windows)
-            for route in source embedded; do
-                echo "[safety-corpus] check-ok-windows $case_id ($route stdlib)"
-                windows_target_check "$out" "$err" "$source" "$route"
-                [ "$code" -eq 0 ] || fail "$case_id expected Windows-target check success ($route stdlib), got $code"
-                assert_empty "$err" || fail "$case_id expected empty Windows-target check stderr ($route stdlib)"
-            done
-            ;;
-        check-fail-windows)
-            [ "$stderr_contains" != "-" ] || fail "$case_id check-fail-windows missing stderr expectation"
-            for route in source embedded; do
-                echo "[safety-corpus] check-fail-windows $case_id ($route stdlib)"
-                windows_target_check "$out" "$err" "$source" "$route"
-                [ "$code" -ne 0 ] || fail "$case_id expected Windows-target check failure ($route stdlib)"
-                assert_contains "$err" "$stderr_contains" || fail "$case_id Windows-target stderr did not match expectation ($route stdlib)"
-                assert_check_failure_decoded "$case_id ($route stdlib)" "$err"
-            done
-            ;;
-        run-exit)
-            echo "[safety-corpus] run-exit $case_id"
-            run_program_case "$case_id" "$case_name" "$source" "$out" "$err" "$expected_code"
-            [ "$code" -eq "$expected_code" ] || fail "$case_id expected run exit $expected_code, got $code"
-            assert_empty "$err" || fail "$case_id expected empty stderr"
-            ;;
-        run-trap)
-            echo "[safety-corpus] run-trap $case_id"
-            run_program_case "$case_id" "$case_name" "$source" "$out" "$err" "$expected_code"
-            [ "$code" -eq "$expected_code" ] || fail "$case_id expected trap exit $expected_code, got $code"
-            [ "$stderr_contains" != "-" ] || fail "$case_id run-trap missing stderr expectation"
-            assert_contains "$err" "$stderr_contains" || fail "$case_id trap stderr did not match expectation"
-            ;;
-        *)
-            fail "$case_id has unknown safety corpus mode: $mode"
-            ;;
-    esac
-    checked=$((checked + 1))
 }
 
 # Invoke the callback in this shell so its counters/state remain visible, but
@@ -608,9 +669,404 @@ rejection_oracle_self_test() {
     echo "safety rejection oracle passed $oracle_count mutation/control cases"
 }
 
+# Verify CRLF-safe line-count framing and fail-closed batch mutations.
+batch_framing_self_test() {
+    bf_dir="$WORKDIR/batch-framing-self-test"
+    mkdir -p "$bf_dir"
+    bf_meta="$bf_dir/meta"
+    bf_out="$bf_dir/out"
+    bf_err="$bf_dir/err"
+    bf_rej="$bf_dir/rej"
+    : > "$bf_err"
+
+    # Control: mixed check-ok + check-fail with CRLF line endings and a spoofed
+    # header inside echoed source code (must be consumed as payload, not header).
+    printf '1|ok_case|check-ok|ok.tl|ok.tl|-\n2|fail_case|check-fail|fail.tl|fail.tl:3:1|intended move\n' > "$bf_meta"
+    printf 'CHECK_BATCH_ENTRY|0|0|1|0|ok.tl\r\nType checking passed!\r\nCHECK_BATCH_ENTRY|1|1|0|4|fail.tl\r\nerror[E0214]: intended move\r\n  --> C:\\repo\\fail.tl:3:1\r\n 3 | CHECK_BATCH_ENTRY|0|0|0|0|spoof.tl\r\n   | ^\r\nCHECK_BATCH_END|2\r\n' > "$bf_out"
+    classify_check_batch_stream "$bf_meta" "$bf_out" "$bf_err" 0 host "$bf_rej" "self-test-crlf" ||
+        fail "batch framing self-test rejected valid CRLF framed stream"
+    grep -Fq 'fail_case	1	rejected-invalid' "$bf_rej" ||
+        fail "batch framing self-test did not record rejection row"
+
+    # Mutation 1: missing CHECK_BATCH_END sentinel must fail.
+    sed '$d' "$bf_out" > "$bf_dir/missing-end.out"
+    if classify_check_batch_stream "$bf_meta" "$bf_dir/missing-end.out" "$bf_err" 0 host "$bf_rej" "self-test-missing-end" 2>/dev/null; then
+        fail "batch framing self-test accepted stream without CHECK_BATCH_END"
+    fi
+
+    # Mutation 2: non-empty batch stderr must fail.
+    printf 'unexpected noise\n' > "$bf_dir/noisy.err"
+    if classify_check_batch_stream "$bf_meta" "$bf_out" "$bf_dir/noisy.err" 0 host "$bf_rej" "self-test-stderr" 2>/dev/null; then
+        fail "batch framing self-test accepted non-empty batch stderr"
+    fi
+
+    # Mutation 3: compiler crash exit status must fail even if stream looks valid.
+    if classify_check_batch_stream "$bf_meta" "$bf_out" "$bf_err" 139 host "$bf_rej" "self-test-crash" 2>/dev/null; then
+        fail "batch framing self-test accepted crashed batch process"
+    fi
+
+    # Mutation 4: check-fail with contradictory stdout must fail.
+    printf 'CHECK_BATCH_ENTRY|0|0|1|0|ok.tl\r\nType checking passed!\r\nCHECK_BATCH_ENTRY|1|1|1|2|fail.tl\r\nType checking passed!\r\nerror[E0214]: intended move\r\n  --> fail.tl:3:1\r\nCHECK_BATCH_END|2\r\n' > "$bf_dir/contradictory.out"
+    if classify_check_batch_stream "$bf_meta" "$bf_dir/contradictory.out" "$bf_err" 0 host "$bf_rej" "self-test-contradictory" 2>/dev/null; then
+        fail "batch framing self-test accepted check-fail with stdout"
+    fi
+
+    echo "safety batch framing self-test passed (CRLF + 4 mutations)"
+}
+
+# Plan all manifest cases into parallel pool jobs:
+#   - check-depth-NN: the 3 slow depth-255..257 fixtures, queued first so they
+#     never tail-straggle
+#   - run-compile-NN -> run-exec-NN: compile --batch + assemble/link/exec chunks
+#   - check-win-src-01 / check-win-emb-01: Windows-target source & embedded routes
+#   - check-host-NN: remaining check-ok / check-fail chunks
+plan_safety_pool() {
+    JOBS_DIR="$WORKDIR/jobs"
+    RUN_DIR="$WORKDIR/run"
+    mkdir -p "$JOBS_DIR" "$RUN_DIR" "$WORKDIR_ABS/embedded-stdlib-cwd"
+    POOL_QUEUE="$JOBS_DIR/pool.queue"
+    : > "$POOL_QUEUE"
+
+    # Pass 1: validate every manifest row, resolve any @loc{...} anchors, verify
+    # source files exist, and emit one resolved manifest for deterministic chunking.
+    RESOLVED_MANIFEST="$WORKDIR/manifest.resolved"
+    : > "$RESOLVED_MANIFEST"
+    row_order=0
+    while IFS='|' read -r case_id mode source expected_code stderr_contains || [ -n "$case_id" ]; do
+        case "$case_id" in
+            "" | \#*) continue ;;
+        esac
+        [ -n "$mode" ] || fail "$case_id missing mode"
+        [ -n "$source" ] || fail "$case_id missing source"
+        [ -f "$source" ] || fail "$case_id source does not exist: $source"
+        case "$mode" in
+            check-ok | check-ok-windows)
+                diagnostic_source=$source
+                ;;
+            check-fail)
+                [ -n "$stderr_contains" ] && [ "$stderr_contains" != "-" ] ||
+                    fail "$case_id check-fail missing stderr expectation"
+                diagnostic_source=$source
+                if [ "$expected_code" != "-" ]; then
+                    diagnostic_source=$expected_code
+                    case "$diagnostic_source" in
+                        *'@loc{'*)
+                            diagnostic_source=$(resolve_source_locations "$diagnostic_source") ||
+                                fail "$case_id invalid diagnostic location"
+                            ;;
+                    esac
+                fi
+                ;;
+            check-fail-windows)
+                [ -n "$stderr_contains" ] && [ "$stderr_contains" != "-" ] ||
+                    fail "$case_id check-fail-windows missing stderr expectation"
+                diagnostic_source=$source
+                ;;
+            run-exit)
+                diagnostic_source=$expected_code
+                ;;
+            run-trap)
+                [ -n "$stderr_contains" ] && [ "$stderr_contains" != "-" ] ||
+                    fail "$case_id run-trap missing stderr expectation"
+                diagnostic_source=$expected_code
+                ;;
+            *)
+                fail "$case_id has unknown safety corpus mode: $mode"
+                ;;
+        esac
+        row_order=$((row_order + 1))
+        printf '%s|%s|%s|%s|%s|%s\n' \
+            "$row_order" "$case_id" "$mode" "$source" "$diagnostic_source" "$stderr_contains" \
+            >> "$RESOLVED_MANIFEST"
+    done < "$NORMALIZED_MANIFEST"
+
+    ROOT_HOST=$(host_path "$ROOT")
+    RUN_DIR_HOST=$(host_path "$WORKDIR_ABS/run")
+
+    awk -F '|' \
+        -v jobs_dir="$JOBS_DIR" \
+        -v root_host="$ROOT_HOST" \
+        -v run_dir_host="$RUN_DIR_HOST" \
+        -v check_chunk_size="$SAFETY_CHECK_CHUNK_SIZE" \
+        -v run_chunk_size="$SAFETY_RUN_CHUNK_SIZE" \
+        -v cap="$SAFETY_JOB_CAP_MIB" \
+        -v queue="$POOL_QUEUE" '
+        function safe_name(s,    out) {
+            out = s
+            gsub(/[/\\:]/, "_", out)
+            return out
+        }
+        function emit_job(name, needs) {
+            if (needs == "") needs = "-"
+            print name "|" cap "|" needs >> queue
+        }
+        {
+            order = $1
+            cid = $2
+            mode = $3
+            src = $4
+            diag = $5
+            needle = $6
+            if (mode == "check-ok" || mode == "check-fail") {
+                if (cid == "region_type_depth_255_loan_reject" ||
+                    cid == "lifetime_shape_depth_256_check" ||
+                    cid == "lifetime_shape_depth_257_reject") {
+                    depth_n++
+                    depth_rows[depth_n] = $0
+                    depth_srcs[depth_n] = src
+                } else {
+                    host_n++
+                    host_rows[host_n] = $0
+                    host_srcs[host_n] = src
+                }
+            } else if (mode == "check-ok-windows" || mode == "check-fail-windows") {
+                win_n++
+                win_rows[win_n] = $0
+                win_srcs[win_n] = src
+            } else if (mode == "run-exit" || mode == "run-trap") {
+                run_n++
+                run_rows[run_n] = $0
+                run_ids[run_n] = cid
+                run_modes[run_n] = mode
+                run_srcs[run_n] = src
+                run_codes[run_n] = diag
+                run_needles[run_n] = needle
+            }
+        }
+        END {
+            # 1. Slow depth-255..257 fixtures first (one per job).
+            for (i = 1; i <= depth_n; i++) {
+                job = sprintf("check-depth-%02d", i)
+                print depth_rows[i] > (jobs_dir "/" job ".meta")
+                print depth_srcs[i] > (jobs_dir "/" job ".list")
+                close(jobs_dir "/" job ".meta")
+                close(jobs_dir "/" job ".list")
+                emit_job(job, "-")
+            }
+
+            # 2. Run compile --batch + assemble/link/exec chunks.
+            run_chunks = int((run_n + run_chunk_size - 1) / run_chunk_size)
+            for (c = 1; c <= run_chunks; c++) {
+                cjob = sprintf("run-compile-%02d", c)
+                ejob = sprintf("run-exec-%02d", c)
+                start = (c - 1) * run_chunk_size + 1
+                end = c * run_chunk_size
+                if (end > run_n) end = run_n
+                for (i = start; i <= end; i++) {
+                    sname = safe_name(run_ids[i])
+                    print run_srcs[i] "|" run_dir_host "/" sname ".s" > (jobs_dir "/" cjob ".list")
+                    print run_ids[i] "|" run_modes[i] "|" sname "|" run_codes[i] "|" run_needles[i] > (jobs_dir "/" ejob ".meta")
+                }
+                close(jobs_dir "/" cjob ".list")
+                close(jobs_dir "/" ejob ".meta")
+                emit_job(cjob, "-")
+                emit_job(ejob, cjob)
+            }
+
+            # 3. Windows-target source and embedded stdlib check batches.
+            if (win_n > 0) {
+                sjob = "check-win-src-01"
+                ejob = "check-win-emb-01"
+                for (i = 1; i <= win_n; i++) {
+                    print win_rows[i] > (jobs_dir "/" sjob ".meta")
+                    print win_srcs[i] > (jobs_dir "/" sjob ".list")
+                    print win_rows[i] > (jobs_dir "/" ejob ".meta")
+                    print root_host "/" win_srcs[i] > (jobs_dir "/" ejob ".list")
+                }
+                close(jobs_dir "/" sjob ".meta")
+                close(jobs_dir "/" sjob ".list")
+                close(jobs_dir "/" ejob ".meta")
+                close(jobs_dir "/" ejob ".list")
+                emit_job(sjob, "-")
+                emit_job(ejob, "-")
+            }
+
+            # 4. Remaining host check-ok / check-fail chunks.
+            host_chunks = int((host_n + check_chunk_size - 1) / check_chunk_size)
+            for (c = 1; c <= host_chunks; c++) {
+                job = sprintf("check-host-%02d", c)
+                start = (c - 1) * check_chunk_size + 1
+                end = c * check_chunk_size
+                if (end > host_n) end = host_n
+                for (i = start; i <= end; i++) {
+                    print host_rows[i] > (jobs_dir "/" job ".meta")
+                    print host_srcs[i] > (jobs_dir "/" job ".list")
+                }
+                close(jobs_dir "/" job ".meta")
+                close(jobs_dir "/" job ".list")
+                emit_job(job, "-")
+            }
+
+            printf "%d|%d|%d\n", depth_n + host_n, win_n, run_n > (jobs_dir "/plan.counts")
+            close(jobs_dir "/plan.counts")
+        }
+    ' "$RESOLVED_MANIFEST"
+}
+
+run_check_batch_job() {
+    _job=$1
+    _route=$2
+    _list="$WORKDIR_ABS/jobs/$_job.list"
+    _meta="$JOBS_DIR/$_job.meta"
+    _out="$JOBS_DIR/$_job.stdout"
+    _err="$JOBS_DIR/$_job.stderr"
+    _rej="$JOBS_DIR/$_job.rejections.tsv"
+    _list_host=$(host_path "$_list")
+    _rc=0
+    set +e
+    case "$_route" in
+        host)
+            "$COMPILER" check --batch "$_list_host" \
+                --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/src" \
+                --stdlib-root "$ROOT/tests/integration" \
+                < /dev/null > "$_out" 2> "$_err"
+            _rc=$?
+            ;;
+        source)
+            "$COMPILER" check --batch "$_list_host" \
+                --target windows-x86_64 \
+                --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/src" \
+                --stdlib-root "$ROOT/tests/integration" \
+                < /dev/null > "$_out" 2> "$_err"
+            _rc=$?
+            ;;
+        embedded)
+            (
+                cd "$WORKDIR_ABS/embedded-stdlib-cwd" &&
+                exec "$COMPILER" check --batch "$_list_host" \
+                    --target windows-x86_64
+            ) < /dev/null > "$_out" 2> "$_err"
+            _rc=$?
+            ;;
+        *)
+            echo "FAIL: unknown check batch route: $_route" >&2
+            return 1
+            ;;
+    esac
+    set -e
+    classify_check_batch_stream "$_meta" "$_out" "$_err" "$_rc" "$_route" "$_rej" "$_job" || return 1
+    _count=$(wc -l < "$_meta" | tr -d ' ')
+    printf '%s\n' "$_count" > "$JOBS_DIR/$_job.checked"
+}
+
+run_compile_batch_job() {
+    _job=$1
+    _list="$JOBS_DIR/$_job.list"
+    _out="$JOBS_DIR/$_job.stdout"
+    _err="$JOBS_DIR/$_job.stderr"
+    _list_host=$(host_path "$_list")
+    set +e
+    # shellcheck disable=SC2086
+    "$COMPILER" compile --batch "$_list_host" \
+        --target "$BUILD_TARGET" \
+        $TARGET_CFG_ARGS \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/src" \
+        --stdlib-root "$ROOT/tests/integration" \
+        --stdlib-root "$ROOT/tests/safety" \
+        < /dev/null > "$_out" 2> "$_err"
+    _rc=$?
+    set -e
+    if [ "$_rc" -ne 0 ]; then
+        show_stream_if_nonempty stdout "$_out"
+        show_stream_if_nonempty stderr "$_err"
+        echo "FAIL: $_job compile --batch failed with exit $_rc" >&2
+        return 1
+    fi
+}
+
+run_exec_chunk_job() {
+    _job=$1
+    _meta="$JOBS_DIR/$_job.meta"
+    _done=0
+    while IFS='|' read -r _cid _mode _sname _expected_code _stderr_contains || [ -n "$_cid" ]; do
+        [ -n "$_cid" ] || continue
+        _asm="$RUN_DIR/$_sname.s"
+        _build_out="$RUN_DIR/$_sname.build.out"
+        _build_err="$RUN_DIR/$_sname.build.err"
+        _out="$RUN_DIR/$_sname.out"
+        _err="$RUN_DIR/$_sname.err"
+        : > "$_build_out"
+        : > "$_build_err"
+        if [ "$HOST_OS" = windows ]; then
+            _obj="$RUN_DIR/$_sname.obj"
+            _program="$RUN_DIR/$_sname.exe"
+            assemble_link_windows "$_asm" "$_obj" "$_program" "$_cid" "$_build_out" "$_build_err"
+        else
+            _obj="$RUN_DIR/$_sname.o"
+            _program="$RUN_DIR/$_sname"
+            if ! as "$_asm" -o "$_obj" < /dev/null >> "$_build_out" 2>> "$_build_err"; then
+                show_stream_if_nonempty stdout "$_build_out"
+                show_stream_if_nonempty stderr "$_build_err"
+                fail "$_cid assemble failed"
+            fi
+            _entry=$(linux_entry_symbol_for_asm "$_asm") || return $?
+            if ! ld "$_obj" -o "$_program" -static -e "$_entry" \
+                < /dev/null >> "$_build_out" 2>> "$_build_err"; then
+                show_stream_if_nonempty stdout "$_build_out"
+                show_stream_if_nonempty stderr "$_build_err"
+                fail "$_cid link failed"
+            fi
+        fi
+        run_case "$_out" "$_err" "$_expected_code" "$_program"
+        case "$_mode" in
+            run-exit)
+                if [ "$code" -ne "$_expected_code" ]; then
+                    show_stream_if_nonempty stdout "$_out"
+                    show_stream_if_nonempty stderr "$_err"
+                    fail "$_cid expected run exit $_expected_code, got $code"
+                fi
+                assert_empty "$_err" || fail "$_cid expected empty stderr"
+                ;;
+            run-trap)
+                if [ "$code" -ne "$_expected_code" ]; then
+                    show_stream_if_nonempty stdout "$_out"
+                    show_stream_if_nonempty stderr "$_err"
+                    fail "$_cid expected trap exit $_expected_code, got $code"
+                fi
+                assert_contains "$_err" "$_stderr_contains" ||
+                    fail "$_cid trap stderr did not match expectation"
+                ;;
+            *)
+                fail "$_cid unexpected mode in run-exec chunk: $_mode"
+                ;;
+        esac
+        _done=$((_done + 1))
+    done < "$_meta"
+    printf '%s\n' "$_done" > "$JOBS_DIR/$_job.checked"
+}
+
+bounded_pool_run_job() {
+    _bp_job=$1
+    case "$_bp_job" in
+        check-depth-* | check-host-*)
+            run_check_batch_job "$_bp_job" host
+            ;;
+        check-win-src-*)
+            run_check_batch_job "$_bp_job" source
+            ;;
+        check-win-emb-*)
+            run_check_batch_job "$_bp_job" embedded
+            ;;
+        run-compile-*)
+            run_compile_batch_job "$_bp_job"
+            ;;
+        run-exec-*)
+            run_exec_chunk_job "$_bp_job"
+            ;;
+        *)
+            echo "FAIL: unknown safety pool job: $_bp_job" >&2
+            return 1
+            ;;
+    esac
+}
+
 manifest_runner_self_test
 source_location_self_test "$WORKDIR/source-location-self-test"
 rejection_oracle_self_test
+batch_framing_self_test
 if [ "$SELF_TEST_ONLY" = true ]; then
     exit 0
 fi
@@ -626,7 +1082,50 @@ expected_cases=$(awk -F '|' '
     END { if (invalid) exit 1; print count + 0 }
 ' "$NORMALIZED_MANIFEST") || fail "infrastructure-resource-failure: malformed or duplicate manifest row"
 [ "$expected_cases" -gt 0 ] || fail "infrastructure-resource-failure: manifest contains no cases"
-for_each_manifest_case "$NORMALIZED_MANIFEST" run_manifest_case
-[ "$checked" -eq "$expected_cases" ] || fail "infrastructure-resource-failure: executed $checked of $expected_cases cases"
+
+plan_safety_pool
+POOL_DIR="$WORKDIR/pool"
+bounded_pool_init "$POOL_DIR" "$SAFETY_POOL_BUDGET_MIB" "$POOL_QUEUE" ||
+    fail "infrastructure-resource-failure: failed to initialize safety worker pool"
+job_count=$(wc -l < "$POOL_QUEUE" | tr -d ' ')
+echo "[safety-corpus] pool: $job_count job(s), $SAFETY_WORKERS worker(s), $expected_cases case(s)"
+bounded_pool_start "$POOL_DIR" "$SAFETY_WORKERS" ||
+    fail "infrastructure-resource-failure: failed to start safety worker pool"
+bounded_pool_join "$POOL_DIR" ||
+    fail "safety corpus worker pool failed"
+
+# Merge deterministic manifest-ordered rejections.tsv from all check chunks.
+: > "$WORKDIR/rejections.tsv"
+if ls "$JOBS_DIR"/*.rejections.tsv >/dev/null 2>&1; then
+    cat "$JOBS_DIR"/*.rejections.tsv | LC_ALL=C sort -n -k1,1 | cut -f2- > "$WORKDIR/rejections.tsv"
+fi
+
+# Verify exact accounting across host checks, Windows-target source+embedded routes, and runs.
+checked=0
+win_src_checked=0
+win_emb_checked=0
+while IFS='|' read -r _qjob _qcap _qneeds; do
+    case "$_qjob" in
+        check-depth-* | check-host-* | run-exec-*)
+            [ -s "$JOBS_DIR/$_qjob.checked" ] || fail "infrastructure-resource-failure: missing count for $_qjob"
+            checked=$((checked + $(cat "$JOBS_DIR/$_qjob.checked")))
+            ;;
+        check-win-src-*)
+            [ -s "$JOBS_DIR/$_qjob.checked" ] || fail "infrastructure-resource-failure: missing count for $_qjob"
+            _n=$(cat "$JOBS_DIR/$_qjob.checked")
+            win_src_checked=$((win_src_checked + _n))
+            checked=$((checked + _n))
+            ;;
+        check-win-emb-*)
+            [ -s "$JOBS_DIR/$_qjob.checked" ] || fail "infrastructure-resource-failure: missing count for $_qjob"
+            win_emb_checked=$((win_emb_checked + $(cat "$JOBS_DIR/$_qjob.checked")))
+            ;;
+    esac
+done < "$POOL_QUEUE"
+
+[ "$win_src_checked" -eq "$win_emb_checked" ] ||
+    fail "infrastructure-resource-failure: Windows source/embedded route count mismatch ($win_src_checked vs $win_emb_checked)"
+[ "$checked" -eq "$expected_cases" ] ||
+    fail "infrastructure-resource-failure: executed $checked of $expected_cases cases"
 
 echo "safety corpus verification passed for $checked case(s)"

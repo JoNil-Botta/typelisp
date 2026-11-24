@@ -1,0 +1,89 @@
+# Safety corpus cases: stdlib I/O, filesystem, process, JSON, serialization, winsock, and compiler fixtures.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+process_owned_redundant_count_reject|check-fail|tests/safety/process_owned_redundant_count_reject.tl|-|process.ProcessStringList expected 1 argument, got 2 arguments
+process_borrowed_raw_word_reject|check-fail|tests/safety/process_borrowed_raw_word_reject.tl|-|expected (& text str), found (& raw u64)
+process_runtime_safe_entry_reject|check-fail|tests/safety/process_runtime_safe_entry_reject.tl|-|process_runtime/tl_process_output requires unsafe context
+process_runtime_safe_inherit_reject|check-fail|tests/safety/process_runtime_safe_inherit_reject.tl|-|process_runtime/tl_process_inherit requires unsafe context
+process_runtime_safe_start_reject|check-fail|tests/safety/process_runtime_safe_start_reject.tl|-|process_runtime/tl_process_start requires unsafe context
+process_runtime_safe_wait_reject|check-fail|tests/safety/process_runtime_safe_wait_reject.tl|-|process_runtime/tl_process_wait requires unsafe context
+process_child_copy_reject|check-fail|tests/safety/process_child_copy_reject.tl|-|typecheck: use of moved value `child`
+winsock_table_without_unsafe_reject|check-fail|tests/safety/winsock_table_without_unsafe_reject.tl|-|winsock/winsock-table-for-lease requires unsafe context
+winsock_table_storage_safe_write_reject|check-fail|tests/safety/winsock_table_storage_safe_write_reject.tl|-|ptr-write! requires unsafe context
+winsock_lease_move_reuse_reject|check-fail|tests/safety/winsock_lease_move_reuse_reject.tl|-|typecheck: use of moved value `lease`
+process_runtime_safe_linux_output_reject|check-fail|tests/safety/process_runtime_safe_linux_output_reject.tl|-|process_runtime/linux-output requires unsafe context
+process_runtime_safe_raw_helper_reject|check-fail|tests/safety/process_runtime_safe_raw_helper_reject.tl|-|process_runtime/linux-build-argv requires unsafe context
+process_runtime_redundant_count_reject|check-fail|tests/safety/process_runtime_redundant_count_reject.tl|-|process_runtime.ProcessRuntimeStringList expected 1 argument, got 2 arguments
+process_nul_validation_ok|run-exit|tests/safety/process_nul_validation_ok.tl|42|-
+process_owned_shared_view_bounds_trap|run-trap|tests/safety/process_owned_shared_view_bounds_trap.tl|134|array index out of bounds: index=0 length=0
+process_runtime_shared_view_bounds_trap|run-trap|tests/safety/process_runtime_shared_view_bounds_trap.tl|134|array index out of bounds: index=0 length=0
+compiler_intern_structural_to_name_reject|check-fail|tests/safety/compiler_intern_structural_to_name_reject.tl|-|expected compiler_intern/InternId, found i64
+compiler_intern_raw_to_syntax_reject|check-fail|tests/safety/compiler_intern_raw_to_syntax_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
+compiler_intern_syntax_to_name_reject|check-fail|tests/safety/compiler_intern_syntax_to_name_reject.tl|-|expected compiler_intern/InternId, found compiler_intern/InternSyntaxId
+compiler_lower_private_to_name_reject|check-fail|tests/safety/compiler_lower_private_to_name_reject.tl|-|expected compiler_intern/InternId, found compiler_intern_state/InternLowerPrivateIdentity
+compiler_ast_structural_export_reject|check-fail|tests/safety/compiler_ast_structural_export_reject.tl|-|expected compiler_intern/InternId, found compiler_intern/InternSyntaxId
+compiler_ast_raw_cleanup_name_reject|check-fail|tests/safety/compiler_ast_raw_cleanup_name_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
+compiler_ast_raw_expr_binding_clause_name_reject|check-fail|tests/safety/compiler_ast_raw_expr_binding_clause_name_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
+compiler_ast_raw_extern_symbol_reject|check-fail|tests/safety/compiler_ast_raw_extern_symbol_reject.tl|-|expected compiler_intern/InternId, found i64
+compiler_ast_raw_field_name_reject|check-fail|tests/safety/compiler_ast_raw_field_name_reject.tl|-|expected compiler_intern/InternSyntaxId, found i64
+compiler_ir_raw_source_span_function_reject|check-fail|tests/safety/compiler_ir_raw_source_span_function_reject.tl|-|expected compiler_ir_types/CompilerIrSymbolId, found i64
+stdlib_eq_box_reject|check-fail|tests/safety/stdlib_eq_box_reject.tl|-|eq: unsupported type
+stdlib_eq_recursive_box_reject|check-fail|tests/safety/stdlib_eq_recursive_box_reject.tl|-|eq: unsupported type
+stdlib_eq_dynamic_array_reject|check-fail|tests/safety/stdlib_eq_dynamic_array_reject.tl|-|eq: unsupported type
+stdlib_eq_alias_vector_field_reject|check-fail|tests/safety/stdlib_eq_alias_vector_field_reject.tl|-|eq: unsupported type dynarray_String
+stdlib_eq_reference_reject|check-fail|tests/safety/stdlib_eq_reference_reject.tl|-|eq: unsupported type
+stdlib_eq_ptr_reject|check-fail|tests/safety/stdlib_eq_ptr_reject.tl|-|eq: unsupported type
+stdlib_eq_mut_ptr_reject|check-fail|tests/safety/stdlib_eq_mut_ptr_reject.tl|-|eq: unsupported type
+stdlib_eq_function_reject|check-fail|tests/safety/stdlib_eq_function_reject.tl|-|eq: unsupported type
+io_print_template_literal_reject|check-fail|tests/safety/io_print_template_literal_reject.tl|-|format: template must be a string literal
+fs_raw_metadata_safe_reject|check-fail|tests/safety/fs_raw_metadata_safe_reject.tl|-|fs/metadata-read-i64-at requires unsafe context
+fs_raw_directory_alias_safe_reject|check-fail|tests/safety/fs_raw_directory_alias_safe_reject.tl|-|disk/c-string-byte requires unsafe context
+fs_raw_resource_integer_safe_reject|check-fail|tests/safety/fs_raw_resource_integer_safe_reject.tl|-|fs/file-lock-close-status requires unsafe context
+fs_raw_helper_callable_launder_reject|check-fail|tests/safety/fs_raw_helper_callable_launder_reject.tl|-|fs/metadata-read-i64-at is an unsafe callable and cannot be used as a plain function value
+fs_raw_helper_unsafe_call_ok|check-ok|tests/safety/fs_raw_helper_unsafe_call_ok.tl|-|-
+fs_owned_wrappers_safe_ok|check-ok|tests/safety/fs_owned_wrappers_safe_ok.tl|-|-
+io_c_string_length_safe_reject|check-fail|tests/safety/io_c_string_length_safe_reject.tl|-|io/c-string-length requires unsafe context
+io_raw_resource_alias_safe_reject|check-fail|tests/safety/io_raw_resource_alias_safe_reject.tl|-|streams/platform-close requires unsafe context
+io_raw_handle_status_safe_reject|check-fail|tests/safety/io_raw_handle_status_safe_reject.tl|-|io/file-close-status requires unsafe context
+io_core_raw_table_safe_reject|check-fail|tests/safety/io_core_raw_table_safe_reject.tl|-|io_core/io-file-i64-ref requires unsafe context
+io_core_raw_clear_safe_reject|check-fail|tests/safety/io_core_raw_clear_safe_reject.tl|-|io_core/io-file-handle-clear! requires unsafe context
+io_raw_helper_callable_launder_reject|check-fail|tests/safety/io_raw_helper_callable_launder_reject.tl|-|io/c-string-length is an unsafe callable and cannot be used as a plain function value
+io_raw_helper_unsafe_call_ok|check-ok|tests/safety/io_raw_helper_unsafe_call_ok.tl|-|-
+io_formatter_callback_value_ok|check-ok|tests/safety/io_formatter_callback_value_ok.tl|-|-
+fs_rooted_linux_state_read_reject|check-fail|tests/safety/fs_rooted_linux_state_read_reject.tl|-|linux-rooted-state-read requires unsafe context
+fs_rooted_linux_raw_close_reject|check-fail|tests/safety/fs_rooted_linux_raw_close_reject.tl|-|linux-rooted-raw-close requires unsafe context
+fs_rooted_linux_raw_rewind_reject|check-fail|tests/safety/fs_rooted_linux_raw_rewind_reject.tl|-|linux-rooted-raw-rewind requires unsafe context
+fs_rooted_linux_rewind_shared_borrow_reject|check-fail|tests/safety/fs_rooted_linux_rewind_shared_borrow_reject.tl|-|argument 1 type mismatch: expected (&mut file
+fs_rooted_linux_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner
+fs_rooted_linux_reopen_directory_copy_reject|check-fail|tests/safety/fs_rooted_linux_reopen_directory_copy_reject.tl|-|cleanup-required resource already has a cleanup owner
+fs_rooted_linux_read_capability_copy_reject|check-fail|tests/safety/fs_rooted_linux_read_capability_copy_reject.tl|-|cleanup-required resource already has a cleanup owner
+fs_rooted_linux_arena_escape_reject|check-fail|tests/safety/fs_rooted_linux_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
+serialize_missing_object_hook_reject|check-fail|tests/safety/serialize_missing_object_hook_reject.tl|-|typecheck: strategy module serialize_missing_object_hook_format does not export hook object-finish
+serialize_missing_sequence_hook_reject|check-fail|tests/safety/serialize_missing_sequence_hook_reject.tl|-|typecheck: strategy module serialize_missing_sequence_hook_format does not export hook sequence-empty
+serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_missing_extra_decls_hook_reject.tl|-|typecheck: strategy module serialize_missing_extra_decls_hook_format does not export hook extra-decls
+serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|tests/safety/serialize_bad_object_finish_hook_format.tl:20:4|typecheck: return type mismatch
+serialize_view_direct_reject|check-fail|tests/safety/serialize_view_direct_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+serialize_view_alias_reject|check-fail|tests/safety/serialize_view_alias_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+serialize_view_transitive_reject|check-fail|tests/safety/serialize_view_transitive_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+serialize_element_view_direct_reject|check-fail|tests/safety/serialize_element_view_direct_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+serialize_element_view_alias_reject|check-fail|tests/safety/serialize_element_view_alias_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+serialize_element_view_transitive_reject|check-fail|tests/safety/serialize_element_view_transitive_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+serialize_helper_caller_index_reject|check-fail|tests/safety/serialize_helper_caller_index_reject.tl|-|typecheck: ptr-read requires unsafe context
+serialize_views_explicit_unsafe_ok|run-exit|tests/safety/serialize_views_explicit_unsafe_ok.tl|42|-
+serialize_unsupported_char_root_reject|check-fail|tests/safety/serialize_unsupported_char_root_reject.tl|-|serialize: unsupported root type
+serialize_unsupported_tuple_element_reject|check-fail|tests/safety/serialize_unsupported_tuple_element_reject.tl|-|serialize: unsupported type char
+json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|-
+json_view_direct_reject|check-fail|tests/safety/json_view_direct_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+json_view_alias_reject|check-fail|tests/safety/json_view_alias_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+json_view_transitive_reject|check-fail|tests/safety/json_view_transitive_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+json_element_view_direct_reject|check-fail|tests/safety/json_element_view_direct_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+json_element_view_alias_reject|check-fail|tests/safety/json_element_view_alias_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+json_element_view_transitive_reject|check-fail|tests/safety/json_element_view_transitive_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+json_box_view_direct_reject|check-fail|tests/safety/json_box_view_direct_reject.tl|@loc{stdlib/json.tl;6;    `(ptr-read}|typecheck: ptr-read requires unsafe context
+json_box_view_alias_reject|check-fail|tests/safety/json_box_view_alias_reject.tl|@loc{stdlib/json.tl;6;    `(ptr-read}|typecheck: ptr-read requires unsafe context
+json_box_view_transitive_reject|check-fail|tests/safety/json_box_view_transitive_reject.tl|@loc{stdlib/json.tl;6;    `(ptr-read}|typecheck: ptr-read requires unsafe context
+json_views_explicit_unsafe_ok|run-exit|tests/safety/json_views_explicit_unsafe_ok.tl|42|-
+compiler_state_schema_ok|run-exit|tests/safety/compiler_state_schema_ok.tl|42|-
+compiler_state_schema_field_type_reject|check-fail|tests/safety/compiler_state_schema_field_type_reject.tl|-|let binding `text` type mismatch: expected String, found i64
+compiler_state_schema_init_type_reject|check-fail|tests/safety/compiler_state_schema_init_type_reject.tl|src/compiler_state_schema.tl|array assignment value type mismatch: expected i64, found String
+compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_state_schema_untyped_field_reject.tl|-|compiler-state-directory-schema: every field needs a type

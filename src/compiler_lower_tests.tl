@@ -173,7 +173,7 @@
           (test.assert-i64-eq
             (lower.lower-simd-lanes-for-elem
               (lower.lower-mode-of (array-ref abis abi) (array-ref simds simd))
-              (clone (array-ref types index)))
+              (ast.clone-ast-type (& (array-ref types index))))
             (* simd (array-ref avx2 index))
             "shared geometry preserves all previous OS/backend lane choices"))))))
 
@@ -298,7 +298,7 @@
         (match (lower.lower-function-escaping
           ctx
           parent
-          (clone types)
+          (lower.lower-type-cache-from-env owner parent)
           (ci.intern-generated-canonical-name "function-env-ok")
           params
           (I64)
@@ -307,7 +307,7 @@
             (Var first))
           (Known -1 0)
           (ir.compiler-source-spans-empty)
-          (clone names)
+          (lower.lower-name-cache-from-env owner Nil)
           (lower.CompilerLowerMode.Scalar))
           [(Ok functions _)
             (test.assert-true
@@ -337,7 +337,7 @@
     (match (lower.lower-function-escaping
       ctx
       parent
-      (clone types)
+      types
       (ci.intern-generated-canonical-name "function-env-error")
       (ast.ast-param-list-new)
       (I64)
@@ -385,7 +385,10 @@
     [inner : i64 (ast.ast-node-pool-context-type-push pools (String))]
     [source : ast.AstType (Region 77 inner)]
     [env : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id (tc_core.tc-empty-env) name (clone source))]
+      (tc_core.tc-bind-id
+        (tc_core.tc-empty-env)
+        name
+        (ast.clone-ast-type (& source)))]
     [facts : tc_core.TcCheckedLetBindingFactState
       (tc_core.tc-job-state-checked-let-binding-facts job)]
     [transition : tc_core.TcCheckedLetBindingTransition
@@ -429,7 +432,7 @@
       0
       name
       init
-      (clone source)
+      (ast.clone-ast-type (& source))
       transition)
     (tc_core.tc-checked-let-binding-facts-freeze! facts)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 7)
@@ -1410,7 +1413,7 @@
     (for [index (iterator.range 0 2)]
       (for [route (iterator.range 0 2)]
         (let
-          [message : String (clone (array-ref messages index))]
+          [message : String (string.copy (array-ref messages index))]
           [diag : cdiag.CompilerDiagnostic
             (if (= route 0)
               (lower.lower-diagnostic message)
@@ -1874,7 +1877,7 @@
     [canonical : bool
       (lower.lower-exposure-has-address?
         ctx
-        (clone expr)
+        (lower.lower-clone-ast-expr (& expr))
         false
         (&mut canonical-budget))]
     [complete : bool
@@ -1901,7 +1904,11 @@
       (lower.compiler-lower-function-state-new owner)]
     [budget : i64 lower.lower-written-roots-scan-budget]
     [canonical : bool
-      (lower.lower-exposure-has-address? ctx (clone expr) false (&mut budget))]
+      (lower.lower-exposure-has-address?
+        ctx
+        (lower.lower-clone-ast-expr (& expr))
+        false
+        (&mut budget))]
     (lower.lower-function-state-scan-body-proofs! ctx state expr)
     (let
       [cached : i64
@@ -1937,8 +1944,10 @@
       (ast.ast-expr-cons plain (& (ast.ast-expr-list-new)))]
     [loops : (__tl_dyn-array ast.AstExpr) (__tl_make-array ast.AstExpr 0)]
     (ast.ast-node-pool-context-install! pools)
-    (__tl_array-push! loops (While plain (clone body)))
-    (__tl_array-push! loops (While address (clone plain-body)))
+    (__tl_array-push! loops (While plain (ast.clone-ast-expr-list (& body))))
+    (__tl_array-push!
+      loops
+      (While address (ast.clone-ast-expr-list (& plain-body))))
     (__tl_array-push!
       loops
       (Foreach (box (ast.AstForeach.Foreach name (I64) plain plain address))))
@@ -2012,20 +2021,30 @@
       (Foreach (box (ast.AstForeach.Foreach name (I64) address plain plain))))
     (for [index (iterator.range 0 (array-length loops))]
       (let
-        [expr : ast.AstExpr (clone (array-ref loops index))]
+        [expr : ast.AstExpr
+          (lower.lower-clone-ast-expr (& (array-ref loops index)))]
         (test.assert-true
-          (lower-test-precheck-cached? ctx (clone expr) true)
+          (lower-test-precheck-cached?
+            ctx
+            (lower.lower-clone-ast-expr (& expr))
+            true)
           "every loop and condition/bound retains its exact canonical summary")
         (for [limit (iterator.range 0 12)]
           (test.assert-true
-            (lower-test-precheck-carrier-agrees? ctx (clone expr) 10000 limit)
+            (lower-test-precheck-carrier-agrees?
+              ctx
+              (lower.lower-clone-ast-expr (& expr))
+              10000
+              limit)
             "the independent address budget preserves canonical exhaustion"))
         (test.assert-true
           (lower-test-precheck-carrier-agrees? ctx expr 0 10000)
           "an incomplete carrier cannot cache a negative answer")))
     (let
       [inner : i64
-        (ast.ast-node-pool-context-expr-push pools (While plain (clone body)))]
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (While plain (ast.clone-ast-expr-list (& body))))]
       [boundaries : (__tl_dyn-array ast.AstExpr)
         (__tl_make-array ast.AstExpr 0)]
       (__tl_array-push!
@@ -2040,19 +2059,22 @@
           [boundary : i64
             (ast.ast-node-pool-context-expr-push
               pools
-              (clone (array-ref boundaries index)))]
+              (lower.lower-clone-ast-expr (& (array-ref boundaries index))))]
           [outer : ast.AstExpr
             (While
               plain
               (ast.ast-expr-cons boundary (& (ast.ast-expr-list-new))))]
           (test.assert-true
-            (lower-test-precheck-cached? ctx (clone outer) false)
+            (lower-test-precheck-cached?
+              ctx
+              (lower.lower-clone-ast-expr (& outer))
+              false)
             "nested lambda/quote/comptime bodies do not contribute to the parent")
           (for [limit (iterator.range 0 8)]
             (test.assert-true
               (lower-test-precheck-carrier-agrees?
                 ctx
-                (clone outer)
+                (lower.lower-clone-ast-expr (& outer))
                 10000
                 limit)
               "ignored descendants consume no address-summary budget")))))
@@ -2220,7 +2242,11 @@
       [body : ast.AstExpr (ast.ast-node-pool-context-expr-get pools tree)]
       [budget : i64 lower.lower-written-roots-scan-budget]
       (test.assert-true
-        (lower.lower-exposure-has-address? ctx (clone body) false (&mut budget))
+        (lower.lower-exposure-has-address?
+          ctx
+          (lower.lower-clone-ast-expr (& body))
+          false
+          (&mut budget))
         "canonical exhaustion conservatively requires the census")
       (lower.lower-function-state-scan-body-proofs! ctx state body)
       (test.assert-i64-eq
@@ -2319,15 +2345,16 @@
                   (for [index (iterator.range 0 instrs.len)]
                     (let
                       [instr : ir.CompilerIrInstr
-                        (clone (array-ref instrs.slots index))]
+                        (ir.clone-compiler-ir-instr
+                          (& (array-ref instrs.slots index)))]
                       [used : i64
                         (if (string.eq consumer "")
-                          (match (clone instr)
+                          (match (ir.clone-compiler-ir-instr (& instr))
                             [(or (CallIndirect _ (Var value) _ _)
                                  (TailCallIndirect (Var value) _ _))
                               value]
                             [_ -1])
-                          (match (clone instr)
+                          (match (ir.clone-compiler-ir-instr (& instr))
                             [(or (Call _ target args _)
                                  (TailCall target args _))
                               (if (string.eq
@@ -2344,20 +2371,26 @@
                           (if (array-ref captured used)
                             1
                             0)))
-                      (if (lower-test-instr-call-name? (clone instr) effect)
+                      (if (lower-test-instr-call-name?
+                        (ir.clone-compiler-ir-instr (& instr))
+                        effect)
                         (set! effect-seen true)
                         (when
                           (and
                             (not effect-seen)
                             (or
                               (>
-                                (lower-test-instr-copy-mov-count (clone instr))
+                                (lower-test-instr-copy-mov-count
+                                  (ir.clone-compiler-ir-instr (& instr)))
                                 0)
-                              (> (lower-test-instr-load-count (clone instr)) 0)
+                              (>
+                                (lower-test-instr-load-count
+                                  (ir.clone-compiler-ir-instr (& instr)))
+                                0)
                               (match (ir.compiler-ir-instr-effect (& instr))
                                 [(Pure)
                                   (ir.compiler-ir-instr-fold-uses
-                                    (clone instr)
+                                    (ir.clone-compiler-ir-instr (& instr))
                                     false
                                     lower-test-captured-use?
                                     (& captured))]
@@ -2673,7 +2706,7 @@
 (define (inc [value : i64]) : i64 (+ value 1))
 (define (argument) : i64 41)
 (define (main) : i64 "
-            (clone (array-ref bodies index))
+            (string.copy (array-ref bodies index))
             ")"))
         (str_cat.str-cat "Never callee, case " (string.int->string index))))))
 
@@ -3550,7 +3583,7 @@
         "missing clone prelude returns a diagnostic for its tagged helper name")
       (for [index (iterator.range 0 3)]
         (match (lower.lower-compiler-source-with-mode
-          (clone (array-ref sources index))
+          (string.copy (array-ref sources index))
           (array-ref modes mode))
           [(Err diagnostic)
             (test.assert-true
@@ -3563,7 +3596,7 @@
                   (cdiag.compiler-diagnostic-message (& (deref diagnostic)))
                   (str_cat.str-cat
                     "typecheck: module-scope macro call does not name a macro: "
-                    (clone (array-ref names index))))
+                    (string.copy (array-ref names index))))
                 (=
                   (cdiag.compiler-diagnostic-line (& (deref diagnostic)))
                   (array-ref lines index))
@@ -10125,7 +10158,7 @@
   [value : String]) : String
   (str_cat.str-cat
     "(define (fill [src : (__tl_dyn-array "
-    (clone source)
+    (string.copy source)
     ")] [out : (__tl_dyn-array "
     destination
     ")] [n : i64]) : unit
@@ -10145,7 +10178,7 @@
   [destination : String]) : String
   (compiler-lower-masked-cast-source
     source
-    (clone destination)
+    (string.copy destination)
     (str_cat.str-cat "(cast (array-ref src i) : " destination ")")))
 
 ;; The masked-control conversion row for `source -> destination` must reject
@@ -10159,16 +10192,16 @@
     [want : String
       (str_cat.str-cat
         "lower: SPMD numeric conversion from "
-        (clone source)
+        (string.copy source)
         " to "
-        (clone destination)
+        (string.copy destination)
         " is unsupported in masked control context for "
         backend
         " backend; SIMD cross-lane conversion has no implemented strategy; use scalar backend")]
     (match (lower.lower-compiler-source-with-mode
       (compiler-lower-masked-cast-value-source
-        (clone source)
-        (clone destination))
+        (string.copy source)
+        (string.copy destination))
       mode)
       [(Err diag-box)
         (let
@@ -10219,10 +10252,26 @@
   (and
     ;; Both directions of every representation-changing 32-bit row, and a
     ;; same-width signedness change, which has no checked classification.
-    (compiler-lower-masked-cast-rejected? "i32" "f32" mode (clone backend))
-    (compiler-lower-masked-cast-rejected? "f32" "i32" mode (clone backend))
-    (compiler-lower-masked-cast-rejected? "u32" "f32" mode (clone backend))
-    (compiler-lower-masked-cast-rejected? "f32" "u32" mode (clone backend))
+    (compiler-lower-masked-cast-rejected?
+      "i32"
+      "f32"
+      mode
+      (string.copy backend))
+    (compiler-lower-masked-cast-rejected?
+      "f32"
+      "i32"
+      mode
+      (string.copy backend))
+    (compiler-lower-masked-cast-rejected?
+      "u32"
+      "f32"
+      mode
+      (string.copy backend))
+    (compiler-lower-masked-cast-rejected?
+      "f32"
+      "u32"
+      mode
+      (string.copy backend))
     (compiler-lower-masked-cast-rejected? "i32" "u32" mode backend)
     ;; An identity cast and a casted literal still lower as masked vectors.
     (compiler-lower-masked-cast-vectorized?
@@ -12161,7 +12210,7 @@
     [(Err _) false]))
 
 (define (lower-test-twice [shape : String]) : String
-  (str_cat.str-cat (clone shape) " | " shape))
+  (str_cat.str-cat (string.copy shape) " | " shape))
 
 ;; Uniform `&mut` reference, varying i64, and two mask (varying bool) sources.
 (define (compiler-lower-spmd-private-abi-mask-arg-source) : String
@@ -12217,9 +12266,9 @@
         (lower-test-twice
           (str_cat.str-cat
             "avx512 lanes 8 "
-            (clone mask)
+            (string.copy mask)
             "1 "
-            (clone varying-i64)
+            (string.copy varying-i64)
             ", 2 index-base : i64] index appended 2 result varying i64")))
       (compiler-lower-spmd-private-abi-case-ok?
         (compiler-lower-spmd-out-of-line-value-source)
@@ -12228,9 +12277,9 @@
         (lower-test-twice
           (str_cat.str-cat
             "avx2 lanes 4 "
-            (clone mask)
+            (string.copy mask)
             "1 "
-            (clone varying-i64)
+            (string.copy varying-i64)
             ", 2 index-base : i64] index appended 2 result varying i64")))
       (compiler-lower-spmd-private-abi-case-ok?
         (compiler-lower-spmd-out-of-line-unit-source)
@@ -12239,9 +12288,9 @@
         (lower-test-twice
           (str_cat.str-cat
             "avx512 lanes 8 "
-            (clone mask)
+            (string.copy mask)
             "1 "
-            (clone varying-i64)
+            (string.copy varying-i64)
             ", 2 index-base : i64] index appended 2 result unit")))
       (compiler-lower-spmd-private-abi-case-ok?
         (compiler-lower-spmd-varying-local-call-source)
@@ -12250,9 +12299,9 @@
         (lower-test-twice
           (str_cat.str-cat
             "avx2 lanes 4 "
-            (clone mask)
+            (string.copy mask)
             "1 "
-            (clone varying-i64)
+            (string.copy varying-i64)
             "] index none result varying i64")))
       (compiler-lower-spmd-private-abi-case-ok?
         (compiler-lower-spmd-private-abi-mask-arg-source)
@@ -12261,8 +12310,8 @@
         (lower-test-twice
           (str_cat.str-cat
             "avx512 lanes 8 "
-            (clone mask)
-            (clone mask-arg-sources)
+            (string.copy mask)
+            (string.copy mask-arg-sources)
             ", 5 index-base : i64] index appended 5 result unit")))
       (compiler-lower-spmd-private-abi-case-ok?
         (compiler-lower-spmd-private-abi-bool-result-source)
@@ -12271,9 +12320,9 @@
         (lower-test-twice
           (str_cat.str-cat
             "avx2 lanes 4 "
-            (clone mask)
+            (string.copy mask)
             "1 "
-            (clone varying-i64)
+            (string.copy varying-i64)
             ", 2 index-base : i64] index appended 2 result mask bool")))
       (compiler-lower-spmd-private-abi-case-ok?
         (compiler-lower-spmd-private-abi-uniform-result-source)
@@ -12282,9 +12331,9 @@
         (lower-test-twice
           (str_cat.str-cat
             "avx512 lanes 8 "
-            (clone mask)
+            (string.copy mask)
             "1 "
-            (clone varying-i64)
+            (string.copy varying-i64)
             ", 2 source 1 uniform i64 : i64, 3 index-base : i64]"
             " index appended 3 result uniform i64")))
       (compiler-lower-spmd-private-abi-case-ok?
@@ -12294,7 +12343,7 @@
         (lower-test-twice
           (str_cat.str-cat
             "avx512 lanes 8 "
-            (clone mask)
+            (string.copy mask)
             "1 source 0 varying f64 : f64, 2 source 1 uniform f64 : f64]"
             " index none result varying f64")))
       (compiler-lower-spmd-private-abi-optimized-ok?
@@ -18017,7 +18066,8 @@
     (for [index (iterator.range 0 facts.decisions.len)]
       (let
         [item : ir.CompilerSpmdDecision
-          (clone (array-ref facts.decisions.slots index))]
+          (ir.clone-compiler-spmd-decision
+            (& (array-ref facts.decisions.slots index)))]
         (set!
           out
           (str_cat.str-cat
@@ -18152,9 +18202,9 @@
         [row : (& cases LowerSpmdDecisionCase) (& (array-ref cases index))]
         (test.assert-owned-string-eq
           (compiler-lower-spmd-decisions-text
-            (clone row.source)
+            (string.copy (& row.source))
             (lower.CompilerLowerMode.LinuxAvx2))
-          (clone row.expected)
+          (string.copy (& row.expected))
           "final SPMD route and first reason")))))
 
 (define (compiler-lower-spmd-same-facts?
@@ -18173,9 +18223,11 @@
   (for [index (iterator.range 0 left.decisions.len)]
     (let
       [a : ir.CompilerSpmdDecision
-        (clone (array-ref left.decisions.slots index))]
+        (ir.clone-compiler-spmd-decision
+          (& (array-ref left.decisions.slots index)))]
       [b : ir.CompilerSpmdDecision
-        (clone (array-ref right.decisions.slots index))]
+        (ir.clone-compiler-spmd-decision
+          (& (array-ref right.decisions.slots index)))]
       (unless
         (and
           (ir.compiler-ir-symbol-id-eq? a.site.function b.site.function)
@@ -18189,9 +18241,11 @@
   (for [index (iterator.range 0 left.frames.len)]
     (let
       [a : ir.CompilerSpmdMacroFrame
-        (clone (array-ref left.frames.slots index))]
+        (ir.clone-compiler-spmd-macro-frame
+          (& (array-ref left.frames.slots index)))]
       [b : ir.CompilerSpmdMacroFrame
-        (clone (array-ref right.frames.slots index))]
+        (ir.clone-compiler-spmd-macro-frame
+          (& (array-ref right.frames.slots index)))]
       (unless (and (= a.name-id b.name-id)) (return false))))
   true)
 
@@ -18282,7 +18336,8 @@
       "one macro site and one independent source site")
     (let
       [generated : ir.CompilerSpmdDecision
-        (clone (array-ref facts.decisions.slots 0))]
+        (ir.clone-compiler-spmd-decision
+          (& (array-ref facts.decisions.slots 0)))]
       [ordinary : ir.CompilerSpmdDecision (array-ref facts.decisions.slots 1)]
       (test.assert-i64-eq generated.frame-count 1 "macro frame retained")
       (test.assert-i64-eq
@@ -18331,7 +18386,8 @@
           source
           (lower.CompilerLowerMode.LinuxAvx2))]
       [item : ir.CompilerSpmdDecision
-        (clone (array-ref facts.decisions.slots 0))]
+        (ir.clone-compiler-spmd-decision
+          (& (array-ref facts.decisions.slots 0)))]
       [outer : ir.CompilerSpmdMacroFrame
         (array-ref facts.frames.slots item.frame-start)]
       [inner : ir.CompilerSpmdMacroFrame
@@ -18426,9 +18482,11 @@
       "both imported source sites retained")
     (let
       [generated : ir.CompilerSpmdDecision
-        (clone (array-ref facts.decisions.slots 0))]
+        (ir.clone-compiler-spmd-decision
+          (& (array-ref facts.decisions.slots 0)))]
       [forwarded : ir.CompilerSpmdDecision
-        (clone (array-ref facts.decisions.slots 1))]
+        (ir.clone-compiler-spmd-decision
+          (& (array-ref facts.decisions.slots 1)))]
       (test.assert-owned-string-eq
         (compiler-lower-spmd-location-text owner (& generated.primary))
         "tests/spmd/spmd_decision_macros.tl:2"
@@ -18464,7 +18522,7 @@
     [empty : ir.CompilerSpmdDecisions
       (compiler-lower-spmd-source-facts
         owner
-        (clone ordinary)
+        (string.copy ordinary)
         (lower.CompilerLowerMode.Scalar))]
     (test.assert-i64-eq empty.decisions.len 0 "ordinary program has no sites")
     (test.assert-true
@@ -18518,9 +18576,11 @@
       "both function scopes retain sites")
     (let
       [first : ir.CompilerSpmdDecision
-        (clone (array-ref facts.decisions.slots 0))]
+        (ir.clone-compiler-spmd-decision
+          (& (array-ref facts.decisions.slots 0)))]
       [second : ir.CompilerSpmdDecision
-        (clone (array-ref facts.decisions.slots 1))]
+        (ir.clone-compiler-spmd-decision
+          (& (array-ref facts.decisions.slots 1)))]
       (test.assert-i64-eq first.site.ordinal 0 "first function ordinal")
       (test.assert-i64-eq second.site.ordinal 0 "lambda owns its ordinal")
       (test.assert-true
@@ -18533,7 +18593,8 @@
   (let
     [expr : ast.AstExpr (ast.ast-node-pool-context-expr-get (& pools) id)]
     [plain : ast.AstExpr (ast.ast-expr-unspan-with-pools (& pools) (& expr))]
-    [children : ast.AstExprList (ast.ast-expr-child-ids (clone plain))]
+    [children : ast.AstExprList
+      (ast.ast-expr-child-ids (lower.lower-clone-ast-expr (& plain)))]
     (for [index (iterator.range 0 children.len)]
       (compiler-lower-spmd-unspan-tree!
         pools
@@ -18604,10 +18665,10 @@
           "0:foreach:native:DirectMap:4:-1\n1:shuffle:native:DirectMap:4:0\n"))]
     (for [index (iterator.range 0 (array-length cases))]
       (let
-        [case : LowerSpmdDecisionCase (clone (array-ref cases index))]
+        [case : (& cases LowerSpmdDecisionCase) (& (array-ref cases index))]
         (test.assert-owned-string-eq
-          (compiler-lower-spmd-unlocated-text case.source)
-          case.expected
+          (compiler-lower-spmd-unlocated-text (string.copy (& case.source)))
+          (string.copy (& case.expected))
           "fully unspanned API syntax retains every source site")))))
 
 (test
@@ -18771,7 +18832,9 @@
       (for [index (iterator.range 0 (array-length cases))]
         (let
           [source
-            (str_cat.str-cat (clone prefix) (clone (array-ref cases index)))]
+            (str_cat.str-cat
+              (string.copy prefix)
+              (string.copy (array-ref cases index)))]
           (match (lower.lower-compiler-source-with-mode
             source
             (array-ref modes mode))
@@ -18849,14 +18912,14 @@
         [source : String
           (str_cat.str-cat
             "(defstruct Pair (a i64) (b i64)) (defstruct Wide (a i64) (b i64) (c i64)) (defstruct Holder (wide Wide)) (defstruct Zero (z unit)) (defenum Choice (Full Wide) (Blank)) (define (add [a : i64] [b : i64]) : i64 (+ a b)) (define (use-ref [p : (&mut p i64)] [v : i64]) : i64 (+ (deref p) v)) (extern (c-add [a : i64] [b : i64]) : i64 (:symbol \"c_add\")) (define (main) : i64 "
-            (clone (array-ref bodies index))
+            (string.copy (array-ref bodies index))
             ")")]
         [label : String
           (str_cat.str-cat
             "store exit must terminate its block, case "
             (string.int->string index))]
         (test.assert-true
-          (lower-test-source-blocks-exit? source "main" (clone label))
+          (lower-test-source-blocks-exit? source "main" (string.copy label))
           label)))))
 
 (test
@@ -18878,9 +18941,9 @@
           (str_cat.str-cat "literal exit case " (string.int->string index))]
         (test.assert-true
           (lower-test-source-blocks-exit?
-            (clone (array-ref sources index))
+            (string.copy (array-ref sources index))
             "probe"
-            (clone label))
+            (string.copy label))
           label)))))
 
 (test
@@ -18911,14 +18974,14 @@
         [source : String
           (str_cat.str-cat
             "(defstruct Pair (a i64) (b i64)) (defstruct Wide (a i64) (b i64) (c i64)) (defenum Choice (Full Wide) (Blank)) (define (drop-pair [p : Pair]) : unit unit) (define (probe [c : bool]) : i64 "
-            (clone (array-ref bodies index))
+            (string.copy (array-ref bodies index))
             ")")]
         [label : String
           (str_cat.str-cat
             "operand consumer exit case "
             (string.int->string index))]
         (test.assert-true
-          (lower-test-source-blocks-exit? source "probe" (clone label))
+          (lower-test-source-blocks-exit? source "probe" (string.copy label))
           label)))))
 
 (test
@@ -19062,7 +19125,7 @@
     (unsafe
       (set!
         (deref (lower.compiler-lower-function-state-ptr function-state)).address-exposure
-        (clone scan.facts))
+        (lower.lower-clone-address-exposure (& scan.facts)))
       (set!
         (deref (lower.compiler-lower-function-state-ptr function-state)).address-exposure-mode
         1))

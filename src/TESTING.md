@@ -1770,7 +1770,10 @@ there must fail the campaign rather than count as an ownership rejection.
 
 ### Safety rejection oracle
 
-`scripts/verify-safety-corpus.sh` requires a normal checker exit of 1 and a
+`scripts/verify-safety-corpus.sh` loads the thematic fragment manifests under
+`tests/safety/manifest.d/*.manifest` (add new cases in a new
+`tests/safety/manifest.d/<slug>.manifest` fragment rather than appending to an
+existing file) and requires a normal checker exit of 1 and a
 structured, source-located diagnostic for every `check-fail` row. The expected
 substring must occur in diagnostic text or metadata, not a location path or
 an echoed source line;
@@ -3303,6 +3306,9 @@ in [`../CONTRIBUTING.md`](../CONTRIBUTING.md)):
   `scripts/verify-integration.sh`) in sync whenever imports change.
 - Add a `src/compile_manifest.d/*.manifest` case when a new top-level module must
   compile on its own or pins a codegen marker.
+- Add safety-corpus cases in a new `tests/safety/manifest.d/<slug>.manifest`
+  fragment file (never append to an existing fragment unless modifying its
+  existing rows).
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
   the matching `tests/cli/*.cases` file, and codegen-shape checks to
   `tests/codegen/*.cases`.

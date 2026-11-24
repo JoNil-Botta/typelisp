@@ -2747,7 +2747,7 @@
               ,def-mapper
               ,type-mapper
               ,@contexts)
-            (clone payload.origin)))]
+            (clone-compiler-ir-spmd-call-origin (& payload.origin))))]
       [(compiler_ir_types.CompilerIrInstr.TailCall name args ty)
         (compiler_ir_types.CompilerIrInstr.TailCall
           name
@@ -3026,7 +3026,7 @@
   [pools : ast.AstNodePoolContext]
   [abi : CompilerIrReturnStorageAbi]) : CompilerIrReturnStorageAbi
   (CompilerIrReturnStorageAbi
-    (clone abi.convention)
+    abi.convention
     abi.index
     abi.bytes
     abi.alignment
@@ -3063,7 +3063,9 @@
     [(Private private-box)
       (compiler-ir-spmd-call-origin-private
         (compiler-ir-clone-spmd-private-abi pools (deref private-box)))]
-    [(Imported selected-box) (Imported (clone selected-box))]))
+    [(Imported selected-box)
+      (Imported
+        (box (clone-compiler-ir-imported-spmd-call (& (deref selected-box)))))]))
 
 ;; --- equality ---
 (define (compiler-ir-spmd-backend-eq?
@@ -3869,7 +3871,7 @@
     (match (array-ref args.slots index)
       [(Arg _ _ ty)
         (let
-          [type-name : String (compiler-ir-type-name bases (& (clone ty)))]
+          [type-name : String (compiler-ir-type-name bases ty)]
           [next : i64 (+ position 1 (string.string-length type-name))]
           (if (and
             (compiler-ir-spmd-call-segment-eq-at? signature position " ")
@@ -3895,7 +3897,7 @@
     [result-type : String
       (match payload.result
         [(Unit) "unit"]
-        [(Value _ _ ty) (compiler-ir-type-name bases (& (clone ty)))])]
+        [(Value _ _ ty) (compiler-ir-type-name bases ty)])]
     (and
       (compiler-ir-spmd-call-segment-eq-at? signature 0 "(->")
       (compiler-ir-spmd-call-segment-eq-at? signature end " ")
@@ -4717,9 +4719,9 @@
             ;; Clone all owned enum/list/Box payloads, preserving those
             ;; IDs; appending remapped nodes here would mutate a snapshot
             ;; independently of the live producer's cursor.
-            (clone item.signature)
+            (ast.clone-ast-type (& item.signature))
             item.c-abi?
-            (clone item.storage)))
+            (clone-compiler-ir-return-storage (& item.storage))))
         (set! i (+ i 1))))
     out))
 
@@ -6468,7 +6470,7 @@
           (compiler-ir-clone-type
             pools
             (ast.ast-node-pool-context-type-get (& pools) elem))))]
-    [_ (clone ty)]))
+    [_ (ast.clone-ast-type (& ty))]))
 
 (define (compiler-ir-clone-type-list-into
   [pools : ast.AstNodePoolContext]
@@ -6676,9 +6678,9 @@
         source-name-id
         (string.copy name)
         (compiler-ir-clone-type pools ty)
-        (clone abi)
+        (clone-ast-extern-abi (& abi))
         symbol-id
-        (clone links)
+        (clone-ast-extern-link-input-list (& links))
         provided
         (compiler-ir-clone-return-storage pools storage))]))
 
@@ -6695,6 +6697,688 @@
           pools
           (compiler-ir-extern-seq-borrow externs index))))
     (CompilerIrExternSeq slots externs.len)))
+
+(define (clone-ast-extern-abi [abi : (& ast.AstExternAbi)]) : ast.AstExternAbi
+  (match abi
+    [(ast.AstExternAbi.C) ast.AstExternAbi.C]
+    [(ast.AstExternAbi.CVarargsOpen) ast.AstExternAbi.CVarargsOpen]
+    [(ast.AstExternAbi.CVarargsTyped inner)
+      (ast.AstExternAbi.CVarargsTyped (ast.clone-ast-type inner))]
+    [(ast.AstExternAbi.TypeLisp) ast.AstExternAbi.TypeLisp]))
+
+(define (clone-ast-extern-link-input [item : (& ast.AstExternLinkInput)]) : ast.AstExternLinkInput
+  (match item
+    [(ast.AstExternLinkInput.Lib name)
+      (ast.AstExternLinkInput.Lib (string.copy name))]
+    [(ast.AstExternLinkInput.Search path)
+      (ast.AstExternLinkInput.Search (string.copy path))]
+    [(ast.AstExternLinkInput.Arg arg)
+      (ast.AstExternLinkInput.Arg (string.copy arg))]))
+
+(define (clone-ast-extern-link-input-list
+  [items : (& ast.AstExternLinkInputList)]) : ast.AstExternLinkInputList
+  (let
+    [slots : (__tl_dyn-array ast.AstExternLinkInput)
+      (__tl_make-array ast.AstExternLinkInput items.len)]
+    (for [index (iterator.range 0 items.len)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-extern-link-input (& (array-ref items.slots index)))))
+    (ast.AstExternLinkInputList slots items.len)))
+
+(define (clone-compiler-ir-bin-op [op : (& CompilerIrBinOp)]) : CompilerIrBinOp
+  (match op
+    [(Add) (Add)]
+    [(Sub) (Sub)]
+    [(Mul) (Mul)]
+    [(Div) (Div)]
+    [(Mod) (Mod)]
+    [(SafeDiv) (SafeDiv)]
+    [(SafeMod) (SafeMod)]
+    [(Eq) (Eq)]
+    [(Ne) (Ne)]
+    [(Lt) (Lt)]
+    [(Le) (Le)]
+    [(Gt) (Gt)]
+    [(Ge) (Ge)]
+    [(BitTestEq) (BitTestEq)]
+    [(BitTestNe) (BitTestNe)]
+    [(And) (And)]
+    [(Or) (Or)]
+    [(BitAnd) (BitAnd)]
+    [(BitOr) (BitOr)]
+    [(BitXor) (BitXor)]
+    [(Shl rhs-ty) (Shl (ast.clone-ast-type rhs-ty))]
+    [(Shr rhs-ty) (Shr (ast.clone-ast-type rhs-ty))]))
+
+(define (clone-compiler-ir-maybe-value [value : (& CompilerIrMaybeValue)]) : CompilerIrMaybeValue
+  (match value
+    [(No) (No)]
+    [(Some inner) (Some (compiler-ir-clone-value inner))]))
+
+(define (clone-compiler-ir-value-seq [seq : (& CompilerIrValueSeq)]) : CompilerIrValueSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrValue)
+      (__tl_make-array CompilerIrValue seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (compiler-ir-clone-value (& (array-ref seq.slots index)))))
+    (CompilerIrValueSeq slots seq.len)))
+
+(define (clone-compiler-ir-call-args [args : (& CompilerIrCallArgs)]) : CompilerIrCallArgs
+  (match args
+    [(Nil) (Nil)]
+    [(One value) (One (compiler-ir-clone-value value))]
+    [(Two first second)
+      (Two (compiler-ir-clone-value first) (compiler-ir-clone-value second))]
+    [(Array slots)
+      (let
+        [len : i64 (array-length slots)]
+        [out : (__tl_dyn-array CompilerIrValue)
+          (__tl_make-array CompilerIrValue len)]
+        (for [index (iterator.range 0 len)]
+          (set!
+            (array-ref out index)
+            (compiler-ir-clone-value (& (array-ref slots index)))))
+        (Array out))]
+    [(Sret slots index)
+      (let
+        [len : i64 (array-length slots)]
+        [out : (__tl_dyn-array CompilerIrValue)
+          (__tl_make-array CompilerIrValue len)]
+        (for [slot (iterator.range 0 len)]
+          (set!
+            (array-ref out slot)
+            (compiler-ir-clone-value (& (array-ref slots slot)))))
+        (Sret out index))]))
+
+(define (clone-compiler-ir-spmd-call-arg [arg : (& CompilerIrSpmdCallArg)]) : CompilerIrSpmdCallArg
+  (match arg
+    [(Arg class value ty)
+      (Arg class (compiler-ir-clone-value value) (ast.clone-ast-type ty))]))
+
+(define (clone-compiler-ir-spmd-call-arg-seq
+  [seq : (& CompilerIrSpmdCallArgSeq)]) : CompilerIrSpmdCallArgSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrSpmdCallArg)
+      (__tl_make-array CompilerIrSpmdCallArg seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-spmd-call-arg (& (array-ref seq.slots index)))))
+    (CompilerIrSpmdCallArgSeq slots seq.len)))
+
+(define (clone-compiler-ir-spmd-call-result
+  [result : (& CompilerIrSpmdCallResult)]) : CompilerIrSpmdCallResult
+  (match result
+    [(Unit) (Unit)]
+    [(Value dst class ty) (Value dst class (ast.clone-ast-type ty))]))
+
+(define (clone-compiler-ir-c-abi-return-slot
+  [slot : (& CompilerIrCAbiReturnSlot)]) : CompilerIrCAbiReturnSlot
+  (match slot
+    [(Slot ty offset) (Slot (ast.clone-ast-type ty) offset)]))
+
+(define (clone-compiler-ir-c-abi-return-slot-seq
+  [seq : (& CompilerIrCAbiReturnSlotSeq)]) : CompilerIrCAbiReturnSlotSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrCAbiReturnSlot)
+      (__tl_make-array CompilerIrCAbiReturnSlot seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-c-abi-return-slot (& (array-ref seq.slots index)))))
+    (CompilerIrCAbiReturnSlotSeq slots seq.len)))
+
+(define (clone-compiler-ir-phi-input [input : (& CompilerIrPhiInput)]) : CompilerIrPhiInput
+  (CompilerIrPhiInput (compiler-ir-clone-value (& input.value)) input.label))
+
+(define (clone-compiler-ir-phi-input-seq [seq : (& CompilerIrPhiInputSeq)]) : CompilerIrPhiInputSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrPhiInput)
+      (__tl_make-array CompilerIrPhiInput seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-phi-input
+          (& (array-ref seq.slots (+ seq.start index))))))
+    (CompilerIrPhiInputSeq slots 0 seq.len)))
+
+(define (clone-compiler-ir-switch-case-seq [seq : (& CompilerIrSwitchCaseSeq)]) : CompilerIrSwitchCaseSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrSwitchCase)
+      (__tl_make-array CompilerIrSwitchCase seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (match (array-ref seq.slots index)
+          [(Case tag label) (Case tag label)])))
+    (CompilerIrSwitchCaseSeq slots seq.len)))
+
+(define (clone-compiler-ir-imported-spmd-call
+  [call : (& CompilerIrImportedSpmdCall)]) : CompilerIrImportedSpmdCall
+  (CompilerIrImportedSpmdCall
+    (string.copy (& call.package-owner))
+    (string.copy (& call.package-version))
+    (string.copy (& call.canonical-helper))
+    (string.copy (& call.signature))
+    (string.copy (& call.abi))
+    (string.copy (& call.backend))
+    call.lanes
+    (string.copy (& call.args))
+    (string.copy (& call.result))
+    call.index-param
+    (string.copy (& call.link-symbol))))
+
+(define (clone-compiler-ir-spmd-private-param
+  [param : (& CompilerIrSpmdPrivateParam)]) : CompilerIrSpmdPrivateParam
+  (match param
+    [(Param ordinal role ty)
+      (Param
+        ordinal
+        (match role
+          [(ActiveMask) (ActiveMask)]
+          [(Source source class source-ty)
+            (Source source class (ast.clone-ast-type source-ty))]
+          [(IndexBase) (IndexBase)])
+        (ast.clone-ast-type ty))]))
+
+(define (clone-compiler-ir-spmd-private-param-seq
+  [seq : (& CompilerIrSpmdPrivateParamSeq)]) : CompilerIrSpmdPrivateParamSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrSpmdPrivateParam)
+      (__tl_make-array CompilerIrSpmdPrivateParam seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-spmd-private-param (& (array-ref seq.slots index)))))
+    (CompilerIrSpmdPrivateParamSeq slots seq.len)))
+
+(define (clone-compiler-ir-spmd-private-abi
+  [abi : (& CompilerIrSpmdPrivateAbi)]) : CompilerIrSpmdPrivateAbi
+  (CompilerIrSpmdPrivateAbi
+    (match abi.schema
+      [(V1) (V1)])
+    abi.callee
+    (match abi.backend
+      [(Scalar) (Scalar)]
+      [(Avx2) (Avx2)]
+      [(Avx512) (Avx512)])
+    abi.lanes
+    (clone-compiler-ir-spmd-private-param-seq (& abi.params))
+    (match abi.index
+      [(None) (None)]
+      [(ReuseSource source) (ReuseSource source)]
+      [(Appended ordinal) (Appended ordinal)])
+    (match (& abi.result)
+      [(Unit) (Unit)]
+      [(Value class ty)
+        (Value
+          (compiler-ir-clone-spmd-value-class class)
+          (ast.clone-ast-type ty))])))
+
+(define (clone-compiler-ir-return-storage-convention
+  [convention : (& CompilerIrReturnStorageConvention)]) : CompilerIrReturnStorageConvention
+  (match convention
+    [(InternalLeading) (InternalLeading)]
+    [(InternalTrailing) (InternalTrailing)]
+    [(SysV) (SysV)]
+    [(Win64) (Win64)]))
+
+(define (clone-compiler-ir-return-storage-abi
+  [abi : (& CompilerIrReturnStorageAbi)]) : CompilerIrReturnStorageAbi
+  (CompilerIrReturnStorageAbi
+    (clone-compiler-ir-return-storage-convention (& abi.convention))
+    abi.index
+    abi.bytes
+    abi.alignment
+    (ast.clone-ast-type (& abi.output))
+    (ast.clone-ast-type (& abi.physical-result))
+    (ast.clone-ast-type-list (& abi.physical-params))
+    (ast.clone-ast-type (& abi.source-signature))))
+
+(define (clone-compiler-ir-return-storage
+  [storage : (& CompilerIrReturnStorage)]) : CompilerIrReturnStorage
+  (match storage
+    [(CompilerIrReturnStorage.None) (CompilerIrReturnStorage.None)]
+    [(CompilerIrReturnStorage.Some abi)
+      (CompilerIrReturnStorage.Some
+        (box (clone-compiler-ir-return-storage-abi abi)))]))
+
+(define (clone-compiler-ir-function-abi [abi : (& CompilerIrFunctionAbi)]) : CompilerIrFunctionAbi
+  (match abi
+    [(Ordinary) (Ordinary)]
+    [(ReturnStorage storage)
+      (ReturnStorage (box (clone-compiler-ir-return-storage-abi storage)))]
+    [(SpmdPrivate private-abi)
+      (SpmdPrivate (box (clone-compiler-ir-spmd-private-abi private-abi)))]))
+
+(define (clone-compiler-ir-spmd-call-origin
+  [origin : (& CompilerIrSpmdCallOrigin)]) : CompilerIrSpmdCallOrigin
+  (match origin
+    [(Private private-abi)
+      (Private (box (clone-compiler-ir-spmd-private-abi private-abi)))]
+    [(Imported selected)
+      (Imported (box (clone-compiler-ir-imported-spmd-call selected)))]))
+
+(define (clone-compiler-ir-instr [instr : (& CompilerIrInstr)]) : CompilerIrInstr
+  (match instr
+    [(Mov dst value ty)
+      (Mov dst (compiler-ir-clone-value value) (ast.clone-ast-type ty))]
+    [(Alloc dst ty) (Alloc dst (ast.clone-ast-type ty))]
+    [(AddrOf dst src words) (AddrOf dst src words)]
+    [(Gep dst base offset ty)
+      (Gep
+        dst
+        (compiler-ir-clone-value base)
+        (compiler-ir-clone-value offset)
+        (ast.clone-ast-type ty))]
+    [(Load dst src ty)
+      (Load dst (compiler-ir-clone-value src) (ast.clone-ast-type ty))]
+    [(StoreOwned dst value ty)
+      (StoreOwned
+        (compiler-ir-clone-value dst)
+        (compiler-ir-clone-value value)
+        (ast.clone-ast-type ty))]
+    [(StorePtr dst value ty)
+      (StorePtr
+        (compiler-ir-clone-value dst)
+        (compiler-ir-clone-value value)
+        (ast.clone-ast-type ty))]
+    [(CopyBytes dst src size)
+      (CopyBytes
+        (compiler-ir-clone-value dst)
+        (compiler-ir-clone-value src)
+        size)]
+    [(BoundsCheck index len ok-label)
+      (BoundsCheck
+        (compiler-ir-clone-value index)
+        (compiler-ir-clone-value len)
+        ok-label)]
+    [(Cast dst value from-ty to-ty)
+      (Cast
+        dst
+        (compiler-ir-clone-value value)
+        (ast.clone-ast-type from-ty)
+        (ast.clone-ast-type to-ty))]
+    [(Bitcast dst value from-ty to-ty)
+      (Bitcast
+        dst
+        (compiler-ir-clone-value value)
+        (ast.clone-ast-type from-ty)
+        (ast.clone-ast-type to-ty))]
+    [(BinOp dst op lhs rhs ty)
+      (BinOp
+        dst
+        (clone-compiler-ir-bin-op op)
+        (compiler-ir-clone-value lhs)
+        (compiler-ir-clone-value rhs)
+        (ast.clone-ast-type ty))]
+    [(UnOp dst op value ty)
+      (UnOp dst op (compiler-ir-clone-value value) (ast.clone-ast-type ty))]
+    [(LaneId dst lanes ty) (LaneId dst lanes (ast.clone-ast-type ty))]
+    [(Splat dst value lanes ty)
+      (Splat dst (compiler-ir-clone-value value) lanes (ast.clone-ast-type ty))]
+    [(VectorBinOp payload)
+      (ir-instr-vector-bin-op
+        payload.dst
+        (clone-compiler-ir-bin-op (& payload.op))
+        (compiler-ir-clone-value (& payload.lhs))
+        (compiler-ir-clone-value (& payload.rhs))
+        payload.lanes
+        (ast.clone-ast-type (& payload.ty)))]
+    [(VectorPrefix payload)
+      (ir-instr-vector-prefix
+        payload.dst
+        (match payload.op
+          [(Sum) (Sum)]
+          [(Min) (Min)]
+          [(Max) (Max)]
+          [(All) (All)]
+          [(Any) (Any)]
+          [(SplatLast) (SplatLast)])
+        (compiler-ir-clone-value (& payload.src))
+        (compiler-ir-clone-value (& payload.carry))
+        payload.lanes
+        (ast.clone-ast-type (& payload.ty)))]
+    [(VectorReduce dst op value lanes ty)
+      (VectorReduce
+        dst
+        op
+        (compiler-ir-clone-value value)
+        lanes
+        (ast.clone-ast-type ty))]
+    [(VectorCompare payload)
+      (ir-instr-vector-compare
+        payload.dst
+        (clone-compiler-ir-bin-op (& payload.op))
+        (compiler-ir-clone-value (& payload.lhs))
+        (compiler-ir-clone-value (& payload.rhs))
+        payload.lanes
+        (ast.clone-ast-type (& payload.ty)))]
+    [(MaskBinOp dst op lhs rhs lanes)
+      (MaskBinOp
+        dst
+        op
+        (compiler-ir-clone-value lhs)
+        (compiler-ir-clone-value rhs)
+        lanes)]
+    [(MaskNot dst value lanes)
+      (MaskNot dst (compiler-ir-clone-value value) lanes)]
+    [(MaskReduce dst op value lanes)
+      (MaskReduce dst op (compiler-ir-clone-value value) lanes)]
+    [(Select payload)
+      (ir-instr-select
+        payload.dst
+        (compiler-ir-clone-value (& payload.mask))
+        (compiler-ir-clone-value (& payload.on-true))
+        (compiler-ir-clone-value (& payload.on-false))
+        payload.lanes
+        (ast.clone-ast-type (& payload.ty)))]
+    [(VectorLoad dst base index lanes ty)
+      (VectorLoad
+        dst
+        (compiler-ir-clone-value base)
+        (compiler-ir-clone-value index)
+        lanes
+        (ast.clone-ast-type ty))]
+    [(VectorStore payload)
+      (ir-instr-vector-store
+        (compiler-ir-clone-value (& payload.base))
+        (compiler-ir-clone-value (& payload.index))
+        (compiler-ir-clone-value (& payload.value))
+        payload.lanes
+        (ast.clone-ast-type (& payload.ty)))]
+    [(PredicatedStore payload)
+      (ir-instr-predicated-store
+        (compiler-ir-clone-value (& payload.base))
+        (compiler-ir-clone-value (& payload.index))
+        (compiler-ir-clone-value (& payload.value))
+        (compiler-ir-clone-value (& payload.mask))
+        payload.lanes
+        (ast.clone-ast-type (& payload.ty)))]
+    [(PredicatedLoad payload)
+      (ir-instr-predicated-load
+        payload.dst
+        (compiler-ir-clone-value (& payload.base))
+        (compiler-ir-clone-value (& payload.index))
+        (compiler-ir-clone-value (& payload.mask))
+        payload.lanes
+        (ast.clone-ast-type (& payload.ty)))]
+    [(GatherLoad payload)
+      (ir-instr-gather-load
+        payload.dst
+        (compiler-ir-clone-value (& payload.base))
+        (compiler-ir-clone-value (& payload.index-base))
+        (compiler-ir-clone-value (& payload.index))
+        payload.lane-offset
+        payload.lanes
+        (ast.clone-ast-type (& payload.ty)))]
+    [(VectorShuffle payload)
+      (ir-instr-vector-shuffle
+        payload.dst
+        (compiler-ir-clone-value (& payload.source))
+        (compiler-ir-clone-value (& payload.selector-low))
+        (clone-compiler-ir-maybe-value (& payload.selector-high))
+        (compiler-ir-clone-value (& payload.active-lanes))
+        payload.lanes
+        (ast.clone-ast-type (& payload.ty)))]
+    [(TailMask dst index limit lanes)
+      (TailMask
+        dst
+        (compiler-ir-clone-value index)
+        (compiler-ir-clone-value limit)
+        lanes)]
+    [(EntryArgc dst) (EntryArgc dst)]
+    [(EntryArgv dst) (EntryArgv dst)]
+    [(EntryEnvp dst) (EntryEnvp dst)]
+    [(CpuId dst leaf subleaf reg)
+      (CpuId
+        dst
+        (compiler-ir-clone-value leaf)
+        (compiler-ir-clone-value subleaf)
+        reg)]
+    [(Xgetbv dst index) (Xgetbv dst (compiler-ir-clone-value index))]
+    [(Syscall dst args) (Syscall dst (clone-compiler-ir-call-args args))]
+    [(Call dst name args ty)
+      (Call dst name (clone-compiler-ir-call-args args) (ast.clone-ast-type ty))]
+    [(CallIndirect dst callee args ty)
+      (CallIndirect
+        dst
+        (compiler-ir-clone-value callee)
+        (clone-compiler-ir-call-args args)
+        (ast.clone-ast-type ty))]
+    [(CallIndirectC dst callee args ty)
+      (CallIndirectC
+        dst
+        (compiler-ir-clone-value callee)
+        (clone-compiler-ir-call-args args)
+        (ast.clone-ast-type ty))]
+    [(CallCAbiStoreResult payload)
+      (ir-instr-call-cabi-store-result
+        (compiler-ir-clone-value (& payload.base))
+        payload.name
+        (clone-compiler-ir-call-args (& payload.args))
+        (clone-compiler-ir-c-abi-return-slot-seq (& payload.slots)))]
+    [(CallIndirectCAbiStoreResult payload)
+      (ir-instr-call-indirect-cabi-store-result
+        (compiler-ir-clone-value (& payload.base))
+        (compiler-ir-clone-value (& payload.callee))
+        (clone-compiler-ir-call-args (& payload.args))
+        (clone-compiler-ir-c-abi-return-slot-seq (& payload.slots)))]
+    [(SpmdCall payload)
+      (ir-instr-spmd-call-with-origin
+        payload.callee
+        (match payload.backend
+          [(Scalar) (Scalar)]
+          [(Avx2) (Avx2)]
+          [(Avx512) (Avx512)])
+        payload.lanes
+        (compiler-ir-clone-value (& payload.active-mask))
+        (clone-compiler-ir-spmd-call-arg-seq (& payload.args))
+        (clone-compiler-ir-spmd-call-result (& payload.result))
+        (clone-compiler-ir-spmd-call-origin (& payload.origin)))]
+    [(TailCall name args ty)
+      (TailCall name (clone-compiler-ir-call-args args) (ast.clone-ast-type ty))]
+    [(Store name value ty)
+      (Store name (compiler-ir-clone-value value) (ast.clone-ast-type ty))]
+    [(Jump label) (Jump label)]
+    [(Branch cond true-label false-label)
+      (Branch (compiler-ir-clone-value cond) true-label false-label)]
+    [(TotalEnumBranch cond true-label false-label)
+      (TotalEnumBranch (compiler-ir-clone-value cond) true-label false-label)]
+    [(Return value) (Return (clone-compiler-ir-maybe-value value))]
+    [(Phi dst inputs ty)
+      (Phi dst (clone-compiler-ir-phi-input-seq inputs) (ast.clone-ast-type ty))]
+    [(Pack dst values ty)
+      (Pack dst (clone-compiler-ir-value-seq values) (ast.clone-ast-type ty))]
+    [(Word dst value index ty)
+      (Word dst (compiler-ir-clone-value value) index (ast.clone-ast-type ty))]
+    [(TailCallIndirect callee args ty)
+      (TailCallIndirect
+        (compiler-ir-clone-value callee)
+        (clone-compiler-ir-call-args args)
+        (ast.clone-ast-type ty))]
+    [(Switch value default-label cases min-tag)
+      (Switch
+        (compiler-ir-clone-value value)
+        default-label
+        (clone-compiler-ir-switch-case-seq cases)
+        min-tag)]
+    [(TotalEnumSwitch value default-label cases min-tag trap-label)
+      (TotalEnumSwitch
+        (compiler-ir-clone-value value)
+        default-label
+        (clone-compiler-ir-switch-case-seq cases)
+        min-tag
+        trap-label)]))
+
+(define (clone-compiler-ir-instr-seq [seq : (& CompilerIrInstrSeq)]) : CompilerIrInstrSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrInstr)
+      (__tl_make-array CompilerIrInstr seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-instr (& (array-ref seq.slots index)))))
+    (CompilerIrInstrSeq slots seq.len)))
+
+(define (clone-compiler-ir-block [block : (& CompilerIrBlock)]) : CompilerIrBlock
+  (match block
+    [(Block label instrs) (Block label (clone-compiler-ir-instr-seq instrs))]))
+
+(define (clone-compiler-ir-block-seq [seq : (& CompilerIrBlockSeq)]) : CompilerIrBlockSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrBlock)
+      (__tl_make-array CompilerIrBlock seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-block (& (array-ref seq.slots index)))))
+    (CompilerIrBlockSeq slots seq.len)))
+
+(define (clone-compiler-ir-block-list [blocks : (& CompilerIrBlockList)]) : CompilerIrBlockList
+  (match blocks
+    [(Array seq) (Array (clone-compiler-ir-block-seq seq))]))
+
+(define (clone-compiler-ir-param [param : (& CompilerIrParam)]) : CompilerIrParam
+  (match param
+    [(Param name ty id) (Param (string.copy name) (ast.clone-ast-type ty) id)]))
+
+(define (clone-compiler-ir-param-seq [seq : (& CompilerIrParamSeq)]) : CompilerIrParamSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrParam)
+      (__tl_make-array CompilerIrParam seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-param (& (array-ref seq.slots index)))))
+    (CompilerIrParamSeq slots seq.len)))
+
+(define (clone-compiler-ir-function [func : (& CompilerIrFunction)]) : CompilerIrFunction
+  (match func
+    [(Function name params ret vars blocks function-abi)
+      (Function
+        name
+        (clone-compiler-ir-param-seq params)
+        (ast.clone-ast-type ret)
+        vars
+        (clone-compiler-ir-block-list blocks)
+        (clone-compiler-ir-function-abi function-abi))]))
+
+(define (clone-compiler-ir-function-seq [seq : (& CompilerIrFunctionSeq)]) : CompilerIrFunctionSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrFunction)
+      (__tl_make-array CompilerIrFunction seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-function (& (array-ref seq.slots index)))))
+    (CompilerIrFunctionSeq slots seq.len)))
+
+(define (clone-compiler-ir-global [global : (& CompilerIrGlobal)]) : CompilerIrGlobal
+  (match global
+    [(Global name ty value)
+      (Global name (ast.clone-ast-type ty) (compiler-ir-clone-value value))]))
+
+(define (clone-compiler-ir-global-seq [seq : (& CompilerIrGlobalSeq)]) : CompilerIrGlobalSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrGlobal)
+      (__tl_make-array CompilerIrGlobal seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-global (& (array-ref seq.slots index)))))
+    (CompilerIrGlobalSeq slots seq.len)))
+
+(define (clone-compiler-ir-extern [extern : (& CompilerIrExtern)]) : CompilerIrExtern
+  (match extern
+    [(Extern
+        name-id
+        source-name-id
+        name
+        ty
+        abi
+        symbol-id
+        links
+        provided
+        storage)
+      (Extern
+        name-id
+        source-name-id
+        (string.copy name)
+        (ast.clone-ast-type ty)
+        (clone-ast-extern-abi abi)
+        symbol-id
+        (clone-ast-extern-link-input-list links)
+        provided
+        (clone-compiler-ir-return-storage storage))]))
+
+(define (clone-compiler-ir-extern-seq [seq : (& CompilerIrExternSeq)]) : CompilerIrExternSeq
+  (let
+    [slots : (__tl_dyn-array CompilerIrExtern)
+      (__tl_make-array CompilerIrExtern seq.len)]
+    (for [index (iterator.range 0 seq.len)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-ir-extern (& (array-ref seq.slots index)))))
+    (CompilerIrExternSeq slots seq.len)))
+
+(define (clone-compiler-ir-return-storage-declaration
+  [decl : (& CompilerIrReturnStorageDeclaration)]) : CompilerIrReturnStorageDeclaration
+  (CompilerIrReturnStorageDeclaration
+    decl.name
+    (ast.clone-ast-type (& decl.signature))
+    decl.c-abi?
+    (clone-compiler-ir-return-storage (& decl.storage))))
+
+(define (clone-compiler-ir-return-storage-index
+  [index : (& CompilerIrReturnStorageIndex)]) : CompilerIrReturnStorageIndex
+  (let
+    [declarations : (__tl_dyn-array CompilerIrReturnStorageDeclaration)
+      (__tl_make-array CompilerIrReturnStorageDeclaration index.len)]
+    (for [i (iterator.range 0 index.len)]
+      (set!
+        (array-ref declarations i)
+        (clone-compiler-ir-return-storage-declaration
+          (& (array-ref index.declarations i)))))
+    (CompilerIrReturnStorageIndex
+      (ir_i64_i64_map.clone-map (& index.names))
+      declarations
+      index.len
+      index.type-count
+      (string.copy (& index.problem)))))
+
+(define (clone-compiler-ir-return-storage-authority
+  [authority : (& CompilerIrReturnStorageAuthority)]) : CompilerIrReturnStorageAuthority
+  (match authority
+    [(CompilerIrReturnStorageAuthority.None)
+      (CompilerIrReturnStorageAuthority.None)]
+    [(CompilerIrReturnStorageAuthority.Invalid problem)
+      (CompilerIrReturnStorageAuthority.Invalid (string.copy problem))]
+    [(CompilerIrReturnStorageAuthority.Captured data)
+      (CompilerIrReturnStorageAuthority.Captured
+        (box
+          (CompilerIrReturnStorageAuthorityData
+            (ast.AstTypePoolStamp
+              data.stamp.cursor-cell
+              data.stamp.revision
+              data.stamp.segment-bases
+              data.stamp.count)
+            data.intern-table
+            data.intern-generation
+            data.target
+            (clone-compiler-ir-return-storage-index (& data.catalog)))))]))
+
+(define (clone-compiler-ir-program [program : (& CompilerIrProgram)]) : CompilerIrProgram
+  (match program
+    [(Program globals functions externs authority)
+      (Program
+        (clone-compiler-ir-global-seq globals)
+        (clone-compiler-ir-function-seq functions)
+        (clone-compiler-ir-extern-seq externs)
+        (clone-compiler-ir-return-storage-authority authority))]))
 
 ;; Relocate only the program shell whose lists are allocated by the enclosing
 ;; lowerer arena. Function payloads already live in lower-ir-arena and remain
@@ -8687,6 +9371,77 @@
 (define (compiler-spmd-decision-list-empty) : CompilerSpmdDecisionList
   (CompilerSpmdDecisionList (__tl_make-array CompilerSpmdDecision 0) 0))
 
+(define (clone-ast-source-span [span : (& ast.AstSourceSpan)]) : ast.AstSourceSpan
+  (ast.AstSourceSpan span.start-line span.start-col span.end-line span.end-col))
+
+(define (clone-compiler-source-location [loc : (& CompilerSourceLocation)]) : CompilerSourceLocation
+  (CompilerSourceLocation loc.path-id (clone-ast-source-span (& loc.span))))
+
+(define (clone-compiler-spmd-decision [item : (& CompilerSpmdDecision)]) : CompilerSpmdDecision
+  (CompilerSpmdDecision
+    (CompilerSpmdSiteId
+      (CompilerIrSymbolId item.site.function.value)
+      item.site.ordinal)
+    item.parent-ordinal
+    (match item.form
+      [(Foreach) (Foreach)]
+      [(Reduce) (Reduce)]
+      [(Scan) (Scan)]
+      [(Compact) (Compact)]
+      [(Broadcast) (Broadcast)]
+      [(Shuffle) (Shuffle)])
+    (match item.backend
+      [(Scalar) (Scalar)]
+      [(Avx2) (Avx2)]
+      [(Avx512) (Avx512)])
+    item.lanes
+    (match item.route
+      [(NativeGangs) (NativeGangs)]
+      [(CompilerFallback) (CompilerFallback)]
+      [(SpecifiedScalar) (SpecifiedScalar)]
+      [(ScalarBackend) (ScalarBackend)]
+      [(Inactive) (Inactive)]
+      [(Rejected) (Rejected)])
+    (match item.reason
+      [(DirectMap) (DirectMap)]
+      [(MaskedMap) (MaskedMap)]
+      [(ContiguousReduction) (ContiguousReduction)]
+      [(FusedReduction) (FusedReduction)]
+      [(ContiguousScan) (ContiguousScan)]
+      [(ScalarBackendSelected) (ScalarBackendSelected)]
+      [(OrderedCompact) (OrderedCompact)]
+      [(ExplicitAtomic) (ExplicitAtomic)]
+      [(ScalarCrossLane) (ScalarCrossLane)]
+      [(IndexType) (IndexType)]
+      [(MapShape) (MapShape)]
+      [(DuplicateDestination) (DuplicateDestination)]
+      [(DependentStores) (DependentStores)]
+      [(MixedLaneShape) (MixedLaneShape)]
+      [(ReductionValueShape) (ReductionValueShape)]
+      [(ScanInputShape) (ScanInputShape)]
+      [(ScanOutputShape) (ScanOutputShape)]
+      [(LaneType) (LaneType)]
+      [(Operator) (Operator)]
+      [(NumericPolicy) (NumericPolicy)]
+      [(VaryingWhile) (VaryingWhile)]
+      [(VaryingIf) (VaryingIf)]
+      [(VaryingEnumMatch) (VaryingEnumMatch)]
+      [(VaryingMatch) (VaryingMatch)]
+      [(ShuffleShape) (ShuffleShape)]
+      [(UnsupportedShift) (UnsupportedShift)]
+      [(UnsupportedMap) (UnsupportedMap)]
+      [(ForeachActive) (ForeachActive)]
+      [(PrivateHelper) (PrivateHelper)]
+      [(NotLowered) (NotLowered)]
+      [(UnsupportedSource) (UnsupportedSource)])
+    (clone-compiler-source-location (& item.primary))
+    (clone-compiler-source-location (& item.actionable))
+    item.frame-start
+    item.frame-count))
+
+(define (clone-compiler-spmd-macro-frame [item : (& CompilerSpmdMacroFrame)]) : CompilerSpmdMacroFrame
+  (CompilerSpmdMacroFrame item.name-id))
+
 (define (compiler-spmd-decision-list-append!
   [items : (&mut items CompilerSpmdDecisionList)]
   [item : CompilerSpmdDecision]) : unit
@@ -8700,7 +9455,9 @@
             CompilerSpmdDecision
             (compiler-source-spans-entry-list-capacity-for (+ len 1)))]
         (for [index (iterator.range 0 len)]
-          (set! (array-ref grown index) (clone (array-ref items.slots index))))
+          (set!
+            (array-ref grown index)
+            (clone-compiler-spmd-decision (& (array-ref items.slots index)))))
         (set! items.slots grown)))
     (set! (array-ref items.slots len) item)
     (set! items.len (+ len 1))))
@@ -8711,7 +9468,9 @@
     [copy : (__tl_dyn-array CompilerSpmdDecision)
       (__tl_make-array CompilerSpmdDecision items.len)]
     (for [index (iterator.range 0 items.len)]
-      (set! (array-ref copy index) (clone (array-ref items.slots index))))
+      (set!
+        (array-ref copy index)
+        (clone-compiler-spmd-decision (& (array-ref items.slots index)))))
     (CompilerSpmdDecisionList copy items.len)))
 
 (defstruct CompilerSpmdMacroFrameList
@@ -8734,7 +9493,9 @@
             CompilerSpmdMacroFrame
             (compiler-source-spans-entry-list-capacity-for (+ len 1)))]
         (for [index (iterator.range 0 len)]
-          (set! (array-ref grown index) (clone (array-ref items.slots index))))
+          (set!
+            (array-ref grown index)
+            (clone-compiler-spmd-macro-frame (& (array-ref items.slots index)))))
         (set! items.slots grown)))
     (set! (array-ref items.slots len) item)
     (set! items.len (+ len 1))))
@@ -8745,7 +9506,9 @@
     [copy : (__tl_dyn-array CompilerSpmdMacroFrame)
       (__tl_make-array CompilerSpmdMacroFrame items.len)]
     (for [index (iterator.range 0 items.len)]
-      (set! (array-ref copy index) (clone (array-ref items.slots index))))
+      (set!
+        (array-ref copy index)
+        (clone-compiler-spmd-macro-frame (& (array-ref items.slots index)))))
     (CompilerSpmdMacroFrameList copy items.len)))
 
 (defstruct CompilerSpmdDecisions
@@ -9316,26 +10079,26 @@
           [(Spans entries instructions _ facts)
             (for [index (iterator.range entry-start entries.len)]
               (let
-                [entry : CompilerSourceSpansEntry
-                  (clone (array-ref entries.slots index))]
+                [entry : (& complete CompilerSourceSpansEntry)
+                  (& (array-ref entries.slots index))]
                 (set!
                   out
                   (compiler-source-spans-insert-located
                     out
-                    entry.name
+                    (CompilerIrSymbolId entry.name.value)
                     entry.path-id
-                    entry.span))))
+                    (clone-ast-source-span (& entry.span))))))
             (for [index (iterator.range instruction-start instructions.len)]
               (let
-                [entry : CompilerSourceSpansInstrEntry
-                  (clone (array-ref instructions.slots index))]
+                [entry : (& complete CompilerSourceSpansInstrEntry)
+                  (& (array-ref instructions.slots index))]
                 (set!
                   out
                   (compiler-source-spans-insert-instr-entry-located
                     out
-                    (compiler-source-spans-instr-entry-key (& entry))
+                    (compiler-source-spans-instr-entry-key entry)
                     entry.path-id
-                    entry.span))))
+                    (clone-ast-source-span (& entry.span))))))
             (set!
               out
               (match out
@@ -9344,11 +10107,13 @@
                     (iterator.range decision-start facts.decisions.len)]
                     (compiler-spmd-decision-list-append!
                       (&mut output.decisions)
-                      (clone (array-ref facts.decisions.slots index))))
+                      (clone-compiler-spmd-decision
+                        (& (array-ref facts.decisions.slots index)))))
                   (for [index (iterator.range frame-start facts.frames.len)]
                     (compiler-spmd-macro-frame-list-append!
                       (&mut output.frames)
-                      (clone (array-ref facts.frames.slots index))))
+                      (clone-compiler-spmd-macro-frame
+                        (& (array-ref facts.frames.slots index)))))
                   (Spans output-entries output-instructions output-count output)]))])
         out)]))
 
@@ -10938,8 +11703,8 @@
               (Source
                 index
                 (compiler-ir-clone-spmd-value-class class)
-                (clone ty))
-              (clone ty)))]))
+                (ast.clone-ast-type (& ty)))
+              (ast.clone-ast-type (& ty))))]))
     (CompilerIrSpmdPrivateAbi
       (V1)
       callee
@@ -10950,7 +11715,9 @@
       (match result
         [(Unit) (Unit)]
         [(Value _ class ty)
-          (Value (compiler-ir-clone-spmd-value-class class) (clone ty))]))))
+          (Value
+            (compiler-ir-clone-spmd-value-class class)
+            (ast.clone-ast-type (& ty)))]))))
 
 ;; Test support: a same-program SPMD call carrying the descriptor
 ;; `compiler-ir-test-spmd-private-abi` derives from its own payload.

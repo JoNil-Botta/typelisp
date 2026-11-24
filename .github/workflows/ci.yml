@@ -19,8 +19,8 @@ jobs:
   # stage0 (cli.tl), runs the one compiler build of the flow (the
   # stage1->stage2->stage3 bootstrap fixpoint over src/main.tl, with a stage4
   # fallback when needed), and then runs its gates on the converged compiler.
-  # Each host's gates run in two CI lanes (#7767 slice 2): scripts/ci-lanes.tsv
-  # assigns every gate of scripts/ci-gates.tsv to exactly one lane, and each
+  # Each host's gates run in two CI lanes (#7767 slice 2): scripts/ci-gates.d/*.tsv
+  # defines every gate and assigns it to exactly one lane per host, and each
   # lane runs scripts/ci-verify.sh --gates with its own gates, their needs and
   # its own bootstrap. No compiler passes between jobs. The gate is
   # fail-closed: Linux and Windows must run every applicable gate. Lane plans
@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        # Lane names only; scripts/ci-lanes.tsv owns their gates. host_checks
+        # Lane names only; scripts/ci-gates.d/*.tsv owns their gates. host_checks
         # runs the host-wide source and editor checks once per host.
         include:
           - lane: linux-1
@@ -64,7 +64,7 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 2
 
-      # Fails every lane when scripts/ci-lanes.tsv leaves a gate unassigned,
+      # Fails every lane when scripts/ci-gates.d/*.tsv leaves a gate unassigned,
       # assigns one twice or omits a declared duplicate. Only a lane that holds
       # nothing else beside build-invariance gets three pool workers (hosted
       # only); under this layout no lane does.
@@ -253,7 +253,7 @@ jobs:
           if-no-files-found: error
 
       # Evidence uploads run in every lane; each uploads only what the gates
-      # scripts/ci-lanes.tsv gave that lane produced.
+      # scripts/ci-gates.d/*.tsv gave that lane produced.
       - name: Upload C comparison provenance
         if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4

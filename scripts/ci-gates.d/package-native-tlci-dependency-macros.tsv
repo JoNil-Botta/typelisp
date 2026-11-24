@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+package-native-tlci-dependency-macros	150	all	package native TLCI dependency macros	bootstrap-compiler,stage2-compile-profile-verifier	profile	1024	spmd-package	scripts/verify-package-native-tlci.sh	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+package-metadata-only-tlci-dependency-catalogs	240	all	package metadata-only TLCI dependency catalogs	bootstrap-compiler,stage2-compile-profile-verifier	profile	512	-	scripts/verify-package-metadata-tlci.sh	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

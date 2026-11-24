@@ -3,7 +3,8 @@ set -eu
 
 # ci-verify.sh - the repository's CI verification gate.
 #
-# Runs the gates of scripts/ci-gates.tsv in table order. Fetches the published
+# Runs the gates of scripts/ci-gates.d/*.tsv in Kahn topological order
+# (priority desc, id asc). Fetches the published
 # stage0 artifact when TYPELISP_BIN is unset. The seed performs the single
 # compiler build of the flow: the stage1->stage2->stage3 bootstrap fixpoint over
 # src/main.tl, with a stage4 fallback when needed. Every remaining gate then
@@ -19,7 +20,8 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-GATES_FILE="$ROOT/scripts/ci-gates.tsv"
+. "$ROOT/scripts/lib-ci-gates.sh"
+GATES_DIR="$ROOT/scripts/ci-gates.d"
 HOST_TOOLS_FILE="$ROOT/scripts/ci-host-tools.tsv"
 TAB=$(printf '\t')
 
@@ -28,8 +30,8 @@ usage() {
 usage: scripts/ci-verify.sh [--gates ID[,ID...]] [--jobs N --memory-mib MIB]
        scripts/ci-verify.sh --list-gates linux|windows [--gates ID[,ID...]]
 
-Runs the repository's CI verification gate: every gate of scripts/ci-gates.tsv
-that applies to this host, in table order.
+Runs the repository's CI verification gate: every gate of scripts/ci-gates.d/*.tsv
+that applies to this host, in scheduled topological order.
 If TYPELISP_BIN is unset, downloads stage0-latest with scripts/fetch-stage0.sh.
 TYPELISP_BIN is the seed compiler and performs the single compiler build of
 the flow: the bootstrap stage1->stage2->stage3 fixpoint over src/main.tl, with
@@ -71,108 +73,24 @@ EOF
 # ci_gates_plan HOST [ID,...]
 #   Validate the whole table, then print the HOST rows (id, hosts, label,
 #   needs projected onto HOST, compiler, memory, locks, command), or only the
-#   requested gates plus the closure of their needs, in table order.
+#   requested gates plus the closure of their needs, in scheduled order.
 ci_gates_plan() {
-    awk -F '\t' -v host="$1" -v request="${2:-}" '
-        function fail(message) {
-            print "ci-gates.tsv: " message > "/dev/stderr"
-            invalid = 1
-            exit 1
-        }
-        { sub(/\r$/, "") }
-        /^#/ { next }
-        !header {
-            if ($0 != "id\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand")
-                fail("line " NR ": expected the id/hosts/label/needs/compiler/memory/locks/command header")
-            header = 1
-            next
-        }
-        {
-            if (NF != 8 || $1 !~ /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
-                fail("line " NR ": expected eight fields and a lowercase kebab-case ID")
-            if ($2 != "all" && $2 != "linux" && $2 != "windows") fail("line " NR ": invalid hosts: " $2)
-            if ($3 == "") fail("line " NR ": empty label")
-            if ($5 != "-" && $5 != "stage2" && $5 != "profile") fail("line " NR ": invalid compiler: " $5)
-            if ($6 !~ /^[1-9][0-9]*$/) fail("line " NR ": memory must be a positive MiB count: " $6)
-            if ($7 != "-" && $7 !~ /^[a-z][a-z0-9-]*(,[a-z][a-z0-9-]*)*$/) fail("line " NR ": invalid locks: " $7)
-            if ($8 == "") fail("line " NR ": empty command")
-            if ($1 in gate_hosts) fail("line " NR ": duplicate gate ID: " $1)
-            gate_hosts[$1] = $2
-            # A need names an earlier gate that runs wherever this one does,
-            # optionally on one host only, so table order is a topological order.
-            projected = ""
-            if ($4 != "-") {
-                count = split($4, list, ",")
-                for (n = 1; n <= count; n++) {
-                    need = list[n]
-                    need_host = ""
-                    at = index(need, "@")
-                    if (at > 0) {
-                        need_host = substr(need, at + 1)
-                        need = substr(need, 1, at - 1)
-                        if (need_host != "linux" && need_host != "windows") fail("line " NR ": invalid need host: " list[n])
-                    }
-                    if (!(need in gate_hosts) || need == $1) fail("line " NR ": " $1 " needs an unknown or later gate: " need)
-                    covered = (need_host != "" ? need_host : $2)
-                    if (gate_hosts[need] != "all" && gate_hosts[need] != covered)
-                        fail("line " NR ": " $1 " needs a gate that does not run on its hosts: " need)
-                    if (need_host == "" || need_host == host) projected = (projected == "" ? need : projected "," need)
-                    if (need_host == "") direct[need] = 1
-                }
-            }
-            # A gate receives a produced compiler only from a gate it needs.
-            if ($5 == "stage2" && !direct["bootstrap-compiler"])
-                fail("line " NR ": " $1 " runs the stage2 compiler without needing bootstrap-compiler")
-            if ($5 == "profile" && !direct["stage2-compile-profile-verifier"])
-                fail("line " NR ": " $1 " runs the profile compiler without needing stage2-compile-profile-verifier")
-            delete direct
-            if ($2 != "all" && $2 != host) next
-            rows++
-            row[rows] = $1 "\t" $2 "\t" $3 "\t" (projected == "" ? "-" : projected) "\t" $5 "\t" $6 "\t" $7 "\t" $8
-            needs[rows] = projected
-            position[$1] = rows
-        }
-        END {
-            if (invalid) exit 1
-            if (!rows) fail("no gates for " host)
-            if (request == "") {
-                for (k = 1; k <= rows; k++) print row[k]
-                exit 0
-            }
-            count = split(request, requested, ",")
-            for (r = 1; r <= count; r++) {
-                id = requested[r]
-                if (id == "") fail("empty gate ID in selection: " request)
-                if (seen[id]++) fail("duplicate gate in selection: " id)
-                if (!(id in position)) {
-                    if (id in gate_hosts) fail("gate does not run on " host " (" gate_hosts[id] "): " id)
-                    fail("unknown gate in selection: " id)
-                }
-                selected[position[id]] = 1
-            }
-            # Needs name earlier gates only, so one reverse pass is a closure.
-            for (k = rows; k >= 1; k--) {
-                if (!selected[k] || needs[k] == "") continue
-                count = split(needs[k], list, ",")
-                for (n = 1; n <= count; n++) selected[position[list[n]]] = 1
-            }
-            for (k = 1; k <= rows; k++) if (selected[k]) print row[k]
-        }
-    ' "$GATES_FILE"
+    ci_gates_plan_dir "$GATES_DIR" "$1" "${2:-}"
 }
 
 # Every command must name something that exists: the scripts/ files it runs
 # and the gate_* functions defined in this file.
 ci_gates_check_commands() {
     _ci_missing=0
-    for _ci_word in $(awk -F '\t' '!/^#/ && NF == 8 && $1 != "id" { print $8 }' "$GATES_FILE" |
+    _ci_loaded=$(ci_gates_load "$GATES_DIR") || return 1
+    for _ci_word in $(printf '%s\n' "$_ci_loaded" | awk -F '\t' '{ print $9 }' |
         tr -d '\r"' | tr ' ' '\n' |
         grep -E '^(gate_[a-z0-9_]+|scripts/[A-Za-z0-9._/-]+)$' | sort -u); do
         case "$_ci_word" in
             gate_*) command -v "$_ci_word" >/dev/null 2>&1 ;;
             *) [ -f "$ROOT/$_ci_word" ] ;;
         esac || {
-            echo "ci-gates.tsv: command names a missing script or gate function: $_ci_word" >&2
+            echo "ci-gates.d: command names a missing script or gate function: $_ci_word" >&2
             _ci_missing=1
         }
     done
@@ -188,6 +106,7 @@ ci_verify_error() {
 #   HOST rows of the selected gates: tool, the selected gates that run it, check
 #   and install.
 ci_host_tools_plan() {
+    _ci_ht_gates=$(ci_gates_load "$GATES_DIR") || return 1
     awk -F '\t' -v host="$1" -v selection=",${2:-}," '
         function fail(message) {
             print "ci-host-tools.tsv: " message > "/dev/stderr"
@@ -195,10 +114,9 @@ ci_host_tools_plan() {
             exit 1
         }
         { sub(/\r$/, "") }
-        # ci_gates_plan has validated the gate table; only its hosts are read.
+        # ci_gates_load has validated the gate table; only its hosts are read.
         FNR == NR {
-            if (/^#/) next
-            if (gates_header++) gate_hosts[$1] = $2
+            gate_hosts[$1] = $3
             next
         }
         /^#/ { next }
@@ -231,7 +149,9 @@ ci_host_tools_plan() {
             if (invalid) exit 1
             if (!header) fail("missing the tool/hosts/gates/check/install header")
         }
-    ' "$GATES_FILE" "$HOST_TOOLS_FILE"
+    ' - "$HOST_TOOLS_FILE" <<EOF
+$_ci_ht_gates
+EOF
 }
 
 # ci_host_gnu_time BIN

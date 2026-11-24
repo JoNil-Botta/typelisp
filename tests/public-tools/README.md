@@ -65,7 +65,7 @@ TYPELISP_BIN=./target/stage0/typelisp tests/public-tools/run-corpus.sh lsp fresh
 `ci-affected.sh --self-test` audit, Linux), `cli-transcripts-1` to
 `cli-transcripts-3` (the `tests/cli/public-*.cases` transcripts, split into
 three balanced groups that together cover every file exactly once) and
-`corpora`; `scripts/ci-gates.tsv` runs each part as its own gate, and
+`corpora`; `scripts/ci-gates.d/*.tsv` runs each part as its own gate, and
 `scripts/ci-verify.sh --gates stage2-public-tool-affected-map,
 stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,
 stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora` runs them all.

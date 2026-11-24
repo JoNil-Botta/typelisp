@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-crypto-aes-fixed-work-asm-shape-gate	420	linux	stage2 crypto AES fixed-work asm shape gate	bootstrap-compiler	stage2	512	-	scripts/verify-codegen-cases.sh --only 'aes-*' tests/codegen/crypto-aes.cases	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior, opaque secret storage and the reviewed both-target AES body pins.

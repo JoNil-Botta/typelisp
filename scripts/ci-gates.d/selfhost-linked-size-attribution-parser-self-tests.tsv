@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+selfhost-linked-size-attribution-parser-self-tests	1030	all	selfhost linked-size attribution parser self-tests	-	-	256	-	scripts/analyze-selfhost-build-asm-size.sh --self-test	linux-2	windows-2	compiler,stdlib,corpus	Builds a mangled module-prefix inventory from src and stdlib, even in self-test mode.

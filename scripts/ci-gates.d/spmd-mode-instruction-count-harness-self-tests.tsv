@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+spmd-mode-instruction-count-harness-self-tests	960	linux	SPMD mode instruction-count harness self-tests	-	-	256	-	scripts/measure-spmd-mode-instruction-counts.sh --self-test	linux-2	-	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

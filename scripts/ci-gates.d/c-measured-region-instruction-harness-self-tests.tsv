@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+c-measured-region-instruction-harness-self-tests	950	linux	C measured-region instruction harness self-tests	-	-	256	-	scripts/measure-instruction-counts.sh --self-test --output target/instruction-count-c-region-self-test	linux-2	-	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

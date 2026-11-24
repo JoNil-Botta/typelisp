@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+4944.507	BCE multi-block guard versioning (profitability, 2-tier split, header-check hoist, outer-loop LICM guard) plus cascade-aware unroll dead-clone gate add optimizer work per compiled loop; local back-to-back own cost +519,983,668 Ir (M(T) 105,683,898,889 at 16e5f1988 merge vs M(B) 105,163,915,221 at main f519605ab, same host)

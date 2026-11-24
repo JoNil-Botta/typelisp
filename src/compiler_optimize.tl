@@ -65401,7 +65401,18 @@
               step
               (- 0 step))
             (> mode 0))
-            [(Some max-trips) (<= max-trips copies)]
+            [(Some max-trips)
+              (let
+                [min-copies : i64
+                  (if (and
+                    (> (opt-unroll-cascade-count copies) 0)
+                    (opt-unroll-cascade-body-ok?
+                      (& instrs.slots)
+                      phi-count
+                      (- (ir.compiler-ir-instr-seq-count instrs) 1)))
+                    (opt-unroll-cascade-copies)
+                    copies)]
+                (<= max-trips min-copies))]
             [(No) false])
           (opt-unroll-reason-dead-clone)]
         ;; UNR-2: the descending side's own trip-count refusal -- a group the

@@ -3508,6 +3508,13 @@
   (Ok LowerResourceBindings)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+(defenum LowerResourceCleanupBinding
+  (Binding LowerState sym_i64_env.SymI64Env tc_core.TcTypeEnv i64))
+
+(defenum ResultLowerResourceCleanupBinding
+  (Ok LowerResourceCleanupBinding)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
 (defenum LowerLoopTarget
   (Target i64 i64))
 
@@ -25530,8 +25537,10 @@
     [_ (Err "lower: resource cleanup must be a direct function name")]))
 
 (define (lower-emit-cleanup-call
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [hidden-name-id : i64]
   [cleanup-name-id : i64]) : ResultLowerState
   (let
@@ -25541,20 +25550,60 @@
         hidden-name-id
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? resource-id)
-      (match (lower-state-alloc-var state)
-        [(Alloc allocated var-id)
-          (let
-            [call-name : i64
-              (lower-resolve-call-name-id allocated env cleanup-name-id)]
-            (Ok
-              (lower-state-emit
-                allocated
-                (Call var-id call-name (One (Var resource-id)) (Unit)))))])
+      (let
+        [cleanup-local-id : i64
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            cleanup-name-id
+            (csym.compiler-symbols-missing-handle))]
+        (if (csym.compiler-symbols-handle-found? cleanup-local-id)
+          (match (tc_core.tc-lookup-id type-env cleanup-name-id)
+            [(Ok fn-ty)
+              (if (lower-function-type? (clone fn-ty))
+                (let
+                  [arg-id : i64
+                    (ast.ast-node-pool-context-expr-push
+                      (tc_core.tc-context-pools ctx)
+                      (Var hidden-name-id))]
+                  [args : ast.AstExprList
+                    (ast.ast-expr-cons arg-id (& (ast.ast-expr-list-new)))]
+                  (match (lower-indirect-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    fn-ty
+                    (Var cleanup-local-id)
+                    cleanup-name-id
+                    (lower-state-next-var state)
+                    args
+                    (Unit)
+                    (Literal (Unit)))
+                    [(Ok lowered)
+                      (match lowered
+                        [(Expr call-state _ _) (Ok call-state)])]
+                    [(Err message) (Err message)]))
+                (Err
+                  (box
+                    (lower-diagnostic
+                      "lower: resource cleanup target is not a function"))))]
+            [(Err message) (Err (box (lower-diagnostic message)))])
+          (match (lower-state-alloc-var state)
+            [(Alloc allocated var-id)
+              (let
+                [call-name : i64
+                  (lower-resolve-call-name-id allocated env cleanup-name-id)]
+                (Ok
+                  (lower-state-emit
+                    allocated
+                    (Call var-id call-name (One (Var resource-id)) (Unit)))))])))
       (Err (box (lower-diagnostic "lower: missing resource cleanup binding"))))))
 
 (define (lower-emit-cleanup-call-if-live
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [hidden-name-id : i64]
   [cleanup-name-id : i64]
   [live-name-id : i64]) : ResultLowerState
@@ -25580,8 +25629,10 @@
                 [called-state
                   (try
                     (lower-emit-cleanup-call
+                      ctx
                       cleanup-state
                       env
+                      type-env
                       hidden-name-id
                       cleanup-name-id))]
                 (Ok
@@ -25680,8 +25731,10 @@
       (+ count 1))))
 
 (define (lower-emit-cleanup-stack-at
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [hidden-name-ids : (__tl_dyn-array i64)]
   [cleanup-name-ids : (__tl_dyn-array i64)]
   [live-name-ids : (__tl_dyn-array i64)]
@@ -25694,31 +25747,41 @@
         (try
           (if (= live-name-id 0)
             (lower-emit-cleanup-call
+              ctx
               state
               env
+              type-env
               (array-ref hidden-name-ids index)
               (array-ref cleanup-name-ids index))
             (lower-emit-cleanup-call-if-live
+              ctx
               state
               env
+              type-env
               (array-ref hidden-name-ids index)
               (array-ref cleanup-name-ids index)
               live-name-id)))]
       (lower-emit-cleanup-stack-at
+        ctx
         next-state
         env
+        type-env
         hidden-name-ids
         cleanup-name-ids
         live-name-ids
         (- index 1)))))
 
 (define (lower-emit-cleanup-stack
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [cleanups : LowerCleanupStack]) : ResultLowerState
   (lower-emit-cleanup-stack-at
+    ctx
     state
     env
+    type-env
     cleanups.hidden-name-ids
     cleanups.cleanup-name-ids
     cleanups.live-name-ids
@@ -25728,6 +25791,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [types : ast.AstTypeList]) : ResultLowerState
   (if (or
     (= (ast.ast-type-list-len (& types)) 2)
@@ -25746,14 +25810,22 @@
           (match cleanup-ty
             [(Var cleanup-name)
               (if (= (ast.ast-type-list-len (& types)) 2)
-                (lower-emit-cleanup-call state env hidden-name cleanup-name)
+                (lower-emit-cleanup-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  hidden-name
+                  cleanup-name)
                 (match (tc_core.tc-context-type-get
                   ctx
                   (ast.ast-type-list-get (& types) 2 (ast.ast-type-id-fallback)))
                   [(Var live-name)
                     (lower-emit-cleanup-call-if-live
+                      ctx
                       state
                       env
+                      type-env
                       hidden-name
                       cleanup-name
                       live-name)]
@@ -25850,6 +25922,7 @@
                     ctx
                     cur-state
                     env
+                    rest-env
                     (deref types))
                     [(Ok next-state) (set! cur-state next-state)]
                     [(Err message)
@@ -41546,8 +41619,6 @@
                                 raw-name)])
                           (owned_view.compiler-owned-shared-view name))]
                       [name-id : i64 source-key-id]
-                      [cpu-kind : i64
-                        (tc_core.tc-cpu-query-head-kind ctx type-env raw-name)]
                       [builtin-available : bool
                         (or
                           (and
@@ -41788,7 +41859,9 @@
                             args
                             result-ty
                             origin)]
-                        [(tc_core.tc-cpuid-head? ctx type-env raw-name)
+                        [(and
+                            (cbi.compiler-builtin-lower-cpuid-id? source-id)
+                            (tc_core.tc-cpuid-head? ctx type-env raw-name))
                           (lower-cpuid-call
                             ctx
                             state
@@ -41797,14 +41870,45 @@
                             args
                             result-ty
                             origin)]
-                        [(>= cpu-kind 0)
+                        [(and
+                            (>=
+                              (tc_core.tc-cpu-query-spelling-kind source-id)
+                              0)
+                            (>=
+                              (tc_core.tc-cpu-query-kind
+                                ctx
+                                type-env
+                                raw-name
+                                source-id)
+                              0))
                           (lower-cpu-query-call
                             ctx
                             state
                             env
                             type-env
                             args
-                            cpu-kind
+                            (tc_core.tc-cpu-query-spelling-kind source-id)
+                            origin)]
+                        [(and
+                            (>=
+                              (tc_core.tc-process-syscall-spelling-kind
+                                source-id)
+                              0)
+                            (>=
+                              (tc_core.tc-process-syscall-kind
+                                ctx
+                                type-env
+                                raw-name
+                                source-id)
+                              0))
+                          (lower-process-syscall-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            (tc_core.tc-process-syscall-spelling-kind source-id)
+                            result-ty
                             origin)]
                         [(and
                             builtin-available
@@ -42484,6 +42588,27 @@
             ctx
             origin
             "lower: wrong number of CPU query arguments")))]))
+
+(define (lower-process-syscall-call
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [args : ast.AstExprList]
+  [kind : i64]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (cond
+    [(and (< kind 3) (= args.len 0)) (lower-entry-load state kind result-ty)]
+    [(and (= kind 3) (>= args.len 1) (<= args.len 7))
+      (lower-syscall ctx state env type-env args)]
+    [else
+      (Err
+        (box
+          (lower-diagnostic-at-expr
+            ctx
+            origin
+            "lower: wrong number of process/syscall arguments")))]))
 
 (define (lower-word-view-item
   [ctx : tc_core.TcContext]
@@ -48704,6 +48829,57 @@
   [cleanups : LowerCleanupStack]) : ResultLowerResourceBindings
   (lower-resource-bindings-at ctx state env type-env (& bindings) cleanups 0))
 
+(define (lower-resource-cleanup-binding
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [outer-env : sym_i64_env.SymI64Env]
+  [outer-type-env : tc_core.TcTypeEnv]
+  [bound-env : sym_i64_env.SymI64Env]
+  [bound-type-env : tc_core.TcTypeEnv]
+  [cleanup : ast.AstExpr]
+  [cleanup-name-id : i64]) : ResultLowerResourceCleanupBinding
+  (let
+    [local-cleanup-id : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        outer-env
+        cleanup-name-id
+        (csym.compiler-symbols-missing-handle))]
+    (if (not (csym.compiler-symbols-handle-found? local-cleanup-id))
+      (Ok (Binding state bound-env bound-type-env cleanup-name-id))
+      (match (tc_core.tc-lookup-id outer-type-env cleanup-name-id)
+        [(Ok fn-ty)
+          (if (lower-function-type? (clone fn-ty))
+            (match (lower-state-alloc-var state)
+              [(Alloc allocated cleanup-var-id)
+                (let
+                  [hidden-cleanup-id : i64
+                    (cis.intern-lower-private-identity-raw
+                      (lower-cleanup-hidden-name-id allocated cleanup-var-id))]
+                  [fn-ir-ty : ast.AstType
+                    (lower-one-word-register-storage-type ctx fn-ty)]
+                  (Ok
+                    (Binding
+                      (lower-state-emit
+                        allocated
+                        (Mov cleanup-var-id (Var local-cleanup-id) fn-ir-ty))
+                      (sym_i64_env.sym-i64-bind-id
+                        bound-env
+                        hidden-cleanup-id
+                        cleanup-var-id)
+                      (tc_core.tc-bind-id
+                        bound-type-env
+                        hidden-cleanup-id
+                        fn-ty)
+                      hidden-cleanup-id)))])
+            (Err
+              (box
+                (lower-diagnostic-at-expr
+                  ctx
+                  cleanup
+                  "lower: call target is not a function"))))]
+        [(Err message)
+          (Err (box (lower-diagnostic-at-expr ctx cleanup message)))]))))
+
 (define (lower-resource-bindings-at
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -48764,7 +48940,7 @@
                                     (lower-cleanup-hidden-name-id
                                       allocated
                                       var-id))]
-                                [bound-state : LowerState
+                                [resource-state : LowerState
                                   (lower-state-emit
                                     (lower-exposure-seed
                                       allocated
@@ -48773,7 +48949,7 @@
                                       name
                                       var-id)
                                     (Mov var-id init-value binding-ir-ty))]
-                                [bound-env : sym_i64_env.SymI64Env
+                                [resource-env : sym_i64_env.SymI64Env
                                   (sym_i64_env.sym-i64-bind-id
                                     (sym_i64_env.sym-i64-bind-id
                                       env
@@ -48781,62 +48957,82 @@
                                       var-id)
                                     hidden-name-id
                                     var-id)]
-                                [bound-type-env : tc_core.TcTypeEnv
-                                  (lower-type-env-push-cleanup
-                                    bound-state
+                                [resource-type-env : tc_core.TcTypeEnv
+                                  (tc_core.tc-bind-id
                                     (tc_core.tc-bind-id
                                       type-env
-                                      name
-                                      (lower-global-shared-view binding-ty))
-                                    hidden-name-id
-                                    cleanup-name-id)]
-                                (if move-aware?
-                                  (match (lower-state-alloc-var bound-state)
-                                    [(Alloc live-state live-var-id)
-                                      (let
-                                        [live-name-id : i64
-                                          (cis.intern-lower-private-identity-raw
-                                            (lower-cleanup-live-name-id
-                                              live-state
-                                              var-id))]
-                                        [move-aware-type-env : tc_core.TcTypeEnv
-                                          (lower-type-env-push-move-aware-cleanup
-                                            live-state
-                                            (tc_core.tc-bind-id
-                                              type-env
-                                              name
-                                              binding-ty)
-                                            hidden-name-id
-                                            cleanup-name-id
-                                            live-name-id)]
-                                        (lower-resource-bindings-at
-                                          ctx
-                                          (lower-state-emit
-                                            live-state
-                                            (Mov live-var-id (Bool true) (Bool)))
-                                          (sym_i64_env.sym-i64-bind-id
-                                            bound-env
-                                            live-name-id
-                                            live-var-id)
-                                          move-aware-type-env
-                                          bindings
-                                          (lower-cleanup-stack-push-move-aware
-                                            cleanups
-                                            hidden-name-id
-                                            cleanup-name-id
-                                            live-name-id)
-                                          (+ index 1)))])
-                                  (lower-resource-bindings-at
-                                    ctx
-                                    bound-state
-                                    bound-env
-                                    bound-type-env
-                                    bindings
-                                    (lower-cleanup-stack-push
-                                      cleanups
                                       hidden-name-id
-                                      cleanup-name-id)
-                                    (+ index 1))))]))]
+                                      (clone binding-ty))
+                                    name
+                                    binding-ty)]
+                                [cleanup-bound : LowerResourceCleanupBinding
+                                  (try
+                                    (lower-resource-cleanup-binding
+                                      ctx
+                                      resource-state
+                                      env
+                                      type-env
+                                      resource-env
+                                      resource-type-env
+                                      cleanup
+                                      cleanup-name-id))]
+                                (match cleanup-bound
+                                  [(Binding
+                                      bound-state
+                                      bound-env
+                                      base-type-env
+                                      effective-cleanup-id)
+                                    (if move-aware?
+                                      (match (lower-state-alloc-var bound-state)
+                                        [(Alloc live-state live-var-id)
+                                          (let
+                                            [live-name-id : i64
+                                              (cis.intern-lower-private-identity-raw
+                                                (lower-cleanup-live-name-id
+                                                  live-state
+                                                  var-id))]
+                                            [move-aware-type-env : tc_core.TcTypeEnv
+                                              (lower-type-env-push-move-aware-cleanup
+                                                live-state
+                                                base-type-env
+                                                hidden-name-id
+                                                effective-cleanup-id
+                                                live-name-id)]
+                                            (lower-resource-bindings-at
+                                              ctx
+                                              (lower-state-emit
+                                                live-state
+                                                (Mov
+                                                  live-var-id
+                                                  (Bool true)
+                                                  (Bool)))
+                                              (sym_i64_env.sym-i64-bind-id
+                                                bound-env
+                                                live-name-id
+                                                live-var-id)
+                                              move-aware-type-env
+                                              bindings
+                                              (lower-cleanup-stack-push-move-aware
+                                                cleanups
+                                                hidden-name-id
+                                                effective-cleanup-id
+                                                live-name-id)
+                                              (+ index 1)))])
+                                      (lower-resource-bindings-at
+                                        ctx
+                                        bound-state
+                                        bound-env
+                                        (lower-type-env-push-cleanup
+                                          bound-state
+                                          base-type-env
+                                          hidden-name-id
+                                          effective-cleanup-id)
+                                        bindings
+                                        (lower-cleanup-stack-push
+                                          cleanups
+                                          hidden-name-id
+                                          effective-cleanup-id)
+                                        (+ index 1)))]))]))]
                       [(Err message)
                         (Err
                           (box (lower-diagnostic-at-expr ctx cleanup message)))])]))]
@@ -48900,7 +49096,12 @@
                 (let
                   [cleanup-state : LowerState
                     (try
-                      (lower-emit-cleanup-stack body-state body-env cleanups))]
+                      (lower-emit-cleanup-stack
+                        ctx
+                        body-state
+                        body-env
+                        body-type-env
+                        cleanups))]
                   (ResultLowerExpr.Ok
                     (LowerExpr.Expr cleanup-state value body-ty))))]))]
       ;; No cleanup runs on a never edge.
@@ -75723,6 +75924,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [bindings : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [expr : (& ast.AstExpr)]
   [ty : pointer_proof.PointerProofType]) : pointer_proof.PointerProofOperation
   (match expr
@@ -75768,20 +75970,31 @@
         (& (lower-context-expr-get ctx func-id)))
         [(Var name)
           (let
-            [names : LowerNameCache (lower-state-names state)]
-            [lookup : i64
-              (lower-name-cache-resolve-logical-id (& names) name name)]
-            [callable : bool
-              (and
-                (not (sym_i64_env.sym-i64-contains-id bindings name))
-                (lower-top-level-callable-lookup-id?
-                  ctx
-                  (lower-callable-lookup-id ctx name lookup)))]
-            (if callable
-              (DirectCall
-                (ir.compiler-ir-symbol-typed-id
-                  (lower-resolve-call-name-id state bindings name)))
-              IndirectCall))]
+            [ps-kind : i64
+              (tc_core.tc-process-syscall-head-kind ctx type-env name)]
+            (cond
+              [(= ps-kind 1) ProgramArgv]
+              [(= ps-kind 2) ProgramEnvp]
+              [(>= ps-kind 0)
+                (if (lower-pointer-proof-scalar-type? ty)
+                  Scalar
+                  Unsupported)]
+              [else
+                (let
+                  [names : LowerNameCache (lower-state-names state)]
+                  [lookup : i64
+                    (lower-name-cache-resolve-logical-id (& names) name name)]
+                  [callable : bool
+                    (and
+                      (not (sym_i64_env.sym-i64-contains-id bindings name))
+                      (lower-top-level-callable-lookup-id?
+                        ctx
+                        (lower-callable-lookup-id ctx name lookup)))]
+                  (if callable
+                    (DirectCall
+                      (ir.compiler-ir-symbol-typed-id
+                        (lower-resolve-call-name-id state bindings name)))
+                    IndirectCall))]))]
         [_ IndirectCall])]
     ;; Binder forms other than let and parameters are not modelled. A read of
     ;; one of their bindings would miss the capture's bindings and could
@@ -75866,7 +76079,7 @@
             [(Ok source-ty) (lower-pointer-proof-type ctx source-ty)]
             [(Err _) Missing])]
         [operation : pointer_proof.PointerProofOperation
-          (lower-pointer-proof-operation ctx state bindings expr ty)]
+          (lower-pointer-proof-operation ctx state bindings type-env expr ty)]
         [operands : proof_refs.Vec
           (pointer_proof.pointer-proof-input-operands input)]
         [function : ir.CompilerIrSymbolId

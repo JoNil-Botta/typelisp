@@ -38,6 +38,7 @@
 (import compiler_lower as lower)
 (import package_source_core)
 (import compiler_optimize)
+(import compiler_profile_state as profile_state)
 (import compiler_symbols as csym)
 (import compiler_typecheck_api)
 (import compiler_typecheck_core as tc_core)
@@ -118,6 +119,8 @@
 (define tltest-failed-count-offset : i64
   1000000000)
 (define tltest-prefix-cache-stats : bool
+  false)
+(define tltest-combined : bool
   false)
 (define tltest-list-only : bool
   false)
@@ -364,6 +367,20 @@
           "test: failed to read --batch list file: "
           (io.error-message error)))]))
 
+(define (tltest-combined-config-error
+  [combined : bool]
+  [has-batch : bool]
+  [list-only : bool]
+  [test-mode : TestMode]) : TestMaybeString
+  (if (not combined)
+    (No)
+    (cond
+      [(not has-batch) (Some "test: --combined requires --batch")]
+      [list-only (Some "test: --combined cannot be combined with --list")]
+      [(tltest-check-mode? test-mode)
+        (Some "test: --combined cannot be combined with --check")]
+      [else (No)])))
+
 (define (tltest-config-finish
   [source : String]
   [has-source : bool]
@@ -379,37 +396,53 @@
     (Err "test: --seed requires --shuffle")
     (match batch-list
       [(Some list-path)
-        (cond
-          [(and tltest-list-only tltest-prefix-cache-stats)
-            (Err "test: --prefix-cache-stats cannot be combined with --list")]
-          [has-manifest
-            (Err "test: cannot combine --batch with --manifest-path")]
-          [has-source (Err "test: cannot combine input paths with --batch")]
-          [else
-            (let
-              [paths (try (tltest-batch-paths list-path))]
-              (if (cli_svec.is-empty? (& paths))
-                (Err "test: --batch list is empty")
-                (Ok (Batch paths target mode roots opt-level test-mode))))])]
+        (match (tltest-combined-config-error
+          tltest-combined
+          true
+          tltest-list-only
+          test-mode)
+          [(Some message) (Err message)]
+          [(No)
+            (cond
+              [(and tltest-list-only tltest-prefix-cache-stats)
+                (Err
+                  "test: --prefix-cache-stats cannot be combined with --list")]
+              [has-manifest
+                (Err "test: cannot combine --batch with --manifest-path")]
+              [has-source (Err "test: cannot combine input paths with --batch")]
+              [else
+                (let
+                  [paths (try (tltest-batch-paths list-path))]
+                  (if (cli_svec.is-empty? (& paths))
+                    (Err "test: --batch list is empty")
+                    (Ok (Batch paths target mode roots opt-level test-mode))))])])]
       [(No)
         (if tltest-prefix-cache-stats
           (Err "test: --prefix-cache-stats requires --batch")
-          (if has-source
-            (if has-manifest
-              (Err "test: cannot combine source path with --manifest-path")
-              (let
-                [source-roots : cli_svec.Vec
-                  (tltest-source-roots (& source) roots)]
-                (Ok (File source target mode source-roots opt-level test-mode))))
-            (Ok
-              (Package
-                manifest-path
-                has-manifest
-                target
-                mode
-                roots
-                opt-level
-                test-mode))))])))
+          (match (tltest-combined-config-error
+            tltest-combined
+            false
+            tltest-list-only
+            test-mode)
+            [(Some message) (Err message)]
+            [(No)
+              (if has-source
+                (if has-manifest
+                  (Err "test: cannot combine source path with --manifest-path")
+                  (let
+                    [source-roots : cli_svec.Vec
+                      (tltest-source-roots (& source) roots)]
+                    (Ok
+                      (File source target mode source-roots opt-level test-mode))))
+                (Ok
+                  (Package
+                    manifest-path
+                    has-manifest
+                    target
+                    mode
+                    roots
+                    opt-level
+                    test-mode)))]))])))
 
 ;; Testing a module of the implicit prelude reads the prelude from that file
 ;; rather than the test-blanked embedded copy (#8813).
@@ -435,7 +468,7 @@
         "--stdlib-root <dir> --cfg <name> --target <target> --debug|-g|--backtrace --opt-level <0|1|2|s> -Os
          --check --list --filter <substring> --exact <name> --include-ignored
          --include-slow --shuffle --seed <u64> --backend-mode <mode>
-         --manifest-path <file> --batch <file> --prefix-cache-stats"
+         --manifest-path <file> --batch <file> --combined --prefix-cache-stats"
         start
         count)]
     [source : String ""]
@@ -445,6 +478,7 @@
     [test-mode : TestMode Run]
     [batch-list : TestMaybeString (No)]
     (set! tltest-prefix-cache-stats false)
+    (set! tltest-combined false)
     (set! tltest-list-only false)
     (set! tltest-name-filter-set false)
     (set! tltest-name-filter "")
@@ -534,6 +568,10 @@
             [(Some _)
               (cli_option.cli-args-fail! (&mut args) "test: duplicate --batch")]
             [(No) (set! batch-list (Some (cli_option.cli-args-value (& args))))])]
+        [(string.eq args.name "--combined")
+          (if tltest-combined
+            (cli_option.cli-args-fail! (&mut args) "test: duplicate --combined")
+            (set! tltest-combined true))]
         [(string.eq args.name "--prefix-cache-stats")
           (set! tltest-prefix-cache-stats true)]
         [(cli_option.cli-flag? args.arg)
@@ -561,27 +599,10 @@
         test-mode
         batch-list))))
 
-(define (tltest-decl-list-count [items : ast.AstDeclList]) : i64
-  (let
-    [cur : ast.AstDeclList items]
-    [count : i64 0]
-    [done : bool false]
-    (while (not done)
-      (match (ast.ast-decl-list-step cur)
-        [(Nil) (set! done true)]
-        [(Cons _ rest)
-          (+= count 1)
-          (set! cur rest)]))
-    count))
-
-(define (tltest-main-decl? [decl : ast.AstDecl]) : bool
+(define (tltest-main-decl? [decl : (& ast.AstDecl)]) : bool
   (match decl
     [(or (Def _ name _ _) (DefFn _ name _ _ _ _)) (= name (tltest-main-id))]
-    [(DefMacro decl-meta _ _ _ _) false]
-    [(Unsafe inner-box)
-      (let
-        [inner : ast.AstDecl (deref inner-box)]
-        (tltest-main-decl? inner))]
+    [(Unsafe inner-box) (tltest-main-decl? inner-box)]
     [_ false]))
 
 (define (tltest-source-line [span : ast.AstSourceSpan]) : i64
@@ -768,8 +789,7 @@
                 unit]
               [_
                 (unless
-                  (tltest-main-decl?
-                    (owned_view.compiler-owned-shared-view decl))
+                  (tltest-main-decl? (& decl))
                   (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
                   (ast.ast-decl-path-list-push-with-owner-id
                     (&mut runtime-paths-out)
@@ -802,7 +822,7 @@
       (str_cat.str-cat
         name
         " "
-        (tltest-location path line)
+        (tltest-location (& path) line)
         " "
         (match selection
           [(Run) "[run]\n"]
@@ -870,24 +890,35 @@
               (ast.ast-node-push (Literal (ast.ast-lit-int slow-skipped)))
               (& (ast.ast-expr-list-new)))))))))
 
-(define (tltest-location [path : String] [line : i64]) : String
+(define (tltest-location [path : (& path str)] [line : i64]) : String
   (if (string.eq path "")
     (str_cat.str-cat "<unknown>:" (string.int->string line))
-    (str_cat.str-cat path ":" (string.int->string line))))
+    (str_cat.str-cat (string.copy path) ":" (string.int->string line))))
 
-(define (tltest-running-line [test : InlineTest]) : String
+(define (tltest-running-line [test : (& InlineTest)]) : String
   (match test
     [(Case name path _ line _ _ _ _ _)
-      (str_cat.str-cat "test " name " " (tltest-location path line) "\n")]))
+      (str_cat.str-cat
+        "test "
+        (string.copy name)
+        " "
+        (tltest-location path line)
+        "\n")]))
 
-(define (tltest-ok-line [test : InlineTest]) : String
+(define (tltest-ok-line [test : (& InlineTest)]) : String
   (match test
-    [(Case name _ _ _ _ _ _ _ _) (str_cat.str-cat "ok " name "\n")]))
+    [(Case name _ _ _ _ _ _ _ _)
+      (str_cat.str-cat "ok " (string.copy name) "\n")]))
 
-(define (tltest-failed-line [test : InlineTest]) : String
+(define (tltest-failed-line [test : (& InlineTest)]) : String
   (match test
     [(Case name path _ line _ _ _ _ _)
-      (str_cat.str-cat "FAILED " name " " (tltest-location path line) "\n")]))
+      (str_cat.str-cat
+        "FAILED "
+        (string.copy name)
+        " "
+        (tltest-location path line)
+        "\n")]))
 
 (define (tltest-print-runtime-write-params) : ast.AstParamList
   (ast.ast-param-cons
@@ -1145,42 +1176,38 @@
         (tltest-paths-with-print-runtime-count 4 runtime-path-id paths)])))
 
 (define (tltest-main-exprs-from
-  [tests : (__tl_dyn-array InlineTest)]
+  [tests : (& (__tl_dyn-array InlineTest))]
   [index : i64]
   [out : ast.AstExprList]) : ast.AstExprList
   (if (< index 0)
     out
-    (let
-      [test : InlineTest
-        (owned_view.compiler-owned-array-element-shared-view tests index)]
-      (match (owned_view.compiler-owned-shared-view test)
-        [(Case _ _ _ _ _ _ _ call-id selection)
-          (match selection
-            [(Run)
-              (tltest-main-exprs-from
-                tests
-                (- index 1)
-                (ast.ast-expr-cons
-                  (tltest-runtime-call-expr-id (tltest-runtime-case-begin-id))
-                  (&
-                    (ast.ast-expr-cons
-                      (tltest-print-expr
-                        (tltest-running-line
-                          (owned_view.compiler-owned-shared-view test)))
-                      (&
-                        (ast.ast-expr-cons
-                          (tltest-call-expr-id call-id)
-                          (&
-                            (ast.ast-expr-cons
-                              (ast.ast-expr-if
-                                (tltest-runtime-call-expr-id
-                                  (tltest-runtime-case-finish-id))
-                                (tltest-print-expr
-                                  (tltest-failed-line
-                                    (owned_view.compiler-owned-shared-view test)))
-                                (tltest-print-expr (tltest-ok-line test)))
-                              (& out)))))))))]
-            [_ (tltest-main-exprs-from tests (- index 1) out)])]))))
+    (match (& (array-ref tests index))
+      [(Case _ _ _ _ _ _ _ call-id selection)
+        (match selection
+          [(Run)
+            (tltest-main-exprs-from
+              tests
+              (- index 1)
+              (ast.ast-expr-cons
+                (tltest-runtime-call-expr-id (tltest-runtime-case-begin-id))
+                (&
+                  (ast.ast-expr-cons
+                    (tltest-print-expr
+                      (tltest-running-line (& (array-ref tests index))))
+                    (&
+                      (ast.ast-expr-cons
+                        (tltest-call-expr-id call-id)
+                        (&
+                          (ast.ast-expr-cons
+                            (ast.ast-expr-if
+                              (tltest-runtime-call-expr-id
+                                (tltest-runtime-case-finish-id))
+                              (tltest-print-expr
+                                (tltest-failed-line (& (array-ref tests index))))
+                              (tltest-print-expr
+                                (tltest-ok-line (& (array-ref tests index)))))
+                            (& out)))))))))]
+          [_ (tltest-main-exprs-from tests (- index 1) out)])])))
 
 (define (tltest-selection-counts
   [tests : (& tests (__tl_dyn-array InlineTest))]
@@ -1208,11 +1235,11 @@
   [tests : (& tests (__tl_dyn-array InlineTest))]) : i64
   (tltest-selection-counts tests 2))
 
-(define (tltest-main-exprs [tests : (__tl_dyn-array InlineTest)]) : ast.AstExprList
+(define (tltest-main-exprs [tests : (& (__tl_dyn-array InlineTest))]) : ast.AstExprList
   (let
     [count : i64 (array-length tests)]
-    [ignored : i64 (tltest-ignored-count (& tests))]
-    [slow-skipped : i64 (tltest-slow-skipped-count (& tests))]
+    [ignored : i64 (tltest-ignored-count tests)]
+    [slow-skipped : i64 (tltest-slow-skipped-count tests)]
     (ast.ast-expr-cons
       (tltest-runtime-call-expr-id (tltest-runtime-suite-begin-id))
       (&
@@ -1331,7 +1358,7 @@
     (tltest-main-id)
     (ast.ast-param-list-new)
     (I64)
-    (ast.ast-node-push (Begin (tltest-main-exprs tests)))))
+    (ast.ast-node-push (Begin (tltest-main-exprs (& tests))))))
 
 (define (tltest-reach-mark-name-id
   [names : tltest_name_map.Map]
@@ -1469,7 +1496,7 @@
           (& names)
           (csym.compiler-symbol-name-id-key leaf-id))))))
 
-(define (tltest-generated-comptime-decl? [decl : ast.AstDecl]) : bool
+(define (tltest-generated-comptime-decl? [decl : (& ast.AstDecl)]) : bool
   (match (ast.ast-decl-generated-meta decl)
     [(Some _ _ _ _) true]
     [(No) false]))
@@ -1625,31 +1652,20 @@
         (tltest-reach-mark-source-name session names name))]
     [_ (tltest-reach-mark-children session node-id names)]))
 
-(define (tltest-reach-mark-tests-from
-  [session : cis.InternStructuralSessionHandle]
-  [tests : (__tl_dyn-array InlineTest)]
-  [index : i64]
-  [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (if (< index 0)
-    names
-    (let
-      [test : InlineTest
-        (owned_view.compiler-owned-array-element-shared-view tests index)]
-      (match test
-        [(Case _ _ _ _ body _ _ _ _)
-          (tltest-reach-mark-tests-from
-            session
-            tests
-            (- index 1)
-            (tltest-reach-mark-expr session body names))]))))
-
 (define (tltest-reach-mark-tests
   [session : cis.InternStructuralSessionHandle]
-  [tests : (__tl_dyn-array InlineTest)]
+  [tests : (& (__tl_dyn-array InlineTest))]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (let
-    [last-index : i64 (- (array-length tests) 1)]
-    (tltest-reach-mark-tests-from session tests last-index names)))
+    [result : tltest_name_map.Map names]
+    [count : i64 (array-length tests)]
+    (for [i (iterator.range 0 count)]
+      (let
+        [body : i64
+          (match (& (array-ref tests i))
+            [(Case _ _ _ _ b _ _ _ _) b])]
+        (set! result (tltest-reach-mark-expr session body result))))
+    result))
 
 (define (tltest-runtime-string-helper-impl-name-id? [name-id : i64]) : bool
   (or
@@ -1677,18 +1693,19 @@
     [_ names]))
 
 (define (tltest-reach-mark-runtime-helper-roots
-  [decls : ast.AstDeclList]
+  [decls : (& ast.AstDeclList)]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (let
-    [cur : ast.AstDeclList decls]
     [result : tltest_name_map.Map names]
-    [done : bool false]
-    (while (not done)
-      (match (ast.ast-decl-list-step cur)
-        [(Nil) (set! done true)]
-        [(Cons decl rest)
-          (set! result (tltest-reach-mark-runtime-helper-root decl result))
-          (set! cur rest)]))
+    [count : i64 (ast.ast-decl-list-len decls)]
+    (for [i (iterator.range 0 count)]
+      (let
+        [decl : ast.AstDecl
+          (ast.ast-decl-list-get
+            decls
+            i
+            (ast.ast-decl-module-id cbi.compiler-builtin-id-fix-empty))]
+        (set! result (tltest-reach-mark-runtime-helper-root decl result))))
     result))
 
 (define (tltest-reach-mark-test-harness-runtime [names : tltest_name_map.Map]) : tltest_name_map.Map
@@ -1868,18 +1885,19 @@
 
 (define (tltest-reach-mark-decls-from
   [session : cis.InternStructuralSessionHandle]
-  [decls : ast.AstDeclList]
+  [decls : (& ast.AstDeclList)]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (let
-    [cur : ast.AstDeclList decls]
     [result : tltest_name_map.Map names]
-    [done : bool false]
-    (while (not done)
-      (match (ast.ast-decl-list-step cur)
-        [(Nil) (set! done true)]
-        [(Cons decl rest)
-          (set! result (tltest-reach-mark-decl session decl result))
-          (set! cur rest)]))
+    [count : i64 (ast.ast-decl-list-len decls)]
+    (for [i (iterator.range 0 count)]
+      (let
+        [decl : ast.AstDecl
+          (ast.ast-decl-list-get
+            decls
+            i
+            (ast.ast-decl-module-id cbi.compiler-builtin-id-fix-empty))]
+        (set! result (tltest-reach-mark-decl session decl result))))
     result))
 
 ;; Iterate the reachability marker to a fixpoint. The reachable-name set only
@@ -1889,7 +1907,7 @@
 ;; rather than `fuel` full-program walks.
 (define (tltest-reach-fixed
   [session : cis.InternStructuralSessionHandle]
-  [decls : ast.AstDeclList]
+  [decls : (& ast.AstDeclList)]
   [fuel : i64]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (let
@@ -1899,12 +1917,7 @@
     (while (and (not done) (> remaining 0))
       (let
         [before : i64 (tltest_name_map.len (& result))]
-        [next : tltest_name_map.Map
-          (tltest-reach-mark-decls-from
-            session
-            (owned_view.compiler-owned-shared-view decls)
-            (owned_view.compiler-owned-shared-view result))]
-        (set! result next)
+        (set! result (tltest-reach-mark-decls-from session decls result))
         (if (= (tltest_name_map.len (& result)) before)
           (set! done true)
           (-= remaining 1))))
@@ -1912,14 +1925,13 @@
 
 (define (tltest-reachable-names
   [session : cis.InternStructuralSessionHandle]
-  [decls : ast.AstDeclList]
-  [tests : (__tl_dyn-array InlineTest)]) : tltest_name_map.Map
+  [decls : (& ast.AstDeclList)]
+  [tests : (& (__tl_dyn-array InlineTest))]) : tltest_name_map.Map
   (let
-    [decl-count : i64
-      (tltest-decl-list-count (owned_view.compiler-owned-shared-view decls))]
+    [decl-count : i64 (ast.ast-decl-list-len decls)]
     (tltest-reach-fixed
       session
-      (owned_view.compiler-owned-shared-view decls)
+      decls
       decl-count
       (tltest-reach-mark-runtime-helper-roots
         decls
@@ -1931,30 +1943,27 @@
 
 (define (tltest-reachable-runtime-decl?
   [session : cis.InternStructuralSessionHandle]
-  [decl : ast.AstDecl]
+  [decl : (& ast.AstDecl)]
   [names : (& names tltest_name_map.Map)]) : bool
   (match decl
     [(or (Def _ name _ _) (Extern _ name _ _ _))
       (tltest-reachable-name-marked? session names name)]
-    [(DefFn decl-meta name _ _ _ metadata)
-      (let
-        [marked : bool (tltest-reachable-name-marked? session names name)]
-        (match (ast.ast-fn-metadata-export (& metadata))
-          [(Export _) true]
-          [(No) marked]))]
-    [(DefMacro decl-meta _ _ _ _) true]
+    [(DefFn _ name _ _ _ metadata)
+      (match (ast.ast-fn-metadata-export metadata)
+        [(Export _) true]
+        [(No) (tltest-reachable-name-marked? session names name)])]
+    [(DefMacro _ _ _ _ _) true]
     [(Unsafe inner-box)
-      (let
-        [inner : ast.AstDecl (deref inner-box)]
-        (tltest-reachable-runtime-decl? session inner names))]
+      (tltest-reachable-runtime-decl? session inner-box names)]
     [_ true]))
 
 (define (tltest-prune-runtime-decls-in
   [session : cis.InternStructuralSessionHandle]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [target-path : String]
-  [names : tltest_name_map.Map]
+  [target-path : (& target-path str)]
+  [keep-all-generated? : bool]
+  [names : (& tltest_name_map.Map)]
   [out-decls : ast.AstDeclList]
   [out-paths : ast.AstDeclPathList]) : InlineRuntimeDecls
   (let
@@ -1978,26 +1987,32 @@
                     (& cur-paths)
                     0
                     cbi.compiler-builtin-id-fix-empty)]
+                [decl-prov-id : i64
+                  (ast.ast-decl-path-list-provenance-id
+                    (& cur-paths)
+                    0
+                    decl-owner-id)]
                 ;; Keep imported generated helpers: macro-expanded bodies can
                 ;; reference them in ways the lightweight source reachability walk
                 ;; cannot always see. Local generated helpers and ordinary imported
                 ;; functions/values still go through reachability pruning so tiny
-                ;; inline harnesses stay small.
+                ;; inline harnesses stay small. In combined mode any file in the
+                ;; chunk may also be imported by another file in the chunk.
                 (when
                   (or
-                    (tltest-reachable-runtime-decl?
-                      session
-                      (owned_view.compiler-owned-shared-view decl)
-                      names)
+                    (tltest-reachable-runtime-decl? session (& decl) names)
                     (and
-                      (not (tltest-owned-test-path? target-path decl-path))
-                      (tltest-generated-comptime-decl?
-                        (owned_view.compiler-owned-shared-view decl))))
+                      (or
+                        keep-all-generated?
+                        (not
+                          (tltest-owned-test-path? target-path (& decl-path))))
+                      (tltest-generated-comptime-decl? (& decl))))
                   (ast.ast-decl-list-push (&mut result-decls) decl)
-                  (ast.ast-decl-path-list-push-with-owner-id
+                  (ast.ast-decl-path-list-push-with-owner-and-provenance-id
                     (&mut result-paths)
                     decl-path
-                    decl-owner-id))
+                    decl-owner-id
+                    decl-prov-id))
                 (set! cur-decls rest)
                 (set! cur-paths path-rest))])]))
     (Decls result-decls result-paths)))
@@ -2007,15 +2022,19 @@
   [source : (& source str)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
-  [tests : (__tl_dyn-array InlineTest)]) : InlineRuntimeDecls
-  (tltest-prune-runtime-decls-in
-    session
-    (owned_view.compiler-owned-shared-view decls)
-    paths
-    (compiler_load.compiler-load-normalize-path source)
-    (tltest-reachable-names session decls tests)
-    (ast.ast-decl-list-new)
-    (ast.ast-decl-path-list-new)))
+  [tests : (& (__tl_dyn-array InlineTest))]) : InlineRuntimeDecls
+  (let
+    [names : tltest_name_map.Map
+      (tltest-reachable-names session (& decls) tests)]
+    (tltest-prune-runtime-decls-in
+      session
+      decls
+      paths
+      (& (compiler_load.compiler-load-normalize-path source))
+      false
+      (& names)
+      (ast.ast-decl-list-new)
+      (ast.ast-decl-path-list-new))))
 
 (define (tltest-build-harness-with-session
   [session : cis.InternStructuralSessionHandle]
@@ -2029,7 +2048,7 @@
         source
         runtime-decls
         runtime-paths
-        (owned_view.compiler-owned-shared-view tests))
+        (& tests))
         [(Decls pruned-decls pruned-paths)
           (let
             [count : i64 (array-length tests)]
@@ -2103,7 +2122,7 @@
             source
             runtime-decls
             runtime-paths
-            (owned_view.compiler-owned-shared-view tests))
+            (& tests))
             [(Decls pruned-decls pruned-paths)
               (let
                 [legacy-roots : cli_svec.Vec roots]
@@ -2975,7 +2994,7 @@
   (match (ast.ast-decl-list-step decls)
     [(Nil) false]
     [(Cons decl rest)
-      (if (tltest-main-decl? decl)
+      (if (tltest-main-decl? (& decl))
         true
         (tltest-decls-have-main? rest))]))
 
@@ -4149,6 +4168,1302 @@
           1))
       fatal-status)))
 
+(defenum InlineCombinedLoad
+  (CombinedLoaded ast.AstDeclList ast.AstDeclPathList)
+  (CombinedLoadErr String))
+
+(defenum InlineCombinedCollect
+  (CombinedCollect
+    ast.AstDeclList
+    ast.AstDeclPathList
+    (__tl_dyn-array InlineTest)
+    (__tl_dyn-array i64)))
+
+(define (tltest-combined-path-absolute? [path : (& path str)]) : bool
+  (let
+    [n : i64 (string.string-length path)]
+    (if (= n 0)
+      false
+      (let
+        [c0 : char (string.string-ref path 0)]
+        (or
+          (= c0 '/')
+          (= c0 '\\')
+          (and (>= n 2) (= (string.string-ref path 1) ':')))))))
+
+(define (tltest-combined-absolute-normalized
+  [cwd : (& cwd str)]
+  [path : (& path str)]) : String
+  (let
+    [norm : String (compiler_load.compiler-load-normalize-path path)]
+    (if (or
+      (tltest-combined-path-absolute? (& norm))
+      (= (string.string-length cwd) 0))
+      norm
+      (compiler_load.compiler-load-normalize-path
+        (& (compiler_load.compiler-load-join-root-path (string.copy cwd) norm))))))
+
+(define (tltest-combined-path-basename-stem [norm : (& norm str)]) : String
+  (let
+    [n : i64 (string.string-length norm)]
+    [slash : i64 -1]
+    [i : i64 (- n 1)]
+    (while (and (< slash 0) (>= i 0))
+      (let
+        [c : char (string.string-ref norm i)]
+        (if (or (= c '/') (= c '\\'))
+          (set! slash i)
+          (-= i 1))))
+    (let
+      [start : i64 (+ slash 1)]
+      [base : String (string.substring norm start (- n start))]
+      (if (source_text.ends-with? (& base) ".tl")
+        (string.substring (& base) 0 (- (string.string-length (& base)) 3))
+        base))))
+
+(define (tltest-combined-synthetic-module-name [index : i64]) : String
+  (str_cat.str-cat "__tl_combined_file_mod_" (string.int->string index)))
+
+(define (tltest-combined-canonical-module-name
+  [path : (& path str)]
+  [cwd : (& cwd str)]
+  [roots : (& cli_svec.Vec)]
+  [index : i64]
+  [used-names : (&mut tltest_name_map.Map)]) : String
+  (let
+    [norm : String (compiler_load.compiler-load-normalize-path path)]
+    [candidate : String
+      (cond
+        [(compiler_load.compiler-load-stdlib-import? (& norm))
+          (compiler_load.compiler-load-canonical-module-id-from-path (& norm))]
+        [(source_text.starts-with? (& norm) "src/tests/")
+          (tltest-combined-path-basename-stem (& norm))]
+        [(source_text.starts-with? (& norm) "src/")
+          (let
+            [suffix : String
+              (string.substring
+                (& norm)
+                4
+                (- (string.string-length (& norm)) 4))]
+            (compiler_load.compiler-load-canonical-module-id-from-path
+              (& suffix)))]
+        [else
+          (let
+            [abs-norm : String
+              (tltest-combined-absolute-normalized cwd (& norm))]
+            [root-count : i64 (cli_svec.len roots)]
+            [ridx : i64 0]
+            [matched : String ""]
+            (while (and
+              (= (string.string-length (& matched)) 0)
+              (< ridx root-count))
+              (let
+                [root : String (cli_svec.get roots ridx "")]
+                [rnorm : String
+                  (tltest-combined-absolute-normalized cwd (& root))]
+                [prefix : String
+                  (compiler_load.compiler-load-join-root-path
+                    (string.copy (& rnorm))
+                    "")]
+                [plen : i64 (string.string-length (& prefix))]
+                (when
+                  (and
+                    (> plen 0)
+                    (source_text.starts-with? (& abs-norm) (& prefix)))
+                  (let
+                    [rel : String
+                      (string.substring
+                        (& abs-norm)
+                        plen
+                        (- (string.string-length (& abs-norm)) plen))]
+                    (cond
+                      [(or
+                          (string.eq (& rnorm) "stdlib")
+                          (source_text.ends-with? (& rnorm) "/stdlib"))
+                        (set!
+                          matched
+                          (str_cat.str-cat
+                            "stdlib."
+                            (compiler_load.compiler-load-canonical-module-id-from-path
+                              (& rel))))]
+                      [(and
+                          (or
+                            (string.eq (& rnorm) "src")
+                            (source_text.ends-with? (& rnorm) "/src"))
+                          (source_text.starts-with? (& rel) "tests/"))
+                        (set!
+                          matched
+                          (tltest-combined-path-basename-stem (& rel)))]
+                      [else
+                        (set!
+                          matched
+                          (compiler_load.compiler-load-canonical-module-id-from-path
+                            (& rel)))]))))
+              (+= ridx 1))
+            matched)])]
+    (if (= (string.string-length (& candidate)) 0)
+      (tltest-combined-synthetic-module-name index)
+      (let
+        [key : i64
+          (csym.compiler-symbol-name-id-key
+            (ci.intern (string.copy (& candidate))))]
+        (if (tltest_name_map.contains? used-names key)
+          (tltest-combined-synthetic-module-name index)
+          (begin
+            (tltest_name_map.insert-if-absent-ref! used-names key 1)
+            candidate))))))
+
+(define (tltest-combined-effective-roots
+  [paths : (& cli_svec.Vec)]
+  [roots : (& cli_svec.Vec)]) : cli_svec.Vec
+  (let
+    [acc : cli_svec.Vec (cli_svec.clone-vec roots)]
+    [count : i64 (cli_svec.len paths)]
+    (for [i (iterator.range 0 count)]
+      (let
+        [source : String (cli_svec.get paths i "")]
+        (set! acc (tltest-source-roots (& source) acc))))
+    acc))
+
+(define (tltest-combined-register-path-alias!
+  [map : (&mut tltest_name_map.Map)]
+  [alias : (& alias str)]
+  [file-index : i64]) : unit
+  (when
+    (> (string.string-length alias) 0)
+    (let
+      [key : i64
+        (csym.compiler-symbol-name-id-key (ci.intern (string.copy alias)))]
+      [_inserted : bool
+        (tltest_name_map.insert-if-absent-ref! map key file-index)]
+      unit)))
+
+(define (tltest-combined-target-map
+  [paths : (& cli_svec.Vec)]
+  [cwd : (& cwd str)]
+  [roots : (& cli_svec.Vec)]) : tltest_name_map.Map
+  (let
+    [count : i64 (cli_svec.len paths)]
+    [root-count : i64 (cli_svec.len roots)]
+    [map : tltest_name_map.Map
+      (tltest_name_map.with-capacity (+ (* count 4) 16))]
+    (for [i (iterator.range 0 count)]
+      (let
+        [source : String (cli_svec.get paths i "")]
+        [norm : String (compiler_load.compiler-load-normalize-path (& source))]
+        [abs-norm : String (tltest-combined-absolute-normalized cwd (& norm))]
+        (tltest-combined-register-path-alias! (&mut map) (& norm) i)
+        (tltest-combined-register-path-alias! (&mut map) (& abs-norm) i)
+        (when
+          (compiler_load.compiler-load-stdlib-import? (& norm))
+          (let
+            [suffix : String
+              (compiler_load.compiler-load-stdlib-suffix (& norm))]
+            (match (compiler_load.compiler-load-resolve-stdlib-root
+              (& suffix)
+              roots)
+              [(CompilerLoadSomePath resolved)
+                (let
+                  [res-norm : String
+                    (compiler_load.compiler-load-normalize-path (& resolved))]
+                  [res-abs : String
+                    (tltest-combined-absolute-normalized cwd (& res-norm))]
+                  (tltest-combined-register-path-alias!
+                    (&mut map)
+                    (& res-norm)
+                    i)
+                  (tltest-combined-register-path-alias!
+                    (&mut map)
+                    (& res-abs)
+                    i))]
+              [(CompilerLoadNoPath) unit])))
+        (when
+          (source_text.starts-with? (& norm) "src/")
+          (let
+            [suffix : String
+              (string.substring
+                (& norm)
+                4
+                (- (string.string-length (& norm)) 4))]
+            (match (compiler_load.compiler-load-resolve-stdlib-root
+              (& suffix)
+              roots)
+              [(CompilerLoadSomePath resolved)
+                (let
+                  [res-norm : String
+                    (compiler_load.compiler-load-normalize-path (& resolved))]
+                  [res-abs : String
+                    (tltest-combined-absolute-normalized cwd (& res-norm))]
+                  (tltest-combined-register-path-alias!
+                    (&mut map)
+                    (& res-norm)
+                    i)
+                  (tltest-combined-register-path-alias!
+                    (&mut map)
+                    (& res-abs)
+                    i))]
+              [(CompilerLoadNoPath) unit])))
+        (for [ridx (iterator.range 0 root-count)]
+          (let
+            [root : String (cli_svec.get roots ridx "")]
+            [root-norm : String
+              (compiler_load.compiler-load-normalize-path (& root))]
+            [rnorm : String
+              (tltest-combined-absolute-normalized cwd (& root-norm))]
+            [prefix : String
+              (compiler_load.compiler-load-join-root-path
+                (string.copy (& rnorm))
+                "")]
+            [plen : i64 (string.string-length (& prefix))]
+            (when
+              (and
+                (> plen 0)
+                (source_text.starts-with? (& abs-norm) (& prefix)))
+              (let
+                [rel : String
+                  (string.substring
+                    (& abs-norm)
+                    plen
+                    (- (string.string-length (& abs-norm)) plen))]
+                [root-rel : String
+                  (compiler_load.compiler-load-normalize-path
+                    (&
+                      (compiler_load.compiler-load-join-root-path
+                        (string.copy (& root-norm))
+                        (string.copy (& rel)))))]
+                (tltest-combined-register-path-alias! (&mut map) (& root-rel) i)
+                (cond
+                  [(or
+                      (string.eq (& rnorm) "stdlib")
+                      (source_text.ends-with? (& rnorm) "/stdlib"))
+                    (tltest-combined-register-path-alias!
+                      (&mut map)
+                      (& (str_cat.str-cat "stdlib/" (string.copy (& rel))))
+                      i)]
+                  [(or
+                      (string.eq (& rnorm) "src")
+                      (source_text.ends-with? (& rnorm) "/src"))
+                    (tltest-combined-register-path-alias!
+                      (&mut map)
+                      (& (str_cat.str-cat "src/" (string.copy (& rel))))
+                      i)]
+                  [else unit])))))))
+    map))
+
+(define (tltest-combined-path-file-index
+  [map : (& tltest_name_map.Map)]
+  [cwd : (& cwd str)]
+  [decl-path : (& decl-path str)]) : i64
+  (let
+    [norm : String (compiler_load.compiler-load-normalize-path decl-path)]
+    [key : i64
+      (csym.compiler-symbol-name-id-key (ci.intern (string.copy (& norm))))]
+    [found : i64 (tltest_name_map.get-value-or map key -1)]
+    (if (>= found 0)
+      found
+      (let
+        [abs-norm : String (tltest-combined-absolute-normalized cwd (& norm))]
+        [abs-key : i64 (csym.compiler-symbol-name-id-key (ci.intern abs-norm))]
+        (tltest_name_map.get-value-or map abs-key -1)))))
+
+(define (tltest-combined-has-duplicate-paths?
+  [paths : (& cli_svec.Vec)]
+  [cwd : (& cwd str)]) : bool
+  (let
+    [count : i64 (cli_svec.len paths)]
+    [seen-paths : tltest_name_map.Map
+      (tltest_name_map.with-capacity (+ count 8))]
+    [dup : bool false]
+    [i : i64 0]
+    (while (and (not dup) (< i count))
+      (let
+        [source : String (cli_svec.get paths i "")]
+        [abs-norm : String (tltest-combined-absolute-normalized cwd (& source))]
+        [key : i64 (csym.compiler-symbol-name-id-key (ci.intern abs-norm))]
+        (if (tltest_name_map.contains? (& seen-paths) key)
+          (set! dup true)
+          (begin
+            (tltest_name_map.insert-if-absent-ref! (&mut seen-paths) key 1)
+            (+= i 1)))))
+    dup))
+
+(define (tltest-combined-seen-held-by-other?
+  [seen : (& sym_i64_env.SymI64Env)]
+  [target-map : (& tltest_name_map.Map)]
+  [cwd : (& cwd str)]
+  [module-id : i64]
+  [file-index : i64]) : bool
+  (let
+    [holder : i64 (sym_i64_env.sym-i64-lookup-id-or seen module-id -1)]
+    (cond
+      [(< holder 0) false]
+      [(<= holder 1) true]
+      [else
+        (let
+          [holder-path : String (ci.intern-str holder)]
+          (not
+            (=
+              (tltest-combined-path-file-index target-map cwd (& holder-path))
+              file-index)))])))
+
+(define (tltest-combined-load-collided?
+  [seen-before : (& sym_i64_env.SymI64Env)]
+  [target-map : (& tltest_name_map.Map)]
+  [cwd : (& cwd str)]
+  [mod-id : i64]
+  [file-decls : (& ast.AstDeclList)]
+  [file-modules : (& ast.AstDeclModuleList)]
+  [file-index : i64]) : bool
+  (let
+    [decl-len : i64 (ast.ast-decl-list-len file-decls)]
+    (cond
+      [(= decl-len 0)
+        (tltest-combined-seen-held-by-other?
+          seen-before
+          target-map
+          cwd
+          mod-id
+          file-index)]
+      [(and (= decl-len 1) (= (ast.ast-decl-module-list-len file-modules) 1))
+        (let
+          [loaded-mod-id : i64
+            (ast.ast-decl-module-list-get-id file-modules 0 -1)]
+          (and
+            (>= loaded-mod-id 0)
+            (tltest-combined-seen-held-by-other?
+              seen-before
+              target-map
+              cwd
+              loaded-mod-id
+              file-index)))]
+      [else false])))
+
+(define (tltest-combined-push-decls!
+  [dst-decls : (&mut ast.AstDeclList)]
+  [dst-paths : (&mut ast.AstDeclPathList)]
+  [src-decls : ast.AstDeclList]
+  [src-paths : ast.AstDeclPathList]) : unit
+  (let
+    [cur-decls : ast.AstDeclList src-decls]
+    [cur-paths : ast.AstDeclPathList src-paths]
+    [done : bool false]
+    (while (not done)
+      (match (ast.ast-decl-list-step cur-decls)
+        [(Nil) (set! done true)]
+        [(Cons decl rest-decls)
+          (let
+            [decl-owner-id : i64
+              (ast.ast-decl-path-list-owner-id
+                (& cur-paths)
+                0
+                cbi.compiler-builtin-id-fix-empty)]
+            [decl-prov-id : i64
+              (ast.ast-decl-path-list-provenance-id
+                (& cur-paths)
+                0
+                decl-owner-id)]
+            (match (ast.ast-decl-path-list-step cur-paths)
+              [(Cons decl-path rest-paths)
+                (ast.ast-decl-list-push dst-decls decl)
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+                  dst-paths
+                  decl-path
+                  decl-owner-id
+                  decl-prov-id)
+                (set! cur-paths rest-paths)]
+              [(Nil)
+                (ast.ast-decl-list-push dst-decls decl)
+                (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+                  dst-paths
+                  ""
+                  decl-owner-id
+                  decl-prov-id)
+                (set! cur-paths (ast.ast-decl-path-list-new))]))
+          (set! cur-decls rest-decls)]))))
+
+(define (tltest-combined-load
+  [paths : (& cli_svec.Vec)]
+  [cwd : (& cwd str)]
+  [effective-roots : (& cli_svec.Vec)]
+  [target-map : (& tltest_name_map.Map)]
+  [cfgs : sym_i64_env.SymI64Env]) : InlineCombinedLoad
+  (if (tltest-combined-has-duplicate-paths? paths cwd)
+    (CombinedLoadErr "duplicate batch path")
+    (match (driver.compiler-driver-load-runtime-prelude-and-profile-state
+      (cli_svec.clone-vec effective-roots)
+      cfgs
+      (profile_state.compiler-profile-state-new))
+      [(Err _) (CombinedLoadErr "prelude load failed")]
+      [(Ok prelude-decls prelude-paths _ prelude-seen)
+        (let
+          [acc-decls : ast.AstDeclList (ast.ast-decl-list-new)]
+          [acc-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+          [seen : sym_i64_env.SymI64Env prelude-seen]
+          [count : i64 (cli_svec.len paths)]
+          [used-names : tltest_name_map.Map
+            (tltest_name_map.with-capacity (+ count 16))]
+          [err-msg : String ""]
+          (tltest-combined-push-decls!
+            (&mut acc-decls)
+            (&mut acc-paths)
+            prelude-decls
+            prelude-paths)
+          ;; Hold surface-summary load depth > 0 across all files in the combined
+          ;; chunk so later files do not reset earlier modules' surface summaries
+          ;; or miss cross-file import deduplication.
+          ;;
+          ;; Load paths[1..count-1] first in their canonical named modules, then
+          ;; load paths[0] last. If paths[0] is not a stdlib module and was not
+          ;; already imported by paths[1..count-1], load it in the root module
+          ;; (matching single-file entry semantics, which preserves cross-module
+          ;; macro type-name resolution for the chunk's primary test suite).
+          (compiler_load.compiler-load-surface-summary-load-enter!)
+          (let
+            [cursor : i64 1]
+            (while (and
+              (= (string.string-length (& err-msg)) 0)
+              (< cursor count))
+              (let
+                [source : String (cli_svec.get paths cursor "")]
+                [mod-name : String
+                  (tltest-combined-canonical-module-name
+                    (& source)
+                    cwd
+                    effective-roots
+                    cursor
+                    (&mut used-names))]
+                [mod-id : i64
+                  (compiler_load.compiler-load-parse-context-name-id
+                    (& mod-name))]
+                (match (compiler_load.compiler-load-file-with-paths-and-roots-expect-cfg-fallback
+                  (& source)
+                  seen
+                  effective-roots
+                  (No)
+                  cfgs
+                  (string.copy (& mod-name))
+                  (& mod-name))
+                  [(Ok file-decls file-paths file-modules next-seen)
+                    (if (tltest-combined-load-collided?
+                      (& seen)
+                      target-map
+                      cwd
+                      mod-id
+                      (& file-decls)
+                      (& file-modules)
+                      cursor)
+                      (set!
+                        err-msg
+                        (str_cat.str-cat "module collision for " source))
+                      (begin
+                        (tltest-combined-push-decls!
+                          (&mut acc-decls)
+                          (&mut acc-paths)
+                          file-decls
+                          file-paths)
+                        (set! seen next-seen)
+                        (+= cursor 1)))]
+                  [(Err _)
+                    (set! err-msg (str_cat.str-cat "load failed for " source))]))))
+          (when
+            (and (= (string.string-length (& err-msg)) 0) (> count 0))
+            (let
+              [source0 : String (cli_svec.get paths 0 "")]
+              [norm0 : String
+                (compiler_load.compiler-load-normalize-path (& source0))]
+              [mod-name0 : String
+                (tltest-combined-canonical-module-name
+                  (& source0)
+                  cwd
+                  effective-roots
+                  0
+                  (&mut used-names))]
+              [mod-id0 : i64
+                (compiler_load.compiler-load-parse-context-name-id
+                  (& mod-name0))]
+              [already-seen? : bool
+                (compiler_load.compiler-load-seen-module-contains?
+                  seen
+                  (& mod-name0)
+                  mod-id0)]
+              [use-root-module? : bool
+                (and
+                  (not already-seen?)
+                  (not (compiler_load.compiler-load-stdlib-import? (& norm0))))]
+              [source-mod-fallback0 : String
+                (if use-root-module?
+                  ""
+                  (string.copy (& mod-name0)))]
+              (when
+                use-root-module?
+                (ast.ast-decl-list-push
+                  (&mut acc-decls)
+                  (ast.ast-decl-module-id (tltest-empty-name-id)))
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut acc-paths)
+                  (string.copy (& source0))
+                  cbi.compiler-builtin-id-fix-empty))
+              (match (compiler_load.compiler-load-file-with-paths-and-roots-expect-cfg-fallback
+                (& source0)
+                seen
+                effective-roots
+                (No)
+                cfgs
+                (string.copy (& mod-name0))
+                (& source-mod-fallback0))
+                [(Ok file-decls file-paths file-modules next-seen)
+                  (if (tltest-combined-load-collided?
+                    (& seen)
+                    target-map
+                    cwd
+                    mod-id0
+                    (& file-decls)
+                    (& file-modules)
+                    0)
+                    (set!
+                      err-msg
+                      (str_cat.str-cat "module collision for " source0))
+                    (begin
+                      (tltest-combined-push-decls!
+                        (&mut acc-decls)
+                        (&mut acc-paths)
+                        file-decls
+                        file-paths)
+                      (set! seen next-seen)))]
+                [(Err _)
+                  (set! err-msg (str_cat.str-cat "load failed for " source0))])))
+          (compiler_load.compiler-load-surface-summary-load-exit!)
+          (if (= (string.string-length (& err-msg)) 0)
+            (CombinedLoaded acc-decls acc-paths)
+            (CombinedLoadErr err-msg)))])))
+
+(define (tltest-combined-decl-kind [decl : (& ast.AstDecl)]) : i64
+  (match decl
+    [(Test _ _ _ _) 0]
+    [(Module _) 1]
+    [(or (IncludeStr _ _) (IncludeStrComptime _ _) (IncludeStrLzss _ _)
+         (IncludeBin _ _))
+      2]
+    [_
+      (if (tltest-main-decl? decl)
+        2
+        3)]))
+
+(define (tltest-combined-module-id-ref
+  [decl : (& ast.AstDecl)]
+  [fallback : i64]) : i64
+  (match decl
+    [(Module name) name]
+    [_ fallback]))
+
+(define (tltest-collect-combined
+  [target-map : (& tltest_name_map.Map)]
+  [cwd : (& cwd str)]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]) : InlineCombinedCollect
+  (let
+    [cur-decls : ast.AstDeclList decls]
+    [cur-paths : ast.AstDeclPathList paths]
+    [runtime-decls-out : ast.AstDeclList (ast.ast-decl-list-new)]
+    [runtime-paths-out : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+    [test-items : (__tl_dyn-array InlineTest) (__tl_make-array InlineTest 0)]
+    [test-file-indices : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [current-module : i64 (tltest-empty-name-id)]
+    [done : bool false]
+    (while (not done)
+      (match (ast.ast-decl-list-step cur-decls)
+        [(Nil) (set! done true)]
+        [(Cons decl rest-decls)
+          (let
+            [decl-owner-id : i64
+              (ast.ast-decl-path-list-owner-id (& cur-paths) 0 current-module)]
+            [decl-prov-id : i64
+              (ast.ast-decl-path-list-provenance-id
+                (& cur-paths)
+                0
+                decl-owner-id)]
+            [decl-path : String ""]
+            (match (ast.ast-decl-path-list-step cur-paths)
+              [(Cons path path-rest)
+                (set! decl-path path)
+                (set! cur-paths path-rest)]
+              [(Nil) (set! cur-paths (ast.ast-decl-path-list-new))])
+            (let
+              [kind : i64 (tltest-combined-decl-kind (& decl))]
+              (cond
+                [(= kind 0)
+                  (match decl
+                    [(Test name body-box metadata span)
+                      (let
+                        [file-idx : i64
+                          (tltest-combined-path-file-index
+                            target-map
+                            cwd
+                            (& decl-path))]
+                        (when
+                          (and
+                            (>= file-idx 0)
+                            (tltest-test-name-selected? (ci.intern-str name)))
+                          (let
+                            [test-count : i64 (array-length test-items)]
+                            [private-name : String
+                              (tltest-private-name test-count)]
+                            [private-id : i64
+                              (ci.intern-generated-name (& private-name))]
+                            (__tl_array-push!
+                              test-items
+                              (Case
+                                (ci.intern-str name)
+                                decl-path
+                                current-module
+                                (tltest-source-line span)
+                                body-box
+                                private-name
+                                private-id
+                                (tltest-private-call-id
+                                  current-module
+                                  private-id)
+                                (tltest-test-selection metadata)))
+                            (__tl_array-push! test-file-indices file-idx))))]
+                    [_ unit])]
+                [(= kind 1)
+                  (set!
+                    current-module
+                    (tltest-combined-module-id-ref (& decl) current-module))
+                  (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
+                  (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+                    (&mut runtime-paths-out)
+                    decl-path
+                    decl-owner-id
+                    decl-prov-id)]
+                [(= kind 2) unit]
+                [else
+                  (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
+                  (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+                    (&mut runtime-paths-out)
+                    decl-path
+                    decl-owner-id
+                    decl-prov-id)])))
+          (set! cur-decls rest-decls)]))
+    (CombinedCollect
+      runtime-decls-out
+      runtime-paths-out
+      test-items
+      test-file-indices)))
+
+(define (tltest-combined-file-runner-id [file-index : i64]) : i64
+  (ci.intern-generated-name
+    (& (str_cat.str-cat "__tl_inline_file_" (string.int->string file-index)))))
+
+(define (tltest-combined-parse-index-decl [parse-fn-id : i64]) : ast.AstDecl
+  (let
+    [p-id : i64 (ci.intern-generated-name "__tl_comb_p")]
+    [idx-id : i64 (ci.intern-generated-name "__tl_comb_idx")]
+    [acc-id : i64 (ci.intern-generated-name "__tl_comb_acc")]
+    [done-id : i64 (ci.intern-generated-name "__tl_comb_done")]
+    [bad-id : i64 (ci.intern-generated-name "__tl_comb_bad")]
+    [b-id : i64 (ci.intern-generated-name "__tl_comb_b")]
+    [u8-ptr-ty : ast.AstType
+      (ast.AstType.Ptr (ast.ty-node-push (& (ast.AstType.U8))))]
+    [read-argv1 : i64
+      (ast.ast-node-push
+        (Unsafe
+          (ast.ast-expr-cons
+            (ast.ast-expr-ptr-read
+              (ast.ast-expr-ptr-offset
+                (ast.ast-node-push (ProgramArgv))
+                (ast.ast-node-push (Literal (ast.ast-lit-int 1)))))
+            (& (ast.ast-expr-list-new)))))]
+    [read-byte : i64
+      (ast.ast-node-push
+        (Unsafe
+          (ast.ast-expr-cons
+            (ast.ast-expr-ptr-read
+              (ast.ast-expr-ptr-offset
+                (ast.ast-node-push (Var p-id))
+                (ast.ast-node-push (Var idx-id))))
+            (& (ast.ast-expr-list-new)))))]
+    [digit-cond : i64
+      (ast.ast-expr-binary
+        (And)
+        (ast.ast-expr-binary
+          (Ge)
+          (ast.ast-expr-cast (ast.ast-node-push (Var b-id)) (& (I64)))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 48))))
+        (ast.ast-expr-binary
+          (Le)
+          (ast.ast-expr-cast (ast.ast-node-push (Var b-id)) (& (I64)))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 57)))))]
+    [digit-step : i64
+      (ast.ast-node-push
+        (Begin
+          (ast.ast-expr-cons
+            (ast.ast-expr-set-id
+              acc-id
+              (ast.ast-expr-binary
+                (Add)
+                (ast.ast-expr-binary
+                  (Mul)
+                  (ast.ast-node-push (Var acc-id))
+                  (ast.ast-node-push (Literal (ast.ast-lit-int 10))))
+                (ast.ast-expr-binary
+                  (Sub)
+                  (ast.ast-expr-cast (ast.ast-node-push (Var b-id)) (& (I64)))
+                  (ast.ast-node-push (Literal (ast.ast-lit-int 48))))))
+            (&
+              (ast.ast-expr-cons
+                (ast.ast-expr-set-id
+                  idx-id
+                  (ast.ast-expr-binary
+                    (Add)
+                    (ast.ast-node-push (Var idx-id))
+                    (ast.ast-node-push (Literal (ast.ast-lit-int 1)))))
+                (& (ast.ast-expr-list-new)))))))]
+    [bad-step : i64
+      (ast.ast-node-push
+        (Begin
+          (ast.ast-expr-cons
+            (ast.ast-expr-set-id
+              bad-id
+              (ast.ast-node-push (Literal (Bool true))))
+            (&
+              (ast.ast-expr-cons
+                (ast.ast-expr-set-id
+                  done-id
+                  (ast.ast-node-push (Literal (Bool true))))
+                (& (ast.ast-expr-list-new)))))))]
+    [loop-body : i64
+      (ast.ast-expr-let
+        (ast.ast-let-binding-cons
+          (& (ast.ast-let-binding-id b-id (Some (U8)) read-byte))
+          (& (ast.ast-let-binding-list-new)))
+        (ast.ast-expr-if
+          (ast.ast-expr-binary
+            (Eq)
+            (ast.ast-node-push (Var b-id))
+            (ast.ast-expr-cast
+              (ast.ast-node-push (Literal (ast.ast-lit-int 0)))
+              (& (U8))))
+          (ast.ast-expr-set-id
+            done-id
+            (ast.ast-node-push (Literal (Bool true))))
+          (ast.ast-expr-if digit-cond digit-step bad-step)))]
+    [loop-expr : i64
+      (ast.ast-node-push
+        (While
+          (ast.ast-expr-binary
+            (Eq)
+            (ast.ast-node-push (Var done-id))
+            (ast.ast-node-push (Literal (Bool false))))
+          (ast.ast-expr-cons loop-body (& (ast.ast-expr-list-new)))))]
+    [result-expr : i64
+      (ast.ast-expr-if
+        (ast.ast-expr-binary
+          (Or)
+          (ast.ast-node-push (Var bad-id))
+          (ast.ast-expr-binary
+            (Eq)
+            (ast.ast-node-push (Var idx-id))
+            (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+        (ast.ast-node-push (Literal (ast.ast-lit-int -1)))
+        (ast.ast-node-push (Var acc-id)))]
+    [parse-body : i64
+      (ast.ast-expr-if
+        (ast.ast-expr-binary
+          (Lt)
+          (ast.ast-node-push (ProgramArgc))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 2))))
+        (ast.ast-node-push (Literal (ast.ast-lit-int -1)))
+        (ast.ast-expr-let
+          (ast.ast-let-binding-cons
+            (& (ast.ast-let-binding-id p-id (Some u8-ptr-ty) read-argv1))
+            (&
+              (ast.ast-let-binding-cons
+                (&
+                  (ast.ast-let-binding-id
+                    idx-id
+                    (Some (I64))
+                    (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+                (&
+                  (ast.ast-let-binding-cons
+                    (&
+                      (ast.ast-let-binding-id
+                        acc-id
+                        (Some (I64))
+                        (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+                    (&
+                      (ast.ast-let-binding-cons
+                        (&
+                          (ast.ast-let-binding-id
+                            done-id
+                            (Some (Bool))
+                            (ast.ast-node-push (Literal (Bool false)))))
+                        (&
+                          (ast.ast-let-binding-cons
+                            (&
+                              (ast.ast-let-binding-id
+                                bad-id
+                                (Some (Bool))
+                                (ast.ast-node-push (Literal (Bool false)))))
+                            (& (ast.ast-let-binding-list-new)))))))))))
+          (ast.ast-node-push
+            (Begin
+              (ast.ast-expr-cons
+                loop-expr
+                (& (ast.ast-expr-cons result-expr (& (ast.ast-expr-list-new)))))))))]
+    (ast.ast-decl-def-fn-id
+      parse-fn-id
+      (ast.ast-param-list-new)
+      (I64)
+      parse-body)))
+
+(define (tltest-combined-dispatch-tree
+  [sel-id : i64]
+  [runner-ids : (& (__tl_dyn-array i64))]
+  [lo : i64]
+  [hi : i64]) : i64
+  (if (>= lo hi)
+    (ast.ast-node-push (Literal (ast.ast-lit-int 2)))
+    (if (= (+ lo 1) hi)
+      (ast.ast-expr-if
+        (ast.ast-expr-binary
+          (Eq)
+          (ast.ast-node-push (Var sel-id))
+          (ast.ast-node-push (Literal (ast.ast-lit-int lo))))
+        (tltest-call-expr-id (array-ref runner-ids lo))
+        (ast.ast-node-push (Literal (ast.ast-lit-int 2))))
+      (let
+        [mid : i64 (+ lo (/ (- hi lo) 2))]
+        (ast.ast-expr-if
+          (ast.ast-expr-binary
+            (Lt)
+            (ast.ast-node-push (Var sel-id))
+            (ast.ast-node-push (Literal (ast.ast-lit-int mid))))
+          (tltest-combined-dispatch-tree sel-id runner-ids lo mid)
+          (tltest-combined-dispatch-tree sel-id runner-ids mid hi))))))
+
+(define (tltest-combined-main-decl
+  [parse-fn-id : i64]
+  [runner-ids : (& (__tl_dyn-array i64))]
+  [file-count : i64]) : ast.AstDecl
+  (let
+    [sel-id : i64 (ci.intern-generated-name "__tl_comb_sel")]
+    (ast.ast-decl-def-fn-id
+      (tltest-main-id)
+      (ast.ast-param-list-new)
+      (I64)
+      (ast.ast-expr-let
+        (ast.ast-let-binding-cons
+          (&
+            (ast.ast-let-binding-id
+              sel-id
+              (Some (I64))
+              (tltest-call-expr-id parse-fn-id)))
+          (& (ast.ast-let-binding-list-new)))
+        (tltest-combined-dispatch-tree sel-id runner-ids 0 file-count)))))
+
+(define (tltest-combined-compile-in-entry
+  [paths : (& cli_svec.Vec)]
+  [roots : (& cli_svec.Vec)]
+  [files : (& build_run_core.SourceToolTempFiles)]
+  [file-counts : (&mut (__tl_dyn-array i64))]
+  [opt-level : i64]
+  [backend-mode : be_state.CompilerBackendMode]
+  [backend-target : be_state.CompilerBackendTarget]) : i64
+  (let
+    [file-count : i64 (cli_svec.len paths)]
+    [cwd : String (fs.current-dir)]
+    [effective-roots : cli_svec.Vec
+      (tltest-combined-effective-roots paths roots)]
+    [cfgs : sym_i64_env.SymI64Env (tltest-cfgs backend-target)]
+    [target-map : tltest_name_map.Map
+      (tltest-combined-target-map paths (& cwd) (& effective-roots))]
+    (match (tltest-combined-load
+      paths
+      (& cwd)
+      (& effective-roots)
+      (& target-map)
+      cfgs)
+      [(CombinedLoadErr _) 1]
+      [(CombinedLoaded loaded-decls loaded-paths)
+        (match (tltest-collect-combined
+          (& target-map)
+          (& cwd)
+          loaded-decls
+          loaded-paths)
+          [(CombinedCollect
+              runtime-decls
+              runtime-paths
+              all-tests
+              test-file-indices)
+            (let
+              [total-tests : i64 (array-length all-tests)]
+              [dropped-tests? : bool
+                (let
+                  [dropped : bool false]
+                  [f : i64 0]
+                  (for [j (iterator.range 0 file-count)]
+                    (set! (array-ref file-counts j) 0))
+                  (for [t (iterator.range 0 total-tests)]
+                    (let
+                      [idx : i64 (array-ref test-file-indices t)]
+                      (when
+                        (and (>= idx 0) (< idx file-count))
+                        (set!
+                          (array-ref file-counts idx)
+                          (+ (array-ref file-counts idx) 1)))))
+                  (unless
+                    (tltest-selection-set?)
+                    (while (and (not dropped) (< f file-count))
+                      (when
+                        (= (array-ref file-counts f) 0)
+                        (let
+                          [file-source : String (cli_svec.get paths f "")]
+                          (when
+                            (and
+                              (io.file-exists? (string.copy (& file-source)))
+                              (tltest-source-has-inline-tests? file-source))
+                            (set! dropped true))))
+                      (+= f 1)))
+                  dropped)]
+              (if dropped-tests?
+                1
+                (let
+                  [session : cis.InternStructuralSessionHandle
+                    (tltest-active-structural-session)]
+                  [reachable : tltest_name_map.Map
+                    (tltest-reachable-names
+                      session
+                      (& runtime-decls)
+                      (& all-tests))]
+                  (match (tltest-prune-runtime-decls-in
+                    session
+                    runtime-decls
+                    runtime-paths
+                    ""
+                    true
+                    (& reachable)
+                    (ast.ast-decl-list-new)
+                    (ast.ast-decl-path-list-new))
+                    [(Decls out-decls out-paths)
+                      (let
+                        [harness-decls : ast.AstDeclList out-decls]
+                        [harness-paths : ast.AstDeclPathList out-paths]
+                        [parse-fn-id : i64
+                          (ci.intern-generated-name "__tl_test_parse_index")]
+                        [runner-ids : (__tl_dyn-array i64)
+                          (__tl_make-array i64 file-count)]
+                        [harness-path : String "<combined test harness>"]
+                        ;; Emit every collected inline test function in its owning module.
+                        (for [t (iterator.range 0 total-tests)]
+                          (let
+                            [test : InlineTest
+                              (clone-inline-test (& (array-ref all-tests t)))]
+                            (match test
+                              [(Case _ path module-id _ body _ private-id _ _)
+                                (ast.ast-decl-list-push
+                                  (&mut harness-decls)
+                                  (ast.ast-decl-module-id module-id))
+                                (ast.ast-decl-path-list-push-with-owner-id
+                                  (&mut harness-paths)
+                                  (string.copy (& path))
+                                  module-id)
+                                (ast.ast-decl-list-push
+                                  (&mut harness-decls)
+                                  (ast.ast-decl-def-fn-id
+                                    private-id
+                                    (ast.ast-param-list-new)
+                                    (Unit)
+                                    body))
+                                (ast.ast-decl-path-list-push-with-owner-id
+                                  (&mut harness-paths)
+                                  path
+                                  module-id)])))
+                        ;; Switch to root module and import stdlib.runtime for suite helpers.
+                        (ast.ast-decl-list-push
+                          (&mut harness-decls)
+                          (ast.ast-decl-module-id (tltest-empty-name-id)))
+                        (ast.ast-decl-path-list-push-with-owner-id
+                          (&mut harness-paths)
+                          (string.copy (& harness-path))
+                          cbi.compiler-builtin-id-fix-empty)
+                        (ast.ast-decl-list-push
+                          (&mut harness-decls)
+                          (Import
+                            (ast.ast-decl-meta-runtime-with-aggregate-markers 0)
+                            (Spec
+                              (Module)
+                              "stdlib.runtime"
+                              (Some cbi.compiler-builtin-id-runtime-module)
+                              (Some (tltest-runtime-import-alias-id))
+                              (box (ast.ast-decl-span-fallback)))))
+                        (ast.ast-decl-path-list-push-with-owner-id
+                          (&mut harness-paths)
+                          (string.copy (& harness-path))
+                          cbi.compiler-builtin-id-fix-empty)
+                        ;; Emit one runner function per file in the batch.
+                        (for [f (iterator.range 0 file-count)]
+                          (let
+                            [file-tests : (__tl_dyn-array InlineTest)
+                              (__tl_make-array InlineTest 0)]
+                            [file-source : String (cli_svec.get paths f "")]
+                            (for [t (iterator.range 0 total-tests)]
+                              (when
+                                (= (array-ref test-file-indices t) f)
+                                (__tl_array-push!
+                                  file-tests
+                                  (clone-inline-test
+                                    (& (array-ref all-tests t))))))
+                            (tltest-shuffle-tests! (&mut file-tests))
+                            (set!
+                              (array-ref file-counts f)
+                              (array-length file-tests))
+                            (let
+                              [runner-id : i64
+                                (tltest-combined-file-runner-id f)]
+                              (set! (array-ref runner-ids f) runner-id)
+                              (ast.ast-decl-list-push
+                                (&mut harness-decls)
+                                (ast.ast-decl-def-fn-id
+                                  runner-id
+                                  (ast.ast-param-list-new)
+                                  (I64)
+                                  (ast.ast-node-push
+                                    (Begin (tltest-main-exprs (& file-tests)))))))
+                            (ast.ast-decl-path-list-push-with-owner-id
+                              (&mut harness-paths)
+                              file-source
+                              cbi.compiler-builtin-id-fix-empty)))
+                        ;; Emit argv index parser and dispatched main.
+                        (ast.ast-decl-list-push
+                          (&mut harness-decls)
+                          (tltest-combined-parse-index-decl parse-fn-id))
+                        (ast.ast-decl-path-list-push-with-owner-id
+                          (&mut harness-paths)
+                          (string.copy (& harness-path))
+                          cbi.compiler-builtin-id-fix-empty)
+                        (ast.ast-decl-list-push
+                          (&mut harness-decls)
+                          (tltest-combined-main-decl
+                            parse-fn-id
+                            (& runner-ids)
+                            file-count))
+                        (ast.ast-decl-path-list-push-with-owner-id
+                          (&mut harness-paths)
+                          (string.copy (& harness-path))
+                          cbi.compiler-builtin-id-fix-empty)
+                        (let
+                          [full-program : ast.AstProgram
+                            (tltest-program-with-print-runtime
+                              (ast.ast-program harness-decls)
+                              backend-target)]
+                          [full-paths : ast.AstDeclPathList
+                            (tltest-paths-with-print-runtime
+                              backend-target
+                              harness-paths)]
+                          [lower-state : lower.CompilerLowerState
+                            (lower.compiler-lower-state-new)]
+                          [legacy-roots : cli_svec.Vec
+                            (cli_svec.clone-vec (& effective-roots))]
+                          [first-source : String (cli_svec.get paths 0 "")]
+                          [status : i64
+                            (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-state
+                              lower-state
+                              (string.copy (& first-source))
+                              full-program
+                              full-paths
+                              (tltest-harness-lower-mode
+                                backend-target
+                                backend-mode)
+                              (cli_svec.clone-vec (& legacy-roots))
+                              cfgs
+                              (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
+                                "typecheck-prefix-test-cli"
+                                legacy-roots
+                                cfgs))
+                              [(Err diag)
+                                (io.print-error
+                                  (str_cat.str-cat
+                                    "test: --combined diagnostic: "
+                                    (driver.compiler-driver-render-source-diagnostic
+                                      (deref diag))
+                                    "\n"))
+                                2]
+                              [(Ok ir spans lowered-state)
+                                (match (build_run_core.source-tool-link-program
+                                  (build_run_core.SourceToolLinkRequest
+                                    (string.copy (& first-source))
+                                    (Lowered ir spans lowered-state)
+                                    backend-target
+                                    opt-level
+                                    backend-mode
+                                    (build_run_core.source-tool-link-inputs-empty)
+                                    (build_run_core.SourceToolTempFiles
+                                      (string.copy (& files.dir))
+                                      (string.copy (& files.asm))
+                                      (string.copy (& files.obj))
+                                      (string.copy (& files.bin)))
+                                    "test: failed to write assembly artifact"))
+                                  [(Ok) 0]
+                                  [(Err msg)
+                                    (io.print-error
+                                      (str_cat.str-cat
+                                        "test: --combined link error: "
+                                        msg
+                                        "\n"))
+                                    3])])]
+                          (lower.compiler-lower-state-reset! lower-state)
+                          (lower.compiler-lower-arena-state-release!
+                            (lower.compiler-lower-state-arenas lower-state))
+                          status))]))))])])))
+
+(define (tltest-combined-failure-label [code : i64]) : String
+  (cond
+    [(= code 1) "load failed"]
+    [(= code 2) "typecheck/lower failed"]
+    [(= code 3) "assemble/link failed"]
+    [else "harness compile failed"]))
+
+(define (tltest-run-batch-run-paths-combined
+  [paths : cli_svec.Vec]
+  [target : String]
+  [roots : cli_svec.Vec]
+  [opt-level : i64]
+  [backend-mode : be_state.CompilerBackendMode]
+  [backend-target : be_state.CompilerBackendTarget]) : i64
+  (let
+    [count : i64 (cli_svec.len (& paths))]
+    (if (<= count 1)
+      (tltest-run-batch-run-paths
+        paths
+        target
+        roots
+        opt-level
+        backend-mode
+        backend-target)
+      (match (build_run_core.source-tool-create-temp-dir
+        "typelisp-test-combined")
+        [(Err message)
+          (io.print-error
+            (str_cat.str-cat "test: failed to create temp dir: " message "\n"))
+          1]
+        [(Ok temp-dir)
+          (let
+            [files : build_run_core.SourceToolTempFiles
+              (build_run_core.source-tool-temp-files
+                temp-dir
+                "combined_harness.tl"
+                backend-target)]
+            [file-counts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+            [entry : TlTestEntry (tltest-entry-new)]
+            [entry-result : i64
+              (in-arena
+                entry.owner
+                (tltest-combined-compile-in-entry
+                  (& paths)
+                  (& roots)
+                  (& files)
+                  (&mut file-counts)
+                  opt-level
+                  backend-mode
+                  backend-target))]
+            [compile-status : i64 (tltest-entry-finish entry entry-result)]
+            (if (not (= compile-status 0))
+              (begin
+                (build_run_core.source-tool-clean-temp-files files true)
+                (driver.compiler-driver-reset-file-state!)
+                (io.print-error
+                  (str_cat.str-cat
+                    "test: --combined fallback to single-file mode ("
+                    (tltest-combined-failure-label compile-status)
+                    ")\n"))
+                (tltest-run-batch-run-paths
+                  paths
+                  target
+                  roots
+                  opt-level
+                  backend-mode
+                  backend-target))
+              (let
+                [cursor : i64 0]
+                [ran-files : i64 0]
+                [ran-tests : i64 0]
+                [failed-files : i64 0]
+                [fatal-status : i64 0]
+                [preserve-artifacts : bool false]
+                (while (and (= fatal-status 0) (< cursor count))
+                  (let
+                    [source : String (cli_svec.get (& paths) cursor "")]
+                    [file-test-count : i64 (array-ref file-counts cursor)]
+                    (io.print-format
+                      "{}"
+                      (tltest-package-source-line
+                        (string.copy (& source))
+                        file-test-count))
+                    (let
+                      [command : process.ProcessCommand
+                        (build_run_core.source-tool-command-for-target
+                          backend-target
+                          (process.command-with-env-list
+                            (process.command
+                              (string.copy (& files.bin))
+                              (process.args-single (string.int->string cursor)))
+                            (if (tltest-stdlib-env-fixture-source?
+                              (string.copy (& source)))
+                              (tltest-stdlib-env-fixture-env backend-target)
+                              (process.env-empty))))]
+                      (match (process.output command)
+                        [(OkProcessOutput output)
+                          (let
+                            [status : i64 (process.output-status output)]
+                            (build_run_core.source-tool-forward-output output)
+                            (cond
+                              [(= status 0)
+                                (+= ran-files 1)
+                                (+= ran-tests file-test-count)
+                                (+= cursor 1)]
+                              [(and (> file-test-count 0) (= status 1))
+                                (+= ran-files 1)
+                                (+= ran-tests file-test-count)
+                                (+= failed-files 1)
+                                (+= cursor 1)]
+                              [else
+                                (tltest-report-child-status output)
+                                (io.print-error
+                                  (str_cat.str-cat
+                                    "\ntest: batch source failed: "
+                                    source
+                                    "\n"))
+                                (set! fatal-status 2)]))]
+                        [(ErrProcessOutput error)
+                          (set! preserve-artifacts true)
+                          (io.print-error
+                            (tltest-run-executable-error-message
+                              (string.copy (& files.bin))
+                              (string.copy (& files.dir))
+                              error))
+                          (io.print-error
+                            (str_cat.str-cat
+                              "\ntest: batch source failed: "
+                              source
+                              "\n"))
+                          (set! fatal-status 2)]))))
+                (unless
+                  preserve-artifacts
+                  (build_run_core.source-tool-clean-temp-files files true))
+                (if (= fatal-status 0)
+                  (begin
+                    (io.print-format
+                      "{}"
+                      (tltest-batch-run-summary-line
+                        ran-files
+                        ran-tests
+                        failed-files))
+                    (if (= failed-files 0)
+                      0
+                      1))
+                  fatal-status))))]))))
+
 (define (tltest-run-batch-run
   [paths : cli_svec.Vec]
   [target : String]
@@ -4169,13 +5484,21 @@
         unit)
       (let
         [status : i64
-          (tltest-run-batch-run-paths
-            paths
-            target
-            roots
-            opt-level
-            backend-mode
-            backend-target)]
+          (if tltest-combined
+            (tltest-run-batch-run-paths-combined
+              paths
+              target
+              roots
+              opt-level
+              backend-mode
+              backend-target)
+            (tltest-run-batch-run-paths
+              paths
+              target
+              roots
+              opt-level
+              backend-mode
+              backend-target))]
         (if tltest-prefix-cache-stats
           (tc_core.tc-prefix-snapshot-cache-print-stats "test-run-batch")
           unit)

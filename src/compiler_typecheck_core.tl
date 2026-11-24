@@ -5402,6 +5402,26 @@
             ,allow-mut
             ,ordinary
             ,sink)]
+        [(Spanned _ _)
+          (tc-infer-selected-transparent-id
+            ,ctx
+            ,env
+            ,id
+            TcMaybeAstSourceSpan.No
+            ,syntax
+            ,expected
+            (if ,ordinary
+              ,source
+              (ownership.OwnershipSource
+                (__tl-project-field ,source path)
+                (tc-selected-span-line (__tl-project-field ,source line) ,at)
+                (tc-selected-span-column
+                  (__tl-project-field ,source column)
+                  ,at)
+                (__tl-project-field ,source expansion)))
+            ,allow-mut
+            ,ordinary
+            ,sink)]
         [_
           (if ,ordinary
             (match (match ,expected
@@ -6509,34 +6529,36 @@
               ordinary?
               TcSelectedSink.Query)]))]
     [(TcSelectedSink.Capture store lease bindings)
-      (match span
-        [(TcMaybeAstSourceSpan.No)
-          (tc-infer-selected-result-id
-            ctx
-            env
-            (& syntax)
+      (if (and
+        (not allow-mut-by-value-borrow)
+        (match (& span)
+          [(TcMaybeAstSourceSpan.No) true]
+          [_ false]))
+        (tc-infer-selected-result-id
+          ctx
+          env
+          (& syntax)
+          id
+          expected
+          source
+          (TcSelectedSink.Capture store lease bindings))
+        (tc-infer-selected-view-id-validated
+          ctx
+          env
+          id
+          (match (tc-context-expr-get ctx id)
+            ;; Unsafe and compact expansion chains inherit read-through.
+            [(or (Unsafe _) (MacroExpansion _ _ _)) syntax]
+            [_ (typed.TypedSyntax.Source id)])
+          expected
+          source
+          (tc-selected-id-bound-ok
             id
-            expected
-            source
-            (TcSelectedSink.Capture store lease bindings))]
-        [(TcMaybeAstSourceSpan.Some _)
-          (tc-infer-selected-view-id-validated
-            ctx
-            env
-            id
-            (match (tc-context-expr-get ctx id)
-              ;; Unsafe and compact expansion chains inherit read-through.
-              [(or (Unsafe _) (MacroExpansion _ _ _)) syntax]
-              [_ (typed.TypedSyntax.Source id)])
-            expected
-            source
-            (tc-selected-id-bound-ok
-              id
-              (ast.ast-node-pool-context-expr-len lease.pools))
-            span
-            allow-mut-by-value-borrow
-            false
-            (TcSelectedSink.Capture store lease bindings))])]))
+            (ast.ast-node-pool-context-expr-len lease.pools))
+          span
+          allow-mut-by-value-borrow
+          false
+          (TcSelectedSink.Capture store lease bindings)))]))
 
 (define (tc-infer-selected-expansion
   [ctx : TcContext]
@@ -7761,6 +7783,61 @@
           [(TcSelectedResult.Ok ty occurrence next)
             (TcSelectedResult.Ok ty occurrence next)])]
       [(TcMaybeAstSourceSpan.No) result])))
+
+;; A `(&mut place)` call argument reached through macro expansion or nested
+;; span wrappers: preserve expansion hygiene, ownership frames, and spans
+;; while enabling the immediate call-argument by-value borrow policy.
+(define (tc-infer-selected-mut-borrow-wrapped-arg
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (if (tc-type-env-scoped-identity-exhausted? env)
+    (TcSelectedResult.Err (tc-selected-error typed.TypedError.Exhausted) sink)
+    (match sink
+      [(TcSelectedSink.Query)
+        (tc-selected-speculative-query
+          ctx
+          (tc-infer-selected-view-id-validated
+            ctx
+            env
+            arg-id
+            (typed.TypedSyntax.Source arg-id)
+            ast.AstMaybeType.No
+            source
+            (tc-context-expr-query-id-ok ctx arg-id)
+            TcMaybeAstSourceSpan.No
+            true
+            false
+            TcSelectedSink.Query))]
+      [(TcSelectedSink.Capture store lease bindings)
+        (match (tc-selected-context-lease-ok ctx lease)
+          [(typed.TypedResult.Err error)
+            (tc-selected-failed error store lease bindings)]
+          [(typed.TypedResult.Ok _)
+            (match (typed.typed-lease-ok (& store) lease)
+              [(typed.TypedResult.Err error)
+                (tc-selected-failed error store lease bindings)]
+              [(typed.TypedResult.Ok _)
+                (tc-infer-selected-view-id-validated
+                  ctx
+                  env
+                  arg-id
+                  (typed.TypedSyntax.Source arg-id)
+                  ast.AstMaybeType.No
+                  source
+                  (tc-selected-id-bound-ok
+                    arg-id
+                    (ast.ast-node-pool-context-expr-len lease.pools))
+                  TcMaybeAstSourceSpan.No
+                  true
+                  false
+                  (TcSelectedSink.Capture store lease bindings))])])])))
 
 ;; --- Match (#8449) ------------------------------------------------------------
 ;;
@@ -19065,26 +19142,42 @@
               (tc-global-shared-view source)
               sink)]
           [(TcSelectedMutBorrowArg.No)
-            (if (tc-selected-raw-spawn-entry?
-              ctx
-              env
-              (tc-global-shared-view func)
-              args
-              params
-              index)
-              (tc-infer-selected-spawn-entry
-                ctx
-                env
-                arg-id
-                (ast.clone-ast-type want)
-                (tc-global-shared-view source)
-                sink)
-              (if (and
-                (not constructor?)
-                (tc-arena-type? ctx (ast.clone-ast-type want))
-                (not
-                  (tc-call-param-moves-argument? ctx (ast.clone-ast-type want)))
-                (tc-selected-arena-handle-operand? ctx env arg-id))
+            (cond
+              [(and
+                  (not constructor?)
+                  (>=
+                    (tc-mut-borrow-arg-place-id
+                      ctx
+                      (tc-context-expr-get ctx arg-id))
+                    0))
+                (tc-infer-selected-mut-borrow-wrapped-arg
+                  ctx
+                  env
+                  arg-id
+                  (ownership.ownership-source-copy (& source))
+                  sink)]
+              [(tc-selected-raw-spawn-entry?
+                  ctx
+                  env
+                  (tc-global-shared-view func)
+                  args
+                  params
+                  index)
+                (tc-infer-selected-spawn-entry
+                  ctx
+                  env
+                  arg-id
+                  (ast.clone-ast-type want)
+                  (tc-global-shared-view source)
+                  sink)]
+              [(and
+                  (not constructor?)
+                  (tc-arena-type? ctx (ast.clone-ast-type want))
+                  (not
+                    (tc-call-param-moves-argument?
+                      ctx
+                      (ast.clone-ast-type want)))
+                  (tc-selected-arena-handle-operand? ctx env arg-id))
                 ;; A bare `Arena` parameter reads an owner without
                 ;; moving it (`tc-call-param-moves-argument?`).
                 (match (tc-expr-with-expected-or-actual-id
@@ -19101,7 +19194,8 @@
                       arg-id
                       got
                       (tc-global-shared-view source)
-                      sink)])
+                      sink)])]
+              [else
                 ;; A shared-reference formal borrows its argument for
                 ;; the call, so a compound one, or an element read
                 ;; through a temporary (no auto-borrowed place), is
@@ -19145,7 +19239,7 @@
                         (ast.AstMaybeType.Some (ast.clone-ast-type want))
                         arg-source
                         true
-                        sink)]))))])])))
+                        sink)]))])])])))
 
 ;; Evidence from lifetime inference is local to one call. Only a value
 ;; operand checked with the same formal and without an implicit borrow can

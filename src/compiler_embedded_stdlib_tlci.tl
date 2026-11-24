@@ -1144,12 +1144,15 @@
 ;; The unspanned expression of operand `index`, or a unit literal when the
 ;; operand is out of range or carries no expression node. Callers probe the
 ;; range separately, so the fallback is only a total-function placeholder.
+(define (compiler-comptime-host-operand-value [index : i64]) : ctfe_support.CompilerCtfeValue
+  (compiler-comptime-host-array-element-shared-view
+    compiler-comptime-host-operands
+    index))
+
 (define (compiler-comptime-host-operand-expr [index : i64]) : ast.AstExpr
   (let
     [value : ctfe_support.CompilerCtfeValue
-      (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-operands
-        index)]
+      (compiler-comptime-host-operand-value index)]
     [node : i64 (compiler-comptime-host-value-node value)]
     [pools : ast.AstNodePoolContext (compiler-comptime-host-value-pools value)]
     (if (< node 0)
@@ -4416,11 +4419,36 @@
     session
     (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-operand-expr arg-a)
-        [(Call callee _)
-          (compiler-comptime-host-push!
-            (Expr callee (ctfe_support.ctfe-untyped-expr-type)))]
-        [_ tlci.tlci-host-callback-status-bad-request]))))
+      (let
+        [value : ctfe_support.CompilerCtfeValue
+          (compiler-comptime-host-operand-value arg-a)]
+        [node : i64 (compiler-comptime-host-value-node (& value))]
+        [pools : ast.AstNodePoolContext
+          (compiler-comptime-host-value-pools (& value))]
+        [captured : bool
+          (match (& value)
+            [(CapturedExpr _ _ _) true]
+            [_ false])]
+        (if (< node 0)
+          tlci.tlci-host-callback-status-bad-request
+          (match (compiler-comptime-host-unspanned-expr
+            (& pools)
+            (ast.ast-node-pool-context-expr-get pools node))
+            [(Call callee _)
+              (let
+                [wrapped-callee : i64
+                  (ctfe_support.ctfe-expr-rewrap-macro-expansions-with-pools
+                    pools
+                    node
+                    callee)]
+                (compiler-comptime-host-push!
+                  (if captured
+                    (CapturedExpr
+                      wrapped-callee
+                      (ctfe_support.ctfe-untyped-expr-type)
+                      pools)
+                    (Expr wrapped-callee (ctfe_support.ctfe-untyped-expr-type)))))]
+            [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 (define (compiler-comptime-host-callback-operand-expr-call-args
   [session : i64]
@@ -4431,9 +4459,33 @@
     session
     (if (or (< arg-a 0) (>= arg-a compiler-comptime-host-operand-count))
       tlci.tlci-host-callback-status-bad-request
-      (match (compiler-comptime-host-operand-expr arg-a)
-        [(Call _ call-args) (compiler-comptime-host-push! (ExprList call-args))]
-        [_ tlci.tlci-host-callback-status-bad-request]))))
+      (let
+        [value : ctfe_support.CompilerCtfeValue
+          (compiler-comptime-host-operand-value arg-a)]
+        [node : i64 (compiler-comptime-host-value-node (& value))]
+        [pools : ast.AstNodePoolContext
+          (compiler-comptime-host-value-pools (& value))]
+        [captured : bool
+          (match (& value)
+            [(CapturedExpr _ _ _) true]
+            [_ false])]
+        (if (< node 0)
+          tlci.tlci-host-callback-status-bad-request
+          (match (compiler-comptime-host-unspanned-expr
+            (& pools)
+            (ast.ast-node-pool-context-expr-get pools node))
+            [(Call _ call-args)
+              (let
+                [wrapped-args : ast.AstExprList
+                  (ctfe_support.ctfe-expr-list-rewrap-macro-expansions-with-pools
+                    pools
+                    node
+                    call-args)]
+                (compiler-comptime-host-push!
+                  (if captured
+                    (CapturedExprList wrapped-args pools)
+                    (ExprList wrapped-args))))]
+            [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; expr-call-args: replace the Expr on top of the stack with its call
 ;; arguments, or an empty list when it is not a call. Spans and caller-origin

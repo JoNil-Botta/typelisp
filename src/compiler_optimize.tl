@@ -5625,44 +5625,6 @@
     i64
     ast.AstType))
 
-(define (clone-opt-expr-key [key : (& OptExprKey)]) : OptExprKey
-  (match key
-    [(BinKey op lhs rhs ty)
-      (BinKey
-        (ir.clone-compiler-ir-bin-op op)
-        (ir.compiler-ir-clone-value lhs)
-        (ir.compiler-ir-clone-value rhs)
-        (ast.clone-ast-type ty))]
-    [(UnKey op value ty)
-      (UnKey op (ir.compiler-ir-clone-value value) (ast.clone-ast-type ty))]
-    [(CpuIdKey leaf subleaf reg)
-      (CpuIdKey
-        (ir.compiler-ir-clone-value leaf)
-        (ir.compiler-ir-clone-value subleaf)
-        reg)]
-    [(XgetbvKey index) (XgetbvKey (ir.compiler-ir-clone-value index))]
-    [(WordKey value index ty)
-      (WordKey (ir.compiler-ir-clone-value value) index (ast.clone-ast-type ty))]
-    [(SplatKey value lanes ty)
-      (SplatKey
-        (ir.compiler-ir-clone-value value)
-        lanes
-        (ast.clone-ast-type ty))]
-    [(VectorBinKey op lhs rhs lanes ty)
-      (VectorBinKey
-        (ir.clone-compiler-ir-bin-op op)
-        (ir.compiler-ir-clone-value lhs)
-        (ir.compiler-ir-clone-value rhs)
-        lanes
-        (ast.clone-ast-type ty))]
-    [(VectorCompareKey op lhs rhs lanes ty)
-      (VectorCompareKey
-        (ir.clone-compiler-ir-bin-op op)
-        (ir.compiler-ir-clone-value lhs)
-        (ir.compiler-ir-clone-value rhs)
-        lanes
-        (ast.clone-ast-type ty))]))
-
 ;; The table is one mutable store per block walk (#5731). No older table is
 ;; retained: every step hands back the handle it was given. Keys are stored once,
 ;; in walk order, and never moved or rewritten, since copying a key deep-copies

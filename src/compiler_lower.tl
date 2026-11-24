@@ -2696,19 +2696,19 @@
 (define (lower-clone-vector-map-value-cache
   [cache : (& LowerVectorMapValueCache)]) : LowerVectorMapValueCache
   (let
-    [cap : i64 (array-length cache.keys)]
+    [count : i64 cache.count]
     [keys : (__tl_dyn-array LowerVectorMapValueKey)
-      (__tl_make-array LowerVectorMapValueKey cap)]
+      (__tl_make-array LowerVectorMapValueKey count)]
     [values : (__tl_dyn-array ir.CompilerIrValue)
-      (__tl_make-array ir.CompilerIrValue (array-length cache.values))]
-    (for [index (iterator.range 0 cache.count)]
+      (__tl_make-array ir.CompilerIrValue count)]
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref keys index)
         (lower-clone-vector-map-value-key (& (array-ref cache.keys index))))
       (set!
         (array-ref values index)
         (ir.compiler-ir-clone-value (& (array-ref cache.values index)))))
-    (LowerVectorMapValueCache keys values cache.count)))
+    (LowerVectorMapValueCache keys values count)))
 
 (defenum LowerVectorMapCachedEmit
   (Emit LowerState ir.CompilerIrValue LowerVectorMapValueCache))

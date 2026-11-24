@@ -51212,153 +51212,102 @@
       [(No) false])
     false))
 
-;; Emit `stride >= 0` and overflow-checked `max_mul = (y_span - 1) * stride`,
-;; returning updated state, ok-var (and'ed into `ok-var`), and `max-mul-var`.
-(defenum LowerForeach2StrideGuard
-  (Guard LowerState i64 i64))
-
+;; Emit `stride >= 0` and overflow-checked `max_mul = (y_span - 1) * stride`
+;; into RES-OK (`ok-var` and'ed with the guard) and RES-MUL.
 (define (lower-foreach2-rect-stride-guard
-  [state : LowerState]
+  [s : LowerState]
   [ok-var : i64]
   [y-span-m1-var : i64]
   [x-span-var : i64]
-  [stride-var : i64]) : LowerForeach2StrideGuard
+  [stride-var : i64]
+  [res-ok : i64]
+  [res-mul : i64]) : unit
   (let
-    [s : LowerState state]
-    [res-ok : i64 0]
-    [res-mul : i64 0]
-    [pos-label : i64 (ir.compiler-ir-label-none)]
-    [pos-div-label : i64 (ir.compiler-ir-label-none)]
-    [pos-fast-label : i64 (ir.compiler-ir-label-none)]
-    [nonpos-label : i64 (ir.compiler-ir-label-none)]
-    [join-label : i64 (ir.compiler-ir-label-none)]
-    (match (lower-state-alloc-var s)
-      [(Alloc next v)
-        (set! s next)
-        (set! res-ok v)])
-    (match (lower-state-alloc-var s)
-      [(Alloc next v)
-        (set! s next)
-        (set! res-mul v)])
-    (match (lower-state-fresh-label s "foreach2_rect_stride_pos")
-      [(Label next lbl)
-        (set! s next)
-        (set! pos-label lbl)])
-    (match (lower-state-fresh-label s "foreach2_rect_stride_fast")
-      [(Label next lbl)
-        (set! s next)
-        (set! pos-fast-label lbl)])
-    (match (lower-state-fresh-label s "foreach2_rect_stride_div")
-      [(Label next lbl)
-        (set! s next)
-        (set! pos-div-label lbl)])
-    (match (lower-state-fresh-label s "foreach2_rect_stride_nonpos")
-      [(Label next lbl)
-        (set! s next)
-        (set! nonpos-label lbl)])
-    (match (lower-state-fresh-label s "foreach2_rect_stride_join")
-      [(Label next lbl)
-        (set! s next)
-        (set! join-label lbl)])
-    (match (lower-row-origin-binop s Gt (Var stride-var) (I64 0) (I64))
-      [(Alloc next pos-cond)
-        (set!
-          s
-          (lower-state-finish-block
-            (lower-state-emit
-              next
-              (Branch (Var pos-cond) pos-label nonpos-label))
-            pos-label))])
+    [pos-label : i64 (lower-row-origin-label s "foreach2_rect_stride_pos")]
+    [pos-fast-label : i64
+      (lower-row-origin-label s "foreach2_rect_stride_fast")]
+    [pos-div-label : i64 (lower-row-origin-label s "foreach2_rect_stride_div")]
+    [nonpos-label : i64
+      (lower-row-origin-label s "foreach2_rect_stride_nonpos")]
+    [join-label : i64 (lower-row-origin-label s "foreach2_rect_stride_join")]
+    (lower-row-origin-close
+      s
+      (Branch
+        (Var (lower-row-origin-binop s Gt (Var stride-var) (I64 0) (I64)))
+        pos-label
+        nonpos-label)
+      pos-label)
     ;; `foreach2_checks` already proved `y_span * x_span <= INT64_MAX`, so
     ;; `0 < stride <= x_span` guarantees `(y_span - 1) * stride` cannot overflow
     ;; without emitting a second `idivq`.
-    (match (lower-row-origin-binop s Le (Var stride-var) (Var x-span-var) (I64))
-      [(Alloc next fast-cond)
-        (set!
-          s
-          (lower-state-finish-block
-            (lower-state-emit
-              next
-              (Branch (Var fast-cond) pos-fast-label pos-div-label))
-            pos-fast-label))])
-    (match (lower-row-origin-binop
+    (lower-row-origin-close
       s
-      Mul
-      (Var y-span-m1-var)
-      (Var stride-var)
-      (I64))
-      [(Alloc mul-state mul-var)
-        (set!
-          s
-          (lower-state-finish-block
-            (lower-state-emit
-              (lower-state-emit
-                (lower-state-emit mul-state (Mov res-ok (Var ok-var) (Bool)))
-                (Mov res-mul (Var mul-var) (I64)))
-              (Jump join-label))
-            pos-div-label))])
-    ;; Larger positive stride (> x_span): safe_div(INT64_MAX, stride) cannot divide by zero or -1.
-    (match (lower-row-origin-binop
+      (Branch
+        (Var
+          (lower-row-origin-binop s Le (Var stride-var) (Var x-span-var) (I64)))
+        pos-fast-label
+        pos-div-label)
+      pos-fast-label)
+    (lower-foreach2-rect-stride-result
       s
-      SafeDiv
-      (I64 9223372036854775807)
-      (Var stride-var)
-      (I64))
-      [(Alloc q-state q-var)
-        (match (lower-row-origin-binop
-          q-state
-          Le
+      res-ok
+      (Var ok-var)
+      res-mul
+      (Var
+        (lower-row-origin-binop
+          s
+          Mul
           (Var y-span-m1-var)
-          (Var q-var)
-          (I64))
-          [(Alloc fit-state fit-var)
-            (match (lower-row-origin-binop
-              fit-state
-              And
-              (Var ok-var)
-              (Var fit-var)
-              (Bool))
-              [(Alloc and-state pos-ok)
-                (match (lower-row-origin-binop
-                  and-state
-                  Mul
-                  (Var y-span-m1-var)
-                  (Var stride-var)
-                  (I64))
-                  [(Alloc mul-state mul-var)
-                    (set!
-                      s
-                      (lower-state-finish-block
-                        (lower-state-emit
-                          (lower-state-emit
-                            (lower-state-emit
-                              mul-state
-                              (Mov res-ok (Var pos-ok) (Bool)))
-                            (Mov res-mul (Var mul-var) (I64)))
-                          (Jump join-label))
-                        nonpos-label))])])])])
+          (Var stride-var)
+          (I64)))
+      join-label
+      pos-div-label)
+    ;; Larger positive stride (> x_span): safe_div(INT64_MAX, stride) cannot divide by zero or -1.
+    (let
+      [q : i64
+        (lower-row-origin-binop
+          s
+          SafeDiv
+          (I64 9223372036854775807)
+          (Var stride-var)
+          (I64))]
+      (lower-foreach2-rect-stride-result
+        s
+        res-ok
+        (Var (lower-row-origin-and s ok-var Le (Var y-span-m1-var) (Var q)))
+        res-mul
+        (Var
+          (lower-row-origin-binop
+            s
+            Mul
+            (Var y-span-m1-var)
+            (Var stride-var)
+            (I64)))
+        join-label
+        nonpos-label))
     ;; Non-positive stride: stride == 0 is valid with max_mul = 0; stride < 0 fails guard.
-    (match (lower-row-origin-binop s Eq (Var stride-var) (I64 0) (I64))
-      [(Alloc z-state z-var)
-        (match (lower-row-origin-binop
-          z-state
-          And
-          (Var ok-var)
-          (Var z-var)
-          (Bool))
-          [(Alloc and-state zero-ok)
-            (set!
-              s
-              (lower-state-finish-block
-                (lower-state-emit
-                  (lower-state-emit
-                    (lower-state-emit
-                      and-state
-                      (Mov res-ok (Var zero-ok) (Bool)))
-                    (Mov res-mul (I64 0) (I64)))
-                  (Jump join-label))
-                join-label))])])
-    (Guard s res-ok res-mul)))
+    (lower-foreach2-rect-stride-result
+      s
+      res-ok
+      (Var (lower-row-origin-and s ok-var Eq (Var stride-var) (I64 0)))
+      res-mul
+      (I64 0)
+      join-label
+      join-label)))
+
+;; Close a stride-guard arm with `res_ok = ok; res_mul = mul`, jumping to
+;; JOIN-LABEL and opening NEXT-LABEL.
+(define (lower-foreach2-rect-stride-result
+  [s : LowerState]
+  [res-ok : i64]
+  [ok : ir.CompilerIrValue]
+  [res-mul : i64]
+  [mul : ir.CompilerIrValue]
+  [join-label : i64]
+  [next-label : i64]) : unit
+  (lower-state-emit s (Mov res-ok ok (Bool)))
+  (lower-state-emit s (Mov res-mul mul (I64)))
+  (lower-row-origin-close s (Jump join-label) next-label))
 
 ;; Hoist one overflow-checked rectangular guard above the rank-2 row loop when
 ;; every row-origin view is affine in `outer-id`. On pass, the fast row loop
@@ -51385,61 +51334,34 @@
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     [s : LowerState state]
     [count : i64 plan.count]
-    [y0-env : sym_i64_env.SymI64Env
-      (sym_i64_env.sym-i64-bind-id env outer-id y0)]
-    [y0-type-env : tc_core.TcTypeEnv
-      (tc_core.tc-bind-id type-env outer-id (I64))]
-    [y-span-var : i64 0]
-    [y-span-m1-var : i64 0]
-    [x-span-var : i64 0]
-    [rect-ok-var : i64 0]
     [ptr-vars : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [len-vars : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [group-of : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [group-first : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [group-stride : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [group-has-stride : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [group-req-len : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [group-cur : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [group-count : i64 0]
     [view-ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [view-vars : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [rect-entry-label : i64 (ir.compiler-ir-label-none)]
-    [rect-header-label : i64 (ir.compiler-ir-label-none)]
-    [rect-row-label : i64 (ir.compiler-ir-label-none)]
-    [checked-entry-label : i64 (ir.compiler-ir-label-none)]
-    [checked-header-label : i64 (ir.compiler-ir-label-none)]
-    [checked-row-label : i64 (ir.compiler-ir-label-none)]
-    [row-var : i64 0]
-    [checked-row-var : i64 0]
+    ;; Items sharing an origin share one group: its running row origin
+    ;; (`group-cur`), its y-stride var (-1 when constant), and `req_len`.
+    [group-of : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [group-cur : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [group-stride : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [group-req-len : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     [row-index : i64
       (cis.intern-lower-private-identity-raw
         (lower-private-identity state SpmdRowIndex))]
     [row-start : i64
       (cis.intern-lower-private-identity-raw
         (lower-private-identity state SpmdRowStart))]
-    (match (lower-row-origin-binop s Sub (Var y1) (Var y0) (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! y-span-var var)])
-    (match (lower-row-origin-binop s Sub (Var y-span-var) (I64 1) (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! y-span-m1-var var)])
-    (match (lower-row-origin-binop s Sub (Var x1) (Var x0) (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! x-span-var var)])
+    [y-span-var : i64 (lower-row-origin-binop s Sub (Var y1) (Var y0) (I64))]
+    [y-span-m1-var : i64
+      (lower-row-origin-binop s Sub (Var y-span-var) (I64 1) (I64))]
+    [x-span-var : i64 (lower-row-origin-binop s Sub (Var x1) (Var x0) (I64))]
     ;; Keep x_span <= INT64_MAX - 16 so vector headers (index + lanes) cannot overflow.
-    (match (lower-row-origin-binop
-      s
-      Le
-      (Var x-span-var)
-      (I64 9223372036854775791)
-      (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! rect-ok-var var)])
+    [rect-ok-var : i64
+      (lower-row-origin-binop
+        s
+        Le
+        (Var x-span-var)
+        (I64 9223372036854775791)
+        (I64))]
     (for [item-index (iterator.range 0 count)]
       (let
         [item : LowerRowOrigin (array-ref plan.items item-index)]
@@ -51454,77 +51376,53 @@
                 ctx
                 (ast.ast-node-pool-context-expr-push pools (Var item.name)))))]
         [matched-group : i64 -1]
+        [prev : i64 0]
         (match fields
           [(Fields fields-state ptr len _)
-            (match (lower-row-origin-hold fields-state ptr (U64))
-              [(Alloc ptr-state ptr-var)
-                (match (lower-row-origin-hold ptr-state len (I64))
-                  [(Alloc len-state len-var)
-                    (set! s len-state)
-                    (set! (array-ref ptr-vars item-index) ptr-var)
-                    (set! (array-ref len-vars item-index) len-var)])])])
-        (let
-          [prev : i64 0]
-          (while (and (< matched-group 0) (< prev item-index))
-            (let
-              [prev-item : LowerRowOrigin (array-ref plan.items prev)]
-              (when
-                (lower-row-origin-same? ctx prev-item.origin item.origin)
-                (set! matched-group (array-ref group-of prev))))
-            (+= prev 1)))
+            (set! s fields-state)
+            (set!
+              (array-ref ptr-vars item-index)
+              (lower-row-origin-hold s ptr (U64)))
+            (set!
+              (array-ref len-vars item-index)
+              (lower-row-origin-hold s len (I64)))])
+        (while (and (< matched-group 0) (< prev item-index))
+          (let
+            [prev-item : LowerRowOrigin (array-ref plan.items prev)]
+            (when
+              (lower-row-origin-same? ctx prev-item.origin item.origin)
+              (set! matched-group (array-ref group-of prev))))
+          (+= prev 1))
         (when
           (< matched-group 0)
-          (set! matched-group group-count)
+          (set! matched-group (array-length group-cur))
           (let
             [first-lowered
               (try
                 (lower-expr
                   ctx
                   s
-                  y0-env
-                  y0-type-env
+                  (sym_i64_env.sym-i64-bind-id env outer-id y0)
+                  (tc_core.tc-bind-id type-env outer-id (I64))
                   (lower-context-expr-get ctx item.origin)))]
             [first-var : i64 0]
-            [stride-var : i64 0]
-            [has-stride : i64 0]
+            [stride-var : i64 -1]
             [max-mul-var : i64 0]
             (match first-lowered
               [(Expr orig-state orig-val _)
-                (match (lower-row-origin-binop
-                  orig-state
-                  Add
-                  orig-val
-                  (Var x0)
-                  (I64))
-                  [(Alloc add-state fv)
-                    (set! s add-state)
-                    (set! first-var fv)])])
-            (match (lower-row-origin-binop s Ge (Var first-var) (I64 0) (I64))
-              [(Alloc ge-state ge-var)
-                (match (lower-row-origin-binop
-                  ge-state
-                  And
-                  (Var rect-ok-var)
-                  (Var ge-var)
-                  (Bool))
-                  [(Alloc ok-state ok)
-                    (set! s ok-state)
-                    (set! rect-ok-var ok)])])
+                (set! s orig-state)
+                (set!
+                  first-var
+                  (lower-row-origin-binop s Add orig-val (Var x0) (I64)))])
+            (set!
+              rect-ok-var
+              (lower-row-origin-and s rect-ok-var Ge (Var first-var) (I64 0)))
             (match (array-ref strides item-index)
               [(StrideZero)
-                (match (lower-row-origin-hold s (I64 0) (I64))
-                  [(Alloc next zvar)
-                    (set! s next)
-                    (set! stride-var zvar)
-                    (set! max-mul-var zvar)
-                    (set! has-stride 0)])]
+                (set! max-mul-var (lower-row-origin-hold s (I64 0) (I64)))]
               [(StrideOne)
-                (match (lower-row-origin-hold s (I64 1) (I64))
-                  [(Alloc next ovar)
-                    (set! s next)
-                    (set! stride-var ovar)
-                    (set! max-mul-var y-span-m1-var)
-                    (set! has-stride 1)])]
+                (set! stride-var (lower-row-origin-hold s (I64 1) (I64)))
+                (set! max-mul-var y-span-m1-var)]
               [(StrideExpr stride-expr-id)
                 (let
                   [stride-lowered
@@ -51535,223 +51433,167 @@
                         env
                         type-env
                         (lower-context-expr-get ctx stride-expr-id)))]
+                  [guard-ok : i64 0]
                   (match stride-lowered
                     [(Expr st-state st-val _)
-                      (match (lower-row-origin-hold st-state st-val (I64))
-                        [(Alloc hold-state sv)
-                          (match (lower-foreach2-rect-stride-guard
-                            hold-state
-                            rect-ok-var
-                            y-span-m1-var
-                            x-span-var
-                            sv)
-                            [(Guard next-state next-ok next-mul)
-                              (set! s next-state)
-                              (set! rect-ok-var next-ok)
-                              (set! stride-var sv)
-                              (set! max-mul-var next-mul)
-                              (set! has-stride 1)])])]))]
+                      (set! s st-state)
+                      (set! stride-var (lower-row-origin-hold s st-val (I64)))
+                      (set! guard-ok (lower-row-origin-var s))
+                      (set! max-mul-var (lower-row-origin-var s))
+                      (lower-foreach2-rect-stride-guard
+                        s
+                        rect-ok-var
+                        y-span-m1-var
+                        x-span-var
+                        stride-var
+                        guard-ok
+                        max-mul-var)
+                      (set! rect-ok-var guard-ok)]))]
               [(StrideUnsupported) unit])
             ;; Compute overflow-checked `req_len = first + x_span + max_mul` once per group.
             (let
-              [req-len-var : i64 0]
-              (match (lower-row-origin-binop
-                s
-                Sub
-                (I64 9223372036854775807)
-                (Var x-span-var)
-                (I64))
-                [(Alloc s1 max-first)
-                  (match (lower-row-origin-binop
-                    s1
-                    Le
-                    (Var first-var)
-                    (Var max-first)
-                    (I64))
-                    [(Alloc s2 ok1)
-                      (match (lower-row-origin-binop
-                        s2
-                        Add
-                        (Var first-var)
-                        (Var x-span-var)
-                        (I64))
-                        [(Alloc s3 base-end)
-                          (match (lower-row-origin-binop
-                            s3
-                            Sub
-                            (I64 9223372036854775807)
-                            (Var base-end)
-                            (I64))
-                            [(Alloc s4 max-rem)
-                              (match (lower-row-origin-binop
-                                s4
-                                Le
-                                (Var max-mul-var)
-                                (Var max-rem)
-                                (I64))
-                                [(Alloc s5 ok2)
-                                  (match (lower-row-origin-binop
-                                    s5
-                                    Add
-                                    (Var base-end)
-                                    (Var max-mul-var)
-                                    (I64))
-                                    [(Alloc s6 req-v)
-                                      (match (lower-row-origin-binop
-                                        s6
-                                        And
-                                        (Var ok1)
-                                        (Var ok2)
-                                        (Bool))
-                                        [(Alloc s7 ok12)
-                                          (match (lower-row-origin-binop
-                                            s7
-                                            And
-                                            (Var rect-ok-var)
-                                            (Var ok12)
-                                            (Bool))
-                                            [(Alloc s8 next-ok)
-                                              (set! s s8)
-                                              (set! rect-ok-var next-ok)
-                                              (set! req-len-var req-v)])])])])])])])])
-              (__tl_array-push! group-first first-var)
-              (__tl_array-push! group-stride stride-var)
-              (__tl_array-push! group-has-stride has-stride)
-              (__tl_array-push! group-req-len req-len-var)
-              (__tl_array-push! group-cur 0)
-              (+= group-count 1))))
+              [max-first : i64
+                (lower-row-origin-binop
+                  s
+                  Sub
+                  (I64 9223372036854775807)
+                  (Var x-span-var)
+                  (I64))]
+              [ok1 : i64
+                (lower-row-origin-binop
+                  s
+                  Le
+                  (Var first-var)
+                  (Var max-first)
+                  (I64))]
+              [base-end : i64
+                (lower-row-origin-binop
+                  s
+                  Add
+                  (Var first-var)
+                  (Var x-span-var)
+                  (I64))]
+              [max-rem : i64
+                (lower-row-origin-binop
+                  s
+                  Sub
+                  (I64 9223372036854775807)
+                  (Var base-end)
+                  (I64))]
+              [ok2 : i64
+                (lower-row-origin-binop
+                  s
+                  Le
+                  (Var max-mul-var)
+                  (Var max-rem)
+                  (I64))]
+              [req-v : i64
+                (lower-row-origin-binop
+                  s
+                  Add
+                  (Var base-end)
+                  (Var max-mul-var)
+                  (I64))]
+              [ok12 : i64
+                (lower-row-origin-binop s And (Var ok1) (Var ok2) (Bool))]
+              (set!
+                rect-ok-var
+                (lower-row-origin-binop
+                  s
+                  And
+                  (Var rect-ok-var)
+                  (Var ok12)
+                  (Bool)))
+              (__tl_array-push! group-req-len req-v))
+            (__tl_array-push! group-cur first-var)
+            (__tl_array-push! group-stride stride-var)))
         (set! (array-ref group-of item-index) matched-group)
         ;; Single comparison per participating slice/array: `req_len <= len_i`.
-        (let
-          [len-var : i64 (array-ref len-vars item-index)]
-          [req-len-var : i64 (array-ref group-req-len matched-group)]
-          (match (lower-row-origin-binop
+        (set!
+          rect-ok-var
+          (lower-row-origin-and
             s
+            rect-ok-var
             Le
-            (Var req-len-var)
-            (Var len-var)
-            (I64))
-            [(Alloc s1 len-ok)
-              (match (lower-row-origin-binop
-                s1
-                And
-                (Var rect-ok-var)
-                (Var len-ok)
-                (Bool))
-                [(Alloc s2 next-ok)
-                  (set! s s2)
-                  (set! rect-ok-var next-ok)])]))
+            (Var (array-ref group-req-len matched-group))
+            (Var (array-ref len-vars item-index))))
         (set!
           (array-ref view-ids item-index)
           (cis.intern-lower-private-identity-raw
             (lower-private-identity s (SpmdRowView item-index))))))
-    (match (lower-state-fresh-label s "row_origin_native")
-      [(Label next lbl)
-        (set! s next)
-        (set! rect-entry-label lbl)])
-    (match (lower-state-fresh-label s "foreach2_header")
-      [(Label next lbl)
-        (set! s next)
-        (set! rect-header-label lbl)])
-    (match (lower-state-fresh-label s "foreach2_row")
-      [(Label next lbl)
-        (set! s next)
-        (set! rect-row-label lbl)])
-    (match (lower-state-fresh-label s "row_origin_scalar")
-      [(Label next lbl)
-        (set! s next)
-        (set! checked-entry-label lbl)])
-    (match (lower-state-fresh-label s "foreach2_checked_header")
-      [(Label next lbl)
-        (set! s next)
-        (set! checked-header-label lbl)])
-    (match (lower-state-fresh-label s "foreach2_checked_row")
-      [(Label next lbl)
-        (set! s next)
-        (set! checked-row-label lbl)])
-    (set!
-      s
-      (lower-state-finish-block
-        (lower-state-emit
-          s
-          (Branch (Var rect-ok-var) rect-entry-label checked-entry-label))
-        rect-entry-label))
-    ;; Fast rectangular path: initialize row counter and running row origins.
-    (match (lower-row-origin-hold s (Var y0) (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! row-var var)])
-    (for [g (iterator.range 0 group-count)]
-      (match (lower-row-origin-hold s (Var (array-ref group-first g)) (I64))
-        [(Alloc next cur-var)
-          (set! s next)
-          (set! (array-ref group-cur g) cur-var)]))
-    (set!
-      s
-      (lower-state-finish-block
-        (lower-state-emit s (Jump rect-header-label))
-        rect-header-label))
-    (match (lower-row-origin-binop s Lt (Var row-var) (Var y1) (I64))
-      [(Alloc next cond-var)
-        (set!
-          s
-          (lower-state-finish-block
-            (lower-state-emit
-              next
-              (Branch (Var cond-var) rect-row-label exit-label))
-            rect-row-label))])
     (let
-      [rect-env : sym_i64_env.SymI64Env
-        (sym_i64_env.sym-i64-bind-id env outer-id row-var)]
+      [rect-entry-label : i64 (lower-row-origin-label s "row_origin_native")]
+      [rect-header-label : i64 (lower-row-origin-label s "foreach2_header")]
+      [rect-row-label : i64 (lower-row-origin-label s "foreach2_row")]
+      [checked-entry-label : i64 (lower-row-origin-label s "row_origin_scalar")]
+      [checked-header-label : i64
+        (lower-row-origin-label s "foreach2_checked_header")]
+      [checked-row-label : i64
+        (lower-row-origin-label s "foreach2_checked_row")]
+      [group-count : i64 (array-length group-cur)]
+      [row-var : i64 0]
+      [checked-row-var : i64 0]
+      [rect-env : sym_i64_env.SymI64Env env]
       [rect-type-env : tc_core.TcTypeEnv
         (tc_core.tc-bind-id type-env outer-id (I64))]
+      (lower-row-origin-close
+        s
+        (Branch (Var rect-ok-var) rect-entry-label checked-entry-label)
+        rect-entry-label)
+      ;; Fast rectangular path: initialize row counter and running row origins.
+      (set! row-var (lower-row-origin-hold s (Var y0) (I64)))
+      (set! rect-env (sym_i64_env.sym-i64-bind-id env outer-id row-var))
+      (for [g (iterator.range 0 group-count)]
+        (set!
+          (array-ref group-cur g)
+          (lower-row-origin-hold s (Var (array-ref group-cur g)) (I64))))
+      (lower-row-origin-close s (Jump rect-header-label) rect-header-label)
+      (lower-row-origin-close
+        s
+        (Branch
+          (Var (lower-row-origin-binop s Lt (Var row-var) (Var y1) (I64)))
+          rect-row-label
+          exit-label)
+        rect-row-label)
       (for [item-index (iterator.range 0 count)]
         (let
           [item : LowerRowOrigin (array-ref plan.items item-index)]
           [elem-id : i64 (lower-row-origin-elem-id ctx env type-env item.name)]
           [slice : i64
             (ast.ast-node-pool-context-type-push pools (Slice elem-id))]
-          [view-ty : ast.AstType
-            (if item.write
-              (MutRef -1 slice)
-              (Ref -1 slice))]
-          [g : i64 (array-ref group-of item-index)]
           (match (lower-emit-elem-addr-gep
             ctx
             s
             (Var (array-ref ptr-vars item-index))
-            (Var (array-ref group-cur g))
+            (Var (array-ref group-cur (array-ref group-of item-index)))
             (tc_core.tc-context-type-get ctx elem-id))
             [(Expr ptr-state view-ptr _)
               (match (lower-slice-view-pack
                 ptr-state
                 view-ptr
                 (Var x-span-var)
-                (if item.write
-                  (MutRef -1 slice)
-                  (Ref -1 slice)))
+                (lower-row-origin-view-ty item.write slice))
                 [(Expr view-state view-value _)
-                  (match (lower-row-origin-hold
-                    view-state
-                    view-value
-                    (if item.write
-                      (MutRef -1 slice)
-                      (Ref -1 slice)))
-                    [(Alloc next view-var)
-                      (set! s next)
-                      (set! (array-ref view-vars item-index) view-var)
-                      (set!
+                  (set! s view-state)
+                  (let
+                    [view-var : i64
+                      (lower-row-origin-hold
+                        s
+                        view-value
+                        (lower-row-origin-view-ty item.write slice))]
+                    (set! (array-ref view-vars item-index) view-var)
+                    (set!
+                      rect-env
+                      (sym_i64_env.sym-i64-bind-id
                         rect-env
-                        (sym_i64_env.sym-i64-bind-id
-                          rect-env
-                          (array-ref view-ids item-index)
-                          view-var))
-                      (set!
+                        (array-ref view-ids item-index)
+                        view-var))
+                    (set!
+                      rect-type-env
+                      (tc_core.tc-bind-id
                         rect-type-env
-                        (tc_core.tc-bind-id
-                          rect-type-env
-                          (array-ref view-ids item-index)
-                          view-ty))])])])))
+                        (array-ref view-ids item-index)
+                        (lower-row-origin-view-ty item.write slice))))])])))
       (let
         [rewritten : i64
           (lower-row-origin-rewrite
@@ -51781,79 +51623,48 @@
               true
               (& view-vars)))]
         (match row-lowered
-          [(Expr row-state _ _) (set! s row-state)])))
-    (for [g (iterator.range 0 group-count)]
-      (when
-        (= (array-ref group-has-stride g) 1)
+          [(Expr row-state _ _) (set! s row-state)]))
+      (for [g (iterator.range 0 group-count)]
         (let
           [cur-var : i64 (array-ref group-cur g)]
           [st-var : i64 (array-ref group-stride g)]
-          (match (lower-row-origin-binop s Add (Var cur-var) (Var st-var) (I64))
-            [(Alloc next sum-var)
-              (set! s (lower-state-emit next (Mov cur-var (Var sum-var) (I64))))]))))
-    (match (lower-row-origin-binop s Add (Var row-var) (I64 1) (I64))
-      [(Alloc next inc-var)
-        (set!
-          s
-          (lower-state-finish-block
-            (lower-state-emit
-              (lower-state-emit next (Mov row-var (Var inc-var) (I64)))
-              (Jump rect-header-label))
-            checked-entry-label))])
-    ;; Fallback checked path: exact existing per-row guarded loop.
-    (match (lower-row-origin-hold s (Var y0) (I64))
-      [(Alloc next var)
-        (set! checked-row-var var)
-        (set!
-          s
-          (lower-state-finish-block
-            (lower-state-emit next (Jump checked-header-label))
-            checked-header-label))])
-    (match (lower-row-origin-binop s Lt (Var checked-row-var) (Var y1) (I64))
-      [(Alloc next cond-var)
-        (set!
-          s
-          (lower-state-finish-block
-            (lower-state-emit
-              next
-              (Branch (Var cond-var) checked-row-label exit-label))
-            checked-row-label))])
-    (let
-      [checked-row
-        (try
-          (lower-scalar-foreach-lowered
-            ctx
-            s
-            (sym_i64_env.sym-i64-bind-id env outer-id checked-row-var)
-            (tc_core.tc-bind-id type-env outer-id (I64))
-            inner-id
-            (tc_core.tc-env-key-name-text inner-id)
-            (I64)
-            (Var x0)
-            (Var x1)
-            (lower-context-expr-get ctx body)))]
-      (match checked-row
-        [(Expr row-state _ _)
-          (match (lower-state-alloc-var row-state)
-            [(Alloc inc-alloc inc-var)
-              (Ok
-                (Expr
-                  (lower-state-finish-block
-                    (lower-state-emit
-                      (lower-state-emit
-                        (lower-state-emit
-                          inc-alloc
-                          (BinOp
-                            inc-var
-                            Add
-                            (Var checked-row-var)
-                            (I64 1)
-                            (I64)))
-                        (Mov checked-row-var (Var inc-var) (I64)))
-                      (Jump checked-header-label))
-                    exit-label)
-                  Unit
-                  (Unit)))])]))))
+          (when (>= st-var 0) (lower-row-origin-step s cur-var (Var st-var)))))
+      (lower-row-origin-step s row-var (I64 1))
+      (lower-row-origin-close s (Jump rect-header-label) checked-entry-label)
+      ;; Fallback checked path: exact existing per-row guarded loop.
+      (set! checked-row-var (lower-row-origin-hold s (Var y0) (I64)))
+      (lower-row-origin-close
+        s
+        (Jump checked-header-label)
+        checked-header-label)
+      (lower-row-origin-close
+        s
+        (Branch
+          (Var
+            (lower-row-origin-binop s Lt (Var checked-row-var) (Var y1) (I64)))
+          checked-row-label
+          exit-label)
+        checked-row-label)
+      (let
+        [checked-row
+          (try
+            (lower-scalar-foreach-lowered
+              ctx
+              s
+              (sym_i64_env.sym-i64-bind-id env outer-id checked-row-var)
+              (tc_core.tc-bind-id type-env outer-id (I64))
+              inner-id
+              (tc_core.tc-env-key-name-text inner-id)
+              (I64)
+              (Var x0)
+              (Var x1)
+              (lower-context-expr-get ctx body)))]
+        (match checked-row
+          [(Expr row-state _ _)
+            (set! s row-state)
+            (lower-row-origin-step s checked-row-var (I64 1))
+            (lower-row-origin-close s (Jump checked-header-label) exit-label)
+            (Ok (Expr s Unit (Unit)))])))))
 
 (define (lower-foreach2-domain
   [ctx : tc_core.TcContext]
@@ -69819,23 +69630,73 @@
     0
     (lower_i64_i64_map.with-capacity 0)))
 
+;; Row-origin lowering threads one `LowerState` handle, so these emit through
+;; it and return only the new var or label.
+(define (lower-row-origin-var [state : LowerState]) : i64
+  (match (lower-state-alloc-var state)
+    [(Alloc _ var) var]))
+
+(define (lower-row-origin-label [state : LowerState] [prefix : String]) : i64
+  (match (lower-state-fresh-label state prefix)
+    [(Label _ label) label]))
+
 ;; Emit `(BinOp var op left right ty)` into a fresh var.
 (define (lower-row-origin-binop
   [state : LowerState]
   [op : ir.CompilerIrBinOp]
   [left : ir.CompilerIrValue]
   [right : ir.CompilerIrValue]
-  [ty : ast.AstType]) : LowerAlloc
-  (match (lower-state-alloc-var state)
-    [(Alloc next var)
-      (Alloc (lower-state-emit next (BinOp var op left right ty)) var)]))
+  [ty : ast.AstType]) : i64
+  (let
+    [var : i64 (lower-row-origin-var state)]
+    (lower-state-emit state (BinOp var op left right ty))
+    var))
 
 (define (lower-row-origin-hold
   [state : LowerState]
   [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : LowerAlloc
-  (match (lower-state-alloc-var state)
-    [(Alloc next var) (Alloc (lower-state-emit next (Mov var value ty)) var)]))
+  [ty : ast.AstType]) : i64
+  (let
+    [var : i64 (lower-row-origin-var state)]
+    (lower-state-emit state (Mov var value ty))
+    var))
+
+;; `ok && (left op right)` as a fresh bool var.
+(define (lower-row-origin-and
+  [state : LowerState]
+  [ok : i64]
+  [op : ir.CompilerIrBinOp]
+  [left : ir.CompilerIrValue]
+  [right : ir.CompilerIrValue]) : i64
+  (let
+    [cond : i64 (lower-row-origin-binop state op left right (I64))]
+    (lower-row-origin-binop state And (Var ok) (Var cond) (Bool))))
+
+;; `var += step`.
+(define (lower-row-origin-step
+  [state : LowerState]
+  [var : i64]
+  [step : ir.CompilerIrValue]) : unit
+  (lower-state-emit
+    state
+    (Mov
+      var
+      (Var (lower-row-origin-binop state Add (Var var) step (I64)))
+      (I64)))
+  unit)
+
+;; End the current block with TERM and open NEXT-LABEL.
+(define (lower-row-origin-close
+  [state : LowerState]
+  [term : ir.CompilerIrInstr]
+  [next-label : i64]) : unit
+  (lower-state-finish-block (lower-state-emit state term) next-label)
+  unit)
+
+(define (lower-row-origin-view-ty [write : bool] [slice : i64]) : ast.AstType
+  (if write
+    (MutRef -1 slice)
+    (Ref -1 slice)))
 
 ;; A rank-2 row whose PLAN has views. The guard, computed once per row, takes
 ;; the native row when the row is non-empty, its span does not overflow, and
@@ -69856,17 +69717,10 @@
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     [s : LowerState state]
-    [start-var : i64 0]
-    [end-var : i64 0]
-    [span-var : i64 0]
-    [ok-var : i64 0]
     [origin-vars : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
     [ptr-vars : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
     [len-vars : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
     [view-ids : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
-    [native-label : i64 (ir.compiler-ir-label-none)]
-    [scalar-label : i64 (ir.compiler-ir-label-none)]
-    [join-label : i64 (ir.compiler-ir-label-none)]
     [row-index : i64
       (cis.intern-lower-private-identity-raw
         (lower-private-identity state SpmdRowIndex))]
@@ -69875,29 +69729,18 @@
         (lower-private-identity state SpmdRowStart))]
     [native-env : sym_i64_env.SymI64Env env]
     [native-type-env : tc_core.TcTypeEnv type-env]
-    (match (lower-row-origin-hold s start-value (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! start-var var)])
-    (match (lower-row-origin-hold s end-value (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! end-var var)])
-    (match (lower-row-origin-binop s Sub (Var end-var) (Var start-var) (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! span-var var)])
+    [start-var : i64 (lower-row-origin-hold s start-value (I64))]
+    [end-var : i64 (lower-row-origin-hold s end-value (I64))]
+    [span-var : i64
+      (lower-row-origin-binop s Sub (Var end-var) (Var start-var) (I64))]
     ;; Non-empty with a span that did not wrap.
-    (match (lower-row-origin-binop s Lt (Var start-var) (Var end-var) (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! ok-var var)])
-    (match (lower-row-origin-binop s Gt (Var span-var) (I64 0) (I64))
-      [(Alloc next var)
-        (match (lower-row-origin-binop next And (Var ok-var) (Var var) (Bool))
-          [(Alloc joined ok)
-            (set! s joined)
-            (set! ok-var ok)])])
+    [ok-var : i64
+      (lower-row-origin-and
+        s
+        (lower-row-origin-binop s Lt (Var start-var) (Var end-var) (I64))
+        Gt
+        (Var span-var)
+        (I64 0))]
     (for [item-index (iterator.range 0 plan.count)]
       (let
         [item : LowerRowOrigin (array-ref plan.items item-index)]
@@ -69911,15 +69754,10 @@
               (lower-context-expr-get ctx item.origin)))]
         (match origin
           [(Expr origin-state origin-value _)
-            (match (lower-row-origin-binop
-              origin-state
-              Add
-              origin-value
-              (Var start-var)
-              (I64))
-              [(Alloc next var)
-                (set! s next)
-                (set! (array-ref origin-vars item-index) var)])])
+            (set! s origin-state)
+            (set!
+              (array-ref origin-vars item-index)
+              (lower-row-origin-binop s Add origin-value (Var start-var) (I64)))])
         (let
           [fields
             (try
@@ -69933,173 +69771,145 @@
                   (ast.ast-node-pool-context-expr-push pools (Var item.name)))))]
           (match fields
             [(Fields fields-state ptr len _)
-              (match (lower-row-origin-hold fields-state ptr (U64))
-                [(Alloc ptr-state ptr-var)
-                  (match (lower-row-origin-hold ptr-state len (I64))
-                    [(Alloc len-state len-var)
-                      (set! s len-state)
-                      (set! (array-ref ptr-vars item-index) ptr-var)
-                      (set! (array-ref len-vars item-index) len-var)])])]))
-        (match (lower-row-origin-binop
-          s
-          Ge
-          (Var (array-ref origin-vars item-index))
-          (I64 0)
-          (I64))
-          [(Alloc ge-state ge)
-            (match (lower-row-origin-binop
-              ge-state
+              (set! s fields-state)
+              (set!
+                (array-ref ptr-vars item-index)
+                (lower-row-origin-hold s ptr (U64)))
+              (set!
+                (array-ref len-vars item-index)
+                (lower-row-origin-hold s len (I64)))]))
+        (let
+          [origin-var : i64 (array-ref origin-vars item-index)]
+          [ge : i64
+            (lower-row-origin-binop s Ge (Var origin-var) (I64 0) (I64))]
+          [le : i64
+            (lower-row-origin-binop
+              s
               Le
-              (Var (array-ref origin-vars item-index))
+              (Var origin-var)
               (Var (array-ref len-vars item-index))
-              (I64))
-              [(Alloc le-state le)
-                (match (lower-row-origin-binop
-                  le-state
-                  And
-                  (Var ge)
-                  (Var le)
-                  (Bool))
-                  [(Alloc in-state within)
-                    (match (lower-row-origin-binop
-                      in-state
-                      And
-                      (Var ok-var)
-                      (Var within)
-                      (Bool))
-                      [(Alloc next ok)
-                        (set! s next)
-                        (set! ok-var ok)])])])])
+              (I64))]
+          [within : i64 (lower-row-origin-binop s And (Var ge) (Var le) (Bool))]
+          (set!
+            ok-var
+            (lower-row-origin-binop s And (Var ok-var) (Var within) (Bool))))
         (set!
           (array-ref view-ids item-index)
           (cis.intern-lower-private-identity-raw
             (lower-private-identity s (SpmdRowView item-index))))))
-    (match (lower-state-fresh-label s "row_origin_native")
-      [(Label next label)
-        (set! s next)
-        (set! native-label label)])
-    (match (lower-state-fresh-label s "row_origin_scalar")
-      [(Label next label)
-        (set! s next)
-        (set! scalar-label label)])
-    (match (lower-state-fresh-label s "row_origin_join")
-      [(Label next label)
-        (set! s next)
-        (set! join-label label)])
-    (set!
-      s
-      (lower-state-finish-block
-        (lower-state-emit s (Branch (Var ok-var) native-label scalar-label))
-        native-label))
-    ;; The native row: one view per plan item, then the rewritten body over the
-    ;; row index from 0.
-    (for [item-index (iterator.range 0 plan.count)]
+    (let
+      [native-label : i64 (lower-row-origin-label s "row_origin_native")]
+      [scalar-label : i64 (lower-row-origin-label s "row_origin_scalar")]
+      [join-label : i64 (lower-row-origin-label s "row_origin_join")]
+      (lower-row-origin-close
+        s
+        (Branch (Var ok-var) native-label scalar-label)
+        native-label)
+      ;; The native row: one view per plan item, then the rewritten body over the
+      ;; row index from 0.
+      (for [item-index (iterator.range 0 plan.count)]
+        (let
+          [item : LowerRowOrigin (array-ref plan.items item-index)]
+          [elem-id : i64 (lower-row-origin-elem-id ctx env type-env item.name)]
+          [slice : i64
+            (ast.ast-node-pool-context-type-push pools (Slice elem-id))]
+          [view-ty : ast.AstType
+            (if item.write
+              (MutRef -1 slice)
+              (Ref -1 slice))]
+          [origin-var : i64 (array-ref origin-vars item-index)]
+          (match (lower-emit-elem-addr-gep
+            ctx
+            s
+            (Var (array-ref ptr-vars item-index))
+            (Var origin-var)
+            (tc_core.tc-context-type-get ctx elem-id))
+            [(Expr ptr-state view-ptr _)
+              (set! s ptr-state)
+              (match (lower-slice-view-pack
+                s
+                view-ptr
+                (Var
+                  (lower-row-origin-binop
+                    s
+                    Sub
+                    (Var (array-ref len-vars item-index))
+                    (Var origin-var)
+                    (I64)))
+                (lower-global-shared-view view-ty))
+                [(Expr view-state view-value _)
+                  (set! s view-state)
+                  (let
+                    [view-var : i64
+                      (lower-row-origin-hold
+                        s
+                        view-value
+                        (lower-global-shared-view view-ty))]
+                    (set!
+                      native-env
+                      (sym_i64_env.sym-i64-bind-id
+                        native-env
+                        (array-ref view-ids item-index)
+                        view-var))
+                    (set!
+                      native-type-env
+                      (tc_core.tc-bind-id
+                        native-type-env
+                        (array-ref view-ids item-index)
+                        view-ty)))])])))
       (let
-        [item : LowerRowOrigin (array-ref plan.items item-index)]
-        [elem-id : i64 (lower-row-origin-elem-id ctx env type-env item.name)]
-        [slice : i64
-          (ast.ast-node-pool-context-type-push pools (Slice elem-id))]
-        [view-ty : ast.AstType
-          (if item.write
-            (MutRef -1 slice)
-            (Ref -1 slice))]
-        (match (lower-emit-elem-addr-gep
-          ctx
-          s
-          (Var (array-ref ptr-vars item-index))
-          (Var (array-ref origin-vars item-index))
-          (tc_core.tc-context-type-get ctx elem-id))
-          [(Expr ptr-state view-ptr _)
-            (match (lower-row-origin-binop
-              ptr-state
-              Sub
-              (Var (array-ref len-vars item-index))
-              (Var (array-ref origin-vars item-index))
-              (I64))
-              [(Alloc len-state view-len)
-                (match (lower-slice-view-pack
-                  len-state
-                  view-ptr
-                  (Var view-len)
-                  (lower-global-shared-view view-ty))
-                  [(Expr view-state view-value _)
-                    (match (lower-row-origin-hold
-                      view-state
-                      view-value
-                      (lower-global-shared-view view-ty))
-                      [(Alloc next view-var)
-                        (set! s next)
-                        (set!
-                          native-env
-                          (sym_i64_env.sym-i64-bind-id
-                            native-env
-                            (array-ref view-ids item-index)
-                            view-var))
-                        (set!
-                          native-type-env
-                          (tc_core.tc-bind-id
-                            native-type-env
-                            (array-ref view-ids item-index)
-                            view-ty))])])])])))
-    (let
-      [rewritten : i64
-        (lower-row-origin-rewrite
-          ctx
-          env
-          type-env
-          index-id
-          (& plan)
-          (& view-ids)
-          row-index
-          row-start
-          (lower-context-expr-push ctx (lower-global-shared-view inlined-body)))]
-      [empty-proven : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-      [native
-        (try
-          (lower-foreach-lowered-inlined
+        [rewritten : i64
+          (lower-row-origin-rewrite
             ctx
-            s
-            (sym_i64_env.sym-i64-bind-id native-env row-start start-var)
-            (tc_core.tc-bind-id native-type-env row-start (I64))
-            row-index
-            (tc_core.tc-env-key-name-text row-index)
-            (I64)
-            (I64 0)
-            (Var span-var)
-            body
-            (lower-context-expr-get ctx rewritten)
-            true
-            (& empty-proven)))]
-      (match native
-        [(Expr native-state _ _)
-          (set!
-            s
-            (lower-state-finish-block
-              (lower-state-emit native-state (Jump join-label))
-              scalar-label))]))
-    (let
-      [scalar
-        (try
-          (lower-scalar-foreach-lowered
-            ctx
-            s
             env
             type-env
             index-id
-            index
-            index-ty
-            (Var start-var)
-            (Var end-var)
-            inlined-body))]
-      (match scalar
-        [(Expr scalar-state _ _)
-          (Ok
-            (Expr
-              (lower-state-finish-block
-                (lower-state-emit scalar-state (Jump join-label))
-                join-label)
-              Unit
-              (Unit)))]))))
+            (& plan)
+            (& view-ids)
+            row-index
+            row-start
+            (lower-context-expr-push
+              ctx
+              (lower-global-shared-view inlined-body)))]
+        [empty-proven : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+        [native
+          (try
+            (lower-foreach-lowered-inlined
+              ctx
+              s
+              (sym_i64_env.sym-i64-bind-id native-env row-start start-var)
+              (tc_core.tc-bind-id native-type-env row-start (I64))
+              row-index
+              (tc_core.tc-env-key-name-text row-index)
+              (I64)
+              (I64 0)
+              (Var span-var)
+              body
+              (lower-context-expr-get ctx rewritten)
+              true
+              (& empty-proven)))]
+        (match native
+          [(Expr native-state _ _)
+            (lower-row-origin-close native-state (Jump join-label) scalar-label)
+            (set! s native-state)]))
+      (let
+        [scalar
+          (try
+            (lower-scalar-foreach-lowered
+              ctx
+              s
+              env
+              type-env
+              index-id
+              index
+              index-ty
+              (Var start-var)
+              (Var end-var)
+              inlined-body))]
+        (match scalar
+          [(Expr scalar-state _ _)
+            (lower-row-origin-close scalar-state (Jump join-label) join-label)
+            (Ok (Expr scalar-state Unit (Unit)))])))))
 
 (define (lower-foreach-lowered-after-numeric-admission
   [ctx : tc_core.TcContext]

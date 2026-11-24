@@ -10944,20 +10944,18 @@
             out)]))
     (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
-(define (compiler-backend-vector-bit-and-sign-bit-fused?
+(define (compiler-backend-vector-sign-bit-mode-at
   [backend-state : be_state.CompilerBackendState]
   [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
-  [cmp-index : i64]) : bool
+  [cmp-index : i64]) : i64
   (if (< cmp-index instrs.len)
     (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cmp-index)
       [(VectorCompare cp)
-        (>
-          (be_simd.compiler-backend-avx2-sign-bit-mask-mode-for-var
-            backend-state
-            cp.dst)
-          0)]
-      [_ false])
-    false))
+        (be_simd.compiler-backend-avx2-sign-bit-mask-mode-for-var
+          backend-state
+          cp.dst)]
+      [_ 0])
+    0))
 
 ;; The sign-bit mask emission for an AVX2 (bit_and, compare) pair whose
 ;; compare at `cursor` the sign-bit plan rewrote, resuming after the compare.
@@ -11043,12 +11041,13 @@
                 [sel-ty ty])))
           (let
             [fused : be_state.ResultCompilerBackend
-              (be_simd.compiler-backend-emit-avx2-sign-bit-select-direct
+              (be_simd.compiler-backend-emit-avx2-blend
                 ctx.type-segment-bases
                 ctx.assignments
                 sel-dst
-                src-val
+                true
                 (/ sign-mode 256)
+                src-val
                 sel-true
                 sel-false
                 sel-lanes
@@ -11104,15 +11103,11 @@
   [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
   (let
     [sign-mode : i64
-      (if (and
-        (< cursor instrs.len)
-        (be_state.compiler-backend-current-mode-avx2? ctx.function-state))
-        (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cursor)
-          [(VectorCompare cp)
-            (be_simd.compiler-backend-avx2-sign-bit-mask-mode-for-var
-              ctx.backend-state
-              cp.dst)]
-          [_ 0])
+      (if (be_state.compiler-backend-current-mode-avx2? ctx.function-state)
+        (compiler-backend-vector-sign-bit-mode-at
+          ctx.backend-state
+          (& instrs)
+          cursor)
         0)]
     (if (> sign-mode 0)
       (compiler-backend-emit-vector-sign-bit-step
@@ -11347,10 +11342,12 @@
                 (match (& op)
                   [(BitAnd) true]
                   [_ false])
-                (compiler-backend-vector-bit-and-sign-bit-fused?
-                  ctx.backend-state
-                  (& instrs)
-                  after-binop)))
+                (>
+                  (compiler-backend-vector-sign-bit-mode-at
+                    ctx.backend-state
+                    (& instrs)
+                    after-binop)
+                  0)))
             (be_simd.compiler-backend-vector-load-binop-foldable?
               ctx.type-segment-bases
               ctx.use-counts

@@ -7382,6 +7382,15 @@
   [var : i64]) : bool
   (and (>= var 0) (< var (/ (array-length facts) 9))))
 
+;; VAR has one def and one use, so the factor pass may drop it.
+(define (compiler-backend-simd-select-factor-single?
+  [facts : (& facts (__tl_dyn-array i64))]
+  [var : i64]) : bool
+  (and
+    (compiler-backend-simd-select-factor-var? facts var)
+    (= (compiler-backend-simd-select-factor-fact facts var 0) 1)
+    (= (compiler-backend-simd-select-factor-fact facts var 1) 1)))
+
 (define (compiler-backend-simd-int-tag-type [tag : i64]) : compiler_ast_types.AstType
   (cond
     [(= tag 1) (I8)]
@@ -7614,16 +7623,16 @@
                   [fl-id : i64
                     (compiler-backend-avx2-sign-bit-var-id (& sp.on-false))]
                   [direct? : bool (and (= tl-id d1) (= fl-id d2))]
-                  [t-op : i64
-                    (compiler-backend-simd-op-add-sub-code
-                      (if direct?
-                        (& p1.op)
-                        (& p2.op)))]
-                  [f-op : i64
-                    (compiler-backend-simd-op-add-sub-code
-                      (if direct?
-                        (& p2.op)
-                        (& p1.op)))]
+                  [tp
+                    (if direct?
+                      p1
+                      p2)]
+                  [fp
+                    (if direct?
+                      p2
+                      p1)]
+                  [t-op : i64 (compiler-backend-simd-op-add-sub-code (& tp.op))]
+                  [f-op : i64 (compiler-backend-simd-op-add-sub-code (& fp.op))]
                   [code : i64
                     (if (and
                       (> t-op 0)
@@ -7636,49 +7645,17 @@
                       (!= d1 d2)
                       (!= sp.dst d1)
                       (!= sp.dst d2)
-                      (compiler-backend-simd-select-factor-var? (& facts) d1)
-                      (compiler-backend-simd-select-factor-var? (& facts) d2)
-                      (=
-                        (compiler-backend-simd-select-factor-fact
-                          (& facts)
-                          d1
-                          0)
-                        1)
-                      (=
-                        (compiler-backend-simd-select-factor-fact
-                          (& facts)
-                          d1
-                          1)
-                        1)
-                      (=
-                        (compiler-backend-simd-select-factor-fact
-                          (& facts)
-                          d2
-                          0)
-                        1)
-                      (=
-                        (compiler-backend-simd-select-factor-fact
-                          (& facts)
-                          d2
-                          1)
-                        1)
+                      (compiler-backend-simd-select-factor-single? (& facts) d1)
+                      (compiler-backend-simd-select-factor-single? (& facts) d2)
                       (or direct? (and (= tl-id d2) (= fl-id d1))))
                       (compiler-backend-simd-select-factor-kind
                         (& facts)
                         t-op
                         f-op
-                        (if direct?
-                          (& p1.lhs)
-                          (& p2.lhs))
-                        (if direct?
-                          (& p1.rhs)
-                          (& p2.rhs))
-                        (if direct?
-                          (& p2.lhs)
-                          (& p1.lhs))
-                        (if direct?
-                          (& p2.rhs)
-                          (& p1.rhs))
+                        (& tp.lhs)
+                        (& tp.rhs)
+                        (& fp.lhs)
+                        (& fp.rhs)
                         sp.lanes
                         tag)
                       0)]
@@ -7688,22 +7665,10 @@
                       facts
                       builder
                       code
-                      (compiler-backend-simd-ir-value-copy
-                        (if direct?
-                          (& p1.lhs)
-                          (& p2.lhs)))
-                      (compiler-backend-simd-ir-value-copy
-                        (if direct?
-                          (& p1.rhs)
-                          (& p2.rhs)))
-                      (compiler-backend-simd-ir-value-copy
-                        (if direct?
-                          (& p2.lhs)
-                          (& p1.lhs)))
-                      (compiler-backend-simd-ir-value-copy
-                        (if direct?
-                          (& p2.rhs)
-                          (& p1.rhs)))
+                      (compiler-backend-simd-ir-value-copy (& tp.lhs))
+                      (compiler-backend-simd-ir-value-copy (& tp.rhs))
+                      (compiler-backend-simd-ir-value-copy (& fp.lhs))
+                      (compiler-backend-simd-ir-value-copy (& fp.rhs))
                       d1
                       sp.dst
                       (compiler-backend-simd-ir-value-copy (& sp.mask))
@@ -7908,6 +7873,16 @@
   [field : i64]) : i64
   (array-ref facts (+ (* var 5) field)))
 
+;; A 4-lane 64-bit Eq/Ne compare, the only kind the sign-bit plan rewrites.
+(define (compiler-backend-avx2-sign-bit-compare?
+  [p : (& p compiler_ir_types.CompilerIrInstrVectorComparePayload)]) : bool
+  (and
+    (= p.lanes 4)
+    (compiler-backend-avx2-sign-bit-int64-ty? (& p.ty))
+    (match (& p.op)
+      [(or (Eq) (Ne)) true]
+      [_ false])))
+
 (define (compiler-backend-avx2-sign-bit-single-def?
   [facts : (& facts (__tl_dyn-array i64))]
   [var : i64]) : bool
@@ -7957,13 +7932,9 @@
       [(VectorCompare p)
         (when
           (and
-            (= p.lanes 4)
             (>= p.dst 0)
             (< p.dst var-count)
-            (compiler-backend-avx2-sign-bit-int64-ty? (& p.ty))
-            (match (& p.op)
-              [(or (Eq) (Ne)) true]
-              [_ false]))
+            (compiler-backend-avx2-sign-bit-compare? p))
           (set! (array-ref facts (+ (* p.dst 5) 3)) 1))]
       [(Select p)
         (let
@@ -7999,12 +7970,7 @@
                     i)
                     [(VectorCompare p)
                       (when
-                        (and
-                          (= p.lanes 4)
-                          (compiler-backend-avx2-sign-bit-int64-ty? (& p.ty))
-                          (match (& p.op)
-                            [(or (Eq) (Ne)) true]
-                            [_ false]))
+                        (compiler-backend-avx2-sign-bit-compare? p)
                         (set! found true))]
                     [_ unit])
                   (set! i (+ i 1))))])
@@ -8288,12 +8254,41 @@
       elem-ty
       lanes)))
 
-(define (compiler-backend-emit-avx2-sign-bit-select-direct
+(define (compiler-backend-emit-avx2-select
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
-  [src : compiler_ir_types.CompilerIrValue]
+  [mask : compiler_ir_types.CompilerIrValue]
+  [on-true : compiler_ir_types.CompilerIrValue]
+  [on-false : compiler_ir_types.CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : compiler_ast_types.AstType]
+  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (compiler-backend-emit-avx2-blend
+    type-segment-bases
+    assignments
+    dst
+    false
+    (/ (compiler-backend-avx2-sign-bit-mask-mode backend-state (& mask)) 256)
+    mask
+    on-true
+    on-false
+    lanes
+    elem-ty
+    instr-diag
+    backend-state))
+
+;; An AVX2 Select. POLARITY 0 blends bytes on a full-lane mask; otherwise the
+;; mask's sign bits pick (swapped when 2) with `vblendvpd`. DIRECT? reads MASK
+;; as the 64-bit sign-bit source itself instead of a byte mask.
+(define (compiler-backend-emit-avx2-blend
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [direct? : bool]
   [polarity : i64]
+  [mask : compiler_ir_types.CompilerIrValue]
   [on-true : compiler_ir_types.CompilerIrValue]
   [on-false : compiler_ir_types.CompilerIrValue]
   [lanes : i64]
@@ -8301,14 +8296,25 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
   (if (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes)
-    (match (be_operand.compiler-backend-vector-register-use
-      assignments
-      src
-      "sign-bit select src"
-      "ymm"
-      elem-ty
-      "%ymm0"
-      backend-state)
+    (match (if direct?
+      (be_operand.compiler-backend-vector-register-use
+        assignments
+        mask
+        "sign-bit select src"
+        "ymm"
+        elem-ty
+        "%ymm0"
+        backend-state)
+      (let
+        [elem-ty (compiler_ast_types.AstType.I8)]
+        (be_operand.compiler-backend-vector-register-use
+          assignments
+          mask
+          "select mask"
+          "ymm"
+          elem-ty
+          "%ymm0"
+          backend-state)))
       [(Ok mask-use)
         (match mask-use
           [(Use mask-asm mask-reg)
@@ -8342,42 +8348,29 @@
                               "%ymm14"
                               backend-state)
                               [(Ok dst-reg)
-                                (let
-                                  [blend-asm : String
+                                (Ok
+                                  (str_cat.str-cat
+                                    mask-asm
+                                    false-asm
+                                    true-asm
+                                    (if (> polarity 0)
+                                      "    vblendvpd "
+                                      "    vpblendvb ")
+                                    mask-reg
+                                    ", "
                                     (if (= polarity 2)
-                                      (str_cat.str-cat
-                                        "    vblendvpd "
-                                        mask-reg
-                                        ", "
-                                        false-reg
-                                        ", "
-                                        true-reg
-                                        ", "
-                                        dst-reg
-                                        "\n")
-                                      (str_cat.str-cat
-                                        "    vblendvpd "
-                                        mask-reg
-                                        ", "
-                                        true-reg
-                                        ", "
-                                        false-reg
-                                        ", "
-                                        dst-reg
-                                        "\n"))]
-                                  (Ok
-                                    (str_cat.str-cat
-                                      mask-asm
-                                      false-asm
-                                      true-asm
-                                      blend-asm
-                                      (compiler-backend-vector-store-dst
-                                        assignments
-                                        dst
-                                        "ymm"
-                                        elem-ty
-                                        dst-reg
-                                        backend-state))))]
+                                      (str_cat.str-cat false-reg ", " true-reg)
+                                      (str_cat.str-cat true-reg ", " false-reg))
+                                    ", "
+                                    dst-reg
+                                    "\n"
+                                    (compiler-backend-vector-store-dst
+                                      assignments
+                                      dst
+                                      "ymm"
+                                      elem-ty
+                                      dst-reg
+                                      backend-state)))]
                               [(Err message)
                                 (be_state.compiler-backend-instr-error
                                   instr-diag
@@ -8389,129 +8382,6 @@
               [(Err message)
                 (be_state.compiler-backend-instr-error instr-diag message)])])]
       [(Err message) (be_state.compiler-backend-instr-error instr-diag message)])
-    (be_operand.compiler-backend-avx2-shape-diagnostic
-      type-segment-bases
-      instr-diag
-      elem-ty
-      lanes)))
-
-(define (compiler-backend-emit-avx2-select
-  [type-segment-bases : i64]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [dst : i64]
-  [mask : compiler_ir_types.CompilerIrValue]
-  [on-true : compiler_ir_types.CompilerIrValue]
-  [on-false : compiler_ir_types.CompilerIrValue]
-  [lanes : i64]
-  [elem-ty : compiler_ast_types.AstType]
-  [instr-diag : compiler_diagnostic.CompilerDiagnostic]
-  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
-  (if (be_operand.compiler-backend-avx2-shape-ok? elem-ty lanes)
-    (let
-      [sign-mode : i64
-        (compiler-backend-avx2-sign-bit-mask-mode backend-state (& mask))]
-      (match (let
-        [elem-ty (compiler_ast_types.AstType.I8)]
-        (be_operand.compiler-backend-vector-register-use
-          assignments
-          mask
-          "select mask"
-          "ymm"
-          elem-ty
-          "%ymm0"
-          backend-state))
-        [(Ok mask-use)
-          (match mask-use
-            [(Use mask-asm mask-reg)
-              (match (be_operand.compiler-backend-vector-register-use
-                assignments
-                on-false
-                "select false"
-                "ymm"
-                elem-ty
-                "%ymm14"
-                backend-state)
-                [(Ok false-use)
-                  (match false-use
-                    [(Use false-asm false-reg)
-                      (match (be_operand.compiler-backend-vector-register-use
-                        assignments
-                        on-true
-                        "select true"
-                        "ymm"
-                        elem-ty
-                        "%ymm15"
-                        backend-state)
-                        [(Ok true-use)
-                          (match true-use
-                            [(Use true-asm true-reg)
-                              (match (compiler-backend-vector-dst-reg
-                                assignments
-                                dst
-                                "select dst"
-                                "ymm"
-                                "%ymm14"
-                                backend-state)
-                                [(Ok dst-reg)
-                                  (let
-                                    [blend-asm : String
-                                      (if (> sign-mode 0)
-                                        (if (= (/ sign-mode 256) 2)
-                                          (str_cat.str-cat
-                                            "    vblendvpd "
-                                            mask-reg
-                                            ", "
-                                            false-reg
-                                            ", "
-                                            true-reg
-                                            ", "
-                                            dst-reg
-                                            "\n")
-                                          (str_cat.str-cat
-                                            "    vblendvpd "
-                                            mask-reg
-                                            ", "
-                                            true-reg
-                                            ", "
-                                            false-reg
-                                            ", "
-                                            dst-reg
-                                            "\n"))
-                                        (str_cat.str-cat
-                                          "    vpblendvb "
-                                          mask-reg
-                                          ", "
-                                          true-reg
-                                          ", "
-                                          false-reg
-                                          ", "
-                                          dst-reg
-                                          "\n"))]
-                                    (Ok
-                                      (str_cat.str-cat
-                                        mask-asm
-                                        false-asm
-                                        true-asm
-                                        blend-asm
-                                        (compiler-backend-vector-store-dst
-                                          assignments
-                                          dst
-                                          "ymm"
-                                          elem-ty
-                                          dst-reg
-                                          backend-state))))]
-                                [(Err message)
-                                  (be_state.compiler-backend-instr-error
-                                    instr-diag
-                                    message)])])]
-                        [(Err message)
-                          (be_state.compiler-backend-instr-error
-                            instr-diag
-                            message)])])]
-                [(Err message)
-                  (be_state.compiler-backend-instr-error instr-diag message)])])]
-        [(Err message)
-          (be_state.compiler-backend-instr-error instr-diag message)]))
     (be_operand.compiler-backend-avx2-shape-diagnostic
       type-segment-bases
       instr-diag

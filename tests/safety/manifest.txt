@@ -816,6 +816,10 @@ with_scratch_clone_hook_type_change_reject|check-fail|tests/safety/with_scratch_
 with_scratch_bare_arena_reject|check-fail|tests/safety/with_scratch_bare_arena_reject.tl|-|with-scratch clone-out of stdlib.arena/Arena
 with_scratch_arena_struct_reject|check-fail|tests/safety/with_scratch_arena_struct_reject.tl|-|with-scratch clone-out of ArenaHolder
 with_scratch_tuple_arena_reject|check-fail|tests/safety/with_scratch_tuple_arena_reject.tl|-|with-scratch clone-out of (Tuple stdlib.arena/Arena String)
+with_scratch_box_fn_hook_reject|check-fail|tests/safety/with_scratch_box_fn_hook_reject.tl|-|with-scratch clone-out of (Box FnBox)
+with_scratch_box_arena_hook_reject|check-fail|tests/safety/with_scratch_box_arena_hook_reject.tl|-|with-scratch clone-out of (Box ArenaHolder)
+with_scratch_array_fn_hook_reject|check-fail|tests/safety/with_scratch_array_fn_hook_reject.tl|-|with-scratch clone-out of (Array FnBox 1)
+with_scratch_array_arena_hook_reject|check-fail|tests/safety/with_scratch_array_arena_hook_reject.tl|-|with-scratch clone-out of (Array ArenaHolder 1)
 while_break_outside_reject|check-fail|tests/safety/while_break_outside_reject.tl|-|typecheck: break requires enclosing scalar while
 while_continue_outside_reject|check-fail|tests/safety/while_continue_outside_reject.tl|-|typecheck: continue requires enclosing scalar while
 while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_boundary_reject.tl|-|typecheck: break requires enclosing scalar while

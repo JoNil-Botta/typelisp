@@ -3234,9 +3234,10 @@
   (let
     [scratch : arena.Arena (arena.make)]
     (with-escape scratch inc)))")
-      "with-escape clone-out of (-> i64 i64): gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep")
+      "typecheck: with-escape clone-out of (-> i64 i64): result cannot contain a function, arena handle, or reference")
     ;; Aggregates containing functions or raw pointers are not plain Copy data
-    ;; for clone-out and must be rejected through `__tl-clone-out`.
+    ;; for clone-out; functions, arenas, and references are rejected regardless
+    ;; of whether a custom `clone-*` hook exists.
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-escape-stdlib-source
         "(defstruct FnBox (f (-> i64 i64)))
@@ -3248,7 +3249,7 @@
           [x : i64 42]
           (FnBox (lambda ([y : i64]) : i64 (+ x y)))))]
     ((. cb f) 1)))")
-      "with-scratch clone-out of FnBox: gen-clone: unsupported type fn_i64_nil_to_i64 at FnBox.f")
+      "typecheck: with-scratch clone-out of FnBox: result cannot contain a function, arena handle, or reference")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-escape-stdlib-source
         "(define (main) : i64
@@ -3259,7 +3260,7 @@
           [x : i64 42]
           (tuple (lambda ([y : i64]) : i64 (+ x y)) x)))]
     ((tuple-ref pair 0) (tuple-ref pair 1))))")
-      "with-scratch clone-out of (Tuple (-> i64 i64) i64): gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep[0]")
+      "typecheck: with-scratch clone-out of (Tuple (-> i64 i64) i64): result cannot contain a function, arena handle, or reference")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-escape-stdlib-source
         "(defstruct PtrBox (p (Ptr i64)))
@@ -3366,21 +3367,21 @@
 (define (clone-boxed [x : (& r Boxed)]) : i64 x.n)
 (define (main) : i64 (with-scratch (Boxed 42 \"hello\")))")
       "typecheck: with-scratch clone-out must preserve result type: expected Boxed, got i64")
-    ;; Bare arena.Arena and aggregates containing arena.Arena cannot bypass
-    ;; clone-out as plain Copy values.
+    ;; Bare arena.Arena and aggregates containing arena.Arena, functions, or
+    ;; references cannot leave a scratch form even with a custom `clone-*` hook.
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-escape-stdlib-source
         "(define (main) : i64
   (let [dead : arena.Arena (with-scratch (arena.current))]
     (in-arena dead (string.string-length (string.int->string 42)))))")
-      "with-scratch clone-out of stdlib.arena/Arena: gen-clone: missing explicit dependency clone-arena for struct_stdlib.arena/Arena at clone.deep from owner stdlib.arena; invoke gen-clone in its owner module first")
+      "typecheck: with-scratch clone-out of stdlib.arena/Arena: result cannot contain a function, arena handle, or reference")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-escape-stdlib-source
         "(defstruct ArenaHolder (a arena.Arena))
 (define (main) : i64
   (let [h : ArenaHolder (with-scratch (ArenaHolder (arena.current)))]
     (in-arena h.a (string.string-length (string.int->string 42)))))")
-      "with-scratch clone-out of ArenaHolder: gen-clone: missing explicit dependency clone-arena-holder for struct_ArenaHolder at clone.deep from owner <root>; invoke gen-clone in its owner module first")
+      "typecheck: with-scratch clone-out of ArenaHolder: result cannot contain a function, arena handle, or reference")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-with-escape-stdlib-source
         "(define (main) : i64
@@ -3389,7 +3390,104 @@
     (match p
       [(tuple dead _)
         (in-arena dead (string.string-length (string.int->string 99)))])))")
-      "with-scratch clone-out of (Tuple stdlib.arena/Arena String): gen-clone: missing explicit dependency clone-arena for struct_stdlib.arena/Arena at clone.deep[0] from owner stdlib.arena; invoke gen-clone in its owner module first")
+      "typecheck: with-scratch clone-out of (Tuple stdlib.arena/Arena String): result cannot contain a function, arena handle, or reference")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defstruct FnBox (f (-> i64 i64)))
+(define (clone-fn-box [x : (& r FnBox)]) : FnBox (FnBox x.f))
+(define (main) : i64
+  (let [b : (Box FnBox)
+          (with-scratch (let [x : i64 42] (box (FnBox (lambda ([y : i64]) : i64 (+ x y))))))]
+    ((. (deref b) f) 1)))")
+      "typecheck: with-scratch clone-out of (Box FnBox): result cannot contain a function, arena handle, or reference")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defstruct ArenaHolder (a arena.Arena))
+(define (clone-arena-holder [x : (& r ArenaHolder)]) : ArenaHolder (ArenaHolder x.a))
+(define (main) : i64
+  (let [b : (Box ArenaHolder) (with-scratch (box (ArenaHolder (arena.current))))]
+    (in-arena (. (deref b) a) (string.string-length (string.int->string 42)))))")
+      "typecheck: with-scratch clone-out of (Box ArenaHolder): result cannot contain a function, arena handle, or reference")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defstruct ArenaHolder (a arena.Arena))
+(define (clone-arena-holder [x : (& r ArenaHolder)]) : ArenaHolder (ArenaHolder x.a))
+(define (main) : i64
+  (let [arr : (Array ArenaHolder 1) (with-scratch (array (ArenaHolder (arena.current))))]
+    (in-arena (. (array-ref arr 0) a) (string.string-length (string.int->string 42)))))")
+      "typecheck: with-scratch clone-out of (Array ArenaHolder 1): result cannot contain a function, arena handle, or reference")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(defstruct RefHolder (:lifetimes r) (p (& r i64)))
+(define (clone-ref-holder [x : (& s (RefHolder r))]) : (RefHolder r) (RefHolder x.p))
+(define (main) : i64
+  (let [n : i64 42]
+    [b : (Box (RefHolder n)) (with-scratch (box (RefHolder (& n))))]
+    (deref (. (deref b) p))))")
+      "typecheck: with-scratch clone-out of (Box (RefHolder n)): result cannot contain a function, arena handle, or reference")
+    ;; Deeply nested call-arg and lazy-expected sites with wrapped scratch
+    ;; branches must repair in-place in linear time, never O(2^N).
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(define (id [x : i64]) : i64 x)
+(define (f [c : bool]) : i64
+  (id (if c (with-scratch 1) (id (if c (with-scratch 2) (id (if c (with-scratch 3)
+  (id (if c (with-scratch 4) (id (if c (with-scratch 5) (id (if c (with-scratch 6)
+  (id (if c (with-scratch 7) (id (if c (with-scratch 8) (id (if c (with-scratch 9)
+  (id (if c (with-scratch 10) (id (if c (with-scratch 11) (id (if c (with-scratch 12)
+  (id (if c (with-scratch 13) (id (if c (with-scratch 14) (id (if c (with-scratch 15)
+  (id (if c (with-scratch 16) (id (if c (with-scratch 17) (id (if c (with-scratch 18)
+  (id (if c (with-scratch 19) (id (if c (with-scratch 20) (id (if c (with-scratch 21)
+  (id (if c (with-scratch 22) (id (if c (with-scratch 23) (id (if c (with-scratch 24)
+  (id (if c (with-scratch 25) 0)))))))))))))))))))))))))))))))))))))))))))))))))))
+(define (main) : i64 (f true))"))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(define (add [a : i64] [b : i64]) : i64 (+ a b))
+(define (f) : i64
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) (add (let [t : i64 1] (with-scratch t))
+  (add (let [t : i64 1] (with-scratch t)) 0))))))))))))))))))))))))))
+(define (main) : i64 (f))"))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-escape-stdlib-source
+        "(define (f [c : bool]) : i64
+  (let [x01 : i64 0] (replace! x01 (if c (with-scratch 1)
+  (let [x02 : i64 0] (replace! x02 (if c (with-scratch 2)
+  (let [x03 : i64 0] (replace! x03 (if c (with-scratch 3)
+  (let [x04 : i64 0] (replace! x04 (if c (with-scratch 4)
+  (let [x05 : i64 0] (replace! x05 (if c (with-scratch 5)
+  (let [x06 : i64 0] (replace! x06 (if c (with-scratch 6)
+  (let [x07 : i64 0] (replace! x07 (if c (with-scratch 7)
+  (let [x08 : i64 0] (replace! x08 (if c (with-scratch 8)
+  (let [x09 : i64 0] (replace! x09 (if c (with-scratch 9)
+  (let [x10 : i64 0] (replace! x10 (if c (with-scratch 10)
+  (let [x11 : i64 0] (replace! x11 (if c (with-scratch 11)
+  (let [x12 : i64 0] (replace! x12 (if c (with-scratch 12)
+  (let [x13 : i64 0] (replace! x13 (if c (with-scratch 13)
+  (let [x14 : i64 0] (replace! x14 (if c (with-scratch 14)
+  (let [x15 : i64 0] (replace! x15 (if c (with-scratch 15)
+  (let [x16 : i64 0] (replace! x16 (if c (with-scratch 16)
+  (let [x17 : i64 0] (replace! x17 (if c (with-scratch 17)
+  (let [x18 : i64 0] (replace! x18 (if c (with-scratch 18)
+  (let [x19 : i64 0] (replace! x19 (if c (with-scratch 19)
+  (let [x20 : i64 0] (replace! x20 (if c (with-scratch 20)
+  (let [x21 : i64 0] (replace! x21 (if c (with-scratch 21)
+  (let [x22 : i64 0] (replace! x22 (if c (with-scratch 22)
+  (let [x23 : i64 0] (replace! x23 (if c (with-scratch 23)
+  (let [x24 : i64 0] (replace! x24 (if c (with-scratch 24)
+  (let [x25 : i64 0] (replace! x25 (if c (with-scratch 25) 0))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))
+(define (main) : i64 (f true))"))
     ;; Deeply nested annotated lets/anns with sibling scratch branches must not
     ;; trigger speculative (No) passes or exponential retries.
     (compiler-typecheck-ok?

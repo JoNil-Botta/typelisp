@@ -1,0 +1,2 @@
+path	required	advisory	reason
+src/compiler_opt_range.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.

@@ -574,7 +574,14 @@
   ;; is the shared empty array the cleared fields point at.
   (sweep-addr-arena i64)
   (sweep-addr-mark i64)
-  (sweep-scratch-empty (__tl_dyn-array i64)))
+  (sweep-scratch-empty (__tl_dyn-array i64))
+  ;; Win64 unwind lowering (3 fields): the emission's interned UNWIND_INFO
+  ;; records (`.byte` operand text -> `.L_tl_xdata_<id>`), their count, and
+  ;; the count of `.L_tl_seh_end_<n>` function end labels. The table lives in
+  ;; the emission's home arena and is recreated by `assembly-stream-start!`.
+  (win64-xdata-ids backend_string_i64_map.Map)
+  (win64-xdata-count i64)
+  (win64-unwind-end-count i64))
 
 (defstruct CompilerBackendStreamState
   (address i64))
@@ -1713,7 +1720,10 @@
         (__tl_make-array i64 0)
         0
         0
-        (__tl_make-array i64 0)))
+        (__tl_make-array i64 0)
+        (backend_string_i64_map.with-capacity 1)
+        0
+        0))
     (CompilerBackendStreamState
       (cast
         (unsafe

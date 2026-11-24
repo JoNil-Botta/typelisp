@@ -1,12 +1,16 @@
 ;; #9052: as arena_clone_escape_reject, cloning through a reference.
+(import stdlib.clone)
+
 (defstruct Cell
   (items (__tl_dyn-array i64)))
+
+(clone.gen-clone Cell)
 
 (define (first [c : (& c Cell)]) : i64
   (array-ref c.items 0))
 
 (define (f [r : (& r Cell)]) : Cell
-  (with-arena phase (clone (deref r))))
+  (with-arena phase (clone.deep (deref r))))
 
 (define (main) : i64
   (let

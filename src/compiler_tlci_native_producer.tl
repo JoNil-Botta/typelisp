@@ -5841,8 +5841,7 @@
               ;; A control-flow value used as the tail of `expr-list-cons`
               ;; needs the caller's continuation: evaluate the head first,
               ;; lower the match/if tail, combine the two stack values, then
-              ;; run the outer final. This is the shape used by
-              ;; stdlib.clone/synthesize-helpers. Refs #6552.
+              ;; run the outer final. Refs #6552.
               [(and
                   (or
                     (string.eq head "comptime.expr-list-cons")

@@ -1,5 +1,9 @@
+(import stdlib.clone)
+
 (defstruct Cell
   (items (__tl_dyn-array i64)))
+
+(clone.gen-clone Cell)
 
 (defstruct Holder
   (cell Cell))
@@ -7,6 +11,8 @@
 (defenum Choice
   (Empty)
   (Full Cell))
+
+(clone.gen-clone Choice)
 
 (define prefix-calls : i64
   0)
@@ -18,40 +24,40 @@
   source)
 
 (define (copy-direct [source : (& source Cell)]) : Cell
-  (clone (deref (observe source))))
+  (clone-cell (observe source)))
 
 (define (copy-projected [source : (& source Holder)]) : Cell
-  (clone (deref source).cell))
+  (clone.deep (deref source).cell))
 
 (define (copy-mutable [source : (&mut source Cell)]) : Cell
-  (clone (deref source)))
+  (clone.deep (deref source)))
 
 (define (copy-choice [source : (& source Choice)]) : Choice
-  (clone (deref source)))
+  (clone.deep (deref source)))
 
 (define (copy-fixed [source : (& source (Array Cell 2))]) : (Array Cell 2)
-  (clone (deref source)))
+  (clone.deep (deref source)))
 
 (defmacro (read-cell [source : Expr]) : Expr
-  `(deref ,source))
+  source)
 
 (define (copy-flow [source : (& source Cell)] [mode : i64]) : Cell
-  (clone
+  (clone-cell
     (match mode
       [0
         (set! prefix-calls (+ prefix-calls 1))
-        (deref source)]
+        source]
       [1
         (if true
-          (deref source)
-          (deref source))]
+          source
+          source)]
       [2
         (let
           [flag true]
           (if flag
-            (deref source)
-            (deref source)))]
-      [3 (ann (deref source) : Cell)]
+            source
+            source))]
+      [3 (ann source : (& source Cell))]
       [_ (read-cell source)])))
 
 (define (first [cell : (& cell Cell)]) : i64
@@ -67,7 +73,7 @@
   (with
     ([source (box (Cell (__tl_make-array 90))) cleanup-box])
     (let
-      [copy : Cell (clone (deref source))]
+      [copy : Cell (clone.deep (deref source))]
       (set! (array-ref copy.items 0) 92)
       (let
         [independent : bool (= (first (& (deref source))) 90)]
@@ -96,7 +102,7 @@
       (array (Cell (__tl_make-array 50)) (Cell (__tl_make-array 60)))]
     [fixed-copy : (Array Cell 2) (copy-fixed (& fixed))]
     [boxed : (Box Cell) (box (Cell (__tl_make-array 70 80)))]
-    [box-copy : Cell (clone (deref boxed))]
+    [box-copy : Cell (clone.deep (deref boxed))]
     [cleanup-ok : bool (box-cleanup-ok?)]
     [_mutate-copy : unit (set! (array-ref box-copy.items 0) 71)]
     [box-independent : bool (= (first (& (deref boxed))) 70)]

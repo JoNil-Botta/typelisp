@@ -17,12 +17,6 @@ case|integration_ownership_certified_scalar_control|tests/integration/ownership_
 contains|_tl_ownership_certified_scalar_control_captured_left:
 end
 
-case|integration_clone_macro_handoff|tests/integration/clone_macro_handoff.tl|assembly|exactly-one|direct
-contains|_tl_clone_macro_handoff_clone_u24CloneMacroUsed:
-contains|_tl_clone_macro_handoff_clone_u24CloneMacroChoice:
-not-contains|_tl_clone_macro_handoff_clone_u24CloneMacroUnused
-end
-
 case|integration_lexer|tests/integration/lexer.tl|assembly|present|direct
 contains|call tl_alloc
 contains|substring_copy_checked

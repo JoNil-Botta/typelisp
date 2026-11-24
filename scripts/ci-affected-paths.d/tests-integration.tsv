@@ -106,7 +106,6 @@ tests/integration/stdlib_hash_generated.tl	ir-observability-golden	@corpus	Direc
 tests/integration/winsock_capability_measure.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
 tests/integration/winsock_capability.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
 tests/integration/winsock_shadow_identity.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
-tests/integration/clone_macro_handoff.tl	stage2-selfhost-compile-manifest	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/maybe_result.tl	stage2-selfhost-compile-manifest	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/ownership_certified_scalar_control.tl	stage2-selfhost-compile-manifest	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/stdlib_serialize_json.tl	stage2-compile-profile-verifier	@corpus	Direct tracked input named by its owning verifier or compile manifest.

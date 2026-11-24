@@ -7,7 +7,7 @@ src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-byref-aggregate-temps-s
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-enum-aggregate-shape-ok?	test	test-only	CompilerLowerMode.WindowsScalar	*	Inline lowerer test asserts Win64 enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?	test	test-only	CompilerLowerMode.WindowsScalar	*	Inline lowerer test asserts Win64 nested scalar aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?	test	test-only	CompilerLowerMode.WindowsScalar	*	Inline lowerer test asserts Win64 small float aggregate shape.
-src/compiler_lower_tests.tl	compiler-lower-clone-source-with-prelude	test	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	*	Following inline missing-macro diagnostic test exercises Linux and Windows scalar lowering.
+src/compiler_lower_tests.tl	compiler-lower-tuple-return-source	test	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	*	Following inline missing-macro diagnostic test exercises Linux and Windows scalar lowering.
 src/compiler_lower_tests.tl	compiler-lower-defdispatch-sret-verify-ok?	test	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	*	Inline lowerer defdispatch sret verification test checks Linux and Windows scalar lower modes.
 src/compiler_lower_tests.tl	compiler-lower-defdispatch-structural-shape-ok?	test	test-only	CompilerLowerMode[.]LinuxScalar	*	Inline lowerer structural-shape test selects the Linux scalar lower mode.
 src/compiler_lower_tests.tl	compiler-lower-extern-value-fnptr-shape-ok?	test	test-only	CompilerLowerMode.LinuxScalar	*	Inline lowerer test uses Linux C ABI mode for extern function pointer shape.

@@ -1,14 +1,17 @@
-;; The compiler-special `clone` reads its operand without moving it (SPEC 7.6)
-;; through every result position: `if` branches, match arm bodies, a `let`
-;; body, the last form of a `begin`, annotations and macro expansions, and the
-;; receivers of field, tuple, array and `deref` projections. An owned place
-;; read there stays usable afterwards, a place read through a reference is not
-;; moved out of it, a value among the results is cloned from a temporary, and
-;; a diverging branch reads nothing. Every copy is independent storage.
+;; Generated `clone-cell` takes a shared reference `(& Cell)` through every
+;; result position: `if` branches, match arm bodies, a `let` body, the last
+;; form of a `begin`, annotations and macro expansions, and projected places
+;; (field, tuple, array, and `Box` `deref`). An owned place borrowed there
+;; stays usable afterwards, a place borrowed through a reference is not moved
+;; out of it, a temporary is cloned via `clone.deep`, and a diverging branch
+;; reads nothing. Every copy is independent storage.
+(import stdlib.clone)
 (import stdlib.io)
 
 (defstruct Cell
   (items (__tl_dyn-array i64)))
+
+(clone.gen-clone Cell)
 
 (defstruct Holder
   (cell Cell)
@@ -31,24 +34,24 @@
     [a : Cell (fresh 1)]
     [b : Cell (fresh 2)]
     [from-if : Cell
-      (clone
+      (clone-cell
         (if flag
-          a
-          b))]
+          (& a)
+          (& b)))]
     [from-match : Cell
-      (clone
+      (clone-cell
         (match flag
           [true
             (begin
               0
-              b)]
-          [false a]))]
+              (& b))]
+          [false (& a)]))]
     [from-let : Cell
-      (clone
+      (clone-cell
         (let
           [_unused 0]
-          a))]
-    [from-macro : Cell (clone (pick flag (ann a : Cell) b))]
+          (& a)))]
+    [from-macro : Cell (clone-cell (pick flag (ann (& a) : (& a Cell)) (& b)))]
     (set! (array-ref a.items 0) 10)
     (+
       (first (& from-if))
@@ -65,25 +68,21 @@
   [pair : (& pair (Tuple Cell i64))]
   [cells : (& cells (Array Cell 2))]) : i64
   (let
-    [field : Cell
-      (clone
-        (if flag
-          (deref holder)
-          (deref holder)).cell)]
-    [element : Cell
-      (clone
-        (tuple-ref
-          (match flag
-            [true (deref pair)]
-            [false (deref pair)])
-          0))]
-    [item : Cell
-      (clone
-        (array-ref
-          (if flag
-            (deref cells)
-            (deref cells))
-          1))]
+    [h
+      (if flag
+        holder
+        holder)]
+    [field : Cell (clone-cell (& h.cell))]
+    [p
+      (match flag
+        [true pair]
+        [false pair])]
+    [element : Cell (clone-cell (& (tuple-ref (deref p) 0)))]
+    [c
+      (if flag
+        cells
+        cells)]
+    [item : Cell (clone-cell (& (array-ref (deref c) 1)))]
     (+ (first (& field)) (first (& element)) (first (& item)))))
 
 ;; 60 (the copy, written) + 6 + 7.
@@ -92,11 +91,10 @@
     [left : (Box Cell) (box (fresh 6))]
     [right : (Box Cell) (box (fresh 7))]
     [copy : Cell
-      (clone
-        (deref
-          (if flag
-            left
-            right)))]
+      (clone-cell
+        (if flag
+          (& (deref left))
+          (& (deref right))))]
     (set! (array-ref copy.items 0) 60)
     (+ (first (& copy)) (first (& (deref left))) (first (& (deref right))))))
 
@@ -104,14 +102,13 @@
 (define (mixed [flag : bool] [source : (& source Cell)]) : i64
   (let
     [value : Cell
-      (clone
-        (if flag
-          (fresh 8)
-          (deref source)))]
+      (if flag
+        (clone.deep (fresh 8))
+        (clone-cell source))]
     [kept : Cell
-      (clone
+      (clone-cell
         (if flag
-          (deref source)
+          source
           (io.panic "unreachable")))]
     (+ (first (& value)) (first (& kept)))))
 

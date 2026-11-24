@@ -18,7 +18,6 @@
 (import compiler_typecheck_api as tc_api)
 (import compiler_load as load)
 (import compiler_ctfe as ctfe)
-(import compiler_clone as clone_support)
 (import stdlib.hashmap)
 (import (hashmap.hashmap (Tuple i64 i64 i64) i64) as exposure_reference)
 (import sym_i64_env)
@@ -492,37 +491,21 @@
     [(Some logical) logical]
     [(No) source-name]))
 
-(define (lower-prune-unreachable-functions-with-clone-roots
-  [pools : ast.AstNodePoolContext]
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [paths : ast.AstDeclPathList]
-  [names : lower.LowerNameEnv]
-  [clone-roots : clone_support.CloneRootEntries]) : LowerPrunedProgram
-  (match (lower.lower-prune-unreachable-functions-with-clone-roots-and-plan
-    (lower.compiler-lower-state-new)
-    pools
-    entry-path
-    program
-    paths
-    names
-    clone-roots)
-    [(Program pruned-program pruned-paths _)
-      (Program pruned-program pruned-paths)]))
-
 (define (lower-prune-unreachable-functions
   [pools : ast.AstNodePoolContext]
   [entry-path : String]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
   [names : lower.LowerNameEnv]) : LowerPrunedProgram
-  (lower-prune-unreachable-functions-with-clone-roots
+  (match (lower.lower-prune-unreachable-functions-with-plan
+    (lower.compiler-lower-state-new)
     pools
     entry-path
     program
     paths
-    names
-    (Empty)))
+    names)
+    [(Program pruned-program pruned-paths _)
+      (Program pruned-program pruned-paths)]))
 
 (define (lower-test-prune-unreachable-functions
   [entry-path : String]
@@ -814,10 +797,10 @@
   (if item.is-owned
     (__tl_string_length item.owned)
     (__tl_string_length item.borrowed)))
-(define (main [text : String] [owned : String]) : i64
+(define (main [text : String] [owned : String] [owned2 : String]) : i64
   (let
-    [borrowed : (RefBox text) (ref-box-borrowed (& text) (clone owned))]
-    [owned-box : (RefBox text) (ref-box-owned (& text) owned)]
+    [borrowed : (RefBox text) (ref-box-borrowed (& text) owned)]
+    [owned-box : (RefBox text) (ref-box-owned (& text) owned2)]
     (+ (ref-box-length borrowed) (ref-box-length owned-box))))")
 
 (define (compiler-lower-reference-struct-multi-result-source) : String
@@ -848,12 +831,12 @@
       (if item.is-owned
         (__tl_string_length item.owned)
         (__tl_string_length item.borrowed)))))
-(define (main [text : String] [old : String] [replacement : String] [owned : String]) : i64
+(define (main [text : String] [old : String] [replacement : String] [owned : String] [owned2 : String]) : i64
   (let
     [borrowed : (ReplaceResult text old replacement)
-      (replace-borrowed (& text) (& old) (& replacement) (clone owned))]
+      (replace-borrowed (& text) (& old) (& replacement) owned)]
     [owned-result : (ReplaceResult text old replacement)
-      (replace-owned (& text) (& old) (& replacement) owned)]
+      (replace-owned (& text) (& old) (& replacement) owned2)]
     (+ (replace-score borrowed) (replace-score owned-result))))")
 
 (define (compiler-lower-reference-enum-result-source) : String
@@ -3417,140 +3400,6 @@
   "(define (make-pair [a : i64] [b : bool]) : (Tuple i64 bool)
   (tuple a b))")
 
-(define (compiler-lower-clone-source) : String
-  "(defstruct Holder
-  (name String)
-  (fixed (Array String 2))
-  (items (__tl_dyn-array String))
-  (pair (Tuple String String)))
-(defenum StringTree
-  (Leaf String)
-  (Branch (Box StringTree) (Box StringTree)))
-(define (clone-tuple [items : (__tl_dyn-array String)]) : i64
-  (let [pair : (Tuple String (__tl_dyn-array String)) (clone (tuple \"tuple\" items))]
-    (__tl_string_length (tuple-ref pair 0))))
-(define (clone-fixed) : i64
-  (let [fixed : (Array String 2) (clone (array \"left\" \"right\"))]
-    (__tl_string_length (array-ref fixed 0))))
-(define (clone-dyn [items : (__tl_dyn-array String)]) : i64
-  (let [copied : (__tl_dyn-array String) (clone items)]
-    (array-length copied)))
-(define (clone-holder [items : (__tl_dyn-array String)]) : Holder
-  (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
-(define (clone-tree [tree : StringTree]) : StringTree
-  (clone tree))
-(define (main [n : i64] [tree : StringTree]) : i64
-  (let
-    [items1 : (__tl_dyn-array String) (__tl_make-array String n)]
-    [items2 : (__tl_dyn-array String) (__tl_make-array String n)]
-    [items3 : (__tl_dyn-array String) (__tl_make-array String n)]
-    (begin
-      (clone-tuple items1)
-      (clone-dyn items2)
-      (clone-holder items3)
-      (clone-fixed)
-      (clone-tree tree)
-      0)))")
-
-(define (compiler-lower-clone-dynarray-bulk-source) : String
-  "(defstruct OneWord
-  (value i64))
-(define (copy-i64-items [items : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
-  (clone items))
-(define (copy-word-items [items : (__tl_dyn-array OneWord)]) : (__tl_dyn-array OneWord)
-  (clone items))
-(define (copy-string-items [items : (__tl_dyn-array String)]) : (__tl_dyn-array String)
-  (clone items))")
-
-(define (compiler-lower-clone-unsupported-source) : String
-  "(define (inc [x : i64]) : i64 (+ x 1))
-(define (main) : (-> i64 i64)
-  (clone inc))")
-
-(define (compiler-lower-clone-reachable-source) : String
-  "(defstruct UsedClone
-  (name String))
-(defstruct NestedClone
-  (used UsedClone))
-(defstruct UnusedClone
-  (name String))
-(define (make-nested [s : String]) : NestedClone
-  (clone (NestedClone (UsedClone s))))
-(define (main [s : String]) : i64
-  (let
-    [item : NestedClone (make-nested s)]
-    (__tl_string_length item.used.name)))")
-
-;; Eighteen independent aggregate roots force stdlib.clone's helper handoff
-;; across the fixed 16-root chunk boundary.  Source-order field discovery
-;; prepends roots, so logical positions 0, 15, 16, and 17 are CloneChunk17,
-;; CloneChunk2, CloneChunk1, and CloneChunk0 respectively.
-(define (compiler-lower-clone-chunk-boundary-source) : String
-  "(defstruct CloneChunk0 (value String))
-(defstruct CloneChunk1 (value String))
-(defstruct CloneChunk2 (value String))
-(defstruct CloneChunk3 (value String))
-(defstruct CloneChunk4 (value String))
-(defstruct CloneChunk5 (value String))
-(defstruct CloneChunk6 (value String))
-(defstruct CloneChunk7 (value String))
-(defstruct CloneChunk8 (value String))
-(defstruct CloneChunk9 (value String))
-(defstruct CloneChunk10 (value String))
-(defstruct CloneChunk11 (value String))
-(defstruct CloneChunk12 (value String))
-(defstruct CloneChunk13 (value String))
-(defstruct CloneChunk14 (value String))
-(defstruct CloneChunk15 (value String))
-(defstruct CloneChunk16 (value String))
-(defstruct CloneChunk17 (value String))
-(define (main [s : String]) : i64
-  (begin
-    (clone
-      (tuple
-        (CloneChunk0 (clone s))
-        (CloneChunk1 (clone s))
-        (CloneChunk2 (clone s))
-        (CloneChunk3 (clone s))
-        (CloneChunk4 (clone s))
-        (CloneChunk5 (clone s))
-        (CloneChunk6 (clone s))
-        (CloneChunk7 (clone s))
-        (CloneChunk8 (clone s))
-        (CloneChunk9 (clone s))
-        (CloneChunk10 (clone s))
-        (CloneChunk11 (clone s))
-        (CloneChunk12 (clone s))
-        (CloneChunk13 (clone s))
-        (CloneChunk14 (clone s))
-        (CloneChunk15 (clone s))
-        (CloneChunk16 (clone s))
-        (CloneChunk17 s)))
-    0))")
-
-(define (compiler-lower-clone-chunk-boundary-ok?) : bool
-  (match (lower-test-functions
-    (compiler-lower-clone-source-with-prelude
-      (compiler-lower-clone-chunk-boundary-source)))
-    [(Some functions)
-      (and
-        (lower-test-function-defined? functions ".::clone$CloneChunk17")
-        (lower-test-function-defined? functions ".::clone$CloneChunk2")
-        (lower-test-function-defined? functions ".::clone$CloneChunk1")
-        (lower-test-function-defined? functions ".::clone$CloneChunk0"))]
-    [_ false]))
-
-;; Nominal clone helpers are declaration macros now, so clone-producing lowering
-;; fixtures must load the same implicit prelude as the compiler driver.
-(define (compiler-lower-clone-source-with-prelude [src : String]) : lower.ResultCompilerLower
-  (ci.intern-reset!)
-  (lower.lower-reset-intern-owned-state!)
-  (cbi.compiler-builtin-reset!)
-  (match (tc_api.typecheck-compiler-source-load src)
-    [(Ok decls paths _ _)
-      (lower-compiler-program-with-decl-paths "" (ast.ast-program decls) paths)]
-    [(Err diag) (Err diag)]))
-
 (test
   compiler-lower-missing-declaration-macro-diagnostic
   (let
@@ -3572,15 +3421,6 @@
         (lower.CompilerLowerMode.LinuxScalar)
         (lower.CompilerLowerMode.WindowsScalar))]
     (for [mode (iterator.range 0 2)]
-      (test.assert-true
-        (compiler-lower-mode-diagnostic-ok?
-          "(defstruct Wide (a i64) (b i64) (c i64) (d i64))
-(define (cloned [p : Wide]) : Wide (clone p))"
-          (array-ref modes mode)
-          "typecheck: module-scope macro call does not name a macro: synthesize-helpers"
-          1
-          1)
-        "missing clone prelude returns a diagnostic for its tagged helper name")
       (for [index (iterator.range 0 3)]
         (match (lower.lower-compiler-source-with-mode
           (string.copy (array-ref sources index))
@@ -3620,84 +3460,6 @@
         (>= (lower-test-count functions "main" (Load)) 1))]
     [_ false]))
 
-(test
-  compiler-lower-clone-reference-receiver-once
-  (match (lower-test-functions
-    (compiler-lower-clone-source-with-prelude
-      "(defstruct Cell (name String))
-(define (observe [source : (& source Cell)]) : (& source Cell) source)
-(define (copy [source : (& source Cell)]) : Cell
-  (clone (deref (observe source))))
-(define (main) : i64
-  (let [source (Cell \"source\")] [copy (copy (& source))] 0))"))
-    [(Some functions)
-      (test.assert-true
-        (and
-          (=
-            (lower-test-function-call-count functions ".::copy" ".::observe")
-            1)
-          (=
-            (lower-test-function-call-count functions ".::copy" ".::clone$Cell")
-            1))
-        "cloning a shared referent evaluates its receiver once and deep-clones once")]
-    [_ (test.assert-true false "a supported non-Copy referent clone lowers")]))
-
-(define (compiler-lower-clone-shape-ok?) : bool
-  (match (lower-test-functions
-    (compiler-lower-clone-source-with-prelude (compiler-lower-clone-source)))
-    [(Some functions)
-      (and
-        (>
-          (lower-test-function-call-count
-            functions
-            ".::clone-tuple"
-            "tl_substring")
-          0)
-        (>
-          (lower-test-function-call-count functions ".::clone-tuple" "tl_alloc")
-          0)
-        (>
-          (lower-test-function-call-count
-            functions
-            ".::clone-fixed"
-            "tl_substring")
-          1)
-        (>
-          (lower-test-function-call-count functions ".::clone-dyn" "tl_alloc")
-          1)
-        (> (lower-test-count functions ".::clone-dyn" (Branch)) 0)
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::clone-holder"
-            ".::clone$Holder")
-          1)
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::clone-tree"
-            ".::clone$StringTree")
-          1)
-        (>
-          (lower-test-function-call-count
-            functions
-            ".::clone$Holder"
-            "tl_substring")
-          0)
-        (>
-          (lower-test-function-call-count
-            functions
-            ".::clone$Holder"
-            "tl_alloc")
-          0)
-        (>
-          (lower-test-function-call-count
-            functions
-            ".::clone$StringTree"
-            "tl_substring")
-          0))]
-    [_ false]))
-
 (define (lower-test-runtime-memcpy-instr-count
   [count : i64]
   [instr : ir.CompilerIrInstr]) : i64
@@ -3734,48 +3496,6 @@
         1
         "a fixed-size aggregate copy names the runtime source identity")]
     [(No) (test.assert-true false "aggregate copy fixture lowers")]))
-
-(define (compiler-lower-clone-dynarray-bulk-copy-ok?) : bool
-  (match (lower-test-functions
-    (compiler-lower-clone-source-with-prelude
-      (compiler-lower-clone-dynarray-bulk-source)))
-    [(Some functions)
-      (and
-        (= (lower-test-runtime-memcpy-count functions ".::copy-i64-items") 1)
-        (= (lower-test-count functions ".::copy-i64-items" (Branch)) 0)
-        (= (lower-test-runtime-memcpy-count functions ".::copy-word-items") 1)
-        (= (lower-test-count functions ".::copy-word-items" (Branch)) 0)
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::copy-string-items"
-            "tl_memcpy")
-          0)
-        (>
-          (lower-test-function-call-count
-            functions
-            ".::copy-string-items"
-            "tl_substring")
-          0)
-        (> (lower-test-count functions ".::copy-string-items" (Branch)) 0))]
-    [_ false]))
-
-(define (compiler-lower-clone-reachable-helpers-ok?) : bool
-  (match (lower-test-functions
-    (compiler-lower-clone-source-with-prelude
-      (compiler-lower-clone-reachable-source)))
-    [(Some functions)
-      (and
-        (lower-test-function-defined? functions ".::clone$NestedClone")
-        (lower-test-function-defined? functions ".::clone$UsedClone")
-        (not (lower-test-function-defined? functions ".::clone$UnusedClone"))
-        (=
-          (lower-test-function-call-count
-            functions
-            ".::clone$NestedClone"
-            ".::clone$UsedClone")
-          1))]
-    [_ false]))
 
 (define (compiler-lower-inline-struct-source) : String
   "(defstruct Packet (tag i64) (small u8) (count i64))
@@ -9537,9 +9257,18 @@
           0))]
     [_ false]))
 
+(define (compiler-lower-source-with-prelude [src : String]) : lower.ResultCompilerLower
+  (ci.intern-reset!)
+  (lower.lower-reset-intern-owned-state!)
+  (cbi.compiler-builtin-reset!)
+  (match (tc_api.typecheck-compiler-source-load src)
+    [(Ok decls paths _ _)
+      (lower-compiler-program-with-decl-paths "" (ast.ast-program decls) paths)]
+    [(Err diag) (Err diag)]))
+
 (define (compiler-lower-with-escape-owning-shape-ok?) : bool
   (match (lower-test-functions
-    (compiler-lower-clone-source-with-prelude
+    (compiler-lower-source-with-prelude
       (compiler-lower-with-escape-owning-source)))
     [(Some functions)
       (and
@@ -9670,7 +9399,7 @@
 
 (define (compiler-lower-with-scratch-owning-shape-ok?) : bool
   (match (lower-test-functions
-    (compiler-lower-clone-source-with-prelude
+    (compiler-lower-source-with-prelude
       (compiler-lower-with-scratch-owning-source)))
     [(Some functions)
       (and
@@ -10457,14 +10186,17 @@
 
 (define (compiler-lower-foreach2-row-tests-ok?) : bool
   (compiler-lower-and8
+    ;; Hoisted rectangular bound guard proves each row fits inside every view,
+    ;; eliminating the per-row scalar tail fallback while keeping the single
+    ;; scalar fallback loop (`row_origin_scalar`) for non-rectangular domains.
     (compiler-lower-foreach2-row-counts-are?
       (compiler-lower-foreach2-row-map-source)
       (lower.CompilerLowerMode.Avx2)
-      (array 1 1 1 1 1 2))
+      (array 1 1 1 1 1 1))
     (compiler-lower-foreach2-row-counts-are?
       (compiler-lower-foreach2-row-map-source)
       (lower.CompilerLowerMode.Avx512)
-      (array 1 1 1 1 1 2))
+      (array 1 1 1 1 1 1))
     (compiler-lower-foreach2-row-counts-are?
       (compiler-lower-foreach2-row-map-source)
       (lower.CompilerLowerMode.Scalar)
@@ -16826,122 +16558,6 @@
     (compiler-lower-stdlib-comptime-type-prune-keeps-types-ok?)
     (compiler-lower-stdlib-comptime-nullary-enum-runtime-skip-ok?)
     (compiler-lower-unsafe-ast-dce-ok?)))
-
-(cfg
-  test
-  ;; The first conflict the per-function scan finds: the oracle the indexed
-  ;; conflict check must reproduce.
-  (define (compiler-lower-clone-conflict-oracle
-    [lower-state : lower.CompilerLowerState]
-    [decls : (& decls ast.AstDeclList)]
-    [roots : clone_support.CloneRootEntries]) : i64
-    (let
-      [index : i64 0]
-      [module-id : i64 cbi.compiler-builtin-id-fix-empty]
-      [found : i64 -1]
-      (while (and (< found 0) (< index (ast.ast-decl-list-len decls)))
-        (match (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))
-          [(Module next) (set! module-id next)]
-          [(DefFn _ name _ _ _ _)
-            (set!
-              found
-              (lower.lower-clone-handoff-source-helper-root-id
-                lower-state
-                name
-                module-id
-                roots))]
-          [_ unit])
-        (+= index 1))
-      found)))
-
-(cfg
-  test
-  (define (compiler-lower-clone-conflict-decls [spec : (& spec str)]) : ast.AstDeclList
-    ;; `spec` is a space-separated list: `@m` enters module `m`, any other word
-    ;; declares a function of that (generated) name.
-    (let
-      [out : ast.AstDeclList (ast.ast-decl-list-new)]
-      [start : i64 0]
-      [len : i64 (string.string-length spec)]
-      (for [index (iterator.range 0 (+ len 1))]
-        (when
-          (or (= index len) (= (string.string-ref spec index) ' '))
-          (when
-            (> index start)
-            (let
-              [word : String (string.substring spec start (- index start))]
-              (if (= (string.string-ref word 0) '@')
-                (ast.ast-decl-list-push
-                  (&mut out)
-                  (ast.ast-decl-module-id
-                    (ci.intern
-                      (string.substring
-                        word
-                        1
-                        (- (string.string-length word) 1)))))
-                (ast.ast-decl-list-push
-                  (&mut out)
-                  (ast.ast-decl-def-fn-id
-                    (lower-test-generated-name-id word)
-                    (ast.ast-param-list-new)
-                    (ast.AstType.I64)
-                    -1)))))
-          (set! start (+ index 1))))
-      out)))
-
-(cfg
-  test
-  (define (compiler-lower-clone-conflict-index-ok?) : bool
-    (let
-      [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
-      [pair-key : i64 (clone_support.clone-name-key-id (ci.intern "Pair"))]
-      [box-key : i64
-        (clone_support.clone-name-key-id-in-module
-          (ci.intern "m")
-          (ci.intern "Box"))]
-      [no-roots : clone_support.CloneRootEntries Empty]
-      [roots : clone_support.CloneRootEntries
-        (clone_support.clone-root-entries-add-id
-          (clone_support.clone-root-entries-add-id no-roots pair-key)
-          box-key)]
-      [ok : bool true]
-      (clone_support.clone-root-entries-materialize-helper-names! roots)
-      ;; Each case: decls, expected key. A helper name only conflicts in its
-      ;; own module, and the first declaration in order wins.
-      (for [case
-        (array
-          (tuple "keep clone$Pair" pair-key)
-          (tuple "@m clone$Pair" -1)
-          (tuple "clone$Box" -1)
-          (tuple "@m keep clone$Box" box-key)
-          (tuple "@m clone$Box @r clone$Pair" box-key))]
-        (let
-          [decls : ast.AstDeclList
-            (compiler-lower-clone-conflict-decls (& (tuple-ref case 0)))]
-          [got : i64
-            (lower.lower-clone-handoff-source-conflict-in-module
-              lower-state
-              (& decls)
-              roots
-              cbi.compiler-builtin-id-fix-empty)]
-          (when
-            (not
-              (and
-                (= got (tuple-ref case 1))
-                (=
-                  got
-                  (compiler-lower-clone-conflict-oracle
-                    lower-state
-                    (& decls)
-                    roots))))
-            (set! ok false))))
-      ok)))
-
-(test
-  compiler-lower-clone-conflict-index
-  (test.assert-true
-    (compiler-lower-clone-conflict-index-ok?)
-    "the indexed clone conflict check finds the per-function scan's first conflict"))
 
 (test
   compiler-lower-profile-job-isolation

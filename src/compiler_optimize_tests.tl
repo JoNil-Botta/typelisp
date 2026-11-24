@@ -41003,7 +41003,7 @@ exit:
           [(No) true]
           [(Some _) false])
         2]
-      ;; ... every fast-derived block (clone + its unroll copies) is
+      ;; ... every fast-derived block (versioned copy + its unroll copies) is
       ;; check-free ...
       [(not
           (=

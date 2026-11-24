@@ -5,8 +5,8 @@ clone_reference_prefix_move_reject|check-fail|tests/safety/clone_reference_prefi
 clone_reference_prefix_deref_reject|check-fail|tests/safety/clone_reference_prefix_deref_reject.tl|-|cannot move a `Cell` out of a shared reference
 clone_reference_shadow_reject|check-fail|tests/safety/clone_reference_shadow_reject.tl|-|cannot move a `Cell` out of a shared reference
 clone_reference_let_move_reject|check-fail|tests/safety/clone_reference_let_move_reject.tl|-|cannot move a `Cell` out of a shared reference
-clone_reference_direct_ref_reject|check-fail|tests/safety/clone_reference_direct_ref_reject.tl|-|clone unsupported type (& source Cell)
-clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper at LocalRawWrapper.item.ptr: (Ptr i64) has no clone capability
+clone_reference_direct_ref_reject|check-fail|tests/safety/clone_reference_direct_ref_reject.tl|-|gen-clone: unsupported type ref_source_struct_Cell at clone.deep
+clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|gen-clone: unsupported type ptr_i64 at RawItem.ptr
 clone_deep_missing_owner_reject|check-fail|tests/safety/clone_deep_missing_owner_reject.tl|-|at clone.deep from owner clone_deep_missing_owner; invoke gen-clone in its owner module first
 clone_deep_function_reject|check-fail|tests/safety/clone_deep_function_reject.tl|-|gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep
 clone_deep_reference_reject|check-fail|tests/safety/clone_deep_reference_reject.tl|-|gen-clone: unsupported type ref_source_i64 at clone.deep
@@ -83,11 +83,11 @@ move_out_of_reference_borrow_ok|run-exit|tests/safety/move_out_of_reference_borr
 move_out_view_element_return_reject|check-fail|tests/safety/move_out_view_element_return_reject.tl|tests/safety/move_out_view_element_return_reject.tl:12:3|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
 move_out_view_element_argument_reject|check-fail|tests/safety/move_out_view_element_argument_reject.tl|tests/safety/move_out_view_element_argument_reject.tl:16:9|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
 clone_read_positions_ok|run-exit|tests/safety/clone_read_positions_ok.tl|42|-
-clone_read_condition_move_reject|check-fail|tests/safety/clone_read_condition_move_reject.tl|tests/safety/clone_read_condition_move_reject.tl:17:19|use of moved value `a`
+clone_read_condition_move_reject|check-fail|tests/safety/clone_read_condition_move_reject.tl|tests/safety/clone_read_condition_move_reject.tl:21:19|use of moved value `a`
 ownership_split_chain_reject|check-fail|tests/safety/ownership_split_chain_reject.tl|tests/safety/ownership_split_chain_reject.tl:20:13|cannot assign to borrowed place `pair.right`
-clone_cleanup_owned_reject|check-fail|tests/safety/clone_cleanup_owned_reject.tl|-|error[E0206]: typecheck: clone unsupported type Res at Res: cleanup-owning type Res cannot be cloned
-clone_cleanup_deref_reject|check-fail|tests/safety/clone_cleanup_deref_reject.tl|-|error[E0206]: typecheck: clone unsupported type Res at Res: cleanup-owning type Res cannot be cloned
-clone_cleanup_enum_reject|check-fail|tests/safety/clone_cleanup_enum_reject.tl|-|error[E0206]: typecheck: clone unsupported type Handle at Handle: cleanup-owning type Handle cannot be cloned
-clone_cleanup_containing_aggregate_reject|check-fail|tests/safety/clone_cleanup_containing_aggregate_reject.tl|-|error[E0206]: typecheck: clone unsupported type Wrapper at Wrapper: cleanup-owning type Wrapper cannot be cloned
-clone_cleanup_tuple_reject|check-fail|tests/safety/clone_cleanup_tuple_reject.tl|-|error[E0206]: typecheck: clone unsupported type (Tuple Res i64)
+clone_cleanup_owned_reject|check-fail|tests/safety/clone_cleanup_owned_reject.tl|-|gen-clone: unsupported cleanup-owning type struct_Res at clone.deep
+clone_cleanup_deref_reject|check-fail|tests/safety/clone_cleanup_deref_reject.tl|-|gen-clone: unsupported cleanup-owning type struct_Res at clone.deep
+clone_cleanup_enum_reject|check-fail|tests/safety/clone_cleanup_enum_reject.tl|-|gen-clone: unsupported cleanup-owning type enum_Handle at clone.deep
+clone_cleanup_containing_aggregate_reject|check-fail|tests/safety/clone_cleanup_containing_aggregate_reject.tl|-|gen-clone: unsupported cleanup-owning type struct_Wrapper at clone.deep
+clone_cleanup_tuple_reject|check-fail|tests/safety/clone_cleanup_tuple_reject.tl|-|gen-clone: unsupported cleanup-owning type struct_Res at clone.deep[0]
 clone_non_cleanup_control_ok|run-exit|tests/safety/clone_non_cleanup_control_ok.tl|42|-

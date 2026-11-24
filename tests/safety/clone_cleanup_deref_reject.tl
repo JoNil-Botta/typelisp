@@ -1,5 +1,7 @@
-;; #9053: `(clone (deref r))` through a reference to a cleanup-owning struct
-;; would duplicate its cleanup obligation and must fail E0206.
+;; #9053: `(clone.deep (deref r))` through a reference to a cleanup-owning
+;; struct would duplicate its cleanup obligation and must be rejected.
+(import stdlib.clone)
+
 (define closes : i64
   0)
 
@@ -11,7 +13,7 @@
   (fd i64 (:cleanup close-fd)))
 
 (define (dup [r : (& r Res)]) : Res
-  (clone (deref r)))
+  (clone.deep (deref r)))
 
 (define (run) : i64
   (with ([a (Res 7) close-res]) (with ([b (dup (& a)) close-res]) b.fd)))

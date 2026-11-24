@@ -3,6 +3,8 @@
 ;; The import makes the string helpers visible where the macros expand.
 ;; lint-allow: unused-import
 (import stdlib.string)
+
+;; lint-allow: unused-import
 (import macro_qualified_helper_defs as defs)
 (import macro_qualified_helper_macros.*)
 
@@ -12,14 +14,8 @@
 (define (tail-concat) : String
   (q-concat "a" "b"))
 
-(define (tail-clone [cell : (& cell defs.Cell)]) : defs.Pair
-  (q-clone cell))
-
 (define (main) : i64
   (let
-    [cell : defs.Cell (defs.Cell 1)]
-    [pair : defs.Pair (q-clone (& cell))]
-    [tail-pair : defs.Pair (tail-clone (& cell))]
     [appended : String (q-append "a" "b")]
     [concatenated : String (q-concat "a" "b")]
     [nested : String (q-append (q-concat "a" "b") "c")]
@@ -35,8 +31,6 @@
       (s-eq nested "user")
       (s-eq (tail-append) "user")
       (s-eq (tail-concat) "user")
-      (= (+ pair.a pair.b) 42)
-      (= (+ tail-pair.a tail-pair.b) 42)
       (q-int-eq 3 2)
       (not (q-int-eq 2 2))
       (= (q-int-length 21) 42)

@@ -28,9 +28,6 @@
 (defmacro (q-concat [a : Expr] [b : Expr]) : Expr
   `(defs.string-concat ,a ,b))
 
-(defmacro (q-clone [a : Expr]) : Expr
-  `(defs.clone ,a))
-
 (defmacro (q-int-eq [a : Expr] [b : Expr]) : Expr
   `(idefs.eq ,a ,b))
 

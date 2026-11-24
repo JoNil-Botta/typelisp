@@ -70,7 +70,7 @@ usage:
   scripts/check-instruction-counts.sh [options] [typelisp-seed]
   scripts/check-instruction-counts.sh reference --compiler PATH [--jobs N] [--output DIR]
   scripts/check-instruction-counts.sh finalize-ci
-  scripts/check-instruction-counts.sh main-check
+  scripts/check-instruction-counts.sh main-check [--prepare]
   scripts/check-instruction-counts.sh --self-test
 
 Options (default check mode):
@@ -187,6 +187,7 @@ insn_write_meta() {
 insn_declaration_parse() {
     _idp_file=$1
     _idp_valid_cases=${2:-}
+    [ ! -L "$_idp_file" ] || { echo "declaration file must not be a symlink: $_idp_file"; return 1; }
     [ -f "$_idp_file" ] || { echo "missing declaration file: $_idp_file"; return 1; }
     awk -F '\t' -v valid_cases="$_idp_valid_cases" '
         BEGIN {
@@ -708,6 +709,27 @@ new_cases_between() {
     '
 }
 
+# insn_filter_base_cases BASE_COMMIT CASES_CSV
+#   Print comma-separated cases from CASES_CSV that were instruction-gated in
+#   BASE_COMMIT (matching commit_instruction_cases and new_cases_between).
+insn_filter_base_cases() {
+    _ifbc_base=$1
+    _ifbc_cases=$2
+    commit_instruction_cases "$_ifbc_base" | awk -v cases="$_ifbc_cases" '
+        { old[$0] = 1 }
+        END {
+            n = split(cases, arr, ",")
+            for (i = 1; i <= n; i++) {
+                c = arr[i]
+                if (c != "" && (c in old) && !seen[c]++) {
+                    out = (out == "" ? c : out "," c)
+                }
+            }
+            print out
+        }
+    '
+}
+
 all_instruction_cases_csv() {
     _aic_main=$(benchmark_ci_case_csv "$ROOT" instruction-main) || return 1
     _aic_heavy=$(benchmark_ci_case_csv "$ROOT" instruction-heavy) || return 1
@@ -920,14 +942,9 @@ insn_cmd_fallback() {
         _icf_stage2=$(cat target/ci-verify-stage2.path 2>/dev/null || true)
         [ -x "$_icf_stage2" ] || _icf_status=1
     fi
-    # Filter cases to those whose benchmarks/<case>/bench.tl exist in BASE.
+    # Filter cases to those instruction-gated in BASE (matching commit_instruction_cases).
     if [ "$_icf_status" -eq 0 ]; then
-        _icf_base_cases=
-        for _icf_c in $(printf '%s' "$_icf_cases" | tr ',' ' '); do
-            if [ -f "benchmarks/$_icf_c/bench.tl" ] && [ -f "benchmarks/$_icf_c/baseline.c" ]; then
-                _icf_base_cases="${_icf_base_cases:+$_icf_base_cases,}$_icf_c"
-            fi
-        done
+        _icf_base_cases=$(insn_filter_base_cases "$_icf_base" "$_icf_cases")
         if [ -n "$_icf_base_cases" ]; then
             env -i PATH="$PATH" HOME="${HOME:-}" LC_ALL=C \
                 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-local}" GITHUB_RUN_ID="${GITHUB_RUN_ID:-local}" \
@@ -1145,7 +1162,9 @@ insn_check_pr_declarations() {
     _icpd_b_has_own=no
     git cat-file -e "$_icpd_base:$_icpd_own" 2>/dev/null && _icpd_b_has_own=yes
     INSN_DECL_PROBLEMS=$(insn_declaration_diff_check "$_icpd_pr" "$_icpd_out_dir/declarations.diff" "$_icpd_b_has_own") || true
-    if [ -z "$INSN_DECL_PROBLEMS" ] && [ -f "$_icpd_own" ]; then
+    if [ -z "$INSN_DECL_PROBLEMS" ] && [ -L "$_icpd_own" ]; then
+        INSN_DECL_PROBLEMS="declaration file must not be a symlink: $_icpd_own"
+    elif [ -z "$INSN_DECL_PROBLEMS" ] && [ -f "$_icpd_own" ]; then
         if ! _icpd_parsed=$(insn_declaration_parse "$_icpd_own" "$_icpd_valid_cases"); then
             INSN_DECL_PROBLEMS="malformed $_icpd_own: $_icpd_parsed"
         else
@@ -1154,14 +1173,47 @@ insn_check_pr_declarations() {
     fi
 }
 
+insn_require_pr_env() {
+    _irpe_pr=${TYPELISP_SELF_COMPILE_PR_NUMBER:-}
+    _irpe_head=${TYPELISP_SELF_COMPILE_PR_HEAD:-}
+    case "$_irpe_pr" in "" | *[!0-9]*) insn_fail "TYPELISP_SELF_COMPILE_PR_NUMBER is not a PR number: $_irpe_pr" ;; esac
+    sc_is_sha "$_irpe_head" || insn_fail "TYPELISP_SELF_COMPILE_PR_HEAD is not a commit id"
+    [ -n "${GH_TOKEN:-}" ] || insn_fail "GH_TOKEN is required for GitHub Actions PR instruction-count check"
+}
+
+# insn_result_tsv_passed FILE
+#   Verify a completed result.tsv has at least one data row (NR > 1), exact `ok`
+#   on every `benchmark/c*` row, and only passing statuses on `benchmark/typelisp/*`.
+insn_result_tsv_passed() {
+    [ -f "$1" ] || return 1
+    awk -F '\t' '
+        { sub(/\r$/, "") }
+        NR == 1 {
+            if ($1 != "metric" || $6 != "status") bad = 1
+            next
+        }
+        $0 == "" { next }
+        {
+            rows++
+            if ($1 ~ /^benchmark\/c/) {
+                if ($6 != "ok") bad = 1
+            } else if ($1 ~ /^benchmark\/typelisp\//) {
+                if ($6 != "ok" && $6 != "IMPROVEMENT" && $6 != "declared-ok" && $6 != "new-benchmark") bad = 1
+            } else {
+                bad = 1
+            }
+        }
+        END { exit (bad || rows == 0) ? 1 : 0 }
+    ' "$1"
+}
+
 # --- subcommand: finalize-ci (ci.yml post-ci-verify step) -------------------
 
 insn_cmd_finalize_ci() {
     insn_in_actions || insn_fail "finalize-ci runs in GitHub Actions only"
-    _icfc_pr=${TYPELISP_SELF_COMPILE_PR_NUMBER:-}
-    _icfc_event_head=${TYPELISP_SELF_COMPILE_PR_HEAD:-}
-    case "$_icfc_pr" in "" | *[!0-9]*) insn_fail "TYPELISP_SELF_COMPILE_PR_NUMBER is not a PR number: $_icfc_pr" ;; esac
-    sc_is_sha "$_icfc_event_head" || insn_fail "TYPELISP_SELF_COMPILE_PR_HEAD is not a commit id"
+    insn_require_pr_env
+    _icfc_pr=$TYPELISP_SELF_COMPILE_PR_NUMBER
+    _icfc_event_head=$TYPELISP_SELF_COMPILE_PR_HEAD
 
     _icfc_deferred_dirs=
     _icfc_all_cases=
@@ -1177,9 +1229,7 @@ insn_cmd_finalize_ci() {
         elif [ -f "$_icfc_dir/result.tsv" ]; then
             _icfc_any=1
             insn_log "reusing completed instruction-count check in $_icfc_dir/result.tsv"
-            if awk -F '\t' 'NR > 1 && $6 != "ok" && $6 != "IMPROVEMENT" && $6 != "declared-ok" && $6 != "new-benchmark" { bad = 1 } END { exit bad ? 1 : 0 }' "$_icfc_dir/result.tsv"; then
-                :
-            else
+            if ! insn_result_tsv_passed "$_icfc_dir/result.tsv"; then
                 insn_fail "completed check in $_icfc_dir/result.tsv did not pass"
             fi
         fi
@@ -1256,6 +1306,70 @@ insn_cmd_finalize_ci() {
 
 # --- subcommand: main-check (self-compile-reference.yml ledger job) ---------
 
+insn_fetch_head_reference() {
+    _ifhr_c=$1
+    _ifhr_out=$2
+    INSN_HEAD_REC=
+    INSN_HEAD_ERR=
+    if ! insn_api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$INSN_REF_ARTIFACT&per_page=100" \
+        "$_ifhr_out/head-artifacts.json"; then
+        INSN_HEAD_ERR="failed to list artifacts for run $GITHUB_RUN_ID"
+        return 1
+    fi
+    _ifhr_hid=$(sc_select_artifact "$_ifhr_out/head-artifacts.json" "$INSN_REF_ARTIFACT" "$GITHUB_RUN_ID")
+    if [ -z "$_ifhr_hid" ]; then
+        INSN_HEAD_ERR="run $GITHUB_RUN_ID has no $INSN_REF_ARTIFACT artifact"
+        return 1
+    fi
+    if ! insn_download_artifact "$_ifhr_hid" "$_ifhr_out/head-artifact"; then
+        INSN_HEAD_ERR="failed to download HEAD $INSN_REF_ARTIFACT"
+        return 1
+    fi
+    _ifhr_rec="$_ifhr_out/head-artifact/record.tsv"
+    if ! _ifhr_vmsg=$(insn_record_validate "$_ifhr_rec" reference); then
+        INSN_HEAD_ERR="invalid HEAD record: $_ifhr_vmsg"
+        return 1
+    fi
+    if [ "$(sc_record_get "$_ifhr_rec" commit)" != "$_ifhr_c" ]; then
+        INSN_HEAD_ERR="HEAD record commit does not match $_ifhr_c"
+        return 1
+    fi
+    INSN_HEAD_REC=$_ifhr_rec
+}
+
+insn_cmd_main_check_prepare() {
+    insn_in_actions || insn_fail "main-check --prepare runs in GitHub Actions only"
+    _icmp_c=$(git rev-parse HEAD)
+    _icmp_p=$(git rev-parse HEAD^1 2>/dev/null || true)
+    _icmp_tools=no
+    _icmp_reason="root commit"
+    if [ -n "$_icmp_p" ]; then
+        _icmp_out=target/insn-exec/main-check-prepare
+        rm -rf -- "$_icmp_out"
+        mkdir -p "$_icmp_out"
+        if extract_legacy_tl_baseline "$_icmp_p" "$_icmp_out/legacy-tl.tsv" 2>/dev/null; then
+            _icmp_tools=no
+            _icmp_reason="pre-cutover legacy baseline at $_icmp_p"
+        elif ! insn_fetch_head_reference "$_icmp_c" "$_icmp_out"; then
+            _icmp_tools=yes
+            _icmp_reason="HEAD reference unavailable during prepare ($INSN_HEAD_ERR)"
+        else
+            insn_resolve_reference "$_icmp_p" "$INSN_HEAD_REC" "$_icmp_out/parent"
+            if [ "$INSN_REF_STATUS" = ok ]; then
+                _icmp_tools=no
+                _icmp_reason="parent reference ready (run $INSN_REF_RUN)"
+            else
+                _icmp_tools=yes
+                _icmp_reason="parent reference $INSN_REF_STATUS"
+            fi
+        fi
+    fi
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+        printf 'needs-tools=%s\n' "$_icmp_tools" >> "$GITHUB_OUTPUT"
+    fi
+    insn_log "main-check --prepare: needs-tools=$_icmp_tools ($_icmp_reason)"
+}
+
 insn_cmd_main_check() {
     insn_in_actions || insn_fail "main-check runs in GitHub Actions only"
     _icmc_c=$(git rev-parse HEAD)
@@ -1269,18 +1383,8 @@ insn_cmd_main_check() {
     mkdir -p "$_icmc_out"
 
     # Fetch HEAD's own insn-exec-reference from this run's `measure` job.
-    if ! insn_api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$INSN_REF_ARTIFACT&per_page=100" \
-        "$_icmc_out/head-artifacts.json"; then
-        insn_fail "main-check: failed to list artifacts for run $GITHUB_RUN_ID"
-    fi
-    _icmc_hid=$(sc_select_artifact "$_icmc_out/head-artifacts.json" "$INSN_REF_ARTIFACT" "$GITHUB_RUN_ID")
-    [ -n "$_icmc_hid" ] || insn_fail "main-check: run $GITHUB_RUN_ID has no $INSN_REF_ARTIFACT artifact"
-    insn_download_artifact "$_icmc_hid" "$_icmc_out/head-artifact" ||
-        insn_fail "main-check: failed to download HEAD $INSN_REF_ARTIFACT"
-    _icmc_head_rec="$_icmc_out/head-artifact/record.tsv"
-    _icmc_vmsg=$(insn_record_validate "$_icmc_head_rec" reference) || insn_fail "main-check: invalid HEAD record: $_icmc_vmsg"
-    [ "$(sc_record_get "$_icmc_head_rec" commit)" = "$_icmc_c" ] ||
-        insn_fail "main-check: HEAD record commit does not match $_icmc_c"
+    insn_fetch_head_reference "$_icmc_c" "$_icmc_out" || insn_fail "main-check: $INSN_HEAD_ERR"
+    _icmc_head_rec=$INSN_HEAD_REC
 
     # Resolve parent P's TypeLisp reference (wait if pending; allow pre-cutover legacy baseline).
     _icmc_waited=0
@@ -1296,6 +1400,7 @@ insn_cmd_main_check() {
         _icmc_waited=$((_icmc_waited + INSN_POLL_SECONDS))
     done
 
+    _icmc_valid_cases=$(all_instruction_cases_csv) || exit 1
     _icmc_base_tl="$_icmc_out/parent-tl.tsv"
     if [ "$INSN_REF_STATUS" = ok ]; then
         cp "$_icmc_pdir/record.tsv" "$_icmc_base_tl"
@@ -1303,6 +1408,20 @@ insn_cmd_main_check() {
     elif extract_legacy_tl_baseline "$_icmc_p" "$_icmc_base_tl"; then
         _icmc_base_src="pre-cutover legacy baseline at $_icmc_p"
         insn_log "main-check: using pre-cutover legacy TypeLisp baseline at $_icmc_p"
+    elif [ "$INSN_REF_STATUS" = rejected ] || [ "$INSN_REF_STATUS" = absent ]; then
+        insn_log "main-check: no usable parent insn-exec reference for $_icmc_p ($INSN_REF_STATUS):"
+        sed 's/^/  /' "$_icmc_pdir/reasons" >&2
+        [ "${TYPELISP_SELF_COMPILE_TOOLS_READY:-}" = true ] ||
+            insn_fail "main-check: fallback measurement requires Linux instruction-count tools (TYPELISP_SELF_COMPILE_TOOLS_READY=true)"
+        insn_run_fallback "$_icmc_p" "$_icmc_c" "$_icmc_valid_cases" "$_icmc_base_tl" parent-fallback
+        if ! insn_records_comparable "$_icmc_head_rec" "$_icmc_base_tl" >/dev/null 2>&1; then
+            insn_log "main-check: ledger runner identity differs from measure job; measuring $_icmc_c in place for comparability"
+            _icmc_head_rec="$_icmc_out/head-fallback.tsv"
+            insn_run_fallback "$_icmc_c" "$_icmc_c" "$_icmc_valid_cases" "$_icmc_head_rec" head-fallback
+            _icmc_base_src="in-place fallback pair on ledger runner (parent reference $INSN_REF_STATUS)"
+        else
+            _icmc_base_src="in-place fallback on ledger runner (parent reference $INSN_REF_STATUS)"
+        fi
     else
         sed 's/^/  /' "$_icmc_pdir/reasons" >&2
         insn_fail "main-check: no usable parent insn-exec reference for $_icmc_p ($INSN_REF_STATUS)"
@@ -1313,7 +1432,6 @@ insn_cmd_main_check() {
     : > "$_icmc_decl_parsed"
     _icmc_decl_probs=
     git diff --name-status -M "$_icmc_p" "$_icmc_c" -- "$INSN_DECL_DIR" > "$_icmc_out/declarations.diff"
-    _icmc_valid_cases=$(all_instruction_cases_csv) || exit 1
 
     if [ -s "$_icmc_out/declarations.diff" ]; then
         _icmc_pr=
@@ -1328,14 +1446,16 @@ insn_cmd_main_check() {
             _icmc_pr=$(printf '%s' "$_icmc_sel" | cut -f1)
         fi
         if [ -z "$_icmc_pr" ]; then
-            # Fallback: if exactly one A perf/insn-exec-declarations/pr-<N>.tsv line exists, extract N and verify.
+            # Fail closed: require GitHub PR attribution rather than trusting the filename alone.
             _icmc_decl_probs="cannot attribute $INSN_DECL_DIR change on $_icmc_c to a single merged PR"
         else
             _icmc_own="$INSN_DECL_DIR/pr-$_icmc_pr.tsv"
             _icmc_b_has_own=no
             git cat-file -e "$_icmc_p:$_icmc_own" 2>/dev/null && _icmc_b_has_own=yes
             _icmc_decl_probs=$(insn_declaration_diff_check "$_icmc_pr" "$_icmc_out/declarations.diff" "$_icmc_b_has_own") || true
-            if [ -z "$_icmc_decl_probs" ] && [ -f "$_icmc_own" ]; then
+            if [ -z "$_icmc_decl_probs" ] && [ -L "$_icmc_own" ]; then
+                _icmc_decl_probs="declaration file must not be a symlink: $_icmc_own"
+            elif [ -z "$_icmc_decl_probs" ] && [ -f "$_icmc_own" ]; then
                 if ! _icmc_parsed=$(insn_declaration_parse "$_icmc_own" "$_icmc_valid_cases"); then
                     _icmc_decl_probs="malformed $_icmc_own: $_icmc_parsed"
                 else
@@ -1608,6 +1728,294 @@ self_test() {
         [ "$(new_cases_between "$_c0" "a,h,brand_new")" = "brand_new" ] || exit 1
     ) || { echo "self-test pre-cutover git extraction failed" >&2; _st_status=1; }
 
+    # 7. Symlink rejection at perf/insn-exec-declarations/pr-<N>.tsv.
+    ln -s "$SELF_TEST_DIR/good.decl" "$SELF_TEST_DIR/link.decl"
+    ln -s "$SELF_TEST_DIR/nonexistent.decl" "$SELF_TEST_DIR/dangling.decl"
+    if insn_declaration_parse "$SELF_TEST_DIR/link.decl" "arith_loop" >/dev/null 2>&1; then
+        echo "self-test decl-symlink: accepted live symlink" >&2; _st_status=1
+    fi
+    if insn_declaration_parse "$SELF_TEST_DIR/dangling.decl" "arith_loop" >/dev/null 2>&1; then
+        echo "self-test decl-symlink: accepted dangling symlink" >&2; _st_status=1
+    fi
+    _st_symrepo="$SELF_TEST_DIR/symlink-repo"
+    mkdir -p "$_st_symrepo/$INSN_DECL_DIR" "$_st_symrepo/out"
+    (
+        cd "$_st_symrepo"
+        git init -q
+        git config user.email test@example.com
+        git config user.name test
+        printf 'benchmark/typelisp/arith_loop\t+50\tlegit\n' > target.tsv
+        git add target.tsv
+        git commit -q -m "base"
+        _sb=$(git rev-parse HEAD)
+        ln -s ../../target.tsv "$INSN_DECL_DIR/pr-42.tsv"
+        git add "$INSN_DECL_DIR/pr-42.tsv"
+        git commit -q -m "add symlink decl"
+        _sh=$(git rev-parse HEAD)
+        insn_check_pr_declarations "$_sb" "$_sh" 42 "$_st_symrepo/out" "arith_loop"
+        [ -n "$INSN_DECL_PROBLEMS" ] || { echo "accepted symlink in insn_check_pr_declarations" >&2; exit 1; }
+    ) || { echo "self-test decl-symlink repo check failed" >&2; _st_status=1; }
+
+    # 8. Fallback base case filtering uses commit_instruction_cases (not bench.tl/baseline.c presence).
+    _st_fbrepo="$SELF_TEST_DIR/fallback-filter-repo"
+    mkdir -p "$_st_fbrepo/perf/benchmarks" "$_st_fbrepo/benchmarks/a" "$_st_fbrepo/benchmarks/spmd_scan"
+    (
+        cd "$_st_fbrepo"
+        git init -q
+        git config user.email test@example.com
+        git config user.name test
+        printf 'fn main() {}\n' > benchmarks/a/bench.tl
+        printf 'int main(void) { return 0; }\n' > benchmarks/a/baseline.c
+        printf 'fn main() {}\n' > benchmarks/spmd_scan/bench.tl
+        printf 'int main(void) { return 0; }\n' > benchmarks/spmd_scan/baseline.c
+        printf 'suites\tinstruction-main\nbenchmark/c-scalar/a\t10\n' > perf/benchmarks/a.tsv
+        printf 'suites\tbenchmark\n' > perf/benchmarks/spmd_scan.tsv
+        git add benchmarks/ perf/
+        git commit -q -m "base with non-instruction spmd_scan"
+        _fb_base=$(git rev-parse HEAD)
+        [ "$(insn_filter_base_cases "$_fb_base" "a,spmd_scan")" = "a" ] || {
+            echo "expected base cases 'a', got '$(insn_filter_base_cases "$_fb_base" "a,spmd_scan")'" >&2
+            exit 1
+        }
+        [ "$(new_cases_between "$_fb_base" "a,spmd_scan")" = "spmd_scan" ] || {
+            echo "expected new cases 'spmd_scan', got '$(new_cases_between "$_fb_base" "a,spmd_scan")'" >&2
+            exit 1
+        }
+    ) || { echo "self-test fallback base case filter failed" >&2; _st_status=1; }
+
+    # 9. Fail closed on missing Actions PR/token env vars & tighten finalize-ci result.tsv checks.
+    _st_good_sha=2222222222222222222222222222222222222222
+    if (env -u TYPELISP_SELF_COMPILE_PR_NUMBER GITHUB_ACTIONS=true \
+        TYPELISP_SELF_COMPILE_PR_HEAD="$_st_good_sha" GH_TOKEN=tok \
+        sh "$ROOT/scripts/check-instruction-counts.sh" --cached-base-only) >/dev/null 2>&1; then
+        echo "self-test actions-env: accepted missing PR number" >&2; _st_status=1
+    fi
+    if (env -u TYPELISP_SELF_COMPILE_PR_HEAD GITHUB_ACTIONS=true \
+        TYPELISP_SELF_COMPILE_PR_NUMBER=42 GH_TOKEN=tok \
+        sh "$ROOT/scripts/check-instruction-counts.sh" --cached-base-only) >/dev/null 2>&1; then
+        echo "self-test actions-env: accepted missing PR head" >&2; _st_status=1
+    fi
+    if (env -u GH_TOKEN GITHUB_ACTIONS=true \
+        TYPELISP_SELF_COMPILE_PR_NUMBER=42 TYPELISP_SELF_COMPILE_PR_HEAD="$_st_good_sha" \
+        sh "$ROOT/scripts/check-instruction-counts.sh" --cached-base-only) >/dev/null 2>&1; then
+        echo "self-test actions-env: accepted missing GH_TOKEN" >&2; _st_status=1
+    fi
+
+    _st_res_hdr='metric	base_ir	head_ir	delta	pct	status	declared_max_ir	suite	base_commit	head_commit	base_source'
+    printf '%s\n' "$_st_res_hdr" > "$SELF_TEST_DIR/res-empty.tsv"
+    printf '%s\nbenchmark/c-scalar/a\t10\t9\t-1\t-10.000000%%\tIMPROVEMENT\t-\tinstruction-main\tb\th\ts\n' "$_st_res_hdr" > "$SELF_TEST_DIR/res-c-imp.tsv"
+    printf '%s\nbenchmark/c/a\t10\t9\t-1\t-10.000000%%\tIMPROVEMENT\t-\tinstruction-main\tb\th\ts\n' "$_st_res_hdr" > "$SELF_TEST_DIR/res-cauto-imp.tsv"
+    printf '%s\nbenchmark/c-scalar/a\t10\t10\t0\t+0.000000%%\tok\t-\tinstruction-main\tb\th\ts\nbenchmark/typelisp/a\t20\t18\t-2\t-10.000000%%\tIMPROVEMENT\t-\tinstruction-main\tb\th\ts\n' "$_st_res_hdr" > "$SELF_TEST_DIR/res-ok.tsv"
+    printf '%s\nbenchmark/c-scalar/a\t10\t10\t0\t+0.000000%%\tok\t-\tinstruction-main\tb\th\ts\nbenchmark/typelisp/a\t20\t21\t+1\t+5.000000%%\tREGRESSION\t-\tinstruction-main\tb\th\ts\n' "$_st_res_hdr" > "$SELF_TEST_DIR/res-tl-reg.tsv"
+
+    for _st_badres in res-empty res-c-imp res-cauto-imp res-tl-reg; do
+        if insn_result_tsv_passed "$SELF_TEST_DIR/$_st_badres.tsv"; then
+            echo "self-test finalize-ci: accepted $_st_badres" >&2; _st_status=1
+        fi
+    done
+    insn_result_tsv_passed "$SELF_TEST_DIR/res-ok.tsv" || { echo "self-test finalize-ci: rejected res-ok" >&2; _st_status=1; }
+
+    _st_fcrepo="$SELF_TEST_DIR/finalize-ci-repo"
+    mkdir -p "$_st_fcrepo/target/instruction-count-check"
+    (
+        cd "$_st_fcrepo"
+        GITHUB_ACTIONS=true
+        TYPELISP_SELF_COMPILE_PR_NUMBER=42
+        TYPELISP_SELF_COMPILE_PR_HEAD=$_st_good_sha
+        GH_TOKEN=tok
+        cp "$SELF_TEST_DIR/res-empty.tsv" target/instruction-count-check/result.tsv
+        if (insn_cmd_finalize_ci) >/dev/null 2>&1; then
+            echo "finalize-ci accepted header-only result.tsv" >&2; exit 1
+        fi
+        cp "$SELF_TEST_DIR/res-c-imp.tsv" target/instruction-count-check/result.tsv
+        if (insn_cmd_finalize_ci) >/dev/null 2>&1; then
+            echo "finalize-ci accepted IMPROVEMENT on benchmark/c-scalar" >&2; exit 1
+        fi
+        cp "$SELF_TEST_DIR/res-ok.tsv" target/instruction-count-check/result.tsv
+        (insn_cmd_finalize_ci) >/dev/null 2>&1 || {
+            echo "finalize-ci rejected valid completed result.tsv" >&2; exit 1
+        }
+    ) || { echo "self-test finalize-ci end-to-end failed" >&2; _st_status=1; }
+
+    # 10. Post-merge main-check --prepare and main-check fallback paths.
+    _st_mcrepo="$SELF_TEST_DIR/main-check-repo"
+    mkdir -p "$_st_mcrepo/perf"
+    (
+        cd "$_st_mcrepo"
+        git init -q
+        git config user.email test@example.com
+        git config user.name test
+        printf 'name\tir_count\nbenchmark/typelisp/a\t100\nbenchmark/c-scalar/a\t200\n' > perf/insn-exec-baseline.tsv
+        git add perf/
+        git commit -q -m "pre-cutover"
+        _mc_pre=$(git rev-parse HEAD)
+        git rm -q perf/insn-exec-baseline.tsv
+        mkdir -p perf/benchmarks
+        printf 'suites\tinstruction-main\nbenchmark/c-scalar/a\t200\n' > perf/benchmarks/a.tsv
+        printf 'suites\tinstruction-heavy\nbenchmark/c-scalar/h\t300\n' > perf/benchmarks/h.tsv
+        git add perf/
+        git commit -q -m "post-cutover parent"
+        _mc_p=$(git rev-parse HEAD)
+        printf 'suites\tinstruction-main\nbenchmark/c-scalar/a\t200\n' > perf/benchmarks/a.tsv
+        printf 'x\n' > note.txt
+        git add note.txt
+        git commit -q -m "post-cutover head"
+        _mc_c=$(git rev-parse HEAD)
+        _mc_ptree=$(git rev-parse "$_mc_p^{tree}")
+        _mc_ctree=$(git rev-parse "$_mc_c^{tree}")
+
+        _st_write_rec() {
+            _swr_out=$1; _swr_sha=$2; _swr_tree=$3; _swr_run=$4; _swr_vg=$5; _swr_a=$6; _swr_h=$7; _swr_role=${8:-reference}
+            {
+                printf 'schema\t%s\n' "$INSN_REF_SCHEMA"
+                printf 'commit\t%s\n' "$_swr_sha"
+                printf 'tree\t%s\n' "$_swr_tree"
+                printf 'role\t%s\n' "$_swr_role"
+                printf 'authority\thosted\n'
+                printf 'procedure\t%s\n' "$_st_hash"
+                printf 'compiler_sha256\t%s\n' "$_st_hash"
+                printf 'compiler_commit\t%s\n' "$_swr_sha"
+                printf 'key.image_os\tubuntu24\n'
+                printf 'key.valgrind\t%s\n' "$_swr_vg"
+                printf 'key.as\tGNU assembler\n'
+                printf 'key.ld\tGNU ld\n'
+                printf 'key.arch\tx86_64\n'
+                printf 'info.image_version\t1.0\n'
+                printf 'info.cpu\tx86\n'
+                printf 'run.repository\ttest/repo\n'
+                printf 'run.id\t%s\n' "$_swr_run"
+                printf 'run.attempt\t1\n'
+                printf 'run.workflow_ref\ttest/repo/%s@refs/heads/main\n' "$SC_REFERENCE_WORKFLOW"
+                printf 'run.event\tpush\n'
+                printf 'benchmark/typelisp/a\t%s\n' "$_swr_a"
+                printf 'benchmark/typelisp/h\t%s\n' "$_swr_h"
+            } > "$_swr_out"
+        }
+
+        ROOT=$_st_mcrepo
+        GITHUB_ACTIONS=true
+        GITHUB_REPOSITORY=test/repo
+        GITHUB_RUN_ID=200
+        GITHUB_RUN_ATTEMPT=1
+        INSN_WAIT_SECONDS=0
+        INSN_POLL_SECONDS=0
+        _mc_mode=ok
+        _mc_head_a=100
+        _mc_fb_calls=0
+
+        insn_api() {
+            case "$1" in
+                "repos/test/repo/actions/runs/200/artifacts"*)
+                    printf '{"artifacts":[{"id":201,"name":"%s","expired":false,"workflow_run":{"id":200}}]}\n' "$INSN_REF_ARTIFACT" > "$2"
+                    return 0
+                    ;;
+                "repos/test/repo/actions/workflows/"*"head_sha=$_mc_p"*)
+                    case "$_mc_mode" in
+                        absent) printf '{"workflow_runs":[]}\n' > "$2"; return 0 ;;
+                        api-error) return 1 ;;
+                        *)
+                            printf '{"workflow_runs":[{"id":100,"run_number":1,"run_attempt":1,"status":"completed","conclusion":"success","event":"push","head_branch":"main","head_sha":"%s","path":"%s","repository":{"full_name":"test/repo"},"head_repository":{"full_name":"test/repo"}}]}\n' "$_mc_p" "$SC_REFERENCE_WORKFLOW" > "$2"
+                            return 0
+                            ;;
+                    esac
+                    ;;
+                "repos/test/repo/actions/runs/100/jobs"*)
+                    printf '{"jobs":[{"run_attempt":1,"name":"%s","status":"completed","conclusion":"success"}]}\n' "$SC_REFERENCE_JOB_NAME" > "$2"
+                    return 0
+                    ;;
+                "repos/test/repo/actions/runs/100/artifacts"*)
+                    printf '{"artifacts":[{"id":101,"name":"%s","expired":false,"workflow_run":{"id":100}}]}\n' "$INSN_REF_ARTIFACT" > "$2"
+                    return 0
+                    ;;
+            esac
+            return 1
+        }
+        insn_download_artifact() {
+            mkdir -p "$2"
+            if [ "$1" = 201 ]; then
+                _st_write_rec "$2/record.tsv" "$_mc_c" "$_mc_ctree" 200 "valgrind-3.23.0" "$_mc_head_a" 500
+            elif [ "$1" = 101 ]; then
+                if [ "$_mc_mode" = rejected ]; then
+                    _st_write_rec "$2/record.tsv" "$_mc_p" "$_mc_ptree" 100 "valgrind-3.22.0" 100 500
+                else
+                    _st_write_rec "$2/record.tsv" "$_mc_p" "$_mc_ptree" 100 "valgrind-3.23.0" 100 500
+                fi
+            else
+                return 1
+            fi
+        }
+        insn_run_fallback() {
+            _mc_fb_calls=$((_mc_fb_calls + 1))
+            printf '%s\n' "$_mc_fb_calls" > "$SELF_TEST_DIR/mc-fb-calls"
+            mkdir -p "$(dirname -- "$4")"
+            _st_write_rec "$4" "$1" "$_mc_ptree" 200 "valgrind-3.23.0" 100 500 "$5"
+        }
+
+        # 10a. --prepare: parent ok -> needs-tools=no
+        GITHUB_OUTPUT="$SELF_TEST_DIR/mc-out-ok"
+        : > "$GITHUB_OUTPUT"
+        _mc_mode=ok
+        insn_cmd_main_check_prepare >/dev/null 2>&1 || exit 1
+        grep -qxF 'needs-tools=no' "$GITHUB_OUTPUT" || { echo "prepare ok wanted needs-tools=no" >&2; exit 1; }
+
+        # 10b. --prepare: parent rejected -> needs-tools=yes
+        GITHUB_OUTPUT="$SELF_TEST_DIR/mc-out-rej"
+        : > "$GITHUB_OUTPUT"
+        _mc_mode=rejected
+        insn_cmd_main_check_prepare >/dev/null 2>&1 || exit 1
+        grep -qxF 'needs-tools=yes' "$GITHUB_OUTPUT" || { echo "prepare rejected wanted needs-tools=yes" >&2; exit 1; }
+
+        # 10c. --prepare: parent absent -> needs-tools=yes
+        GITHUB_OUTPUT="$SELF_TEST_DIR/mc-out-abs"
+        : > "$GITHUB_OUTPUT"
+        _mc_mode=absent
+        insn_cmd_main_check_prepare >/dev/null 2>&1 || exit 1
+        grep -qxF 'needs-tools=yes' "$GITHUB_OUTPUT" || { echo "prepare absent wanted needs-tools=yes" >&2; exit 1; }
+
+        # 10d. main-check: rejected without tools ready -> fail closed
+        _mc_mode=rejected
+        TYPELISP_SELF_COMPILE_TOOLS_READY=false
+        if (insn_cmd_main_check) >/dev/null 2>&1; then
+            echo "main-check ran fallback without TYPELISP_SELF_COMPILE_TOOLS_READY=true" >&2; exit 1
+        fi
+
+        # 10e. main-check: rejected with tools ready -> runs fallback and passes
+        _mc_mode=rejected
+        _mc_head_a=100
+        TYPELISP_SELF_COMPILE_TOOLS_READY=true
+        rm -f "$SELF_TEST_DIR/mc-fb-calls"
+        (insn_cmd_main_check) >/dev/null 2>&1 || { echo "main-check fallback on rejected failed" >&2; exit 1; }
+        [ "$(cat "$SELF_TEST_DIR/mc-fb-calls" 2>/dev/null || echo 0)" = 1 ] || { echo "main-check did not invoke fallback on rejected" >&2; exit 1; }
+
+        # 10f. main-check: rejected with tools ready + regression -> fails
+        _mc_head_a=101
+        if (insn_cmd_main_check) >/dev/null 2>&1; then
+            echo "main-check fallback missed +1 Ir regression" >&2; exit 1
+        fi
+
+        # 10g. main-check: absent with tools ready -> runs fallback and passes
+        _mc_mode=absent
+        _mc_head_a=100
+        rm -f "$SELF_TEST_DIR/mc-fb-calls"
+        (insn_cmd_main_check) >/dev/null 2>&1 || { echo "main-check fallback on absent failed" >&2; exit 1; }
+        [ "$(cat "$SELF_TEST_DIR/mc-fb-calls" 2>/dev/null || echo 0)" = 1 ] || { echo "main-check did not invoke fallback on absent" >&2; exit 1; }
+
+        # 10h. main-check: api-error -> fails closed without running fallback
+        _mc_mode=api-error
+        rm -f "$SELF_TEST_DIR/mc-fb-calls"
+        if (insn_cmd_main_check) >/dev/null 2>&1; then
+            echo "main-check passed on api-error" >&2; exit 1
+        fi
+        [ ! -f "$SELF_TEST_DIR/mc-fb-calls" ] || { echo "main-check invoked fallback on api-error" >&2; exit 1; }
+
+        # 10i. --prepare on pre-cutover parent -> needs-tools=no
+        git -c advice.detachedHead=false checkout -q "$_mc_p"
+        GITHUB_OUTPUT="$SELF_TEST_DIR/mc-out-pre"
+        : > "$GITHUB_OUTPUT"
+        insn_cmd_main_check_prepare >/dev/null 2>&1 || exit 1
+        grep -qxF 'needs-tools=no' "$GITHUB_OUTPUT" || { echo "prepare pre-cutover wanted needs-tools=no" >&2; exit 1; }
+    ) || { echo "self-test main-check prepare/fallback failed" >&2; _st_status=1; }
+
     c_provenance_self_test "$SELF_TEST_DIR" || _st_status=1
     rm -rf -- "$SELF_TEST_DIR"
     if [ "$_st_status" -ne 0 ]; then
@@ -1631,8 +2039,21 @@ case "${1:-}" in
         ;;
     main-check)
         shift
-        insn_cmd_main_check "$@"
-        exit $?
+        case "${1:-}" in
+            --prepare)
+                [ "$#" -eq 1 ] || { usage >&2; exit 2; }
+                insn_cmd_main_check_prepare
+                exit $?
+                ;;
+            "")
+                insn_cmd_main_check
+                exit $?
+                ;;
+            *)
+                usage >&2
+                exit 2
+                ;;
+        esac
         ;;
     fallback)
         shift
@@ -1763,6 +2184,10 @@ case "$BENCHMARKS" in
         ;;
 esac
 case "$WORKDIR" in "" | / | . | ..) echo "unsafe --output path: $WORKDIR" >&2; exit 2 ;; esac
+
+if insn_in_actions && [ "$CACHED_BASE_ONLY" -eq 1 ] && [ -z "$BASE_REF" ] && [ "$UPDATE_C_BASELINE" -eq 0 ]; then
+    insn_require_pr_env
+fi
 
 case "$(uname -s)" in
     Linux*) ;;
@@ -1914,9 +2339,13 @@ if [ -n "$BASE_REF" ]; then
     fi
 fi
 
-if insn_in_actions && [ -n "${TYPELISP_SELF_COMPILE_PR_NUMBER:-}" ] && [ -n "${GH_TOKEN:-}" ]; then
+if insn_in_actions && {
+    [ "$CACHED_BASE_ONLY" -eq 1 ] ||
+    { [ -n "${TYPELISP_SELF_COMPILE_PR_NUMBER:-}" ] && [ -n "${GH_TOKEN:-}" ]; }
+}; then
+    insn_require_pr_env
     _pr_num=$TYPELISP_SELF_COMPILE_PR_NUMBER
-    _pr_head=${TYPELISP_SELF_COMPILE_PR_HEAD:-}
+    _pr_head=$TYPELISP_SELF_COMPILE_PR_HEAD
     _pr_t=$(git rev-parse HEAD)
     [ "$_pr_t" = "${GITHUB_SHA:-}" ] || insn_fail "checkout $_pr_t is not GITHUB_SHA ${GITHUB_SHA:-}"
     _pr_parents=$(git cat-file -p HEAD | sed -n 's/^parent //p')

@@ -656,7 +656,6 @@ measure_benchmarks() {
     exec 3>&-
     rm -f "$_mb_fifo"
 
-    _mb_prov_parts=
     while IFS="$(printf '\t')" read -r _bench_tl name; do
         _mb_cdir="$_mb_cases_dir/$name"
         if [ -f "$_mb_cdir/worker.log" ]; then

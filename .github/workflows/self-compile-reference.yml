@@ -159,9 +159,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/self-compile.sh ledger --prepare
 
+      - name: Prepare insn-exec main-check
+        id: insn-records
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-instruction-counts.sh main-check --prepare
+
       - name: Install Linux instruction-count tools when measurement is needed
         id: ledger-tools
-        if: steps.ledger-records.outputs.needs-tools == 'yes'
+        if: steps.ledger-records.outputs.needs-tools == 'yes' || steps.insn-records.outputs.needs-tools == 'yes'
         uses: ./.github/actions/linux-instruction-count-tools
 
       - name: Enable Linux kernel memory limits
@@ -201,4 +208,5 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TYPELISP_SELF_COMPILE_TOOLS_READY: ${{ steps.ledger-tools.outcome == 'success' }}
         run: scripts/check-instruction-counts.sh main-check

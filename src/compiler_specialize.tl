@@ -5328,7 +5328,7 @@
               (ast.AstResourceBinding.Binding name ni nc mv)))])
       (set! i (+ i 1)))
     (let
-      [bout : ast.AstExprList (ast.ast-expr-list-with-capacity 0)]
+      [bout : ast.AstExprList (ast.ast-expr-list-empty-shared)]
       [ich : bool false]
       [j : i64 0]
       (while (< j body.len)
@@ -5436,7 +5436,7 @@
               (ast.AstResourceBinding.Binding name ni nc mv)))])
       (set! i (+ i 1)))
     (let
-      [bout : ast.AstExprList (ast.ast-expr-list-with-capacity 0)]
+      [bout : ast.AstExprList (ast.ast-expr-list-empty-shared)]
       [ich : bool false]
       [j : i64 0]
       (while (< j body.len)

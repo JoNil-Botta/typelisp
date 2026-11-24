@@ -1218,7 +1218,7 @@
     [mark-after : arena.ArenaMark (arena.mark)]
     [pool-after : i64 (ast.ast-node-pool-len)]
     ;; Changed rebuilds across TypeId, inline Type, Pattern, Foreach2, and
-    ;; `ast-expr-with-children!` wrapper.
+    ;; a direct `ast-expr-with-children-from!` call.
     [new-ann : i64
       (ast-children-test-walk-all ann-id (&mut scratch) e0 e3 t0 t1 false)]
     [new-mk : i64
@@ -1239,29 +1239,10 @@
         0
         (ast.AstExprChild.Expr e2))]
     [direct-rebuilt : ast.AstExpr
-      (ast.ast-expr-with-children!
+      (ast.ast-expr-with-children-from!
         (ast.ast-node-get ann-id)
-        (&mut direct-children))]
-    [kind-names-ok? : bool
-      (and
-        (string.eq
-          (ast.ast-expr-kind-name
-            (ast.AstExpr.Spanned 0 (ast.ast-source-span 1 1 1 2)))
-          "spanned")
-        (string.eq (ast.ast-expr-kind-name (ast.AstExpr.Var 0)) "var")
-        (string.eq
-          (ast.ast-expr-kind-name (ast.AstExpr.FixedMakeArray 0 0))
-          "fixed-make-array")
-        (string.eq
-          (ast.ast-expr-kind-name (ast.AstExpr.TypeLiteral 0))
-          "type-literal")
-        (string.eq (ast.ast-expr-kind-name (ast.AstExpr.PtrNull 0)) "ptr-null")
-        (string.eq
-          (ast.ast-expr-kind-name ast.AstExpr.SpmdProgramIndex)
-          "spmd-program-index")
-        (string.eq
-          (ast.ast-expr-kind-name (ast.AstExpr.CloneOut 0 0))
-          "clone-out"))]
+        (&mut direct-children)
+        0)]
     [ok : bool
       (and
         (= same-ann ann-id)
@@ -1340,8 +1321,7 @@
           [_ false])
         (match direct-rebuilt
           [(ast.AstExpr.Ann ra rt) (and (= ra e2) (= rt t0))]
-          [_ false])
-        kind-names-ok?)]
+          [_ false]))]
     (ast.ast-node-pool-reset-to! base-pool)
     (ast.ty-node-pool-reset-to! base-ty)
     ok))
@@ -1362,4 +1342,4 @@
     (unless
       (compiler-ast-children-into-and-with-children-ok?)
       (io.panic
-        "ast-expr-children-into!, ast-expr-with-children-from!, or ast-expr-kind-name failed"))))
+        "ast-expr-children-into! or ast-expr-with-children-from! failed"))))

@@ -6906,8 +6906,8 @@
   AstParamList
   ast-param-list
   caller-provided-fallback
-  zero-capacity
-  compiler-dense-list-unused-shared-zero-storage
+  shared-zero-capacity
+  ast-param-list-empty-storage
   len
   append-from)
 
@@ -7609,8 +7609,8 @@
   AstLetBindingList
   ast-let-binding-list
   caller-provided-fallback
-  zero-capacity
-  compiler-dense-list-unused-shared-zero-storage
+  shared-zero-capacity
+  ast-let-binding-list-empty-storage
   len
   append-from)
 
@@ -7637,8 +7637,8 @@
   AstResourceBindingList
   ast-resource-binding-list
   caller-provided-fallback
-  zero-capacity
-  compiler-dense-list-unused-shared-zero-storage
+  shared-zero-capacity
+  ast-resource-binding-list-empty-storage
   len
   append-from)
 
@@ -7664,8 +7664,8 @@
   AstMatchArmList
   ast-match-arm-list
   caller-provided-fallback
-  minimum-one
-  compiler-dense-list-unused-shared-zero-storage
+  shared-zero-capacity
+  ast-match-arm-list-empty-storage
   len
   empty?
   append-from)
@@ -8783,97 +8783,6 @@
 (define (ast-expr-with-child-ids [expr : AstExpr] [ids : (& ids AstExprList)]) : AstExpr
   (ast-expr-with-child-ids-from expr ids 0))
 
-;; Canonical variant tag name for every `AstExpr` variant (all 87 variants).
-(define (ast-expr-kind-name [expr : AstExpr]) : String
-  (match expr
-    [(AstExpr.Spanned _ _) "spanned"]
-    [(AstExpr.Literal _) "literal"]
-    [(AstExpr.Var _) "var"]
-    [(AstExpr.Binary _ _ _) "binary"]
-    [(AstExpr.Unary _ _) "unary"]
-    [(AstExpr.Call _ _) "call"]
-    [(AstExpr.If _ _ _) "if"]
-    [(AstExpr.Let _) "let"]
-    [(AstExpr.Lambda _) "lambda"]
-    [(AstExpr.Tuple _) "tuple"]
-    [(AstExpr.TupleRef _ _) "tuple-ref"]
-    [(AstExpr.Array _) "array"]
-    [(AstExpr.DynArray _) "dyn-array"]
-    [(AstExpr.FixedMakeArray _ _) "fixed-make-array"]
-    [(AstExpr.MakeArray _ _) "make-array"]
-    [(AstExpr.ArrayRef _ _) "array-ref"]
-    [(AstExpr.ArraySet _ _ _) "array-set"]
-    [(AstExpr.ArrayTake _ _ _) "array-take"]
-    [(AstExpr.ArrayPush _ _) "array-push"]
-    [(AstExpr.StringRef _ _) "string-ref"]
-    [(AstExpr.While _ _) "while"]
-    [(AstExpr.Begin _) "begin"]
-    [(AstExpr.Unsafe _) "unsafe"]
-    [(AstExpr.Set _ _) "set"]
-    [(AstExpr.Replace _ _) "replace"]
-    [(AstExpr.Ann _ _) "ann"]
-    [(AstExpr.Cast _ _) "cast"]
-    [(AstExpr.Borrow _ _ _) "borrow"]
-    [(AstExpr.Match _) "match"]
-    [(AstExpr.Foreach _) "foreach"]
-    [(AstExpr.SpmdReduce _) "spmd-reduce"]
-    [(AstExpr.SpmdScan _) "spmd-scan"]
-    [(AstExpr.SpmdCompact _) "spmd-compact"]
-    [(AstExpr.SpmdBroadcast _ _) "spmd-broadcast"]
-    [(AstExpr.SpmdShuffle _ _) "spmd-shuffle"]
-    [(AstExpr.SpmdProgramIndex) "spmd-program-index"]
-    [(AstExpr.SpmdProgramCount) "spmd-program-count"]
-    [(AstExpr.StructGet _ _) "struct-get"]
-    [(AstExpr.StructSet _ _ _) "struct-set"]
-    [(AstExpr.WithRegion _ _) "with-region"]
-    [(AstExpr.WithEscape _ _) "with-escape"]
-    [(AstExpr.WithScratch _) "with-scratch"]
-    [(AstExpr.InArena _ _) "in-arena"]
-    [(AstExpr.WithResource _) "with-resource"]
-    [(AstExpr.Box _) "box"]
-    [(AstExpr.BoxGet _) "box-get"]
-    [(AstExpr.BoxTake _) "box-take"]
-    [(AstExpr.BoxSet _ _) "box-set"]
-    [(AstExpr.TypeLiteral _) "type-literal"]
-    [(AstExpr.Comptime _) "comptime"]
-    [(AstExpr.Quote _) "quote"]
-    [(AstExpr.Quasiquote _) "quasiquote"]
-    [(AstExpr.Unquote _) "unquote"]
-    [(AstExpr.UnquoteSplicing _) "unquote-splicing"]
-    [(AstExpr.BracketClause _) "bracket-clause"]
-    [(AstExpr.Try _) "try"]
-    [(AstExpr.Return _) "return"]
-    [(AstExpr.Break) "break"]
-    [(AstExpr.Continue) "continue"]
-    [(AstExpr.PtrNull _) "ptr-null"]
-    [(AstExpr.PtrNullCheck _) "ptr-null-check"]
-    [(AstExpr.PtrAddrOf _) "ptr-addr-of"]
-    [(AstExpr.PtrRead _) "ptr-read"]
-    [(AstExpr.PtrWrite _ _) "ptr-write"]
-    [(AstExpr.PtrOffset _ _) "ptr-offset"]
-    [(AstExpr.PtrCast _ _) "ptr-cast"]
-    [(AstExpr.PtrToInt _) "ptr-to-int"]
-    [(AstExpr.IntToPtr _ _) "int-to-ptr"]
-    [(AstExpr.StringData _) "string-data"]
-    [(AstExpr.StringFromBytes _ _) "string-from-bytes"]
-    [(AstExpr.ArrayData _) "array-data"]
-    [(AstExpr.BinaryData _) "binary-data"]
-    [(AstExpr.ProgramArgc) "program-argc"]
-    [(AstExpr.ProgramArgv) "program-argv"]
-    [(AstExpr.ProgramEnvp) "program-envp"]
-    [(AstExpr.CpuIdEax _ _) "cpuid-eax"]
-    [(AstExpr.CpuIdEbx _ _) "cpuid-ebx"]
-    [(AstExpr.CpuIdEcx _ _) "cpuid-ecx"]
-    [(AstExpr.CpuIdEdx _ _) "cpuid-edx"]
-    [(AstExpr.Xgetbv _) "xgetbv"]
-    [(AstExpr.Syscall _) "syscall"]
-    [(AstExpr.ForOwnedState _) "for-owned-state"]
-    [(AstExpr.ForOwnedStep _) "for-owned-step"]
-    [(AstExpr.MacroExpansion _ _ _) "macro-expansion"]
-    [(AstExpr.ForeachActive _ _) "foreach-active"]
-    [(AstExpr.LaneValue _) "lane-value"]
-    [(AstExpr.CloneOut _ _) "clone-out"]))
-
 ;; Compiled-once typed child list (`ast-expr-children-into!` /
 ;; `ast-expr-with-children-from!`), moving children out via `replace!`.
 (defenum AstExprChild
@@ -9024,9 +8933,6 @@
     [empty : AstExprList (ast-expr-list-empty-shared)]
     [cur : AstChildCursor (AstChildCursor start true)]
     (ast-expr-rebuild-from! expr (& empty) children (&mut cur))))
-
-(define (ast-expr-with-children! [e : AstExpr] [c : (&mut c AstExprChildList)]) : AstExpr
-  (ast-expr-with-children-from! e c 0))
 
 ;; `ast-expr-children-eq?` is structural equality of two nodes: the same
 ;; variant, equal scalar payloads, and children equal pairwise by the hooks,

@@ -1,0 +1,6 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.text_buf/append!	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.text_buf/append-char!	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.text_buf/append-int!	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.text_buf/clear!	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.text_buf/reset!	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly

@@ -125,7 +125,7 @@ stage2-optimization-corpus-correctness	all	stage2 optimization corpus correctnes
 benchmark-wall-clock-harness-self-tests	linux	benchmark wall-clock harness self-tests	bootstrap-compiler	stage2	256	-	scripts/bench.sh --self-test
 stage2-core-ir-dependency-boundary	all	stage2 core IR dependency boundary	bootstrap-compiler	stage2	1792	-	scripts/verify-core-ir-dependencies.sh
 typelisp-source-formatting	all	TypeLisp source formatting	bootstrap-compiler	stage2	256	-	env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh
-stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-compiler	stage2	5120	-	scripts/verify-codegen-cases.sh tests/codegen/asm-shape.cases
+stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape gates	bootstrap-compiler	stage2	5120	-	scripts/verify-codegen-cases.sh tests/codegen/asm-shape.d
 package-metadata-only-tlci-dependency-catalogs	all	package metadata-only TLCI dependency catalogs	bootstrap-compiler,stage2-compile-profile-verifier	profile	512	-	scripts/verify-package-metadata-tlci.sh
 ir-observability-golden	all	IR observability golden	bootstrap-compiler	stage2	2304	-	scripts/verify-ir-observability.sh
 stage2-backend-source-import-context	all	stage2 backend source import context	bootstrap-compiler	stage2	3072	-	scripts/verify-backend-source-import-context.sh

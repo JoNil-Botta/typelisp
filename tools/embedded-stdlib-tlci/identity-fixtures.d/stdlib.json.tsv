@@ -1,0 +1,24 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.json/json-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/json-array-element-shared-view	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/json-box-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/checked-live-prefix-length	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/encode-bool	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/decode-bool	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/encode-int	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/decode-int	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/encode-float	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/decode-float	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/encode-string	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/decode-string	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/object-empty	0	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/object-field	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/object-finish	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/expect-object	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/field-value	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/sequence-empty	0	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/sequence-element	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/sequence-finish	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/sequence-length	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/sequence-element-value	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.json/extra-decls	1	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

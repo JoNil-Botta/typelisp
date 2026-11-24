@@ -16,7 +16,7 @@ esac
 
 # Exercise Git's actual Windows checkout filter, including the provenance
 # table and byte-compared historical paths. Their LF attributes must win.
-for path in scripts/ci-affected-paths.tsv scripts/ci-affected-inputs.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv tests/integration/manifest.d/*.manifest src/compile_manifest.d/*.manifest; do
+for path in scripts/ci-affected-paths.tsv scripts/ci-affected-inputs.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv tests/integration/manifest.d/*.manifest src/compile_manifest.d/*.manifest scripts/codegen-target-dispatch.d/*.tsv tools/embedded-stdlib-tlci/identity-fixtures.d/*.tsv tests/codegen/asm-shape.d/*.cases tests/spmd/simd.d/*.cases; do
     git cat-file blob ":$path" > "$work/checkout.expected"
     git -c core.autocrlf=true cat-file --filters --path="$path" ":$path" > "$work/checkout.actual"
     cmp "$work/checkout.actual" "$work/checkout.expected" || fail "Windows checkout changed line endings: $path"
@@ -137,6 +137,16 @@ awk -F '|' '$1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$work
 # lists and generic compiler-comparison suites remain advisory source classes.
 awk -F '\t' '$1 ~ /\.cases$/ {print}' "$work/script-inputs.tsv" > "$work/inventory-owners.tsv"
 awk -F '\t' '{sub(/\r$/, "")} !/^#/ && $1 != "id" {n=split($8, words, " "); for(i=1;i<=n;i++) if(words[i] ~ /^tests\/.*\.cases$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" >> "$work/inventory-owners.tsv"
+{
+    awk -F '\t' '$1 ~ /^tests\/.*\.d$/ {print $1 "\t" $2}' "$work/script-inputs.tsv"
+    awk -F '\t' '{sub(/\r$/, "")} !/^#/ && $1 != "id" {n=split($8, words, " "); for(i=1;i<=n;i++) if(words[i] ~ /^tests\/.*\.d$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv"
+} | sort -u | while IFS=$TAB read -r case_dir case_gate; do
+    [ -d "$ROOT/$case_dir" ] || continue
+    for case_file in "$ROOT/$case_dir"/*.cases; do
+        [ -f "$case_file" ] || continue
+        printf '%s\t%s\n' "${case_file#"$ROOT"/}" "$case_gate"
+    done
+done >> "$work/inventory-owners.tsv"
 # The public-tool family runs these transcripts and corpora together, and each
 # map row that owns one of their inputs names the whole family, so every file
 # requires every part.
@@ -386,6 +396,9 @@ for host in linux windows; do
     awk -F '\t' '!/^#/ && $1 != "id" {n = split($8, words, " "); for (i = 1; i <= n; i++) if (words[i] ~ /^tests\/[A-Za-z0-9._\/-]+$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" > "$work/literal-inputs.tsv"
     while IFS=$TAB read -r path gate; do
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
+        if grep -Fx "$path" "$work/tracked-directories" >/dev/null; then
+            path="$path/__ci_affected_directory_probe__.cases"
+        fi
         batched=$((batched + 1))
         printf '@@\t%s\trequired\t%s\n%s\n' "$host" "$work/$host-replay.$batched.ids" "$path" >> "$work/$host-replay.batch"
         printf '%s\t%s\t%s\n' "$batched" "$path" "$gate" >> "$work/$host-replay.rows"
@@ -440,7 +453,7 @@ for host in linux windows; do
     printf '%s\n' docs/testing-guide.md > "$work/paths"
     "$selector" --host "$host" --paths "$work/paths" --tier advisory > "$work/single-advisory.ids"
     cmp "$work/batch-advisory.ids" "$work/single-advisory.ids" || fail 'batched advisory record differs from its replay'
-    for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity'; do
+    for row in 'scripts/codegen-target-dispatch.d/compiler_backend.tsv stage2-codegen-target-parity' 'tools/embedded-stdlib-tlci/identity-fixtures.d/stdlib.clone.tsv embedded-stdlib-tlci-image,stage2-compile-profile-verifier'; do
         path=${row% *}
         gate=${row##* }
         printf '%s\n' "$path" > "$work/paths"
@@ -449,7 +462,7 @@ for host in linux windows; do
         sed '1d' "$work/subset.table" | cut -f 1 > "$work/subset.expected"
         cmp "$work/subset.ids" "$work/subset.expected" || fail "wrong dependency closure: $path"
     done
-    printf '%s\n' tests/safety/manifest.txt scripts/codegen-target-dispatch-inventory.tsv tests/safety/manifest.txt > "$work/paths"
+    printf '%s\n' tests/safety/manifest.txt scripts/codegen-target-dispatch.d/compiler_backend.tsv tests/safety/manifest.txt > "$work/paths"
     "$selector" --host "$host" --paths "$work/paths" > "$work/union.ids"
     has_gate "$work/union.ids" stage2-safety-corpus
     has_gate "$work/union.ids" stage2-codegen-target-parity

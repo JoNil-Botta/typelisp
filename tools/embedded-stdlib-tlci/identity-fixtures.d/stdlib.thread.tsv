@@ -1,0 +1,2 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.thread/handle	1	fixed	module	stdlib/tests/thread_api.tl	ok	default	assembly

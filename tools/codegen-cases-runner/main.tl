@@ -1113,6 +1113,356 @@
           (util.rm-rf! (& tmp-dir))
           fails)])))
 
+(defstruct ValidateExpandedResult
+  (ok bool)
+  (error String)
+  (output String))
+
+;; Parse all expanded .cases files, enforcing isolated per-file defaults/files
+;; and global unique case-ID (and fixture-source in --list-fixtures mode).
+(define (validate-expanded-files
+  [files : (& files svec.Vec)]
+  [root : (& root str)]
+  [do-list : bool]
+  [do-fixtures : bool]) : ValidateExpandedResult
+  (let
+    [seen-ids : svec.Vec (svec.new)]
+    [seen-sources : svec.Vec (svec.new)]
+    [out : bbc.ByteBufBuilder (bbc.byte-buf-builder-new)]
+    [n : i64 (svec.len files)]
+    [fi : i64 0]
+    [ok : bool true]
+    [err : String ""]
+    (while (and ok (< fi n))
+      (let
+        [cfile : String (svec.get files fi "")]
+        [pf : parser.ParsedFile
+          (parser.parse-cases-file (& cfile) root do-fixtures)]
+        (if (not pf.ok)
+          (begin
+            (set! ok false)
+            (set! err pf.error))
+          (if do-fixtures
+            (let
+              [flines : svec.Vec (util.split-lines (& pf.fixtures-output))]
+              [nf : i64 (svec.len (& flines))]
+              [li : i64 0]
+              (while (and ok (< li nf))
+                (let
+                  [fline : String (svec.get (& flines) li "")]
+                  (when
+                    (> (string.string-length (& fline)) 0)
+                    (let
+                      [cols : svec.Vec (util.split-by-sep (& fline) "\t")]
+                      (when
+                        (= (svec.len (& cols)) 2)
+                        (let
+                          [fid : String (svec.get (& cols) 0 "")]
+                          [fsrc : String (svec.get (& cols) 1 "")]
+                          (cond
+                            [(parser.svec-has? (& seen-ids) (& fid))
+                              (set! ok false)
+                              (set!
+                                err
+                                (str_cat.str-cat
+                                  (string.copy (& cfile))
+                                  ": duplicate case "
+                                  fid))]
+                            [(parser.svec-has? (& seen-sources) (& fsrc))
+                              (set! ok false)
+                              (set!
+                                err
+                                (str_cat.str-cat
+                                  (string.copy (& cfile))
+                                  ": duplicate fixture source: "
+                                  fsrc))]
+                            [else
+                              (svec.push-ref! (&mut seen-ids) fid)
+                              (svec.push-ref! (&mut seen-sources) fsrc)]))))))
+                (set! li (+ li 1)))
+              (when
+                ok
+                (bbc.byte-buf-builder-append-string
+                  (&mut out)
+                  (string.copy (& pf.fixtures-output)))))
+            (let
+              [nc : i64 (parser.parsed-cases-len (& pf))]
+              [ci : i64 0]
+              (while (and ok (< ci nc))
+                (let
+                  [cdef : parser.CaseDef (parser.parsed-cases-get (& pf) ci)]
+                  (if (parser.svec-has? (& seen-ids) (& cdef.id))
+                    (begin
+                      (set! ok false)
+                      (set!
+                        err
+                        (str_cat.str-cat
+                          (string.copy (& cfile))
+                          ":"
+                          (string.int->string cdef.line)
+                          ": duplicate case "
+                          cdef.id)))
+                    (svec.push-ref! (&mut seen-ids) (string.copy (& cdef.id)))))
+                (set! ci (+ ci 1)))
+              (when
+                (and ok do-list)
+                (bbc.byte-buf-builder-append-string
+                  (&mut out)
+                  (parser.render-list (& pf))))))))
+      (set! fi (+ fi 1)))
+    (ValidateExpandedResult ok err (bbc.byte-buf-builder-finish-string (& out)))))
+
+(define (self-test-directory-loading) : i64
+  (let
+    [fails : i64 0]
+    [tmp-res : io.ResultIoString (fs.try-create-temp-dir "cc-dir-selftest")]
+    (match tmp-res
+      [(io.ErrIoString _)
+        (io.print-error
+          "SELF-TEST FAIL: could not create dir self-test temp dir\n")
+        1]
+      [(io.OkIoString tmp-dir)
+        (let
+          [valid-dir : String
+            (str_cat.str-cat (string.copy (& tmp-dir)) "/valid.d")]
+          [dup-dir : String
+            (str_cat.str-cat (string.copy (& tmp-dir)) "/dup.d")]
+          [stray-dir : String
+            (str_cat.str-cat (string.copy (& tmp-dir)) "/stray.d")]
+          [nested-dir : String
+            (str_cat.str-cat (string.copy (& tmp-dir)) "/nested.d")]
+          [empty-dir : String
+            (str_cat.str-cat (string.copy (& tmp-dir)) "/empty.d")]
+          [fix-dir : String
+            (str_cat.str-cat (string.copy (& tmp-dir)) "/fixtures.d")]
+          [fix-dup-dir : String
+            (str_cat.str-cat (string.copy (& tmp-dir)) "/fixtures-dup.d")]
+          [tests-dir : String
+            (str_cat.str-cat (string.copy (& tmp-dir)) "/tests")]
+          (util.ensure-dir! (& valid-dir))
+          (util.ensure-dir! (& dup-dir))
+          (util.ensure-dir! (& stray-dir))
+          (util.ensure-dir!
+            (& (str_cat.str-cat (string.copy (& nested-dir)) "/sub")))
+          (util.ensure-dir! (& empty-dir))
+          (util.ensure-dir! (& fix-dir))
+          (util.ensure-dir! (& fix-dup-dir))
+          (util.ensure-dir! (& tests-dir))
+          ;; Valid directory: b before a on disk, must sort LC_ALL=C and isolate defaults.
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& valid-dir)) "/02-second.cases"))
+            "case second-case\nsource tests/b.tl\n")
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& valid-dir)) "/01-first.cases"))
+            "opt 1\ncase first-case\nsource tests/a.tl\n")
+          (let
+            [in-v : svec.Vec (svec.new)]
+            (svec.push-ref! (&mut in-v) (string.copy (& valid-dir)))
+            (let
+              [exp : util.CaseInputsResult (util.expand-case-inputs (& in-v))]
+              (set!
+                fails
+                (+ fails (assert-eq-bool "dir expand valid ok" exp.ok true)))
+              (set!
+                fails
+                (+
+                  fails
+                  (assert-eq-i64
+                    "dir expand valid count"
+                    (svec.len (& exp.files))
+                    2)))
+              (when
+                (and exp.ok (= (svec.len (& exp.files)) 2))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-str
+                      "dir expand sorted 0"
+                      (svec.get (& exp.files) 0 "")
+                      (&
+                        (str_cat.str-cat
+                          (string.copy (& valid-dir))
+                          "/01-first.cases")))))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-str
+                      "dir expand sorted 1"
+                      (svec.get (& exp.files) 1 "")
+                      (&
+                        (str_cat.str-cat
+                          (string.copy (& valid-dir))
+                          "/02-second.cases")))))
+                (let
+                  [vr : ValidateExpandedResult
+                    (validate-expanded-files
+                      (& exp.files)
+                      (& tmp-dir)
+                      true
+                      false)]
+                  [want : String
+                    (str_cat.str-cat
+                      (string.copy (& valid-dir))
+                      "/01-first.cases first-case [linux-x86_64 1 -]\n"
+                      (string.copy (& valid-dir))
+                      "/02-second.cases second-case [linux-x86_64 2 -]\n")]
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-bool
+                        "dir validate isolated defaults ok"
+                        vr.ok
+                        true)))
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-str
+                        "dir validate list output"
+                        (& vr.output)
+                        (& want))))))))
+          ;; Global duplicate case-ID across two files in one directory.
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& dup-dir)) "/a.cases"))
+            "case shared-id\nsource tests/a.tl\n")
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& dup-dir)) "/b.cases"))
+            "case shared-id\nsource tests/b.tl\n")
+          (let
+            [in-v : svec.Vec (svec.new)]
+            (svec.push-ref! (&mut in-v) (string.copy (& dup-dir)))
+            (let
+              [exp : util.CaseInputsResult (util.expand-case-inputs (& in-v))]
+              (set!
+                fails
+                (+ fails (assert-eq-bool "dup dir expand ok" exp.ok true)))
+              (when
+                exp.ok
+                (let
+                  [vr : ValidateExpandedResult
+                    (validate-expanded-files
+                      (& exp.files)
+                      (& tmp-dir)
+                      true
+                      false)]
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-bool
+                        "dup case across files rejected"
+                        vr.ok
+                        false)))))))
+          ;; Stray non-.cases entry rejected.
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& stray-dir)) "/a.cases"))
+            "case ok-a\nsource tests/a.tl\n")
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& stray-dir)) "/notes.txt"))
+            "stray\n")
+          (let
+            [in-v : svec.Vec (svec.new)]
+            (svec.push-ref! (&mut in-v) (string.copy (& stray-dir)))
+            (let
+              [exp : util.CaseInputsResult (util.expand-case-inputs (& in-v))]
+              (set!
+                fails
+                (+ fails (assert-eq-bool "stray dir rejected" exp.ok false)))))
+          ;; Nested directory rejected.
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& nested-dir)) "/a.cases"))
+            "case ok-a\nsource tests/a.tl\n")
+          (let
+            [in-v : svec.Vec (svec.new)]
+            (svec.push-ref! (&mut in-v) (string.copy (& nested-dir)))
+            (let
+              [exp : util.CaseInputsResult (util.expand-case-inputs (& in-v))]
+              (set!
+                fails
+                (+ fails (assert-eq-bool "nested dir rejected" exp.ok false)))))
+          ;; Empty directory rejected.
+          (let
+            [in-v : svec.Vec (svec.new)]
+            (svec.push-ref! (&mut in-v) (string.copy (& empty-dir)))
+            (let
+              [exp : util.CaseInputsResult (util.expand-case-inputs (& in-v))]
+              (set!
+                fails
+                (+ fails (assert-eq-bool "empty dir rejected" exp.ok false)))))
+          ;; --list-fixtures across directory + global duplicate fixture-source rejection.
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& tests-dir)) "/f1.tl"))
+            "(define (main) : i64 0)\n")
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& tests-dir)) "/f2.tl"))
+            "(define (main) : i64 0)\n")
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& fix-dir)) "/a.cases"))
+            "do none\ncase fix-a\nsource tests/f1.tl\n")
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& fix-dir)) "/b.cases"))
+            "do none\ncase fix-b\nsource tests/f2.tl\n")
+          (let
+            [in-v : svec.Vec (svec.new)]
+            (svec.push-ref! (&mut in-v) (string.copy (& fix-dir)))
+            (let
+              [exp : util.CaseInputsResult (util.expand-case-inputs (& in-v))]
+              (when
+                exp.ok
+                (let
+                  [vr : ValidateExpandedResult
+                    (validate-expanded-files
+                      (& exp.files)
+                      (& tmp-dir)
+                      true
+                      true)]
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-bool "fixtures dir valid ok" vr.ok true)))
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-str
+                        "fixtures dir output"
+                        (& vr.output)
+                        "fix-a\ttests/f1.tl\nfix-b\ttests/f2.tl\n")))))))
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& fix-dup-dir)) "/a.cases"))
+            "do none\ncase fix-a\nsource tests/f1.tl\n")
+          (util.write-file!
+            (& (str_cat.str-cat (string.copy (& fix-dup-dir)) "/b.cases"))
+            "do none\ncase fix-b\nsource tests/f1.tl\n")
+          (let
+            [in-v : svec.Vec (svec.new)]
+            (svec.push-ref! (&mut in-v) (string.copy (& fix-dup-dir)))
+            (let
+              [exp : util.CaseInputsResult (util.expand-case-inputs (& in-v))]
+              (when
+                exp.ok
+                (let
+                  [vr : ValidateExpandedResult
+                    (validate-expanded-files
+                      (& exp.files)
+                      (& tmp-dir)
+                      true
+                      true)]
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-bool
+                        "fixtures dup source rejected"
+                        vr.ok
+                        false)))))))
+          (util.rm-rf! (& tmp-dir))
+          fails)])))
+
 (define (run-self-test) : i64
   (let
     [fails : i64 0]
@@ -1477,6 +1827,7 @@
             "C:/Program Files/Git")
           "/OUT:foo.exe")))
     (set! fails (+ fails (self-test-runner-fixes)))
+    (set! fails (+ fails (self-test-directory-loading)))
     (if (= fails 0)
       (begin
         (io.stdout-write
@@ -1594,439 +1945,459 @@
                 [total-simd-native : i64 0]
                 [total-simd-emulated : i64 0]
                 [total-simd-skipped : i64 0]
-                [fi : i64 0]
-                [fatal-exit : i64 0]
-                (set!
-                  wave-cfg
-                  (exec.RunnerConfig
-                    (string.copy (& root))
-                    (string.copy (& native-root))
-                    compiler
-                    host
-                    host-target
-                    exe-ext
-                    lib-prefix
-                    lib-suffix
-                    native-isas
-                    sde-bin
-                    sde-policy
-                    simd-filter
-                    timing-on
-                    timing-file
-                    timing-gate
-                    timing-host
-                    sh-bin))
-                (while (and (= fatal-exit 0) (< fi nfiles))
+                [expanded-res : util.CaseInputsResult
+                  (util.expand-case-inputs (& parsed.positionals))]
+                (if (not expanded-res.ok)
+                  (begin
+                    (io.print-error (str_cat.str-cat expanded-res.error "\n"))
+                    2)
                   (let
-                    [cfile : String (svec.get (& parsed.positionals) fi "")]
-                    (if (not (util.is-regular-file? (& cfile)))
+                    [val-res : ValidateExpandedResult
+                      (validate-expanded-files
+                        (& expanded-res.files)
+                        (& root)
+                        do-list
+                        do-fixtures)]
+                    (if (not val-res.ok)
                       (begin
-                        (io.print-error
-                          (str_cat.str-cat "missing case file: " cfile "\n"))
-                        (set! fatal-exit 2))
-                      (let
-                        [pf : parser.ParsedFile
-                          (parser.parse-cases-file
-                            (& cfile)
-                            (& root)
-                            do-fixtures)]
-                        (if (not pf.ok)
-                          (begin
-                            (io.print-error (str_cat.str-cat pf.error "\n"))
-                            (set! fatal-exit 2))
-                          (cond
-                            [do-fixtures
-                              (io.stdout-write
-                                (byte_buf.str-as-bytes (& pf.fixtures-output)))]
-                            [do-list
-                              (let
-                                [listing : String (parser.render-list (& pf))]
-                                (io.stdout-write
-                                  (byte_buf.str-as-bytes (& listing))))]
-                            [else
-                              (let
-                                [base-name : String
-                                  (util.path-basename-strip-cases (& cfile))]
-                                [work-dir : String
-                                  (str_cat.str-cat
-                                    (string.copy (& work-root))
-                                    "/"
-                                    base-name
-                                    (string.copy (& work-suffix)))]
-                                [native-work-dir : String
-                                  (util.to-native-path
-                                    (& work-dir)
-                                    (& root)
-                                    (& native-root))]
-                                [pre-vars : util.VarTable (util.var-table-new)]
-                                (util.rm-rf! (& work-dir))
-                                (util.ensure-dir! (& work-dir))
-                                (io.stdout-write
-                                  (byte_buf.str-as-bytes
+                        (io.print-error (str_cat.str-cat val-res.error "\n"))
+                        2)
+                      (if do-list
+                        (begin
+                          (io.stdout-write
+                            (byte_buf.str-as-bytes (& val-res.output)))
+                          0)
+                        (let
+                          [expanded-n : i64 (svec.len (& expanded-res.files))]
+                          [fi : i64 0]
+                          [fatal-exit : i64 0]
+                          (set!
+                            wave-cfg
+                            (exec.RunnerConfig
+                              (string.copy (& root))
+                              (string.copy (& native-root))
+                              compiler
+                              host
+                              host-target
+                              exe-ext
+                              lib-prefix
+                              lib-suffix
+                              native-isas
+                              sde-bin
+                              sde-policy
+                              simd-filter
+                              timing-on
+                              timing-file
+                              timing-gate
+                              timing-host
+                              sh-bin))
+                          (while (and (= fatal-exit 0) (< fi expanded-n))
+                            (let
+                              [cfile : String
+                                (svec.get (& expanded-res.files) fi "")]
+                              [pf : parser.ParsedFile
+                                (parser.parse-cases-file
+                                  (& cfile)
+                                  (& root)
+                                  false)]
+                              (if (not pf.ok)
+                                (begin
+                                  (io.print-error
+                                    (str_cat.str-cat pf.error "\n"))
+                                  (set! fatal-exit 2))
+                                (let
+                                  [base-name : String
+                                    (util.path-basename-strip-cases (& cfile))]
+                                  [work-dir : String
                                     (str_cat.str-cat
-                                      "[codegen-cases] "
-                                      (string.copy (& cfile))
-                                      "\n")))
-                                ;; Write pre-case file blocks once relative to {{work}}
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "root"
-                                  (& root))
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "native-root"
-                                  (& native-root))
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "work"
-                                  (& work-dir))
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "native-work"
-                                  (& native-work-dir))
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "host"
-                                  (& wave-cfg.host))
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "host-target"
-                                  (& wave-cfg.host-target))
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "exe"
-                                  (& wave-cfg.exe-ext))
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "lib-prefix"
-                                  (& wave-cfg.lib-prefix))
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "lib-suffix"
-                                  (& wave-cfg.lib-suffix))
-                                (util.var-table-set!
-                                  (&mut pre-vars)
-                                  "compiler"
-                                  (& wave-cfg.compiler))
-                                (let
-                                  [npf : i64
-                                    (parser.parsed-pre-files-len (& pf))]
-                                  [pi : i64 0]
-                                  (while (< pi npf)
-                                    (let
-                                      [fb : parser.FileBlock
-                                        (parser.parsed-pre-files-get (& pf) pi)]
-                                      (exec.write-file-block!
-                                        (& pre-vars)
-                                        (& work-dir)
-                                        (& fb.path)
-                                        (& fb.flags)
-                                        (& fb.content)))
-                                    (set! pi (+ pi 1))))
-                                ;; Build variant job list (applying --only, hosts, and SIMD_MODE_FILTER)
-                                (let
-                                  [jobs : jobvec.Vec (jobvec.new)]
-                                  [nc : i64 (parser.parsed-cases-len (& pf))]
-                                  [ci : i64 0]
-                                  (while (< ci nc)
-                                    (let
-                                      [cdef : parser.CaseDef
-                                        (parser.parsed-cases-get (& pf) ci)]
-                                      (when
-                                        (util.glob-match?
-                                          (& only-glob)
-                                          (& cdef.id))
-                                        (set!
-                                          total-selected
-                                          (+ total-selected 1))
-                                        (if (not
-                                          (or
-                                            (exec.word-in-list?
-                                              "all"
-                                              (& cdef.hosts))
-                                            (exec.word-in-list?
-                                              (& wave-cfg.host)
-                                              (& cdef.hosts))))
-                                          (io.stdout-write
-                                            (byte_buf.str-as-bytes
-                                              (str_cat.str-cat
-                                                "[codegen-cases] skip "
-                                                (string.copy (& cdef.id))
-                                                " (hosts: "
-                                                (string.copy (& cdef.hosts))
-                                                ")\n")))
-                                          (let
-                                            [ts : svec.Vec
-                                              (util.split-words-blank
-                                                (& cdef.target))]
-                                            [os : svec.Vec
-                                              (util.split-words-blank
-                                                (& cdef.opt))]
-                                            [ms : svec.Vec
-                                              (util.split-words-blank
-                                                (& cdef.mode))]
-                                            [es : svec.Vec
-                                              (util.split-words-blank
-                                                (& cdef.each))]
-                                            [nt : i64 (svec.len (& ts))]
-                                            [no : i64 (svec.len (& os))]
-                                            [nm : i64 (svec.len (& ms))]
-                                            [ne : i64 (svec.len (& es))]
-                                            [ti : i64 0]
-                                            (while (< ti nt)
-                                              (let
-                                                [t : String
-                                                  (svec.get (& ts) ti "")]
-                                                [oi : i64 0]
-                                                (while (< oi no)
-                                                  (let
-                                                    [o : String
-                                                      (svec.get (& os) oi "")]
-                                                    [mi : i64 0]
-                                                    (while (< mi nm)
-                                                      (let
-                                                        [m : String
-                                                          (svec.get
-                                                            (& ms)
-                                                            mi
-                                                            "")]
-                                                        [ei : i64 0]
-                                                        (while (< ei ne)
-                                                          (let
-                                                            [e : String
-                                                              (svec.get
-                                                                (& es)
-                                                                ei
-                                                                "")]
-                                                            (if (not
-                                                              (exec.simd-mode-selected?
-                                                                (& wave-cfg)
-                                                                (& m)))
-                                                              (when
-                                                                (string.eq
-                                                                  (& m)
-                                                                  "-")
-                                                                (set!
-                                                                  total-failures
-                                                                  (+
-                                                                    total-failures
-                                                                    1))
-                                                                (io.print-error
-                                                                  (str_cat.str-cat
-                                                                    "FAIL "
-                                                                    (string.copy
-                                                                      (& cfile))
-                                                                    ":"
-                                                                    (string.int->string
-                                                                      cdef.line)
-                                                                    " "
-                                                                    (string.copy
-                                                                      (&
-                                                                        cdef.id))
-                                                                    " ["
-                                                                    (exec.variant-name-of
-                                                                      (& t)
-                                                                      (& o)
-                                                                      (& m)
-                                                                      (& e))
-                                                                    "]: cannot determine the backend mode under TYPELISP_SIMD_MODE_FILTER="
-                                                                    (string.copy
-                                                                      (&
-                                                                        wave-cfg.simd-mode-filter))
-                                                                    "\n")))
-                                                              (begin
-                                                                (set!
-                                                                  total-mode-selected
-                                                                  (+
-                                                                    total-mode-selected
-                                                                    1))
-                                                                (jobvec.push-ref!
-                                                                  (&mut jobs)
-                                                                  (VariantJob
-                                                                    ci
-                                                                    (string.copy
-                                                                      (& t))
-                                                                    (string.copy
-                                                                      (& o))
-                                                                    (string.copy
-                                                                      (& m))
-                                                                    e
-                                                                    cdef.needs-barrier)))))
-                                                          (set! ei (+ ei 1))))
-                                                      (set! mi (+ mi 1))))
-                                                  (set! oi (+ oi 1))))
-                                              (set! ti (+ ti 1)))))))
-                                    (set! ci (+ ci 1)))
-                                  ;; Publish read-only wave state and execute in barrier-respecting parallel waves
+                                      (string.copy (& work-root))
+                                      "/"
+                                      base-name
+                                      (string.copy (& work-suffix)))]
+                                  [native-work-dir : String
+                                    (util.to-native-path
+                                      (& work-dir)
+                                      (& root)
+                                      (& native-root))]
+                                  [pre-vars : util.VarTable
+                                    (util.var-table-new)]
+                                  (util.rm-rf! (& work-dir))
+                                  (util.ensure-dir! (& work-dir))
+                                  (io.stdout-write
+                                    (byte_buf.str-as-bytes
+                                      (str_cat.str-cat
+                                        "[codegen-cases] "
+                                        (string.copy (& cfile))
+                                        "\n")))
+                                  ;; Write pre-case file blocks once relative to {{work}}
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "root"
+                                    (& root))
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "native-root"
+                                    (& native-root))
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "work"
+                                    (& work-dir))
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "native-work"
+                                    (& native-work-dir))
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "host"
+                                    (& wave-cfg.host))
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "host-target"
+                                    (& wave-cfg.host-target))
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "exe"
+                                    (& wave-cfg.exe-ext))
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "lib-prefix"
+                                    (& wave-cfg.lib-prefix))
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "lib-suffix"
+                                    (& wave-cfg.lib-suffix))
+                                  (util.var-table-set!
+                                    (&mut pre-vars)
+                                    "compiler"
+                                    (& wave-cfg.compiler))
                                   (let
-                                    [njobs : i64 (jobvec.len (& jobs))]
-                                    [results : resvec.Vec
-                                      (resvec.with-capacity njobs)]
-                                    [ri : i64 0]
-                                    (while (< ri njobs)
-                                      (resvec.push-ref!
-                                        (&mut results)
-                                        (exec.VariantResult
-                                          ri
-                                          0
-                                          0
-                                          0
-                                          0
-                                          0
-                                          0
-                                          ""
-                                          ""))
-                                      (set! ri (+ ri 1)))
-                                    (set! wave-file pf)
-                                    (set! wave-work-dir work-dir)
-                                    (set! wave-native-work-dir native-work-dir)
-                                    (set! wave-jobs jobs)
-                                    (let
-                                      [wi : i64 0]
-                                      (while (< wi njobs)
-                                        (let
-                                          [cur-job : VariantJob
-                                            (jobvec.get
-                                              (& wave-jobs)
-                                              wi
-                                              (VariantJob 0 "" "" "" "" false))]
-                                          (if cur-job.needs-barrier
-                                            (begin
-                                              (run-wave!
-                                                wi
-                                                (+ wi 1)
-                                                1
-                                                (&mut results))
-                                              (set! wi (+ wi 1)))
-                                            (let
-                                              [wj : i64 (+ wi 1)]
-                                              (while (and
-                                                (< wj njobs)
-                                                (not
-                                                  (jobvec.get
-                                                    (& wave-jobs)
-                                                    wj
-                                                    (VariantJob
-                                                      0
-                                                      ""
-                                                      ""
-                                                      ""
-                                                      ""
-                                                      false)).needs-barrier))
-                                                (set! wj (+ wj 1)))
-                                              (run-wave!
-                                                wi
-                                                wj
-                                                workers
-                                                (&mut results))
-                                              (set! wi wj))))))
-                                    ;; Flush outputs in deterministic job order and aggregate counters
-                                    (let
-                                      [ji : i64 0]
-                                      (while (< ji njobs)
-                                        (let
-                                          [r : exec.VariantResult
-                                            (resvec.get
-                                              (& results)
-                                              ji
-                                              (exec.VariantResult
-                                                0
-                                                0
-                                                0
-                                                0
-                                                0
-                                                0
-                                                0
-                                                ""
-                                                ""))]
-                                          (when
-                                            (>
-                                              (string.string-length
-                                                (& r.stderr-log))
-                                              0)
-                                            (io.print-error (& r.stderr-log)))
-                                          (when
-                                            (>
-                                              (string.string-length
-                                                (& r.stdout-log))
-                                              0)
+                                    [npf : i64
+                                      (parser.parsed-pre-files-len (& pf))]
+                                    [pi : i64 0]
+                                    (while (< pi npf)
+                                      (let
+                                        [fb : parser.FileBlock
+                                          (parser.parsed-pre-files-get
+                                            (& pf)
+                                            pi)]
+                                        (exec.write-file-block!
+                                          (& pre-vars)
+                                          (& work-dir)
+                                          (& fb.path)
+                                          (& fb.flags)
+                                          (& fb.content)))
+                                      (set! pi (+ pi 1))))
+                                  ;; Build variant job list (applying --only, hosts, and SIMD_MODE_FILTER)
+                                  (let
+                                    [jobs : jobvec.Vec (jobvec.new)]
+                                    [nc : i64 (parser.parsed-cases-len (& pf))]
+                                    [ci : i64 0]
+                                    (while (< ci nc)
+                                      (let
+                                        [cdef : parser.CaseDef
+                                          (parser.parsed-cases-get (& pf) ci)]
+                                        (when
+                                          (util.glob-match?
+                                            (& only-glob)
+                                            (& cdef.id))
+                                          (set!
+                                            total-selected
+                                            (+ total-selected 1))
+                                          (if (not
+                                            (or
+                                              (exec.word-in-list?
+                                                "all"
+                                                (& cdef.hosts))
+                                              (exec.word-in-list?
+                                                (& wave-cfg.host)
+                                                (& cdef.hosts))))
                                             (io.stdout-write
                                               (byte_buf.str-as-bytes
-                                                (& r.stdout-log))))
-                                          (set!
-                                            total-failures
-                                            (+ total-failures r.failures))
-                                          (set!
-                                            total-rows
-                                            (+ total-rows r.rows))
-                                          (set!
-                                            total-skipped
-                                            (+ total-skipped r.skipped))
-                                          (set!
-                                            total-simd-native
-                                            (+ total-simd-native r.simd-native))
-                                          (set!
-                                            total-simd-emulated
-                                            (+
+                                                (str_cat.str-cat
+                                                  "[codegen-cases] skip "
+                                                  (string.copy (& cdef.id))
+                                                  " (hosts: "
+                                                  (string.copy (& cdef.hosts))
+                                                  ")\n")))
+                                            (let
+                                              [ts : svec.Vec
+                                                (util.split-words-blank
+                                                  (& cdef.target))]
+                                              [os : svec.Vec
+                                                (util.split-words-blank
+                                                  (& cdef.opt))]
+                                              [ms : svec.Vec
+                                                (util.split-words-blank
+                                                  (& cdef.mode))]
+                                              [es : svec.Vec
+                                                (util.split-words-blank
+                                                  (& cdef.each))]
+                                              [nt : i64 (svec.len (& ts))]
+                                              [no : i64 (svec.len (& os))]
+                                              [nm : i64 (svec.len (& ms))]
+                                              [ne : i64 (svec.len (& es))]
+                                              [ti : i64 0]
+                                              (while (< ti nt)
+                                                (let
+                                                  [t : String
+                                                    (svec.get (& ts) ti "")]
+                                                  [oi : i64 0]
+                                                  (while (< oi no)
+                                                    (let
+                                                      [o : String
+                                                        (svec.get (& os) oi "")]
+                                                      [mi : i64 0]
+                                                      (while (< mi nm)
+                                                        (let
+                                                          [m : String
+                                                            (svec.get
+                                                              (& ms)
+                                                              mi
+                                                              "")]
+                                                          [ei : i64 0]
+                                                          (while (< ei ne)
+                                                            (let
+                                                              [e : String
+                                                                (svec.get
+                                                                  (& es)
+                                                                  ei
+                                                                  "")]
+                                                              (if (not
+                                                                (exec.simd-mode-selected?
+                                                                  (& wave-cfg)
+                                                                  (& m)))
+                                                                (when
+                                                                  (string.eq
+                                                                    (& m)
+                                                                    "-")
+                                                                  (set!
+                                                                    total-failures
+                                                                    (+
+                                                                      total-failures
+                                                                      1))
+                                                                  (io.print-error
+                                                                    (str_cat.str-cat
+                                                                      "FAIL "
+                                                                      (string.copy
+                                                                        (&
+                                                                          cfile))
+                                                                      ":"
+                                                                      (string.int->string
+                                                                        cdef.line)
+                                                                      " "
+                                                                      (string.copy
+                                                                        (&
+                                                                          cdef.id))
+                                                                      " ["
+                                                                      (exec.variant-name-of
+                                                                        (& t)
+                                                                        (& o)
+                                                                        (& m)
+                                                                        (& e))
+                                                                      "]: cannot determine the backend mode under TYPELISP_SIMD_MODE_FILTER="
+                                                                      (string.copy
+                                                                        (&
+                                                                          wave-cfg.simd-mode-filter))
+                                                                      "\n")))
+                                                                (begin
+                                                                  (set!
+                                                                    total-mode-selected
+                                                                    (+
+                                                                      total-mode-selected
+                                                                      1))
+                                                                  (jobvec.push-ref!
+                                                                    (&mut jobs)
+                                                                    (VariantJob
+                                                                      ci
+                                                                      (string.copy
+                                                                        (& t))
+                                                                      (string.copy
+                                                                        (& o))
+                                                                      (string.copy
+                                                                        (& m))
+                                                                      e
+                                                                      cdef.needs-barrier)))))
+                                                            (set! ei (+ ei 1))))
+                                                        (set! mi (+ mi 1))))
+                                                    (set! oi (+ oi 1))))
+                                                (set! ti (+ ti 1)))))))
+                                      (set! ci (+ ci 1)))
+                                    ;; Publish read-only wave state and execute in barrier-respecting parallel waves
+                                    (let
+                                      [njobs : i64 (jobvec.len (& jobs))]
+                                      [results : resvec.Vec
+                                        (resvec.with-capacity njobs)]
+                                      [ri : i64 0]
+                                      (while (< ri njobs)
+                                        (resvec.push-ref!
+                                          (&mut results)
+                                          (exec.VariantResult
+                                            ri
+                                            0
+                                            0
+                                            0
+                                            0
+                                            0
+                                            0
+                                            ""
+                                            ""))
+                                        (set! ri (+ ri 1)))
+                                      (set! wave-file pf)
+                                      (set! wave-work-dir work-dir)
+                                      (set!
+                                        wave-native-work-dir
+                                        native-work-dir)
+                                      (set! wave-jobs jobs)
+                                      (let
+                                        [wi : i64 0]
+                                        (while (< wi njobs)
+                                          (let
+                                            [cur-job : VariantJob
+                                              (jobvec.get
+                                                (& wave-jobs)
+                                                wi
+                                                (VariantJob 0 "" "" "" "" false))]
+                                            (if cur-job.needs-barrier
+                                              (begin
+                                                (run-wave!
+                                                  wi
+                                                  (+ wi 1)
+                                                  1
+                                                  (&mut results))
+                                                (set! wi (+ wi 1)))
+                                              (let
+                                                [wj : i64 (+ wi 1)]
+                                                (while (and
+                                                  (< wj njobs)
+                                                  (not
+                                                    (jobvec.get
+                                                      (& wave-jobs)
+                                                      wj
+                                                      (VariantJob
+                                                        0
+                                                        ""
+                                                        ""
+                                                        ""
+                                                        ""
+                                                        false)).needs-barrier))
+                                                  (set! wj (+ wj 1)))
+                                                (run-wave!
+                                                  wi
+                                                  wj
+                                                  workers
+                                                  (&mut results))
+                                                (set! wi wj))))))
+                                      ;; Flush outputs in deterministic job order and aggregate counters
+                                      (let
+                                        [ji : i64 0]
+                                        (while (< ji njobs)
+                                          (let
+                                            [r : exec.VariantResult
+                                              (resvec.get
+                                                (& results)
+                                                ji
+                                                (exec.VariantResult
+                                                  0
+                                                  0
+                                                  0
+                                                  0
+                                                  0
+                                                  0
+                                                  0
+                                                  ""
+                                                  ""))]
+                                            (when
+                                              (>
+                                                (string.string-length
+                                                  (& r.stderr-log))
+                                                0)
+                                              (io.print-error (& r.stderr-log)))
+                                            (when
+                                              (>
+                                                (string.string-length
+                                                  (& r.stdout-log))
+                                                0)
+                                              (io.stdout-write
+                                                (byte_buf.str-as-bytes
+                                                  (& r.stdout-log))))
+                                            (set!
+                                              total-failures
+                                              (+ total-failures r.failures))
+                                            (set!
+                                              total-rows
+                                              (+ total-rows r.rows))
+                                            (set!
+                                              total-skipped
+                                              (+ total-skipped r.skipped))
+                                            (set!
+                                              total-simd-native
+                                              (+
+                                                total-simd-native
+                                                r.simd-native))
+                                            (set!
                                               total-simd-emulated
-                                              r.simd-emulated))
-                                          (set!
-                                            total-simd-skipped
-                                            (+
+                                              (+
+                                                total-simd-emulated
+                                                r.simd-emulated))
+                                            (set!
                                               total-simd-skipped
-                                              r.simd-skipped)))
-                                        (set! ji (+ ji 1)))))))]))))
-                    (set! fi (+ fi 1))))
-                (cond
-                  [(!= fatal-exit 0) fatal-exit]
-                  [do-list 0]
-                  [(= total-selected 0)
-                    (io.print-error
-                      (str_cat.str-cat
-                        "[codegen-cases] no case matches --only "
-                        only-glob
-                        "\n"))
-                    1]
-                  [(and
-                    (> (string.string-length (& wave-cfg.simd-mode-filter)) 0)
-                    (= total-mode-selected 0))
-                    (io.print-error
-                      (str_cat.str-cat
-                        "[codegen-cases] TYPELISP_SIMD_MODE_FILTER="
-                        (string.copy (& wave-cfg.simd-mode-filter))
-                        " selected no case variant\n"))
-                    1]
-                  [(> total-failures 0)
-                    (io.print-error
-                      (str_cat.str-cat
-                        "[codegen-cases] FAILED: "
-                        (string.int->string total-failures)
-                        " failure(s); "
-                        (string.int->string total-rows)
-                        " expectation(s) checked, "
-                        (string.int->string total-skipped)
-                        " skipped\n"))
-                    1]
-                  [else
-                    (io.stdout-write
-                      (byte_buf.str-as-bytes
-                        (str_cat.str-cat
-                          "[simd-execution] codegen-cases avx512 executed="
-                          (string.int->string
-                            (+ total-simd-native total-simd-emulated))
-                          " native="
-                          (string.int->string total-simd-native)
-                          " emulated="
-                          (string.int->string total-simd-emulated)
-                          " skipped="
-                          (string.int->string total-simd-skipped)
-                          "\n")))
-                    (io.stdout-write
-                      (byte_buf.str-as-bytes
-                        (str_cat.str-cat
-                          "[codegen-cases] passed: "
-                          (string.int->string total-rows)
-                          " expectation(s) checked, "
-                          (string.int->string total-skipped)
-                          " skipped\n")))
-                    0])))))])))
+                                              (+
+                                                total-simd-skipped
+                                                r.simd-skipped)))
+                                          (set! ji (+ ji 1))))))))
+                              (set! fi (+ fi 1))))
+                          (cond
+                            [(!= fatal-exit 0) fatal-exit]
+                            [(= total-selected 0)
+                              (io.print-error
+                                (str_cat.str-cat
+                                  "[codegen-cases] no case matches --only "
+                                  only-glob
+                                  "\n"))
+                              1]
+                            [(and
+                              (>
+                                (string.string-length
+                                  (& wave-cfg.simd-mode-filter))
+                                0)
+                              (= total-mode-selected 0))
+                              (io.print-error
+                                (str_cat.str-cat
+                                  "[codegen-cases] TYPELISP_SIMD_MODE_FILTER="
+                                  (string.copy (& wave-cfg.simd-mode-filter))
+                                  " selected no case variant\n"))
+                              1]
+                            [(> total-failures 0)
+                              (io.print-error
+                                (str_cat.str-cat
+                                  "[codegen-cases] FAILED: "
+                                  (string.int->string total-failures)
+                                  " failure(s); "
+                                  (string.int->string total-rows)
+                                  " expectation(s) checked, "
+                                  (string.int->string total-skipped)
+                                  " skipped\n"))
+                              1]
+                            [else
+                              (io.stdout-write
+                                (byte_buf.str-as-bytes
+                                  (str_cat.str-cat
+                                    "[simd-execution] codegen-cases avx512 executed="
+                                    (string.int->string
+                                      (+ total-simd-native total-simd-emulated))
+                                    " native="
+                                    (string.int->string total-simd-native)
+                                    " emulated="
+                                    (string.int->string total-simd-emulated)
+                                    " skipped="
+                                    (string.int->string total-simd-skipped)
+                                    "\n")))
+                              (io.stdout-write
+                                (byte_buf.str-as-bytes
+                                  (str_cat.str-cat
+                                    "[codegen-cases] passed: "
+                                    (string.int->string total-rows)
+                                    " expectation(s) checked, "
+                                    (string.int->string total-skipped)
+                                    " skipped\n")))
+                              0]))))))))))])))

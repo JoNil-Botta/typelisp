@@ -1,0 +1,406 @@
+# SPMD SIMD codegen shapes and trap paths, run by scripts/verify-spmd-simd.sh
+# (gate stage2-spmd-simd-comparison). See tests/spmd/simd.d/.
+
+target -
+opt -
+
+# ------------------------------------------------------------------- shifts
+
+# Variable shifts keep an active-lane trap guard behind one reduced
+# invalid-lane mask; AVX2 has no signed i64 right shift and expands it.
+case masked-shift-avx2
+source tests/spmd/masked_if_shift_value_types.tl
+mode avx2
+in fn _tl_masked_if_shift_value_types_case_i32
+contains vpsllv
+contains vpsravd
+match call (\.L_tl_abort_)?tl_shift_abort
+contains vpmovmskb
+contains %ymm
+in fn _tl_masked_if_shift_value_types_case_u32
+contains vpsllv
+contains vpsrlvd
+match call (\.L_tl_abort_)?tl_shift_abort
+contains vpmovmskb
+contains %ymm
+in fn _tl_masked_if_shift_value_types_case_i64
+contains vpsllv
+contains vpsrlvq
+match call (\.L_tl_abort_)?tl_shift_abort
+contains vpmovmskb
+contains vpcmpgtq
+contains vpsllvq
+contains vpor
+contains %ymm
+in fn _tl_masked_if_shift_value_types_case_u64
+contains vpsllv
+contains vpsrlvq
+match call (\.L_tl_abort_)?tl_shift_abort
+contains vpmovmskb
+contains %ymm
+
+case masked-shift-avx512
+source tests/spmd/masked_if_shift_value_types.tl
+mode avx512
+in fn _tl_masked_if_shift_value_types_case_i32
+contains vpsllv
+contains vpsravd
+match call (\.L_tl_abort_)?tl_shift_abort
+contains kortest
+match %zmm[0-9]+|%k[0-7]
+in fn _tl_masked_if_shift_value_types_case_u32
+contains vpsllv
+contains vpsrlvd
+match call (\.L_tl_abort_)?tl_shift_abort
+contains kortest
+match %zmm[0-9]+|%k[0-7]
+in fn _tl_masked_if_shift_value_types_case_i64
+contains vpsllv
+contains vpsravq
+match call (\.L_tl_abort_)?tl_shift_abort
+contains kortest
+match %zmm[0-9]+|%k[0-7]
+in fn _tl_masked_if_shift_value_types_case_u64
+contains vpsllv
+contains vpsrlvq
+match call (\.L_tl_abort_)?tl_shift_abort
+contains kortest
+match %zmm[0-9]+|%k[0-7]
+
+case map-shift-avx2
+source tests/spmd/map_shift_value_types.tl
+mode avx2
+in fn _tl_map_shift_value_types_case_i32
+contains vpsllv
+contains vpsravd
+match call (\.L_tl_abort_)?tl_shift_abort
+contains vpmovmskb
+contains %ymm
+in fn _tl_map_shift_value_types_case_u32
+contains vpsllv
+contains vpsrlvd
+match call (\.L_tl_abort_)?tl_shift_abort
+contains vpmovmskb
+contains %ymm
+in fn _tl_map_shift_value_types_case_i64
+contains vpsllv
+contains vpsrlvq
+match call (\.L_tl_abort_)?tl_shift_abort
+contains vpmovmskb
+contains vpcmpgtq
+contains vpsllvq
+contains vpor
+contains %ymm
+in fn _tl_map_shift_value_types_case_u64
+contains vpsllv
+contains vpsrlvq
+match call (\.L_tl_abort_)?tl_shift_abort
+contains vpmovmskb
+contains %ymm
+
+case map-shift-avx512
+source tests/spmd/map_shift_value_types.tl
+mode avx512
+in fn _tl_map_shift_value_types_case_i32
+contains vpsllv
+contains vpsravd
+match call (\.L_tl_abort_)?tl_shift_abort
+contains kortest
+match %zmm[0-9]+|%k[0-7]
+in fn _tl_map_shift_value_types_case_u32
+contains vpsllv
+contains vpsrlvd
+match call (\.L_tl_abort_)?tl_shift_abort
+contains kortest
+match %zmm[0-9]+|%k[0-7]
+in fn _tl_map_shift_value_types_case_i64
+contains vpsllv
+contains vpsravq
+match call (\.L_tl_abort_)?tl_shift_abort
+contains kortest
+match %zmm[0-9]+|%k[0-7]
+in fn _tl_map_shift_value_types_case_u64
+contains vpsllv
+contains vpsrlvq
+match call (\.L_tl_abort_)?tl_shift_abort
+contains kortest
+match %zmm[0-9]+|%k[0-7]
+
+# Byte shifts widen to dwords, shift, and pack back inside the gang.
+case byte-shift
+source tests/spmd/byte_shift_value_types.tl
+mode avx2 avx512
+in fn _tl_byte_shift_value_types_run_direct_i8
+narrow ranges:foreach_avx2_body~foreach_tail_header
+contains vpmovsxbd
+contains vpsllvd
+contains vpsravd
+contains vpackusdw
+contains vpackuswb
+contains vpermd
+match call (\.L_tl_abort_)?tl_shift_abort
+not-match ^[[:space:]]+(salb|sarb|shrb)[[:space:]]
+in fn _tl_byte_shift_value_types_run_direct_u8
+narrow ranges:foreach_avx2_body~foreach_tail_header
+contains vpmovzxbd
+contains vpsllvd
+contains vpsrlvd
+contains vpackusdw
+contains vpackuswb
+contains vpermd
+match call (\.L_tl_abort_)?tl_shift_abort
+not-match ^[[:space:]]+(salb|sarb|shrb)[[:space:]]
+
+# Word shifts widen on AVX2 and use native word shifts on AVX-512.
+case word-shift
+source tests/spmd/word_shift_value_types.tl
+mode avx2 avx512
+in fn _tl_word_shift_value_types_run_direct_i16
+narrow ranges:foreach_avx2_body~foreach_tail_header
+match call (\.L_tl_abort_)?tl_shift_abort
+not-match ^[[:space:]]+(salw|sarw|shrw)[[:space:]]
+if-mode avx2
+contains vpmovsxwd
+contains vpsllvd
+contains vpsravd
+contains vpackusdw
+contains vpermq
+else
+contains vpsllvw
+contains vpsravw
+not-match vpmov(sx|zx)wd|vpackusdw
+end-if
+in fn _tl_word_shift_value_types_run_direct_u16
+narrow ranges:foreach_avx2_body~foreach_tail_header
+match call (\.L_tl_abort_)?tl_shift_abort
+not-match ^[[:space:]]+(salw|sarw|shrw)[[:space:]]
+if-mode avx2
+contains vpmovzxwd
+contains vpsllvd
+contains vpsrlvd
+contains vpackusdw
+contains vpermq
+else
+contains vpsllvw
+contains vpsrlvw
+not-match vpmov(sx|zx)wd|vpackusdw
+end-if
+
+# Active invalid counts keep scalar trap semantics in masked control flow and
+# direct maps: signed negative counts, and unsigned counts equal to the byte,
+# word and dword widths.
+case masked-if-shift-negative-trap
+source tests/spmd/masked_if_shift_negative_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 129
+in stderr
+contains shift count out of range
+
+case masked-if-shift-large-trap
+source tests/spmd/masked_if_shift_large_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 129
+in stderr
+contains shift count out of range
+
+case map-shift-negative-trap
+source tests/spmd/map_shift_negative_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 129
+in stderr
+contains shift count out of range
+
+case map-shift-large-trap
+source tests/spmd/map_shift_large_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 129
+in stderr
+contains shift count out of range
+
+case byte-shift-negative-trap
+source tests/spmd/byte_shift_negative_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 129
+in stderr
+contains shift count out of range
+
+case byte-shift-large-trap
+source tests/spmd/byte_shift_large_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 129
+in stderr
+contains shift count out of range
+
+case word-shift-negative-trap
+source tests/spmd/word_shift_negative_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 129
+in stderr
+contains shift count out of range
+
+case word-shift-large-trap
+source tests/spmd/word_shift_large_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 129
+in stderr
+contains shift count out of range
+
+# ------------------------------------------------------------ native Slices
+
+# A native Slice foreach is a vector map; an ordinary while loop over Slices is
+# not vectorized implicitly.
+case native-slice
+source tests/spmd/native_slice_surface_i64.tl
+mode avx2 avx512
+opt 2
+in fn _tl_native_slice_surface_i64_slice_case
+not-match %ymm[0-9]+|%zmm[0-9]+|%k[0-7]
+in fn _tl_native_slice_surface_i64_fill_slice_foreach
+contains vpaddq
+if-mode avx2
+contains %ymm
+contains vmovdqu
+contains vpmaskmovq
+not-match %zmm[0-9]+|%k[0-7]
+else
+contains %zmm
+contains vmovdqu64
+contains {%k
+not-contains vpmaskmovq
+end-if
+
+# Scalar mode consolidates the masked helper's bounds checks to one call for
+# each of its four Slices.
+case native-slice-scalar-masked-bounds
+source tests/spmd/native_slice_surface_i64.tl
+mode scalar
+opt 2
+in fn _tl_native_slice_surface_i64_masked_slice_foreach
+count-fixed = 4 call .L_tl_abort_tl_oob_abort_at
+
+case native-slice-multi-output
+source tests/spmd/native_slice_multi_output_i64.tl
+mode avx2 avx512
+opt 2
+in fn _tl_native_slice_multi_output_i64_map_two_outputs
+count = 4 ^[[:space:]]+call[[:space:]]+(tl_oob_abort|\.L_tl_abort_tl_oob_abort_at)$
+contains vpaddq
+contains vpsubq
+if-mode avx2
+contains %ymm
+else
+match %zmm[0-9]+|%k[0-7]
+end-if
+
+# Every source and destination joins the fused safety proof: a short second
+# destination leaves the SIMD path and keeps the scalar bounds trap.
+case multi-output-bounds-trap
+source tests/spmd/multi_output_bounds_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+# Ordinary variant references use the ambient mode; dispatch keeps its own ISA.
+case dispatch-distinct-direct
+source tests/spmd/dispatch_distinct_direct.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit scalar=43 avx2=46 avx512=50
+stdout empty
+stderr empty
+
+case dispatch-shared-direct
+source tests/spmd/dispatch_shared_direct.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit scalar=43 avx2=46 avx512=50
+stdout empty
+stderr empty
+
+case dispatch-shared-only
+source tests/spmd/dispatch_shared_only.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+stdout empty
+stderr empty
+in asm
+not-match ^_tl_dispatch_shared_only_fill_bang:$
+contains __tl_dispatch_variant_scalar_
+contains __tl_dispatch_variant_avx2_
+contains __tl_dispatch_variant_avx512_
+
+case dispatch-imported-values
+source tests/spmd/dispatch_imported_values.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+stdout empty
+stderr empty
+
+case private-uniform-call-clamp
+source tests/spmd/private_uniform_call_clamp.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+in asm
+if-mode avx2 avx512
+match call _tl___tl_spmd_
+match vcmppd
+end-if
+
+case private-uniform-call-float
+source tests/spmd/private_uniform_call_float.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+in asm
+if-mode avx2 avx512
+match call _tl___tl_spmd_
+match vcmpp[sd]
+end-if
+
+# Opt2 legitimately inlines these small scalar min/max bodies. The numeric
+# pressure case below retains ordinary f32/f64 calls at every optimization.
+case private-uniform-call-float-minmax-calls
+source tests/spmd/private_uniform_call_float.tl
+mode avx2 avx512
+opt 0 1
+match call _tl_stdlib_math_stdlib_math_f64_(min|max)
+
+case private-uniform-call-numeric
+source tests/spmd/private_uniform_call_numeric.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+in asm
+if-mode avx2 avx512
+match call _tl___tl_spmd_
+match call _tl_private_uniform_call_numeric_uniform_bias_
+match call _tl_private_uniform_call_numeric_uniform_bias_f32
+match call _tl_private_uniform_call_numeric_uniform_bias_f64
+match vpadd[bwdq]|vaddp[sd]
+end-if

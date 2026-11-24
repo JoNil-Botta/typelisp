@@ -179,4 +179,10 @@ if [ "${TYPELISP_STAGE0_SIZE_REPORT:-0}" -eq 1 ]; then
     echo "[build-stage0] size attribution TSV: $SIZE_REPORT_TSV"
 fi
 
+# Build the prebuilt stdlib sysroot beside the final converged stage4 binary
+# (never before fixpoint or into stage0/stage1/stage2/stage3).
+OUT_DIR=$(dirname -- "$OUT")
+scripts/build-stdlib-sysroot.sh "$RUN_OUT" "$OUT_DIR" \
+    --target "$NL_BOOTSTRAP_TARGET" --opt-level 2
+
 echo "[build-stage0] built $OUT"

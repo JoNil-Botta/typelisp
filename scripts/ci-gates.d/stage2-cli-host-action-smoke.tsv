@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-cli-host-action-smoke	310	linux	stage2 CLI host-action smoke	bootstrap-compiler	stage2	4352	-	scripts/check-stage1-wrapper.sh	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+linux-compiler-scaling-budgets	100	linux	Linux compiler scaling budgets	bootstrap-compiler	stage2	1024	-	scripts/check-compiler-scaling.sh "$STAGE2_BIN"	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

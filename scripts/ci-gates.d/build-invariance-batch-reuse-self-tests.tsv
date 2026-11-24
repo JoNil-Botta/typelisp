@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+build-invariance-batch-reuse-self-tests	1040	linux	build-invariance batch reuse self-tests	-	-	256	-	scripts/verify-build-invariance-batch.sh	linux-2	-	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

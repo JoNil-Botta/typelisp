@@ -2,7 +2,7 @@
 set -eu
 
 # verify-public-tools.sh - parts of the public CLI surface of TYPELISP_BIN.
-# scripts/ci-gates.tsv runs each part as its own gate, so the pool schedules
+# scripts/ci-gates.d/*.tsv runs each part as its own gate, so the pool schedules
 # them side by side instead of one 35+ minute gate:
 #
 #   affected-map       the tests/cli/ci-affected map audit (Linux)
@@ -20,7 +20,7 @@ cd "$ROOT"
 usage() {
     cat >&2 <<'EOF'
 usage: scripts/verify-public-tools.sh PART
-PART is one of the gate parts of scripts/ci-gates.tsv: affected-map,
+PART is one of the gate parts of scripts/ci-gates.d/*.tsv: affected-map,
 cli-transcripts-1, cli-transcripts-2, cli-transcripts-3 or corpora.
 EOF
     exit 2

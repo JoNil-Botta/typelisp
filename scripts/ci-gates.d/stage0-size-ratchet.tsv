@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage0-size-ratchet	160	all	stage0 size ratchet	bootstrap-compiler	stage2	256	-	scripts/check-stage0-size.sh --self-test && scripts/check-stage0-size.sh "$STAGE2_BIN" && scripts/verify-stage0-lzss-scanner.sh && scripts/analyze-stage0-size.sh "$STAGE2_BIN"	linux-2	windows-2	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

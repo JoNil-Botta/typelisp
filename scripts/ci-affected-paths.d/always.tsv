@@ -1,0 +1,2 @@
+path	required	advisory	reason
+@always	bootstrap-compiler,bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests	-	Shared local hygiene and documented-source content guard, with canonical producer dependencies.

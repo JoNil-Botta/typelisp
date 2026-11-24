@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-inline-aggregate-scaling	1250	all	stage2 inline aggregate scaling	bootstrap-compiler	stage2	768	-	scripts/verify-inline-aggregate-scaling.sh	linux-2	windows-2	compiler,stdlib,corpus	Bounds depth-40 binary inline aggregate check and opt0/1/2 compile on the produced compiler.

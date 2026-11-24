@@ -3771,7 +3771,9 @@
 ;; `syscall` is not a call mnemonic. This is the fact
 ;; compiler-backend-function-bool-call-align-needed records; its comment carries
 ;; the alignment argument.
-(define (compiler-backend-text-has-returning-call? [text : (& text str)]) : bool
+(define (compiler-backend-text-has-call-needing-align?
+  [text : (& text str)]
+  [include-aborts? : bool]) : bool
   (let
     [n : i64 (string.string-length text)]
     [data : (Ptr u8)
@@ -3800,11 +3802,16 @@
                 end
                 32)
               m))
-          (not (compiler-backend-peephole-line-noreturn-abort? data i end)))
+          (or
+            include-aborts?
+            (not (compiler-backend-peephole-line-noreturn-abort? data i end))))
           (set! found true)
           unit)
         (set! i (+ end 1))))
     found))
+
+(define (compiler-backend-text-has-returning-call? [text : (& text str)]) : bool
+  (compiler-backend-text-has-call-needing-align? text false))
 
 ;; True iff the byte range [start,end) of `data` contains `needle` as a substring.
 (define (compiler-backend-peephole-range-contains-substr?

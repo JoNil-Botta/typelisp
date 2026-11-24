@@ -111,15 +111,18 @@ exit 134
 in stderr
 contains array index out of bounds: index=7 length=4
 
-# Win64 reserves shadow space for every call-shaped instruction, so none of the
-# three may lose its stack adjustment there, and callers stay aligned.
+# Win64 Internal calls reserve no shadow space (#8438), so a tail-call-only
+# Internal forwarder drops its dead stack adjustment while abort-only and
+# returning callers keep valid SEH frames and 16-byte call alignment.
 case dead-frame-boundary-win64
 source tests/integration/dead_frame_boundary.tl
 target windows-x86_64
 in fn tl_dfb_forward$typelisp
 contains jmp _tl_dead_frame_boundary_dfb_sink
-metric call-alignment:0 = ok
-match \.seh_stackalloc[ ]
+not-match ^[[:space:]]+call[ ]
+count = 0 ^[[:space:]]+subq \$[0-9]+, %rsp$
+count = 0 ^[[:space:]]+addq \$[0-9]+, %rsp$
+count = 0 \.seh_stackalloc[ ]
 in fn tl_dfb_abort_only$typelisp
 match call (\.L_tl_abort_)?tl_oob_abort
 match \.seh_stackalloc[ ]

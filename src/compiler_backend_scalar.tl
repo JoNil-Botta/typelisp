@@ -539,9 +539,10 @@
 (define (compiler-backend-emit-c-entry-shared) : String
   ;; A raw leaf tail-enters with its body in volatile R11. At most four
   ;; physical words need no argument moves; the common frame preserves the
-  ;; Platform saves and home area, and owns the unwind record for the call.
+  ;; Platform saves, aligns the stack for the Internal body (which reserves no
+  ;; shadow space), and owns the unwind record for the call.
   (str_cat.str-cat
-    ".seh_proc __tl$c_entry\n__tl$c_entry:\n    pushq %rsi\n    .seh_pushreg %rsi\n    pushq %rdi\n    .seh_pushreg %rdi\n    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    call *%r11\n    addq $40, %rsp\n    popq %rdi\n    popq %rsi\n    ret\n    .seh_endproc\n"
+    ".seh_proc __tl$c_entry\n__tl$c_entry:\n    pushq %rsi\n    .seh_pushreg %rsi\n    pushq %rdi\n    .seh_pushreg %rdi\n    subq $8, %rsp\n    .seh_stackalloc 8\n    .seh_endprologue\n    call *%r11\n    addq $8, %rsp\n    popq %rdi\n    popq %rsi\n    ret\n    .seh_endproc\n"
     (if (compiler_ir_types.compiler-debug-info-enabled?)
       (compiler-backend-backtrace-c-entry-range
         "__tl$c_entry"
@@ -619,7 +620,11 @@
               "\n")
             (str_cat.str-cat
               "    movq %rax, "
-              (string.int->string (+ 32 (* 8 (- position 6))))
+              (string.int->string
+                (be_facts.compiler-backend-outgoing-stack-arg-offset
+                  target-policy.target
+                  (Internal)
+                  (- position 6)))
               "(%rsp)\n"))))
       (text_buf.append!
         out

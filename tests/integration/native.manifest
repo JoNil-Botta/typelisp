@@ -427,6 +427,9 @@ crossblock_reload_elide|all|-|tests/integration/crossblock_reload_elide.tl|42|-|
 licm_desc_hoist|all|-|tests/integration/licm_desc_hoist.tl|42|-|-|stdlib/io.tl|-
 licm_memclean_global_promote|all|-|tests/integration/licm_memclean_global_promote.tl|42|-|-|stdlib/io.tl|-
 cpuid_operand_homes|all|-|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl|-
+xgetbv_user_define|all|0,1,2|tests/integration/xgetbv_user_define.tl|9|-|-|cpu_query_intrinsics_dep.tl|-
+cpuid_register_user_defines|all|0,1,2|tests/integration/cpuid_register_user_defines.tl|7|-|-|cpu_query_intrinsics_dep.tl|-
+cpu_query_selected_import|all|0,1,2|tests/integration/cpu_query_selected_import.tl|42|-|-|cpu_query_selected_import_dep.tl cpu_query_selected_import_other.tl cpu_query_intrinsics_dep.tl|-
 global_cell_writer_loop_reads|all|-|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl|-
 global_store_only_dead|all|0,2|tests/integration/global_store_only_dead.tl|42|-|-|-|-
 lftr_counter_retire|all|-|tests/integration/lftr_counter_retire.tl|42|-|-|stdlib/io.tl|-
@@ -1150,7 +1153,7 @@ wide_enum_variants|all|0,2|tests/integration/wide_enum_variants.tl|42|-|-|wide_a
 wide_struct_literal|all|-|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|-
 wide_struct_literal|all|0,2|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|stage-stdlib
 global_reference_initializers|all|-|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|-
-global_reference_initializers|all|0,2|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|stage-stdlib
+global_reference_initializers|all|0,1,2|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|stage-stdlib
 generated_import_global_initializers|all|-|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|-
 generated_import_global_initializers|all|0,2|tests/integration/generated_import_global_initializers.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|stage-stdlib
 nested_flag_loops|all|-|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203\n-206\n0\n-201\n|-|stdlib/io.tl stdlib/string.tl|-

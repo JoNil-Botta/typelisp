@@ -1224,6 +1224,7 @@
   (copy-thunks backend_string_i64_map.Map)
   (copy-thunk-bodies (__tl_dyn-array String))
   (copy-thunk-count i64)
+  (copy-thunk-size-counts (__tl_dyn-array i64))
   ;; Per-program scratch for the registry: a dedicated arena (raw handle +
   ;; start mark) rewound by `compiler-backend-copy-thunks-reset!`, so no thunk
   ;; key, body or table outlives the emission that registered it.
@@ -1231,7 +1232,9 @@
   (copy-thunk-mark i64)
   ;; The caller owns the complete native link and has supplied no foreign
   ;; objects or link options. Assembly and library requests leave this false.
-  (closed-executable bool))
+  (closed-executable bool)
+  (archive-runtime bool)
+  (library-object bool))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1305,8 +1308,11 @@
         (backend_string_i64_map.with-capacity 1)
         (__tl_make-array String 0)
         0
+        (__tl_make-array i64 0)
         0
         0
+        false
+        false
         false))
     (CompilerBackendState
       (cast
@@ -1349,6 +1355,34 @@
   [enabled : bool]) : unit
   (unsafe
     (set! (deref (compiler-backend-state-ptr state)).closed-executable enabled)))
+
+(define (compiler-backend-state-archive-runtime? [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).archive-runtime))
+
+(define (compiler-backend-state-set-archive-runtime!
+  [state : CompilerBackendState]
+  [enabled : bool]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).archive-runtime enabled)))
+
+(define (compiler-backend-state-library-object? [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).library-object))
+
+(define (compiler-backend-state-set-library-object!
+  [state : CompilerBackendState]
+  [enabled : bool]) : unit
+  (unsafe
+    (set! (deref (compiler-backend-state-ptr state)).library-object enabled)))
+
+(define (compiler-backend-state-private-global?
+  [state : CompilerBackendState]
+  [id : i64]) : bool
+  (ci.intern-compat-state-generated-role-symbol?
+    (& (compiler-backend-state-intern state))
+    id
+    (ci.intern-generated-symbol-role-nullary-enum-object)))
 
 (define (compiler-backend-state-set-shared-object-code-model!
   [state : CompilerBackendState]

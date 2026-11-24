@@ -12853,6 +12853,7 @@
         vars
         vars
         (& (live.compiler-live-set-empty))
+        (& (__tl_make-array i64 0))
         stack-only?)]))
 
 (define (compiler-reg-empty-private-param-homes-ok?) : bool
@@ -14004,6 +14005,7 @@
           vars
           vars
           (& (live.compiler-live-set-empty))
+          (& (__tl_make-array i64 0))
           true)
           [(Remap remap slots)
             (let
@@ -16857,6 +16859,7 @@
     vars
     slot-candidate-vars
     (& identity-pinned)
+    (& (__tl_make-array i64 0))
     false))
 
 (define (compiler-reg-move-list-contains?
@@ -17324,3 +17327,118 @@
                       (test.assert-true false "expected scalar register for %5")])]
                 [(No) (test.assert-true false "expected assignment for %7")])]
             [(No) (test.assert-true false "expected assignment for %5")])]))))
+
+(test
+  reg-color-direct-stack-params-compacts-without-holes
+  (let
+    [func : ir.CompilerIrFunction
+      (irt.func
+        "function @direct_color(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:i64, k=%8:i64) -> i64 vars 10 {
+         entry:
+           %9 = add %6, %7 : i64
+           %9 = add %9, %8 : i64
+           return %9
+         }")]
+    [plan : reg.CompilerRegPlan
+      (reg.compiler-reg-plan-function-scalar-for-abi
+        (cabi.CompilerRegTargetAbi.Linux)
+        (& func))]
+    [direct : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    (set! (array-ref direct 6) 16)
+    (set! (array-ref direct 7) 24)
+    (match func
+      [(Function _ params _ vars blocks _)
+        (match (reg.compiler-reg-color-stack-slots-with-stack-only
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& plan)
+          (& (live.compiler-live-set-empty))
+          (& params)
+          (& blocks)
+          vars
+          vars
+          (& (live.compiler-live-set-empty))
+          (& direct)
+          false)
+          [(Remap remap slots)
+            (let
+              [r6 : i64 (array-ref remap 6)]
+              [r7 : i64 (array-ref remap 7)]
+              [r8 : i64 (array-ref remap 8)]
+              (test.assert-true
+                (and
+                  (= slots 7)
+                  (= r8 6)
+                  (>= r6 slots)
+                  (>= r7 slots)
+                  (< r6 vars)
+                  (< r7 vars)
+                  (not (= r6 r7)))
+                "direct stack params must compact param-floor without holes and remap outside local slots"))]
+          [(None)
+            (test.assert-true
+              false
+              "expected coloring remap for direct stack params")])])))
+
+(test
+  reg-color-direct-stack-params-skipped-by-hot-slot-order
+  ;; With >16 frame slots and no free ids >= frame-slots, a direct-home stack
+  ;; param falls back into a hole < frame-slots; the hot-slot order pass must
+  ;; not score it as a hot live slot or collide it with a live frame slot.
+  (let
+    [params : ir.CompilerIrParamBuilder
+      (ir.compiler-ir-param-builder-with-capacity 18)]
+    [_p : unit
+      (for [i (iterator.range 0 18)]
+        (ir.compiler-ir-param-builder-push!
+          (&mut params)
+          (ir.CompilerIrParam.Param
+            "p"
+            (if (= i 0)
+              (ast.AstType.Bytes)
+              (ast.AstType.I64))
+            i)))]
+    [func : ir.CompilerIrFunction
+      (ir.CompilerIrFunction.Function
+        (ci.intern "direct_hot_order")
+        (ir.compiler-ir-param-builder-to-seq params)
+        (ast.AstType.I64)
+        18
+        (irt.blocks
+          "entry:
+            %0 = add %6, %6 : i64
+            %0 = add %0, %6 : i64
+            %0 = add %0, %6 : i64
+            %0 = add %0, %6 : i64
+            %0 = add %0, %1 : i64
+            return %0")
+        ir.CompilerIrFunctionAbi.Ordinary)]
+    [plan : reg.CompilerRegPlan
+      (reg.compiler-reg-plan-function-scalar-for-abi
+        (cabi.CompilerRegTargetAbi.Linux)
+        (& func))]
+    [direct : (__tl_dyn-array i64) (__tl_make-array i64 18)]
+    (set! (array-ref direct 6) 16)
+    (match func
+      [(Function _ pseq _ vars blocks _)
+        (match (reg.compiler-reg-color-stack-slots-with-stack-only
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& plan)
+          (& (live.compiler-live-set-empty))
+          (& pseq)
+          (& blocks)
+          vars
+          vars
+          (& (live.compiler-live-set-empty))
+          (& direct)
+          false)
+          [(Remap remap slots)
+            (let
+              [r0 : i64 (array-ref remap 0)]
+              [r6 : i64 (array-ref remap 6)]
+              (test.assert-true
+                (and (= slots 17) (= r6 17) (= r0 (- slots 1)))
+                "free-high starts at frame-slots=17 and hot live slot %0 lands at slots-1"))]
+          [(None)
+            (test.assert-true
+              false
+              "expected coloring remap for >16-slot direct stack param test")])])))

@@ -64,6 +64,7 @@
       (set! (deref data).copy-thunks (backend_string_i64_map.with-capacity 1))
       (set! (deref data).copy-thunk-bodies (__tl_make-array String 0))
       (set! (deref data).copy-thunk-count 0)
+      (set! (deref data).copy-thunk-size-counts (__tl_make-array i64 0))
       (set! (deref data).copy-thunk-arena 0)
       (set! (deref data).copy-thunk-mark 0)
       (set! (deref data).function-state-address 0)
@@ -644,109 +645,624 @@
           [fresh : backend_string_i64_map.Map
             (backend_string_i64_map.with-capacity 1)]
           [bodies : (__tl_dyn-array String) (__tl_make-array String 0)]
+          [counts : (__tl_dyn-array i64)
+            (__tl_make-array
+              i64
+              (+ be_scalar.compiler-backend-copy-thunk-size-bucket-max 1))]
           (set! (deref data).copy-thunks fresh)
           (set! (deref data).copy-thunk-bodies bodies)
+          (set! (deref data).copy-thunk-size-counts counts)
           unit))
       (set! (deref data).copy-thunk-count 0))))
 
+(define (compiler-backend-copy-thunk-size-counts-scan-blocks!
+  [blocks : (& blocks (Slice compiler_ir_types.CompilerIrBlock))]
+  [counts : (&mut counts (__tl_dyn-array i64))]) : unit
+  (match blocks
+    [(slice) unit]
+    [(slice block & rest)
+      (match block
+        [(Block _ instrs)
+          (let
+            [n : i64 instrs.len]
+            (for [i (iterator.range 0 n)]
+              (match (& (array-ref instrs.slots i))
+                [(CopyBytes _ _ size)
+                  (when
+                    (and
+                      (>=
+                        size
+                        be_scalar.compiler-backend-copy-thunk-size-opt-min-bytes)
+                      (= (% size 4) 0))
+                    (let
+                      [bucket : i64
+                        (be_scalar.compiler-backend-copy-thunk-size-bucket size)]
+                      (when
+                        (and (>= bucket 0) (< bucket (array-length counts)))
+                        (set!
+                          (array-ref counts bucket)
+                          (+ (array-ref counts bucket) 1)))))]
+                [_ unit])))])
+      (compiler-backend-copy-thunk-size-counts-scan-blocks! rest counts)]))
+
+;; Count eligible `CopyBytes` sizes across all functions with a returning call
+;; before function emission starts, so single-use sizes in small binaries stay
+;; inline instead of paying for a thunk definition + call overhead.
+(define (compiler-backend-copy-thunk-size-counts-collect!
+  [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]
+  [backend-state : be_state.CompilerBackendState]) : unit
+  (let
+    [data : (MutPtr be_state.CompilerBackendStateData)
+      (be_state.compiler-backend-state-ptr backend-state)]
+    [counts : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).copy-thunk-size-counts)]
+    (when
+      (> (array-length counts) 0)
+      (for [i (iterator.range 0 functions.len)]
+        (match (& (array-ref functions.slots i))
+          [(Function _ _ _ _ blocks _)
+            (let
+              [view (compiler_ir_types.compiler-ir-block-list-view blocks)]
+              (when
+                (compiler-backend-blocks-have-returning-call? view)
+                (compiler-backend-copy-thunk-size-counts-scan-blocks!
+                  view
+                  (&mut counts))))])))))
+
 (define (compiler-backend-copy-thunk-key
-  [type-segment-bases : i64]
   [bytes : i64]
   [src-reg : (& str)]
   [dst-reg : (& str)]
-  [gp-scratch : (& str)]
-  [xmm-scratch : (& str)]
-  [offset : i64]
-  [dst-bias : i64]) : String
+  [dst-bias : i64]
+  [xmm-scratch : (& str)]) : String
   (str_cat.str-cat
-    (string.int->string type-segment-bases)
-    "|"
     (string.int->string bytes)
     "|"
     src-reg
     "|"
     dst-reg
     "|"
-    gp-scratch
-    "|"
-    (string.int->string offset)
-    "|"
     (string.int->string dst-bias)
     "|"
     xmm-scratch))
 
-;; The copy emitter proper: the whole chunk run -- the 16-byte chunks and the
-;; sub-16-byte tail -- becomes one `call` to a shared thunk where
-;; `compiler-backend-copy-thunk-applies?` allows it, and stays inline
-;; otherwise. `chunked` is the length of the run without its tail, so it is
-;; the run whose byte saving has to pay for the thunk's extra `call`.
-(define (compiler-backend-emit-copy-bytes-chunks
-  [type-segment-bases : i64]
-  [dst-reg : String]
-  [src-reg : String]
-  [gp-scratch : String]
-  [xmm-scratch : String]
-  [offset : i64]
-  [remaining : i64]
-  [dst-bias : i64]
-  [backend-state : be_state.CompilerBackendState]) : String
+(define (compiler-backend-copy-thunk-pair-src [tier : i64]) : String
+  (cond [(= tier 0) "%rax"] [(= tier 1) "%r10"] [else "%rcx"]))
+
+(define (compiler-backend-copy-thunk-pair-dst [tier : i64]) : String
+  (cond [(= tier 0) "%rcx"] [(= tier 1) "%r11"] [else "%rax"]))
+
+;; Common read-only register pairs emitted with ZERO setup instructions when
+;; both bases already sit in those registers with displacement 0. Because a
+;; canonical thunk (`size % 4 == 0`) never writes `src` or `dst`, reading a
+;; callee-saved register preserves both System V and Win64 SEH invariants.
+(define (compiler-backend-copy-thunk-direct-pair?
+  [src-base : (& str)]
+  [dst-base : (& str)]
+  [size : i64]
+  [size-count : i64]) : bool
+  (cond
+    [(and (= size 48) (>= size-count 120))
+      (or
+        (and
+          (string.eq src-base "%rax")
+          (or
+            (string.eq dst-base "%r12")
+            (string.eq dst-base "%rsi")
+            (string.eq dst-base "%r13")
+            (string.eq dst-base "%rdi")
+            (string.eq dst-base "%r14")
+            (string.eq dst-base "%rdx")
+            (string.eq dst-base "%r8")))
+        (and (string.eq src-base "%rsi") (string.eq dst-base "%rax"))
+        (and (string.eq src-base "%r13") (string.eq dst-base "%r12"))
+        (and (string.eq src-base "%r12") (string.eq dst-base "%r13"))
+        (and (string.eq src-base "%rsi") (string.eq dst-base "%r13"))
+        (and (string.eq src-base "%rdi") (string.eq dst-base "%rax")))]
+    [(and (>= size 56) (<= size 112) (>= size-count 300))
+      (or
+        (and
+          (string.eq src-base "%rax")
+          (or
+            (string.eq dst-base "%r12")
+            (string.eq dst-base "%rsi")
+            (string.eq dst-base "%r13")
+            (and
+              (>= size-count 450)
+              (or (string.eq dst-base "%rdi") (string.eq dst-base "%r14")))
+            (and (= size 56) (string.eq dst-base "%rdx"))))
+        (and (string.eq src-base "%rsi") (string.eq dst-base "%rax"))
+        (and
+          (>= size-count 450)
+          (string.eq src-base "%r13")
+          (string.eq dst-base "%r12")))]
+    [else false]))
+
+;; Top enum-payload (`dst-disp == 8`) read-only pairs emitted with zero setup
+;; instructions by baking the +8 destination bias into the canonical thunk body.
+(define (compiler-backend-copy-thunk-direct-disp8-pair?
+  [src-base : (& str)]
+  [dst-base : (& str)]
+  [size : i64]
+  [size-count : i64]) : bool
+  (or
+    (and
+      (>= size 48)
+      (<= size 112)
+      (>= size-count 300)
+      (string.eq src-base "%rax")
+      (string.eq dst-base "%r12"))
+    (and
+      (>= size 56)
+      (<= size 104)
+      (>= size-count 450)
+      (or
+        (and (string.eq src-base "%r13") (string.eq dst-base "%r12"))
+        (and (string.eq src-base "%r14") (string.eq dst-base "%r12"))
+        (and (string.eq src-base "%rsi") (string.eq dst-base "%rax"))))))
+
+(define (compiler-backend-copy-thunk-pick-xmm [forbidden : i64]) : String
+  (cond
+    [(=
+        (bit-and
+          forbidden
+          (be_operand.compiler-backend-scavenge-reg-bit "%xmm2"))
+        0)
+      "%xmm2"]
+    [(=
+        (bit-and
+          forbidden
+          (be_operand.compiler-backend-scavenge-reg-bit "%xmm3"))
+        0)
+      "%xmm3"]
+    [(=
+        (bit-and
+          forbidden
+          (be_operand.compiler-backend-scavenge-reg-bit "%xmm4"))
+        0)
+      "%xmm4"]
+    [(=
+        (bit-and
+          forbidden
+          (be_operand.compiler-backend-scavenge-reg-bit "%xmm5"))
+        0)
+      "%xmm5"]
+    [else ""]))
+
+(define (compiler-backend-copy-thunk-base-is-sib? [base : (& base str)]) : bool
+  (be_operand.compiler-backend-string-contains? base ","))
+
+(define (compiler-backend-copy-thunk-disp8? [disp : i64]) : bool
+  (and (>= disp (- 0 128)) (<= disp 127)))
+
+(define (compiler-backend-copy-thunk-setup-one-bytes
+  [base : (& base str)]
+  [disp : i64]
+  [target : (& target str)]) : i64
+  (cond
+    [(string.eq base "")
+      (cond
+        [(= disp 0) 0]
+        [(compiler-backend-copy-thunk-disp8? disp) 4]
+        [else 7])]
+    [(and (= disp 0) (string.eq base target)) 0]
+    [(and (= disp 0) (not (compiler-backend-copy-thunk-base-is-sib? base))) 3]
+    [(= disp 0) 4]
+    [(compiler-backend-copy-thunk-disp8? disp) 4]
+    [else 7]))
+
+(define (compiler-backend-copy-thunk-base-uses-rex? [base : (& base str)]) : bool
+  (or
+    (be_operand.compiler-backend-string-contains? base "%r8")
+    (be_operand.compiler-backend-string-contains? base "%r9")
+    (be_operand.compiler-backend-string-contains? base "%r1")))
+
+;; Byte profitability guard for `-Os` sub-48 B copies (`32..44 B`): emit a
+;; canonical call only when `5 (call) + setup_bytes` beats the inline sequence
+;; by at least 3 bytes per site.
+(define (compiler-backend-copy-thunk-small-profitable?
+  [size : i64]
+  [src-base : (& str)]
+  [src-disp : i64]
+  [dst-base : (& str)]
+  [dst-disp : i64]
+  [c-src : (& str)]
+  [c-dst : (& str)]) : bool
+  (if (>= size 48)
+    true
+    (let
+      [tail : i64 (% size 16)]
+      [extra-inline : i64
+        (if (or
+          (not (= src-disp 0))
+          (not (= dst-disp 0))
+          (compiler-backend-copy-thunk-base-is-sib? src-base)
+          (compiler-backend-copy-thunk-base-is-sib? dst-base)
+          (compiler-backend-copy-thunk-base-uses-rex? src-base)
+          (compiler-backend-copy-thunk-base-uses-rex? dst-base))
+          4
+          0)]
+      [tail-bytes : i64
+        (cond [(= tail 4) 6] [(= tail 8) 8] [(= tail 12) 14] [else 0])]
+      [inline-est : i64 (+ 14 (+ extra-inline tail-bytes))]
+      [setup-bytes : i64
+        (+
+          (compiler-backend-copy-thunk-setup-one-bytes src-base src-disp c-src)
+          (compiler-backend-copy-thunk-setup-one-bytes dst-base dst-disp c-dst))]
+      (<= (+ 5 setup-bytes) (- inline-est 3)))))
+
+(define (compiler-backend-copy-thunk-setup-one-asm
+  [base : (& base str)]
+  [disp : i64]
+  [target : (& target str)]) : String
+  (cond
+    [(string.eq base "") ""]
+    [(and (= disp 0) (string.eq base target)) ""]
+    [(and (= disp 0) (not (compiler-backend-copy-thunk-base-is-sib? base)))
+      (str_cat.str-cat "    movq " base ", " target "\n")]
+    [else
+      (str_cat.str-cat
+        "    leaq "
+        (be_facts.compiler-backend-copy-address disp (string.copy base))
+        ", "
+        target
+        "\n")]))
+
+(define (compiler-backend-copy-thunk-forbidden-mask
+  [protect : (& protect (__tl_dyn-array String))]
+  [protect-n : i64]
+  [backend-state : be_state.CompilerBackendState]) : i64
   (let
-    [chunked : i64
-      (if (and (>= remaining 16) (> (string.string-length xmm-scratch) 0))
-        (* 16 (/ remaining 16))
-        0)]
-    (if (be_scalar.compiler-backend-copy-thunk-applies?
-      chunked
-      src-reg
-      dst-reg
-      backend-state)
-      (let
-        ;; The registry outlives this function and the emit-time arenas that
-        ;; host its texts, so the thunk body and the key are built in the
-        ;; state's own arena (see compiler-backend-copy-thunk-arena-ensure!).
-        [chunk-call : String
-          (in-arena
-            (compiler-backend-copy-thunk-arena-ensure! backend-state)
+    [fn-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state backend-state)]
+    [point : i64
+      (be_state.compiler-backend-function-state-emission-point fn-state)]
+    [occ : i64
+      (if (be_state.compiler-backend-function-scratch-bool?
+        fn-state
+        be_state.compiler-backend-scratch-bool-pair-emission)
+        (be_operand.compiler-backend-scavenge-occupied-mask-over-range
+          fn-state
+          point
+          (+ point be_operand.compiler-backend-scavenge-staging-window))
+        (be_operand.compiler-backend-scavenge-occupied-mask-at-point
+          fn-state
+          point))]
+    [reserved : i64
+      (be_state.compiler-backend-function-scratch-i64
+        fn-state
+        be_state.compiler-backend-scratch-i64-current-instr-reserved-mask)]
+    [protect-mask : i64
+      (be_operand.compiler-backend-scavenge-exclude-mask protect protect-n)]
+    (bit-or occ (bit-or reserved protect-mask))))
+
+;; Try to emit a canonical copy thunk call for `size` bytes (`size % 4 == 0`),
+;; materializing `(src + src-disp, dst + dst-disp)` into a free volatile pair
+;; and loading any spilled/remat operand directly into its canonical register.
+;; Returns `(Ok "")` to decline (caller emits inline); non-empty `(Ok asm)` on
+;; success; `(Err e)` on operand load failure.
+(define (compiler-backend-try-emit-canonical-copy-thunk
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst-val : (& compiler_ir_types.CompilerIrValue)]
+  [src-val : (& compiler_ir_types.CompilerIrValue)]
+  [dst-base : (& str)]
+  [src-base : (& str)]
+  [src-disp : i64]
+  [dst-disp : i64]
+  [size : i64]
+  [protect : (& (__tl_dyn-array String))]
+  [protect-n : i64]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (if (not (be_scalar.compiler-backend-copy-thunk-applies? size backend-state))
+    (Ok "")
+    (let
+      [forbidden : i64
+        (compiler-backend-copy-thunk-forbidden-mask
+          protect
+          protect-n
+          backend-state)]
+      [c-xmm : String (compiler-backend-copy-thunk-pick-xmm forbidden)]
+      (if (string.eq c-xmm "")
+        (Ok "")
+        (let
+          [size-count : i64
+            (be_scalar.compiler-backend-copy-thunk-size-count
+              backend-state
+              size)]
+          [opt-size? : bool
+            (be_state.compiler-backend-state-optimize-for-size? backend-state)]
+          [in-loop? : bool
             (let
-              ;; The key is built first: the body call takes ownership of the
-              ;; register spellings, the key only reads them.
-              [key : String
-                (compiler-backend-copy-thunk-key
-                  type-segment-bases
-                  remaining
-                  (& src-reg)
-                  (& dst-reg)
-                  (& gp-scratch)
-                  (& xmm-scratch)
-                  offset
-                  dst-bias)]
-              [body : String
-                (be_scalar.compiler-backend-emit-copy-bytes-chunks-inline
-                  type-segment-bases
-                  dst-reg
-                  src-reg
-                  gp-scratch
-                  xmm-scratch
-                  offset
-                  remaining
-                  dst-bias)]
-              (str_cat.str-cat
-                "    call "
-                (be_scalar.compiler-backend-copy-thunk-register
-                  key
-                  body
-                  backend-state)
-                "\n")))]
-        chunk-call)
-      (be_scalar.compiler-backend-emit-copy-bytes-chunks-inline
-        type-segment-bases
-        dst-reg
-        src-reg
-        gp-scratch
-        xmm-scratch
-        offset
-        remaining
-        dst-bias))))
+              [fn-state : be_state.CompilerBackendFunctionState
+                (be_state.compiler-backend-state-function-state backend-state)]
+              [cur-label : i64
+                (be_state.compiler-backend-function-state-i64
+                  fn-state
+                  be_state.compiler-backend-function-i64-current-block-label)]
+              (be_state.compiler-backend-function-loop-block?
+                fn-state
+                cur-label))]
+          [chosen-src : String ""]
+          [chosen-dst : String ""]
+          [chosen-dst-bias : i64 0]
+          [chosen-swap? : bool false]
+          [chosen-dst-first? : bool false]
+          [chosen-cost : i64 99]
+          [found? : bool false]
+          ;; Fast path: zero-setup direct read-only pair for hot 48..112 B
+          ;; shapes (neither base is written, so live-out / Win64 nonvolatile
+          ;; registers are untouched and call-site setup is 0 instructions).
+          (when
+            (and
+              (= src-disp 0)
+              (= dst-disp 0)
+              (string.eq (& c-xmm) "%xmm2")
+              (compiler-backend-copy-thunk-direct-pair?
+                src-base
+                dst-base
+                size
+                size-count))
+            (set! chosen-src (string.copy src-base))
+            (set! chosen-dst (string.copy dst-base))
+            (set! chosen-dst-bias 0)
+            (set! chosen-cost 0)
+            (set! found? true))
+          ;; Fast path for top enum-payload (`dst-disp == 8`) read-only pairs.
+          (when
+            (and
+              (not found?)
+              (= src-disp 0)
+              (= dst-disp 8)
+              (string.eq (& c-xmm) "%xmm2")
+              (compiler-backend-copy-thunk-direct-disp8-pair?
+                src-base
+                dst-base
+                size
+                size-count))
+            (set! chosen-src (string.copy src-base))
+            (set! chosen-dst (string.copy dst-base))
+            (set! chosen-dst-bias 8)
+            (set! chosen-cost 0)
+            (set! found? true))
+          (for [tier (iterator.range 0 3)]
+            (when
+              (> chosen-cost 0)
+              (let
+                [c-src : String (compiler-backend-copy-thunk-pair-src tier)]
+                [c-dst : String (compiler-backend-copy-thunk-pair-dst tier)]
+                ;; Tier 2 (%rcx,%rax) is only considered when dst is already
+                ;; in %rax with displacement 0, avoiding a setup move.
+                [tier-shape-ok? : bool
+                  (if (< tier 2)
+                    true
+                    (and
+                      (= dst-disp 0)
+                      (string.eq dst-base "%rax")
+                      (>= size 56)
+                      (<= size 112)
+                      (>= size-count 300)))]
+                ;; A canonical register needs a write unless the corresponding
+                ;; base is ALREADY that exact register with 0 displacement.
+                ;; Every register written by setup MUST be dead after the copy
+                ;; (0 in `forbidden`).
+                [src-needs-write? : bool
+                  (not (and (= src-disp 0) (string.eq src-base (& c-src))))]
+                [dst-needs-write? : bool
+                  (not (and (= dst-disp 0) (string.eq dst-base (& c-dst))))]
+                [src-ok? : bool
+                  (or
+                    (not src-needs-write?)
+                    (=
+                      (bit-and
+                        forbidden
+                        (be_operand.compiler-backend-scavenge-reg-bit (& c-src)))
+                      0))]
+                [dst-ok? : bool
+                  (or
+                    (not dst-needs-write?)
+                    (=
+                      (bit-and
+                        forbidden
+                        (be_operand.compiler-backend-scavenge-reg-bit (& c-dst)))
+                      0))]
+                [src-uses-cdst? : bool
+                  (and
+                    (not (string.eq src-base ""))
+                    (be_operand.compiler-backend-string-contains?
+                      src-base
+                      (& c-dst)))]
+                [dst-uses-csrc? : bool
+                  (and
+                    (not (string.eq dst-base ""))
+                    (be_operand.compiler-backend-string-contains?
+                      dst-base
+                      (& c-src)))]
+                [exact-swap? : bool
+                  (and
+                    src-uses-cdst?
+                    dst-uses-csrc?
+                    (= src-disp 0)
+                    (= dst-disp 0)
+                    (string.eq src-base (& c-dst))
+                    (string.eq dst-base (& c-src)))]
+                [parallel-ok? : bool
+                  (or (not (and src-uses-cdst? dst-uses-csrc?)) exact-swap?)]
+                [primary? : bool (and (= tier 0) (string.eq (& c-xmm) "%xmm2"))]
+                [setup-cost : i64
+                  (if exact-swap?
+                    1
+                    (+
+                      (if (or (string.eq src-base "") (not src-needs-write?))
+                        0
+                        1)
+                      (if (or
+                        (and (string.eq dst-base "") (= dst-disp 0))
+                        (not dst-needs-write?))
+                        0
+                        1)))]
+                ;; At -O2:
+                ;; - Outside loops, >=56 B copies use canonical thunks; 48..52 B
+                ;;   uses canonical thunks only when setup-cost == 0.
+                ;; - Inside loops, <=104 B copies needing 2 setup moves stay
+                ;;   inline to avoid per-iteration setup+call+ret overhead.
+                [o2-cost-ok? : bool
+                  (or
+                    opt-size?
+                    (if in-loop?
+                      (not (and (= setup-cost 2) (<= size 104)))
+                      (or (>= size 56) (= setup-cost 0))))]
+                (when
+                  (and
+                    tier-shape-ok?
+                    o2-cost-ok?
+                    (< setup-cost chosen-cost)
+                    src-ok?
+                    dst-ok?
+                    parallel-ok?
+                    (or
+                      primary?
+                      (and
+                        (>= size 48)
+                        (let
+                          [probe-key : String
+                            (compiler-backend-copy-thunk-key
+                              size
+                              (& c-src)
+                              (& c-dst)
+                              0
+                              (& c-xmm))]
+                          (or
+                            (be_scalar.compiler-backend-copy-thunk-registered?
+                              (& probe-key)
+                              backend-state)
+                            (and
+                              (= tier 1)
+                              (string.eq (& c-xmm) "%xmm2")
+                              (>= size-count 6))
+                            (and
+                              (= tier 2)
+                              (string.eq (& c-xmm) "%xmm2")
+                              (<= size 112)
+                              (>= size-count 300))
+                            (and
+                              (>=
+                                size
+                                be_scalar.compiler-backend-copy-thunk-loop-min-bytes)
+                              (>= size-count 32))))))
+                    (compiler-backend-copy-thunk-small-profitable?
+                      size
+                      src-base
+                      src-disp
+                      dst-base
+                      dst-disp
+                      (& c-src)
+                      (& c-dst)))
+                  (set! chosen-src c-src)
+                  (set! chosen-dst c-dst)
+                  (set! chosen-dst-bias 0)
+                  (set! chosen-swap? exact-swap?)
+                  (set!
+                    chosen-dst-first?
+                    (and dst-uses-csrc? (not exact-swap?)))
+                  (set! chosen-cost setup-cost)
+                  (set! found? true)))))
+          (if (not found?)
+            (Ok "")
+            (let
+              ;; Step 1: parallel register/SIB setup for any register-homed
+              ;; operands (runs BEFORE loading spilled/remat operands so
+              ;; direct loads into `chosen-src`/`chosen-dst` never clobber a
+              ;; register still waiting to be read).
+              [reg-setup : String
+                (if chosen-swap?
+                  (str_cat.str-cat
+                    "    xchgq "
+                    (string.copy (& chosen-src))
+                    ", "
+                    (string.copy (& chosen-dst))
+                    "\n")
+                  (let
+                    [src-setup : String
+                      (compiler-backend-copy-thunk-setup-one-asm
+                        src-base
+                        src-disp
+                        (& chosen-src))]
+                    [dst-setup : String
+                      (compiler-backend-copy-thunk-setup-one-asm
+                        dst-base
+                        (- dst-disp chosen-dst-bias)
+                        (& chosen-dst))]
+                    (if chosen-dst-first?
+                      (str_cat.str-cat dst-setup src-setup)
+                      (str_cat.str-cat src-setup dst-setup))))]
+              ;; Step 2: load any spilled/remat operand directly into its
+              ;; canonical register (reading no GP register).
+              [dst-load-asm : String
+                (try
+                  (if (string.eq dst-base "")
+                    (match (be_operand.compiler-backend-emit-load-value
+                      assignments
+                      dst-val
+                      (string.copy (& chosen-dst))
+                      backend-state)
+                      [(Ok load-asm)
+                        (if (= dst-disp 0)
+                          (be_state.ResultCompilerBackend.Ok load-asm)
+                          (be_state.ResultCompilerBackend.Ok
+                            (str_cat.str-cat
+                              load-asm
+                              "    leaq "
+                              (string.int->string dst-disp)
+                              "("
+                              (string.copy (& chosen-dst))
+                              "), "
+                              (string.copy (& chosen-dst))
+                              "\n")))]
+                      [(Err message)
+                        (be_state.ResultCompilerBackend.Err message)])
+                    (be_state.ResultCompilerBackend.Ok "")))]
+              [src-load-asm : String
+                (try
+                  (if (string.eq src-base "")
+                    (be_operand.compiler-backend-emit-load-value
+                      assignments
+                      src-val
+                      (string.copy (& chosen-src))
+                      backend-state)
+                    (be_state.ResultCompilerBackend.Ok "")))]
+              [call-asm : String
+                (in-arena
+                  (compiler-backend-copy-thunk-arena-ensure! backend-state)
+                  (let
+                    [key : String
+                      (compiler-backend-copy-thunk-key
+                        size
+                        (& chosen-src)
+                        (& chosen-dst)
+                        chosen-dst-bias
+                        (& c-xmm))]
+                    [body : String
+                      (if (be_scalar.compiler-backend-copy-thunk-registered?
+                        (& key)
+                        backend-state)
+                        ""
+                        (be_scalar.compiler-backend-emit-copy-bytes-chunks-canonical
+                          (& chosen-dst)
+                          (& chosen-src)
+                          (& c-xmm)
+                          0
+                          size
+                          chosen-dst-bias))]
+                    (str_cat.str-cat
+                      "    call "
+                      (be_scalar.compiler-backend-copy-thunk-register
+                        key
+                        body
+                        backend-state)
+                      "\n")))]
+              (Ok
+                (str_cat.str-cat reg-setup dst-load-asm src-load-asm call-asm)))))))))
 
 (define (compiler-backend-emit-copy-bytes-avoid
   [type-segment-bases : i64]
@@ -768,88 +1284,105 @@
             backend-state
             assignments
             dst))]
-      [dst-reg : String
-        (if (string.eq dst-home "")
-          (be_operand.compiler-backend-scavenge-reg-here
-            (be_state.compiler-backend-global-shared-view protect)
-            protect-n
-            "%r10"
-            backend-state)
-          (owned_view.compiler-owned-shared-view dst-home))]
-      [dst-asm
-        (try
-          (if (string.eq dst-home "")
-            (be_operand.compiler-backend-emit-load-value
-              assignments
-              dst
-              (be_state.compiler-backend-global-shared-view dst-reg)
-              backend-state)
-            (be_state.ResultCompilerBackend.Ok "")))]
       [src-home : String
         (be_facts.compiler-backend-address-base-filter-direct
           (be_facts.compiler-backend-value-register-home
             backend-state
             assignments
             src))]
-      [src-exclude-base : (__tl_dyn-array String)
-        (be_operand.compiler-backend-one-exclude
-          (be_state.compiler-backend-global-shared-view dst-reg))]
-      [src-exclude : (__tl_dyn-array String)
-        (be_scalar.compiler-backend-scavenge-exclude-merge
-          src-exclude-base
-          1
-          protect
-          protect-n)]
-      [src-reg : String
-        (if (string.eq src-home "")
-          (be_operand.compiler-backend-scavenge-reg-here
-            src-exclude
-            (+ 1 protect-n)
-            "%r9"
-            backend-state)
-          (owned_view.compiler-owned-shared-view src-home))]
-      [copy-xmm : String (compiler-backend-copy-xmm-scratch size backend-state)]
-      [copy-gp-exclude-base : (__tl_dyn-array String)
-        (be_operand.compiler-backend-two-exclude
-          (be_state.compiler-backend-global-shared-view dst-reg)
-          (be_state.compiler-backend-global-shared-view src-reg))]
-      [copy-gp-exclude : (__tl_dyn-array String)
-        (be_scalar.compiler-backend-scavenge-exclude-merge
-          copy-gp-exclude-base
-          2
-          protect
-          protect-n)]
-      [copy-gp : String
-        (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-          (be_operand.compiler-backend-scavenge-reg-here
-            copy-gp-exclude
-            (+ 2 protect-n)
-            "%r8"
-            backend-state)
-          "")]
-      [src-asm
+      [thunk-asm : String
         (try
-          (if (string.eq src-home "")
-            (be_operand.compiler-backend-emit-load-value
-              assignments
-              src
-              (be_state.compiler-backend-global-shared-view src-reg)
-              backend-state)
-            (be_state.ResultCompilerBackend.Ok "")))]
-      (Ok
-        (str_cat.str-cat
-          dst-asm
-          src-asm
-          (compiler-backend-emit-copy-bytes-chunks
-            type-segment-bases
-            dst-reg
-            src-reg
-            copy-gp
-            copy-xmm
+          (compiler-backend-try-emit-canonical-copy-thunk
+            assignments
+            (& dst)
+            (& src)
+            (& dst-home)
+            (& src-home)
+            0
             0
             size
-            0
-            backend-state))))))
+            (& protect)
+            protect-n
+            backend-state))]
+      (if (not (string.eq (& thunk-asm) ""))
+        (Ok thunk-asm)
+        (let
+          [dst-reg : String
+            (if (string.eq dst-home "")
+              (be_operand.compiler-backend-scavenge-reg-here
+                (be_state.compiler-backend-global-shared-view protect)
+                protect-n
+                "%r10"
+                backend-state)
+              (owned_view.compiler-owned-shared-view dst-home))]
+          [dst-asm
+            (try
+              (if (string.eq dst-home "")
+                (be_operand.compiler-backend-emit-load-value
+                  assignments
+                  dst
+                  (be_state.compiler-backend-global-shared-view dst-reg)
+                  backend-state)
+                (be_state.ResultCompilerBackend.Ok "")))]
+          [src-exclude-base : (__tl_dyn-array String)
+            (be_operand.compiler-backend-one-exclude
+              (be_state.compiler-backend-global-shared-view dst-reg))]
+          [src-exclude : (__tl_dyn-array String)
+            (be_scalar.compiler-backend-scavenge-exclude-merge
+              src-exclude-base
+              1
+              protect
+              protect-n)]
+          [src-reg : String
+            (if (string.eq src-home "")
+              (be_operand.compiler-backend-scavenge-reg-here
+                src-exclude
+                (+ 1 protect-n)
+                "%r9"
+                backend-state)
+              (owned_view.compiler-owned-shared-view src-home))]
+          [copy-xmm : String
+            (compiler-backend-copy-xmm-scratch size backend-state)]
+          [copy-gp-exclude-base : (__tl_dyn-array String)
+            (be_operand.compiler-backend-two-exclude
+              (be_state.compiler-backend-global-shared-view dst-reg)
+              (be_state.compiler-backend-global-shared-view src-reg))]
+          [copy-gp-exclude : (__tl_dyn-array String)
+            (be_scalar.compiler-backend-scavenge-exclude-merge
+              copy-gp-exclude-base
+              2
+              protect
+              protect-n)]
+          [copy-gp : String
+            (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+              (be_operand.compiler-backend-scavenge-reg-here
+                copy-gp-exclude
+                (+ 2 protect-n)
+                "%r8"
+                backend-state)
+              "")]
+          [src-asm
+            (try
+              (if (string.eq src-home "")
+                (be_operand.compiler-backend-emit-load-value
+                  assignments
+                  src
+                  (be_state.compiler-backend-global-shared-view src-reg)
+                  backend-state)
+                (be_state.ResultCompilerBackend.Ok "")))]
+          (Ok
+            (str_cat.str-cat
+              dst-asm
+              src-asm
+              (be_scalar.compiler-backend-emit-copy-bytes-chunks-inline
+                type-segment-bases
+                dst-reg
+                src-reg
+                copy-gp
+                copy-xmm
+                0
+                size
+                0))))))))
 
 (define (compiler-backend-emit-copy-bytes
   [type-segment-bases : i64]
@@ -957,98 +1490,117 @@
           backend-state
           assignments
           src))]
-    [dst-reg : String
-      (if (string.eq base-home "")
-        (be_operand.compiler-backend-scavenge-reg-here
-          (be_scalar.compiler-backend-scavenge-exclude-merge
-            (be_operand.compiler-backend-one-exclude
-              (be_state.compiler-backend-global-shared-view src-home))
-            1
-            protect
-            protect-n)
-          (+ 1 protect-n)
-          "%r10"
-          backend-state)
-        (owned_view.compiler-owned-shared-view base-home))]
-    [dst-asm
+    [thunk-asm : String
       (try
-        (if (string.eq base-home "")
-          (match (be_operand.compiler-backend-emit-load-value
+        (if near?
+          (compiler-backend-try-emit-canonical-copy-thunk
             assignments
-            base
-            (be_state.compiler-backend-global-shared-view dst-reg)
-            backend-state)
-            [(Ok load-asm)
-              (if near?
-                (be_state.ResultCompilerBackend.Ok load-asm)
-                (match (be_scalar.compiler-backend-gep-immediate-base-asm
-                  dst-reg
-                  disp)
-                  [(Some fold-asm)
-                    (be_state.ResultCompilerBackend.Ok
-                      (str_cat.str-cat load-asm fold-asm))]
-                  [(No)
-                    (be_state.ResultCompilerBackend.Err
-                      (box
-                        (compiler_diagnostic.compiler-diagnostic-at-start
-                          ""
-                          "backend: fused gep copy displacement out of range")))]))]
-            [(Err message) (be_state.ResultCompilerBackend.Err message)])
-          (be_state.ResultCompilerBackend.Ok "")))]
-    [src-reg : String
-      (if (string.eq src-home "")
-        (be_operand.compiler-backend-scavenge-reg-here
-          (be_scalar.compiler-backend-scavenge-exclude-merge
-            (be_operand.compiler-backend-one-exclude
-              (be_state.compiler-backend-global-shared-view dst-reg))
-            1
-            protect
-            protect-n)
-          (+ 1 protect-n)
-          "%r9"
-          backend-state)
-        (owned_view.compiler-owned-shared-view src-home))]
-    [copy-xmm : String (compiler-backend-copy-xmm-scratch size backend-state)]
-    [copy-gp : String
-      (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-        (be_operand.compiler-backend-scavenge-reg-here
-          (be_scalar.compiler-backend-scavenge-exclude-merge
-            (be_operand.compiler-backend-two-exclude
-              (be_state.compiler-backend-global-shared-view dst-reg)
-              (be_state.compiler-backend-global-shared-view src-reg))
-            2
-            protect
-            protect-n)
-          (+ 2 protect-n)
-          "%r8"
-          backend-state)
-        "")]
-    [src-asm
-      (try
-        (if (string.eq src-home "")
-          (be_operand.compiler-backend-emit-load-value
-            assignments
-            src
-            (be_state.compiler-backend-global-shared-view src-reg)
-            backend-state)
-          (be_state.ResultCompilerBackend.Ok "")))]
-    (Ok
-      (str_cat.str-cat
-        dst-asm
-        (str_cat.str-cat
-          src-asm
-          (compiler-backend-emit-copy-bytes-chunks
-            type-segment-bases
-            dst-reg
-            src-reg
-            copy-gp
-            copy-xmm
+            (& base)
+            (& src)
+            (& base-home)
+            (& src-home)
             0
+            disp
             size
-            (if near?
-              disp
-              0)
-            backend-state))))))
+            (& protect)
+            protect-n
+            backend-state)
+          (be_state.ResultCompilerBackend.Ok "")))]
+    (if (not (string.eq (& thunk-asm) ""))
+      (Ok thunk-asm)
+      (let
+        [dst-reg : String
+          (if (string.eq base-home "")
+            (be_operand.compiler-backend-scavenge-reg-here
+              (be_scalar.compiler-backend-scavenge-exclude-merge
+                (be_operand.compiler-backend-one-exclude
+                  (be_state.compiler-backend-global-shared-view src-home))
+                1
+                protect
+                protect-n)
+              (+ 1 protect-n)
+              "%r10"
+              backend-state)
+            (owned_view.compiler-owned-shared-view base-home))]
+        [dst-asm
+          (try
+            (if (string.eq base-home "")
+              (match (be_operand.compiler-backend-emit-load-value
+                assignments
+                base
+                (be_state.compiler-backend-global-shared-view dst-reg)
+                backend-state)
+                [(Ok load-asm)
+                  (if near?
+                    (be_state.ResultCompilerBackend.Ok load-asm)
+                    (match (be_scalar.compiler-backend-gep-immediate-base-asm
+                      dst-reg
+                      disp)
+                      [(Some fold-asm)
+                        (be_state.ResultCompilerBackend.Ok
+                          (str_cat.str-cat load-asm fold-asm))]
+                      [(No)
+                        (be_state.ResultCompilerBackend.Err
+                          (box
+                            (compiler_diagnostic.compiler-diagnostic-at-start
+                              ""
+                              "backend: fused gep copy displacement out of range")))]))]
+                [(Err message) (be_state.ResultCompilerBackend.Err message)])
+              (be_state.ResultCompilerBackend.Ok "")))]
+        [src-reg : String
+          (if (string.eq src-home "")
+            (be_operand.compiler-backend-scavenge-reg-here
+              (be_scalar.compiler-backend-scavenge-exclude-merge
+                (be_operand.compiler-backend-one-exclude
+                  (be_state.compiler-backend-global-shared-view dst-reg))
+                1
+                protect
+                protect-n)
+              (+ 1 protect-n)
+              "%r9"
+              backend-state)
+            (owned_view.compiler-owned-shared-view src-home))]
+        [copy-xmm : String
+          (compiler-backend-copy-xmm-scratch size backend-state)]
+        [copy-gp : String
+          (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+            (be_operand.compiler-backend-scavenge-reg-here
+              (be_scalar.compiler-backend-scavenge-exclude-merge
+                (be_operand.compiler-backend-two-exclude
+                  (be_state.compiler-backend-global-shared-view dst-reg)
+                  (be_state.compiler-backend-global-shared-view src-reg))
+                2
+                protect
+                protect-n)
+              (+ 2 protect-n)
+              "%r8"
+              backend-state)
+            "")]
+        [src-asm
+          (try
+            (if (string.eq src-home "")
+              (be_operand.compiler-backend-emit-load-value
+                assignments
+                src
+                (be_state.compiler-backend-global-shared-view src-reg)
+                backend-state)
+              (be_state.ResultCompilerBackend.Ok "")))]
+        (Ok
+          (str_cat.str-cat
+            dst-asm
+            (str_cat.str-cat
+              src-asm
+              (be_scalar.compiler-backend-emit-copy-bytes-chunks-inline
+                type-segment-bases
+                dst-reg
+                src-reg
+                copy-gp
+                copy-xmm
+                0
+                size
+                (if near?
+                  disp
+                  0)))))))))
 
 ;; Dynamic-index fused Gep+CopyBytes. The element address still composes into
 ;; a scavenged scratch (the chunk copies need one persistent base register),
@@ -1150,59 +1702,75 @@
               protect-n
               gep-disp
               backend-state))]
-        [src-reg : String
-          (if (string.eq src-home "")
-            (be_operand.compiler-backend-scavenge-reg-here
-              (be_scalar.compiler-backend-scavenge-exclude-merge
-                (be_operand.compiler-backend-one-exclude
-                  (be_state.compiler-backend-global-shared-view scav-base))
-                1
-                protect
-                protect-n)
-              (+ 1 protect-n)
-              "%r9"
-              backend-state)
-            (owned_view.compiler-owned-shared-view src-home))]
-        [copy-xmm : String
-          (compiler-backend-copy-xmm-scratch size backend-state)]
-        [copy-gp : String
-          (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-            (be_operand.compiler-backend-scavenge-reg-here
-              (be_scalar.compiler-backend-scavenge-exclude-merge
-                (be_operand.compiler-backend-two-exclude
-                  (be_state.compiler-backend-global-shared-view scav-base)
-                  (be_state.compiler-backend-global-shared-view src-reg))
-                2
-                protect
-                protect-n)
-              (+ 2 protect-n)
-              "%r8"
-              backend-state)
-            "")]
-        [src-asm
+        [thunk-asm : String
           (try
-            (if (string.eq src-home "")
-              (be_operand.compiler-backend-emit-load-value
-                assignments
-                src
-                (be_state.compiler-backend-global-shared-view src-reg)
-                backend-state)
-              (be_state.ResultCompilerBackend.Ok "")))]
-        (Ok
-          (str_cat.str-cat
-            addr-asm
-            (str_cat.str-cat
-              src-asm
-              (compiler-backend-emit-copy-bytes-chunks
-                type-segment-bases
-                scav-base
-                src-reg
-                copy-gp
-                copy-xmm
-                0
-                size
-                0
-                backend-state))))))))
+            (compiler-backend-try-emit-canonical-copy-thunk
+              assignments
+              (& src)
+              (& src)
+              (& scav-base)
+              (& src-home)
+              0
+              0
+              size
+              (& protect)
+              protect-n
+              backend-state))]
+        (if (not (string.eq (& thunk-asm) ""))
+          (Ok (str_cat.str-cat addr-asm thunk-asm))
+          (let
+            [src-reg : String
+              (if (string.eq src-home "")
+                (be_operand.compiler-backend-scavenge-reg-here
+                  (be_scalar.compiler-backend-scavenge-exclude-merge
+                    (be_operand.compiler-backend-one-exclude
+                      (be_state.compiler-backend-global-shared-view scav-base))
+                    1
+                    protect
+                    protect-n)
+                  (+ 1 protect-n)
+                  "%r9"
+                  backend-state)
+                (owned_view.compiler-owned-shared-view src-home))]
+            [copy-xmm : String
+              (compiler-backend-copy-xmm-scratch size backend-state)]
+            [copy-gp : String
+              (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+                (be_operand.compiler-backend-scavenge-reg-here
+                  (be_scalar.compiler-backend-scavenge-exclude-merge
+                    (be_operand.compiler-backend-two-exclude
+                      (be_state.compiler-backend-global-shared-view scav-base)
+                      (be_state.compiler-backend-global-shared-view src-reg))
+                    2
+                    protect
+                    protect-n)
+                  (+ 2 protect-n)
+                  "%r8"
+                  backend-state)
+                "")]
+            [src-asm
+              (try
+                (if (string.eq src-home "")
+                  (be_operand.compiler-backend-emit-load-value
+                    assignments
+                    src
+                    (be_state.compiler-backend-global-shared-view src-reg)
+                    backend-state)
+                  (be_state.ResultCompilerBackend.Ok "")))]
+            (Ok
+              (str_cat.str-cat
+                addr-asm
+                (str_cat.str-cat
+                  src-asm
+                  (be_scalar.compiler-backend-emit-copy-bytes-chunks-inline
+                    type-segment-bases
+                    scav-base
+                    src-reg
+                    copy-gp
+                    copy-xmm
+                    0
+                    size
+                    0))))))))))
 
 ;; The constant part of a gep element's byte displacement (0 for a dynamic
 ;; index). Callers add the GAP9 fold on top; for a constant offset that fold is
@@ -1251,58 +1819,75 @@
           backend-state
           assignments
           dst))]
-    [dst-reg : String
-      (if (string.eq dst-home "")
-        (be_operand.compiler-backend-scavenge-reg-here
-          (be_scalar.compiler-backend-scavenge-exclude-merge
-            (be_operand.compiler-backend-two-exclude
-              (be_state.compiler-backend-global-shared-view operand-a)
-              (be_state.compiler-backend-global-shared-view operand-b))
-            2
-            protect
-            protect-n)
-          (+ 2 protect-n)
-          "%r10"
-          backend-state)
-        (owned_view.compiler-owned-shared-view dst-home))]
-    [dst-asm
+    [thunk-asm : String
       (try
-        (if (string.eq dst-home "")
-          (be_operand.compiler-backend-emit-load-value
-            assignments
-            dst
-            (be_state.compiler-backend-global-shared-view dst-reg)
-            backend-state)
-          (be_state.ResultCompilerBackend.Ok "")))]
-    [copy-xmm : String (compiler-backend-copy-xmm-scratch size backend-state)]
-    [copy-gp : String
-      (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-        (be_operand.compiler-backend-scavenge-reg-here
-          (be_scalar.compiler-backend-scavenge-exclude-merge
-            (be_operand.compiler-backend-three-exclude
-              (be_state.compiler-backend-global-shared-view dst-reg)
-              operand-a
-              operand-b)
-            3
-            protect
-            protect-n)
-          (+ 3 protect-n)
-          "%r8"
-          backend-state)
-        "")]
-    (Ok
-      (str_cat.str-cat
-        dst-asm
-        (compiler-backend-emit-copy-bytes-chunks
-          type-segment-bases
-          dst-reg
-          src-spelling
-          copy-gp
-          copy-xmm
+        (compiler-backend-try-emit-canonical-copy-thunk
+          assignments
+          (& dst)
+          (& dst)
+          (& dst-home)
+          (& src-spelling)
           src-disp
+          0
           size
-          (- 0 src-disp)
-          backend-state)))))
+          (& protect)
+          protect-n
+          backend-state))]
+    (if (not (string.eq (& thunk-asm) ""))
+      (Ok thunk-asm)
+      (let
+        [dst-reg : String
+          (if (string.eq dst-home "")
+            (be_operand.compiler-backend-scavenge-reg-here
+              (be_scalar.compiler-backend-scavenge-exclude-merge
+                (be_operand.compiler-backend-two-exclude
+                  (be_state.compiler-backend-global-shared-view operand-a)
+                  (be_state.compiler-backend-global-shared-view operand-b))
+                2
+                protect
+                protect-n)
+              (+ 2 protect-n)
+              "%r10"
+              backend-state)
+            (owned_view.compiler-owned-shared-view dst-home))]
+        [dst-asm
+          (try
+            (if (string.eq dst-home "")
+              (be_operand.compiler-backend-emit-load-value
+                assignments
+                dst
+                (be_state.compiler-backend-global-shared-view dst-reg)
+                backend-state)
+              (be_state.ResultCompilerBackend.Ok "")))]
+        [copy-xmm : String
+          (compiler-backend-copy-xmm-scratch size backend-state)]
+        [copy-gp : String
+          (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+            (be_operand.compiler-backend-scavenge-reg-here
+              (be_scalar.compiler-backend-scavenge-exclude-merge
+                (be_operand.compiler-backend-three-exclude
+                  (be_state.compiler-backend-global-shared-view dst-reg)
+                  operand-a
+                  operand-b)
+                3
+                protect
+                protect-n)
+              (+ 3 protect-n)
+              "%r8"
+              backend-state)
+            "")]
+        (Ok
+          (str_cat.str-cat
+            dst-asm
+            (be_scalar.compiler-backend-emit-copy-bytes-chunks-inline
+              type-segment-bases
+              dst-reg
+              src-spelling
+              copy-gp
+              copy-xmm
+              src-disp
+              size
+              (- 0 src-disp))))))))
 
 ;; Destination-side twin of the emitter above: the gep element is the copy
 ;; DESTINATION, so `dst-spelling` addresses the chunk STORES and the source
@@ -1340,58 +1925,75 @@
           backend-state
           assignments
           src))]
-    [src-reg : String
-      (if (string.eq src-home "")
-        (be_operand.compiler-backend-scavenge-reg-here
-          (be_scalar.compiler-backend-scavenge-exclude-merge
-            (be_operand.compiler-backend-two-exclude
-              (be_state.compiler-backend-global-shared-view operand-a)
-              (be_state.compiler-backend-global-shared-view operand-b))
-            2
-            protect
-            protect-n)
-          (+ 2 protect-n)
-          "%r9"
-          backend-state)
-        (owned_view.compiler-owned-shared-view src-home))]
-    [src-asm
+    [thunk-asm : String
       (try
-        (if (string.eq src-home "")
-          (be_operand.compiler-backend-emit-load-value
-            assignments
-            src
-            (be_state.compiler-backend-global-shared-view src-reg)
-            backend-state)
-          (be_state.ResultCompilerBackend.Ok "")))]
-    [copy-xmm : String (compiler-backend-copy-xmm-scratch size backend-state)]
-    [copy-gp : String
-      (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-        (be_operand.compiler-backend-scavenge-reg-here
-          (be_scalar.compiler-backend-scavenge-exclude-merge
-            (be_operand.compiler-backend-three-exclude
-              (be_state.compiler-backend-global-shared-view src-reg)
-              operand-a
-              operand-b)
-            3
-            protect
-            protect-n)
-          (+ 3 protect-n)
-          "%r8"
-          backend-state)
-        "")]
-    (Ok
-      (str_cat.str-cat
-        src-asm
-        (compiler-backend-emit-copy-bytes-chunks
-          type-segment-bases
-          dst-spelling
-          src-reg
-          copy-gp
-          copy-xmm
+        (compiler-backend-try-emit-canonical-copy-thunk
+          assignments
+          (& src)
+          (& src)
+          (& dst-spelling)
+          (& src-home)
           0
-          size
           dst-disp
-          backend-state)))))
+          size
+          (& protect)
+          protect-n
+          backend-state))]
+    (if (not (string.eq (& thunk-asm) ""))
+      (Ok thunk-asm)
+      (let
+        [src-reg : String
+          (if (string.eq src-home "")
+            (be_operand.compiler-backend-scavenge-reg-here
+              (be_scalar.compiler-backend-scavenge-exclude-merge
+                (be_operand.compiler-backend-two-exclude
+                  (be_state.compiler-backend-global-shared-view operand-a)
+                  (be_state.compiler-backend-global-shared-view operand-b))
+                2
+                protect
+                protect-n)
+              (+ 2 protect-n)
+              "%r9"
+              backend-state)
+            (owned_view.compiler-owned-shared-view src-home))]
+        [src-asm
+          (try
+            (if (string.eq src-home "")
+              (be_operand.compiler-backend-emit-load-value
+                assignments
+                src
+                (be_state.compiler-backend-global-shared-view src-reg)
+                backend-state)
+              (be_state.ResultCompilerBackend.Ok "")))]
+        [copy-xmm : String
+          (compiler-backend-copy-xmm-scratch size backend-state)]
+        [copy-gp : String
+          (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
+            (be_operand.compiler-backend-scavenge-reg-here
+              (be_scalar.compiler-backend-scavenge-exclude-merge
+                (be_operand.compiler-backend-three-exclude
+                  (be_state.compiler-backend-global-shared-view src-reg)
+                  operand-a
+                  operand-b)
+                3
+                protect
+                protect-n)
+              (+ 3 protect-n)
+              "%r8"
+              backend-state)
+            "")]
+        (Ok
+          (str_cat.str-cat
+            src-asm
+            (be_scalar.compiler-backend-emit-copy-bytes-chunks-inline
+              type-segment-bases
+              dst-spelling
+              src-reg
+              copy-gp
+              copy-xmm
+              0
+              size
+              dst-disp)))))))
 
 (define (compiler-backend-var-value-seq [count : i64] [idx : i64]) : compiler_ir_types.CompilerIrValueSeq
   (let
@@ -14614,6 +15216,354 @@
           (& dst)
           ty)))))
 
+(define (compiler-backend-direct-stack-param-note-use!
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [var : i64]
+  [remaining : i64]) : i64
+  (when
+    (and
+      (>= var 0)
+      (< var (array-length offsets))
+      (> (array-ref offsets var) 0))
+    (let
+      [next : i64 (+ (array-ref refs var) 1)]
+      (set! (array-ref refs var) next)
+      (when (> next 16) (set! (array-ref offsets var) 0) (-= remaining 1))))
+  remaining)
+
+(define (compiler-backend-direct-stack-param-count-uses!
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [instr : (& compiler_ir_types.CompilerIrInstr)]
+  [remaining : i64]) : i64
+  (let
+    [ids : (__tl_dyn-array i64) (compiler_liveness.compiler-live-instr-ids)]
+    [id-count : i64 (compiler_liveness.compiler-live-instr-use-ids! instr)]
+    (if (< id-count 0)
+      (let
+        [uses : compiler_liveness.CompilerLiveI64Set
+          (compiler_liveness.compiler-live-instr-uses instr)]
+        [word-count : i64
+          (compiler_liveness.compiler-live-set-word-count (& uses))]
+        [word-bits : i64 (compiler_liveness.compiler-live-set-word-bits)]
+        (for [w (iterator.range 0 word-count)]
+          (let
+            [bits : i64
+              (compiler_liveness.compiler-live-set-word-at-bounded (& uses) w)]
+            [base : i64 (* w word-bits)]
+            (while (!= bits 0)
+              (let
+                [bit : i64
+                  (compiler_regalloc.compiler-reg-low-bit-index32 bits)]
+                (set!
+                  remaining
+                  (compiler-backend-direct-stack-param-note-use!
+                    offsets
+                    refs
+                    (+ base bit)
+                    remaining))
+                (when (<= remaining 0) (return 0))
+                (set! bits (bit-and bits (- bits 1))))))))
+      (for [index (iterator.range 0 id-count)]
+        (set!
+          remaining
+          (compiler-backend-direct-stack-param-note-use!
+            offsets
+            refs
+            (array-ref ids index)
+            remaining))
+        (when (<= remaining 0) (return 0))))
+    remaining))
+
+(define (compiler-backend-direct-stack-param-filter-instr!
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [source-function : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [block-label : i64]
+  [frame-may-escape-state : (&mut frame-may-escape-state (__tl_dyn-array i64))]
+  [instr : (& compiler_ir_types.CompilerIrInstr)]
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [count-hot? : bool]
+  [remaining : i64]) : i64
+  (match instr
+    [(TailCallIndirect _ _ _) (return 0)]
+    [(TailCall callee args _)
+      (when
+        (be_calls.compiler-backend-tail-call-writes-stack-args?
+          type-segment-bases
+          target
+          source-function
+          callee
+          (compiler_ir_types.compiler-ir-call-args-count (& args))
+          program-index)
+        (let
+          [known : i64 (array-ref frame-may-escape-state 0)]
+          [may-escape? : bool
+            (if (= known 0)
+              (let
+                [computed : bool
+                  (compiler_ir_types.compiler-ir-blocks-frame-may-escape?
+                    blocks)]
+                (set!
+                  (array-ref frame-may-escape-state 0)
+                  (if computed
+                    2
+                    1))
+                computed)
+              (= known 2))]
+          (unless
+            (compiler_ir_types.compiler-ir-blocks-expose-frame-at-given?
+              blocks
+              may-escape?
+              block-label)
+            (return 0))))]
+    [(AddrOf _ src _)
+      (when
+        (and
+          (>= src 0)
+          (< src (array-length offsets))
+          (> (array-ref offsets src) 0))
+        (set! (array-ref offsets src) 0)
+        (-= remaining 1))]
+    [_ unit])
+  (let
+    [dst : i64 (compiler_ir_types.compiler-ir-instr-dst instr)]
+    (when
+      (and
+        (>= dst 0)
+        (< dst (array-length offsets))
+        (> (array-ref offsets dst) 0))
+      (set! (array-ref offsets dst) 0)
+      (-= remaining 1)))
+  (if (and count-hot? (> remaining 0))
+    (compiler-backend-direct-stack-param-count-uses!
+      offsets
+      refs
+      instr
+      remaining)
+    remaining))
+
+(define (compiler-backend-direct-stack-param-filter-instrs!
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [source-function : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [block-label : i64]
+  [frame-may-escape-state : (&mut frame-may-escape-state (__tl_dyn-array i64))]
+  [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [count-hot? : bool]
+  [remaining : i64]) : i64
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+    (for [i (iterator.range 0 count)]
+      (set!
+        remaining
+        (compiler-backend-direct-stack-param-filter-instr!
+          type-segment-bases
+          target
+          source-function
+          program-index
+          blocks
+          block-label
+          frame-may-escape-state
+          (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
+          offsets
+          refs
+          count-hot?
+          remaining))
+      (when (<= remaining 0) (return 0))))
+  remaining)
+
+;; Filter candidate direct-home incoming stack parameters against the function
+;; body in one pass: any TailCallIndirect or stack-arg-writing direct TailCall
+;; disqualifies the whole function (caller incoming stack-arg slots can be
+;; overwritten before the tail jump), any AddrOf or instruction/Phi write
+;; disqualifies that parameter, and in large frames (`count-hot?`) any
+;; candidate with >16 body uses is disqualified so it keeps a disp8 local slot.
+(define (compiler-backend-direct-stack-param-filter-blocks!
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [source-function : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [count-hot? : bool]
+  [remaining : i64]) : i64
+  (let
+    [frame-may-escape-state : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [refs : (__tl_dyn-array i64)
+      (if count-hot?
+        (__tl_make-array i64 (array-length offsets))
+        (__tl_make-array i64 0))]
+    (match blocks
+      [(Array seq)
+        (for [b
+          (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count seq))]
+          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+            [(Block block-label instrs)
+              (set!
+                remaining
+                (compiler-backend-direct-stack-param-filter-instrs!
+                  type-segment-bases
+                  target
+                  source-function
+                  program-index
+                  blocks
+                  block-label
+                  (&mut frame-may-escape-state)
+                  (& instrs)
+                  offsets
+                  (&mut refs)
+                  count-hot?
+                  remaining))
+              (when (<= remaining 0) (return 0))]))]))
+  remaining)
+
+;; Identify incoming 8-byte scalar/f64 stack parameters that can be read
+;; directly from their caller-frame stack homes (`16+8*idx` SysV,
+;; `48+8*idx` Win64) without a prologue copy or local spill slot.
+(define (compiler-backend-direct-stack-param-offsets
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [mode : be_state.CompilerBackendMode]
+  [scalar-registers-enabled : bool]
+  [name : i64]
+  [params : (& compiler_ir_types.CompilerIrParamSeq)]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [plan : (& compiler_regalloc.CompilerRegPlan)]
+  [fn-group-vars : (& compiler_liveness.CompilerLiveI64Set)]
+  [vars : i64]
+  [slot-candidate-vars : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]) : (__tl_dyn-array i64)
+  (let
+    [plan-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-plan-assignments plan)]
+    (when
+      (or
+        (not scalar-registers-enabled)
+        (not (be_state.compiler-backend-mode-scalar? mode))
+        (compiler_ir_types.compiler-debug-info-enabled?)
+        (= params.len 0)
+        (<= vars 0)
+        (compiler_regalloc.compiler-reg-assignment-table-empty?
+          plan-assignments)
+        (compiler-backend-spmd-private-function?
+          program-index.backend-state
+          name)
+        (be_operand.compiler-backend-index-c-export? program-index name))
+      (return (__tl_make-array i64 0)))
+    (let
+      [offsets : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+      [candidate-count : i64 0]
+      [banks : (Array i64 4) (make-array i64 4)]
+      (for [param-index (iterator.range 0 params.len)]
+        (match (compiler_ir_types.compiler-ir-param-seq-borrow
+          params
+          param-index)
+          [(Param param-name ty var-id)
+            (let
+              [param-stack-idx : i64
+                (be_calls.compiler-backend-abi-bank-step!
+                  type-segment-bases
+                  target
+                  (Internal)
+                  program-index
+                  (& ty)
+                  (&mut banks))]
+              (when
+                (>= param-stack-idx 0)
+                (let
+                  [incoming-offset : i64
+                    (be_facts.compiler-backend-incoming-stack-arg-offset
+                      target
+                      param-stack-idx)]
+                  [stack-homed? : bool
+                    (match (compiler_regalloc.compiler-reg-assignment-table-lookup
+                      plan-assignments
+                      var-id)
+                      [(Some location)
+                        (match location
+                          [(Spill _) true]
+                          [_ false])]
+                      [(No) true])]
+                  (when
+                    (and
+                      (> incoming-offset 0)
+                      (>= var-id 0)
+                      (< var-id vars)
+                      (< var-id slot-candidate-vars)
+                      stack-homed?
+                      (not
+                        (compiler_regalloc.compiler-reg-spmd-wide-param?
+                          param-name))
+                      (not
+                        (compiler_liveness.compiler-live-set-contains?
+                          fn-group-vars
+                          var-id))
+                      (=
+                        (be_operand.compiler-backend-type-size
+                          type-segment-bases
+                          (& ty))
+                        8))
+                    (when
+                      (= (array-length offsets) 0)
+                      (set! offsets (__tl_make-array i64 vars)))
+                    (when
+                      (= (array-ref offsets var-id) 0)
+                      (set! (array-ref offsets var-id) incoming-offset)
+                      (+= candidate-count 1))))))]))
+      (if (= candidate-count 0)
+        (__tl_make-array i64 0)
+        (let
+          [remaining : i64
+            (compiler-backend-direct-stack-param-filter-blocks!
+              type-segment-bases
+              target
+              name
+              program-index
+              blocks
+              (&mut offsets)
+              (> vars 16)
+              candidate-count)]
+          (if (<= remaining 0)
+            (__tl_make-array i64 0)
+            offsets))))))
+
+;; Overlay positive caller-frame `(Spill +offset)` homes onto the post-coloring
+;; assignment table for eligible direct-home incoming stack parameters.
+(define (compiler-backend-overlay-direct-stack-params
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [coloring : (& compiler_regalloc.CompilerRegColoring)]
+  [direct-stack-offsets : (& (__tl_dyn-array i64))]) : compiler_regalloc.CompilerRegAssignmentTable
+  (let
+    [n : i64 (array-length direct-stack-offsets)]
+    (if (= n 0)
+      assignments
+      (match coloring
+        [(None) assignments]
+        [(Remap remap _)
+          (let
+            [out : compiler_regalloc.CompilerRegAssignmentTable assignments]
+            (for [v (iterator.range 0 n)]
+              (let
+                [off : i64 (array-ref direct-stack-offsets v)]
+                (when
+                  (> off 0)
+                  (set!
+                    out
+                    (compiler_regalloc.compiler-reg-assignment-table-insert
+                      out
+                      (compiler_regalloc.compiler-reg-remap-id (& remap) v)
+                      (Spill off))))))
+            out)]))))
+
 (define (compiler-backend-emit-param-spills-from
   [entry : (&mut entry be_state.CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
@@ -14886,93 +15836,122 @@
                 float-idx
                 position)
                 (let
-                  [addr : String
-                    (be_operand.compiler-backend-frame-offset-with-backend-state
+                  [incoming-offset : i64
+                    (be_facts.compiler-backend-incoming-stack-arg-offset
+                      target
+                      stack-idx)]
+                  [direct-home? : bool
+                    (match (be_operand.compiler-backend-emit-assignment-lookup
                       backend-state
-                      (be_facts.compiler-backend-incoming-stack-arg-offset
-                        target
-                        stack-idx))]
-                  ;; A float with a register home loads straight into it
-                  ;; below.
-                  [entry-copy? : bool
-                    (compiler-backend-param-entry-float-copy?
-                      is-float
                       assignments
-                      var-id
-                      backend-state)]
-                  [_entry-copy : unit
-                    (when
-                      entry-copy?
-                      (compiler-backend-param-entry-float-copy!
-                        entry
-                        target
-                        assignments
-                        var-id
-                        addr
-                        ty
-                        backend-state))]
-                  [tail
-                    (try
-                      (compiler-backend-emit-param-spills-from
-                        entry
-                        type-segment-bases
-                        target
-                        assignments
-                        (be_state.compiler-backend-global-shared-view
-                          all-params)
-                        params
-                        (+ param-index 1)
-                        next-int
-                        next-float
-                        (+ position 1)
-                        (+ stack-idx 1)
-                        program-index
-                        vars
-                        backend-state))]
-                  (Ok
+                      var-id)
+                      [(Some location)
+                        (match location
+                          [(Spill offset) (= offset incoming-offset)]
+                          [_ false])]
+                      [(No) false])]
+                  (if direct-home?
+                    (compiler-backend-emit-param-spills-from
+                      entry
+                      type-segment-bases
+                      target
+                      assignments
+                      all-params
+                      params
+                      (+ param-index 1)
+                      next-int
+                      next-float
+                      (+ position 1)
+                      (+ stack-idx 1)
+                      program-index
+                      vars
+                      backend-state)
                     (let
-                      [exclude-n : i64
-                        (be_scalar.compiler-backend-param-register-exclude-count
+                      [addr : String
+                        (be_operand.compiler-backend-frame-offset-with-backend-state
                           backend-state
-                          (be_state.compiler-backend-global-shared-view
-                            all-params)
-                          assignments)]
-                      [exclude : (__tl_dyn-array String)
-                        (be_scalar.compiler-backend-param-register-exclude
-                          backend-state
-                          all-params
-                          assignments)]
-                      (str_cat.str-cat
-                        (cond
-                          [entry-copy? ""]
-                          [is-float
-                            (be_scalar.compiler-backend-emit-load-float-address-to-var
-                              assignments
-                              var-id
-                              addr
-                              ty
-                              backend-state)]
-                          [else
-                            (be_scalar.compiler-backend-emit-load-scalar-address-to-var
-                              type-segment-bases
-                              assignments
-                              var-id
-                              addr
-                              ty
+                          incoming-offset)]
+                      ;; A float with a register home loads straight into it
+                      ;; below.
+                      [entry-copy? : bool
+                        (compiler-backend-param-entry-float-copy?
+                          is-float
+                          assignments
+                          var-id
+                          backend-state)]
+                      [_entry-copy : unit
+                        (when
+                          entry-copy?
+                          (compiler-backend-param-entry-float-copy!
+                            entry
+                            target
+                            assignments
+                            var-id
+                            addr
+                            ty
+                            backend-state))]
+                      [tail
+                        (try
+                          (compiler-backend-emit-param-spills-from
+                            entry
+                            type-segment-bases
+                            target
+                            assignments
+                            (be_state.compiler-backend-global-shared-view
+                              all-params)
+                            params
+                            (+ param-index 1)
+                            next-int
+                            next-float
+                            (+ position 1)
+                            (+ stack-idx 1)
+                            program-index
+                            vars
+                            backend-state))]
+                      (Ok
+                        (let
+                          [exclude-n : i64
+                            (be_scalar.compiler-backend-param-register-exclude-count
+                              backend-state
                               (be_state.compiler-backend-global-shared-view
-                                exclude)
-                              exclude-n
-                              (be_operand.compiler-backend-scavenge-pick-with-mask
-                                (be_state.compiler-backend-state-function-state
-                                  backend-state)
-                                true
-                                0
-                                0
-                                exclude
-                                exclude-n
-                                "%r8")
-                              backend-state)])
-                        tail))))
+                                all-params)
+                              assignments)]
+                          [exclude : (__tl_dyn-array String)
+                            (be_scalar.compiler-backend-param-register-exclude
+                              backend-state
+                              all-params
+                              assignments)]
+                          (str_cat.str-cat
+                            (cond
+                              [entry-copy? ""]
+                              [is-float
+                                (be_scalar.compiler-backend-emit-load-float-address-to-var
+                                  assignments
+                                  var-id
+                                  addr
+                                  ty
+                                  backend-state)]
+                              [else
+                                (be_scalar.compiler-backend-emit-load-scalar-address-to-var
+                                  type-segment-bases
+                                  assignments
+                                  var-id
+                                  addr
+                                  ty
+                                  (be_state.compiler-backend-global-shared-view
+                                    exclude)
+                                  exclude-n
+                                  (be_operand.compiler-backend-scavenge-pick-with-mask
+                                    (be_state.compiler-backend-state-function-state
+                                      backend-state)
+                                    true
+                                    0
+                                    0
+                                    exclude
+                                    exclude-n
+                                    "%r8")
+                                  backend-state)])
+                            tail))))))
                 (match (if is-float
                   (be_facts.compiler-backend-target-float-arg-reg-for-banks
                     target
@@ -21270,6 +22249,25 @@
             fusion-pinned-vars
             (be_state.compiler-backend-global-shared-view
               source-span-pinned-vars))]
+        ;; Direct caller-frame stack homes for eligible read-only 8-byte
+        ;; incoming stack parameters: skip local spill slots during coloring
+        ;; and elide their prologue copies.
+        [direct-stack-offsets : (__tl_dyn-array i64)
+          (if (not color-stack-slots?)
+            (__tl_make-array i64 0)
+            (compiler-backend-direct-stack-param-offsets
+              type-segment-bases
+              target
+              mode
+              scalar-registers-enabled
+              name
+              (& params)
+              (& rewritten-blocks)
+              (& rewritten-reg-plan)
+              (& fn-group-vars)
+              scratch-vars
+              rewritten-vars
+              program-index))]
         ;; Compact the frame after planning by renumbering stack-resident
         ;; values into a dense slot prefix. Scalar stack-only opt0/opt1 plans
         ;; carry conservative CFG intervals specifically for this pass; plans
@@ -21294,6 +22292,7 @@
               scratch-vars
               rewritten-vars
               (& coloring-pinned-vars)
+              (& direct-stack-offsets)
               (and
                 (be_state.compiler-backend-mode-scalar? mode)
                 (not scalar-registers-enabled))))]
@@ -21324,16 +22323,19 @@
                   remap)
                 (owned_view.compiler-owned-shared-view coloring-spans))])]
         [assignments : compiler_regalloc.CompilerRegAssignmentTable
-          (match (be_state.compiler-backend-global-shared-view coloring)
-            [(None)
-              (compiler_regalloc.compiler-reg-plan-assignments
-                (& rewritten-reg-plan))]
-            [(Remap remap _)
-              (compiler_regalloc.compiler-reg-color-rebuild-assignments
-                (& remap)
-                emit-vars
+          (compiler-backend-overlay-direct-stack-params
+            (match (be_state.compiler-backend-global-shared-view coloring)
+              [(None)
                 (compiler_regalloc.compiler-reg-plan-assignments
-                  (& rewritten-reg-plan)))])]
+                  (& rewritten-reg-plan))]
+              [(Remap remap _)
+                (compiler_regalloc.compiler-reg-color-rebuild-assignments
+                  (& remap)
+                  emit-vars
+                  (compiler_regalloc.compiler-reg-plan-assignments
+                    (& rewritten-reg-plan)))])
+            (& coloring)
+            (& direct-stack-offsets))]
         ;; Install the final authoritative table for direct operand-home lookup
         ;; in large functions. Caller-save and
         ;; slot-coloring re-plans are all folded into this table, so no emission
@@ -22243,9 +23245,9 @@
                               function-state
                               be_state.compiler-backend-function-bool-frame-slot-referenced))
                           (not
-                            (compiler-backend-blocks-have-returning-call?
-                              (compiler_ir_types.compiler-ir-block-list-view
-                                emit-blocks-list)))))]
+                            (be_state.compiler-backend-function-state-bool?
+                              function-state
+                              be_state.compiler-backend-function-bool-call-align-needed))))]
                     ;; GAP1 corollary: in PUSH mode the callee-save slot
                     ;; region is never written -- the rebase deletes the
                     ;; mov save/restore pairs and rewrites the pop-run
@@ -22783,6 +23785,12 @@
                                   (be_scalar.compiler-backend-function-symbol-map-comment
                                     program-index
                                     name)
+                                  (if (be_state.compiler-backend-state-library-object?
+                                    program-index.backend-state)
+                                    (be_operand.compiler-backend-function-section
+                                      target
+                                      (& symbol))
+                                    "")
                                   ".globl "
                                   symbol
                                   "\n"
@@ -23504,13 +24512,19 @@
           program-index
           vars
           program-index.backend-state))]
+    [entry : String
+      (be_facts.compiler-backend-closure-entry-label
+        (be_state.compiler-backend-symbol-text-index program-index name))]
     (Ok
       (str_cat.str-cat
+        (if (be_state.compiler-backend-state-library-object?
+          program-index.backend-state)
+          (be_operand.compiler-backend-function-section target (& entry))
+          "")
         (be_scalar.compiler-backend-emit-function-entry
           (be_state.compiler-backend-state-emission-target-policy
             program-index.backend-state)
-          (be_facts.compiler-backend-closure-entry-label
-            (be_state.compiler-backend-symbol-text-index program-index name))
+          entry
           frame
           (compiler_regalloc.compiler-reg-assignment-table-empty)
           vars
@@ -23989,6 +25003,9 @@ tl_shared_object_init:
             compile-profile
             (be_state.compiler-backend-profile-start
               program-index.profile-state))
+          (compiler-backend-copy-thunk-size-counts-collect!
+            (& functions)
+            program-index.backend-state)
           (match (compiler-backend-emit-functions-buffer-into
             type-segment-bases
             target
@@ -24064,6 +25081,8 @@ tl_shared_object_init:
                                     target
                                     runtime-features
                                     (be_state.compiler-backend-state-closed-executable?
+                                      program-index.backend-state)
+                                    (be_state.compiler-backend-state-archive-runtime?
                                       program-index.backend-state))
                                   "")))
                             (cond
@@ -24146,6 +25165,9 @@ tl_shared_object_init:
             (compiler_diagnostic.compiler-diagnostic-at-start
               ""
               (compiler-backend-shared-object-target-message target))))))
+    (be_state.compiler-backend-state-set-library-object!
+      backend-state
+      (and (not emit-entry) (not pic-emit?)))
     (compiler-backend-debug-path-remap-load-environment!)
     (be_state.compiler-backend-state-set-emission-target-policy!
       backend-state
@@ -24271,6 +25293,8 @@ tl_shared_object_init:
                                     externs)
                                   plan
                                   program-index
+                                  (& runtime-index)
+                                  (& collections.references.items)
                                   emit-entry))]
                             (be_data.compiler-backend-shared-object-unstreamed
                               backend-state
@@ -24393,6 +25417,7 @@ tl_shared_object_init:
         spans
         emit-entry
         crt-entry
+        false
         profile-state))))
 
 (define (compiler-backend-peephole-records-retire!
@@ -25500,6 +26525,7 @@ tl_shared_object_init:
           spans
           emit-entry
           crt-entry
+          true
           profile-state))]
     (if (compiler-backend-pic-symbols-have-extern? image.symbols)
       (Err

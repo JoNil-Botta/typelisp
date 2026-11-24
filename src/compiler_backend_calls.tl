@@ -77,9 +77,6 @@
 (define (compiler-backend-fast-alloc-supported-size? [size : i64]) : bool
   (and (> size 0) (<= size 64) (= (% size 8) 0)))
 
-(define (compiler-backend-fast-alloc-label [size : i64]) : String
-  (str_cat.str-cat ".L_tl_alloc" (string.int->string size) "" ""))
-
 (define (compiler-backend-inline-fast-alloc?
   [size : i64]
   [function-state : be_state.CompilerBackendFunctionState]
@@ -257,7 +254,9 @@
             "    call tl_alloc_global\n")
           (str_cat.str-cat
             "    call "
-            (compiler-backend-fast-alloc-label size)
+            (runtime_common.compiler-backend-runtime-fast-alloc-label
+              size
+              false)
             "\n"))
         done-label
         ":\n"))))
@@ -418,12 +417,12 @@
 ;; System V assigns a two-eightbyte aggregate atomically. Test both required
 ;; register banks before consuming either one: if one word cannot be assigned,
 ;; the caller/callee must put both words on the stack and roll both cursors back.
-(define (compiler-backend-linux-group-register-banks-fit?
+(define (compiler-backend-linux-group-register-banks-fit-ref?
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
   [convention : compiler_abi.CompilerCallConvention]
   [program-index : be_state.CompilerBackendProgramIndex]
-  [ty : compiler_ast_types.AstType]
+  [ty : (& ty compiler_ast_types.AstType)]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]) : bool
@@ -466,6 +465,25 @@
           int1
           float1
           (+ position 1))))))
+
+(define (compiler-backend-linux-group-register-banks-fit?
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [ty : compiler_ast_types.AstType]
+  [int-idx : i64]
+  [float-idx : i64]
+  [position : i64]) : bool
+  (compiler-backend-linux-group-register-banks-fit-ref?
+    type-segment-bases
+    target
+    convention
+    program-index
+    (& ty)
+    int-idx
+    float-idx
+    position))
 
 (define (compiler-backend-extern-call-info-fixed-count [info : i64]) : i64
   (- (/ info 4) 1))
@@ -1023,10 +1041,212 @@
       [_ 0])
     0))
 
+;; Advance ABI bank cursor `banks = [int-idx, float-idx, position, stack-idx]`
+;; by one parameter/argument of type `ty`. Returns the incoming/outgoing stack
+;; slot index (`>= 0`) when `ty` is a scalar/float stack argument, or `-1`
+;; otherwise (register arg, register-group arg, or SysV memory aggregate).
+(define (compiler-backend-abi-bank-step!
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [ty : (& compiler_ast_types.AstType)]
+  [banks : (&mut banks (Array i64 4))]) : i64
+  (let
+    [int-idx : i64 (array-ref banks 0)]
+    [float-idx : i64 (array-ref banks 1)]
+    [position : i64 (array-ref banks 2)]
+    [stack-idx : i64 (array-ref banks 3)]
+    [is-float : bool (be_operand.compiler-backend-float-type? ty)]
+    [private-memory-size : i64
+      (be_facts.compiler-backend-abi-memory-size-ref type-segment-bases ty)]
+    (cond
+      [(and
+        (be_state.compiler-backend-target-sysv-aggregates? target convention)
+        (> private-memory-size 0))
+        (set! (array-ref banks 2) (+ position 1))
+        (set!
+          (array-ref banks 3)
+          (+
+            stack-idx
+            (compiler-backend-stack-slots-for-size private-memory-size)))
+        (- 0 1)]
+      [(be_facts.compiler-backend-group-type?
+        type-segment-bases
+        program-index
+        ty)
+        (let
+          [linux-group-fits : bool
+            (compiler-backend-linux-group-register-banks-fit-ref?
+              type-segment-bases
+              target
+              convention
+              program-index
+              ty
+              int-idx
+              float-idx
+              position)]
+          [w0-sse : bool
+            (be_facts.compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              ty
+              0)]
+          [w0-stack : bool
+            (be_scalar.compiler-backend-stack-call-arg-for-banks?
+              target
+              convention
+              w0-sse
+              int-idx
+              float-idx
+              position)]
+          [int1 : i64
+            (if w0-sse
+              int-idx
+              (+ int-idx 1))]
+          [float1 : i64
+            (if w0-sse
+              (+ float-idx 1)
+              float-idx)]
+          [stack1 : i64
+            (if w0-stack
+              (+ stack-idx 1)
+              stack-idx)]
+          [w1-sse : bool
+            (be_facts.compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              ty
+              1)]
+          [w1-stack : bool
+            (be_scalar.compiler-backend-stack-call-arg-for-banks?
+              target
+              convention
+              w1-sse
+              int1
+              float1
+              (+ position 1))]
+          (if (and
+            (be_state.compiler-backend-target-sysv-aggregates?
+              target
+              convention)
+            (not linux-group-fits))
+            (begin
+              (set! (array-ref banks 2) (+ position 2))
+              (set! (array-ref banks 3) (+ stack-idx 2)))
+            (begin
+              (set!
+                (array-ref banks 0)
+                (if w1-sse
+                  int1
+                  (+ int1 1)))
+              (set!
+                (array-ref banks 1)
+                (if w1-sse
+                  (+ float1 1)
+                  float1))
+              (set! (array-ref banks 2) (+ position 2))
+              (set!
+                (array-ref banks 3)
+                (if w1-stack
+                  (+ stack1 1)
+                  stack1)))))
+        (- 0 1)]
+      [else
+        (let
+          [on-stack? : bool
+            (be_scalar.compiler-backend-stack-call-arg-for-banks?
+              target
+              convention
+              is-float
+              int-idx
+              float-idx
+              position)]
+          (set!
+            (array-ref banks 0)
+            (if is-float
+              int-idx
+              (+ int-idx 1)))
+          (set!
+            (array-ref banks 1)
+            (if is-float
+              (+ float-idx 1)
+              float-idx))
+          (set! (array-ref banks 2) (+ position 1))
+          (when on-stack? (set! (array-ref banks 3) (+ stack-idx 1)))
+          (if on-stack?
+            stack-idx
+            (- 0 1)))])))
+
 ;; Count the OUTGOING arguments that must be passed on the stack. Walks
 ;; the args in order, tracking the integer/float/position banks exactly as
 ;; `compiler-backend-emit-call-args` does, and counts every arg whose bank is
 ;; already full.
+;; True when a direct TailCall to `name` with `arg-count` arguments can emit a
+;; direct tail jump that writes to the caller's incoming stack-arg area. Mirrors
+;; `compiler-backend-direct-tail-call?`: returns false whenever `tail-stack == 0`
+;; or the backend is guaranteed to fall back to a plain call + ret (undefined
+;; callee, callee stack-arg count exceeding caller's incoming stack-arg count,
+;; or a callee with register-group params and `tail-stack > 0`).
+(define (compiler-backend-tail-call-writes-stack-args?
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [source-function : i64]
+  [name : i64]
+  [arg-count : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]) : bool
+  (let
+    [convention : compiler_abi.CompilerCallConvention
+      (compiler_regalloc.compiler-reg-direct-call-convention name)]
+    [extern-call-info : i64
+      (be_operand.compiler-backend-index-extern-call-info program-index name)]
+    (when
+      (or
+        (match convention
+          [(Internal) false]
+          [_ true])
+        (be_facts.compiler-backend-extern-call-info-aggregate-params?
+          extern-call-info)
+        (>= (compiler-backend-extern-call-info-fixed-count extern-call-info) 0))
+      (return true))
+    (when (<= arg-count 0) (return false))
+    (when
+      (not
+        (be_operand.compiler-backend-index-function-defines? program-index name))
+      (return false))
+    (let
+      [param-types : compiler_ast_types.AstTypeList
+        (compiler-backend-call-param-types-index name program-index)]
+      [param-len : i64 (compiler_ast_types.ast-type-list-len (& param-types))]
+      (when (not (= arg-count param-len)) (return true))
+      (let
+        [tail-stack : i64
+          (compiler-backend-type-list-stack-arg-count-at
+            type-segment-bases
+            target
+            (Internal)
+            (& param-types)
+            0
+            0
+            0
+            0
+            0
+            program-index)]
+        (and
+          (> tail-stack 0)
+          (<=
+            tail-stack
+            (compiler-backend-incoming-stack-arg-count
+              type-segment-bases
+              target
+              source-function
+              program-index))
+          (not
+            (compiler-backend-type-list-has-group?
+              type-segment-bases
+              (& param-types)
+              program-index)))))))
+
 (define (compiler-backend-call-stack-arg-count
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
@@ -1270,154 +1490,30 @@
   [position : i64]
   [stack-count : i64]
   [program-index : be_state.CompilerBackendProgramIndex]) : i64
-  (if (>= type-index (compiler_ast_types.ast-type-list-len types))
-    stack-count
-    (let
-      [arg-ty : compiler_ast_types.AstType
-        (compiler_ast_types.ast-type-segment-bases-get
-          type-segment-bases
-          (compiler_ast_types.ast-type-list-get
-            types
-            type-index
-            (compiler_ast_types.ast-type-id-fallback)))]
-      [is-float : bool (be_operand.compiler-backend-float-type? arg-ty)]
-      [next-int : i64
-        (if is-float
-          int-idx
-          (+ int-idx 1))]
-      [next-float : i64
-        (if is-float
-          (+ float-idx 1)
-          float-idx)]
-      [private-memory-size : i64
-        (be_facts.compiler-backend-abi-memory-size
-          type-segment-bases
-          (be_state.compiler-backend-global-shared-view arg-ty))]
-      (if (and
-        (be_state.compiler-backend-target-sysv-aggregates? target convention)
-        (> private-memory-size 0))
-        (compiler-backend-type-list-stack-arg-count-at
+  (let
+    [len : i64 (compiler_ast_types.ast-type-list-len types)]
+    [banks : (Array i64 4) (make-array i64 4)]
+    (set! (array-ref banks 0) int-idx)
+    (set! (array-ref banks 1) float-idx)
+    (set! (array-ref banks 2) position)
+    (set! (array-ref banks 3) stack-count)
+    (for [idx (iterator.range type-index len)]
+      (let
+        [arg-ty : compiler_ast_types.AstType
+          (compiler_ast_types.ast-type-segment-bases-get
+            type-segment-bases
+            (compiler_ast_types.ast-type-list-get
+              types
+              idx
+              (compiler_ast_types.ast-type-id-fallback)))]
+        (compiler-backend-abi-bank-step!
           type-segment-bases
           target
           convention
-          types
-          (+ type-index 1)
-          int-idx
-          float-idx
-          (+ position 1)
-          (+
-            stack-count
-            (compiler-backend-stack-slots-for-size private-memory-size))
-          program-index)
-        (if (be_facts.compiler-backend-group-type?
-          type-segment-bases
           program-index
-          arg-ty)
-          (let
-            [linux-group-fits : bool
-              (compiler-backend-linux-group-register-banks-fit?
-                type-segment-bases
-                target
-                convention
-                program-index
-                (be_state.compiler-backend-global-shared-view arg-ty)
-                int-idx
-                float-idx
-                position)]
-            [w0-sse : bool
-              (be_facts.compiler-backend-group-word-sse?
-                type-segment-bases
-                program-index
-                arg-ty
-                0)]
-            [w0-stack : bool
-              (be_scalar.compiler-backend-stack-call-arg-for-banks?
-                target
-                convention
-                w0-sse
-                int-idx
-                float-idx
-                position)]
-            [int1 : i64
-              (if w0-sse
-                int-idx
-                (+ int-idx 1))]
-            [float1 : i64
-              (if w0-sse
-                (+ float-idx 1)
-                float-idx)]
-            [w1-sse : bool
-              (be_facts.compiler-backend-group-word-sse?
-                type-segment-bases
-                program-index
-                arg-ty
-                1)]
-            [w1-stack : bool
-              (be_scalar.compiler-backend-stack-call-arg-for-banks?
-                target
-                convention
-                w1-sse
-                int1
-                float1
-                (+ position 1))]
-            (if (and
-              (be_state.compiler-backend-target-sysv-aggregates?
-                target
-                convention)
-              (not linux-group-fits))
-              (compiler-backend-type-list-stack-arg-count-at
-                type-segment-bases
-                target
-                convention
-                types
-                (+ type-index 1)
-                int-idx
-                float-idx
-                (+ position 2)
-                (+ stack-count 2)
-                program-index)
-              (compiler-backend-type-list-stack-arg-count-at
-                type-segment-bases
-                target
-                convention
-                types
-                (+ type-index 1)
-                (if w1-sse
-                  int1
-                  (+ int1 1))
-                (if w1-sse
-                  (+ float1 1)
-                  float1)
-                (+ position 2)
-                (+
-                  stack-count
-                  (+
-                    (if w0-stack
-                      1
-                      0)
-                    (if w1-stack
-                      1
-                      0)))
-                program-index)))
-          (compiler-backend-type-list-stack-arg-count-at
-            type-segment-bases
-            target
-            convention
-            types
-            (+ type-index 1)
-            next-int
-            next-float
-            (+ position 1)
-            (if (be_scalar.compiler-backend-stack-call-arg-for-banks?
-              target
-              convention
-              is-float
-              int-idx
-              float-idx
-              position)
-              (+ stack-count 1)
-              stack-count)
-            program-index))))))
+          (& arg-ty)
+          (&mut banks))))
+    (array-ref banks 3)))
 
 (define (compiler-backend-incoming-stack-arg-count
   [type-segment-bases : i64]
@@ -9112,6 +9208,10 @@
         (be_state.compiler-backend-global-shared-view args))]
     [call-symbol : String
       (be_operand.compiler-backend-call-symbol-index name plan program-index)]
+    [library-object? : bool
+      (be_state.compiler-backend-state-library-object? backend-state)]
+    [size-optimized? : bool
+      (be_state.compiler-backend-state-optimize-for-size? backend-state)]
     [inline-memory-name : String
       (if (and
         (be_state.compiler-backend-state-emission-target-policy backend-state).windows
@@ -9125,6 +9225,7 @@
     (cond
       [(and
           (> fast-alloc-size 0)
+          (or (not library-object?) size-optimized? (= fast-alloc-size 16))
           ;; An extern alias with a pointer result uses the same register ABI.
           ;; Its resolved symbol and the runtime plan below must still prove
           ;; that this is our allocator, including its shared-arena slow path.
@@ -9141,21 +9242,20 @@
             (and
               (= name cbi.compiler-builtin-id-tl-alloc-global)
               (string.eq call-symbol "tl_alloc_global")
-              (not
-                (be_state.compiler-backend-state-optimize-for-size?
-                  backend-state)))))
+              (not (or library-object? size-optimized?)))))
         (Ok
           (str_cat.str-cat
-            (if (or
-              (= name cbi.compiler-builtin-id-tl-alloc-global)
-              (and
-                (not
-                  (be_state.compiler-backend-state-optimize-for-size?
-                    backend-state))
-                (compiler-backend-inline-fast-alloc?
-                  fast-alloc-size
-                  (be_state.compiler-backend-state-function-state backend-state)
-                  current-label)))
+            (if (and
+              (not library-object?)
+              (or
+                (= name cbi.compiler-builtin-id-tl-alloc-global)
+                (and
+                  (not size-optimized?)
+                  (compiler-backend-inline-fast-alloc?
+                    fast-alloc-size
+                    (be_state.compiler-backend-state-function-state
+                      backend-state)
+                    current-label))))
               (compiler-backend-emit-inline-fast-alloc
                 target
                 function
@@ -9170,10 +9270,10 @@
                 backend-state)
               (str_cat.str-cat
                 "    call "
-                (compiler-backend-fast-alloc-label fast-alloc-size)
-                "\n"
-                ""
-                ""))
+                (runtime_common.compiler-backend-runtime-fast-alloc-label
+                  fast-alloc-size
+                  library-object?)
+                "\n"))
             (be_operand.compiler-backend-emit-store-typed-var
               assignments
               dst

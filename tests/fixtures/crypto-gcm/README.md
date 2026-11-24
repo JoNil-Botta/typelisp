@@ -298,3 +298,34 @@ frame sizes, opcodes, conditional branches, calls, table/RIP references,
 GHASH multiply loop shape and volatile wipes are byte-identical. Every changed
 body differs strictly by a 1-to-1 permutation of `N(%rsp)` stack-slot
 displacements.
+
+## Direct stack-parameter reads re-pin (PR #9936)
+
+At opt2, the backend now reads eligible read-only spilled incoming 8-byte
+stack parameters directly from their caller-frame homes instead of copying
+them into local spill slots in the prologue (composed on top of PR #9935's
+hot scalar spill-slot packing). Re-derived pins:
+
+- linux opt2: 2 bodies, `gctr!` and `seal` (`shape-linux-x86_64-opt2.sha256`);
+- windows opt2: 2 bodies, `gctr!` and `seal` (`shape-windows-x86_64-opt2.sha256`);
+- linux opt1, windows opt1, and all standalone AES opt1/opt2 pins: unchanged.
+
+Per changed body, audited before re-pinning:
+
+- `gctr!`: drops the 2-instruction prologue copy of the 7th parameter (`stream`,
+  a public `SecretFixed` reference) into a local spill slot and reads it
+  directly from `256(%rsp)` (Linux) / `48(%rbp)` (Windows) at the call to
+  `encrypt_checked_bang`. Frame reservations remain 200 B (Linux) / 224 B
+  (Windows), with remaining local slots packed up by 8 B.
+- `seal`: drops the 2-instruction prologue copy of the hidden sret result
+  pointer, shrinks its frame reservation by 16 B (`152 -> 136 B` Linux,
+  `184 -> 168 B` Windows), keeps #9935's disp8 local spill slots (`16/24(%rsp)`
+  Linux, `48/56(%rsp)` Windows), and reads the sret pointer directly from
+  `144(%rsp)` (Linux) / `208(%rsp)` (Windows) when calling `seal_operation` and
+  returning after `crypto_stack_scrub.tree!`.
+
+Every AES, GHASH, `construct_key*`, `prepare!`, `seal_operation`, `open*`,
+`validate_lengths`, `crypto_secret`, `crypto_stack_scrub`, and `main` body is
+byte-identical. No instruction or stack store is added (each changed body has
+one fewer local stack store), and every branch, call, table reference, address
+form, wipe, and stack-scrub boundary is preserved.

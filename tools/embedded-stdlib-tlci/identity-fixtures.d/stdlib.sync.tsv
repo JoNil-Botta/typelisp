@@ -1,0 +1,3 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.sync/channel	1	fixed	module	tests/integration/sync_channel_thread_runtime.tl	ok	default	assembly
+stdlib.sync/mutex	1	fixed	module	tests/integration/sync_mutex_thread_runtime.tl	ok	default	assembly

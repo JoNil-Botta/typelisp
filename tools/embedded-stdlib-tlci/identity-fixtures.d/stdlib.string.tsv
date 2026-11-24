@@ -1,0 +1,3 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.string/string-bytes-copy!	3	fixed	expr	tests/integration/stdlib_string.tl	ok	default	assembly
+stdlib.string/string-bytes-eq	3	fixed	expr	tests/integration/stdlib_string.tl	ok	default	assembly

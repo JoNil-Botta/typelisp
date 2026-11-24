@@ -1,0 +1,23 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.serialize/serialize-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/serialize-array-element-shared-view	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/array-fixed-length	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/encode-tuple-elements	6	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/decode-tuple-items	7	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/encode-enum-payload-elements	6	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/encode-enum-dispatch	4	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/decode-enum-payload-items	8	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/decode-enum-variants	7	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/encode-value	4	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/decode-value	5	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/encode-field	4	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/encode-fields	4	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/decode-field	5	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/decode-fields	6	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/enum-source-import	2	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/nested-import-for-type	3	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/nested-imports-for-tuple	4	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/nested-imports-for-enum-payloads	5	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/nested-imports-for-enum	4	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/nested-imports	3	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.serialize/serialize	2	fixed	module	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

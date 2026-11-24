@@ -7,7 +7,7 @@ scripts/lib-benchmark.sh	linux-instruction-count-baseline,linux-heavy-instructio
 scripts/check-crypto-aes-shape.sh	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	Shared AES/GCM structural constant-time shape contract checker and self-test.
 scripts/measure-crypto-gcm.sh	stage2-crypto-gcm-native-report	@corpus	Both-target native GCM measurement wrapper.
 scripts/regenerate-crypto-gcm-kat.sh	stage2-inline-typelisp-tests	@corpus	Offline official GCM vector regeneration, pinned by source hashes and count.
-scripts/codegen-target-dispatch-inventory.tsv	stage2-codegen-target-parity	-	Only target parity consumes the target-dispatch inventory.
+scripts/codegen-target-dispatch.d/*	stage2-codegen-target-parity	-	Only target parity consumes the per-module target-dispatch inventory.
 .github/*	*	-	Workflow and action changes can alter every gate contract.
 scripts/verify-linux-stack-protection.sh	stage2-linux-stack-protection	-	Linux stack witness harness.
 scripts/verify-linux-stack-combinations.sh	stage2-linux-stack-protection	-	Entry/transient combinations on the minimum foreign guard.

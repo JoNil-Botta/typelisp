@@ -25,8 +25,9 @@ esac
     exit 1
 }
 
-MANIFEST="$ROOT/tools/embedded-stdlib-tlci/identity-fixtures.tsv"
+MANIFEST_DIR="$ROOT/tools/embedded-stdlib-tlci/identity-fixtures.d"
 WORKDIR="$ROOT/target/stdlib-tlci-identity-differential/$NL_HOST_OS"
+MANIFEST="$WORKDIR/identity-fixtures.combined.tsv"
 EXPLICIT_CWD="$WORKDIR/explicit-cwd"
 MODIFIED_ROOT="$WORKDIR/modified-root"
 DEFAULT_DIR="$WORKDIR/default"
@@ -51,29 +52,69 @@ batch_path() {
     fi
 }
 
-[ -f "$MANIFEST" ] || fail "fixture manifest is missing: $MANIFEST"
-
-if ! awk -F '\t' '
-    /^#/ || NF == 0 { next }
-    NF != 8 { bad = 1; next }
-    $1 !~ /^stdlib\.[^/]+\/[^/]+$/ { bad = 1 }
-    $2 !~ /^[0-9]+$/ { bad = 1 }
-    $3 != "fixed" && $3 != "variadic" { bad = 1 }
-    $4 != "expr" && $4 != "module" && $4 != "decls" { bad = 1 }
-    $5 !~ /^(tests\/integration|stdlib\/tests)\/[^/]+\.tl$/ { bad = 1 }
-    $6 != "ok" { bad = 1 }
-    $7 != "default" { bad = 1 }
-    $8 != "assembly" { bad = 1 }
-    seen[$1]++ { duplicate = 1 }
-    END { exit bad || duplicate }
-' "$MANIFEST"; then
-    fail "fixture manifest has a malformed or duplicate identity row"
-fi
+[ -d "$MANIFEST_DIR" ] || fail "fixture manifest directory is missing: $MANIFEST_DIR"
 
 rm -rf "$WORKDIR"
 mkdir -p \
     "$EXPLICIT_CWD" "$MODIFIED_ROOT/stdlib" \
     "$DEFAULT_DIR" "$EXPLICIT_DIR" "$SOURCE_DIR"
+
+MANIFEST_FILES="$WORKDIR/identity-fixture-files.txt"
+: > "$MANIFEST_FILES"
+_mf_entries=$(find "$MANIFEST_DIR" -print | LC_ALL=C sort)
+_mf_count=0
+while IFS= read -r _mf_entry; do
+    [ -n "$_mf_entry" ] || continue
+    [ "$_mf_entry" != "$MANIFEST_DIR" ] || continue
+    _mf_rel=${_mf_entry#"$MANIFEST_DIR"/}
+    case "$_mf_rel" in
+        */*) fail "fixture manifest directory contains nested entry: $_mf_rel" ;;
+        .tsv) fail "fixture manifest directory contains invalid filename: $_mf_rel" ;;
+        *.tsv) ;;
+        *) fail "fixture manifest directory contains unexpected non-.tsv entry: $_mf_rel" ;;
+    esac
+    if [ ! -f "$_mf_entry" ] || [ -L "$_mf_entry" ]; then
+        fail "fixture manifest directory contains non-regular entry: $_mf_rel"
+    fi
+    printf '%s\n' "$_mf_entry" >> "$MANIFEST_FILES"
+    _mf_count=$((_mf_count + 1))
+done <<EOF
+$_mf_entries
+EOF
+[ "$_mf_count" -gt 0 ] || fail "fixture manifest directory is empty: $MANIFEST_DIR"
+
+if ! awk -F '\t' '
+    {
+        path = $0
+        sub(/\r$/, "", path)
+        if (path == "") next
+        mod = path
+        sub(/^.*\//, "", mod)
+        sub(/\.tsv$/, "", mod)
+        file_rows = 0
+        while ((st = (getline raw < path)) > 0) {
+            sub(/\r$/, "", raw)
+            if (raw == "" || raw ~ /^#/) continue
+            file_rows++
+            nf = split(raw, f, "\t")
+            if (nf != 8) { bad = 1; continue }
+            if (f[1] !~ /^stdlib\.[^\/]+\/[^\/]+$/) { bad = 1 }
+            if (index(f[1], mod "/") != 1) { bad = 1 }
+            if (f[2] !~ /^[0-9]+$/) { bad = 1 }
+            if (f[3] != "fixed" && f[3] != "variadic") { bad = 1 }
+            if (f[4] != "expr" && f[4] != "module" && f[4] != "decls") { bad = 1 }
+            if (f[5] !~ /^(tests\/integration|stdlib\/tests)\/[^\/]+\.tl$/) { bad = 1 }
+            if (f[6] != "ok" || f[7] != "default" || f[8] != "assembly") { bad = 1 }
+            if (seen[f[1]]++) { duplicate = 1 }
+            print raw
+        }
+        if (st < 0 || file_rows == 0) { bad = 1 }
+        close(path)
+    }
+    END { exit bad || duplicate }
+' "$MANIFEST_FILES" > "$MANIFEST"; then
+    fail "fixture manifest has a malformed, mismatched, empty, or duplicate identity row"
+fi
 
 awk -F '\t' '!/^#/ && NF { print $1 }' "$MANIFEST" | LC_ALL=C sort > "$EXPECTED"
 awk -F '\t' '!/^#/ && NF { print $1 "\t" $4 }' "$MANIFEST" | LC_ALL=C sort \

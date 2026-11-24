@@ -1,0 +1,142 @@
+# opt2 assembly-shape gates for the regalloc/backend/optimizer fixtures (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+
+# LICM hoists the array descriptor loads out of the loop.
+case licm-desc-hoist
+source tests/integration/licm_desc_hoist.tl
+in fn _tl_licm_desc_hoist_sum_loop
+count = 1 ^[[:space:]]+movq 8\(%rdi\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq \(%rdi\), %r[a-z0-9]+$
+match call (\.L_tl_abort_)?tl_oob_abort
+
+# A global cell read across a memory-clean call is promoted to a register;
+# under register pressure, or with a writing callee, it is not.
+case licm-memclean-promote
+source tests/integration/licm_memclean_global_promote.tl
+in asm
+narrow ranges:^[[:space:]]+\.type _tl_licm_memclean_global_promote_mix,@function$~^_tl_licm_memclean_global_promote_mix:$
+capture entry ^("__tl_arg_entry:[0-9]+"):$
+in fn _tl_licm_memclean_global_promote_promoted_scan
+count-fixed = 1 _tl_licm_memclean_global_promote_gcell_a(%rip)
+match ^[[:space:]]+call {{entry}}$
+in fn _tl_licm_memclean_global_promote_pressured_scan
+count-fixed = 2 _tl_licm_memclean_global_promote_gcell_b(%rip)
+contains call _tl_licm_memclean_global_promote_mix
+in fn _tl_licm_memclean_global_promote_writer_scan
+count-fixed = 2 _tl_licm_memclean_global_promote_gcell_c(%rip)
+count = 0 ^[[:space:]]+movq %r[a-z0-9]+, _tl_licm_memclean_global_promote_gcell_c\(%rip\)$
+contains call _tl_licm_memclean_global_promote_mix_writing
+
+# A global cell written by a callee is re-read after each call.
+case global-cell-writer-loop-reads
+source tests/integration/global_cell_writer_loop_reads.tl
+in fn _tl_global_cell_writer_loop_reads_bumped_records
+contains call _tl_global_cell_writer_loop_reads_bump_cursor
+count = 2 ^[[:space:]]+movq _tl_global_cell_writer_loop_reads_cursor\(%rip\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+[a-z]+ _tl_global_cell_writer_loop_reads_cursor\(%rip\), %r[a-z0-9]+$
+
+# A 24-byte group copy moves straight from source to destination registers.
+case group-copy-direct
+source tests/integration/group_copy_direct.tl
+in fn _tl_group_copy_direct_wrap
+capture xmm ^[[:space:]]*movups[[:space:]]+\(%rdi\),[[:space:]]+(%xmm([0-9]|1[0-5]))([[:space:]].*)?$
+contains movups {{xmm}}, 8(%rdx)
+capture gp ^[[:space:]]*movq[[:space:]]+16\(%rdi\),[[:space:]]+(%r[a-z0-9]+)([[:space:]].*)?$
+contains movq {{gp}}, 24(%rdx)
+not-match ^[[:space:]]+movq %r(di|dx), %r(9|10|11)$
+
+# A dead call result is not stored.
+case dead-result-store
+source tests/integration/dead_result_store.tl
+in fn main
+contains call _tl_dead_result_store_poke
+not-match ^[[:space:]]+movq %rax, -?[0-9]+\(%rsp\)$
+not-match ^[[:space:]]+movq %rax, -?[0-9]+\(%rbp\)$
+
+# A parameter live across calls is homed in a callee-saved register, not a slot.
+case param-csr-home
+source tests/integration/param_csr_home.tl
+in fn _tl_param_csr_home_param_loop
+contains call _tl_param_csr_home_bump
+match ^[[:space:]]+movq %rsi, %r(12|13|14|15|bx|bp)$
+not-match \(%rsp\)|\(%rbp\)
+
+# ...a handle argument too, and neither it nor %rdi is reloaded from a slot.
+case handle-arg-csr
+source tests/integration/handle_arg_csr.tl
+in asm
+narrow ranges:^[[:space:]]+\.type _tl_handle_arg_csr_probe,@function$~^_tl_handle_arg_csr_probe:$
+capture entry ^("__tl_arg_entry:[0-9]+"):$
+in fn _tl_handle_arg_csr_sum_args
+match ^[[:space:]]+call {{entry}}$
+match ^[[:space:]]+movq %rdi, %r(12|13|14|15|bx|bp)$
+capture home ^[[:space:]]*movq %rdi, %(r1[2-5]|rbx|rbp)$
+not-match ^[[:space:]]+movq [-0-9]*\((%rsp|%rbp)\), %{{home}}$
+not-match ^[[:space:]]+movq [-0-9]*\((%rsp|%rbp)\), %rdi$
+
+# A shift-count parameter pinned to %rcx needs no callee-saved save or slot.
+case shift-pin
+source tests/integration/param_shift_pin.tl
+in fn _tl_param_shift_pin_shift_mix
+contains shlq $2
+not-match ^[[:space:]]+pushq %r(12|13|14|15|bx|bp)$
+not-match ^[[:space:]]+popq %r(12|13|14|15|bx|bp)$
+not-match \(%rsp\)|\(%rbp\)
+
+# hashmap_get's get-value-or leaf inlines into main using caller-saved registers.
+case hashmap-get-leaf-caller-saved
+source benchmarks/hashmap_get/bench.tl
+not-contains _tl_bench_stdlib_hashmap_generated_i64_i64_get_value_or
+in fn main
+count = 2 ^[[:space:]]+leaq \(%r8,
+not-contains call _tl_bench_stdlib_hashmap_generated_i64_i64_get_value_or
+
+# Updating an occupied hashmap slot writes only its value word, at the slot's
+# scaled address, without cloning the key. The scalar helper inlines into the
+# recursive wrapper; the general helper retains its standalone body.
+case hashmap-slot-value-update
+source tests/integration/hashmap_slot_update_shape.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_hashmap_slot_update_shape_scalar_update
+not-match ^[[:space:]]+(call|jmp) _tl_hashmap_slot_update_shape_stdlib_hashmap_generated_i64_i64_set_occupied_value_bang$
+count = 1 ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,2\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+contains cmpq $2, (%rax)
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%rax\)$
+not-match ^[[:space:]]+movq %r[a-z0-9]+, (8|24)?\(%rax\)$
+in fn _tl_hashmap_slot_update_shape_stdlib_hashmap_generated_String_i64_set_occupied_value_bang
+contains shlq $5
+contains cmpq $2, (%rax)
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%rax\)$
+not-match ^[[:space:]]+movq %r[a-z0-9]+, (8|24)?\(%rax\)$
+not-contains string_copy
+
+# Parameter pin intervals end at the last use, so neither function spills.
+case param-pin-interval
+source tests/integration/param_pin_interval.tl
+in fn _tl_param_pin_interval_dead_early
+contains call _tl_param_pin_interval_bump
+not-match \(%rsp\)|\(%rbp\)
+in fn _tl_param_pin_interval_div_arm
+contains cqto
+contains idivq
+not-match \(%rsp\)|\(%rbp\)
+
+# Frame slots are repacked: at most one stack allocation of at most 24 bytes,
+# identical on both targets.
+case frame-slot-repacking-linux
+source tests/integration/early_return.tl
+in fn _tl_early_return_choose
+count <= 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+metric frame-size <= 24
+
+case frame-slot-repacking-windows
+source tests/integration/early_return.tl
+target windows-x86_64
+in fn _tl_early_return_choose
+count <= 1 ^[[:space:]]+subq \$[0-9]+, %rsp$
+metric frame-size <= 24
+check same-metric {{work}}/frame-slot-repacking-linux/linux-x86_64-o2/out.s _tl_early_return_choose stack-frame

@@ -1,0 +1,99 @@
+# opt2 assembly-shape gates for the regalloc/backend/optimizer fixtures (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+file private_literal_address.tl
+(import stdlib.io)
+(define (main) : i64
+  (io.println "private literal address")
+  0)
+end-file
+
+case private-literal-closed-elf
+source {{work}}/private_literal_address.tl
+args --cfg closed-executable-image
+target linux-x86_64
+opt 2
+assemble
+in fn main
+match ^[[:space:]]+movl \$\.L_tl_str_
+
+case private-literal-portable-elf
+source {{work}}/private_literal_address.tl
+target linux-x86_64
+opt 2
+assemble
+in fn main
+match ^[[:space:]]+leaq \.L_tl_str_
+not-match ^[[:space:]]+movl \$\.L_tl_str_
+
+case private-literal-coff
+source {{work}}/private_literal_address.tl
+args --cfg closed-executable-image
+target windows-x86_64
+opt 2
+assemble
+in fn main
+match ^[[:space:]]+leaq \.L_tl_str_
+not-match ^[[:space:]]+movl \$\.L_tl_str_
+
+case private-literal-separate-elf
+source {{work}}/private_literal_address.tl
+args --cfg closed-executable-image --no-entry
+target linux-x86_64
+opt 2
+assemble
+in fn main
+match ^[[:space:]]+leaq \.L_tl_str_
+not-match ^[[:space:]]+movl \$\.L_tl_str_
+
+# Effect-free static arrays disappear at every level, including opt0. Used,
+# mutated and address-taken tables retain independent writable storage.
+case static-array-reachability
+source tests/integration/static_scalar_array_globals.tl
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+assemble
+not-contains static_scalar_array_unused_provider_empty:
+not-contains static_scalar_array_unused_provider_unused_one:
+not-contains static_scalar_array_unused_provider_unused_eight:
+not-contains static_scalar_array_unused_provider_unused_wide:
+contains _tl_static_scalar_array_globals_mutable:
+contains _tl_static_scalar_array_globals_twin:
+contains _tl_static_scalar_array_globals_wide:
+
+# Export body names must not turn the raw runtime atomic intrinsics into calls.
+case runtime-atomic-export-intrinsics
+source tests/integration/runtime_atomic_raw_pointer.tl
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+in asm
+if-fn tl_atomic_i64_load_ptr$typelisp
+order tl_atomic_i64_load_ptr: || tl_atomic_i64_load_ptr$typelisp:
+order tl_atomic_i32_load_ptr: || tl_atomic_i32_load_ptr$typelisp:
+in fn tl_atomic_raw_result$typelisp
+else
+not-contains tl_atomic_i64_load_ptr$typelisp:
+not-contains tl_atomic_i32_load_ptr$typelisp:
+in fn tl_atomic_raw_result
+end-if
+not-match ^[[:space:]]+call tl_atomic_i(32|64)_
+count = 2 ^[[:space:]]+xchg[ql][ ]
+count = 2 ^[[:space:]]+lock add[ql][ ]
+count = 2 ^[[:space:]]+lock xadd[ql][ ]
+count = 2 ^[[:space:]]+lock cmpxchg[ql][ ]
+if-fn tl_atomic_i64_load_ptr$typelisp
+in fn tl_atomic_i64_load_ptr$typelisp
+else
+in fn tl_atomic_i64_load_ptr
+end-if
+match ^[[:space:]]+movq \(%r(di|cx)\), %rax$
+not-match %(rsp|rbp)
+if-fn tl_atomic_i32_load_ptr$typelisp
+in fn tl_atomic_i32_load_ptr$typelisp
+else
+in fn tl_atomic_i32_load_ptr
+end-if
+match ^[[:space:]]+movl \(%r(di|cx)\), %eax$
+not-match %(rsp|rbp)

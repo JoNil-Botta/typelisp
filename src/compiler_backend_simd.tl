@@ -7333,17 +7333,6 @@
         [_ false])]
     [_ false]))
 
-(define (compiler-backend-simd-count-use!
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [_role : compiler_ir_types.CompilerIrOperandRole]
-  [value : compiler_ir_types.CompilerIrValue]) : unit
-  (match (& value)
-    [(Var id)
-      (when
-        (and (>= id 0) (< id (array-length counts)))
-        (set! (array-ref counts id) (+ (array-ref counts id) 1)))]
-    [_ unit]))
-
 (define (compiler-backend-simd-select-factor-has-candidate?
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]) : bool
   (match blocks
@@ -7378,6 +7367,430 @@
     [(Sub) 2]
     [_ 0]))
 
+;; The select-factor pass's per-var facts, one row of nine per var:
+;; 0 defs, 1 uses (the backend's shared operand walk), 2 splat-ok, 3 splat-is-const, 4 splat-val (constant or
+;; source var), 5 splat-lanes, 6 splat-ty-tag, 7 neg-splat-var,
+;; 8 neg-scalar-var (-1 until allocated).
+(define (compiler-backend-simd-select-factor-fact
+  [facts : (& facts (__tl_dyn-array i64))]
+  [var : i64]
+  [field : i64]) : i64
+  (array-ref facts (+ (* var 9) field)))
+
+(define (compiler-backend-simd-select-factor-var?
+  [facts : (& facts (__tl_dyn-array i64))]
+  [var : i64]) : bool
+  (and (>= var 0) (< var (/ (array-length facts) 9))))
+
+(define (compiler-backend-simd-int-tag-type [tag : i64]) : compiler_ast_types.AstType
+  (cond
+    [(= tag 1) (I8)]
+    [(= tag 2) (U8)]
+    [(= tag 3) (I16)]
+    [(= tag 4) (U16)]
+    [(= tag 5) (I32)]
+    [(= tag 6) (U32)]
+    [(= tag 8) (U64)]
+    [else (I64)]))
+
+;; Pass 1 of the select-factor pass for one instruction: def counts and
+;; single-def integer Splats.
+(define (compiler-backend-simd-select-factor-scan-instr!
+  [facts : (&mut facts (__tl_dyn-array i64))]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [i : i64]) : unit
+  (let
+    [vars : i64 (/ (array-length facts) 9)]
+    [instr (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)]
+    [dst : i64 (compiler_ir_types.compiler-ir-instr-dst instr)]
+    (when
+      (and (>= dst 0) (< dst vars))
+      (set! (array-ref facts (* dst 9)) (+ (array-ref facts (* dst 9)) 1)))
+    (match instr
+      [(Splat sdst svalue slanes sty)
+        (let
+          [ttag : i64 (compiler-backend-simd-int-type-tag (& sty))]
+          [val : i64
+            (match (& svalue)
+              [(I64 c) c]
+              [(Var vid) vid]
+              [_ -1])]
+          [is-const : i64
+            (match (& svalue)
+              [(I64 _) 1]
+              [_ 0])]
+          (when
+            (and
+              (> ttag 0)
+              (>= sdst 0)
+              (< sdst vars)
+              (or (= is-const 1) (and (>= val 0) (< val vars))))
+            (set! (array-ref facts (+ (* sdst 9) 2)) 1)
+            (set! (array-ref facts (+ (* sdst 9) 3)) is-const)
+            (set! (array-ref facts (+ (* sdst 9) 4)) val)
+            (set! (array-ref facts (+ (* sdst 9) 5)) slanes)
+            (set! (array-ref facts (+ (* sdst 9) 6)) ttag)))]
+      [_ unit])))
+
+;; True when `var` is a single-def Splat whose negation can stand for it in a
+;; factored `lanes`-wide select of integer type tag `tag`.
+(define (compiler-backend-simd-select-factor-neg-splat?
+  [facts : (& facts (__tl_dyn-array i64))]
+  [var : i64]
+  [lanes : i64]
+  [tag : i64]) : bool
+  (and
+    (compiler-backend-simd-select-factor-var? facts var)
+    (= (compiler-backend-simd-select-factor-fact facts var 0) 1)
+    (= (compiler-backend-simd-select-factor-fact facts var 2) 1)
+    (= (compiler-backend-simd-select-factor-fact facts var 5) lanes)
+    (= (compiler-backend-simd-select-factor-fact facts var 6) tag)))
+
+;; How `select(m, tl t-op tr, fl f-op fr)` factors, as kind * 4 + t-side * 2
+;; + f-side (0 when it does not): kind 1 Add, 2 Sub, 3 Add with negated fr,
+;; 4 Add with negated tr; a side names the operand (0 left, 1 right) shared
+;; as the common `x`.
+(define (compiler-backend-simd-select-factor-kind
+  [facts : (& facts (__tl_dyn-array i64))]
+  [t-op : i64]
+  [f-op : i64]
+  [tl : (& tl compiler_ir_types.CompilerIrValue)]
+  [tr : (& tr compiler_ir_types.CompilerIrValue)]
+  [fl : (& fl compiler_ir_types.CompilerIrValue)]
+  [fr : (& fr compiler_ir_types.CompilerIrValue)]
+  [lanes : i64]
+  [tag : i64]) : i64
+  (cond
+    [(and (= t-op 1) (= f-op 1))
+      (cond
+        [(compiler-backend-simd-ir-value-eq? tl fl) 4]
+        [(compiler-backend-simd-ir-value-eq? tl fr) 5]
+        [(compiler-backend-simd-ir-value-eq? tr fl) 6]
+        [(compiler-backend-simd-ir-value-eq? tr fr) 7]
+        [else 0])]
+    [(and (= t-op 2) (= f-op 2))
+      (if (compiler-backend-simd-ir-value-eq? tl fl)
+        8
+        0)]
+    [(and (= t-op 1) (= f-op 2))
+      (cond
+        [(not
+            (compiler-backend-simd-select-factor-neg-splat?
+              facts
+              (compiler-backend-avx2-sign-bit-var-id fr)
+              lanes
+              tag))
+          0]
+        [(compiler-backend-simd-ir-value-eq? tl fl) 12]
+        [(compiler-backend-simd-ir-value-eq? tr fl) 14]
+        [else 0])]
+    [(and (= t-op 2) (= f-op 1))
+      (cond
+        [(not
+            (compiler-backend-simd-select-factor-neg-splat?
+              facts
+              (compiler-backend-avx2-sign-bit-var-id tr)
+              lanes
+              tag))
+          0]
+        [(compiler-backend-simd-ir-value-eq? tl fl) 16]
+        [(compiler-backend-simd-ir-value-eq? tl fr) 17]
+        [else 0])]
+    [else 0]))
+
+;; The negated-splat var shared by every factored select of `neg-id`,
+;; allocated from `next-var` on first use. Returns the next free var.
+(define (compiler-backend-simd-select-factor-neg-var!
+  [facts : (&mut facts (__tl_dyn-array i64))]
+  [neg-id : i64]
+  [next-var : i64]) : i64
+  (if (>= (array-ref facts (+ (* neg-id 9) 7)) 0)
+    next-var
+    (if (= (array-ref facts (+ (* neg-id 9) 3)) 0)
+      (begin
+        (set! (array-ref facts (+ (* neg-id 9) 8)) next-var)
+        (set! (array-ref facts (+ (* neg-id 9) 7)) (+ next-var 1))
+        (+ next-var 2))
+      (begin
+        (set! (array-ref facts (+ (* neg-id 9) 7)) next-var)
+        (+ next-var 1)))))
+
+;; Emit the factored `d1 = select(m, sel-t, sel-f); ds = common op d1` for
+;; factor code `code` (see compiler-backend-simd-select-factor-kind). Returns
+;; the next free var.
+(define (compiler-backend-simd-select-factor-emit!
+  [facts : (&mut facts (__tl_dyn-array i64))]
+  [builder : (&mut builder compiler_ir_types.CompilerIrInstrBuilder)]
+  [code : i64]
+  [tl : compiler_ir_types.CompilerIrValue]
+  [tr : compiler_ir_types.CompilerIrValue]
+  [fl : compiler_ir_types.CompilerIrValue]
+  [fr : compiler_ir_types.CompilerIrValue]
+  [d1 : i64]
+  [ds : i64]
+  [mask : compiler_ir_types.CompilerIrValue]
+  [lanes : i64]
+  [ty : (& ty compiler_ast_types.AstType)]
+  [next-var : i64]) : i64
+  (let
+    [kind : i64 (/ code 4)]
+    [t-side : i64 (bit-and (/ code 2) 1)]
+    [f-side : i64 (bit-and code 1)]
+    [neg-id : i64
+      (cond
+        [(= kind 3) (compiler-backend-avx2-sign-bit-var-id (& fr))]
+        [(= kind 4) (compiler-backend-avx2-sign-bit-var-id (& tr))]
+        [else -1])]
+    [after : i64
+      (if (>= neg-id 0)
+        (compiler-backend-simd-select-factor-neg-var! facts neg-id next-var)
+        next-var)]
+    [common : compiler_ir_types.CompilerIrValue
+      (compiler-backend-simd-ir-value-copy
+        (if (= t-side 1)
+          (& tr)
+          (& tl)))]
+    [sel-t : compiler_ir_types.CompilerIrValue
+      (cond
+        [(= kind 4) (Var (array-ref facts (+ (* neg-id 9) 7)))]
+        [(= t-side 1) (compiler-backend-simd-ir-value-copy (& tl))]
+        [else (compiler-backend-simd-ir-value-copy (& tr))])]
+    [sel-f : compiler_ir_types.CompilerIrValue
+      (cond
+        [(= kind 3) (Var (array-ref facts (+ (* neg-id 9) 7)))]
+        [(= f-side 1) (compiler-backend-simd-ir-value-copy (& fl))]
+        [else (compiler-backend-simd-ir-value-copy (& fr))])]
+    (compiler_ir_types.compiler-ir-instr-builder-push!
+      builder
+      (Select
+        (box
+          (compiler_ir_types.CompilerIrInstrSelectPayload
+            d1
+            mask
+            sel-t
+            sel-f
+            lanes
+            (compiler-backend-copy-int-ast-type ty)))))
+    (compiler_ir_types.compiler-ir-instr-builder-push!
+      builder
+      (VectorBinOp
+        (box
+          (compiler_ir_types.CompilerIrInstrVectorBinOpPayload
+            ds
+            (if (= kind 2)
+              (Sub)
+              (Add))
+            common
+            (Var d1)
+            lanes
+            (compiler-backend-copy-int-ast-type ty)))))
+    after))
+
+;; Pass 2 of the select-factor pass at instruction `i`: when an adjacent
+;; (VectorBinOp, VectorBinOp, Select) triple there factors, push its rewrite
+;; and return the next free var; otherwise return -1 and push nothing.
+(define (compiler-backend-simd-select-factor-try!
+  [facts : (&mut facts (__tl_dyn-array i64))]
+  [builder : (&mut builder compiler_ir_types.CompilerIrInstrBuilder)]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [i : i64]
+  [next-var : i64]) : i64
+  (if (> (+ i 2) (- instrs.len 1))
+    -1
+    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
+      [(VectorBinOp p1)
+        (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs (+ i 1))
+          [(VectorBinOp p2)
+            (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+              instrs
+              (+ i 2))
+              [(Select sp)
+                (let
+                  [d1 : i64 p1.dst]
+                  [d2 : i64 p2.dst]
+                  [tag : i64 (compiler-backend-simd-int-type-tag (& p1.ty))]
+                  [tl-id : i64
+                    (compiler-backend-avx2-sign-bit-var-id (& sp.on-true))]
+                  [fl-id : i64
+                    (compiler-backend-avx2-sign-bit-var-id (& sp.on-false))]
+                  [direct? : bool (and (= tl-id d1) (= fl-id d2))]
+                  [t-op : i64
+                    (compiler-backend-simd-op-add-sub-code
+                      (if direct?
+                        (& p1.op)
+                        (& p2.op)))]
+                  [f-op : i64
+                    (compiler-backend-simd-op-add-sub-code
+                      (if direct?
+                        (& p2.op)
+                        (& p1.op)))]
+                  [code : i64
+                    (if (and
+                      (> t-op 0)
+                      (> f-op 0)
+                      (> tag 0)
+                      (= tag (compiler-backend-simd-int-type-tag (& p2.ty)))
+                      (= tag (compiler-backend-simd-int-type-tag (& sp.ty)))
+                      (= p1.lanes p2.lanes)
+                      (= p1.lanes sp.lanes)
+                      (!= d1 d2)
+                      (!= sp.dst d1)
+                      (!= sp.dst d2)
+                      (compiler-backend-simd-select-factor-var? (& facts) d1)
+                      (compiler-backend-simd-select-factor-var? (& facts) d2)
+                      (=
+                        (compiler-backend-simd-select-factor-fact
+                          (& facts)
+                          d1
+                          0)
+                        1)
+                      (=
+                        (compiler-backend-simd-select-factor-fact
+                          (& facts)
+                          d1
+                          1)
+                        1)
+                      (=
+                        (compiler-backend-simd-select-factor-fact
+                          (& facts)
+                          d2
+                          0)
+                        1)
+                      (=
+                        (compiler-backend-simd-select-factor-fact
+                          (& facts)
+                          d2
+                          1)
+                        1)
+                      (or direct? (and (= tl-id d2) (= fl-id d1))))
+                      (compiler-backend-simd-select-factor-kind
+                        (& facts)
+                        t-op
+                        f-op
+                        (if direct?
+                          (& p1.lhs)
+                          (& p2.lhs))
+                        (if direct?
+                          (& p1.rhs)
+                          (& p2.rhs))
+                        (if direct?
+                          (& p2.lhs)
+                          (& p1.lhs))
+                        (if direct?
+                          (& p2.rhs)
+                          (& p1.rhs))
+                        sp.lanes
+                        tag)
+                      0)]
+                  (if (= code 0)
+                    -1
+                    (compiler-backend-simd-select-factor-emit!
+                      facts
+                      builder
+                      code
+                      (compiler-backend-simd-ir-value-copy
+                        (if direct?
+                          (& p1.lhs)
+                          (& p2.lhs)))
+                      (compiler-backend-simd-ir-value-copy
+                        (if direct?
+                          (& p1.rhs)
+                          (& p2.rhs)))
+                      (compiler-backend-simd-ir-value-copy
+                        (if direct?
+                          (& p2.lhs)
+                          (& p1.lhs)))
+                      (compiler-backend-simd-ir-value-copy
+                        (if direct?
+                          (& p2.rhs)
+                          (& p1.rhs)))
+                      d1
+                      sp.dst
+                      (compiler-backend-simd-ir-value-copy (& sp.mask))
+                      sp.lanes
+                      (& sp.ty)
+                      next-var)))]
+              [_ -1])]
+          [_ -1])]
+      [_ -1])))
+
+;; Pass 3 of the select-factor pass for one instruction: copy it, and splice a
+;; negated splat allocated for it right after it.
+(define (compiler-backend-simd-select-factor-splice-instr!
+  [facts : (& facts (__tl_dyn-array i64))]
+  [builder : (&mut builder compiler_ir_types.CompilerIrInstrBuilder)]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [i : i64]) : unit
+  (let
+    [sdst : i64
+      (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
+        [(Splat sdst _ _ _) sdst]
+        [_ -1])]
+    (compiler_ir_types.compiler-ir-instr-builder-push!
+      builder
+      (compiler_ir_types.compiler-ir-instr-seq-ref instrs i))
+    (when
+      (and
+        (compiler-backend-simd-select-factor-var? facts sdst)
+        (>= (compiler-backend-simd-select-factor-fact facts sdst 7) 0))
+      (let
+        [ns-var : i64 (compiler-backend-simd-select-factor-fact facts sdst 7)]
+        [slanes : i64 (compiler-backend-simd-select-factor-fact facts sdst 5)]
+        [val : i64 (compiler-backend-simd-select-factor-fact facts sdst 4)]
+        [ttag : i64 (compiler-backend-simd-select-factor-fact facts sdst 6)]
+        (if (= (compiler-backend-simd-select-factor-fact facts sdst 3) 1)
+          (compiler_ir_types.compiler-ir-instr-builder-push!
+            builder
+            (Splat
+              ns-var
+              (I64 (- 0 val))
+              slanes
+              (compiler-backend-simd-int-tag-type ttag)))
+          (let
+            [nsc-var : i64
+              (compiler-backend-simd-select-factor-fact facts sdst 8)]
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              builder
+              (UnOp
+                nsc-var
+                (Neg)
+                (Var val)
+                (compiler-backend-simd-int-tag-type ttag)))
+            (compiler_ir_types.compiler-ir-instr-builder-push!
+              builder
+              (Splat
+                ns-var
+                (Var nsc-var)
+                slanes
+                (compiler-backend-simd-int-tag-type ttag)))))))))
+
+(define (compiler-backend-simd-select-factor-splice
+  [facts : (& facts (__tl_dyn-array i64))]
+  [rebuilt-seq : compiler_ir_types.CompilerIrBlockSeq]) : compiler_ir_types.CompilerIrBlockSeq
+  (let
+    [bcount : i64 (compiler_ir_types.compiler-ir-block-seq-count rebuilt-seq)]
+    [final-blocks : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
+      (__tl_make-array compiler_ir_types.CompilerIrBlock 0)]
+    (for [b (iterator.range 0 bcount)]
+      (match (compiler_ir_types.compiler-ir-block-seq-borrow rebuilt-seq b)
+        [(Block label instrs)
+          (let
+            [builder : compiler_ir_types.CompilerIrInstrBuilder
+              (compiler_ir_types.compiler-ir-instr-builder-with-capacity
+                instrs.len)]
+            (for [i (iterator.range 0 instrs.len)]
+              (compiler-backend-simd-select-factor-splice-instr!
+                facts
+                (&mut builder)
+                instrs
+                i))
+            (__tl_array-push!
+              final-blocks
+              (Block
+                label
+                (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))]))
+    (compiler_ir_types.CompilerIrBlockSeq final-blocks bcount)))
+
 ;; Pre-regalloc SIMD algebraic select-add/sub factoring:
 ;;   select(m, x + a, x + b) -> x + select(m, a, b)
 ;;   select(m, x - a, x - b) -> x - select(m, a, b)
@@ -7385,505 +7798,81 @@
 ;;   select(m, x - a, x + b) -> x + select(m, -a, b)  when a is a single-def Splat
 ;; Negated splats are inserted right after the original Splat (so preheader
 ;; splats stay hoisted out of loops) and shared across unrolled copies.
+;; `uses` holds the function's use counts; the caller runs this only when
+;; vars > 0 and compiler-backend-simd-select-factor-has-candidate? holds.
 (define (compiler-backend-simd-select-add-factor-blocks
   [vars : i64]
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendSelectFactorResult
-  (if (or
-    (<= vars 0)
-    (not (compiler-backend-simd-select-factor-has-candidate? (& blocks))))
-    (SelectFactorResult vars blocks)
-    (match blocks
-      [(Array seq)
-        (let
-          [bcount : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-          [defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [uses : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [splat-ok : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [splat-is-const : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [splat-val : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [splat-lanes : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [splat-ty-tag : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [neg-splat-var : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [neg-scalar-var : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [next-var : i64 vars]
-          [changed : bool false]
-          [rebuilt-blocks : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
-            (__tl_make-array compiler_ir_types.CompilerIrBlock 0)]
-          (for [v (iterator.range 0 vars)]
-            (set! (array-ref neg-splat-var v) -1)
-            (set! (array-ref neg-scalar-var v) -1))
-          ;; Pass 1: def counts, use counts, and single-def integer Splats.
-          (for [b (iterator.range 0 bcount)]
-            (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
-              [(Block _ instrs)
-                (for [i (iterator.range 0 instrs.len)]
-                  (let
-                    [instr
-                      (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)]
-                    [dst : i64 (compiler_ir_types.compiler-ir-instr-dst instr)]
-                    (when
-                      (and (>= dst 0) (< dst vars))
-                      (set! (array-ref defs dst) (+ (array-ref defs dst) 1)))
-                    (match instr
-                      [(Splat sdst svalue slanes sty)
-                        (let
-                          [ttag : i64
-                            (compiler-backend-simd-int-type-tag (& sty))]
-                          (when
-                            (and (> ttag 0) (>= sdst 0) (< sdst vars))
-                            (match (& svalue)
-                              [(I64 c)
-                                (set! (array-ref splat-ok sdst) 1)
-                                (set! (array-ref splat-is-const sdst) 1)
-                                (set! (array-ref splat-val sdst) c)
-                                (set! (array-ref splat-lanes sdst) slanes)
-                                (set! (array-ref splat-ty-tag sdst) ttag)]
-                              [(Var vid)
-                                (when
-                                  (and (>= vid 0) (< vid vars))
-                                  (set! (array-ref splat-ok sdst) 1)
-                                  (set! (array-ref splat-is-const sdst) 0)
-                                  (set! (array-ref splat-val sdst) vid)
-                                  (set! (array-ref splat-lanes sdst) slanes)
-                                  (set! (array-ref splat-ty-tag sdst) ttag))]
-                              [_ unit])))]
-                      [(AddrOf _ src _)
-                        (when
-                          (and (>= src 0) (< src vars))
-                          (set! (array-ref uses src) (+ (array-ref uses src) 2)))]
-                      [_ unit])
-                    (compiler_ir_types.compiler-ir-instr-visit-uses
-                      (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)
-                      compiler-backend-simd-count-use!
-                      (&mut uses))))]))
-          ;; Pass 2: scan each block for adjacent (VectorBinOp, VectorBinOp, Select)
-          ;; triples and allocate shared negated splat vars on demand.
-          (for [b (iterator.range 0 bcount)]
-            (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
-              [(Block label instrs)
-                (let
-                  [icount : i64 instrs.len]
-                  [builder : compiler_ir_types.CompilerIrInstrBuilder
-                    (compiler_ir_types.compiler-ir-instr-builder-with-capacity
-                      icount)]
-                  [i : i64 0]
-                  (while (< i icount)
-                    (let
-                      [rewrote : bool false]
-                      (when
-                        (<= (+ i 2) (- icount 1))
-                        (match (compiler_ir_types.compiler-ir-instr-seq-borrow
-                          instrs
-                          i)
-                          [(VectorBinOp p1)
-                            (match (compiler_ir_types.compiler-ir-instr-seq-borrow
-                              instrs
-                              (+ i 1))
-                              [(VectorBinOp p2)
-                                (match (compiler_ir_types.compiler-ir-instr-seq-borrow
-                                  instrs
-                                  (+ i 2))
-                                  [(Select sp)
-                                    (let
-                                      [d1 : i64 p1.dst]
-                                      [d2 : i64 p2.dst]
-                                      [ds : i64 sp.dst]
-                                      [op1 : i64
-                                        (compiler-backend-simd-op-add-sub-code
-                                          (& p1.op))]
-                                      [op2 : i64
-                                        (compiler-backend-simd-op-add-sub-code
-                                          (& p2.op))]
-                                      [tag1 : i64
-                                        (compiler-backend-simd-int-type-tag
-                                          (& p1.ty))]
-                                      [tag2 : i64
-                                        (compiler-backend-simd-int-type-tag
-                                          (& p2.ty))]
-                                      [tags : i64
-                                        (compiler-backend-simd-int-type-tag
-                                          (& sp.ty))]
-                                      [tl-id : i64
-                                        (compiler-backend-avx2-sign-bit-var-id
-                                          (& sp.on-true))]
-                                      [fl-id : i64
-                                        (compiler-backend-avx2-sign-bit-var-id
-                                          (& sp.on-false))]
-                                      [direct? : bool
-                                        (and (= tl-id d1) (= fl-id d2))]
-                                      [swapped? : bool
-                                        (and (= tl-id d2) (= fl-id d1))]
-                                      (when
-                                        (and
-                                          (> op1 0)
-                                          (> op2 0)
-                                          (> tag1 0)
-                                          (= tag1 tag2)
-                                          (= tag1 tags)
-                                          (= p1.lanes p2.lanes)
-                                          (= p1.lanes sp.lanes)
-                                          (>= d1 0)
-                                          (< d1 vars)
-                                          (>= d2 0)
-                                          (< d2 vars)
-                                          (!= d1 d2)
-                                          (!= ds d1)
-                                          (!= ds d2)
-                                          (= (array-ref defs d1) 1)
-                                          (= (array-ref uses d1) 1)
-                                          (= (array-ref defs d2) 1)
-                                          (= (array-ref uses d2) 1)
-                                          (or direct? swapped?))
-                                        (let
-                                          [t-op : i64
-                                            (if direct?
-                                              op1
-                                              op2)]
-                                          [f-op : i64
-                                            (if direct?
-                                              op2
-                                              op1)]
-                                          [tl : compiler_ir_types.CompilerIrValue
-                                            (compiler-backend-simd-ir-value-copy
-                                              (if direct?
-                                                (& p1.lhs)
-                                                (& p2.lhs)))]
-                                          [tr : compiler_ir_types.CompilerIrValue
-                                            (compiler-backend-simd-ir-value-copy
-                                              (if direct?
-                                                (& p1.rhs)
-                                                (& p2.rhs)))]
-                                          [fl : compiler_ir_types.CompilerIrValue
-                                            (compiler-backend-simd-ir-value-copy
-                                              (if direct?
-                                                (& p2.lhs)
-                                                (& p1.lhs)))]
-                                          [fr : compiler_ir_types.CompilerIrValue
-                                            (compiler-backend-simd-ir-value-copy
-                                              (if direct?
-                                                (& p2.rhs)
-                                                (& p1.rhs)))]
-                                          [found-kind : i64 0]
-                                          [common : compiler_ir_types.CompilerIrValue
-                                            Unit]
-                                          [sel-t : compiler_ir_types.CompilerIrValue
-                                            Unit]
-                                          [sel-f : compiler_ir_types.CompilerIrValue
-                                            Unit]
-                                          [neg-id : i64 -1]
-                                          ;; found-kind: 1=Add, 2=Sub, 3=Add+neg(f), 4=Add+neg(t)
-                                          (cond
-                                            [(and (= t-op 1) (= f-op 1))
-                                              (cond
-                                                [(compiler-backend-simd-ir-value-eq?
-                                                  (& tl)
-                                                  (& fl))
-                                                  (set! found-kind 1)
-                                                  (set! common tl)
-                                                  (set! sel-t tr)
-                                                  (set! sel-f fr)]
-                                                [(compiler-backend-simd-ir-value-eq?
-                                                  (& tl)
-                                                  (& fr))
-                                                  (set! found-kind 1)
-                                                  (set! common tl)
-                                                  (set! sel-t tr)
-                                                  (set! sel-f fl)]
-                                                [(compiler-backend-simd-ir-value-eq?
-                                                  (& tr)
-                                                  (& fl))
-                                                  (set! found-kind 1)
-                                                  (set! common tr)
-                                                  (set! sel-t tl)
-                                                  (set! sel-f fr)]
-                                                [(compiler-backend-simd-ir-value-eq?
-                                                  (& tr)
-                                                  (& fr))
-                                                  (set! found-kind 1)
-                                                  (set! common tr)
-                                                  (set! sel-t tl)
-                                                  (set! sel-f fl)]
-                                                [else unit])]
-                                            [(and (= t-op 2) (= f-op 2))
-                                              (when
-                                                (compiler-backend-simd-ir-value-eq?
-                                                  (& tl)
-                                                  (& fl))
-                                                (set! found-kind 2)
-                                                (set! common tl)
-                                                (set! sel-t tr)
-                                                (set! sel-f fr))]
-                                            [(and (= t-op 1) (= f-op 2))
-                                              (let
-                                                [fid : i64
-                                                  (compiler-backend-avx2-sign-bit-var-id
-                                                    (& fr))]
-                                                (when
-                                                  (and
-                                                    (>= fid 0)
-                                                    (< fid vars)
-                                                    (= (array-ref defs fid) 1)
-                                                    (=
-                                                      (array-ref splat-ok fid)
-                                                      1)
-                                                    (=
-                                                      (array-ref
-                                                        splat-lanes
-                                                        fid)
-                                                      sp.lanes)
-                                                    (=
-                                                      (array-ref
-                                                        splat-ty-tag
-                                                        fid)
-                                                      tag1))
-                                                  (cond
-                                                    [(compiler-backend-simd-ir-value-eq?
-                                                      (& tl)
-                                                      (& fl))
-                                                      (set! found-kind 3)
-                                                      (set! common tl)
-                                                      (set! sel-t tr)
-                                                      (set! neg-id fid)]
-                                                    [(compiler-backend-simd-ir-value-eq?
-                                                      (& tr)
-                                                      (& fl))
-                                                      (set! found-kind 3)
-                                                      (set! common tr)
-                                                      (set! sel-t tl)
-                                                      (set! neg-id fid)]
-                                                    [else unit])))]
-                                            [(and (= t-op 2) (= f-op 1))
-                                              (let
-                                                [tid : i64
-                                                  (compiler-backend-avx2-sign-bit-var-id
-                                                    (& tr))]
-                                                (when
-                                                  (and
-                                                    (>= tid 0)
-                                                    (< tid vars)
-                                                    (= (array-ref defs tid) 1)
-                                                    (=
-                                                      (array-ref splat-ok tid)
-                                                      1)
-                                                    (=
-                                                      (array-ref
-                                                        splat-lanes
-                                                        tid)
-                                                      sp.lanes)
-                                                    (=
-                                                      (array-ref
-                                                        splat-ty-tag
-                                                        tid)
-                                                      tag1))
-                                                  (cond
-                                                    [(compiler-backend-simd-ir-value-eq?
-                                                      (& tl)
-                                                      (& fl))
-                                                      (set! found-kind 4)
-                                                      (set! common tl)
-                                                      (set! sel-f fr)
-                                                      (set! neg-id tid)]
-                                                    [(compiler-backend-simd-ir-value-eq?
-                                                      (& tl)
-                                                      (& fr))
-                                                      (set! found-kind 4)
-                                                      (set! common tl)
-                                                      (set! sel-f fl)
-                                                      (set! neg-id tid)]
-                                                    [else unit])))]
-                                            [else unit])
-                                          (when
-                                            (> found-kind 0)
-                                            (when
-                                              (or
-                                                (= found-kind 3)
-                                                (= found-kind 4))
-                                              (when
-                                                (<
-                                                  (array-ref
-                                                    neg-splat-var
-                                                    neg-id)
-                                                  0)
-                                                (when
-                                                  (=
-                                                    (array-ref
-                                                      splat-is-const
-                                                      neg-id)
-                                                    0)
-                                                  (set!
-                                                    (array-ref
-                                                      neg-scalar-var
-                                                      neg-id)
-                                                    next-var)
-                                                  (set! next-var (+ next-var 1)))
-                                                (set!
-                                                  (array-ref
-                                                    neg-splat-var
-                                                    neg-id)
-                                                  next-var)
-                                                (set! next-var (+ next-var 1)))
-                                              (let
-                                                [nsv : i64
-                                                  (array-ref
-                                                    neg-splat-var
-                                                    neg-id)]
-                                                (if (= found-kind 3)
-                                                  (set! sel-f (Var nsv))
-                                                  (set! sel-t (Var nsv)))))
-                                            (let
-                                              [final-op : compiler_ir_types.CompilerIrBinOp
-                                                (if (= found-kind 2)
-                                                  (Sub)
-                                                  (Add))]
-                                              [sel-ty : compiler_ast_types.AstType
-                                                (compiler-backend-copy-int-ast-type
-                                                  (& sp.ty))]
-                                              [op-ty : compiler_ast_types.AstType
-                                                (compiler-backend-copy-int-ast-type
-                                                  (& sp.ty))]
-                                              (compiler_ir_types.compiler-ir-instr-builder-push!
-                                                (&mut builder)
-                                                (Select
-                                                  (box
-                                                    (compiler_ir_types.CompilerIrInstrSelectPayload
-                                                      d1
-                                                      (compiler-backend-simd-ir-value-copy
-                                                        (& sp.mask))
-                                                      sel-t
-                                                      sel-f
-                                                      sp.lanes
-                                                      sel-ty))))
-                                              (compiler_ir_types.compiler-ir-instr-builder-push!
-                                                (&mut builder)
-                                                (VectorBinOp
-                                                  (box
-                                                    (compiler_ir_types.CompilerIrInstrVectorBinOpPayload
-                                                      ds
-                                                      final-op
-                                                      common
-                                                      (Var d1)
-                                                      sp.lanes
-                                                      op-ty))))
-                                              (set! rewrote true)
-                                              (set! changed true))))))]
-                                  [_ unit])]
-                              [_ unit])]
-                          [_ unit]))
-                      (if rewrote
-                        (set! i (+ i 3))
-                        (begin
-                          (compiler_ir_types.compiler-ir-instr-builder-push!
-                            (&mut builder)
-                            (compiler_ir_types.compiler-ir-instr-seq-ref
-                              instrs
-                              i))
-                          (set! i (+ i 1))))))
-                  (__tl_array-push!
-                    rebuilt-blocks
-                    (Block
-                      label
-                      (compiler_ir_types.compiler-ir-instr-builder-to-seq
-                        builder))))]))
-          (if (not changed)
-            (SelectFactorResult vars (Array seq))
-            ;; Pass 3: if any negated splats were allocated, splice each one
-            ;; immediately after its original Splat instruction.
-            (if (= next-var vars)
-              (SelectFactorResult
-                next-var
-                (Array
-                  (compiler_ir_types.CompilerIrBlockSeq rebuilt-blocks bcount)))
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [uses : (& uses (__tl_dyn-array i64))]) : CompilerBackendSelectFactorResult
+  (match blocks
+    [(Array seq)
+      (let
+        [bcount : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
+        [facts : (__tl_dyn-array i64) (__tl_make-array i64 (* vars 9))]
+        [next-var : i64 vars]
+        [changed : bool false]
+        [rebuilt-blocks : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
+          (__tl_make-array compiler_ir_types.CompilerIrBlock 0)]
+        (for [v (iterator.range 0 vars)]
+          (when
+            (< v (array-length uses))
+            (set! (array-ref facts (+ (* v 9) 1)) (array-ref uses v)))
+          (set! (array-ref facts (+ (* v 9) 7)) -1)
+          (set! (array-ref facts (+ (* v 9) 8)) -1))
+        (for [b (iterator.range 0 bcount)]
+          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+            [(Block _ instrs)
+              (for [i (iterator.range 0 instrs.len)]
+                (compiler-backend-simd-select-factor-scan-instr!
+                  (&mut facts)
+                  instrs
+                  i))]))
+        (for [b (iterator.range 0 bcount)]
+          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+            [(Block label instrs)
               (let
-                [rebuilt-seq : compiler_ir_types.CompilerIrBlockSeq
-                  (compiler_ir_types.CompilerIrBlockSeq rebuilt-blocks bcount)]
-                [final-blocks : (__tl_dyn-array
-                  compiler_ir_types.CompilerIrBlock)
-                  (__tl_make-array compiler_ir_types.CompilerIrBlock 0)]
-                (for [b (iterator.range 0 bcount)]
-                  (match (compiler_ir_types.compiler-ir-block-seq-borrow
-                    rebuilt-seq
-                    b)
-                    [(Block label instrs)
-                      (let
-                        [icount : i64 instrs.len]
-                        [builder : compiler_ir_types.CompilerIrInstrBuilder
-                          (compiler_ir_types.compiler-ir-instr-builder-with-capacity
-                            icount)]
-                        (for [i (iterator.range 0 icount)]
-                          (let
-                            [insert-splat : i64 -1]
-                            (match (compiler_ir_types.compiler-ir-instr-seq-borrow
-                              instrs
-                              i)
-                              [(Splat sdst _ _ _)
-                                (when
-                                  (and
-                                    (>= sdst 0)
-                                    (< sdst vars)
-                                    (>= (array-ref neg-splat-var sdst) 0))
-                                  (set! insert-splat sdst))]
-                              [_ unit])
-                            (compiler_ir_types.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (compiler_ir_types.compiler-ir-instr-seq-ref
-                                instrs
-                                i))
-                            (when
-                              (>= insert-splat 0)
-                              (let
-                                [ns-var : i64
-                                  (array-ref neg-splat-var insert-splat)]
-                                [nsc-var : i64
-                                  (array-ref neg-scalar-var insert-splat)]
-                                [slanes : i64
-                                  (array-ref splat-lanes insert-splat)]
-                                [ttag : i64
-                                  (array-ref splat-ty-tag insert-splat)]
-                                [ty : compiler_ast_types.AstType
-                                  (cond
-                                    [(= ttag 1) (I8)]
-                                    [(= ttag 2) (U8)]
-                                    [(= ttag 3) (I16)]
-                                    [(= ttag 4) (U16)]
-                                    [(= ttag 5) (I32)]
-                                    [(= ttag 6) (U32)]
-                                    [(= ttag 8) (U64)]
-                                    [else (I64)])]
-                                (if (=
-                                  (array-ref splat-is-const insert-splat)
-                                  1)
-                                  (compiler_ir_types.compiler-ir-instr-builder-push!
-                                    (&mut builder)
-                                    (Splat
-                                      ns-var
-                                      (I64
-                                        (- 0 (array-ref splat-val insert-splat)))
-                                      slanes
-                                      ty))
-                                  (let
-                                    [ty2 : compiler_ast_types.AstType
-                                      (compiler-backend-copy-int-ast-type
-                                        (& ty))]
-                                    (compiler_ir_types.compiler-ir-instr-builder-push!
-                                      (&mut builder)
-                                      (UnOp
-                                        nsc-var
-                                        (Neg)
-                                        (Var (array-ref splat-val insert-splat))
-                                        ty))
-                                    (compiler_ir_types.compiler-ir-instr-builder-push!
-                                      (&mut builder)
-                                      (Splat ns-var (Var nsc-var) slanes ty2))))))))
-                        (__tl_array-push!
-                          final-blocks
-                          (Block
-                            label
-                            (compiler_ir_types.compiler-ir-instr-builder-to-seq
-                              builder))))]))
-                (SelectFactorResult
-                  next-var
-                  (Array
-                    (compiler_ir_types.CompilerIrBlockSeq final-blocks bcount)))))))])))
+                [builder : compiler_ir_types.CompilerIrInstrBuilder
+                  (compiler_ir_types.compiler-ir-instr-builder-with-capacity
+                    instrs.len)]
+                [i : i64 0]
+                (while (< i instrs.len)
+                  (let
+                    [after : i64
+                      (compiler-backend-simd-select-factor-try!
+                        (&mut facts)
+                        (&mut builder)
+                        instrs
+                        i
+                        next-var)]
+                    (if (>= after 0)
+                      (begin
+                        (set! next-var after)
+                        (set! changed true)
+                        (set! i (+ i 3)))
+                      (begin
+                        (compiler_ir_types.compiler-ir-instr-builder-push!
+                          (&mut builder)
+                          (compiler_ir_types.compiler-ir-instr-seq-ref instrs i))
+                        (set! i (+ i 1))))))
+                (__tl_array-push!
+                  rebuilt-blocks
+                  (Block
+                    label
+                    (compiler_ir_types.compiler-ir-instr-builder-to-seq builder))))]))
+        (cond
+          [(not changed) (SelectFactorResult vars (Array seq))]
+          [(= next-var vars)
+            (SelectFactorResult
+              next-var
+              (Array
+                (compiler_ir_types.CompilerIrBlockSeq rebuilt-blocks bcount)))]
+          [else
+            (SelectFactorResult
+              next-var
+              (Array
+                (compiler-backend-simd-select-factor-splice
+                  (& facts)
+                  (compiler_ir_types.CompilerIrBlockSeq rebuilt-blocks bcount))))]))]))
 
 (define (compiler-backend-avx2-single-bit-index [value : i64]) : i64
   (if (or (= value 0) (!= (bit-and value (- value 1)) 0))
@@ -7910,26 +7899,85 @@
     [(or (I64) (U64) (F64)) true]
     [_ false]))
 
-(define (compiler-backend-avx2-sign-bit-mark-use!
-  [flags : (&mut flags (__tl_dyn-array i64))]
-  [_role : compiler_ir_types.CompilerIrOperandRole]
-  [value : compiler_ir_types.CompilerIrValue]) : unit
-  (match (& value)
-    [(Var id)
-      (when
-        (and (>= id 0) (< id (array-length flags)))
-        (set! (array-ref flags id) 1))]
-    [_ unit]))
+;; The sign-bit plan's per-var facts, one row of five per var:
+;; 0 defs, 1 has-splat, 2 splat-val, 3 select-only, 4 uses as the mask of a
+;; 64-bit 4-lane Select.
+(define (compiler-backend-avx2-sign-bit-fact
+  [facts : (& facts (__tl_dyn-array i64))]
+  [var : i64]
+  [field : i64]) : i64
+  (array-ref facts (+ (* var 5) field)))
 
-(define (compiler-backend-avx2-sign-bit-mark-value!
-  [flags : (&mut flags (__tl_dyn-array i64))]
-  [value : (& value compiler_ir_types.CompilerIrValue)]) : unit
-  (match value
-    [(Var id)
-      (when
-        (and (>= id 0) (< id (array-length flags)))
-        (set! (array-ref flags id) 1))]
-    [_ unit]))
+(define (compiler-backend-avx2-sign-bit-single-def?
+  [facts : (& facts (__tl_dyn-array i64))]
+  [var : i64]) : bool
+  (and
+    (>= var 0)
+    (< var (/ (array-length facts) 5))
+    (= (array-ref facts (* var 5)) 1)))
+
+(define (compiler-backend-avx2-sign-bit-single-bit-splat?
+  [facts : (& facts (__tl_dyn-array i64))]
+  [var : i64]) : bool
+  (and
+    (compiler-backend-avx2-sign-bit-single-def? facts var)
+    (= (compiler-backend-avx2-sign-bit-fact facts var 1) 1)
+    (>=
+      (compiler-backend-avx2-single-bit-index
+        (compiler-backend-avx2-sign-bit-fact facts var 2))
+      0)))
+
+;; Pass 1 of the sign-bit plan for one instruction: def counts, single-def
+;; 4-lane 64-bit constant splats, Eq/Ne compares, and mask uses by 64-bit
+;; 4-lane Selects.
+(define (compiler-backend-avx2-sign-bit-scan-instr!
+  [facts : (&mut facts (__tl_dyn-array i64))]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [i : i64]) : unit
+  (let
+    [var-count : i64 (/ (array-length facts) 5)]
+    [instr (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)]
+    [dst : i64 (compiler_ir_types.compiler-ir-instr-dst instr)]
+    (when
+      (and (>= dst 0) (< dst var-count))
+      (set! (array-ref facts (* dst 5)) (+ (array-ref facts (* dst 5)) 1)))
+    (match instr
+      [(Splat sdst svalue slanes sty)
+        (when
+          (and
+            (= slanes 4)
+            (>= sdst 0)
+            (< sdst var-count)
+            (compiler-backend-avx2-sign-bit-int64-ty? (& sty)))
+          (match (& svalue)
+            [(I64 c)
+              (set! (array-ref facts (+ (* sdst 5) 1)) 1)
+              (set! (array-ref facts (+ (* sdst 5) 2)) c)]
+            [_ unit]))]
+      [(VectorCompare p)
+        (when
+          (and
+            (= p.lanes 4)
+            (>= p.dst 0)
+            (< p.dst var-count)
+            (compiler-backend-avx2-sign-bit-int64-ty? (& p.ty))
+            (match (& p.op)
+              [(or (Eq) (Ne)) true]
+              [_ false]))
+          (set! (array-ref facts (+ (* p.dst 5) 3)) 1))]
+      [(Select p)
+        (let
+          [mask-id : i64 (compiler-backend-avx2-sign-bit-var-id (& p.mask))]
+          (when
+            (and
+              (= p.lanes 4)
+              (compiler-backend-avx2-sign-bit-select-ty? (& p.ty))
+              (>= mask-id 0)
+              (< mask-id var-count))
+            (set!
+              (array-ref facts (+ (* mask-id 5) 4))
+              (+ (array-ref facts (+ (* mask-id 5) 4)) 1))))]
+      [_ unit])))
 
 (define (compiler-backend-avx2-sign-bit-has-candidate?
   [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]) : bool
@@ -7969,6 +8017,131 @@
     [(Var id) id]
     [_ -1]))
 
+;; The sign-bit table entry for `and-dst = bit_and(lhs, rhs)` followed by
+;; `cmp-dst = compare_{eq,ne}(cl, cr)` (cmp-op 1 Eq, 2 Ne), or 0 when the
+;; pair does not qualify: polarity * 256 + lhs-is-splat * 64 + k.
+(define (compiler-backend-avx2-sign-bit-pair-code
+  [facts : (& facts (__tl_dyn-array i64))]
+  [use-counts : (& use-counts (__tl_dyn-array i64))]
+  [and-dst : i64]
+  [lhs-id : i64]
+  [rhs-id : i64]
+  [cmp-dst : i64]
+  [cl-id : i64]
+  [cr-id : i64]
+  [cmp-op : i64]) : i64
+  (let
+    [rhs-ok : bool
+      (compiler-backend-avx2-sign-bit-single-bit-splat? facts rhs-id)]
+    [lhs-ok : bool
+      (and
+        (not rhs-ok)
+        (compiler-backend-avx2-sign-bit-single-bit-splat? facts lhs-id))]
+    [other-id : i64
+      (if (= cl-id and-dst)
+        cr-id
+        (if (= cr-id and-dst)
+          cl-id
+          -1))]
+    (if (and
+      (compiler-backend-avx2-sign-bit-single-def? facts and-dst)
+      (compiler-backend-var-single-use? use-counts and-dst)
+      (compiler-backend-avx2-sign-bit-single-def? facts cmp-dst)
+      (= (compiler-backend-avx2-sign-bit-fact facts cmp-dst 3) 1)
+      (< cmp-dst (array-length use-counts))
+      (>= (array-ref use-counts cmp-dst) 1)
+      ;; Every use of the compare is the mask of a 64-bit 4-lane Select.
+      (=
+        (array-ref use-counts cmp-dst)
+        (compiler-backend-avx2-sign-bit-fact facts cmp-dst 4))
+      (or rhs-ok lhs-ok)
+      (compiler-backend-avx2-sign-bit-single-def? facts other-id)
+      (= (compiler-backend-avx2-sign-bit-fact facts other-id 1) 1))
+      (let
+        [bit-const : i64
+          (compiler-backend-avx2-sign-bit-fact
+            facts
+            (if rhs-ok
+              rhs-id
+              lhs-id)
+            2)]
+        [cmp-const : i64 (compiler-backend-avx2-sign-bit-fact facts other-id 2)]
+        [polarity : i64
+          (cond
+            [(= cmp-op 1)
+              (if (= cmp-const bit-const)
+                1
+                (if (= cmp-const 0)
+                  2
+                  0))]
+            [(= cmp-op 2)
+              (if (= cmp-const 0)
+                1
+                (if (= cmp-const bit-const)
+                  2
+                  0))]
+            [else 0])]
+        (if (> polarity 0)
+          (+
+            (+
+              (* polarity 256)
+              (if rhs-ok
+                0
+                64))
+            (compiler-backend-avx2-single-bit-index bit-const))
+          0))
+      0)))
+
+;; Pass 2 of the sign-bit plan for one block: record each qualifying adjacent
+;; 64-bit 4-lane (bit_and, compare) pair in `table`; true when one was found.
+(define (compiler-backend-avx2-sign-bit-plan-block!
+  [table : (&mut table (__tl_dyn-array i64))]
+  [facts : (& facts (__tl_dyn-array i64))]
+  [use-counts : (& use-counts (__tl_dyn-array i64))]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]) : bool
+  (let
+    [found : bool false]
+    (for [i (iterator.range 0 (- instrs.len 1))]
+      (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
+        [(VectorBinOp ap)
+          (when
+            (and
+              (= ap.lanes 4)
+              (match (& ap.op)
+                [(BitAnd) true]
+                [_ false])
+              (compiler-backend-avx2-sign-bit-int64-ty? (& ap.ty)))
+            (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+              instrs
+              (+ i 1))
+              [(VectorCompare cp)
+                (when
+                  (and
+                    (= cp.lanes 4)
+                    (compiler-backend-avx2-sign-bit-int64-ty? (& cp.ty)))
+                  (let
+                    [code : i64
+                      (compiler-backend-avx2-sign-bit-pair-code
+                        facts
+                        use-counts
+                        ap.dst
+                        (compiler-backend-avx2-sign-bit-var-id (& ap.lhs))
+                        (compiler-backend-avx2-sign-bit-var-id (& ap.rhs))
+                        cp.dst
+                        (compiler-backend-avx2-sign-bit-var-id (& cp.lhs))
+                        (compiler-backend-avx2-sign-bit-var-id (& cp.rhs))
+                        (match (& cp.op)
+                          [(Eq) 1]
+                          [(Ne) 2]
+                          [_ 0]))]
+                    (when
+                      (> code 0)
+                      (set! (array-ref table cp.dst) code)
+                      (set! found true))))]
+              [_ unit]))]
+        [_ unit]))
+    found))
+
 ;; Pre-pass over an AVX2 function's blocks: identify 64-bit 4-lane single-bit
 ;; tests `vector_compare_{eq,ne}(vector_bit_and(x, splat(1<<k)), splat(1<<k|0))`
 ;; whose result is consumed strictly as the mask of 64-bit 4-lane Select(s).
@@ -7996,12 +8169,7 @@
       (match blocks
         [(Array seq)
           (let
-            [defs : (__tl_dyn-array i64) (__tl_make-array i64 var-count)]
-            [has-splat : (__tl_dyn-array i64) (__tl_make-array i64 var-count)]
-            [splat-val : (__tl_dyn-array i64) (__tl_make-array i64 var-count)]
-            [select-only : (__tl_dyn-array i64) (__tl_make-array i64 var-count)]
-            [non-select-use : (__tl_dyn-array i64)
-              (__tl_make-array i64 var-count)]
+            [facts : (__tl_dyn-array i64) (__tl_make-array i64 (* var-count 5))]
             [table : (__tl_dyn-array i64) (__tl_make-array i64 var-count)]
             [any-found : bool false]
             [bcount : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
@@ -8009,213 +8177,20 @@
               (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
                 [(Block _ instrs)
                   (for [i (iterator.range 0 instrs.len)]
-                    (let
-                      [instr
-                        (compiler_ir_types.compiler-ir-instr-seq-borrow
-                          instrs
-                          i)]
-                      [dst : i64
-                        (compiler_ir_types.compiler-ir-instr-dst instr)]
-                      (when
-                        (and (>= dst 0) (< dst var-count))
-                        (set! (array-ref defs dst) (+ (array-ref defs dst) 1)))
-                      (match instr
-                        [(Splat sdst svalue slanes sty)
-                          (when
-                            (and
-                              (= slanes 4)
-                              (>= sdst 0)
-                              (< sdst var-count)
-                              (compiler-backend-avx2-sign-bit-int64-ty? (& sty)))
-                            (match (& svalue)
-                              [(I64 c)
-                                (set! (array-ref has-splat sdst) 1)
-                                (set! (array-ref splat-val sdst) c)]
-                              [_ unit]))]
-                        [(VectorCompare p)
-                          (when
-                            (and
-                              (= p.lanes 4)
-                              (>= p.dst 0)
-                              (< p.dst var-count)
-                              (compiler-backend-avx2-sign-bit-int64-ty?
-                                (& p.ty))
-                              (match (& p.op)
-                                [(or (Eq) (Ne)) true]
-                                [_ false]))
-                            (set! (array-ref select-only p.dst) 1))]
-                        [_ unit])
-                      (match instr
-                        [(Select p)
-                          (if (and
-                            (= p.lanes 4)
-                            (compiler-backend-avx2-sign-bit-select-ty? (& p.ty)))
-                            (begin
-                              (compiler-backend-avx2-sign-bit-mark-value!
-                                (&mut non-select-use)
-                                (& p.on-true))
-                              (compiler-backend-avx2-sign-bit-mark-value!
-                                (&mut non-select-use)
-                                (& p.on-false)))
-                            (compiler_ir_types.compiler-ir-instr-visit-uses
-                              (compiler_ir_types.compiler-ir-instr-seq-ref
-                                instrs
-                                i)
-                              compiler-backend-avx2-sign-bit-mark-use!
-                              (&mut non-select-use)))]
-                        [(AddrOf _ src _)
-                          (when
-                            (and (>= src 0) (< src var-count))
-                            (set! (array-ref non-select-use src) 1))]
-                        [_
-                          (compiler_ir_types.compiler-ir-instr-visit-uses
-                            (compiler_ir_types.compiler-ir-instr-seq-ref
-                              instrs
-                              i)
-                            compiler-backend-avx2-sign-bit-mark-use!
-                            (&mut non-select-use))])))]))
+                    (compiler-backend-avx2-sign-bit-scan-instr!
+                      (&mut facts)
+                      instrs
+                      i))]))
             (for [b (iterator.range 0 bcount)]
               (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
                 [(Block _ instrs)
-                  (let
-                    [limit : i64 (- instrs.len 1)]
-                    (for [i (iterator.range 0 limit)]
-                      (match (compiler_ir_types.compiler-ir-instr-seq-borrow
-                        instrs
-                        i)
-                        [(VectorBinOp ap)
-                          (let
-                            [and-dst : i64 ap.dst]
-                            (when
-                              (and
-                                (= ap.lanes 4)
-                                (match (& ap.op)
-                                  [(BitAnd) true]
-                                  [_ false])
-                                (compiler-backend-avx2-sign-bit-int64-ty?
-                                  (& ap.ty))
-                                (>= and-dst 0)
-                                (< and-dst var-count)
-                                (= (array-ref defs and-dst) 1)
-                                (compiler-backend-var-single-use?
-                                  use-counts
-                                  and-dst))
-                              (match (compiler_ir_types.compiler-ir-instr-seq-borrow
-                                instrs
-                                (+ i 1))
-                                [(VectorCompare cp)
-                                  (let
-                                    [cmp-dst : i64 cp.dst]
-                                    (when
-                                      (and
-                                        (= cp.lanes 4)
-                                        (compiler-backend-avx2-sign-bit-int64-ty?
-                                          (& cp.ty))
-                                        (>= cmp-dst 0)
-                                        (< cmp-dst var-count)
-                                        (= (array-ref defs cmp-dst) 1)
-                                        (= (array-ref select-only cmp-dst) 1)
-                                        (= (array-ref non-select-use cmp-dst) 0)
-                                        (< cmp-dst use-len)
-                                        (>= (array-ref use-counts cmp-dst) 1))
-                                      (let
-                                        [rhs-id : i64
-                                          (compiler-backend-avx2-sign-bit-var-id
-                                            (& ap.rhs))]
-                                        [lhs-id : i64
-                                          (compiler-backend-avx2-sign-bit-var-id
-                                            (& ap.lhs))]
-                                        [rhs-ok : bool
-                                          (and
-                                            (>= rhs-id 0)
-                                            (< rhs-id var-count)
-                                            (= (array-ref defs rhs-id) 1)
-                                            (= (array-ref has-splat rhs-id) 1)
-                                            (>=
-                                              (compiler-backend-avx2-single-bit-index
-                                                (array-ref splat-val rhs-id))
-                                              0))]
-                                        [lhs-ok : bool
-                                          (and
-                                            (not rhs-ok)
-                                            (>= lhs-id 0)
-                                            (< lhs-id var-count)
-                                            (= (array-ref defs lhs-id) 1)
-                                            (= (array-ref has-splat lhs-id) 1)
-                                            (>=
-                                              (compiler-backend-avx2-single-bit-index
-                                                (array-ref splat-val lhs-id))
-                                              0))]
-                                        (when
-                                          (or rhs-ok lhs-ok)
-                                          (let
-                                            [splat-id : i64
-                                              (if rhs-ok
-                                                rhs-id
-                                                lhs-id)]
-                                            [lhs-is-splat : i64
-                                              (if rhs-ok
-                                                0
-                                                1)]
-                                            [bit-const : i64
-                                              (array-ref splat-val splat-id)]
-                                            [k : i64
-                                              (compiler-backend-avx2-single-bit-index
-                                                bit-const)]
-                                            [cl-id : i64
-                                              (compiler-backend-avx2-sign-bit-var-id
-                                                (& cp.lhs))]
-                                            [cr-id : i64
-                                              (compiler-backend-avx2-sign-bit-var-id
-                                                (& cp.rhs))]
-                                            [other-id : i64
-                                              (if (= cl-id and-dst)
-                                                cr-id
-                                                (if (= cr-id and-dst)
-                                                  cl-id
-                                                  -1))]
-                                            (when
-                                              (and
-                                                (>= other-id 0)
-                                                (< other-id var-count)
-                                                (= (array-ref defs other-id) 1)
-                                                (=
-                                                  (array-ref has-splat other-id)
-                                                  1))
-                                              (let
-                                                [cmp-const : i64
-                                                  (array-ref splat-val other-id)]
-                                                [polarity : i64
-                                                  (match (& cp.op)
-                                                    [(Eq)
-                                                      (if (=
-                                                        cmp-const
-                                                        bit-const)
-                                                        1
-                                                        (if (= cmp-const 0)
-                                                          2
-                                                          0))]
-                                                    [(Ne)
-                                                      (if (= cmp-const 0)
-                                                        1
-                                                        (if (=
-                                                          cmp-const
-                                                          bit-const)
-                                                          2
-                                                          0))]
-                                                    [_ 0])]
-                                                (when
-                                                  (> polarity 0)
-                                                  (set!
-                                                    (array-ref table cmp-dst)
-                                                    (+
-                                                      (+
-                                                        (* polarity 256)
-                                                        (* lhs-is-splat 64))
-                                                      k))
-                                                  (set! any-found true)))))))))]
-                                [_ unit])))]
-                        [_ unit])))]))
+                  (when
+                    (compiler-backend-avx2-sign-bit-plan-block!
+                      (&mut table)
+                      (& facts)
+                      use-counts
+                      instrs)
+                    (set! any-found true))]))
             (when
               any-found
               (be_state.compiler-backend-function-state-set-i64-array!

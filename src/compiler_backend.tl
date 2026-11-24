@@ -3097,16 +3097,15 @@
 ;; substitutes vars directly into Pack/Word operands); so does AddrOf's storage
 ;; var.
 (define (compiler-backend-count-instr-uses
-  [counts : (__tl_dyn-array i64)]
+  [counts : (&mut counts (__tl_dyn-array i64))]
   [instr : compiler_ir_types.CompilerIrInstr]) : unit
   (match (& instr)
-    [(AddrOf _ src _storage-words)
-      (compiler-backend-use-count-inc (&mut counts) src)]
+    [(AddrOf _ src _storage-words) (compiler-backend-use-count-inc counts src)]
     [_
       (compiler_ir_types.compiler-ir-instr-visit-uses
         instr
         compiler-backend-count-use
-        (&mut counts))]))
+        counts)]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (__tl_dyn-array i64)]
@@ -3116,7 +3115,7 @@
     [count : i64 instrs.len]
     (for [index (iterator.range 0 count)]
       (compiler-backend-count-instr-uses
-        (be_state.compiler-backend-global-shared-view counts)
+        (&mut counts)
         (be_state.compiler-backend-global-array-element-shared-view slots index)))
     unit))
 
@@ -3138,6 +3137,36 @@
             (be_state.compiler-backend-global-shared-view counts)
             instrs)]))
     unit))
+
+;; Pre-regalloc SIMD select-add/sub factoring
+;; (be_simd.compiler-backend-simd-select-add-factor-blocks), fed this
+;; function's use counts from the shared operand walk.
+(define (compiler-backend-select-add-factor-blocks
+  [vars : i64]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : be_simd.CompilerBackendSelectFactorResult
+  (if (or
+    (<= vars 0)
+    (not
+      (be_simd.compiler-backend-simd-select-factor-has-candidate? (& blocks))))
+    (SelectFactorResult vars blocks)
+    (let
+      [uses : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      (match (& blocks)
+        [(Array seq)
+          (for [b
+            (iterator.range
+              0
+              (compiler_ir_types.compiler-ir-block-seq-count seq))]
+            (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+              [(Block _ instrs)
+                (for [i (iterator.range 0 instrs.len)]
+                  (compiler-backend-count-instr-uses
+                    (&mut uses)
+                    (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)))]))])
+      (be_simd.compiler-backend-simd-select-add-factor-blocks
+        vars
+        blocks
+        (& uses)))))
 
 (define (compiler-backend-function-use-counts
   [vars : i64]
@@ -3219,7 +3248,7 @@
             (array-ref counts pending)
             0)]
         (compiler-backend-count-instr-uses
-          (be_state.compiler-backend-global-shared-view counts)
+          (&mut counts)
           (be_state.compiler-backend-global-shared-view instr))
         (if (and (>= pending 0) (> (array-ref counts pending) before))
           (set! (array-ref adjacent pending) true)
@@ -3422,7 +3451,7 @@
     [n : i64 instrs.len]
     (for [j (iterator.range 0 n)]
       (compiler-backend-count-instr-uses
-        (be_state.compiler-backend-global-shared-view counts)
+        (&mut counts)
         (be_state.compiler-backend-global-array-element-shared-view slots j))
       (let
         [v : i64
@@ -3536,9 +3565,7 @@
             [before : i64 (array-ref probe pending)]
             (unless
               (or (= kind 1) (= kind 3))
-              (compiler-backend-count-instr-uses
-                (be_state.compiler-backend-i64-array-shared-view probe)
-                instr))
+              (compiler-backend-count-instr-uses probe instr))
             (if (not (= (array-ref probe pending) before))
               (set! (array-ref items pending) pending-root)
               (set! unproven true))))
@@ -10932,6 +10959,138 @@
       [_ false])
     false))
 
+;; The sign-bit mask emission for an AVX2 (bit_and, compare) pair whose
+;; compare at `cursor` the sign-bit plan rewrote, resuming after the compare.
+(define (compiler-backend-emit-vector-sign-bit-mask-rest
+  [ctx : be_state.CompilerBackendEmissionContext]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [cmp-dst : i64]
+  [src-val : compiler_ir_types.CompilerIrValue]
+  [bit-index : i64]
+  [and-lanes : i64]
+  [and-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [cursor : i64]
+  [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
+  (let
+    [fused : be_state.ResultCompilerBackend
+      (be_simd.compiler-backend-emit-avx2-sign-bit-mask
+        ctx.type-segment-bases
+        ctx.assignments
+        cmp-dst
+        src-val
+        bit-index
+        and-lanes
+        and-ty
+        (be_state.compiler-backend-instr-diagnostic-ref
+          (& ctx.spans)
+          ctx.source-function
+          (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cursor))
+        ctx.backend-state)]
+    (compiler-backend-emit-fused-result-rest
+      ctx
+      fallthrough
+      fused
+      instrs
+      (+ cursor 1)
+      out)))
+
+;; An AVX2 (bit_and, compare) pair whose compare at `cursor` has sign-bit mode
+;; `sign-mode`: a bit-63 test feeding one 4-lane 64-bit Select as its only use
+;; blends on the source directly; any other plans a shifted sign-bit mask.
+(define (compiler-backend-emit-vector-sign-bit-step
+  [ctx : be_state.CompilerBackendEmissionContext]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [sign-mode : i64]
+  [and-lhs : compiler_ir_types.CompilerIrValue]
+  [and-rhs : compiler_ir_types.CompilerIrValue]
+  [and-lanes : i64]
+  [and-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [cursor : i64]
+  [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
+  (let
+    [cmp-dst : i64
+      (compiler_ir_types.compiler-ir-instr-dst
+        (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cursor))]
+    [src-val : compiler_ir_types.CompilerIrValue
+      (if (= (% (/ sign-mode 64) 2) 1)
+        and-rhs
+        and-lhs)]
+    [bit-index : i64 (% sign-mode 64)]
+    [after-cmp : i64 (+ cursor 1)]
+    [direct? : bool
+      (and
+        (= bit-index 63)
+        (< after-cmp instrs.len)
+        (be_simd.compiler-backend-var-single-use? ctx.use-counts cmp-dst)
+        (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs after-cmp)
+          [(Select sp)
+            (and
+              (= sp.lanes 4)
+              (be_operand.compiler-backend-branch-uses-var? (& sp.mask) cmp-dst)
+              (be_simd.compiler-backend-avx2-sign-bit-select-ty? (& sp.ty)))]
+          [_ false]))]
+    (if direct?
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs after-cmp)
+        [(Select
+            (box
+              (fields
+                [sel-dst dst]
+                [sel-true on-true]
+                [sel-false on-false]
+                [sel-lanes lanes]
+                [sel-ty ty])))
+          (let
+            [fused : be_state.ResultCompilerBackend
+              (be_simd.compiler-backend-emit-avx2-sign-bit-select-direct
+                ctx.type-segment-bases
+                ctx.assignments
+                sel-dst
+                src-val
+                (/ sign-mode 256)
+                sel-true
+                sel-false
+                sel-lanes
+                sel-ty
+                (be_state.compiler-backend-instr-diagnostic-ref
+                  (& ctx.spans)
+                  ctx.source-function
+                  (compiler_ir_types.compiler-ir-instr-seq-borrow
+                    instrs
+                    after-cmp))
+                ctx.backend-state)]
+            (compiler-backend-emit-fused-result-rest
+              ctx
+              fallthrough
+              fused
+              instrs
+              (+ after-cmp 1)
+              out))]
+        [_
+          (compiler-backend-emit-vector-sign-bit-mask-rest
+            ctx
+            fallthrough
+            cmp-dst
+            src-val
+            bit-index
+            and-lanes
+            and-ty
+            instrs
+            cursor
+            out)])
+      (compiler-backend-emit-vector-sign-bit-mask-rest
+        ctx
+        fallthrough
+        cmp-dst
+        src-val
+        bit-index
+        and-lanes
+        and-ty
+        instrs
+        cursor
+        out))))
+
 (define (compiler-backend-emit-vector-binop-step
   [ctx : be_state.CompilerBackendEmissionContext]
   [fallthrough : be_state.CompilerBackendMaybeLabel]
@@ -10943,171 +11102,37 @@
   [instrs : compiler_ir_types.CompilerIrInstrSeq]
   [cursor : i64]
   [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
-  (if (and
-    (< cursor instrs.len)
-    (be_state.compiler-backend-current-mode-avx2? ctx.function-state))
-    (let
-      [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
-      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)
-        [(VectorCompare (box (fields [cmp-dst dst])))
-          (let
-            [sign-mode : i64
-              (be_simd.compiler-backend-avx2-sign-bit-mask-mode-for-var
-                ctx.backend-state
-                cmp-dst)]
-            (if (> sign-mode 0)
-              (let
-                [polarity : i64 (/ sign-mode 256)]
-                [lhs-is-splat : i64 (% (/ sign-mode 64) 2)]
-                [bit-index : i64 (% sign-mode 64)]
-                [src-val : compiler_ir_types.CompilerIrValue
-                  (if (= lhs-is-splat 1)
-                    and-rhs
-                    and-lhs)]
-                [after-cmp : i64 (+ cursor 1)]
-                (if (and
-                  (= bit-index 63)
-                  (< after-cmp instrs.len)
-                  (be_simd.compiler-backend-var-single-use?
-                    ctx.use-counts
-                    cmp-dst))
-                  (let
-                    [sel-instr
-                      (compiler_ir_types.compiler-ir-instr-seq-ref
-                        instrs
-                        after-cmp)]
-                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
-                      instrs
-                      after-cmp)
-                      [(Select
-                          (box
-                            (fields
-                              [sel-dst dst]
-                              [sel-mask mask]
-                              [sel-true on-true]
-                              [sel-false on-false]
-                              [sel-lanes lanes]
-                              [sel-ty ty])))
-                        (if (and
-                          (= sel-lanes 4)
-                          (be_operand.compiler-backend-branch-uses-var?
-                            sel-mask
-                            cmp-dst)
-                          (be_simd.compiler-backend-avx2-sign-bit-select-ty?
-                            (& sel-ty)))
-                          (let
-                            [fused : be_state.ResultCompilerBackend
-                              (be_simd.compiler-backend-emit-avx2-sign-bit-select-direct
-                                ctx.type-segment-bases
-                                ctx.assignments
-                                sel-dst
-                                src-val
-                                polarity
-                                sel-true
-                                sel-false
-                                sel-lanes
-                                sel-ty
-                                (be_state.compiler-backend-instr-diagnostic-ref
-                                  (& ctx.spans)
-                                  ctx.source-function
-                                  (& sel-instr))
-                                ctx.backend-state)]
-                            (compiler-backend-emit-fused-result-rest
-                              ctx
-                              fallthrough
-                              fused
-                              instrs
-                              (+ after-cmp 1)
-                              out))
-                          (let
-                            [fused : be_state.ResultCompilerBackend
-                              (be_simd.compiler-backend-emit-avx2-sign-bit-mask
-                                ctx.type-segment-bases
-                                ctx.assignments
-                                cmp-dst
-                                src-val
-                                bit-index
-                                and-lanes
-                                and-ty
-                                (be_state.compiler-backend-instr-diagnostic-ref
-                                  (& ctx.spans)
-                                  ctx.source-function
-                                  (& next))
-                                ctx.backend-state)]
-                            (compiler-backend-emit-fused-result-rest
-                              ctx
-                              fallthrough
-                              fused
-                              instrs
-                              after-cmp
-                              out)))]
-                      [_
-                        (let
-                          [fused : be_state.ResultCompilerBackend
-                            (be_simd.compiler-backend-emit-avx2-sign-bit-mask
-                              ctx.type-segment-bases
-                              ctx.assignments
-                              cmp-dst
-                              src-val
-                              bit-index
-                              and-lanes
-                              and-ty
-                              (be_state.compiler-backend-instr-diagnostic-ref
-                                (& ctx.spans)
-                                ctx.source-function
-                                (& next))
-                              ctx.backend-state)]
-                          (compiler-backend-emit-fused-result-rest
-                            ctx
-                            fallthrough
-                            fused
-                            instrs
-                            after-cmp
-                            out))]))
-                  (let
-                    [fused : be_state.ResultCompilerBackend
-                      (be_simd.compiler-backend-emit-avx2-sign-bit-mask
-                        ctx.type-segment-bases
-                        ctx.assignments
-                        cmp-dst
-                        src-val
-                        bit-index
-                        and-lanes
-                        and-ty
-                        (be_state.compiler-backend-instr-diagnostic-ref
-                          (& ctx.spans)
-                          ctx.source-function
-                          (& next))
-                        ctx.backend-state)]
-                    (compiler-backend-emit-fused-result-rest
-                      ctx
-                      fallthrough
-                      fused
-                      instrs
-                      after-cmp
-                      out))))
-              (compiler-backend-emit-instrs-normal
-                ctx
-                fallthrough
-                instr
-                instrs
-                cursor
-                out)))]
-        [_
-          (compiler-backend-emit-instrs-normal
-            ctx
-            fallthrough
-            instr
-            instrs
-            cursor
-            out)]))
-    (compiler-backend-emit-instrs-normal
-      ctx
-      fallthrough
-      instr
-      instrs
-      cursor
-      out)))
+  (let
+    [sign-mode : i64
+      (if (and
+        (< cursor instrs.len)
+        (be_state.compiler-backend-current-mode-avx2? ctx.function-state))
+        (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cursor)
+          [(VectorCompare cp)
+            (be_simd.compiler-backend-avx2-sign-bit-mask-mode-for-var
+              ctx.backend-state
+              cp.dst)]
+          [_ 0])
+        0)]
+    (if (> sign-mode 0)
+      (compiler-backend-emit-vector-sign-bit-step
+        ctx
+        fallthrough
+        sign-mode
+        and-lhs
+        and-rhs
+        and-lanes
+        and-ty
+        instrs
+        cursor
+        out)
+      (compiler-backend-emit-instrs-normal
+        ctx
+        fallthrough
+        instr
+        instrs
+        cursor
+        out))))
 
 (define (compiler-backend-emit-vector-load-step
   [ctx : be_state.CompilerBackendEmissionContext]
@@ -17145,7 +17170,7 @@
     (compiler-backend-use-count-inc
       (&mut mask-counts)
       (compiler_ir_types.compiler-ir-instr-dst instr))
-    (compiler-backend-count-instr-uses mask-counts instr)
+    (compiler-backend-count-instr-uses (&mut mask-counts) instr)
     (be_state.compiler-backend-function-state-set-bool!
       function-state
       be_state.compiler-backend-function-bool-use-home-mask-active
@@ -22344,9 +22369,7 @@
         [select-factored : be_simd.CompilerBackendSelectFactorResult
           (if (be_state.compiler-backend-mode-scalar? mode)
             (SelectFactorResult vars folded-blocks)
-            (be_simd.compiler-backend-simd-select-add-factor-blocks
-              vars
-              folded-blocks))]
+            (compiler-backend-select-add-factor-blocks vars folded-blocks))]
         [factored-vars : i64
           (match (& select-factored)
             [(SelectFactorResult out-vars _) out-vars])]

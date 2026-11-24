@@ -323,12 +323,20 @@ cc_expand_inputs() {
     shift
     : > "$_ce_out"
     for _ce_arg do
-        if [ -d "$_ce_arg" ]; then
-            _ce_dir=$_ce_arg
-            case "$_ce_dir" in
-                /) ;;
-                */) _ce_dir=${_ce_dir%/} ;;
+        _ce_probe=$_ce_arg
+        while :; do
+            case "$_ce_probe" in
+                / | [A-Za-z]:/) break ;;
+                */) _ce_probe=${_ce_probe%/} ;;
+                *) break ;;
             esac
+        done
+        if [ -L "$_ce_probe" ]; then
+            echo "case input cannot be a symlink: $_ce_arg" >&2
+            return 2
+        fi
+        if [ -d "$_ce_arg" ]; then
+            _ce_dir=$_ce_probe
             _ce_entries=$(find "$_ce_dir" -print | LC_ALL=C sort) || return 2
             _ce_count=0
             while IFS= read -r _ce_entry; do
@@ -505,6 +513,7 @@ if [ "$CC_SELF_TEST" -eq 1 ]; then
 
     mkdir -p "$CC_WORK_ROOT"
     ST_DIR=$(mktemp -d "$CC_WORK_ROOT/self-test.XXXXXX")
+    ST_ARG=$(cc_native_path "$ST_DIR")
     trap 'rm -rf -- "$ST_DIR"' EXIT
 
     # 1. Native runner built-in self-test (including directory loading & global uniqueness).
@@ -527,16 +536,16 @@ end-file
 case case-a
 source {{work}}/local_a.tl
 EOF
-    CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$ST_DIR/valid.d" > "$ST_DIR/sh.list"
-    "$RUNNER_BIN" --list "$ST_DIR/valid.d" > "$ST_DIR/bin.list"
+    CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$ST_ARG/valid.d" > "$ST_DIR/sh.list"
+    "$RUNNER_BIN" --list "$ST_ARG/valid.d" > "$ST_DIR/bin.list"
     cmp -s "$ST_DIR/sh.list" "$ST_DIR/bin.list" || {
         echo "verify-codegen-cases --self-test: --list parity mismatch between shell and runner" >&2
         diff -u "$ST_DIR/sh.list" "$ST_DIR/bin.list" >&2 || true
         exit 1
     }
     printf '%s\n%s\n' \
-        "$ST_DIR/valid.d/01-first.cases case-a [linux-x86_64 1 -]" \
-        "$ST_DIR/valid.d/02-second.cases case-b [linux-x86_64 2 -]" > "$ST_DIR/want.list"
+        "$ST_ARG/valid.d/01-first.cases case-a [linux-x86_64 1 -]" \
+        "$ST_ARG/valid.d/02-second.cases case-b [linux-x86_64 2 -]" > "$ST_DIR/want.list"
     cmp -s "$ST_DIR/sh.list" "$ST_DIR/want.list" || {
         echo "verify-codegen-cases --self-test: directory order or default isolation mismatch" >&2
         diff -u "$ST_DIR/want.list" "$ST_DIR/sh.list" >&2 || true
@@ -557,8 +566,8 @@ do none
 case fix-two
 source tests/cc_selftest_b.tl
 EOF
-    CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" CODEGEN_CASES_FIXTURE_ROOT="$ST_DIR/fake-root" sh "$ROOT/scripts/verify-codegen-cases.sh" --list-fixtures "$ST_DIR/fix.d" > "$ST_DIR/sh.fix"
-    TYPELISP_CODEGEN_CASES_ROOT="$ST_DIR/fake-root" "$RUNNER_BIN" --list-fixtures "$ST_DIR/fix.d" > "$ST_DIR/bin.fix"
+    CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" CODEGEN_CASES_FIXTURE_ROOT="$ST_ARG/fake-root" sh "$ROOT/scripts/verify-codegen-cases.sh" --list-fixtures "$ST_ARG/fix.d" > "$ST_DIR/sh.fix"
+    TYPELISP_CODEGEN_CASES_ROOT="$ST_ARG/fake-root" "$RUNNER_BIN" --list-fixtures "$ST_ARG/fix.d" > "$ST_DIR/bin.fix"
     cmp -s "$ST_DIR/sh.fix" "$ST_DIR/bin.fix" || {
         echo "verify-codegen-cases --self-test: --list-fixtures parity mismatch between shell and runner" >&2
         diff -u "$ST_DIR/sh.fix" "$ST_DIR/bin.fix" >&2 || true
@@ -572,10 +581,12 @@ EOF
     printf 'stray\n' > "$ST_DIR/stray.d/notes.txt"
     printf 'case ok\nsource tests/cc_selftest_a.tl\n' > "$ST_DIR/nested.d/a.cases"
     ln -s "$ST_DIR/valid.d/01-first.cases" "$ST_DIR/symlink.d/link.cases" 2>/dev/null || true
+    ln -s "$ST_DIR/valid.d" "$ST_DIR/valid-link.d" 2>/dev/null || true
+    ln -s "$ST_DIR/valid.d/01-first.cases" "$ST_DIR/file-link.cases" 2>/dev/null || true
     printf 'do none\ncase fa\nsource tests/cc_selftest_a.tl\n' > "$ST_DIR/fix-dup.d/a.cases"
     printf 'do none\ncase fb\nsource tests/cc_selftest_a.tl\n' > "$ST_DIR/fix-dup.d/b.cases"
 
-    for bad_dir in "$ST_DIR/dup.d" "$ST_DIR/empty.d" "$ST_DIR/stray.d" "$ST_DIR/nested.d"; do
+    for bad_dir in "$ST_ARG/dup.d" "$ST_ARG/empty.d" "$ST_ARG/stray.d" "$ST_ARG/nested.d"; do
         if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$bad_dir" >/dev/null 2>&1; then
             echo "verify-codegen-cases --self-test: shell accepted invalid directory $bad_dir" >&2
             exit 1
@@ -586,20 +597,42 @@ EOF
         fi
     done
     if [ -L "$ST_DIR/symlink.d/link.cases" ]; then
-        if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$ST_DIR/symlink.d" >/dev/null 2>&1; then
+        if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$ST_ARG/symlink.d" >/dev/null 2>&1; then
             echo "verify-codegen-cases --self-test: shell accepted symlink in directory" >&2
             exit 1
         fi
-        if "$RUNNER_BIN" --list "$ST_DIR/symlink.d" >/dev/null 2>&1; then
+        if "$RUNNER_BIN" --list "$ST_ARG/symlink.d" >/dev/null 2>&1; then
             echo "verify-codegen-cases --self-test: runner accepted symlink in directory" >&2
             exit 1
         fi
     fi
-    if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" CODEGEN_CASES_FIXTURE_ROOT="$ST_DIR/fake-root" sh "$ROOT/scripts/verify-codegen-cases.sh" --list-fixtures "$ST_DIR/fix-dup.d" >/dev/null 2>&1; then
+    if [ -L "$ST_DIR/valid-link.d" ]; then
+        for bad_link in "$ST_ARG/valid-link.d" "$ST_ARG/valid-link.d/"; do
+            if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$bad_link" >/dev/null 2>&1; then
+                echo "verify-codegen-cases --self-test: shell accepted symlinked directory $bad_link" >&2
+                exit 1
+            fi
+            if "$RUNNER_BIN" --list "$bad_link" >/dev/null 2>&1; then
+                echo "verify-codegen-cases --self-test: runner accepted symlinked directory $bad_link" >&2
+                exit 1
+            fi
+        done
+    fi
+    if [ -L "$ST_DIR/file-link.cases" ]; then
+        if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$ST_ARG/file-link.cases" >/dev/null 2>&1; then
+            echo "verify-codegen-cases --self-test: shell accepted symlinked case file" >&2
+            exit 1
+        fi
+        if "$RUNNER_BIN" --list "$ST_ARG/file-link.cases" >/dev/null 2>&1; then
+            echo "verify-codegen-cases --self-test: runner accepted symlinked case file" >&2
+            exit 1
+        fi
+    fi
+    if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" CODEGEN_CASES_FIXTURE_ROOT="$ST_ARG/fake-root" sh "$ROOT/scripts/verify-codegen-cases.sh" --list-fixtures "$ST_ARG/fix-dup.d" >/dev/null 2>&1; then
         echo "verify-codegen-cases --self-test: shell accepted duplicate fixture source across directory" >&2
         exit 1
     fi
-    if TYPELISP_CODEGEN_CASES_ROOT="$ST_DIR/fake-root" "$RUNNER_BIN" --list-fixtures "$ST_DIR/fix-dup.d" >/dev/null 2>&1; then
+    if TYPELISP_CODEGEN_CASES_ROOT="$ST_ARG/fake-root" "$RUNNER_BIN" --list-fixtures "$ST_ARG/fix-dup.d" >/dev/null 2>&1; then
         echo "verify-codegen-cases --self-test: runner accepted duplicate fixture source across directory" >&2
         exit 1
     fi

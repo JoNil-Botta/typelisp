@@ -1268,19 +1268,24 @@
     (while (and ok (< i n))
       (let
         [arg : String (svec.get inputs i "")]
-        [narg : String (win-fs-path (& arg))]
-        (match (fs.try-file-kind (& narg))
+        [probe : String (trim-trailing-slashes (& arg))]
+        [narg : String (win-fs-path (& probe))]
+        (match (fs.try-file-kind-no-follow (& narg))
           [(fs.ErrFsFileKind _)
             (set! ok false)
             (set! err (str_cat.str-cat "missing case file: " arg))]
           [(fs.OkFsFileKind kind)
             (cond
-              [(fs.file-kind-regular? kind) (svec.push-ref! (&mut out) arg)]
+              [(fs.file-kind-regular? kind)
+                (if (string.eq (& arg) (& probe))
+                  (svec.push-ref! (&mut out) arg)
+                  (begin
+                    (set! ok false)
+                    (set! err (str_cat.str-cat "missing case file: " arg))))]
               [(fs.file-kind-directory? kind)
                 (let
-                  [dir-clean : String (trim-trailing-slashes (& arg))]
-                  [ndir : String (win-fs-path (& dir-clean))]
-                  (match (fs.try-read-dir (& ndir))
+                  [dir-clean : String probe]
+                  (match (fs.try-read-dir (& narg))
                     [(fs.ErrIoStringVector _)
                       (set! ok false)
                       (set!
@@ -1364,6 +1369,8 @@
                               dir-clean))))]))]
               [else
                 (set! ok false)
-                (set! err (str_cat.str-cat "missing case file: " arg))])]))
+                (set!
+                  err
+                  (str_cat.str-cat "case input cannot be a symlink: " arg))])]))
       (set! i (+ i 1)))
     (CaseInputsResult ok err out)))

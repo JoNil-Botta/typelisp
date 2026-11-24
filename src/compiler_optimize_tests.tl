@@ -58589,7 +58589,7 @@ done:
 ;; The cycle under a chain of `depth` callers, each handing its descriptor to
 ;; the one below and the last to the cycle's first member. Every row on the
 ;; chain is the cycle's element summary however deep it is: the fixpoint solves
-;; one call-graph component at a time and has no round budget to run out of.
+;; one call-graph component at a time, so the chain's depth costs no rounds.
 (define (opt-call-memory-chain-symbol [depth : i64]) : i64
   (opt-test-symbol
     (str_cat.str-cat "call_memory_chain" (string.int->string depth))))
@@ -58640,6 +58640,167 @@ done:
   (match (opt_i64_i64_map.get (& summaries) (ir.compiler-ir-symbol-id name))
     [(LookupFound summary) (not (= (bit-and summary flag) 0))]
     [(LookupMissing) false]))
+
+;; A LADDER of `rungs` mutually recursive members: each hands its descriptor to
+;; the rung below and the rung above (the ends call themselves), and only
+;; `writer` stores through the element buffer. The least fixed point is the
+;; element bit on every rung, but a sweep carries it one rung against the sweep
+;; order, so with the writer at one end or the other some 200-rung ladder needs
+;; more sweeps than opt-call-memory-scc-round-limit and is committed `unknown`.
+(define (opt-call-memory-ladder-symbol [rung : i64]) : i64
+  (opt-test-symbol
+    (str_cat.str-cat "call_memory_ladder" (string.int->string rung))))
+
+(define (opt-call-memory-ladder-calls [rung : i64] [rungs : i64]) : ir.CompilerIrInstrSeq
+  (opt-test-instrs
+    (ir.CompilerIrInstr.Call
+      5
+      (opt-call-memory-ladder-symbol
+        (if (> rung 0)
+          (- rung 1)
+          rung))
+      (One (Var 0))
+      (Unit))
+    (ir.CompilerIrInstr.Call
+      6
+      (opt-call-memory-ladder-symbol
+        (if (< (+ rung 1) rungs)
+          (+ rung 1)
+          rung))
+      (One (Var 0))
+      (Unit))))
+
+(define (opt-call-memory-ladder-functions
+  [rung : i64]
+  [rungs : i64]
+  [writer : i64]) : ir.CompilerIrFunctionSeq
+  (if (= rung rungs)
+    (ir.compiler-ir-function-seq-empty)
+    (ir.compiler-ir-function-seq-prepend
+      (&
+        (opt-call-memory-test-function
+          (opt-call-memory-ladder-symbol rung)
+          (opt-load-cse-descriptor-params)
+          (if (= rung writer)
+            (opt-test-instrs-with-tail
+              (opt-call-memory-ladder-calls rung rungs)
+              (ir.CompilerIrInstr.Load 2 (Var 0) (U64))
+              (irt.instr "%3 = gep %2, 4 : u64")
+              (irt.instr "store_ptr %3, 7 : u64"))
+            (opt-call-memory-ladder-calls rung rungs))))
+      (& (opt-call-memory-ladder-functions (+ rung 1) rungs writer)))))
+
+;; 0: the exact element summary on every rung; 1: every rung `unknown` (the
+;; round cap fired); 2: anything else, which is unsound or a partial fallback.
+(define (opt-call-memory-ladder-verdict [rungs : i64] [writer : i64]) : i64
+  (let
+    [rows : opt_i64_i64_map.Map
+      (opt.opt-call-memory-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& (opt-call-memory-ladder-functions 0 rungs writer))
+        (* rungs 2))]
+    [unknown : i64 0]
+    [element : i64 0]
+    (for [rung (iterator.range 0 rungs)]
+      (let
+        [name : i64 (opt-call-memory-ladder-symbol rung)]
+        (when
+          (opt-call-memory-summary-has?
+            rows
+            name
+            (opt.opt-call-memory-unknown-bit))
+          (+= unknown 1))
+        (when
+          (opt-call-memory-summary-has?
+            rows
+            name
+            (opt.opt-call-memory-element-bit))
+          (+= element 1))))
+    (cond
+      [(= unknown rungs) 1]
+      [(and (= unknown 0) (= element rungs)) 0]
+      [else 2])))
+
+;; The program index, call-memory and direct-call-clean reach a program past
+;; opt-summary-function-limit; the global-cell mod-ref row stays capped there.
+(define (opt-program-summary-cap-test-text [padding : i64]) : String
+  (let
+    [buf : byte_buf.ByteBuf
+      (byte_buf.append-string
+        (byte_buf.new)
+        "global @cell : i64 = 0
+         function @main() -> i64 vars 0 {
+         entry:
+           return 0
+         }
+         function @writer() -> i64 vars 0 {
+         entry:
+           store @cell, 7 : i64
+           return 0
+         }")]
+    (for [at (iterator.range 0 padding)]
+      (set!
+        buf
+        (byte_buf.append-string
+          buf
+          (str_cat.str-cat
+            "
+             function @summary_pad"
+            (string.int->string at)
+            "() -> i64 vars 0 {
+             entry:
+               return 0
+             }"))))
+    (byte_buf.to-string buf)))
+
+;; 1: call-memory and direct-call-clean carry `summary_pad0`; 2: the cell table
+;; is built.
+(define (opt-program-summary-cap-test-bits [padding : i64]) : i64
+  (match (irt.program (opt-program-summary-cap-test-text padding))
+    [(Program globals functions _ _authority)
+      (let
+        [summaries : opt.OptProgramSummaries
+          (opt.opt-build-program-summaries
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& globals)
+            (& (ir.compiler-ir-extern-seq-empty))
+            (& functions)
+            2)]
+        [pad : i64 (ir.compiler-ir-symbol-id (opt-test-symbol "summary_pad0"))]
+        (bit-or
+          (if (and
+            (opt_i64_i64_map.contains? (& summaries.call-memory) pad)
+            (opt_i64_i64_map.contains? (& summaries.direct-call-clean) pad))
+            1
+            0)
+          (if summaries.global-cell.mod-ref.built?
+            2
+            0)))]))
+
+(define (compiler-optimize-program-summary-cap-self-test) : i64
+  (let
+    [low : i64 (opt-call-memory-ladder-verdict 200 0)]
+    [high : i64 (opt-call-memory-ladder-verdict 200 199)]
+    (cond
+      ;; A small component settles exactly in either orientation.
+      [(not (= (opt-call-memory-ladder-verdict 8 0) 0)) 1]
+      [(not (= (opt-call-memory-ladder-verdict 8 7) 0)) 2]
+      [(or (= low 2) (= high 2)) 3]
+      [(= (+ low high) 0) 4]
+      [(not (= (opt-program-summary-cap-test-bits 2) 3)) 5]
+      [(not
+          (=
+            (opt-program-summary-cap-test-bits (opt.opt-summary-function-limit))
+            1))
+        6]
+      [else 42])))
+
+(test
+  program-summary-cap
+  (test.assert-i64-eq
+    (compiler-optimize-program-summary-cap-self-test)
+    42
+    "call-memory caps a huge component to unknown; P-B summaries pass the 1024-function limit, mod-ref does not"))
 
 ;; SUM-3 fixtures: one function that writes an element of a global array
 ;; through the global's own data slot, and the global table that types the

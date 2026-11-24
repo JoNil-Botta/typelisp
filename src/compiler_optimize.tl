@@ -121663,7 +121663,7 @@
     (match disqualified
       [(OptGlobalDisqualifications disq addr-taken)
         (OptProgramFacts
-          (if (<= count (opt-summary-function-limit))
+          (if (<= count (opt-program-summary-function-limit))
             (opt-program-index-build functions)
             (opt-program-index-empty))
           disq
@@ -122604,8 +122604,11 @@
 ;;   the lfp of the whole map, and a committed row is always a genuine fixed
 ;;   point rather than an optimistic guess.
 ;;
-;; No round budget is needed: every row only grows, so a component settles
-;; within 63 sweeps per member. A member is recomputed only when a member of
+;; Every row only grows, so a component settles within 63 sweeps per member;
+;; a huge mutually recursive component could still take many sweeps, so each
+;; one gets `opt-call-memory-scc-round-limit` sweeps, after which every member
+;; still moving is committed as `unknown` -- the summary of an unanalyzed
+;; extern, which every consumer reads as "may write anything". A member is recomputed only when a member of
 ;; its own component that it calls moved after its last verdict (`changed-at`
 ;; against `computed-at`); nothing else it reads can move. Every program
 ;; function a verdict can call therefore has a row when it is read, so a name
@@ -122636,6 +122639,9 @@
           (set! stale? true))
         (+= at 1)))
     stale?))
+
+(define (opt-call-memory-scc-round-limit) : i64
+  64)
 
 (define (opt-call-memory-build-with-descriptor-globals
   [type-segment-bases : i64]
@@ -122677,6 +122683,7 @@
           (array-ref index.scc.scc-of (array-ref index.scc.members at))]
         [end : i64 at]
         [moved? : bool true]
+        [rounds : i64 0]
         ;; The component's members at bottom.
         (while (and
           (< end count)
@@ -122691,8 +122698,9 @@
               (opt_i64_i64_map.insert-ref! (&mut rows) id 0))
             (set! (array-ref computed-at slot) -1)
             (+= end 1)))
-        (while moved?
+        (while (and moved? (< rounds (opt-call-memory-scc-round-limit)))
           (set! moved? false)
+          (+= rounds 1)
           (for [member (iterator.range at end)]
             (let
               [slot : i64 (array-ref index.scc.members member)]
@@ -122719,6 +122727,19 @@
                     (set! (array-ref changed-at slot) tick)
                     (opt_i64_i64_map.insert-ref! (&mut rows) id row)
                     (set! moved? true)))))))
+        (when
+          moved?
+          (for [member (iterator.range at end)]
+            (let
+              [slot : i64 (array-ref index.scc.members member)]
+              [id : i64 (opt-program-function-id index slot)]
+              (unless
+                (array-ref kept slot)
+                (opt_i64_i64_map.insert-ref!
+                  (&mut rows)
+                  id
+                  (opt-call-memory-summary-add-unknown
+                    (opt_i64_i64_map.get-value-or (& rows) id 0)))))))
         (set! at end)))
     rows))
 
@@ -123848,16 +123869,27 @@
       disq
       (opt_i64_i64_map.with-capacity capacity))))
 
-;; The whole-program call summaries (direct-call-clean + call-memory) gate on a
-;; function-count limit because they scan function bodies across a fixpoint. The
-;; const-divisor table is independent and far cheaper (one linear store scan),
-;; so it is built separately by the program driver and injected here rather
-;; than tied to this gate -- see opt-build-program-summaries.
+;; The whole-program summaries gate on a function-count limit because they
+;; scan function bodies across the program. The const-divisor table is
+;; independent and far cheaper (one linear store scan), so it is built
+;; separately by the program driver and injected here rather than tied to this
+;; gate -- see opt-build-program-summaries.
+;;
+;; This limit still gates the tables whose cost or encoding grows with the
+;; program: the inliner's mod-ref, the global-cell and storage mod-ref rows
+;; (a 62-global bitmask), GAP-1/IAG-2, and LGA specialization (code size).
 (define (opt-summary-function-limit) : i64
   ;; Dotted stdlib imports can leave small programs with many pre-prune reachable
   ;; functions, even when the final program is still tiny. Keep the fixpoint
   ;; summary pass bounded, but high enough for those cases.
   1024)
+
+;; The program index, the call summaries (direct-call-clean + call-memory, one
+;; call-graph component at a time under a per-component round cap) and P-B's
+;; length-equality table are linear in the call graph, so they reach programs
+;; the size of the compiler itself.
+(define (opt-program-summary-function-limit) : i64
+  32768)
 
 ;; `direct-call-clean` is a projection of the call-memory rows: a LICM call
 ;; site asks what a callee may write in the terms below, and a function's row
@@ -124154,7 +124186,7 @@
       [facts : OptProgramFacts (opt-program-facts-build reachable-functions)]
       [_externs : unit (opt-effect-links-install! externs)]
       [summaries : OptProgramSummaries
-        (if (<= count (opt-summary-function-limit))
+        (if (<= count (opt-program-summary-function-limit))
           (opt-program-call-summaries
             type-segment-bases
             globals
@@ -128068,8 +128100,8 @@
 
 ;; Build the length-equality table, or decline. `addr-taken` is the program's
 ;; `GlobalAddr` set; `call-memory` is the per-callee memory summary the box and
-;; descriptor arguments are checked against. The function-count gate is the one
-;; every other whole-program summary applies.
+;; descriptor arguments are checked against. The function-count gate is the
+;; call summaries' (opt-program-summary-function-limit).
 (define (opt-len-eq-build
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
@@ -128078,7 +128110,9 @@
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
   [call-memory : opt_i64_i64_map.Map]
   [capacity : i64]) : opt_i64_i64_map.Map
-  (if (> (opt-function-seq-count functions) (opt-summary-function-limit))
+  (if (>
+    (opt-function-seq-count functions)
+    (opt-program-summary-function-limit))
     (opt_i64_i64_map.with-capacity 1)
     (let
       [cand : OptGlobalFrozenCandidates

@@ -66672,12 +66672,12 @@ done:
       (& (opt_i64_i64_map.with-capacity 1))
       (&
         (opt.opt-len-eq-use-build
-          (& cells.len-eq)
-          cells.len-eq-clean
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& cells)
           name
           64
           (& blocks)
-          (& cells.arg-global)
+          true
           (& (opt-le-params 1))))
       (& blocks))
       [(Result out _) out])))
@@ -66694,10 +66694,8 @@ done:
     [func
       (opt.opt-len-eq-late-sweep
         (ast.ast-node-pool-reader-type-segment-bases)
-        (& cells.len-eq)
-        cells.len-eq-clean
-        (& (opt_i64_i64_map.with-capacity 1))
-        (& cells.arg-global)
+        (& cells)
+        true
         (&
           (opt.opt-cfg-context-build
             (opt.compiler-opt-global-shared-view blocks)))
@@ -66972,20 +66970,26 @@ done:
   (let
     [blocks : ir.CompilerIrBlockList (opt-le-field-blocks len-cell array-cell)]
     [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [doms : opt.OptDomInfo
+      (opt.opt-cfg-dominators-with
+        (opt.opt-cfg-index-build (& blocks))
+        (opt.opt-cfg-entry-label (& blocks)))]
     [use
       (opt.opt-len-eq-use-build
-        (& cells.len-eq)
-        cells.len-eq-clean
+        type-segment-bases
+        (& cells)
         name
         64
         (& blocks)
-        (& cells.arg-global)
+        true
         (& (opt-le-params 1)))]
     [copies (opt_i64_i64_map.with-capacity 1)]
     (opt.opt-len-eq-field-guarded?
       type-segment-bases
-      use
-      copies
+      (& doms)
+      (& doms.index)
+      (& use)
+      (& copies)
       (&
         (opt.opt-dom-cmp-facts-cons
           (Fact (Lt) (Var 0) (Var 2) (I64) true 0)
@@ -69866,15 +69870,27 @@ return 0" true)
         64
         (opt.compiler-opt-global-shared-view blocks)
         Ordinary)]
+    [cells-with-facts : opt.OptGlobalCellSummary
+      (opt.OptGlobalCellSummary
+        cells.addr-taken
+        cells.type-index
+        cells.types
+        cells.word-cell
+        cells.mod-ref
+        cells.nonneg
+        cells.len-eq
+        cells.len-eq-clean
+        facts
+        cells.obj-mod-ref
+        cells.call-memory
+        cells.len-inv)]
     [walked-blocks : ir.CompilerIrBlockList
       (let
         [func-2
           (opt.opt-len-eq-late-sweep
             (ast.ast-node-pool-reader-type-segment-bases)
-            (& cells.len-eq)
-            cells.len-eq-clean
-            (& (opt_i64_i64_map.with-capacity 1))
-            (& facts)
+            (& cells-with-facts)
+            true
             (& (opt.opt-cfg-context-build blocks))
             func)]
         (opt.opt-function-blocks func-2))]
@@ -80954,7 +80970,8 @@ done:
       empty.len-eq-clean
       empty.arg-global
       (opt.OptGlobalModRef true obj-index obj-writes)
-      empty.call-memory)))
+      empty.call-memory
+      empty.len-inv)))
 
 (define (opt-guard-sink-run
   [name : String]
@@ -88685,3 +88702,613 @@ inl.entry.0.cont:
                     (test.assert-true
                       (not (string.contains (& reader-text) "@lib_const_cell"))
                       "executable with main still folds constant global"))))])]))))
+
+;; --- P-B selective cap lift, global scalar/mask invariants, and struct-field length invariants ---
+(define (opt-len-inv-test-cells [src : String]) : opt.OptGlobalCellSummary
+  (match (irt.program src)
+    [(Program globals functions externs _)
+      (let
+        [_links : unit (opt.opt-effect-links-install! (& externs))]
+        [_addr : unit
+          (opt.opt-function-addr-taken-install-scan!
+            (opt.opt-function-addr-taken-scan-new 0))]
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [functions (opt-le-raw-test-functions (& functions))]
+        [facts (opt.opt-program-facts-build functions)]
+        [call-memory
+          (opt.opt-call-memory-build type-segment-bases (& functions) 16)]
+        (opt.opt-global-cell-summary-build-with-call-memory
+          type-segment-bases
+          (& globals)
+          functions
+          facts
+          call-memory))]))
+
+(test
+  len-inv-selective-cap-lift-and-scc-cap
+  (test.assert-i64-eq
+    (opt.opt-summary-function-limit)
+    1024
+    "opt-lga and global mod-ref stay capped at 1024 functions")
+  (test.assert-i64-eq
+    (opt.opt-program-summary-function-limit)
+    32768
+    "program index, call-memory, and P-B summaries use lifted 32768 cap")
+  (test.assert-i64-eq
+    (opt.opt-call-memory-scc-round-cap)
+    64
+    "call-memory SCC fixed point caps rounds at 64"))
+
+(test
+  len-inv-global-scalar-and-mask-positive
+  (let
+    [prog-src : String
+      "global @inv-arr : (__tl_dyn-array i64) = runtime-init@init-inv-arr
+       global @inv-cap : i64 = 0
+       global @inv-mask : i64 = 0
+       function @init-inv-arr() -> (__tl_dyn-array i64) vars 4 {
+       entry:
+         %0 = call tl_alloc(8) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 1 : i64
+         return %1
+       }
+       function @setup() -> unit vars 8 {
+       entry:
+         %0 = call tl_alloc(64) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 8 : i64
+         store @inv-arr, %1 : (__tl_dyn-array i64)
+         %4 = sub 8, 1 : i64
+         store @inv-mask, %4 : i64
+         store @inv-cap, 8 : i64
+         return
+       }
+       function @read-cap(i=%0:i64) -> i64 vars 1 {
+       entry:
+         return %0
+       }
+       function @read-mask(i=%0:i64) -> i64 vars 1 {
+       entry:
+         return %0
+       }
+       function @main() -> i64 vars 2 {
+       entry:
+         %0 = call setup() : unit
+         %1 = call read-cap(1) : i64
+         return %1
+       }"]
+    [cells (opt-len-inv-test-cells prog-src)]
+    (test.assert-true
+      (opt.opt-len-scalar-mask-lt?
+        (opt_i64_i64_map.get-value-or
+          (& cells.len-inv.scalar-map)
+          (ir.compiler-ir-symbol-id (opt-test-symbol "inv-mask"))
+          0))
+      "inv-mask is proven strictly less than inv-arr.len")
+    ;; Dominating `0 <= %0 < @inv-cap` discharges `bounds_check %0, @inv-arr.len`.
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& cells)
+          (opt-test-symbol "read-cap")
+          (irt.blocks
+            "entry:
+               %1 = ge %0, 0 : i64
+               branch %1, nonneg, done
+             nonneg:
+               %2 = mov @inv-cap : i64
+               %3 = lt %0, %2 : i64
+               branch %3, ok, done
+             ok:
+               %4 = gep @inv-arr, 1 : i64
+               %5 = load %4 : i64
+               bounds_check %0, %5 message \"cap\"
+               return %0
+             done:
+               return 0")))
+      0
+      "verified global scalar @inv-cap <= @inv-arr.len eliminates bounds check")
+    ;; Direct bitmask `idx = %0 & @inv-mask` discharges `bounds_check idx, @inv-arr.len`.
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& cells)
+          (opt-test-symbol "read-mask")
+          (irt.blocks
+            "entry:
+               %1 = mov @inv-mask : i64
+               %2 = bit_and %0, %1 : i64
+               %4 = gep @inv-arr, 1 : i64
+               %5 = load %4 : i64
+               bounds_check %2, %5 message \"mask-direct\"
+               return %2")))
+      0
+      "verified global bitmask @inv-mask < @inv-arr.len eliminates direct bounds check")
+    ;; Bitmask `idx = %0 & @inv-mask` and inductive phi cycle `(p + 1) & @inv-mask`
+    ;; discharge `bounds_check p, @inv-arr.len` inside loops in the late sweep.
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-late-sweep
+          cells
+          (opt-test-symbol "read-mask")
+          (irt.blocks
+            "entry:
+               %1 = mov @inv-mask : i64
+               %2 = bit_and %0, %1 : i64
+               jump loop
+             loop:
+               %3 = phi [%2, entry], [%7, loop] : i64
+               %4 = gep @inv-arr, 1 : i64
+               %5 = load %4 : i64
+               bounds_check %3, %5 message \"mask\"
+               %6 = add %3, 1 : i64
+               %7 = bit_and %6, %1 : i64
+               %8 = lt %6, 10 : i64
+               branch %8, loop, done
+             done:
+               return %3")))
+      0
+      "verified global bitmask @inv-mask < @inv-arr.len eliminates phi-cycle bounds check")))
+
+(test
+  len-inv-global-scalar-and-mask-negative
+  (let
+    [cap-check : String
+      "entry:
+         %1 = ge %0, 0 : i64
+         branch %1, nonneg, done
+       nonneg:
+         %2 = mov @inv-cap : i64
+         %3 = lt %0, %2 : i64
+         branch %3, ok, done
+       ok:
+         %4 = gep @inv-arr, 1 : i64
+         %5 = load %4 : i64
+         bounds_check %0, %5 message \"cap\"
+         return %0
+       done:
+         return 0"]
+    [mask-check : String
+      "entry:
+         %1 = mov @inv-mask : i64
+         %2 = bit_and %0, %1 : i64
+         %3 = gep @inv-arr, 1 : i64
+         %4 = load %3 : i64
+         bounds_check %2, %4 message \"mask\"
+         return %2"]
+    ;; (a) Unchecked store to @inv-cap must preserve bounds_check.
+    [unchecked-cells
+      (opt-len-inv-test-cells
+        "global @inv-arr : (__tl_dyn-array i64) = runtime-init@init-inv-arr
+         global @inv-cap : i64 = 0
+         function @init-inv-arr() -> (__tl_dyn-array i64) vars 4 {
+         entry:
+           %0 = call tl_alloc(64) : u64
+           %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+           %2 = gep %1, 0 : u8
+           store_ptr %2, %0 : u64
+           %3 = gep %1, 8 : u8
+           store_ptr %3, 8 : i64
+           return %1
+         }
+         function @clobber(n=%0:i64) -> unit vars 1 {
+         entry:
+           store @inv-cap, %0 : i64
+           return
+         }
+         function @read-cap(i=%0:i64) -> i64 vars 1 {
+         entry:
+           return %0
+         }
+         function @main() -> i64 vars 1 {
+         entry:
+           %0 = call clobber(99) : unit
+           return 0
+         }")]
+    ;; (b) Addr-taken @inv-cap must preserve bounds_check.
+    [addr-cells
+      (opt-len-inv-test-cells
+        "global @inv-arr : (__tl_dyn-array i64) = runtime-init@init-inv-arr
+         global @inv-cap : i64 = 0
+         function @init-inv-arr() -> (__tl_dyn-array i64) vars 4 {
+         entry:
+           %0 = call tl_alloc(64) : u64
+           %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+           %2 = gep %1, 0 : u8
+           store_ptr %2, %0 : u64
+           %3 = gep %1, 8 : u8
+           store_ptr %3, 8 : i64
+           return %1
+         }
+         function @escape() -> unit vars 2 {
+         entry:
+           %0 = gep @inv-cap, 0 : u8
+           %1 = call unknown_ext(%0) : unit
+           return
+         }
+         function @read-cap(i=%0:i64) -> i64 vars 1 {
+         entry:
+           return %0
+         }
+         function @main() -> i64 vars 1 {
+         entry:
+           %0 = call escape() : unit
+           return 0
+         }")]
+    ;; (c) Array shrink while @inv-cap stays large must preserve bounds_check.
+    [shrink-cells
+      (opt-len-inv-test-cells
+        "global @inv-arr : (__tl_dyn-array i64) = runtime-init@init-inv-arr
+         global @inv-cap : i64 = 6
+         function @init-inv-arr() -> (__tl_dyn-array i64) vars 4 {
+         entry:
+           %0 = call tl_alloc(64) : u64
+           %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+           %2 = gep %1, 0 : u8
+           store_ptr %2, %0 : u64
+           %3 = gep %1, 8 : u8
+           store_ptr %3, 8 : i64
+           return %1
+         }
+         function @shrink() -> unit vars 4 {
+         entry:
+           %0 = call tl_alloc(16) : u64
+           %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+           %2 = gep %1, 0 : u8
+           store_ptr %2, %0 : u64
+           %3 = gep %1, 8 : u8
+           store_ptr %3, 2 : i64
+           store @inv-arr, %1 : (__tl_dyn-array i64)
+           return
+         }
+         function @read-cap(i=%0:i64) -> i64 vars 1 {
+         entry:
+           return %0
+         }
+         function @main() -> i64 vars 1 {
+         entry:
+           %0 = call shrink() : unit
+           return 0
+         }")]
+    ;; (d) Off-by-one mask (@inv-mask == 8 == @inv-arr.len) must preserve bounds_check.
+    [bad-mask-cells
+      (opt-len-inv-test-cells
+        "global @inv-arr : (__tl_dyn-array i64) = runtime-init@init-inv-arr
+         global @inv-mask : i64 = 8
+         function @init-inv-arr() -> (__tl_dyn-array i64) vars 4 {
+         entry:
+           %0 = call tl_alloc(64) : u64
+           %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+           %2 = gep %1, 0 : u8
+           store_ptr %2, %0 : u64
+           %3 = gep %1, 8 : u8
+           store_ptr %3, 8 : i64
+           return %1
+         }
+         function @read-mask(i=%0:i64) -> i64 vars 1 {
+         entry:
+           return %0
+         }
+         function @main() -> i64 vars 1 {
+         entry:
+           %0 = call read-mask(3) : i64
+           return %0
+         }")]
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& unchecked-cells)
+          (opt-test-symbol "read-cap")
+          (irt.blocks (string.copy (& cap-check)))))
+      1
+      "unchecked store to @inv-cap must NOT eliminate bounds check")
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& addr-cells)
+          (opt-test-symbol "read-cap")
+          (irt.blocks (string.copy (& cap-check)))))
+      1
+      "addr-taken @inv-cap must NOT eliminate bounds check")
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& shrink-cells)
+          (opt-test-symbol "read-cap")
+          (irt.blocks (string.copy (& cap-check)))))
+      1
+      "shrinking @inv-arr while @inv-cap stays large must NOT eliminate bounds check")
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& bad-mask-cells)
+          (opt-test-symbol "read-mask")
+          (irt.blocks mask-check)))
+      1
+      "off-by-one bitmask @inv-mask == @inv-arr.len must NOT eliminate bounds check")))
+
+(test
+  len-inv-struct-field-positive-and-negative
+  (let
+    [good-prog : String
+      "global @sv : TestBuf = runtime-init@init-sv
+       function @init-sv() -> TestBuf vars 8 {
+       entry:
+         %0 = call tl_alloc(64) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 8 : i64
+         %4 = alloc TestBuf
+         %5 = gep %4, 0 : u8
+         store_ptr %5, %1 : (__tl_dyn-array i64)
+         %6 = gep %4, 8 : u8
+         store_ptr %6, 0 : i64
+         return %4
+       }
+       function @sv-push(x=%0:i64) -> unit vars 12 {
+       entry:
+         %1 = gep @sv, 0 : u8
+         %2 = load %1 : (__tl_dyn-array i64)
+         %3 = gep %2, 1 : i64
+         %4 = load %3 : i64
+         %5 = gep @sv, 8 : u8
+         %6 = load %5 : i64
+         %7 = lt %6, %4 : i64
+         branch %7, push_ok, push_full
+       push_ok:
+         bounds_check %6, %4 message \"push\"
+         %8 = add %6, 1 : i64
+         store_ptr %5, %8 : i64
+         return
+       push_full:
+         return
+       }
+       function @sv-get(i=%0:i64) -> i64 vars 1 {
+       entry:
+         return %0
+       }
+       function @main() -> i64 vars 2 {
+       entry:
+         %0 = call sv-push(42) : unit
+         %1 = call sv-get(0) : i64
+         return %1
+       }"]
+    [good-check : String
+      "entry:
+         %1 = ge %0, 0 : i64
+         branch %1, nonneg, done
+       nonneg:
+         %2 = gep @sv, 8 : u8
+         %3 = load %2 : i64
+         %4 = lt %0, %3 : i64
+         branch %4, ok, done
+       ok:
+         %5 = gep @sv, 0 : u8
+         %6 = load %5 : (__tl_dyn-array i64)
+         %7 = gep %6, 1 : i64
+         %8 = load %7 : i64
+         bounds_check %0, %8 message \"sv\"
+         return %0
+       done:
+         return 0"]
+    ;; (a) Constructor violating len <= slots.len (len = 10, slots.len = 4).
+    [bad-ctor-prog : String
+      "global @sv : TestBufBadCtor = runtime-init@init-sv
+       function @init-sv() -> TestBufBadCtor vars 8 {
+       entry:
+         %0 = call tl_alloc(32) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 4 : i64
+         %4 = alloc TestBufBadCtor
+         %5 = gep %4, 0 : u8
+         store_ptr %5, %1 : (__tl_dyn-array i64)
+         %6 = gep %4, 8 : u8
+         store_ptr %6, 10 : i64
+         return %4
+       }
+       function @sv-get(i=%0:i64) -> i64 vars 1 {
+       entry:
+         return %0
+       }
+       function @main() -> i64 vars 1 {
+       entry:
+         %0 = call sv-get(0) : i64
+         return %0
+       }"]
+    ;; (b) Shrinking `slots` while `len` stays large.
+    [shrink-slots-prog : String
+      "global @sv : TestBufShrink = runtime-init@init-sv
+       function @init-sv() -> TestBufShrink vars 8 {
+       entry:
+         %0 = call tl_alloc(64) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 8 : i64
+         %4 = alloc TestBufShrink
+         %5 = gep %4, 0 : u8
+         store_ptr %5, %1 : (__tl_dyn-array i64)
+         %6 = gep %4, 8 : u8
+         store_ptr %6, 6 : i64
+         return %4
+       }
+       function @sv-shrink() -> unit vars 6 {
+       entry:
+         %0 = call tl_alloc(16) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 2 : i64
+         %4 = gep @sv, 0 : u8
+         store_ptr %4, %1 : (__tl_dyn-array i64)
+         return
+       }
+       function @sv-get(i=%0:i64) -> i64 vars 1 {
+       entry:
+         return %0
+       }
+       function @main() -> i64 vars 2 {
+       entry:
+         %0 = call sv-shrink() : unit
+         %1 = call sv-get(0) : i64
+         return %1
+       }"]
+    ;; (c) Opaque / addr-taken mutation of struct.
+    [opaque-escape-prog : String
+      "global @sv : TestBufOpaque = runtime-init@init-sv
+       function @init-sv() -> TestBufOpaque vars 8 {
+       entry:
+         %0 = call tl_alloc(64) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 8 : i64
+         %4 = alloc TestBufOpaque
+         %5 = gep %4, 0 : u8
+         store_ptr %5, %1 : (__tl_dyn-array i64)
+         %6 = gep %4, 8 : u8
+         store_ptr %6, 0 : i64
+         return %4
+       }
+       function @sv-escape() -> unit vars 2 {
+       entry:
+         %0 = mov @sv : (&mut e TestBufOpaque)
+         %1 = call unknown_ext(%0) : unit
+         return
+       }
+       function @sv-get(i=%0:i64) -> i64 vars 1 {
+       entry:
+         return %0
+       }
+       function @main() -> i64 vars 2 {
+       entry:
+         %0 = call sv-escape() : unit
+         %1 = call sv-get(0) : i64
+         return %1
+       }"]
+    ;; (d) Unchecked store to word 1 (len).
+    [unchecked-len-prog : String
+      "global @sv : TestBufBadLen = runtime-init@init-sv
+       function @init-sv() -> TestBufBadLen vars 8 {
+       entry:
+         %0 = call tl_alloc(64) : u64
+         %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+         %2 = gep %1, 0 : u8
+         store_ptr %2, %0 : u64
+         %3 = gep %1, 8 : u8
+         store_ptr %3, 8 : i64
+         %4 = alloc TestBufBadLen
+         %5 = gep %4, 0 : u8
+         store_ptr %5, %1 : (__tl_dyn-array i64)
+         %6 = gep %4, 8 : u8
+         store_ptr %6, 0 : i64
+         return %4
+       }
+       function @sv-set-len(n=%0:i64) -> unit vars 2 {
+       entry:
+         %1 = gep @sv, 8 : u8
+         store_ptr %1, %0 : i64
+         return
+       }
+       function @sv-get(i=%0:i64) -> i64 vars 1 {
+       entry:
+         return %0
+       }
+       function @main() -> i64 vars 2 {
+       entry:
+         %0 = call sv-set-len(99) : unit
+         %1 = call sv-get(0) : i64
+         return %1
+       }"]
+    [good-cells (opt-len-inv-test-cells good-prog)]
+    [bad-ctor-cells (opt-len-inv-test-cells bad-ctor-prog)]
+    [shrink-cells (opt-len-inv-test-cells shrink-slots-prog)]
+    [opaque-cells (opt-len-inv-test-cells opaque-escape-prog)]
+    [bad-len-cells (opt-len-inv-test-cells unchecked-len-prog)]
+    ;; Positive: verified struct eliminates bounds check.
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& good-cells)
+          (opt-test-symbol "sv-get")
+          (irt.blocks (string.copy (& good-check)))))
+      0
+      "verified struct TestBuf (len <= slots.len) eliminates bounds check")
+    ;; Negative (a): bad constructor preserves bounds check.
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& bad-ctor-cells)
+          (opt-test-symbol "sv-get")
+          (irt.blocks (string.copy (& good-check)))))
+      1
+      "constructor violating len <= slots.len must NOT eliminate bounds check")
+    ;; Negative (b): shrinking slots preserves bounds check.
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& shrink-cells)
+          (opt-test-symbol "sv-get")
+          (irt.blocks (string.copy (& good-check)))))
+      1
+      "shrinking struct slots while len stays large must NOT eliminate bounds check")
+    ;; Negative (c): opaque/addr-taken mutation preserves bounds check.
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& opaque-cells)
+          (opt-test-symbol "sv-get")
+          (irt.blocks (string.copy (& good-check)))))
+      1
+      "opaque/addr-taken struct escape must NOT eliminate bounds check")
+    ;; Negative (d): unchecked len write preserves bounds check.
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& bad-len-cells)
+          (opt-test-symbol "sv-get")
+          (irt.blocks (string.copy (& good-check)))))
+      1
+      "unchecked write to struct len field must NOT eliminate bounds check")
+    ;; Negative (e): mid-function mutation between `load s.len` and `load s.slots` preserves bounds check.
+    (test.assert-i64-eq
+      (opt-le-check-count
+        (opt-le-bounds-dom
+          (& good-cells)
+          (opt-test-symbol "sv-get")
+          (irt.blocks
+            "entry:
+               %1 = ge %0, 0 : i64
+               branch %1, nonneg, done
+             nonneg:
+               %2 = gep @sv, 8 : u8
+               %3 = load %2 : i64
+               %4 = lt %0, %3 : i64
+               branch %4, ok, done
+             ok:
+               %9 = call sv-push(1) : unit
+               %5 = gep @sv, 0 : u8
+               %6 = load %5 : (__tl_dyn-array i64)
+               %7 = gep %6, 1 : i64
+               %8 = load %7 : i64
+               bounds_check %0, %8 message \"sv-mid\"
+               return %0
+             done:
+               return 0")))
+      1
+      "mid-function mutation between load s.len and load s.slots must NOT eliminate bounds check")))

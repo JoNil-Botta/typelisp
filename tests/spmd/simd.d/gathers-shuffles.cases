@@ -1,0 +1,170 @@
+# SPMD SIMD codegen shapes and trap paths, run by scripts/verify-spmd-simd.sh
+# (gate stage2-spmd-simd-comparison). See tests/spmd/simd.d/.
+
+target -
+opt -
+
+# ------------------------------------------------------------------ gathers
+
+case gather-read-opcodes
+source tests/integration/spmd_gather_read.tl
+mode avx2 avx512
+contains vpgatherqd
+contains vpgatherqq
+contains vgatherqps
+contains vgatherqpd
+# The computed gather adds the lane offset in a vector.
+contains vpaddq
+
+case gather-reduce-opcodes
+source benchmarks/ispc/perfbench_gathers/bench.tl
+mode avx2 avx512
+contains vgatherqps
+contains vaddps
+
+# Gather safety is a runtime property: a full gang with several invalid active
+# lanes takes the ordinary bounds abort in every mode, because the lowering
+# checks logical lanes before the hardware gather.
+case gather-oob
+source tests/integration/spmd_gather_oob.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+case gather-lane-offset-oob
+source tests/integration/spmd_gather_lane_offset_oob.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+# Below opt2 a loop counter and the slice accessors keep several Mov
+# definitions joined by back edges; the backend's SIMD copy-shape query must
+# visit each variable once instead of exploring those chains exponentially
+# (#8394). Both levels used to exhaust memory in the SIMD modes.
+case loop-carried-copy-shape
+source tests/integration/spmd_loop_carried_copy_shape.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1
+exit 42
+
+# Fixed arrays, global, local and referenced, are SPMD operands through one
+# preheader Slice view each (#8346): all eight foreach loops take the vector
+# path, gathering every 32- and 64-bit lane type.
+case fixed-array-sources-opcodes
+source tests/spmd/fixed_array_sources.tl
+mode avx2 avx512
+contains vpgatherqq
+contains vpgatherqd
+contains vgatherqpd
+contains vgatherqps
+count = 8 foreach_avx2_body\.[0-9]+:
+
+# A fixed-array gather keeps the ordinary per-lane bounds check, in logical
+# lane order, before the hardware gather.
+case fixed-array-gather-oob
+source tests/spmd/fixed_array_gather_oob.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 134
+in stderr
+contains array index out of bounds
+
+# ----------------------------------------------------------------- shuffles
+
+case shuffle-opcodes
+source tests/integration/spmd_shuffle_simd.tl
+mode avx2 avx512
+contains vpermd
+not-match vector_shuffle_.*_skip_
+if-mode avx2
+not-match %zmm[0-9]+|%k[0-7]
+contains vpcmpgtq
+contains vpmovmskb
+else
+contains vpermq
+contains vpcmpuq
+contains kmovw
+end-if
+
+# The paired benchmark has only compile-time identity selectors; they are gone
+# before backend shuffle emission.
+case shuffle-identity-eliminated
+source benchmarks/spmd_shuffle/bench.tl
+mode avx2 avx512
+not-match vpermd|vpermq|vector_shuffle_
+
+# The 65-element runtime fixture covers unrolled groups and the remainder.
+case shuffle-unrolled-gangs
+source tests/integration/spmd_shuffle_simd.tl
+mode avx2
+opt 2
+in fn _tl_spmd_shuffle_simd_unrolled_identity
+narrow labeled-block:__unroll_body:
+count = 4 ^[[:space:]]+vpaddq[ ]
+not-match vpermd|vector_shuffle_
+in fn _tl_spmd_shuffle_simd_unrolled_dynamic
+count = 4 ^[.]L.*vector_shuffle_.*__unroll_body_v[0-9]+_permute:$
+
+# A three-lane partial gang with exactly sized value and selector arrays. SIMD
+# modes only: scalar has one-lane gangs, a different selector contract.
+case shuffle-tail-selector
+source tests/integration/spmd_shuffle_tail_selector.tl
+do link-run
+mode avx2 avx512
+exit 42
+in stderr
+empty
+
+case shuffle-tail-computed-selector
+source tests/integration/spmd_shuffle_tail_computed_selector.tl
+do link-run
+mode avx2 avx512
+exit 42
+in stderr
+empty
+
+# Invalid, negative and inactive-tail selectors take the ordinary bounds abort
+# in every mode; a uniform value does not skip selector validation.
+case shuffle-lane1-trap
+source tests/integration/spmd_shuffle_lane1_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+case shuffle-lane1-debug-backtrace
+source tests/integration/spmd_shuffle_lane1_trap.tl
+do build-run
+mode avx2 avx512
+opt 1 2
+args -g
+exit 134
+in stderr
+contains array index out of bounds
+contains stack backtrace:
+contains 0: main at
+contains spmd_shuffle_lane1_trap.tl:11:3
+
+case shuffle-negative-trap
+source tests/integration/spmd_shuffle_negative_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+case shuffle-tail-oob
+source tests/integration/spmd_shuffle_tail_oob.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+

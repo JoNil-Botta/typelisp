@@ -23,6 +23,11 @@
   (keys svec.Vec)
   (values svec.Vec))
 
+(defstruct CaseInputsResult
+  (ok bool)
+  (error String)
+  (files svec.Vec))
+
 (define (host-is-windows?) : bool
   (cfg windows true false))
 
@@ -1201,3 +1206,164 @@
                       (string.substring text pos (- (+ close 2) pos)))
                     (set! pos (+ close 2))))))))))
     (bbc.byte-buf-builder-finish-string (& out))))
+
+;; Byte-lexicographical string comparison matching LC_ALL=C sort.
+(define (str-byte-less? [a : (& a str)] [b : (& b str)]) : bool
+  (let
+    [la : i64 (string.string-length a)]
+    [lb : i64 (string.string-length b)]
+    [n : i64
+      (if (< la lb)
+        la
+        lb)]
+    [i : i64 0]
+    [decided : bool false]
+    [res : bool false]
+    (while (and (not decided) (< i n))
+      (let
+        [ba : i64 (bit-and (byte-at a i) 255)]
+        [bb : i64 (bit-and (byte-at b i) 255)]
+        (cond
+          [(< ba bb)
+            (set! res true)
+            (set! decided true)]
+          [(> ba bb)
+            (set! res false)
+            (set! decided true)]
+          [else (set! i (+ i 1))])))
+    (if decided
+      res
+      (< la lb))))
+
+(define (sort-strings-c! [v : (&mut v svec.Vec)]) : unit
+  (let
+    [n : i64 (svec.len v)]
+    [i : i64 1]
+    (while (< i n)
+      (let
+        [key : String (svec.get v i "")]
+        [j : i64 (- i 1)]
+        [shifting : bool true]
+        (while (and shifting (>= j 0))
+          (let
+            [cur : String (svec.get v j "")]
+            (if (str-byte-less? (& key) (& cur))
+              (begin
+                (svec.set-ref! v (+ j 1) cur)
+                (set! j (- j 1)))
+              (set! shifting false))))
+        (svec.set-ref! v (+ j 1) key))
+      (set! i (+ i 1)))))
+
+;; Expand positional .cases file and directory arguments in LC_ALL=C sorted order.
+;; Rejects missing paths, empty directories, nested directories, symlinks, and
+;; non-.cases stray entries.
+(define (expand-case-inputs [inputs : (& inputs svec.Vec)]) : CaseInputsResult
+  (let
+    [out : svec.Vec (svec.new)]
+    [n : i64 (svec.len inputs)]
+    [i : i64 0]
+    [ok : bool true]
+    [err : String ""]
+    (while (and ok (< i n))
+      (let
+        [arg : String (svec.get inputs i "")]
+        [narg : String (win-fs-path (& arg))]
+        (match (fs.try-file-kind (& narg))
+          [(fs.ErrFsFileKind _)
+            (set! ok false)
+            (set! err (str_cat.str-cat "missing case file: " arg))]
+          [(fs.OkFsFileKind kind)
+            (cond
+              [(fs.file-kind-regular? kind) (svec.push-ref! (&mut out) arg)]
+              [(fs.file-kind-directory? kind)
+                (let
+                  [dir-clean : String (trim-trailing-slashes (& arg))]
+                  [ndir : String (win-fs-path (& dir-clean))]
+                  (match (fs.try-read-dir (& ndir))
+                    [(fs.ErrIoStringVector _)
+                      (set! ok false)
+                      (set!
+                        err
+                        (str_cat.str-cat
+                          "failed to read case directory: "
+                          dir-clean))]
+                    [(fs.OkIoStringVector entries)
+                      (let
+                        [names : svec.Vec entries.items]
+                        [m : i64 (svec.len (& names))]
+                        [j : i64 0]
+                        [dir-count : i64 0]
+                        (sort-strings-c! (&mut names))
+                        (while (and ok (< j m))
+                          (let
+                            [name : String (svec.get (& names) j "")]
+                            (cond
+                              [(string.eq (& name) ".cases")
+                                (set! ok false)
+                                (set!
+                                  err
+                                  (str_cat.str-cat
+                                    "case directory "
+                                    (string.copy (& dir-clean))
+                                    " contains invalid filename: "
+                                    name))]
+                              [(not (ends-with? (& name) ".cases"))
+                                (set! ok false)
+                                (set!
+                                  err
+                                  (str_cat.str-cat
+                                    "case directory "
+                                    (string.copy (& dir-clean))
+                                    " contains unexpected non-.cases entry: "
+                                    name))]
+                              [else
+                                (let
+                                  [full : String
+                                    (if (string.eq (& dir-clean) "/")
+                                      (str_cat.str-cat
+                                        "/"
+                                        (string.copy (& name)))
+                                      (str_cat.str-cat
+                                        (string.copy (& dir-clean))
+                                        "/"
+                                        (string.copy (& name))))]
+                                  [nfull : String (win-fs-path (& full))]
+                                  (match (fs.try-file-kind-no-follow (& nfull))
+                                    [(fs.OkFsFileKind ekind)
+                                      (if (fs.file-kind-regular? ekind)
+                                        (begin
+                                          (svec.push-ref! (&mut out) full)
+                                          (set! dir-count (+ dir-count 1)))
+                                        (begin
+                                          (set! ok false)
+                                          (set!
+                                            err
+                                            (str_cat.str-cat
+                                              "case directory "
+                                              (string.copy (& dir-clean))
+                                              " contains non-regular entry: "
+                                              name))))]
+                                    [(fs.ErrFsFileKind _)
+                                      (set! ok false)
+                                      (set!
+                                        err
+                                        (str_cat.str-cat
+                                          "case directory "
+                                          (string.copy (& dir-clean))
+                                          " contains non-regular entry: "
+                                          name))]))]))
+                          (set! j (+ j 1)))
+                        (when
+                          (and ok (= dir-count 0))
+                          (set! ok false)
+                          (set!
+                            err
+                            (str_cat.str-cat
+                              "case directory is empty (no *.cases files): "
+                              dir-clean))))]))]
+              [else
+                (set! ok false)
+                (set! err (str_cat.str-cat "missing case file: " arg))])]))
+      (set! i (+ i 1)))
+    (CaseInputsResult ok err out)))

@@ -1,0 +1,146 @@
+# opt2 assembly-shape gates for the regalloc/backend/optimizer fixtures (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+
+# Synthesized-wrapper probes: the checked probe inlines into get-or while its
+# out-of-line body stays for the other site, and the abort variants keep three
+# located bounds tails whose staging pushes never read memory.
+case synth-wrapped-probe
+source tests/integration/synth_wrapped_probe.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_wrapped_probe_sp_get_or
+not-match ^[[:space:]]+call _tl_synth_wrapped_probe_sp_probe$
+match 2654435761
+in asm
+match ^_tl_synth_wrapped_probe_sp_probe:$
+count = 1 ^[[:space:]]+call _tl_synth_wrapped_probe_sp_probe$
+in fn _tl_synth_wrapped_probe_sp_get_or
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+
+case synth-wrapped-probe-abort
+source tests/integration/synth_wrapped_probe_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_wrapped_probe_abort_sp_get_or
+not-match ^[[:space:]]+call _tl_synth_wrapped_probe_abort_sp_probe$
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+count = 3 ^[[:space:]]+call \.L_tl_abort_tl_oob_abort_at$
+count = 0 ^[[:space:]]+call tl_oob_abort$
+in asm
+count >= 3 ^\.L_tl_abort_site_[0-9]+_bounds:$
+in fn _tl_synth_wrapped_probe_abort_sp_get_or
+count = 9 ^[[:space:]]+cmpq[ ]
+count = 3 ^[[:space:]]+jae [.A-Za-z0-9_]+\.cold$
+count = 0 ^[[:space:]]+jb[ ]
+metric abort-staging-push-from-memory = 0
+
+case synth-tail-wrapper
+source tests/integration/synth_tail_wrapper.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_tail_wrapper_sp_slot_id
+not-match ^[[:space:]]+call _tl_synth_tail_wrapper_sp_get_or$
+not-match ^[[:space:]]+jmp _tl_synth_tail_wrapper_sp_get_or$
+match 2654435761
+not-match ^[[:space:]]+call _tl_synth_tail_wrapper_sp_probe$
+in asm
+match ^_tl_synth_tail_wrapper_sp_get_or:$
+count = 1 ^[[:space:]]+call _tl_synth_tail_wrapper_sp_get_or$
+in fn _tl_synth_tail_wrapper_sp_slot_id
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+
+case synth-tail-wrapper-abort
+source tests/integration/synth_tail_wrapper_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_tail_wrapper_abort_sp_slot_id
+not-match ^[[:space:]]+call _tl_synth_tail_wrapper_abort_sp_get_or$
+not-match ^[[:space:]]+jmp _tl_synth_tail_wrapper_abort_sp_get_or$
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+count = 3 ^[[:space:]]+call \.L_tl_abort_tl_oob_abort_at$
+count = 0 ^[[:space:]]+call tl_oob_abort$
+in asm
+count >= 3 ^\.L_tl_abort_site_[0-9]+_bounds:$
+in fn _tl_synth_tail_wrapper_abort_sp_slot_id
+count = 9 ^[[:space:]]+cmpq[ ]
+count = 3 ^[[:space:]]+jae [.A-Za-z0-9_]+\.cold$
+count = 0 ^[[:space:]]+jb[ ]
+metric abort-staging-push-from-memory = 0
+
+case synth-struct-accessor
+source tests/integration/synth_struct_accessor.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_struct_accessor_sa_value
+not-match ^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+in asm
+match ^_tl_synth_struct_accessor_sa_lookup_in:$
+count = 1 ^[[:space:]]+call _tl_synth_struct_accessor_sa_lookup_in$
+
+case synth-struct-accessor-abort
+source tests/integration/synth_struct_accessor_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_synth_struct_accessor_abort_sa_value
+not-match ^[[:space:]]+call _tl_synth_struct_accessor_abort_sa_lookup_in$
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+
+# Checked match-arm wrappers, post-multi-call lookups and dispatch arms inline
+# their checked callee while it stays reachable elsewhere.
+case checked-arm-wrapper
+source tests/integration/checked_arm_wrapper.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_arm_wrapper_aw_slot_id
+not-match ^[[:space:]]+call _tl_checked_arm_wrapper_aw_get_or$
+not-match ^[[:space:]]+jmp _tl_checked_arm_wrapper_aw_get_or$
+match 2654435761
+not-match ^[[:space:]]+call _tl_checked_arm_wrapper_aw_probe$
+in asm
+match ^_tl_checked_arm_wrapper_aw_get_or:$
+count = 1 ^[[:space:]]+call _tl_checked_arm_wrapper_aw_get_or$
+in fn _tl_checked_arm_wrapper_aw_slot_id
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+
+case checked-arm-wrapper-abort
+source tests/integration/checked_arm_wrapper_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_arm_wrapper_abort_aw_slot_id
+not-match ^[[:space:]]+call _tl_checked_arm_wrapper_abort_aw_get_or$
+not-match ^[[:space:]]+jmp _tl_checked_arm_wrapper_abort_aw_get_or$
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+
+case checked-post-multi-call
+source tests/integration/checked_post_multi_call.tl
+target linux-x86_64 windows-x86_64
+match ^_tl_checked_post_multi_call_pm_lookup:$
+in fn _tl_checked_post_multi_call_pm_lookup
+not-match ^[[:space:]]+call _tl_checked_post_multi_call_pm_probe$
+not-match ^[[:space:]]+jmp _tl_checked_post_multi_call_pm_probe$
+match 2654435761
+in asm
+match ^_tl_checked_post_multi_call_pm_probe:$
+in fn _tl_checked_post_multi_call_pm_lookup
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+
+case checked-post-multi-call-abort
+source tests/integration/checked_post_multi_call_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_post_multi_call_abort_pm_lookup
+not-match ^[[:space:]]+call _tl_checked_post_multi_call_abort_pm_probe$
+count >= 1 ^[[:space:]]+call (\.L_tl_abort_)?tl_oob_abort
+
+case checked-dispatch-arm
+source tests/integration/checked_dispatch_arm.tl
+target linux-x86_64 windows-x86_64
+match ^_tl_checked_dispatch_arm_da_dispatch:$
+in fn _tl_checked_dispatch_arm_da_dispatch
+not-match ^[[:space:]]+call _tl_checked_dispatch_arm_da_fold$
+not-match ^[[:space:]]+jmp _tl_checked_dispatch_arm_da_fold$
+count >= 8 ^[[:space:]]+call \.L_tl_abort_tl_oob_abort_at
+in asm
+match ^_tl_checked_dispatch_arm_da_fold:$
+
+case checked-dispatch-arm-abort
+source tests/integration/checked_dispatch_arm_abort.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_dispatch_arm_abort_da_dispatch
+not-match ^[[:space:]]+call _tl_checked_dispatch_arm_abort_da_fold$
+count >= 8 ^[[:space:]]+call \.L_tl_abort_tl_oob_abort_at

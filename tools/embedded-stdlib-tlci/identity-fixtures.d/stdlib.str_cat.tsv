@@ -1,0 +1,2 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.str_cat/str-cat	1	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

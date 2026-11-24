@@ -1,0 +1,3 @@
+# Codegen target-dispatch boundary inventory (#5347); see scripts/check-codegen-target-dispatch.sh.
+# file	scope	boundary	category	token-regex	count	rationale
+src/compiler_x64_executable_template_identity.tl	compiler-x64-template-target-name	policy	entry	linux-x86_64|windows-x86_64	2	Names the template catalog's targets.

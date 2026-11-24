@@ -1,0 +1,2 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.format_writer_core/format-writer-key	1	fixed	expr	tests/integration/format_writer_capabilities.tl	ok	default	assembly

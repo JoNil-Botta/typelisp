@@ -121,7 +121,9 @@
 (define (null-state-is-empty) : unit
   (with
     ([iter
-        (tokens.IntoIter (ptr-null : (MutPtr tokens.IntoIterState)))
+        ;; A null IntoIter can only be forged in unsafe code (#9783).
+        (unsafe
+          (tokens.IntoIter (ptr-null : (MutPtr tokens.IntoIterState))))
         tokens.cleanup-into-iter])
     (test.assert-i64-eq
       (tokens.into-remaining-len (& iter))

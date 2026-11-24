@@ -1,0 +1,29 @@
+# Selfhost compile manifest: ownership core, normalization, typed occurrences, and ownership tests.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|selfhost_compiler_ownership_core|src/compiler_ownership_core.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_dump|src/compiler_ownership_dump.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_core_tests|src/compiler_ownership_core_tests.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_loan_tests|src/compiler_ownership_loan_tests.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_cleanup_tests|src/compiler_ownership_cleanup_tests.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_typed_occurrence|src/compiler_typed_occurrence.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_typed_occurrence_tests|src/compiler_typed_occurrence_tests.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_normalize|src/compiler_ownership_normalize.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ownership_normalize_tests|src/compiler_ownership_normalize_tests.tl|assembly|none|direct
+end

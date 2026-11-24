@@ -1,0 +1,81 @@
+# Native integration cases: general language semantics and cross-cutting fixtures.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+devirt_address_taken_callee|all|0,1,2|tests/integration/devirt_address_taken_callee.tl|42|-|-|-|-
+binding_ownership|all|0,1,2|tests/integration/binding_ownership.tl|42|16383\n|-|-|stage-stdlib
+pointer_eval_order|all|0,1,2|tests/integration/pointer_eval_order.tl|42|-|-|-|-
+operator_operand_snapshot|all|0,1,2|tests/integration/operator_operand_snapshot.tl|42|-|-|stdlib/test.tl|-
+two_field_array_growth|all|0,1,2|tests/integration/two_field_array_growth.tl|42|-|-|stdlib/test.tl|-
+cross_mode_internal_color|all|-|tests/integration/cross_mode_internal_color.tl|42|color=104:36\n|-|stdlib/io.tl stdlib/string.tl|-
+loopcarry_coalesce|all|-|tests/integration/loopcarry_coalesce.tl|42|-|-|stdlib/io.tl|-
+callrun_subrange_home|all|-|tests/integration/callrun_subrange_home.tl|42|-|-|stdlib/io.tl|-
+scavenge_destructure_clobber|all|-|tests/integration/scavenge_destructure_clobber.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+splitkit_realize_split|all|-|tests/integration/splitkit_realize_split.tl|42|-|-|stdlib/io.tl|-
+splitkit_realize_writeback|all|-|tests/integration/splitkit_realize_writeback.tl|42|-|-|stdlib/io.tl|-
+splitkit_csr_across_call|all|-|tests/integration/splitkit_csr_across_call.tl|42|-|-|stdlib/io.tl|-
+idx_copy_coalesce|all|-|tests/integration/idx_copy_coalesce.tl|42|-|-|stdlib/io.tl|-
+callregion_split|all|-|tests/integration/callregion_split.tl|42|-|-|stdlib/io.tl|-
+callregion_writeback|all|-|tests/integration/callregion_writeback.tl|42|-|-|stdlib/io.tl|-
+divmagic_hoist|all|-|tests/integration/divmagic_hoist.tl|42|-|-|stdlib/io.tl|-
+divmod_live_dividend|all|-|tests/integration/divmod_live_dividend.tl|42|-|-|stdlib/io.tl|-
+fallthrough_jmp_chain|all|-|tests/integration/fallthrough_jmp_chain.tl|42|-|-|-|-
+jump_only_forward|all|-|tests/integration/jump_only_forward.tl|42|-|-|-|-
+select_flags_lea|all|-|tests/integration/select_flags_lea.tl|42|-|-|stdlib/io.tl|-
+save_reload_elide|all|-|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl|-
+crossblock_reload_elide|all|-|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl|-
+cpuid_operand_homes|all|-|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl|-
+xgetbv_user_define|all|0,1,2|tests/integration/xgetbv_user_define.tl|9|-|-|cpu_query_intrinsics_dep.tl|-
+cpuid_register_user_defines|all|0,1,2|tests/integration/cpuid_register_user_defines.tl|7|-|-|cpu_query_intrinsics_dep.tl|-
+cpu_query_selected_import|all|0,1,2|tests/integration/cpu_query_selected_import.tl|42|-|-|cpu_query_selected_import_dep.tl cpu_query_selected_import_other.tl cpu_query_intrinsics_dep.tl|-
+gvn_addr_taken_compare|all|0,1,2|tests/integration/gvn_addr_taken_compare.tl|42|-|-|-|-
+total_switch_runtime|all|-|tests/integration/total_switch_runtime.tl|42|-|-|-|-
+gap_switch_runtime|all|-|tests/integration/gap_switch_runtime.tl|42|-|-|-|-
+alu_mem_operand_tie|all|-|tests/integration/alu_mem_operand_tie.tl|42|-|-|-|-
+deref_place_forms|all|0,1,2|tests/integration/deref_place_forms.tl|42|-|-|-|-
+constant_divisor_strength|all|-|tests/integration/constant_divisor_strength.tl|42|-|-|-|-
+constructor_alias_two_phase|all|-,0,2|tests/integration/constructor_alias_two_phase.tl|42|-|-|stdlib/string.tl|-
+explicit_clone_generation|all|-,0,1,2|tests/integration/explicit_clone_generation.tl|42|-|-|explicit_clone_generation_owner.tl stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
+entry_names_like_imported_variants|all|-|tests/integration/entry_names_like_imported_variants.tl|42|-|-|entry_names_like_imported_variants_dep.tl stdlib/iterator.tl|-
+cond|all|-|tests/integration/cond.tl|42|-|-|-|-
+multiform_arms|all|-,0,1,2|tests/integration/multiform_arms.tl|42|-|-|stdlib/comptime.tl|-
+early_return|all|-|tests/integration/early_return.tl|42|-|-|-|-
+dot_field_access|all|-|tests/integration/dot_field_access.tl|0|-|-|-|-
+functions|all|-|tests/integration/functions.tl|32|-|-|-|-
+parameter_set_rebind|all|-|tests/integration/parameter_set_rebind.tl|42|-|-|-|-
+min_div_neg1_trap|all|-|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:5:7: integer division or remainder error: dividend=-9223372036854775808 divisor=-1\n
+legacy_dotted_enum|all|-|tests/integration/legacy_dotted_enum_main.tl|42|-|-|legacy_dotted_enum_bridge.tl legacy_dotted_enum_provider.tl|-
+opt2_f32_mandelbrot_loop|all|-,0,2|tests/integration/opt2_f32_mandelbrot_loop.tl|42|-|-|-|-
+write_file_invalid_trap|all|-|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
+selfhost_argv_oob|all|-|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: @loc{stdlib/io.tl;8;      (panic "tl: argv index out of bounds\n")}: panic: tl: argv index out of bounds\n
+stdin_bytes_negative_trap|all|-|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: @loc{stdlib/io.tl;6;    (panic "tl: stdin failed\n")}: panic: tl: stdin failed\n
+rem_zero_trap|all|-|tests/integration/rem_zero_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=1 divisor=0\n
+shl_count_width_trap|all|-,2|tests/integration/shl_count_width_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:3:5: shift count out of range: count=64 width=32\n
+shr_u64_high_count_trap|all|2,-|tests/integration/shr_u64_high_count_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:3:5: shift count out of range: count=18446744073709551615 width=64\n
+valid_scalar_shift_matrix|all|-|tests/integration/valid_scalar_shift_matrix.tl|42|-|-|-|-
+core_string_length|all|-|tests/integration/core_string_length.tl|42|-|-|stdlib/string.tl|-
+private_intrinsic_provenance|all|-|tests/integration/private_intrinsic_provenance.tl|42|-|-|private_intrinsic_provenance_provider.tl private_intrinsic_provenance_shadow_provider.tl|-
+null_arena_sentinel|all|-|tests/integration/null_arena_sentinel.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+tree|all|-|tests/integration/tree.tl|3|-|-|-|-
+unified_place_syntax|all|-|tests/integration/unified_place_syntax.tl|42|-|-|-|-
+composed_place_projection|all|-|tests/integration/composed_place_projection.tl|42|-|-|-|-
+valid_shift_counts|all|-|tests/integration/valid_shift_counts.tl|42|-|-|-|-
+selfloop_redef_writeback|all|-|tests/integration/selfloop_redef_writeback.tl|42|-|-|-|-
+loopcarried_phi_home|all|-|tests/integration/loopcarried_phi_home.tl|42|-|-|-|-
+in_arena|all|-|tests/integration/in_arena.tl|42|-|-|-|-
+zii_zero_representation|all|0,1,2|tests/integration/zii_zero_representation.tl|42|-|-|stdlib/arena.tl|-
+consume_parameters|all|-|tests/integration/consume_parameters.tl|0|-|-|consume/parameters/helper.tl stdlib/string.tl|-
+latch_sink_for_loops|all|0,2|tests/integration/latch_sink_for_loops.tl|42|-|-|stdlib/iterator.tl|-
+counter_sink_loops|all|0,1,2|tests/integration/counter_sink_loops.tl|42|-|-|-|-
+factored_addresses|all|0,1,2|tests/integration/factored_addresses.tl|0|257269108\n|-|-|stage-stdlib
+memcpy_short_runtime|all|0,1,2|tests/integration/memcpy_short_runtime.tl|42|-|-|stdlib/runtime.tl|stage-stdlib
+selected_inference_dotted|all|0,1,2|tests/integration/selected_inference_dotted.tl|42|-|-|-|stage-stdlib
+exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|-|-|stdlib/test.tl|-
+reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-
+serialize_module_scopes|all|0,1,2|tests/integration/serialize_module_scopes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl|-
+legacy_box_get_public_deref|all|0,1,2|tests/integration/legacy_box_get_public_deref.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
+legacy_box_get_owned_template|all|0,1,2|tests/integration/legacy_box_get_owned_template.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
+legacy_box_get_owned_places|all|0,1,2|tests/integration/legacy_box_get_owned_places.tl|42|-|-|-|-
+divrem_addr_taken|all|0,1,2|tests/integration/divrem_addr_taken.tl|135|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:14:12: integer division or remainder error: dividend=10 divisor=0\n
+induction_addr_taken|all|0,1,2|tests/integration/induction_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+dynarray_loop_continue|all|0,1,2|tests/integration/dynarray_loop_continue.tl|13|-|-|-|-
+reborrow_reference_projection|all|0,1,2|tests/integration/reborrow_reference_projection.tl|42|-|-|-|-

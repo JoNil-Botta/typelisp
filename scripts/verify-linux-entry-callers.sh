@@ -6,6 +6,7 @@ set -eu
 # retains its C-dependency step, so a helper error must precede that work too.
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$ROOT/scripts/lib-ci-timing.sh"
+. "$ROOT/scripts/lib-manifest.sh"
 entry_root=${1:-"$ROOT/target/exp/linux-entry-callers"}
 mkdir -p "$entry_root"
 entry_work=$(mktemp -d "$entry_root/run.XXXXXX")
@@ -15,8 +16,9 @@ printf 'caller\tcontrol\ttiming\twant\tstatus\n' > "$entry_work/results.tsv"
 
 # Keep the exit-139 row tied to the actual corpus contract. An entry-selection
 # failure must never reach the runtime assertion that could accept that crash.
+manifest_concat_dir "$ROOT/tests/integration/manifest.d" > "$entry_work/integration.manifest"
 awk -F '|' '$1 == "arena_poison_stale_array_trap" && $2 == "linux" && $5 == 139 && $6 == "-" && $7 == "-" {found++}
-    END {exit found != 1}' "$ROOT/tests/integration/native.manifest"
+    END {exit found != 1}' "$entry_work/integration.manifest"
 
 for entry_spec in ci-verify:1 verify-integration:1 verify-codegen-cases:1 \
         verify-doc-site:1 verify-spmd-simd:1 verify-safety-corpus:1 \

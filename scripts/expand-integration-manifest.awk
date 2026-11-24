@@ -1,6 +1,7 @@
-# expand-integration-manifest.awk - one host's rows of tests/integration/native.manifest.
+# expand-integration-manifest.awk - one host's rows of tests/integration/manifest.d/*.manifest.
 #
-#   awk -v host=linux|windows [-v work_root=DIR] -f scripts/expand-integration-manifest.awk tests/integration/native.manifest
+#   manifest_concat_dir tests/integration/manifest.d > combined.manifest
+#   awk -v host=linux|windows [-v work_root=DIR] -f scripts/expand-integration-manifest.awk combined.manifest
 #
 # Merged row:   name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
 # Emitted row:  name|source|exit|stdout|args|deps[|extra[|suite-members]]
@@ -17,7 +18,7 @@
 # own work root when scripts/verify-integration.sh runs one as its own gate.
 
 function fail(message) {
-    printf "native.manifest line %d: %s\n", FNR, message > "/dev/stderr"
+    printf "integration manifest line %d: %s\n", FNR, message > "/dev/stderr"
     failed = 1
     exit 1
 }

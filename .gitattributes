@@ -19,6 +19,8 @@ scripts/ci-gates.tsv text eol=lf
 scripts/ci-affected-paths.tsv text eol=lf
 scripts/ci-affected-inputs.tsv text eol=lf
 tests/fixtures/ci-affected/** text eol=lf
+tests/integration/manifest.d/*.manifest text eol=lf
+src/compile_manifest.d/*.manifest text eol=lf
 
 # Unicode profile inputs are exact upstream byte oracles (including CSV CRLF).
 tools/idna-unicode12-data/inputs/* binary

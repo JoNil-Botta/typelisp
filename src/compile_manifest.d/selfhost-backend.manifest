@@ -1,0 +1,14 @@
+# Selfhost compile manifest: register allocation and x86-64 backend code generation.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|selfhost_compiler_backend|src/compiler_backend.tl|assembly|none|direct
+not-contains|_tl_compiler_backend_runtime_file_open_status_functions:
+not-contains|_tl_compiler_backend_runtime_file_close_status_functions:
+not-contains|_tl_compiler_backend_runtime_windows_file_handle_functions:
+not-contains|_tl_compiler_backend_runtime_file_read_chunk_status_functions:
+not-contains|_tl_compiler_backend_runtime_windows_file_read_chunk_functions:
+not-contains|backend: Windows runtime helpers not yet implemented (#648)
+end
+
+case|selfhost_compiler_regalloc|src/compiler_regalloc.tl|assembly|none|direct
+end

@@ -13184,6 +13184,29 @@ f:
     ret
     .size f, . - f
 ")
+    ;; REFUSED under -Os: the copy would carry more than its `jmp`.
+    (compiler-backend-layout-unchanged?
+      (bit-or
+        be_peephole.compiler-backend-layout-mode-dup
+        be_peephole.compiler-backend-layout-mode-size)
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
     ;; REFUSED above the run cap: one more instruction than the budget.
     (compiler-backend-layout-unchanged?
       be_peephole.compiler-backend-layout-mode-dup

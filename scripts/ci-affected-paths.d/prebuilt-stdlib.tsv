@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/prebuilt_stdlib_hello_io.tl	stage2-public-tool-affected-map,stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora	@corpus	Primary source of the prebuilt stdlib discovery and --no-prebuilt-stdlib fallback public CLI transcript.

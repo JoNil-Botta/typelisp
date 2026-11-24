@@ -1130,6 +1130,10 @@
   [program-index : be_state.CompilerBackendProgramIndex]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]) : be_state.CompilerBackendIagCensusCell
+  (when
+    (be_state.compiler-backend-state-library-object?
+      program-index.backend-state)
+    (return (compiler-backend-iag-census-disabled)))
   (let
     [global-count : i64 globals.len]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 (+ global-count 1))]

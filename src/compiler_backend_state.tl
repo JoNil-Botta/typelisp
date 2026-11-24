@@ -598,6 +598,14 @@
   (Ok String)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
+(define (clone-result-compiler-backend
+  [value : (& value ResultCompilerBackend)]) : ResultCompilerBackend
+  (match value
+    [(Ok text) (Ok (string.copy text))]
+    [(Err diag)
+      (Err
+        (box (compiler_diagnostic.clone-compiler-diagnostic (& (deref diag)))))]))
+
 ;; Append-only function-body assembly text buffer.
 ;;
 ;; The block/instruction spine appends emitted text straight into this growth
@@ -1224,6 +1232,7 @@
   (copy-thunks backend_string_i64_map.Map)
   (copy-thunk-bodies (__tl_dyn-array String))
   (copy-thunk-count i64)
+  (copy-thunk-size-counts (__tl_dyn-array i64))
   ;; Per-program scratch for the registry: a dedicated arena (raw handle +
   ;; start mark) rewound by `compiler-backend-copy-thunks-reset!`, so no thunk
   ;; key, body or table outlives the emission that registered it.
@@ -1307,6 +1316,7 @@
         (backend_string_i64_map.with-capacity 1)
         (__tl_make-array String 0)
         0
+        (__tl_make-array i64 0)
         0
         0
         false

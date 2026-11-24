@@ -1,0 +1,47 @@
+# Native integration cases: strings, byte views, characters, printing, and argv.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+char_comparisons|all|0,1,2|tests/integration/char_comparisons.tl|42|-|-|-|-
+char_comparison_immediates|all|0,1,2|tests/integration/char_comparison_immediates.tl|42|-|-|-|-
+byte_buf_live_full|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|42|-|0|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|-
+byte_buf_live_mut_full|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|42|-|1|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|-
+byte_buf_live_oversize|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|2|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_maximum|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|3|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_negative|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|4|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_empty_oversize|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|5|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_mut_oversize|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|6|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_mut_maximum|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|13|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_mut_negative|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|7|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_mut_empty_oversize|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|8|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_empty|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|42|-|9|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|-
+byte_buf_live_mut_empty|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|42|-|10|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|-
+byte_buf_live_append_negative|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|11|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+byte_buf_live_append_overflow|all|0,1,2|tests/integration/byte_buf_live_bounds.tl|134|-|12|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|expected-stderr:tl: array index out of bounds\n
+argv|all|-|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl|-
+bytes_view_no_alloc|all|-|tests/integration/bytes_view_no_alloc.tl|42|-|-|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|-
+bytes_view_no_alloc|all|0,2|tests/integration/bytes_view_no_alloc.tl|42|-|-|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib
+bytes_view_trap_negative_start|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|1|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+bytes_view_trap_negative_length|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|2|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+bytes_view_trap_overflow|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|3|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+bytes_view_trap_past_end|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|4|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+bytes_view_trap_subview_past_end|all|0,2|tests/integration/bytes_view_no_alloc.tl|134|-|5|stdlib/byte_buf.tl stdlib/io.tl stdlib/profile.tl stdlib/string.tl|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+hello|all|-|tests/integration/hello.tl|42|-|-|-|-
+print|all|-|tests/integration/print.tl|0|42\nfalse\n|-|-|-
+print_char|all|-|tests/integration/print_char.tl|0|A\n|-|-|-
+print_float|all|-|tests/integration/print_float.tl|0|1.5\n|-|-|-
+print_string|all|-|tests/integration/print_string.tl|0|hello\nworld\n|-|-|-
+str_cat_native_arities|all|-|tests/integration/str_cat_native_arities.tl|42|-|-|stdlib/io.tl stdlib/string.tl stdlib/str_cat.tl|-
+string_append|all|-|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|stdlib/io.tl stdlib/string.tl|-
+string_concat_deep|all|-|tests/integration/string_concat_deep.tl|42|-|-|stdlib/string.tl|-
+string_eq|all|-|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl|-
+string_length|all|-|tests/integration/string_length.tl|5|-|-|stdlib/string.tl|-
+string_record_extent|all|-|tests/integration/string_record_extent.tl|42|-|-|-|-
+string_match|all|-|tests/integration/string_match.tl|42|-|-|-|-
+substring|all|-|tests/integration/substring.tl|55|-|-|stdlib/string.tl|-
+string_literal_eq|all|0,1,2|tests/integration/string_literal_eq.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl|-
+str_cat_scoped_region|all|-|tests/integration/str_cat_scoped_region.tl|42|-|-|-|-
+byte_le_read_tail_trap|all|0,1,2|tests/integration/byte_le_read_tail_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+byte_le_read_max_offset_trap|all|0,1,2|tests/integration/byte_le_read_max_offset_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+byte_le_set_tail_trap|all|0,1,2|tests/integration/byte_le_set_tail_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+byte_le_set_max_offset_trap|all|0,1,2|tests/integration/byte_le_set_max_offset_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+string_scrutinee_literal_match|all|0,1,2|tests/integration/string_scrutinee_literal_match.tl|42|-|-|-|-

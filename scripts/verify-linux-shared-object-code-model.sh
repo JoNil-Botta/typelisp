@@ -4,7 +4,7 @@ set -eu
 # verify-linux-shared-object-code-model.sh - gate for the Linux shared-object
 # code model (#8257).
 #
-# Every Linux row of tests/integration/native.manifest, at its default level,
+# Every Linux row of tests/integration/manifest.d/*.manifest, at its default level,
 # is staged like scripts/verify-integration.sh stages it and compiled in one
 # `compile --batch` run with TYPELISP_BACKEND_CODE_MODEL=shared-object. Each
 # object is assembled and linked with both `cc -shared` and `ld -shared`, and
@@ -33,6 +33,7 @@ esac
 gate_compiler
 gate_require_compiler
 . "$ROOT/scripts/lib-integration-deps.sh"
+. "$ROOT/scripts/lib-manifest.sh"
 BOUNDED_POOL_LABEL=shared-object
 . "$ROOT/scripts/lib-bounded-pool.sh"
 
@@ -76,9 +77,11 @@ stage_plan_copy() {
     cp "$1" "$2"
 }
 
+COMBINED_MANIFEST="$WORKDIR/manifest.combined"
+manifest_concat_dir "$ROOT/tests/integration/manifest.d" > "$COMBINED_MANIFEST"
 NORMALIZED="$WORKDIR/manifest.normalized"
 awk -v host=linux -f "$ROOT/scripts/expand-integration-manifest.awk" \
-    "$ROOT/tests/integration/native.manifest" > "$NORMALIZED"
+    "$COMBINED_MANIFEST" > "$NORMALIZED"
 
 BATCH="$WORKDIR/batch.txt"
 NAMES="$WORKDIR/names.txt"

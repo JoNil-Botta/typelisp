@@ -1,0 +1,43 @@
+# Native integration cases: SPMD lanes, SIMD operations, shuffles, and reductions.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+inline_helper_composition|all|0,1,2|tests/integration/spmd_inline_helper_composition.tl|42|-|-|spmd_inline_helper_composition_provider.tl|-
+spmd_uniform_index_write|all|0,1,2|tests/integration/spmd_uniform_index_write.tl|42|-|-|-|stage-stdlib
+spmd_compact_scalar|all|-|tests/integration/spmd_compact_scalar.tl|42|-|-|-|-
+spmd_compact_overflow_trap|all|-|tests/integration/spmd_compact_overflow_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
+spmd_compact_destination_oob_trap|all|-|tests/integration/spmd_compact_destination_oob_trap.tl|134|-|-|-|expected-stderr:tl: $SRC:10:30: array index out of bounds: index=1 length=1\n
+spmd_foreach|all|-|tests/integration/spmd_foreach.tl|42|-|-|spmd_vec_support.tl|-
+spmd_gather_read|all|-|tests/integration/spmd_gather_read.tl|42|-|-|spmd_vec_support.tl|-
+spmd_loop_carried_copy_shape|all|-|tests/integration/spmd_loop_carried_copy_shape.tl|42|-|-|spmd_vec_support.tl|-
+spmd_gather_oob|all|-|tests/integration/spmd_gather_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:31:33: array index out of bounds: index=9223372036854775807 length=8\n
+spmd_gather_lane_offset_oob|all|-|tests/integration/spmd_gather_lane_offset_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:28:33: array index out of bounds: index=-9223372036854775808 length=8\n
+spmd_atomic_scatter|all|-|tests/integration/spmd_atomic_scatter.tl|42|-|-|stdlib/atomic.tl spmd_vec_support.tl|-
+spmd_scalar_for_native|all|-|tests/integration/spmd_scalar_for_native.tl|42|-|-|spmd_vec_support.tl|-
+spmd_reduce_scalar|all|-|tests/integration/spmd_reduce_scalar.tl|42|-|-|spmd_vec_support.tl|-
+spmd_lane_identity_scalar|all|-|tests/integration/spmd_lane_identity_scalar.tl|42|-|-|spmd_vec_support.tl|-
+spmd_scan_scalar|all|-|tests/integration/spmd_scan_scalar.tl|42|-|-|spmd_vec_support.tl|-
+spmd_scan_negative_start_trap|all|-|tests/integration/spmd_scan_negative_start_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:18:29: array index out of bounds: index=-1 length=4\n
+spmd_scan_short_output_trap|all|-|tests/integration/spmd_scan_short_output_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: $SRC:19:36: array index out of bounds: index=6 length=6\n
+spmd_shuffle_scalar|all|-|tests/integration/spmd_shuffle_scalar.tl|42|-|-|spmd_vec_support.tl|-
+spmd_shuffle_simd|all|-|tests/integration/spmd_shuffle_simd.tl|42|-|-|spmd_vec_support.tl|-
+spmd_shuffle_types|all|-|tests/integration/spmd_shuffle_types.tl|42|-|-|spmd_vec_support.tl|-
+spmd_shuffle_reduce|all|-|tests/integration/spmd_shuffle_reduce.tl|42|-|-|spmd_vec_support.tl|-
+spmd_shuffle_tail_computed_selector|all|-|tests/integration/spmd_shuffle_tail_computed_selector.tl|42|-|-|spmd_vec_support.tl|-
+spmd_shuffle_lane1_trap|all|-|tests/integration/spmd_shuffle_lane1_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
+spmd_shuffle_negative_trap|all|-|tests/integration/spmd_shuffle_negative_trap.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
+spmd_shuffle_tail_oob|all|-|tests/integration/spmd_shuffle_tail_oob.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
+spmd_shuffle_abort_nested|all|-|tests/integration/spmd_shuffle_abort_nested.tl|134|-|-|spmd_vec_support.tl|expected-stderr:tl: array index out of bounds\n
+spmd_inline_helper_call_by_value|all|0,1,2|tests/integration/spmd_inline_helper_call_by_value.tl|42|-|-|-|-
+spmd_foreach_active_histogram|all|-|tests/integration/spmd_foreach_active.tl|0|1 2 4 1\n|1|-|stage-stdlib
+spmd_foreach_active_accumulate|all|-|tests/integration/spmd_foreach_active.tl|0|55 15\n|2|-|stage-stdlib
+spmd_foreach_active_masked|all|-|tests/integration/spmd_foreach_active.tl|0|25 579\n|3|-|stage-stdlib
+spmd_foreach_active_calls|all|-|tests/integration/spmd_foreach_active.tl|0|0 0 0 1\n1 0 0 1\n2 0 0 1\n3 0 0 1\n|4|-|stage-stdlib
+spmd_foreach_active_lane_types|all|-|tests/integration/spmd_foreach_active.tl|0|-2 8 2\n|5|-|stage-stdlib
+spmd_foreach_active_atomics|all|-|tests/integration/spmd_foreach_active.tl|0|9 5 7\n|6|-|stage-stdlib
+spmd_foreach_active_first_fault|all|-|tests/integration/spmd_foreach_active.tl|134|0\n1\n2\n3\n|7|-|stage-stdlib+expected-stderr:tl: $SRC:140:32: array index out of bounds: index=9 length=8\n
+spmd_foreach_2d_order|all|-|tests/integration/spmd_foreach_2d.tl|0|y0=2\ny1=4\nx0=-1\nx1=2\n(2 -1)\n(2 0)\n(2 1)\n(3 -1)\n(3 0)\n(3 1)\ncount=6\n|1|-|stage-stdlib
+spmd_foreach_2d_row_major|all|-|tests/integration/spmd_foreach_2d.tl|0|0 -7 -6 -5 3 4 5 13 14 15\n|2|-|stage-stdlib
+spmd_foreach_2d_empty|all|-|tests/integration/spmd_foreach_2d.tl|0|y0=3\ny1=3\nx0=-9223372036854775808\nx1=9223372036854775807\ncount=0\ny0=-9223372036854775808\ny1=9223372036854775807\nx0=5\nx1=5\ncount=0\ny0=5\ny1=2\nx0=0\nx1=4\ncount=0\ny0=0\ny1=1\nx0=7\nx1=-7\ncount=0\n|3|-|stage-stdlib
+spmd_foreach_2d_outer_span_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=-9223372036854775808\ny1=9223372036854775807\nx0=0\nx1=1\n|4|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+spmd_foreach_2d_inner_span_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=0\ny1=1\nx0=-9223372036854775808\nx1=9223372036854775807\n|5|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+spmd_foreach_2d_product_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=0\ny1=4294967296\nx0=0\nx1=2147483648\n|6|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n

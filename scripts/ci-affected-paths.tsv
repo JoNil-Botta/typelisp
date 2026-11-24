@@ -25,7 +25,7 @@ src/compiler_backend*	x64-executable-template-registry-coverage	@compiler	Backen
 src/compiler_x64*	x64-executable-template-registry-coverage	@compiler	Executable-template code and catalog data are read by the registry guard.
 src/main.tl	cli-help-surface,stage2-selfhost-compile-manifest	@compiler	The help-surface guard reads the dispatcher help text directly.
 src/*_cli_core.tl	cli-help-surface	@compiler	CLI parser modules are compared with their help text by the direct source guard.
-src/compile_manifest.txt	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Exact compiler-manifest input, expectations and standalone coverage.
+src/compile_manifest.d/*	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Exact compiler-manifest fragments, expectations and standalone coverage.
 stdlib/*	stage2-safety-corpus	@stdlib	Every stdlib edit can change located safety diagnostics and pins.
 stdlib/*.tl	stage2-docs-pages-build-path,stage2-stdlib-documentation,stage2-stdlib-modules-and-fixtures,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@stdlib	Stdlib sources carry target references and feed rendered-site links and anchors, documentation, concat-lint, source-content and module-path guards.
 stdlib/tests/*	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier,stage2-prelude-macro-mutation-guard	@stdlib	Stdlib witnesses are executed by both fixture verifiers and copied by the macro-mutation runner.
@@ -215,7 +215,7 @@ tests/integration/lexer.tl	stage2-deterministic-assembly,stage2-selfhost-compile
 tests/integration/many_args.tl	stage2-backend-target-assembly-parity,stage2-deterministic-assembly	@corpus	Direct fixture input in check-backend-target-asm-parity.sh, check-codegen-target-parity.sh, check-deterministic-asm.sh.
 tests/integration/modules_main.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/narrow_div_mod.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
-tests/integration/native.manifest	stage2-linux-shared-object-code-model,stage2-opt1-opt2-build-invariance,integration-batch-observability	@corpus	Direct fixture input in verify-linux-shared-object-code-model.sh, verify-integration.sh, check-build-invariance.sh. The real entry-helper caller controls retain the Linux exit-139 row contract.
+tests/integration/manifest.d/*	stage2-linux-shared-object-code-model,stage2-opt1-opt2-build-invariance,integration-batch-observability	@corpus	Direct fixture fragments in verify-linux-shared-object-code-model.sh, verify-integration.sh, check-build-invariance.sh. The real entry-helper caller controls retain the Linux exit-139 row contract.
 tests/integration/nested_eval.tl	stage2-deterministic-assembly,stage2-selfhost-compile-manifest	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/nested_tuple_array_projection.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
 tests/integration/nullary_variant_call.tl	stage2-deterministic-assembly,stage2-selfhost-compile-manifest	@corpus	Direct fixture input in check-deterministic-asm.sh.
@@ -763,3 +763,6 @@ scripts/verify-addr-taken-matrix.sh	stage2-addr-taken-matrix	-	Native address-ta
 scripts/run-bounded-batch.ps1	stage2-ownership-model	-	Windows multi-worker Job Object batch runner for verify-ownership-model.sh.
 tests/addr-taken-matrix/*	stage2-addr-taken-matrix	@corpus	Adversarial address-taken-local programs compiled and run at opt0/1/2/s; pending/ leaders move here as their fixes land.
 tools/embedded-stdlib-tli/roundtrip.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Checked embedded stdlib interface round trip.
+tools/codegen-cases-runner/*	*	-	Native codegen-cases runner drives all .cases gates across Linux and Windows.
+tools/build-stdlib-sysroot/main.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Single-pass prebuilt stdlib sysroot builder.
+scripts/build-stdlib-sysroot.sh	bootstrap-compiler,stage2-codegen-target-parity	@compiler	Prebuilt stdlib sysroot build and deterministic archive script.

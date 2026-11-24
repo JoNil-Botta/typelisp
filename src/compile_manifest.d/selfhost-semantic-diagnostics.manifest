@@ -1,0 +1,12 @@
+# Selfhost compile manifest: semantic index, lint facts, diagnostics, and global effects.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|selfhost_compiler_semantic_index|src/compiler_semantic_index.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_semantic_lint_facts|src/compiler_semantic_lint_facts.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_diagnostic|src/compiler_diagnostic.tl|assembly|none|direct
+case|selfhost_compiler_global_effects|src/compiler_global_effects.tl|assembly|none|direct
+end

@@ -1,0 +1,14 @@
+# Native integration cases: modules, imports, specialization, visibility, and package boundaries.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+dotted_field_place_parity|all|-|tests/integration/dotted_field_place_parity.tl|42|-|-|stdlib/vector.tl|-
+modules_main|all|-|tests/integration/modules_main.tl|30|-|-|modules_helper.tl|-
+dotted_nested_variant|all|-|tests/integration/dotted_nested_variant_main.tl|0|-|-|dotted_nested_variant_consumer.tl dotted_nested_variant_provider.tl|-
+specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|42|-|-|-|-
+specialize_substitution_forms|all|-|tests/integration/specialize_substitution_forms.tl|42|-|-|stdlib/vector.tl|-
+specialize_binder_shadow|all|-|tests/integration/specialize_binder_shadow.tl|42|-|-|-|-
+source_selected_generated_export|all|0,1,2|tests/integration/source_selected_generated_export.tl|42|-|-|source_selected_generated_dep.tl source_selected_generated_macro_dep.tl source_selected_generated_user.tl source_selected_generated_shadow.tl stdlib/io.tl|-
+backend_source_import_payload|all|0,1,2|tests/fixtures/backend_source_import_payload.tl|42|-|-|-|stage-stdlib
+backend_source_import_aliases|all|0,1,2|tests/fixtures/backend_source_import_aliases.tl|42|-|-|-|stage-stdlib
+backend_source_import_wildcard|all|0,1,2|tests/fixtures/backend_source_import_wildcard.tl|42|-|-|-|stage-stdlib
+backend_source_import_str_cat|all|0,1,2|tests/fixtures/backend_source_import_str_cat.tl|42|-|-|-|stage-stdlib

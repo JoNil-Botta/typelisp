@@ -1,0 +1,38 @@
+# Native integration cases: C ABI, FFI, externs, platform boundaries, and calling conventions.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+hidden_sret_source_name|all|0,1,2|tests/integration/hidden_sret_source_name.tl|42|-|-|-|-
+extern_callback_global|all|0,1,2|tests/integration/extern_callback_global.tl|42|-|-|benchmarks/extern_callback_global/baseline.c|stage-stdlib
+extern_callback_global_more|all|0,1,2|tests/integration/extern_callback_global.tl|42|-|a b|benchmarks/extern_callback_global/baseline.c|stage-stdlib
+internal_abi_six_positions|all|0,1,2|tests/integration/internal_abi_six_positions.tl|42|-|-|benchmarks/internal_abi_six_positions/baseline.c|stage-stdlib
+internal_abi_six_positions_more|all|0,1,2|tests/integration/internal_abi_six_positions.tl|42|-|a b|benchmarks/internal_abi_six_positions/baseline.c|stage-stdlib
+winsock_capability|all|-|tests/integration/winsock_capability.tl|42|-|-|stdlib/net_windows_winsock.tl stdlib/ffi.tl stdlib/byte_buf.tl|stage-stdlib
+windows_nt_create_file_boundary|windows|-|tests/integration/windows_nt_create_file_boundary.tl|42|-|-|stdlib/byte_buf.tl stdlib/fs.tl stdlib/io.tl stdlib/process.tl stdlib/str_cat.tl stdlib/string.tl|stage-stdlib
+raw_copy_api|all|0,1,2|stdlib/tests/raw_copy_api.tl|42|-|-|stdlib/string.tl stdlib/format.tl|-
+c_abi_aggregate_color|all|-|tests/integration/c_abi_aggregate_color.tl|42|color=104:36\n|-|benchmarks/c_abi_aggregate_color/baseline.c stdlib/io.tl stdlib/string.tl|-
+c_abi_f32_scalar|all|-|tests/integration/c_abi_f32_scalar.tl|42|-|-|benchmarks/c_abi_f32_scalar/baseline.c|-
+c_abi_win64_sret_return|windows|-|tests/integration/c_abi_win64_sret_return.tl|42|-|-|benchmarks/c_abi_win64_sret_return/baseline.c|-
+c_abi_win64_aggregate_args|windows|-|tests/integration/c_abi_win64_aggregate_args.tl|42|-|-|benchmarks/c_abi_win64_aggregate_args/baseline.c|-
+c_abi_win64_enum_aggregate|windows|-|tests/integration/c_abi_win64_enum_aggregate.tl|42|-|-|benchmarks/c_abi_win64_enum_aggregate/baseline.c|-
+c_abi_win64_small_aggregate_float_mixed|windows|-|tests/integration/c_abi_win64_small_aggregate_float_mixed.tl|42|-|-|benchmarks/c_abi_win64_small_aggregate_float_mixed/baseline.c|-
+c_abi_win64_nested_aggregate|windows|-|tests/integration/c_abi_win64_nested_aggregate.tl|42|-|-|benchmarks/c_abi_win64_nested_aggregate/baseline.c|-
+c_abi_int8_struct|all|-|tests/integration/c_abi_int8_struct.tl|42|-|-|benchmarks/c_abi_int8_struct/baseline.c|-
+c_abi_sysv_register_aggregate_args|linux|-|tests/integration/c_abi_sysv_register_aggregate_args.tl|42|-|-|benchmarks/c_abi_sysv_register_aggregate_args/baseline.c|-
+c_abi_sysv_two_register_return|linux|-|tests/integration/c_abi_sysv_two_register_return.tl|42|-|-|benchmarks/c_abi_sysv_two_register_return/baseline.c|-
+c_abi_sysv_memory_aggregate|linux|-|tests/integration/c_abi_sysv_memory_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_memory_aggregate/baseline.c|-
+c_abi_sret_cfunc_only|all|0,1,2|tests/integration/c_abi_sret_cfunc_only.tl|42|-|-|benchmarks/c_abi_sret_cfunc_only/baseline.c|-
+c_abi_sysv_memory_tail|linux|0|tests/integration/c_abi_sysv_memory_tail.tl|42|-|-|benchmarks/c_abi_sysv_memory_tail/baseline.c|stage-stdlib
+c_abi_sysv_tag_only_enum|linux|-|tests/integration/c_abi_sysv_tag_only_enum.tl|42|-|-|benchmarks/c_abi_sysv_tag_only_enum/baseline.c|-
+c_abi_sysv_enum_aggregate|linux|-|tests/integration/c_abi_sysv_enum_aggregate.tl|42|-|-|benchmarks/c_abi_sysv_enum_aggregate/baseline.c|-
+c_abi_slice_ptr_len|all|-|tests/integration/c_abi_slice_ptr_len.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c|-
+win64_rbp_eighth_csr|all|-|tests/integration/win64_rbp_eighth_csr.tl|42|-|-|stdlib/io.tl|-
+c_abi_aggregate_no_alloc|all|-|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|-
+c_abi_aggregate_no_alloc|all|0,2|tests/integration/c_abi_aggregate_no_alloc.tl|42|-|-|benchmarks/c_abi_aggregate_no_alloc/baseline.c stdlib/profile.tl|stage-stdlib
+windows_allocation_abort|windows|-|tests/integration/windows_allocation_abort.tl|134|-|-|-|expected-stderr:tl: allocation failed: arena=atomic operation=growth-commit requested=18446744073709551615 reserved=18446744073709551614 committed=9223372036854775808 windows-error=4294967295\n
+c_function_pointer_flow|all|-|tests/integration/c_function_pointer_flow.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c|-
+c_function_pointer_null|all|-,0,1,2|tests/integration/c_function_pointer_null.tl|134|-|-|-|expected-stderr:tl: null C function pointer\n
+c_function_pointer_publication|all|-|tests/integration/c_function_pointer_publication.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c stdlib/thread.tl|-
+c_function_pointer_kind|all|-|tests/integration/c_function_pointer_kind.tl|42|-|-|-|-
+extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
+extern_data_places|all|0,1,2|tests/integration/extern_data_places.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
+extern_data_places_direct|all|0,1,2|tests/integration/extern_data_places_direct.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib

@@ -1299,7 +1299,14 @@
   (ForeachActive i64 i64)
   ;; `(lane-value expr)`: inside a foreach-active body, the current lane's
   ;; value of the varying EXPR, as a uniform value.
-  (LaneValue i64))
+  (LaneValue i64)
+  ;; `(CloneOut form step)`: a `with-scratch` or `with-escape` FORM with its
+  ;; clone-out STEP, which expansion produces: the prelude `__tl-clone-out`
+  ;; expansion over the hidden result binding (`tc-clone-out-result-name`),
+  ;; or that binding alone for a Copy result. The step runs in the enclosing
+  ;; arena after the body and before the rewind or destroy. Appended so every
+  ;; established AstExpr tag ordinal stays stable.
+  (CloneOut i64 i64))
 
 ;; Tuple-place writes reuse `StructSet` internally so the public place syntax
 ;; can land without changing the serialized AstExpr ABI. Interned struct field
@@ -6152,6 +6159,27 @@
   (len i64)
   (prependable bool))
 
+(define (clone-ast-decl-path-list [value : (& value AstDeclPathList)]) : AstDeclPathList
+  (let
+    [count : i64 value.len]
+    [src-offset : i64 value.offset]
+    [src-cap : i64 (array-length value.slots)]
+    [dst-slots : (__tl_dyn-array String) (__tl_make-array String count)]
+    [dst-owner-ids : (__tl_dyn-array i64) (__tl_make-array i64 (* count 2))]
+    (for [index (iterator.range 0 count)]
+      (let
+        [src-index : i64 (+ src-offset index)]
+        (set!
+          (array-ref dst-slots index)
+          (string.copy (& (array-ref value.slots src-index))))
+        (set!
+          (array-ref dst-owner-ids index)
+          (array-ref value.owner-ids src-index))
+        (set!
+          (array-ref dst-owner-ids (+ count index))
+          (array-ref value.owner-ids (+ src-cap src-index)))))
+    (AstDeclPathList dst-slots dst-owner-ids 0 count true)))
+
 (defenum AstDeclPathListStep
   (Nil)
   (Cons String AstDeclPathList))
@@ -7999,7 +8027,8 @@
         (ast-for-owned-slots-fold items ,c ,s ,e ,@x)]
       [(AstExpr.MacroExpansion a _ _) (ast-fold-1 ,c ,s ,e a ,@x)]
       [(AstExpr.ForeachActive _ a) (ast-fold-1 ,c ,s ,e a ,@x)]
-      [(AstExpr.LaneValue a) (ast-fold-1 ,c ,s ,e a ,@x)])))
+      [(AstExpr.LaneValue a) (ast-fold-1 ,c ,s ,e a ,@x)]
+      [(AstExpr.CloneOut a b) (ast-fold-2 ,c ,s ,e a b ,@x)])))
 
 (defmacro (ast-expr-for-each-child
   [expr : Expr]
@@ -8365,7 +8394,8 @@
       [(AstExpr.MacroExpansion a provenance name)
         (AstExpr.MacroExpansion (,e ,@x a) provenance name)]
       [(AstExpr.ForeachActive lane a) (AstExpr.ForeachActive lane (,e ,@x a))]
-      [(AstExpr.LaneValue a) (AstExpr.LaneValue (,e ,@x a))])))
+      [(AstExpr.LaneValue a) (AstExpr.LaneValue (,e ,@x a))]
+      [(AstExpr.CloneOut a b) (AstExpr.CloneOut (,e ,@x a) (,e ,@x b))])))
 
 ;; The expression-child schema as two functions, for walkers that treat a
 ;; node's expression children uniformly: `ast-expr-child-ids` lists them in
@@ -9122,6 +9152,10 @@
       [(AstExpr.LaneValue a0)
         (match ,r
           [(AstExpr.LaneValue b0) (,e ,@x a0 b0)]
+          [_ false])]
+      [(AstExpr.CloneOut a0 a1)
+        (match ,r
+          [(AstExpr.CloneOut b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
           [_ false])])))
 
 (define (ast-expr-for-owned? [expr : (& expr AstExpr)]) : bool
@@ -10084,6 +10118,15 @@
   [pools : AstNodePoolContext]
   [value : i64]) : i64
   (ast-node-pool-context-expr-push pools (LaneValue value)))
+
+(define (ast-expr-clone-out [form : i64] [step : i64]) : i64
+  (ast-node-push (CloneOut form step)))
+
+(define (ast-expr-clone-out-with-pools
+  [pools : AstNodePoolContext]
+  [form : i64]
+  [step : i64]) : i64
+  (ast-node-pool-context-expr-push pools (CloneOut form step)))
 
 (define (ast-expr-struct-get-id-with-pools
   [pools : AstNodePoolContext]

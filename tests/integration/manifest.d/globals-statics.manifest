@@ -1,0 +1,31 @@
+# Native integration cases: globals, statics, and thread-local storage.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+global_mut_borrow_field|all|0,1,2|tests/integration/global_mut_borrow_field.tl|5|-|-|-|-
+global_mut_borrow_storage|all|0,1,2|tests/integration/global_mut_borrow_storage.tl|42|-|-|-|-
+global_pair_store_regression|all|0,1,2|tests/integration/global_pair_store_regression.tl|25|-|-|-|-
+global_pair_store_live|all|0,1,2|tests/integration/global_pair_store_live.tl|42|-|-|-|-
+global_cell_stored_address_loop|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|0 0|-|stage-stdlib
+global_cell_stored_address_alias|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|1 0|-|stage-stdlib
+global_cell_stored_address_raw|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|2 0|-|stage-stdlib
+global_cell_stored_address_twice|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|3 0|-|stage-stdlib
+static_scalar_array_globals|all|0,1,2|tests/integration/static_scalar_array_globals.tl|42|-|-|stdlib/math.tl static_scalar_array_unused_provider.tl|-
+global_header_hoist_loop|all|-|tests/integration/global_header_hoist_loop.tl|42|885\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+global_header_hoist_grow|all|-|tests/integration/global_header_hoist_grow.tl|42|397\n|12|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+global_handle_cse|all|-|tests/integration/global_handle_cse.tl|42|-|-|stdlib/io.tl|-
+global_cell_writer_loop_reads|all|-|tests/integration/global_cell_writer_loop_reads.tl|42|-|-|stdlib/io.tl stdlib/vector.tl|-
+global_store_only_dead|all|0,2|tests/integration/global_store_only_dead.tl|42|-|-|-|-
+global_cmp_mem_fold|all|-|tests/integration/global_cmp_mem_fold.tl|42|-|-|-|-
+global_add_mem_fold|all|-|tests/integration/global_add_mem_fold.tl|42|-|-|-|-
+global_len_fold|all|-|tests/integration/global_len_fold.tl|42|-|-|-|-
+global_cursor_helper|all|-|tests/integration/global_cursor_helper.tl|42|6749155\n81323579\n26\n|32 8|stdlib/io.tl stdlib/string.tl|-
+global_cursor_helper_abort|all|-,2|tests/integration/global_cursor_helper.tl|134|-|20 8|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:36:39: array index out of bounds: index=20 length=20\n
+global_cursor_guarded|all|-|tests/integration/global_cursor_guarded.tl|42|107629787\n139493707\n26\n|32 8 32|stdlib/io.tl stdlib/string.tl|-
+global_cursor_guarded_abort|all|-,2|tests/integration/global_cursor_guarded.tl|134|-|20 8 64|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:44:42: array index out of bounds: index=20 length=20\n
+global_initializer|all|-|tests/integration/global_initializer.tl|120|-|-|-|-
+global_reference_initializers|all|-|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|-
+global_reference_initializers|all|0,1,2|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|stage-stdlib
+global_aggregate_storage_lifetime|all|0,1,2|tests/integration/global_aggregate_storage_lifetime.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/test.tl|-
+global_aggregate_storage_threads|all|0,1,2|tests/integration/global_aggregate_storage_threads.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_storage_boundary.tl|42|-|-|stdlib/profile.tl|-
+global_init_small_array_tuple|all|0,1,2|tests/integration/global_init_small_array_tuple.tl|42|-|-|-|-

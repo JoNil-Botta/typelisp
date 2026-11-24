@@ -506,6 +506,10 @@
       [(LaneValue value)
         (codec.surface-ast-write-i64! out 88)
         (codec.surface-ast-write-i64! out value)]
+      [(CloneOut form step)
+        (codec.surface-ast-write-i64! out 90)
+        (codec.surface-ast-write-i64! out form)
+        (codec.surface-ast-write-i64! out step)]
       [(StructGet target field)
         (codec.surface-ast-write-i64! out 34)
         (codec.surface-ast-write-i64! out target)
@@ -776,6 +780,10 @@
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-i64! reader))]
       [(= tag 88) (LaneValue (codec.surface-ast-read-i64! reader))]
+      [(= tag 90)
+        (CloneOut
+          (codec.surface-ast-read-i64! reader)
+          (codec.surface-ast-read-i64! reader))]
       [(= tag 89)
         (Foreach
           (box

@@ -101,4 +101,93 @@ awk -v root="$ROOT" -v catalog="$CATALOG" -v known_out="$KNOWN" \
     -f "$VALIDATOR" "$CATALOG" "$MANIFEST"
 grep -Fx good "$KNOWN" >/dev/null
 
+# Exercise scripts/lib-manifest.sh fragment concatenation, LC_ALL=C ordering,
+# CRLF stripping, stray/empty rejection, and cross-fragment uniqueness checks.
+. "$ROOT/scripts/lib-manifest.sh"
+EXPANDER="$ROOT/scripts/expand-integration-manifest.awk"
+
+expect_manifest_dir_failure() {
+    _label=$1
+    _dir=$2
+    _expected=$3
+    if manifest_concat_dir "$_dir" > "$WORKDIR/out.manifest" 2> "$STDERR"; then
+        echo "manifest directory self-test unexpectedly passed: $_label" >&2
+        exit 1
+    fi
+    if [ -s "$WORKDIR/out.manifest" ]; then
+        echo "manifest directory self-test emitted stdout on failure: $_label" >&2
+        exit 1
+    fi
+    if ! grep -F "$_expected" "$STDERR" >/dev/null; then
+        echo "manifest directory self-test produced wrong diagnostic: $_label" >&2
+        cat "$STDERR" >&2
+        exit 1
+    fi
+}
+
+expect_manifest_dir_failure missing-dir "$WORKDIR/does-not-exist" "manifest directory does not exist"
+
+mkdir -p "$WORKDIR/empty.d"
+expect_manifest_dir_failure empty-dir "$WORKDIR/empty.d" "manifest directory is empty"
+
+mkdir -p "$WORKDIR/stray.d"
+printf 'good|all|-|tests/integration/good.tl|0|-|-|-|-\n' > "$WORKDIR/stray.d/a.manifest"
+printf 'stray\n' > "$WORKDIR/stray.d/README.txt"
+expect_manifest_dir_failure stray-file "$WORKDIR/stray.d" "unexpected non-.manifest entry"
+
+mkdir -p "$WORKDIR/nested.d/sub"
+printf 'good|all|-|tests/integration/good.tl|0|-|-|-|-\n' > "$WORKDIR/nested.d/a.manifest"
+printf 'good2|all|-|tests/integration/good.tl|0|-|-|-|-\n' > "$WORKDIR/nested.d/sub/b.manifest"
+expect_manifest_dir_failure nested-dir "$WORKDIR/nested.d" "unexpected non-.manifest entry"
+
+mkdir -p "$WORKDIR/dot.d"
+printf 'good|all|-|tests/integration/good.tl|0|-|-|-|-\n' > "$WORKDIR/dot.d/.manifest"
+expect_manifest_dir_failure dot-manifest "$WORKDIR/dot.d" "invalid manifest filename"
+
+case "$(uname -s)" in
+    Linux*)
+        mkdir -p "$WORKDIR/symlink.d"
+        ln -s "$WORKDIR/stray.d/a.manifest" "$WORKDIR/symlink.d/link.manifest"
+        expect_manifest_dir_failure symlink-entry "$WORKDIR/symlink.d" "non-regular entry"
+        ;;
+esac
+
+# Ordered concatenation, CRLF stripping, and missing trailing newline safety.
+mkdir -p "$WORKDIR/ordered.d"
+printf 'second|all|-|tests/integration/good.tl|0|-|-|helper.tl|-\r\n' > "$WORKDIR/ordered.d/b.manifest"
+printf 'first|all|-|tests/integration/good.tl|0|-|-|-|-' > "$WORKDIR/ordered.d/a.manifest"
+manifest_concat_dir "$WORKDIR/ordered.d" > "$WORKDIR/ordered.combined"
+printf 'first|all|-|tests/integration/good.tl|0|-|-|-|-\nsecond|all|-|tests/integration/good.tl|0|-|-|helper.tl|-\n' > "$WORKDIR/ordered.expected"
+cmp "$WORKDIR/ordered.combined" "$WORKDIR/ordered.expected"
+awk -v host=linux -f "$EXPANDER" "$WORKDIR/ordered.combined" > "$WORKDIR/ordered.expanded"
+: > "$KNOWN"
+awk -v root="$ROOT" -v catalog="$CATALOG" -v known_out="$KNOWN" \
+    -f "$VALIDATOR" "$CATALOG" "$WORKDIR/ordered.expanded"
+grep -Fx good "$KNOWN" >/dev/null
+grep -Fx helper "$KNOWN" >/dev/null
+
+# Cross-fragment duplicate expanded name is rejected.
+mkdir -p "$WORKDIR/dup.d"
+printf 'dup|all|-,0|tests/integration/good.tl|0|-|-|-|-\n' > "$WORKDIR/dup.d/a.manifest"
+printf 'dup_opt0|all|-|tests/integration/good.tl|0|-|-|-|-\n' > "$WORKDIR/dup.d/b.manifest"
+manifest_concat_dir "$WORKDIR/dup.d" > "$WORKDIR/dup.combined"
+if awk -v host=linux -f "$EXPANDER" "$WORKDIR/dup.combined" > /dev/null 2> "$STDERR"; then
+    echo "manifest directory self-test accepted cross-fragment duplicate expanded row" >&2
+    exit 1
+fi
+grep -F "duplicate expanded row dup_opt0" "$STDERR" >/dev/null
+
+# Cross-fragment duplicate suite member is rejected.
+mkdir -p "$WORKDIR/dup-suite.d"
+printf 'suite_a|all|-|src/tests/compiler_frontend_smoke_suite.tl|42|-|-|-|-|suite-members:compiler_symbols_smoke.tl\n' > "$WORKDIR/dup-suite.d/a.manifest"
+printf 'suite_b|all|-|src/tests/compiler_frontend_smoke_suite.tl|42|-|-|-|-|suite-members:compiler_symbols_smoke.tl\n' > "$WORKDIR/dup-suite.d/b.manifest"
+manifest_concat_dir "$WORKDIR/dup-suite.d" > "$WORKDIR/dup-suite.combined"
+awk -v host=linux -f "$EXPANDER" "$WORKDIR/dup-suite.combined" > "$WORKDIR/dup-suite.expanded"
+if awk -v root="$ROOT" -v catalog="$CATALOG" -v known_out="$KNOWN" \
+    -f "$VALIDATOR" "$CATALOG" "$WORKDIR/dup-suite.expanded" 2> "$STDERR"; then
+    echo "manifest directory self-test accepted cross-fragment duplicate suite member" >&2
+    exit 1
+fi
+grep -F "duplicates suite member src/tests/compiler_symbols_smoke.tl" "$STDERR" >/dev/null
+
 echo "integration manifest validator self-tests passed"

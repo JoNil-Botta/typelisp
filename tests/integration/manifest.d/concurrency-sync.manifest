@@ -1,0 +1,24 @@
+# Native integration cases: threads, atomics, and synchronization primitives.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+tls_buffer_live_negative|all|0,1,2|tests/integration/tls_buffer_live_bounds.tl|134|-|-|stdlib/byte_buf.tl stdlib/net/tls_wire.tl|expected-stderr:tl: array index out of bounds\n
+thread_runtime|all|-|tests/integration/thread_runtime.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+atomic_intrinsics_thread_counter|all|-|tests/integration/atomic_intrinsics_thread_counter.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+thread_safe_i64|all|-|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+thread_local_word|linux|0,1,2|tests/integration/thread_local_word.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+thread_safe_bool_unit|all|-|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+thread_safe_unit|all|-|tests/integration/thread_safe_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+thread_safe_aggregate_capture|all|-|tests/integration/thread_safe_aggregate_capture.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+thread_safe_string|all|-|tests/integration/thread_safe_string.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+thread_safe_i64_vec|all|-|tests/integration/thread_safe_i64_vec.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl stdlib/vector.tl|-
+thread_safe_box_i64|all|-|tests/integration/thread_safe_box_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+atomic_thread_spawn|all|-|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+safe_threading_example|all|-|examples/safe_threading.tl|42|safe threading score: 42\n|-|stdlib/arena.tl stdlib/io.tl stdlib/thread.tl stdlib/string.tl stdlib/str_cat.tl|-
+sync_channel_thread_runtime|all|-|tests/integration/sync_channel_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+sync_channel_pair_thread_runtime|all|-|tests/integration/sync_channel_pair_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+sync_channel_string_thread_runtime|all|-|tests/integration/sync_channel_string_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+sync_mutex_thread_runtime|all|-|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+sync_mutex_forged_lock_abort|all|-|tests/integration/sync_mutex_forged_lock_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+sync_mutex_wrong_family_lock_abort|all|-|tests/integration/sync_mutex_wrong_family_lock_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+sync_mutex_stolen_token_guard_abort|all|-|tests/integration/sync_mutex_stolen_token_guard_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+sync_mutex_closed_alias_lock_abort|all|-|tests/integration/sync_mutex_closed_alias_lock_abort.tl|134|-|-|stdlib/sync.tl stdlib/concurrency_registry.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-

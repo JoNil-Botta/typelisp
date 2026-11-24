@@ -1,0 +1,32 @@
+# Native integration cases: formatter, linter, LSP, lexer/parser, and toolchain utilities.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+calc|all|-|tests/integration/calc.tl|14|-|-|token.tl|-
+intern_pool_active_source_exhaustion|all|-|tests/integration/intern_pool_exhaustion.tl|134|-|0|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_pool_active_generated_exhaustion|all|-|tests/integration/intern_pool_exhaustion.tl|134|-|1|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_pool_state_source_exhaustion|all|-|tests/integration/intern_pool_exhaustion.tl|134|-|2|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_pool_state_generated_exhaustion|all|-|tests/integration/intern_pool_exhaustion.tl|134|-|3|compiler_intern.tl stdlib/arena.tl stdlib/io.tl stdlib/string.tl|expected-stderr:tl: intern pool capacity exhausted: source and generated lanes met\n
+intern_structural_generation_poison|all|-|tests/integration/intern_structural_generation_poison.tl|42|-|-|compiler_intern.tl compiler_intern_state.tl compiler_owned_view.tl stdlib/arena.tl stdlib/comptime.tl stdlib/string.tl|-
+lexer|all|-|tests/integration/lexer.tl|12|-|-|stdlib/io.tl stdlib/string.tl|-
+nested_eval|all|-|tests/integration/nested_eval.tl|7|-|-|stdlib/io.tl stdlib/string.tl|-
+parser|all|-|tests/integration/parser.tl|14|-|-|-|-
+read_file_missing_trap|all|-|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: @loc{stdlib/io.tl;8;      (panic "tl: read-file failed\n")}: panic: tl: read-file failed\n
+format_precision_counts|all|-|tests/integration/format_precision_counts.tl|42|-|-|stdlib/format.tl stdlib/profile.tl stdlib/string.tl|-
+format_writer_sinks|all|-|tests/integration/format_writer_sinks.tl|42|-|-|format_owner_point.tl stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/profile.tl stdlib/string.tl stdlib/text_buf.tl|stage-stdlib
+format_writer_capabilities|all|-|tests/integration/format_writer_capabilities.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/string.tl stdlib/text_buf.tl stdlib/thread.tl|stage-stdlib
+format_file_writer|all|-|tests/integration/format_file_writer.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/fs.tl stdlib/io.tl stdlib/string.tl|stage-stdlib
+format_stdio_family|all|-|tests/integration/format_stdio_family.tl|42|print=7 line=8\nprint="o\\n" hex=0xff\n retained=value=0xff\n|-|stdlib/io.tl|stage-stdlib
+format_stdio_family_stderr|all|-|tests/integration/format_stdio_family.tl|42|-|debug|stdlib/io.tl|stage-stdlib+expected-stderr:error=9 line=10\nerror="e\\n" hex=0xFF\n retained=value=0xff\n
+format_stdio_empty_newline|all|-|tests/integration/format_stdio_empty_newline.tl|42|\no\n1\n\n|-|stdlib/io.tl|stage-stdlib
+format_stdio_empty_newline_stderr|all|-|tests/integration/format_stdio_empty_newline.tl|42|-|debug|stdlib/io.tl|stage-stdlib+expected-stderr:\ne\n2\n\n
+format_stdio_empty_newline_raw|all|-|tests/integration/format_stdio_empty_newline_raw.tl|42|-|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|stage-stdlib
+format_writeln_empty|all|-|tests/integration/format_writeln_empty.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/profile.tl stdlib/string.tl stdlib/text_buf.tl|stage-stdlib
+format_writer_error|all|-|tests/integration/format_writer_error.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/string.tl|stage-stdlib
+format_arguments|all|-|tests/integration/format_arguments.tl|42|-|-|stdlib/byte_buf.tl stdlib/format.tl stdlib/format_writer_core.tl stdlib/profile.tl stdlib/string.tl stdlib/text_buf.tl|stage-stdlib
+format_arguments_stdio|all|-|tests/integration/format_arguments_stdio.tl|42|value=direct\n|-|format_arguments_owner.tl stdlib/format.tl stdlib/io.tl stdlib/string.tl|expected-stderr:value=direct\n
+format_integer_radix_counts|all|-|tests/integration/format_integer_radix_counts.tl|42|-|-|stdlib/format.tl stdlib/profile.tl stdlib/string.tl|-
+format_owner_protocol|all|-|tests/integration/format_owner_protocol.tl|0|@tests/integration/format_owner_protocol.stdout|-|format_owner_alpha.tl format_owner_beta.tl format_owner_multi.tl format_owner_nested.tl format_owner_point.tl format_owner_state.tl stdlib/format.tl stdlib/io.tl stdlib/string.tl|-
+format_owner_order_a|all|-|tests/integration/format_owner_order_a.tl|0|@tests/integration/format_owner_order.stdout|-|format_owner_alpha.tl format_owner_beta.tl stdlib/format.tl stdlib/io.tl|-
+format_owner_order_b|all|-|tests/integration/format_owner_order_b.tl|0|@tests/integration/format_owner_order.stdout|-|format_owner_alpha.tl format_owner_beta.tl stdlib/format.tl stdlib/io.tl|-
+format_owner_nested_macros|all|-|tests/integration/format_owner_nested_macros.tl|0|@tests/integration/format_owner_nested_macros.stdout|-|format_owner_alpha.tl stdlib/format.tl stdlib/io.tl|-
+sym_i64_env|all|-|tests/integration/sym_i64_env.tl|0|PASS: empty-miss\nPASS: empty-lookup-or\nPASS: single-hit-contains\nPASS: single-hit-value\nPASS: single-miss\nPASS: bound-miss-lookup-or\nPASS: shadow-newest\nPASS: outer-preserved-a\nPASS: outer-no-b\nPASS: inner-sees-a\nPASS: inner-sees-b\nPASS: fork-parent-no-left\nPASS: fork-parent-no-right\nPASS: fork-left-sees-left\nPASS: fork-left-no-right\nPASS: fork-right-sees-right\nPASS: fork-right-no-left\nPASS: computed-key-hit\nPASS: second-computed-key-hit\nPASS: chain-x\nPASS: chain-y\nPASS: chain-z\nPASS: id-key-contains\nPASS: id-key-value\nPASS: deep-newest\nPASS: deep-middle\nPASS: deep-oldest\nPASS: deep-miss\nPASS: deep-view-count\nPASS: arena-growth-parent\nPASS: arena-growth-child\nAll sym-i64-env tests passed.\n|-|sym_i64_env_core.tl compiler_intern.tl stdlib/io.tl stdlib/string.tl stdlib/arena.tl|-

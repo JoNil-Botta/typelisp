@@ -110010,6 +110010,10 @@
 ;; the caller's real size.
 (define opt-inline-caller-absorb-blocks : i64
   0)
+(define opt-inline-caller-cyclic-absorbed? : bool
+  false)
+(define opt-inline-caller-entry-label : i64
+  (- 0 1))
 (define opt-inline-pred-renames : (__tl_dyn-array OptInlinePredRenameList)
   (__tl_make-array (OptInlinePredRenameList.Nil)))
 
@@ -111665,6 +111669,8 @@
   (set! opt-inline-caller-hot-loop-blocks 0)
   (set! opt-inline-caller-chain-blocks 0)
   (set! opt-inline-caller-absorb-blocks 0)
+  (set! opt-inline-caller-cyclic-absorbed? false)
+  (set! opt-inline-caller-entry-label (opt-cfg-entry-label blocks))
   (set! opt-inline-caller-accessor-blocks 0)
   (set! opt-inline-caller-checked-blocks 0)
   (set! opt-inline-caller-checked-taken? false)
@@ -112489,13 +112495,120 @@
 ;; The staged-argument clause is the fail-closed refusal documented under this
 ;; function; the clauses shared with the band below live in
 ;; opt-inline-single-site-absorb-ok?.
-(define (opt-inline-sole-call-absorb-ok?
-  [absorb-class : i64]
-  [stage-args? : bool]
+(define (opt-inline-size-sole-call-max-merged-blocks) : i64
+  128)
+
+(define (opt-inline-size-sole-call-max-merged-vars) : i64
+  192)
+
+;; Safe argument staging for `-Os` sole-site absorption: keep param-mutating
+;; bodies and call-carrying sret bodies fail-closed (see the reproducer below),
+;; while permitting global-only staging and call-free sret bodies.
+(define (opt-inline-size-sole-call-staging-ok?
+  [staging : (& staging OptInlineArgStaging)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (and
+    (not staging.all?)
+    (or (not staging.values?) (opt-inline-blocks-call-free? blocks))))
+
+;; Size-mode sole-site absorption: moving the only call site retires the
+;; standalone function body. Acyclic shallow callees keep their existing
+;; heavy-gate budget (bounded in vars to avoid disp32 frame blowup); cyclic or
+;; deep-in-loop sole-site callees absorb when the merged caller stays within
+;; compact block and variable bounds so the combined stack frame stays small.
+(define (opt-inline-size-sole-call-absorb-ok?
+  [absorb-class : i64]
+  [staging : (& staging OptInlineArgStaging)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [added-blocks : i64]
+  [merged-vars : i64]) : bool
+  (and
     (= absorb-class 1)
-    (not stage-args?)
+    (opt-inline-size-sole-call-staging-ok? staging blocks)
+    (let
+      [merged-blocks : i64 (+ caller-blocks (+ added-so-far added-blocks))]
+      (or
+        (and
+          (<= merged-blocks (opt-inline-size-sole-call-max-merged-blocks))
+          (<= merged-vars (opt-inline-size-sole-call-max-merged-vars)))
+        (and
+          (<= merged-blocks (opt-inline-heavy-gate-block-limit))
+          (<= merged-vars 224)
+          (opt-inline-sole-call-pressure-ok? blocks))))))
+
+(define (opt-inline-sole-call-max-merged-vars) : i64
+  1024)
+
+(define (opt-inline-sole-call-cyclic-max-body) : i64
+  128)
+
+(define (opt-inline-sole-call-cyclic-max-blocks) : i64
+  24)
+
+(define (opt-inline-sole-call-cyclic-max-merged-blocks) : i64
+  512)
+
+(define (opt-inline-sole-call-cyclic-max-merged-vars) : i64
+  384)
+
+;; Non-loop cyclic sole-site absorption for `-O2`: when the caller itself has
+;; no loops, is not a single-site callee (avoiding cascade loss of the caller's
+;; own absorption), and has not already imported a cyclic body during this walk,
+;; admit a call-free cyclic leaf when either:
+;;   - the call sits unconditionally in the caller's entry block (cannot widen
+;;     a hot fast-path prologue for a cold conditional helper like `grow!`), or
+;;   - the caller is cold (synthetic entry count <= 1, never reached from a loop).
+(define (opt-inline-sole-call-cyclic-absorb-ok?
+  [index : (& OptFunctionIndex)]
+  [func-name : i64]
+  [absorb-class : i64]
+  [staging : (& staging OptInlineArgStaging)]
+  [has-bounds? : bool]
+  [callee-instrs : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [added-blocks : i64]
+  [caller-blocks : i64]
+  [added-so-far : i64]
+  [merged-vars : i64]) : bool
+  (and
+    (= absorb-class 1)
+    (not staging.all?)
+    (not staging.values?)
+    (not opt-inline-caller-single-site?)
+    (not opt-inline-caller-cyclic-absorbed?)
+    (= opt-inline-caller-hot-loop-blocks 0)
+    (<= callee-instrs (opt-inline-sole-call-cyclic-max-body))
+    (<=
+      (ir.compiler-ir-block-list-count blocks)
+      (opt-inline-sole-call-cyclic-max-blocks))
+    (<= merged-vars (opt-inline-sole-call-cyclic-max-merged-vars))
+    (<=
+      (+
+        caller-blocks
+        (+ (+ added-so-far opt-inline-caller-absorb-blocks) added-blocks))
+      (opt-inline-sole-call-cyclic-max-merged-blocks))
+    (or
+      (= opt-inline-current-block-label opt-inline-caller-entry-label)
+      (and
+        (opt-inline-synth-ready?)
+        (<= (opt-inline-synth-for-name index func-name) 1)))
+    (opt-inline-blocks-call-free? blocks)
+    (not (opt-inline-bounds-loop-site-in-loop?))
+    (opt-inline-caller-loop-free?)
+    (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))))
+
+(define (opt-inline-sole-call-absorb-ok?
+  [absorb-class : i64]
+  [staging : (& staging OptInlineArgStaging)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [merged-vars : i64]) : bool
+  (and
+    (= absorb-class 1)
+    (not staging.all?)
+    (not staging.values?)
+    (<= merged-vars (opt-inline-sole-call-max-merged-vars))
     (opt-inline-sole-call-pressure-ok? blocks)))
 
 ;; --- why the staged-argument clause above is FAIL-CLOSED, not a cost rule ---
@@ -112531,15 +112644,18 @@
 ;; for the underlying defect to be found and fixed, and re-measuring it is a
 ;; one-line change plus the reproducer above.
 (define (opt-inline-single-site-absorb-ok?
+  [index : (& OptFunctionIndex)]
+  [func-name : i64]
   [absorb-class : i64]
-  [stage-args? : bool]
+  [staging : (& staging OptInlineArgStaging)]
   [has-bounds? : bool]
   [param-count : i64]
   [callee-instrs : i64]
   [blocks : (& ir.CompilerIrBlockList)]
   [added-blocks : i64]
   [caller-blocks : i64]
-  [added-so-far : i64]) : bool
+  [added-so-far : i64]
+  [merged-vars : i64]) : bool
   (and
     (= absorb-class 1)
     ;; The heavy gate is asked about TOTAL caller growth, this band's own moved
@@ -112551,7 +112667,19 @@
         (+ added-so-far opt-inline-caller-absorb-blocks)
         added-blocks))
     (or
-      (opt-inline-sole-call-absorb-ok? absorb-class stage-args? blocks)
+      (opt-inline-sole-call-absorb-ok? absorb-class staging blocks merged-vars)
+      (opt-inline-sole-call-cyclic-absorb-ok?
+        index
+        func-name
+        absorb-class
+        staging
+        has-bounds?
+        callee-instrs
+        blocks
+        added-blocks
+        caller-blocks
+        added-so-far
+        merged-vars)
       (and
         (opt-inline-single-site-arity-ok? param-count callee-instrs blocks)
         (<= callee-instrs (opt-inline-single-site-max-body))
@@ -117534,7 +117662,8 @@
   (checked? bool)
   (hot-import? bool)
   (chain-import? bool)
-  (absorb-import? bool))
+  (absorb-import? bool)
+  (cyclic-absorb? bool))
 
 (defenum OptInlineMaybeSitePlan
   (NoSitePlan)
@@ -117596,12 +117725,13 @@
   [tail-site? : bool]
   [census : (& census OptInlineCensus)]
   [func-name : i64]
+  [caller-vars : i64]
   [caller-blocks : i64]
   [added-so-far : i64]
   [site-pos : i64]
   [index : (& index OptFunctionIndex)]) : OptInlineMaybeSitePlan
   (match callee
-    [(Function callee-name cparams _ _ cblocks _)
+    [(Function callee-name cparams _ cvars cblocks _)
       (let
         [np : i64 (opt-inline-param-count cparams)]
         (if (opt-inline-arity-ok? cargs np)
@@ -117642,22 +117772,27 @@
                 (opt-inline-param-mutating-blocks? cblocks np)
                 (opt-inline-params-have-sret? (& cparams)))]
             [stage-args? : bool (> staging.count 0)]
+            [merged-vars : i64
+              (+
+                caller-vars
+                (+
+                  (if stage-args?
+                    cvars
+                    (opt-inline-frame-growth cvars np))
+                  tail-slots))]
             [callee-instrs : i64
               (+ (opt-inline-multiblock-cost-instrs cblocks) staging.count)]
             [_size : unit
               (when
                 census.optimize-for-size
-                (if (and
-                  (opt-inline-sole-call-absorb-ok?
-                    absorb-class
-                    stage-args?
-                    cblocks)
-                  (not (opt-inline-tailrec-converted-slot? index callee-name))
-                  (not
-                    (opt-inline-cost-crosses-heavy-gate?
-                      caller-blocks
-                      added-so-far
-                      added-blocks)))
+                (if (opt-inline-size-sole-call-absorb-ok?
+                  absorb-class
+                  (& staging)
+                  cblocks
+                  caller-blocks
+                  added-so-far
+                  added-blocks
+                  merged-vars)
                   (return
                     (SitePlan
                       (OptInlineSitePlan
@@ -117668,6 +117803,7 @@
                         callee-instrs
                         absorb-class
                         1
+                        false
                         false
                         false
                         false
@@ -117728,15 +117864,18 @@
             ;; budget applies to it.
             [single-site-absorb? : bool
               (opt-inline-single-site-absorb-ok?
+                index
+                func-name
                 absorb-class
-                stage-args?
+                (& staging)
                 has-bounds?
                 np
                 callee-instrs
                 (& cblocks)
                 added-blocks
                 caller-blocks
-                added-so-far)]
+                added-so-far
+                merged-vars)]
             [bounds-ok? : bool
               (or
                 (opt-inline-bounds-inline-ok?
@@ -117913,6 +118052,17 @@
                 (not legacy-cost-ok?)
                 (not hot-loop-leaf?)
                 (not branch-chain?))]
+            [cyclic-absorb? : bool
+              (and
+                inline?
+                (or
+                  hot-loop-leaf?
+                  (and
+                    (not tail-site?)
+                    single-site-absorb?
+                    (not
+                      (opt-inline-tiny-predicate-acyclic-reclaiming?
+                        (& cblocks))))))]
             (if inline?
               (SitePlan
                 (OptInlineSitePlan
@@ -117928,7 +118078,8 @@
                   checked?
                   hot-import?
                   chain-import?
-                  absorb-import?))
+                  absorb-import?
+                  cyclic-absorb?))
               (NoSitePlan)))
           (NoSitePlan)))]))
 
@@ -117972,9 +118123,11 @@
         (+= opt-inline-caller-chain-blocks plan.added-blocks)
         unit)]
     [_absorb-bump : unit
-      (if plan.absorb-import?
-        (+= opt-inline-caller-absorb-blocks plan.added-blocks)
-        unit)]
+      (when
+        plan.absorb-import?
+        (+= opt-inline-caller-absorb-blocks plan.added-blocks))]
+    [_cyclic-bump : unit
+      (when plan.cyclic-absorb? (set! opt-inline-caller-cyclic-absorbed? true))]
     [_accessor-bump : unit
       (if plan.accessor-import?
         (+= opt-inline-caller-accessor-blocks plan.added-blocks)
@@ -118417,6 +118570,7 @@
         tail-site?
         census
         func-name
+        vars
         caller-blocks
         added-so-far
         site-pos
@@ -123436,7 +123590,9 @@
   [externs : (& ir.CompilerIrExternSeq)]
   [reachable-functions : (& reachable-functions ir.CompilerIrFunctionSeq)]
   [level : i64]) : OptProgramSummaries
-  (if (not (opt_level.opt-level-full? level))
+  (if (or
+    (not (opt_level.opt-level-full? level))
+    (not (opt-function-seq-defines? reachable-functions "main")))
     (opt-program-summaries-empty)
     (let
       [count : i64 (opt-function-seq-count reachable-functions)]
@@ -128727,6 +128883,7 @@
     [count : i64 (opt-function-seq-count functions)]
     (if (or
       (not (opt_level.opt-level-full? level))
+      (not (opt-function-seq-defines? (& functions) "main"))
       (<= count 0)
       (> count (opt-summary-function-limit))
       (= (ir.compiler-ir-global-seq-count globals) 0))

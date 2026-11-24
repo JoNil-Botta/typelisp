@@ -38937,7 +38937,9 @@
     [(Dense address tail len)
       (Dense address (tc-string-list-store-push! address tail name) (+ len 1))]))
 
-(define (tc-string-list-contains [items : TcStringList] [name : String]) : bool
+(define (tc-string-list-contains-ref
+  [items : (& items TcStringList)]
+  [name : (& name str)]) : bool
   (match items
     [(Nil) false]
     [(One item) (string.eq item name)]
@@ -38966,6 +38968,9 @@
           (set! index (__tl-project-field (array-ref nodes index) parent))
           (-= remaining 1))
         found)]))
+
+(define (tc-string-list-contains [items : TcStringList] [name : String]) : bool
+  (tc-string-list-contains-ref (& items) (& name)))
 
 (define (tc-string-list-add [items : TcStringList] [name : String]) : TcStringList
   (if (tc-string-list-contains
@@ -76223,9 +76228,6 @@
           (tc-string-list-add bound (tc-env-key-name-text name))
           (+ index 1))])))
 
-(defmacro (tc-ast-child-false [_ignored : Expr ...]) : Expr
-  `false)
-
 (defenum TcFreeVarQuery
   (Names TcStringList bool)
   (SourceIds cis.InternStructuralSessionHandle i64 i64))
@@ -76233,35 +76235,6 @@
 (defenum TcFreeVarBound
   (Names TcStringList)
   (SourceIds TcNameIdList))
-
-(define (tc-string-list-contains-ref
-  [items : (& items TcStringList)]
-  [name : (& name str)]) : bool
-  (match items
-    [(Nil) false]
-    [(One item) (string.eq item name)]
-    [(Dense address tail len)
-      (let
-        [data : TcStringListStoreData (tc-string-list-store-read address)]
-        [nodes : (__tl_dyn-array TcStringListNode) data.nodes]
-        [index : i64 tail]
-        [remaining : i64 len]
-        [found : bool false]
-        [name-len : i64 (string.string-length name)]
-        (while (and (not found) (> remaining 0))
-          (if (and
-            (=
-              (string.string-length
-                (& (__tl-project-field (array-ref nodes index) value)))
-              name-len)
-            (string.eq
-              (& (__tl-project-field (array-ref nodes index) value))
-              name))
-            (set! found true)
-            unit)
-          (set! index (__tl-project-field (array-ref nodes index) parent))
-          (-= remaining 1))
-        found)]))
 
 (define (tc-free-var-bound-copy [bound : (& bound TcFreeVarBound)]) : TcFreeVarBound
   (match bound
@@ -76369,6 +76342,20 @@
             (tc-string-list-contains-ref names (& root))
             (not (tc-string-list-contains-ref bound (& root)))))))))
 
+(define (tc-free-var-source-id-matches?
+  [session : cis.InternStructuralSessionHandle]
+  [target-1 : i64]
+  [target-2 : i64]
+  [bound : (& bound TcFreeVarBound)]
+  [var-name : i64]) : bool
+  (let
+    [sid : i64 (tc-env-key-source-id-or-neg session var-name)]
+    (and
+      (or (= sid target-1) (= sid target-2))
+      (match bound
+        [(SourceIds bound-ids) (not (tc-name-id-list-contains bound-ids sid))]
+        [_ true]))))
+
 (define (tc-free-var-exact-matches?
   [query : (& query TcFreeVarQuery)]
   [bound : (& bound TcFreeVarBound)]
@@ -76384,14 +76371,7 @@
               (not (tc-string-list-contains-ref bound-names (& text)))]
             [_ true])))]
     [(SourceIds session target-1 target-2)
-      (let
-        [sid : i64 (tc-env-key-source-id-or-neg session var-name)]
-        (and
-          (or (= sid target-1) (= sid target-2))
-          (match bound
-            [(SourceIds bound-ids)
-              (not (tc-name-id-list-contains bound-ids sid))]
-            [_ true])))]))
+      (tc-free-var-source-id-matches? session target-1 target-2 bound var-name)]))
 
 (define (tc-free-var-var-matches?
   [query : (& query TcFreeVarQuery)]
@@ -76407,7 +76387,8 @@
             [(Names bound-names)
               (tc-free-name-text-matches? names bound-names (& text))]
             [_ false])))]
-    [(SourceIds _ _ _) (tc-free-var-exact-matches? query bound var-name)]))
+    [(SourceIds session target-1 target-2)
+      (tc-free-var-source-id-matches? session target-1 target-2 bound var-name)]))
 
 (define (tc-expr-id-uses-free-var?
   [expr-bases : i64]
@@ -76428,12 +76409,15 @@
   (let
     [found : bool false]
     [index : i64 0]
-    (while (and (not found) (< index exprs.len))
-      (if (tc-expr-id-uses-free-var?
+    [len : i64 exprs.len]
+    (while (and (not found) (< index len))
+      (if (tc-expr-uses-free-var?
         expr-bases
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get exprs index 0))
         query
-        bound
-        (ast.ast-expr-list-get exprs index 0))
+        bound)
         (set! found true)
         (set! index (+ index 1))))
     found))
@@ -76471,7 +76455,52 @@
   [query : (& query TcFreeVarQuery)]
   [bound : (& bound TcFreeVarBound)]) : bool
   (match (& expr)
+    [(Spanned inner-box _)
+      (tc-expr-uses-free-var?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        query
+        bound)]
     [(Var var-name) (tc-free-var-var-matches? query bound var-name)]
+    [(or (Literal _) (Break) (Continue) (TypeLiteral _) (PtrNull _)
+         (BinaryData _) (ProgramArgc) (ProgramArgv) (ProgramEnvp)
+         (SpmdProgramIndex) (SpmdProgramCount))
+      false]
+    [(Call func-box args)
+      (or
+        (tc-expr-id-uses-free-var? expr-bases query bound func-box)
+        (tc-expr-list-uses-free-var? expr-bases args query bound))]
+    [(or (Begin items) (Unsafe items) (Tuple items) (Array items)
+         (DynArray items) (BracketClause items) (WithRegion _ items)
+         (Syscall items))
+      (tc-expr-list-uses-free-var? expr-bases items query bound)]
+    [(or (While head-box items) (InArena head-box items))
+      (or
+        (tc-expr-id-uses-free-var? expr-bases query bound head-box)
+        (tc-expr-list-uses-free-var? expr-bases items query bound))]
+    [(or (Unary _ inner-box) (StructGet inner-box _) (Borrow _ _ inner-box)
+         (Ann inner-box _) (Cast inner-box _) (Try inner-box) (Return inner-box)
+         (TupleRef inner-box _) (Box inner-box) (BoxGet inner-box)
+         (BoxTake inner-box) (FixedMakeArray _ inner-box)
+         (MakeArray _ inner-box) (Comptime inner-box) (Quote inner-box)
+         (Quasiquote inner-box) (Unquote inner-box) (UnquoteSplicing inner-box)
+         (PtrNullCheck inner-box) (PtrAddrOf inner-box) (PtrRead inner-box)
+         (PtrCast inner-box _) (PtrToInt inner-box) (IntToPtr inner-box _)
+         (StringData inner-box) (ArrayData inner-box) (Xgetbv inner-box)
+         (MacroExpansion inner-box _ _) (LaneValue inner-box))
+      (tc-expr-id-uses-free-var? expr-bases query bound inner-box)]
+    [(or (Binary _ a b) (ArrayRef a b) (StructSet a _ b) (ArrayPush a b)
+         (StringRef a b) (SpmdBroadcast a b) (SpmdShuffle a b) (BoxSet a b)
+         (PtrWrite a b) (PtrOffset a b) (StringFromBytes a b) (CpuIdEax a b)
+         (CpuIdEbx a b) (CpuIdEcx a b) (CpuIdEdx a b) (CloneOut a b))
+      (or
+        (tc-expr-id-uses-free-var? expr-bases query bound a)
+        (tc-expr-id-uses-free-var? expr-bases query bound b))]
+    [(or (If a b c) (ArraySet a b c) (ArrayTake a b c))
+      (or
+        (tc-expr-id-uses-free-var? expr-bases query bound a)
+        (tc-expr-id-uses-free-var? expr-bases query bound b)
+        (tc-expr-id-uses-free-var? expr-bases query bound c))]
     [(Let let-box)
       (match let-box
         [(Let bindings body-box)
@@ -76749,19 +76778,7 @@
         [(Names _ _)
           (or
             (tc-expr-id-uses-free-var? expr-bases query bound scratch-box)
-            (tc-expr-list-uses-free-var? expr-bases items query bound))])]
-    [_
-      (ast.ast-expr-fold-children
-        expr
-        ast.ast-fold-or
-        false
-        tc-expr-id-uses-free-var?
-        tc-ast-child-false
-        tc-ast-child-false
-        tc-ast-child-false
-        expr-bases
-        query
-        bound)]))
+            (tc-expr-list-uses-free-var? expr-bases items query bound))])]))
 
 (define (tc-let-binding-list-uses-free-names?
   [expr-bases : i64]
@@ -106426,549 +106443,537 @@
   [expr : ast.AstExpr]
   [span : token.SourceSpan]
   [origin : (& ast.AstExpr)]) : ResultMacroSexpr
-  (let
-    [head-id : i64 (macro-expr-uniform-head-id (& expr))]
-    (match expr
-      [(Spanned inner-box ast-span)
-        (macro-expr-to-spanned-sexpr-with-span
-          owner
-          (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
-          (macro-source-span-from-ast ast-span)
-          origin)]
-      ;; A clone-out step is regenerated when its form is expanded again.
-      [(or (MacroExpansion inner-box _ _) (CloneOut inner-box _))
-        (macro-expr-to-spanned-sexpr-with-span
-          owner
-          (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
-          span
-          origin)]
-      [(Literal lit) (Ok (macro-literal-to-spanned-sexpr lit span))]
-      [(Var name)
-        (Ok
-          (macro-spanned-symbol-id
-            (macro-output-source-identity-id-at
-              (macro-sexpr-session owner)
-              name
-              "expr-var")
-            span))]
-      [(Call func-box args)
-        (let
-          [func : ast.AstExpr
-            (ast.ast-expr-segment-bases-get owner.expr-bases func-box)]
-          [head (try (macro-call-head-to-spanned-sexpr owner func span origin))]
-          [tail (try (macro-expr-list-to-spanned-sexpr owner args span origin))]
-          (Ok (reader.spanned-sexpr-list-prepend head tail span)))]
-      [(BracketClause items)
-        (let
-          [list
-            (try (macro-expr-list-to-spanned-sexpr owner items span origin))]
-          (Ok (reader.spanned-sexpr-bracket-list list span)))]
-      [(or (ProgramArgc) (ProgramArgv) (ProgramEnvp) (Break) (Continue)
-           (SpmdProgramIndex) (SpmdProgramCount))
-        (Ok (macro-form0-id head-id span))]
-      [(or (Unary _ inner-id) (Quote inner-id) (Quasiquote inner-id)
-           (Unquote inner-id) (UnquoteSplicing inner-id) (Return inner-id)
-           (Try inner-id) (Box inner-id) (BoxGet inner-id) (BoxTake inner-id)
-           (PtrNullCheck inner-id) (PtrAddrOf inner-id) (PtrRead inner-id)
-           (PtrToInt inner-id) (StringData inner-id) (ArrayData inner-id)
-           (Xgetbv inner-id) (Comptime inner-id) (LaneValue inner-id))
-        (macro-child-form1-id owner head-id inner-id span origin)]
-      [(or (Binary _ left-id right-id) (ArrayRef left-id right-id)
-           (Replace left-id right-id) (ArrayPush left-id right-id)
-           (StringRef left-id right-id) (PtrWrite left-id right-id)
-           (PtrOffset left-id right-id) (StringFromBytes left-id right-id)
-           (CpuIdEax left-id right-id) (CpuIdEbx left-id right-id)
-           (CpuIdEcx left-id right-id) (CpuIdEdx left-id right-id)
-           (SpmdBroadcast left-id right-id) (SpmdShuffle left-id right-id))
-        (macro-child-form2-id owner head-id left-id right-id span origin)]
-      [(or (If a-id b-id c-id) (ArraySet a-id b-id c-id)
-           (ArrayTake a-id b-id c-id))
-        (macro-child-form3-id owner head-id a-id b-id c-id span origin)]
-      [(or (Begin items) (Unsafe items) (Tuple items) (Array items)
-           (DynArray items) (Syscall items) (WithScratch items)
-           (ForOwnedState items))
-        (macro-expr-list-with-head-symbol-id owner head-id items span origin)]
-      [(or (While operand-id body) (InArena operand-id body)
-           (WithEscape operand-id body))
-        (macro-operand-body-form owner head-id operand-id body span origin)]
-      [(or (Cast expr-id ty-id) (Ann expr-id ty-id) (PtrCast expr-id ty-id)
-           (IntToPtr expr-id ty-id))
-        (macro-child-type-form3-id
-          owner
-          head-id
-          expr-id
-          (ast.ty-node-get ty-id)
-          span
-          origin)]
-      [(or (FixedMakeArray ty-id len-id) (MakeArray ty-id len-id))
-        (macro-type-child-form2-id
-          owner
-          head-id
-          (ast.ty-node-get ty-id)
-          len-id
-          span
-          origin)]
-      [(Let let-box)
-        (match (__tl-box-place let-box)
-          [(Let bindings body-id)
-            (let
-              [sbody
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
-              [stail (try (macro-let-tail owner bindings sbody span origin))]
-              (Ok
-                (reader.spanned-sexpr-list-prepend
-                  (macro-spanned-symbol-id
-                    (cbi.compiler-builtin-ctfe "let")
-                    span)
-                  stail
-                  span)))])]
-      [(Match match-box)
-        (match (__tl-box-place match-box)
-          [(Match scrutinee-id arms)
-            (let
-              [sscrutinee
-                (try
-                  (macro-child-to-spanned-sexpr-ref
-                    owner
-                    scrutinee-id
-                    span
-                    origin))]
-              [sarms
-                (try
-                  (macro-match-arm-list-to-spanned-sexpr owner arms span origin))]
-              (Ok
-                (reader.spanned-sexpr-list-from-builder
-                  (reader.spanned-sexpr-builder-extend
+  (match expr
+    [(Spanned inner-box ast-span)
+      (macro-expr-to-spanned-sexpr-with-span
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
+        (macro-source-span-from-ast ast-span)
+        origin)]
+    ;; A clone-out step is regenerated when its form is expanded again.
+    [(or (MacroExpansion inner-box _ _) (CloneOut inner-box _))
+      (macro-expr-to-spanned-sexpr-with-span
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
+        span
+        origin)]
+    [(Literal lit) (Ok (macro-literal-to-spanned-sexpr lit span))]
+    [(Var name)
+      (Ok
+        (macro-spanned-symbol-id
+          (macro-output-source-identity-id-at
+            (macro-sexpr-session owner)
+            name
+            "expr-var")
+          span))]
+    [(Call func-box args)
+      (let
+        [func : ast.AstExpr
+          (ast.ast-expr-segment-bases-get owner.expr-bases func-box)]
+        [head (try (macro-call-head-to-spanned-sexpr owner func span origin))]
+        [tail (try (macro-expr-list-to-spanned-sexpr owner args span origin))]
+        (Ok (reader.spanned-sexpr-list-prepend head tail span)))]
+    [(BracketClause items)
+      (let
+        [list (try (macro-expr-list-to-spanned-sexpr owner items span origin))]
+        (Ok (reader.spanned-sexpr-bracket-list list span)))]
+    [(Let let-box)
+      (match (__tl-box-place let-box)
+        [(Let bindings body-id)
+          (let
+            [sbody
+              (try (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
+            [stail (try (macro-let-tail owner bindings sbody span origin))]
+            (Ok
+              (reader.spanned-sexpr-list-prepend
+                (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "let") span)
+                stail
+                span)))])]
+    [(Match match-box)
+      (match (__tl-box-place match-box)
+        [(Match scrutinee-id arms)
+          (let
+            [sscrutinee
+              (try
+                (macro-child-to-spanned-sexpr-ref
+                  owner
+                  scrutinee-id
+                  span
+                  origin))]
+            [sarms
+              (try
+                (macro-match-arm-list-to-spanned-sexpr owner arms span origin))]
+            (Ok
+              (reader.spanned-sexpr-list-from-builder
+                (reader.spanned-sexpr-builder-extend
+                  (reader.spanned-sexpr-builder-push
                     (reader.spanned-sexpr-builder-push
-                      (reader.spanned-sexpr-builder-push
-                        (reader.spanned-sexpr-builder-new)
-                        (macro-spanned-symbol-id
-                          (cbi.compiler-builtin-ctfe "match")
-                          span))
-                      sscrutinee)
-                    sarms)
-                  span)))])]
-      [(Set name value-id)
-        (let
-          [svalue
-            (try (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
-          (Ok
-            (macro-form2-id
-              (cbi.compiler-builtin-ctfe "set!")
-              (macro-spanned-symbol-id
-                (macro-output-source-identity-id-at
-                  (macro-sexpr-session owner)
-                  name
-                  "expr-set")
-                span)
-              svalue
-              span)))]
-      [(StructGet receiver-id field)
-        (let
-          [sreceiver
-            (try
-              (macro-child-to-spanned-sexpr-ref owner receiver-id span origin))]
-          (Ok
+                      (reader.spanned-sexpr-builder-new)
+                      (macro-spanned-symbol-id
+                        (cbi.compiler-builtin-ctfe "match")
+                        span))
+                    sscrutinee)
+                  sarms)
+                span)))])]
+    [(Set name value-id)
+      (let
+        [svalue
+          (try (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
+        (Ok
+          (macro-form2-id
+            (cbi.compiler-builtin-ctfe "set!")
+            (macro-spanned-symbol-id
+              (macro-output-source-identity-id-at
+                (macro-sexpr-session owner)
+                name
+                "expr-set")
+              span)
+            svalue
+            span)))]
+    [(StructGet receiver-id field)
+      (let
+        [sreceiver
+          (try (macro-child-to-spanned-sexpr-ref owner receiver-id span origin))]
+        (Ok
+          (macro-form2-id
+            (ci.intern "__tl_struct-get")
+            sreceiver
+            (macro-spanned-symbol-id field span)
+            span)))]
+    [(StructSet receiver-id field value-id)
+      (let
+        [sreceiver
+          (try (macro-child-to-spanned-sexpr-ref owner receiver-id span origin))]
+        [svalue
+          (try (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
+        [starget : reader.SpannedSexpr
+          (if (ast.ast-tuple-set-field-id? field)
+            (let
+              [index : i64 (ast.ast-tuple-set-index-from-field-id field)]
+              (macro-form2-id
+                (cbi.compiler-builtin-ctfe "tuple-ref")
+                sreceiver
+                (Int index (reader.sp-text-id (string.int->string index)) span)
+                span))
             (macro-form2-id
               (ci.intern "__tl_struct-get")
               sreceiver
               (macro-spanned-symbol-id field span)
-              span)))]
-      [(StructSet receiver-id field value-id)
-        (let
-          [sreceiver
-            (try
-              (macro-child-to-spanned-sexpr-ref owner receiver-id span origin))]
-          [svalue
-            (try (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
-          [starget : reader.SpannedSexpr
-            (if (ast.ast-tuple-set-field-id? field)
-              (let
-                [index : i64 (ast.ast-tuple-set-index-from-field-id field)]
-                (macro-form2-id
-                  (cbi.compiler-builtin-ctfe "tuple-ref")
-                  sreceiver
-                  (Int
-                    index
-                    (reader.sp-text-id (string.int->string index))
-                    span)
-                  span))
-              (macro-form2-id
-                (ci.intern "__tl_struct-get")
-                sreceiver
-                (macro-spanned-symbol-id field span)
-                span))]
-          (Ok
-            (macro-form2-id
-              (cbi.compiler-builtin-ctfe "set!")
-              starget
-              svalue
-              span)))]
-      [(Borrow mutable lifetime-id place-id)
-        (let
-          [splace
-            (try (macro-child-to-spanned-sexpr-ref owner place-id span origin))]
-          [borrow-head-id : i64
-            (if mutable
-              (cbi.compiler-builtin-ctfe "&mut")
-              (cbi.compiler-builtin-ctfe "&"))]
-          (match (ast.ast-borrow-lifetime-from-id lifetime-id)
-            [(Inferred) (Ok (macro-form1-id borrow-head-id splace span))]
-            [(Named name)
-              (Ok
-                (macro-form2-id
-                  borrow-head-id
-                  (macro-spanned-symbol-id name span)
-                  splace
-                  span))]))]
-      [(BoxSet receiver-id value-id)
-        (let
-          [sreceiver
-            (try
-              (macro-child-to-spanned-sexpr-ref owner receiver-id span origin))]
-          [svalue
-            (try (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
-          (Ok
-            (macro-form2-id
-              (cbi.compiler-builtin-ctfe "set!")
-              (macro-form1-id (ci.intern "__tl_box-get") sreceiver span)
-              svalue
-              span)))]
-      [(TupleRef tuple-id index)
-        (let
-          [stuple
-            (try (macro-child-to-spanned-sexpr-ref owner tuple-id span origin))]
-          (Ok
-            (macro-form2-id
-              (cbi.compiler-builtin-ctfe "tuple-ref")
-              stuple
-              (Int index (reader.sp-text-id (string.int->string index)) span)
-              span)))]
-      [(TypeLiteral ty-id)
-        (let
-          [sty
-            (try
-              (macro-type-to-spanned-sexpr
-                owner
-                (ast.ty-node-get ty-id)
-                span
-                origin))]
-          (Ok (macro-form1-id (cbi.compiler-builtin-ctfe "type") sty span)))]
-      [(PtrNull ty-id)
-        (let
-          [sty
-            (try
-              (macro-type-to-spanned-sexpr
-                owner
-                (ast.ty-node-get ty-id)
-                span
-                origin))]
-          (Ok
-            (macro-form2-id
-              (cbi.compiler-builtin-ctfe "ptr-null")
-              (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
-              sty
-              span)))]
-      [(BinaryData bytes)
+              span))]
         (Ok
-          (macro-form1-id
-            (cbi.compiler-builtin-ctfe "__typelisp internal binary data")
-            (Str
-              (ci.intern-id-from-renderable
-                (ci.intern-generated-canonical-name bytes))
-              span)
-            span))]
-      [(WithRegion region body)
-        (let
-          [sbody : reader.SpannedSexpr
-            (try (macro-expr-list-to-spanned-sexpr owner body span origin))]
-          (Ok
+          (macro-form2-id
+            (cbi.compiler-builtin-ctfe "set!")
+            starget
+            svalue
+            span)))]
+    [(Borrow mutable lifetime-id place-id)
+      (let
+        [splace
+          (try (macro-child-to-spanned-sexpr-ref owner place-id span origin))]
+        [borrow-head-id : i64
+          (if mutable
+            (cbi.compiler-builtin-ctfe "&mut")
+            (cbi.compiler-builtin-ctfe "&"))]
+        (match (ast.ast-borrow-lifetime-from-id lifetime-id)
+          [(Inferred) (Ok (macro-form1-id borrow-head-id splace span))]
+          [(Named name)
+            (Ok
+              (macro-form2-id
+                borrow-head-id
+                (macro-spanned-symbol-id name span)
+                splace
+                span))]))]
+    [(BoxSet receiver-id value-id)
+      (let
+        [sreceiver
+          (try (macro-child-to-spanned-sexpr-ref owner receiver-id span origin))]
+        [svalue
+          (try (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
+        (Ok
+          (macro-form2-id
+            (cbi.compiler-builtin-ctfe "set!")
+            (macro-form1-id (ci.intern "__tl_box-get") sreceiver span)
+            svalue
+            span)))]
+    [(TupleRef tuple-id index)
+      (let
+        [stuple
+          (try (macro-child-to-spanned-sexpr-ref owner tuple-id span origin))]
+        (Ok
+          (macro-form2-id
+            (cbi.compiler-builtin-ctfe "tuple-ref")
+            stuple
+            (Int index (reader.sp-text-id (string.int->string index)) span)
+            span)))]
+    [(TypeLiteral ty-id)
+      (let
+        [sty
+          (try
+            (macro-type-to-spanned-sexpr
+              owner
+              (ast.ty-node-get ty-id)
+              span
+              origin))]
+        (Ok (macro-form1-id (cbi.compiler-builtin-ctfe "type") sty span)))]
+    [(PtrNull ty-id)
+      (let
+        [sty
+          (try
+            (macro-type-to-spanned-sexpr
+              owner
+              (ast.ty-node-get ty-id)
+              span
+              origin))]
+        (Ok
+          (macro-form2-id
+            (cbi.compiler-builtin-ctfe "ptr-null")
+            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
+            sty
+            span)))]
+    [(BinaryData bytes)
+      (Ok
+        (macro-form1-id
+          (cbi.compiler-builtin-ctfe "__typelisp internal binary data")
+          (Str
+            (ci.intern-id-from-renderable
+              (ci.intern-generated-canonical-name bytes))
+            span)
+          span))]
+    [(WithRegion region body)
+      (let
+        [sbody : reader.SpannedSexpr
+          (try (macro-expr-list-to-spanned-sexpr owner body span origin))]
+        (Ok
+          (reader.spanned-sexpr-list-prepend
+            (macro-spanned-symbol-id (ci.intern "with-arena") span)
             (reader.spanned-sexpr-list-prepend
-              (macro-spanned-symbol-id (ci.intern "with-arena") span)
-              (reader.spanned-sexpr-list-prepend
-                (macro-binder-symbol owner region "with-arena-region" span)
-                sbody
-                span)
-              span)))]
-      [(WithResource resource-box)
-        (match (__tl-box-place resource-box)
-          [(WithResource bindings body)
-            (let
-              [sbindings : reader.SpannedSexpr
-                (try
-                  (macro-resource-bindings-to-spanned-sexpr
-                    owner
-                    (& bindings)
-                    0
-                    span
-                    origin
-                    (reader.spanned-sexpr-builder-new)))]
-              [sbody : reader.SpannedSexpr
-                (try (macro-expr-list-to-spanned-sexpr owner body span origin))]
-              (Ok
-                (reader.spanned-sexpr-list-prepend
-                  (macro-spanned-symbol-id (ci.intern "with") span)
-                  (reader.spanned-sexpr-list-prepend sbindings sbody span)
-                  span)))])]
-      [(Lambda lambda-box)
-        (match (__tl-box-place lambda-box)
-          [(Lambda params maybe-ret body-id)
-            (let
-              [sparams : reader.SpannedSexpr
-                (try
-                  (macro-lambda-params-to-spanned-sexpr
-                    owner
-                    (& params)
-                    0
-                    span
-                    origin
-                    (reader.spanned-sexpr-builder-new)))]
-              [sbody : reader.SpannedSexpr
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
-              [head : reader.SpannedSexpr
-                (macro-spanned-symbol-id (ci.intern "lambda") span)]
-              (match maybe-ret
-                [(No) (Ok (reader.spanned-sexpr-list3 head sparams sbody span))]
-                [(Some ret)
-                  (let
-                    [sret : reader.SpannedSexpr
-                      (try (macro-type-to-spanned-sexpr owner ret span origin))]
-                    (Ok
-                      (macro-spanned-sexpr-list5
-                        head
-                        sparams
-                        (macro-spanned-symbol-id
-                          (cbi.compiler-builtin-ctfe ":")
-                          span)
-                        sret
-                        sbody
-                        span)))]))])]
-      [(Foreach foreach-box)
-        (match (__tl-box-place foreach-box)
-          [(Foreach name index-ty start-id end-id body-id)
-            (let
-              [srange : reader.SpannedSexpr
-                (try
-                  (macro-range-binder-bracket
-                    owner
-                    name
-                    "foreach-index"
-                    index-ty
-                    start-id
-                    end-id
-                    span
-                    origin))]
-              [sbody : reader.SpannedSexpr
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
-              (Ok
-                (reader.spanned-sexpr-list3
-                  (macro-spanned-symbol-id (ci.intern "foreach") span)
-                  (reader.spanned-sexpr-list1 srange span)
-                  sbody
-                  span)))]
-          [(Foreach2
-              outer
-              outer-ty
-              outer-start-id
-              outer-end-id
-              inner
-              inner-ty
-              inner-start-id
-              inner-end-id
-              body-id)
-            (let
-              [souter : reader.SpannedSexpr
-                (try
-                  (macro-range-binder-bracket
-                    owner
-                    outer
-                    "foreach-index"
-                    outer-ty
-                    outer-start-id
-                    outer-end-id
-                    span
-                    origin))]
-              [sinner : reader.SpannedSexpr
-                (try
-                  (macro-range-binder-bracket
-                    owner
-                    inner
-                    "foreach-index"
-                    inner-ty
-                    inner-start-id
-                    inner-end-id
-                    span
-                    origin))]
-              [sbody : reader.SpannedSexpr
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
-              (Ok
-                (reader.spanned-sexpr-list3
-                  (macro-spanned-symbol-id (ci.intern "foreach") span)
-                  (reader.spanned-sexpr-list2 souter sinner span)
-                  sbody
-                  span)))])]
-      [(ForeachActive lane body-id)
-        (let
-          [sbody : reader.SpannedSexpr
-            (try (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
-          (Ok
-            (reader.spanned-sexpr-list3
-              (macro-spanned-symbol-id (ci.intern "foreach-active") span)
-              (reader.spanned-sexpr-bracket-list
-                (reader.spanned-sexpr-list3
-                  (macro-binder-symbol owner lane "foreach-active-lane" span)
-                  (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
-                  (macro-spanned-symbol-id (ci.intern "i64") span)
-                  span)
-                span)
+              (macro-binder-symbol owner region "with-arena-region" span)
               sbody
-              span)))]
-      [(SpmdReduce reduce-box)
-        (match (__tl-box-place reduce-box)
-          [(Reduce op name ty start-id end-id init-id value-id)
-            (let
-              [srange : reader.SpannedSexpr
-                (try
-                  (macro-range-binder-bracket
-                    owner
-                    name
-                    "spmd-reduce-index"
-                    ty
-                    start-id
-                    end-id
-                    span
-                    origin))]
-              [sinit : reader.SpannedSexpr
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner init-id span origin))]
-              [svalue : reader.SpannedSexpr
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
-              (Ok
-                (macro-spanned-sexpr-list5
-                  (macro-spanned-symbol-id (ci.intern "spmd-reduce") span)
-                  (macro-reduce-op-symbol op span)
-                  (reader.spanned-sexpr-list1 srange span)
-                  sinit
-                  svalue
-                  span)))])]
-      [(SpmdScan scan-box)
-        (match (__tl-box-place scan-box)
-          [(Scan
-              op
-              name
-              ty
-              start-id
-              end-id
-              prefix
-              prefix-ty
-              init-id
-              value-id
-              body-id)
-            (let
-              [srange : reader.SpannedSexpr
-                (try
-                  (macro-range-binder-bracket
-                    owner
-                    name
-                    "spmd-scan-index"
-                    ty
-                    start-id
-                    end-id
-                    span
-                    origin))]
-              [sprefix : reader.SpannedSexpr
-                (try
-                  (macro-state-binder-bracket
-                    owner
-                    prefix
-                    "spmd-scan-prefix"
-                    prefix-ty
-                    init-id
-                    span
-                    origin))]
-              [svalue : reader.SpannedSexpr
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
-              [sbody : reader.SpannedSexpr
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
-              (Ok
-                (macro-spanned-sexpr-list5
-                  (macro-spanned-symbol-id (ci.intern "spmd-scan") span)
-                  (macro-reduce-op-symbol op span)
-                  (reader.spanned-sexpr-list2 srange sprefix span)
-                  svalue
-                  sbody
-                  span)))])]
-      [(SpmdCompact compact-box)
-        (match (__tl-box-place compact-box)
-          [(Compact
-              name
-              ty
-              start-id
-              end-id
-              slot
-              slot-ty
-              init-id
-              keep-id
-              body-id)
-            (let
-              [srange : reader.SpannedSexpr
-                (try
-                  (macro-range-binder-bracket
-                    owner
-                    name
-                    "spmd-compact-index"
-                    ty
-                    start-id
-                    end-id
-                    span
-                    origin))]
-              [sslot : reader.SpannedSexpr
-                (try
-                  (macro-state-binder-bracket
-                    owner
-                    slot
-                    "spmd-compact-slot"
-                    slot-ty
-                    init-id
-                    span
-                    origin))]
-              [skeep : reader.SpannedSexpr
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner keep-id span origin))]
-              [sbody : reader.SpannedSexpr
-                (try
-                  (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
-              (Ok
-                (reader.spanned-sexpr-list4
-                  (macro-spanned-symbol-id (ci.intern "spmd-compact") span)
-                  (reader.spanned-sexpr-list2 srange sslot span)
-                  skeep
-                  sbody
-                  span)))])]
-      ;; The compiler-private owned-iteration step keeps its operands as
-      ;; expression ids. Its expected type is -1 unless it was written with the
-      ;; typed spelling, which takes it as an extra fourth operand.
-      [(ForOwnedStep payload)
-        (if (< (ast.ast-for-owned-payload-get (& payload) 3) 0)
-          (macro-expr-list-with-head-symbol-id
-            owner
-            (ci.intern "__tl_for-owned-step")
-            (macro-expr-list-without (& payload) 3)
-            span
-            origin)
-          (macro-expr-list-with-head-symbol-id
-            owner
-            (ci.intern "__tl_for-owned-step-typed")
-            payload
-            span
-            origin))])))
+              span)
+            span)))]
+    [(WithResource resource-box)
+      (match (__tl-box-place resource-box)
+        [(WithResource bindings body)
+          (let
+            [sbindings : reader.SpannedSexpr
+              (try
+                (macro-resource-bindings-to-spanned-sexpr
+                  owner
+                  (& bindings)
+                  0
+                  span
+                  origin
+                  (reader.spanned-sexpr-builder-new)))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-expr-list-to-spanned-sexpr owner body span origin))]
+            (Ok
+              (reader.spanned-sexpr-list-prepend
+                (macro-spanned-symbol-id (ci.intern "with") span)
+                (reader.spanned-sexpr-list-prepend sbindings sbody span)
+                span)))])]
+    [(Lambda lambda-box)
+      (match (__tl-box-place lambda-box)
+        [(Lambda params maybe-ret body-id)
+          (let
+            [sparams : reader.SpannedSexpr
+              (try
+                (macro-lambda-params-to-spanned-sexpr
+                  owner
+                  (& params)
+                  0
+                  span
+                  origin
+                  (reader.spanned-sexpr-builder-new)))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
+            [head : reader.SpannedSexpr
+              (macro-spanned-symbol-id (ci.intern "lambda") span)]
+            (match maybe-ret
+              [(No) (Ok (reader.spanned-sexpr-list3 head sparams sbody span))]
+              [(Some ret)
+                (let
+                  [sret : reader.SpannedSexpr
+                    (try (macro-type-to-spanned-sexpr owner ret span origin))]
+                  (Ok
+                    (macro-spanned-sexpr-list5
+                      head
+                      sparams
+                      (macro-spanned-symbol-id
+                        (cbi.compiler-builtin-ctfe ":")
+                        span)
+                      sret
+                      sbody
+                      span)))]))])]
+    [(Foreach foreach-box)
+      (match (__tl-box-place foreach-box)
+        [(Foreach name index-ty start-id end-id body-id)
+          (let
+            [srange : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  name
+                  "foreach-index"
+                  index-ty
+                  start-id
+                  end-id
+                  span
+                  origin))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
+            (Ok
+              (reader.spanned-sexpr-list3
+                (macro-spanned-symbol-id (ci.intern "foreach") span)
+                (reader.spanned-sexpr-list1 srange span)
+                sbody
+                span)))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start-id
+            outer-end-id
+            inner
+            inner-ty
+            inner-start-id
+            inner-end-id
+            body-id)
+          (let
+            [souter : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  outer
+                  "foreach-index"
+                  outer-ty
+                  outer-start-id
+                  outer-end-id
+                  span
+                  origin))]
+            [sinner : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  inner
+                  "foreach-index"
+                  inner-ty
+                  inner-start-id
+                  inner-end-id
+                  span
+                  origin))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
+            (Ok
+              (reader.spanned-sexpr-list3
+                (macro-spanned-symbol-id (ci.intern "foreach") span)
+                (reader.spanned-sexpr-list2 souter sinner span)
+                sbody
+                span)))])]
+    [(ForeachActive lane body-id)
+      (let
+        [sbody : reader.SpannedSexpr
+          (try (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
+        (Ok
+          (reader.spanned-sexpr-list3
+            (macro-spanned-symbol-id (ci.intern "foreach-active") span)
+            (reader.spanned-sexpr-bracket-list
+              (reader.spanned-sexpr-list3
+                (macro-binder-symbol owner lane "foreach-active-lane" span)
+                (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe ":") span)
+                (macro-spanned-symbol-id (ci.intern "i64") span)
+                span)
+              span)
+            sbody
+            span)))]
+    [(SpmdReduce reduce-box)
+      (match (__tl-box-place reduce-box)
+        [(Reduce op name ty start-id end-id init-id value-id)
+          (let
+            [srange : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  name
+                  "spmd-reduce-index"
+                  ty
+                  start-id
+                  end-id
+                  span
+                  origin))]
+            [sinit : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr-ref owner init-id span origin))]
+            [svalue : reader.SpannedSexpr
+              (try
+                (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
+            (Ok
+              (macro-spanned-sexpr-list5
+                (macro-spanned-symbol-id (ci.intern "spmd-reduce") span)
+                (macro-reduce-op-symbol op span)
+                (reader.spanned-sexpr-list1 srange span)
+                sinit
+                svalue
+                span)))])]
+    [(SpmdScan scan-box)
+      (match (__tl-box-place scan-box)
+        [(Scan
+            op
+            name
+            ty
+            start-id
+            end-id
+            prefix
+            prefix-ty
+            init-id
+            value-id
+            body-id)
+          (let
+            [srange : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  name
+                  "spmd-scan-index"
+                  ty
+                  start-id
+                  end-id
+                  span
+                  origin))]
+            [sprefix : reader.SpannedSexpr
+              (try
+                (macro-state-binder-bracket
+                  owner
+                  prefix
+                  "spmd-scan-prefix"
+                  prefix-ty
+                  init-id
+                  span
+                  origin))]
+            [svalue : reader.SpannedSexpr
+              (try
+                (macro-child-to-spanned-sexpr-ref owner value-id span origin))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
+            (Ok
+              (macro-spanned-sexpr-list5
+                (macro-spanned-symbol-id (ci.intern "spmd-scan") span)
+                (macro-reduce-op-symbol op span)
+                (reader.spanned-sexpr-list2 srange sprefix span)
+                svalue
+                sbody
+                span)))])]
+    [(SpmdCompact compact-box)
+      (match (__tl-box-place compact-box)
+        [(Compact name ty start-id end-id slot slot-ty init-id keep-id body-id)
+          (let
+            [srange : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  name
+                  "spmd-compact-index"
+                  ty
+                  start-id
+                  end-id
+                  span
+                  origin))]
+            [sslot : reader.SpannedSexpr
+              (try
+                (macro-state-binder-bracket
+                  owner
+                  slot
+                  "spmd-compact-slot"
+                  slot-ty
+                  init-id
+                  span
+                  origin))]
+            [skeep : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr-ref owner keep-id span origin))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr-ref owner body-id span origin))]
+            (Ok
+              (reader.spanned-sexpr-list4
+                (macro-spanned-symbol-id (ci.intern "spmd-compact") span)
+                (reader.spanned-sexpr-list2 srange sslot span)
+                skeep
+                sbody
+                span)))])]
+    ;; The compiler-private owned-iteration step keeps its operands as
+    ;; expression ids. Its expected type is -1 unless it was written with the
+    ;; typed spelling, which takes it as an extra fourth operand.
+    [(ForOwnedStep payload)
+      (if (< (ast.ast-for-owned-payload-get (& payload) 3) 0)
+        (macro-expr-list-with-head-symbol-id
+          owner
+          (ci.intern "__tl_for-owned-step")
+          (macro-expr-list-without (& payload) 3)
+          span
+          origin)
+        (macro-expr-list-with-head-symbol-id
+          owner
+          (ci.intern "__tl_for-owned-step-typed")
+          payload
+          span
+          origin))]
+    [_
+      (let
+        [head-id : i64 (macro-expr-uniform-head-id (& expr))]
+        (match expr
+          [(or (ProgramArgc) (ProgramArgv) (ProgramEnvp) (Break) (Continue)
+               (SpmdProgramIndex) (SpmdProgramCount))
+            (Ok (macro-form0-id head-id span))]
+          [(or (Unary _ inner-id) (Quote inner-id) (Quasiquote inner-id)
+               (Unquote inner-id) (UnquoteSplicing inner-id) (Return inner-id)
+               (Try inner-id) (Box inner-id) (BoxGet inner-id)
+               (BoxTake inner-id) (PtrNullCheck inner-id) (PtrAddrOf inner-id)
+               (PtrRead inner-id) (PtrToInt inner-id) (StringData inner-id)
+               (ArrayData inner-id) (Xgetbv inner-id) (Comptime inner-id)
+               (LaneValue inner-id))
+            (macro-child-form1-id owner head-id inner-id span origin)]
+          [(or (Binary _ left-id right-id) (ArrayRef left-id right-id)
+               (Replace left-id right-id) (ArrayPush left-id right-id)
+               (StringRef left-id right-id) (PtrWrite left-id right-id)
+               (PtrOffset left-id right-id) (StringFromBytes left-id right-id)
+               (CpuIdEax left-id right-id) (CpuIdEbx left-id right-id)
+               (CpuIdEcx left-id right-id) (CpuIdEdx left-id right-id)
+               (SpmdBroadcast left-id right-id) (SpmdShuffle left-id right-id))
+            (macro-child-form2-id owner head-id left-id right-id span origin)]
+          [(or (If a-id b-id c-id) (ArraySet a-id b-id c-id)
+               (ArrayTake a-id b-id c-id))
+            (macro-child-form3-id owner head-id a-id b-id c-id span origin)]
+          [(or (Begin items) (Unsafe items) (Tuple items) (Array items)
+               (DynArray items) (Syscall items) (WithScratch items)
+               (ForOwnedState items))
+            (macro-expr-list-with-head-symbol-id
+              owner
+              head-id
+              items
+              span
+              origin)]
+          [(or (While operand-id body) (InArena operand-id body)
+               (WithEscape operand-id body))
+            (macro-operand-body-form owner head-id operand-id body span origin)]
+          [(or (Cast expr-id ty-id) (Ann expr-id ty-id) (PtrCast expr-id ty-id)
+               (IntToPtr expr-id ty-id))
+            (macro-child-type-form3-id
+              owner
+              head-id
+              expr-id
+              (ast.ty-node-get ty-id)
+              span
+              origin)]
+          [(or (FixedMakeArray ty-id len-id) (MakeArray ty-id len-id))
+            (macro-type-child-form2-id
+              owner
+              head-id
+              (ast.ty-node-get ty-id)
+              len-id
+              span
+              origin)]
+          [_
+            (Err
+              (box
+                (macro-output-syntax-diag
+                  origin
+                  "typecheck: unsupported expression in module macro output")))]))]))
 
 ;; A binder the output declares again -- a loop index, lambda parameter,
 ;; resource or region name -- spelled with its macro-output source identity,
@@ -125047,66 +125052,70 @@
     [base : String (macro-call-callee-base-name name)]
     (or (string.eq base "when") (string.eq base "unless"))))
 
-(define (macro-call-callee-base-name-id
-  [expr-bases : i64]
+(define (macro-call-callee-base-name-id-var
   [session : cis.InternStructuralSessionHandle]
-  [func : ast.AstExpr]) : TcMaybeNameId
+  [name-id : i64]) : TcMaybeNameId
+  (cond
+    [(csym.compiler-composite-triple-key-id? name-id)
+      (Some (csym.compiler-composite-triple-right-id name-id))]
+    [(csym.compiler-composite-pair-key-id? name-id)
+      (Some (csym.compiler-composite-pair-right-id name-id))]
+    [else
+      (let
+        [source-id : i64
+          (macro-hygiene-global-source-name-id-or session name-id name-id)]
+        [base-id : i64
+          (if (and
+            (>= source-id 0)
+            (< source-id (ci.intern-capacity))
+            (ci.intern-qualified? source-id))
+            (ci.intern-qualified-base-id source-id)
+            source-id)]
+        (if (< base-id 0)
+          No
+          (Some
+            (if (and
+              (< base-id (ci.intern-capacity))
+              (ci.intern-dotted? base-id))
+              (ci.intern-dotted-final-id base-id)
+              base-id))))]))
+
+(define (macro-call-callee-maybe-macro-ref?
+  [expr-bases : i64]
+  [state : TcMacroState]
+  [func : (& func ast.AstExpr)]) : bool
   (match func
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
-      (macro-call-callee-base-name-id
-        expr-bases
-        session
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (macro-call-callee-maybe-macro-ref? expr-bases state (& inner)))]
     [(Var name-id)
-      (cond
-        [(csym.compiler-composite-triple-key-id? name-id)
-          (Some (csym.compiler-composite-triple-right-id name-id))]
-        [(csym.compiler-composite-pair-key-id? name-id)
-          (Some (csym.compiler-composite-pair-right-id name-id))]
-        [else
+      (match (macro-call-callee-base-name-id-var
+        (tc-macro-state-structural-session state)
+        name-id)
+        [(Some base-id)
           (let
-            [source-id : i64
-              (macro-hygiene-global-source-name-id-or session name-id name-id)]
-            [base-id : i64
-              (if (and
-                (>= source-id 0)
-                (< source-id (ci.intern-capacity))
-                (ci.intern-qualified? source-id))
-                (ci.intern-qualified-base-id source-id)
-                source-id)]
-            (if (< base-id 0)
-              No
-              (Some
-                (if (and
-                  (< base-id (ci.intern-capacity))
-                  (ci.intern-dotted? base-id))
-                  (ci.intern-dotted-final-id base-id)
-                  base-id))))])]
-    [_ No]))
+            [names : tc_i64_i64_map.Map
+              (tc-macro-walk-field state macro-expand-macro-name-set)]
+            (or
+              (tc_i64_i64_map.contains? (& names) base-id)
+              (= base-id cbi.compiler-builtin-id-fix-when)
+              (= base-id cbi.compiler-builtin-id-fix-unless)))]
+        [No
+          (match (macro-call-callee-name
+            expr-bases
+            (tc-macro-state-structural-session state)
+            (ast.AstExpr.Var name-id))
+            [(Some name) (macro-call-name-maybe-macro? name)]
+            [(No) false])])]
+    [_ false]))
 
 (define (macro-call-callee-maybe-macro?
   [expr-bases : i64]
   [state : TcMacroState]
   [func : ast.AstExpr]) : bool
-  (match (macro-call-callee-base-name-id
-    expr-bases
-    (tc-macro-state-structural-session state)
-    (tc-global-shared-view func))
-    [(Some base-id)
-      (let
-        [names : tc_i64_i64_map.Map
-          (tc-macro-walk-field state macro-expand-macro-name-set)]
-        (or
-          (tc_i64_i64_map.contains? (& names) base-id)
-          (= base-id cbi.compiler-builtin-id-fix-when)
-          (= base-id cbi.compiler-builtin-id-fix-unless)))]
-    [No
-      (match (macro-call-callee-name
-        expr-bases
-        (tc-macro-state-structural-session state)
-        func)
-        [(Some name) (macro-call-name-maybe-macro? name)]
-        [(No) false])]))
+  (macro-call-callee-maybe-macro-ref? expr-bases state (& func)))
 
 (define (macro-call-is-expandable?
   [ctx : TcContext]
@@ -125292,7 +125301,7 @@
         (let
           [body : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
-          (if (macro-expr-might-fire? state expr-bases body)
+          (if (macro-expr-might-fire-uncounted? state expr-bases body)
             index
             (macro-match-arms-first-fire-index-at
               state
@@ -125310,41 +125319,206 @@
   [state : TcMacroState]
   [expr-bases : i64]
   [expr-id : i64]) : bool
-  (macro-expr-might-fire?
+  (macro-expr-might-fire-uncounted?
     state
     expr-bases
     (ast.ast-expr-segment-bases-get expr-bases expr-id)))
+
+(define (macro-expr-list-might-fire?
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (let
+    [found : bool false]
+    [index : i64 0]
+    [len : i64 exprs.len]
+    (while (and (not found) (< index len))
+      (if (macro-expr-might-fire-uncounted?
+        state
+        expr-bases
+        (ast.ast-expr-segment-bases-get
+          expr-bases
+          (ast.ast-expr-list-get exprs index 0)))
+        (set! found true)
+        (set! index (+ index 1))))
+    found))
+
+(define (macro-let-binding-list-might-fire?
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (let
+    [found : bool false]
+    [index : i64 0]
+    [len : i64 (ast.ast-let-binding-list-len bindings)]
+    (while (and (not found) (< index len))
+      (match (ast.ast-let-binding-list-get
+        bindings
+        index
+        (ast.ast-let-binding-fallback))
+        [(Binding _ _ init-box)
+          (if (macro-expr-might-fire-uncounted?
+            state
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases init-box))
+            (set! found true)
+            (set! index (+ index 1)))]))
+    found))
 
 (define (macro-expr-might-fire-uncounted?
   [state : TcMacroState]
   [expr-bases : i64]
   [expr : ast.AstExpr]) : bool
   (match (& expr)
+    [(Spanned inner-box _)
+      (macro-expr-might-fire-uncounted?
+        state
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(or (Literal _) (Var _) (CloneOut _ _) (TypeLiteral _) (PtrNull _)
+         (BinaryData _) (ProgramArgc) (ProgramArgv) (ProgramEnvp)
+         (SpmdProgramIndex) (SpmdProgramCount))
+      false]
     ;; Expansion gives every scratch form its clone-out step, once.
     ;; Quoted templates and loop-control forms stay on the conservative path.
     [(or (WithScratch _) (WithEscape _ _) (Quote _) (Quasiquote _) (Unquote _)
          (UnquoteSplicing _) (Break) (Continue))
       true]
-    [(CloneOut _ _) false]
-    [_
+    [(Call func-box args)
+      (let
+        [func : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases func-box)]
+        (or
+          (macro-call-callee-maybe-macro-ref? expr-bases state (& func))
+          (macro-expr-might-fire-uncounted? state expr-bases func)
+          (macro-expr-list-might-fire? state expr-bases args)))]
+    [(or (Begin items) (Unsafe items) (Tuple items) (Array items)
+         (DynArray items) (BracketClause items) (WithRegion _ items)
+         (Syscall items))
+      (macro-expr-list-might-fire? state expr-bases items)]
+    [(Let let-box)
+      (match let-box
+        [(Let bindings body-box)
+          (or
+            (macro-let-binding-list-might-fire? state expr-bases bindings)
+            (macro-expr-id-might-fire? state expr-bases body-box))])]
+    [(Match match-box)
+      (match match-box
+        [(Match scrutinee-box arms)
+          (or
+            (macro-expr-id-might-fire? state expr-bases scrutinee-box)
+            (>= (macro-match-arms-first-fire-index state expr-bases arms) 0))])]
+    [(Lambda lambda-box)
+      (match lambda-box
+        [(Lambda _ _ body-box)
+          (macro-expr-id-might-fire? state expr-bases body-box)])]
+    [(or (While head-box items) (InArena head-box items))
       (or
-        (match (& expr)
-          [(Call func-box _)
-            (macro-call-callee-maybe-macro?
-              expr-bases
-              state
-              (ast.ast-expr-segment-bases-get expr-bases func-box))]
-          [_ false])
-        (ast.ast-expr-fold-children
-          expr
-          ast.ast-fold-or
-          false
-          macro-expr-id-might-fire?
-          tc-ast-child-false
-          tc-ast-child-false
-          tc-ast-child-false
+        (macro-expr-id-might-fire? state expr-bases head-box)
+        (macro-expr-list-might-fire? state expr-bases items))]
+    [(or (Unary _ inner-box) (StructGet inner-box _) (Set _ inner-box)
+         (Borrow _ _ inner-box) (Ann inner-box _) (Cast inner-box _)
+         (Try inner-box) (Return inner-box) (TupleRef inner-box _)
+         (Box inner-box) (BoxGet inner-box) (BoxTake inner-box)
+         (FixedMakeArray _ inner-box) (MakeArray _ inner-box)
+         (Comptime inner-box) (PtrNullCheck inner-box) (PtrAddrOf inner-box)
+         (PtrRead inner-box) (PtrCast inner-box _) (PtrToInt inner-box)
+         (IntToPtr inner-box _) (StringData inner-box) (ArrayData inner-box)
+         (Xgetbv inner-box) (MacroExpansion inner-box _ _)
+         (ForeachActive _ inner-box) (LaneValue inner-box))
+      (macro-expr-id-might-fire? state expr-bases inner-box)]
+    [(or (Binary _ a b) (ArrayRef a b) (StructSet a _ b) (Replace a b)
+         (ArrayPush a b) (StringRef a b) (SpmdBroadcast a b) (SpmdShuffle a b)
+         (BoxSet a b) (PtrWrite a b) (PtrOffset a b) (StringFromBytes a b)
+         (CpuIdEax a b) (CpuIdEbx a b) (CpuIdEcx a b) (CpuIdEdx a b))
+      (or
+        (macro-expr-id-might-fire? state expr-bases a)
+        (macro-expr-id-might-fire? state expr-bases b))]
+    [(or (If a b c) (ArraySet a b c) (ArrayTake a b c))
+      (or
+        (macro-expr-id-might-fire? state expr-bases a)
+        (macro-expr-id-might-fire? state expr-bases b)
+        (macro-expr-id-might-fire? state expr-bases c))]
+    [(Foreach fe-box)
+      (match fe-box
+        [(Foreach _ _ a b c)
+          (or
+            (macro-expr-id-might-fire? state expr-bases a)
+            (macro-expr-id-might-fire? state expr-bases b)
+            (macro-expr-id-might-fire? state expr-bases c))]
+        [(Foreach2 _ _ a0 b0 _ _ a1 b1 d)
+          (or
+            (macro-expr-id-might-fire? state expr-bases a0)
+            (macro-expr-id-might-fire? state expr-bases b0)
+            (macro-expr-id-might-fire? state expr-bases a1)
+            (macro-expr-id-might-fire? state expr-bases b1)
+            (macro-expr-id-might-fire? state expr-bases d))])]
+    [(SpmdReduce reduce-box)
+      (match reduce-box
+        [(Reduce _ _ _ a b c d)
+          (or
+            (macro-expr-id-might-fire? state expr-bases a)
+            (macro-expr-id-might-fire? state expr-bases b)
+            (macro-expr-id-might-fire? state expr-bases c)
+            (macro-expr-id-might-fire? state expr-bases d))])]
+    [(SpmdScan scan-box)
+      (match scan-box
+        [(Scan _ _ _ a b _ _ c d e)
+          (or
+            (macro-expr-id-might-fire? state expr-bases a)
+            (macro-expr-id-might-fire? state expr-bases b)
+            (macro-expr-id-might-fire? state expr-bases c)
+            (macro-expr-id-might-fire? state expr-bases d)
+            (macro-expr-id-might-fire? state expr-bases e))])]
+    [(SpmdCompact compact-box)
+      (match compact-box
+        [(Compact _ _ a b _ _ c d e)
+          (or
+            (macro-expr-id-might-fire? state expr-bases a)
+            (macro-expr-id-might-fire? state expr-bases b)
+            (macro-expr-id-might-fire? state expr-bases c)
+            (macro-expr-id-might-fire? state expr-bases d)
+            (macro-expr-id-might-fire? state expr-bases e))])]
+    [(WithResource wr-box)
+      (match wr-box
+        [(WithResource bindings body)
+          (let
+            [found : bool false]
+            [index : i64 0]
+            [len : i64 (ast.ast-resource-binding-list-len bindings)]
+            (while (and (not found) (< index len))
+              (match (ast.ast-resource-binding-list-get
+                bindings
+                index
+                (ast.ast-resource-binding-fallback))
+                [(Binding _ init-box cleanup-box _)
+                  (if (or
+                    (macro-expr-id-might-fire? state expr-bases init-box)
+                    (macro-expr-id-might-fire? state expr-bases cleanup-box))
+                    (set! found true)
+                    (set! index (+ index 1)))]))
+            (or found (macro-expr-list-might-fire? state expr-bases body)))])]
+    [(ForOwnedState payload)
+      (or
+        (macro-expr-id-might-fire?
           state
-          expr-bases))]))
+          expr-bases
+          (ast.ast-for-owned-state-source payload))
+        (macro-expr-id-might-fire?
+          state
+          expr-bases
+          (ast.ast-for-owned-state-body payload)))]
+    [(ForOwnedStep payload)
+      (let
+        [expected-type : i64 (ast.ast-for-owned-step-expected-type payload)]
+        (or
+          (and
+            (>= expected-type 0)
+            (macro-expr-id-might-fire? state expr-bases expected-type))
+          (macro-expr-id-might-fire?
+            state
+            expr-bases
+            (ast.ast-for-owned-step-body payload))))]))
 
 ;; Decl-level companion to `macro-expr-might-fire?`. Returns true only for the
 ;; value-bearing decl kinds whose entire macro-expandable surface is a single

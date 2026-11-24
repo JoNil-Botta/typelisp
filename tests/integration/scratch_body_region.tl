@@ -3,12 +3,15 @@
 ;; form's result, and scratch forms nested with with-arena keep working.
 (import stdlib.arena)
 (import stdlib.string)
+(import stdlib.clone as clone_gen)
 (import stdlib.vector)
 (import (vector.vector i64) as ivec)
 
 (defstruct Label
   (name String)
   (weight i64))
+
+(clone_gen.gen-clone Label)
 
 (defenum Parsed
   (Ok String)

@@ -191,12 +191,14 @@ Options:
 (define (cli-check-help-text) : String
   "Usage:
     typelisp check [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
+    typelisp check --batch <inputs.txt> [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Type check a source file or package.
 
 Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
+    --batch <file>                 Read newline-separated input paths and emit framed per-entry results
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
     --backend-mode <mode>          Validate scalar, avx2, or avx512; no code is emitted

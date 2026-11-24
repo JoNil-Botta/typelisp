@@ -67,6 +67,8 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 21: AstExpr tag 90 adds the CloneOut scratch-form clone-out step (#8223).
+  ;;
   ;; 20: AstExpr tag 46 (`init`) is retired and no longer encoded or decoded
   ;; (#7951).
   ;;
@@ -129,7 +131,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  20)
+  21)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

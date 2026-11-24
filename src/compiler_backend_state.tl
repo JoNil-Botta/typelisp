@@ -598,6 +598,14 @@
   (Ok String)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
+(define (clone-result-compiler-backend
+  [value : (& value ResultCompilerBackend)]) : ResultCompilerBackend
+  (match value
+    [(Ok text) (Ok (string.copy text))]
+    [(Err diag)
+      (Err
+        (box (compiler_diagnostic.clone-compiler-diagnostic (& (deref diag)))))]))
+
 ;; Append-only function-body assembly text buffer.
 ;;
 ;; The block/instruction spine appends emitted text straight into this growth

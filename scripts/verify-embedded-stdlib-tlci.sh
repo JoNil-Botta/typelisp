@@ -71,6 +71,7 @@ run_checkout_root_self_test() (
 
 required_native_identities() {
     printf '%s\n' \
+        stdlib.core_macros/__tl-clone-out \
         stdlib.clone/deep \
         stdlib.clone/clone-nominal-value \
         stdlib.clone/nominal-hook-name \

@@ -16,6 +16,7 @@ stdlib.core_macros/__tl-project-set-field	3	fixed	expr	tests/integration/tlci_id
 stdlib.core_macros/__tl-project-field-name	2	fixed	expr	tests/integration/generated_hashmap_global_mutation.tl	ok	default	assembly
 stdlib.core_macros/__tl-project-set-field-name	3	fixed	expr	tests/integration/generated_hashmap_global_mutation.tl	ok	default	assembly
 stdlib.core_macros/__tl-box-place	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.core_macros/__tl-clone-out	1	fixed	expr	tests/integration/with_escape_clone_out.tl	ok	default	assembly
 stdlib.core_macros/and	1	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.core_macros/or	1	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.core_macros/when	2	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

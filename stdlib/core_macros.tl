@@ -80,8 +80,18 @@
 (defmacro (__tl-box-place [value : Expr]) : Expr
   `(box-get ,value))
 
-;; lint-allow: unused-import -- loads the typed clone declaration producer.
 (import stdlib.clone)
+
+;: The clone-out step of `with-scratch` and `with-escape` (SPEC 5.16).
+;:
+;: The compiler applies it to the hidden binding of a form's non-Copy body
+;: result, after switching back to the enclosing arena and before the scratch
+;: arena is rewound or destroyed. It deep-copies the result into the enclosing
+;: arena with ordinary stdlib clone code; a nominal type uses its owner's
+;: `clone-<kebab-name>` from `(gen-clone T)`.
+;; lint-allow: function-name-case -- private compiler clone-out bridge
+(defmacro (__tl-clone-out [value : Expr]) : Expr
+  `(stdlib.clone.deep ,value))
 
 ;: Short-circuiting boolean conjunction.
 ;:

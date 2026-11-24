@@ -2385,6 +2385,7 @@
     [decl-offset : i64 decls.offset]
     [decl-index : ModuleDeclIndex
       (compiler-symbols-build-module-decl-index all-decls)]
+    [has-selected-item : bool false]
     (for [index (iterator.range 0 decl-count)]
       (let
         [decl : ast.AstDecl
@@ -2392,15 +2393,9 @@
         [decl-for-module : ast.AstDecl (compiler-symbols-decl-shared-view decl)]
         [next-symbols : CompilerSymbols
           (match decl
-            [(Import
-                decl-meta
-                (Spec (ModuleItem item) _ (Some target-module) (Some alias) _))
-              (compiler-symbols-add-selected-item-alias
-                (& (compiler-symbols-shared-view cur-symbols))
-                target-module
-                item
-                cur-module-id
-                alias)]
+            [(Import _ (Spec (ModuleItem _) _ (Some _) (Some _) _))
+              (set! has-selected-item true)
+              cur-symbols]
             [(Import decl-meta (Spec _ _ (Some target-module) (Some alias) _))
               (let
                 [target-module-id : i64 target-module]
@@ -2415,12 +2410,12 @@
                 [without-bare-macros : CompilerSymbols
                   (if target-has-macros
                     (compiler-symbols-remove-module-macro-aliases-indexed
-                      (compiler-symbols-shared-view cur-symbols)
+                      cur-symbols
                       all-decls
                       (& decl-index)
                       target-module-id
                       handle-index-offset)
-                    (compiler-symbols-shared-view cur-symbols))]
+                    cur-symbols)]
                 (if (= alias cbi.compiler-builtin-id-fix-empty)
                   (compiler-symbols-add-module-aliases-indexed
                     without-bare-macros
@@ -2430,9 +2425,29 @@
                     cur-module-id
                     handle-index-offset)
                   without-bare-macros))]
-            [_ (compiler-symbols-shared-view cur-symbols)])]
+            [_ cur-symbols])]
         (set! cur-symbols next-symbols)
         (match decl-for-module
+          [(Module next-module) (set! cur-module-id next-module)]
+          [_ unit])))
+    ;; Apply selected-item imports after aliased module imports so a later
+    ;; `(import M as alias)` cannot erase an earlier `(import M.item)`.
+    (when
+      has-selected-item
+      (set! cur-module-id module-id)
+      (for [index (iterator.range 0 decl-count)]
+        (match (& (array-ref decls.slots (+ decl-offset index)))
+          [(Import
+              _
+              (Spec (ModuleItem item) _ (Some target-module) (Some alias) _))
+            (set!
+              cur-symbols
+              (compiler-symbols-add-selected-item-alias
+                (& cur-symbols)
+                target-module
+                item
+                cur-module-id
+                alias))]
           [(Module next-module) (set! cur-module-id next-module)]
           [_ unit])))
     cur-symbols))

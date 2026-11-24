@@ -666,6 +666,11 @@ printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlin
 printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ncyc-b\t90\tall\tcycle b\tcyc-a\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tcycle fixture\n' > "$work/cycle-gates/cyc-b.tsv"
 expect_rejected gates-dependency-cycle ci_gates_load "$work/cycle-gates"
 grep -F 'dependency cycle' "$work/gates-dependency-cycle.err" >/dev/null || fail 'cycle rejection lost its diagnostic'
+mkdir -p "$work/dup-need-gates"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ng-a\t100\tall\tgate a\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tdup need fixture\n' > "$work/dup-need-gates/g-a.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ng-b\t90\tall\tgate b\tg-a,g-a@linux\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tdup need fixture\n' > "$work/dup-need-gates/g-b.tsv"
+expect_rejected gates-duplicate-effective-need ci_gates_load "$work/dup-need-gates"
+grep -F 'duplicate linux need' "$work/gates-duplicate-effective-need.err" >/dev/null || fail 'duplicate effective-host need rejection lost its diagnostic'
 mkdir -p "$work/kahn-gates"
 printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-b\t100\tall\tgate b\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-b.tsv"
 printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-a\t100\tall\tgate a\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-a.tsv"

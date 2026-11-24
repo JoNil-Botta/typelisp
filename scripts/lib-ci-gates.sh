@@ -274,11 +274,17 @@ ci_gates_load() {
                         }
                         if (!(need in seen_id) || need == id)
                             fail(base ": " id " needs an unknown or self gate: " need)
-                        if (need_edge_seen[id, entry]++)
-                            fail(base ": " id " lists duplicate need: " entry)
                         covered = (need_host != "" ? need_host : gate_hosts[id])
                         if (gate_hosts[need] != "all" && gate_hosts[need] != covered)
                             fail(base ": " id " needs a gate that does not run on its hosts: " need)
+                        if (covered == "all" || covered == "linux") {
+                            if (need_edge_seen[id, "linux", need]++)
+                                fail(base ": " id " lists duplicate linux need: " entry)
+                        }
+                        if (covered == "all" || covered == "windows") {
+                            if (need_edge_seen[id, "windows", need]++)
+                                fail(base ": " id " lists duplicate windows need: " entry)
+                        }
                         if (need_host == "")
                             direct[id, need] = 1
                         if (!dag_edge[need, id]++) {

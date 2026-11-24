@@ -169,182 +169,33 @@
     [(ir.CompilerIrValue.GlobalAddr name) (note-ref! refs name)]
     [_ unit]))
 
-(define (collect-maybe-value-refs!
-  [refs : (&mut i64_map.Map)]
-  [value : (& ir.CompilerIrMaybeValue)]) : unit
-  (match value
-    [(ir.CompilerIrMaybeValue.No) unit]
-    [(ir.CompilerIrMaybeValue.Some inner) (collect-value-refs! refs (& inner))]))
+(define (fold-value-ref
+  [_role : ir.CompilerIrOperandRole]
+  [refs : i64_map.Map]
+  [value : ir.CompilerIrValue]) : i64_map.Map
+  (let
+    [out : i64_map.Map refs]
+    (collect-value-refs! (&mut out) (& value))
+    out))
 
-(define (collect-value-seq-refs!
-  [refs : (&mut i64_map.Map)]
-  [values : (& ir.CompilerIrValueSeq)]) : unit
-  (for [i (iterator.range 0 values.len)]
-    (collect-value-refs! refs (& (array-ref values.slots i)))))
-
-(define (collect-value-array-refs!
-  [refs : (&mut i64_map.Map)]
-  [values : (& (__tl_dyn-array ir.CompilerIrValue))]) : unit
-  (for [i (iterator.range 0 (array-length values))]
-    (collect-value-refs! refs (& (array-ref values i)))))
-
-(define (collect-call-args-refs!
-  [refs : (&mut i64_map.Map)]
-  [args : (& ir.CompilerIrCallArgs)]) : unit
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) unit]
-    [(ir.CompilerIrCallArgs.One a) (collect-value-refs! refs (& a))]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (collect-value-refs! refs (& a))
-      (collect-value-refs! refs (& b))]
-    [(ir.CompilerIrCallArgs.Array arr) (collect-value-array-refs! refs (& arr))]
-    [(ir.CompilerIrCallArgs.Sret arr _)
-      (collect-value-array-refs! refs (& arr))]))
-
-(define (collect-spmd-call-args-refs!
-  [refs : (&mut i64_map.Map)]
-  [args : (& ir.CompilerIrSpmdCallArgSeq)]) : unit
-  (for [i (iterator.range 0 args.len)]
-    (match (& (array-ref args.slots i))
-      [(ir.CompilerIrSpmdCallArg.Arg _ value _)
-        (collect-value-refs! refs (& value))])))
-
-(define (collect-phi-refs!
-  [refs : (&mut i64_map.Map)]
-  [inputs : (& ir.CompilerIrPhiInputSeq)]) : unit
-  (for [i (iterator.range 0 inputs.len)]
-    (match (& (array-ref inputs.slots (+ inputs.start i)))
-      [(ir.CompilerIrPhiInput value _) (collect-value-refs! refs (& value))])))
-
-(define (collect-instr-refs!
-  [refs : (&mut i64_map.Map)]
-  [instr : (& ir.CompilerIrInstr)]) : unit
-  (match instr
-    [(or (ir.CompilerIrInstr.BinOp _ _ lhs rhs _)
-         (ir.CompilerIrInstr.Gep _ lhs rhs _)
-         (ir.CompilerIrInstr.StorePtr lhs rhs _)
-         (ir.CompilerIrInstr.StoreOwned lhs rhs _)
-         (ir.CompilerIrInstr.CopyBytes lhs rhs _)
-         (ir.CompilerIrInstr.BoundsCheck lhs rhs _)
-         (ir.CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
-         (ir.CompilerIrInstr.VectorLoad _ lhs rhs _ _)
-         (ir.CompilerIrInstr.CpuId _ lhs rhs _))
-      (collect-value-refs! refs (& lhs))
-      (collect-value-refs! refs (& rhs))]
-    [(ir.CompilerIrInstr.UnOp _ _ src _) (collect-value-refs! refs (& src))]
-    [(or (ir.CompilerIrInstr.Call _ name args _)
-         (ir.CompilerIrInstr.TailCall name args _))
-      (note-ref! refs name)
-      (collect-call-args-refs! refs (& args))]
-    [(or (ir.CompilerIrInstr.CallIndirect _ func args _)
-         (ir.CompilerIrInstr.CallIndirectC _ func args _)
-         (ir.CompilerIrInstr.TailCallIndirect func args _))
-      (collect-value-refs! refs (& func))
-      (collect-call-args-refs! refs (& args))]
-    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (match (& (deref payload-box))
-        [(fields name base args)
-          (note-ref! refs name)
-          (collect-value-refs! refs (& base))
-          (collect-call-args-refs! refs (& args))])]
-    [(ir.CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (match (& (deref payload-box))
-        [(fields base callee args)
-          (collect-value-refs! refs (& base))
-          (collect-value-refs! refs (& callee))
-          (collect-call-args-refs! refs (& args))])]
-    [(ir.CompilerIrInstr.SpmdCall payload-box)
-      (match (& (deref payload-box))
-        [(fields callee active-mask args)
-          (note-ref! refs callee)
-          (collect-value-refs! refs (& active-mask))
-          (collect-spmd-call-args-refs! refs (& args))])]
-    [(ir.CompilerIrInstr.Store name value _)
-      (note-ref! refs name)
-      (collect-value-refs! refs (& value))]
-    [(ir.CompilerIrInstr.Return maybe)
-      (collect-maybe-value-refs! refs (& maybe))]
-    [(ir.CompilerIrInstr.Phi _ inputs _) (collect-phi-refs! refs (& inputs))]
-    [(ir.CompilerIrInstr.Cast _ src _ _) (collect-value-refs! refs (& src))]
-    [(ir.CompilerIrInstr.VectorBinOp payload-box)
-      (match (& (deref payload-box))
-        [(fields lhs rhs)
-          (collect-value-refs! refs (& lhs))
-          (collect-value-refs! refs (& rhs))])]
-    [(ir.CompilerIrInstr.VectorPrefix payload-box)
-      (match (& (deref payload-box))
-        [(fields src carry)
-          (collect-value-refs! refs (& src))
-          (collect-value-refs! refs (& carry))])]
-    [(ir.CompilerIrInstr.VectorCompare payload-box)
-      (match (& (deref payload-box))
-        [(fields lhs rhs)
-          (collect-value-refs! refs (& lhs))
-          (collect-value-refs! refs (& rhs))])]
-    [(ir.CompilerIrInstr.Select payload-box)
-      (match (& (deref payload-box))
-        [(fields mask on-true on-false)
-          (collect-value-refs! refs (& mask))
-          (collect-value-refs! refs (& on-true))
-          (collect-value-refs! refs (& on-false))])]
-    [(ir.CompilerIrInstr.VectorStore payload-box)
-      (match (& (deref payload-box))
-        [(fields base index value)
-          (collect-value-refs! refs (& base))
-          (collect-value-refs! refs (& index))
-          (collect-value-refs! refs (& value))])]
-    [(ir.CompilerIrInstr.PredicatedStore payload-box)
-      (match (& (deref payload-box))
-        [(fields base index value mask)
-          (collect-value-refs! refs (& base))
-          (collect-value-refs! refs (& index))
-          (collect-value-refs! refs (& value))
-          (collect-value-refs! refs (& mask))])]
-    [(ir.CompilerIrInstr.PredicatedLoad payload-box)
-      (match (& (deref payload-box))
-        [(fields base index mask)
-          (collect-value-refs! refs (& base))
-          (collect-value-refs! refs (& index))
-          (collect-value-refs! refs (& mask))])]
-    [(ir.CompilerIrInstr.GatherLoad payload-box)
-      (match (& (deref payload-box))
-        [(fields base index-base index)
-          (collect-value-refs! refs (& base))
-          (collect-value-refs! refs (& index-base))
-          (collect-value-refs! refs (& index))])]
-    [(ir.CompilerIrInstr.VectorShuffle payload-box)
-      (match (& (deref payload-box))
-        [(fields source selector-low selector-high active-lanes)
-          (collect-value-refs! refs (& source))
-          (collect-value-refs! refs (& selector-low))
-          (collect-maybe-value-refs! refs (& selector-high))
-          (collect-value-refs! refs (& active-lanes))])]
-    [(ir.CompilerIrInstr.TailMask _ index length _)
-      (collect-value-refs! refs (& index))
-      (collect-value-refs! refs (& length))]
-    [(ir.CompilerIrInstr.Syscall _ args)
-      (collect-call-args-refs! refs (& args))]
-    [(ir.CompilerIrInstr.Pack _ words _)
-      (collect-value-seq-refs! refs (& words))]
-    [(or (ir.CompilerIrInstr.Alloc _ _) (ir.CompilerIrInstr.AddrOf _ _ _)
-         (ir.CompilerIrInstr.EntryArgc _) (ir.CompilerIrInstr.EntryArgv _)
-         (ir.CompilerIrInstr.EntryEnvp _) (ir.CompilerIrInstr.Jump _)
-         (ir.CompilerIrInstr.LaneId _ _ _))
-      unit]
-    [(or (ir.CompilerIrInstr.Mov _ index _)
-         (ir.CompilerIrInstr.Branch index _ _)
-         (ir.CompilerIrInstr.TotalEnumBranch index _ _)
-         (ir.CompilerIrInstr.Load _ index _)
-         (ir.CompilerIrInstr.Bitcast _ index _ _)
-         (ir.CompilerIrInstr.Splat _ index _ _)
-         (ir.CompilerIrInstr.VectorReduce _ _ index _ _)
-         (ir.CompilerIrInstr.MaskNot _ index _)
-         (ir.CompilerIrInstr.MaskReduce _ _ index _)
-         (ir.CompilerIrInstr.Xgetbv _ index)
-         (ir.CompilerIrInstr.Word _ index _ _)
-         (ir.CompilerIrInstr.Switch index _ _ _)
-         (ir.CompilerIrInstr.TotalEnumSwitch index _ _ _ _))
-      (collect-value-refs! refs (& index))]))
+(define (collect-instr-refs
+  [refs : i64_map.Map]
+  [instr : (& ir.CompilerIrInstr)]) : i64_map.Map
+  (let
+    [out : i64_map.Map refs]
+    (match instr
+      [(or (ir.CompilerIrInstr.Call _ name _ _)
+           (ir.CompilerIrInstr.TailCall name _ _))
+        (note-ref! (&mut out) name)]
+      [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+        (match (& (deref payload-box))
+          [(fields name) (note-ref! (&mut out) name)])]
+      [(ir.CompilerIrInstr.SpmdCall payload-box)
+        (match (& (deref payload-box))
+          [(fields callee) (note-ref! (&mut out) callee)])]
+      [(ir.CompilerIrInstr.Store name _ _) (note-ref! (&mut out) name)]
+      [_ unit])
+    (ir.compiler-ir-instr-fold-uses (clone (deref instr)) out fold-value-ref)))
 
 (defstruct ModuleRefs
   (refs i64_map.Map))
@@ -381,9 +232,9 @@
               (match (& (array-ref block-seq.slots bi))
                 [(ir.CompilerIrBlock.Block _ instrs)
                   (for [ii (iterator.range 0 instrs.len)]
-                    (collect-instr-refs!
-                      (&mut refs)
-                      (& (array-ref instrs.slots ii))))]))])])
+                    (set!
+                      refs
+                      (collect-instr-refs refs (& (array-ref instrs.slots ii)))))]))])])
     refs))
 
 (define (compute-windows-syscall-skip-mask
@@ -443,9 +294,11 @@
                 (match (& (array-ref block-seq.slots bi))
                   [(ir.CompilerIrBlock.Block _ instrs)
                     (for [ii (iterator.range 0 instrs.len)]
-                      (collect-instr-refs!
-                        (&mut refs)
-                        (& (array-ref instrs.slots ii))))]))])]))
+                      (set!
+                        refs
+                        (collect-instr-refs
+                          refs
+                          (& (array-ref instrs.slots ii)))))]))])]))
     (ModuleRefs refs)))
 
 (define (typecheck-for-tli-and-lower [request : api.TypecheckRequest]) : tc.ResultCompilerTypecheckChecked
@@ -970,6 +823,11 @@
               (__tl_make-array ir.CompilerIrExtern fn-count)]
             [gl-cross-externs : (__tl_dyn-array ir.CompilerIrExtern)
               (__tl_make-array ir.CompilerIrExtern gl-count)]
+            [base-reps : ir.CompilerIrRepresentationIndex
+              (lower.lower-representation-index-from-layouts
+                type-segment-bases
+                job
+                (ir.compiler-ir-representation-index-empty))]
             [manifest-buf : text_buf.TextBuf (text_buf.empty)]
             [emitted-modules : i64 0]
             [skipped-modules : i64 0]
@@ -1240,7 +1098,7 @@
                           authority)]
                       [prof : profile_state.CompilerProfileState
                         (profile_state.compiler-profile-state-new)]
-                      [opt-reps : ir.CompilerIrRepresentationIndex
+                      [mod-reps : ir.CompilerIrRepresentationIndex
                         (ir.compiler-ir-representation-index-with-authority
                           pools
                           (& interns)
@@ -1248,24 +1106,11 @@
                             1
                             0)
                           (& mod-program)
-                          (lower.lower-representation-index-from-layouts
-                            type-segment-bases
-                            job
-                            (ir.compiler-ir-representation-index-empty)))]
+                          (clone base-reps))]
                       (be_state.compiler-backend-state-set-representations-for-pools!
                         be-state-mod
                         (& pools)
-                        (ir.compiler-ir-representation-index-with-authority
-                          pools
-                          (& interns)
-                          (if windows?
-                            1
-                            0)
-                          (& mod-program)
-                          (lower.lower-representation-index-from-layouts
-                            type-segment-bases
-                            job
-                            (ir.compiler-ir-representation-index-empty))))
+                        (clone mod-reps))
                       (match (opt.optimize-program
                         mod-program
                         (ir.compiler-source-spans-empty)
@@ -1275,7 +1120,7 @@
                           opt-level
                           prof
                           true
-                          opt-reps
+                          mod-reps
                           (opt.OptInputRetirement.Retain)
                           (__tl_make-array i64 0)))
                         [(opt.CompilerOptimizedProgram.Program

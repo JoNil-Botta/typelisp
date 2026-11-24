@@ -146,7 +146,21 @@ else
     else
         TARGET_CLANG=$(find_clang) || fail "build-stdlib-sysroot: windows target requires 'clang'"
     fi
-    if command -v llvm-ar >/dev/null 2>&1; then
+    TARGET_CLANG_RESOLVED=$TARGET_CLANG
+    case "$TARGET_CLANG_RESOLVED" in
+        */*) ;;
+        *)
+            TARGET_CLANG_RESOLVED=$(command -v "$TARGET_CLANG_RESOLVED" 2>/dev/null || printf '%s' "$TARGET_CLANG_RESOLVED")
+            ;;
+    esac
+    TARGET_CLANG_DIR=$(dirname -- "$TARGET_CLANG_RESOLVED")
+    if [ -x "$TARGET_CLANG_DIR/llvm-ar.exe" ]; then
+        TARGET_AR="$TARGET_CLANG_DIR/llvm-ar.exe"
+        TARGET_AR_KIND=llvm-coff
+    elif [ -x "$TARGET_CLANG_DIR/llvm-ar" ]; then
+        TARGET_AR="$TARGET_CLANG_DIR/llvm-ar"
+        TARGET_AR_KIND=llvm-coff
+    elif command -v llvm-ar >/dev/null 2>&1; then
         TARGET_AR=$(command -v llvm-ar)
         TARGET_AR_KIND=llvm-coff
     elif command -v llvm-ar.exe >/dev/null 2>&1; then
@@ -192,7 +206,7 @@ TOOL_SOURCE_HASHES=$(
 )
 TOOL_SOURCE_HASH=$(printf '%s\n' "$TOOL_SOURCE_HASHES" | LC_ALL=C sort | ci_compiler_artifact_sha256_stdin)
 COMPILER_HASH=$(ci_compiler_artifact_sha256_stdin < "$COMPILER")
-TOOL_KEY=$(printf '%s\n' "$COMPILER_HASH" "$TOOL_SOURCE_HASH" "$NL_HOST_OS" "$TLCI_HASH" |
+TOOL_KEY=$(printf '%s\n' "$COMPILER_HASH" "$TOOL_SOURCE_HASH" "$NL_HOST_OS" "$TLCI_HASH" "tool-opt-1" |
     ci_compiler_artifact_sha256_stdin)
 TOOL_CACHE="$ROOT/target/build-stdlib-sysroot/tools/$TOOL_KEY"
 BUILDER_BIN="$TOOL_CACHE/build-stdlib-sysroot$NL_BIN_EXT"
@@ -215,7 +229,7 @@ if [ ! -x "$BUILDER_BIN" ]; then
             --target "$NL_BOOTSTRAP_TARGET" \
             $(native_target_cfg_args) \
             --stdlib-root stdlib --stdlib-root src \
-            --opt-level 2 \
+            --opt-level 1 \
             $TLCI_CFG_ARGS
         assemble_and_link "build-stdlib-sysroot" \
             "$TOOL_TEMP/builder.s" \

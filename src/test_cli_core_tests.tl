@@ -3,6 +3,7 @@
 (import compiler_backend_state as be_state)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
+(import stdlib.fs)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.hashmap)
@@ -1809,6 +1810,9 @@
   (let
     [used : tltest_name_map.Map (tltest_name_map.with-capacity 8)]
     [roots : cli_svec.Vec (tltest-roots-for-self-test)]
+    [rel-roots : cli_svec.Vec (cli_svec.new)]
+    [_r0 : unit (cli_svec.push-ref! (&mut rel-roots) "stdlib")]
+    [_r1 : unit (cli_svec.push-ref! (&mut rel-roots) "src")]
     [mod-std : String
       (tltest.tltest-combined-canonical-module-name
         "stdlib/tests/env_api.tl"
@@ -1823,6 +1827,38 @@
         (& roots)
         1
         (&mut used))]
+    [mod-inline : String
+      (tltest.tltest-combined-canonical-module-name
+        "tests/inline/foo.tl"
+        "/repo"
+        (& rel-roots)
+        2
+        (&mut used))]
+    [mod-src-foo : String
+      (tltest.tltest-combined-canonical-module-name
+        "src/foo.tl"
+        "/repo"
+        (& rel-roots)
+        3
+        (&mut used))]
+    [mod-src-foo-dup : String
+      (tltest.tltest-combined-canonical-module-name
+        "src/tests/foo.tl"
+        "/repo"
+        (& rel-roots)
+        4
+        (&mut used))]
+    [mod-abs-bar : String
+      (tltest.tltest-combined-canonical-module-name
+        "/repo/src/bar.tl"
+        "/repo"
+        (& rel-roots)
+        5
+        (&mut used))]
+    [abs-paths : cli_svec.Vec (cli_svec.new)]
+    [_p0 : unit (cli_svec.push-ref! (&mut abs-paths) "/repo/src/bar.tl")]
+    [tmap : tltest_name_map.Map
+      (tltest.tltest-combined-target-map (& abs-paths) "/repo" (& rel-roots))]
     (unless
       (and
         (not
@@ -1839,6 +1875,19 @@
           (tltest.tltest-combined-config-error true true false Check))
         (string.eq (& mod-std) "stdlib.tests.env_api")
         (string.eq (& mod-src) "foo_smoke")
+        (string.eq (& mod-inline) "__tl_combined_file_mod_2")
+        (string.eq (& mod-src-foo) "foo")
+        (string.eq (& mod-src-foo-dup) "__tl_combined_file_mod_4")
+        (string.eq (& mod-abs-bar) "bar")
+        (=
+          (tltest.tltest-combined-path-file-index (& tmap) "/repo" "src/bar.tl")
+          0)
+        (=
+          (tltest.tltest-combined-path-file-index
+            (& tmap)
+            "/repo"
+            "/repo/src/bar.tl")
+          0)
         (string.eq (tltest.tltest-combined-failure-label 1) "load failed")
         (string.eq
           (tltest.tltest-combined-failure-label 2)
@@ -2036,3 +2085,249 @@
               (driver.compiler-driver-reset-file-state!)
               (and run-ok (= bad-status 1)))))])
     (io.panic "test: --combined failure/fallback self-test failed")))
+
+(test
+  test-cli-combined-duplicate-module-fails-closed
+  (unless
+    (match (build_run_core.source-tool-create-temp-dir "tltest-combined-dupmod")
+      [(Err _) false]
+      [(Ok dir)
+        (let
+          [file-a : String
+            (build_run_core.source-tool-fs-path-join (& dir) "demo_a.tl")]
+          [file-b : String
+            (build_run_core.source-tool-fs-path-join (& dir) "demo_b.tl")]
+          [paths : cli_svec.Vec (cli_svec.new)]
+          [single-a : cli_svec.Vec (cli_svec.new)]
+          [roots : cli_svec.Vec (tltest-roots-for-self-test)]
+          [target : be_state.CompilerBackendTarget
+            (tltest-combined-host-target)]
+          [files : build_run_core.SourceToolTempFiles
+            (build_run_core.source-tool-temp-files
+              (string.copy (& dir))
+              "combined_dupmod.tl"
+              target)]
+          [single-files : build_run_core.SourceToolTempFiles
+            (build_run_core.source-tool-temp-files
+              (string.copy (& dir))
+              "single_demo_a.tl"
+              target)]
+          [file-counts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+          [single-counts : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+          (tltest-write-text
+            (& file-a)
+            "(module demo)\n(import stdlib.test)\n(test demo-a-fails (test.assert-i64-eq 1 2 \"must fail\"))\n")
+          (tltest-write-text
+            (& file-b)
+            "(module demo)\n(import stdlib.test)\n(test demo-b-passes (test.assert-i64-eq 2 2 \"ok\"))\n")
+          (cli_svec.push-ref! (&mut paths) (string.copy (& file-a)))
+          (cli_svec.push-ref! (&mut paths) file-b)
+          (cli_svec.push-ref! (&mut single-a) file-a)
+          (driver.compiler-driver-reset-file-state!)
+          (let
+            [entry : tltest.TlTestEntry (tltest.tltest-entry-new)]
+            [entry-result : i64
+              (in-arena
+                entry.owner
+                (tltest.tltest-combined-compile-in-entry
+                  (& paths)
+                  (& roots)
+                  (& files)
+                  (&mut file-counts)
+                  0
+                  (Scalar)
+                  target))]
+            [compile-status : i64
+              (tltest.tltest-entry-finish entry entry-result)]
+            (driver.compiler-driver-reset-file-state!)
+            (let
+              [single-entry : tltest.TlTestEntry (tltest.tltest-entry-new)]
+              [single-result : i64
+                (in-arena
+                  single-entry.owner
+                  (tltest.tltest-combined-compile-in-entry
+                    (& single-a)
+                    (& roots)
+                    (& single-files)
+                    (&mut single-counts)
+                    0
+                    (Scalar)
+                    target))]
+              [single-status : i64
+                (tltest.tltest-entry-finish single-entry single-result)]
+              [single-fails? : bool
+                (and
+                  (= single-status 0)
+                  (= (array-ref single-counts 0) 1)
+                  (tltest-combined-run-index
+                    target
+                    (& single-files.bin)
+                    0
+                    1
+                    "0 passed; 1 failed"))]
+              (build_run_core.source-tool-clean-temp-files files true)
+              (driver.compiler-driver-reset-file-state!)
+              (and (= compile-status 1) single-fails?))))])
+    (io.panic
+      "test: --combined duplicate (module demo) must fail closed and fail")))
+
+(test
+  test-cli-combined-stem-collision-src-and-inline
+  (unless
+    (match (build_run_core.source-tool-create-temp-dir "tltest-combined-stem")
+      [(Err _) false]
+      [(Ok dir)
+        (let
+          [src-dir : String
+            (build_run_core.source-tool-fs-path-join (& dir) "src")]
+          [tests-dir : String
+            (build_run_core.source-tool-fs-path-join (& dir) "tests")]
+          [inline-dir : String
+            (build_run_core.source-tool-fs-path-join (& tests-dir) "inline")]
+          [_m0 : i64 (fs.mkdir-status (& src-dir))]
+          [_m1 : i64 (fs.mkdir-status (& tests-dir))]
+          [_m2 : i64 (fs.mkdir-status (& inline-dir))]
+          [src-foo : String
+            (build_run_core.source-tool-fs-path-join (& src-dir) "foo.tl")]
+          [inline-foo : String
+            (build_run_core.source-tool-fs-path-join (& inline-dir) "foo.tl")]
+          [paths : cli_svec.Vec (cli_svec.new)]
+          [roots : cli_svec.Vec (tltest-roots-for-self-test)]
+          [target : be_state.CompilerBackendTarget
+            (tltest-combined-host-target)]
+          [files : build_run_core.SourceToolTempFiles
+            (build_run_core.source-tool-temp-files
+              (string.copy (& dir))
+              "combined_stem.tl"
+              target)]
+          [file-counts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+          (tltest-write-text
+            (& src-foo)
+            "(import stdlib.test)\n(define (local-val) : i64 42)\n(test src-foo-ok (test.assert-i64-eq (local-val) 42 \"src foo\"))\n")
+          (tltest-write-text
+            (& inline-foo)
+            "(import stdlib.test)\n(define (local-val) : i64 99)\n(test inline-foo-ok (test.assert-i64-eq (local-val) 99 \"inline foo\"))\n")
+          (cli_svec.push-ref! (&mut roots) src-dir)
+          (cli_svec.push-ref! (&mut paths) src-foo)
+          (cli_svec.push-ref! (&mut paths) inline-foo)
+          (driver.compiler-driver-reset-file-state!)
+          (let
+            [entry : tltest.TlTestEntry (tltest.tltest-entry-new)]
+            [entry-result : i64
+              (in-arena
+                entry.owner
+                (tltest.tltest-combined-compile-in-entry
+                  (& paths)
+                  (& roots)
+                  (& files)
+                  (&mut file-counts)
+                  0
+                  (Scalar)
+                  target))]
+            [compile-status : i64
+              (tltest.tltest-entry-finish entry entry-result)]
+            [ok : bool
+              (and
+                (= compile-status 0)
+                (= (array-ref file-counts 0) 1)
+                (= (array-ref file-counts 1) 1)
+                (tltest-combined-run-index
+                  target
+                  (& files.bin)
+                  0
+                  0
+                  "1 passed; 0 failed")
+                (tltest-combined-run-index
+                  target
+                  (& files.bin)
+                  1
+                  0
+                  "1 passed; 0 failed"))]
+            (build_run_core.source-tool-clean-temp-files files true)
+            (driver.compiler-driver-reset-file-state!)
+            ok))])
+    (io.panic
+      "test: --combined src/foo.tl + tests/inline/foo.tl stem collision failed")))
+
+(test
+  test-cli-combined-duplicate-batch-path-falls-back
+  (unless
+    (match (build_run_core.source-tool-create-temp-dir
+      "tltest-combined-duppath")
+      [(Err _) false]
+      [(Ok dir)
+        (let
+          [file-a : String
+            (build_run_core.source-tool-fs-path-join (& dir) "dup_a.tl")]
+          [file-a-alias : String
+            (build_run_core.source-tool-fs-path-join
+              (& (build_run_core.source-tool-fs-path-join (& dir) "."))
+              "dup_a.tl")]
+          [file-b : String
+            (build_run_core.source-tool-fs-path-join (& dir) "dup_b.tl")]
+          [paths : cli_svec.Vec (cli_svec.new)]
+          [exact-dup : cli_svec.Vec (cli_svec.new)]
+          [distinct : cli_svec.Vec (cli_svec.new)]
+          [roots : cli_svec.Vec (tltest-roots-for-self-test)]
+          [target : be_state.CompilerBackendTarget
+            (tltest-combined-host-target)]
+          [files : build_run_core.SourceToolTempFiles
+            (build_run_core.source-tool-temp-files
+              (string.copy (& dir))
+              "combined_duppath.tl"
+              target)]
+          [file-counts : (__tl_dyn-array i64) (__tl_make-array i64 2)]
+          (tltest-write-text
+            (& file-a)
+            "(import stdlib.test)\n(test dup-ok (test.assert-i64-eq 3 3 \"ok\"))\n")
+          (cli_svec.push-ref! (&mut paths) (string.copy (& file-a)))
+          (cli_svec.push-ref! (&mut paths) file-a-alias)
+          (cli_svec.push-ref! (&mut exact-dup) (string.copy (& file-a)))
+          (cli_svec.push-ref! (&mut exact-dup) (string.copy (& file-a)))
+          (cli_svec.push-ref! (&mut distinct) file-a)
+          (cli_svec.push-ref! (&mut distinct) file-b)
+          (driver.compiler-driver-reset-file-state!)
+          (let
+            [entry : tltest.TlTestEntry (tltest.tltest-entry-new)]
+            [entry-result : i64
+              (in-arena
+                entry.owner
+                (tltest.tltest-combined-compile-in-entry
+                  (& paths)
+                  (& roots)
+                  (& files)
+                  (&mut file-counts)
+                  0
+                  (Scalar)
+                  target))]
+            [alias-status : i64 (tltest.tltest-entry-finish entry entry-result)]
+            [exact-entry : tltest.TlTestEntry (tltest.tltest-entry-new)]
+            [exact-result : i64
+              (in-arena
+                exact-entry.owner
+                (tltest.tltest-combined-compile-in-entry
+                  (& exact-dup)
+                  (& roots)
+                  (& files)
+                  (&mut file-counts)
+                  0
+                  (Scalar)
+                  target))]
+            [exact-status : i64
+              (tltest.tltest-entry-finish exact-entry exact-result)]
+            [ok : bool
+              (and
+                (tltest.tltest-combined-has-duplicate-paths? (& paths) (& dir))
+                (tltest.tltest-combined-has-duplicate-paths?
+                  (& exact-dup)
+                  (& dir))
+                (not
+                  (tltest.tltest-combined-has-duplicate-paths?
+                    (& distinct)
+                    (& dir)))
+                (= alias-status 1)
+                (= exact-status 1))]
+            (build_run_core.source-tool-clean-temp-files files true)
+            (driver.compiler-driver-reset-file-state!)
+            ok))])
+    (io.panic "test: --combined duplicate batch path fallback failed")))

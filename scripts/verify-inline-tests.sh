@@ -356,18 +356,6 @@ inline_test_plan_chunks() {
             }
             return 0
         }
-        function sort_asc_hub_path(arr, n,    i, j, kf, kk) {
-            for (i = 2; i <= n; i++) {
-                kf = arr[i]
-                kk = full_hub_key[kf]
-                j = i - 1
-                while (j >= 1 && (full_hub_key[arr[j]] > kk || (full_hub_key[arr[j]] == kk && arr[j] > kf))) {
-                    arr[j + 1] = arr[j]
-                    j--
-                }
-                arr[j + 1] = kf
-            }
-        }
         function split_weight(path,    ln) {
             ln = lines[path]
             if (ln > 15000) ln = 15000
@@ -378,8 +366,9 @@ inline_test_plan_chunks() {
         # heavy chunk'\''s closure) does not force the remaining files into one
         # oversized tail chunk, peeling out cross-module struct/enum collisions.
         # Then promote each chunk'\''s largest non-chunk-imported file to index 1
-        # (the root-module leader) and relocate any importer of that leader.
-        function plan_contiguous_combined(arr, n, k, bcap, use_leader,    i, j, b, nb, tot, target, acc, f, best, best_dup, cur_dup, imp, leader, dst, job, cs, ce, defn, deff) {
+        # (the root-module leader) and relocate any importer of that leader to
+        # the next unprocessed chunk when collision-free, or defer it to deff.
+        function plan_contiguous_combined(arr, n, k, bcap, use_leader,    i, j, m, b, nb, tot, target, acc, f, best, best_dup, cur_dup, imp, leader, dst, job, cs, ce, dst_cs, dst_ce, defn, deff) {
             if (n <= 0) return
             sort_asc_path(arr, n)
             nb = (k > 0 && k < n) ? k : n
@@ -443,13 +432,25 @@ inline_test_plan_chunks() {
                     }
                     leader = bfile[b, 1]
                     if (nb > 1) {
-                        dst = (b < nb) ? (b + 1) : (b - 1)
+                        dst = (b < nb) ? (b + 1) : 0
+                        if (dst > 0) {
+                            delete dst_cs
+                            delete dst_ce
+                            for (m = 1; m <= bcount[dst]; m++) {
+                                chunk_record_types(bfile[dst, m], dst_cs, dst_ce)
+                            }
+                        }
                         j = 1
                         for (i = 2; i <= bcount[b]; i++) {
                             f = bfile[b, i]
                             if ((f SUBSEP leader) in reaches) {
-                                bcount[dst]++
-                                bfile[dst, bcount[dst]] = f
+                                if (dst > 0 && !chunk_has_type_conflict(f, dst_cs, dst_ce)) {
+                                    bcount[dst]++
+                                    bfile[dst, bcount[dst]] = f
+                                    chunk_record_types(f, dst_cs, dst_ce)
+                                } else {
+                                    deff[++defn] = f
+                                }
                             } else {
                                 j++
                                 bfile[b, j] = f
@@ -740,27 +741,21 @@ bounded_pool_run_job() {
     if ci_timing_enabled; then
         TYPELISP_CI_TIMING_FILE="$INLINE_TEST_POOL_DIR/timing/$_pool_job.tsv"
     fi
-    _pool_rc=0
+    _pool_phase=batch-run
+    set -- "$COMPILER" test --batch "$WORKDIR/$_pool_job.list"
     if [ -f "$WORKDIR/$_pool_job.combined" ]; then
-        ci_timing_run "$_pool_job" batch-run-combined \
-            "$ROOT/scripts/run-memory-bounded.sh" \
-            --limit-mib "$_pool_cap" --report "$WORKDIR/$_pool_job.memory" \
-            --timeout-seconds "$INLINE_TEST_JOB_TIMEOUT_SECONDS" -- \
-            "$COMPILER" test --batch "$WORKDIR/$_pool_job.list" --combined \
-            --target "$HOST_TARGET" \
-            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-            > "$WORKDIR/$_pool_job.stdout" 2> "$WORKDIR/$_pool_job.stderr" ||
-            _pool_rc=$?
-    else
-        ci_timing_run "$_pool_job" batch-run \
-            "$ROOT/scripts/run-memory-bounded.sh" \
-            --limit-mib "$_pool_cap" --report "$WORKDIR/$_pool_job.memory" \
-            --timeout-seconds "$INLINE_TEST_JOB_TIMEOUT_SECONDS" -- \
-            "$COMPILER" test --batch "$WORKDIR/$_pool_job.list" --target "$HOST_TARGET" \
-            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-            > "$WORKDIR/$_pool_job.stdout" 2> "$WORKDIR/$_pool_job.stderr" ||
-            _pool_rc=$?
+        _pool_phase=batch-run-combined
+        set -- "$@" --combined
     fi
+    _pool_rc=0
+    ci_timing_run "$_pool_job" "$_pool_phase" \
+        "$ROOT/scripts/run-memory-bounded.sh" \
+        --limit-mib "$_pool_cap" --report "$WORKDIR/$_pool_job.memory" \
+        --timeout-seconds "$INLINE_TEST_JOB_TIMEOUT_SECONDS" -- \
+        "$@" --target "$HOST_TARGET" \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+        > "$WORKDIR/$_pool_job.stdout" 2> "$WORKDIR/$_pool_job.stderr" ||
+        _pool_rc=$?
     printf '%s\n' "$_pool_rc" > "$WORKDIR/$_pool_job.status"
     if ! bounded_pool_read_report "$WORKDIR/$_pool_job.memory" "$_pool_rc" "$_pool_cap" "$HOST_OS"; then
         echo "inline test $_pool_job $BOUNDED_POOL_REPORT_FAILURE" \
@@ -829,6 +824,31 @@ inline_test_self_test_chunks() {
         echo "inline test chunk self-test: combined chunk planner did not separate struct/enum conflicts or partition sources" >&2
         exit 1
     fi
+
+    _reloc_dir=$(mktemp -d "$INLINE_TEST_SELF_TEST_ROOT/reloc.XXXXXX")
+    mkdir -p "$_reloc_dir/src"
+    awk 'BEGIN { for (i = 0; i < 60; i++) print ";; pad"; print "(test a unit)" }' > "$_reloc_dir/src/a_big.tl"
+    printf '(import a_big)\n(defstruct Clash (v i64))\n(test b unit)\n' > "$_reloc_dir/src/b_imp.tl"
+    printf '(test c unit)\n' > "$_reloc_dir/src/c_pad.tl"
+    printf '(test d unit)\n' > "$_reloc_dir/src/d_pad.tl"
+    printf '(defenum Clash (V))\n(test e unit)\n' > "$_reloc_dir/src/e_enum.tl"
+    printf '(test f unit)\n' > "$_reloc_dir/src/f_pad.tl"
+    (
+        cd "$_reloc_dir" || exit 1
+        printf '%s\n' src/a_big.tl src/b_imp.tl src/c_pad.tl src/d_pad.tl src/e_enum.tl src/f_pad.tl > discovered.txt
+        INLINE_TEST_COMBINED_LIGHT_CHUNKS=2
+        inline_test_plan_chunks discovered.txt "$_reloc_dir" "$_reloc_dir/queue"
+    )
+    if [ "$(cat "$_reloc_dir"/chunk-*.list | LC_ALL=C sort)" != "$(printf '%s\n' src/a_big.tl src/b_imp.tl src/c_pad.tl src/d_pad.tl src/e_enum.tl src/f_pad.tl)" ]; then
+        echo "inline test chunk self-test: leader relocation lost or duplicated a source" >&2
+        exit 1
+    fi
+    for _reloc_list in "$_reloc_dir"/chunk-*.list; do
+        if grep -qxF 'src/b_imp.tl' "$_reloc_list" && grep -qxF 'src/e_enum.tl' "$_reloc_list"; then
+            echo "inline test chunk self-test: leader relocation re-introduced a struct/enum collision" >&2
+            exit 1
+        fi
+    done
 
     inline_test_self_test_fixture "$_self_dir"
     mv "$_self_dir/chunk-002.status" "$_self_dir/chunk-002.status.saved"

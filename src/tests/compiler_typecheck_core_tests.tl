@@ -13363,8 +13363,7 @@
               false
               false
               (effect_words.new)
-              (effect_words.new)
-              (tc_core.TcGlobalInitializerScan -1 -1 0 0 0 -1))]
+              (effect_words.new))]
           [outer : tc_core.TcNameIdList
             (tc_core.tc-global-effect-bind!
               (&mut collector)

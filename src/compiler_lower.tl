@@ -40931,9 +40931,7 @@
                             args
                             result-ty
                             origin)]
-                        [(and
-                            builtin-available
-                            (cbi.compiler-builtin-lower-cpuid-id? name-id))
+                        [(tc_core.tc-cpuid-head? ctx type-env raw-name)
                           (lower-cpuid-call
                             ctx
                             state

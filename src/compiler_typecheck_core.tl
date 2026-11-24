@@ -5154,26 +5154,44 @@
     [string-temporary?
       (and
         allow-mut-by-value-borrow
+        (match (& expected)
+          [(ast.AstMaybeType.Some want)
+            (match want
+              [(ast.AstType.Ref _ inner)
+                (match (ast.ty-node-get inner)
+                  [(or (ast.AstType.Str) (ast.AstType.Var _)
+                       (ast.AstType.VarArgs _ _))
+                    true]
+                  [_ false])]
+              [(or (ast.AstType.Var _) (ast.AstType.VarArgs _ _)
+                   (ast.AstType.Region _ _))
+                true]
+              [_ false])]
+          [_ false])
         (match (& expr)
-          [(or (Ann _ _) (Try _) (PtrRead _) (StringFromBytes _ _)) true]
+          [(or (Literal _) (Call _ _) (StructGet _ _) (TupleRef _ _)
+               (ArrayRef _ _) (Replace _ _) (Ann _ _) (Try _) (PtrRead _)
+               (StringFromBytes _ _))
+            true]
           [_ false]))]
     [string-expected : ast.AstMaybeType
       (if string-temporary?
         (clone expected)
         (No))]
     [result
-      (tc-selected-project
-        (tc-infer-selected-inner
-          ctx
-          env
-          expr
-          typed.TypedSyntax.Generated
-          expected
-          (tc-infer-unlocated-source)
-          (& tc-infer-no-span)
-          allow-mut-by-value-borrow
-          true
-          TcSelectedSink.Query))]
+      (match (tc-infer-selected-inner
+        ctx
+        env
+        expr
+        typed.TypedSyntax.Generated
+        expected
+        (tc-infer-unlocated-source)
+        (& tc-infer-no-span)
+        allow-mut-by-value-borrow
+        true
+        TcSelectedSink.Query)
+        [(TcSelectedResult.Ok ty _ _) (ResultTcType.Ok ty)]
+        [(TcSelectedResult.Err message _) (ResultTcType.Err message)])]
     (if string-temporary?
       (tc-call-string-temporary-result ctx string-expected result)
       result)))
@@ -5186,10 +5204,15 @@
     [(Some want)
       (match result
         [(Ok actual)
-          (if (tc-call-string-temporary-ref-compatible?
-            ctx
-            (clone want)
-            (clone actual))
+          (if (and
+            (match (& actual)
+              [(ast.AstType.String) true]
+              [(ast.AstType.Region _ inner)
+                (match (ast.ty-node-get inner)
+                  [(ast.AstType.String) true]
+                  [_ false])]
+              [_ false])
+            (tc-str-ref-type? (tc-resolve-type ctx (clone want))))
             (Ok want)
             (Ok actual))]
         [(Err message) (Err message)])]
@@ -5291,7 +5314,7 @@
     (tc-selected-scope-finish ,env binding-count result)))
 
 ;; A source span locates an operand's errors. Only forms that inspect spans
-;; receive the full range; the ordinary checker returns its scalar result.
+;; receive the full range.
 (defmacro (tc-infer-spanned-operand
   [ctx : Expr]
   [env : Expr]
@@ -5303,106 +5326,88 @@
   [syntax : Expr]
   [source : Expr]
   [sink : Expr]) : Expr
-  (let
-    [ordinary? : bool (comptime.expr-bool-value ordinary)]
-    [expanded : Expr
-      `(tc-infer-selected-expansion
-        ,ctx
-        ,env
-        expanded-id
-        provenance-id
-        macro-name-id
-        ,at
-        ,syntax
-        ,expected
-        ,source
-        ,allow-mut
-        ,ordinary
-        ,sink)]
-    [located : Expr
-      (if ordinary?
-        source
-        `(ownership.OwnershipSource
-          (__tl-project-field ,source path)
-          (tc-selected-span-line (__tl-project-field ,source line) ,at)
-          (tc-selected-span-column (__tl-project-field ,source column) ,at)
-          (__tl-project-field ,source expansion)))]
-    [view : Expr
-      `(tc-infer-selected-transparent-id
-        ,ctx
-        ,env
-        ,id
-        (TcMaybeAstSourceSpan.Some ,at)
-        ,syntax
-        ,expected
-        ,located
-        ,allow-mut
-        ,ordinary
-        ,sink)]
-    [check : Expr
-      `(match (& operand)
+  `(let
+    [operand : ast.AstExpr (tc-context-expr-get ,ctx ,id)]
+    [checked
+      (match (& operand)
         [(MacroExpansion expanded-id provenance-id macro-name-id)
           (return
-            ,(if ordinary?
-              `(tc-selected-project ,expanded)
-              expanded))]
+            (tc-infer-selected-expansion
+              ,ctx
+              ,env
+              expanded-id
+              provenance-id
+              macro-name-id
+              ,at
+              ,syntax
+              ,expected
+              ,source
+              ,allow-mut
+              ,ordinary
+              ,sink))]
         [(or (Borrow _ _ _) (Unsafe _))
-          ,(if ordinary?
-            `(tc-selected-project ,view)
-            view)]
+          (tc-infer-selected-transparent-id
+            ,ctx
+            ,env
+            ,id
+            (TcMaybeAstSourceSpan.Some ,at)
+            ,syntax
+            ,expected
+            (if ,ordinary
+              ,source
+              (ownership.OwnershipSource
+                (__tl-project-field ,source path)
+                (tc-selected-span-line (__tl-project-field ,source line) ,at)
+                (tc-selected-span-column
+                  (__tl-project-field ,source column)
+                  ,at)
+                (__tl-project-field ,source expansion)))
+            ,allow-mut
+            ,ordinary
+            ,sink)]
         [_
-          ,(if ordinary?
-            `(tc-infer-operand-id ,ctx ,env ,id ,expected ,allow-mut)
-            `(tc-infer-selected-result-id
+          (if ,ordinary
+            (match (match ,expected
+              [(ast.AstMaybeType.No) (tc-expr-id ,ctx ,env ,id)]
+              [(ast.AstMaybeType.Some want)
+                (tc-expr-with-expected-or-actual-core-id
+                  ,ctx
+                  ,env
+                  ,id
+                  want
+                  ,allow-mut)])
+              [(ResultTcType.Ok ty)
+                (TcSelectedResult.Ok
+                  ty
+                  TcSelectedOccurrence.Unrepresented
+                  ,sink)]
+              [(ResultTcType.Err message) (TcSelectedResult.Err message ,sink)])
+            (tc-infer-selected-result-id
               ,ctx
               ,env
               (& ,syntax)
               ,id
               ,expected
-              ,located
+              (ownership.OwnershipSource
+                (__tl-project-field ,source path)
+                (tc-selected-span-line (__tl-project-field ,source line) ,at)
+                (tc-selected-span-column
+                  (__tl-project-field ,source column)
+                  ,at)
+                (__tl-project-field ,source expansion))
               ,sink))])]
-    `(let
-      [operand : ast.AstExpr (tc-context-expr-get ,ctx ,id)]
-      ,(if ordinary?
-        `(match ,check
-          [(Ok ty) (Ok ty)]
-          [(Err message)
-            (tc-locate-spanned-error-with-context ,ctx ,env operand ,at message)])
-        `(match ,check
-          [(TcSelectedResult.Ok ty occurrence next)
-            (TcSelectedResult.Ok ty occurrence next)]
-          [(TcSelectedResult.Err message next)
-            (tc-selected-unrepresented
-              (tc-locate-spanned-error-with-context
-                ,ctx
-                ,env
-                operand
-                ,at
-                message)
-              next)])))))
+    (match checked
+      [(TcSelectedResult.Ok ty occurrence next)
+        (TcSelectedResult.Ok ty occurrence next)]
+      [(TcSelectedResult.Err message next)
+        (tc-selected-unrepresented
+          (tc-locate-spanned-error-with-context ,ctx ,env operand ,at message)
+          next)])))
 
 (defmacro (tc-selected-query? [sink : Expr]) : Expr
   `(match ,sink
     [(TcSelectedSink.Query) true]
     [_ false]))
-
-(defmacro (tc-selected-aggregate-query
-  [ctx : Expr]
-  [env : Expr]
-  [expr : Expr]
-  [expected : Expr]) : Expr
-  `(tc-selected-project
-    (tc-infer-selected-inner
-      ,ctx
-      ,env
-      ,expr
-      typed.TypedSyntax.Generated
-      ,expected
-      (tc-infer-unlocated-source)
-      (& tc-infer-no-span)
-      false
-      false
-      TcSelectedSink.Query)))
 
 (defmacro (tc-aggregate-contextual-type
   [ctx : Expr]
@@ -5472,16 +5477,21 @@
         at
         expected
         allow-mut-by-value-borrow
-        false
+        ordinary?
         syntax
         source
         sink)]
     [(ast.AstExpr.Literal literal)
       (match sink
         [(TcSelectedSink.Query)
-          (tc-selected-unrepresented
-            (tc-infer-selected-literal-type ctx env literal expected)
-            TcSelectedSink.Query)]
+          (match (tc-infer-selected-literal-type ctx env literal expected)
+            [(ResultTcType.Ok ty)
+              (TcSelectedResult.Ok
+                ty
+                TcSelectedOccurrence.Unrepresented
+                TcSelectedSink.Query)]
+            [(ResultTcType.Err message)
+              (TcSelectedResult.Err message TcSelectedSink.Query)])]
         [_
           (tc-selected-publish
             (tc-infer-selected-literal-type
@@ -5502,26 +5512,21 @@
             (return (TcSelectedResult.Err message sink))]
           [(TcSelectedDotted.Field place)
             (return
-              (if ordinary?
-                (tc-selected-unrepresented
-                  (tc-infer-selected-legacy
-                    ctx
-                    env
-                    place
-                    typed.TypedSyntax.Generated
-                    expected)
-                  sink)
-                (tc-infer-selected-inner
-                  ctx
-                  env
-                  place
-                  syntax
-                  expected
-                  source
-                  span
-                  allow-mut-by-value-borrow
+              (tc-infer-selected-inner
+                ctx
+                env
+                place
+                (if ordinary?
+                  typed.TypedSyntax.Generated
+                  syntax)
+                expected
+                source
+                span
+                (if ordinary?
                   false
-                  sink)))]
+                  allow-mut-by-value-borrow)
+                false
+                sink))]
           [(TcSelectedDotted.No)
             (unless
               ordinary?
@@ -5670,13 +5675,15 @@
     [(ast.AstExpr.StructGet receiver field)
       (cond
         [(tc-selected-query? (& sink))
-          (tc-selected-contextual-result
-            ctx
-            env
-            expected
-            (tc-selected-unrepresented
-              (tc-struct-read-type ctx env receiver field)
-              sink))]
+          (let
+            [res : ResultTcType (tc-struct-read-type ctx env receiver field)]
+            (match (match expected
+              [(ast.AstMaybeType.No) res]
+              [(ast.AstMaybeType.Some want)
+                (tc-expr-result-with-expected-or-actual ctx env want false res)])
+              [(ResultTcType.Ok ty)
+                (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented sink)]
+              [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]))]
         [(tc-raw-deref-place? ctx env (clone expr))
           (tc-infer-selected-raw-read
             ctx
@@ -5894,17 +5901,29 @@
          (ast.AstExpr.ProgramArgv) (ast.AstExpr.ProgramEnvp))
       (tc-infer-selected-intrinsic ctx env expr syntax expected source sink)]
     [(or (ast.AstExpr.BoxTake receiver) (ast.AstExpr.BoxGet receiver))
-      (tc-infer-selected-deref
-        ctx
-        env
-        receiver
-        (match (& expr)
-          [(ast.AstExpr.BoxTake _) true]
-          [_ false])
-        syntax
-        expected
-        source
-        sink)]
+      (let
+        [take? : bool
+          (match (& expr)
+            [(ast.AstExpr.BoxTake _) true]
+            [_ false])]
+        (if ordinary?
+          (tc-selected-unrepresented
+            (tc-deref-value-type
+              ctx
+              env
+              (tc-context-expr-get ctx receiver)
+              take?
+              expected)
+            sink)
+          (tc-infer-selected-deref
+            ctx
+            env
+            receiver
+            take?
+            syntax
+            expected
+            source
+            sink)))]
     [(ast.AstExpr.Tuple items)
       (tc-infer-selected-tuple ctx env (& items) syntax expected source sink)]
     [(ast.AstExpr.Lambda lambda-box)
@@ -6062,7 +6081,7 @@
         syntax
         expected
         source
-        false
+        ordinary?
         sink)]
     [(ast.AstExpr.Ann inner-id ty-id)
       (tc-infer-selected-ann ctx env inner-id ty-id syntax expected source sink)]
@@ -6315,7 +6334,6 @@
       (tc-infer-selected-scratch
         ctx
         env
-        expr
         -1
         (& body)
         syntax
@@ -6326,7 +6344,6 @@
       (tc-infer-selected-scratch
         ctx
         env
-        expr
         scratch-id
         (& body)
         syntax
@@ -6349,10 +6366,7 @@
               (if (tc-selected-call-type-ok? ctx (clone ty))
                 (tc-selected-publish-nullary-variant ty syntax source sink)
                 (tc-selected-unrepresented (ResultTcType.Ok ty) sink))])])]
-    [_
-      (tc-selected-unrepresented
-        (tc-infer-selected-legacy ctx env expr syntax expected)
-        sink)]))
+    [_ (TcSelectedResult.Err "typecheck: unsupported expression" sink)]))
 
 ;; --- Unsafe blocks and macro expansions (#8449) ------------------------------
 ;; Most operands already have their own ID policy. A span-sensitive node
@@ -10839,16 +10853,15 @@
     (tc-type-env-scoped-runtime-restore! saved)
     result))
 
-;; `with-scratch` and `with-escape` (SPEC clone-out): legacy typing decides
-;; the result (the body's value with its scratch regions erased, a supported
-;; clone-out type, tagged with the region active outside the form because the
-;; clone is a fresh allocation there). The body is an ordinary block whose
-;; value is consumed by the clone-out; the result is a fresh value. A
+;; `with-scratch` and `with-escape` (SPEC clone-out): the body is checked in a
+;; scratch region, its result must be a supported clone-out type, and its
+;; scratch regions are erased and replaced by the region active outside the form
+;; because the clone is a fresh allocation there. The body is an ordinary block
+;; whose value is consumed by the clone-out; the result is a fresh value. A
 ;; `with-escape` scratch owner is read through a borrow, never moved.
 (define (tc-infer-selected-scratch
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : ast.AstExpr]
   [scratch-id : i64]
   [body : (& body ast.AstExprList)]
   [syntax : typed.TypedSyntax]
@@ -10859,51 +10872,72 @@
     lease
     intern
     bind)
-  (match (tc-infer-selected-legacy
-    ctx
-    env
-    expr
-    syntax
-    (tc-global-shared-view expected))
-    [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-    [(ResultTcType.Ok ty)
-      (match (cond
-        [(< scratch-id 0)
-          (TcSelectedResult.Ok
-            ast.AstType.Unit
-            TcSelectedOccurrence.Unrepresented
-            sink)]
-        [(tc-selected-arena-handle-operand? ctx env scratch-id)
-          (match (tc-expr-id ctx env scratch-id)
-            [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
-            [(ResultTcType.Ok scratch-ty)
-              (tc-infer-selected-arena-handle
-                ctx
-                env
-                scratch-id
-                scratch-ty
-                (tc-global-shared-view source)
-                sink)])]
-        [else
-          (tc-infer-selected-operand
+  (match (cond
+    [(< scratch-id 0)
+      (TcSelectedResult.Ok
+        ast.AstType.Unit
+        TcSelectedOccurrence.Unrepresented
+        sink)]
+    [(tc-selected-query? (& sink))
+      (tc-selected-unrepresented
+        (tc-expr ctx env (tc-context-expr-get ctx scratch-id))
+        sink)]
+    [(tc-selected-arena-handle-operand? ctx env scratch-id)
+      (match (tc-expr-id ctx env scratch-id)
+        [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
+        [(ResultTcType.Ok scratch-ty)
+          (tc-infer-selected-arena-handle
             ctx
             env
             scratch-id
+            scratch-ty
             (tc-global-shared-view source)
-            sink)])
-        [(TcSelectedResult.Err message next)
-          (TcSelectedResult.Err message next)]
-        [(TcSelectedResult.Ok _ scratch next)
-          (match (tc-infer-selected-scratch-body
-            ctx
-            env
-            body
-            expected
-            (tc-global-shared-view source)
-            next)
-            [(TcSelectedResult.Err message after)
-              (TcSelectedResult.Err message after)]
-            [(TcSelectedResult.Ok _ value after)
+            sink)])]
+    [else
+      (tc-infer-selected-operand
+        ctx
+        env
+        scratch-id
+        (tc-global-shared-view source)
+        sink)])
+    [(TcSelectedResult.Err message next) (TcSelectedResult.Err message next)]
+    [(TcSelectedResult.Ok scratch-ty scratch next)
+      (when
+        (and (>= scratch-id 0) (not (tc-arena-type? ctx scratch-ty)))
+        (return
+          (TcSelectedResult.Err
+            (tc-kind-message
+              (ArenaOwnership)
+              "typecheck: with-escape arena must be Arena")
+            next)))
+      (match (tc-infer-selected-scratch-body
+        ctx
+        env
+        body
+        expected
+        (tc-global-shared-view source)
+        next)
+        [(TcSelectedResult.Err message after)
+          (TcSelectedResult.Err message after)]
+        [(TcSelectedResult.Ok body-ty value after)
+          (unless
+            (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
+            (return
+              (TcSelectedResult.Err
+                (if (< scratch-id 0)
+                  (tc-with-scratch-unsupported-message ctx body-ty)
+                  (tc-with-escape-unsupported-message ctx body-ty))
+                after)))
+          (let
+            [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
+            (tc-clone-root-collection-note!
+              ctx
+              (tc-global-shared-view clone-ty))
+            ;; The clone lands in the arena active outside the form, so it
+            ;; carries that region: a clone out of a scratch region into an
+            ;; enclosing `with-arena` must not read as untagged.
+            (let
+              [ty : ast.AstType (tc-tag-active-region env clone-ty)]
               (match value
                 [(TcSelectedOccurrence.Unrepresented)
                   (tc-selected-unrepresented (ResultTcType.Ok ty) after)]
@@ -10978,7 +11012,7 @@
                                       (tc-selected-form-code-with-escape)
                                       2))
                                   children
-                                  after))])))])])])])]))
+                                  after))])))])])))])]))
 
 ;; --- Arena owners (SPEC 5.16, #8449) -----------------------------------------
 ;;
@@ -13680,9 +13714,6 @@
 
 (define (tc-selected-form-code-box) : i64
   109)
-
-(define (tc-selected-form-code-box-get) : i64
-  110)
 
 (define (tc-selected-form-code-box-set) : i64
   111)
@@ -20496,21 +20527,6 @@
                                           (tc-arena-owner-kind-none))
                                           (tc-selected-lender-site published)
                                           published))))))])])]))]))]))))
-
-(define (tc-infer-selected-legacy
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr : ast.AstExpr]
-  [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]) : ResultTcType
-  (match syntax
-    [(typed.TypedSyntax.Generated)
-      (match expected
-        [(ast.AstMaybeType.No) (tc-expr ctx env expr)]
-        [(ast.AstMaybeType.Some want)
-          (tc-expr-with-expected-or-actual ctx env expr want)])]
-    [(typed.TypedSyntax.Source id)
-      (tc-infer-operand-id ctx env id expected false)]))
 
 ;; The referent of the view binder a name read `syntax` reads (of view type
 ;; `actual`), taken.
@@ -29576,12 +29592,6 @@
 (define (tc-local-cache-partial-layer-cap) : i64
   8)
 
-(define (tc-builtin-symbol-name-id
-  [session : cis.InternStructuralSessionHandle]
-  [raw-name-id : i64]
-  [hygiene-global : bool]) : i64
-  (tc-builtin-call-name-id session raw-name-id hygiene-global))
-
 ;; The spelling builtin and string-helper dispatch sees for a call head, or -1
 ;; for none. A macro-hygiene global that names another module's own binding
 ;; (`macro-hygiene-global-user-binding-id?`) is an ordinary call of that
@@ -38390,14 +38400,6 @@
             (tc-unqualified-import-key-id module-id source-id)))))
     (No)))
 
-(define (tc-lookup-visible-source-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name-id : i64]
-  [env-name-id : i64]) : ResultTcType
-  (tc-binding-project
-    (tc-lookup-visible-binding-source-id ctx env name-id env-name-id)))
-
 ;; Keep the winning lexical coordinate through the existing module-selection
 ;; policy. Persistent/module winners have no executable local binder identity;
 ;; exhausted identities cannot fall through to another lookup.
@@ -39073,10 +39075,6 @@
         unit)
       (set! cursor (tc-name-id-list-rest cursor)))
     found))
-
-;; Names of `a` that `b` also contains, in `a`'s order.
-(define (tc-name-id-list-intersection [a : TcNameIdList] [b : TcNameIdList]) : TcNameIdList
-  (tc-name-id-list-filter-membership a b true))
 
 ;; Names of `a` that `b` does not contain, in `a`'s order.
 (define (tc-name-id-list-difference [a : TcNameIdList] [b : TcNameIdList]) : TcNameIdList
@@ -54278,15 +54276,6 @@
 (define (tc-expr-list-len [exprs : ast.AstExprList]) : i64
   exprs.len)
 
-(define (tc-expr-list-types
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]) : ResultTcTypeList
-  (let
-    [out : ast.AstTypeList (ast.ast-type-list-new)]
-    [_ (try (tc-expr-list-types-into-at ctx env (& exprs) 0 (&mut out)))]
-    (Ok out)))
-
 (define (tc-expr-list-types-into-at
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -54352,18 +54341,6 @@
     [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
       (tc-lifetime-list-to-name-id-list-into (deref lifetimes) out)]
     [_ out]))
-
-(define (tc-param-list-has-name-id-at?
-  [params : (& params ast.AstParamList)]
-  [name-id : i64]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-param-list-len params))
-    false
-    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(Param name _ _)
-        (or
-          (= name name-id)
-          (tc-param-list-has-name-id-at? params name-id (+ index 1)))])))
 
 ;; The one signature-marker entry type of a parameter list (#8998): its caller
 ;; regions, arena brands included (#9604), which are incomparable to each
@@ -58841,24 +58818,6 @@
       [(ResultTcUnit.Ok)
         (ResultTcType.Ok (tc-tag-active-region env (ast.ast-ty-tuple out)))])))
 
-;; Flow the expected type into a begin's final expression so a contextual
-;; literal in tail position resolves against it; non-final expressions keep
-;; the non-contextual policy (any type is allowed).
-(define (tc-begin-list-with-expected
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]
-  [expected : ast.AstType]) : ResultTcType
-  (tc-selected-project
-    (tc-infer-selected-begin
-      ctx
-      env
-      exprs
-      typed.TypedSyntax.Generated
-      (ast.AstMaybeType.Some expected)
-      (tc-infer-unlocated-source)
-      TcSelectedSink.Query)))
-
 ;; The canonical sequence checker retains precisely the child results it just
 ;; selected. A child that diverges before the last one ends the sequence: later
 ;; children are still checked once, in Query mode, and the sequence is its
@@ -59257,12 +59216,10 @@
         (if (tc-defmacro-transformer-comptime?
           ctx
           (tc-context-expr-get ctx inner-id))
-          (tc-infer-selected-legacy
-            ctx
-            env
-            inner
-            typed.TypedSyntax.Generated
-            expected)
+          (match expected
+            [(ast.AstMaybeType.No) (tc-expr ctx env inner)]
+            [(ast.AstMaybeType.Some want)
+              (tc-expr-with-expected-or-actual ctx env inner want)])
           (let
             [diagnostic : cdiag.CompilerDiagnostic
               (cdiag.compiler-diagnostic-box-shared-view diag)]
@@ -59339,118 +59296,6 @@
             macro-name-id
             (tc-unbound-finalize-located-error located))))]))
 
-;; Ordinary Spanned nodes and compact caller operands use the same transient
-;; view. No-view callers retain the ID entrypoint's normalization/observation.
-;; The view checks Unsafe with its span and locates errors with full context.
-(define (tc-expr-with-expected-or-actual-core-inner
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr : ast.AstExpr]
-  [expected : ast.AstType]
-  [allow-mut-by-value-borrow : bool]) : ResultTcType
-  (match (tc-global-shared-view expr)
-    [(Literal literal)
-      (if allow-mut-by-value-borrow
-        (tc-call-string-temporary-result
-          ctx
-          (Some (clone expected))
-          (tc-infer-selected-literal-type ctx env literal (Some expected)))
-        (tc-infer-selected-literal-type ctx env literal (Some expected)))]
-    [(Spanned id at)
-      (tc-infer-spanned-operand
-        ctx
-        env
-        id
-        at
-        (Some expected)
-        allow-mut-by-value-borrow
-        true
-        typed.TypedSyntax.Generated
-        (tc-infer-unlocated-source)
-        TcSelectedSink.Query)]
-    [(or (MacroExpansion _ _ _) (BinaryData _) (Var _) (TypeLiteral _) (Ann _ _)
-         (Begin _) (Unsafe _) (Set _ _) (Borrow _ _ _) (Binary _ _ _)
-         (Unary _ _) (If _ _ _) (Let _) (While _ _) (Cast _ _) (Comptime _)
-         (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _) (Try _)
-         (Return _) (Break) (Continue) (PtrNull _) (PtrNullCheck _)
-         (PtrAddrOf _) (PtrRead _) (PtrWrite _ _) (PtrOffset _ _) (PtrCast _ _)
-         (PtrToInt _) (IntToPtr _ _) (StringRef _ _) (StringData _)
-         (StringFromBytes _ _) (ArrayData _) (ProgramArgc) (ProgramArgv)
-         (ProgramEnvp) (CpuIdEax _ _) (CpuIdEbx _ _) (CpuIdEcx _ _)
-         (CpuIdEdx _ _) (Xgetbv _) (Syscall _) (Match _) (WithRegion _ _)
-         (InArena _ _) (WithResource _) (Lambda _) (ForOwnedState _)
-         (ForOwnedStep _))
-      (tc-infer-query-value
-        ctx
-        env
-        expr
-        (ast.AstMaybeType.Some expected)
-        allow-mut-by-value-borrow)]
-    [(or (Array _) (DynArray _) (Tuple _) (Box _))
-      (tc-selected-aggregate-query
-        ctx
-        env
-        expr
-        (ast.AstMaybeType.Some expected))]
-    [(or (BoxGet receiver) (BoxTake receiver))
-      (tc-deref-value-type
-        ctx
-        env
-        (tc-context-expr-get ctx receiver)
-        (match (& expr)
-          [(BoxTake _) true]
-          [_ false])
-        (ast.AstMaybeType.Some expected))]
-    [(WithEscape scratch-box body)
-      (let
-        [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
-        (tc-with-escape-expr ctx env scratch body (Some expected)))]
-    [(WithScratch body) (tc-with-scratch-expr ctx env body (Some expected))]
-    [(Call func-box _)
-      (let
-        [_
-          (try
-            (tc-expected-call-variant-retarget!
-              ctx
-              env
-              func-box
-              (clone expected)))]
-        (tc-expr-result-with-expected-or-actual
-          ctx
-          env
-          expected
-          allow-mut-by-value-borrow
-          (tc-selected-project
-            (tc-infer-selected
-              ctx
-              env
-              expr
-              typed.TypedSyntax.Generated
-              ast.AstMaybeType.No
-              (ownership.OwnershipSource
-                (ownership.ownership-path-none)
-                0
-                0
-                (ownership.ownership-expansion-none))
-              true
-              TcSelectedSink.Query))))]
-    [_
-      (if (tc-integer-literal-expr? ctx (tc-global-shared-view expr))
-        (tc-integer-literal-expr-with-expected ctx expr expected)
-        (if (tc-float-literal-expr? ctx (tc-global-shared-view expr))
-          (tc-float-literal-expr-with-expected ctx expr expected)
-          (tc-expr-result-with-expected-or-actual
-            ctx
-            env
-            expected
-            allow-mut-by-value-borrow
-            (tc-expr ctx env expr))))]))
-
-(define (tc-expr-scoped-bindings? [expr : (& expr ast.AstExpr)]) : bool
-  (match expr
-    [(or (ForOwnedState _) (ForOwnedStep _) (WithResource _)) true]
-    [_ false]))
-
 (define (tc-expr-with-expected-or-actual-core
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -59459,29 +59304,21 @@
   [allow-mut-by-value-borrow : bool]) : ResultTcType
   (if (tc-type-env-scoped-identity-exhausted? env)
     (ResultTcType.Err (tc-selected-error typed.TypedError.Exhausted))
-    (if (and
-      (tc-type-env-scoped-runtime-active? env)
-      (tc-expr-scoped-bindings? expr))
-      (let
-        [saved : TcTypeEnvScopedRuntimeSave
-          (tc-type-env-scoped-runtime-save env)]
-        [result : ResultTcType
-          (tc-expr-with-expected-or-actual-core-inner
-            ctx
-            env
-            expr
-            expected
-            allow-mut-by-value-borrow)]
-        (tc-type-env-scoped-runtime-restore! saved)
-        (if (tc-type-env-scoped-identity-exhausted? env)
-          (ResultTcType.Err (tc-selected-error typed.TypedError.Exhausted))
-          result))
-      (tc-expr-with-expected-or-actual-core-inner
+    (if allow-mut-by-value-borrow
+      (tc-infer-query-value ctx env expr (ast.AstMaybeType.Some expected) true)
+      (match (tc-infer-selected-inner
         ctx
         env
         expr
-        expected
-        allow-mut-by-value-borrow))))
+        typed.TypedSyntax.Generated
+        (ast.AstMaybeType.Some expected)
+        (tc-infer-unlocated-source)
+        (& tc-infer-no-span)
+        false
+        true
+        TcSelectedSink.Query)
+        [(TcSelectedResult.Ok ty _ _) (ResultTcType.Ok ty)]
+        [(TcSelectedResult.Err message _) (ResultTcType.Err message)]))))
 
 (define (tc-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -59603,86 +59440,6 @@
     (if (= tc-semantic-observed-jobs 0)
       (tc-expr-id-recorded ctx env expr-id)
       (tc-expr-id-observed ctx env expr-id))))
-
-(define (tc-body-type-fact-lookup-profiled
-  [_site : (& str)]
-  [ctx : TcContext]
-  [expr-id : i64]) : TcBodyTypeFact
-  (match (tc-body-type-fact-lookup (tc-context-body-state ctx) expr-id)
-    [(Hit ty)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-body-fact-profile-hit (tc-context-job-state ctx) _site))
-        (Hit ty))]
-    [(Miss)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-body-fact-profile-miss (tc-context-job-state ctx) _site))
-        (Miss))]))
-
-(define (tc-body-type-fact-expr-id
-  [site : String]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expr-id : i64]) : ResultTcType
-  (match (tc-body-type-fact-lookup-profiled site ctx expr-id)
-    [(Hit ty) (Ok ty)]
-    [(Miss)
-      (compiler-tc-reinfer-profiled ctx site (tc-expr-id ctx env expr-id))]))
-
-(define (tc-body-type-fact-list-types-into-at
-  [state : TcBodyState]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
-  [out : (&mut out ast.AstTypeList)]) : ResultTcUnit
-  (if (>= index exprs.len)
-    Ok
-    (match (tc-body-type-fact-lookup
-      state
-      (ast.ast-expr-list-get exprs index 0))
-      [(Hit ty)
-        (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push (& ty)))
-        (tc-body-type-fact-list-types-into-at state exprs (+ index 1) out)]
-      [(Miss) (Err "")])))
-
-(define (tc-body-type-fact-list-types
-  [state : TcBodyState]
-  [exprs : (& exprs ast.AstExprList)]) : ResultTcTypeList
-  (if (unsafe
-    (deref (tc-body-state-view state)).type-facts-consuming)
-    (let
-      [out : ast.AstTypeList (ast.ast-type-list-new)]
-      [_
-        (try
-          (tc-body-type-fact-list-types-into-at state (& exprs) 0 (&mut out)))]
-      (Ok out))
-    (Err "")))
-
-(define (tc-body-type-fact-expr-list-types
-  [_site : String]
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : ast.AstExprList]) : ResultTcTypeList
-  (match (tc-body-type-fact-list-types (tc-context-body-state ctx) exprs)
-    [(Ok types)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-body-fact-profile-hit (tc-context-job-state ctx) _site))
-        (Ok types))]
-    [(Err _)
-      (begin
-        (cfg
-          compile-profile
-          (compiler-tc-body-fact-profile-miss
-            (tc-context-job-state ctx)
-            (tc-global-shared-view _site)))
-        (compiler-tc-reinfer-profiled
-          ctx
-          _site
-          (tc-expr-list-types ctx env exprs)))]))
 
 ;; Contextual typing is deliberately separate from non-contextual `tc-expr-id`:
 ;; the same node can produce a different result type when an expected type
@@ -60009,70 +59766,6 @@
               ;; env is authoritative for an unqualified root definition.
               (tc-name-bound-id? env name-id)
               (tc-top-level-value-owned-by-module-id? ctx module-id name-id))))))))
-
-;; Compiler-private text inspectors expose ordinary callable signatures to
-;; move/borrow analysis even though their direct calls still use intrinsic
-;; result checking below. Keeping these signatures out of general expression
-;; lookup preserves normal shadowing and avoids making CTFE evaluate the private
-;; implementation functions while it is constructing their definitions.
-(define (tc-private-string-intrinsic-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name-id : i64]) : ResultTcType
-  (if (tc-private-intrinsic-unshadowed-id? ctx env name-id)
-    (let
-      [text : ast.AstType
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (& (Str)))]
-      [left : ast.AstType
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-left (& (Str)))]
-      [right : ast.AstType
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-right (& (Str)))]
-      (cond
-        [(= name-id cbi.compiler-builtin-id-tl-private-string-length)
-          (Ok (tc-fn1 text (I64)))]
-        [(= name-id cbi.compiler-builtin-id-tl-private-string-ref)
-          (Ok (tc-fn2 text (I64) (Char)))]
-        [(= name-id cbi.compiler-builtin-id-tl-private-string-eq)
-          (Ok (tc-fn2 left right (Bool)))]
-        [(= name-id cbi.compiler-builtin-id-tl-private-string-to-int)
-          (Ok (tc-fn1 text (I64)))]
-        [else (Err "")]))
-    (Err "")))
-
-(define (tc-private-string-intrinsic-call-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]) : ResultTcType
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-segment-bases ctx)
-    (& func))
-    [(Var raw-name)
-      (let
-        [raw-text : String
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            raw-name)]
-        [hygiene-global : bool
-          (tc-hygiene-global-name-id?
-            (tc-context-structural-session ctx)
-            raw-name)]
-        [name : String
-          (if (and
-            hygiene-global
-            (not
-              (macro-hygiene-global-id?
-                (tc-context-structural-session ctx)
-                raw-name)))
-            (tc-hygiene-global-call-name raw-text)
-            raw-text)]
-        [name-id : i64
-          (tc-builtin-call-name-id
-            (tc-context-structural-session ctx)
-            raw-name
-            hygiene-global)]
-        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
-        (tc-private-string-intrinsic-type ctx env lookup-id))]
-    [_ (Err "")]))
 
 ;; Source-level builtin dispatch observes module-local declaration
 ;; copies through `tc-name-bound-id?`. Dotted modules keep the authoritative
@@ -61248,9 +60941,6 @@
   [expected : i64]) : String
   (tc-call-arity-count-message expr-bases func expected (tc-expr-list-len args)))
 
-(define (tc-call-arity-invariant-message [phase : String]) : String
-  (str_cat.str-cat "typecheck: internal " phase " call arity invariant failed"))
-
 (define (tc-call-direct-value-handle [ctx : TcContext] [func : ast.AstExpr]) : i64
   (let
     [name-id : i64
@@ -62422,15 +62112,6 @@
     [(No) false]
     [_ true]))
 
-(define (tc-call-mutable-ref-formal? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-global-shared-view ty))
-    [(MutRef _ _) true]
-    [(or (Var _) (VarArgs _ _))
-      (match (tc-type-strip-region (tc-resolve-type ctx ty))
-        [(MutRef _ _) true]
-        [_ false])]
-    [_ false]))
-
 (define (tc-call-actual-immutable-reference?
   [ctx : TcContext]
   [ty : ast.AstType]) : bool
@@ -62451,24 +62132,6 @@
     (match (tc-type-strip-region got)
       [(String) true]
       [_ false])))
-
-(define (tc-call-type-list-has-immutable-ref-formal?
-  [ctx : TcContext]
-  [types : (& types ast.AstTypeList)]) : bool
-  (tc-call-type-list-has-immutable-ref-formal-at? ctx (& types) 0))
-
-(define (tc-call-type-list-has-immutable-ref-formal-at?
-  [ctx : TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
-    (if (tc-call-immutable-ref-formal?
-      ctx
-      (ast.ty-node-get
-        (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      true
-      (tc-call-type-list-has-immutable-ref-formal-at? ctx types (+ index 1)))))
 
 (define (tc-call-auto-borrow-type
   [ctx : TcContext]
@@ -65912,26 +65575,6 @@
           reason))]
     [_ Ok]))
 
-(define (tc-thread-channel-send-function-result?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]) : bool
-  (match (tc-expr ctx env func)
-    [(Ok fn-ty)
-      (match (tc-type-strip-region fn-ty)
-        [(Func _ ret-box)
-          (tc-thread-channel-send-result-type? ctx (ast.ty-node-get ret-box))]
-        [_ false])]
-    [(Err _) false]))
-
-(define (tc-thread-channel-send-call?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]) : bool
-  (match (tc-thread-channel-send-call-name ctx (tc-global-shared-view func))
-    [(Some _) (tc-thread-channel-send-function-result? ctx env func)]
-    [(No) false]))
-
 ;; Call-only compatibility extensions. Keep ordinary inferred-type matching
 ;; unchanged, then admit the closed whole-array reference unsize and an owned
 ;; String temporary passed to a borrowed str formal. The effective-argument
@@ -67680,26 +67323,6 @@
           (tc-slice-view-call-kind-for-head ctx env raw-name name-id name)
           (tc-slice-view-call-kind-name ctx env name-id name)))]
     [_ (None)]))
-
-(define (tc-slice-view-call-spelling?
-  [expr-bases : i64]
-  [session : cis.InternStructuralSessionHandle]
-  [func : ast.AstExpr]) : bool
-  ;; Borrow gating runs before a complete type environment is available.  It
-  ;; therefore recognizes the raw spelling conservatively; the real
-  ;; classifier above still performs shadowing checks before interception.
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
-    [(Var raw-name)
-      (let
-        [raw-text : String
-          (tc-hygiene-name-text-id-for-session session raw-name)]
-        [name : String
-          (if (tc-hygiene-global-name-id? session raw-name)
-            (tc-hygiene-global-call-name raw-text)
-            raw-text)]
-        (not
-          (= (tc-slice-view-spelling-kind (& name)) TcSliceViewCallKind.None)))]
-    [_ false]))
 
 (define (tc-slice-call-mutable? [kind : TcSliceViewCallKind]) : bool
   (or
@@ -71946,31 +71569,6 @@
         (tc-with-binding-type end-kind init-ty)
         init
         end-kind))))
-
-(define (tc-begin-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]) : ResultTcType
-  (tc-selected-project
-    (tc-infer-selected-begin
-      ctx
-      env
-      exprs
-      typed.TypedSyntax.Generated
-      ast.AstMaybeType.No
-      (tc-infer-unlocated-source)
-      TcSelectedSink.Query)))
-
-;; A body checked against the context's expected type when it has one, and
-;; synthesized otherwise.
-(define (tc-begin-list-maybe-expected
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]
-  [expected : ast.AstMaybeType]) : ResultTcType
-  (match expected
-    [(Some ty) (tc-begin-list-with-expected ctx env exprs ty)]
-    [(No) (tc-begin-list ctx env exprs)]))
 
 (define (tc-spmd-require-uniform [class : TcSpmdClass] [message : String]) : ResultTcUnit
   (if (tc-spmd-varying? class)
@@ -76512,11 +76110,6 @@
           (tc-string-list-add bound (tc-env-key-name-text name))
           (+ index 1))])))
 
-(define (tc-let-binding-list-add-bound-name-ids
-  [bindings : ast.AstLetBindingList]
-  [bound : TcNameIdList]) : TcNameIdList
-  (tc-let-binding-list-add-bound-name-ids-at (& bindings) bound 0))
-
 (define (tc-let-binding-list-add-bound-name-ids-at
   [bindings : (& bindings ast.AstLetBindingList)]
   [bound : TcNameIdList]
@@ -77222,13 +76815,6 @@
   [name : String]
   [bound : TcStringList]) : bool
   (tc-expr-uses-free-names? expr-bases expr (One name) bound false))
-
-(define (tc-expr-list-uses-free-name?
-  [expr-bases : i64]
-  [exprs : ast.AstExprList]
-  [name : String]
-  [bound : TcStringList]) : bool
-  (tc-expr-list-uses-free-names? expr-bases exprs (One name) bound false))
 
 (define (tc-expr-sets-free-name?
   [expr-bases : i64]
@@ -85973,67 +85559,6 @@
     (Err (tc-bare-variant-ambiguous-message ctx name-id))
     Ok))
 
-(define (tc-merge-if-branch-types
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [then-branch-id : i64]
-  [else-branch-id : i64]
-  [then-ty : ast.AstType]
-  [else-ty : ast.AstType]) : ResultTcType
-  (match (tc-merge-branch-type
-    ctx
-    env
-    (tc-global-shared-view then-ty)
-    (tc-global-shared-view else-ty))
-    [(Ok merged) (Ok merged)]
-    [(Err message)
-      (match (tc-expr-with-expected-or-actual-id
-        ctx
-        env
-        then-branch-id
-        (tc-global-shared-view else-ty))
-        [(Ok retyped-then)
-          (match (tc-merge-branch-type
-            ctx
-            env
-            retyped-then
-            (tc-global-shared-view else-ty))
-            [(Ok merged) (Ok merged)]
-            [(Err _)
-              (tc-merge-if-else-retyped ctx env else-branch-id then-ty message)])]
-        [(Err _)
-          (tc-merge-if-else-retyped ctx env else-branch-id then-ty message)])]))
-
-(define (tc-merge-if-else-retyped
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [else-branch-id : i64]
-  [then-ty : ast.AstType]
-  [message : String]) : ResultTcType
-  (match (tc-expr-with-expected-or-actual-id
-    ctx
-    env
-    else-branch-id
-    (tc-global-shared-view then-ty))
-    [(Ok retyped-else)
-      (match (tc-merge-branch-type ctx env then-ty retyped-else)
-        [(Ok merged) (Ok merged)]
-        [(Err _) (Err message)])]
-    [(Err _) (Err message)]))
-
-;; The `deref` operand at the root of a field and tuple-element projection
-;; chain such as `(deref b).leaf.w`, or -1 when the chain has no `deref` root.
-(define (tc-projection-deref-root-operand
-  [expr-bases : i64]
-  [receiver : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& receiver))
-    [(or (ast.AstExpr.StructGet inner-box _) (ast.AstExpr.TupleRef inner-box _))
-      (tc-projection-deref-root-operand
-        expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(ast.AstExpr.BoxTake inner-box) inner-box]
-    [_ -1]))
-
 (define (tc-raw-deref-place?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -89940,65 +89465,6 @@
       (set! cursor (tc-name-id-list-rest cursor)))
     all-scratch))
 
-(define (tc-scratch-body-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [body : ast.AstExprList]
-  [expected : ast.AstMaybeType]) : ResultTcType
-  (let
-    [saved : TcTypeEnvScopedRuntimeSave
-      (tc-type-env-scoped-runtime-enter-env! env)]
-    [region-env : TcTypeEnv
-      (tc-push-region env (tc-scratch-body-region (& body)))]
-    [result : ResultTcType
-      (tc-begin-list-maybe-expected ctx region-env body expected)]
-    (tc-type-env-scoped-runtime-restore! saved)
-    result))
-
-(define (tc-with-escape-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [scratch : ast.AstExpr]
-  [body : ast.AstExprList]
-  [expected : ast.AstMaybeType]) : ResultTcType
-  (let
-    [scratch-ty : ast.AstType (try (tc-expr ctx env scratch))]
-    (if (tc-arena-type? ctx scratch-ty)
-      (let
-        [body-ty : ast.AstType
-          (try (tc-scratch-body-type ctx env body expected))]
-        (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
-          (let
-            [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
-            (tc-clone-root-collection-note!
-              ctx
-              (tc-global-shared-view clone-ty))
-            ;; The clone lands in the arena active outside the form, so it
-            ;; carries that region: a clone out of a scratch region into an
-            ;; enclosing `with-arena` must not read as untagged.
-            (Ok (tc-tag-active-region env clone-ty)))
-          (Err (tc-with-escape-unsupported-message ctx body-ty))))
-      (Err
-        (tc-kind-message
-          (ArenaOwnership)
-          "typecheck: with-escape arena must be Arena")))))
-
-(define (tc-with-scratch-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [body : ast.AstExprList]
-  [expected : ast.AstMaybeType]) : ResultTcType
-  (let
-    [body-ty : ast.AstType (try (tc-scratch-body-type ctx env body expected))]
-    (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
-      (let
-        [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
-        (tc-clone-root-collection-note! ctx (tc-global-shared-view clone-ty))
-        ;; Same as `tc-clone-call`: the clone-out allocates in the arena
-        ;; active outside the form (SPEC 3.4.1) and carries its region.
-        (Ok (tc-tag-active-region env clone-ty)))
-      (Err (tc-with-scratch-unsupported-message ctx body-ty)))))
-
 (define (tc-in-arena-owner
   [expr-bases : i64]
   [env : TcTypeEnv]
@@ -91532,86 +90998,22 @@
         [_ (try (tc-foreach2-bound-ok ctx env inner-start))]
         (tc-foreach2-bound-ok ctx env inner-end)))))
 
-(define (tc-expr-inner [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
-  (match expr
-    [(Literal literal) (tc-literal-type-checked literal)]
-    [(Spanned id at)
-      (tc-infer-spanned-operand
-        ctx
-        env
-        id
-        at
-        ast.AstMaybeType.No
-        false
-        true
-        typed.TypedSyntax.Generated
-        (tc-infer-unlocated-source)
-        TcSelectedSink.Query)]
-    [(or (MacroExpansion _ _ _) (BinaryData _) (Var _) (TypeLiteral _) (Ann _ _)
-         (Begin _) (Unsafe _) (Set _ _) (Borrow _ _ _) (Binary _ _ _) (Call _ _)
-         (Unary _ _) (If _ _ _) (Let _) (While _ _) (Cast _ _) (Comptime _)
-         (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _) (Try _)
-         (Return _) (Break) (Continue) (PtrNull _) (PtrNullCheck _)
-         (PtrAddrOf _) (PtrRead _) (PtrWrite _ _) (PtrOffset _ _) (PtrCast _ _)
-         (PtrToInt _) (IntToPtr _ _) (StringRef _ _) (StringData _)
-         (StringFromBytes _ _) (ArrayData _) (ProgramArgc) (ProgramArgv)
-         (ProgramEnvp) (CpuIdEax _ _) (CpuIdEbx _ _) (CpuIdEcx _ _)
-         (CpuIdEdx _ _) (Xgetbv _) (Syscall _) (Match _) (WithRegion _ _)
-         (InArena _ _) (WithResource _) (Lambda _) (ForOwnedState _)
-         (ForOwnedStep _))
-      (tc-infer-query-value ctx env expr ast.AstMaybeType.No false)]
-    [(StructGet receiver field) (tc-struct-read-type ctx env receiver field)]
-    [(or (Tuple _) (TupleRef _ _) (Array _) (DynArray _) (FixedMakeArray _ _)
-         (MakeArray _ _) (ArrayRef _ _) (ArraySet _ _ _) (ArrayTake _ _ _)
-         (Replace _ _) (ArrayPush _ _) (StructSet _ _ _) (Box _) (BoxSet _ _))
-      (tc-selected-aggregate-query ctx env expr ast.AstMaybeType.No)]
-    [(or (BoxGet receiver) (BoxTake receiver))
-      (tc-deref-value-type
-        ctx
-        env
-        (tc-context-expr-get ctx receiver)
-        (match (& expr)
-          [(BoxTake _) true]
-          [_ false])
-        ast.AstMaybeType.No)]
-    [(BracketClause _)
-      (Err
-        "typecheck: bracket clause is only valid as an ExprClause or ExprBindingClause macro operand")]
-    [(or (Foreach _) (SpmdReduce _) (SpmdScan _) (SpmdCompact _)
-         (ForeachActive _ _) (SpmdBroadcast _ _) (SpmdShuffle _ _)
-         (SpmdProgramIndex) (SpmdProgramCount) (LaneValue _))
-      (tc-selected-project
-        (tc-infer-selected-spmd-scoped
-          ctx
-          env
-          expr
-          typed.TypedSyntax.Generated
-          ast.AstMaybeType.No
-          (tc-infer-unlocated-source)
-          true
-          TcSelectedSink.Query))]
-    [(WithEscape scratch-box body)
-      (let
-        [scratch : ast.AstExpr (tc-context-expr-get ctx scratch-box)]
-        (tc-with-escape-expr ctx env scratch body No))]
-    [(WithScratch body) (tc-with-scratch-expr ctx env body No)]
-    [_ (Err "typecheck: unsupported expression")]))
-
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (if (tc-type-env-scoped-identity-exhausted? env)
     (ResultTcType.Err (tc-selected-error typed.TypedError.Exhausted))
-    (if (and
-      (tc-type-env-scoped-runtime-active? env)
-      (tc-expr-scoped-bindings? expr))
-      (let
-        [saved : TcTypeEnvScopedRuntimeSave
-          (tc-type-env-scoped-runtime-save env)]
-        [result : ResultTcType (tc-expr-inner ctx env expr)]
-        (tc-type-env-scoped-runtime-restore! saved)
-        (if (tc-type-env-scoped-identity-exhausted? env)
-          (ResultTcType.Err (tc-selected-error typed.TypedError.Exhausted))
-          result))
-      (tc-expr-inner ctx env expr))))
+    (match (tc-infer-selected-inner
+      ctx
+      env
+      expr
+      typed.TypedSyntax.Generated
+      ast.AstMaybeType.No
+      (tc-infer-unlocated-source)
+      (& tc-infer-no-span)
+      false
+      true
+      TcSelectedSink.Query)
+      [(TcSelectedResult.Ok ty _ _) (ResultTcType.Ok ty)]
+      [(TcSelectedResult.Err message _) (ResultTcType.Err message)])))
 
 (define (tc-extern-abi-enum-aggregate-type? [ty : ast.AstType]) : bool
   (match (tc-type-without-regions ty)
@@ -131175,17 +130577,6 @@
             (array-ref cells index).cleanup?))
         (set! index (+ index 1)))
       (set! table.classes exact))))
-
-(define (tc-selected-type-classes!
-  [ctx : TcContext]
-  [store : (&mut store typed.TypedStore)]
-  [lease : (& lease (typed.TypedBodyLease intern))]) : (__tl_dyn-array
-    ownership_normalize.OwnershipNormalizeTypeClass)
-  (let
-    [table : TcSelectedTypeTable
-      (tc-selected-type-table-new (typed.typed-arena-regions-copy (& store)))]
-    (tc-selected-classify! ctx store lease (&mut table) false)
-    table.classes))
 
 ;; A struct's field types and name ids in declaration order, when each field's
 ;; canonical selection agrees with that order (otherwise no shape).

@@ -4,9 +4,9 @@ The checked tables in this directory, and the gates and scripts that own them:
 
 | File | Owner |
 | --- | --- |
-| `insn-exec-baseline.tsv` | `linux-instruction-count-baseline` (`scripts/check-instruction-counts.sh`) |
-| `insn-exec-heavy-baseline.tsv` | `linux-heavy-instruction-count-baseline` (the same script) |
-| `benchmark-ci-cases.tsv` | suite membership for the benchmark, optimizer-corpus and instruction-count gates |
+| `benchmarks/<case>.tsv` | per-benchmark suite membership and exact C instruction baselines (`scripts/check-instruction-counts.sh`, `scripts/lib-benchmark.sh`) |
+| `benchmarks/<case>.provenance.json` | per-benchmark C comparison provenance (`scripts/lib-c-provenance.sh`) |
+| `insn-exec-declarations/pr-<N>.tsv` | PR N's declared TypeLisp instruction-count regression ceiling (`scripts/check-instruction-counts.sh`) |
 | `compiler-scaling-budgets.tsv` | `linux-compiler-scaling-budgets` (`scripts/check-compiler-scaling.sh`) |
 | `spmd-mode-insn-baseline.tsv`, `spmd-mode-support.tsv` | opt-in `scripts/measure-spmd-mode-instruction-counts.sh` |
 | `codegen-cycle-report.md` | Same-host realistic-kernel, FP and AVX2 SPMD hardware measurements |
@@ -17,48 +17,42 @@ Measured deltas belong in the PR that changes a row, not in this file.
 
 ## Instruction-count baselines
 
-`perf/insn-exec-baseline.tsv` and `perf/insn-exec-heavy-baseline.tsv` are the
-committed cachegrind `Ir` baselines for the required Linux per-PR performance
-gates. The first covers the `instruction-main` cases of
-`perf/benchmark-ci-cases.tsv`: twelve compiler-derived kernels, the
-`graph_dijkstra`, `phys_nbody` and `route_http` workloads, two floating-point
-pairs, and the original benchmark pairs.
-That is every `benchmark/typelisp` row the file carries, so none goes stale
-unchecked. The second covers the `instruction-heavy` cases, benchmark rows
-only. Explicit `--benchmarks` subsets
-are scoped against the selected cases even when a baseline carries additional
-rows. Neither file carries `self_compile`, whose absolute count is
-environment-specific; it is gated main-relative (see [`self_compile`](#self_compile)).
+Per-benchmark files `perf/benchmarks/<case>.tsv` record suite membership
+(`benchmark`, `optimization-opt2`, `instruction-main`, `instruction-heavy`,
+`realistic-kernel`) and exact C reference counts (`benchmark/c-scalar/<case>`,
+plus optional `benchmark/c/<case>` for heavy cases), paired with per-case C
+provenance records in `perf/benchmarks/<case>.provenance.json`. Neither
+manifest files nor provenance carry `benchmark/typelisp/*` or `self_compile/*`
+rows.
 
-Benchmark metrics are exact: `current != baseline` fails in either direction,
-and an intentional change is accepted by committing the refreshed rows in the
-same PR. Both improvements and regressions therefore block the PR that
-introduces them.
+TypeLisp `Ir` baselines are CI-owned: `.github/workflows/self-compile-reference.yml`
+publishes the `insn-exec-reference` artifact on every push to `main` and checks
+`HEAD` against `HEAD^1`. PR CI compares every `instruction-main` and
+`instruction-heavy` TypeLisp benchmark against the tested merge's base parent
+(`HEAD^1`):
 
-### Refreshing
+- `head <= base` passes and auto-ratchets on merge;
+- `head > base` (even `+1 Ir`) fails closed unless declared in
+  `perf/insn-exec-declarations/pr-<N>.tsv` (`benchmark/typelisp/<case><TAB>+<max_delta_ir><TAB><reason>`),
+  which is append-only per PR (a PR may only add its own `pr-<N>.tsv`).
+- C rows (`benchmark/c-scalar/<case>`, optional `benchmark/c/<case>`) remain
+  exact in both directions against `perf/benchmarks/<case>.tsv`.
 
-Refresh benchmark rows on Linux or WSL with the recorded tools and workload
-paths described under [C comparison provenance](#c-comparison-provenance).
+### Local comparison & refreshing C baselines
+
+Compare TypeLisp counts locally by snapshotting a base checkout and checking a branch against it:
 
 ```sh
-scripts/check-instruction-counts.sh --update-baseline
+scripts/check-instruction-counts.sh --write-reference target/exp/base-ref.tsv
+scripts/check-instruction-counts.sh --base-ref target/exp/base-ref.tsv
 ```
 
-A refresh rewrites the measured rows and preserves every other row
-(`--benchmarks-only` is still accepted). A baseline that carries a
-`self_compile` row fails the gate: that row was a pin of the retired
-checked-row contract.
-
-Refresh the heavy baseline with the gate's own selection:
+When a benchmark's `baseline.c` changes intentionally, refresh ONLY its C rows
+and per-case provenance on Linux with the recorded tools described under
+[C comparison provenance](#c-comparison-provenance):
 
 ```sh
-scripts/check-instruction-counts.sh \
-  --update-baseline \
-  --baseline perf/insn-exec-heavy-baseline.tsv \
-  --benchmarks spmd_map,spmd_mask,spmd_zip,spmd_short_tail,string_scan \
-  --benchmarks-only \
-  --runs 1 \
-  --output target/instruction-count-heavy
+scripts/check-instruction-counts.sh --update-c-baseline --benchmarks <case>
 ```
 
 ### `self_compile`
@@ -463,10 +457,10 @@ local reproduction does not replace required hosted CI.
 
 ### Suite membership
 
-`perf/benchmark-ci-cases.tsv` assigns positive membership to the Linux generic
-`benchmark` suite, the `optimization-opt2` optimizer-corpus suite, and the
-`instruction-main` and `instruction-heavy` suites. Every `realistic-kernel`
-report case also belongs to `instruction-main`. `scripts/lib-benchmark.sh`
+Per-benchmark manifests under `perf/benchmarks/<case>.tsv` assign positive
+membership to the Linux generic `benchmark` suite, the `optimization-opt2`
+optimizer-corpus suite, and the `instruction-main` and `instruction-heavy`
+suites. Every `realistic-kernel` report case also belongs to `instruction-main`. `scripts/lib-benchmark.sh`
 enforces that no `instruction-heavy` case is also in `benchmark`: its measured
 execution already supplies output parity. An `instruction-main` case may also
 be in `benchmark` or `optimization-opt2`, because each suite checks something

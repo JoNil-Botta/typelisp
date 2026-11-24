@@ -45,6 +45,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 RUNS=${TYPELISP_IR_RUNS:-3}
+JOBS=${TYPELISP_IR_JOBS:-1}
 CYCLES=0
 CYCLE_RUNS=5
 FILTER=${TYPELISP_IR_FILTER:-}
@@ -70,6 +71,7 @@ usage: scripts/measure-instruction-counts.sh [options] [typelisp-seed]
 
 Options:
   --runs N              Repeated cachegrind runs per case (default: 3)
+  --jobs N              Parallel benchmark worker count (default: 1)
   --cycles              Also measure whole-process perf stat user cycles
   --cycle-runs N        Native samples per binary with --cycles (default: 5)
   --filter TEXT         Run benchmark names containing TEXT
@@ -112,6 +114,14 @@ while [ "$#" -gt 0 ]; do
                 exit 2
             }
             RUNS=$2
+            shift 2
+            ;;
+        --jobs)
+            [ "$#" -ge 2 ] || {
+                echo "missing value for --jobs" >&2
+                exit 2
+            }
+            JOBS=$2
             shift 2
             ;;
         --cycles)
@@ -207,6 +217,18 @@ case "$RUNS" in
         exit 2
         ;;
 esac
+
+case "$JOBS" in
+    "" | *[!0-9]* | 0)
+        echo "--jobs must be a positive integer: $JOBS" >&2
+        exit 2
+        ;;
+esac
+
+if [ "$CYCLES" -eq 1 ] && [ "$JOBS" -gt 1 ]; then
+    echo "[ir-count] note: --cycles disables parallel workers; running with --jobs 1" >&2
+    JOBS=1
+fi
 
 case "$OPT_LEVEL" in
     0 | 1 | 2) ;;
@@ -569,10 +591,11 @@ measure_benchmarks() {
     if [ -n "$CASES" ] || [ -n "$FILTER" ]; then
         explicit_selection=1
     fi
-    for bench_tl in benchmarks/*/bench.tl; do
-        [ -e "$bench_tl" ] || continue
+    _mb_order="$WORKDIR/cases.order"
+    : > "$_mb_order"
+    for bench_tl in $(LC_ALL=C; for _f in benchmarks/*/bench.tl; do [ -e "$_f" ] && printf '%s\n' "$_f"; done | LC_ALL=C sort); do
         dir=$(dirname "$bench_tl")
-        name=$(basename "$(dirname "$bench_tl")")
+        name=$(basename "$dir")
         benchmark_selected "$name" || continue
         if [ ! -f "$dir/baseline.c" ]; then
             if [ "$explicit_selection" -eq 1 ]; then
@@ -582,9 +605,76 @@ measure_benchmarks() {
             continue
         fi
         matched=$((matched + 1))
-        build_benchmark_pair "$bench_tl" "$name"
+        printf '%s\t%s\n' "$bench_tl" "$name" >> "$_mb_order"
     done
     [ "$matched" -gt 0 ] || fail "no benchmark cases matched filter='$FILTER' cases='$CASES'"
+
+    if [ "$JOBS" -le 1 ] || [ "$matched" -le 1 ]; then
+        while IFS="$(printf '\t')" read -r bench_tl name; do
+            build_benchmark_pair "$bench_tl" "$name"
+        done < "$_mb_order"
+        return 0
+    fi
+
+    _mb_cases_dir="$WORKDIR/cases"
+    mkdir -p "$_mb_cases_dir"
+    _mb_fifo="$_mb_cases_dir/.slots"
+    rm -f "$_mb_fifo"
+    mkfifo "$_mb_fifo"
+    exec 3<>"$_mb_fifo"
+    _mb_s=0
+    while [ "$_mb_s" -lt "$JOBS" ]; do
+        printf 'slot\n' >&3
+        _mb_s=$((_mb_s + 1))
+    done
+
+    _mb_pids=
+    while IFS="$(printf '\t')" read -r bench_tl name; do
+        IFS= read -r _mb_tok <&3
+        _mb_cdir="$_mb_cases_dir/$name"
+        mkdir -p "$_mb_cdir"
+        (
+            trap 'printf "slot\n" >&3' EXIT
+            : > "$_mb_cdir/runs.tsv"
+            : > "$_mb_cdir/summary.tsv"
+            printf '{"rows":{}}\n' > "$_mb_cdir/c-provenance.json"
+            RUNS_TSV="$_mb_cdir/runs.tsv"
+            SUMMARY_TSV="$_mb_cdir/summary.tsv"
+            C_PROVENANCE="$_mb_cdir/c-provenance.json"
+            C_PROVENANCE_BUILD_ARGV="$_mb_cdir/c-build-argv.json"
+            build_benchmark_pair "$bench_tl" "$name" > "$_mb_cdir/worker.log" 2>&1
+        ) &
+        _mb_pids="$_mb_pids $!"
+    done < "$_mb_order"
+
+    _mb_failed=0
+    for _mb_pid in $_mb_pids; do
+        if ! wait "$_mb_pid"; then
+            _mb_failed=1
+        fi
+    done
+    exec 3>&-
+    rm -f "$_mb_fifo"
+
+    _mb_prov_parts=
+    while IFS="$(printf '\t')" read -r _bench_tl name; do
+        _mb_cdir="$_mb_cases_dir/$name"
+        if [ -f "$_mb_cdir/worker.log" ]; then
+            cat "$_mb_cdir/worker.log"
+        fi
+    done < "$_mb_order"
+    if [ "$_mb_failed" -ne 0 ]; then
+        fail "one or more parallel benchmark measurements failed"
+    fi
+
+    set --
+    while IFS="$(printf '\t')" read -r _bench_tl name; do
+        _mb_cdir="$_mb_cases_dir/$name"
+        cat "$_mb_cdir/runs.tsv" >> "$RUNS_TSV"
+        cat "$_mb_cdir/summary.tsv" >> "$SUMMARY_TSV"
+        set -- "$@" "$_mb_cdir/c-provenance.json"
+    done < "$_mb_order"
+    c_provenance_merge_rows "$C_PROVENANCE" "$@"
 }
 
 generate_benchmark_ratios() {

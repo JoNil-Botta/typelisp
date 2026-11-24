@@ -1,0 +1,104 @@
+{
+  "schema": 1,
+  "status": "measured",
+  "complete": true,
+  "origin": {
+    "repository": "JoNil-Botta/typelisp",
+    "run_id": "44580870111",
+    "attempt": "1",
+    "workflow": "JoNil-Botta/typelisp/.github/workflows/ci.yml@refs/pull/9782/merge",
+    "job": "lane",
+    "commit": "5aefc4a5321f6f1e297c8cb746bc952a88babd08"
+  },
+  "environment": {
+    "compiler": {
+      "path": "/usr/lib/llvm-18/bin/clang",
+      "sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
+      "version": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+      "target": "x86_64-pc-linux-gnu"
+    },
+    "valgrind": {
+      "path": "/usr/bin/valgrind",
+      "sha256": "4652774bd116cb49951ef74115ad4237cad5021b2bd4d80002f09d986ec438b9",
+      "version": "valgrind-3.22.0"
+    },
+    "linker": {
+      "path": "/usr/bin/x86_64-linux-gnu-ld.bfd",
+      "sha256": "e9ceb054c12207970f2726dfc07e9a66b411602748628baf27399f02a9bbb31b",
+      "version": "GNU ld (GNU Binutils for Ubuntu) 2.42\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis program is free software; you may redistribute it under the terms of\nthe GNU General Public License version 3 or (at your option) a later version.\nThis program has absolutely no warranty."
+    },
+    "libc_version": "glibc 2.39",
+    "arch": "x86_64",
+    "os_release": "PRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.5 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo",
+    "wrapper_sha256": "8ff551a59011dad2728cb76fe78cb3b65934697ed31f01e0cc424f517957eca8",
+    "cwd": "/home/runner/work/typelisp/typelisp",
+    "cachegrind_argv": [
+      "--quiet",
+      "--tool=cachegrind",
+      "--instr-at-start=no",
+      "--vex-guest-chase=no"
+    ],
+    "runtime_env": [
+      "LC_ALL=C"
+    ]
+  },
+  "info": {
+    "kernel": "7.0.0-1014-aws",
+    "image_os": "ubuntu24",
+    "image_version": "20261116.133.1"
+  },
+  "rows": {
+    "benchmark/c/loop_call_literal": {
+      "ir_count": 9006786,
+      "source_sha256": "6c0288c1708adacbd4ae43a659b5ad41cd13c0a066a76a20b067a56d5289831f",
+      "metadata_sha256": "07723a624a4cc7cb61f8485799d11c4ffdacb6b675c8da28ae5cb2b556570b07",
+      "binary_sha256": "a8c50355031262b2a1d496bcbfd119439876e5e2a09e43dd5364e5bb0817c121",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "755a371e86cc9f564ab54f66140747700fb0a103f698f659f2060f707897e09a"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/loop_call_literal/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-check/measure/bin/loop_call_literal.c"
+      ],
+      "run_argv": [
+        "target/instruction-count-check/measure/bin/loop_call_literal.c",
+        "13",
+        "1000000"
+      ]
+    },
+    "benchmark/c-scalar/loop_call_literal": {
+      "ir_count": 100006683,
+      "source_sha256": "6c0288c1708adacbd4ae43a659b5ad41cd13c0a066a76a20b067a56d5289831f",
+      "metadata_sha256": "07723a624a4cc7cb61f8485799d11c4ffdacb6b675c8da28ae5cb2b556570b07",
+      "binary_sha256": "61b0f02d8af7dee57fb27d5a543211c1afc6dab34bac793840a54d344f433ff0",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "755a371e86cc9f564ab54f66140747700fb0a103f698f659f2060f707897e09a"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/loop_call_literal/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-check/measure/bin/loop_call_literal.c-scalar"
+      ],
+      "run_argv": [
+        "target/instruction-count-check/measure/bin/loop_call_literal.c-scalar",
+        "13",
+        "1000000"
+      ]
+    }
+  }
+}

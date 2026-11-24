@@ -335,6 +335,35 @@ jobs:
           path: target/sde-fallback-*.memory
           if-no-files-found: ignore
 
+      # TypeLisp instruction counts have no checked-in rows: PR gates compare
+      # against main's `insn-exec-reference` artifact (or pre-cutover baseline)
+      # in ci-verify when ready, and defer pending/missing bases here so an
+      # in-place base fallback can safely switch checkouts after ci-verify.
+      - name: Check instruction counts against main
+        if: runner.os == 'Linux' && steps.plan.outputs.instruction_tools == '1'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TYPELISP_SELF_COMPILE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          TYPELISP_SELF_COMPILE_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: scripts/check-instruction-counts.sh finalize-ci
+
+      - name: Upload instruction-count result
+        if: always() && runner.os == 'Linux' && steps.plan.outputs.instruction_tools == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: instruction-count-result
+          path: |
+            target/instruction-count-check/result.tsv
+            target/instruction-count-check/current.tsv
+            target/instruction-count-check/diff.txt
+            target/instruction-count-heavy/result.tsv
+            target/instruction-count-heavy/current.tsv
+            target/instruction-count-heavy/diff.txt
+          if-no-files-found: ignore
+          retention-days: 90
+          overwrite: true
+
       # self_compile has no checked row (#9307, perf/README.md). The
       # linux-self-compile-measurement gate measured the tested merge T; this
       # cached-base check gates M(T) - M(B) as soon as main's reference is

@@ -71,15 +71,15 @@
       [else 0])))
 
 ;; Whether the comment at `start..end` of `src` (from its first `;` to its
-;; line break) is prose that nothing reads. A doc comment (`;:` or `;#`) and a
-;; `name:` directive such as `lint-allow:` or `doctest-exit:` are not.
+;; line break) is strippable (prose or `;:`/`;#` doc comment). A `name:`
+;; directive such as `lint-allow:` or `doctest-exit:` is kept.
 (define (ref-prose-comment? [src : (& src str)] [start : i64] [end : i64]) : bool
   (let
     [j : i64 (+ start 1)]
     (if (and
       (< j end)
       (or (= (__tl_string_ref src j) ':') (= (__tl_string_ref src j) '#')))
-      false
+      true
       (begin
         (while (and (< j end) (= (__tl_string_ref src j) ';'))
           (set! j (+ j 1)))
@@ -98,13 +98,16 @@
             (set! k (+ k 1)))
           (not (and (> k j) (< k end) (= (__tl_string_ref src k) ':'))))))))
 
-;; The source a module's payload embeds, as #8764 built it: each top-level
-;; inline test replaced by its line breaks, and each prose comment outside
-;; those forms cut to its first `;`.
+;; The source a module's payload embeds: each top-level inline test replaced by
+;; its line breaks, and each strippable comment (prose or `;:`/`;#` doc) outside
+;; those forms dropped along with its immediately preceding horizontal
+;; whitespace while keeping `\r`/`\n` line breaks.
 (define (ref-payload-source [src : String]) : String
   (let
     [n : i64 (string-length (& src))]
     [i : i64 0]
+    [line-start : i64 0]
+    [line-has-code : bool false]
     [depth : i64 0]
     [start : i64 -1]
     [kind : i64 0]
@@ -126,19 +129,46 @@
               (when
                 (and
                   (or (= depth 0) (= kind 0))
-                  (> cut (+ i 1))
                   (ref-prose-comment? (& src) i cut))
-                (text_buf.append!
-                  out
-                  (string.substring (& src) copied (- (+ i 1) copied)))
-                (set! copied cut))
+                (let
+                  [drop-start : i64
+                    (if (not line-has-code)
+                      line-start
+                      (let
+                        [ws : i64 i]
+                        (while (and
+                          (> ws line-start)
+                          (let
+                            [prev : char (__tl_string_ref (& src) (- ws 1))]
+                            (or (= prev ' ') (= prev '\t'))))
+                          (set! ws (- ws 1)))
+                        ws))]
+                  (when
+                    (> cut drop-start)
+                    (text_buf.append!
+                      out
+                      (string.substring (& src) copied (- drop-start copied)))
+                    (let
+                      [j : i64 drop-start]
+                      (while (< j cut)
+                        (let
+                          [b : char (__tl_string_ref (& src) j)]
+                          (when
+                            (or (= b '\n') (= b '\r'))
+                            (text_buf.append!
+                              out
+                              (string.substring (& src) j 1))))
+                        (set! j (+ j 1))))
+                    (set! copied cut))))
               (set! i end))]
           [(= c '"')
+            (set! line-has-code true)
             (when (= depth 1) (set! elements (+ elements 1)))
             (match (lexer.scan-str-end-result (& src) (+ i 1) n)
               [(Ok end) (set! i (+ end 1))]
               [(Err _) (set! valid false)])]
           [(= c '\'')
+            (set! line-has-code true)
             (match (lexer.apostrophe-char-literal-result (& src) i n)
               [(Ok _ end)
                 (when (= depth 1) (set! elements (+ elements 1)))
@@ -146,6 +176,7 @@
               [(No) (set! i (+ i 1))]
               [(Err _) (set! valid false)])]
           [(or (= c '(') (= c '['))
+            (set! line-has-code true)
             (when (= depth 1) (set! elements (+ elements 1)))
             (when
               (and (= depth 0) (= c '('))
@@ -155,6 +186,7 @@
             (set! depth (+ depth 1))
             (set! i (+ i 1))]
           [(or (= c ')') (= c ']'))
+            (set! line-has-code true)
             (set! depth (- depth 1))
             (cond
               [(< depth 0) (set! valid false)]
@@ -177,8 +209,14 @@
                 (set! start -1)]
               [else unit])
             (set! i (+ i 1))]
-          [(lexer.is-space c) (set! i (+ i 1))]
+          [(lexer.is-space c)
+            (when
+              (= c '\n')
+              (set! line-start (+ i 1))
+              (set! line-has-code false))
+            (set! i (+ i 1))]
           [else
+            (set! line-has-code true)
             (when (= depth 1) (set! elements (+ elements 1)))
             (set! i (ref-atom-end (& src) (+ i 1) n))])))
     (if (and valid (= depth 0))
@@ -439,11 +477,17 @@
     (source-agrees? "(cfg test (define a 1) ; kept\n (define a 2)) ;; end")
     "edge case 17")
   (test.assert-true
-    (match-agrees? ";; one\n(define a 1)\n" ";\n(define a 1)\n")
+    (match-agrees? ";; one\n(define a 1)\n" "\n(define a 1)\n")
     "edge case 18")
+  (test.assert-true
+    (match-agrees? ";; one\n(define a 1)\n" ";\n(define a 1)\n")
+    "edge case 18b")
   (test.assert-true
     (match-agrees? ";; one\n(define a 1)\n" ";; one\n(define a 1)\n")
     "edge case 19")
+  (test.assert-true
+    (source-agrees? "\r;; bare cr\n  \r  ;; indented cr\n(define a 1)\n")
+    "edge case 20")
   ;; The dropped-span proof over the same shapes, CRLF and prose included.
   (test.assert-true
     (module-dropped-exact?

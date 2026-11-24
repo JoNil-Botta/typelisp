@@ -1,0 +1,5 @@
+# Selfhost compile manifest fragment for C32 range/CVP pass.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|selfhost_compiler_opt_range|src/compiler_opt_range.tl|assembly|none|direct
+end

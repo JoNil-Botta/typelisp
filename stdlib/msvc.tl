@@ -16,7 +16,6 @@
 ;#   (msvc.find-tool (& target) (& tool)))
 ;# ```
 (import stdlib.env)
-(import stdlib.comptime)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.fs)
@@ -24,32 +23,6 @@
 (import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.vector)
-
-;; Internal shallow reads used while ordinary by-value parameters own values.
-;: Return a representation-level shared view of an MSVC value place.
-(defmacro (msvc-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
-;: Return a representation-level shared view of an MSVC array element.
-(defmacro (msvc-array-element-shared-view [items : Expr] [index : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
-
-;: Return a representation-level shared view of a boxed MSVC value.
-(defmacro (msvc-box-shared-view [value : Expr]) : Expr
-  (let
-    ;; Spliced into the generated pointer element type.
-    ;; lint-allow: unused-variable
-    [inner-ty : comptime.Expr
-      (comptime.box-element-type (comptime.expr-type value))]
-    `(let
-      [address : i64
-        (unsafe
-          (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))))]
-      (unsafe
-        (ptr-read (int->ptr (cast address : u64) : (Ptr ,inner-ty)))))))
-
 (import (vector.vector String) as svec)
 
 ;: Resolved MSVC tool: executable path plus the command-environment overrides.
@@ -101,26 +74,21 @@
   (MsvcNoSdk)
   (MsvcSomeSdk MsvcSdk))
 
-;: Re-expose a borrowed MSVC string field through the public String surface.
-(define (msvc-string-shared-view [value : (& value str)]) : String
-  (unsafe
-    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
-
 ;: Return the resolved tool executable path.
 (define (tool-executable [tool : (& tool MsvcTool)]) : String
-  (msvc-string-shared-view tool.executable))
+  (string.copy (& tool.executable)))
 
 ;: Return the PATH override for invoking the tool.
 (define (tool-path [tool : (& tool MsvcTool)]) : String
-  (msvc-string-shared-view tool.path))
+  (string.copy (& tool.path)))
 
 ;: Return the LIB override for invoking the tool.
 (define (tool-lib [tool : (& tool MsvcTool)]) : String
-  (msvc-string-shared-view tool.lib))
+  (string.copy (& tool.lib)))
 
 ;: Return the INCLUDE override for invoking the tool.
 (define (tool-include [tool : (& tool MsvcTool)]) : String
-  (msvc-string-shared-view tool.include))
+  (string.copy (& tool.include)))
 
 ;: Return process environment overrides for invoking the tool.
 (define (tool-process-env [tool : (& tool MsvcTool)]) : process.ProcessEnvList

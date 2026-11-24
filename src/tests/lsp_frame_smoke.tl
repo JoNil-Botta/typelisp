@@ -921,13 +921,14 @@
         (lsp_tests.lsp-diagnostic-uris-single
           (owned_view.compiler-owned-shared-view uri)))]
     [doc1 : lvf.LspDocument
-      (lsp_document_vec.get (& docs1) 0 (lsp.lsp-document-fallback))]
+      (lsp.lsp-document-copy (& (array-ref docs1.slots 0)))]
     [empty-decls : lsp_decl_vec.Vec
       (lsp.lsp-document-decls
         doc1
         (owned_view.compiler-owned-shared-view docs1))]
-    [cached-empty-doc : lvf.LspDocument
-      (lsp_document_vec.get (& docs1) 0 (lsp.lsp-document-fallback))]
+    [cached-empty-valid : bool (array-ref docs1.slots 0).decls-valid]
+    [cached-empty-decls-len : i64
+      (lsp_decl_vec.len (& (array-ref docs1.slots 0).decls))]
     [docs2 : lsp_document_vec.Vec
       (lsp.lsp-documents-set
         docs1
@@ -935,8 +936,7 @@
         (owned_view.compiler-owned-shared-view path)
         ""
         (lsp_tests.lsp-diagnostic-uris-single "diag"))]
-    [same-text-doc : lvf.LspDocument
-      (lsp_document_vec.get (& docs2) 0 (lsp.lsp-document-fallback))]
+    [same-text-valid : bool (array-ref docs2.slots 0).decls-valid]
     [docs3 : lsp_document_vec.Vec
       (lsp.lsp-documents-set
         docs2
@@ -945,21 +945,20 @@
         "(define cached : i64 1)"
         (lsp_tests.lsp-diagnostic-uris-single "diag"))]
     [changed-doc : lvf.LspDocument
-      (lsp_document_vec.get (& docs3) 0 (lsp.lsp-document-fallback))]
+      (lsp.lsp-document-copy (& (array-ref docs3.slots 0)))]
     [changed-decls : lsp_decl_vec.Vec
       (lsp.lsp-document-decls
         (owned_view.compiler-owned-shared-view changed-doc)
         (owned_view.compiler-owned-shared-view docs3))]
-    [cached-changed-doc : lvf.LspDocument
-      (lsp_document_vec.get (& docs3) 0 (lsp.lsp-document-fallback))]
+    [cached-changed-valid : bool (array-ref docs3.slots 0).decls-valid]
     (and
       (= (lsp_decl_vec.len (& empty-decls)) 0)
-      cached-empty-doc.decls-valid
-      (= (lsp_decl_vec.len cached-empty-doc.decls) 0)
-      same-text-doc.decls-valid
+      cached-empty-valid
+      (= cached-empty-decls-len 0)
+      same-text-valid
       (not changed-doc.decls-valid)
       (= (lsp_decl_vec.len (& changed-decls)) 1)
-      cached-changed-doc.decls-valid)))
+      cached-changed-valid)))
 
 (define (lsp-document-disk-resync-ok?) : bool
   (let
@@ -998,25 +997,22 @@
           (owned_view.compiler-owned-shared-view docs))
           [(Found _ text _) (string.contains (& text) (& fresh-name))]
           [(Missing) false])]
-      [cached-doc : lvf.LspDocument
-        (lsp_document_vec.get (& docs) 0 (lsp.lsp-document-fallback))]
       [cache-ok : bool
         (and
-          (string.contains (& cached-doc.text) (& fresh-name))
-          (not cached-doc.decls-valid))]
+          (string.contains (& (array-ref docs.slots 0).text) (& fresh-name))
+          (not (array-ref docs.slots 0).decls-valid))]
       [decls-ok : bool
         (match (lsp.lsp-get-document-decls params docs)
           [(Found _ text _ decls)
             (let
               [entry : lvf.LspDeclEntry
-                (lsp_decl_vec.get (& decls) 0 (lsp.lsp-decl-entry-fallback))]
+                (lvf.lsp-decl-vec-get (& decls) 0 (lsp.lsp-decl-entry-fallback))]
               (and
                 (string.contains (& text) (& fresh-name))
                 (= (lsp_decl_vec.len (& decls)) 1)
                 (string.eq entry.name fresh-name)))]
           [(Missing) false])]
-      [cached-decls-doc : lvf.LspDocument
-        (lsp_document_vec.get (& docs) 0 (lsp.lsp-document-fallback))]
+      [cached-decls-valid : bool (array-ref docs.slots 0).decls-valid]
       [versioned-docs : lsp_document_vec.Vec
         (lsp.lsp-documents-set-versioned
           (lsp_document_vec.new)
@@ -1036,24 +1032,22 @@
           [(Found _ text _ decls)
             (let
               [entry : lvf.LspDeclEntry
-                (lsp_decl_vec.get (& decls) 0 (lsp.lsp-decl-entry-fallback))]
+                (lvf.lsp-decl-vec-get (& decls) 0 (lsp.lsp-decl-entry-fallback))]
               (and
                 (string.contains (& text) (& overlay-name))
                 (= (lsp_decl_vec.len (& decls)) 1)
                 (string.eq entry.name overlay-name)))]
           [(Missing) false])]
-      [versioned-cached-doc : lvf.LspDocument
-        (lsp_document_vec.get (& versioned-docs) 0 (lsp.lsp-document-fallback))]
       (and
         lookup-ok
         cache-ok
         decls-ok
-        cached-decls-doc.decls-valid
+        cached-decls-valid
         versioned-lookup-ok
         versioned-decls-ok
-        (string.eq versioned-cached-doc.text overlay-text)
-        (= versioned-cached-doc.version 7)
-        versioned-cached-doc.decls-valid))))
+        (string.eq (& (array-ref versioned-docs.slots 0).text) (& overlay-text))
+        (= (array-ref versioned-docs.slots 0).version 7)
+        (array-ref versioned-docs.slots 0).decls-valid))))
 
 (define (lsp-edit-save-doc-smoke-ok?) : bool
   (let
@@ -1082,11 +1076,13 @@
       [(Ok next-docs)
         (let
           [disk-text : String (byte_buf.to-string (io.read-file path))]
-          [cached-doc : lvf.LspDocument
-            (lsp_document_vec.get (& next-docs) 0 (lsp.lsp-document-fallback))]
+          [next-view : (& next-docs (Slice lvf.LspDocument))
+            (lsp_document_vec.view (& next-docs))]
+          [cached-doc : (& next-docs lvf.LspDocument)
+            (& (array-ref next-view 0))]
           (and
             (string.eq disk-text updated)
-            (string.eq cached-doc.text updated)
+            (string.eq (& cached-doc.text) updated)
             (not cached-doc.decls-valid)))]
       [(Err _) false])))
 
@@ -1098,9 +1094,9 @@
     [first-decls : lsp_decl_vec.Vec (lsp.lsp-scan-decls first)]
     [second-decls : lsp_decl_vec.Vec (lsp.lsp-scan-decls second)]
     [wide : lvf.LspDeclEntry
-      (lsp_decl_vec.get (& second-decls) 0 (lsp.lsp-decl-entry-fallback))]
+      (lvf.lsp-decl-vec-get (& second-decls) 0 (lsp.lsp-decl-entry-fallback))]
     [next : lvf.LspDeclEntry
-      (lsp_decl_vec.get (& second-decls) 1 (lsp.lsp-decl-entry-fallback))]
+      (lvf.lsp-decl-vec-get (& second-decls) 1 (lsp.lsp-decl-entry-fallback))]
     (and
       (= (lsp_decl_vec.len (& first-decls)) 1)
       (= (lsp_decl_vec.len (& second-decls)) 2)
@@ -1189,19 +1185,20 @@
               uri
               1
               index)]
-          [doc : lvf.LspDocument
-            (lsp_document_vec.get (& docs) 0 (lsp.lsp-document-fallback))]
+          [doc-view : (& docs (Slice lvf.LspDocument))
+            (lsp_document_vec.view (& docs))]
+          [doc : (& docs lvf.LspDocument) (& (array-ref doc-view 0))]
           [top-results : lsp.LspDocumentHighlightResults
             (lsp.lsp-document-highlights-at
-              (& doc)
+              doc
               (lsp.lsp-offset-at-position source 7 22))]
           [local-results : lsp.LspDocumentHighlightResults
             (lsp.lsp-document-highlights-at
-              (& doc)
+              doc
               (lsp.lsp-offset-at-position source 6 33))]
           [slot-results : lsp.LspDocumentHighlightResults
             (lsp.lsp-document-highlights-at
-              (& doc)
+              doc
               (lsp.lsp-offset-at-position source 1 16))]
           [wrap-results : lsp.LspDocumentHighlightResults
             (lsp.lsp-document-highlights-at
@@ -1368,10 +1365,11 @@
         (owned_view.compiler-owned-shared-view source)
         1
         (lsp.lsp-diagnostic-uris-empty))]
-    [doc : lvf.LspDocument
-      (lsp_document_vec.get (& docs) 0 (lsp.lsp-document-fallback))]
+    [doc-view : (& docs (Slice lvf.LspDocument))
+      (lsp_document_vec.view (& docs))]
+    [doc : (& docs lvf.LspDocument) (& (array-ref doc-view 0))]
     [_utf16 : unit (lsp.lsp-position-encoding-use-utf16!)]
-    [utf16-result : json.Json (lsp.lsp-semantic-tokens-for-document (& doc))]
+    [utf16-result : json.Json (lsp.lsp-semantic-tokens-for-document doc)]
     [utf16-rendered : String
       (json.stringify (owned_view.compiler-owned-shared-view utf16-result))]
     [utf16-decoded : LspSemanticTokenDecode
@@ -1379,7 +1377,7 @@
         utf16-result
         (owned_view.compiler-owned-shared-view source))]
     [_utf8 : unit (lsp.lsp-position-encoding-use-utf8!)]
-    [utf8-result : json.Json (lsp.lsp-semantic-tokens-for-document (& doc))]
+    [utf8-result : json.Json (lsp.lsp-semantic-tokens-for-document doc)]
     [utf8-rendered : String
       (json.stringify (owned_view.compiler-owned-shared-view utf8-result))]
     [utf8-decoded : LspSemanticTokenDecode
@@ -1432,12 +1430,10 @@
               uri
               1
               index)]
-          [doc : lvf.LspDocument
-            (lsp_document_vec.get (& docs) 0 (lsp.lsp-document-fallback))]
           [semantic-result : json.Json
-            (lsp.lsp-semantic-tokens-for-document (& doc))]
+            (lsp.lsp-semantic-tokens-for-document (& (array-ref docs.slots 0)))]
           [repeated-result : json.Json
-            (lsp.lsp-semantic-tokens-for-document (& doc))]
+            (lsp.lsp-semantic-tokens-for-document (& (array-ref docs.slots 0)))]
           [decoded : LspSemanticTokenDecode
             (lsp-semantic-token-decode
               (owned_view.compiler-owned-shared-view semantic-result)
@@ -1451,13 +1447,9 @@
               (owned_view.compiler-owned-shared-view changed-source)
               2
               (lsp.lsp-diagnostic-uris-empty))]
-          [changed-doc : lvf.LspDocument
-            (lsp_document_vec.get
-              (& changed-docs)
-              0
-              (lsp.lsp-document-fallback))]
           [stale-result : json.Json
-            (lsp.lsp-semantic-tokens-for-document (& changed-doc))]
+            (lsp.lsp-semantic-tokens-for-document
+              (& (array-ref changed-docs.slots 0)))]
           [stale-decoded : LspSemanticTokenDecode
             (lsp-semantic-token-decode stale-result changed-source)]
           [all-types : i64 (- (shl 1 13) 1)]

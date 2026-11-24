@@ -6135,7 +6135,8 @@
 ;; other, so the loop is not a leaf region and the constant hoister must not
 ;; carry the `% 3` magic across it in %r8 (#8198). A declined hoist
 ;; rematerializes the magic at its use; `movabsq` then sits right before the
-;; `imulq`, never at the preheader label.
+;; unsigned `mulq` (since `cvp_range` proves `i >= 0`), never at the preheader
+;; label.
 (define compiler-backend-spmd-call-loop-divmod-source : String
   "(define (store-flags
   [out : (&mut out (__tl_dyn-array i64))]
@@ -6162,8 +6163,8 @@
     [(Ok asm)
       (and
         (asm-has? asm "    call _tl_f0\n")
-        (asm-has? asm "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
-        (asm-lacks? asm "__preheader:\n    movabsq $6148914691236517206"))]
+        (asm-has? asm "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
+        (asm-lacks? asm "__preheader:\n    movabsq $-6148914691236517205"))]
     [(Err _) false]))
 
 (define (compiler-backend-spmd-call-loop-divmod-ok?) : bool
@@ -7166,6 +7167,90 @@ high:
     ret
 ")
 
+;; Push mode deletes every save into the callee-save band, so a squeezed
+;; rebase drops 32 of its bytes: var slots move 32 bytes closer to %rsp,
+;; while a bottom-of-frame slot below the band keeps its %rsp offset. With
+;; slot-vars = 3 the squeezed band is -56..-32. A reference into the band
+;; that is not a classified save fails the audit.
+(define (compiler-backend-frame-squeeze-rebase
+  [body : String]
+  [frame : i64]
+  [squeeze : i64]) : be_peephole.CompilerBackendRspRebaseResult
+  (let
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_abi : unit (compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (compiler-backend-callee-save-assignments3)]
+    [push-regs : (__tl_dyn-array String)
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        (&mut push-regs)
+        backend-state)]
+    (be_peephole.compiler-backend-rsp-rebase-full-result-squeezed
+      body
+      (- frame squeeze)
+      true
+      push-regs
+      push-count
+      3
+      squeeze
+      backend-state)))
+
+(define (compiler-backend-frame-squeeze-body [extra : String]) : String
+  (str_cat.str-cat
+    "    movq %r12, -32(%rbp)
+    movq %r13, -40(%rbp)
+    movq %r14, -48(%rbp)
+    movq -8(%rbp), %r12
+    movq %r12, -72(%rbp)
+"
+    extra
+    "    addq %r14, %r13
+    movq -72(%rbp), %rax
+    leaq -48(%rbp), %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+"))
+
+(define (compiler-backend-frame-squeeze-rebase-ok?) : bool
+  (let
+    [plain : be_peephole.CompilerBackendRspRebaseResult
+      (compiler-backend-frame-squeeze-rebase
+        (compiler-backend-frame-squeeze-body "")
+        96
+        0)]
+    [squeezed : be_peephole.CompilerBackendRspRebaseResult
+      (compiler-backend-frame-squeeze-rebase
+        (compiler-backend-frame-squeeze-body "")
+        96
+        32)]
+    [band-ref : be_peephole.CompilerBackendRspRebaseResult
+      (compiler-backend-frame-squeeze-rebase
+        (compiler-backend-frame-squeeze-body "    movq -56(%rbp), %rax\n")
+        96
+        32)]
+    [plain-text : String plain.text]
+    [squeezed-text : String squeezed.text]
+    (and
+      plain.ok
+      (asm-has? plain-text "    movq 88(%rsp), %r12\n")
+      (asm-has? plain-text "    movq %r12, 24(%rsp)\n")
+      (asm-has? plain-text "    addq $96, %rsp\n")
+      squeezed.ok
+      (asm-has? squeezed-text "    movq 56(%rsp), %r12\n")
+      (asm-has? squeezed-text "    movq %r12, 24(%rsp)\n")
+      (asm-has? squeezed-text "    movq 24(%rsp), %rax\n")
+      (asm-has? squeezed-text "    addq $64, %rsp\n")
+      (asm-lacks? squeezed-text "(%rbp)")
+      (not band-ref.ok))))
+
 ;; The same body with %r13 named through its 32-bit spelling. A register named
 ;; at ANY width is used; reading only the 64-bit spellings makes this body look
 ;; empty of %r13 and trims a save the function needs.
@@ -7256,6 +7341,7 @@ high:
         push-regs
         push-count
         3
+        0
         backend-state)]
     [prologue : String
       (be_scalar.compiler-backend-emit-function-entry-fpo-push
@@ -13183,6 +13269,29 @@ f:
     ret
     .size f, . - f
 ")
+    ;; REFUSED under -Os: the copy would carry more than its `jmp`.
+    (compiler-backend-layout-unchanged?
+      (bit-or
+        be_peephole.compiler-backend-layout-mode-dup
+        be_peephole.compiler-backend-layout-mode-size)
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    xorl %r9d, %r9d
+    jmp .Lf0_join
+.Lf0_body:
+    addq $1, %r9
+.Lf0_join:
+    cmpq %rdx, %r9
+    jl .Lf0_body
+.Lf0_tail:
+    xorl %edi, %edi
+    jmp .Lf0_exit
+.Lf0_exit:
+    ret
+    .size f, . - f
+")
     ;; REFUSED above the run cap: one more instruction than the budget.
     (compiler-backend-layout-unchanged?
       be_peephole.compiler-backend-layout-mode-dup
@@ -16349,6 +16458,127 @@ f:
           "    subq $4096, %rsp\n")
         "late expansion preserves a live indirect target and the small dip"))
     (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  win64-unwind-lowering-shares-records-and-drops-leaves
+  (let
+    [state
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [stream (be_state.compiler-backend-state-stream-state state)]
+    [push-alloc : String
+      "    pushq %r12\n    .seh_pushreg %r12\n    subq $128, %rsp\n    .seh_stackalloc 128\n    .seh_endprologue\n"]
+    [text : String
+      (str_cat.str-cat
+        ".seh_proc f1\nf1:\n"
+        push-alloc
+        "    call g\n    addq $128, %rsp\n    popq %r12\n    ret\n    .seh_endproc\n\n.seh_proc f2\nf2:\n"
+        push-alloc
+        "    addq $128, %rsp\n    popq %r12\n    ret\n    .seh_endproc\n\n"
+        ".seh_proc leaf\nleaf:\n    .seh_endprologue\n    movq %rcx, %rax\n    ret\n    .seh_endproc\n\n"
+        ".seh_proc calls\ncalls:\n    .seh_endprologue\n    call g\n    ret\n    .seh_endproc\n\n"
+        ".seh_proc big\nbig:\n    movl $8192, %eax\n    callq __chkstk\n    subq %rax, %rsp\n    .seh_stackalloc 8192\n    .seh_endprologue\n    ret\n    .seh_endproc\n\n"
+        ".seh_proc huge\nhuge:\n    subq $1048576, %rsp\n    .seh_stackalloc 1048576\n    .seh_endprologue\n    ret\n    .seh_endproc\n\n"
+        ".seh_proc framed\nframed:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    .seh_setframe %rbp, 0\n    .seh_endprologue\n    leave\n    ret\n    .seh_endproc\n")]
+    [lowered : String
+      (be_peephole.compiler-backend-win64-lower-unwind
+        stream
+        text
+        (arena.current))]
+    (test.assert-owned-string-eq
+      lowered
+      (str_cat.str-cat
+        "f1:\n    pushq %r12\n    subq $128, %rsp\n    call g\n    addq $128, %rsp\n    popq %r12\n    ret\n"
+        ".L_tl_seh_end_0:\n    .pushsection .xdata,\"dr\"\n    .p2align 2\n.L_tl_xdata_0:\n    .byte 1, 9, 2, 0\n    .byte 9, 242    # UWOP_ALLOC_SMALL 128\n    .byte 2, 192    # UWOP_PUSH_NONVOL %r12\n    .popsection\n"
+        "    .pushsection .pdata,\"dr\"\n    .rva f1, .L_tl_seh_end_0, .L_tl_xdata_0\n    .popsection\n\n"
+        "f2:\n    pushq %r12\n    subq $128, %rsp\n    addq $128, %rsp\n    popq %r12\n    ret\n"
+        ".L_tl_seh_end_1:\n    .pushsection .pdata,\"dr\"\n    .rva f2, .L_tl_seh_end_1, .L_tl_xdata_0\n    .popsection\n\n"
+        "leaf:\n    movq %rcx, %rax\n    ret\n\n"
+        "calls:\n    call g\n    ret\n"
+        ".L_tl_seh_end_2:\n    .pushsection .xdata,\"dr\"\n    .p2align 2\n.L_tl_xdata_1:\n    .byte 1, 0, 0, 0\n    .byte 0, 0, 0, 0\n    .popsection\n"
+        "    .pushsection .pdata,\"dr\"\n    .rva calls, .L_tl_seh_end_2, .L_tl_xdata_1\n    .popsection\n\n"
+        "big:\n    movl $8192, %eax\n    callq __chkstk\n    subq %rax, %rsp\n    ret\n"
+        ".L_tl_seh_end_3:\n    .pushsection .xdata,\"dr\"\n    .p2align 2\n.L_tl_xdata_2:\n    .byte 1, 13, 2, 0\n    .byte 13, 1, 0, 4    # UWOP_ALLOC_LARGE 8192\n    .popsection\n"
+        "    .pushsection .pdata,\"dr\"\n    .rva big, .L_tl_seh_end_3, .L_tl_xdata_2\n    .popsection\n\n"
+        "huge:\n    subq $1048576, %rsp\n    ret\n"
+        ".L_tl_seh_end_4:\n    .pushsection .xdata,\"dr\"\n    .p2align 2\n.L_tl_xdata_3:\n    .byte 1, 7, 3, 0\n    .byte 7, 17, 0, 0, 16, 0    # UWOP_ALLOC_LARGE 1048576\n    .byte 0, 0\n    .popsection\n"
+        "    .pushsection .pdata,\"dr\"\n    .rva huge, .L_tl_seh_end_4, .L_tl_xdata_3\n    .popsection\n\n"
+        ".seh_proc framed\nframed:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    .seh_setframe %rbp, 0\n    .seh_endprologue\n    leave\n    ret\n    .seh_endproc\n")
+      "push/alloc/probe prologues share interned records, leaves drop, frames keep directives")
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  win64-unwind-lowering-associates-comdat-pdata
+  (let
+    [state
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [stream (be_state.compiler-backend-state-stream-state state)]
+    [body : String
+      "    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    call g\n    addq $40, %rsp\n    ret\n    .seh_endproc\n"]
+    [text : String
+      (str_cat.str-cat
+        ".section .text,\"xr\",one_only,a\n.globl a\n.seh_proc a\na:\n"
+        body
+        ".section .text,\"xr\",one_only,b\n.globl b\n.seh_proc b\nb:\n"
+        body
+        "    .text\n.seh_proc c\nc:\n"
+        body)]
+    [lowered : String
+      (be_peephole.compiler-backend-win64-lower-unwind
+        stream
+        text
+        (arena.current))]
+    [plain-body : String
+      "    subq $40, %rsp\n    call g\n    addq $40, %rsp\n    ret\n"]
+    (test.assert-owned-string-eq
+      lowered
+      (str_cat.str-cat
+        ".section .text,\"xr\",one_only,a\n.globl a\na:\n"
+        plain-body
+        ".L_tl_seh_end_0:\n    .pushsection .xdata,\"dr\"\n    .p2align 2\n.L_tl_xdata_0:\n    .byte 1, 4, 1, 0\n    .byte 4, 66    # UWOP_ALLOC_SMALL 40\n    .byte 0, 0\n    .popsection\n"
+        "    .pushsection .pdata,\"dr\",associative,a\n    .rva a, .L_tl_seh_end_0, .L_tl_xdata_0\n    .popsection\n"
+        ".section .text,\"xr\",one_only,b\n.globl b\nb:\n"
+        plain-body
+        ".L_tl_seh_end_1:\n    .pushsection .pdata,\"dr\",associative,b\n    .rva b, .L_tl_seh_end_1, .L_tl_xdata_0\n    .popsection\n"
+        "    .text\nc:\n"
+        plain-body
+        ".L_tl_seh_end_2:\n    .pushsection .pdata,\"dr\"\n    .rva c, .L_tl_seh_end_2, .L_tl_xdata_0\n    .popsection\n")
+      "COMDAT functions get associative .pdata rows; plain .text keeps a plain row")
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  win64-object-unwind-shares-identical-records
+  (let
+    [bytes : String
+      (object_windows.compiler-backend-object-entry-range-unwind-bytes
+        40
+        4
+        false)]
+    [parts : object_target.CompilerBackendObjectTargetParts
+      (object_windows.compiler-backend-object-add-unwind
+        (object_windows.compiler-backend-object-add-unwind
+          (object_target.compiler-backend-object-parts-empty)
+          "a"
+          "a$end"
+          (string.copy (& bytes)))
+        "b"
+        "b$end"
+        bytes)]
+    (test.assert-i64-eq
+      parts.xdata.count
+      3
+      "identical unwind bytes keep one aligned, labeled record")
+    (test.assert-true
+      (and
+        (cobj.compiler-object-relocation-builder-targets?
+          (& parts.relocations)
+          "a$unwind")
+        (not
+          (cobj.compiler-object-relocation-builder-targets?
+            (& parts.relocations)
+            "b$unwind")))
+      "the second range's .pdata row names the first range's record")))
 
 (test
   linux-stack-probes-whole-text-finalizer
@@ -27662,14 +27892,16 @@ entry:
         "%rbp"
         "%rcx"
         "$3"
-        (I64 3))
+        (I64 3)
+        false)
       "    imulq $3, %rbp, %rcx\n")
     (string.eq
       (be_scalar.compiler-backend-mul-immediate-direct-asm
         "%rbp"
         "%rbp"
         "$9"
-        (I64 9))
+        (I64 9)
+        false)
       "    imulq $9, %rbp, %rbp\n")))
 
 (define (compiler-backend-mul-non-pow2-imul-shape-ok?) : bool
@@ -40802,62 +41034,54 @@ b_keep:
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
 
-(define (compiler-backend-placement-test-last-before
-  [text : (& text str)]
-  [needle : String]
-  [limit : i64]) : i64
-  (let
-    [pos : i64 -1]
-    [scan : i64 0]
-    [next : i64 0]
-    (while (>= scan 0)
-      (set! next (backend.compiler-backend-string-find-from text needle scan))
-      (if (and (>= next 0) (< next limit))
-        (begin
-          (set! pos next)
-          (set! scan (+ next 1)))
-        (set! scan -1)))
-    pos))
-
 ;; Rotation moves whole blocks, and on Windows the unwind description is
-;; positional: `.seh_` notes describe the prologue and nothing else may sit
-;; between them and `.seh_endprologue`. The entry-first rule is what guarantees
-;; that, and this is the check that it holds while a loop below it is rotated.
+;; positional: the prologue notes describe the entry instructions and nothing
+;; else may sit between them and the end of the prologue. The entry-first rule
+;; is what guarantees that, and this is the check that it holds while a loop
+;; below it is rotated. The unwind lowering only accepts that shape: any other
+;; line in the prologue, or a note in the body, keeps the `.seh_` directives.
 (define (compiler-backend-placement-windows-seh-shape-ok?) : bool
   (match (backend.compiler-backend-emit-program-for-target
     (compiler-backend-placement-seh-program)
     (be_state.CompilerBackendTarget.Windows))
     [(Ok asm)
       (let
+        [entry : i64
+          (backend.compiler-backend-string-find-from
+            asm
+            "_tl_placement_loop:\n"
+            0)]
         ;; the loop test's own label, and the first place anything JUMPS to it
         ;; (a jump operand ends the line, a label definition ends in a colon)
         [label : i64
           (backend.compiler-backend-string-find-from asm "_header:\n" 0)]
         [operand : i64
           (backend.compiler-backend-string-find-from asm "_header\n" 0)]
-        [prologue : i64
-          (compiler-backend-placement-test-last-before
-            asm
-            "    .seh_endprologue\n"
-            (if (>= label 0)
-              label
-              0))]
+        [end : i64
+          (if (< entry 0)
+            -1
+            (backend.compiler-backend-string-find-from
+              asm
+              ".L_tl_seh_end_"
+              entry))]
         (and
-          (>= label 0)
-          (>= operand 0)
-          (>= prologue 0)
+          (>= entry 0)
+          (< entry operand)
           ;; rotation put the test below the body, so the function reaches it by
           ;; a jump before ever defining the label ...
           (< operand label)
-          (< prologue operand)
-          ;; ... and no `.seh_` note travelled into the rotated body with a
-          ;; block: the next one is not until the test itself
-          (>=
-            (backend.compiler-backend-string-find-from
-              asm
-              "    .seh_"
-              (+ prologue 1))
-            label)))]
+          (< label end)
+          ;; ... the lowering accepted the function: no `.seh_` note is left in
+          ;; it ...
+          (let
+            [note : i64
+              (backend.compiler-backend-string-find-from asm "    .seh_" entry)]
+            (or (< note 0) (> note end)))
+          ;; ... and its record's 4-byte prologue is the entry `subq` alone
+          (compiler-backend-win64-row-describes?
+            (& asm)
+            "_tl_placement_loop"
+            "    .byte 1, 4, 1, 0\n    .byte 4, 98    # UWOP_ALLOC_SMALL 56\n    .byte 0, 0\n")))]
     [(Err _) false]))
 
 (define (compiler-backend-placement-ok?) : bool
@@ -41502,6 +41726,7 @@ b_keep:
         (compiler-backend-rsp-rebase-indexed-pool-base-ok?)
         (compiler-backend-csr-unused-save-trim-ok?)
         (compiler-backend-csr-narrow-spelling-keeps-save-ok?)
+        (compiler-backend-frame-squeeze-rebase-ok?)
         (compiler-backend-dead-slot-region-push-ok?)
         (compiler-backend-win64-callee-save-homes-ok?)
         (compiler-backend-win64-fpo-seh-prologue-ok?)
@@ -42518,12 +42743,13 @@ b_keep:
                 (when
                   active
                   (begin
-                    (text_buf_borrowed.copy-byte-range-into
-                      data
-                      run-start
-                      (- run-end run-start)
-                      dst
-                      pos)
+                    (unsafe
+                      (text_buf_borrowed.copy-byte-range-into
+                        data
+                        run-start
+                        (- run-end run-start)
+                        dst
+                        pos))
                     (+= pos (- run-end run-start))))
                 (set! active true)
                 (set! run-start s)
@@ -42531,12 +42757,13 @@ b_keep:
         (when
           active
           (begin
-            (text_buf_borrowed.copy-byte-range-into
-              data
-              run-start
-              (- run-end run-start)
-              dst
-              pos)
+            (unsafe
+              (text_buf_borrowed.copy-byte-range-into
+                data
+                run-start
+                (- run-end run-start)
+                dst
+                pos))
             (+= pos (- run-end run-start))))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
@@ -46360,6 +46587,36 @@ user_fn:
     (compiler-backend-backtrace-metadata-shape-ok?)
     "debug backtraces omit shared and dedicated C-entry frames; release emits no map"))
 
+;; True when `symbol`'s `.pdata` row names an `.xdata` record whose `.byte`
+;; lines are `record`.
+(define (compiler-backend-win64-row-describes?
+  [asm : (& asm str)]
+  [symbol : String]
+  [record : String]) : bool
+  (let
+    [row : i64
+      (backend.compiler-backend-string-find-from
+        asm
+        (& (str_cat.str-cat "    .rva " symbol ", "))
+        0)]
+    [label : i64
+      (if (< row 0)
+        -1
+        (backend.compiler-backend-string-find-from asm ", .L_tl_xdata_" row))]
+    [line-end : i64
+      (if (< label 0)
+        -1
+        (backend.compiler-backend-string-find-from asm "\n" label))]
+    (and
+      (>= line-end 0)
+      (be_operand.compiler-backend-string-contains?
+        asm
+        (&
+          (str_cat.str-cat
+            (string.substring asm (+ label 2) (- line-end (+ label 2)))
+            ":\n"
+            record))))))
+
 (test
   backend-c-export-entries
   (test.assert-true
@@ -46417,7 +46674,7 @@ user_fn:
       [(Err _) (test.assert-true false "small C entries assembly")]
       [(Ok asm)
         (let
-          [marker : String ".seh_proc __tl$c_entry\n"]
+          [marker : String "    .rva __tl$c_entry, "]
           [first : i64 (backend.compiler-backend-string-find-from asm marker 0)]
           (test.assert-true
             (and
@@ -46663,11 +46920,10 @@ user_fn:
                 "call bridge_c$typelisp\n"
                 "popq %rdi\n"
                 "popq %rsi\n")
-              (asm-has?
-                asm
-                ".seh_proc bridge_c\n"
-                ".seh_pushreg %rsi\n"
-                ".seh_pushreg %rdi\n"))
+              (compiler-backend-win64-row-describes?
+                (& asm)
+                "bridge_c"
+                "    .byte 1, 6, 3, 0\n    .byte 6, 98    # UWOP_ALLOC_SMALL 56\n    .byte 2, 112    # UWOP_PUSH_NONVOL %rdi\n    .byte 1, 96    # UWOP_PUSH_NONVOL %rsi\n    .byte 0, 0\n"))
             "C entry must preserve registers, forward stack words and describe its own frame"))])))
 
 ;; One `int->string` per byte: the text the `.byte` emitter must produce.
@@ -47611,23 +47867,23 @@ user_fn:
       "Linux fallback-TailCall direct-stack-param function aligns %rsp with subq $8, %rsp")
     (test.assert-true
       (and
-        (asm-has? reader "    movq 176(%rsp), %r8\n    addq 184(%rsp), %r8\n")
-        (asm-lacks? reader "movq 176(%rsp), %r8\n    movq %r8, ")
-        (asm-has? tail-reg "    movq 176(%rsp), %r8\n    addq 184(%rsp), %r8\n")
+        (asm-has? reader "    movq 128(%rsp), %r8\n    addq 136(%rsp), %r8\n")
+        (asm-lacks? reader "movq 128(%rsp), %r8\n    movq %r8, ")
+        (asm-has? tail-reg "    movq 128(%rsp), %r8\n    addq 136(%rsp), %r8\n")
         (asm-has? tail-reg "    jmp _tl_dsp_tr_cal\n"))
       "Linux direct stack params and 0-stack-arg tail caller read caller frame directly")
     (test.assert-true
       (and
-        (asm-has? addr "    movq 176(%rsp), %r8\n    movq %r8, 64(%rsp)\n")
-        (asm-has? addr "    leaq 64(%rsp), %rdi\n")
-        (asm-has? addr "    addq 184(%rsp), %rax\n")
-        (asm-has? narrow "    movslq 176(%rsp), %r8\n")
-        (asm-has? narrow "    movzbl 184(%rsp), %r8d\n")
+        (asm-has? addr "    movq 128(%rsp), %r8\n    movq %r8, 16(%rsp)\n")
+        (asm-has? addr "    leaq 16(%rsp), %rdi\n")
+        (asm-has? addr "    addq 136(%rsp), %rax\n")
+        (asm-has? narrow "    movslq 128(%rsp), %r8\n")
+        (asm-has? narrow "    movzbl 136(%rsp), %r8d\n")
         (asm-has?
           tail-stack
-          "    movq 144(%rsp), %r8\n    movq %r8, 72(%rsp)\n")
+          "    movq 112(%rsp), %r8\n    movq %r8, 40(%rsp)\n")
         (asm-has? tail-stack "    jmp _tl_dsp_tc_cal\n")
-        (asm-lacks? mutated ", 176(%rsp)" ", 184(%rsp)"))
+        (asm-lacks? mutated ", 128(%rsp)" ", 136(%rsp)"))
       "Linux excludes AddrOf, narrow <8-byte, and stack-arg tail-call params and never mutates caller slots"))
   ;; End-to-end Windows x64 opt2 checks.
   (let
@@ -47653,14 +47909,14 @@ user_fn:
         (asm-has? win-reader ".seh_stackalloc " ".seh_endprologue")
         (asm-has?
           win-reader
-          "    movq 256(%rsp), %r8\n    addq 264(%rsp), %r8\n")
-        (asm-lacks? win-reader "movq 256(%rsp), %r8\n    movq %r8, "))
+          "    movq 208(%rsp), %r8\n    addq 216(%rsp), %r8\n")
+        (asm-lacks? win-reader "movq 208(%rsp), %r8\n    movq %r8, "))
       "Windows direct stack reader reads incoming caller slots directly with valid SEH")
     (test.assert-true
       (and
         (asm-has? win-narrow ".seh_stackalloc " ".seh_endprologue")
-        (asm-has? win-narrow "    movslq 256(%rsp), %r8\n")
-        (asm-has? win-narrow "    movzbl 264(%rsp), %r8d\n"))
+        (asm-has? win-narrow "    movslq 208(%rsp), %r8\n")
+        (asm-has? win-narrow "    movzbl 216(%rsp), %r8d\n"))
       "Windows excludes narrow <8-byte incoming stack params with valid SEH")))
 
 (test
@@ -47712,6 +47968,76 @@ user_fn:
                 (asm-lacks? asm "_tl_f0")
                 (asm-lacks? asm "#t _tl_f"))
               "library object never emits compact _tl_f<slot> function symbols")])))))
+
+(test
+  scalar-mul-mersenne-and-split-3op-lea
+  ;; Mersenne constant multiplies (7, 15, 31, 63) lower to `movq; shlq $k; subq`
+  ;; (2c latency vs 3c imulq) inside loops when destination differs from source.
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$31"
+        (I64 31)
+        true)
+      "    movq %r12, %rcx\n    shlq $5, %rcx\n    subq %r12, %rcx\n")
+    "mul by 31 lowers to movq; shlq $5; subq")
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$7"
+        (I64 7)
+        true)
+      "    movq %r12, %rcx\n    shlq $3, %rcx\n    subq %r12, %rcx\n")
+    "mul by 7 lowers to movq; shlq $3; subq")
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$15"
+        (I64 15)
+        true)
+      "    movq %r12, %rcx\n    shlq $4, %rcx\n    subq %r12, %rcx\n")
+    "mul by 15 lowers to movq; shlq $4; subq")
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$63"
+        (I64 63)
+        true)
+      "    movq %r12, %rcx\n    shlq $6, %rcx\n    subq %r12, %rcx\n")
+    "mul by 63 lowers to movq; shlq $6; subq")
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$31"
+        (I64 31)
+        false)
+      "    imulq $31, %r12, %rcx\n")
+    "mul by 31 outside a loop keeps the single imulq")
+  ;; Slow 3-op `leaq disp(dep, inv), dep` splits into `leaq disp(inv), tmp; addq tmp, dep`
+  ;; when `dep` was produced by the immediately preceding instruction.
+  (test.assert-true
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (irt.instrs
+          "%1 = mul %0, 31 : i64
+           %2 = add %4, 24 : i64
+           %3 = add %1, %2 : i64
+           %5 = add %3, 1 : i64")
+        (reg-homes "%0=%rax %1=%rax %2=%r10 %3=%rax %4=%rsi %5=%rax")
+        6)
+      (has "    leaq 24(%rsi), %r10\n    addq %r10, %rax\n")
+      (lacks "    leaq 24(%rax,%rsi), %rax\n"))
+    "dependent 3-op leaq splits to leaq disp(inv), tmp; addq tmp, dep"))
 
 (test
   peephole-compact-leaq-and-copy-folding

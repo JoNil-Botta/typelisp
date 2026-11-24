@@ -1,5 +1,6 @@
 ;; lsp_vector_families.tl - vector-backed LSP state collections.
 (import stdlib.iterator)
+(import stdlib.string)
 (import stdlib.vector)
 (import compiler_semantic_index)
 
@@ -16,6 +17,27 @@
   (symbol-kind i64))
 
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
+
+(define (lsp-decl-vec-get
+  [decls : (& decls lsp_decl_vec.Vec)]
+  [index : i64]
+  [fallback : LspDeclEntry]) : LspDeclEntry
+  (if (and (>= index 0) (< index (lsp_decl_vec.len decls)))
+    (let
+      [view : (& decls (Slice LspDeclEntry)) (lsp_decl_vec.view decls)]
+      [entry : (& decls LspDeclEntry) (& (array-ref view index))]
+      (LspDeclEntry
+        (string.copy (& entry.kind))
+        (string.copy (& entry.name))
+        entry.name-line
+        entry.name-col
+        entry.name-len
+        entry.form-start-line
+        entry.form-start-col
+        entry.form-end-line
+        entry.form-end-col
+        entry.symbol-kind))
+    fallback))
 
 (defenum LspCheckCache
   (LspCheckCacheInvalid)

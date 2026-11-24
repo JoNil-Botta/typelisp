@@ -166,10 +166,10 @@
 (define (doc-import-form-list-mut-contains-from?
   [forms : (&mut forms doc_import_form_vec.Vec)]
   [form : (& form str)]) : bool
-  (for [index (iterator.range 0 (doc_import_form_vec.len forms))]
-    (when
-      (string.eq (doc_import_form_vec.get forms index "") form)
-      (return true)))
+  (let
+    [view : (& forms (Slice String)) (doc_import_form_vec.view forms)]
+    (for [index (iterator.range 0 (doc_import_form_vec.len forms))]
+      (when (string.eq (& (array-ref view index)) form) (return true))))
   false)
 
 (define (doc-import-form-list-mut-contains?
@@ -190,10 +190,12 @@
   [count : i64]) : String
   (if (>= index count)
     ""
-    (doc-cat3
-      (doc_import_form_vec.get (& forms) index "")
-      "\n"
-      (doc-import-form-list-source-from forms (+ index 1) count))))
+    (let
+      [view : (& forms (Slice String)) (doc_import_form_vec.view forms)]
+      (doc-cat3
+        (string.copy (& (array-ref view index)))
+        "\n"
+        (doc-import-form-list-source-from forms (+ index 1) count)))))
 
 (define (doc-import-form-list-source [forms : doc_import_form_vec.Vec]) : String
   (doc-import-form-list-source-from forms 0 (doc_import_form_vec.len (& forms))))
@@ -437,13 +439,11 @@
   (if (< index 0)
     ""
     (let
-      [example : DocMacroImportExample
-        (doc_macro_import_example_vec.get
-          examples
-          index
-          (doc-macro-import-example-fallback))]
-      (if (string.eq example.alias alias)
-        example.form
+      [view : (& examples (Slice DocMacroImportExample))
+        (doc_macro_import_example_vec.view examples)]
+      [example : (& examples DocMacroImportExample) (& (array-ref view index))]
+      (if (string.eq (& example.alias) alias)
+        (string.copy (& example.form))
         (doc-macro-import-example-find-from examples alias (- index 1))))))
 
 (define (doc-macro-import-example-find
@@ -513,14 +513,16 @@
   [examples : (& examples doc_generated_target_example_vec.Vec)]
   [target : (& target str)]
   [count : i64]) : String
-  (for [index (iterator.range 0 count)]
-    (let
-      [example : DocGeneratedTargetExample
-        (doc_generated_target_example_vec.get
-          examples
-          index
-          (doc-generated-target-example-fallback))]
-      (when (string.eq example.target target) (return example.form))))
+  (let
+    [view : (& examples (Slice DocGeneratedTargetExample))
+      (doc_generated_target_example_vec.view examples)]
+    (for [index (iterator.range 0 count)]
+      (let
+        [example : (& examples DocGeneratedTargetExample)
+          (& (array-ref view index))]
+        (when
+          (string.eq (& example.target) target)
+          (return (string.copy (& example.form)))))))
   "")
 
 (define (doc-generated-target-example-find

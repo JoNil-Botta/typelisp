@@ -22,30 +22,11 @@
 (import stdlib.byte_buf)
 (import stdlib.byte_buf_core)
 (import stdlib.env)
-(import stdlib.comptime)
 (import stdlib.io)
 (import stdlib.string)
 (cfg
   process-linux-test-hooks
   (import tests.integration.process_runtime_linux_hooks as process_linux_test_hooks))
-
-;; Runtime command storage is arena-backed and immutable after construction.
-;; Explicit shallow reads preserve those shared buffers across owner accessors.
-;: Return a representation-level shared view of a runtime process value place.
-(defmacro (process-runtime-place-shared-view [place : Expr]) : Expr
-  (let
-    [value-ty : comptime.Expr (comptime.expr-type place)]
-    [kind : String (type-kind value-ty)]
-    (if (if (string.eq kind "dyn-array")
-      true
-      (string.eq kind "string"))
-      `(let
-        [shared-ref (& ,place)]
-        (unsafe
-          (ptr-read
-            (ptr-cast (__tl_array-data (array shared-ref)) : (Ptr ,value-ty)))))
-      `(unsafe
-        (ptr-read (ptr-addr-of ,place))))))
 
 ;: Runtime argv sequence. Its authoritative count is the backing-array length.
 ;: `stdlib.process` validates and converts the public model before invoking an
@@ -512,89 +493,6 @@
         (process-runtime-child-registry-unlock!))
       claim)))
 
-;: Internal wrapper around a borrowed runtime argument list.
-(defstruct ProcessRuntimeStringListRef
-  (:lifetimes value)
-  (value (& value ProcessRuntimeStringList)))
-
-;: Internal wrapper around a borrowed optional runtime string.
-(defstruct ProcessRuntimeMaybeStringRef
-  (:lifetimes value)
-  (value (& value ProcessRuntimeMaybeString)))
-
-;: Internal wrapper around a borrowed runtime environment list.
-(defstruct ProcessRuntimeEnvListRef
-  (:lifetimes value)
-  (value (& value ProcessRuntimeEnvList)))
-
-;: Internal wrapper around a borrowed runtime environment entry.
-(defstruct ProcessRuntimeEnvEntryRef
-  (:lifetimes value)
-  (value (& value ProcessRuntimeEnvEntry)))
-
-;: Return a checked shared view of a runtime string-array element.
-(define (process-runtime-string-array-shared-view
-  [items : (& items (__tl_dyn-array String))]
-  [index : i64]) : String
-  (unsafe
-    (ptr-read
-      (ptr-cast
-        (__tl_array-data (array (& (array-ref items index))))
-        : (Ptr String)))))
-
-;: Re-expose a borrowed runtime environment entry through the compatibility
-;: surface.
-(define (process-runtime-env-entry-shared-view
-  [value : (& value ProcessRuntimeEnvEntry)]) : ProcessRuntimeEnvEntry
-  (let
-    [cell : (ProcessRuntimeEnvEntryRef value) (ProcessRuntimeEnvEntryRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr ProcessRuntimeEnvEntry))))))
-
-;: Return a checked shared view of a runtime environment-entry array element.
-(define (process-runtime-env-array-shared-view
-  [items : (& items (__tl_dyn-array ProcessRuntimeEnvEntry))]
-  [index : i64]) : ProcessRuntimeEnvEntry
-  (process-runtime-env-entry-shared-view (& (array-ref items index))))
-
-;: Re-expose a borrowed runtime argument list through the compatibility surface.
-(define (process-runtime-string-list-shared-view
-  [value : (& value ProcessRuntimeStringList)]) : ProcessRuntimeStringList
-  (let
-    [cell : (ProcessRuntimeStringListRef value)
-      (ProcessRuntimeStringListRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr ProcessRuntimeStringList))))))
-
-;: Re-expose a borrowed optional runtime string through the compatibility surface.
-(define (process-runtime-maybe-string-shared-view
-  [value : (& value ProcessRuntimeMaybeString)]) : ProcessRuntimeMaybeString
-  (let
-    [cell : (ProcessRuntimeMaybeStringRef value)
-      (ProcessRuntimeMaybeStringRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr ProcessRuntimeMaybeString))))))
-
-;: Re-expose a borrowed runtime environment through the compatibility surface.
-(define (process-runtime-env-list-shared-view
-  [value : (& value ProcessRuntimeEnvList)]) : ProcessRuntimeEnvList
-  (let
-    [cell : (ProcessRuntimeEnvListRef value) (ProcessRuntimeEnvListRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr ProcessRuntimeEnvList))))))
-
 ;: Return an empty runtime argv list.
 (define (args-empty) : ProcessRuntimeStringList
   (ProcessRuntimeStringList (__tl_make-array String 0)))
@@ -610,7 +508,7 @@
     (while (< index len)
       (set!
         (array-ref slots (+ index 1))
-        (process-runtime-string-array-shared-view (& rest.slots) index))
+        (string.copy (& (array-ref rest.slots index))))
       (set! index (+ index 1)))
     (ProcessRuntimeStringList slots)))
 
@@ -632,9 +530,14 @@
     [index : i64 0]
     (set! (array-ref slots 0) (ProcessRuntimeEnvEntry name value))
     (while (< index len)
-      (set!
-        (array-ref slots (+ index 1))
-        (process-runtime-env-array-shared-view (& rest.slots) index))
+      (let
+        [entry : (& rest ProcessRuntimeEnvEntry)
+          (& (array-ref rest.slots index))]
+        (set!
+          (array-ref slots (+ index 1))
+          (ProcessRuntimeEnvEntry
+            (string.copy (& entry.name))
+            (string.copy (& entry.value)))))
       (set! index (+ index 1)))
     (ProcessRuntimeEnvList slots)))
 
@@ -686,30 +589,34 @@
   [info : (& info ProcessRuntimeMaybeStringInfo)]) : bool
   info.present)
 
-;: Return the string from a destructured optional string.
+;: Return the borrowed string from a destructured optional string.
 (define (maybe-string-info-value
-  [info : (& info ProcessRuntimeMaybeStringInfo)]) : String
-  (unsafe
-    (ptr-read
-      (ptr-cast (__tl_array-data (array (& info.value))) : (Ptr String)))))
+  [info : (& info ProcessRuntimeMaybeStringInfo)]) : (& info str)
+  (& info.value))
 
-;: Return the executable path from a runtime command.
-(define (command-executable [command : (& command ProcessRuntimeCommand)]) : String
-  (unsafe
-    (ptr-read
-      (ptr-cast (__tl_array-data (array (& command.executable))) : (Ptr String)))))
+;: Return the borrowed executable path from a runtime command.
+(define (command-executable [command : (& command ProcessRuntimeCommand)]) : (&
+    command
+    str)
+  (& command.executable))
 
-;: Return the argv list from a runtime command.
-(define (command-argv [command : (& command ProcessRuntimeCommand)]) : ProcessRuntimeStringList
-  (process-runtime-string-list-shared-view (& command.argv)))
+;: Return the borrowed argv list from a runtime command.
+(define (command-argv [command : (& command ProcessRuntimeCommand)]) : (&
+    command
+    ProcessRuntimeStringList)
+  (& command.argv))
 
-;: Return the cwd setting from a runtime command.
-(define (command-cwd [command : (& command ProcessRuntimeCommand)]) : ProcessRuntimeMaybeString
-  (process-runtime-maybe-string-shared-view (& command.cwd)))
+;: Return the borrowed cwd setting from a runtime command.
+(define (command-cwd [command : (& command ProcessRuntimeCommand)]) : (&
+    command
+    ProcessRuntimeMaybeString)
+  (& command.cwd))
 
-;: Return the environment override list from a runtime command.
-(define (command-env [command : (& command ProcessRuntimeCommand)]) : ProcessRuntimeEnvList
-  (process-runtime-env-list-shared-view (& command.env)))
+;: Return the borrowed environment override list from a runtime command.
+(define (command-env [command : (& command ProcessRuntimeCommand)]) : (&
+    command
+    ProcessRuntimeEnvList)
+  (& command.env))
 
 ;: Return the environment policy code from a runtime command.
 (define (command-env-policy [command : (& command ProcessRuntimeCommand)]) : i64
@@ -728,9 +635,11 @@
 (define (env-policy-error) : ProcessRuntimeError
   (ProcessRuntimeInvalidCommand "process: unsupported environment policy"))
 
-;: Return the stdin setting from a runtime command.
-(define (command-stdin [command : (& command ProcessRuntimeCommand)]) : ProcessRuntimeMaybeString
-  (process-runtime-maybe-string-shared-view (& command.stdin)))
+;: Return the borrowed stdin setting from a runtime command.
+(define (command-stdin [command : (& command ProcessRuntimeCommand)]) : (&
+    command
+    ProcessRuntimeMaybeString)
+  (& command.stdin))
 
 ;: Construct a successful captured-output runtime result.
 (define (output-ok [status : i64] [stdout : String] [stderr : String]) : ResultProcessRuntimeOutput
@@ -1078,9 +987,9 @@
     "process: async child handles are not supported by this runtime"))
 
 ;: Return the integer address of private byte storage.
-(define (array-u8-addr [buf : (__tl_dyn-array u8)]) : i64
+(define (array-u8-addr [buf : (& buf (__tl_dyn-array u8))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data (deref buf)) : (Ptr u8))) : i64)))
 
 ;: Return the integer address of a byte-builder snapshot backing buffer.
 (cfg
@@ -1089,17 +998,17 @@
     (let
       [bytes : (__tl_dyn-array u8)
         (byte_buf_core.byte-buf-builder-finish-array (& buf))]
-      (stdlib.process_runtime.array-u8-addr bytes))))
+      (stdlib.process_runtime.array-u8-addr (& bytes)))))
 
 ;: Return the integer address of private `u64` storage.
-(define (array-u64-addr [buf : (__tl_dyn-array u64)]) : i64
+(define (array-u64-addr [buf : (& buf (__tl_dyn-array u64))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data (deref buf)) : (Ptr u8))) : i64)))
 
 ;: Return the integer address of private `i32` storage.
-(define (array-i32-addr [buf : (__tl_dyn-array i32)]) : i64
+(define (array-i32-addr [buf : (& buf (__tl_dyn-array i32))]) : i64
   (unsafe
-    (cast (ptr->int (ptr-cast (__tl_array-data buf) : (Ptr u8))) : i64)))
+    (cast (ptr->int (ptr-cast (__tl_array-data (deref buf)) : (Ptr u8))) : i64)))
 
 ;: Read the unsigned byte at `index` of a C string as an i64.
 (unsafe
@@ -1158,7 +1067,8 @@
 
 ;: Build a NUL-terminated `NAME=VALUE` C string for an env override.
 (unsafe
-  (define (env-cstring [name : String] [value : String]) : (__tl_dyn-array u8)
+  (define (env-cstring [name : (& name str)] [value : (& value str)]) : (__tl_dyn-array
+      u8)
     (let
       [nl : i64 (string-length name)]
       [vl : i64 (string-length value)]
@@ -1183,10 +1093,9 @@
       (byte_buf_core.byte-buf-builder-finish-array (& buf)))))
 
 ;: Materialize the override list into an array of `NAME=VALUE` C string
-;: addresses. The move-only `env` list is consumed exactly once here so the
-;: resulting array can be scanned repeatedly without further moves.
+;: addresses.
 (unsafe
-  (define (build-override-cstrings [env : ProcessRuntimeEnvList]) : (__tl_dyn-array
+  (define (build-override-cstrings [env : (& env ProcessRuntimeEnvList)]) : (__tl_dyn-array
       u64)
     (let
       [count : i64 (array-length env.slots)]
@@ -1194,15 +1103,17 @@
       [index : i64 0]
       (while (< index count)
         (let
-          [entry : ProcessRuntimeEnvEntry
-            (process-runtime-env-array-shared-view (& env.slots) index)]
+          [entry : (& env ProcessRuntimeEnvEntry)
+            (& (array-ref env.slots index))]
           (set!
             (array-ref ov index)
             (unsafe
               (cast
                 (ptr->int
                   (io.array-const-ptr
-                    (stdlib.process_runtime.env-cstring entry.name entry.value)))
+                    (stdlib.process_runtime.env-cstring
+                      (& entry.name)
+                      (& entry.value))))
                 : u64)))
           (set! index (+ index 1))))
       ov)))
@@ -1251,18 +1162,15 @@
     [index : i64 0]
     (while (< index count)
       (let
-        [entry : ProcessRuntimeEnvEntry
-          (process-runtime-env-array-shared-view (& env.slots) index)]
+        [entry : (& env ProcessRuntimeEnvEntry) (& (array-ref env.slots index))]
         [slot : i64 index]
         [moving : bool true]
         (while moving
           (if (= slot 0)
             (set! moving false)
             (let
-              [previous : ProcessRuntimeEnvEntry
-                (process-runtime-env-array-shared-view
-                  (& env.slots)
-                  (array-ref order (- slot 1)))]
+              [previous : (& env ProcessRuntimeEnvEntry)
+                (& (array-ref env.slots (array-ref order (- slot 1))))]
               (if (> (env-name-fold-compare (& previous.name) (& entry.name)) 0)
                 (begin
                   (set! (array-ref order slot) (array-ref order (- slot 1)))
@@ -1274,39 +1182,29 @@
 
 ;: Return the integer address of an optional command path C string, or 0.
 (unsafe
-  (define (maybe-cstring-addr [value : ProcessRuntimeMaybeString]) : i64
-    (let
-      [info : ProcessRuntimeMaybeStringInfo
-        (stdlib.process_runtime.maybe-string-info value)]
-      (if (stdlib.process_runtime.maybe-string-info-present? info)
-        (stdlib.process_runtime.array-u8-addr
-          (io.c-string (stdlib.process_runtime.maybe-string-info-value info)))
-        0))))
+  (define (maybe-cstring-addr [value : (& value ProcessRuntimeMaybeString)]) : i64
+    (if value.present
+      (let
+        [cstr : (__tl_dyn-array u8) (io.c-string (& value.value))]
+        (stdlib.process_runtime.array-u8-addr (& cstr)))
+      0)))
 
 ;: Return true when an optional stdin value provides input.
-(define (maybe-present? [value : ProcessRuntimeMaybeString]) : bool
+(define (maybe-present? [value : (& value ProcessRuntimeMaybeString)]) : bool
   value.present)
 
 ;: Return the integer address of an optional stdin string's byte storage, or 0.
-(define (maybe-data-addr [value : ProcessRuntimeMaybeString]) : i64
-  (let
-    [info : ProcessRuntimeMaybeStringInfo
-      (stdlib.process_runtime.maybe-string-info value)]
-    (if (stdlib.process_runtime.maybe-string-info-present? info)
-      (let
-        [text : String (stdlib.process_runtime.maybe-string-info-value info)]
-        (unsafe
-          (cast (ptr->int (string-data text)) : i64)))
-      0)))
+(define (maybe-data-addr [value : (& value ProcessRuntimeMaybeString)]) : i64
+  (if value.present
+    (unsafe
+      (cast (ptr->int (string-data (& value.value))) : i64))
+    0))
 
 ;: Return the byte length of an optional stdin string, or 0.
-(define (maybe-len [value : ProcessRuntimeMaybeString]) : i64
-  (let
-    [info : ProcessRuntimeMaybeStringInfo
-      (stdlib.process_runtime.maybe-string-info value)]
-    (if (stdlib.process_runtime.maybe-string-info-present? info)
-      (__tl_string_length (stdlib.process_runtime.maybe-string-info-value info))
-      0)))
+(define (maybe-len [value : (& value ProcessRuntimeMaybeString)]) : i64
+  (if value.present
+    (__tl_string_length (& value.value))
+    0))
 
 ;; ---------------------------------------------------------------------------
 ;; Linux runtime (raw syscalls).
@@ -1880,7 +1778,9 @@
 ;: Build a NUL-terminated `char**` argv (argv[0] = `exec-addr`) and return its
 ;: integer address.
 (unsafe
-  (define (linux-build-argv [exec-addr : i64] [argv : ProcessRuntimeStringList]) : i64
+  (define (linux-build-argv
+    [exec-addr : i64]
+    [argv : (& argv ProcessRuntimeStringList)]) : i64
     (let
       [argc : i64 (stdlib.process_runtime.args-count argv)]
       [layout-count : i64 (process-runtime-checked-layout-add argc 2)]
@@ -1888,16 +1788,17 @@
       [index : i64 0]
       (set! (array-ref arr 0) (cast exec-addr : u64))
       (while (< index argc)
-        (let
-          [text : String
-            (process-runtime-string-array-shared-view (& argv.slots) index)]
-          (set!
-            (array-ref arr (+ index 1))
-            (unsafe
-              (cast (ptr->int (io.array-const-ptr (io.c-string text))) : u64)))
-          (set! index (+ index 1))))
+        (set!
+          (array-ref arr (+ index 1))
+          (unsafe
+            (cast
+              (ptr->int
+                (io.array-const-ptr
+                  (io.c-string (& (array-ref argv.slots index)))))
+              : u64)))
+        (set! index (+ index 1)))
       (set! (array-ref arr (+ argc 1)) (cast 0 : u64))
-      (stdlib.process_runtime.array-u64-addr arr))))
+      (stdlib.process_runtime.array-u64-addr (& arr)))))
 
 ;: Count inherited environment entries not overridden by `ov`.
 (unsafe
@@ -1928,7 +1829,7 @@
 ;: return its integer address. The parent environment is not read; zero rows
 ;: give an allocated array whose only slot is the terminating null.
 (unsafe
-  (define (linux-build-exact-envp [env : ProcessRuntimeEnvList]) : i64
+  (define (linux-build-exact-envp [env : (& env ProcessRuntimeEnvList)]) : i64
     (let
       [ov : (__tl_dyn-array u64)
         (unsafe
@@ -1941,13 +1842,15 @@
         (set! (array-ref arr k) (array-ref ov k))
         (set! k (+ k 1)))
       (set! (array-ref arr ovc) (cast 0 : u64))
-      (stdlib.process_runtime.array-u64-addr arr))))
+      (stdlib.process_runtime.array-u64-addr (& arr)))))
 
 ;: Build the `char**` envp for `env` under environment policy code `policy`
 ;: and return its integer address. The entry points have already rejected an
 ;: unknown code.
 (unsafe
-  (define (linux-build-policy-envp [policy : i64] [env : ProcessRuntimeEnvList]) : i64
+  (define (linux-build-policy-envp
+    [policy : i64]
+    [env : (& env ProcessRuntimeEnvList)]) : i64
     (unsafe
       (if (= policy process-runtime-env-exact)
         (stdlib.process_runtime.linux-build-exact-envp env)
@@ -1957,7 +1860,7 @@
 ;: and return its integer address; an empty override list reuses the inherited
 ;: environment array directly.
 (unsafe
-  (define (linux-build-envp [env : ProcessRuntimeEnvList]) : i64
+  (define (linux-build-envp [env : (& env ProcessRuntimeEnvList)]) : i64
     (unsafe
       (let
         [ov : (__tl_dyn-array u64)
@@ -2007,7 +1910,7 @@
               (set! w (+ w 1))
               (set! k (+ k 1)))
             (set! (array-ref arr w) (cast 0 : u64))
-            (stdlib.process_runtime.array-u64-addr arr)))))))
+            (stdlib.process_runtime.array-u64-addr (& arr))))))))
 
 ;: Decode a `wait4` status word into the process exit status: a terminating
 ;: signal becomes `128 + signal`, otherwise the low byte of the exit code.
@@ -2082,9 +1985,8 @@
                 [install-result : i64
                   (unsafe
                     (stdlib.process_runtime.linux-raw-sigaction
-                      (stdlib.process_runtime.array-u64-addr act)
-                      (stdlib.process_runtime.array-u64-addr
-                        (process-runtime-place-shared-view old))))]
+                      (stdlib.process_runtime.array-u64-addr (& act))
+                      (stdlib.process_runtime.array-u64-addr (& old))))]
                 (if (< install-result 0)
                   (set!
                     failure
@@ -2119,7 +2021,7 @@
                   [restore-result : i64
                     (unsafe
                       (stdlib.process_runtime.linux-raw-sigaction
-                        (stdlib.process_runtime.array-u64-addr old)
+                        (stdlib.process_runtime.array-u64-addr (& old))
                         0))]
                   (if (< restore-result 0)
                     (set!
@@ -2143,34 +2045,36 @@
         windows
         (ProcessLinuxSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 -1 -1 true -38)
         (let
-          [exec-addr : i64
-            (stdlib.process_runtime.array-u8-addr
-              (io.c-string (stdlib.process_runtime.command-executable command)))]
+          [exec-cstr : (__tl_dyn-array u8)
+            (io.c-string
+              (stdlib.process_runtime.command-executable (& command)))]
+          [exec-addr : i64 (stdlib.process_runtime.array-u8-addr (& exec-cstr))]
           [argv-addr : i64
             (stdlib.process_runtime.linux-build-argv
               exec-addr
-              (stdlib.process_runtime.command-argv command))]
+              (stdlib.process_runtime.command-argv (& command)))]
           [envp-addr : i64
             (stdlib.process_runtime.linux-build-policy-envp
-              (stdlib.process_runtime.command-env-policy command)
-              (stdlib.process_runtime.command-env command))]
+              (stdlib.process_runtime.command-env-policy (& command))
+              (stdlib.process_runtime.command-env (& command)))]
           [cwd-addr : i64
             (unsafe
               (stdlib.process_runtime.maybe-cstring-addr
-                (stdlib.process_runtime.command-cwd command)))]
+                (stdlib.process_runtime.command-cwd (& command))))]
+          [marker-cstr : (__tl_dyn-array u8)
+            (io.c-string
+              "BAD!0000TLX!1000TLX!2000TLX!3000TLX!4000TLX!5000TLX!6000TLX!7000TLX!8000TLX!9000TLX!A000")]
           [marker-addr : i64
-            (stdlib.process_runtime.array-u8-addr
-              (io.c-string
-                "BAD!0000TLX!1000TLX!2000TLX!3000TLX!4000TLX!5000TLX!6000TLX!7000TLX!8000TLX!9000TLX!A000"))]
+            (stdlib.process_runtime.array-u8-addr (& marker-cstr))]
           [has-stdin : bool
             (stdlib.process_runtime.maybe-present?
-              (stdlib.process_runtime.command-stdin command))]
+              (stdlib.process_runtime.command-stdin (& command)))]
           [stdin-data : i64
             (stdlib.process_runtime.maybe-data-addr
-              (stdlib.process_runtime.command-stdin command))]
+              (stdlib.process_runtime.command-stdin (& command)))]
           [stdin-len : i64
             (stdlib.process_runtime.maybe-len
-              (stdlib.process_runtime.command-stdin command))]
+              (stdlib.process_runtime.command-stdin (& command)))]
           [stdin-r : i64 -1]
           [stdin-w : i64 -1]
           [stdout-fd : i64 -1]
@@ -2186,8 +2090,7 @@
               [result : i64
                 (unsafe
                   (stdlib.process_runtime.linux-raw-pipe
-                    (stdlib.process_runtime.array-i32-addr
-                      (process-runtime-place-shared-view pbuf))))]
+                    (stdlib.process_runtime.array-i32-addr (& pbuf))))]
               (if (< result 0)
                 (begin
                   (set! failed true)
@@ -2198,11 +2101,12 @@
             unit)
           (if (not failed)
             (let
+              [stdout-name : (__tl_dyn-array u8)
+                (io.c-string "typelisp-process-stdout")]
               [fd : i64
                 (unsafe
                   (stdlib.process_runtime.linux-raw-memfd
-                    (stdlib.process_runtime.array-u8-addr
-                      (io.c-string "typelisp-process-stdout"))))]
+                    (stdlib.process_runtime.array-u8-addr (& stdout-name))))]
               (if (< fd 0)
                 (begin
                   (set! failed true)
@@ -2211,11 +2115,12 @@
             unit)
           (if (not failed)
             (let
+              [stderr-name : (__tl_dyn-array u8)
+                (io.c-string "typelisp-process-stderr")]
               [fd : i64
                 (unsafe
                   (stdlib.process_runtime.linux-raw-memfd
-                    (stdlib.process_runtime.array-u8-addr
-                      (io.c-string "typelisp-process-stderr"))))]
+                    (stdlib.process_runtime.array-u8-addr (& stderr-name))))]
               (if (< fd 0)
                 (begin
                   (set! failed true)
@@ -2227,8 +2132,7 @@
               [result : i64
                 (unsafe
                   (stdlib.process_runtime.linux-raw-pipe
-                    (stdlib.process_runtime.array-i32-addr
-                      (process-runtime-place-shared-view ebuf))))]
+                    (stdlib.process_runtime.array-i32-addr (& ebuf))))]
               (if (< result 0)
                 (begin
                   (set! failed true)
@@ -2266,34 +2170,36 @@
         windows
         (ProcessLinuxInheritedSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 true -38)
         (let
-          [exec-addr : i64
-            (stdlib.process_runtime.array-u8-addr
-              (io.c-string (stdlib.process_runtime.command-executable command)))]
+          [exec-cstr : (__tl_dyn-array u8)
+            (io.c-string
+              (stdlib.process_runtime.command-executable (& command)))]
+          [exec-addr : i64 (stdlib.process_runtime.array-u8-addr (& exec-cstr))]
           [argv-addr : i64
             (stdlib.process_runtime.linux-build-argv
               exec-addr
-              (stdlib.process_runtime.command-argv command))]
+              (stdlib.process_runtime.command-argv (& command)))]
           [envp-addr : i64
             (stdlib.process_runtime.linux-build-policy-envp
-              (stdlib.process_runtime.command-env-policy command)
-              (stdlib.process_runtime.command-env command))]
+              (stdlib.process_runtime.command-env-policy (& command))
+              (stdlib.process_runtime.command-env (& command)))]
           [cwd-addr : i64
             (unsafe
               (stdlib.process_runtime.maybe-cstring-addr
-                (stdlib.process_runtime.command-cwd command)))]
+                (stdlib.process_runtime.command-cwd (& command))))]
+          [marker-cstr : (__tl_dyn-array u8)
+            (io.c-string
+              "BAD!0000TLX!1000TLX!2000TLX!3000TLX!4000TLX!5000TLX!6000TLX!7000TLX!8000TLX!9000TLX!A000")]
           [marker-addr : i64
-            (stdlib.process_runtime.array-u8-addr
-              (io.c-string
-                "BAD!0000TLX!1000TLX!2000TLX!3000TLX!4000TLX!5000TLX!6000TLX!7000TLX!8000TLX!9000TLX!A000"))]
+            (stdlib.process_runtime.array-u8-addr (& marker-cstr))]
           [has-stdin : bool
             (stdlib.process_runtime.maybe-present?
-              (stdlib.process_runtime.command-stdin command))]
+              (stdlib.process_runtime.command-stdin (& command)))]
           [stdin-data : i64
             (stdlib.process_runtime.maybe-data-addr
-              (stdlib.process_runtime.command-stdin command))]
+              (stdlib.process_runtime.command-stdin (& command)))]
           [stdin-len : i64
             (stdlib.process_runtime.maybe-len
-              (stdlib.process_runtime.command-stdin command))]
+              (stdlib.process_runtime.command-stdin (& command)))]
           [stdin-r : i64 -1]
           [stdin-w : i64 -1]
           [exec-r : i64 -1]
@@ -2307,8 +2213,7 @@
               [result : i64
                 (unsafe
                   (stdlib.process_runtime.linux-raw-pipe
-                    (stdlib.process_runtime.array-i32-addr
-                      (process-runtime-place-shared-view pbuf))))]
+                    (stdlib.process_runtime.array-i32-addr (& pbuf))))]
               (if (< result 0)
                 (begin
                   (set! failed true)
@@ -2322,8 +2227,7 @@
               [result : i64
                 (unsafe
                   (stdlib.process_runtime.linux-raw-pipe
-                    (stdlib.process_runtime.array-i32-addr
-                      (process-runtime-place-shared-view ebuf))))]
+                    (stdlib.process_runtime.array-i32-addr (& ebuf))))]
               (if (< result 0)
                 (begin
                   (set! failed true)
@@ -2855,10 +2759,7 @@
                 (unsafe
                   (stdlib.process_runtime.linux-raw-exec-read
                     exec-r
-                    (+
-                      (stdlib.process_runtime.array-u8-addr
-                        (process-runtime-place-shared-view buf))
-                      offset)
+                    (+ (stdlib.process_runtime.array-u8-addr (& buf)) offset)
                     requested))]
               (cond
                 [(= count -4) unit]
@@ -2952,8 +2853,7 @@
                           (stdlib.process_runtime.linux-raw-capture-read
                             fd
                             (+
-                              (stdlib.process_runtime.array-u8-addr
-                                (process-runtime-place-shared-view buf))
+                              (stdlib.process_runtime.array-u8-addr (& buf))
                               offset)
                             requested)]
                         (cond
@@ -3035,8 +2935,7 @@
             waited
             (stdlib.process_runtime.linux-wait-retry
               pid
-              (stdlib.process_runtime.array-i32-addr
-                (process-runtime-place-shared-view statusbuf))))
+              (stdlib.process_runtime.array-i32-addr (& statusbuf))))
           (if (< waited 0)
             (begin
               (set!
@@ -3148,8 +3047,7 @@
               [waited : i64
                 (stdlib.process_runtime.linux-wait-retry
                   pid
-                  (stdlib.process_runtime.array-i32-addr
-                    (process-runtime-place-shared-view statusbuf)))]
+                  (stdlib.process_runtime.array-i32-addr (& statusbuf)))]
               (if (< waited 0)
                 (set!
                   failure
@@ -3244,8 +3142,7 @@
             waited
             (stdlib.process_runtime.linux-wait-retry
               pid
-              (stdlib.process_runtime.array-i32-addr
-                (process-runtime-place-shared-view statusbuf))))
+              (stdlib.process_runtime.array-i32-addr (& statusbuf))))
           (if (< waited 0)
             (begin
               (set!
@@ -3390,8 +3287,7 @@
           [waited : i64
             (stdlib.process_runtime.linux-wait-retry
               pid
-              (stdlib.process_runtime.array-i32-addr
-                (process-runtime-place-shared-view statusbuf)))]
+              (stdlib.process_runtime.array-i32-addr (& statusbuf)))]
           (if (< waited 0)
             (set!
               failure
@@ -3587,11 +3483,11 @@
 
 ;: Join validated executable/argv without a shell or intermediate argument
 ;: strings. The final NUL-terminated io.c-string copy is writable for Win32.
-(define (windows-cmdline [command : ProcessRuntimeCommand]) : String
+(define (windows-cmdline [command : (& command ProcessRuntimeCommand)]) : String
   (let
     [line : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity
-        (windows-cmdline-size (& command)))]
+        (windows-cmdline-size command))]
     [index : i64 0]
     (windows-append-arg (&mut line) (& command.executable) true)
     (while (< index (array-length command.argv.slots))
@@ -3634,25 +3530,26 @@
 (cfg
   windows
   (unsafe
-    (define (windows-build-exact-env [env : ProcessRuntimeEnvList]) : i64
+    (define (windows-build-exact-env [env : (& env ProcessRuntimeEnvList)]) : i64
       (unsafe
         (let
           [order : (__tl_dyn-array i64)
-            (stdlib.process_runtime.env-windows-order (& env))]
+            (stdlib.process_runtime.env-windows-order env)]
           [count : i64 (array-length order)]
           [block : byte_buf_core.ByteBufBuilder
             (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
           [k : i64 0]
           (while (< k count)
             (let
-              [entry : ProcessRuntimeEnvEntry
-                (process-runtime-env-array-shared-view
-                  (& env.slots)
-                  (array-ref order k))]
+              [entry : (& env ProcessRuntimeEnvEntry)
+                (& (array-ref env.slots (array-ref order k)))]
+              [cstr : (__tl_dyn-array u8)
+                (stdlib.process_runtime.env-cstring
+                  (& entry.name)
+                  (& entry.value))]
               (stdlib.process_runtime.windows-push-cstr
                 (&mut block)
-                (stdlib.process_runtime.array-u8-addr
-                  (stdlib.process_runtime.env-cstring entry.name entry.value))))
+                (stdlib.process_runtime.array-u8-addr (& cstr))))
             (set! k (+ k 1)))
           (when
             (= count 0)
@@ -3668,7 +3565,7 @@
   (unsafe
     (define (windows-build-policy-env
       [policy : i64]
-      [env : ProcessRuntimeEnvList]) : i64
+      [env : (& env ProcessRuntimeEnvList)]) : i64
       (unsafe
         (if (= policy process-runtime-env-exact)
           (stdlib.process_runtime.windows-build-exact-env env)
@@ -3680,7 +3577,7 @@
 (cfg
   windows
   (unsafe
-    (define (windows-build-env [env : ProcessRuntimeEnvList]) : i64
+    (define (windows-build-env [env : (& env ProcessRuntimeEnvList)]) : i64
       (unsafe
         (let
           [ov : (__tl_dyn-array u64)
@@ -3801,7 +3698,7 @@
                         (io.array-const-ptr namebuf)
                         0xc0000000
                         0x3
-                        (stdlib.process_runtime.array-u64-addr security)
+                        (stdlib.process_runtime.array-u64-addr (& security))
                         2
                         0x4000100
                         0)]
@@ -3845,10 +3742,8 @@
                 0
                 env-addr
                 cwd-addr
-                (stdlib.process_runtime.array-u64-addr startup)
-                (stdlib.process_runtime.array-u64-addr
-                  (stdlib.process_runtime.process-runtime-place-shared-view
-                    procinfo)))]
+                (stdlib.process_runtime.array-u64-addr (& startup))
+                (stdlib.process_runtime.array-u64-addr (& procinfo)))]
             (if (= created (cast 0 : i32))
               -1
               (let
@@ -3916,10 +3811,8 @@
                     0
                     env-addr
                     cwd-addr
-                    (stdlib.process_runtime.array-u64-addr startup)
-                    (stdlib.process_runtime.array-u64-addr
-                      (stdlib.process_runtime.process-runtime-place-shared-view
-                        procinfo)))]
+                    (stdlib.process_runtime.array-u64-addr (& startup))
+                    (stdlib.process_runtime.array-u64-addr (& procinfo)))]
                 (stdlib.process_runtime.windows-close-if stdin-handle)
                 (stdlib.process_runtime.windows-close-if stdout-handle)
                 (stdlib.process_runtime.windows-close-if stderr-handle)
@@ -4030,27 +3923,27 @@
     (define (windows-output [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
       (unsafe
         (let
+          [appname-cstr : (__tl_dyn-array u8)
+            (io.c-string
+              (stdlib.process_runtime.command-executable (& command)))]
           [appname-addr : i64
-            (stdlib.process_runtime.array-u8-addr
-              (io.c-string (stdlib.process_runtime.command-executable command)))]
+            (stdlib.process_runtime.array-u8-addr (& appname-cstr))]
+          [cmdline-cstr : (__tl_dyn-array u8)
+            (io.c-string (stdlib.process_runtime.windows-cmdline (& command)))]
           [cmdline-addr : i64
-            (stdlib.process_runtime.array-u8-addr
-              (io.c-string
-                (stdlib.process_runtime.windows-cmdline
-                  (stdlib.process_runtime.process-runtime-place-shared-view
-                    command))))]
+            (stdlib.process_runtime.array-u8-addr (& cmdline-cstr))]
           [env-addr : i64 0]
           [cwd-addr : i64
             (unsafe
               (stdlib.process_runtime.maybe-cstring-addr
-                (stdlib.process_runtime.command-cwd command)))]
+                (stdlib.process_runtime.command-cwd (& command))))]
           [out-handle : i64 -1]
           [err-handle : i64 -1]
           (set!
             env-addr
             (stdlib.process_runtime.windows-build-policy-env
-              (stdlib.process_runtime.command-env-policy command)
-              (stdlib.process_runtime.command-env command)))
+              (stdlib.process_runtime.command-env-policy (& command))
+              (stdlib.process_runtime.command-env (& command))))
           (set! out-handle (stdlib.process_runtime.windows-make-temp-file))
           (set! err-handle (stdlib.process_runtime.windows-make-temp-file))
           (if (or (= out-handle -1) (= err-handle -1))
@@ -4096,23 +3989,23 @@
     (define (windows-inherit [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
       (unsafe
         (let
+          [appname-cstr : (__tl_dyn-array u8)
+            (io.c-string
+              (stdlib.process_runtime.command-executable (& command)))]
           [appname-addr : i64
-            (stdlib.process_runtime.array-u8-addr
-              (io.c-string (stdlib.process_runtime.command-executable command)))]
+            (stdlib.process_runtime.array-u8-addr (& appname-cstr))]
+          [cmdline-cstr : (__tl_dyn-array u8)
+            (io.c-string (stdlib.process_runtime.windows-cmdline (& command)))]
           [cmdline-addr : i64
-            (stdlib.process_runtime.array-u8-addr
-              (io.c-string
-                (stdlib.process_runtime.windows-cmdline
-                  (stdlib.process_runtime.process-runtime-place-shared-view
-                    command))))]
+            (stdlib.process_runtime.array-u8-addr (& cmdline-cstr))]
           [env-addr : i64
             (stdlib.process_runtime.windows-build-policy-env
-              (stdlib.process_runtime.command-env-policy command)
-              (stdlib.process_runtime.command-env command))]
+              (stdlib.process_runtime.command-env-policy (& command))
+              (stdlib.process_runtime.command-env (& command)))]
           [cwd-addr : i64
             (unsafe
               (stdlib.process_runtime.maybe-cstring-addr
-                (stdlib.process_runtime.command-cwd command)))]
+                (stdlib.process_runtime.command-cwd (& command))))]
           [status : i64 -1]
           (set!
             status

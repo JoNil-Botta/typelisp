@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+6295.454	New opt2-only cvp_range pass in src/compiler_opt_range.tl plus opt2 divmod/backend scalar support adds compiler source compiled at opt1 (compacted from +7,412 ppm by packing OptRangeState and deduplicating walkers); local own cost +663,191,365 Ir (106,007,679,184 vs 105,344,487,819 at 601397863); no work skipped

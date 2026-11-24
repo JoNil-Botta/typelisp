@@ -307,12 +307,7 @@
   (let
     [json : json.Json (i64_json.to-json 42)]
     [encoded-source : json.Json (i64_json.to-json 42)]
-    ;; An explicit caller `unsafe` view (#7701): the read consumes
-    ;; `encoded-source`, which is not used again.
-    [encoded : String
-      (stdlib.json.stringify
-        (unsafe
-          (stdlib.json.json-shared-view encoded-source)))]
+    [encoded : String (stdlib.json.stringify encoded-source)]
     (and
       (string.eq encoded "42")
       (match (i64_json.from-json json)

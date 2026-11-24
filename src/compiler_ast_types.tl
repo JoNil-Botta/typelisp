@@ -6906,8 +6906,8 @@
   AstParamList
   ast-param-list
   caller-provided-fallback
-  zero-capacity
-  compiler-dense-list-unused-shared-zero-storage
+  shared-zero-capacity
+  ast-param-list-empty-storage
   len
   append-from)
 
@@ -7609,8 +7609,8 @@
   AstLetBindingList
   ast-let-binding-list
   caller-provided-fallback
-  zero-capacity
-  compiler-dense-list-unused-shared-zero-storage
+  shared-zero-capacity
+  ast-let-binding-list-empty-storage
   len
   append-from)
 
@@ -7637,8 +7637,8 @@
   AstResourceBindingList
   ast-resource-binding-list
   caller-provided-fallback
-  zero-capacity
-  compiler-dense-list-unused-shared-zero-storage
+  shared-zero-capacity
+  ast-resource-binding-list-empty-storage
   len
   append-from)
 
@@ -7664,8 +7664,8 @@
   AstMatchArmList
   ast-match-arm-list
   caller-provided-fallback
-  minimum-one
-  compiler-dense-list-unused-shared-zero-storage
+  shared-zero-capacity
+  ast-match-arm-list-empty-storage
   len
   empty?
   append-from)
@@ -7742,6 +7742,17 @@
     [index : i64 v.len]
     (set! (array-ref v.slots index) value)
     (set! v.len (+ index 1))))
+
+(define (ast-expr-list-set!
+  [v : (&mut v AstExprList)]
+  [index : i64]
+  [value : i64]) : unit
+  (when
+    (and (>= index 0) (< index v.len))
+    (set! (array-ref v.slots index) value)))
+
+(define (ast-expr-list-truncate! [v : (&mut v AstExprList)] [len : i64]) : unit
+  (when (and (>= len 0) (< len v.len)) (set! v.len len)))
 
 (define (ast-expr-list-append-from
   [out : (&mut out AstExprList)]
@@ -8235,12 +8246,11 @@
               ,c
               (ast-fold-2
                 ,c
-                (ast-fold-2
+                (ast-fold-1
                   ,c
-                  (ast-fold-1 ,c (ast-fold-1 ,c ,s ,ty t0 ,@x) ,ty t1 ,@x)
-                  ,e
-                  a0
-                  b0
+                  (ast-fold-2 ,c (ast-fold-1 ,c ,s ,ty t0 ,@x) ,e a0 b0 ,@x)
+                  ,ty
+                  t1
                   ,@x)
                 ,e
                 a1
@@ -8727,16 +8737,7 @@
       [(AstExpr.LaneValue a) (AstExpr.LaneValue (,e ,@x a))]
       [(AstExpr.CloneOut a b) (AstExpr.CloneOut (,e ,@x a) (,e ,@x b))])))
 
-;; The expression-child schema as two functions, for walkers that treat a
-;; node's expression children uniformly: `ast-expr-child-ids` lists them in
-;; payload order, and `ast-expr-with-child-ids` rebuilds the node with them
-;; replaced by `ids` in the same order, keeping every other payload field.
-;; Type and pattern children are not included, and absent for-owned slots are
-;; neither listed nor replaced. A walker keeps the arms it has rules for and
-;; hands every other node to its list form over these ids, so each schema
-;; expansion is compiled once here rather than once per walker.
-;; A node without children shares one empty storage, so leaves allocate
-;; nothing; the first child allocates the usual four slots.
+;; Compiled-once expression-child accessors.
 (define ast-expr-child-ids-empty-storage : (__tl_dyn-array i64)
   (__tl_make-array i64 0))
 
@@ -8744,47 +8745,138 @@
   (when (= (array-length ids.slots) 0) (set! ids.slots (__tl_make-array i64 4)))
   (ast-expr-list-push ids child))
 
+(define (ast-expr-child-ids-into!
+  [expr : AstExpr]
+  [out : (&mut out AstExprList)]) : unit
+  (ast-expr-for-each-child
+    expr
+    ast-expr-child-id-push!
+    ast-child-unit
+    ast-child-unit
+    ast-child-unit
+    out))
+
+(define (ast-expr-list-empty-shared) : AstExprList
+  (AstExprList
+    (unsafe
+      (ptr-read (ptr-addr-of ast-expr-child-ids-empty-storage)))
+    0))
+
 (define (ast-expr-child-ids [expr : AstExpr]) : AstExprList
   (let
-    [ids : AstExprList
-      (AstExprList
-        (unsafe
-          (ptr-read (ptr-addr-of ast-expr-child-ids-empty-storage)))
-        0)]
-    (ast-expr-for-each-child
-      expr
-      ast-expr-child-id-push!
-      ast-child-unit
-      ast-child-unit
-      ast-child-unit
-      (&mut ids))
+    [ids : AstExprList (ast-expr-list-empty-shared)]
+    (ast-expr-child-ids-into! expr (&mut ids))
     ids))
 
-(defmacro (ast-expr-take-child-id [ids : Expr] [next : Expr] [_replaced : Expr]) : Expr
-  `(begin
-    (set! ,next (+ ,next 1))
-    (ast-expr-list-get ,ids (- ,next 1) -1)))
+(defmacro (ast-child-keep [args : Expr ...]) : Expr
+  (expr-list-nth args (- (expr-list-length args) 1)))
 
-(defmacro (ast-child-keep [_ids : Expr] [_next : Expr] [value : Expr]) : Expr
-  value)
+(define (ast-expr-with-child-ids-from
+  [expr : AstExpr]
+  [ids : (& ids AstExprList)]
+  [start : i64]) : AstExpr
+  (let
+    [empty : AstExprChildList (ast-expr-child-list-with-capacity 0)]
+    [cur : AstChildCursor (AstChildCursor start false)]
+    (ast-expr-rebuild-from! expr ids (&mut empty) (&mut cur))))
 
 (define (ast-expr-with-child-ids [expr : AstExpr] [ids : (& ids AstExprList)]) : AstExpr
-  (let
-    [next : i64 0]
-    (ast-expr-map-children
-      expr
-      ast-expr-take-child-id
-      ast-child-keep
-      ast-child-keep
-      ast-child-keep
-      ast-child-keep
-      ast-child-keep
-      ids
-      next)))
+  (ast-expr-with-child-ids-from expr ids 0))
 
-;; `ast-expr-children` lists every child, typed by kind, in payload order: the
-;; expression ids of `ast-expr-child-ids` interleaved with the type-id, inline
-;; type and pattern children, for walkers that also visit those in order.
+;; Source-level spelling of every `AstExpr` variant (all 87), shared by the
+;; diagnostics and reports that name an expression's kind.
+(define (ast-expr-kind-name [expr : (& AstExpr)]) : String
+  (match expr
+    [(AstExpr.Spanned _ _) "spanned"]
+    [(AstExpr.Literal _) "literal"]
+    [(AstExpr.Var _) "var"]
+    [(AstExpr.Binary _ _ _) "binary"]
+    [(AstExpr.Unary _ _) "unary"]
+    [(AstExpr.Call _ _) "call"]
+    [(AstExpr.If _ _ _) "if"]
+    [(AstExpr.Let _) "let"]
+    [(AstExpr.Lambda _) "lambda"]
+    [(AstExpr.Tuple _) "tuple"]
+    [(AstExpr.TupleRef _ _) "tuple-ref"]
+    [(AstExpr.Array _) "array"]
+    [(AstExpr.DynArray _) "dyn-array"]
+    [(AstExpr.FixedMakeArray _ _) "make-array"]
+    [(AstExpr.MakeArray _ _) "__tl_make-array"]
+    [(AstExpr.ArrayRef _ _) "array-ref"]
+    [(AstExpr.ArraySet _ _ _) "array-set!"]
+    [(AstExpr.ArrayTake _ _ _) "array-take"]
+    [(AstExpr.ArrayPush _ _) "__tl_array-push!"]
+    [(AstExpr.StringRef _ _) "string-ref"]
+    [(AstExpr.While _ _) "while"]
+    [(AstExpr.Begin _) "begin"]
+    [(AstExpr.Unsafe _) "unsafe"]
+    [(AstExpr.Set _ _) "set!"]
+    [(AstExpr.Replace _ _) "replace"]
+    [(AstExpr.Ann _ _) "ann"]
+    [(AstExpr.Cast _ _) "cast"]
+    [(AstExpr.Borrow _ _ _) "borrow"]
+    [(AstExpr.Match _) "match"]
+    [(AstExpr.Foreach _) "foreach"]
+    [(AstExpr.SpmdReduce _) "spmd-reduce"]
+    [(AstExpr.SpmdScan _) "spmd-scan"]
+    [(AstExpr.SpmdCompact _) "spmd-compact"]
+    [(AstExpr.SpmdBroadcast _ _) "spmd-broadcast"]
+    [(AstExpr.SpmdShuffle _ _) "spmd-shuffle"]
+    [(AstExpr.SpmdProgramIndex) "program-index"]
+    [(AstExpr.SpmdProgramCount) "program-count"]
+    [(AstExpr.StructGet _ _) "struct-get"]
+    [(AstExpr.StructSet _ _ _) "struct-set!"]
+    [(AstExpr.WithRegion _ _) "with-arena"]
+    [(AstExpr.WithEscape _ _) "with-escape"]
+    [(AstExpr.WithScratch _) "with-scratch"]
+    [(AstExpr.InArena _ _) "in-arena"]
+    [(AstExpr.WithResource _) "with"]
+    [(AstExpr.Box _) "box"]
+    [(AstExpr.BoxGet _) "box-get"]
+    [(AstExpr.BoxTake _) "box-take"]
+    [(AstExpr.BoxSet _ _) "box-set"]
+    [(AstExpr.TypeLiteral _) "type-literal"]
+    [(AstExpr.Comptime _) "comptime"]
+    [(AstExpr.Quote _) "quote"]
+    [(AstExpr.Quasiquote _) "quasiquote"]
+    [(AstExpr.Unquote _) "unquote"]
+    [(AstExpr.UnquoteSplicing _) "unquote-splicing"]
+    [(AstExpr.BracketClause _) "bracket-clause"]
+    [(AstExpr.Try _) "try"]
+    [(AstExpr.Return _) "return"]
+    [(AstExpr.Break) "break"]
+    [(AstExpr.Continue) "continue"]
+    [(AstExpr.PtrNull _) "ptr-null"]
+    [(AstExpr.PtrNullCheck _) "ptr-null?"]
+    [(AstExpr.PtrAddrOf _) "ptr-addr-of"]
+    [(AstExpr.PtrRead _) "ptr-read"]
+    [(AstExpr.PtrWrite _ _) "ptr-write!"]
+    [(AstExpr.PtrOffset _ _) "ptr-offset"]
+    [(AstExpr.PtrCast _ _) "ptr-cast"]
+    [(AstExpr.PtrToInt _) "ptr->int"]
+    [(AstExpr.IntToPtr _ _) "int->ptr"]
+    [(AstExpr.StringData _) "string-data"]
+    [(AstExpr.StringFromBytes _ _) "string-from-bytes"]
+    [(AstExpr.ArrayData _) "__tl_array-data"]
+    [(AstExpr.BinaryData _) "binary-data"]
+    [(AstExpr.ProgramArgc) "program-argc"]
+    [(AstExpr.ProgramArgv) "program-argv"]
+    [(AstExpr.ProgramEnvp) "program-envp"]
+    [(AstExpr.CpuIdEax _ _) "cpuid-eax"]
+    [(AstExpr.CpuIdEbx _ _) "cpuid-ebx"]
+    [(AstExpr.CpuIdEcx _ _) "cpuid-ecx"]
+    [(AstExpr.CpuIdEdx _ _) "cpuid-edx"]
+    [(AstExpr.Xgetbv _) "xgetbv"]
+    [(AstExpr.Syscall _) "syscall"]
+    [(AstExpr.ForOwnedState _) "for-owned-state"]
+    [(AstExpr.ForOwnedStep _) "for-owned-step"]
+    [(AstExpr.MacroExpansion _ _ _) "macro-expansion"]
+    [(AstExpr.ForeachActive _ _) "foreach-active"]
+    [(AstExpr.LaneValue _) "lane-value"]
+    [(AstExpr.CloneOut _ _) "clone-out"]))
+
+;; Compiled-once typed child list (`ast-expr-children-into!` /
+;; `ast-expr-with-children-from!`), moving children out via `replace!`.
 (defenum AstExprChild
   (Expr i64)
   (TypeId i64)
@@ -8803,8 +8895,98 @@
   AstExprChildList
   ast-expr-child-list
   caller-provided-fallback
-  zero-capacity
-  compiler-dense-list-unused-shared-zero-storage)
+  shared-zero-capacity
+  ast-expr-child-empty-storage
+  len)
+
+(define (ast-expr-child-list-set!
+  [v : (&mut v AstExprChildList)]
+  [i : i64]
+  [x : AstExprChild]) : unit
+  (when (and (>= i 0) (< i v.len)) (set! (array-ref v.slots i) x)))
+
+(define (ast-expr-child-list-truncate!
+  [v : (&mut v AstExprChildList)]
+  [n : i64]) : unit
+  (when (and (>= n 0) (< n v.len)) (set! v.len n)))
+
+(defstruct AstChildCursor
+  (pos i64)
+  (all? bool))
+
+(define (ast-expr-child-take-next!
+  [c : (&mut c AstExprChildList)]
+  [cur : (&mut cur AstChildCursor)]) : AstExprChild
+  (let
+    [i : i64 cur.pos]
+    (set! cur.pos (+ i 1))
+    (if (and (>= i 0) (< i c.len))
+      (replace! (array-ref c.slots i) (AstExprChild.Expr -1))
+      (ast-expr-child-fallback))))
+
+(define (ast-expr-rebuild-expr!
+  [ids : (& ids AstExprList)]
+  [c : (&mut c AstExprChildList)]
+  [cur : (&mut cur AstChildCursor)]
+  [fb : i64]) : i64
+  (if cur.all?
+    (match (ast-expr-child-take-next! c cur)
+      [(AstExprChild.Expr id) id]
+      [_ fb])
+    (let
+      [i : i64 cur.pos]
+      (set! cur.pos (+ i 1))
+      (ast-expr-list-get ids i -1))))
+
+(define (ast-expr-rebuild-type-id!
+  [_ids : (& ids AstExprList)]
+  [c : (&mut c AstExprChildList)]
+  [cur : (&mut cur AstChildCursor)]
+  [fb : i64]) : i64
+  (if cur.all?
+    (match (ast-expr-child-take-next! c cur)
+      [(AstExprChild.TypeId id) id]
+      [_ fb])
+    fb))
+
+(define (ast-expr-rebuild-type!
+  [_ids : (& ids AstExprList)]
+  [c : (&mut c AstExprChildList)]
+  [cur : (&mut cur AstChildCursor)]
+  [fb : AstType]) : AstType
+  (if cur.all?
+    (match (ast-expr-child-take-next! c cur)
+      [(AstExprChild.Type ty) ty]
+      [_ fb])
+    fb))
+
+(define (ast-expr-rebuild-pattern!
+  [_ids : (& ids AstExprList)]
+  [c : (&mut c AstExprChildList)]
+  [cur : (&mut cur AstChildCursor)]
+  [fb : AstPattern]) : AstPattern
+  (if cur.all?
+    (match (ast-expr-child-take-next! c cur)
+      [(AstExprChild.Pattern pat) pat]
+      [_ fb])
+    fb))
+
+(define (ast-expr-rebuild-from!
+  [expr : AstExpr]
+  [ids : (& ids AstExprList)]
+  [children : (&mut children AstExprChildList)]
+  [cur : (&mut cur AstChildCursor)]) : AstExpr
+  (ast-expr-map-children
+    expr
+    ast-expr-rebuild-expr!
+    ast-expr-rebuild-type-id!
+    ast-expr-rebuild-type!
+    ast-expr-rebuild-pattern!
+    ast-child-keep
+    ast-child-keep
+    ids
+    children
+    cur))
 
 (defmacro (ast-expr-child-push-expr! [out : Expr] [child : Expr]) : Expr
   `(ast-expr-child-list-push ,out (AstExprChild.Expr ,child)))
@@ -8818,17 +9000,31 @@
 (defmacro (ast-expr-child-push-pattern! [out : Expr] [child : Expr]) : Expr
   `(ast-expr-child-list-push ,out (AstExprChild.Pattern ,child)))
 
+(define (ast-expr-children-into!
+  [expr : AstExpr]
+  [out : (&mut out AstExprChildList)]) : unit
+  (ast-expr-for-each-child
+    expr
+    ast-expr-child-push-expr!
+    ast-expr-child-push-type-id!
+    ast-expr-child-push-type!
+    ast-expr-child-push-pattern!
+    out))
+
 (define (ast-expr-children [expr : AstExpr]) : AstExprChildList
   (let
     [children : AstExprChildList (ast-expr-child-list-with-capacity 0)]
-    (ast-expr-for-each-child
-      expr
-      ast-expr-child-push-expr!
-      ast-expr-child-push-type-id!
-      ast-expr-child-push-type!
-      ast-expr-child-push-pattern!
-      (&mut children))
+    (ast-expr-children-into! expr (&mut children))
     children))
+
+(define (ast-expr-with-children-from!
+  [expr : AstExpr]
+  [children : (&mut children AstExprChildList)]
+  [start : i64]) : AstExpr
+  (let
+    [empty : AstExprList (ast-expr-list-empty-shared)]
+    [cur : AstChildCursor (AstChildCursor start true)]
+    (ast-expr-rebuild-from! expr (& empty) children (&mut cur))))
 
 ;; `ast-expr-children-eq?` is structural equality of two nodes: the same
 ;; variant, equal scalar payloads, and children equal pairwise by the hooks,

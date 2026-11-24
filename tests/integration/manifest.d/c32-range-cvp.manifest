@@ -1,0 +1,4 @@
+# Native integration cases for C32 range/CVP and divmod no-wrap guard.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+cvp_range_divmod_wrap_overflow|all|0,1,2|tests/integration/cvp_range_divmod_wrap_overflow.tl|42|330637357 -821813502 673175210 -291171994\n|-|stdlib/io.tl|-

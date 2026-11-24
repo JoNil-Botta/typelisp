@@ -3508,6 +3508,13 @@
   (Ok LowerResourceBindings)
   (Err (Box cdiag.CompilerDiagnostic)))
 
+(defenum LowerResourceCleanupBinding
+  (Binding LowerState sym_i64_env.SymI64Env tc_core.TcTypeEnv i64))
+
+(defenum ResultLowerResourceCleanupBinding
+  (Ok LowerResourceCleanupBinding)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
 (defenum LowerLoopTarget
   (Target i64 i64))
 
@@ -10244,6 +10251,30 @@
                 (lower-context-expr-push ctx rewritten-func)
                 rewritten-args))))])))
 
+;; The nodes `lower-spmd-inline-expr` rebuilds from their inlined expression
+;; children. It hands every other node it has no rule for back as it is.
+(define (lower-spmd-inline-rebuilds? [expr : (& ast.AstExpr)]) : bool
+  (match expr
+    [(or (Spanned _ _) (Binary _ _ _) (Unary _ _) (If _ _ _) (Begin _) (Ann _ _)
+         (Cast _ _) (ArrayRef _ _) (ArraySet _ _ _) (ArrayTake _ _ _)
+         (Replace _ _) (StructSet _ _ _) (SpmdScan _) (SpmdCompact _)
+         (SpmdBroadcast _ _) (SpmdShuffle _ _))
+      true]
+    [_ false]))
+
+;; Whether inlining handed BEFORE back as it is, so its parent can keep the
+;; child's id: a variable that kept its name, or a node without a rule.
+(define (lower-spmd-inline-kept?
+  [before : (& ast.AstExpr)]
+  [after : (& ast.AstExpr)]) : bool
+  (match before
+    [(Var name)
+      (match after
+        [(Var next) (= next name)]
+        [_ false])]
+    [(or (Call _ _) (Let _)) false]
+    [_ (not (lower-spmd-inline-rebuilds? before))]))
+
 (define (lower-spmd-inline-expr
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
@@ -10258,83 +10289,10 @@
     [shadowed : LowerIdSet
       (owned_view.compiler-owned-reference-shared-view shadowed)]
     (match (lower-global-shared-view expr)
-      [(Spanned inner-box span)
-        (let
-          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          [rewritten : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                inner
-                subst
-                shadowed))]
-          [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-spanned-with-pools
-                pools
-                (lower-context-expr-push ctx rewritten)
-                span))))]
       [(Var name)
         (match (lower-spmd-inline-subst-lookup subst name)
           [(Some value) (Ok value)]
           [(No) (Ok expr)])]
-      [(Binary op left-box right-box)
-        (let
-          [left : ast.AstExpr (lower-context-expr-get ctx left-box)]
-          [right : ast.AstExpr (lower-context-expr-get ctx right-box)]
-          [rewritten-left
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                left
-                subst
-                shadowed))]
-          [rewritten-right : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                right
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-binary-with-pools
-                (tc_core.tc-context-pools ctx)
-                op
-                (lower-context-expr-push ctx rewritten-left)
-                (lower-context-expr-push ctx rewritten-right)))))]
-      [(Unary op inner-box)
-        (let
-          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          [rewritten : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                inner
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-unary-with-pools
-                (tc_core.tc-context-pools ctx)
-                op
-                (lower-context-expr-push ctx rewritten)))))]
       [(Call func-box args)
         (let
           [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
@@ -10348,49 +10306,6 @@
             subst
             shadowed
             expr))]
-      [(If cond-box then-box else-box)
-        (let
-          [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-          [then-branch : ast.AstExpr (lower-context-expr-get ctx then-box)]
-          [else-branch : ast.AstExpr (lower-context-expr-get ctx else-box)]
-          [rewritten-cond
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                cond
-                subst
-                shadowed))]
-          [rewritten-then
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                then-branch
-                subst
-                shadowed))]
-          [rewritten-else : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                else-branch
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-if-with-pools
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten-cond)
-                (lower-context-expr-push ctx rewritten-then)
-                (lower-context-expr-push ctx rewritten-else)))))]
       [(Let let-box)
         (match (__tl-box-place let-box)
           [(Let bindings body-box)
@@ -10426,467 +10341,43 @@
                           (tc_core.tc-context-pools ctx)
                           rewritten-bindings
                           (lower-context-expr-push ctx rewritten-body)))))]))])]
-      [(Begin exprs)
-        (let
-          [rewritten : ast.AstExprList
-            (try
-              (lower-spmd-inline-expr-list
-                ctx
-                function-state
-                env
-                type-env
-                exprs
-                subst
-                shadowed))]
-          (Ok (Begin rewritten)))]
-      [(Ann inner-box ty-id)
-        (let
-          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          [rewritten : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                inner
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-ann-with-pools-id
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten)
-                ty-id))))]
-      [(Cast inner-box ty-id)
-        (let
-          [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
-          [rewritten : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                inner
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-cast-with-pools-id
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten)
-                ty-id))))]
-      [(ArrayRef array-box index-box)
-        (let
-          [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
-          [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-          [rewritten-array
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                array
-                subst
-                shadowed))]
-          [rewritten-index : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                index
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-array-ref-with-pools
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten-array)
-                (lower-context-expr-push ctx rewritten-index)))))]
-      [(ArraySet array-box index-box value-box)
-        (let
-          [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
-          [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-          [rewritten-array
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                array
-                subst
-                shadowed))]
-          [rewritten-index
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                index
-                subst
-                shadowed))]
-          [rewritten-value : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                value
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-array-set-with-pools
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten-array)
-                (lower-context-expr-push ctx rewritten-index)
-                (lower-context-expr-push ctx rewritten-value)))))]
-      [(ArrayTake array-box live-box index-box)
-        (let
-          [array : ast.AstExpr (lower-context-expr-get ctx array-box)]
-          [live : ast.AstExpr (lower-context-expr-get ctx live-box)]
-          [index : ast.AstExpr (lower-context-expr-get ctx index-box)]
-          [rewritten-array
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                array
-                subst
-                shadowed))]
-          [rewritten-live
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                live
-                subst
-                shadowed))]
-          [rewritten-index : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                index
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-array-take-with-pools
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten-array)
-                (lower-context-expr-push ctx rewritten-live)
-                (lower-context-expr-push ctx rewritten-index)))))]
-      [(Replace place-box replacement-box)
-        (let
-          [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
-          [replacement : ast.AstExpr
-            (lower-context-expr-get ctx replacement-box)]
-          [rewritten-place
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                place
-                subst
-                shadowed))]
-          [rewritten-replacement : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                replacement
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-replace-with-pools
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten-place)
-                (lower-context-expr-push ctx rewritten-replacement)))))]
-      [(StructSet receiver-box field value-box)
-        (let
-          [receiver : ast.AstExpr (lower-context-expr-get ctx receiver-box)]
-          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-          [rewritten-receiver
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                receiver
-                subst
-                shadowed))]
-          [rewritten-value : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                value
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-struct-set-id-with-pools
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten-receiver)
-                field
-                (lower-context-expr-push ctx rewritten-value)))))]
-      [(SpmdScan scan-box)
-        (match (__tl-box-place scan-box)
-          [(Scan
-              op
-              index
-              index-ty
-              start-box
-              end-box
-              prefix
-              prefix-ty
-              init-box
-              value-box
-              body-box)
-            (let
-              [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-              [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-              [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-              [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-              [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-              [rewritten-start
-                (try
-                  (lower-spmd-inline-expr
+      [_
+        (if (lower-spmd-inline-rebuilds? (& expr))
+          (let
+            [children : ast.AstExprList
+              (ast.ast-expr-child-ids (lower-global-shared-view expr))]
+            [rewritten : ast.AstExprList
+              (ast.ast-expr-list-with-capacity children.len)]
+            [changed? : bool false]
+            (for [index (iterator.range 0 children.len)]
+              (let
+                [child : i64
+                  (lower-context-expr-transparent-id
                     ctx
-                    function-state
-                    env
-                    type-env
-                    start
-                    subst
-                    shadowed))]
-              [rewritten-end
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    end
-                    subst
-                    shadowed))]
-              [rewritten-init
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    init
-                    subst
-                    shadowed))]
-              [rewritten-value
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    value
-                    subst
-                    shadowed))]
-              [rewritten-body : ast.AstExpr
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    body
-                    subst
-                    shadowed))]
-              (Ok
-                (SpmdScan
-                  (box
-                    (ast.AstSpmdScan.Scan
-                      op
-                      index
-                      index-ty
-                      (lower-context-expr-push ctx rewritten-start)
-                      (lower-context-expr-push ctx rewritten-end)
-                      prefix
-                      prefix-ty
-                      (lower-context-expr-push ctx rewritten-init)
-                      (lower-context-expr-push ctx rewritten-value)
-                      (lower-context-expr-push ctx rewritten-body))))))])]
-      [(SpmdCompact compact-box)
-        (match (__tl-box-place compact-box)
-          [(Compact
-              index
-              index-ty
-              start-box
-              end-box
-              slot
-              slot-ty
-              init-box
-              keep-box
-              body-box)
-            (let
-              [start : ast.AstExpr (lower-context-expr-get ctx start-box)]
-              [end : ast.AstExpr (lower-context-expr-get ctx end-box)]
-              [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-              [keep : ast.AstExpr (lower-context-expr-get ctx keep-box)]
-              [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
-              [rewritten-start
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    start
-                    subst
-                    shadowed))]
-              [rewritten-end
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    end
-                    subst
-                    shadowed))]
-              [rewritten-init
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    init
-                    subst
-                    shadowed))]
-              [rewritten-keep
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    keep
-                    subst
-                    shadowed))]
-              [rewritten-body : ast.AstExpr
-                (try
-                  (lower-spmd-inline-expr
-                    ctx
-                    function-state
-                    env
-                    type-env
-                    body
-                    subst
-                    shadowed))]
-              (Ok
-                (SpmdCompact
-                  (box
-                    (ast.AstSpmdCompact.Compact
-                      index
-                      index-ty
-                      (lower-context-expr-push ctx rewritten-start)
-                      (lower-context-expr-push ctx rewritten-end)
-                      slot
-                      slot-ty
-                      (lower-context-expr-push ctx rewritten-init)
-                      (lower-context-expr-push ctx rewritten-keep)
-                      (lower-context-expr-push ctx rewritten-body))))))])]
-      [(SpmdBroadcast value-box lane-box)
-        (let
-          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-          [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-          [rewritten-value
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                value
-                subst
-                shadowed))]
-          [rewritten-lane : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                lane
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-spmd-broadcast-with-pools
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten-value)
-                (lower-context-expr-push ctx rewritten-lane)))))]
-      [(SpmdShuffle value-box lane-box)
-        (let
-          [value : ast.AstExpr (lower-context-expr-get ctx value-box)]
-          [lane : ast.AstExpr (lower-context-expr-get ctx lane-box)]
-          [rewritten-value
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                value
-                subst
-                shadowed))]
-          [rewritten-lane : ast.AstExpr
-            (try
-              (lower-spmd-inline-expr
-                ctx
-                function-state
-                env
-                type-env
-                lane
-                subst
-                shadowed))]
-          (Ok
-            (lower-context-expr-get
-              ctx
-              (ast.ast-expr-spmd-shuffle-with-pools
-                (tc_core.tc-context-pools ctx)
-                (lower-context-expr-push ctx rewritten-value)
-                (lower-context-expr-push ctx rewritten-lane)))))]
-      [_ (Ok expr)])))
+                    (ast.ast-expr-list-get (& children) index -1))]
+                [next-expr : ast.AstExpr
+                  (try
+                    (lower-spmd-inline-expr
+                      ctx
+                      function-state
+                      env
+                      type-env
+                      (lower-context-expr-get ctx child)
+                      subst
+                      shadowed))]
+                [next : i64
+                  (if (lower-spmd-inline-kept?
+                    (& (lower-context-expr-get ctx child))
+                    (& next-expr))
+                    child
+                    (lower-context-expr-push ctx next-expr))]
+                (when (!= next child) (set! changed? true))
+                (ast.ast-expr-list-push (&mut rewritten) next)))
+            (Ok
+              (if changed?
+                (ast.ast-expr-with-child-ids expr (& rewritten))
+                expr)))
+          (Ok expr))])))
 
 (define (lower-function-logical-id-from-decl
   [lower-state : CompilerLowerState]
@@ -11519,39 +11010,6 @@
         exprs
         (+ index 1)))))
 
-(define (lower-reach-let-bindings
-  [pools : (& pools ast.AstNodePoolContext)]
-  [all-functions : (& all-functions lower_i64_i64_map.Map)]
-  [names : LowerNameCache]
-  [state : LowerReachState]
-  [bindings : ast.AstLetBindingList]) : LowerReachState
-  (lower-reach-let-bindings-at pools all-functions names state (& bindings) 0))
-
-(define (lower-reach-let-bindings-at
-  [pools : (& pools ast.AstNodePoolContext)]
-  [all-functions : (& all-functions lower_i64_i64_map.Map)]
-  [names : LowerNameCache]
-  [state : LowerReachState]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]) : LowerReachState
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    state
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(Binding _ _ value-box)
-        (let
-          [value : ast.AstExpr
-            (ast.ast-node-pool-context-expr-get pools value-box)]
-          (lower-reach-let-bindings-at
-            pools
-            all-functions
-            (lower-global-shared-view names)
-            (lower-reach-expr pools all-functions names state value)
-            bindings
-            (+ index 1)))])))
-
 (define (lower-reach-match-arms
   [pools : (& pools ast.AstNodePoolContext)]
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
@@ -11583,52 +11041,6 @@
             (lower-global-shared-view names)
             (lower-reach-expr pools all-functions names state body)
             arms
-            (+ index 1)))])))
-
-(define (lower-reach-resource-bindings
-  [pools : (& pools ast.AstNodePoolContext)]
-  [all-functions : (& all-functions lower_i64_i64_map.Map)]
-  [names : LowerNameCache]
-  [state : LowerReachState]
-  [bindings : ast.AstResourceBindingList]) : LowerReachState
-  (lower-reach-resource-bindings-at
-    pools
-    all-functions
-    names
-    state
-    (& bindings)
-    0))
-
-(define (lower-reach-resource-bindings-at
-  [pools : (& pools ast.AstNodePoolContext)]
-  [all-functions : (& all-functions lower_i64_i64_map.Map)]
-  [names : LowerNameCache]
-  [state : LowerReachState]
-  [bindings : (& bindings ast.AstResourceBindingList)]
-  [index : i64]) : LowerReachState
-  (if (>= index (ast.ast-resource-binding-list-len bindings))
-    state
-    (match (ast.ast-resource-binding-list-get
-      bindings
-      index
-      (ast.ast-resource-binding-fallback))
-      [(Binding _ acquire-box cleanup-box _)
-        (let
-          [acquire : ast.AstExpr
-            (ast.ast-node-pool-context-expr-get pools acquire-box)]
-          [cleanup : ast.AstExpr
-            (ast.ast-node-pool-context-expr-get pools cleanup-box)]
-          (lower-reach-resource-bindings-at
-            pools
-            all-functions
-            (lower-global-shared-view names)
-            (lower-reach-expr
-              pools
-              all-functions
-              (lower-global-shared-view names)
-              (lower-reach-expr pools all-functions names state acquire)
-              cleanup)
-            bindings
             (+ index 1)))])))
 
 (define (lower-clone-handoff-type-args
@@ -12243,30 +11655,15 @@
   [state : LowerReachState]
   [expr : ast.AstExpr]) : LowerReachState
   (match expr
-    [(or (Spanned inner-box _) (Unary _ inner-box) (Ann inner-box _)
-         (Cast inner-box _) (Borrow _ _ inner-box) (Box inner-box)
-         (BoxGet inner-box) (BoxTake inner-box) (Comptime inner-box)
-         (Unquote inner-box) (UnquoteSplicing inner-box) (Try inner-box)
-         (Return inner-box) (StringData inner-box) (ArrayData inner-box))
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        (lower-reach-expr pools all-functions names state inner))]
-    [(or (Literal _) (TypeLiteral _) (Quote _) (Quasiquote _) (Break) (Continue)
-         (PtrNull _) (BinaryData _) (SpmdProgramIndex) (SpmdProgramCount)
-         (ProgramArgc) (ProgramArgv) (ProgramEnvp))
-      state]
+    [(Spanned inner-box _)
+      (lower-reach-expr
+        pools
+        all-functions
+        names
+        state
+        (ast.ast-node-pool-context-expr-get pools inner-box))]
+    [(or (Literal _) (Quote _) (Quasiquote _)) state]
     [(Var name) (lower-reach-add-source-id all-functions names state name)]
-    [(Binary _ lhs-box rhs-box)
-      (let
-        [lhs : ast.AstExpr (ast.ast-node-pool-context-expr-get pools lhs-box)]
-        [rhs : ast.AstExpr (ast.ast-node-pool-context-expr-get pools rhs-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state lhs)
-          rhs))]
     [(Call callee-box args)
       (let
         [callee : ast.AstExpr
@@ -12306,41 +11703,6 @@
                 concat-state)]
             [_ concat-state])]
         (lower-reach-expr-list pools all-functions names runtime-state args))]
-    [(If cond-box then-expr-box else-expr-box)
-      (let
-        [cond : ast.AstExpr (ast.ast-node-pool-context-expr-get pools cond-box)]
-        [then-expr : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools then-expr-box)]
-        [else-expr : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools else-expr-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr
-            pools
-            all-functions
-            (lower-global-shared-view names)
-            (lower-reach-expr pools all-functions names state cond)
-            then-expr)
-          else-expr))]
-    [(Let let-box)
-      (match (__tl-box-place let-box)
-        [(Let bindings body-box)
-          (let
-            [body : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools body-box)]
-            (lower-reach-expr
-              pools
-              all-functions
-              (lower-global-shared-view names)
-              (lower-reach-let-bindings
-                pools
-                all-functions
-                names
-                state
-                bindings)
-              body))])]
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda _ _ body-box)
@@ -12356,113 +11718,18 @@
                 names
                 state)
               body))])]
-    [(or (Tuple values) (Array values) (DynArray values) (Begin values)
-         (Unsafe values) (WithRegion _ values) (BracketClause values)
-         (Syscall values))
-      (lower-reach-expr-list pools all-functions names state values)]
-    [(or (TupleRef value-box _) (Set _ value-box) (StructGet value-box _)
-         (PtrNullCheck value-box) (IntToPtr value-box _))
-      (let
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr pools all-functions names state value))]
-    [(or (FixedMakeArray _ len-box) (MakeArray _ len-box))
-      (let
-        [len : ast.AstExpr (ast.ast-node-pool-context-expr-get pools len-box)]
-        (lower-reach-expr pools all-functions names state len))]
-    [(ArrayRef array-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools array-box)]
-        [index : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools index-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state array)
-          index))]
-    [(Replace place-box replacement-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools place-box)]
-        [replacement : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools replacement-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state place)
-          replacement))]
-    [(ArraySet array-box index-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools array-box)]
-        [index : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools index-box)]
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr
-            pools
-            all-functions
-            (lower-global-shared-view names)
-            (lower-reach-expr pools all-functions names state array)
-            index)
-          value))]
-    [(ArrayTake array-box live-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools array-box)]
-        [live : ast.AstExpr (ast.ast-node-pool-context-expr-get pools live-box)]
-        [index : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools index-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr
-            pools
-            all-functions
-            (lower-global-shared-view names)
-            (lower-reach-expr pools all-functions names state array)
-            live)
-          index))]
-    [(ArrayPush array-box value-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools array-box)]
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state array)
-          value))]
-    [(StringRef text-box index-box)
-      (let
-        [text : ast.AstExpr (ast.ast-node-pool-context-expr-get pools text-box)]
-        [index : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools index-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state text)
-          index))]
-    [(While cond-box body-box)
-      (let
-        [cond : ast.AstExpr (ast.ast-node-pool-context-expr-get pools cond-box)]
-        (lower-reach-expr-list
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state cond)
-          body-box))]
+    [(Match match-box)
+      (match (__tl-box-place match-box)
+        [(Match value-box arms)
+          (let
+            [value : ast.AstExpr
+              (ast.ast-node-pool-context-expr-get pools value-box)]
+            (lower-reach-match-arms
+              pools
+              all-functions
+              (lower-global-shared-view names)
+              (lower-reach-expr pools all-functions names state value)
+              arms))])]
     [(ForOwnedState payload)
       (lower-reach-expr
         pools
@@ -12497,316 +11764,22 @@
           (ast.ast-node-pool-context-expr-get
             pools
             (ast.ast-for-owned-step-body (& payload)))))]
-    [(Match match-box)
-      (match (__tl-box-place match-box)
-        [(Match value-box arms)
-          (let
-            [value : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools value-box)]
-            (lower-reach-match-arms
-              pools
-              all-functions
-              (lower-global-shared-view names)
-              (lower-reach-expr pools all-functions names state value)
-              arms))])]
-    [(Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(Foreach _ _ source-box init-box body-box)
-          (let
-            [source : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools source-box)]
-            [init : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools init-box)]
-            [body : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools body-box)]
+    [_
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        [reached : LowerReachState state]
+        (for [index (iterator.range 0 children.len)]
+          (set!
+            reached
             (lower-reach-expr
               pools
               all-functions
               (lower-global-shared-view names)
-              (lower-reach-expr
-                pools
-                all-functions
-                (lower-global-shared-view names)
-                (lower-reach-expr pools all-functions names state source)
-                init)
-              body))]
-        [(Foreach2 _ _ a-box b-box _ _ c-box d-box body-box)
-          (let
-            [reached : LowerReachState
-              (lower-reach-expr
-                pools
-                all-functions
-                (lower-global-shared-view names)
-                (lower-reach-expr
-                  pools
-                  all-functions
-                  (lower-global-shared-view names)
-                  (lower-reach-expr
-                    pools
-                    all-functions
-                    (lower-global-shared-view names)
-                    (lower-reach-expr
-                      pools
-                      all-functions
-                      (lower-global-shared-view names)
-                      state
-                      (ast.ast-node-pool-context-expr-get pools a-box))
-                    (ast.ast-node-pool-context-expr-get pools b-box))
-                  (ast.ast-node-pool-context-expr-get pools c-box))
-                (ast.ast-node-pool-context-expr-get pools d-box))]
-            (lower-reach-expr
-              pools
-              all-functions
-              names
               reached
-              (ast.ast-node-pool-context-expr-get pools body-box)))])]
-    [(SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(Reduce _ _ _ source-box init-box map-expr-box reduce-expr-box)
-          (let
-            [source : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools source-box)]
-            [init : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools init-box)]
-            [map-expr : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools map-expr-box)]
-            [reduce-expr : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools reduce-expr-box)]
-            (lower-reach-expr
-              pools
-              all-functions
-              (lower-global-shared-view names)
-              (lower-reach-expr
+              (ast.ast-node-pool-context-expr-get
                 pools
-                all-functions
-                (lower-global-shared-view names)
-                (lower-reach-expr
-                  pools
-                  all-functions
-                  (lower-global-shared-view names)
-                  (lower-reach-expr pools all-functions names state source)
-                  init)
-                map-expr)
-              reduce-expr))])]
-    [(SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(Scan _ _ _ start-box end-box _ _ init-box value-box body-box)
-          (let
-            [start : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools start-box)]
-            [end : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools end-box)]
-            [init : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools init-box)]
-            [value : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools value-box)]
-            [body : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools body-box)]
-            (lower-reach-expr
-              pools
-              all-functions
-              (lower-global-shared-view names)
-              (lower-reach-expr
-                pools
-                all-functions
-                (lower-global-shared-view names)
-                (lower-reach-expr
-                  pools
-                  all-functions
-                  (lower-global-shared-view names)
-                  (lower-reach-expr
-                    pools
-                    all-functions
-                    (lower-global-shared-view names)
-                    (lower-reach-expr pools all-functions names state start)
-                    end)
-                  init)
-                value)
-              body))])]
-    [(SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(Compact _ _ start-box end-box _ _ init-box keep-box body-box)
-          (let
-            [start : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools start-box)]
-            [end : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools end-box)]
-            [init : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools init-box)]
-            [keep : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools keep-box)]
-            [body : ast.AstExpr
-              (ast.ast-node-pool-context-expr-get pools body-box)]
-            (lower-reach-expr
-              pools
-              all-functions
-              (lower-global-shared-view names)
-              (lower-reach-expr
-                pools
-                all-functions
-                (lower-global-shared-view names)
-                (lower-reach-expr
-                  pools
-                  all-functions
-                  (lower-global-shared-view names)
-                  (lower-reach-expr
-                    pools
-                    all-functions
-                    (lower-global-shared-view names)
-                    (lower-reach-expr pools all-functions names state start)
-                    end)
-                  init)
-                keep)
-              body))])]
-    [(or (SpmdBroadcast value-box lane-box) (SpmdShuffle value-box lane-box))
-      (let
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        [lane : ast.AstExpr (ast.ast-node-pool-context-expr-get pools lane-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state value)
-          lane))]
-    [(StructSet receiver-box _ value-box)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools receiver-box)]
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state receiver)
-          value))]
-    [(WithEscape scratch-box exprs)
-      (let
-        [scratch : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools scratch-box)]
-        (lower-reach-expr-list
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state scratch)
-          exprs))]
-    [(WithScratch exprs)
-      (lower-reach-expr-list pools all-functions names state exprs)]
-    [(InArena arena-box exprs)
-      (let
-        [arena : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools arena-box)]
-        (lower-reach-expr-list
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state arena)
-          exprs))]
-    [(WithResource wr-box)
-      (match (__tl-box-place wr-box)
-        [(WithResource bindings body)
-          (lower-reach-expr-list
-            pools
-            all-functions
-            (lower-global-shared-view names)
-            (lower-reach-resource-bindings
-              pools
-              all-functions
-              names
-              state
-              bindings)
-            body)])]
-    [(BoxSet inner-box value-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools inner-box)]
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state inner)
-          value))]
-    [(PtrAddrOf place-box)
-      (let
-        [place : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools place-box)]
-        (lower-reach-expr pools all-functions names state place))]
-    [(or (PtrRead ptr-box) (PtrCast ptr-box _) (PtrToInt ptr-box))
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools ptr-box)]
-        (lower-reach-expr pools all-functions names state ptr))]
-    [(PtrWrite ptr-box value-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools ptr-box)]
-        [value : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools value-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state ptr)
-          value))]
-    [(PtrOffset ptr-box offset-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools ptr-box)]
-        [offset : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools offset-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state ptr)
-          offset))]
-    [(StringFromBytes ptr-box len-box)
-      (let
-        [ptr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools ptr-box)]
-        [len : ast.AstExpr (ast.ast-node-pool-context-expr-get pools len-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state ptr)
-          len))]
-    [(or (CpuIdEax leaf-box subleaf-box) (CpuIdEbx leaf-box subleaf-box)
-         (CpuIdEcx leaf-box subleaf-box) (CpuIdEdx leaf-box subleaf-box))
-      (let
-        [leaf : ast.AstExpr (ast.ast-node-pool-context-expr-get pools leaf-box)]
-        [subleaf : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools subleaf-box)]
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          (lower-reach-expr pools all-functions names state leaf)
-          subleaf))]
-    [(Xgetbv index-box)
-      (let
-        [index : ast.AstExpr
-          (ast.ast-node-pool-context-expr-get pools index-box)]
-        (lower-reach-expr pools all-functions names state index))]
-    [(or (MacroExpansion value-box _ _) (ForeachActive _ value-box)
-         (LaneValue value-box))
-      (lower-reach-expr
-        pools
-        all-functions
-        names
-        state
-        (ast.ast-node-pool-context-expr-get pools value-box))]
-    [(CloneOut form-box step-box)
-      (lower-reach-expr
-        pools
-        all-functions
-        (lower-global-shared-view names)
-        (lower-reach-expr
-          pools
-          all-functions
-          (lower-global-shared-view names)
-          state
-          (ast.ast-node-pool-context-expr-get pools form-box))
-        (ast.ast-node-pool-context-expr-get pools step-box))]))
+                (ast.ast-expr-list-get (& children) index -1)))))
+        reached)]))
 
 (define (lower-reach-global-decl
   [pools : (& pools ast.AstNodePoolContext)]
@@ -25530,8 +24503,10 @@
     [_ (Err "lower: resource cleanup must be a direct function name")]))
 
 (define (lower-emit-cleanup-call
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [hidden-name-id : i64]
   [cleanup-name-id : i64]) : ResultLowerState
   (let
@@ -25541,20 +24516,60 @@
         hidden-name-id
         (csym.compiler-symbols-missing-handle))]
     (if (csym.compiler-symbols-handle-found? resource-id)
-      (match (lower-state-alloc-var state)
-        [(Alloc allocated var-id)
-          (let
-            [call-name : i64
-              (lower-resolve-call-name-id allocated env cleanup-name-id)]
-            (Ok
-              (lower-state-emit
-                allocated
-                (Call var-id call-name (One (Var resource-id)) (Unit)))))])
+      (let
+        [cleanup-local-id : i64
+          (sym_i64_env.sym-i64-lookup-id-or
+            env
+            cleanup-name-id
+            (csym.compiler-symbols-missing-handle))]
+        (if (csym.compiler-symbols-handle-found? cleanup-local-id)
+          (match (tc_core.tc-lookup-id type-env cleanup-name-id)
+            [(Ok fn-ty)
+              (if (lower-function-type? (clone fn-ty))
+                (let
+                  [arg-id : i64
+                    (ast.ast-node-pool-context-expr-push
+                      (tc_core.tc-context-pools ctx)
+                      (Var hidden-name-id))]
+                  [args : ast.AstExprList
+                    (ast.ast-expr-cons arg-id (& (ast.ast-expr-list-new)))]
+                  (match (lower-indirect-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    fn-ty
+                    (Var cleanup-local-id)
+                    cleanup-name-id
+                    (lower-state-next-var state)
+                    args
+                    (Unit)
+                    (Literal (Unit)))
+                    [(Ok lowered)
+                      (match lowered
+                        [(Expr call-state _ _) (Ok call-state)])]
+                    [(Err message) (Err message)]))
+                (Err
+                  (box
+                    (lower-diagnostic
+                      "lower: resource cleanup target is not a function"))))]
+            [(Err message) (Err (box (lower-diagnostic message)))])
+          (match (lower-state-alloc-var state)
+            [(Alloc allocated var-id)
+              (let
+                [call-name : i64
+                  (lower-resolve-call-name-id allocated env cleanup-name-id)]
+                (Ok
+                  (lower-state-emit
+                    allocated
+                    (Call var-id call-name (One (Var resource-id)) (Unit)))))])))
       (Err (box (lower-diagnostic "lower: missing resource cleanup binding"))))))
 
 (define (lower-emit-cleanup-call-if-live
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [hidden-name-id : i64]
   [cleanup-name-id : i64]
   [live-name-id : i64]) : ResultLowerState
@@ -25580,8 +24595,10 @@
                 [called-state
                   (try
                     (lower-emit-cleanup-call
+                      ctx
                       cleanup-state
                       env
+                      type-env
                       hidden-name-id
                       cleanup-name-id))]
                 (Ok
@@ -25680,8 +24697,10 @@
       (+ count 1))))
 
 (define (lower-emit-cleanup-stack-at
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [hidden-name-ids : (__tl_dyn-array i64)]
   [cleanup-name-ids : (__tl_dyn-array i64)]
   [live-name-ids : (__tl_dyn-array i64)]
@@ -25694,31 +24713,41 @@
         (try
           (if (= live-name-id 0)
             (lower-emit-cleanup-call
+              ctx
               state
               env
+              type-env
               (array-ref hidden-name-ids index)
               (array-ref cleanup-name-ids index))
             (lower-emit-cleanup-call-if-live
+              ctx
               state
               env
+              type-env
               (array-ref hidden-name-ids index)
               (array-ref cleanup-name-ids index)
               live-name-id)))]
       (lower-emit-cleanup-stack-at
+        ctx
         next-state
         env
+        type-env
         hidden-name-ids
         cleanup-name-ids
         live-name-ids
         (- index 1)))))
 
 (define (lower-emit-cleanup-stack
+  [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [cleanups : LowerCleanupStack]) : ResultLowerState
   (lower-emit-cleanup-stack-at
+    ctx
     state
     env
+    type-env
     cleanups.hidden-name-ids
     cleanups.cleanup-name-ids
     cleanups.live-name-ids
@@ -25728,6 +24757,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [types : ast.AstTypeList]) : ResultLowerState
   (if (or
     (= (ast.ast-type-list-len (& types)) 2)
@@ -25746,14 +24776,22 @@
           (match cleanup-ty
             [(Var cleanup-name)
               (if (= (ast.ast-type-list-len (& types)) 2)
-                (lower-emit-cleanup-call state env hidden-name cleanup-name)
+                (lower-emit-cleanup-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  hidden-name
+                  cleanup-name)
                 (match (tc_core.tc-context-type-get
                   ctx
                   (ast.ast-type-list-get (& types) 2 (ast.ast-type-id-fallback)))
                   [(Var live-name)
                     (lower-emit-cleanup-call-if-live
+                      ctx
                       state
                       env
+                      type-env
                       hidden-name
                       cleanup-name
                       live-name)]
@@ -25850,6 +24888,7 @@
                     ctx
                     cur-state
                     env
+                    rest-env
                     (deref types))
                     [(Ok next-state) (set! cur-state next-state)]
                     [(Err message)
@@ -29311,9 +28350,6 @@
                   (ast.AstType.Unit))
                 origin)])])]))
 
-(define lower-arg-writeback-fallback : LowerArgWriteback
-  (Writeback 0 (I64 0) (I64) (Literal (ast.ast-lit-int 0))))
-
 (define (lower-apply-arg-writebacks
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -29325,15 +28361,14 @@
         [count : i64 (lower_arg_writeback_vec.len (& items))]
         [out : LowerState state]
         (for [index (iterator.range 0 count)]
+          ;; `items` is consumed here; each live writeback moves out once.
           (set!
             out
             (lower-apply-arg-writeback
               ctx
               out
-              (lower_arg_writeback_vec.get
-                (& items)
-                index
-                (lower-global-shared-view lower-arg-writeback-fallback)))))
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data items.slots) index))))))
         out)]))
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
@@ -41546,8 +40581,6 @@
                                 raw-name)])
                           (owned_view.compiler-owned-shared-view name))]
                       [name-id : i64 source-key-id]
-                      [cpu-kind : i64
-                        (tc_core.tc-cpu-query-head-kind ctx type-env raw-name)]
                       [builtin-available : bool
                         (or
                           (and
@@ -41788,7 +40821,9 @@
                             args
                             result-ty
                             origin)]
-                        [(tc_core.tc-cpuid-head? ctx type-env raw-name)
+                        [(and
+                            (cbi.compiler-builtin-lower-cpuid-id? source-id)
+                            (tc_core.tc-cpuid-head? ctx type-env raw-name))
                           (lower-cpuid-call
                             ctx
                             state
@@ -41797,14 +40832,45 @@
                             args
                             result-ty
                             origin)]
-                        [(>= cpu-kind 0)
+                        [(and
+                            (>=
+                              (tc_core.tc-cpu-query-spelling-kind source-id)
+                              0)
+                            (>=
+                              (tc_core.tc-cpu-query-kind
+                                ctx
+                                type-env
+                                raw-name
+                                source-id)
+                              0))
                           (lower-cpu-query-call
                             ctx
                             state
                             env
                             type-env
                             args
-                            cpu-kind
+                            (tc_core.tc-cpu-query-spelling-kind source-id)
+                            origin)]
+                        [(and
+                            (>=
+                              (tc_core.tc-process-syscall-spelling-kind
+                                source-id)
+                              0)
+                            (>=
+                              (tc_core.tc-process-syscall-kind
+                                ctx
+                                type-env
+                                raw-name
+                                source-id)
+                              0))
+                          (lower-process-syscall-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            args
+                            (tc_core.tc-process-syscall-spelling-kind source-id)
+                            result-ty
                             origin)]
                         [(and
                             builtin-available
@@ -42484,6 +41550,27 @@
             ctx
             origin
             "lower: wrong number of CPU query arguments")))]))
+
+(define (lower-process-syscall-call
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [args : ast.AstExprList]
+  [kind : i64]
+  [result-ty : ast.AstType]
+  [origin : ast.AstExpr]) : ResultLowerExpr
+  (cond
+    [(and (< kind 3) (= args.len 0)) (lower-entry-load state kind result-ty)]
+    [(and (= kind 3) (>= args.len 1) (<= args.len 7))
+      (lower-syscall ctx state env type-env args)]
+    [else
+      (Err
+        (box
+          (lower-diagnostic-at-expr
+            ctx
+            origin
+            "lower: wrong number of process/syscall arguments")))]))
 
 (define (lower-word-view-item
   [ctx : tc_core.TcContext]
@@ -48050,8 +47137,8 @@
               (lower-alias-scan-children
                 ctx
                 type-env
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                0
+                (&
+                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id)))
                 name
                 written
                 in-call?
@@ -48075,8 +47162,8 @@
               (lower-alias-scan-children
                 ctx
                 type-env
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                0
+                (&
+                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id)))
                 name
                 written
                 in-call?
@@ -48107,8 +47194,9 @@
                 (lower-alias-scan-children
                   ctx
                   type-env
-                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                  0
+                  (&
+                    (ast.ast-expr-child-ids
+                      (lower-context-expr-get ctx expr-id)))
                   name
                   written
                   in-call?
@@ -48119,8 +47207,8 @@
               (lower-alias-scan-children
                 ctx
                 type-env
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                0
+                (&
+                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id)))
                 name
                 written
                 true
@@ -48181,8 +47269,7 @@
                 (lower-alias-scan-children
                   ctx
                   type-env
-                  (lower-global-shared-view children)
-                  0
+                  (& children)
                   name
                   written
                   in-call?
@@ -48204,8 +47291,7 @@
                   (lower-alias-scan-children
                     ctx
                     type-env
-                    children
-                    0
+                    (& children)
                     name
                     once
                     in-call?
@@ -48217,8 +47303,8 @@
               (lower-alias-scan-children
                 ctx
                 type-env
-                (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-                0
+                (&
+                  (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id)))
                 name
                 written
                 true
@@ -48235,8 +47321,7 @@
             (lower-alias-scan-children
               ctx
               type-env
-              (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id))
-              0
+              (& (ast.ast-expr-child-ids (lower-context-expr-get ctx expr-id)))
               name
               written
               in-call?
@@ -48245,22 +47330,21 @@
 (define (lower-alias-scan-children
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
-  [children : ast.AstExprList]
-  [index : i64]
+  [children : (& children ast.AstExprList)]
   [name : i64]
   [written : i64]
   [in-call? : bool]
   [budget : (&mut budget i64)]) : i64
   (let
     [state : i64 written]
-    [at : i64 index]
+    [at : i64 0]
     (while (and (>= state 0) (< at children.len))
       (set!
         state
         (lower-alias-scan
           ctx
           type-env
-          (ast.ast-expr-list-get (& children) at -1)
+          (ast.ast-expr-list-get children at -1)
           name
           state
           in-call?
@@ -48704,6 +47788,57 @@
   [cleanups : LowerCleanupStack]) : ResultLowerResourceBindings
   (lower-resource-bindings-at ctx state env type-env (& bindings) cleanups 0))
 
+(define (lower-resource-cleanup-binding
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [outer-env : sym_i64_env.SymI64Env]
+  [outer-type-env : tc_core.TcTypeEnv]
+  [bound-env : sym_i64_env.SymI64Env]
+  [bound-type-env : tc_core.TcTypeEnv]
+  [cleanup : ast.AstExpr]
+  [cleanup-name-id : i64]) : ResultLowerResourceCleanupBinding
+  (let
+    [local-cleanup-id : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        outer-env
+        cleanup-name-id
+        (csym.compiler-symbols-missing-handle))]
+    (if (not (csym.compiler-symbols-handle-found? local-cleanup-id))
+      (Ok (Binding state bound-env bound-type-env cleanup-name-id))
+      (match (tc_core.tc-lookup-id outer-type-env cleanup-name-id)
+        [(Ok fn-ty)
+          (if (lower-function-type? (clone fn-ty))
+            (match (lower-state-alloc-var state)
+              [(Alloc allocated cleanup-var-id)
+                (let
+                  [hidden-cleanup-id : i64
+                    (cis.intern-lower-private-identity-raw
+                      (lower-cleanup-hidden-name-id allocated cleanup-var-id))]
+                  [fn-ir-ty : ast.AstType
+                    (lower-one-word-register-storage-type ctx fn-ty)]
+                  (Ok
+                    (Binding
+                      (lower-state-emit
+                        allocated
+                        (Mov cleanup-var-id (Var local-cleanup-id) fn-ir-ty))
+                      (sym_i64_env.sym-i64-bind-id
+                        bound-env
+                        hidden-cleanup-id
+                        cleanup-var-id)
+                      (tc_core.tc-bind-id
+                        bound-type-env
+                        hidden-cleanup-id
+                        fn-ty)
+                      hidden-cleanup-id)))])
+            (Err
+              (box
+                (lower-diagnostic-at-expr
+                  ctx
+                  cleanup
+                  "lower: call target is not a function"))))]
+        [(Err message)
+          (Err (box (lower-diagnostic-at-expr ctx cleanup message)))]))))
+
 (define (lower-resource-bindings-at
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -48764,7 +47899,7 @@
                                     (lower-cleanup-hidden-name-id
                                       allocated
                                       var-id))]
-                                [bound-state : LowerState
+                                [resource-state : LowerState
                                   (lower-state-emit
                                     (lower-exposure-seed
                                       allocated
@@ -48773,7 +47908,7 @@
                                       name
                                       var-id)
                                     (Mov var-id init-value binding-ir-ty))]
-                                [bound-env : sym_i64_env.SymI64Env
+                                [resource-env : sym_i64_env.SymI64Env
                                   (sym_i64_env.sym-i64-bind-id
                                     (sym_i64_env.sym-i64-bind-id
                                       env
@@ -48781,62 +47916,82 @@
                                       var-id)
                                     hidden-name-id
                                     var-id)]
-                                [bound-type-env : tc_core.TcTypeEnv
-                                  (lower-type-env-push-cleanup
-                                    bound-state
+                                [resource-type-env : tc_core.TcTypeEnv
+                                  (tc_core.tc-bind-id
                                     (tc_core.tc-bind-id
                                       type-env
-                                      name
-                                      (lower-global-shared-view binding-ty))
-                                    hidden-name-id
-                                    cleanup-name-id)]
-                                (if move-aware?
-                                  (match (lower-state-alloc-var bound-state)
-                                    [(Alloc live-state live-var-id)
-                                      (let
-                                        [live-name-id : i64
-                                          (cis.intern-lower-private-identity-raw
-                                            (lower-cleanup-live-name-id
-                                              live-state
-                                              var-id))]
-                                        [move-aware-type-env : tc_core.TcTypeEnv
-                                          (lower-type-env-push-move-aware-cleanup
-                                            live-state
-                                            (tc_core.tc-bind-id
-                                              type-env
-                                              name
-                                              binding-ty)
-                                            hidden-name-id
-                                            cleanup-name-id
-                                            live-name-id)]
-                                        (lower-resource-bindings-at
-                                          ctx
-                                          (lower-state-emit
-                                            live-state
-                                            (Mov live-var-id (Bool true) (Bool)))
-                                          (sym_i64_env.sym-i64-bind-id
-                                            bound-env
-                                            live-name-id
-                                            live-var-id)
-                                          move-aware-type-env
-                                          bindings
-                                          (lower-cleanup-stack-push-move-aware
-                                            cleanups
-                                            hidden-name-id
-                                            cleanup-name-id
-                                            live-name-id)
-                                          (+ index 1)))])
-                                  (lower-resource-bindings-at
-                                    ctx
-                                    bound-state
-                                    bound-env
-                                    bound-type-env
-                                    bindings
-                                    (lower-cleanup-stack-push
-                                      cleanups
                                       hidden-name-id
-                                      cleanup-name-id)
-                                    (+ index 1))))]))]
+                                      (clone binding-ty))
+                                    name
+                                    binding-ty)]
+                                [cleanup-bound : LowerResourceCleanupBinding
+                                  (try
+                                    (lower-resource-cleanup-binding
+                                      ctx
+                                      resource-state
+                                      env
+                                      type-env
+                                      resource-env
+                                      resource-type-env
+                                      cleanup
+                                      cleanup-name-id))]
+                                (match cleanup-bound
+                                  [(Binding
+                                      bound-state
+                                      bound-env
+                                      base-type-env
+                                      effective-cleanup-id)
+                                    (if move-aware?
+                                      (match (lower-state-alloc-var bound-state)
+                                        [(Alloc live-state live-var-id)
+                                          (let
+                                            [live-name-id : i64
+                                              (cis.intern-lower-private-identity-raw
+                                                (lower-cleanup-live-name-id
+                                                  live-state
+                                                  var-id))]
+                                            [move-aware-type-env : tc_core.TcTypeEnv
+                                              (lower-type-env-push-move-aware-cleanup
+                                                live-state
+                                                base-type-env
+                                                hidden-name-id
+                                                effective-cleanup-id
+                                                live-name-id)]
+                                            (lower-resource-bindings-at
+                                              ctx
+                                              (lower-state-emit
+                                                live-state
+                                                (Mov
+                                                  live-var-id
+                                                  (Bool true)
+                                                  (Bool)))
+                                              (sym_i64_env.sym-i64-bind-id
+                                                bound-env
+                                                live-name-id
+                                                live-var-id)
+                                              move-aware-type-env
+                                              bindings
+                                              (lower-cleanup-stack-push-move-aware
+                                                cleanups
+                                                hidden-name-id
+                                                effective-cleanup-id
+                                                live-name-id)
+                                              (+ index 1)))])
+                                      (lower-resource-bindings-at
+                                        ctx
+                                        bound-state
+                                        bound-env
+                                        (lower-type-env-push-cleanup
+                                          bound-state
+                                          base-type-env
+                                          hidden-name-id
+                                          effective-cleanup-id)
+                                        bindings
+                                        (lower-cleanup-stack-push
+                                          cleanups
+                                          hidden-name-id
+                                          effective-cleanup-id)
+                                        (+ index 1)))]))]))]
                       [(Err message)
                         (Err
                           (box (lower-diagnostic-at-expr ctx cleanup message)))])]))]
@@ -48900,7 +48055,12 @@
                 (let
                   [cleanup-state : LowerState
                     (try
-                      (lower-emit-cleanup-stack body-state body-env cleanups))]
+                      (lower-emit-cleanup-stack
+                        ctx
+                        body-state
+                        body-env
+                        body-type-env
+                        cleanups))]
                   (ResultLowerExpr.Ok
                     (LowerExpr.Expr cleanup-state value body-ty))))]))]
       ;; No cleanup runs on a never edge.
@@ -75723,6 +74883,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [bindings : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
   [expr : (& ast.AstExpr)]
   [ty : pointer_proof.PointerProofType]) : pointer_proof.PointerProofOperation
   (match expr
@@ -75768,20 +74929,31 @@
         (& (lower-context-expr-get ctx func-id)))
         [(Var name)
           (let
-            [names : LowerNameCache (lower-state-names state)]
-            [lookup : i64
-              (lower-name-cache-resolve-logical-id (& names) name name)]
-            [callable : bool
-              (and
-                (not (sym_i64_env.sym-i64-contains-id bindings name))
-                (lower-top-level-callable-lookup-id?
-                  ctx
-                  (lower-callable-lookup-id ctx name lookup)))]
-            (if callable
-              (DirectCall
-                (ir.compiler-ir-symbol-typed-id
-                  (lower-resolve-call-name-id state bindings name)))
-              IndirectCall))]
+            [ps-kind : i64
+              (tc_core.tc-process-syscall-head-kind ctx type-env name)]
+            (cond
+              [(= ps-kind 1) ProgramArgv]
+              [(= ps-kind 2) ProgramEnvp]
+              [(>= ps-kind 0)
+                (if (lower-pointer-proof-scalar-type? ty)
+                  Scalar
+                  Unsupported)]
+              [else
+                (let
+                  [names : LowerNameCache (lower-state-names state)]
+                  [lookup : i64
+                    (lower-name-cache-resolve-logical-id (& names) name name)]
+                  [callable : bool
+                    (and
+                      (not (sym_i64_env.sym-i64-contains-id bindings name))
+                      (lower-top-level-callable-lookup-id?
+                        ctx
+                        (lower-callable-lookup-id ctx name lookup)))]
+                  (if callable
+                    (DirectCall
+                      (ir.compiler-ir-symbol-typed-id
+                        (lower-resolve-call-name-id state bindings name)))
+                    IndirectCall))]))]
         [_ IndirectCall])]
     ;; Binder forms other than let and parameters are not modelled. A read of
     ;; one of their bindings would miss the capture's bindings and could
@@ -75866,7 +75038,7 @@
             [(Ok source-ty) (lower-pointer-proof-type ctx source-ty)]
             [(Err _) Missing])]
         [operation : pointer_proof.PointerProofOperation
-          (lower-pointer-proof-operation ctx state bindings expr ty)]
+          (lower-pointer-proof-operation ctx state bindings type-env expr ty)]
         [operands : proof_refs.Vec
           (pointer_proof.pointer-proof-input-operands input)]
         [function : ir.CompilerIrSymbolId

@@ -264,47 +264,58 @@
         (set! start (+ end 1))))
     out))
 
-;; Whether `cut` is `original` with a prose comment cut to its first `;`: a
-;; proper prefix ending in `;` whose removed tail is neither a doc comment
-;; (`:` or `#` right after that `;`) nor a `name:` directive.
+;; Whether `cut` is `original` with a strippable comment (prose or `;:`/`;#`
+;; doc comment) and its immediately preceding horizontal whitespace removed,
+;; while never removing a `name:` directive (`lint-allow:`, `doctest-exit:`, etc.).
 (define (embedded-stdlib-verify-prose-cut?
   [original : (& original str)]
   [cut : (& cut str)]) : bool
   (let
     [kept : i64 (string.string-length cut)]
     [length : i64 (string.string-length original)]
-    (and
-      (> kept 0)
-      (< kept length)
-      (string.eq (string.substring original 0 kept) cut)
-      (= (string.string-ref cut (- kept 1)) ';')
+    (if (not
+      (and (< kept length) (string.eq (string.substring original 0 kept) cut)))
+      false
       (let
-        [next : char (string.string-ref original kept)]
-        [j : i64 kept]
-        (and
-          (not (= next ':'))
-          (not (= next '#'))
-          (begin
-            (while (and (< j length) (= (string.string-ref original j) ';'))
-              (set! j (+ j 1)))
-            (while (and (< j length) (= (string.string-ref original j) ' '))
-              (set! j (+ j 1)))
-            (let
-              [k : i64 j]
-              (while (and
-                (< k length)
+        [semi : i64 kept]
+        (while (and
+          (< semi length)
+          (let
+            [c : char (string.string-ref original semi)]
+            (or (= c ' ') (= c '\t'))))
+          (set! semi (+ semi 1)))
+        (if (or (>= semi length) (!= (string.string-ref original semi) ';'))
+          false
+          (let
+            [after : i64 (+ semi 1)]
+            (if (and
+              (< after length)
+              (let
+                [next : char (string.string-ref original after)]
+                (or (= next ':') (= next '#'))))
+              true
+              (let
+                [j : i64 after]
+                (while (and (< j length) (= (string.string-ref original j) ';'))
+                  (set! j (+ j 1)))
+                (while (and (< j length) (= (string.string-ref original j) ' '))
+                  (set! j (+ j 1)))
                 (let
-                  [c : char (string.string-ref original k)]
-                  (or
-                    (and (>= c 'a') (<= c 'z'))
-                    (and (> k j) (>= c '0') (<= c '9'))
-                    (and (> k j) (= c '-')))))
-                (set! k (+ k 1)))
-              (not
-                (and
-                  (> k j)
-                  (< k length)
-                  (= (string.string-ref original k) ':'))))))))))
+                  [k : i64 j]
+                  (while (and
+                    (< k length)
+                    (let
+                      [c : char (string.string-ref original k)]
+                      (or
+                        (and (>= c 'a') (<= c 'z'))
+                        (and (> k j) (>= c '0') (<= c '9'))
+                        (and (> k j) (= c '-')))))
+                    (set! k (+ k 1)))
+                  (not
+                    (and
+                      (> k j)
+                      (< k length)
+                      (= (string.string-ref original k) ':'))))))))))))
 
 ;; Whether every line of `stripped` outside the inline tests equals the same
 ;; line of `original` or is a prose comment cut from it, with the line count

@@ -128,25 +128,67 @@
 (define (empty-parsed-file) : ParsedFile
   (ParsedFile false "" "" (fbvec.new) (casevec.new) ""))
 
+(define (case-row-copy [r : (& r CaseRow)]) : CaseRow
+  (CaseRow
+    r.kind
+    r.line
+    (string.copy (& r.a))
+    (string.copy (& r.b))
+    (string.copy (& r.c))
+    r.n))
+
+(define (file-block-copy [fb : (& fb FileBlock)]) : FileBlock
+  (FileBlock
+    fb.line
+    (string.copy (& fb.path))
+    (string.copy (& fb.flags))
+    (string.copy (& fb.content))))
+
 (define (case-rows-len [cdef : (& cdef CaseDef)]) : i64
   (rowvec.len (& cdef.rows)))
 
 (define (case-rows-get [cdef : (& cdef CaseDef)] [idx : i64]) : CaseRow
-  (rowvec.get (& cdef.rows) idx (CaseRow 0 0 "" "" "" 0)))
+  (if (and (>= idx 0) (< idx (rowvec.len (& cdef.rows))))
+    (let
+      [view : (& cdef (Slice CaseRow)) (rowvec.view (& cdef.rows))]
+      (case-row-copy (& (array-ref view idx))))
+    (CaseRow 0 0 "" "" "" 0)))
 
 (define (parsed-pre-files-len [pf : (& pf ParsedFile)]) : i64
   (fbvec.len (& pf.pre-files)))
 
 (define (parsed-pre-files-get [pf : (& pf ParsedFile)] [idx : i64]) : FileBlock
-  (fbvec.get (& pf.pre-files) idx (FileBlock 0 "" "" "")))
+  (if (and (>= idx 0) (< idx (fbvec.len (& pf.pre-files))))
+    (let
+      [view : (& pf (Slice FileBlock)) (fbvec.view (& pf.pre-files))]
+      (file-block-copy (& (array-ref view idx))))
+    (FileBlock 0 "" "" "")))
 
 (define (parsed-cases-len [pf : (& pf ParsedFile)]) : i64
   (casevec.len (& pf.cases)))
 
 (define (parsed-cases-get [pf : (& pf ParsedFile)] [idx : i64]) : CaseDef
-  (casevec.get
-    (& pf.cases)
-    idx
+  (if (and (>= idx 0) (< idx (casevec.len (& pf.cases))))
+    (let
+      [view : (& pf (Slice CaseDef)) (casevec.view (& pf.cases))]
+      [c : (& pf CaseDef) (& (array-ref view idx))]
+      (CaseDef
+        (string.copy (& c.id))
+        c.line
+        (string.copy (& c.do-action))
+        (string.copy (& c.source))
+        (string.copy (& c.args))
+        (string.copy (& c.hosts))
+        (string.copy (& c.target))
+        (string.copy (& c.opt))
+        (string.copy (& c.mode))
+        (string.copy (& c.each))
+        c.assemble
+        c.repeatable
+        c.has-exit
+        c.needs-barrier
+        (svec.clone-vec (& c.setups))
+        (copy-rowvec (& c.rows))))
     (CaseDef
       ""
       0
@@ -191,11 +233,12 @@
 (define (copy-rowvec [src : (& src rowvec.Vec)]) : rowvec.Vec
   (let
     [out : rowvec.Vec (rowvec.new)]
-    [n : i64 (rowvec.len src)]
+    [view : (& src (Slice CaseRow)) (rowvec.view src)]
+    [n : i64 (array-length view)]
     [i : i64 0]
     (while (< i n)
       (let
-        [r : CaseRow (rowvec.get src i (CaseRow 0 0 "" "" "" 0))]
+        [r : (& src CaseRow) (& (array-ref view i))]
         (rowvec.push-ref!
           (&mut out)
           (CaseRow
@@ -372,11 +415,12 @@
               (let
                 [after : i64 (+ after-tok 1)]
                 [matched-pre : bool false]
+                [pre-view : (& pre-files (Slice FileBlock))
+                  (fbvec.view pre-files)]
                 [p : i64 0]
                 (while (and (not matched-pre) (< p np))
                   (let
-                    [pf : FileBlock
-                      (fbvec.get pre-files p (FileBlock 0 "" "" ""))]
+                    [pf : (& pre-files FileBlock) (& (array-ref pre-view p))]
                     [pflen : i64 (string.string-length (& pf.path))]
                     (when
                       (and (> pflen 0) (<= (+ after pflen) tlen))
@@ -430,11 +474,12 @@
     ;; Scan ALL row kinds; always barrier file/sh touching {{work}} or {{native-work}}
     ;; even on pre-file names.
     (let
-      [nr : i64 (rowvec.len rows)]
+      [row-view : (& rows (Slice CaseRow)) (rowvec.view rows)]
+      [nr : i64 (array-length row-view)]
       [i : i64 0]
       (while (and (not needs) (< i nr))
         (let
-          [r : CaseRow (rowvec.get rows i (CaseRow 0 0 "" "" "" 0))]
+          [r : (& rows CaseRow) (& (array-ref row-view i))]
           (cond
             [(or (= r.kind rk-file) (= r.kind rk-sh))
               (when
@@ -1108,31 +1153,12 @@
 (define (render-list [pf : (& pf ParsedFile)]) : String
   (let
     [out : bbc.ByteBufBuilder (bbc.byte-buf-builder-new)]
-    [nc : i64 (casevec.len (& pf.cases))]
+    [cases-view : (& pf (Slice CaseDef)) (casevec.view (& pf.cases))]
+    [nc : i64 (array-length cases-view)]
     [ci : i64 0]
     (while (< ci nc)
       (let
-        [c : CaseDef
-          (casevec.get
-            (& pf.cases)
-            ci
-            (CaseDef
-              ""
-              0
-              ""
-              ""
-              ""
-              ""
-              ""
-              ""
-              ""
-              ""
-              false
-              false
-              false
-              false
-              (svec.new)
-              (rowvec.new)))]
+        [c : (& pf CaseDef) (& (array-ref cases-view ci))]
         [ts : svec.Vec (util.split-words-blank (& c.target))]
         [os : svec.Vec (util.split-words-blank (& c.opt))]
         [ms : svec.Vec (util.split-words-blank (& c.mode))]

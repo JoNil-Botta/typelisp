@@ -97,11 +97,25 @@
 (define (doc-item-fallback) : DocItem
   (Item (Define) "" "" "" 0))
 
+(define (doc-item-copy [item : (& item DocItem)]) : DocItem
+  (match item
+    [(Item kind name doc-text signature source-line)
+      (Item
+        kind
+        (string.copy name)
+        (string.copy doc-text)
+        (string.copy signature)
+        source-line)]))
+
 (define (doc-item-list-count [items : (& items doc_item_vec.Vec)]) : i64
   (doc_item_vec.len (& items)))
 
 (define (doc-item-list-ref [items : (& items doc_item_vec.Vec)] [index : i64]) : DocItem
-  (doc_item_vec.get (& items) index (doc-item-fallback)))
+  (if (and (>= index 0) (< index (doc_item_vec.len items)))
+    (let
+      [view : (& items (Slice DocItem)) (doc_item_vec.view items)]
+      (doc-item-copy (& (array-ref view index))))
+    (doc-item-fallback)))
 
 (define (doc-item-array-copy-to-list
   [out : (&mut out doc_item_vec.Vec)]

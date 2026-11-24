@@ -516,6 +516,19 @@
   (scopes lower_i64_i64_map.Map)
   (exposed (__tl_dyn-array i64)))
 
+(define (lower-clone-address-exposure [facts : (& LowerAddressExposure)]) : LowerAddressExposure
+  (let
+    [len : i64 (array-length facts.exposed)]
+    [exposed : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+    (for [index (iterator.range 0 len)]
+      (set! (array-ref exposed index) (array-ref facts.exposed index)))
+    (LowerAddressExposure
+      facts.ready
+      facts.complete
+      (lower_i64_i64_map.clone-map (& facts.bindings))
+      (lower_i64_i64_map.clone-map (& facts.scopes))
+      exposed)))
+
 (defstruct CompilerLowerFunctionStateData
   (owner-address i64)
   (inline-helper-stack LowerIdSet)
@@ -998,6 +1011,330 @@
   (Avx2)
   (Avx512))
 
+(define (lower-clone-pointer-proof-request
+  [req : (& pointer_proof.PointerProofRequest)]) : pointer_proof.PointerProofRequest
+  (match req
+    [(Disabled) (Disabled)]
+    [(Requested input)
+      (Requested (pointer_proof.PointerProofInput input.control))]))
+
+(define (lower-clone-tc-job-state [state : (& tc_core.TcJobState)]) : tc_core.TcJobState
+  (tc_core.TcJobState state.address))
+
+(define (lower-clone-tc-context [ctx : (& tc_core.TcContext)]) : tc_core.TcContext
+  (tc_core.TcContext
+    ctx.shared
+    (lower-clone-tc-job-state (& ctx.job-state))
+    ctx.module-id
+    ctx.type-module-id
+    ctx.module
+    ctx.program-decls))
+
+(define (lower-clone-state [state : (& LowerState)]) : LowerState
+  (LowerState state.address))
+
+(define (lower-clone-ast-node-pool-context [pools : (& ast.AstNodePoolContext)]) : ast.AstNodePoolContext
+  (ast.AstNodePoolContext pools.expr-pool pools.type-pool pools.owner-arena))
+
+(define (lower-clone-sym-i64-env [env : (& sym_i64_env.SymI64Env)]) : sym_i64_env.SymI64Env
+  (sym_i64_env.SymI64Env env.store-address env.head env.abi-reserved))
+
+(define (lower-clone-ast-bin-op [op : (& ast.AstBinOp)]) : ast.AstBinOp
+  (match op
+    [(Add) (Add)]
+    [(Sub) (Sub)]
+    [(Mul) (Mul)]
+    [(Div) (Div)]
+    [(Mod) (Mod)]
+    [(Eq) (Eq)]
+    [(Ne) (Ne)]
+    [(Lt) (Lt)]
+    [(Le) (Le)]
+    [(Gt) (Gt)]
+    [(Ge) (Ge)]
+    [(And) (And)]
+    [(Or) (Or)]
+    [(BitAnd) (BitAnd)]
+    [(BitOr) (BitOr)]
+    [(BitXor) (BitXor)]
+    [(Shl) (Shl)]
+    [(Shr) (Shr)]))
+
+(define (lower-clone-ast-un-op [op : (& ast.AstUnOp)]) : ast.AstUnOp
+  (match op
+    [(Neg) (Neg)]
+    [(Not) (Not)]
+    [(BitNot) (BitNot)]))
+
+(define (lower-clone-ast-reduce-op [op : (& ast.AstReduceOp)]) : ast.AstReduceOp
+  (match op
+    [(Sum) (Sum)]
+    [(Min) (Min)]
+    [(Max) (Max)]
+    [(All) (All)]
+    [(Any) (Any)]))
+
+(define (lower-clone-ast-param [param : (& ast.AstParam)]) : ast.AstParam
+  (match param
+    [(ast.AstParam.Param name ty mutable?)
+      (ast.AstParam.Param name (ast.clone-ast-type ty) mutable?)]))
+
+(define (lower-clone-ast-param-list [items : (& ast.AstParamList)]) : ast.AstParamList
+  (let
+    [slots : (__tl_dyn-array ast.AstParam)
+      (__tl_make-array ast.AstParam items.len)]
+    (for [index (iterator.range 0 items.len)]
+      (set!
+        (array-ref slots index)
+        (lower-clone-ast-param (& (array-ref items.slots index)))))
+    (ast.AstParamList slots items.len)))
+
+(define (lower-clone-ast-resource-binding-list
+  [items : (& ast.AstResourceBindingList)]) : ast.AstResourceBindingList
+  (let
+    [slots : (__tl_dyn-array ast.AstResourceBinding)
+      (__tl_make-array ast.AstResourceBinding items.len)]
+    (for [index (iterator.range 0 items.len)]
+      (set!
+        (array-ref slots index)
+        (match (array-ref items.slots index)
+          [(ast.AstResourceBinding.Binding name init cleanup mutable?)
+            (ast.AstResourceBinding.Binding name init cleanup mutable?)])))
+    (ast.AstResourceBindingList slots items.len)))
+
+(define (lower-clone-ast-expr [expr : (& ast.AstExpr)]) : ast.AstExpr
+  (match expr
+    [(ast.AstExpr.Spanned inner span)
+      (ast.AstExpr.Spanned inner (ir.clone-ast-source-span span))]
+    [(ast.AstExpr.Literal literal)
+      (ast.AstExpr.Literal (ast.clone-ast-literal literal))]
+    [(ast.AstExpr.Var name) (ast.AstExpr.Var name)]
+    [(ast.AstExpr.Binary op lhs rhs)
+      (ast.AstExpr.Binary (lower-clone-ast-bin-op op) lhs rhs)]
+    [(ast.AstExpr.Unary op inner)
+      (ast.AstExpr.Unary (lower-clone-ast-un-op op) inner)]
+    [(ast.AstExpr.Call callee args)
+      (ast.AstExpr.Call callee (ast.clone-ast-expr-list args))]
+    [(ast.AstExpr.If cond then-expr else-expr)
+      (ast.AstExpr.If cond then-expr else-expr)]
+    [(ast.AstExpr.Let payload)
+      (ast.AstExpr.Let
+        (box
+          (match payload
+            [(ast.AstLet.Let bindings body)
+              (ast.AstLet.Let (ast.clone-ast-let-binding-list bindings) body)])))]
+    [(ast.AstExpr.Lambda payload)
+      (ast.AstExpr.Lambda
+        (box
+          (match payload
+            [(ast.AstLambda.Lambda params ret body)
+              (ast.AstLambda.Lambda
+                (lower-clone-ast-param-list params)
+                (ast.clone-ast-maybe-type ret)
+                body)])))]
+    [(ast.AstExpr.Tuple items)
+      (ast.AstExpr.Tuple (ast.clone-ast-expr-list items))]
+    [(ast.AstExpr.TupleRef target index) (ast.AstExpr.TupleRef target index)]
+    [(ast.AstExpr.Array items)
+      (ast.AstExpr.Array (ast.clone-ast-expr-list items))]
+    [(ast.AstExpr.DynArray items)
+      (ast.AstExpr.DynArray (ast.clone-ast-expr-list items))]
+    [(ast.AstExpr.FixedMakeArray ty len) (ast.AstExpr.FixedMakeArray ty len)]
+    [(ast.AstExpr.MakeArray ty len) (ast.AstExpr.MakeArray ty len)]
+    [(ast.AstExpr.ArrayRef target index) (ast.AstExpr.ArrayRef target index)]
+    [(ast.AstExpr.ArraySet target index value)
+      (ast.AstExpr.ArraySet target index value)]
+    [(ast.AstExpr.ArrayTake target bitmap index)
+      (ast.AstExpr.ArrayTake target bitmap index)]
+    [(ast.AstExpr.ArrayPush target value) (ast.AstExpr.ArrayPush target value)]
+    [(ast.AstExpr.StringRef target index) (ast.AstExpr.StringRef target index)]
+    [(ast.AstExpr.While cond body)
+      (ast.AstExpr.While cond (ast.clone-ast-expr-list body))]
+    [(ast.AstExpr.Begin body)
+      (ast.AstExpr.Begin (ast.clone-ast-expr-list body))]
+    [(ast.AstExpr.Unsafe body)
+      (ast.AstExpr.Unsafe (ast.clone-ast-expr-list body))]
+    [(ast.AstExpr.Set target value) (ast.AstExpr.Set target value)]
+    [(ast.AstExpr.Replace target value) (ast.AstExpr.Replace target value)]
+    [(ast.AstExpr.Ann inner ty) (ast.AstExpr.Ann inner ty)]
+    [(ast.AstExpr.Cast inner ty) (ast.AstExpr.Cast inner ty)]
+    [(ast.AstExpr.Borrow mutable? lifetime inner)
+      (ast.AstExpr.Borrow mutable? lifetime inner)]
+    [(ast.AstExpr.Match payload)
+      (ast.AstExpr.Match
+        (box
+          (match payload
+            [(ast.AstMatch.Match scrutinee arms)
+              (ast.AstMatch.Match scrutinee (ast.clone-ast-match-arm-list arms))])))]
+    [(ast.AstExpr.Foreach payload)
+      (ast.AstExpr.Foreach
+        (box
+          (match payload
+            [(ast.AstForeach.Foreach name ty start end body)
+              (ast.AstForeach.Foreach
+                name
+                (ast.clone-ast-type ty)
+                start
+                end
+                body)]
+            [(ast.AstForeach.Foreach2
+                outer-name
+                outer-ty
+                outer-start
+                outer-end
+                inner-name
+                inner-ty
+                inner-start
+                inner-end
+                body)
+              (ast.AstForeach.Foreach2
+                outer-name
+                (ast.clone-ast-type outer-ty)
+                outer-start
+                outer-end
+                inner-name
+                (ast.clone-ast-type inner-ty)
+                inner-start
+                inner-end
+                body)])))]
+    [(ast.AstExpr.SpmdReduce payload)
+      (ast.AstExpr.SpmdReduce
+        (box
+          (match payload
+            [(ast.AstSpmdReduce.Reduce op name ty start end init body)
+              (ast.AstSpmdReduce.Reduce
+                (lower-clone-ast-reduce-op op)
+                name
+                (ast.clone-ast-type ty)
+                start
+                end
+                init
+                body)])))]
+    [(ast.AstExpr.SpmdScan payload)
+      (ast.AstExpr.SpmdScan
+        (box
+          (match payload
+            [(ast.AstSpmdScan.Scan
+                op
+                idx-name
+                idx-ty
+                start
+                end
+                out-name
+                out-ty
+                init
+                value
+                body)
+              (ast.AstSpmdScan.Scan
+                (lower-clone-ast-reduce-op op)
+                idx-name
+                (ast.clone-ast-type idx-ty)
+                start
+                end
+                out-name
+                (ast.clone-ast-type out-ty)
+                init
+                value
+                body)])))]
+    [(ast.AstExpr.SpmdCompact payload)
+      (ast.AstExpr.SpmdCompact
+        (box
+          (match payload
+            [(ast.AstSpmdCompact.Compact
+                idx-name
+                idx-ty
+                start
+                end
+                out-name
+                out-ty
+                init
+                pred
+                body)
+              (ast.AstSpmdCompact.Compact
+                idx-name
+                (ast.clone-ast-type idx-ty)
+                start
+                end
+                out-name
+                (ast.clone-ast-type out-ty)
+                init
+                pred
+                body)])))]
+    [(ast.AstExpr.SpmdBroadcast value lane)
+      (ast.AstExpr.SpmdBroadcast value lane)]
+    [(ast.AstExpr.SpmdShuffle value lane) (ast.AstExpr.SpmdShuffle value lane)]
+    [(ast.AstExpr.SpmdProgramIndex) (ast.AstExpr.SpmdProgramIndex)]
+    [(ast.AstExpr.SpmdProgramCount) (ast.AstExpr.SpmdProgramCount)]
+    [(ast.AstExpr.StructGet target field) (ast.AstExpr.StructGet target field)]
+    [(ast.AstExpr.StructSet target field value)
+      (ast.AstExpr.StructSet target field value)]
+    [(ast.AstExpr.WithRegion name body)
+      (ast.AstExpr.WithRegion name (ast.clone-ast-expr-list body))]
+    [(ast.AstExpr.WithEscape name body)
+      (ast.AstExpr.WithEscape name (ast.clone-ast-expr-list body))]
+    [(ast.AstExpr.WithScratch body)
+      (ast.AstExpr.WithScratch (ast.clone-ast-expr-list body))]
+    [(ast.AstExpr.InArena name body)
+      (ast.AstExpr.InArena name (ast.clone-ast-expr-list body))]
+    [(ast.AstExpr.WithResource payload)
+      (ast.AstExpr.WithResource
+        (box
+          (match payload
+            [(ast.AstWithResource.WithResource bindings body)
+              (ast.AstWithResource.WithResource
+                (lower-clone-ast-resource-binding-list bindings)
+                (ast.clone-ast-expr-list body))])))]
+    [(ast.AstExpr.Box inner) (ast.AstExpr.Box inner)]
+    [(ast.AstExpr.BoxGet inner) (ast.AstExpr.BoxGet inner)]
+    [(ast.AstExpr.BoxTake inner) (ast.AstExpr.BoxTake inner)]
+    [(ast.AstExpr.BoxSet target value) (ast.AstExpr.BoxSet target value)]
+    [(ast.AstExpr.TypeLiteral ty) (ast.AstExpr.TypeLiteral ty)]
+    [(ast.AstExpr.Comptime inner) (ast.AstExpr.Comptime inner)]
+    [(ast.AstExpr.Quote inner) (ast.AstExpr.Quote inner)]
+    [(ast.AstExpr.Quasiquote inner) (ast.AstExpr.Quasiquote inner)]
+    [(ast.AstExpr.Unquote inner) (ast.AstExpr.Unquote inner)]
+    [(ast.AstExpr.UnquoteSplicing inner) (ast.AstExpr.UnquoteSplicing inner)]
+    [(ast.AstExpr.BracketClause items)
+      (ast.AstExpr.BracketClause (ast.clone-ast-expr-list items))]
+    [(ast.AstExpr.Try inner) (ast.AstExpr.Try inner)]
+    [(ast.AstExpr.Return inner) (ast.AstExpr.Return inner)]
+    [(ast.AstExpr.Break) (ast.AstExpr.Break)]
+    [(ast.AstExpr.Continue) (ast.AstExpr.Continue)]
+    [(ast.AstExpr.PtrNull ty) (ast.AstExpr.PtrNull ty)]
+    [(ast.AstExpr.PtrNullCheck inner) (ast.AstExpr.PtrNullCheck inner)]
+    [(ast.AstExpr.PtrAddrOf inner) (ast.AstExpr.PtrAddrOf inner)]
+    [(ast.AstExpr.PtrRead inner) (ast.AstExpr.PtrRead inner)]
+    [(ast.AstExpr.PtrWrite ptr value) (ast.AstExpr.PtrWrite ptr value)]
+    [(ast.AstExpr.PtrOffset ptr offset) (ast.AstExpr.PtrOffset ptr offset)]
+    [(ast.AstExpr.PtrCast ptr ty) (ast.AstExpr.PtrCast ptr ty)]
+    [(ast.AstExpr.PtrToInt ptr) (ast.AstExpr.PtrToInt ptr)]
+    [(ast.AstExpr.IntToPtr value ty) (ast.AstExpr.IntToPtr value ty)]
+    [(ast.AstExpr.StringData inner) (ast.AstExpr.StringData inner)]
+    [(ast.AstExpr.StringFromBytes ptr len)
+      (ast.AstExpr.StringFromBytes ptr len)]
+    [(ast.AstExpr.ArrayData inner) (ast.AstExpr.ArrayData inner)]
+    [(ast.AstExpr.BinaryData data) (ast.AstExpr.BinaryData (string.copy data))]
+    [(ast.AstExpr.ProgramArgc) (ast.AstExpr.ProgramArgc)]
+    [(ast.AstExpr.ProgramArgv) (ast.AstExpr.ProgramArgv)]
+    [(ast.AstExpr.ProgramEnvp) (ast.AstExpr.ProgramEnvp)]
+    [(ast.AstExpr.CpuIdEax leaf subleaf) (ast.AstExpr.CpuIdEax leaf subleaf)]
+    [(ast.AstExpr.CpuIdEbx leaf subleaf) (ast.AstExpr.CpuIdEbx leaf subleaf)]
+    [(ast.AstExpr.CpuIdEcx leaf subleaf) (ast.AstExpr.CpuIdEcx leaf subleaf)]
+    [(ast.AstExpr.CpuIdEdx leaf subleaf) (ast.AstExpr.CpuIdEdx leaf subleaf)]
+    [(ast.AstExpr.Xgetbv index) (ast.AstExpr.Xgetbv index)]
+    [(ast.AstExpr.Syscall args)
+      (ast.AstExpr.Syscall (ast.clone-ast-expr-list args))]
+    [(ast.AstExpr.ForOwnedState items)
+      (ast.AstExpr.ForOwnedState (ast.clone-ast-expr-list items))]
+    [(ast.AstExpr.ForOwnedStep items)
+      (ast.AstExpr.ForOwnedStep (ast.clone-ast-expr-list items))]
+    [(ast.AstExpr.MacroExpansion inner caller name)
+      (ast.AstExpr.MacroExpansion inner caller name)]
+    [(ast.AstExpr.ForeachActive lane body)
+      (ast.AstExpr.ForeachActive lane body)]
+    [(ast.AstExpr.LaneValue inner) (ast.AstExpr.LaneValue inner)]
+    [(ast.AstExpr.CloneOut form step) (ast.AstExpr.CloneOut form step)]))
+
 (define (lower-mode-abi [mode : CompilerLowerMode]) : LowerModeAbi
   (match mode
     [(or (CompilerLowerMode.Scalar) (CompilerLowerMode.Avx2)
@@ -1220,6 +1557,17 @@
   (finished bool)
   (decision ir.CompilerSpmdDecision))
 
+(define (lower-clone-spmd-site [item : (& LowerSpmdSite)]) : LowerSpmdSite
+  (LowerSpmdSite
+    item.subtree-end
+    item.next-source
+    item.previous-source
+    item.source-tail
+    item.selected
+    item.entered
+    item.finished
+    (ir.clone-compiler-spmd-decision (& item.decision))))
+
 (defstruct LowerSpmdSiteList
   (slots (__tl_dyn-array LowerSpmdSite))
   (len i64))
@@ -1286,7 +1634,7 @@
   (for [index (iterator.range 0 frames.len)]
     (ir.compiler-spmd-macro-frame-list-append!
       out
-      (clone (array-ref frames.slots index)))))
+      (ir.clone-compiler-spmd-macro-frame (& (array-ref frames.slots index))))))
 
 (define (lower-spmd-add-site!
   [ctx : tc_core.TcContext]
@@ -1365,7 +1713,8 @@
     [index : i64 cursor]
     (while (and (>= index 0) (< index limit))
       (let
-        [item : LowerSpmdSite (clone (array-ref sites.items.slots index))]
+        [item : LowerSpmdSite
+          (lower-clone-spmd-site (& (array-ref sites.items.slots index)))]
         (when
           (and (= item.decision.parent-ordinal parent) (not item.entered))
           (lower_spmd_key_map.insert-ref!
@@ -1379,7 +1728,8 @@
     (set! index cursor)
     (while (>= index 0)
       (let
-        [item : LowerSpmdSite (clone (array-ref sites.items.slots index))]
+        [item : LowerSpmdSite
+          (lower-clone-spmd-site (& (array-ref sites.items.slots index)))]
         (when
           (and (= item.decision.parent-ordinal parent) item.entered)
           (return index))
@@ -1422,7 +1772,8 @@
     (match (& expr)
       [(Spanned inner span)
         (let
-          [prior-span : ast.AstSourceSpan (clone origin.primary.span)]
+          [prior-span : ast.AstSourceSpan
+            (ir.clone-ast-source-span (& origin.primary.span))]
           (set! origin.primary.span span)
           (lower-spmd-enumerate!
             ctx
@@ -1451,7 +1802,7 @@
                 origin.actionable
                 (ir.CompilerSourceLocation
                   invocation
-                  (clone origin.primary.span)))
+                  (ir.clone-ast-source-span (& origin.primary.span))))
               (set! origin.has-actionable true))
             (if (< frames.len ir.compiler-spmd-max-macro-frames)
               (ir.compiler-spmd-macro-frame-list-append!
@@ -1463,7 +1814,9 @@
             (set! origin.primary.path-id origin-path)
             (when
               (< name-id 0)
-              (set! origin.actionable (clone origin.primary))
+              (set!
+                origin.actionable
+                (ir.clone-compiler-source-location (& origin.primary)))
               (set! origin.has-actionable true)))
           (lower-spmd-enumerate!
             ctx
@@ -1726,7 +2079,8 @@
             (for [index (iterator.range sites.flushed-frames sites.frames.len)]
               (ir.compiler-spmd-macro-frame-list-append!
                 (&mut facts.frames)
-                (clone (array-ref sites.frames.slots index))))
+                (ir.clone-compiler-spmd-macro-frame
+                  (& (array-ref sites.frames.slots index)))))
             (for [index (iterator.range sites.flushed sites.items.len)]
               (let
                 [site : LowerSpmdSite
@@ -2016,6 +2370,41 @@
   (keys (__tl_dyn-array LowerVectorMapValueKey))
   (values (__tl_dyn-array ir.CompilerIrValue))
   (count i64))
+
+(define (lower-clone-vector-map-value-key [key : (& LowerVectorMapValueKey)]) : LowerVectorMapValueKey
+  (match key
+    [(Array id) (Array id)]
+    [(ArrayData id) (ArrayData id)]
+    [(Gather a b) (Gather a b)]
+    [(GatherLaneOffset a b) (GatherLaneOffset a b)]
+    [(LaneArray id) (LaneArray id)]
+    [(Uniform value) (Uniform (ir.compiler-ir-clone-value value))]
+    [(BroadcastArray id value)
+      (BroadcastArray id (ir.compiler-ir-clone-value value))]
+    [(LaneIndex) (LaneIndex)]
+    [(LaneCount) (LaneCount)]
+    [(BinOp op lhs rhs)
+      (BinOp
+        (ir.clone-compiler-ir-bin-op op)
+        (ir.compiler-ir-clone-value lhs)
+        (ir.compiler-ir-clone-value rhs))]))
+
+(define (lower-clone-vector-map-value-cache
+  [cache : (& LowerVectorMapValueCache)]) : LowerVectorMapValueCache
+  (let
+    [cap : i64 (array-length cache.keys)]
+    [keys : (__tl_dyn-array LowerVectorMapValueKey)
+      (__tl_make-array LowerVectorMapValueKey cap)]
+    [values : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue (array-length cache.values))]
+    (for [index (iterator.range 0 cache.count)]
+      (set!
+        (array-ref keys index)
+        (lower-clone-vector-map-value-key (& (array-ref cache.keys index))))
+      (set!
+        (array-ref values index)
+        (ir.compiler-ir-clone-value (& (array-ref cache.values index)))))
+    (LowerVectorMapValueCache keys values cache.count)))
 
 (defenum LowerVectorMapCachedEmit
   (Emit LowerState ir.CompilerIrValue LowerVectorMapValueCache))
@@ -2330,7 +2719,8 @@
   result)
 
 (defstruct CompilerLowerRequest
-  (mode CompilerLowerMode)
+  (mode-abi LowerModeAbi)
+  (mode-simd LowerModeSimd)
   (pointer-proof pointer_proof.PointerProofRequest)
   (stdlib-roots svec.Vec)
   (cfg-names svec.Vec)
@@ -2338,7 +2728,31 @@
   (executable bool))
 
 (define (compiler-lower-request [mode : CompilerLowerMode]) : CompilerLowerRequest
-  (CompilerLowerRequest mode Disabled (svec.new) (svec.new) false false))
+  (CompilerLowerRequest
+    (lower-mode-abi mode)
+    (lower-mode-simd mode)
+    Disabled
+    (svec.new)
+    (svec.new)
+    false
+    false))
+
+(define (lower-request-mode-abi [request : (& request CompilerLowerRequest)]) : LowerModeAbi
+  (match (& request.mode-abi)
+    [(None) (None)]
+    [(Linux) (Linux)]
+    [(Windows) (Windows)]))
+
+(define (lower-request-mode-simd [request : (& request CompilerLowerRequest)]) : LowerModeSimd
+  (match (& request.mode-simd)
+    [(Scalar) (Scalar)]
+    [(Avx2) (Avx2)]
+    [(Avx512) (Avx512)]))
+
+(define (lower-request-mode [request : (& request CompilerLowerRequest)]) : CompilerLowerMode
+  (lower-mode-of
+    (lower-request-mode-abi request)
+    (lower-request-mode-simd request)))
 
 ;; Consumers of semantic evidence accept this checked boundary, not an ordinary
 ;; ResultCompilerLower. Its program is immutable until analysis finishes.
@@ -2355,7 +2769,7 @@
   [request : (& request CompilerLowerRequest)]) : unit
   (compiler-lower-state-set-pointer-proof-request!
     state
-    (clone request.pointer-proof)))
+    (lower-clone-pointer-proof-request (& request.pointer-proof))))
 
 (define (lower-compiler-pointer-proof-result
   [request : (& request CompilerLowerRequest)]
@@ -2363,7 +2777,7 @@
   (match result
     [(Err diagnostic) (Err diagnostic)]
     [(Ok program spans lower-state)
-      (match (clone request.pointer-proof)
+      (match (& request.pointer-proof)
         [(Disabled)
           (Err
             (box
@@ -14234,8 +14648,8 @@
               1
               (match (lower-function-logical-id-from-decl
                 lower-state
-                (clone entry-path)
-                (clone decl-path)
+                (string.copy entry-path)
+                (string.copy decl-path)
                 (lower-decl-owner-module-name
                   lower-state
                   source-module-id
@@ -15394,7 +15808,7 @@
   [scope : i64]
   [name : i64]) : sym_i64_env.SymI64Env
   (let
-    [ctx : tc_core.TcContext (clone scan.ctx)]
+    [ctx : tc_core.TcContext (lower-clone-tc-context (& scan.ctx))]
     (when
       (and (= kind 0) (>= scope 0))
       (match (lower-context-expr-get ctx scope)
@@ -15414,7 +15828,7 @@
         (cis.intern-structural-key-raw
           (cis.intern-structural-session-composite-triple-key
             (compiler-lower-state-structural-session
-              (lower-state-owner (clone scan.state)))
+              (lower-state-owner (lower-clone-state (& scan.state))))
             kind
             scope
             name))]
@@ -15486,12 +15900,12 @@
   [type-env : tc_core.TcTypeEnv]
   [place : ast.AstExpr]) : unit
   (let
-    [ctx : tc_core.TcContext (clone scan.ctx)]
-    [state : LowerState (clone scan.state)]
+    [ctx : tc_core.TcContext (lower-clone-tc-context (& scan.ctx))]
+    [state : LowerState (lower-clone-state (& scan.state))]
     [root : i64
       (match (tc_core.tc-move-root-projection-var-id
         (tc_core.tc-context-expr-bases ctx)
-        (clone place))
+        (lower-clone-ast-expr (& place)))
         [(Some name) name]
         [_ -1])]
     [binding : i64 (sym_i64_env.sym-i64-lookup-id-or env root -1)]
@@ -15524,14 +15938,14 @@
               (>=
                 (tc_core.tc-move-direct-root-place
                   (tc_core.tc-context-expr-bases ctx)
-                  (clone place))
+                  (lower-clone-ast-expr (& place)))
                 0)]
             (when
               (if direct
                 (not
                   (lower-ptr-addr-of-storage-value-reference?
                     ctx
-                    (clone resolved)))
+                    (ast.clone-ast-type (& resolved))))
                 (and
                   (match resolved
                     [(or (Ref _ _) (MutRef _ _)) false]
@@ -15546,7 +15960,7 @@
   [type-env : tc_core.TcTypeEnv]
   [id : i64]) : unit
   (let
-    [ctx : tc_core.TcContext (clone scan.ctx)]
+    [ctx : tc_core.TcContext (lower-clone-tc-context (& scan.ctx))]
     (lower-exposure-walk! scan env type-env (lower-context-expr-get ctx id))))
 
 (define (lower-exposure-names!
@@ -15575,8 +15989,8 @@
   [type-env : tc_core.TcTypeEnv]
   [id : i64]) : ast.AstType
   (let
-    [ctx : tc_core.TcContext (clone scan.ctx)]
-    [state : LowerState (clone scan.state)]
+    [ctx : tc_core.TcContext (lower-clone-tc-context (& scan.ctx))]
+    [state : LowerState (lower-clone-state (& scan.state))]
     (match (lower-expr-result-type-or-check
       ctx
       env
@@ -15608,8 +16022,8 @@
   [type-env : tc_core.TcTypeEnv]
   [expr : ast.AstExpr]) : unit
   (let
-    [ctx : tc_core.TcContext (clone scan.ctx)]
-    [state : LowerState (clone scan.state)]
+    [ctx : tc_core.TcContext (lower-clone-tc-context (& scan.ctx))]
+    [state : LowerState (lower-clone-state (& scan.state))]
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     [unwrapped : ast.AstExpr (ast.ast-expr-unspan-with-pools pools (& expr))]
     [previous-loop? : bool scan.loop?]
@@ -15618,7 +16032,7 @@
         [(While _ _) true]
         [_ false])
       (set! scan.loop? true))
-    (match (clone unwrapped)
+    (match (lower-clone-ast-expr (& unwrapped))
       [(or (Lambda _) (Quote _) (Quasiquote _) (Comptime _)) unit]
       [(Let payload)
         (match (__tl-box-place payload)
@@ -15677,15 +16091,15 @@
                         [names : tc_core.TcNameIdList
                           (tc_core.tc-spmd-pattern-bound-names
                             ctx
-                            (clone ty)
-                            (clone pattern))]
+                            (ast.clone-ast-type (& ty))
+                            (ast.clone-ast-pattern (& pattern)))]
                         [arm-env : sym_i64_env.SymI64Env
                           (lower-exposure-names! scan env body names)]
                         [arm-types : tc_core.TcTypeEnv
                           (match (tc_core.tc-bind-match-pattern
                             ctx
                             type-env
-                            (clone ty)
+                            (ast.clone-ast-type (& ty))
                             pattern)
                             [(Ok types) types]
                             [(Err _)
@@ -15958,7 +16372,11 @@
     [needed : bool
       (if (>= summary 0)
         (!= summary 0)
-        (lower-exposure-has-address? ctx (clone body) false (&mut budget)))]
+        (lower-exposure-has-address?
+          ctx
+          (lower-clone-ast-expr (& body))
+          false
+          (&mut budget)))]
     (unless
       needed
       (unsafe
@@ -19836,12 +20254,12 @@
   (if (and
     load-value-reference
     (match (tc_core.tc-type-strip-region
-      (tc_core.tc-resolve-type ctx (clone stored-ty)))
+      (tc_core.tc-resolve-type ctx (ast.clone-ast-type (& stored-ty))))
       [(or (Ref _ _) (MutRef _ _)) true]
       [_
         (lower-borrow-place-value-reference?
           ctx
-          (tc_core.tc-borrow-referent-type (clone stored-ty)))]))
+          (tc_core.tc-borrow-referent-type (ast.clone-ast-type (& stored-ty))))]))
     (if (lower-type-register-group? ctx (& stored-ty))
       (match (lower-load-inline-value-at-offset ctx state slot 0 stored-ty)
         [(Expr loaded value _) (Expr loaded value result-ty)])
@@ -20114,7 +20532,7 @@
                         (tc_core.tc-context-pools ctx)
                         lifetime
                         (& resolved))]
-                    [_ (clone result-ty)])]
+                    [_ (ast.clone-ast-type (& result-ty))])]
                 [borrowed
                   (try
                     (lower-borrow-place-address
@@ -20123,7 +20541,7 @@
                       env
                       type-env
                       receiver
-                      (clone origin)
+                      (lower-clone-ast-expr (& origin))
                       borrow-ty))]
                 (match borrowed
                   [(Expr borrowed-state base _)
@@ -20562,7 +20980,9 @@
               (lower-global-shared-view result-ty)
               true))]
         [handle? : bool
-          (lower-reference-handle-referent? ctx (clone payload-ty))]
+          (lower-reference-handle-referent?
+            ctx
+            (ast.clone-ast-type (& payload-ty)))]
         (match lowered
           [(Expr storage-state storage _)
             (Ok
@@ -21157,7 +21577,7 @@
             box-value
             0
             (& inner)
-            (clone inner-ty))
+            (ast.clone-ast-type (& inner-ty)))
             [(Expr load-state inner-value _)
               (lower-bind-irrefutable-box-value
                 ctx
@@ -24327,7 +24747,7 @@
           (lower_i64_i64_map.with-capacity 8)
           source-start
           (+ source-start param-count))]
-      (lower-spmd-enumerate-function! ctx state (clone body))
+      (lower-spmd-enumerate-function! ctx state (lower-clone-ast-expr (& body)))
       (if (match (& ret-class)
         [(LowerCAbiAggregate.Unsupported _) true]
         [_ false])
@@ -24389,7 +24809,7 @@
                       bound-state
                       bound-env
                       bound-type-env
-                      (clone body))
+                      (lower-clone-ast-expr (& body)))
                     (match (lower-spmd-complete-function
                       bound-state
                       (lower-tail-expr
@@ -27936,7 +28356,7 @@
                       (Some
                         (LowerArgFieldPlace
                           local-id
-                          (clone resolved)
+                          (ast.clone-ast-type (& resolved))
                           0
                           resolved))]
                     [_ (No)]))]
@@ -28023,7 +28443,7 @@
                 ctx
                 state
                 (Var field.local-id)
-                (clone field.root-ty)
+                (ast.clone-ast-type (& field.root-ty))
                 arg-ty)
                 [(Expr copied storage _)
                   (match (lower-gep-byte copied storage field.offset)
@@ -28031,7 +28451,7 @@
                       (Ok
                         (Arg
                           addressed
-                          (clone pointer)
+                          (ir.compiler-ir-clone-value (& pointer))
                           (Some (FieldWriteback field pointer arg))))])])]
             [else
               (lower-call-arg-normal-as
@@ -28525,7 +28945,7 @@
           state
           storage
           0
-          (clone field.ty))
+          (ast.clone-ast-type (& field.ty)))
           [(LowerExpr.Expr loaded value _)
             ;; Materialize the current root after later argument evaluation
             ;; and earlier writebacks. Copying the original whole root back
@@ -28534,8 +28954,8 @@
               ctx
               loaded
               (Var field.local-id)
-              (clone field.root-ty)
-              (clone field.root-ty))
+              (ast.clone-ast-type (& field.root-ty))
+              (ast.clone-ast-type (& field.root-ty)))
               [(LowerExpr.Expr copied root-storage _)
                 (match (lower-load-inline-value-at-offset
                   ctx
@@ -28545,11 +28965,11 @@
                     (& root-storage)
                     field.offset
                     value
-                    (clone field.ty)
+                    (ast.clone-ast-type (& field.ty))
                     (lower-type-size ctx (& field.ty)))
                   root-storage
                   0
-                  (clone field.root-ty))
+                  (ast.clone-ast-type (& field.root-ty)))
                   [(LowerExpr.Expr merged root _)
                     (lower-state-emit-at-expr
                       ctx
@@ -29772,8 +30192,15 @@
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      [origin-copy : ast.AstExpr (clone origin)]
-      (match (lower-init-expr ctx state env type-env (clone ty) origin ty)
+      [origin-copy : ast.AstExpr (lower-clone-ast-expr (& origin))]
+      (match (lower-init-expr
+        ctx
+        state
+        env
+        type-env
+        (ast.clone-ast-type (& ty))
+        origin
+        ty)
         [(Ok (Expr value-state value _))
           (match (lower-init-value-seq-from-types-at
             ctx
@@ -29945,11 +30372,19 @@
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      [resolved : ast.AstType (tc_core.tc-resolve-type ctx (clone ty))]
+      [resolved : ast.AstType
+        (tc_core.tc-resolve-type ctx (ast.clone-ast-type (& ty)))]
       [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
       [size : i64 (lower-type-size ctx resolved)]
-      [origin-copy : ast.AstExpr (clone origin)]
-      (match (lower-init-expr ctx state env type-env (clone ty) origin ty)
+      [origin-copy : ast.AstExpr (lower-clone-ast-expr (& origin))]
+      (match (lower-init-expr
+        ctx
+        state
+        env
+        type-env
+        (ast.clone-ast-type (& ty))
+        origin
+        ty)
         [(Ok (Expr elem-state elem-value _))
           (lower-init-tuple-store-elems-at
             ctx
@@ -30015,15 +30450,15 @@
   (if (>= index count)
     (Ok state)
     (let
-      [origin-copy : ast.AstExpr (clone origin)]
+      [origin-copy : ast.AstExpr (lower-clone-ast-expr (& origin))]
       (match (lower-init-expr
         ctx
         state
         env
         type-env
-        (clone elem-ty)
+        (ast.clone-ast-type (& elem-ty))
         origin
-        (clone elem-ty))
+        (ast.clone-ast-type (& elem-ty)))
         [(Ok (Expr elem-state elem-value _))
           (lower-init-array-store-elems-at
             ctx
@@ -30034,7 +30469,7 @@
                 base
                 offset
                 elem-value
-                (clone elem-ty)
+                (ast.clone-ast-type (& elem-ty))
                 elem-size)
               elem-state)
             env
@@ -30147,7 +30582,7 @@
               state
               env
               type-env
-              (clone elem-ty)
+              (ast.clone-ast-type (& elem-ty))
               origin
               elem-ty)
               [(Ok (Expr inner-state inner-value inner-ty))
@@ -32316,7 +32751,9 @@
                 site
                 (lower-spmd-site-fallback))]
             (set! item.entered true)
-            (set! (array-ref sites.items.slots site) (clone item))
+            (set!
+              (array-ref sites.items.slots site)
+              (lower-clone-spmd-site (& item)))
             (when
               (>= item.decision.parent-ordinal 0)
               (match item.decision.form
@@ -44156,7 +44593,7 @@
   [origin : ast.AstExpr]) : LowerState
   (match (lower-emit-gep
     state
-    (clone place.base)
+    (ir.compiler-ir-clone-value (& place.base))
     (ir.CompilerIrValue.I64 1)
     (ast.AstType.I64))
     [(LowerExpr.Expr length-addressed length-ptr _)
@@ -44168,8 +44605,8 @@
               loaded
               (match (& place.pending)
                 [(LowerPendingBounds.Current evaluated _)
-                  (clone (deref evaluated))]
-                [_ (clone place.index)])
+                  (ir.compiler-ir-clone-value evaluated)]
+                [_ (ir.compiler-ir-clone-value (& place.index))])
               length)
             origin)])]))
 
@@ -44180,7 +44617,7 @@
   [origin : ast.AstExpr]) : LowerExpr
   (match (lower-emit-gep
     (lower-store-place-dynamic-check ctx state (& place) origin)
-    (clone place.base)
+    (ir.compiler-ir-clone-value (& place.base))
     (ir.CompilerIrValue.I64 0)
     (ast.AstType.I64))
     [(LowerExpr.Expr buffer-addressed buffer-ptr _)
@@ -44192,7 +44629,7 @@
               resolved
               buffer
               place.index
-              (clone place.ty))
+              (ast.clone-ast-type (& place.ty)))
             (lower-emit-gep resolved buffer place.offset (ast.AstType.U8)))
             [(LowerExpr.Expr addressed pointer _)
               (LowerExpr.Expr addressed pointer place.ty)])])]))
@@ -44213,11 +44650,18 @@
       (if place.element?
         (lower-emit-cast
           state
-          (clone (deref evaluated))
-          (clone (deref evaluated-ty))
+          (ir.compiler-ir-clone-value evaluated)
+          (ast.clone-ast-type evaluated-ty)
           (ast.AstType.I64))
-        (LowerExpr.Expr state (clone place.index) (ast.AstType.I64)))]
-    [_ (LowerExpr.Expr state (clone place.index) (ast.AstType.I64))]))
+        (LowerExpr.Expr
+          state
+          (ir.compiler-ir-clone-value (& place.index))
+          (ast.AstType.I64)))]
+    [_
+      (LowerExpr.Expr
+        state
+        (ir.compiler-ir-clone-value (& place.index))
+        (ast.AstType.I64))]))
 
 ;; Every store resolves its place here, so the bounds check its element step
 ;; owes runs after the value's effects and before any address of the element
@@ -44237,8 +44681,8 @@
                 ctx
                 (lower-emit-bounds-check
                   indexed
-                  (clone (deref bound))
-                  (clone (deref length)))
+                  (ir.compiler-ir-clone-value bound)
+                  (ir.compiler-ir-clone-value length))
                 (lower-global-shared-view origin))]
             [_ indexed])]
         (lower-store-place-resolve-address
@@ -44273,8 +44717,8 @@
             ctx
             (lower-emit-bounds-check
               state
-              (clone (deref bound))
-              (clone (deref length)))
+              (ir.compiler-ir-clone-value bound)
+              (ir.compiler-ir-clone-value length))
             origin)]
         [(LowerPendingBounds.Current _ _)
           (lower-store-place-dynamic-check ctx state (& place) origin)])]
@@ -44369,7 +44813,7 @@
         (match (lower-emit-binop
           indexed
           ir.CompilerIrBinOp.Mul
-          (clone index)
+          (ir.compiler-ir-clone-value (& index))
           (ir.CompilerIrValue.I64 (lower-type-size ctx place.ty))
           (ast.AstType.I64))
           [(LowerExpr.Expr scaled offset _)
@@ -45083,7 +45527,7 @@
         ctx
         left-captured
         left-element
-        (clone origin))
+        (lower-clone-ast-expr (& origin)))
         [(ResultLowerStorePlace.Err error) (ResultLowerStorePlace.Err error)]
         [(ResultLowerStorePlace.Ok left-state left-place)
           (let
@@ -45101,7 +45545,7 @@
               env
               type-env
               right
-              (clone origin))
+              (lower-clone-ast-expr (& origin)))
               [(ResultLowerStorePlace.Err error)
                 (ResultLowerStorePlace.Err error)]
               [(ResultLowerStorePlace.Ok right-captured right-element)
@@ -48560,8 +49004,9 @@
     (ResultLowerExpr.Ok (LowerExpr.Expr state body-value body-ty))
     (match (match (& body-value)
       [(ir.CompilerIrValue.Var _)
-        (ResultLowerExpr.Ok (LowerExpr.Expr state body-value (clone body-ty)))]
-      [_ (lower-materialize state body-value (clone body-ty))])
+        (ResultLowerExpr.Ok
+          (LowerExpr.Expr state body-value (ast.clone-ast-type (& body-ty))))]
+      [_ (lower-materialize state body-value (ast.clone-ast-type (& body-ty)))])
       [(ResultLowerExpr.Ok
           (LowerExpr.Expr bound-state (ir.CompilerIrValue.Var var-id) _))
         (lower-expr-expected
@@ -48653,11 +49098,11 @@
           body-env
           region-type-env
           body
-          (tc_core.tc-type-without-regions (clone expected-ty))))]
+          (tc_core.tc-type-without-regions (ast.clone-ast-type (& expected-ty)))))]
     (match body-lowered
       [(Expr body-state body-value body-ty)
         (when
-          (tc_core.tc-never-type? (clone body-ty))
+          (tc_core.tc-never-type? (ast.clone-ast-type (& body-ty)))
           (return (Ok (Expr body-state body-value body-ty))))
         (let
           [scratch-head-lowered : LowerExpr
@@ -48873,11 +49318,11 @@
           body-env
           region-type-env
           body
-          (tc_core.tc-type-without-regions (clone expected-ty))))]
+          (tc_core.tc-type-without-regions (ast.clone-ast-type (& expected-ty)))))]
     (match body-lowered
       [(Expr body-state body-value body-ty)
         (when
-          (tc_core.tc-never-type? (clone body-ty))
+          (tc_core.tc-never-type? (ast.clone-ast-type (& body-ty)))
           (return (Ok (Expr body-state body-value body-ty))))
         (let
           [scratch-head-lowered : LowerExpr
@@ -56860,7 +57305,13 @@
           s
           (lower-state-emit
             next
-            (ir.ir-instr-vector-prefix var Sum chunk Unit lanes (clone elem-ty))))
+            (ir.ir-instr-vector-prefix
+              var
+              Sum
+              chunk
+              Unit
+              lanes
+              (ast.clone-ast-type (& elem-ty)))))
         (set! prefix-var var)])
     (match (lower-state-alloc-var s)
       [(Alloc next var)
@@ -56874,7 +57325,7 @@
               (Var prefix-var)
               Unit
               lanes
-              (clone elem-ty))))
+              (ast.clone-ast-type (& elem-ty)))))
         (set! total-var var)])
     (match (lower-state-alloc-var s)
       [(Alloc next result)
@@ -56888,12 +57339,12 @@
                 (Var prefix-var)
                 (Var carry-var)
                 lanes
-                (clone elem-ty)))
+                (ast.clone-ast-type (& elem-ty))))
             Sum
             carry-var
             (Var total-var)
             lanes
-            (clone elem-ty))
+            (ast.clone-ast-type (& elem-ty)))
           (Var result)
           elem-ty)])))
 
@@ -56951,7 +57402,7 @@
         chunk
         carry-var
         lanes
-        (clone elem-ty))
+        (ast.clone-ast-type (& elem-ty)))
         [(Expr next prefix _)
           (set! s next)
           (set! prefix-value prefix)])
@@ -56965,7 +57416,7 @@
             chunk
             (Var carry-var)
             lanes
-            (clone elem-ty)))))
+            (ast.clone-ast-type (& elem-ty))))))
     (if (lower-type-bool? elem-ty)
       (set!
         s
@@ -57418,15 +57869,16 @@
         (return (Base state (Value plan cache) false)))
       (let
         [s : LowerState state]
-        [rebased : LowerVectorMapValueCache (clone cache)]
+        [rebased : LowerVectorMapValueCache
+          (lower-clone-vector-map-value-cache (& cache))]
         (for [i (iterator.range 0 cache.count)]
           (match (& (array-ref cache.keys i))
             [(ArrayData _)
               (match (lower-emit-gep
                 s
-                (clone (array-ref cache.values i))
+                (ir.compiler-ir-clone-value (& (array-ref cache.values i)))
                 (Var index-var)
-                (clone elem-ty))
+                (ast.clone-ast-type (& elem-ty)))
                 [(Expr next address _)
                   (set! s next)
                   (set! (array-ref rebased.values i) address)])]
@@ -57482,7 +57934,12 @@
       [(Label next label)
         (set! s next)
         (set! remainder label)])
-    (match (lower-emit-binop s Ge (clone limit) (I64 width) (I64))
+    (match (lower-emit-binop
+      s
+      Ge
+      (ir.compiler-ir-clone-value (& limit))
+      (I64 width)
+      (I64))
       [(Expr next value _)
         (set! s next)
         (set! long-enough value)])
@@ -57492,7 +57949,12 @@
         (set! group-limit value)])
     ;; An unsigned comparison rejects a negative start. The signed length
     ;; check also rejects any wrapped subtraction from a negative limit.
-    (match (lower-emit-binop s Le (Var index-var) (clone group-limit) (U64))
+    (match (lower-emit-binop
+      s
+      Le
+      (Var index-var)
+      (ir.compiler-ir-clone-value (& group-limit))
+      (U64))
       [(Expr next value _)
         (set! s next)
         (set! first-fits value)])
@@ -57515,9 +57977,13 @@
                 var
                 (lower-spmd-reduce-vector-accumulator-init op acc-var)
                 lanes
-                (clone elem-ty))))]))
+                (ast.clone-ast-type (& elem-ty)))))]))
     (set! s (lower-state-finish-block (lower-state-emit s (Jump body)) body))
-    (match (lower-reduce-group-rebase s input index-var (clone elem-ty))
+    (match (lower-reduce-group-rebase
+      s
+      input
+      index-var
+      (ast.clone-ast-type (& elem-ty)))
       [(Base next rebased relative)
         (set! s next)
         (set! group-input rebased)
@@ -57546,7 +58012,7 @@
               data-ptr
               (Var gang-index)
               lanes
-              (clone elem-ty))
+              (ast.clone-ast-type (& elem-ty)))
               [(Expr next value _)
                 (set! s next)
                 (set! chunk value)])]
@@ -57556,10 +58022,10 @@
               s
               gang-index
               lanes
-              (clone elem-ty)
+              (ast.clone-ast-type (& elem-ty))
               plan
               Full
-              (clone cache))
+              (lower-clone-vector-map-value-cache (& cache)))
               [(Emit next value _)
                 (set! s next)
                 (set! chunk value)])])
@@ -57571,12 +58037,14 @@
             (array-ref accs gang)
             chunk
             lanes
-            (clone elem-ty)))))
+            (ast.clone-ast-type (& elem-ty))))))
     (match (lower-emit-binop s Add (Var index-var) (I64 width) (I64))
       [(Expr next next-index _)
         (set!
           s
-          (lower-state-emit next (Mov index-var (clone next-index) (I64))))
+          (lower-state-emit
+            next
+            (Mov index-var (ir.compiler-ir-clone-value (& next-index)) (I64))))
         (match (lower-vector-loop-next-ok s next-index group-limit)
           [(Expr cmp fits _)
             (set!
@@ -57593,12 +58061,12 @@
           vector-acc-var
           (Var (array-ref accs 1))
           lanes
-          (clone elem-ty))
+          (ast.clone-ast-type (& elem-ty)))
         vector-op
         (array-ref accs 2)
         (Var (array-ref accs 3))
         lanes
-        (clone elem-ty)))
+        (ast.clone-ast-type (& elem-ty))))
     (set!
       s
       (lower-spmd-reduce-vector-accumulate
@@ -57712,9 +58180,9 @@
               (lower-avx2-reduce-groups
                 ctx
                 s
-                (Array (clone data-ptr))
+                (Array (ir.compiler-ir-clone-value (& data-ptr)))
                 index-var
-                (clone vector-limit)
+                (ir.compiler-ir-clone-value (& vector-limit))
                 acc-var
                 vector-acc-var
                 op
@@ -57973,7 +58441,7 @@
                       (lower-global-shared-view value-plan)
                       (lower-global-shared-view preheader-cache))
                     index-var
-                    (clone vector-limit)
+                    (ir.compiler-ir-clone-value (& vector-limit))
                     acc-var
                     vector-acc-var
                     op
@@ -64427,7 +64895,7 @@
         [(Function name _ _ _ _ function-abi)
           (if (ir.compiler-ir-symbol-eq? name helper)
             (begin
-              (set! found (clone function-abi))
+              (set! found (ir.clone-compiler-ir-function-abi (& function-abi)))
               (set! index -1))
             (-= index 1))]))
     found))
@@ -65060,7 +65528,7 @@
           active-mask
           call-args
           (Unit)
-          (clone origin))]
+          (ir.clone-compiler-ir-spmd-call-origin (& origin)))]
       (Ok (Expr (lower-state-emit-at-expr ctx state instr expr) Unit result-ty)))
     (match (lower-state-alloc-var state)
       [(Alloc allocated result-var)
@@ -65078,7 +65546,7 @@
                 result-var
                 result-class
                 (lower-global-shared-view result-ty))
-              (clone origin))]
+              (ir.clone-compiler-ir-spmd-call-origin (& origin)))]
           [call-state : LowerState
             (lower-state-emit-at-expr ctx allocated instr expr)]
           (if (or
@@ -66917,14 +67385,14 @@
   [row? : bool]) : LowerForeachPlan
   (if (and
     (lower-mode-simd? (lower-state-mode state))
-    (lower-type-i64? (clone index-ty)))
+    (lower-type-i64? (ast.clone-ast-type (& index-ty))))
     (match (lower-simple-vector-map
       ctx
       (lower-state-mode state)
       env
       type-env
-      (clone index)
-      (clone body))
+      (string.copy index)
+      (lower-clone-ast-expr (& body)))
       [(Some stores elem-ty lanes) (NativeMap stores elem-ty lanes)]
       [(No first-reason)
         (if (lower-spmd-expr-has-call?
@@ -66933,7 +67401,7 @@
           env
           type-env
           (Atomic)
-          (clone body))
+          (lower-clone-ast-expr (& body)))
           (Scalar (ExplicitAtomic))
           (let
             [facts : LowerMaskedVectorFacts
@@ -66943,16 +67411,16 @@
                 (lower-state-mode state)
                 env
                 type-env
-                (clone index)
-                (clone body))]
+                (string.copy index)
+                (lower-clone-ast-expr (& body)))]
             (match (lower-masked-vector-map
               ctx
               (lower-state-function-state state)
               (lower-state-mode state)
               env
               type-env
-              (clone index)
-              (clone body)
+              (string.copy index)
+              (lower-clone-ast-expr (& body))
               facts)
               [(Some lanes) (NativeMasked lanes)]
               [(No _)
@@ -66963,7 +67431,10 @@
                     (lower-state-function-state state)
                     (lower-state-mode state)
                     env
-                    (tc_core.tc-bind-id type-env index-id (clone index-ty))
+                    (tc_core.tc-bind-id
+                      type-env
+                      index-id
+                      (ast.clone-ast-type (& index-ty)))
                     (DirectMap)
                     diagnostic-body)
                     [(Some origin decision)
@@ -66977,7 +67448,7 @@
                         [facts.varying-while
                           (lower-foreach-plan-rejected
                             ctx
-                            (clone body)
+                            (lower-clone-ast-expr (& body))
                             (VaryingWhile)
                             (if (lower-mode-avx2? (lower-state-mode state))
                               (lower-avx2-varying-while-diagnostic)
@@ -66985,7 +67456,7 @@
                         [facts.varying-if
                           (lower-foreach-plan-rejected
                             ctx
-                            (clone body)
+                            (lower-clone-ast-expr (& body))
                             (VaryingIf)
                             (if (lower-mode-avx2? (lower-state-mode state))
                               (lower-avx2-masked-if-diagnostic)
@@ -66993,7 +67464,7 @@
                         [facts.varying-enum-match
                           (lower-foreach-plan-rejected
                             ctx
-                            (clone body)
+                            (lower-clone-ast-expr (& body))
                             (VaryingEnumMatch)
                             (if (lower-mode-avx2? (lower-state-mode state))
                               "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
@@ -67001,30 +67472,36 @@
                         [facts.varying-match
                           (lower-foreach-plan-rejected
                             ctx
-                            (clone body)
+                            (lower-clone-ast-expr (& body))
                             (VaryingMatch)
                             (if (lower-mode-avx2? (lower-state-mode state))
                               "lower: SPMD varying match AVX2 lowering is not available for this match shape"
                               "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))]
-                        [(lower-vector-body-has? ctx (Shuffle) (clone body))
+                        [(lower-vector-body-has?
+                            ctx
+                            (Shuffle)
+                            (lower-clone-ast-expr (& body)))
                           (lower-foreach-plan-rejected
                             ctx
-                            (clone body)
+                            (lower-clone-ast-expr (& body))
                             (ShuffleShape)
                             (lower-spmd-shuffle-diagnostic))]
-                        [(lower-vector-body-has? ctx (ArrayRead) (clone body))
+                        [(lower-vector-body-has?
+                            ctx
+                            (ArrayRead)
+                            (lower-clone-ast-expr (& body)))
                           (match (lower-simple-vector-map-unsupported-shift-lane
                             ctx
                             (lower-state-mode state)
                             env
                             type-env
-                            (clone index)
+                            (string.copy index)
                             true
-                            (clone body))
+                            (lower-clone-ast-expr (& body)))
                             [(Some lane-ty)
                               (lower-foreach-plan-rejected
                                 ctx
-                                (clone body)
+                                (lower-clone-ast-expr (& body))
                                 (UnsupportedShift)
                                 (lower-spmd-map-shift-diagnostic
                                   "shl"
@@ -67038,7 +67515,7 @@
                                 type-env
                                 index
                                 false
-                                (clone body))
+                                (lower-clone-ast-expr (& body)))
                                 [(Some lane-ty)
                                   (lower-foreach-plan-rejected
                                     ctx
@@ -67079,10 +67556,10 @@
     env
     type-env
     index-id
-    (clone index)
-    (clone index-ty)
+    (string.copy index)
+    (ast.clone-ast-type (& index-ty))
     diagnostic-body
-    (clone body)
+    (lower-clone-ast-expr (& body))
     row?)
     [(NativeMap stores elem-ty lanes)
       (lower-avx2-foreach-lowered
@@ -68677,7 +69154,7 @@
               state
               env
               type-env
-              (clone scrutinee)
+              (lower-clone-ast-expr (& scrutinee))
               scrutinee
               ty)))]
       [(Err _) unit]))
@@ -68968,7 +69445,7 @@
   [ty : (& ty ast.AstType)]) : bool
   (and
     (lower-register-view-pattern? ctx state ty)
-    (not (tc_core.tc-type-copyable? ctx (clone (deref ty))))))
+    (not (tc_core.tc-type-copyable? ctx (ast.clone-ast-type ty)))))
 
 (define (lower-bind-owned-pattern-name
   [ctx : tc_core.TcContext]
@@ -68995,7 +69472,7 @@
       ;; copyable one is a copy (SPEC 3.9, `lower-view-binder-type?`).
       (and
         (= (lower-state-view-match state) 1)
-        (not (tc_core.tc-type-copyable? ctx (clone ty))))
+        (not (tc_core.tc-type-copyable? ctx (ast.clone-ast-type (& ty)))))
       (lower-binding-may-alias-storage? state name var-id))
       (ResultLowerEnv.Ok
         state
@@ -69062,15 +69539,15 @@
                 base
                 offset
                 (& pattern)
-                (clone field-ty)))
+                (ast.clone-ast-type (& field-ty))))
             (lower-struct-field-load-at-offset
               ctx
               state
               base
               struct-id
               offset
-              (clone field-ty)
-              (clone field-ty)))
+              (ast.clone-ast-type (& field-ty))
+              (ast.clone-ast-type (& field-ty))))
             [(Ok (Expr field-state field-value _))
               (return
                 (lower-bind-element-pattern
@@ -69503,7 +69980,12 @@
   [elem-ty : ast.AstType]) : ResultLowerEnv
   (let
     [bound-ty : ast.AstType
-      (lower-bind-mode-ref-type ctx (clone bind-mode) elem-ty)]
+      (lower-bind-mode-ref-type
+        ctx
+        (match bind-mode
+          [(LowerBindMode.Owned) (LowerBindMode.Owned)]
+          [(LowerBindMode.Borrowed lifetime) (LowerBindMode.Borrowed lifetime)])
+        elem-ty)]
     [bound : LowerExpr
       (match (& value)
         [(Var _) (Expr state value bound-ty)]
@@ -69544,7 +70026,7 @@
         [(LowerBindMode.Borrowed _) true]
         [_ false])
       (= (lower-type-size ctx elem-ty) 0)
-      (tc_core.tc-type-copyable? ctx (clone elem-ty)))
+      (tc_core.tc-type-copyable? ctx (ast.clone-ast-type (& elem-ty))))
     (return (Expr state Unit elem-ty)))
   (match bind-mode
     [(LowerBindMode.Owned)
@@ -69552,7 +70034,8 @@
         (lower-register-view-pattern? ctx state (& elem-ty))
         (match pattern
           [(or (ast.AstPattern.Binding _) (ast.AstPattern.Var _ _))
-            (not (tc_core.tc-type-copyable? ctx (clone elem-ty)))]
+            (not
+              (tc_core.tc-type-copyable? ctx (ast.clone-ast-type (& elem-ty))))]
           [_ true]))
         (lower-gep-byte-typed state base offset elem-ty)
         (lower-load-inline-value-at-offset ctx state base offset elem-ty))]
@@ -70318,7 +70801,7 @@
         env
         type-env
         (lower-global-shared-view body)
-        (clone body))
+        (lower-clone-ast-expr (& body)))
         [(ResultLowerStorePlace.Ok captured place)
           (match (lower-publish-store-place
             ctx
@@ -70905,7 +71388,7 @@
           state
           (Var scrut-var)
           lit
-          (clone scrut-ty)))]
+          (ast.clone-ast-type (& scrut-ty))))]
     (match test
       [(Expr eq-state eq-value _)
         (match (lower-state-fresh-label eq-state "match_arm")
@@ -75537,7 +76020,7 @@
           ctx
           params
           (lower-global-shared-view ret-ty))]
-      (lower-spmd-enumerate-function! ctx state (clone body))
+      (lower-spmd-enumerate-function! ctx state (lower-clone-ast-expr (& body)))
       (if (match (& ret-class)
         [(LowerCAbiAggregate.Unsupported _) true]
         [_ false])
@@ -75590,7 +76073,7 @@
                     bound-state
                     bound-env
                     bound-type-env
-                    (clone body))
+                    (lower-clone-ast-expr (& body)))
                   (match (lower-spmd-complete-function
                     bound-state
                     (lower-tail-expr
@@ -76335,7 +76818,8 @@
           (unsafe
             (arena.tl_arena_set enclosing))
           (let
-            [escaped-message : (Box cdiag.CompilerDiagnostic) (clone message)]
+            [escaped-message : (Box cdiag.CompilerDiagnostic)
+              (box (cdiag.clone-compiler-diagnostic (& (deref message))))]
             [owner : CompilerLowerState
               (compiler-lower-function-state-owner function-state)]
             [rejected : ir.CompilerSourceSpans
@@ -77813,7 +78297,10 @@
               1
               0))]
         [physical-ret-ty : ast.AstType
-          (lower-internal-return-physical-type ctx mode (clone ret-ty))]
+          (lower-internal-return-physical-type
+            ctx
+            mode
+            (ast.clone-ast-type (& ret-ty)))]
         [args : ir.CompilerIrCallArgs
           (ir.compiler-ir-call-args-from-seq
             (& (lower-dispatch-physical-param-values param-count 0)))]
@@ -77874,7 +78361,7 @@
                   clean-param-types
                   ret-ty
                   (& physical-params)
-                  (clone physical-ret-ty)
+                  (ast.clone-ast-type (& physical-ret-ty))
                   sret-var
                   leading-sret?)]
               (ir.compiler-ir-block-builder-push!
@@ -78649,8 +79136,9 @@
                         (lower-return-storage-extern
                           decl-ctx
                           mode
-                          (tc_core.tc-type-without-regions (clone resolved-ty))
-                          (clone abi))]
+                          (tc_core.tc-type-without-regions
+                            (ast.clone-ast-type (& resolved-ty)))
+                          (ir.clone-ast-extern-abi (& abi)))]
                       (ir.compiler-ir-extern-builder-push!
                         (&mut cur-externs)
                         (ir.CompilerIrExtern.Extern
@@ -80383,7 +80871,7 @@
                 lower-state
                 decls
                 paths
-                (clone entry-path)
+                (string.copy entry-path)
                 Nil))])]
       [specialized-result : spec.ResultSpecProgramWithPaths
         (begin
@@ -80396,7 +80884,7 @@
               (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
                 (& program)
                 (& paths)
-                (clone entry-path)
+                (string.copy entry-path)
                 pools
                 (& intern-state)
                 (compiler-lower-state-profile lower-state))
@@ -80508,7 +80996,8 @@
                           (AstProgramCompaction specialized pools))]
                       [source-pools : ast.AstNodePoolContext
                         (match (& source-compaction)
-                          [(AstProgramCompaction _ out-pools) (clone out-pools)])]
+                          [(AstProgramCompaction _ out-pools)
+                            (lower-clone-ast-node-pool-context out-pools)])]
                       [source-program : ast.AstProgram
                         (match source-compaction
                           [(AstProgramCompaction out _) out])]
@@ -80740,7 +81229,7 @@
           (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
             (& program)
             (& paths)
-            (clone entry-path)
+            (string.copy entry-path)
             generation-owner)]
         ;; Publish explicit generation mutations before matching either result
         ;; or entering the legacy macro-expansion phase.
@@ -80769,7 +81258,8 @@
                   (AstProgramCompaction generated pools))]
               [macro-pools : ast.AstNodePoolContext
                 (match (& generated-compaction)
-                  [(AstProgramCompaction _ out-pools) (clone out-pools)])]
+                  [(AstProgramCompaction _ out-pools)
+                    (lower-clone-ast-node-pool-context out-pools)])]
               [macro-program : ast.AstProgram
                 (match generated-compaction
                   [(AstProgramCompaction out _) out])]
@@ -80902,7 +81392,7 @@
                           [detached-pools : ast.AstNodePoolContext
                             (match (& detached-compaction)
                               [(AstProgramCompaction _ out-pools)
-                                (clone out-pools)])]
+                                (lower-clone-ast-node-pool-context out-pools)])]
                           [detached-program : ast.AstProgram
                             (match detached-compaction
                               [(AstProgramCompaction out _) out])]
@@ -81129,14 +81619,14 @@
             (& context.load-state))
           (sym_i64_env.sym-i64-empty)
           (& context.stdlib-roots)
-          (clone context.cfgs)
-          (clone context.pools))
+          (lower-clone-sym-i64-env (& context.cfgs))
+          (lower-clone-ast-node-pool-context (& context.pools)))
         (load.compiler-load-executable-prelude
           (owned_view.compiler-owned-reference-shared-view
             (& context.load-state))
-          (clone context.stdlib-roots)
-          (clone context.cfgs)
-          (clone context.pools)))]
+          (svec.clone-vec (& context.stdlib-roots))
+          (lower-clone-sym-i64-env (& context.cfgs))
+          (lower-clone-ast-node-pool-context (& context.pools))))]
     (match prelude
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (match (load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
@@ -81147,8 +81637,8 @@
           prelude-seen
           (& context.stdlib-roots)
           (ast.AstMaybeModuleName.No)
-          (clone context.cfgs)
-          (clone context.pools))
+          (lower-clone-sym-i64-env (& context.cfgs))
+          (lower-clone-ast-node-pool-context (& context.pools)))
           [(Ok entry-decls entry-paths entry-modules seen)
             (Ok
               (load.compiler-load-decl-list-append
@@ -81271,7 +81761,7 @@
   (let
     [cfgs : sym_i64_env.SymI64Env
       (target_cfg.compiler-target-user-cfgs (& request.cfg-names))]
-    (match (lower-mode-abi (clone request.mode))
+    (match (lower-request-mode-abi request)
       [(Linux) (target_cfg.compiler-target-cfgs (target_cfg.Linux) cfgs)]
       [(Windows) (target_cfg.compiler-target-cfgs (target_cfg.Windows) cfgs)]
       [_ cfgs])))
@@ -81288,10 +81778,12 @@
   (load.compiler-load-session-state-program-cache-disable!
     (owned_view.compiler-owned-reference-shared-view (& context.load-state)))
   (tc_core.tc-job-state-set-parser-control!
-    (clone context.job-state)
-    (parser.compiler-parse-control-from-cfg (clone context.cfgs)))
+    (lower-clone-tc-job-state (& context.job-state))
+    (parser.compiler-parse-control-from-cfg
+      (lower-clone-sym-i64-env (& context.cfgs))))
   (tc_core.tc-macro-state-bind-source-names!
-    (tc_core.tc-job-state-macro-state (clone context.job-state))
+    (tc_core.tc-job-state-macro-state
+      (lower-clone-tc-job-state (& context.job-state)))
     (ci.intern-source-name-session-capture-active-handle))
   (let
     [loaded : load.ResultCompilerLoadWithPaths
@@ -81305,22 +81797,23 @@
               (& context.load-state))
             (owned_view.compiler-owned-reference-shared-view
               (& context.prefix-cache))
-            (clone context.job-state)
+            (lower-clone-tc-job-state (& context.job-state))
             path
             (ast.ast-program decls)
             (ast.ast-decl-path-list-with-modules paths (& modules))
-            (clone request.mode)
-            (clone context.stdlib-roots)
-            (clone context.cfgs)
-            (clone context.cache-scope)
-            (clone context.pools)
+            (lower-request-mode request)
+            (svec.clone-vec (& context.stdlib-roots))
+            (lower-clone-sym-i64-env (& context.cfgs))
+            (string.copy (& context.cache-scope))
+            (lower-clone-ast-node-pool-context (& context.pools))
             (ci.intern-source-name-session-capture-active-handle)
             (ci.intern-compat-state-capture-active)
             (cbi.state-capture))]
         [(Err diagnostic) (Err diagnostic)])]
     ;; No checked context escapes this boundary: successful IR and spans own
     ;; their escaped data, and failures already live in the caller's arena.
-    (tc_core.tc-job-state-retire-owned-storage! (clone context.job-state))
+    (tc_core.tc-job-state-retire-owned-storage!
+      (lower-clone-tc-job-state (& context.job-state)))
     (tc_core.tc-prefix-snapshot-cache-clear-for-state! (& context.prefix-cache))
     (load.compiler-load-session-state-dotted-path-cache-reset!
       (owned_view.compiler-owned-reference-shared-view (& context.load-state)))
@@ -81356,16 +81849,16 @@
   (let
     [cfgs : sym_i64_env.SymI64Env (lower-source-request-cfgs request)]
     (match (parser.parse-ast-source-diagnostic-with-cfg
-      (clone path)
+      (string.copy path)
       src
-      (clone cfgs))
+      (lower-clone-sym-i64-env (& cfgs)))
       [(Ok program)
         (let
           [load-imports : bool (lower-source-program-needs-loader? (& program))]
           (if load-imports
             (lower-source-context
               lower-state
-              (clone path)
+              (string.copy path)
               src
               request
               (&
@@ -81375,7 +81868,7 @@
                   (tc_core.tc-job-state-new)
                   program
                   (ast.ast-decl-path-list-new)
-                  (clone request.stdlib-roots)
+                  (svec.clone-vec (& request.stdlib-roots))
                   cfgs
                   (load.compiler-load-prelude-cache-key
                     "typecheck-prefix-lower"
@@ -81389,7 +81882,7 @@
               lower-state
               path
               program
-              (clone request.mode))))]
+              (lower-request-mode request))))]
       [(Err diagnostic) (Err diagnostic)])))
 
 (define (lower-compiler-source-with-path-mode-package-and-state
@@ -81437,11 +81930,14 @@
   (let
     [state : CompilerLowerState (compiler-lower-state-new)]
     (compiler-lower-state-use-request! state request)
-    (match (clone request.pointer-proof)
+    (match (& request.pointer-proof)
       [(Disabled) unit]
       [(Requested input)
         (let
-          [error : String (pointer_proof.pointer-proof-input-begin-error input)]
+          [input-copy : pointer_proof.PointerProofInput
+            (pointer_proof.PointerProofInput input.control)]
+          [error : String
+            (pointer_proof.pointer-proof-input-begin-error input-copy)]
           (when
             (> (string.string-length (& error)) 0)
             (return
@@ -81451,17 +81947,17 @@
                     (lower-global-shared-view path)
                     error)))))
           (pointer_proof.pointer-proof-input-use-default-path!
-            input
+            input-copy
             (lower-global-shared-view path)))])
     (let
       [result : ResultCompilerLower
         (lower-source-request state path src request "")]
       (match (& result)
         [(Err _)
-          (match (clone request.pointer-proof)
+          (match (& request.pointer-proof)
             [(Requested input)
               (pointer_proof.pointer-proof-input-fail!
-                input
+                (pointer_proof.PointerProofInput input.control)
                 "pointer proof: requested source lowering did not complete")]
             [_ unit])]
         [_ unit])

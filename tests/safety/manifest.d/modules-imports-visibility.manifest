@@ -1,0 +1,34 @@
+# Safety corpus cases: module imports, qualified paths, unimported items, and removed stdlib symbols.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+qualified_string_append_unexported_reject|check-fail|tests/safety/qualified_string_append_unexported_reject.tl|-|typecheck: unbound name string.string-append
+qualified_string_concat_unexported_reject|check-fail|tests/safety/qualified_string_concat_unexported_reject.tl|-|typecheck: unbound name string.string-concat
+qualified_string_append_alias_reject|check-fail|tests/safety/qualified_string_append_alias_reject.tl|-|typecheck: unbound name s.string-append
+qualified_string_concat_full_path_reject|check-fail|tests/safety/qualified_string_concat_full_path_reject.tl|-|typecheck: unbound name stdlib.string.string-concat
+qualified_string_eq_unexported_reject|check-fail|tests/safety/qualified_string_eq_unexported_reject.tl|-|typecheck: unbound name string.string-eq
+qualified_string_helpers_check_ok|check-ok|tests/safety/qualified_string_helpers_check_ok.tl|-|-
+bare_string_concat_unimported_reject|check-fail|tests/safety/bare_string_concat_unimported_reject.tl|-|typecheck: unbound name string-concat
+bare_string_eq_unimported_reject|check-fail|tests/safety/bare_string_eq_unimported_reject.tl|-|typecheck: unbound name string-eq
+bare_string_eq_question_unimported_reject|check-fail|tests/safety/bare_string_eq_question_unimported_reject.tl|-|typecheck: unbound name string=?
+removed_io_print_string_reject|check-fail|tests/safety/removed_io_print_string_reject.tl|-|typecheck: unbound name io.print-string
+removed_io_print_str_reject|check-fail|tests/safety/removed_io_print_str_reject.tl|-|typecheck: unbound name io.print-str
+removed_io_print_newline_reject|check-fail|tests/safety/removed_io_print_newline_reject.tl|-|typecheck: unbound name io.print-newline
+removed_io_print_bool_reject|check-fail|tests/safety/removed_io_print_bool_reject.tl|-|typecheck: unbound name io.print-bool
+removed_io_print_char_reject|check-fail|tests/safety/removed_io_print_char_reject.tl|-|typecheck: unbound name io.print-char
+removed_io_print_float_reject|check-fail|tests/safety/removed_io_print_float_reject.tl|-|typecheck: unbound name io.print-float
+removed_io_format_float_reject|check-fail|tests/safety/removed_io_format_float_reject.tl|-|typecheck: unbound name io.format-float
+unimported_panic_reject|check-fail|tests/safety/unimported_panic_reject.tl|-|help: panic is provided by stdlib.io — add (import stdlib.io)
+unimported_string_length_reject|check-fail|tests/safety/unimported_string_length_reject.tl|-|help: string-length is provided by stdlib.string — add (import stdlib.string)
+unimported_string_ref_reject|check-fail|tests/safety/unimported_string_ref_reject.tl|-|help: string-ref is provided by stdlib.string — add (import stdlib.string)
+unimported_string_eq_reject|check-fail|tests/safety/unimported_string_eq_reject.tl|-|help: string-eq is provided by stdlib.string — add (import stdlib.string)
+removed_string_to_int_reject|check-fail|tests/safety/removed_string_to_int_reject.tl|-|help: string->int was removed — add (import stdlib.string) and use string.>int
+module_catalog_invalid_unused_helper_reject|check-fail|tests/safety/module_catalog_invalid_unused_helper_reject.tl|-|typecheck: return type mismatch: expected i64, found bool
+import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|tests/safety/import_arg_mismatch_lib.tl:5:14|typecheck: call `takes-i64` argument 1 (parameter `x`) type mismatch: expected i64, found bool
+imported_module_macro_bare_name_reject|check-fail|tests/safety/imported_module_macro_bare_name_reject.tl|-|typecheck: imported macro `vector` requires provider qualification; use `vector.vector`
+imported_module_macro_alias_bare_name_reject|check-fail|tests/safety/imported_module_macro_alias_bare_name_reject.tl|-|typecheck: imported macro `vector` requires provider qualification; use `v.vector`
+module_generated_conflicting_import_reject|check-fail|tests/safety/module_generated_conflicting_import_reject.tl|-|ambiguous import alias 'dep'
+module_generated_selected_conflict_reject|check-fail|tests/safety/module_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
+module_generated_wildcard_conflict_reject|check-fail|tests/safety/module_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
+module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/module_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
+import_local_collision_generated_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|collides with the declaration of 'answer' in the entry module
+import_local_collision_generated_label_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|import_local_collision_generated_reject.tl:10:1

@@ -1,0 +1,2 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.dense_list/compiler-dense-list-operations	7	variadic	decls	tests/integration/dense_list_generated.tl	ok	default	assembly

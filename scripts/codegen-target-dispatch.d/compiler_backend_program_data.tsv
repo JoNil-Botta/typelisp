@@ -1,0 +1,8 @@
+# Codegen target-dispatch boundary inventory (#5347); see scripts/check-codegen-target-dispatch.sh.
+# file	scope	boundary	category	token-regex	count	rationale
+src/compiler_backend_program_data.tl	compiler-backend-entry-for-target-with-crt	adapter	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the platform process entry sequence.
+src/compiler_backend_program_data.tl	compiler-backend-runtime-data-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's data section.
+src/compiler_backend_program_data.tl	compiler-backend-runtime-externs-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's externs.
+src/compiler_backend_program_data.tl	compiler-backend-runtime-features-for-emission	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Linux prunes runtime leaves by use and Windows only the arena sanitizer's; both targets select the private global allocator only when referenced.
+src/compiler_backend_program_data.tl	compiler-backend-runtime-functions-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's functions.
+src/compiler_backend_program_data.tl	compiler-backend-target-entry-text-with-crt	adapter	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the platform entry section text.

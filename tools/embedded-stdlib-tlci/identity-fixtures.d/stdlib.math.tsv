@@ -1,0 +1,9 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.math/math-bits-word	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.math/math-bits-array	1	variadic	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.math/exp	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.math/log	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.math/pow	2	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.math/abs	1	fixed	expr	tests/integration/tlci_native_template_nodes.tl	ok	default	assembly
+stdlib.math/sqrt	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
+stdlib.math/mul-add	3	fixed	expr	tests/integration/stdlib_math_mul_add.tl	ok	default	assembly

@@ -249,7 +249,7 @@ Options:
 (define (cli-test-help-text) : String
   "Usage:
     typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] [<file.tl>] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...]
-    typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] --batch <inputs.txt> [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--prefix-cache-stats]
+    typelisp test [--check] [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] --batch <inputs.txt> [--combined] [--target <target>] [--cfg <name>...] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--prefix-cache-stats]
     typelisp test --list [--filter <substring>|--exact <name>] [--include-ignored] [--include-slow] [--shuffle [--seed <u64>]] [<file.tl>] [--manifest-path <typelisp.pkg>] [--batch <inputs.txt>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
@@ -265,6 +265,7 @@ Options:
     --seed <u64>                   Replay `--shuffle` with an unsigned 64-bit decimal seed
     --list                         List selected test names, locations, and states without running them
     --batch <file>                 Read newline-separated inline-test input paths; runs them unless --check
+    --combined                     Compile a --batch run into one dispatched harness and run each file in its own subprocess
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward when no file is provided
     --target <target>              linux-x86_64 or windows-x86_64

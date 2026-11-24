@@ -426,7 +426,7 @@
     (ir.CompilerIrBinOp.BitAnd)
     (ir.CompilerIrBinOp.BitOr)
     (ir.CompilerIrBinOp.BitXor)
-    (ir.CompilerIrBinOp.Shl (clone shift-ty))
+    (ir.CompilerIrBinOp.Shl (ast.clone-ast-type (& shift-ty)))
     (ir.CompilerIrBinOp.Shr shift-ty)))
 
 ;; The binary operator the renderer spells `name`, or -1.
@@ -436,16 +436,16 @@
     [i : i64 0]
     [found : i64 -1]
     (while (and (< found 0) (< i (array-length ops)))
-      (if (string.eq
-        name
-        (ir.compiler-ir-bin-op-render (& (clone (array-ref ops i)))))
+      (if (string.eq name (ir.compiler-ir-bin-op-render (& (array-ref ops i))))
         (set! found i)
         unit)
       (+= i 1))
     found))
 
 (define (ir-text-binop [index : i64] [shift-ty : ast.AstType]) : ir.CompilerIrBinOp
-  (clone (array-ref (ir-text-binops shift-ty) index)))
+  (let
+    [ops : (__tl_dyn-array ir.CompilerIrBinOp) (ir-text-binops shift-ty)]
+    (ir.clone-compiler-ir-bin-op (& (array-ref ops index)))))
 
 (define (ir-text-unop-index [name : (& name str)]) : i64
   (cond
@@ -565,7 +565,9 @@
       [exact : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
         (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
       (for [i (iterator.range 0 count)]
-        (set! (array-ref exact i) (clone (array-ref slots i))))
+        (set!
+          (array-ref exact i)
+          (ir.clone-compiler-ir-c-abi-return-slot (& (array-ref slots i)))))
       (ir.compiler-ir-c-abi-return-slot-seq-of exact count))))
 
 ;; `name(args)` of a direct call.
@@ -621,7 +623,7 @@
             (box
               (ir.CompilerIrInstrVectorComparePayload
                 dst
-                (ir-text-binop index (clone ty))
+                (ir-text-binop index (ast.clone-ast-type (& ty)))
                 lhs
                 rhs
                 lanes
@@ -642,7 +644,7 @@
             (box
               (ir.CompilerIrInstrVectorBinOpPayload
                 dst
-                (ir-text-binop index (clone ty))
+                (ir-text-binop index (ast.clone-ast-type (& ty)))
                 lhs
                 rhs
                 lanes
@@ -679,7 +681,12 @@
           [lhs : ir.CompilerIrValue (ir-text-value! cur)]
           [rhs : ir.CompilerIrValue (ir-text-comma-value! cur)]
           [ty : ast.AstType (ir-text-typed! cur)]
-          (BinOp dst (ir-text-binop binop (clone ty)) lhs rhs ty))]
+          (BinOp
+            dst
+            (ir-text-binop binop (ast.clone-ast-type (& ty)))
+            lhs
+            rhs
+            ty))]
       [(>= unop 0)
         (let
           [value : ir.CompilerIrValue (ir-text-value! cur)]

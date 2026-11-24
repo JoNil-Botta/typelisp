@@ -86,12 +86,12 @@ fi
 
 # Chunks compile in a bounded pool (scripts/lib-bounded-pool.sh):
 # TYPELISP_COMPILE_MANIFEST_WORKERS compiler processes at once (1-3, default
-# 2), each under an enforced memory cap and timeout (a user cgroup on Linux, a
+# 3), each under an enforced memory cap and timeout (a user cgroup on Linux, a
 # Job Object on Windows), so at most workers x cap MiB of caps run
 # concurrently. A chunk's peak is its heaviest entry's (see above), main.tl's;
-# the cap leaves over 2x headroom above it while two capped chunks stay within
-# half of a 16 GB hosted runner.
-MANIFEST_POOL_WORKERS=${TYPELISP_COMPILE_MANIFEST_WORKERS:-2}
+# the cap leaves over 2x headroom above it while three capped chunks stay within
+# a 16 GB hosted runner.
+MANIFEST_POOL_WORKERS=${TYPELISP_COMPILE_MANIFEST_WORKERS:-3}
 case "$MANIFEST_POOL_WORKERS" in
     1 | 2 | 3) ;;
     *)

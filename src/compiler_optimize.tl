@@ -9869,14 +9869,6 @@
       (set! size (* size 2)))
     size))
 
-;; Fold multiplied high bits into the slot before masking: pruned labels need
-;; not retain the dense numbering of the original body. Equality still reads
-;; the label through the stored id, independently of its probe position.
-(define (opt-cfg-index-id-slot [label : i64] [mask : i64]) : i64
-  (let
-    [mixed : i64 (* label -7046029254386353131)]
-    (bit-and (bit-xor mixed (cast (shr (cast mixed : u64) 29) : i64)) mask)))
-
 ;; Ids are inserted in block order and an occupied slot whose label matches is
 ;; left alone, so a duplicate-label CFG resolves to its first block -- the same
 ;; answer a first-match list scan gives -- until the verifier rejects it.
@@ -9889,7 +9881,7 @@
     (for [id (iterator.range 0 count)]
       (let
         [label : i64 (array-ref labels id)]
-        [slot : i64 (opt-cfg-index-id-slot label mask)]
+        [slot : i64 (ir.compiler-ir-label-id-slot label mask)]
         [placed : bool false]
         (while (not placed)
           (let
@@ -9987,21 +9979,11 @@
 ;; guarantees exists.
 (define (opt-cfg-index-id [index : (& index OptCfgIndex)] [label : i64]) : option_i64.Option
   (let
-    [slots (& index.id-map)]
-    [labels (& index.labels)]
-    [mask : i64 (- (array-length slots) 1)]
-    [slot : i64 (opt-cfg-index-id-slot label mask)]
-    (while true
-      (let
-        [entry : i64 (array-ref slots slot)]
-        (if (= entry 0)
-          (return (None))
-          (let
-            [id : i64 (- entry 1)]
-            (if (= (array-ref labels id) label)
-              (return (Some id))
-              (set! slot (bit-and (+ slot 1) mask)))))))
-    (None)))
+    [id : i64
+      (ir.compiler-ir-label-id-find (& index.id-map) (& index.labels) label)]
+    (if (< id 0)
+      (None)
+      (Some id))))
 
 (define (opt-cfg-index-refresh-block-seq!
   [out : (&mut out (__tl_dyn-array ir.CompilerIrBlock))]
@@ -59495,6 +59477,7 @@
       entry-id
       (opt-cfg-index-block-count (& context.index))
       (& context.index.labels)
+      (& context.index.id-map)
       (& context.index.blocks)
       (& context.index.reachable)
       (& context.index.rpo-num)

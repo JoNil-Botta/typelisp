@@ -584,9 +584,22 @@
       [(or (= fw 0) (= tw 0)) (opt-range-top)]
       [(= r.kind opt-range-kind-bottom) (opt-range-bottom)]
       [(and (= fw 64) (= tw 64)) (opt-range-val-copy r)]
-      [(and (< fw 64) (>= tw fw) (opt-range-type-unsigned? from-ty))
+      ;; Casting to Bool tests `!= 0`, not bit 0.
+      [(= tw 1) (opt-range-range-for-type to-ty)]
+      ;; Widening keeps the value only when the target can represent every
+      ;; source value: unsigned into wider or unsigned, signed into signed,
+      ;; or signed into u64 (whose range is stored in the 64-bit signed view).
+      [(and
+          (< fw 64)
+          (>= tw fw)
+          (opt-range-type-unsigned? from-ty)
+          (or (> tw fw) (opt-range-type-unsigned? to-ty)))
         (opt-range-clamp-unsigned r fw)]
-      [(and (< fw 64) (>= tw fw) (opt-range-type-signed? from-ty))
+      [(and
+          (< fw 64)
+          (>= tw fw)
+          (opt-range-type-signed? from-ty)
+          (or (= tw 64) (opt-range-type-signed? to-ty)))
         (opt-range-clamp-signed r from-ty)]
       [(and (< tw 64) (opt-range-type-unsigned? to-ty))
         (opt-range-clamp-unsigned r tw)]
@@ -1243,7 +1256,7 @@
                   [else (opt-range-interval 0 1)]))]
             [_ tr])))]
     [(Select payload)
-      (if (= payload.lanes 1)
+      (if (= payload.lanes 0)
         (opt-range-eval-select
           st
           block-dense
@@ -2152,24 +2165,13 @@
           (set! found true))))
     found))
 
-(define (opt-range-label-to-id
-  [block-labels : (& (__tl_dyn-array i64))]
-  [block-count : i64]
-  [label : i64]) : i64
-  (let
-    [found : i64 -1]
-    [i : i64 0]
-    (while (and (< i block-count) (< found 0))
-      (when (= (array-ref block-labels i) label) (set! found i))
-      (+= i 1))
-    found))
-
 ;; Evaluate a single Phi's joined value over selected predecessors
 ;; (`only-entry?` = true skips backedges; `only-back?` = true takes ONLY backedges).
 (define (opt-range-eval-phi-inputs
   [st : (&mut OptRangeState)]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
   [block-labels : (& (__tl_dyn-array i64))]
+  [block-id-map : (& (__tl_dyn-array i64))]
   [reachable : (& (__tl_dyn-array bool))]
   [tin : (& (__tl_dyn-array i64))]
   [tout : (& (__tl_dyn-array i64))]
@@ -2187,7 +2189,7 @@
       (let
         [inp (ir.compiler-ir-phi-input-seq-borrow inputs i)]
         [pid : i64
-          (opt-range-label-to-id block-labels st.block-count inp.label)]
+          (ir.compiler-ir-label-id-find block-id-map block-labels inp.label)]
         (when
           (and
             (>= pid 0)
@@ -2306,6 +2308,7 @@
   [st : (&mut OptRangeState)]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
   [block-labels : (& (__tl_dyn-array i64))]
+  [block-id-map : (& (__tl_dyn-array i64))]
   [reachable : (& (__tl_dyn-array bool))]
   [tin : (& (__tl_dyn-array i64))]
   [tout : (& (__tl_dyn-array i64))]
@@ -2370,6 +2373,7 @@
                               st
                               block-dense
                               block-labels
+                              block-id-map
                               reachable
                               tin
                               tout
@@ -2418,6 +2422,7 @@
   [st : (&mut OptRangeState)]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
   [block-labels : (& (__tl_dyn-array i64))]
+  [block-id-map : (& (__tl_dyn-array i64))]
   [reachable : (& (__tl_dyn-array bool))]
   [tin : (& (__tl_dyn-array i64))]
   [tout : (& (__tl_dyn-array i64))]
@@ -2434,7 +2439,7 @@
       (let
         [inp (ir.compiler-ir-phi-input-seq-borrow inputs i)]
         [pid : i64
-          (opt-range-label-to-id block-labels st.block-count inp.label)]
+          (ir.compiler-ir-label-id-find block-id-map block-labels inp.label)]
         (when
           (and
             (>= pid 0)
@@ -2478,6 +2483,7 @@
   [st : (& OptRangeState)]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
   [block-labels : (& (__tl_dyn-array i64))]
+  [block-id-map : (& (__tl_dyn-array i64))]
   [reachable : (& (__tl_dyn-array bool))]
   [tin : (& (__tl_dyn-array i64))]
   [tout : (& (__tl_dyn-array i64))]
@@ -2492,7 +2498,7 @@
       (let
         [inp (ir.compiler-ir-phi-input-seq-borrow inputs i)]
         [pid : i64
-          (opt-range-label-to-id block-labels st.block-count inp.label)]
+          (ir.compiler-ir-label-id-find block-id-map block-labels inp.label)]
         (when
           (and
             (>= pid 0)
@@ -2542,6 +2548,7 @@
   [st : (&mut OptRangeState)]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
   [block-labels : (& (__tl_dyn-array i64))]
+  [block-id-map : (& (__tl_dyn-array i64))]
   [reachable : (& (__tl_dyn-array bool))]
   [tin : (& (__tl_dyn-array i64))]
   [tout : (& (__tl_dyn-array i64))]
@@ -2568,6 +2575,7 @@
       st
       block-dense
       block-labels
+      block-id-map
       reachable
       tin
       tout
@@ -2586,6 +2594,7 @@
               st
               block-dense
               block-labels
+              block-id-map
               reachable
               tin
               tout
@@ -2603,6 +2612,7 @@
   [st : (&mut OptRangeState)]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
   [block-labels : (& (__tl_dyn-array i64))]
+  [block-id-map : (& (__tl_dyn-array i64))]
   [reachable : (& (__tl_dyn-array bool))]
   [rpo-num : (& (__tl_dyn-array i64))]
   [tin : (& (__tl_dyn-array i64))]
@@ -2690,6 +2700,7 @@
                           st
                           block-dense
                           block-labels
+                          block-id-map
                           reachable
                           tin
                           tout
@@ -2702,6 +2713,7 @@
                           st
                           block-dense
                           block-labels
+                          block-id-map
                           reachable
                           tin
                           tout
@@ -2717,6 +2729,7 @@
                   st
                   block-dense
                   block-labels
+                  block-id-map
                   reachable
                   tin
                   tout
@@ -2742,6 +2755,7 @@
                   st
                   block-dense
                   block-labels
+                  block-id-map
                   reachable
                   tin
                   tout
@@ -2774,6 +2788,7 @@
                                   st
                                   block-dense
                                   block-labels
+                                  block-id-map
                                   reachable
                                   tin
                                   tout
@@ -2862,6 +2877,7 @@
                       st
                       block-dense
                       block-labels
+                      block-id-map
                       reachable
                       tin
                       tout
@@ -2888,8 +2904,9 @@
                         (set!
                           (array-ref cand-vals pi)
                           (opt-range-val-copy (& (array-ref phi-top pi))))))
-                    (when
-                      (not all-ok?)
+                    ;; A clean round needs no second check.
+                    (if all-ok?
+                      (break)
                       (for [qi (iterator.range 0 phi-cnt)]
                         (if (= _round 0)
                           (when
@@ -2932,6 +2949,7 @@
   [st : (&mut OptRangeState)]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
   [block-labels : (& (__tl_dyn-array i64))]
+  [block-id-map : (& (__tl_dyn-array i64))]
   [reachable : (& (__tl_dyn-array bool))]
   [rpo-num : (& (__tl_dyn-array i64))]
   [tin : (& (__tl_dyn-array i64))]
@@ -2955,6 +2973,7 @@
         st
         block-dense
         block-labels
+        block-id-map
         reachable
         rpo-num
         tin
@@ -2993,6 +3012,7 @@
                         st
                         block-dense
                         block-labels
+                        block-id-map
                         reachable
                         tin
                         tout
@@ -3112,7 +3132,7 @@
                   (opt-range-var-set! st payload.dst (& r))
                   (when
                     (and
-                      (= payload.lanes 1)
+                      (= payload.lanes 0)
                       (not (opt-range-addr-taken? st payload.dst)))
                     (let
                       [mr : OptRangeVal
@@ -3219,6 +3239,7 @@
   [st : (&mut OptRangeState)]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
   [block-labels : (& (__tl_dyn-array i64))]
+  [block-id-map : (& (__tl_dyn-array i64))]
   [reachable : (& (__tl_dyn-array bool))]
   [rpo-num : (& (__tl_dyn-array i64))]
   [tin : (& (__tl_dyn-array i64))]
@@ -3231,6 +3252,7 @@
     st
     block-dense
     block-labels
+    block-id-map
     reachable
     rpo-num
     tin
@@ -3264,6 +3286,7 @@
           st
           block-dense
           block-labels
+          block-id-map
           reachable
           rpo-num
           tin
@@ -3494,6 +3517,7 @@
   [entry-id : i64]
   [block-count : i64]
   [block-labels : (& (__tl_dyn-array i64))]
+  [block-id-map : (& (__tl_dyn-array i64))]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
   [reachable : (& (__tl_dyn-array bool))]
   [rpo-num : (& (__tl_dyn-array i64))]
@@ -3577,6 +3601,7 @@
                 (&mut st)
                 block-dense
                 block-labels
+                block-id-map
                 reachable
                 rpo-num
                 tin
@@ -3605,7 +3630,10 @@
                       [(Block lbl _)
                         (let
                           [bid : i64
-                            (opt-range-label-to-id block-labels block-count lbl)]
+                            (ir.compiler-ir-label-id-find
+                              block-id-map
+                              block-labels
+                              lbl)]
                           (if (and
                             (>= bid 0)
                             (< bid block-count)

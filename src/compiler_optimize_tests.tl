@@ -32186,7 +32186,7 @@
       (opt.opt-cfg-index-fill-id-map! (&mut slots) (& labels) count)
       (for [id (iterator.range 0 count)]
         (let
-          [slot : i64 (opt.opt-cfg-index-id-slot (array-ref labels id) mask)]
+          [slot : i64 (ir.compiler-ir-label-id-slot (array-ref labels id) mask)]
           [found : bool false]
           (while (not found)
             (+= probes 1)
@@ -88957,3 +88957,111 @@ inl.entry.0.cont:
     (test.assert-true
       (string.contains (& sw-ir) "return 40")
       "switch default sharing a case label keeps non-case default path alive")))
+
+(test
+  cvp-range-casts-keep-target-signedness
+  ;; 1. u8 -> i8 reinterprets 128..255 as negative: `lt y, 0` must stay live.
+  (let
+    [u8-i8-ir : String
+      (opt-cvp-range-test-render
+        "function @u8_to_i8(x=%0:i64) -> i64 vars 6 {
+         entry:
+           %1 = bit_and %0, 255 : i64
+           %2 = cast %1 : i64 to u8
+           %3 = cast %2 : u8 to i8
+           %4 = lt %3, 0 : i8
+           branch %4, neg, done
+         neg:
+           return 1
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (string.contains (& u8-i8-ir) "return 1")
+      "u8 -> i8 cast must not keep the unsigned range"))
+  ;; 2. i8 -> u8 / u32 sign-extends -128..-1 to large unsigned values: the
+  ;;    all-ones compares must stay live.
+  (let
+    [i8-u-ir : String
+      (opt-cvp-range-test-render
+        "function @i8_to_unsigned(x=%0:i64) -> i64 vars 10 {
+         entry:
+           %1 = bit_and %0, 127 : i64
+           %2 = sub %1, 128 : i64
+           %3 = cast %2 : i64 to i8
+           %4 = cast %3 : i8 to u8
+           %5 = eq %4, 255 : u8
+           branch %5, max8, next
+         max8:
+           return 1
+         next:
+           %6 = cast %3 : i8 to u32
+           %7 = eq %6, 4294967295 : u32
+           branch %7, max32, done
+         max32:
+           return 2
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (string.contains (& i8-u-ir) "return 1")
+      "i8 -> u8 cast must not keep the negative signed range")
+    (test.assert-true
+      (string.contains (& i8-u-ir) "return 2")
+      "i8 -> u32 cast must not keep the negative signed range"))
+  ;; 3. Narrowing to Bool tests `!= 0`, not bit 0: `x & -2` has bit 0 known
+  ;;    zero yet may be true, so the check against 1 must stay.
+  (let
+    [bool-ir : String
+      (opt-cvp-range-test-render
+        "function @to_bool(x=%0:i64) -> i64 vars 5 {
+         entry:
+           %1 = bit_and %0, -2 : i64
+           %2 = cast %1 : i64 to Bool
+           %3 = cast %2 : Bool to i64
+           bounds_check %3, 1 message \"bool\"
+           return %3
+         }")]
+    (test.assert-true
+      (string.contains (& bool-ir) "bounds_check")
+      "narrowing to Bool must not fold from bit 0 alone")))
+
+(test
+  cvp-range-scalar-select
+  ;; 1. A scalar select joins its arms' ranges: both arms are in [0, 7], so the
+  ;;    bounds check on the result is discharged.
+  (let
+    [join-ir : String
+      (opt-cvp-range-test-render
+        "function @sel_join(x=%0:i64, y=%1:i64, c=%2:Bool) -> i64 vars 7 {
+         entry:
+           %3 = bit_and %0, 7 : i64
+           %4 = bit_and %1, 7 : i64
+           %5 = select %2, %3, %4 lanes 0 : i64
+           bounds_check %5, 8 message \"sel\"
+           return %5
+         }")]
+    (test.assert-true
+      (not (string.contains (& join-ir) "bounds_check"))
+      "cvp_range discharges a bounds check on a scalar select of in-range arms"))
+  ;; 2. A dominating `x > 10` makes the mask `x > 5` constant: the scalar select
+  ;;    folds to its true arm.
+  (let
+    [fold-ir : String
+      (opt-cvp-range-test-render
+        "function @sel_fold(x=%0:i64) -> i64 vars 6 {
+         entry:
+           %1 = gt %0, 10 : i64
+           branch %1, big, done
+         big:
+           %2 = gt %0, 5 : i64
+           %3 = select %2, 100, 200 lanes 0 : i64
+           return %3
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (and
+        (not (string.contains (& fold-ir) "select"))
+        (not (string.contains (& fold-ir) "200")))
+      "cvp_range folds a scalar select with a range-constant mask")))

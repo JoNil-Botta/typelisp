@@ -11020,7 +11020,8 @@
   [dst-home : (& dst-home str)]
   [imm : (& imm str)]
   [rhs : (& compiler_ir_types.CompilerIrValue)]
-  [scratch-reg : (& scratch-reg str)]) : String
+  [scratch-reg : (& scratch-reg str)]
+  [in-loop? : bool]) : String
   (match rhs
     [(I64 n)
       (let
@@ -11028,7 +11029,7 @@
         (cond
           [(not (string.eq sib ""))
             (str_cat.str-cat "    leaq " sib ", " dst-home "\n")]
-          [(and (> n 8) (string.eq lhs-reg dst-home))
+          [(and (>= n 7) (string.eq lhs-reg dst-home))
             (match (compiler-backend-power-of-two-shift n)
               [(Some count)
                 (str_cat.str-cat
@@ -11072,23 +11073,9 @@
                       ", "
                       dst-home
                       "\n")])])]
-          [(and
-              (= n 7)
-              (string.eq lhs-reg dst-home)
-              (not (string.eq scratch-reg "")))
-            (str_cat.str-cat
-              "    movq "
-              dst-home
-              ", "
-              scratch-reg
-              "\n    shlq $3, "
-              dst-home
-              "\n    subq "
-              scratch-reg
-              ", "
-              dst-home
-              "\n")]
-          [(not (string.eq lhs-reg dst-home))
+          ;; Three instructions instead of one imulq: worth it for latency
+          ;; only inside loops, so straight-line code does not grow.
+          [(and in-loop? (not (string.eq lhs-reg dst-home)))
             (match (compiler-backend-mul-pow2-minus1-shift n)
               [(Some count)
                 (str_cat.str-cat
@@ -11122,13 +11109,15 @@
   [lhs-reg : String]
   [dst-home : String]
   [imm : String]
-  [rhs : compiler_ir_types.CompilerIrValue]) : String
+  [rhs : compiler_ir_types.CompilerIrValue]
+  [in-loop? : bool]) : String
   (compiler-backend-mul-immediate-direct-asm-core
     (& lhs-reg)
     (& dst-home)
     (& imm)
     (& rhs)
-    ""))
+    ""
+    in-loop?))
 
 (define (compiler-backend-mul-immediate-direct-asm-with-state
   [lhs-reg : (& lhs-reg str)]
@@ -11143,10 +11132,12 @@
       (be_state.compiler-backend-function-state-i64
         fn-state
         be_state.compiler-backend-function-i64-current-block-label)]
+    [in-loop? : bool
+      (be_state.compiler-backend-function-loop-block? fn-state cur-label)]
     [scratch-reg : String
       (if (and
         (string.eq lhs-reg dst-home)
-        (be_state.compiler-backend-function-loop-block? fn-state cur-label)
+        in-loop?
         (match rhs
           [(I64 n)
             (match (compiler-backend-mul-pow2-minus1-shift n)
@@ -11160,7 +11151,8 @@
       dst-home
       imm
       rhs
-      (& scratch-reg))))
+      (& scratch-reg)
+      in-loop?)))
 
 ;; Doubling can use base + index to avoid the displacement required by a
 ;; baseless SIB. A fused addition of another register needs the base slot,

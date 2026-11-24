@@ -27663,14 +27663,16 @@ entry:
         "%rbp"
         "%rcx"
         "$3"
-        (I64 3))
+        (I64 3)
+        false)
       "    imulq $3, %rbp, %rcx\n")
     (string.eq
       (be_scalar.compiler-backend-mul-immediate-direct-asm
         "%rbp"
         "%rbp"
         "$9"
-        (I64 9))
+        (I64 9)
+        false)
       "    imulq $9, %rbp, %rbp\n")))
 
 (define (compiler-backend-mul-non-pow2-imul-shape-ok?) : bool
@@ -47717,14 +47719,15 @@ user_fn:
 (test
   scalar-mul-mersenne-and-split-3op-lea
   ;; Mersenne constant multiplies (7, 15, 31, 63) lower to `movq; shlq $k; subq`
-  ;; (2c latency vs 3c imulq) when destination differs from source.
+  ;; (2c latency vs 3c imulq) inside loops when destination differs from source.
   (test.assert-true
     (string.eq
       (be_scalar.compiler-backend-mul-immediate-direct-asm
         "%r12"
         "%rcx"
         "$31"
-        (I64 31))
+        (I64 31)
+        true)
       "    movq %r12, %rcx\n    shlq $5, %rcx\n    subq %r12, %rcx\n")
     "mul by 31 lowers to movq; shlq $5; subq")
   (test.assert-true
@@ -47733,7 +47736,8 @@ user_fn:
         "%r12"
         "%rcx"
         "$7"
-        (I64 7))
+        (I64 7)
+        true)
       "    movq %r12, %rcx\n    shlq $3, %rcx\n    subq %r12, %rcx\n")
     "mul by 7 lowers to movq; shlq $3; subq")
   (test.assert-true
@@ -47742,7 +47746,8 @@ user_fn:
         "%r12"
         "%rcx"
         "$15"
-        (I64 15))
+        (I64 15)
+        true)
       "    movq %r12, %rcx\n    shlq $4, %rcx\n    subq %r12, %rcx\n")
     "mul by 15 lowers to movq; shlq $4; subq")
   (test.assert-true
@@ -47751,9 +47756,20 @@ user_fn:
         "%r12"
         "%rcx"
         "$63"
-        (I64 63))
+        (I64 63)
+        true)
       "    movq %r12, %rcx\n    shlq $6, %rcx\n    subq %r12, %rcx\n")
     "mul by 63 lowers to movq; shlq $6; subq")
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$31"
+        (I64 31)
+        false)
+      "    imulq $31, %r12, %rcx\n")
+    "mul by 31 outside a loop keeps the single imulq")
   ;; Slow 3-op `leaq disp(dep, inv), dep` splits into `leaq disp(inv), tmp; addq tmp, dep`
   ;; when `dep` was produced by the immediately preceding instruction.
   (test.assert-true

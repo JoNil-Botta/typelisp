@@ -3,6 +3,8 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
+(import stdlib.vector)
+(import (vector.vector String) as svec)
 (import compiler_typecheck_api as tc_api)
 (import compiler_typecheck_core as tc_core)
 (import compiler_typecheck_core_tests as core_tests)
@@ -3174,16 +3176,33 @@
   (tc_core.compiler-typecheck-reset-file-state!)
   (let
     [ok : bool
-      (match (load_tests.compiler-load-file-with-paths
-        "target/tc_scratch_shadow_ok_entry.tl"
-        (sym_i64_env.sym-i64-empty))
-        [(Ok decls paths _ _)
-          (match (tc_api.typecheck-compiler-program-with-paths
-            (ast.ast-program decls)
-            paths)
-            [(Ok _) true]
-            [(Err _) false])]
-        [(Err _) false])]
+      (let
+        [stdlib-roots : svec.Vec (svec.new)]
+        [cfgs : sym_i64_env.SymI64Env
+          (tc_api.typecheck-compiler-source-language-cfgs)]
+        (match (load.compiler-load-core-macro-prelude-with-roots-cfg
+          (sym_i64_env.sym-i64-empty)
+          (& stdlib-roots)
+          cfgs)
+          [(Ok prelude-decls prelude-paths _ prelude-seen)
+            (match (load.compiler-load-file-with-paths-and-roots-cfg
+              "target/tc_scratch_shadow_ok_entry.tl"
+              prelude-seen
+              (& stdlib-roots)
+              cfgs)
+              [(Ok entry-decls entry-paths _ _)
+                (match (tc_api.typecheck-compiler-program-with-paths
+                  (ast.ast-program
+                    (load.compiler-load-decl-list-append
+                      (& prelude-decls)
+                      (& entry-decls)))
+                  (load.compiler-load-decl-path-list-append
+                    (& prelude-paths)
+                    (& entry-paths)))
+                  [(Ok _) true]
+                  [(Err _) false])]
+              [(Err _) false])]
+          [(Err _) false]))]
     (tc_core.compiler-typecheck-reset-file-state!)
     ok))
 

@@ -12862,8 +12862,10 @@
                   (normalize-scratch-copy-cells edges))))
             (return unit))
           (let
-            [names : (__tl_dyn-array i64) (clone edges.scratch-names.items)]
-            [invs : (__tl_dyn-array bool) (clone edges.scratch-invs.items)]
+            [names : (__tl_dyn-array i64)
+              (normalize-clone-i64-array (& edges.scratch-names.items))]
+            [invs : (__tl_dyn-array bool)
+              (normalize-clone-bool-array (& edges.scratch-invs.items))]
             (normalize-relate-flat!
               edges
               nodes
@@ -12894,8 +12896,10 @@
                   (normalize-scratch-copy-cells edges))))
             (return unit))
           (let
-            [names : (__tl_dyn-array i64) (clone edges.scratch-names.items)]
-            [invs : (__tl_dyn-array bool) (clone edges.scratch-invs.items)]
+            [names : (__tl_dyn-array i64)
+              (normalize-clone-i64-array (& edges.scratch-names.items))]
+            [invs : (__tl_dyn-array bool)
+              (normalize-clone-bool-array (& edges.scratch-invs.items))]
             (normalize-relate-flat!
               edges
               nodes
@@ -15748,6 +15752,28 @@
   (Exhausted)
   (Gated (__tl_dyn-array OwnershipNormalizedArena)))
 
+(define (normalize-clone-i64-array [src : (& (__tl_dyn-array i64))]) : (__tl_dyn-array
+    i64)
+  (let
+    [count : i64 (array-length src)]
+    [dst : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    (while (< index count)
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))
+    dst))
+
+(define (normalize-clone-bool-array [src : (& (__tl_dyn-array bool))]) : (__tl_dyn-array
+    bool)
+  (let
+    [count : i64 (array-length src)]
+    [dst : (__tl_dyn-array bool) (__tl_make-array bool count)]
+    [index : i64 0]
+    (while (< index count)
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))
+    dst))
+
 ;; The ordinary notes, kept while the lane extends and splits them in place.
 (defstruct NormalizeLenderSaved
   (from (__tl_dyn-array i64))
@@ -16316,18 +16342,18 @@
     [uses : i64 state.use-count]
     [saved : NormalizeLenderSaved
       (NormalizeLenderSaved
-        (clone state.flow-from)
-        (clone state.flow-to)
-        (clone state.flow-from-place)
-        (clone state.flow-to-place)
-        (clone state.flow-outlives)
-        (clone state.flow-contents)
-        (clone state.use-blocks)
-        (clone state.use-indices)
-        (clone state.use-places)
-        (clone state.origin-places)
-        (clone state.origin-loans)
-        (clone state.type-references))]
+        (normalize-clone-i64-array (& state.flow-from))
+        (normalize-clone-i64-array (& state.flow-to))
+        (normalize-clone-i64-array (& state.flow-from-place))
+        (normalize-clone-i64-array (& state.flow-to-place))
+        (normalize-clone-bool-array (& state.flow-outlives))
+        (normalize-clone-bool-array (& state.flow-contents))
+        (normalize-clone-i64-array (& state.use-blocks))
+        (normalize-clone-i64-array (& state.use-indices))
+        (normalize-clone-i64-array (& state.use-places))
+        (normalize-clone-i64-array (& state.origin-places))
+        (normalize-clone-i64-array (& state.origin-loans))
+        (normalize-clone-i64-array (& state.type-references)))]
     [_inputs : unit
       (set!
         state.variances.lenders
@@ -16385,8 +16411,8 @@
       (match (& state.variances.lenders)
         [(OwnershipNormalizeLenderInput.Gated inputs)
           (OwnershipNormalizeArena
-            (clone (array-ref inputs 0).records)
-            (clone (array-ref inputs 0).heads)
+            (normalize-clone-i64-array (& (array-ref inputs 0).records))
+            (normalize-clone-i64-array (& (array-ref inputs 0).heads))
             (normalize-no-bools))]
         [_
           (return
@@ -16570,9 +16596,9 @@
           lenders
           words
           rows
-          (clone state.use-blocks)
-          (clone state.use-indices)
-          (clone state.use-places)
+          (normalize-clone-i64-array (& state.use-blocks))
+          (normalize-clone-i64-array (& state.use-indices))
+          (normalize-clone-i64-array (& state.use-places))
           demand)))))
 
 ;; Whether place `place` may hold a lender (`normalize-lender-rows!`).
@@ -16668,9 +16694,9 @@
             (* (+ nodes.keys.len state.place-count uses 1) words))
           0))]
     [places : (__tl_dyn-array i64)
-      (replace! state.origin-places (clone (deref seeds)))]
+      (replace! state.origin-places (normalize-clone-i64-array seeds))]
     [loans : (__tl_dyn-array i64)
-      (replace! state.origin-loans (clone (deref seeded)))]
+      (replace! state.origin-loans (normalize-clone-i64-array seeded))]
     [bits : NormalizeWords
       (normalize-region-loans! state (& shapes) (& nodes) (& edges) words true)]
     (set! state.origin-places places)

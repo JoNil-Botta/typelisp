@@ -116,7 +116,6 @@
         (= (doc_import_form_vec.len (& forms)) 6)
         (= (doc_macro_import_example_vec.len (& macro-examples)) 6)
         (= (doc_generated_target_example_vec.len (& targets)) 6)
-        (= (doc_render.doc-module-list-count (clone modules)) 6)
         (string.eq
           (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 0))
           "0")
@@ -148,7 +147,8 @@
         (string.eq
           (doc_render.doc-module-path
             (doc_render.doc-module-list-ref (& modules) 5))
-          "5"))
+          "5")
+        (= (doc_render.doc-module-list-count modules) 6))
       (io.panic "doc-expand: generated vector growth/order mismatch"))))
 
 (test

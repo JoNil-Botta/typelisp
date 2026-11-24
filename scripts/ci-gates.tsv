@@ -23,7 +23,7 @@ tlci-format-corpus	all	TLCI format corpus	bootstrap-compiler	stage2	256	-	script
 stage2-crypto-gcm-native-report	all	stage2 crypto GCM native performance report	bootstrap-compiler	stage2	6144	-	scripts/measure-crypto-gcm.sh
 stage2-public-tool-cli-transcripts-2	all	stage2 public tool CLI transcripts 2	bootstrap-compiler	stage2	3840	-	scripts/verify-public-tools.sh cli-transcripts-2
 stage2-prelude-macro-mutation-guard	all	stage2 prelude macro mutation guard	bootstrap-compiler	stage2	256	-	scripts/verify-prelude-mutation.sh
-stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-compiler	stage2	8192	-	scripts/verify-inline-tests.sh
+stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-compiler	stage2	6144	-	scripts/verify-inline-tests.sh
 stage2-spmd-simd-comparison	all	stage2 SPMD SIMD comparison	bootstrap-compiler	stage2	768	-	scripts/verify-spmd-simd.sh
 stage2-inline-aggregate-scaling	all	stage2 inline aggregate scaling	bootstrap-compiler	stage2	768	-	scripts/verify-inline-aggregate-scaling.sh
 stage2-sha-512-wipe-asm-shape-gate	linux	stage2 SHA-512 wipe asm shape gate	bootstrap-compiler	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha512-*' tests/codegen/crypto-sha.cases

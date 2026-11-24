@@ -88685,3 +88685,213 @@ inl.entry.0.cont:
                     (test.assert-true
                       (not (string.contains (& reader-text) "@lib_const_cell"))
                       "executable with main still folds constant global"))))])]))))
+
+(define (opt-cvp-range-test-render [src : String]) : String
+  (let
+    [prog : ir.CompilerIrProgram (irt.program src)]
+    (match (opt.optimize-program-with-spans-and-level
+      (& prog)
+      (ir.compiler-source-spans-empty)
+      2)
+      [(opt.CompilerOptimizedProgram.Program opt-prog _)
+        (match (& opt-prog)
+          [(Program _ fns _ _)
+            (if (> (ir.compiler-ir-function-seq-count (& fns)) 0)
+              (ir.compiler-ir-function-render
+                (cis.InternStructuralSessionHandle 0)
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (& (array-ref fns.slots 0)))
+              "")])])))
+
+(test
+  cvp-range-wrapping-safe-and-rewrites
+  ;; 1. Wrapping safety: unbounded `x >= 0` + 1 may wrap to INT64_MIN, so
+  ;;    `add x, 1 >= 0` must NOT fold to true and must NOT retype `% 1000000007` to u64.
+  (let
+    [wrap-ir : String
+      (opt-cvp-range-test-render
+        "function @wrap_add(x=%0:i64) -> i64 vars 6 {
+         entry:
+           %1 = ge %0, 0 : i64
+           branch %1, pos, done
+         pos:
+           %2 = add %0, 1 : i64
+           %3 = safe_mod %2, 1000000007 : i64
+           return %3
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (string.contains (& wrap-ir) "safe_mod ")
+      "wrapping add keeps mod")
+    (test.assert-true
+      (not (string.contains (& wrap-ir) "1000000007 : u64"))
+      "wrapping add must not assume nsw or retype mod to u64"))
+  ;; 2. KnownBits + Interval bounds-check discharge: `(x & 0xFFFFFFFF) >> 27 < 32`.
+  (let
+    [kb-ir : String
+      (opt-cvp-range-test-render
+        "function @kb_bce(x=%0:i64) -> i64 vars 5 {
+         entry:
+           %1 = bit_and %0, 4294967295 : i64
+           %2 = shr %1, 27 : i64
+           bounds_check %2, 32 message \"kb\"
+           return %2
+         }")]
+    (test.assert-true
+      (not (string.contains (& kb-ir) "bounds_check"))
+      "cvp_range discharges (x & 0xFFFFFFFF) >> 27 < 32 bounds check"))
+  ;; 3. Mask by `len - 1` with dominating `len > 0` discharges BoundsCheck.
+  (let
+    [mask-ir : String
+      (opt-cvp-range-test-render
+        "function @mask_bce(x=%0:i64, len=%1:i64) -> i64 vars 6 {
+         entry:
+           %2 = gt %1, 0 : i64
+           branch %2, ok, done
+         ok:
+           %3 = sub %1, 1 : i64
+           %4 = bit_and %0, %3 : i64
+           bounds_check %4, %1 message \"mask\"
+           return %4
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (not (string.contains (& mask-ir) "bounds_check"))
+      "cvp_range discharges x & (len - 1) bounds check when len > 0"))
+  ;; 4. Retype RoundUp signed div/mod to u64 when dividend >= 0, keep RoundDown (7) signed.
+  (let
+    [div-ir : String
+      (opt-cvp-range-test-render
+        "function @div_retype(x=%0:i64) -> i64 vars 7 {
+         entry:
+           %1 = bit_and %0, 65535 : i64
+           %2 = safe_mod %1, 1000000007 : i64
+           %3 = safe_div %1, 3 : i64
+           %4 = safe_div %1, 7 : i64
+           %5 = add %2, %3 : i64
+           %6 = add %5, %4 : i64
+           return %6
+         }")]
+    (test.assert-true
+      (string.contains (& div-ir) "1000000007 : u64")
+      "cvp_range retypes non-negative RoundUp mod 1000000007 to u64")
+    (test.assert-true
+      (string.contains (& div-ir) "3 : u64")
+      "cvp_range retypes non-negative RoundUp div 3 to u64")
+    (test.assert-true
+      (string.contains (& div-ir) "7 : i64")
+      "cvp_range keeps RoundDown div 7 signed"))
+  ;; 5. spmd_foreach_2d shape: `0 < w` + trap on `8 > INT64_MAX / w` proves `y * w >= 0`
+  ;;    and `w <= INT64_MAX - 4`.
+  (let
+    [spmd-ir : String
+      (opt-cvp-range-test-render
+        "function @spmd_guard(w=%0:i64, y=%1:i64) -> i64 vars 12 {
+         entry:
+           %2 = lt 0, %0 : i64
+           branch %2, chk_y, exit
+         chk_y:
+           %3 = ge %1, 0 : i64
+           branch %3, chk_y2, exit
+         chk_y2:
+           %4 = lt %1, 8 : i64
+           branch %4, chk_ovf, exit
+         chk_ovf:
+           %5 = div 9223372036854775807, %0 : i64
+           %6 = gt 8, %5 : i64
+           branch %6, trap, ok
+         trap:
+           bounds_check 0, 0 message \"ovf\"
+           jump ok
+         ok:
+           %7 = mul %1, %0 : i64
+           %8 = ge %7, 0 : i64
+           branch %8, good, exit
+         good:
+           %9 = lt %0, 9223372036854775803 : i64
+           branch %9, ret_prod, exit
+         ret_prod:
+           return %7
+         exit:
+           return 0
+         }")]
+    (test.assert-true
+      (not (string.contains (& spmd-ir) "ge %7, 0"))
+      "cvp_range folds y * w >= 0 after INT64_MAX / w overflow trap")
+    (test.assert-true
+      (not (string.contains (& spmd-ir) "9223372036854775803"))
+      "cvp_range folds w < INT64_MAX - 4 after INT64_MAX / w overflow trap"))
+  ;; 6. Unroll no-wrap precondition: bounded linear recurrence with `% 1000000007`
+  ;;    emits upper-bound guard in __unroll_guard and retypes __unroll_body mod to u64.
+  (let
+    [unroll-ir : String
+      (opt-cvp-range-test-render
+        "function @mod_loop(n=%0:i64) -> i64 vars 12 {
+         entry:
+           %1 = lt 0, %0 : i64
+           branch %1, loop, exit
+         loop:
+           %2 = phi [0, entry], [%8, loop] : i64
+           %3 = phi [1, entry], [%7, loop] : i64
+           %4 = mul %3, 31 : i64
+           %5 = mul %2, 17 : i64
+           %6 = add %5, 7 : i64
+           %9 = add %4, %6 : i64
+           %7 = mod %9, 1000000007 : i64
+           %8 = add %2, 1 : i64
+           %10 = lt %8, %0 : i64
+           branch %10, loop, exit
+         exit:
+           %11 = phi [1, entry], [%7, loop] : i64
+           return %11
+         }")]
+    (test.assert-true
+      (string.contains (& unroll-ir) "542551294462045608")
+      "opt-unroll emits loop-invariant no-wrap upper-bound check in __unroll_guard")
+    (test.assert-true
+      (string.contains (& unroll-ir) "1000000007 : u64")
+      "cvp_range retypes __unroll_body mod 1000000007 to u64")
+    (test.assert-true
+      (string.contains (& unroll-ir) "1000000007 : i64")
+      "scalar tail keeps exact signed i64 wrapping mod 1000000007"))
+  ;; 7. Width preservation: widening `bit_and %bool, 255 : u64` must NOT fold
+  ;;    to `mov %bool : u64` (which would narrow a subsequent 64-bit bit_or).
+  (let
+    [widen-ir : String
+      (opt-cvp-range-test-render
+        "function @widen_bool(a=%0:bool, b=%1:bool) -> u64 vars 6 {
+         entry:
+           %2 = bit_and %0, 255 : u64
+           %3 = bit_and %1, 255 : u64
+           %4 = shl %3, 8 : i64
+           %5 = bit_or %2, %4 : u64
+           return %5
+         }")]
+    (test.assert-true
+      (string.contains (& widen-ir) "bit_and %0, 255 : u64")
+      "cvp_range preserves widening bit_and %bool, 255 : u64"))
+  ;; 8. Switch default-arm soundness: when a case label equals default-label,
+  ;;    `cvp_range` must NOT refine the discriminant to that single case value.
+  (let
+    [sw-ir : String
+      (opt-cvp-range-test-render
+        "function @switch_shared_def(tag=%0:i64) -> i64 vars 6 {
+         entry:
+           switch %0 base 0 [0:c0, 1:c1, 2:def] default def
+         c0:
+           return 10
+         c1:
+           return 20
+         def:
+           %1 = eq %0, 2 : i64
+           branch %1, is2, other
+         is2:
+           return 30
+         other:
+           return 40
+         }")]
+    (test.assert-true
+      (string.contains (& sw-ir) "return 40")
+      "switch default sharing a case label keeps non-case default path alive")))

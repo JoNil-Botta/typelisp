@@ -10919,20 +10919,108 @@
             ty)))]
     [_ (No)]))
 
+;; Find a live-free scratch register at the current emit point without ever
+;; booking an emergency save/restore. Returns "" when occupancy tracking is
+;; absent or every candidate is live/excluded.
+(define (compiler-backend-free-scratch-reg-here
+  [backend-state : be_state.CompilerBackendState]
+  [exclude1 : (& exclude1 str)]
+  [exclude2 : (& exclude2 str)]) : String
+  (let
+    [function-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state backend-state)]
+    [point : i64
+      (be_state.compiler-backend-function-state-emission-point function-state)]
+    [occupied-masks : (__tl_dyn-array i64)
+      (be_state.compiler-backend-function-scratch-i64-array
+        function-state
+        be_state.compiler-backend-scratch-i64-array-scavenge-occupied-masks)]
+    (if (or (< point 0) (= (array-length occupied-masks) 0))
+      ""
+      (let
+        [occupied-mask : i64
+          (be_operand.compiler-backend-scavenge-occupied-mask-over-range
+            function-state
+            point
+            (+ point 2))]
+        [exclude-mask : i64
+          (bit-or
+            (be_operand.compiler-backend-scavenge-reg-bit exclude1)
+            (be_operand.compiler-backend-scavenge-reg-bit exclude2))]
+        [plan-mask : i64
+          (be_state.compiler-backend-function-scratch-i64
+            function-state
+            be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)]
+        [idx : i64
+          (be_operand.compiler-backend-scavenge-first-ok-index
+            function-state
+            occupied-mask
+            exclude-mask
+            plan-mask
+            (& be_operand.compiler-backend-scavenge-candidate-pool)
+            (array-length be_operand.compiler-backend-scavenge-candidate-pool))]
+        (if (< idx 0)
+          ""
+          (compiler_abi.compiler-abi-register-spelling
+            (array-ref be_operand.compiler-backend-scavenge-candidate-pool idx)))))))
+
+;; When `n = 2^k - 1` with `k >= 3` (e.g. 7, 15, 31, 63, ...), return `(Some k)`
+;; so constant multiplication can lower to `shlq $k; subq` (2c latency vs 3c
+;; `imulq`). Factors 1 and 3 are handled earlier (identity / 1-cycle `leaq`).
+(define (compiler-backend-mul-pow2-minus1-shift [n : i64]) : option_i64.Option
+  (if (or (< n 7) (> n 2147483647))
+    (None)
+    (compiler-backend-power-of-two-shift (+ n 1))))
+
+;; Split a slow 3-component `leaq disp(dep, inv), dep` (3c latency on `dep`)
+;; into `leaq disp(inv), tmp; addq tmp, dep` (1c on `dep`, with `leaq disp(inv)`
+;; executing off the critical path). Returns `(No)` if no free scratch exists.
+(define (compiler-backend-split-3op-lea-asm
+  [backend-state : be_state.CompilerBackendState]
+  [disp : i64]
+  [inv-reg : (& inv-reg str)]
+  [dep-reg : (& dep-reg str)]
+  [preferred-tmp : (& preferred-tmp str)]) : be_state.CompilerBackendMaybeAsm
+  (let
+    [tmp : String
+      (if (and
+        (not (string.eq preferred-tmp ""))
+        (not (string.eq preferred-tmp inv-reg))
+        (not (string.eq preferred-tmp dep-reg)))
+        (string.copy preferred-tmp)
+        (compiler-backend-free-scratch-reg-here backend-state inv-reg dep-reg))]
+    (if (string.eq tmp "")
+      (No)
+      (Some
+        (str_cat.str-cat
+          "    leaq "
+          (string.int->string disp)
+          "("
+          inv-reg
+          "), "
+          (string.copy (& tmp))
+          "\n    addq "
+          tmp
+          ", "
+          dep-reg
+          "\n")))))
+
 ;; Strength-reduce a three-operand constant multiply: a SIB-scale power of two
 ;; (2/4/8) becomes a flags-free `leaq (,%lhs,scale), %dst` and a larger power
 ;; of two whose source already sits in the destination register becomes a bare
 ;; `shlq` -- both the same instruction count as the imulq they replace and
 ;; cheaper to execute. Factors 3/5/9 use base + scaled index in one LEA.
-;; Every other constant keeps the imulq (a
-;; mov+shl pair would trade latency for instruction count).
+;; Mersenne factors `2^k - 1` (`k >= 3`, e.g. 7/15/31/63) lower to
+;; `movq; shlq $k; subq` (2c latency vs 3c `imulq`) when a distinct register is
+;; available without spilling.
 ;; `leaq (,%rbp,scale)` is safe under the FPO rsp-rebase pass: the rebased
 ;; frame shape is `disp(%rbp)`, while this form names only an index.
-(define (compiler-backend-mul-immediate-direct-asm
-  [lhs-reg : String]
-  [dst-home : String]
-  [imm : String]
-  [rhs : compiler_ir_types.CompilerIrValue]) : String
+(define (compiler-backend-mul-immediate-direct-asm-core
+  [lhs-reg : (& lhs-reg str)]
+  [dst-home : (& dst-home str)]
+  [imm : (& imm str)]
+  [rhs : (& compiler_ir_types.CompilerIrValue)]
+  [scratch-reg : (& scratch-reg str)]) : String
   (match rhs
     [(I64 n)
       (let
@@ -10950,6 +11038,74 @@
                   dst-home
                   "\n")]
               [(None)
+                (match (compiler-backend-mul-pow2-minus1-shift n)
+                  [(Some count)
+                    (if (not (string.eq scratch-reg ""))
+                      (str_cat.str-cat
+                        "    movq "
+                        dst-home
+                        ", "
+                        scratch-reg
+                        "\n    shlq $"
+                        (string.int->string count)
+                        ", "
+                        dst-home
+                        "\n    subq "
+                        scratch-reg
+                        ", "
+                        dst-home
+                        "\n")
+                      (str_cat.str-cat
+                        "    imulq "
+                        imm
+                        ", "
+                        lhs-reg
+                        ", "
+                        dst-home
+                        "\n"))]
+                  [(None)
+                    (str_cat.str-cat
+                      "    imulq "
+                      imm
+                      ", "
+                      lhs-reg
+                      ", "
+                      dst-home
+                      "\n")])])]
+          [(and
+              (= n 7)
+              (string.eq lhs-reg dst-home)
+              (not (string.eq scratch-reg "")))
+            (str_cat.str-cat
+              "    movq "
+              dst-home
+              ", "
+              scratch-reg
+              "\n    shlq $3, "
+              dst-home
+              "\n    subq "
+              scratch-reg
+              ", "
+              dst-home
+              "\n")]
+          [(not (string.eq lhs-reg dst-home))
+            (match (compiler-backend-mul-pow2-minus1-shift n)
+              [(Some count)
+                (str_cat.str-cat
+                  "    movq "
+                  lhs-reg
+                  ", "
+                  dst-home
+                  "\n    shlq $"
+                  (string.int->string count)
+                  ", "
+                  dst-home
+                  "\n    subq "
+                  lhs-reg
+                  ", "
+                  dst-home
+                  "\n")]
+              [(None)
                 (str_cat.str-cat
                   "    imulq "
                   imm
@@ -10961,6 +11117,50 @@
           [else
             (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))]
     [_ (str_cat.str-cat "    imulq " imm ", " lhs-reg ", " dst-home "\n")]))
+
+(define (compiler-backend-mul-immediate-direct-asm
+  [lhs-reg : String]
+  [dst-home : String]
+  [imm : String]
+  [rhs : compiler_ir_types.CompilerIrValue]) : String
+  (compiler-backend-mul-immediate-direct-asm-core
+    (& lhs-reg)
+    (& dst-home)
+    (& imm)
+    (& rhs)
+    ""))
+
+(define (compiler-backend-mul-immediate-direct-asm-with-state
+  [lhs-reg : (& lhs-reg str)]
+  [dst-home : (& dst-home str)]
+  [imm : (& imm str)]
+  [rhs : (& compiler_ir_types.CompilerIrValue)]
+  [backend-state : be_state.CompilerBackendState]) : String
+  (let
+    [fn-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state backend-state)]
+    [cur-label : i64
+      (be_state.compiler-backend-function-state-i64
+        fn-state
+        be_state.compiler-backend-function-i64-current-block-label)]
+    [scratch-reg : String
+      (if (and
+        (string.eq lhs-reg dst-home)
+        (be_state.compiler-backend-function-loop-block? fn-state cur-label)
+        (match rhs
+          [(I64 n)
+            (match (compiler-backend-mul-pow2-minus1-shift n)
+              [(Some _) true]
+              [(None) false])]
+          [_ false]))
+        (compiler-backend-free-scratch-reg-here backend-state dst-home "")
+        "")]
+    (compiler-backend-mul-immediate-direct-asm-core
+      lhs-reg
+      dst-home
+      imm
+      rhs
+      (& scratch-reg))))
 
 ;; Doubling can use base + index to avoid the displacement required by a
 ;; baseless SIB. A fused addition of another register needs the base slot,
@@ -11049,7 +11249,13 @@
       (match (& op)
         [(Mul) true]
         [_ false]))
-      (Ok (compiler-backend-mul-immediate-direct-asm lhs-reg dst-home imm rhs))
+      (Ok
+        (compiler-backend-mul-immediate-direct-asm-with-state
+          (& lhs-reg)
+          (& dst-home)
+          (& imm)
+          (& rhs)
+          backend-state))
       (match (if (and
         (not (string.eq lhs-reg ""))
         (not (string.eq lhs-reg dst-home))

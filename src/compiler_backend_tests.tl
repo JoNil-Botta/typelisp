@@ -47710,3 +47710,59 @@ user_fn:
                 (asm-lacks? asm "_tl_f0")
                 (asm-lacks? asm "#t _tl_f"))
               "library object never emits compact _tl_f<slot> function symbols")])))))
+
+(test
+  scalar-mul-mersenne-and-split-3op-lea
+  ;; Mersenne constant multiplies (7, 15, 31, 63) lower to `movq; shlq $k; subq`
+  ;; (2c latency vs 3c imulq) when destination differs from source.
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$31"
+        (I64 31))
+      "    movq %r12, %rcx\n    shlq $5, %rcx\n    subq %r12, %rcx\n")
+    "mul by 31 lowers to movq; shlq $5; subq")
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$7"
+        (I64 7))
+      "    movq %r12, %rcx\n    shlq $3, %rcx\n    subq %r12, %rcx\n")
+    "mul by 7 lowers to movq; shlq $3; subq")
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$15"
+        (I64 15))
+      "    movq %r12, %rcx\n    shlq $4, %rcx\n    subq %r12, %rcx\n")
+    "mul by 15 lowers to movq; shlq $4; subq")
+  (test.assert-true
+    (string.eq
+      (be_scalar.compiler-backend-mul-immediate-direct-asm
+        "%r12"
+        "%rcx"
+        "$63"
+        (I64 63))
+      "    movq %r12, %rcx\n    shlq $6, %rcx\n    subq %r12, %rcx\n")
+    "mul by 63 lowers to movq; shlq $6; subq")
+  ;; Slow 3-op `leaq disp(dep, inv), dep` splits into `leaq disp(inv), tmp; addq tmp, dep`
+  ;; when `dep` was produced by the immediately preceding instruction.
+  (test.assert-true
+    (asm-ok?
+      (compiler-backend-emit-test-instrs
+        (irt.instrs
+          "%1 = mul %0, 31 : i64
+           %2 = add %4, 24 : i64
+           %3 = add %1, %2 : i64
+           %5 = add %3, 1 : i64")
+        (reg-homes "%0=%rax %1=%rax %2=%r10 %3=%rax %4=%rsi %5=%rax")
+        6)
+      (has "    leaq 24(%rsi), %r10\n    addq %r10, %rax\n")
+      (lacks "    leaq 24(%rax,%rsi), %rax\n"))
+    "dependent 3-op leaq splits to leaq disp(inv), tmp; addq tmp, dep"))

@@ -33,7 +33,9 @@
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_builtin_ids as cbi)
 (import compiler_ir_types as ir)
+(import compiler_backend_div_magic as be_div)
 (import compiler_opt_level as opt_level)
+(import compiler_opt_range as opt_range)
 (import compiler_ir_return_storage as return_storage)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
@@ -21921,6 +21923,7 @@
       [(string.eq pass "global_cell") (Shared)]
       [(string.eq pass "gvn") (Shared)]
       [(string.eq pass "bounds_dom") (Shared)]
+      [(string.eq pass "cvp_range") (Shared)]
       [(string.eq pass "sccp") (NotObservable "folds constants and phis")]
       [(string.eq pass "phi_cmp_fold")
         (NotObservable "rewrites compares and phis")]
@@ -57014,39 +57017,18 @@
         [(Some decided) decided]
         [(No) false]))))
 
-;; --- a power-of-two divide whose dividend is known non-negative --------------
+;; --- a constant divide/mod whose dividend is known non-negative --------------
 ;;
-;; `x / 2^k` at `: i64` lowers to `mov; sar $63; and $(2^k - 1); add; sar $k` --
-;; five instructions, of which the first four exist ONLY to round a NEGATIVE
-;; dividend toward zero (`%` pays the same five and a subtract on top). With
-;; `x >= 0` proven, that correction is dead: for a non-negative dividend the
-;; signed and the UNSIGNED quotient are the same number, and so are the two
-;; remainders, so the whole operation is one `shr $k` (one `and $(2^k - 1)` for
-;; the remainder). `opt-bce-version-affine-guard` states the same trade where it
-;; builds its own guard quotient: "a signed power-of-two divide is `mov; sar
-;; $63; and; add; sar` (five instructions) ... an unsigned one is a single
-;; `shr`".
-;;
-;; The rewrite is a RETYPE, not a new instruction: the operand vars are
-;; untouched and only the BinOp's operand/result type moves from `i64` to `u64`,
-;; which is exactly how the versioner spells its unsigned quotient. Every value
-;; involved is a 64-bit word whose bit pattern does not change; what changes is
-;; which lowering the backend picks for it.
-;;
-;; WHY A POWER OF TWO ONLY. For any other literal divisor both signednesses
-;; lower to a magic multiply of the same length, so a retype would buy nothing.
-;; The saving here IS the rounding correction, and only a power of two has one
-;; that a single shift replaces.
-;;
-;; WHY THE DIVISOR MUST BE A POSITIVE LITERAL. A negative divisor reads as a
-;; huge number unsigned, and a non-literal divisor is not known non-negative at
-;; all; a literal in (0, 2^62] denotes itself in both readings.
-;;
-;; WHY IT SITS ON THIS WALK. The dividend's proof is `opt-bounds-dom-nonneg?`,
-;; which is only as strong as the facts reaching the point the question is asked
-;; at -- the length reads and narrowing forms of the lattice above PLUS every
-;; `>= 0` guard and passed check dominating this instruction. Asked anywhere
-;; else it would see strictly less.
+;; For a non-negative i64 dividend and a positive literal divisor d, the signed
+;; and unsigned quotients/remainders are identical, so retyping the BinOp from
+;; `i64` to `u64` preserves the exact bit pattern while unlocking the cheaper
+;; unsigned lowering:
+;;   - powers of two: single `shr`/`and` instead of the 5-insn signed rounding
+;;     correction;
+;;   - RoundUp magic divisors (`compiler-backend-unsigned-divmod-profitable?`):
+;;     `mulq; shrq` without the signed `addq; sarq $63; addq` sign-correction
+;;     chain (RoundDown divisors stay signed because their `addq; adcq` carry
+;;     fixup is not shorter than signed magic).
 (define (opt-bounds-dom-positive-power-of-two? [n : i64]) : bool
   (and (> n 0) (= (bit-and n (- n 1)) 0)))
 
@@ -57058,10 +57040,15 @@
   (match (compiler-opt-global-shared-view instr)
     [(BinOp dst op lhs rhs ty)
       (if (and
-        (or (opt-binop-eq (& op) (& (Div))) (opt-binop-eq (& op) (& (Mod))))
+        (or
+          (opt-binop-eq (& op) (& (Div)))
+          (opt-binop-eq (& op) (& (Mod)))
+          (opt-binop-eq (& op) (& (SafeDiv)))
+          (opt-binop-eq (& op) (& (SafeMod))))
         (opt-type-eq env.type-segment-bases ty (& (I64)))
         (match (compiler-opt-global-shared-view rhs)
-          [(I64 divisor) (opt-bounds-dom-positive-power-of-two? divisor)]
+          [(I64 divisor)
+            (be_div.compiler-backend-unsigned-divmod-profitable? divisor)]
           [_ false])
         (opt-bounds-dom-nonneg?
           env
@@ -59410,6 +59397,41 @@
         (if (array-ref changed 0)
           (Some out)
           (No))))))
+
+(define (opt-cvp-range-blocks-with-context
+  [type-segment-bases : i64]
+  [context : (& OptCfgContext)]
+  [params : (& ir.CompilerIrParamSeq)]
+  [frame : i64]
+  [nonneg : (& opt_i64_i64_map.Map)]
+  [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
+  (let
+    [_addr-taken : unit (opt-addr-taken-refresh! frame (& blocks))]
+    [_refresh : unit
+      (opt-cfg-index-refresh-blocks! (& context.index) (& blocks))]
+    [entry-id : i64
+      (match (opt-cfg-index-id (& context.index) context.entry-label)
+        [(Some id) id]
+        [(None) -1])]
+    (match (opt_range.opt-range-cvp-blocks
+      type-segment-bases
+      params
+      frame
+      entry-id
+      (opt-cfg-index-block-count (& context.index))
+      (& context.index.labels)
+      (& context.index.blocks)
+      (& context.index.reachable)
+      (& context.index.rpo-num)
+      (& context.doms.idom)
+      (& context.doms.tin)
+      (& context.doms.tout)
+      (& context.index.preds.offsets)
+      (& context.index.preds.edges)
+      (& opt-function-addr-taken.marks)
+      nonneg
+      blocks)
+      [(Result rewritten _) rewritten])))
 
 (define (opt-bounds-dom-blocks-with-context-result
   [type-segment-bases : i64]
@@ -66208,6 +66230,429 @@
         tail-block
         guard-label)]))
 
+;; Evaluate a non-negative constant i64 expression (including un-folded
+;; preheader seeds such as `mul 0, 17` created by strength reduction).
+(define (opt-unroll-const-nonneg-eval
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [val : (& ir.CompilerIrValue)]
+  [fuel : i64]) : option_i64.Option
+  (if (<= fuel 0)
+    (None)
+    (match val
+      [(I64 c)
+        (if (>= c 0)
+          (Some c)
+          (None))]
+      [(Var v)
+        (match (opt-unroll-resolved-def blocks v)
+          [(No) (None)]
+          [(Some instr)
+            (match (& instr)
+              [(BinOp _ op lhs rhs (I64))
+                (match (opt-unroll-const-nonneg-eval blocks (& lhs) (- fuel 1))
+                  [(Some a)
+                    (match (opt-unroll-const-nonneg-eval
+                      blocks
+                      (& rhs)
+                      (- fuel 1))
+                      [(Some b)
+                        (match (& op)
+                          [(Add) (opt_range.opt-range-safe-add a b)]
+                          [(Mul) (opt_range.opt-range-safe-mul a b)]
+                          [(Sub)
+                            (if (>= a b)
+                              (Some (- a b))
+                              (None))]
+                          [_ (None)])]
+                      [(None) (None)])]
+                  [(None) (None)])]
+              [_ (None)])])]
+      [_ (None)])))
+
+;; Resolve a loop-body variable through intra-block `Mov`s to its defining
+;; instruction index in `instrs[phi-count .. last)`, or -1.
+(define (opt-unroll-body-def-index
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [phi-count : i64]
+  [last : i64]
+  [var : i64]) : i64
+  (let
+    [cur : i64 var]
+    [found : i64 -1]
+    [steps : i64 0]
+    (while (and (< steps 8) (< found 0))
+      (let
+        [hit : i64 -1]
+        (for [pos (iterator.range phi-count last)]
+          (when
+            (=
+              (ir.compiler-ir-instr-dst
+                (ir.compiler-ir-instr-seq-borrow instrs pos))
+              cur)
+            (set! hit pos)))
+        (if (< hit 0)
+          (set! steps 8)
+          (match (ir.compiler-ir-instr-seq-borrow instrs hit)
+            [(Mov _ (Var next-v) _)
+              (set! cur next-v)
+              (+= steps 1)]
+            [_ (set! found hit)]))))
+    found))
+
+;; Compute a sound loop-invariant upper bound `max_bound` on `bound` when an
+;; ascending i64 loop body contains a signed Div/Mod/SafeDiv/SafeMod by a
+;; positive profitable literal (`RoundUp` or pow2) whose dividend is a bounded
+;; non-negative affine function of `k = i - seed` (plus mod-bounded recurrences).
+;; Whenever `bound <= max_bound`, no intermediate addition/multiplication in any
+;; checked dividend can wrap past INT64_MAX, so `__unroll_body` soundly proves
+;; every dividend >= 0 while the scalar tail preserves exact wrapping i64 for
+;; larger `bound`.
+(define (opt-unroll-divmod-nowrap-max-bound
+  [type-segment-bases : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [phi-count : i64]
+  [last : i64]
+  [iphi : i64]
+  [seed : (& ir.CompilerIrValue)]
+  [ity : (& ast.AstType)]
+  [others : (& OptUnrollPhiList)]
+  [descending? : bool]
+  [copy-count : i64]
+  [frame : i64]) : option_i64.Option
+  (if (or descending? (not (opt-type-eq type-segment-bases ity (& (I64)))))
+    (None)
+    (let
+      [seed-val : i64
+        (match seed
+          [(I64 c) c]
+          [_ -1])]
+      [has-divmod? : bool false]
+      (when
+        (>= seed-val 0)
+        (for [pos (iterator.range phi-count last)]
+          (match (ir.compiler-ir-instr-seq-borrow instrs pos)
+            [(BinOp _ op _ (I64 divisor) (I64))
+              (when
+                (and
+                  (> divisor 1)
+                  (match (& op)
+                    [(or (Div) (Mod) (SafeDiv) (SafeMod)) true]
+                    [_ false])
+                  (be_div.compiler-backend-unsigned-divmod-profitable? divisor))
+                (set! has-divmod? true))]
+            [_ unit])))
+      (if (not has-divmod?)
+        (None)
+        (let
+          [valid : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+          [coeff : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [kconst : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [req-check : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+          [assumed-div : (__tl_dyn-array i64) (__tl_make-array i64 16)]
+          [assumed-cnt : i64 0]
+          [other-n : i64 (opt-unroll-phi-list-count others)]
+          [_seed-iv : unit
+            (when
+              (and (>= iphi 0) (< iphi frame))
+              (set! (array-ref valid iphi) true)
+              (set! (array-ref coeff iphi) 1)
+              (set! (array-ref kconst iphi) seed-val))]
+          ;; Classify non-counter phis: linear IVs (`j' = j + stride`) and
+          ;; mod-bounded accumulators (`acc' = dividend % M`).
+          [_seed-others : unit
+            (for [oi (iterator.range 0 other-n)]
+              (match (opt-unroll-phi-list-ref others oi)
+                [(Phi pvar pinit pback pty)
+                  (when
+                    (and
+                      (>= pvar 0)
+                      (< pvar frame)
+                      (opt-type-eq type-segment-bases (& pty) (& (I64))))
+                    (match (opt-unroll-const-nonneg-eval blocks (& pinit) 4)
+                      [(Some init-v)
+                        (match (& pback)
+                          [(Var bv)
+                            (let
+                              [bidx : i64
+                                (opt-unroll-body-def-index
+                                  instrs
+                                  phi-count
+                                  last
+                                  bv)]
+                              (when
+                                (>= bidx 0)
+                                (match (ir.compiler-ir-instr-seq-borrow
+                                  instrs
+                                  bidx)
+                                  [(BinOp bdst (Add) al ar (I64))
+                                    (let
+                                      [stride : i64
+                                        (cond
+                                          [(and
+                                              (match (& al)
+                                                [(Var lv) (= lv pvar)]
+                                                [_ false])
+                                              (match (& ar)
+                                                [(I64 s) (>= s 0)]
+                                                [_ false]))
+                                            (match (& ar)
+                                              [(I64 s) s]
+                                              [_ -1])]
+                                          [(and
+                                              (match (& ar)
+                                                [(Var rv) (= rv pvar)]
+                                                [_ false])
+                                              (match (& al)
+                                                [(I64 s) (>= s 0)]
+                                                [_ false]))
+                                            (match (& al)
+                                              [(I64 s) s]
+                                              [_ -1])]
+                                          [else -1])]
+                                      (when
+                                        (>= stride 0)
+                                        (set! (array-ref valid pvar) true)
+                                        (set! (array-ref coeff pvar) stride)
+                                        (set! (array-ref kconst pvar) init-v)
+                                        (when
+                                          (and (>= bdst 0) (< bdst frame))
+                                          (set! (array-ref req-check bdst) true))))]
+                                  [(BinOp _ op dlhs (I64 m) (I64))
+                                    (when
+                                      (and
+                                        (> m 0)
+                                        (match (& op)
+                                          [(or (Mod) (SafeMod)) true]
+                                          [_ false]))
+                                      (match (& dlhs)
+                                        [(Var dv)
+                                          (when
+                                            (and
+                                              (>= dv 0)
+                                              (< dv frame)
+                                              (< assumed-cnt 16))
+                                            (let
+                                              [top-a : i64
+                                                (if (> init-v (- m 1))
+                                                  init-v
+                                                  (- m 1))]
+                                              (set! (array-ref valid pvar) true)
+                                              (set! (array-ref coeff pvar) 0)
+                                              (set!
+                                                (array-ref kconst pvar)
+                                                top-a)
+                                              (set!
+                                                (array-ref req-check dv)
+                                                true)
+                                              (set!
+                                                (array-ref
+                                                  assumed-div
+                                                  assumed-cnt)
+                                                dv)
+                                              (+= assumed-cnt 1)))]
+                                        [_ unit]))]
+                                  [_ unit])))]
+                          [_ unit])]
+                      [(None) unit]))]))]
+          ;; Forward affine upper-bound propagation over the loop body.
+          [_eval-body : unit
+            (for [pos (iterator.range phi-count last)]
+              (match (ir.compiler-ir-instr-seq-borrow instrs pos)
+                [(Mov dst src (I64))
+                  (when
+                    (and (>= dst 0) (< dst frame))
+                    (match (& src)
+                      [(I64 c)
+                        (when
+                          (>= c 0)
+                          (set! (array-ref valid dst) true)
+                          (set! (array-ref coeff dst) 0)
+                          (set! (array-ref kconst dst) c))]
+                      [(Var sv)
+                        (when
+                          (and (>= sv 0) (< sv frame) (array-ref valid sv))
+                          (set! (array-ref valid dst) true)
+                          (set! (array-ref coeff dst) (array-ref coeff sv))
+                          (set! (array-ref kconst dst) (array-ref kconst sv)))]
+                      [_ unit]))]
+                [(BinOp dst op lhs rhs (I64))
+                  (when
+                    (and (>= dst 0) (< dst frame))
+                    (let
+                      [lv-ok : bool
+                        (match (& lhs)
+                          [(I64 c) (>= c 0)]
+                          [(Var v)
+                            (and (>= v 0) (< v frame) (array-ref valid v))]
+                          [_ false])]
+                      [lc : i64
+                        (match (& lhs)
+                          [(Var v)
+                            (if (and (>= v 0) (< v frame))
+                              (array-ref coeff v)
+                              0)]
+                          [_ 0])]
+                      [lk : i64
+                        (match (& lhs)
+                          [(I64 c) c]
+                          [(Var v)
+                            (if (and (>= v 0) (< v frame))
+                              (array-ref kconst v)
+                              0)]
+                          [_ 0])]
+                      [rv-ok : bool
+                        (match (& rhs)
+                          [(I64 c) (>= c 0)]
+                          [(Var v)
+                            (and (>= v 0) (< v frame) (array-ref valid v))]
+                          [_ false])]
+                      [rc : i64
+                        (match (& rhs)
+                          [(Var v)
+                            (if (and (>= v 0) (< v frame))
+                              (array-ref coeff v)
+                              0)]
+                          [_ 0])]
+                      [rk : i64
+                        (match (& rhs)
+                          [(I64 c) c]
+                          [(Var v)
+                            (if (and (>= v 0) (< v frame))
+                              (array-ref kconst v)
+                              0)]
+                          [_ 0])]
+                      (match (& op)
+                        [(Add)
+                          (when
+                            (and lv-ok rv-ok)
+                            (match (opt_range.opt-range-safe-add lc rc)
+                              [(Some sc)
+                                (match (opt_range.opt-range-safe-add lk rk)
+                                  [(Some sk)
+                                    (set! (array-ref valid dst) true)
+                                    (set! (array-ref coeff dst) sc)
+                                    (set! (array-ref kconst dst) sk)]
+                                  [(None) unit])]
+                              [(None) unit]))]
+                        [(Sub)
+                          (when
+                            (and lv-ok rv-ok (= rc 0) (>= lk rk))
+                            (set! (array-ref valid dst) true)
+                            (set! (array-ref coeff dst) lc)
+                            (set! (array-ref kconst dst) (- lk rk)))]
+                        [(Mul)
+                          (when
+                            (and lv-ok rv-ok)
+                            (cond
+                              [(= rc 0)
+                                (match (opt_range.opt-range-safe-mul lc rk)
+                                  [(Some mc)
+                                    (match (opt_range.opt-range-safe-mul lk rk)
+                                      [(Some mk)
+                                        (set! (array-ref valid dst) true)
+                                        (set! (array-ref coeff dst) mc)
+                                        (set! (array-ref kconst dst) mk)]
+                                      [(None) unit])]
+                                  [(None) unit])]
+                              [(= lc 0)
+                                (match (opt_range.opt-range-safe-mul rc lk)
+                                  [(Some mc)
+                                    (match (opt_range.opt-range-safe-mul rk lk)
+                                      [(Some mk)
+                                        (set! (array-ref valid dst) true)
+                                        (set! (array-ref coeff dst) mc)
+                                        (set! (array-ref kconst dst) mk)]
+                                      [(None) unit])]
+                                  [(None) unit])]
+                              [else unit]))]
+                        [(BitAnd)
+                          (cond
+                            [(and rv-ok (= rc 0))
+                              (set! (array-ref valid dst) true)
+                              (set! (array-ref coeff dst) 0)
+                              (set! (array-ref kconst dst) rk)]
+                            [(and lv-ok (= lc 0))
+                              (set! (array-ref valid dst) true)
+                              (set! (array-ref coeff dst) 0)
+                              (set! (array-ref kconst dst) lk)]
+                            [else unit])]
+                        [(Shr _)
+                          (when
+                            (and lv-ok rv-ok (= rc 0) (>= rk 0) (< rk 64))
+                            (set! (array-ref valid dst) true)
+                            (set! (array-ref coeff dst) lc)
+                            (set! (array-ref kconst dst) lk))]
+                        [(or (Mod) (SafeMod))
+                          (when
+                            (and lv-ok rv-ok (= rc 0) (> rk 0))
+                            (set! (array-ref valid dst) true)
+                            (set! (array-ref coeff dst) 0)
+                            (set! (array-ref kconst dst) (- rk 1))
+                            (when
+                              (be_div.compiler-backend-unsigned-divmod-profitable?
+                                rk)
+                              (match (& lhs)
+                                [(Var dv)
+                                  (when
+                                    (and (>= dv 0) (< dv frame))
+                                    (set! (array-ref req-check dv) true))]
+                                [_ unit])))]
+                        [(or (Div) (SafeDiv))
+                          (when
+                            (and lv-ok rv-ok (= rc 0) (> rk 0))
+                            (set! (array-ref valid dst) true)
+                            (set! (array-ref coeff dst) lc)
+                            (set! (array-ref kconst dst) lk)
+                            (when
+                              (be_div.compiler-backend-unsigned-divmod-profitable?
+                                rk)
+                              (match (& lhs)
+                                [(Var dv)
+                                  (when
+                                    (and (>= dv 0) (< dv frame))
+                                    (set! (array-ref req-check dv) true))]
+                                [_ unit])))]
+                        [_ unit])))]
+                [_ unit]))]
+          ;; Verify every assumed mod-recurrence dividend is valid.
+          [all-assumed-ok? : bool true]
+          [_check-assumed : unit
+            (for [ai (iterator.range 0 assumed-cnt)]
+              (when
+                (not (array-ref valid (array-ref assumed-div ai)))
+                (set! all-assumed-ok? false)))]
+          (if (not all-assumed-ok?)
+            (None)
+            (let
+              [best-bound : i64 opt_range.opt-range-i64-max]
+              [any-linear? : bool false]
+              [failed? : bool false]
+              (for [v (iterator.range 0 frame)]
+                (when
+                  (array-ref req-check v)
+                  (if (not (array-ref valid v))
+                    (set! failed? true)
+                    (let
+                      [c : i64 (array-ref coeff v)]
+                      [k0 : i64 (array-ref kconst v)]
+                      (when
+                        (> c 0)
+                        (set! any-linear? true)
+                        (let
+                          [kmax : i64 (/ (- opt_range.opt-range-i64-max k0) c)]
+                          (match (opt_range.opt-range-safe-add seed-val kmax)
+                            [(Some bnd)
+                              (when (< bnd best-bound) (set! best-bound bnd))]
+                            [(None) unit])))))))
+              (if (and
+                (not failed?)
+                any-linear?
+                (< best-bound opt_range.opt-range-i64-max)
+                (> best-bound (+ seed-val copy-count)))
+                (Some best-bound)
+                (None)))))))))
+
 (define (opt-unroll-apply
   [type-segment-bases : i64]
   [params : (& ir.CompilerIrParamSeq)]
@@ -66416,9 +66861,30 @@
         [gwrap : i64 (opt-unroll-alloc-var (&mut cell))]
         [gfirst : i64 (opt-unroll-alloc-var (&mut cell))]
         [gok : i64 (opt-unroll-alloc-var (&mut cell))]
+        [gnw : i64 (opt-unroll-alloc-var (&mut cell))]
+        [gfinal : i64 (opt-unroll-alloc-var (&mut cell))]
         [gu : i64 (opt-unroll-alloc-var (&mut cell))]
+        [nowrap-max-bound : option_i64.Option
+          (opt-unroll-divmod-nowrap-max-bound
+            type-segment-bases
+            blocks
+            (& instrs)
+            phi-count
+            last
+            iphi
+            (& seed)
+            (& ity)
+            (& others)
+            descending?
+            copy-count
+            frame)]
+        [nowrap-max-ngroup : i64
+          (match nowrap-max-bound
+            [(Some max-b) (- max-b copy-count)]
+            [(None) -1])]
+        [has-nowrap? : bool (> nowrap-max-ngroup 0)]
         [guard-builder : ir.CompilerIrInstrBuilder
-          (ir.compiler-ir-instr-builder-with-capacity 5)]
+          (ir.compiler-ir-instr-builder-with-capacity 7)]
         [_build-guard : unit
           (begin
             (ir.compiler-ir-instr-builder-push!
@@ -66475,13 +66941,40 @@
                   (Var gwrap)
                   (Var gfirst)
                   (Bool))))
+            ;; Loop-invariant no-wrap upper-bound precondition for signed
+            ;; div/mod recurrences: `ngroup <= max_bound - copy_count` ensures
+            ;; `__unroll_body` soundly proves every dividend >= 0 while the
+            ;; scalar tail preserves exact wrapping i64 for larger bounds.
+            (when
+              has-nowrap?
+              (ir.compiler-ir-instr-builder-push!
+                (&mut guard-builder)
+                (ir.CompilerIrInstr.BinOp
+                  gnw
+                  (Le)
+                  (Var ngroup)
+                  (I64 nowrap-max-ngroup)
+                  (I64)))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut guard-builder)
+                (ir.CompilerIrInstr.BinOp
+                  gfinal
+                  (And)
+                  (Var
+                    (if bound-nonneg?
+                      gfirst
+                      gok))
+                  (Var gnw)
+                  (Bool))))
             (ir.compiler-ir-instr-builder-push!
               (&mut guard-builder)
               (ir.CompilerIrInstr.Branch
                 (Var
-                  (if bound-nonneg?
-                    gfirst
-                    gok))
+                  (if has-nowrap?
+                    gfinal
+                    (if bound-nonneg?
+                      gfirst
+                      gok)))
                 unrolled-label
                 next-label)))]
         [guard-block : ir.CompilerIrBlock
@@ -104083,16 +104576,18 @@
     ;; The range merge mints the two casts its unsigned compare reads, so
     ;; everything below sizes its per-var arrays off THIS frame, not the one
     ;; SSA construction left.
+    [bounds-dom-verified? : bool
+      (opt-verify-ok?
+        (&
+          (opt-verify-at
+            "entry.bounds_dom"
+            (opt-verify-post
+              "entry.bounds_dom"
+              (opt-verify-function-with-context ssa s.ctx)))))]
     [s
       (opt-stage
         "bounds_dom"
-        (if (opt-verify-ok?
-          (&
-            (opt-verify-at
-              "entry.bounds_dom"
-              (opt-verify-post
-                "entry.bounds_dom"
-                (opt-verify-function-with-context ssa s.ctx)))))
+        (if bounds-dom-verified?
           (match (opt-bounds-dom-blocks-with-context-result
             type-segment-bases
             (opt-pass-ctx s)
@@ -104117,6 +104612,23 @@
             [(Result blocks frame)
               (opt-pass-with-frame-blocks frame (& blocks) s)])
           s))]
+    [s
+      (opt-stage
+        "cvp_range"
+        (opt-live-only
+          s
+          (if bounds-dom-verified?
+            (opt-pass-with-blocks
+              (&
+                (opt-cvp-range-blocks-with-context
+                  type-segment-bases
+                  (& (opt-pass-ctx s))
+                  (& (opt-pass-params s))
+                  (opt-pass-frame s)
+                  (& summaries.global-cell.nonneg)
+                  (opt-pass-blocks s)))
+              s)
+            s)))]
     [s
       (opt-stage
         "sccp"

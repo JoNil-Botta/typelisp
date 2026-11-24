@@ -2078,27 +2078,46 @@
           program-index))]
     [(compiler_ir_types.CompilerIrInstr.TailCall name args _)
       (let
+        [convention : compiler_abi.CompilerCallConvention
+          (compiler_regalloc.compiler-reg-direct-call-convention name)]
         [call-target : String
           (be_operand.compiler-backend-call-symbol-index
             name
             plan
             program-index)]
-        (object_target.compiler-backend-object-add-text
-          (object_target.compiler-backend-object-add-text-relocation
-            (compiler-backend-object-add-nonempty-bytes
-              (compiler-backend-object-call-arg-moves
-                parts
-                target
-                (compiler_regalloc.compiler-reg-direct-call-convention name)
-                (be_state.compiler-backend-global-shared-view function)
-                args
-                0
-                program-index)
-              (compiler-backend-object-leave-bytes))
-            (be_state.compiler-backend-global-shared-view function)
-            (cobj.CompilerObjectRelocationKind.TailCall)
-            (be_state.compiler-backend-global-shared-view call-target))
-          (cobj.CompilerObjectX64Instr.TailCall call-target)))]
+        (if (=
+          (be_facts.compiler-backend-direct-call-outgoing-shadow-space
+            target
+            convention
+            program-index
+            name)
+          (be_facts.compiler-backend-outgoing-shadow-space target (Internal)))
+          (object_target.compiler-backend-object-add-text
+            (object_target.compiler-backend-object-add-text-relocation
+              (compiler-backend-object-add-nonempty-bytes
+                (compiler-backend-object-call-arg-moves
+                  parts
+                  target
+                  convention
+                  (be_state.compiler-backend-global-shared-view function)
+                  args
+                  0
+                  program-index)
+                (compiler-backend-object-leave-bytes))
+              (be_state.compiler-backend-global-shared-view function)
+              (cobj.CompilerObjectRelocationKind.TailCall)
+              (be_state.compiler-backend-global-shared-view call-target))
+            (cobj.CompilerObjectX64Instr.TailCall call-target))
+          (compiler-backend-object-add-nonempty-bytes
+            (compiler-backend-object-direct-call
+              parts
+              target
+              convention
+              function
+              call-target
+              args
+              program-index)
+            (compiler-backend-object-leave-ret-bytes))))]
     [(compiler_ir_types.CompilerIrInstr.Store name value ty)
       (let
         [symbol : String
@@ -3128,9 +3147,9 @@
                   (Text)
                   (Function))
                 (Label (string.copy (& entry))))
-              (compiler-backend-object-c-entry-prefix-bytes 40))
+              (compiler-backend-object-c-entry-prefix-bytes 8))
             (compiler-backend-object-call-r11-bytes))
-          (compiler-backend-object-add-rsp-bytes 40))
+          (compiler-backend-object-add-rsp-bytes 8))
         (compiler-backend-object-c-entry-return-bytes))]
     (object_windows.compiler-backend-object-add-unwind
       (object_target.compiler-backend-object-add-text
@@ -3142,10 +3161,7 @@
         (Label (string.copy (& end))))
       entry
       end
-      (object_windows.compiler-backend-object-entry-range-unwind-bytes
-        40
-        6
-        true))))
+      (object_windows.compiler-backend-object-entry-range-unwind-bytes 8 6 true))))
 
 (define (compiler-backend-object-c-export-entry
   [type-segment-bases : i64]
@@ -3236,7 +3252,10 @@
                 position
                 (array-ref plan.float-words position))
               (compiler-backend-object-store-rax-rsp-bytes
-                (+ 32 (* 8 (- position 6))))))))
+                (be_facts.compiler-backend-outgoing-stack-arg-offset
+                  target
+                  (Internal)
+                  (- position 6)))))))
       (set!
         out
         (compiler-backend-object-add-nonempty-bytes

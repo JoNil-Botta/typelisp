@@ -1,0 +1,103 @@
+# AVX2 single-bit sign-bit blend (`vpsllq` + `vblendvpd`), select-add/sub
+# factoring, and rank-2 rectangular bound hoisting tests.
+
+target -
+opt -
+
+case avx2-sign-bit-select-run
+source tests/spmd/avx2_sign_bit_select.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case avx2-sign-bit-select-shape
+source tests/spmd/avx2_sign_bit_select.tl
+mode avx2
+opt 2
+in fn _tl_avx2_sign_bit_select_test_bit0_factor
+narrow labeled-block:__unroll_body:
+contains vpsllq $63,
+contains vblendvpd
+not-contains vpsubq
+not-contains vpcmpeqq
+not-contains vpblendvb
+in fn _tl_avx2_sign_bit_select_test_bit1_eq0
+narrow labeled-block:__unroll_body:
+contains vpsllq $62,
+contains vblendvpd
+not-contains vpcmpeqq
+not-contains vpblendvb
+in fn _tl_avx2_sign_bit_select_test_bit63_direct
+narrow labeled-block:__unroll_body:
+contains vblendvpd
+not-contains vpsllq
+not-contains vpsubq
+not-contains vpcmpeqq
+not-contains vpblendvb
+
+case foreach-2d-rect-guard-run
+source tests/spmd/foreach_2d_rect_guard.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case foreach-2d-rect-guard-shape
+source tests/spmd/foreach_2d_rect_guard.tl
+mode avx2
+opt 2
+in fn _tl_foreach_2d_rect_guard_rect_add_i64
+contains row_origin_native
+contains foreach2_rect_stride_fast
+contains row_origin_scalar
+narrow labeled-block:__unroll_body:
+contains vpaddq (
+not-contains imul
+not-contains idiv
+
+case foreach-2d-rect-partial-trap
+source tests/spmd/foreach_2d_rect_partial_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+case foreach-2d-rect-overflow-trap
+source tests/spmd/foreach_2d_rect_overflow_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+case avx2-sign-bit-dual-load-run
+source tests/spmd/avx2_sign_bit_dual_load.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case foreach-2d-rect-fixed-array-fallback-run
+source tests/spmd/foreach_2d_rect_fixed_array_fallback.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+case foreach-2d-rect-fixed-array-fallback-shape
+source tests/spmd/foreach_2d_rect_fixed_array_fallback.tl
+mode avx2
+opt 2
+in fn _tl_foreach_2d_rect_fixed_array_fallback_check_lut
+contains foreach2_rect_stride_fast
+contains foreach2_checked_row

@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+4269.715	BCE multi-block guard versioning (profitability, 2-tier split, header-check hoist, LICM guard) adds compiler source; the optimizer work itself costs +88 ppm when both compilers compile the same main 130da6360 source; local back-to-back own cost +452,573,595 Ir (M(T) 106,448,776,239 vs M(B) 105,996,202,644 at main 56ed39792, same host)

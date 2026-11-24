@@ -10742,7 +10742,7 @@ slots, with the fifth and later arguments on the stack after shadow space.
   `(Array T N)` values use the same recursive, naturally aligned inline layout
   described above. A structural value of size 1, 2, 4, or 8 bytes is passed by
   value in the integer register/value transport (`%rcx`, `%rdx`, `%r8`, `%r9`,
-  `%rsi`, `%rdi`, then the stack area after shadow space). Every other parameter size
+  `%rsi`, `%rdi`, then the stack area). Every other parameter size
   is passed indirectly through a pointer to a private caller-created
   temporary. A return of 1, 2, 4, or 8 bytes uses `%rax`; every other
   structural return size uses a leading caller-owned sret pointer and returns
@@ -10759,7 +10759,10 @@ slots, with the fifth and later arguments on the stack after shadow space.
   `%rcx`/`%rdx`; a Slice return uses `%rax`/`%rdx` in that order. This is an
   internal TypeLisp rule only and does not authorize borrowed Slice parameters
   in C `extern` declarations.
-- Callers reserve 32 bytes of shadow space before each call.
+- Internal TypeLisp calls reserve no shadow space (home area); their 7th and
+  later stack arguments begin at `0(%rsp)` at the call site (`16(%rbp)` in the
+  callee). Platform calls (C/Win32 `extern` and C function pointers) retain the
+  32-byte Win64 shadow space.
 - Windows executables define user `main` and use the compiler-owned freestanding
   `_tl_start` image entry, linked with `/ENTRY:_tl_start` and `/NODEFAULTLIB`.
   The runtime's platform import libraries are `kernel32.lib` and `ntdll.lib`.

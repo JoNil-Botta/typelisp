@@ -7631,7 +7631,6 @@
   [place-id : i64]
   [span : TcMaybeAstSourceSpan]
   [source : ownership.OwnershipSource]
-  [represented? : bool]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
@@ -7653,56 +7652,41 @@
           inner-id
           arg-id))]
     [result : (TcSelectedResult store lease intern bind)
-      (if (not represented?)
-        (tc-selected-unrepresented
-          (tc-selected-project
-            (tc-infer-selected-borrow
-              ctx
-              env
-              true
-              lifetime-id
-              place-id
-              true
-              span
-              syntax
-              located
-              TcSelectedSink.Query))
-          sink)
-        (match sink
-          [(TcSelectedSink.Query)
-            (tc-infer-selected-borrow
-              ctx
-              env
-              true
-              lifetime-id
-              place-id
-              true
-              span
-              syntax
-              located
-              TcSelectedSink.Query)]
-          [(TcSelectedSink.Capture store lease bindings)
-            (match (typed.typed-attempt-begin!
-              store
-              lease
-              typed.TypedMode.Executable)
-              [(typed.TypedAttemptResult.Err error)
-                (tc-selected-failed error store lease bindings)]
-              [(typed.TypedAttemptResult.Ok attempt)
-                (tc-selected-attempt-finish
-                  attempt
-                  bindings.len
-                  (tc-infer-selected-borrow
-                    ctx
-                    env
-                    true
-                    lifetime-id
-                    place-id
-                    true
-                    span
-                    syntax
-                    located
-                    (TcSelectedSink.Capture store lease bindings)))])]))]
+      (match sink
+        [(TcSelectedSink.Query)
+          (tc-infer-selected-borrow
+            ctx
+            env
+            true
+            lifetime-id
+            place-id
+            true
+            span
+            syntax
+            located
+            TcSelectedSink.Query)]
+        [(TcSelectedSink.Capture store lease bindings)
+          (match (typed.typed-attempt-begin!
+            store
+            lease
+            typed.TypedMode.Executable)
+            [(typed.TypedAttemptResult.Err error)
+              (tc-selected-failed error store lease bindings)]
+            [(typed.TypedAttemptResult.Ok attempt)
+              (tc-selected-attempt-finish
+                attempt
+                bindings.len
+                (tc-infer-selected-borrow
+                  ctx
+                  env
+                  true
+                  lifetime-id
+                  place-id
+                  true
+                  span
+                  syntax
+                  located
+                  (TcSelectedSink.Capture store lease bindings)))])])]
     (match span
       [(TcMaybeAstSourceSpan.Some at)
         (match result
@@ -11991,12 +11975,15 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [args : (& args ast.AstExprList)]
-  [params : (& params ast.AstTypeList)]) : TcSelectedBrands
+  [params : (& params ast.AstTypeList)]
+  [actuals : (& actuals ast.AstTypeList)]) : TcSelectedBrands
   (let
     [index : i64 0]
     [brands : TcNameIdList TcNameIdList.Nil]
     [ended : TcNameIdList TcNameIdList.Nil]
-    (while (and (< index (ast.ast-type-list-len params)) (< index args.len))
+    (while (and
+      (< index (ast.ast-type-list-len params))
+      (< index (ast.ast-type-list-len actuals)))
       (let
         [formal : ast.AstType
           (ast.ty-node-get
@@ -12004,37 +11991,19 @@
         [arg-id : i64 (ast.ast-expr-list-get args index 0)]
         (match (tc-type-invalidate-lifetime (tc-global-shared-view formal))
           [(TcMaybeNameId.Some _)
-            (match (tc-expr-id ctx env arg-id)
-              [(ResultTcType.Ok actual)
-                (match (tc-invalidate-call-brand ctx env formal actual)
-                  [(TcMaybeNameId.Some brand)
-                    (set! brands (tc-name-id-list-cons brands brand))
-                    (set! ended (tc-name-id-list-cons ended arg-id))]
-                  [(TcMaybeNameId.No) unit])]
-              [(ResultTcType.Err _) unit])]
+            (match (tc-invalidate-call-brand
+              ctx
+              env
+              formal
+              (ast.ty-node-get
+                (ast.ast-type-list-get actuals index (ast.ast-type-id-fallback))))
+              [(TcMaybeNameId.Some brand)
+                (set! brands (tc-name-id-list-cons brands brand))
+                (set! ended (tc-name-id-list-cons ended arg-id))]
+              [(TcMaybeNameId.No) unit])]
           [(TcMaybeNameId.No) unit])
         (set! index (+ index 1))))
     (TcSelectedBrands brands ended)))
-
-;; The atomic arena owners whose regions a channel send's message carries
-;; (none for any other call).
-(define (tc-selected-sent-owners
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : (& args ast.AstExprList)]) : TcNameIdList
-  (match (tc-thread-channel-send-call-name ctx func)
-    [(TcMaybeString.No) TcNameIdList.Nil]
-    [(TcMaybeString.Some _)
-      (match (tc-thread-channel-send-message-arg
-        (tc-context-expr-segment-bases ctx)
-        (owned_view.compiler-owned-reference-shared-view args))
-        [(ResultTcExpr.Err _) TcNameIdList.Nil]
-        [(ResultTcExpr.Ok message)
-          (match (tc-expr ctx env message)
-            [(ResultTcType.Ok message-ty)
-              (tc-type-atomic-arena-owner-regions env message-ty)]
-            [(ResultTcType.Err _) TcNameIdList.Nil])])]))
 
 ;; `result` preceded by the marks that atomic arena `owners` gained thread
 ;; users (their values crossed to another thread).
@@ -12255,27 +12224,20 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : ast.AstExpr]
-  [func-id : i64]
   [info : (& info TcCallBuiltinName)]
   [args : ast.AstExprList]) : ResultTcType
   (let
     [arm : i64 info.arm]
-    (if (= arm 9)
-      (tc-arena-owner-call-result
-        ctx
-        info.arena-owner-kind
-        func-id
-        (tc-call-expr-ordinary-id ctx env func-id args))
-      (if (!= args.len 1)
-        (Err (tc-arena-call-arity-error arm))
-        (let
-          [arg : ast.AstExpr
-            (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-          [ty (try (tc-expr ctx env (clone arg)))]
-          [result (try (tc-arena-lifecycle-operand ctx env arm arg ty))]
-          (if (= arm 10)
-            (tc-phase-call-result (tc-expr ctx env func))
-            (Ok result)))))))
+    (if (!= args.len 1)
+      (Err (tc-arena-call-arity-error arm))
+      (let
+        [arg : ast.AstExpr
+          (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
+        [ty (try (tc-expr ctx env (clone arg)))]
+        [result (try (tc-arena-lifecycle-operand ctx env arm arg ty))]
+        (if (= arm 10)
+          (tc-phase-call-result (tc-expr ctx env func))
+          (Ok result))))))
 
 (define (tc-infer-selected-phase-operand
   [ctx : TcContext]
@@ -12348,6 +12310,26 @@
     [arm : i64 info.arm]
     [key : i64 info.declared]
     (cond
+      [(= arm 9)
+        (match (tc-call-target-expr-id ctx env func-id)
+          [(Err message) (TcSelectedResult.Err message sink)]
+          [(Ok ty)
+            (tc-infer-selected-call-signature
+              ctx
+              env
+              func
+              func-id
+              key
+              ty
+              false
+              false
+              info.arena-owner-kind
+              (& args)
+              syntax
+              expected
+              ast.AstMaybeType.No
+              source
+              sink)])]
       [(match (& sink)
           [(TcSelectedSink.Query) true]
           [_ false])
@@ -12356,40 +12338,8 @@
             ctx
             env
             expected
-            (tc-arena-call-query ctx env func func-id info args))
+            (tc-arena-call-query ctx env func info args))
           sink)]
-      [(= arm 9)
-        (match (tc-call-target-expr-id ctx env func-id)
-          [(Err message) (TcSelectedResult.Err message sink)]
-          [(Ok fn-ty)
-            (let
-              [result : ResultTcType
-                (tc-call-contextual-type
-                  ctx
-                  env
-                  expected
-                  (tc-arena-owner-call-result
-                    ctx
-                    info.arena-owner-kind
-                    func-id
-                    (tc-call-expr-ordinary-resolved
-                      ctx
-                      env
-                      func
-                      args
-                      (clone fn-ty))))]
-              (if (< key 0)
-                (tc-selected-unrepresented result sink)
-                (tc-selected-lender-site
-                  (tc-selected-publish-call
-                    result
-                    (typed.TypedCallKind.ArenaOwner key)
-                    fn-ty
-                    syntax
-                    source
-                    (tc-selected-no-occurrences)
-                    true
-                    sink))))])]
       [(!= args.len 1)
         (TcSelectedResult.Err (tc-arena-call-arity-error arm) sink)]
       [else
@@ -16259,20 +16209,12 @@
     ids))
 
 ;; Specialized call routes consume the spelling and declaration from
-;; TcCallBuiltinName. Unsupported signatures retain their resolved type on
-;; the residual route until the ordinary argument paths are unified.
+;; TcCallBuiltinName. Other calls proceed with their resolved signature.
 (defenum TcSelectedCallTarget
-  (Ordinary i64 ast.AstType bool bool bool)
-  ;; Key -2 denotes a C function pointer, with the callee in child zero.
-  (Foreign i64 ast.AstType)
+  (Signature ast.AstType bool bool)
   (Builtin)
   (Clone)
-  ;; `arena.make`/`make-atomic`, `phase`, `rewind-safe!` or `destroy-safe!`:
-  ;; the dispatch arm (9-12).
-  (ArenaForm i64)
-  ;; A safe thread spawn of a direct lambda (`tc-thread-safe-spawn-call-name`).
-  (Spawn ast.AstType)
-  (Residual ast.AstType)
+  (ArenaForm)
   (Err String))
 
 (defenum TcSelectedArgsResult
@@ -16579,8 +16521,6 @@
 
 (define (tc-selected-call-signature-ok?
   [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
   [params : ast.AstTypeList]
   [ret : ast.AstType]) : bool
   (let
@@ -16593,47 +16533,9 @@
     [index : i64 0]
     [ok? : bool
       (and
-        (match (tc-call-extern-abi ctx (tc-global-shared-view func))
-          [(TcMaybeExternAbi.No) true]
-          [(TcMaybeExternAbi.Some _) false])
-        (not
-          (tc-call-lifetime-constructor-for-func?
-            ctx
-            (tc-global-shared-view func)
-            (tc-global-shared-view ret)))
-        ;; A name that resolves to a declared function is that function even
-        ;; when an imported variant shares it (#8582: unqualified entry-module
-        ;; lookup never searches imports).
-        (match (tc-call-constructor-target-for-func
-          ctx
-          env
-          (tc-global-shared-view func)
-          (tc-global-shared-view params)
-          (tc-global-shared-view ret))
-          [(ast.AstMaybeType.No) true]
-          [(ast.AstMaybeType.Some _)
-            (let
-              [callee-id : i64
-                (tc-expr-var-name-id
-                  (tc-context-expr-segment-bases ctx)
-                  (tc-global-shared-view func))]
-              (or
-                (>= (tc-selected-call-declared-function ctx env callee-id) 0)
-                (tc-root-identity-names-entry-value? ctx callee-id)))])
         (or
           (ast.ast-lifetime-list-empty? (& lifetimes))
           (tc-selected-call-lifetimes-separate? ctx (& params)))
-        ;; The safe spawn takes one nullary task (`tc-infer-selected-spawn`);
-        ;; the raw two-argument `thread.spawn` adapter is an ordinary call.
-        (or
-          (!= (ast.ast-type-list-len (& params)) 1)
-          (not
-            (tc-selected-safe-spawn-signature?
-              ctx
-              env
-              (tc-global-shared-view func)
-              (tc-global-shared-view params)
-              (tc-global-shared-view ret))))
         (or
           (tc-selected-call-param-type-ok?
             ctx
@@ -16847,10 +16749,7 @@
     [(ast.AstType.EnumArgs _ _) true]
     [_ false]))
 
-;; A constructor's checked signature from its legacy target type. A field
-;; storing a reference moves its loans into a lifetime-parameterized result,
-;; which holds them.
-;; Whether the call's type (legacy typing) is a lifetime-parameterized
+;; Whether the call's type is a lifetime-parameterized
 ;; aggregate all of whose lifetime arguments are arena regions here.
 (define (tc-selected-arena-branded-call?
   [ctx : TcContext]
@@ -16935,131 +16834,6 @@
         (set! found true))
       (set! index (+ index 1)))
     found))
-
-(define (tc-selected-constructor-target
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : (& args ast.AstExprList)]
-  [func-id : i64]
-  [callee : (&mut callee TcSelectedCalleeMemo)]) : TcSelectedCallTarget
-  (match (tc-selected-callee-type ctx env func-id callee)
-    [(ResultTcType.Err message) (TcSelectedCallTarget.Err message)]
-    [(ResultTcType.Ok fn-ty)
-      (match (tc-global-shared-view fn-ty)
-        [(ast.AstType.Func params-box ret-id)
-          (let
-            [params : ast.AstTypeList
-              (ast.ast-type-list-box-shared-view params-box)]
-            ;; An arena-branded construction: every lifetime of the
-            ;; constructed type is an arena region here, so a parameter
-            ;; tagged with one of them holds an arena allocation, which the
-            ;; ownership graph erases (`tc-selected-arena-erase`; destroying
-            ;; the arena invalidates the result, whose type keeps the
-            ;; region). Only a constructed type with lifetime arguments can
-            ;; be one, so the call is typed only for those.
-            [arena-branded? : bool
-              (and
-                (tc-selected-lifetime-args-type?
-                  (tc-resolve-type ctx (ast.ty-node-get ret-id)))
-                (tc-selected-arena-branded-call?
-                  ctx
-                  env
-                  (tc-call-expr-ordinary-resolved
-                    ctx
-                    env
-                    (clone func)
-                    (clone (deref args))
-                    (clone fn-ty))))]
-            [index : i64 0]
-            [ok? : bool
-              (tc-selected-call-type-ok? ctx (ast.ty-node-get ret-id))]
-            ;; A field may store a reference only into a lifetime-
-            ;; parameterized aggregate, whose loans the MIR tracks.
-            [holding? : bool
-              (tc-selected-holding-type?
-                ctx
-                (tc-resolve-type ctx (ast.ty-node-get ret-id)))]
-            (while (and ok? (< index (ast.ast-type-list-len (& params))))
-              (set!
-                ok?
-                (let
-                  [param : ast.AstType
-                    (if arena-branded?
-                      (tc-selected-strip-lifetime-tags
-                        ctx
-                        (ast.ty-node-get
-                          (ast.ast-type-list-get
-                            (& params)
-                            index
-                            (ast.ast-type-id-fallback)))
-                        (tc-resolve-type ctx (ast.ty-node-get ret-id)))
-                      (ast.ty-node-get
-                        (ast.ast-type-list-get
-                          (& params)
-                          index
-                          (ast.ast-type-id-fallback))))]
-                  (if holding?
-                    (tc-selected-call-param-type-ok? ctx param)
-                    (tc-selected-call-type-ok? ctx param))))
-              (set! index (+ index 1)))
-            (cond
-              ;; A struct or enum without lifetime parameters cannot hold a
-              ;; reference soundly: its type names no lifetime, so a value
-              ;; can outlive the referent once it leaves the function
-              ;; (legacy walkers patched some of those escapes). Its
-              ;; fields' lifetimes must be declared (`(:lifetimes n)`).
-              [(and
-                  (match (tc-resolve-type ctx (ast.ty-node-get ret-id))
-                    [(ast.AstType.Struct _) true]
-                    [(ast.AstType.Enum _) true]
-                    [_ false])
-                  (tc-selected-holds-reference?
-                    ctx
-                    (tc-resolve-type ctx (ast.ty-node-get ret-id))
-                    false))
-                (match (tc-call-expr-ordinary-resolved
-                  ctx
-                  env
-                  (clone func)
-                  (clone (deref args))
-                  (clone fn-ty))
-                  [(ResultTcType.Err message)
-                    (TcSelectedCallTarget.Err message)]
-                  [(ResultTcType.Ok _)
-                    (TcSelectedCallTarget.Err
-                      ;; A missing lifetime declaration (E0210), not an
-                      ;; escape.
-                      (tc-kind-message
-                        (cdiag.CompilerTypecheckKind.LifetimeMismatch)
-                        (str_cat.str-cat
-                          "typecheck: `"
-                          (tc-type-render
-                            (tc-resolve-type ctx (ast.ty-node-get ret-id)))
-                          "` holds a reference but declares no lifetimes; declare them with (:lifetimes ...)")))])]
-              [(not ok?) (TcSelectedCallTarget.Residual fn-ty)]
-              [else
-                (TcSelectedCallTarget.Ordinary
-                  -1
-                  fn-ty
-                  false
-                  (tc-call-region-args-allowed-for-func
-                    ctx
-                    env
-                    (tc-global-shared-view func))
-                  false)]))]
-        ;; A nullary variant's target is its enum value itself.
-        [_
-          (if (and
-            (= args.len 0)
-            (tc-selected-call-type-ok? ctx (tc-global-shared-view fn-ty)))
-            (TcSelectedCallTarget.Ordinary
-              -1
-              (ast.ast-ty-func (ast.ast-type-list-new) fn-ty)
-              false
-              false
-              false)
-            (TcSelectedCallTarget.Residual fn-ty))])]))
 
 ;; A nullary enum variant used as a value is a construction without operands.
 (define (tc-selected-symbol-kind? [ctx : TcContext] [name : i64] [kind : i64]) : bool
@@ -17239,6 +17013,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : ast.AstExpr]
+  [func-id : i64]
   [info : (& info TcCallBuiltinName)]
   [args : ast.AstExprList]
   [syntax : typed.TypedSyntax]
@@ -17270,6 +17045,7 @@
           ctx
           env
           func
+          func-id
           info
           (& args)
           syntax
@@ -17287,6 +17063,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : ast.AstExpr]
+  [func-id : i64]
   [info : (& info TcCallBuiltinName)]
   [args : (& args ast.AstExprList)]
   [syntax : typed.TypedSyntax]
@@ -17372,7 +17149,8 @@
                     ctx
                     env
                     (clone func)
-                    info.name-id
+                    func-id
+                    info
                     args
                     actual)
                   (tc-builtin-checked-operand
@@ -17393,6 +17171,7 @@
                     ctx
                     env
                     func
+                    func-id
                     info
                     args
                     syntax
@@ -17632,144 +17411,6 @@
                     (TcSelectedResult.Err message after)]
                   [(TcSelectedResult.Ok _ occurrence after)
                     (TcSelectedResult.Ok ty occurrence after)]))])]))))
-
-;; Fixed foreign signatures use the same compatibility walk as ordinary
-;; calls. Through a pointer the executable call also holds the callee in
-;; child zero.
-(define (tc-infer-selected-foreign-call
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [func-id : i64]
-  [raw-name : i64]
-  [key : i64]
-  [fn-ty : ast.AstType]
-  [args : ast.AstExprList]
-  [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]
-  [source : ownership.OwnershipSource]
-  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
-    store
-    lease
-    intern
-    bind)
-  (match (clone fn-ty)
-    [(ast.AstType.Func params-box ret-id)
-      (let
-        [params : ast.AstTypeList
-          (ast.ast-type-list-box-shared-view params-box)]
-        [ret : ast.AstType (ast.ty-node-get ret-id)]
-        [capture? : bool
-          (and
-            (match (& sink)
-              [(TcSelectedSink.Query) false]
-              [_ true])
-            (tc-selected-foreign-signature-ok? ctx (clone fn-ty) args.len))]
-        (unless
-          capture?
-          (return
-            (tc-selected-unrepresented
-              (tc-call-contextual-type
-                ctx
-                env
-                expected
-                (tc-call-function-type-normal ctx env func args params ret))
-              sink)))
-        (match (tc-normalize-dotted-local-field-expr-list! ctx env (& args))
-          [(ResultTcUnit.Err message) (TcSelectedResult.Err message sink)]
-          [(ResultTcUnit.Ok)
-            (match (if (= key -2)
-              (tc-infer-selected-callee
-                ctx
-                env
-                func-id
-                raw-name
-                (ownership.ownership-source-copy (& source))
-                sink)
-              (TcSelectedResult.Ok
-                ast.AstType.Unit
-                TcSelectedOccurrence.Unrepresented
-                sink))
-              [(TcSelectedResult.Err message next)
-                (TcSelectedResult.Err message next)]
-              [(TcSelectedResult.Ok _ callee next)
-                (let
-                  [result : ast.AstType (tc-tag-active-region env (clone ret))]
-                  [arg-types : (__tl_dyn-array ast.AstType)
-                    (tc-selected-no-types)]
-                  [collect? : bool
-                    (tc-type-can-hold-arena-handle? ctx (clone result) Nil)]
-                  (match (tc-infer-selected-call-args
-                    ctx
-                    env
-                    (clone func)
-                    (& args)
-                    (& params)
-                    (tc-call-region-args-allowed-for-func ctx env (clone func))
-                    ast.AstMaybeType.No
-                    (&mut result)
-                    collect?
-                    (&mut arg-types)
-                    (TcArityMessage.Detailed
-                      (clone func)
-                      (clone args)
-                      (clone params))
-                    (tc-call-arena-store-region ctx env)
-                    0
-                    (TcSelectedCallStaging.Capture
-                      (__tl_make-array typed.TypedOccurrenceId args.len)
-                      (tc-selected-arena-branded-params ctx (& params)))
-                    true
-                    true
-                    (ownership.ownership-source-copy (& source))
-                    next)
-                    [(TcSelectedCallArgsResult.Err message after)
-                      (TcSelectedResult.Err message after)]
-                    [(TcSelectedCallArgsResult.Ok staged represented? after)
-                      (let
-                        [result : ResultTcType
-                          (tc-call-contextual-type
-                            ctx
-                            env
-                            expected
-                            (match (tc-call-branded-arena-phase-result
-                              ctx
-                              env
-                              (& params)
-                              result)
-                              [(ResultTcType.Ok phased)
-                                (tc-call-erased-owner-result
-                                  ctx
-                                  env
-                                  (& args)
-                                  (& params)
-                                  (& arg-types)
-                                  phased)]
-                              [(ResultTcType.Err message)
-                                (ResultTcType.Err message)]))]
-                        (match staged
-                          [(TcSelectedCallStaging.Query)
-                            (tc-selected-unrepresented result after)]
-                          [(TcSelectedCallStaging.Capture children _)
-                            (tc-selected-publish-call
-                              result
-                              (if (= key -2)
-                                (typed.TypedCallKind.Indirect
-                                  (tc-selected-effect-callee-id ctx env func-id))
-                                (typed.TypedCallKind.Foreign key))
-                              fn-ty
-                              syntax
-                              source
-                              (tc-selected-with-callee children (& callee))
-                              (and
-                                represented?
-                                (or
-                                  (!= key -2)
-                                  (match (& callee)
-                                    [(TcSelectedOccurrence.Selected _) true]
-                                    [_ false])))
-                              after)]))]))])]))]
-    [_ (TcSelectedResult.Err "typecheck: call target is not a function" sink)]))
 
 ;; A read operand formed as a place: a named place, or an array element (lent
 ;; whole for the read when its element cannot be named).
@@ -18831,213 +18472,75 @@
     (set! callee.ready true))
   (clone callee.result))
 
-(define (tc-selected-foreign-target
-  [ctx : TcContext]
-  [key : i64]
-  [fn-ty : ast.AstType]
-  [arg-count : i64]
-  [allow-region-args : bool]
-  [capture? : bool]) : TcSelectedCallTarget
-  (match (& fn-ty)
-    [(ast.AstType.Func params ret)
-      (if (and
-        capture?
-        (not
-          (tc-name-id-list-empty?
-            (tc-type-collect-reference-lifetimes-into
-              (ast.ty-node-get ret)
-              (tc-type-list-collect-reference-lifetimes-at
-                (& (deref params))
-                TcNameIdList.Nil
-                0))))
-        (tc-selected-foreign-signature-ok? ctx (clone fn-ty) arg-count))
-        (TcSelectedCallTarget.Ordinary key fn-ty false allow-region-args true)
-        (TcSelectedCallTarget.Foreign key fn-ty))]
-    [_ (TcSelectedCallTarget.Err "typecheck: call target is not a function")]))
-
 (define (tc-selected-call-target
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : (& args ast.AstExprList)]
   [func-id : i64]
   [func : ast.AstExpr]
   [raw-name : i64]
-  [builtin : (& builtin TcCallBuiltinName)]
-  [capture? : bool]) : TcSelectedCallTarget
+  [builtin : (& builtin TcCallBuiltinName)]) : TcSelectedCallTarget
   (let
     [callee : TcSelectedCalleeMemo
       (TcSelectedCalleeMemo false (ResultTcType.Err ""))]
     [arm : i64 builtin.arm]
-    (cond
-      ;; A builtin spelling may also name a visible variant. Keep the
-      ;; constructor probe for named callees.
-      [(and
-          (>= raw-name 0)
-          (or
-            (tc-selected-call-constructor? ctx env raw-name builtin)
+    [constructor? : bool
+      (and
+        (>= raw-name 0)
+        (< builtin.declared 0)
+        (or
+          (tc-selected-call-constructor? ctx env raw-name builtin)
+          (and
+            (> arm 0)
             (tc-selected-call-variant-value?
               ctx
               env
               raw-name
               func-id
-              (&mut callee))))
-        (tc-selected-constructor-target ctx env func args func-id (&mut callee))]
-      [(= arm 23) TcSelectedCallTarget.Clone]
-      [(and (>= arm 9) (<= arm 12)) (TcSelectedCallTarget.ArenaForm arm)]
-      [(> arm 0) TcSelectedCallTarget.Builtin]
-      [else
-        (let
-          [direct : TcDirectLambdaCheck
-            (if (< raw-name 0)
-              (tc-direct-lambda-check ctx env (clone func))
-              TcDirectLambdaCheck.No)]
-          [direct? : bool
-            (match (& direct)
-              [(TcDirectLambdaCheck.Ok _) true]
-              [_ false])]
-          (match (match direct
-            [(TcDirectLambdaCheck.Ok ty)
-              (tc-body-type-fact-record!
-                (tc-context-body-state ctx)
-                func-id
-                (clone ty))
-              (ResultTcType.Ok ty)]
-            [(TcDirectLambdaCheck.Err message) (ResultTcType.Err message)]
-            [(TcDirectLambdaCheck.No)
-              (if callee.ready
-                callee.result
-                (tc-call-target-expr-id ctx env func-id))])
-            [(ResultTcType.Err message) (TcSelectedCallTarget.Err message)]
-            [(ResultTcType.Ok ty)
-              (let
-                [key : i64 builtin.declared]
-                [abi : TcMaybeExternAbi (tc-selected-call-abi ctx key)]
-                [fn-ty : ast.AstType
-                  (tc-type-strip-region (tc-global-shared-view ty))]
-                (match (tc-global-shared-view fn-ty)
-                  [(ast.AstType.Func params ret)
-                    (let
-                      [formals : ast.AstTypeList
-                        (ast.ast-type-list-box-shared-view params)]
-                      [result : ast.AstType (ast.ty-node-get ret)]
-                      [allow-region-args : bool
-                        (and
-                          (not direct?)
-                          (tc-call-region-args-allowed-for-func
-                            ctx
-                            env
-                            (clone func)))]
-                      (cond
-                        [(and
-                            (= args.len 1)
-                            (tc-selected-safe-spawn-signature?
-                              ctx
-                              env
-                              (clone func)
-                              (tc-global-shared-view formals)
-                              (tc-global-shared-view result)))
-                          (TcSelectedCallTarget.Spawn fn-ty)]
-                        [(match (& abi)
-                            [(or (TcMaybeExternAbi.Some (CVarargsOpen))
-                                 (TcMaybeExternAbi.Some (CVarargsTyped _)))
-                              true]
-                            [_ false])
-                          (match abi
-                            [(TcMaybeExternAbi.Some varargs)
-                              (if capture?
-                                (match (tc-call-extern-varargs-params
-                                  ctx
-                                  env
-                                  func
-                                  (clone (deref args))
-                                  formals
-                                  varargs)
-                                  [(ResultTcTypeList.Ok expanded)
-                                    (tc-selected-foreign-target
-                                      ctx
-                                      key
-                                      (ast.ast-ty-func expanded (& result))
-                                      args.len
-                                      allow-region-args
-                                      capture?)]
-                                  [(ResultTcTypeList.Err message)
-                                    (TcSelectedCallTarget.Err message)])
-                                (TcSelectedCallTarget.Residual ty))]
-                            [(TcMaybeExternAbi.No)
-                              (TcSelectedCallTarget.Residual ty)])]
-                        [(and
-                            capture?
-                            (match (& abi)
-                              [(TcMaybeExternAbi.Some _) true]
-                              [_ false])
-                            (tc-selected-foreign-signature-ok?
-                              ctx
-                              (clone fn-ty)
-                              args.len))
-                          (if (ast.ast-lifetime-list-empty?
-                            (&
-                              (tc-call-function-lifetimes
-                                (tc-global-shared-view formals)
-                                (tc-global-shared-view result))))
-                            (TcSelectedCallTarget.Foreign key fn-ty)
-                            (TcSelectedCallTarget.Ordinary
-                              key
-                              fn-ty
-                              false
-                              allow-region-args
-                              true))]
-                        [(or
-                            (and
-                              capture?
-                              (match (& abi)
-                                [(TcMaybeExternAbi.Some _) true]
-                                [_ false])
-                              (tc-selected-foreign-view-signature-ok?
-                                ctx
-                                (clone fn-ty)
-                                args.len))
-                            (and
-                              (match (& abi)
-                                [(TcMaybeExternAbi.No) true]
-                                [_ false])
-                              (tc-selected-call-signature-ok?
-                                ctx
-                                env
-                                (clone func)
-                                (tc-global-shared-view formals)
-                                (tc-global-shared-view result))))
-                          (TcSelectedCallTarget.Ordinary
-                            (if (>= key 0)
-                              key
-                              (if (tc-selected-discharge-call?
-                                ctx
-                                (clone func)
-                                (& formals))
-                                (tc-move-value-symbol-handle-id ctx raw-name)
-                                -2))
-                            fn-ty
-                            direct?
-                            allow-region-args
-                            false)]
-                        [else (TcSelectedCallTarget.Residual ty)]))]
-                  [(ast.AstType.CFunc signature mode)
-                    (match (tc-call-c-function-signature
-                      ctx
-                      env
-                      (clone func)
-                      signature
-                      mode)
-                      [(ResultTcType.Err message)
-                        (TcSelectedCallTarget.Err message)]
-                      [(ResultTcType.Ok signature)
-                        (tc-selected-foreign-target
+              (&mut callee)))))]
+    (unless
+      constructor?
+      (cond
+        [(= arm 23) (return TcSelectedCallTarget.Clone)]
+        [(and (>= arm 9) (<= arm 12)) (return TcSelectedCallTarget.ArenaForm)]
+        [(> arm 0) (return TcSelectedCallTarget.Builtin)]
+        [else unit]))
+    (match (if (< raw-name 0)
+      (tc-direct-lambda-check ctx env (clone func))
+      TcDirectLambdaCheck.No)
+      [(TcDirectLambdaCheck.Ok ty)
+        (tc-body-type-fact-record!
+          (tc-context-body-state ctx)
+          func-id
+          (clone ty))
+        (TcSelectedCallTarget.Signature ty true false)]
+      [(TcDirectLambdaCheck.Err message) (TcSelectedCallTarget.Err message)]
+      [(TcDirectLambdaCheck.No)
+        (match (if callee.ready
+          callee.result
+          (tc-call-target-expr-id ctx env func-id))
+          [(ResultTcType.Err message) (TcSelectedCallTarget.Err message)]
+          [(ResultTcType.Ok ty)
+            (let
+              [constructor? : bool
+                (or
+                  constructor?
+                  (and
+                    (< builtin.declared 0)
+                    (>= raw-name 0)
+                    (not (tc-name-lexically-bound-id? env raw-name))
+                    (match (& ty)
+                      [(ast.AstType.Func _ ret)
+                        (tc-selected-enum-variant-named?
                           ctx
-                          -2
-                          signature
-                          args.len
-                          (tc-call-region-args-allowed-for-func ctx env func)
-                          capture?)])]
-                  [_ (TcSelectedCallTarget.Residual ty)]))]))])))
+                          (ast.ty-node-get ret)
+                          raw-name)]
+                      [(or (ast.AstType.Enum _) (ast.AstType.EnumArgs _ _))
+                        (tc-selected-enum-variant-named?
+                          ctx
+                          (clone ty)
+                          raw-name)]
+                      [_ false])))]
+              (TcSelectedCallTarget.Signature ty false constructor?))])])))
 
 ;; A call of its argument type's declared cleanup function: it discharges a
 ;; `let` owner's cleanup obligation (as the legacy cleanup checker decides).
@@ -19063,40 +18566,24 @@
                 ctx
                 (ast.ast-type-list-get params 0 (ast.ast-type-id-fallback))))))))))
 
-;; A safe thread spawn (SPEC threads): legacy typing checks the call, its
-;; direct nullary lambda and the captures it may send, and tags the result
-;; with the atomic arena regions the captures hold (the thread handle must be
-;; joined before those arenas are released). The closure's environment moves
+;; A safe thread spawn has checked its direct nullary lambda and tagged its
+;; result with the atomic arena regions held by the captures. The environment moves
 ;; into the new thread (form 136) rather than being coerced to the task's
 ;; function type.
 (define (tc-infer-selected-spawn
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [func : ast.AstExpr]
   [fn-ty : ast.AstType]
   [args : (& args ast.AstExprList)]
   [syntax : typed.TypedSyntax]
-  [expected : ast.AstMaybeType]
+  [result : ResultTcType]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
     store
     lease
     intern
     bind)
-  (match (tc-call-contextual-type
-    ctx
-    env
-    expected
-    (match (clone fn-ty)
-      [(ast.AstType.Func params ret)
-        (tc-call-function-type-normal
-          ctx
-          env
-          func
-          (clone (deref args))
-          (ast.ast-type-list-box-shared-view params)
-          (ast.ty-node-get ret))]
-      [_ (ResultTcType.Err "typecheck: call target is not a function")]))
+  (match result
     [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
     [(ResultTcType.Ok ty)
       (if (match (& sink)
@@ -19176,10 +18663,6 @@
         children)]
     [_ operands]))
 
-;; Mirrors `tc-check-call-args-with-message-at` for a signature without
-;; reference parameters: the effective argument is the argument itself, and
-;; each argument is inferred once against its parameter type. After the first
-;; unrepresented argument the rest are inferred without publication.
 ;; The synthesized borrow of an auto-borrowed argument (the legacy effective
 ;; argument is a fresh Borrow node while the source argument is not a borrow).
 (defenum TcSelectedAutoBorrow
@@ -19304,6 +18787,7 @@
       (tc-global-shared-view want))
       [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
       [(ResultTcType.Ok ty)
+        (set! tc-call-temporary-borrow-typed true)
         (let
           [mutable : bool
             (match (tc-type-strip-region
@@ -19368,40 +18852,6 @@
                                       (ResultTcType.Ok ty)
                                       after)])])])])]))]))])))
 
-;; A call rejected under its call-scoped substitution reports what
-;; `tc-call-lifetime-function-type` does: the substitution inferred from the
-;; arguments (declared lifetime names) gives the rejected call its diagnostic.
-;; A rejection only the ownership graph sees keeps its own message.
-(define (tc-selected-call-scoped-diagnostic
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [lifetimes : ast.AstLifetimeList]
-  [allow-region-args : bool]
-  [message : String]) : String
-  (match (tc-infer-call-lifetime-subst
-    ctx
-    env
-    (tc-global-shared-view func)
-    (tc-global-shared-view args)
-    (tc-global-shared-view params)
-    lifetimes
-    TcLifetimeSubst.Nil)
-    [(ResultTcLifetimeSubst.Err inferred) inferred]
-    [(ResultTcLifetimeSubst.Ok subst)
-      (match (tc-check-call-args
-        ctx
-        env
-        func
-        args
-        (tc-lifetime-subst-type-list subst params)
-        allow-region-args
-        ast.AstMaybeType.No)
-        [(ResultTcType.Err checked) checked]
-        [(ResultTcType.Ok _) message])]))
-
 ;; Only Capture retains checked argument occurrences and signature roles.
 (defenum TcSelectedCallStaging
   (Query)
@@ -19409,8 +18859,220 @@
 
 (defenum TcSelectedCallArgsResult
   (:lifetimes store lease intern bind)
-  (Ok TcSelectedCallStaging bool (TcSelectedSink store lease intern bind))
+  (Ok TcSelectedCallStaging (TcSelectedSink store lease intern bind))
   (Err String (TcSelectedSink store lease intern bind)))
+
+(define (tc-check-effective-call-argument
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [constructor? : bool]
+  [spawn? : bool]
+  [arg : (& arg ast.AstExpr)]
+  [want : (& want ast.AstType)]) : ResultTcType
+  (let
+    [typed-arg : ResultTcType
+      (cond
+        [spawn?
+          (tc-expr-with-expected-or-actual-thread-spawn-arg
+            ctx
+            env
+            (clone (deref arg))
+            (clone (deref want)))]
+        [else
+          (tc-expr-with-expected-or-actual-core
+            ctx
+            env
+            (clone (deref arg))
+            (clone (deref want))
+            (not constructor?))])]
+    (match (& typed-arg)
+      [(Ok _) typed-arg]
+      [(Err _)
+        (tc-call-arg-type-after-error
+          ctx
+          env
+          (clone (deref arg))
+          (clone (deref want))
+          typed-arg)])))
+
+(define (tc-capture-call-argument
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstTypeList)]
+  [index : i64]
+  [arg-id : i64]
+  [arg : (& arg ast.AstExpr)]
+  [effective-arg : (& effective-arg ast.AstExpr)]
+  [want : (& want ast.AstType)]
+  [constructor? : bool]
+  [foreign-read? : bool]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (if (tc-call-temporary-borrow-arg?
+    (tc-context-expr-bases ctx)
+    (clone (deref arg)))
+    (tc-infer-selected-temporary-borrow-arg
+      ctx
+      env
+      arg-id
+      (clone (deref want))
+      (tc-global-shared-view source)
+      true
+      sink)
+    (match (tc-selected-auto-borrow (clone (deref arg)) effective-arg)
+      [(TcSelectedAutoBorrow.Some lifetime-id place-id)
+        (tc-infer-selected-borrow
+          ctx
+          env
+          false
+          lifetime-id
+          place-id
+          false
+          TcMaybeAstSourceSpan.No
+          (typed.TypedSyntax.Source arg-id)
+          (tc-global-shared-view source)
+          sink)]
+      [(TcSelectedAutoBorrow.No)
+        (match (tc-selected-mut-borrow-arg ctx (clone (deref arg)))
+          [(TcSelectedMutBorrowArg.Some inner-id lifetime-id place-id span)
+            (tc-infer-selected-mut-borrow-arg
+              ctx
+              env
+              arg-id
+              inner-id
+              lifetime-id
+              place-id
+              span
+              (tc-global-shared-view source)
+              sink)]
+          [(TcSelectedMutBorrowArg.No)
+            (if (tc-selected-raw-spawn-entry?
+              ctx
+              env
+              (tc-global-shared-view func)
+              args
+              params
+              index)
+              (tc-infer-selected-spawn-entry
+                ctx
+                env
+                arg-id
+                (clone (deref want))
+                (tc-global-shared-view source)
+                sink)
+              (if (and
+                (not constructor?)
+                (tc-arena-type? ctx (clone (deref want)))
+                (not (tc-call-param-moves-argument? ctx (clone (deref want))))
+                (tc-selected-arena-handle-operand? ctx env arg-id))
+                ;; A bare `Arena` parameter reads an owner without
+                ;; moving it (`tc-call-param-moves-argument?`).
+                (match (tc-expr-with-expected-or-actual-id
+                  ctx
+                  env
+                  arg-id
+                  (clone (deref want)))
+                  [(ResultTcType.Err message)
+                    (TcSelectedResult.Err message sink)]
+                  [(ResultTcType.Ok got)
+                    (tc-infer-selected-arena-handle
+                      ctx
+                      env
+                      arg-id
+                      got
+                      (tc-global-shared-view source)
+                      sink)])
+                ;; A shared-reference formal borrows its argument for
+                ;; the call, so a compound one, or an element read
+                ;; through a temporary (no auto-borrowed place), is
+                ;; read as `clone` reads its operand
+                ;; (`tc-infer-selected-read`).
+                (let
+                  [arg-source : ownership.OwnershipSource
+                    (tc-global-shared-view source)]
+                  [route : i64 (tc-selected-argument-route ctx env arg-id want)]
+                  (cond
+                    [(or (= route 1) (= route 2))
+                      (tc-infer-selected-read-operand
+                        ctx
+                        env
+                        arg-id
+                        arg-source
+                        sink)]
+                    [(= route 3)
+                      (tc-infer-selected-reborrow-arg
+                        ctx
+                        env
+                        arg-id
+                        arg-source
+                        sink)]
+                    [(and
+                        foreign-read?
+                        (not (tc-type-copyable? ctx (clone (deref want))))
+                        (not
+                          (tc-selected-expects-reference?
+                            ctx
+                            (ast.AstMaybeType.Some (clone (deref want)))))
+                        (tc-selected-operand-place? ctx (clone (deref arg))))
+                      (tc-infer-selected-operand ctx env arg-id arg-source sink)]
+                    [else
+                      (tc-infer-selected-sequence-child
+                        ctx
+                        env
+                        arg-id
+                        (ast.AstMaybeType.Some (clone (deref want)))
+                        arg-source
+                        true
+                        sink)]))))])])))
+
+;; Evidence from lifetime inference is local to one call. Only a value
+;; operand checked with the same formal and without an implicit borrow can
+;; reuse a contextual result. The first such result allocates the slots.
+(defenum TcCallOperandEvidence
+  (None)
+  (Checked i64 ast.AstType ast.AstType))
+
+(defenum TcCallEvidence
+  (Empty)
+  (Operands (__tl_dyn-array TcCallOperandEvidence)))
+
+(define (tc-call-evidence-record!
+  [evidence : (&mut evidence TcCallEvidence)]
+  [len : i64]
+  [index : i64]
+  [id : i64]
+  [want : ast.AstType]
+  [actual : ast.AstType]) : unit
+  (let
+    [slots : (__tl_dyn-array TcCallOperandEvidence)
+      (match (replace! (deref evidence) TcCallEvidence.Empty)
+        [(TcCallEvidence.Empty) (__tl_make-array TcCallOperandEvidence len)]
+        [(TcCallEvidence.Operands slots) slots])]
+    (set!
+      (array-ref slots index)
+      (TcCallOperandEvidence.Checked id want actual))
+    (set! (deref evidence) (TcCallEvidence.Operands slots))))
+
+(define (tc-call-evidence-lookup
+  [evidence : (& evidence TcCallEvidence)]
+  [index : i64]
+  [id : i64]
+  [want : ast.AstType]) : ast.AstMaybeType
+  (match evidence
+    [(TcCallEvidence.Empty) ast.AstMaybeType.No]
+    [(TcCallEvidence.Operands slots)
+      (match (& (array-ref (deref slots) index))
+        [(TcCallOperandEvidence.Checked checked-id formal actual)
+          (if (and (= checked-id id) (tc-type-eq (clone (deref formal)) want))
+            (ast.AstMaybeType.Some (clone (deref actual)))
+            ast.AstMaybeType.No)]
+        [_ ast.AstMaybeType.No])]))
 
 (define (tc-infer-selected-call-args
   [ctx : TcContext]
@@ -19419,263 +19081,182 @@
   [args : (& args ast.AstExprList)]
   [params : (& params ast.AstTypeList)]
   [allow-region-args : bool]
-  ;; A constructor's result: its arguments are stored into it.
-  [constructor : ast.AstMaybeType]
-  ;; The call's result type; a constructor's joins each argument's regions
-  ;; (`tc-type-join-regions`), as the constructed value holds them.
+  [constructor? : bool]
   [constructed : (&mut constructed ast.AstType)]
-  ;; Each argument's type, in argument order, for
-  ;; `tc-call-erased-owner-result`: its identity walk never re-types an
-  ;; argument. Filled only when the call's result can hold an arena handle, the
-  ;; one case an erased owner's region can be tagged on it.
-  [collect-arg-types? : bool]
-  [arg-types : (&mut arg-types (__tl_dyn-array ast.AstType))]
-  [arity-msg : TcArityMessage]
-  ;; `tc-call-arena-store-region`, once per call.
+  [collect-owners? : bool]
+  [summary : (&mut summary TcCallArgumentSummary)]
+  [send? : bool]
+  [invalidates? : bool]
+  [spawn? : bool]
+  [open-start : i64]
+  [first : (& first ast.AstMaybeType)]
+  [evidence : (& evidence TcCallEvidence)]
   [arena-region : i64]
-  [index : i64]
   [staging : TcSelectedCallStaging]
-  [represented? : bool]
   [foreign-read? : bool]
-  [source : ownership.OwnershipSource]
+  [semantic-error? : (&mut semantic-error? bool)]
+  [source : (& source ownership.OwnershipSource)]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedCallArgsResult
     store
     lease
     intern
     bind)
-  (if (or (>= index args.len) (>= index (ast.ast-type-list-len params)))
-    (if (and (>= index args.len) (>= index (ast.ast-type-list-len params)))
-      (begin
-        (tc-call-arena-store-note!
-          ctx
-          env
-          arena-region
-          params
-          (tc-global-shared-view func)
-          (tc-global-shared-view func)
-          -1
-          (No))
-        (TcSelectedCallArgsResult.Ok staging represented? sink))
-      (TcSelectedCallArgsResult.Err
-        (tc-arity-message-text (tc-context-expr-segment-bases ctx) arity-msg)
-        sink))
-    (let
-      [arg-id : i64 (ast.ast-expr-list-get args index 0)]
-      [arg : ast.AstExpr (tc-context-expr-get ctx arg-id)]
-      ;; As legacy argument checking: an `(:invalidate r T)` formal takes a `T`.
-      [want : ast.AstType
-        (tc-type-strip-invalidate
-          (ast.ty-node-get
-            (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))]
-      ;; The effective argument is the legacy one: an immutable reference
-      ;; formal auto-borrows a plain place argument.
-      (match (tc-call-effective-arg-expr
-        ctx
-        env
-        arg-id
-        (tc-global-shared-view arg)
-        (tc-global-shared-view want))
-        [(ResultTcExpr.Err message)
-          (TcSelectedCallArgsResult.Err
-            (tc-locate-error-at-expr (tc-context-expr-bases ctx) arg message)
-            sink)]
-        [(ResultTcExpr.Ok effective-arg)
-          (match (if (tc-call-temporary-borrow-arg?
-            (tc-context-expr-bases ctx)
-            (tc-global-shared-view arg))
-            (tc-infer-selected-temporary-borrow-arg
-              ctx
-              env
-              arg-id
-              (tc-global-shared-view want)
-              (tc-global-shared-view source)
-              represented?
-              sink)
-            (match (tc-selected-auto-borrow
-              (tc-global-shared-view arg)
-              (& effective-arg))
-              [(TcSelectedAutoBorrow.Some lifetime-id place-id)
-                (if represented?
-                  (tc-infer-selected-borrow
+  (let
+    [index : i64 0]
+    [param-count : i64 (ast.ast-type-list-len params)]
+    (while (and (< index args.len) (< index param-count))
+      (let
+        [arg-id : i64 (ast.ast-expr-list-get args index 0)]
+        [arg : ast.AstExpr (tc-context-expr-get ctx arg-id)]
+        [want : ast.AstType
+          (tc-type-strip-invalidate
+            (ast.ty-node-get
+              (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))]
+        [comptime? : bool
+          (and
+            (tc-comptime-params-present?)
+            (tc-macro-type-param-kind? (clone want))
+            (match (ast.ast-expr-unspan-with-segment-bases
+              (tc-context-expr-bases ctx)
+              (& arg))
+              [(TypeLiteral _) true]
+              [_ false]))]
+        (unless
+          comptime?
+          (let
+            [open? : bool (and (>= open-start 0) (>= index open-start))]
+            [represented? : bool
+              (match (& staging)
+                [(TcSelectedCallStaging.Capture _ _) true]
+                [_ false])]
+            [effective : ast.AstExpr
+              (match (if open?
+                (ResultTcExpr.Ok (tc-global-shared-view arg))
+                (tc-call-effective-arg-expr
+                  ctx
+                  env
+                  arg-id
+                  (tc-global-shared-view arg)
+                  (tc-global-shared-view want)))
+                [(Ok effective) effective]
+                [(Err message)
+                  (return
+                    (TcSelectedCallArgsResult.Err
+                      (tc-locate-error-at-expr
+                        (tc-context-expr-bases ctx)
+                        arg
+                        message)
+                      sink))])]
+            [child : TcSelectedOccurrence TcSelectedOccurrence.Unrepresented]
+            [actual : ResultTcType
+              (cond
+                [(and
+                    (= index 0)
+                    (match first
+                      [(ast.AstMaybeType.Some ty)
+                        (and
+                          (not
+                            (tc-call-temporary-borrow-arg?
+                              (tc-context-expr-bases ctx)
+                              (clone arg)))
+                          (tc-type-eq (clone (deref ty)) (clone want)))]
+                      [_ false]))
+                  (match first
+                    [(ast.AstMaybeType.Some ty) (Ok (clone (deref ty)))]
+                    [_ (Ok (clone want))])]
+                [represented?
+                  (match (tc-capture-call-argument
                     ctx
                     env
-                    false
-                    lifetime-id
-                    place-id
-                    false
-                    TcMaybeAstSourceSpan.No
-                    (typed.TypedSyntax.Source arg-id)
-                    (tc-global-shared-view source)
+                    (tc-global-shared-view func)
+                    args
+                    params
+                    index
+                    arg-id
+                    (& arg)
+                    (& effective)
+                    (& want)
+                    constructor?
+                    foreign-read?
+                    (ownership.ownership-source-copy source)
                     sink)
-                  (tc-selected-unrepresented
-                    (tc-selected-project
-                      (tc-infer-selected-borrow
+                    [(TcSelectedResult.Err message next)
+                      (set! (deref semantic-error?) false)
+                      (return
+                        (TcSelectedCallArgsResult.Err
+                          (if (tc-call-explicit-borrow-expr?
+                            (tc-context-expr-bases ctx)
+                            (clone arg))
+                            (tc-locate-error-at-expr
+                              (tc-context-expr-bases ctx)
+                              arg
+                              message)
+                            message)
+                          next))]
+                    [(TcSelectedResult.Ok ty occurrence next)
+                      (set! sink next)
+                      (set! child occurrence)
+                      (Ok ty)])]
+                [open? (Ok (clone want))]
+                [else
+                  (match (tc-call-evidence-lookup
+                    evidence
+                    index
+                    arg-id
+                    (clone want))
+                    [(ast.AstMaybeType.Some ty) (Ok ty)]
+                    [(ast.AstMaybeType.No)
+                      (tc-check-effective-call-argument
                         ctx
                         env
-                        false
-                        lifetime-id
-                        place-id
-                        false
-                        TcMaybeAstSourceSpan.No
-                        (typed.TypedSyntax.Source arg-id)
-                        (tc-global-shared-view source)
-                        TcSelectedSink.Query))
-                    sink))]
-              [(TcSelectedAutoBorrow.No)
-                (match (tc-selected-mut-borrow-arg
-                  ctx
-                  (tc-global-shared-view arg))
-                  [(TcSelectedMutBorrowArg.Some
-                      inner-id
-                      lifetime-id
-                      place-id
-                      span)
-                    (tc-infer-selected-mut-borrow-arg
+                        constructor?
+                        spawn?
+                        (& effective)
+                        (& want))])])]
+            [got : ast.AstType
+              (match actual
+                [(Ok got)
+                  ;; An explicit dereference is a read of the referent's own
+                  ;; value. Use the place checker if contextual value typing
+                  ;; leaves a loan tag on that read. Capture already used it.
+                  (if (and
+                    (not represented?)
+                    (not constructor?)
+                    (tc-type-contains-any-region (& got))
+                    (match (ast.ast-expr-unspan-with-segment-bases
+                      (tc-context-expr-bases ctx)
+                      (& effective))
+                      [(BoxTake _) true]
+                      [_ false])
+                    (tc-selected-view-move-out?
                       ctx
                       env
-                      arg-id
-                      inner-id
-                      lifetime-id
-                      place-id
-                      span
-                      (tc-global-shared-view source)
-                      represented?
-                      sink)]
-                  [(TcSelectedMutBorrowArg.No)
-                    (if (and
-                      represented?
-                      (tc-selected-raw-spawn-entry?
-                        ctx
-                        env
-                        (tc-global-shared-view func)
-                        args
-                        params
-                        index))
-                      (tc-infer-selected-spawn-entry
-                        ctx
-                        env
-                        arg-id
-                        (tc-global-shared-view want)
-                        (tc-global-shared-view source)
-                        sink)
-                      (if (and
-                        (match (& constructor)
-                          [(ast.AstMaybeType.No) true]
-                          [(ast.AstMaybeType.Some _) false])
-                        (tc-arena-type? ctx (tc-global-shared-view want))
-                        (not
-                          (tc-call-param-moves-argument?
-                            ctx
-                            (tc-global-shared-view want)))
-                        (tc-selected-arena-handle-operand? ctx env arg-id))
-                        ;; A bare `Arena` parameter reads an owner without
-                        ;; moving it (`tc-call-param-moves-argument?`).
-                        (match (tc-expr-with-expected-or-actual-id
+                      (clone want)
+                      (clone got)))
+                    (match (tc-semantic-unobserved
+                      ctx
+                      (tc-selected-project
+                        (tc-infer-selected-id
                           ctx
                           env
                           arg-id
-                          (tc-global-shared-view want))
-                          [(ResultTcType.Err message)
-                            (TcSelectedResult.Err message sink)]
-                          [(ResultTcType.Ok got)
-                            (if represented?
-                              (tc-infer-selected-arena-handle
-                                ctx
-                                env
-                                arg-id
-                                got
-                                (tc-global-shared-view source)
-                                sink)
-                              (tc-selected-unrepresented
-                                (ResultTcType.Ok got)
-                                sink))])
-                        ;; A shared-reference formal borrows its argument for
-                        ;; the call, so a compound one, or an element read
-                        ;; through a temporary (no auto-borrowed place), is
-                        ;; read as `clone` reads its operand
-                        ;; (`tc-infer-selected-read`).
-                        (let
-                          [arg-source : ownership.OwnershipSource
-                            (tc-global-shared-view source)]
-                          [route : i64
-                            (if represented?
-                              (tc-selected-argument-route
-                                ctx
-                                env
-                                arg-id
-                                (& want))
-                              0)]
-                          (cond
-                            [(= route 1)
-                              (tc-infer-selected-read-operand
-                                ctx
-                                env
-                                arg-id
-                                arg-source
-                                sink)]
-                            ;; A move-only element keeps its own type, as a
-                            ;; read spine's result does.
-                            [(= route 2)
-                              (match (tc-infer-selected-read-operand
-                                ctx
-                                env
-                                arg-id
-                                arg-source
-                                sink)
-                                [(TcSelectedResult.Ok ty occurrence next)
-                                  (TcSelectedResult.Ok
-                                    (match (tc-expr-id ctx env arg-id)
-                                      [(ResultTcType.Ok own)
-                                        (tc-selected-strip-regions own)]
-                                      [(ResultTcType.Err _) ty])
-                                    occurrence
-                                    next)]
-                                [(TcSelectedResult.Err message next)
-                                  (TcSelectedResult.Err message next)])]
-                            [(= route 3)
-                              (tc-infer-selected-reborrow-arg
-                                ctx
-                                env
-                                arg-id
-                                arg-source
-                                sink)]
-                            [(and
-                                foreign-read?
-                                represented?
-                                (not (tc-type-copyable? ctx (clone want)))
-                                (not
-                                  (tc-selected-expects-reference?
-                                    ctx
-                                    (ast.AstMaybeType.Some (clone want))))
-                                (tc-selected-operand-place? ctx (clone arg)))
-                              (tc-infer-selected-operand
-                                ctx
-                                env
-                                arg-id
-                                arg-source
-                                sink)]
-                            [else
-                              (tc-infer-selected-sequence-child
-                                ctx
-                                env
-                                arg-id
-                                (ast.AstMaybeType.Some
-                                  (tc-global-shared-view want))
-                                arg-source
-                                represented?
-                                sink)]))))])]))
-            [(TcSelectedResult.Err message next)
-              (TcSelectedCallArgsResult.Err message next)]
-            [(TcSelectedResult.Ok got child next)
-              (when
-                collect-arg-types?
-                (tc-selected-types-push! (&mut arg-types) (clone got)))
-              (match (tc-match-call-type-for-expected
-                ctx
-                env
-                (tc-global-shared-view got)
-                (tc-global-shared-view want))
-                [(TcInferredTypeMatch.Mismatch actual)
+                          (ast.AstMaybeType.Some (clone want))
+                          (ownership.ownership-source-copy source)
+                          TcSelectedSink.Query)))
+                      [(Ok own) own]
+                      [(Err message)
+                        (return (TcSelectedCallArgsResult.Err message sink))])
+                    got)]
+                [(Err message)
+                  (return (TcSelectedCallArgsResult.Err message sink))])]
+            (match (tc-match-call-type-for-expected
+              ctx
+              env
+              (tc-global-shared-view got)
+              (tc-global-shared-view want))
+              [(TcInferredTypeMatch.Compatible _) unit]
+              [(TcInferredTypeMatch.Mismatch actual)
+                (return
                   (TcSelectedCallArgsResult.Err
                     (tc-locate-error-at-expr
                       (tc-context-expr-bases ctx)
@@ -19685,108 +19266,119 @@
                         env
                         actual
                         (tc-global-shared-view want)
-                        (tc-argument-message-prefix-text
+                        (tc-call-argument-message-prefix
                           ctx
-                          (tc-global-shared-view arity-msg)
+                          (tc-global-shared-view func)
                           index)))
-                    next)]
-                [(TcInferredTypeMatch.Compatible _)
-                  (tc-call-arena-store-note!
-                    ctx
+                    sink))])
+            (tc-call-arena-store-note!
+              ctx
+              env
+              arena-region
+              params
+              (tc-global-shared-view func)
+              (tc-global-shared-view effective)
+              index
+              (Some (tc-global-shared-view got)))
+            (when
+              (and
+                (tc-type-contains-any-region (& got))
+                (not allow-region-args)
+                (not (tc-type-contains-any-region (& want)))
+                (not
+                  (tc-type-regions-all-atomic-arena-owners?
                     env
-                    arena-region
-                    params
-                    (tc-global-shared-view func)
-                    (tc-global-shared-view effective-arg)
-                    index
-                    (Some (tc-global-shared-view got)))
-                  (if (and
-                    (tc-type-contains-any-region (& got))
-                    (not allow-region-args)
-                    (not (tc-type-contains-any-region (& want)))
-                    (not
-                      (tc-type-regions-all-atomic-arena-owners?
-                        env
-                        (tc-global-shared-view got)))
-                    (not
-                      (tc-type-regions-all-scratch? (tc-global-shared-view got)))
-                    (not (tc-type-contains-reference? (& got)))
-                    (not (tc-tagged-arena-handle-borrow? ctx (clone got) want)))
-                    (TcSelectedCallArgsResult.Err
-                      (tc-region-call-arg-error
-                        (tc-context-expr-bases ctx)
-                        (tc-global-shared-view effective-arg))
-                      next)
-                    (let
-                      [stored : ResultTcUnit
-                        (match (tc-global-shared-view constructor)
-                          [(ast.AstMaybeType.No) ResultTcUnit.Ok]
-                          [(ast.AstMaybeType.Some target)
-                            (match (tc-ensure-cleanup-resource-not-stored-expr
-                              ctx
-                              env
-                              (tc-global-shared-view effective-arg))
-                              [(ResultTcUnit.Ok)
-                                (tc-ensure-constructor-field-can-flow-into
-                                  env
-                                  target
-                                  (clone got))]
-                              [(ResultTcUnit.Err message)
-                                (ResultTcUnit.Err message)])])]
-                      (match stored
-                        [(ResultTcUnit.Err message)
-                          (TcSelectedCallArgsResult.Err message next)]
-                        [(ResultTcUnit.Ok)
-                          (when
-                            (match (& constructor)
-                              [(ast.AstMaybeType.Some _) true]
-                              [(ast.AstMaybeType.No) false])
-                            (tc-type-join-regions-into! env constructed (& got)))
-                          (let
-                            [next-represented? : bool false]
-                            [next-staging : TcSelectedCallStaging
-                              (match staging
-                                [(TcSelectedCallStaging.Query)
-                                  TcSelectedCallStaging.Query]
-                                [(TcSelectedCallStaging.Capture
-                                  children
-                                  branded)
-                                  (match child
-                                    [(TcSelectedOccurrence.Selected id)
-                                      (set! (array-ref children index) id)
-                                      (set!
-                                        next-represented?
-                                        (and
-                                          represented?
-                                          (or
-                                            (>= index (array-length branded))
-                                            (not (array-ref branded index))
-                                            (tc-selected-arena-brand-exact?
-                                              (tc-global-shared-view got)
-                                              (tc-global-shared-view want)))))]
-                                    [(TcSelectedOccurrence.Unrepresented) unit])
-                                  (TcSelectedCallStaging.Capture
-                                    children
-                                    branded)])]
-                            (tc-infer-selected-call-args
-                              ctx
-                              env
-                              func
-                              args
-                              params
-                              allow-region-args
-                              constructor
-                              constructed
-                              collect-arg-types?
-                              arg-types
-                              arity-msg
-                              arena-region
-                              (+ index 1)
-                              next-staging
-                              next-represented?
-                              foreign-read?
-                              source
-                              next))])))])])]))))
+                    (tc-global-shared-view got)))
+                (not (tc-type-regions-all-scratch? (tc-global-shared-view got)))
+                (not (tc-type-contains-reference? (& got)))
+                (not
+                  (tc-tagged-arena-handle-borrow?
+                    ctx
+                    (tc-global-shared-view got)
+                    (tc-global-shared-view want))))
+              (return
+                (TcSelectedCallArgsResult.Err
+                  (tc-region-call-arg-error
+                    (tc-context-expr-bases ctx)
+                    effective)
+                  sink)))
+            (when
+              constructor?
+              (match (tc-ensure-cleanup-resource-not-stored-expr
+                ctx
+                env
+                effective)
+                [(Err message)
+                  (return (TcSelectedCallArgsResult.Err message sink))]
+                [_ unit])
+              (match (tc-ensure-constructor-field-can-flow-into
+                env
+                (clone (deref constructed))
+                (tc-global-shared-view got))
+                [(Err message)
+                  (return (TcSelectedCallArgsResult.Err message sink))]
+                [_ unit])
+              (tc-type-join-regions-into! env constructed (& got)))
+            (when
+              (and
+                collect-owners?
+                (tc-formal-reaches-bare-arena? ctx (tc-global-shared-view want)))
+              (tc-call-collect-owners! ctx env arg-id (& got) summary))
+            (when
+              (and send? (= index 1))
+              (set!
+                summary.send-type
+                (ast.AstMaybeType.Some (tc-global-shared-view got))))
+            (when
+              invalidates?
+              (ast.ast-type-list-push
+                (&mut summary.invalidate-types)
+                (ast.ast-node-pool-reader-type-push (& got))))
+            (when
+              represented?
+              (match (replace! staging TcSelectedCallStaging.Query)
+                [(TcSelectedCallStaging.Capture children branded)
+                  (match child
+                    [(TcSelectedOccurrence.Selected id)
+                      (when
+                        (or
+                          (>= index (array-length branded))
+                          (not (array-ref branded index))
+                          (tc-selected-arena-brand-exact? got want))
+                        (set! (array-ref children index) id)
+                        (set!
+                          staging
+                          (TcSelectedCallStaging.Capture children branded)))]
+                    [_ unit])]
+                [_ unit]))))
+        (when
+          comptime?
+          (set! staging TcSelectedCallStaging.Query)
+          (when
+            invalidates?
+            (ast.ast-type-list-push
+              (&mut summary.invalidate-types)
+              (ast.ast-type-id-fallback))))
+        (set! index (+ index 1))))
+    (if (and (= index args.len) (= index param-count))
+      (begin
+        (tc-call-arena-store-note!
+          ctx
+          env
+          arena-region
+          params
+          (tc-global-shared-view func)
+          func
+          -1
+          (No))
+        (TcSelectedCallArgsResult.Ok staging sink))
+      (TcSelectedCallArgsResult.Err
+        (tc-call-arity-count-message
+          (tc-context-expr-segment-bases ctx)
+          func
+          param-count
+          args.len)
+        sink))))
 
 ;; The region tags (`(in r T)`) anywhere in a type.
 (define (tc-selected-region-tags-into [ty : ast.AstType] [out : TcNameIdList]) : TcNameIdList
@@ -20035,28 +19627,17 @@
     (match (tc-selected-call-target
       ctx
       env
-      (& args)
       func-id
       (clone func)
       raw-name
-      (& info)
-      (match (& sink)
-        [(TcSelectedSink.Query) false]
-        [_ true]))
-      [(TcSelectedCallTarget.Residual ty)
-        (tc-selected-unrepresented
-          (tc-call-contextual-type
-            ctx
-            env
-            expected
-            (tc-call-expr-ordinary-resolved ctx env func args ty))
-          sink)]
+      (& info))
       [(TcSelectedCallTarget.Err message) (TcSelectedResult.Err message sink)]
       [(TcSelectedCallTarget.Builtin)
         (tc-infer-selected-builtin
           ctx
           env
           func
+          func-id
           (& info)
           args
           syntax
@@ -20065,7 +19646,7 @@
           sink)]
       [(TcSelectedCallTarget.Clone)
         (tc-infer-selected-clone-call ctx env args syntax expected source sink)]
-      [(TcSelectedCallTarget.ArenaForm _)
+      [(TcSelectedCallTarget.ArenaForm)
         (tc-infer-selected-arena-call
           ctx
           env
@@ -20077,369 +19658,874 @@
           expected
           source
           sink)]
-      [(TcSelectedCallTarget.Spawn fn-ty)
-        (tc-infer-selected-spawn
-          ctx
-          env
-          (clone func)
-          fn-ty
-          (& args)
-          syntax
-          expected
-          source
-          sink)]
-      [(TcSelectedCallTarget.Foreign key fn-ty)
-        (tc-infer-selected-foreign-call
+      [(TcSelectedCallTarget.Signature ty direct? constructor?)
+        (tc-infer-selected-call-signature
           ctx
           env
           func
           func-id
-          raw-name
-          key
-          fn-ty
-          args
+          info.declared
+          ty
+          direct?
+          constructor?
+          (tc-arena-owner-kind-none)
+          (& args)
           syntax
           expected
+          ast.AstMaybeType.No
           source
-          sink)]
-      [(TcSelectedCallTarget.Ordinary
-          key
-          fn-ty
-          direct?
-          allow-region-args
-          foreign?)
-        (match (tc-normalize-dotted-local-field-expr-list! ctx env args)
-          [(ResultTcUnit.Err message) (TcSelectedResult.Err message sink)]
-          [(ResultTcUnit.Ok)
-            (match (tc-global-shared-view fn-ty)
-              [(ast.AstType.Func params-box ret-id)
-                (let
-                  [declared-params : ast.AstTypeList
-                    (ast.ast-type-list-box-shared-view params-box)]
-                  [declared-ret : ast.AstType (ast.ty-node-get ret-id)]
-                  [collected : TcNameIdList
-                    (tc-type-collect-reference-lifetimes-into
-                      (tc-global-shared-view declared-ret)
-                      (tc-type-list-collect-reference-lifetimes
-                        (tc-global-shared-view declared-params)
-                        TcNameIdList.Nil))]
-                  ;; A declared callee's parameter spelled `program` names its
-                  ;; own lifetime there (`tc-call-program-shadow`); a
-                  ;; constructor's fields cannot.
-                  [shadow : i64
-                    (if (and
-                      (>= key 0)
-                      (tc-name-id-list-spells-program? collected))
-                      (tc-call-program-shadow
-                        ctx
-                        key
-                        (ast.ast-type-list-len (& declared-params)))
-                      -1)]
-                  ;; A call never instantiates the reserved `program` lifetime,
-                  ;; which outlives every other as Rust's `'static` does: a
-                  ;; `program` parameter or field takes only a `program`
-                  ;; reference (`tc-call-lifetime-constructor-type`).
-                  [lifetimes : ast.AstLifetimeList
+          sink)])))
+
+;; The length intrinsic can hand an already checked receiver to an ordinary call.
+(define (tc-call-length-fallback
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [func-id : i64]
+  [key : i64]
+  [args : (& args ast.AstExprList)]
+  [first : ast.AstMaybeType]) : ResultTcType
+  (let
+    [ty (try (tc-call-target-expr-id ctx env func-id))]
+    (tc-selected-project
+      (tc-infer-selected-call-signature
+        ctx
+        env
+        func
+        func-id
+        key
+        ty
+        false
+        false
+        (tc-arena-owner-kind-none)
+        args
+        typed.TypedSyntax.Generated
+        ast.AstMaybeType.No
+        first
+        (ownership.OwnershipSource
+          (ownership.ownership-path-none)
+          0
+          0
+          (ownership.ownership-expansion-none))
+        TcSelectedSink.Query))))
+
+(define (tc-infer-selected-call-signature
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [func-id : i64]
+  [key : i64]
+  [target : ast.AstType]
+  [direct? : bool]
+  [constructor? : bool]
+  [owner-kind : i64]
+  [args : (& args ast.AstExprList)]
+  [syntax : typed.TypedSyntax]
+  [expected : ast.AstMaybeType]
+  [first : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [wrapped? : bool
+      (match (& target)
+        [(ast.AstType.Region _ _) true]
+        [_ false])]
+    [target : ast.AstType (tc-type-strip-region target)]
+    [c-pointer? : bool
+      (match (& target)
+        [(ast.AstType.CFunc _ _) true]
+        [_ false])]
+    [signature : ast.AstType
+      (match target
+        [(ast.AstType.CFunc signature mode)
+          (match (tc-call-c-function-signature
+            ctx
+            env
+            (clone func)
+            signature
+            mode)
+            [(Ok ty) ty]
+            [(Err message) (return (TcSelectedResult.Err message sink))])]
+        [_ target])]
+    (match signature
+      [(or (ast.AstType.Enum enum-name) (ast.AstType.EnumArgs enum-name _))
+        (let
+          [result : ResultTcType
+            (tc-call-contextual-type
+              ctx
+              env
+              expected
+              (if (= args.len 0)
+                (tc-nullary-variant-call-expr
+                  ctx
+                  env
+                  func
+                  enum-name
+                  (clone signature))
+                (Err
+                  (tc-call-fixed-arity-message
+                    (tc-context-expr-segment-bases ctx)
+                    func
+                    (clone (deref args))
+                    0))))]
+          (match (& sink)
+            [(TcSelectedSink.Query) (tc-selected-unrepresented result sink)]
+            [_
+              (tc-selected-publish-call
+                result
+                typed.TypedCallKind.Construct
+                (ast.ast-ty-func (ast.ast-type-list-new) signature)
+                syntax
+                source
+                (tc-selected-no-occurrences)
+                constructor?
+                sink)]))]
+      [(ast.AstType.Func params-box ret-id)
+        (let
+          [params : ast.AstTypeList
+            (ast.ast-type-list-box-shared-view params-box)]
+          [ret : ast.AstType (ast.ty-node-get ret-id)]
+          [key : i64
+            (if constructor?
+              -1
+              (if (< key 0)
+                -2
+                key))]
+          [region-function? : bool (and wrapped? (not c-pointer?))]
+          [abi : TcMaybeExternAbi
+            (if (or region-function? c-pointer?)
+              TcMaybeExternAbi.No
+              (tc-selected-call-abi ctx key))]
+          [open-start : i64
+            (match (& abi)
+              [(TcMaybeExternAbi.Some (CVarargsOpen))
+                (ast.ast-type-list-len (& params))]
+              [_ -1])]
+          [foreign? : bool
+            (or
+              c-pointer?
+              (match (& abi)
+                [(TcMaybeExternAbi.Some _) true]
+                [_ false]))]
+          [specialized? : bool false]
+          (when
+            (and
+              (not wrapped?)
+              (not c-pointer?)
+              (>= key 0)
+              (tc-comptime-params-present?)
+              (tc-call-has-type-literal-arg? ctx args))
+            (let
+              [types : TcComptimeTypeArgs
+                (tc-call-comptime-type-args ctx (clone func) args)]
+              (when
+                (> types.len 0)
+                (set! params (tc-type-list-subst-comptime (& types) params))
+                (set! ret (tc-type-subst-comptime (& types) ret))
+                (set! specialized? true))))
+          (match abi
+            [(TcMaybeExternAbi.Some tail)
+              (when
+                (tc-call-dynamic-c-varargs-abi? (clone tail))
+                (match (tc-call-extern-varargs-params
+                  ctx
+                  env
+                  (clone func)
+                  (clone (deref args))
+                  params
+                  tail)
+                  [(Ok expanded) (set! params expanded)]
+                  [(Err message) (return (TcSelectedResult.Err message sink))]))]
+            [_ unit])
+          (let
+            [nominal-constructor? : bool
+              (and
+                constructor?
+                (or
+                  (tc-lifetime-constructor-ret? (clone ret))
+                  (tc-constructor-name-id?
+                    ctx
+                    (tc-expr-var-name-id
+                      (tc-context-expr-segment-bases ctx)
+                      (clone func)))))]
+            [shadow : i64 -1]
+            [lifetimes : ast.AstLifetimeList
+              (cond
+                [region-function? (ast.ast-lifetime-list-new)]
+                [nominal-constructor?
+                  (match (clone ret)
+                    [(or (ast.AstType.StructArgs _ names)
+                         (ast.AstType.EnumArgs _ names))
+                      (ast.ast-lifetime-list-box-shared-view names)]
+                    [_ (ast.ast-lifetime-list-new)])]
+                [else
+                  (let
+                    [collected : TcNameIdList
+                      (tc-type-collect-reference-lifetimes-into
+                        (clone ret)
+                        (tc-type-list-collect-reference-lifetimes-at
+                          (& params)
+                          Nil
+                          0))]
+                    (when
+                      (and
+                        (>= key 0)
+                        (tc-name-id-list-spells-program? collected))
+                      (set!
+                        shadow
+                        (tc-call-program-shadow
+                          ctx
+                          key
+                          (ast.ast-type-list-len (& params)))))
                     (tc-name-id-list-to-lifetime-list
                       (if (< shadow 0)
                         (tc-name-id-list-without-program collected)
-                        collected))]
-                  ;; A lifetime that only says how long the call borrows its
-                  ;; argument is the call-temporary lifetime: the call infers
-                  ;; nothing from it (`tc-call-lifetime-function-type`).
-                  [call-scoped? : bool
-                    (and
-                      (not (ast.ast-lifetime-list-empty? (& lifetimes)))
-                      (!= key -1)
-                      (tc-call-lifetimes-call-scoped?
+                        collected)))])]
+            [lifetime? : bool
+              (not (ast.ast-lifetime-list-empty? (& lifetimes)))]
+            [scoped? : bool
+              (and
+                lifetime?
+                (not nominal-constructor?)
+                (tc-call-lifetimes-call-scoped?
+                  ctx
+                  (& params)
+                  (clone ret)
+                  (& lifetimes)))]
+            [allow-region? : bool
+              (and
+                (not direct?)
+                (not region-function?)
+                (tc-call-region-args-allowed-for-func ctx env (clone func)))]
+            [spawn? : bool
+              (and
+                (not lifetime?)
+                (not constructor?)
+                (not region-function?)
+                (tc-selected-safe-spawn-signature?
+                  ctx
+                  env
+                  (clone func)
+                  (tc-global-shared-view params)
+                  (clone ret)))]
+            [outer : bool (tc-call-temporary-borrow-scope-enter!)]
+            [semantic-error? : bool true]
+            [normalized? : bool false]
+            [evidence : TcCallEvidence TcCallEvidence.Empty]
+            [result : (TcSelectedResult store lease intern bind)
+              (tc-check-selected-signature
+                ctx
+                env
+                (clone func)
+                func-id
+                key
+                direct?
+                nominal-constructor?
+                owner-kind
+                args
+                (tc-global-shared-view params)
+                (& ret)
+                (& lifetimes)
+                scoped?
+                shadow
+                allow-region?
+                spawn?
+                region-function?
+                foreign?
+                specialized?
+                open-start
+                (& first)
+                (&mut evidence)
+                (&mut normalized?)
+                (&mut semantic-error?)
+                syntax
+                (clone expected)
+                (ownership.ownership-source-copy (& source))
+                sink)]
+            [result : (TcSelectedResult store lease intern bind)
+              (match result
+                [(TcSelectedResult.Err message next)
+                  (if (and scoped? semantic-error?)
+                    (tc-selected-unrepresented
+                      (tc-semantic-unobserved
                         ctx
-                        (& declared-params)
-                        (tc-global-shared-view declared-ret)
-                        (& lifetimes)))]
-                  ;; Like `tc-call-lifetime-function-type`: the callee's lifetimes
-                  ;; are instantiated from the arguments before they are checked.
-                  [subst : TcLifetimeSubst
-                    (cond
-                      [(ast.ast-lifetime-list-empty? (& lifetimes))
-                        TcLifetimeSubst.Nil]
-                      [call-scoped?
-                        (tc-call-scoped-lifetime-subst (& lifetimes))]
-                      [else
-                        (match (tc-infer-call-or-constructor-lifetime-subst
-                          ctx
-                          env
-                          (tc-global-shared-view func)
-                          (tc-global-shared-view args)
-                          (tc-global-shared-view declared-params)
-                          (tc-global-shared-view lifetimes)
-                          (= key -1)
-                          (& declared-ret))
-                          [(ResultTcLifetimeSubst.Ok found) found]
-                          [(ResultTcLifetimeSubst.Err message)
-                            (return (TcSelectedResult.Err message sink))])])]
-                  [_escape : unit
-                    (match (tc-check-by-value-borrow-escape
-                      ctx
-                      env
-                      (& args)
-                      (& declared-params)
-                      (tc-global-shared-view declared-ret))
-                      [(ResultTcUnit.Ok) unit]
-                      [(ResultTcUnit.Err message)
-                        (return (TcSelectedResult.Err message sink))])]
-                  ;; No borrowed call temporary may outlive the call (section
-                  ;; 3.10).
-                  [_temporaries : unit
-                    (match (tc-check-call-temporary-borrows
-                      ctx
-                      env
-                      (& args)
-                      (& declared-params)
-                      (tc-global-shared-view declared-ret))
-                      [(ResultTcUnit.Ok) unit]
-                      [(ResultTcUnit.Err message)
-                        (return (TcSelectedResult.Err message sink))])]
-                  [declared-view : ast.AstTypeList
-                    (tc-global-shared-view declared-params)]
-                  [staging : TcSelectedCallStaging
-                    (match (& sink)
-                      [(TcSelectedSink.Query) TcSelectedCallStaging.Query]
-                      [(TcSelectedSink.Capture _ _ _)
-                        (TcSelectedCallStaging.Capture
-                          (__tl_make-array typed.TypedOccurrenceId args.len)
-                          (tc-selected-arena-branded-params
+                        (tc-selected-project
+                          (tc-check-selected-signature
                             ctx
-                            (& declared-params)))])]
-                  [params : ast.AstTypeList
-                    (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                      declared-params
-                      (tc-lifetime-subst-type-list
-                        (tc-global-shared-view subst)
-                        declared-params))]
-                  [ret : ast.AstType
-                    (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                            env
+                            (clone func)
+                            func-id
+                            key
+                            direct?
+                            nominal-constructor?
+                            owner-kind
+                            args
+                            (tc-global-shared-view params)
+                            (& ret)
+                            (& lifetimes)
+                            false
+                            shadow
+                            allow-region?
+                            spawn?
+                            region-function?
+                            foreign?
+                            specialized?
+                            open-start
+                            (& first)
+                            (&mut evidence)
+                            (&mut normalized?)
+                            (&mut semantic-error?)
+                            syntax
+                            expected
+                            source
+                            TcSelectedSink.Query)))
+                      next)
+                    (TcSelectedResult.Err message next))]
+                [_ result])]
+            (match (tc-call-temporary-borrow-scope-exit
+              ctx
+              env
+              args
+              (& params)
+              ret
+              outer)
+              [(Ok) result]
+              [(Err message)
+                (match result
+                  [(TcSelectedResult.Err _ next)
+                    (TcSelectedResult.Err message next)]
+                  [(TcSelectedResult.Ok _ _ next)
+                    (TcSelectedResult.Err message next)])])))]
+      [_ (TcSelectedResult.Err "typecheck: call target is not a function" sink)])))
+
+(define (tc-selected-constructor-signature-ok?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : (& params ast.AstTypeList)]
+  [ret : ast.AstType]
+  [result : ast.AstType]) : bool
+  (let
+    [holding? : bool (tc-selected-holding-type? ctx (clone ret))]
+    [branded? : bool
+      (and
+        (tc-selected-lifetime-args-type? (clone ret))
+        (tc-selected-arena-branded-call? ctx env (Ok result)))]
+    [ok? : bool (tc-selected-call-type-ok? ctx (clone ret))]
+    [index : i64 0]
+    (while (and ok? (< index (ast.ast-type-list-len params)))
+      (let
+        [param : ast.AstType
+          (ast.ty-node-get
+            (ast.ast-type-list-get params index (ast.ast-type-id-fallback)))]
+        [param : ast.AstType
+          (if branded?
+            (tc-selected-strip-lifetime-tags ctx param (clone ret))
+            param)]
+        (set!
+          ok?
+          (if holding?
+            (tc-selected-call-param-type-ok? ctx param)
+            (tc-selected-call-type-ok? ctx param))))
+      (set! index (+ index 1)))
+    ok?))
+
+(define (tc-finish-call-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : (& args ast.AstExprList)]
+  [declared-params : (& declared-params ast.AstTypeList)]
+  [declared-ret : (& declared-ret ast.AstType)]
+  [params : (& params ast.AstTypeList)]
+  [ret : ast.AstType]
+  [constructor? : bool]
+  [lifetime? : bool]
+  [spawn? : bool]
+  [checked-escape? : bool]
+  [send-name : TcMaybeString]
+  [summary : (& summary TcCallArgumentSummary)]
+  [result : ast.AstType]) : ResultTcType
+  (when
+    lifetime?
+    (unless
+      checked-escape?
+      (try
+        (tc-check-by-value-borrow-escape
+          ctx
+          env
+          args
+          declared-params
+          (clone (deref declared-ret))))))
+  (when
+    spawn?
+    (set!
+      result
+      (tc-tag-regions
+        (try
+          (tc-check-thread-safe-spawn-call
+            ctx
+            env
+            (clone func)
+            (clone (deref args))
+            (clone (deref params))
+            (clone ret)))
+        result)))
+  (match send-name
+    [(TcMaybeString.No) unit]
+    [(TcMaybeString.Some name)
+      (when
+        (tc-thread-channel-send-result-type? ctx (clone ret))
+        (unless
+          (= (ast.ast-type-list-len params) 2)
+          (return
+            (Err
+              "typecheck: channel send expects channel and message parameters")))
+        (match (& summary.send-type)
+          [(ast.AstMaybeType.Some ty)
+            (try
+              (tc-thread-channel-send-message name ctx env (clone (deref ty))))]
+          [_
+            (return
+              (Err
+                "typecheck: channel send expects channel and message arguments"))]))])
+  (unless
+    (ast.ast-type-list-empty? (& summary.invalidate-types))
+    (try
+      (tc-check-invalidate-call
+        ctx
+        env
+        args
+        declared-params
+        params
+        (& summary.invalidate-types)
+        (clone ret))))
+  (if constructor?
+    (Ok result)
+    (let
+      [phased : ast.AstType
+        (try (tc-call-branded-arena-phase-result ctx env params result))]
+      (tc-call-erased-owner-result ctx summary phased))))
+
+(define (tc-check-selected-signature
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [func-id : i64]
+  [key : i64]
+  [direct? : bool]
+  [constructor? : bool]
+  [owner-kind : i64]
+  [args : (& args ast.AstExprList)]
+  [declared-params : ast.AstTypeList]
+  [declared-ret : (& declared-ret ast.AstType)]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [scoped? : bool]
+  [shadow : i64]
+  [allow-region? : bool]
+  [spawn? : bool]
+  [region-function? : bool]
+  [foreign? : bool]
+  [specialized? : bool]
+  [open-start : i64]
+  [first : (& first ast.AstMaybeType)]
+  [evidence : (&mut evidence TcCallEvidence)]
+  [normalized? : (&mut normalized? bool)]
+  [semantic-error? : (&mut semantic-error? bool)]
+  [syntax : typed.TypedSyntax]
+  [expected : ast.AstMaybeType]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (let
+    [lifetime? : bool (not (ast.ast-lifetime-list-empty? lifetimes))]
+    [subst : TcLifetimeSubst
+      (cond
+        [(not lifetime?) TcLifetimeSubst.Nil]
+        [scoped? (tc-call-scoped-lifetime-subst lifetimes)]
+        [else
+          (match (tc-infer-call-or-constructor-lifetime-subst
+            ctx
+            env
+            (clone func)
+            (clone (deref args))
+            (tc-global-shared-view declared-params)
+            (clone (deref lifetimes))
+            (and
+              constructor?
+              (tc-lifetime-constructor-ret? (clone (deref declared-ret))))
+            declared-ret
+            evidence)
+            [(Ok subst) subst]
+            [(Err message) (return (TcSelectedResult.Err message sink))])])]
+    [params : ast.AstTypeList
+      (tc-lifetime-subst-type-list
+        subst
+        (tc-global-shared-view declared-params))]
+    [ret : ast.AstType
+      (tc-lifetime-subst-type subst (clone (deref declared-ret)))]
+    (when
+      spawn?
+      (match (tc-thread-safe-spawn-region-capture-precheck
+        ctx
+        env
+        (clone func)
+        (clone (deref args))
+        (tc-global-shared-view params)
+        (clone ret))
+        [(Err message) (return (TcSelectedResult.Err message sink))]
+        [_ unit]))
+    (unless
+      (deref normalized?)
+      (match (tc-normalize-dotted-local-field-expr-list! ctx env args)
+        [(Err message) (return (TcSelectedResult.Err message sink))]
+        [(Ok) (set! (deref normalized?) true)]))
+    (let
+      [result : ast.AstType
+        (if (and constructor? (not lifetime?))
+          (tc-constructor-target-type
+            env
+            (tc-global-shared-view params)
+            (clone ret))
+          (tc-tag-active-region env (clone ret)))]
+      [capture? : bool
+        (match (& sink)
+          [(TcSelectedSink.Query) false]
+          [_ true])]
+      [signature : ast.AstType
+        (if capture?
+          (ast.ast-ty-func (tc-global-shared-view declared-params) declared-ret)
+          ast.AstType.Never)]
+      [foreign-signature? : bool
+        (and
+          capture?
+          foreign?
+          (tc-selected-foreign-signature-ok? ctx (clone signature) args.len))]
+      ;; Non-Copy by-value arguments to foreign calls are read rather than moved
+      ;; (SPEC 4.3), including when another parameter carries a lifetime;
+      ;; reference parameters still take the borrow/lifetime capture path.
+      [foreign-read? : bool foreign-signature?]
+      [represented? : bool
+        (and
+          capture?
+          (not specialized?)
+          (not spawn?)
+          (or (= owner-kind (tc-arena-owner-kind-none)) (>= key 0))
+          (cond
+            [(= key -1)
+              (tc-selected-constructor-signature-ok?
+                ctx
+                env
+                (& declared-params)
+                (tc-resolve-type ctx (clone (deref declared-ret)))
+                (clone result))]
+            [(not foreign?)
+              (tc-selected-call-signature-ok?
+                ctx
+                (tc-global-shared-view declared-params)
+                (clone (deref declared-ret)))]
+            [else
+              (or
+                foreign-signature?
+                (tc-selected-foreign-view-signature-ok?
+                  ctx
+                  (clone signature)
+                  args.len))]))]
+      [invalidates? : bool
+        (and
+          lifetime?
+          (not constructor?)
+          (tc-call-invalidate-params? (& params)))]
+      [send-name : TcMaybeString
+        (if (or constructor? region-function? (and lifetime? (not capture?)))
+          TcMaybeString.No
+          (tc-thread-channel-send-call-name ctx (tc-global-shared-view func)))]
+      [send? : bool
+        (match (& send-name)
+          [(TcMaybeString.Some _) true]
+          [_ false])]
+      [summary : TcCallArgumentSummary
+        (TcCallArgumentSummary
+          Nil
+          -1
+          ast.AstMaybeType.No
+          (ast.ast-type-list-with-capacity
+            (if invalidates?
+              args.len
+              0)))]
+      [checked-escape? : bool (and represented? (or lifetime? (not foreign?)))]
+      [discharge? : bool
+        (and
+          represented?
+          (!= key -1)
+          (not foreign?)
+          (tc-selected-discharge-call?
+            ctx
+            (tc-global-shared-view func)
+            (& params)))]
+      (when
+        checked-escape?
+        (match (tc-check-by-value-borrow-escape
+          ctx
+          env
+          args
+          (& declared-params)
+          (clone (deref declared-ret)))
+          [(Err message)
+            (set! (deref semantic-error?) false)
+            (return (TcSelectedResult.Err message sink))]
+          [_ unit]))
+      (match (if (and represented? (= key -2) (not discharge?))
+        (if direct?
+          (tc-infer-selected-direct-closure
+            ctx
+            env
+            func-id
+            (Ok (clone signature))
+            (ownership.ownership-source-copy (& source))
+            sink)
+          (tc-infer-selected-callee
+            ctx
+            env
+            func-id
+            (tc-expr-var-name-id
+              (tc-context-expr-segment-bases ctx)
+              (clone func))
+            (ownership.ownership-source-copy (& source))
+            sink))
+        (tc-selected-unrepresented (Ok ast.AstType.Unit) sink))
+        [(TcSelectedResult.Err message next)
+          (set! (deref semantic-error?) false)
+          (TcSelectedResult.Err message next)]
+        [(TcSelectedResult.Ok _ callee next)
+          (let
+            [staging : TcSelectedCallStaging
+              (if represented?
+                (TcSelectedCallStaging.Capture
+                  (__tl_make-array typed.TypedOccurrenceId args.len)
+                  (tc-selected-arena-branded-params ctx (& declared-params)))
+                TcSelectedCallStaging.Query)]
+            (match (tc-infer-selected-call-args
+              ctx
+              env
+              (clone func)
+              args
+              (& params)
+              allow-region?
+              constructor?
+              (&mut result)
+              (and
+                (not constructor?)
+                (not region-function?)
+                (tc-type-can-hold-arena-handle? ctx (clone result) Nil))
+              (&mut summary)
+              send?
+              invalidates?
+              spawn?
+              open-start
+              first
+              (& (deref evidence))
+              (tc-call-arena-store-region ctx env)
+              staging
+              foreign-read?
+              semantic-error?
+              (& source)
+              next)
+              [(TcSelectedCallArgsResult.Err message after)
+                (TcSelectedResult.Err message after)]
+              [(TcSelectedCallArgsResult.Ok staged after)
+                (let
+                  [checked : ResultTcType
+                    (tc-finish-call-check
+                      ctx
+                      env
+                      (clone func)
+                      args
+                      (& declared-params)
                       declared-ret
-                      (tc-lifetime-subst-type subst declared-ret))]
-                  [arg-types : (__tl_dyn-array ast.AstType)
-                    (tc-selected-no-types)]
-                  ;; A call through a function value reads the callee first.
-                  (match (if (and
-                    (= key -2)
-                    (match (& sink)
-                      [(TcSelectedSink.Query) false]
-                      [_ true]))
-                    (if direct?
-                      (tc-infer-selected-direct-closure
+                      (& params)
+                      ret
+                      (= key -1)
+                      lifetime?
+                      spawn?
+                      checked-escape?
+                      (tc-global-shared-view send-name)
+                      (& summary)
+                      result)]
+                  [checked : ResultTcType
+                    (if (= owner-kind (tc-arena-owner-kind-none))
+                      checked
+                      (tc-arena-owner-call-result
                         ctx
-                        env
+                        owner-kind
                         func-id
-                        (ResultTcType.Ok (clone fn-ty))
-                        (ownership.ownership-source-copy (& source))
-                        sink)
-                      (tc-infer-selected-callee
-                        ctx
-                        env
-                        func-id
-                        raw-name
-                        (ownership.ownership-source-copy (& source))
-                        sink))
-                    (TcSelectedResult.Ok
-                      ast.AstType.Unit
-                      TcSelectedOccurrence.Unrepresented
-                      sink))
-                    [(TcSelectedResult.Err message after)
-                      (TcSelectedResult.Err message after)]
-                    [(TcSelectedResult.Ok _ callee callee-sink)
-                      (let
-                        [constructed : ast.AstType
-                          (tc-tag-active-region env (clone ret))]
-                        [collect-arg-types? : bool
-                          (tc-type-can-hold-arena-handle?
+                        checked))]
+                  (match checked
+                    [(Err message) (TcSelectedResult.Err message after)]
+                    [(Ok ty)
+                      (cond
+                        [spawn?
+                          (tc-infer-selected-spawn
                             ctx
-                            (clone constructed)
-                            Nil)]
-                        (match (tc-infer-selected-call-args
-                          ctx
-                          env
-                          (tc-global-shared-view func)
-                          (& args)
-                          (& params)
-                          allow-region-args
-                          (if (= key -1)
-                            (ast.AstMaybeType.Some
-                              (tc-constructor-target-type
-                                env
-                                (tc-global-shared-view params)
-                                (tc-global-shared-view ret)))
-                            ast.AstMaybeType.No)
-                          (&mut constructed)
-                          collect-arg-types?
-                          (&mut arg-types)
-                          (TcArityMessage.Detailed
-                            (tc-global-shared-view func)
-                            (tc-global-shared-view args)
-                            (tc-global-shared-view params))
-                          (tc-call-arena-store-region ctx env)
-                          0
-                          staging
-                          true
-                          foreign?
-                          (tc-global-shared-view source)
-                          callee-sink)
-                          [(TcSelectedCallArgsResult.Err message next)
-                            (TcSelectedResult.Err
-                              (if call-scoped?
-                                (tc-selected-call-scoped-diagnostic
+                            env
+                            signature
+                            args
+                            syntax
+                            (tc-call-contextual-type ctx env expected (Ok ty))
+                            source
+                            after)]
+                        [(and
+                          (= key -1)
+                          (match (tc-resolve-type
+                            ctx
+                            (clone (deref declared-ret)))
+                            [(or (ast.AstType.Struct _) (ast.AstType.Enum _))
+                              true]
+                            [_ false])
+                          (tc-selected-holds-reference?
+                            ctx
+                            (tc-resolve-type ctx (clone (deref declared-ret)))
+                            false))
+                          (set! (deref semantic-error?) false)
+                          (TcSelectedResult.Err
+                            (tc-kind-message
+                              (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+                              (str_cat.str-cat
+                                "typecheck: `"
+                                (tc-type-render
+                                  (tc-resolve-type
+                                    ctx
+                                    (clone (deref declared-ret))))
+                                "` holds a reference but declares no lifetimes; declare them with (:lifetimes ...)"))
+                            after)]
+                        [else
+                          (match staged
+                            [(TcSelectedCallStaging.Query)
+                              (tc-selected-unrepresented
+                                (tc-call-contextual-type
                                   ctx
                                   env
-                                  (tc-global-shared-view func)
-                                  (tc-global-shared-view args)
-                                  declared-view
-                                  (tc-global-shared-view lifetimes)
-                                  allow-region-args
-                                  message)
-                                message)
-                              next)]
-                          [(TcSelectedCallArgsResult.Ok
-                              staged
-                              represented?
-                              next)
-                            (match (match (tc-check-thread-channel-send-call
-                              ctx
-                              env
-                              (tc-global-shared-view func)
-                              (tc-global-shared-view args)
-                              (tc-global-shared-view params)
-                              (tc-global-shared-view ret))
-                              [(ResultTcUnit.Err message)
-                                (ResultTcUnit.Err message)]
-                              [(ResultTcUnit.Ok)
-                                (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                                  ResultTcUnit.Ok
-                                  (tc-check-invalidate-call
-                                    ctx
-                                    env
-                                    (& args)
-                                    (& declared-view)
-                                    (& params)
-                                    (tc-global-shared-view ret)))])
-                              [(ResultTcUnit.Err message)
-                                (TcSelectedResult.Err message next)]
-                              [(ResultTcUnit.Ok)
-                                (let
-                                  [result : ResultTcType
-                                    (if (= key -1)
-                                      (ResultTcType.Ok constructed)
-                                      (match (tc-call-branded-arena-phase-result
-                                        ctx
-                                        env
-                                        (& params)
-                                        constructed)
-                                        [(ResultTcType.Ok phased)
-                                          (tc-call-erased-owner-result
+                                  expected
+                                  (Ok ty))
+                                after)]
+                            [(TcSelectedCallStaging.Capture children _)
+                              (set! (deref semantic-error?) false)
+                              (let
+                                [adapt-before? : bool
+                                  (or
+                                    (and foreign-signature? (not lifetime?))
+                                    (!= owner-kind (tc-arena-owner-kind-none)))]
+                                [result : ResultTcType
+                                  (if adapt-before?
+                                    (tc-call-contextual-type
+                                      ctx
+                                      env
+                                      (clone expected)
+                                      (Ok ty))
+                                    (Ok ty))]
+                                [kind : typed.TypedCallKind
+                                  (cond
+                                    [(!= owner-kind (tc-arena-owner-kind-none))
+                                      (typed.TypedCallKind.ArenaOwner key)]
+                                    [(= key -1) typed.TypedCallKind.Construct]
+                                    [(= key -2)
+                                      (if discharge?
+                                        (typed.TypedCallKind.Discharge
+                                          (tc-move-value-symbol-handle-id
+                                            ctx
+                                            (tc-expr-var-name-id
+                                              (tc-context-expr-segment-bases
+                                                ctx)
+                                              (clone func))))
+                                        (typed.TypedCallKind.Indirect
+                                          (tc-selected-effect-callee-id
                                             ctx
                                             env
-                                            (& args)
-                                            (& params)
-                                            (& arg-types)
-                                            phased)]
-                                        [(ResultTcType.Err message)
-                                          (ResultTcType.Err message)]))]
-                                  (tc-selected-contextual-result
-                                    ctx
+                                            func-id)))]
+                                    [foreign-signature?
+                                      (typed.TypedCallKind.Foreign key)]
+                                    [discharge?
+                                      (typed.TypedCallKind.Discharge key)]
+                                    [else (typed.TypedCallKind.Declared key)])]
+                                [indirect? : bool
+                                  (match (& kind)
+                                    [(typed.TypedCallKind.Indirect _) true]
+                                    [_ false])]
+                                [ended : TcSelectedBrands
+                                  (if lifetime?
+                                    (tc-selected-invalidate-call-brands
+                                      ctx
+                                      env
+                                      args
+                                      (& params)
+                                      (& summary.invalidate-types))
+                                    (TcSelectedBrands Nil Nil))]
+                                [published : (TcSelectedResult
+                                  store
+                                  lease
+                                  intern
+                                  bind)
+                                  (tc-selected-publish-call
+                                    result
+                                    kind
+                                    (tc-call-published-signature
+                                      shadow
+                                      signature)
+                                    syntax
+                                    (ownership.ownership-source-copy (& source))
+                                    (if indirect?
+                                      (tc-selected-with-callee
+                                        children
+                                        (& callee))
+                                      children)
+                                    (or
+                                      (not indirect?)
+                                      (match (& callee)
+                                        [(TcSelectedOccurrence.Selected _) true]
+                                        [_ false]))
+                                    after)]
+                                (tc-selected-contextual-result
+                                  ctx
+                                  env
+                                  (if adapt-before?
+                                    ast.AstMaybeType.No
+                                    expected)
+                                  (tc-selected-with-thread-users
                                     env
-                                    expected
-                                    (match staged
-                                      [(TcSelectedCallStaging.Query)
-                                        (tc-selected-unrepresented result next)]
-                                      [(TcSelectedCallStaging.Capture
-                                          selected
-                                          _)
-                                        (let
-                                          [ended : TcSelectedBrands
-                                            (if (ast.ast-lifetime-list-empty?
-                                              (& lifetimes))
-                                              (TcSelectedBrands
-                                                TcNameIdList.Nil
-                                                TcNameIdList.Nil)
-                                              (tc-selected-invalidate-call-brands
-                                                ctx
-                                                env
-                                                (& args)
-                                                (& params)))]
-                                          (tc-selected-with-thread-users
-                                            env
-                                            (tc-selected-sent-owners
-                                              ctx
-                                              env
-                                              (tc-global-shared-view func)
-                                              (& args))
-                                            syntax
-                                            (ownership.ownership-source-copy
-                                              (& source))
-                                            (tc-selected-with-release-checks
-                                              ctx
-                                              env
-                                              ended.brands
-                                              syntax
-                                              (ownership.ownership-source-copy
-                                                (& source))
-                                              (tc-selected-with-region-ends
-                                                ctx
-                                                env
-                                                ended.brands
-                                                ended.args
-                                                syntax
-                                                (tc-global-shared-view source)
-                                                (tc-selected-publish-call
-                                                  result
-                                                  ;; Key -1 names a constructor (no declaration),
-                                                  ;; -2 a call through a function value.
-                                                  (cond
-                                                    [(= key -2)
-                                                      (typed.TypedCallKind.Indirect
-                                                        (tc-selected-effect-callee-id
-                                                          ctx
-                                                          env
-                                                          func-id))]
-                                                    [foreign?
-                                                      (typed.TypedCallKind.Foreign
-                                                        key)]
-                                                    [(= key -1)
-                                                      typed.TypedCallKind.Construct]
-                                                    [(tc-selected-discharge-call?
-                                                        ctx
-                                                        (tc-global-shared-view
-                                                          func)
-                                                        (& params))
-                                                      (typed.TypedCallKind.Discharge
-                                                        key)]
-                                                    [else
-                                                      (typed.TypedCallKind.Declared
-                                                        key)])
-                                                  (tc-call-published-signature
-                                                    shadow
-                                                    (tc-global-shared-view
-                                                      fn-ty))
-                                                  syntax
-                                                  source
-                                                  (tc-selected-with-callee
-                                                    selected
-                                                    (& callee))
-                                                  (and
-                                                    represented?
-                                                    (or
-                                                      (!= key -2)
-                                                      (match (& callee)
-                                                        [(TcSelectedOccurrence.Selected
-                                                            _)
-                                                          true]
-                                                        [_ false])))
-                                                  next)))))])))])]))]))]
-              [_
-                (TcSelectedResult.Err
-                  "typecheck: call target is not a function"
-                  sink)])])])))
+                                    (match (& summary.send-type)
+                                      [(ast.AstMaybeType.Some ty)
+                                        (tc-type-atomic-arena-owner-regions
+                                          env
+                                          (clone (deref ty)))]
+                                      [_ Nil])
+                                    syntax
+                                    (ownership.ownership-source-copy (& source))
+                                    (tc-selected-with-release-checks
+                                      ctx
+                                      env
+                                      ended.brands
+                                      syntax
+                                      (ownership.ownership-source-copy
+                                        (& source))
+                                      (tc-selected-with-region-ends
+                                        ctx
+                                        env
+                                        ended.brands
+                                        ended.args
+                                        syntax
+                                        (ownership.ownership-source-copy
+                                          (& source))
+                                        (if (!=
+                                          owner-kind
+                                          (tc-arena-owner-kind-none))
+                                          (tc-selected-lender-site published)
+                                          published))))))])])]))]))]))))
 
 (define (tc-infer-selected-legacy
   [ctx : TcContext]
@@ -53354,100 +53440,51 @@
 ;; (`tc-type-can-hold-arena-handle?`) carries the owner's region and ends with
 ;; it. A result type that cannot carry a region tag (a function, a fixed array)
 ;; is rejected instead.
-(define (tc-call-erased-owner-result
+(defstruct TcCallArgumentSummary
+  (regions TcNameIdList)
+  (first-arg i64)
+  (send-type ast.AstMaybeType)
+  (invalidate-types ast.AstTypeList))
+
+(define (tc-call-collect-owners!
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [args : (& args ast.AstExprList)]
-  [params : (& params ast.AstTypeList)]
-  ;; Each argument's type, as the call site typed it. Typing an argument again
-  ;; here is what made a nested `(pass (pass ...))` chain exponential.
-  [arg-types : (& arg-types (__tl_dyn-array ast.AstType))]
-  [ty : ast.AstType]) : ResultTcType
-  ;; Most results cannot hold a handle: one walk, before any formal's.
-  (unless (tc-type-can-hold-arena-handle? ctx (clone ty) Nil) (return (Ok ty)))
+  [arg-id : i64]
+  [actual : (& actual ast.AstType)]
+  [owners : (&mut owners TcCallArgumentSummary)]) : unit
   (let
-    [index : i64 0]
-    [reaches? : bool false]
-    [regions : TcNameIdList Nil]
-    [first-arg-id : i64 -1]
-    (while (and (< index (ast.ast-type-list-len params)) (< index args.len))
-      (let
-        [arg-id : i64 (ast.ast-expr-list-get (& args) index 0)]
-        (when
-          (tc-formal-reaches-bare-arena?
-            ctx
-            (tc-context-type-get
-              ctx
-              (ast.ast-type-list-get
-                (& params)
-                index
-                (ast.ast-type-id-fallback))))
-          (set! reaches? true)
-          (when
-            (< index (array-length arg-types))
-            (let
-              [found : TcNameIdList
-                (tc-call-arg-arena-identities
-                  ctx
-                  env
-                  arg-id
-                  (& (array-ref arg-types index)))]
-              (unless
-                (tc-name-id-list-empty? found)
-                (when (< first-arg-id 0) (set! first-arg-id arg-id))
-                (let
-                  [cursor : TcNameIdList found]
-                  (while (not (tc-name-id-list-empty? cursor))
-                    (set!
-                      regions
-                      (tc-name-id-list-add
-                        regions
-                        (tc-name-id-list-head cursor)))
-                    (set! cursor (tc-name-id-list-rest cursor)))))))))
-      (set! index (+ index 1)))
-    (unless reaches? (return (Ok ty)))
-    (if (tc-name-id-list-empty? regions)
-      (Ok ty)
-      (begin
-        (unless
-          (tc-region-taggable-type? (clone ty))
-          (return
-            (Err
-              (tc-locate-error-at-expr
-                (tc-context-expr-bases ctx)
-                (tc-context-expr-get ctx first-arg-id)
-                (tc-kind-message
-                  (ArenaOwnership)
-                  "typecheck: this call's result type cannot carry the region of the arena owner passed to it (a function or fixed-array result cannot), so a copy of the owner's handle could outlive the owner's end; take the parameter as `(arena.Arena r)`")))))
-        ;; A region the result already carries is not tagged twice.
-        (let
-          [held : TcNameIdList (tc-type-outer-regions (clone ty))]
-          (Ok (tc-tag-regions (tc-name-id-list-difference regions held) ty)))))))
+    [found : TcNameIdList (tc-call-arg-arena-identities ctx env arg-id actual)]
+    (unless
+      (tc-name-id-list-empty? found)
+      (when (< owners.first-arg 0) (set! owners.first-arg arg-id))
+      (set!
+        owners.regions
+        (tc-name-id-list-add-all (clone owners.regions) found)))))
+
+(define (tc-call-erased-owner-result
+  [ctx : TcContext]
+  [owners : (& owners TcCallArgumentSummary)]
+  [ty : ast.AstType]) : ResultTcType
+  (if (< owners.first-arg 0)
+    (Ok ty)
+    (if (tc-region-taggable-type? (clone ty))
+      (Ok
+        (tc-tag-regions
+          (tc-name-id-list-difference
+            (clone owners.regions)
+            (tc-type-outer-regions (clone ty)))
+          ty))
+      (Err
+        (tc-locate-error-at-expr
+          (tc-context-expr-bases ctx)
+          (tc-context-expr-get ctx owners.first-arg)
+          (tc-kind-message
+            (ArenaOwnership)
+            "typecheck: this call's result type cannot carry the region of the arena owner passed to it (a function or fixed-array result cannot), so a copy of the owner's handle could outlive the owner's end; take the parameter as `(arena.Arena r)`"))))))
 
 ;; Each argument's type in argument order, typed only where the formal reaches
 ;; a bare `arena.Arena` handle: the identity walk never looks at the others, and
 ;; typing an argument is what a chain of nested calls must not pay twice.
-(define (tc-call-argument-types
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [args : (& args ast.AstExprList)]
-  [params : (& params ast.AstTypeList)]) : (__tl_dyn-array ast.AstType)
-  (let
-    [index : i64 0]
-    [types : (__tl_dyn-array ast.AstType) (tc-selected-no-types)]
-    (while (and (< index args.len) (< index (ast.ast-type-list-len params)))
-      (if (tc-formal-reaches-bare-arena?
-        ctx
-        (tc-context-type-get
-          ctx
-          (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback))))
-        (match (tc-expr-id ctx env (ast.ast-expr-list-get (& args) index 0))
-          [(Ok actual) (tc-selected-types-push! (&mut types) actual)]
-          [(Err _) (tc-selected-types-push! (&mut types) ast.AstType.Unit)])
-        (tc-selected-types-push! (&mut types) ast.AstType.Unit))
-      (set! index (+ index 1)))
-    types))
-
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
   (match kind
     [(Copyable) true]
@@ -59452,13 +59489,26 @@
               ctx
               env
               func-box
-              (tc-global-shared-view expected)))]
+              (clone expected)))]
         (tc-expr-result-with-expected-or-actual
           ctx
           env
           expected
           allow-mut-by-value-borrow
-          (tc-expr ctx env expr)))]
+          (tc-selected-project
+            (tc-infer-selected
+              ctx
+              env
+              expr
+              typed.TypedSyntax.Generated
+              ast.AstMaybeType.No
+              (ownership.OwnershipSource
+                (ownership.ownership-path-none)
+                0
+                0
+                (ownership.ownership-expansion-none))
+              true
+              TcSelectedSink.Query))))]
     [_
       (if (tc-integer-literal-expr? ctx (tc-global-shared-view expr))
         (tc-integer-literal-expr-with-expected ctx expr expected)
@@ -61388,33 +61438,6 @@
     ", found "
     (tc-type-render (tc-type-without-regions actual))))
 
-;; Deferred arity-mismatch message. tc-call-arity-message is real work (two
-;; list-length walks, callee-name unspan/intern, two string.int->string division loops,
-;; seven string-appends) but it is only ever consumed on the arity-mismatch error
-;; path, which never fires while typechecking well-formed code (the self-compile).
-;; Carrying the ingredients in this enum and materializing the text only at the
-;; error arms keeps the success path -- the overwhelmingly common one -- free of
-;; that build, with byte-identical output for accepted programs and identical
-;; diagnostics for rejected ones.
-(defenum TcArityMessage
-  (Detailed ast.AstExpr ast.AstExprList ast.AstTypeList))
-
-(define (tc-arity-message-func [arity-msg : TcArityMessage]) : ast.AstExpr
-  (match arity-msg
-    [(Detailed func _ _) func]))
-
-(define (tc-arity-message-text [expr-bases : i64] [arity-msg : TcArityMessage]) : String
-  (match arity-msg
-    [(Detailed func args params)
-      (tc-call-arity-message expr-bases func args params)]))
-
-(define (tc-argument-message-prefix-text
-  [ctx : TcContext]
-  [arity-msg : TcArityMessage]
-  [index : i64]) : String
-  (match arity-msg
-    [(Detailed func _ _) (tc-call-argument-message-prefix ctx func index)]))
-
 (define (tc-nullary-variant-call-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -61524,39 +61547,11 @@
       (tc-call-allows-region-args-id? ctx env name-id)
       false)))
 
-(define (tc-call-constructor-target-for-func
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [params : ast.AstTypeList]
-  [ret : ast.AstType]) : ast.AstMaybeType
-  (let
-    [name-id : i64
-      (tc-expr-var-name-id (tc-context-expr-segment-bases ctx) func)]
-    (if (>= name-id 0)
-      (if (tc-constructor-name-id? ctx name-id)
-        (Some (tc-constructor-target-type env params ret))
-        (No))
-      (No))))
-
 (define (tc-lifetime-constructor-ret? [ret : ast.AstType]) : bool
   (match ret
     [(or (StructArgs _ lifetimes) (EnumArgs _ lifetimes))
       (> (tc-lifetime-list-count (deref lifetimes)) 0)]
     [_ false]))
-
-(define (tc-call-lifetime-constructor-for-func?
-  [ctx : TcContext]
-  [func : ast.AstExpr]
-  [ret : ast.AstType]) : bool
-  (if (tc-lifetime-constructor-ret? ret)
-    (let
-      [name-id : i64
-        (tc-expr-var-name-id (tc-context-expr-segment-bases ctx) func)]
-      (if (>= name-id 0)
-        (tc-constructor-name-id? ctx name-id)
-        false))
-    false))
 
 (define (tc-lifetime-subst-type-list
   [subst : TcLifetimeSubst]
@@ -62661,7 +62656,7 @@
 ;; A formal that resolves to a type with no reference/region lifetimes and no
 ;; struct/enum lifetime arguments cannot contribute lifetime bindings to the
 ;; call substitution, so the substitution pass may skip inferring that
-;; argument's type entirely (tc-check-call-args typechecks every argument right
+;; argument's type entirely (the call checks every argument right
 ;; after). tc-resolve-type resolves aliases structurally, so lifetimes hidden
 ;; behind an alias are still seen.
 (define (tc-lifetime-subst-formal-inert? [ctx : TcContext] [want : ast.AstType]) : bool
@@ -62848,7 +62843,9 @@
   [args : ast.AstExprList]
   [params : ast.AstTypeList]
   [lifetimes : ast.AstLifetimeList]
-  [subst : TcLifetimeSubst]) : ResultTcLifetimeSubst
+  [subst : TcLifetimeSubst]
+  [evidence : (&mut evidence TcCallEvidence)]
+  [remember? : bool]) : ResultTcLifetimeSubst
   (tc-infer-call-lifetime-subst-at
     ctx
     env
@@ -62859,7 +62856,9 @@
     (& params)
     0
     lifetimes
-    subst))
+    subst
+    evidence
+    remember?))
 
 (define (tc-infer-lifetime-subst-from-mixed-source-type
   [ctx : TcContext]
@@ -62927,7 +62926,9 @@
   [params : (& params ast.AstTypeList)]
   [index : i64]
   [lifetimes : ast.AstLifetimeList]
-  [subst : TcLifetimeSubst]) : ResultTcLifetimeSubst
+  [subst : TcLifetimeSubst]
+  [evidence : (&mut evidence TcCallEvidence)]
+  [remember? : bool]) : ResultTcLifetimeSubst
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len params))
       (Ok subst)
@@ -62945,8 +62946,8 @@
           all-args
           all-params))
       (let
-        [arg : ast.AstExpr
-          (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+        [arg-id : i64 (ast.ast-expr-list-get args index 0)]
+        [arg : ast.AstExpr (tc-context-expr-get ctx arg-id)]
         [want : ast.AstType
           (ast.ty-node-get
             (ast.ast-type-list-get params index (ast.ast-type-id-fallback)))]
@@ -62961,30 +62962,47 @@
             params
             (+ index 1)
             lifetimes
-            subst)
+            subst
+            evidence
+            remember?)
           (match (let
+            [hint : ast.AstType
+              (tc-call-want-region-inferred subst (clone want))]
             [typed : ResultTcType
               (tc-call-effective-arg-type
                 ctx
                 env
                 (tc-global-shared-view arg)
-                (tc-call-want-region-inferred
-                  subst
-                  (tc-global-shared-view want)))]
+                (clone hint))]
             [typed-ok : bool
               (match (& typed)
                 [(ResultTcType.Ok _) true]
                 [(ResultTcType.Err _) false])]
-            (if typed-ok
-              typed
-              (tc-call-arg-type-after-error
-                ctx
-                env
-                (tc-global-shared-view arg)
-                (tc-call-want-region-inferred
-                  subst
-                  (tc-global-shared-view want))
-                typed)))
+            [checked : ResultTcType
+              (if typed-ok
+                typed
+                (tc-call-arg-type-after-error
+                  ctx
+                  env
+                  (tc-global-shared-view arg)
+                  (clone hint)
+                  typed))]
+            (when
+              (and
+                remember?
+                (not (tc-call-slice-ref-formal? ctx (clone hint)))
+                (not (tc-call-immutable-ref-formal? ctx (clone hint))))
+              (match (& checked)
+                [(Ok ty)
+                  (tc-call-evidence-record!
+                    evidence
+                    args.len
+                    index
+                    arg-id
+                    hint
+                    (clone (deref ty)))]
+                [_ unit]))
+            checked)
             [(Ok got)
               (match (tc-infer-lifetime-subst-from-type
                 ctx
@@ -63005,7 +63023,9 @@
                     params
                     (+ index 1)
                     lifetimes
-                    next-subst)]
+                    next-subst
+                    evidence
+                    remember?)]
                 [(Err _message)
                   (match (tc-infer-lifetime-subst-from-mixed-source-type
                     ctx
@@ -63025,7 +63045,9 @@
                         params
                         (+ index 1)
                         lifetimes
-                        next-subst)]
+                        next-subst
+                        evidence
+                        remember?)]
                     [(Err _)
                       (let
                         [canonical-want : ast.AstType
@@ -63066,7 +63088,8 @@
   [params : ast.AstTypeList]
   [lifetimes : ast.AstLifetimeList]
   [constructor? : bool]
-  [ret : (& ast.AstType)]) : ResultTcLifetimeSubst
+  [ret : (& ast.AstType)]
+  [evidence : (&mut evidence TcCallEvidence)]) : ResultTcLifetimeSubst
   (let
     [hidden : TcLifetimeSubst
       (if constructor?
@@ -63074,7 +63097,16 @@
         TcLifetimeSubst.Nil)]
     (match hidden
       [(Nil)
-        (tc-infer-call-lifetime-subst ctx env func args params lifetimes Nil)]
+        (tc-infer-call-lifetime-subst
+          ctx
+          env
+          func
+          args
+          params
+          lifetimes
+          Nil
+          evidence
+          (not constructor?))]
       [_
         (let
           ;; One memo for every field of this operation (#8998).
@@ -63102,7 +63134,9 @@
                   (tc-global-shared-view args)
                   hidden-params
                   hidden-lifetimes
-                  Nil)]
+                  Nil
+                  evidence
+                  false)]
               (set! tc-constructor-hidden-formals outer)
               inferred))
             [(Ok inferred)
@@ -63123,7 +63157,9 @@
                 args
                 params
                 lifetimes
-                Nil)]))])))
+                Nil
+                evidence
+                false)]))])))
 
 ;; The hidden formals a constructor's hidden inference is running with,
 ;; innermost first; an argument may hold a nested constructor call.
@@ -63256,64 +63292,6 @@
               inferred
               formal
               (tc-unconstrained-lifetime-id))])))))
-
-(define (tc-call-lifetime-constructor-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [ret : ast.AstType]
-  [allow-region-args : bool]) : ResultTcType
-  (let
-    [outer : bool (tc-call-temporary-borrow-scope-enter!)]
-    [typed-call : ResultTcType
-      (let
-        [lifetimes : ast.AstLifetimeList
-          (match (tc-global-shared-view ret)
-            [(or (StructArgs _ params-lifetimes) (EnumArgs _ params-lifetimes))
-              (ast.ast-lifetime-list-box-shared-view params-lifetimes)]
-            [_ (ast.ast-lifetime-list-new)])]
-        (match (tc-infer-call-or-constructor-lifetime-subst
-          ctx
-          env
-          (tc-global-shared-view func)
-          (tc-global-shared-view args)
-          (tc-global-shared-view params)
-          lifetimes
-          true
-          (& ret))
-          [(Ok subst)
-            (let
-              [target : ast.AstType
-                (tc-tag-active-region
-                  env
-                  (tc-lifetime-subst-type subst (tc-global-shared-view ret)))]
-              [resolved-params : ast.AstTypeList
-                (tc-lifetime-subst-type-list
-                  subst
-                  (tc-global-shared-view params))]
-              (tc-check-call-args
-                ctx
-                env
-                func
-                (tc-global-shared-view args)
-                resolved-params
-                allow-region-args
-                (Some target)))]
-          [(Err message) (Err message)]))]
-    (if tc-call-temporary-borrow-typed
-      (tc-call-temporary-borrow-scope-exit
-        ctx
-        env
-        (& args)
-        (& params)
-        ret
-        outer
-        typed-call)
-      (begin
-        (set! tc-call-temporary-borrow-typed outer)
-        typed-call))))
 
 (define (tc-call-function-lifetimes
   [params : ast.AstTypeList]
@@ -63575,133 +63553,6 @@
             (set! cursor (tc-name-id-list-rest cursor)))
           (Ok out))))))
 
-;; Check a call's arguments against its signature under a lifetime substitution.
-(define (tc-call-lifetime-function-type-with-subst
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [ret : ast.AstType]
-  [allow-region-args : bool]
-  [subst : TcLifetimeSubst]) : ResultTcType
-  (let
-    [resolved-ret : ast.AstType
-      (tc-lifetime-subst-type subst (tc-global-shared-view ret))]
-    [resolved-params : ast.AstTypeList
-      (tc-lifetime-subst-type-list subst (tc-global-shared-view params))]
-    (match (tc-check-call-args
-      ctx
-      env
-      func
-      (tc-global-shared-view args)
-      (tc-global-shared-view resolved-params)
-      allow-region-args
-      (No))
-      [(Ok _)
-        (match (tc-check-by-value-borrow-escape
-          ctx
-          env
-          (& args)
-          (& params)
-          (tc-global-shared-view ret))
-          [(Ok)
-            (match (tc-check-invalidate-call
-              ctx
-              env
-              (& args)
-              (& params)
-              (& resolved-params)
-              (tc-global-shared-view resolved-ret))
-              [(Ok)
-                (let
-                  [arg-types : (__tl_dyn-array ast.AstType)
-                    (tc-call-argument-types
-                      ctx
-                      env
-                      (& args)
-                      (& resolved-params))]
-                  [phased : ast.AstType
-                    (try
-                      (tc-call-branded-arena-phase-result
-                        ctx
-                        env
-                        (& resolved-params)
-                        (tc-tag-active-region env resolved-ret)))]
-                  (tc-call-erased-owner-result
-                    ctx
-                    env
-                    (& args)
-                    (& resolved-params)
-                    (& arg-types)
-                    phased))]
-              [(Err message) (Err message)])]
-          [(Err message) (Err message)])]
-      [(Err message) (Err message)])))
-
-(define (tc-call-lifetime-function-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [ret : ast.AstType]
-  [lifetimes : ast.AstLifetimeList]
-  [allow-region-args : bool]) : ResultTcType
-  (let
-    [outer : bool (tc-call-temporary-borrow-scope-enter!)]
-    [typed-call : ResultTcType
-      (match (if (tc-call-lifetimes-call-scoped?
-        ctx
-        (& params)
-        (tc-global-shared-view ret)
-        (& lifetimes))
-        (tc-call-lifetime-function-type-with-subst
-          ctx
-          env
-          (tc-global-shared-view func)
-          (tc-global-shared-view args)
-          (tc-global-shared-view params)
-          (tc-global-shared-view ret)
-          allow-region-args
-          (tc-call-scoped-lifetime-subst (& lifetimes)))
-        (ResultTcType.Err ""))
-        [(Ok scoped-ty) (Ok scoped-ty)]
-        ;; Infer the substitution, which also gives a rejected call its
-        ;; diagnostic.
-        [(Err _)
-          (match (tc-infer-call-lifetime-subst
-            ctx
-            env
-            (tc-global-shared-view func)
-            (tc-global-shared-view args)
-            (tc-global-shared-view params)
-            lifetimes
-            Nil)
-            [(Ok subst)
-              (tc-call-lifetime-function-type-with-subst
-                ctx
-                env
-                func
-                (tc-global-shared-view args)
-                (tc-global-shared-view params)
-                (tc-global-shared-view ret)
-                allow-region-args
-                subst)]
-            [(Err message) (Err message)])])]
-    (if tc-call-temporary-borrow-typed
-      (tc-call-temporary-borrow-scope-exit
-        ctx
-        env
-        (& args)
-        (& params)
-        ret
-        outer
-        typed-call)
-      (begin
-        (set! tc-call-temporary-borrow-typed outer)
-        typed-call))))
-
 ;; A mutable borrow of a by-value (register-resident) place is a temporary
 ;; written back after the call (SPEC borrow expressions): binding or storing it
 ;; is rejected, so neither the call's result nor another mutable-reference
@@ -63778,6 +63629,16 @@
     [(ResultTcUnit.Ok) false]
     [(ResultTcUnit.Err _) true]))
 
+(define (tc-call-invalidate-params? [params : (& params ast.AstTypeList)]) : bool
+  (unless (tc-invalidate-types-present?) (return false))
+  (for [index (iterator.range 0 (ast.ast-type-list-len params))]
+    (match (tc-type-invalidate-lifetime
+      (ast.ty-node-get
+        (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))
+      [(Some _) (return true)]
+      [_ unit]))
+  false)
+
 ;; A call through `:invalidate` parameters (#6670). After lifetime
 ;; substitution each invalidated brand must be one the caller may end (a local
 ;; arena's brand, or a lifetime the caller itself invalidates), no two
@@ -63791,8 +63652,8 @@
   [args : (& args ast.AstExprList)]
   [declared : (& declared ast.AstTypeList)]
   [params : (& params ast.AstTypeList)]
+  [actuals : (& actuals ast.AstTypeList)]
   [ret : ast.AstType]) : ResultTcUnit
-  (unless (tc-invalidate-types-present?) (return Ok))
   (let
     [index : i64 0]
     [seen : TcNameIdList Nil]
@@ -63872,38 +63733,35 @@
                       (& declared)
                       index
                       (ast.ast-type-id-fallback)))))]
-            (match (tc-expr ctx env arg)
-              [(Ok actual)
-                (let
-                  [brand-cursor : TcNameIdList seen]
-                  [lifetime-cursor : TcNameIdList lifetimes]
-                  (while (and
-                    (not failed?)
-                    (not (tc-name-id-list-empty? brand-cursor)))
-                    (when
-                      (and
-                        (tc-type-contains-arena-owner-region?
-                          env
-                          (clone actual)
-                          (tc-name-id-list-head brand-cursor))
-                        (not
-                          (tc-name-id-list-contains
-                            named
-                            (tc-name-id-list-head lifetime-cursor))))
-                      (set! failed? true)
-                      (set!
-                        failure
-                        (tc-locate-error-at-expr
-                          (tc-context-expr-bases ctx)
-                          (tc-global-shared-view arg)
-                          (tc-kind-message
-                            (ArenaOwnership)
-                            "typecheck: an :invalidate call cannot pass a value tied to the arena it destroys under a formal that does not name the arena's lifetime"))))
-                    (set! brand-cursor (tc-name-id-list-rest brand-cursor))
-                    (set!
-                      lifetime-cursor
-                      (tc-name-id-list-rest lifetime-cursor))))]
-              [(Err _) unit]))])
+            [actual : ast.AstType
+              (ast.ty-node-get
+                (ast.ast-type-list-get actuals index (ast.ast-type-id-fallback)))]
+            [brand-cursor : TcNameIdList seen]
+            [lifetime-cursor : TcNameIdList lifetimes]
+            (while (and
+              (not failed?)
+              (not (tc-name-id-list-empty? brand-cursor)))
+              (when
+                (and
+                  (tc-type-contains-arena-owner-region?
+                    env
+                    (clone actual)
+                    (tc-name-id-list-head brand-cursor))
+                  (not
+                    (tc-name-id-list-contains
+                      named
+                      (tc-name-id-list-head lifetime-cursor))))
+                (set! failed? true)
+                (set!
+                  failure
+                  (tc-locate-error-at-expr
+                    (tc-context-expr-bases ctx)
+                    (tc-global-shared-view arg)
+                    (tc-kind-message
+                      (ArenaOwnership)
+                      "typecheck: an :invalidate call cannot pass a value tied to the arena it destroys under a formal that does not name the arena's lifetime"))))
+              (set! brand-cursor (tc-name-id-list-rest brand-cursor))
+              (set! lifetime-cursor (tc-name-id-list-rest lifetime-cursor))))])
       (+= index 1))
     (if failed?
       (Err failure)
@@ -63951,13 +63809,6 @@
             [(Value) (No)])]
         [_ (No)])
       (No))))
-
-(define (tc-call-extern-abi [ctx : TcContext] [func : ast.AstExpr]) : TcMaybeExternAbi
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-segment-bases ctx)
-    (& func))
-    [(Var name) (tc-call-extern-abi-for-name-id ctx name)]
-    [_ (No)]))
 
 (define (tc-name-base-eq? [name : String] [base : String]) : bool
   (if (string.eq name base)
@@ -64859,30 +64710,6 @@
               (tc-type-list-repeat tail-ty (tc-expr-list-len tail-args)))))
         (Ok params)))))
 
-(define (tc-call-function-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [ret : ast.AstType]) : ResultTcType
-  (match (tc-call-extern-abi ctx (tc-global-shared-view func))
-    [(Some abi)
-      (if (tc-call-dynamic-c-varargs-abi? (tc-global-shared-view abi))
-        (let
-          [expanded-params
-            (try
-              (tc-call-extern-varargs-params
-                ctx
-                env
-                (tc-global-shared-view func)
-                (tc-global-shared-view args)
-                params
-                abi))]
-          (tc-call-function-type-normal ctx env func args expanded-params ret))
-        (tc-call-function-type-normal ctx env func args params ret))]
-    [(No) (tc-call-function-type-normal ctx env func args params ret)]))
-
 (define (tc-thread-name-last-dot [name : (& name str)]) : i64
   (let
     [first : i64 (tc-name-first-dot name)]
@@ -65175,23 +65002,6 @@
     [(or (Enum name) (EnumArgs name _))
       (tc-thread-channel-send-result-name? (tc-nominal-name-id-display name))]
     [_ false]))
-
-(define (tc-thread-channel-send-message-param [params : ast.AstTypeList]) : ResultTcType
-  (if (= (ast.ast-type-list-len (& params)) 2)
-    (Ok
-      (ast.ty-node-get
-        (ast.ast-type-list-get (& params) 1 (ast.ast-type-id-fallback))))
-    (Err "typecheck: channel send expects channel and message parameters")))
-
-(define (tc-thread-channel-send-message-arg
-  [expr-bases : i64]
-  [args : ast.AstExprList]) : ResultTcExpr
-  (if (= args.len 2)
-    (Ok
-      (ast.ast-expr-segment-bases-get
-        expr-bases
-        (ast.ast-expr-list-get (& args) 1 0)))
-    (Err "typecheck: channel send expects channel and message arguments")))
 
 (define (tc-thread-generated-spawn-result-module
   [ctx : TcContext]
@@ -66177,28 +65987,6 @@
           reason))]
     [_ Ok]))
 
-(define (tc-check-thread-channel-send-call
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [ret : ast.AstType]) : ResultTcUnit
-  (match (tc-thread-channel-send-call-name ctx func)
-    [(Some send-name)
-      (if (tc-thread-channel-send-result-type? ctx ret)
-        (let
-          [_ (try (tc-thread-channel-send-message-param params))]
-          [message-expr
-            (try
-              (tc-thread-channel-send-message-arg
-                (tc-context-expr-segment-bases ctx)
-                args))]
-          [message-ty (try (tc-expr ctx env message-expr))]
-          (tc-thread-channel-send-message send-name ctx env message-ty))
-        Ok)]
-    [(No) Ok]))
-
 (define (tc-thread-channel-send-function-result?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -66218,176 +66006,6 @@
   (match (tc-thread-channel-send-call-name ctx (tc-global-shared-view func))
     [(Some _) (tc-thread-channel-send-function-result? ctx env func)]
     [(No) false]))
-
-(define (tc-call-function-type-normal
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [ret : ast.AstType]) : ResultTcType
-  (let
-    [allow-region-args : bool
-      (tc-call-region-args-allowed-for-func
-        ctx
-        env
-        (tc-global-shared-view func))]
-    (if (tc-call-lifetime-constructor-for-func?
-      ctx
-      (tc-global-shared-view func)
-      (tc-global-shared-view ret))
-      (tc-call-lifetime-constructor-type
-        ctx
-        env
-        func
-        args
-        params
-        ret
-        allow-region-args)
-      (let
-        [constructor-target : ast.AstMaybeType
-          (tc-call-constructor-target-for-func
-            ctx
-            env
-            (tc-global-shared-view func)
-            (tc-global-shared-view params)
-            (tc-global-shared-view ret))]
-        (match (& constructor-target)
-          [(Some _)
-            (tc-check-call-args
-              ctx
-              env
-              func
-              args
-              params
-              allow-region-args
-              (tc-global-shared-view constructor-target))]
-          [(No)
-            (let
-              [lifetimes : ast.AstLifetimeList
-                (tc-call-function-lifetimes
-                  (tc-global-shared-view params)
-                  (tc-global-shared-view ret))]
-              [thread-spawn-args : bool
-                (tc-selected-safe-spawn-signature?
-                  ctx
-                  env
-                  (clone func)
-                  (tc-global-shared-view params)
-                  (clone ret))]
-              (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                (let
-                  [_
-                    (try
-                      (if thread-spawn-args
-                        (tc-thread-safe-spawn-region-capture-precheck
-                          ctx
-                          env
-                          (tc-global-shared-view func)
-                          (tc-global-shared-view args)
-                          (tc-global-shared-view params)
-                          (tc-global-shared-view ret))
-                        ResultTcUnit.Ok))]
-                  [_
-                    (try
-                      (if thread-spawn-args
-                        (let
-                          [_
-                            (try
-                              (tc-normalize-dotted-local-field-expr-list!
-                                ctx
-                                env
-                                (& args)))]
-                          (tc-check-call-args-with-message-at
-                            ctx
-                            env
-                            (& args)
-                            (& params)
-                            0
-                            allow-region-args
-                            constructor-target
-                            (Detailed (clone func) (clone args) (clone params))
-                            true
-                            (tc-call-arena-store-region ctx env)))
-                        (tc-check-call-args-with-message
-                          ctx
-                          env
-                          (tc-global-shared-view args)
-                          (tc-global-shared-view params)
-                          allow-region-args
-                          constructor-target
-                          (Detailed
-                            (tc-global-shared-view func)
-                            (tc-global-shared-view args)
-                            (tc-global-shared-view params)))))]
-                  (let
-                    [spawn-owner-regions
-                      (try
-                        (tc-check-thread-safe-spawn-call
-                          ctx
-                          env
-                          (tc-global-shared-view func)
-                          (tc-global-shared-view args)
-                          (tc-global-shared-view params)
-                          (tc-global-shared-view ret)))]
-                    [_
-                      (try
-                        (tc-check-thread-channel-send-call
-                          ctx
-                          env
-                          func
-                          (tc-global-shared-view args)
-                          (tc-global-shared-view params)
-                          (tc-global-shared-view ret)))]
-                    [arg-types : (__tl_dyn-array ast.AstType)
-                      (tc-call-argument-types ctx env (& args) (& params))]
-                    [phased : ast.AstType
-                      (try
-                        (tc-call-branded-arena-phase-result
-                          ctx
-                          env
-                          (& params)
-                          (tc-tag-regions
-                            spawn-owner-regions
-                            (tc-tag-active-region env ret))))]
-                    (tc-call-erased-owner-result
-                      ctx
-                      env
-                      (& args)
-                      (& params)
-                      (& arg-types)
-                      phased)))
-                (tc-call-lifetime-function-type
-                  ctx
-                  env
-                  func
-                  args
-                  params
-                  ret
-                  lifetimes
-                  allow-region-args)))])))))
-
-(define (tc-check-call-args-with-message
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [allow-region-args : bool]
-  [constructor-target : ast.AstMaybeType]
-  [arity-msg : TcArityMessage]) : ResultTcType
-  (let
-    [_ (try (tc-normalize-dotted-local-field-expr-list! ctx env args))]
-    (tc-check-call-args-with-message-at
-      ctx
-      env
-      (& args)
-      (& params)
-      0
-      allow-region-args
-      constructor-target
-      arity-msg
-      false
-      (tc-call-arena-store-region ctx env))))
 
 ;; Call-only compatibility extensions. Keep ordinary inferred-type matching
 ;; unchanged, then admit the closed whole-array reference unsize and an owned
@@ -66421,231 +66039,6 @@
 ;; Checks call arguments against PARAMS. The result is CONSTRUCTOR-TARGET
 ;; joined with every argument's regions (the constructed value holds them), or
 ;; `unit` for a call that constructs nothing.
-(define (tc-check-call-args-with-message-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [args : (& args ast.AstExprList)]
-  [params : (& params ast.AstTypeList)]
-  [index : i64]
-  [allow-region-args : bool]
-  [constructor-target : ast.AstMaybeType]
-  [arity-msg : TcArityMessage]
-  [thread-spawn-args : bool]
-  ;; `tc-call-arena-store-region`, once per call.
-  [arena-region : i64]) : ResultTcType
-  (if (>= index args.len)
-    (if (>= index (ast.ast-type-list-len params))
-      (begin
-        (tc-call-arena-store-note!
-          ctx
-          env
-          arena-region
-          params
-          (tc-arity-message-func (tc-global-shared-view arity-msg))
-          (tc-arity-message-func (tc-global-shared-view arity-msg))
-          -1
-          (No))
-        (match constructor-target
-          [(Some target) (Ok target)]
-          [(No) (Ok ast.AstType.Unit)]))
-      (Err
-        (tc-arity-message-text (tc-context-expr-segment-bases ctx) arity-msg)))
-    (if (>= index (ast.ast-type-list-len params))
-      (Err
-        (tc-arity-message-text (tc-context-expr-segment-bases ctx) arity-msg))
-      (let
-        [arg-id : i64 (ast.ast-expr-list-get args index 0)]
-        [arg : ast.AstExpr (tc-context-expr-get ctx arg-id)]
-        [want : ast.AstType
-          (if (tc-invalidate-types-present?)
-            (tc-type-strip-invalidate
-              (ast.ty-node-get
-                (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))
-            (ast.ty-node-get
-              (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))]
-        (match (tc-call-effective-arg-expr
-          ctx
-          env
-          arg-id
-          (tc-global-shared-view arg)
-          (tc-global-shared-view want))
-          [(Ok effective-arg)
-            (let
-              [typed-first : ResultTcType
-                (match (& constructor-target)
-                  [(No)
-                    (if thread-spawn-args
-                      (tc-expr-with-expected-or-actual-thread-spawn-arg
-                        ctx
-                        env
-                        (tc-global-shared-view effective-arg)
-                        (tc-global-shared-view want))
-                      (tc-expr-with-expected-or-actual-call-arg
-                        ctx
-                        env
-                        (tc-global-shared-view effective-arg)
-                        (tc-global-shared-view want)))]
-                  [(Some _)
-                    (tc-expr-with-expected-or-actual
-                      ctx
-                      env
-                      (tc-global-shared-view effective-arg)
-                      (tc-global-shared-view want))])]
-              [typed-first-ok : bool
-                (match (& typed-first)
-                  [(ResultTcType.Ok _) true]
-                  [(ResultTcType.Err _) false])]
-              [typed-arg : ResultTcType
-                (if typed-first-ok
-                  typed-first
-                  (tc-call-arg-type-after-error
-                    ctx
-                    env
-                    (tc-global-shared-view effective-arg)
-                    (tc-global-shared-view want)
-                    typed-first))]
-              (match typed-arg
-                [(Ok got)
-                  (let
-                    [matched-got : TcInferredTypeMatch
-                      (tc-match-call-type-for-expected
-                        ctx
-                        env
-                        (tc-global-shared-view got)
-                        (tc-global-shared-view want))]
-                    [expect-result : ResultTcUnit
-                      (match matched-got
-                        [(Compatible _) Ok]
-                        [(Mismatch actual)
-                          (Err
-                            (tc-locate-error-at-expr
-                              (tc-context-expr-bases ctx)
-                              arg
-                              (tc-type-mismatch-message-in-context
-                                ctx
-                                env
-                                actual
-                                (tc-global-shared-view want)
-                                (tc-argument-message-prefix-text
-                                  ctx
-                                  (tc-global-shared-view arity-msg)
-                                  index))))])]
-                    [_ (try expect-result)]
-                    [_
-                      (tc-call-arena-store-note!
-                        ctx
-                        env
-                        arena-region
-                        params
-                        (tc-arity-message-func
-                          (tc-global-shared-view arity-msg))
-                        (tc-global-shared-view effective-arg)
-                        index
-                        (Some (tc-global-shared-view got)))]
-                    (if (and
-                      (tc-type-contains-any-region (& got))
-                      (not allow-region-args)
-                      (not (tc-type-contains-any-region (& want)))
-                      (not
-                        (tc-type-regions-all-atomic-arena-owners?
-                          env
-                          (tc-global-shared-view got)))
-                      (not
-                        (tc-type-regions-all-scratch?
-                          (tc-global-shared-view got)))
-                      (not (tc-type-contains-reference? (& got)))
-                      (not
-                        (tc-tagged-arena-handle-borrow? ctx (clone got) want)))
-                      (Err
-                        (tc-region-call-arg-error
-                          (tc-context-expr-bases ctx)
-                          effective-arg))
-                      (match (tc-global-shared-view constructor-target)
-                        [(Some target)
-                          (let
-                            [_
-                              (try
-                                (tc-ensure-cleanup-resource-not-stored-expr
-                                  ctx
-                                  env
-                                  effective-arg))]
-                            (let
-                              [_
-                                (try
-                                  (tc-ensure-constructor-field-can-flow-into
-                                    env
-                                    (clone target)
-                                    (clone got)))]
-                              ;; The constructed value holds the argument, so
-                              ;; it carries the argument's regions too.
-                              (tc-check-call-args-with-message-at
-                                ctx
-                                env
-                                args
-                                params
-                                (+ index 1)
-                                allow-region-args
-                                (ast.AstMaybeType.Some
-                                  (tc-type-join-regions env target (& got)))
-                                arity-msg
-                                thread-spawn-args
-                                arena-region)))]
-                        [(No)
-                          (tc-check-call-args-with-message-at
-                            ctx
-                            env
-                            args
-                            params
-                            (+ index 1)
-                            allow-region-args
-                            constructor-target
-                            arity-msg
-                            thread-spawn-args
-                            arena-region)])))]
-                ;; A `(type X)` argument types as an error. It fills a
-                ;; `[comptime T : type]` parameter, and reaches here only before
-                ;; specialization removes it from the call.
-                [(Err message)
-                  (if (and
-                    (tc-macro-type-param-kind? want)
-                    (match (ast.ast-expr-unspan-with-segment-bases
-                      (tc-context-expr-bases ctx)
-                      (& arg))
-                      [(TypeLiteral _) true]
-                      [_ false]))
-                    (tc-check-call-args-with-message-at
-                      ctx
-                      env
-                      args
-                      params
-                      (+ index 1)
-                      allow-region-args
-                      constructor-target
-                      arity-msg
-                      thread-spawn-args
-                      arena-region)
-                    (Err message))]))]
-          [(Err message)
-            (Err
-              (tc-locate-error-at-expr (tc-context-expr-bases ctx) arg message))])))))
-
-(define (tc-check-call-args
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [allow-region-args : bool]
-  [constructor-target : ast.AstMaybeType]) : ResultTcType
-  (tc-check-call-args-with-message
-    ctx
-    env
-    (tc-global-shared-view args)
-    (tc-global-shared-view params)
-    allow-region-args
-    constructor-target
-    (Detailed func args params)))
-
 (defenum TcDirectLambdaCheck
   (No)
   (Ok ast.AstType)
@@ -66734,17 +66127,6 @@
         (Err fallback-message))]
     [_ (Err fallback-message)]))
 
-(define (tc-call-target-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]) : ResultTcType
-  (match (tc-expr ctx env (tc-global-shared-view func))
-    [(Ok ty) (Ok ty)]
-    [(Err message)
-      (if (tc-direct-call-target-error? message)
-        (tc-call-target-direct-name ctx env func message)
-        (Err message))]))
-
 (define (tc-call-target-expr-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -66791,27 +66173,6 @@
         [(Func _ _) (Ok ty)]
         [_ (Err "typecheck: invalid C function signature")]))))
 
-(define (tc-call-c-function-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [signature : i64]
-  [mode : ast.AstCFunctionMode]) : ResultTcType
-  (let
-    [ty
-      (try (tc-call-c-function-signature ctx env (clone func) signature mode))]
-    (match ty
-      [(Func params ret)
-        (tc-call-function-type-normal
-          ctx
-          env
-          func
-          args
-          (ast.ast-type-list-box-shared-view params)
-          (ast.ty-node-get ret))]
-      [_ (Err "typecheck: invalid C function signature")])))
-
 ;; The `(type X)` arguments a call passes to `[comptime T : type]` parameters,
 ;; keyed by parameter name.
 (defstruct TcComptimeTypeArgs
@@ -66845,26 +66206,6 @@
 ;; ordinary call pays one counter test (see `ast-comptime-param-count`).
 (defmacro (tc-comptime-params-present?) : Expr
   `(not (= ast.ast-comptime-param-count 0)))
-
-(define (tc-call-comptime-function-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [params : ast.AstTypeList]
-  [ret : ast.AstType]) : ResultTcType
-  (let
-    [comptime-args : TcComptimeTypeArgs
-      (tc-call-comptime-type-args ctx (tc-global-shared-view func) (& args))]
-    (if (= comptime-args.len 0)
-      (tc-call-function-type ctx env func args params ret)
-      (tc-call-function-type
-        ctx
-        env
-        func
-        args
-        (tc-type-list-subst-comptime (& comptime-args) params)
-        (tc-type-subst-comptime (& comptime-args) ret)))))
 
 (define (tc-call-has-type-literal-arg?
   [ctx : TcContext]
@@ -67002,99 +66343,6 @@
           (ast.ty-node-get
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
       (& (tc-type-list-subst-comptime-at subst types (+ index 1))))))
-
-(define (tc-call-expr-ordinary
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]) : ResultTcType
-  (let
-    [direct : TcDirectLambdaCheck
-      (tc-direct-lambda-check ctx env (tc-global-shared-view func))]
-    (match direct
-      [(Ok fn-ty)
-        (match fn-ty
-          [(Func params ret)
-            (tc-call-function-type
-              ctx
-              env
-              func
-              args
-              (ast.ast-type-list-box-shared-view params)
-              (ast.ty-node-get ret))]
-          [_ (Err "typecheck: call target is not a function")])]
-      [(Err message) (Err message)]
-      [(No)
-        (let
-          [fn-ty
-            (try (tc-call-target-expr ctx env (tc-global-shared-view func)))]
-          (match (tc-global-shared-view fn-ty)
-            [(CFunc signature mode)
-              (tc-call-c-function-type ctx env func args signature mode)]
-            [(Func params ret)
-              (if (and
-                (tc-comptime-params-present?)
-                (tc-call-has-type-literal-arg? ctx (& args)))
-                (tc-call-comptime-function-type
-                  ctx
-                  env
-                  func
-                  args
-                  (ast.ast-type-list-box-shared-view params)
-                  (ast.ty-node-get ret))
-                (tc-call-function-type
-                  ctx
-                  env
-                  func
-                  args
-                  (ast.ast-type-list-box-shared-view params)
-                  (ast.ty-node-get ret)))]
-            [(Region _ inner)
-              (match (ast.ty-node-get inner)
-                [(CFunc signature mode)
-                  (tc-call-c-function-type ctx env func args signature mode)]
-                [(Func params ret)
-                  (let
-                    [_
-                      (try
-                        (tc-check-call-args-with-message
-                          ctx
-                          env
-                          (tc-global-shared-view args)
-                          (ast.ast-type-list-box-shared-view
-                            (tc-global-shared-view params))
-                          false
-                          (No)
-                          (Detailed
-                            func
-                            args
-                            (ast.ast-type-list-box-shared-view params))))]
-                    (Ok (tc-tag-active-region env (ast.ty-node-get ret))))]
-                [(or (Enum enum-name) (EnumArgs enum-name _))
-                  (if (ast.ast-expr-list-empty? (& args))
-                    (tc-nullary-variant-call-expr
-                      ctx
-                      env
-                      func
-                      enum-name
-                      (ast.ty-node-get inner))
-                    (Err
-                      (tc-call-fixed-arity-message
-                        (tc-context-expr-segment-bases ctx)
-                        func
-                        args
-                        0)))]
-                [_ (Err "typecheck: call target is not a function")])]
-            [(or (Enum enum-name) (EnumArgs enum-name _))
-              (if (ast.ast-expr-list-empty? (& args))
-                (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
-                (Err
-                  (tc-call-fixed-arity-message
-                    (tc-context-expr-segment-bases ctx)
-                    func
-                    args
-                    0)))]
-            [_ (Err "typecheck: call target is not a function")]))])))
 
 (define (tc-phase-call
   [ctx : TcContext]
@@ -67258,102 +66506,6 @@
             (tc-kind-message
               (ArenaOwnership)
               "typecheck: arena.destroy-safe! requires a direct arena owner or branded local owner place")))])))
-
-(define (tc-call-resolve-ordinary
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func-id : i64]
-  [func : ast.AstExpr]) : ResultTcType
-  (match (tc-direct-lambda-check ctx env func)
-    [(Ok ty)
-      (tc-body-type-fact-record! (tc-context-body-state ctx) func-id (clone ty))
-      (Ok ty)]
-    [(Err message) (Err message)]
-    [(No) (tc-call-target-expr-id ctx env func-id)]))
-
-(define (tc-call-expr-ordinary-resolved
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : ast.AstExpr]
-  [args : ast.AstExprList]
-  [fn-ty : ast.AstType]) : ResultTcType
-  (match (tc-global-shared-view fn-ty)
-    [(CFunc signature mode)
-      (tc-call-c-function-type ctx env func args signature mode)]
-    [(Func params ret)
-      (if (and
-        (tc-comptime-params-present?)
-        (tc-call-has-type-literal-arg? ctx (& args)))
-        (tc-call-comptime-function-type
-          ctx
-          env
-          func
-          args
-          (ast.ast-type-list-box-shared-view params)
-          (ast.ty-node-get ret))
-        (tc-call-function-type
-          ctx
-          env
-          func
-          args
-          (ast.ast-type-list-box-shared-view params)
-          (ast.ty-node-get ret)))]
-    [(Region _ inner)
-      (match (ast.ty-node-get inner)
-        [(CFunc signature mode)
-          (tc-call-c-function-type ctx env func args signature mode)]
-        [(Func params ret)
-          (let
-            [_
-              (try
-                (tc-check-call-args-with-message
-                  ctx
-                  env
-                  (tc-global-shared-view args)
-                  (ast.ast-type-list-box-shared-view
-                    (tc-global-shared-view params))
-                  false
-                  (No)
-                  (Detailed
-                    func
-                    args
-                    (ast.ast-type-list-box-shared-view params))))]
-            (Ok (tc-tag-active-region env (ast.ty-node-get ret))))]
-        [(or (Enum enum-name) (EnumArgs enum-name _))
-          (if (ast.ast-expr-list-empty? (& args))
-            (tc-nullary-variant-call-expr
-              ctx
-              env
-              func
-              enum-name
-              (ast.ty-node-get inner))
-            (Err
-              (tc-call-fixed-arity-message
-                (tc-context-expr-segment-bases ctx)
-                func
-                args
-                0)))]
-        [_ (Err "typecheck: call target is not a function")])]
-    [(or (Enum enum-name) (EnumArgs enum-name _))
-      (if (ast.ast-expr-list-empty? (& args))
-        (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
-        (Err
-          (tc-call-fixed-arity-message
-            (tc-context-expr-segment-bases ctx)
-            func
-            args
-            0)))]
-    [_ (Err "typecheck: call target is not a function")]))
-
-(define (tc-call-expr-ordinary-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func-id : i64]
-  [args : ast.AstExprList]) : ResultTcType
-  (let
-    [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
-    [fn-ty (try (tc-call-resolve-ordinary ctx env func-id (clone func)))]
-    (tc-call-expr-ordinary-resolved ctx env func args fn-ty)))
 
 (define (tc-str-ref-type? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -67547,10 +66699,12 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : ast.AstExpr]
-  [name-id : i64]
+  [func-id : i64]
+  [info : (& info TcCallBuiltinName)]
   [args : (& args ast.AstExprList)]
   [arg-ty : ast.AstType]) : ResultTcType
   (let
+    [name-id : i64 info.name-id]
     [array-only? : bool
       (cbi.compiler-builtin-typecheck-array-length-id? name-id)]
     [array? : bool
@@ -67572,7 +66726,15 @@
               0
               arg-ty
               "String or (& str)")]
-          [else (tc-call-expr-ordinary ctx env func (clone (deref args)))])]
+          [else
+            (tc-call-length-fallback
+              ctx
+              env
+              func
+              func-id
+              info.declared
+              args
+              (ast.AstMaybeType.Some arg-ty))])]
       [array-only?
         (if (and
           (tc-type-eq (tc-type-strip-region arg-ty) (Expr))
@@ -67593,8 +66755,24 @@
               0
               arg-ty
               "String, (& str), (& bytes), or (&mut bytes)")]
-          [else (tc-call-expr-ordinary ctx env func (clone (deref args)))])]
-      [else (tc-call-expr-ordinary ctx env func (clone (deref args)))])))
+          [else
+            (tc-call-length-fallback
+              ctx
+              env
+              func
+              func-id
+              info.declared
+              args
+              (ast.AstMaybeType.Some arg-ty))])]
+      [else
+        (tc-call-length-fallback
+          ctx
+          env
+          func
+          func-id
+          info.declared
+          args
+          (ast.AstMaybeType.Some arg-ty))])))
 
 (define (tc-layout-query-name? [name : String]) : bool
   (if (string.eq name "size-of")
@@ -68944,7 +68122,7 @@
         (tc-default-cpu-query-unshadowed? ctx env name-id)))))
 
 ;; The builtin call dispatch for a named callee, decided once from the name.
-;; `tc-call-or-array-length-id` and the selected call producer share this one
+;; Call classification shares this one
 ;; classification, so neither route can type a builtin as an ordinary call.
 ;; Arms are tested in order; the first matching predicate wins.
 ;; Classify `raw-name`. A runtime identity is classified with shadowing off.
@@ -69307,45 +68485,6 @@
                 [integer? "integer"]
                 [(= arm 2) "String, (& str), (& bytes), or (&mut bytes)"]
                 [else "String or (& str)"]))))])))
-
-(define (tc-call-or-array-length-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func-id : i64]
-  [args : ast.AstExprList]) : ResultTcType
-  (let
-    [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
-    (match (ast.ast-expr-unspan-with-segment-bases
-      (tc-context-expr-segment-bases ctx)
-      (& func))
-      [(Var raw-name)
-        ;; Keep builtin dispatch identical to the string-name call path; only
-        ;; the ordinary fallback needs the pooled function expression id.
-        (let
-          [info : TcCallBuiltinName
-            (tc-call-builtin-name ctx env raw-name args.len)]
-          (cond
-            [(= info.arm 0) (tc-call-expr-ordinary-id ctx env func-id args)]
-            [(and (>= info.arm 9) (<= info.arm 12))
-              (tc-arena-call-query ctx env func func-id (& info) args)]
-            [(= info.arm 23) (tc-clone-call ctx env args)]
-            [else
-              (tc-selected-project
-                (tc-infer-selected-builtin
-                  ctx
-                  env
-                  func
-                  (& info)
-                  args
-                  typed.TypedSyntax.Generated
-                  ast.AstMaybeType.No
-                  (ownership.OwnershipSource
-                    (ownership.ownership-path-none)
-                    0
-                    0
-                    (ownership.ownership-expansion-none))
-                  TcSelectedSink.Query))]))]
-      [_ (tc-call-expr-ordinary-id ctx env func-id args)])))
 
 (define (tc-let-bindings
   [ctx : TcContext]
@@ -83959,12 +83098,13 @@
   [args : (& args ast.AstExprList)]
   [params : (& params ast.AstTypeList)]
   [ret : ast.AstType]
-  [outer : bool]
-  [typed-call : ResultTcType]) : ResultTcType
-  (set! tc-call-temporary-borrow-typed outer)
+  [outer : bool]) : ResultTcUnit
   (let
-    [_ (try (tc-check-call-temporary-borrows ctx env args params ret))]
-    typed-call))
+    [typed? : bool tc-call-temporary-borrow-typed]
+    (set! tc-call-temporary-borrow-typed outer)
+    (if typed?
+      (tc-check-call-temporary-borrows ctx env args params ret)
+      Ok)))
 
 ;; The type a reference formal expects of a temporary's value, used to type a
 ;; literal operand such as `(& 7)` against `(& u8)`. A `Slice` formal expects an
@@ -92967,7 +92107,7 @@
         (tc-infer-unlocated-source)
         TcSelectedSink.Query)]
     [(or (MacroExpansion _ _ _) (BinaryData _) (Var _) (TypeLiteral _) (Ann _ _)
-         (Begin _) (Unsafe _) (Set _ _) (Borrow _ _ _) (Binary _ _ _)
+         (Begin _) (Unsafe _) (Set _ _) (Borrow _ _ _) (Binary _ _ _) (Call _ _)
          (Unary _ _) (If _ _ _) (Let _) (While _ _) (Cast _ _) (Comptime _)
          (Quote _) (Quasiquote _) (Unquote _) (UnquoteSplicing _) (Try _)
          (Return _) (Break) (Continue) (PtrNull _) (PtrNullCheck _)
@@ -92993,7 +92133,6 @@
           [(BoxTake _) true]
           [_ false])
         ast.AstMaybeType.No)]
-    [(Call func-box args) (tc-call-or-array-length-id ctx env func-box args)]
     [(BracketClause _)
       (Err
         "typecheck: bracket clause is only valid as an ExprClause or ExprBindingClause macro operand")]
@@ -123742,10 +122881,7 @@
                       func-box
                       expected-ty)]
                   [fn-ty-result : ResultTcType
-                    (tc-call-target-expr
-                      ctx
-                      env
-                      (tc-context-expr-get ctx func-box))]
+                    (tc-call-target-expr-id ctx env func-box)]
                   [_exit : unit (tc-discarding-errors-exit! ctx env observer)]
                   [_restore : unit
                     (tc-dotted-macro-journal-restore-to!
@@ -123977,8 +123113,7 @@
         [(Some expected)
           (tc-expected-call-variant-retarget! ctx env nfunc expected)]
         [(No) Ok])]
-    [fn-ty-result : ResultTcType
-      (tc-call-target-expr ctx env (tc-context-expr-get ctx nfunc))]
+    [fn-ty-result : ResultTcType (tc-call-target-expr-id ctx env nfunc)]
     [_exit : unit (tc-discarding-errors-exit! ctx env observer)]
     [_restore : unit
       (tc-dotted-macro-journal-restore-to! macro-state journal-mark)]
@@ -124072,8 +123207,7 @@
         [(Some expected)
           (tc-expected-call-variant-retarget! ctx env nfunc expected)]
         [(No) Ok])]
-    [fn-ty-result : ResultTcType
-      (tc-call-target-expr ctx env (tc-context-expr-get ctx nfunc))]
+    [fn-ty-result : ResultTcType (tc-call-target-expr-id ctx env nfunc)]
     [_exit : unit (tc-discarding-errors-exit! ctx env observer)]
     [_restore : unit
       (tc-dotted-macro-journal-restore-to! macro-state journal-mark)]

@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+embedded-stdlib-tlci-bounded-resource-report	1210	all	embedded stdlib TLCI bounded resource report	bootstrap-compiler	stage2	6400	build-stamp,embedded-image	scripts/verify-embedded-stdlib-tlci-resources.sh	linux-2	windows-2	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

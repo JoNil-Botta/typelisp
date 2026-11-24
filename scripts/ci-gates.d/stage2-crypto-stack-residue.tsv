@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-crypto-stack-residue	400	all	stage2 crypto stack residue and mutants	bootstrap-compiler	stage2	512	-	scripts/verify-crypto-stack-scrub.sh	linux-2	windows-2	compiler,stdlib,corpus	Compiles actual native crypto call trees, verifies emitted reclaim intervals and executes pinned residue mutants at both optimization levels.

@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-rooted-linux-filesystem-boundary	80	linux	stage2 rooted Linux filesystem boundary	bootstrap-compiler	stage2	512	-	scripts/verify-fs-rooted-linux.sh	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

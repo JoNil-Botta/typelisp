@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+integration-manifest-validator-self-tests	500	all	integration manifest validator self-tests	-	-	256	-	scripts/verify-integration-manifest-validator.sh	linux-2	windows-1	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.

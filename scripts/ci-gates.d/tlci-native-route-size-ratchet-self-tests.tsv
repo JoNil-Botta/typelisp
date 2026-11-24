@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+tlci-native-route-size-ratchet-self-tests	1000	linux	TLCI native route size ratchet self-tests	-	-	256	-	scripts/check-tlci-native-route-size.sh --self-test	linux-2	-	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

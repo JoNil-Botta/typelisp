@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-regalloc-backend-asm-shape-gates	250	linux	stage2 regalloc/backend asm shape gates	bootstrap-compiler	stage2	5120	-	scripts/verify-codegen-cases.sh tests/codegen/asm-shape.d	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

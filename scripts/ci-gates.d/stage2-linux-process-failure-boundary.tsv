@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-linux-process-failure-boundary	70	linux	stage2 Linux process failure boundary	bootstrap-compiler	stage2	512	-	scripts/verify-process-runtime-linux.sh	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+benchmark-wall-clock-harness-self-tests	280	linux	benchmark wall-clock harness self-tests	bootstrap-compiler	stage2	256	-	scripts/bench.sh --self-test	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

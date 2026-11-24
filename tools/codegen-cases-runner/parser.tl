@@ -338,65 +338,119 @@
         (set! i (+ i 1))))
     found))
 
-;; Check if a case references {{work}}/ other than the file's pre-case files.
-;; Any case that writes to {{work}}/ or reads another case's {{work}}/<case>/...
-;; needs a serialization barrier so parallel waves never race on shared work paths.
+;; Check if a byte can continue a path segment (used to detect prefix boundaries
+;; after a pre-file name like `foo.tl` vs `foo.tl.out` or `foo.tl:1:`).
+(define (is-path-cont-byte? [b : i64]) : bool
+  (or (util.is-alnum-byte? b) (= b 95) (= b 45) (= b 46) (= b 47) (= b 92)))
+
+(define (text-touches-any-work? [text : (& text str)]) : bool
+  (or
+    (>= (util.index-of-str-from text "{{work}}" 0) 0)
+    (>= (util.index-of-str-from text "{{native-work}}" 0) 0)))
+
+(define (text-has-non-prefile-work-token?
+  [text : (& text str)]
+  [token : (& token str)]
+  [pre-files : (& pre-files fbvec.Vec)]) : bool
+  (let
+    [tlen : i64 (string.string-length text)]
+    [toklen : i64 (string.string-length token)]
+    [np : i64 (fbvec.len pre-files)]
+    [pos : i64 0]
+    [needs : bool false]
+    [done : bool false]
+    (while (and (not needs) (not done))
+      (let
+        [hit : i64 (util.index-of-str-from text token pos)]
+        (if (< hit 0)
+          (set! done true)
+          (let
+            [after-tok : i64 (+ hit toklen)]
+            (if (or (>= after-tok tlen) (!= (util.byte-at text after-tok) 47))
+              ;; Bare {{work}} / {{native-work}} (not followed by '/')
+              (set! needs true)
+              (let
+                [after : i64 (+ after-tok 1)]
+                [matched-pre : bool false]
+                [p : i64 0]
+                (while (and (not matched-pre) (< p np))
+                  (let
+                    [pf : FileBlock
+                      (fbvec.get pre-files p (FileBlock 0 "" "" ""))]
+                    [pflen : i64 (string.string-length (& pf.path))]
+                    (when
+                      (and (> pflen 0) (<= (+ after pflen) tlen))
+                      (let
+                        [slice-s : String (string.substring text after pflen)]
+                        [end-pos : i64 (+ after pflen)]
+                        [at-boundary : bool
+                          (or
+                            (= end-pos tlen)
+                            (not
+                              (is-path-cont-byte? (util.byte-at text end-pos))))]
+                        (when
+                          (and at-boundary (string.eq (& slice-s) (& pf.path)))
+                          (set! matched-pre true)))))
+                  (set! p (+ p 1)))
+                (when (not matched-pre) (set! needs true))
+                (set! pos after)))))))
+    needs))
+
+(define (text-has-non-prefile-work?
+  [text : (& text str)]
+  [pre-files : (& pre-files fbvec.Vec)]) : bool
+  (or
+    (text-has-non-prefile-work-token? text "{{work}}" pre-files)
+    (text-has-non-prefile-work-token? text "{{native-work}}" pre-files)))
+
+;; Check if a case references {{work}}/ or {{native-work}}/ other than read-only
+;; references to the file's pre-case files, or mutates {{work}}/ via setup/file/sh.
+;; Any such case needs a serialization barrier so parallel waves never race on
+;; shared work paths.
 (define (case-needs-barrier?
+  [source : (& source str)]
+  [args : (& args str)]
+  [setups : (& setups svec.Vec)]
   [rows : (& rows rowvec.Vec)]
   [pre-files : (& pre-files fbvec.Vec)]) : bool
   (let
-    [nr : i64 (rowvec.len rows)]
-    [np : i64 (fbvec.len pre-files)]
-    [i : i64 0]
-    [needs : bool false]
-    (while (and (not needs) (< i nr))
-      (let
-        [r : CaseRow (rowvec.get rows i (CaseRow 0 0 "" "" "" 0))]
-        ;; check asm-equals / same-metric or any {{work}}/ in check/sh/file
-        (cond
-          [(and
-              (= r.kind rk-check)
-              (>= (util.index-of-str-from (& r.a) "{{work}}/" 0) 0))
-            (set! needs true)]
-          [(and
-              (= r.kind rk-file)
-              (>= (util.index-of-str-from (& r.a) "{{work}}/" 0) 0))
-            (set! needs true)]
-          [(and
-              (= r.kind rk-sh)
-              (>= (util.index-of-str-from (& r.a) "{{work}}/" 0) 0))
-            ;; Check if all {{work}}/ occurrences in sh refer to a pre-file; if not, barrier!
-            (let
-              [pos : i64 0]
-              [alen : i64 (string.string-length (& r.a))]
-              [done-s : bool false]
-              (while (and (not needs) (not done-s))
-                (let
-                  [hit : i64 (util.index-of-str-from (& r.a) "{{work}}/" pos)]
-                  (if (< hit 0)
-                    (set! done-s true)
-                    (let
-                      [after : i64 (+ hit 9)]
-                      [matched-pre : bool false]
-                      [p : i64 0]
-                      (while (and (not matched-pre) (< p np))
-                        (let
-                          [pf : FileBlock
-                            (fbvec.get pre-files p (FileBlock 0 "" "" ""))]
-                          [pflen : i64 (string.string-length (& pf.path))]
-                          (when
-                            (<= (+ after pflen) alen)
-                            (let
-                              [slice-s : String
-                                (string.substring (& r.a) after pflen)]
-                              (when
-                                (string.eq (& slice-s) (& pf.path))
-                                (set! matched-pre true)))))
-                        (set! p (+ p 1)))
-                      (when (not matched-pre) (set! needs true))
-                      (set! pos after))))))]
-          [else unit]))
-      (set! i (+ i 1)))
+    [needs : bool
+      (or
+        (text-has-non-prefile-work? source pre-files)
+        (text-has-non-prefile-work? args pre-files))]
+    ;; Always barrier setup touching {{work}} or {{native-work}} (even on pre-file names)
+    (let
+      [ns : i64 (svec.len setups)]
+      [si : i64 0]
+      (while (and (not needs) (< si ns))
+        (when
+          (text-touches-any-work? (svec.get setups si ""))
+          (set! needs true))
+        (set! si (+ si 1))))
+    ;; Scan ALL row kinds; always barrier file/sh touching {{work}} or {{native-work}}
+    ;; even on pre-file names.
+    (let
+      [nr : i64 (rowvec.len rows)]
+      [i : i64 0]
+      (while (and (not needs) (< i nr))
+        (let
+          [r : CaseRow (rowvec.get rows i (CaseRow 0 0 "" "" "" 0))]
+          (cond
+            [(or (= r.kind rk-file) (= r.kind rk-sh))
+              (when
+                (or
+                  (text-touches-any-work? (& r.a))
+                  (text-has-non-prefile-work? (& r.b) pre-files)
+                  (text-has-non-prefile-work? (& r.c) pre-files))
+                (set! needs true))]
+            [else
+              (when
+                (or
+                  (text-has-non-prefile-work? (& r.a) pre-files)
+                  (text-has-non-prefile-work? (& r.b) pre-files)
+                  (text-has-non-prefile-work? (& r.c) pre-files))
+                (set! needs true))]))
+        (set! i (+ i 1))))
     needs))
 
 ;; Mutable parser state for one .cases file.
@@ -529,7 +583,13 @@
         ps.ok
         (ps-close-step! ps)
         (let
-          [barrier : bool (case-needs-barrier? (& ps.rows) (& ps.pre-files))]
+          [barrier : bool
+            (case-needs-barrier?
+              (& ps.cfg.source)
+              (& ps.cfg.args)
+              (& ps.cfg.setups)
+              (& ps.rows)
+              (& ps.pre-files))]
           (casevec.push-ref!
             (&mut ps.cases)
             (CaseDef

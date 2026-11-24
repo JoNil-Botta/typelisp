@@ -1172,6 +1172,22 @@
     (svec.push-ref! (&mut values) (string.copy (& cfg.sde-policy)))
     (svec.push-ref! (&mut names) "SIMDEX_AVX512_MODE")
     (svec.push-ref! (&mut values) (simd-execution-mode cfg "avx512"))
+    (let
+      [isas-buf : bbc.ByteBufBuilder (bbc.byte-buf-builder-new)]
+      [ni : i64 (svec.len (& cfg.native-isas))]
+      [ii : i64 0]
+      (while (< ii ni)
+        (when
+          (> ii 0)
+          (bbc.byte-buf-builder-push (&mut isas-buf) (cast 32 : u8)))
+        (bbc.byte-buf-builder-append-string
+          (&mut isas-buf)
+          (svec.get (& cfg.native-isas) ii ""))
+        (set! ii (+ ii 1)))
+      (svec.push-ref! (&mut names) "SIMDEX_NATIVE_ISAS")
+      (svec.push-ref!
+        (&mut values)
+        (bbc.byte-buf-builder-finish-string (& isas-buf))))
     (EnvPairs names values)))
 
 (define (shell-helper-prelude) : String
@@ -1184,7 +1200,7 @@
     "linux_entry_symbol_for_asm() { for _s in _tl_start _start; do if grep -q \"^${_s}:$\" \"$1\"; then printf '%s\\n' \"$_s\"; return 0; else _st=$?; [ \"$_st\" -eq 1 ] || return \"$_st\"; fi; done; printf '%s\\n' _tl_start; }\n"
     "fail() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
     "cc_wait() { _cw_pid=$1; if [ -f \"$CV_DIR/.bg_pid_$_cw_pid\" ]; then _cw_rc_file=$(cat \"$CV_DIR/.bg_pid_$_cw_pid\"); while [ ! -f \"$_cw_rc_file\" ]; do if ! kill -0 \"$_cw_pid\" 2>/dev/null && [ ! -f \"$_cw_rc_file\" ]; then return 127; fi; sleep 0.05; done; _cw_rc=$(cat \"$_cw_rc_file\"); return \"$_cw_rc\"; fi; wait \"$_cw_pid\"; }\n"
-    "simd_execute() { _m=$1; shift; if [ \"$_m\" = avx512 ] && [ -n \"$SIMDEX_SDE_BIN\" ] && [ \"$SIMDEX_AVX512_MODE\" = sde ]; then \"$SIMDEX_SDE_BIN\" -spr -- \"$@\"; else \"$@\"; fi; }\n"))
+    "simd_execute() { [ \"$#\" -ge 2 ] || { echo 'simd_execute: missing mode or command' >&2; return 1; }; _m=$1; shift; _em=unavailable; case \"$_m\" in - | scalar) _em=native ;; *) if [ \"$_m:$SIMDEX_POLICY\" != avx512:sde ]; then case \" $SIMDEX_NATIVE_ISAS \" in *\" $_m \"*) _em=native ;; esac; fi; if [ \"$_em\" = unavailable ] && [ \"$_m\" = avx512 ] && [ -n \"$SIMDEX_SDE_BIN\" ]; then _em=sde; fi ;; esac; if [ \"$_em\" = unavailable ]; then echo \"cannot execute ISA $_m\" >&2; return 1; elif [ \"$_em\" = sde ]; then \"$SIMDEX_SDE_BIN\" -spr -- \"$@\"; else \"$@\"; fi; }\n"))
 
 ;; Find all CCV_<name>= identifiers referenced in a shell snippet so we sync them back.
 (define (find-assigned-ccv-vars [text : (& text str)]) : svec.Vec
@@ -1437,6 +1453,7 @@
     [use-native : bool
       (and
         sp.native-ok
+        (or is-run (= (svec.len (& st.sourced-scripts)) 0))
         (or (not sp.has-stdin) (not (util.host-is-windows?)))
         (or is-run (> (svec.len (& sp.tokens)) 0)))]
     (if use-native
@@ -1540,7 +1557,7 @@
                 (let
                   [cmd-exe : String (svec.get (& sp.tokens) idx "")]
                   (if (string.eq (& cmd-exe) "simd_execute")
-                    (if (< (+ idx 2) nt)
+                    (if (>= (+ idx 2) nt)
                       (set! use-native false)
                       (let
                         [smode : String (svec.get (& sp.tokens) (+ idx 1) "")]
@@ -1553,42 +1570,55 @@
                             (&mut real-args)
                             (svec.get (& sp.tokens) k ""))
                           (set! k (+ k 1)))
-                        (if (string.eq
-                          (simd-execution-mode cfg (& smode))
-                          "sde")
-                          (let
-                            [sde-args : svec.Vec (svec.new)]
-                            (svec.push-ref! (&mut sde-args) "-spr")
-                            (svec.push-ref! (&mut sde-args) "--")
-                            (svec.push-ref! (&mut sde-args) real-exe)
-                            (let
-                              [j : i64 0]
-                              [rn : i64 (svec.len (& real-args))]
-                              (while (< j rn)
-                                (svec.push-ref!
-                                  (&mut sde-args)
-                                  (svec.get (& real-args) j ""))
-                                (set! j (+ j 1))))
-                            (set!
-                              res
-                              (run-process-direct
-                                (& cfg.sde-bin)
-                                (& sde-args)
-                                (& st.cwd)
-                                (& env-names)
-                                (& env-values)
-                                sp.has-stdin
-                                (& stdin-text))))
-                          (set!
-                            res
-                            (run-process-direct
-                              (& real-exe)
-                              (& real-args)
-                              (& st.cwd)
-                              (& env-names)
-                              (& env-values)
-                              sp.has-stdin
-                              (& stdin-text))))))
+                        (let
+                          [exec-mode : String
+                            (simd-execution-mode cfg (& smode))]
+                          (cond
+                            [(string.eq (& exec-mode) "unavailable")
+                              (set!
+                                res
+                                (ProcResult
+                                  1
+                                  ""
+                                  (str_cat.str-cat
+                                    "cannot execute ISA "
+                                    smode
+                                    "\n")))]
+                            [(string.eq (& exec-mode) "sde")
+                              (let
+                                [sde-args : svec.Vec (svec.new)]
+                                (svec.push-ref! (&mut sde-args) "-spr")
+                                (svec.push-ref! (&mut sde-args) "--")
+                                (svec.push-ref! (&mut sde-args) real-exe)
+                                (let
+                                  [j : i64 0]
+                                  [rn : i64 (svec.len (& real-args))]
+                                  (while (< j rn)
+                                    (svec.push-ref!
+                                      (&mut sde-args)
+                                      (svec.get (& real-args) j ""))
+                                    (set! j (+ j 1))))
+                                (set!
+                                  res
+                                  (run-process-direct
+                                    (& cfg.sde-bin)
+                                    (& sde-args)
+                                    (& st.cwd)
+                                    (& env-names)
+                                    (& env-values)
+                                    sp.has-stdin
+                                    (& stdin-text))))]
+                            [else
+                              (set!
+                                res
+                                (run-process-direct
+                                  (& real-exe)
+                                  (& real-args)
+                                  (& st.cwd)
+                                  (& env-names)
+                                  (& env-values)
+                                  sp.has-stdin
+                                  (& stdin-text)))]))))
                     (if (or
                       (and handled-env (util.starts-with? (& cmd-exe) "-"))
                       (and (util.host-is-windows?) (string.eq (& cmd-exe) "sh")))
@@ -1700,6 +1730,33 @@
     (util.write-file! (& full-path) (& text))
     unit))
 
+;; Check whether a file or any regular file inside a directory has the
+;; executable bit set (used on non-Windows so `cp` falls back to `sh` to
+;; preserve mode bits).
+(define (path-has-executable? [path : (& path str)]) : bool
+  (let
+    [npath : String (util.win-fs-path path)]
+    (match (fs.try-file-kind (& npath))
+      [(fs.ErrFsFileKind _) false]
+      [(fs.OkFsFileKind kind)
+        (if (fs.file-kind-directory? kind)
+          (match (fs.try-read-dir (& npath))
+            [(fs.ErrIoStringVector _) false]
+            [(fs.OkIoStringVector entries)
+              (let
+                [i : i64 0]
+                [count : i64 (svec.len (& entries.items))]
+                [found : bool false]
+                (while (and (not found) (< i count))
+                  (let
+                    [name : String (svec.get (& entries.items) i "")]
+                    [child : String
+                      (str_cat.str-cat (string.copy (& npath)) "/" name)]
+                    (when (path-has-executable? (& child)) (set! found true)))
+                  (set! i (+ i 1)))
+                found)])
+          (util.is-executable? (& npath)))])))
+
 ;; Try executing a single simple `sh` command natively. Returns -1 if shell fallback needed, 0 ok, 1 fail.
 (define (try-native-sh-cmd!
   [cfg : (& cfg RunnerConfig)]
@@ -1722,59 +1779,123 @@
                   -1
                   (let
                     [spath : String (svec.get (& sp.tokens) 1 "")]
-                    (if (util.is-regular-file? (& spath))
-                      (begin
-                        (svec.push-ref! (&mut st.sourced-scripts) spath)
-                        0)
-                      1)))]
+                    (if (not (util.is-regular-file? (& spath)))
+                      1
+                      (let
+                        [shellified : String (util.shellify-vars raw)]
+                        [res : ProcResult
+                          (run-sh-fallback! cfg st (& shellified) "" true)]
+                        (if (= res.exit-code 0)
+                          (begin
+                            (svec.push-ref! (&mut st.sourced-scripts) spath)
+                            0)
+                          1)))))]
               [(string.eq (& head) "mkdir")
                 (let
                   [i : i64 1]
-                  [ok : bool true]
-                  (while (and ok (< i nt))
+                  [parents : bool false]
+                  [end-opts : bool false]
+                  [unknown-flag : bool false]
+                  [paths : svec.Vec (svec.new)]
+                  (while (< i nt)
                     (let
                       [arg : String (svec.get (& sp.tokens) i "")]
-                      (when
-                        (not (string.eq (& arg) "-p"))
-                        (when (not (util.mkdir-all! (& arg))) (set! ok false))))
+                      (cond
+                        [(and (not end-opts) (string.eq (& arg) "--"))
+                          (set! end-opts true)]
+                        [(and (not end-opts) (string.eq (& arg) "-p"))
+                          (set! parents true)]
+                        [(and (not end-opts) (util.starts-with? (& arg) "-"))
+                          (set! unknown-flag true)]
+                        [else (svec.push-ref! (&mut paths) arg)]))
                     (set! i (+ i 1)))
-                  (if ok
-                    0
-                    1))]
+                  (if (or unknown-flag (= (svec.len (& paths)) 0))
+                    -1
+                    (let
+                      [np : i64 (svec.len (& paths))]
+                      [pi : i64 0]
+                      [ok : bool true]
+                      (while (and ok (< pi np))
+                        (let
+                          [p : String (svec.get (& paths) pi "")]
+                          (if parents
+                            (when (not (util.mkdir-all! (& p))) (set! ok false))
+                            (let
+                              [np-win : String (util.win-fs-path (& p))]
+                              (match (fs.try-mkdir (& np-win))
+                                [(io.OkIoUnit) unit]
+                                [(io.ErrIoUnit _) (set! ok false)]))))
+                        (set! pi (+ pi 1)))
+                      (if ok
+                        0
+                        1))))]
               [(string.eq (& head) "rm")
                 (let
                   [i : i64 1]
                   [force : bool false]
                   [rec : bool false]
-                  [ok : bool true]
+                  [end-opts : bool false]
+                  [unknown-flag : bool false]
+                  [paths : svec.Vec (svec.new)]
                   (while (< i nt)
                     (let
                       [arg : String (svec.get (& sp.tokens) i "")]
                       (cond
-                        [(string.eq (& arg) "-rf")
+                        [(and (not end-opts) (string.eq (& arg) "--"))
+                          (set! end-opts true)]
+                        [(and
+                          (not end-opts)
+                          (or
+                            (string.eq (& arg) "-rf")
+                            (string.eq (& arg) "-fr")
+                            (string.eq (& arg) "-Rf")
+                            (string.eq (& arg) "-fR")))
                           (set! force true)
                           (set! rec true)]
-                        [(string.eq (& arg) "-fr")
-                          (set! force true)
+                        [(and
+                            (not end-opts)
+                            (or
+                              (string.eq (& arg) "-r")
+                              (string.eq (& arg) "-R")))
                           (set! rec true)]
-                        [(string.eq (& arg) "-r") (set! rec true)]
-                        [(string.eq (& arg) "-f") (set! force true)]
-                        [(util.starts-with? (& arg) "-") (set! ok false)]
-                        [else
-                          (if rec
-                            (util.rm-rf! (& arg))
-                            (if (util.file-exists? (& arg))
-                              (let
-                                [narg : String (util.win-fs-path (& arg))]
-                                (match (fs.try-remove-file-if-exists (& narg))
-                                  [(io.OkIoUnit) unit]
-                                  [(io.ErrIoUnit _)
-                                    (when (not force) (set! ok false))]))
-                              (when (not force) (set! ok false))))]))
+                        [(and (not end-opts) (string.eq (& arg) "-f"))
+                          (set! force true)]
+                        [(and (not end-opts) (util.starts-with? (& arg) "-"))
+                          (set! unknown-flag true)]
+                        [else (svec.push-ref! (&mut paths) arg)]))
                     (set! i (+ i 1)))
-                  (if ok
-                    0
-                    1))]
+                  (if (or unknown-flag (= (svec.len (& paths)) 0))
+                    -1
+                    (let
+                      [np : i64 (svec.len (& paths))]
+                      [pi : i64 0]
+                      [ok : bool true]
+                      (while (< pi np)
+                        (let
+                          [arg : String (svec.get (& paths) pi "")]
+                          [narg : String (util.win-fs-path (& arg))]
+                          (match (fs.try-file-kind-no-follow (& narg))
+                            [(fs.ErrFsFileKind _)
+                              (when (not force) (set! ok false))]
+                            [(fs.OkFsFileKind kind)
+                              (if rec
+                                (begin
+                                  (util.rm-rf! (& arg))
+                                  (when
+                                    (not force)
+                                    (match (fs.try-file-kind-no-follow (& narg))
+                                      [(fs.OkFsFileKind _) (set! ok false)]
+                                      [(fs.ErrFsFileKind _) unit])))
+                                (if (fs.file-kind-directory? kind)
+                                  (set! ok false)
+                                  (match (fs.try-remove-file (& narg))
+                                    [(io.OkIoUnit) unit]
+                                    [(io.ErrIoUnit _)
+                                      (when (not force) (set! ok false))])))]))
+                        (set! pi (+ pi 1)))
+                      (if ok
+                        0
+                        1))))]
               [(string.eq (& head) "cp")
                 (let
                   [rec : bool false]
@@ -1785,10 +1906,7 @@
                     (let
                       [arg : String (svec.get (& sp.tokens) i "")]
                       (cond
-                        [(or
-                            (string.eq (& arg) "-r")
-                            (string.eq (& arg) "-R")
-                            (string.eq (& arg) "-rp"))
+                        [(or (string.eq (& arg) "-r") (string.eq (& arg) "-R"))
                           (set! rec true)]
                         [(util.starts-with? (& arg) "-")
                           (set! unknown-flag true)]
@@ -1799,41 +1917,57 @@
                     (let
                       [src : String (svec.get (& paths) 0 "")]
                       [dst : String (svec.get (& paths) 1 "")]
-                      [final-dst : String
-                        (if (util.is-dir? (& dst))
-                          (let
-                            [slash : i64 (- (string.string-length (& src)) 1)]
-                            (while (and
-                              (>= slash 0)
-                              (!= (util.byte-at (& src) slash) 47)
-                              (!= (util.byte-at (& src) slash) 92))
-                              (set! slash (- slash 1)))
-                            (str_cat.str-cat
-                              (string.copy (& dst))
-                              "/"
-                              (string.substring
-                                (& src)
-                                (+ slash 1)
-                                (- (string.string-length (& src)) (+ slash 1)))))
-                          (string.copy (& dst)))]
-                      (if rec
-                        (if (util.copy-recursive-ok? (& src) (& final-dst))
-                          0
-                          1)
-                        (if (util.copy-file-ok? (& src) (& final-dst))
-                          0
-                          1)))))]
+                      (if (and
+                        (not (util.host-is-windows?))
+                        (if rec
+                          (path-has-executable? (& src))
+                          (util.is-executable? (& src))))
+                        -1
+                        (let
+                          [final-dst : String
+                            (if (util.is-dir? (& dst))
+                              (let
+                                [slash : i64
+                                  (- (string.string-length (& src)) 1)]
+                                (while (and
+                                  (>= slash 0)
+                                  (!= (util.byte-at (& src) slash) 47)
+                                  (!= (util.byte-at (& src) slash) 92))
+                                  (set! slash (- slash 1)))
+                                (str_cat.str-cat
+                                  (string.copy (& dst))
+                                  "/"
+                                  (string.substring
+                                    (& src)
+                                    (+ slash 1)
+                                    (-
+                                      (string.string-length (& src))
+                                      (+ slash 1)))))
+                              (string.copy (& dst)))]
+                          (if rec
+                            (if (util.copy-recursive-ok? (& src) (& final-dst))
+                              0
+                              1)
+                            (if (util.copy-file-ok? (& src) (& final-dst))
+                              0
+                              1)))))))]
               [(string.eq (& head) "mv")
                 (if (!= nt 3)
                   -1
                   (let
-                    [src : String
-                      (util.win-fs-path (svec.get (& sp.tokens) 1 ""))]
-                    [dst : String
-                      (util.win-fs-path (svec.get (& sp.tokens) 2 ""))]
-                    (match (fs.try-rename (& src) (& dst))
-                      [(io.OkIoUnit) 0]
-                      [(io.ErrIoUnit _) 1])))]
+                    [raw-src : String (svec.get (& sp.tokens) 1 "")]
+                    [raw-dst : String (svec.get (& sp.tokens) 2 "")]
+                    (if (or
+                      (util.starts-with? (& raw-src) "-")
+                      (util.starts-with? (& raw-dst) "-")
+                      (util.is-dir? (& raw-dst)))
+                      -1
+                      (let
+                        [src : String (util.win-fs-path (& raw-src))]
+                        [dst : String (util.win-fs-path (& raw-dst))]
+                        (match (fs.try-rename (& src) (& dst))
+                          [(io.OkIoUnit) 0]
+                          [(io.ErrIoUnit _) 1])))))]
               [(string.eq (& head) "cmp")
                 (if (and
                   (= nt 4)
@@ -2891,6 +3025,138 @@
                                             0)
                                           1)))))))))))))))))))))
 
+;; Compare a named metric (optionally `NAME:ARG`) on a function label between
+;; `st.asm-text` and `other-p`. Fails closed on missing asm/file/label/metric.
+(define (eval-same-metric!
+  [st : (&mut st VariantState)]
+  [other-p : (& other-p str)]
+  [label : (& label str)]
+  [aname : (& aname str)]) : i64
+  (let
+    [colon : i64 (util.index-of-byte-from aname 0 58)]
+    [mname : String
+      (if (>= colon 0)
+        (string.substring aname 0 colon)
+        (string.copy aname))]
+    [marg : String
+      (if (>= colon 0)
+        (string.substring
+          aname
+          (+ colon 1)
+          (- (string.string-length aname) (+ colon 1)))
+        "")]
+    [rf : util.ReadFileResult (util.read-file-result other-p)]
+    (if (or (not st.has-asm) (not rf.ok))
+      (begin
+        (log-err!
+          st
+          (if (not st.has-asm)
+            (str_cat.str-cat
+              "  same-metric "
+              (string.copy aname)
+              ": no current assembly")
+            (str_cat.str-cat "  same-metric: missing " (string.copy other-p))))
+        1)
+      (let
+        [mine-fn : analyzers.AnalyzerResult
+          (analyzers.extract-fn (& st.asm-text) label "fn")]
+        [other-fn : analyzers.AnalyzerResult
+          (analyzers.extract-fn (& rf.text) label "fn")]
+        (if (or (not mine-fn.ok) (not other-fn.ok))
+          (begin
+            (log-err!
+              st
+              (str_cat.str-cat
+                "  same-metric "
+                (string.copy aname)
+                ": missing function label "
+                (string.copy label)))
+            1)
+          (let
+            [mine-m : analyzers.AnalyzerResult
+              (analyzers.run-metric (& mname) (& marg) (& mine-fn.value))]
+            [other-m : analyzers.AnalyzerResult
+              (analyzers.run-metric (& mname) (& marg) (& other-fn.value))]
+            (cond
+              [(or (not mine-m.ok) (not other-m.ok))
+                (log-err!
+                  st
+                  (str_cat.str-cat
+                    "  same-metric "
+                    (string.copy aname)
+                    " of "
+                    (string.copy label)
+                    ": analyzer failed"))
+                1]
+              [(string.eq (& mine-m.value) (& other-m.value)) 0]
+              [else
+                (log-err!
+                  st
+                  (str_cat.str-cat
+                    "  same-metric "
+                    (string.copy aname)
+                    " of "
+                    (string.copy label)
+                    ": "
+                    mine-m.value
+                    " here, "
+                    other-m.value
+                    " in "
+                    (string.copy other-p)))
+                1])))))))
+
+;; Self-test entry point for `same-metric` without invoking the compiler.
+(define (check-same-metric-asm
+  [mine-asm : (& mine-asm str)]
+  [other-p : (& other-p str)]
+  [label : (& label str)]
+  [aname : (& aname str)]) : i64
+  (let
+    [st : VariantState
+      (VariantState
+        "self-test"
+        ""
+        ""
+        "same-metric"
+        1
+        "default"
+        "-"
+        "-"
+        "-"
+        "-"
+        ""
+        ""
+        ""
+        ""
+        0
+        false
+        0
+        0
+        0
+        0
+        0
+        0
+        true
+        0
+        ""
+        (string.copy mine-asm)
+        true
+        ""
+        ""
+        ""
+        ""
+        ""
+        false
+        0
+        ""
+        (svec.new)
+        ""
+        (util.var-table-new)
+        (svec.new)
+        (bbc.byte-buf-builder-new)
+        (bbc.byte-buf-builder-new))]
+    (eval-same-metric! (&mut st) other-p label aname)))
+
 ;; Run a named plugin (`check` or `setup`). Returns 0 pass, 1 fail, 2 skip.
 (define (run-plugin!
   [cfg : (& cfg RunnerConfig)]
@@ -2937,35 +3203,7 @@
                 [other-p : String (svec.get (& args) 0 "")]
                 [label : String (svec.get (& args) 1 "")]
                 [aname : String (svec.get (& args) 2 "")]
-                [rf : util.ReadFileResult (util.read-file-result (& other-p))]
-                (if (not rf.ok)
-                  1
-                  (let
-                    [mine-fn : analyzers.AnalyzerResult
-                      (analyzers.extract-fn (& st.asm-text) (& label) "fn")]
-                    [other-fn : analyzers.AnalyzerResult
-                      (analyzers.extract-fn (& rf.text) (& label) "fn")]
-                    [mine-m : analyzers.AnalyzerResult
-                      (analyzers.run-metric (& aname) "" (& mine-fn.value))]
-                    [other-m : analyzers.AnalyzerResult
-                      (analyzers.run-metric (& aname) "" (& other-fn.value))]
-                    (if (string.eq (& mine-m.value) (& other-m.value))
-                      0
-                      (begin
-                        (log-err!
-                          st
-                          (str_cat.str-cat
-                            "  same-metric "
-                            aname
-                            " of "
-                            label
-                            ": "
-                            mine-m.value
-                            " here, "
-                            other-m.value
-                            " in "
-                            other-p))
-                        1))))))]
+                (eval-same-metric! st (& other-p) (& label) (& aname))))]
           [(string.eq (& name) "git-grep-absent")
             (if (< (svec.len (& args)) 2)
               1
@@ -3348,19 +3586,27 @@
                           r.line
                           "exited 0, expected a nonzero status"))
                       (let
-                        [wn : i64 (util.parse-i64-strict (& want)).value]
-                        (when
-                          (!= st.exit-code wn)
+                        [parsed-w : util.ParsedI64
+                          (util.parse-i64-strict (& want))]
+                        (if (not parsed-w.ok)
                           (record-fail!
                             st
                             r.line
                             (str_cat.str-cat
-                              "exited "
-                              (string.int->string st.exit-code)
-                              ", expected "
+                              "invalid expected exit status: "
                               want))
-                          (log-err! st "  stderr:")
-                          (quote-st-err-err! st))))))))]
+                          (when
+                            (!= st.exit-code parsed-w.value)
+                            (record-fail!
+                              st
+                              r.line
+                              (str_cat.str-cat
+                                "exited "
+                                (string.int->string st.exit-code)
+                                ", expected "
+                                want))
+                            (log-err! st "  stderr:")
+                            (quote-st-err-err! st)))))))))]
           [(= r.kind parser.rk-contains)
             (when
               (and (begin-row! st) (need-subject! st r.line))
@@ -3461,49 +3707,91 @@
               (let
                 [pat : String (util.expand-vars (& st.vars) (& r.a))]
                 [ci : bool (= r.kind parser.rk-match-i)]
-                (when
-                  (not (regex.regex-match-text? (& pat) (& st.subject-text) ci))
+                [prog : regex.RegexProg (regex.regex-compile (& pat) ci)]
+                (if (not prog.ok)
                   (record-fail!
                     st
                     r.line
-                    (str_cat.str-cat "missing regex: " pat)))))]
+                    (str_cat.str-cat "invalid regex: " pat))
+                  (when
+                    (not
+                      (regex.regex-match-prog-text?
+                        (& prog)
+                        (& st.subject-text)))
+                    (record-fail!
+                      st
+                      r.line
+                      (str_cat.str-cat "missing regex: " pat))))))]
           [(or (= r.kind parser.rk-not-match) (= r.kind parser.rk-not-match-i))
             (when
               (and (begin-row! st) (need-subject! st r.line))
               (let
                 [pat : String (util.expand-vars (& st.vars) (& r.a))]
                 [ci : bool (= r.kind parser.rk-not-match-i)]
-                (when
-                  (regex.regex-match-text? (& pat) (& st.subject-text) ci)
+                [prog : regex.RegexProg (regex.regex-compile (& pat) ci)]
+                (if (not prog.ok)
                   (record-fail!
                     st
                     r.line
-                    (str_cat.str-cat "contains forbidden regex: " pat)))))]
+                    (str_cat.str-cat "invalid regex: " pat))
+                  (when
+                    (regex.regex-match-prog-text? (& prog) (& st.subject-text))
+                    (record-fail!
+                      st
+                      r.line
+                      (str_cat.str-cat "contains forbidden regex: " pat))))))]
           [(or (= r.kind parser.rk-count) (= r.kind parser.rk-count-fixed))
             (when
               (and (begin-row! st) (need-subject! st r.line))
               (let
                 [pat : String (util.expand-vars (& st.vars) (& r.b))]
-                [got : i64
-                  (if (= r.kind parser.rk-count)
-                    (regex.regex-count-lines (& pat) (& st.subject-text) false)
-                    (count-fixed-lines (& st.subject-text) (& pat)))]
-                [got-s : String (string.int->string got)]
-                [want-s : String (string.int->string r.n)]
-                (when
-                  (not (compare-metric (& got-s) (& r.a) (& want-s)))
-                  (record-fail!
-                    st
-                    r.line
-                    (str_cat.str-cat
-                      "expected "
-                      r.a
-                      " "
-                      want-s
-                      " match(es) of ["
-                      pat
-                      "], got "
-                      got-s)))))]
+                (if (= r.kind parser.rk-count)
+                  (let
+                    [prog : regex.RegexProg (regex.regex-compile (& pat) false)]
+                    (if (not prog.ok)
+                      (record-fail!
+                        st
+                        r.line
+                        (str_cat.str-cat "invalid regex: " pat))
+                      (let
+                        [got : i64
+                          (regex.regex-count-prog-lines
+                            (& prog)
+                            (& st.subject-text))]
+                        [got-s : String (string.int->string got)]
+                        [want-s : String (string.int->string r.n)]
+                        (when
+                          (not (compare-metric (& got-s) (& r.a) (& want-s)))
+                          (record-fail!
+                            st
+                            r.line
+                            (str_cat.str-cat
+                              "expected "
+                              r.a
+                              " "
+                              want-s
+                              " match(es) of ["
+                              pat
+                              "], got "
+                              got-s))))))
+                  (let
+                    [got : i64 (count-fixed-lines (& st.subject-text) (& pat))]
+                    [got-s : String (string.int->string got)]
+                    [want-s : String (string.int->string r.n)]
+                    (when
+                      (not (compare-metric (& got-s) (& r.a) (& want-s)))
+                      (record-fail!
+                        st
+                        r.line
+                        (str_cat.str-cat
+                          "expected "
+                          r.a
+                          " "
+                          want-s
+                          " match(es) of ["
+                          pat
+                          "], got "
+                          got-s)))))))]
           [(= r.kind parser.rk-next-line)
             (when
               (and (begin-row! st) (need-subject! st r.line))
@@ -3512,36 +3800,49 @@
                 [p2 : String (util.expand-vars (& st.vars) (& r.b))]
                 [re1 : regex.RegexProg (regex.regex-compile (& p1) false)]
                 [re2 : regex.RegexProg (regex.regex-compile (& p2) false)]
-                [lines : svec.Vec (util.split-lines (& st.subject-text))]
-                [nl : i64 (svec.len (& lines))]
-                [found-first : bool false]
-                [ok-next : bool false]
-                [li : i64 0]
-                (while (and (not found-first) (< li nl))
-                  (if (regex.regex-match-line?
-                    (& re1)
-                    (svec.get (& lines) li ""))
-                    (begin
-                      (set! found-first true)
+                (cond
+                  [(not re1.ok)
+                    (record-fail!
+                      st
+                      r.line
+                      (str_cat.str-cat "invalid regex: " p1))]
+                  [(not re2.ok)
+                    (record-fail!
+                      st
+                      r.line
+                      (str_cat.str-cat "invalid regex: " p2))]
+                  [else
+                    (let
+                      [lines : svec.Vec (util.split-lines (& st.subject-text))]
+                      [nl : i64 (svec.len (& lines))]
+                      [found-first : bool false]
+                      [ok-next : bool false]
+                      [li : i64 0]
+                      (while (and (not found-first) (< li nl))
+                        (if (regex.regex-match-line?
+                          (& re1)
+                          (svec.get (& lines) li ""))
+                          (begin
+                            (set! found-first true)
+                            (when
+                              (< (+ li 1) nl)
+                              (set!
+                                ok-next
+                                (regex.regex-match-line?
+                                  (& re2)
+                                  (svec.get (& lines) (+ li 1) "")))))
+                          (set! li (+ li 1))))
                       (when
-                        (< (+ li 1) nl)
-                        (set!
-                          ok-next
-                          (regex.regex-match-line?
-                            (& re2)
-                            (svec.get (& lines) (+ li 1) "")))))
-                    (set! li (+ li 1))))
-                (when
-                  (not ok-next)
-                  (record-fail!
-                    st
-                    r.line
-                    (str_cat.str-cat
-                      "expected /"
-                      p2
-                      "/ on the line after /"
-                      p1
-                      "/")))))]
+                        (not ok-next)
+                        (record-fail!
+                          st
+                          r.line
+                          (str_cat.str-cat
+                            "expected /"
+                            p2
+                            "/ on the line after /"
+                            p1
+                            "/"))))])))]
           [(or (= r.kind parser.rk-empty) (= r.kind parser.rk-not-empty))
             (when
               (and (begin-row! st) (need-subject! st r.line))
@@ -3597,43 +3898,55 @@
               (let
                 [pat : String (util.expand-vars (& st.vars) (& r.b))]
                 [prog : regex.RegexProg (regex.regex-compile (& pat) false)]
-                [lines : svec.Vec (util.split-lines (& st.subject-text))]
-                [nl : i64 (svec.len (& lines))]
-                [val : String ""]
-                [found : bool false]
-                [li : i64 0]
-                (while (and (not found) (< li nl))
+                (if (not prog.ok)
+                  (begin
+                    (util.var-table-set! (&mut st.vars) (& r.a) "")
+                    (record-fail!
+                      st
+                      r.line
+                      (str_cat.str-cat "invalid regex: " pat)))
                   (let
-                    [line : String (svec.get (& lines) li "")]
-                    [m : regex.RegexMatch
-                      (regex.regex-find-line (& prog) (& line))]
+                    [lines : svec.Vec (util.split-lines (& st.subject-text))]
+                    [nl : i64 (svec.len (& lines))]
+                    [val : String ""]
+                    [found : bool false]
+                    [li : i64 0]
+                    (while (and (not found) (< li nl))
+                      (let
+                        [line : String (svec.get (& lines) li "")]
+                        [m : regex.RegexMatch
+                          (regex.regex-find-line (& prog) (& line))]
+                        (when
+                          m.matched
+                          (set! found true)
+                          (when
+                            m.g1-ok
+                            (let
+                              [prefix : String
+                                (string.substring (& line) 0 m.start)]
+                              [g1 : String
+                                (string.substring
+                                  (& line)
+                                  m.g1-start
+                                  (- m.g1-end m.g1-start))]
+                              [suffix : String
+                                (string.substring
+                                  (& line)
+                                  m.end
+                                  (- (string.string-length (& line)) m.end))]
+                              (set! val (str_cat.str-cat prefix g1 suffix))))))
+                      (set! li (+ li 1)))
+                    (util.var-table-set! (&mut st.vars) (& r.a) (& val))
                     (when
-                      m.matched
-                      (set! found true)
-                      (when
-                        m.g1-ok
-                        (let
-                          [prefix : String
-                            (string.substring (& line) 0 m.start)]
-                          [g1 : String
-                            (string.substring
-                              (& line)
-                              m.g1-start
-                              (- m.g1-end m.g1-start))]
-                          [suffix : String
-                            (string.substring
-                              (& line)
-                              m.end
-                              (- (string.string-length (& line)) m.end))]
-                          (set! val (str_cat.str-cat prefix g1 suffix))))))
-                  (set! li (+ li 1)))
-                (util.var-table-set! (&mut st.vars) (& r.a) (& val))
-                (when
-                  (= (string.string-length (& val)) 0)
-                  (record-fail!
-                    st
-                    r.line
-                    (str_cat.str-cat "capture " r.a ": no line matches " pat)))))]
+                      (= (string.string-length (& val)) 0)
+                      (record-fail!
+                        st
+                        r.line
+                        (str_cat.str-cat
+                          "capture "
+                          r.a
+                          ": no line matches "
+                          pat)))))))]
           [(= r.kind parser.rk-check)
             (when
               (begin-row! st)

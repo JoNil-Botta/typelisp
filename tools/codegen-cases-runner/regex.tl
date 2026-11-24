@@ -1039,6 +1039,33 @@
 (define (regex-find-line [prog : (& prog RegexProg)] [line : (& line str)]) : RegexMatch
   (regex-find-line-from prog line 0))
 
+;; Match any line in text using a precompiled RegexProg (grep -E semantics).
+(define (regex-match-prog-text?
+  [prog : (& prog RegexProg)]
+  [text : (& text str)]) : bool
+  (if (not prog.ok)
+    false
+    (let
+      [n : i64 (string.string-length text)]
+      [start : i64 0]
+      [i : i64 0]
+      [found : bool false]
+      (while (and (not found) (< i n))
+        (if (= (util.byte-at text i) 10)
+          (begin
+            (let
+              [line : String (string.substring text start (- i start))]
+              (when (regex-match-line? prog (& line)) (set! found true)))
+            (set! start (+ i 1))
+            (set! i (+ i 1)))
+          (set! i (+ i 1))))
+      (when
+        (and (not found) (< start n))
+        (let
+          [line : String (string.substring text start (- n start))]
+          (when (regex-match-line? prog (& line)) (set! found true))))
+      found)))
+
 ;; Match any line in text (grep -E semantics).
 (define (regex-match-text?
   [pattern : (& pattern str)]
@@ -1046,59 +1073,40 @@
   [case-insensitive : bool]) : bool
   (let
     [prog : RegexProg (regex-compile pattern case-insensitive)]
-    (if (not prog.ok)
-      false
-      (let
-        [n : i64 (string.string-length text)]
-        [start : i64 0]
-        [i : i64 0]
-        [found : bool false]
-        (while (and (not found) (< i n))
-          (if (= (util.byte-at text i) 10)
-            (begin
-              (let
-                [line : String (string.substring text start (- i start))]
-                (when (regex-match-line? (& prog) (& line)) (set! found true)))
-              (set! start (+ i 1))
-              (set! i (+ i 1)))
-            (set! i (+ i 1))))
-        (when
-          (and (not found) (< start n))
-          (let
-            [line : String (string.substring text start (- n start))]
-            (when (regex-match-line? (& prog) (& line)) (set! found true))))
-        found))))
+    (regex-match-prog-text? (& prog) text)))
 
-;; Count matching lines in text (grep -E | wc -l semantics).
+;; Count matching lines in text using a precompiled RegexProg. Returns -1 if !prog.ok.
+(define (regex-count-prog-lines
+  [prog : (& prog RegexProg)]
+  [text : (& text str)]) : i64
+  (if (not prog.ok)
+    -1
+    (let
+      [n : i64 (string.string-length text)]
+      [start : i64 0]
+      [i : i64 0]
+      [count : i64 0]
+      (while (< i n)
+        (if (= (util.byte-at text i) 10)
+          (begin
+            (let
+              [line : String (string.substring text start (- i start))]
+              (when (regex-match-line? prog (& line)) (set! count (+ count 1))))
+            (set! start (+ i 1))
+            (set! i (+ i 1)))
+          (set! i (+ i 1))))
+      (when
+        (< start n)
+        (let
+          [line : String (string.substring text start (- n start))]
+          (when (regex-match-line? prog (& line)) (set! count (+ count 1)))))
+      count)))
+
+;; Count matching lines in text (grep -E | wc -l semantics). Returns -1 on invalid regex.
 (define (regex-count-lines
   [pattern : (& pattern str)]
   [text : (& text str)]
   [case-insensitive : bool]) : i64
   (let
     [prog : RegexProg (regex-compile pattern case-insensitive)]
-    (if (not prog.ok)
-      0
-      (let
-        [n : i64 (string.string-length text)]
-        [start : i64 0]
-        [i : i64 0]
-        [count : i64 0]
-        (while (< i n)
-          (if (= (util.byte-at text i) 10)
-            (begin
-              (let
-                [line : String (string.substring text start (- i start))]
-                (when
-                  (regex-match-line? (& prog) (& line))
-                  (set! count (+ count 1))))
-              (set! start (+ i 1))
-              (set! i (+ i 1)))
-            (set! i (+ i 1))))
-        (when
-          (< start n)
-          (let
-            [line : String (string.substring text start (- n start))]
-            (when
-              (regex-match-line? (& prog) (& line))
-              (set! count (+ count 1)))))
-        count))))
+    (regex-count-prog-lines (& prog) text)))

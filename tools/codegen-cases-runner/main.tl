@@ -117,63 +117,158 @@
   (bbc.byte-buf-builder-append-string out (string.copy (& r.stdout-log)))
   (bbc.byte-buf-builder-append-string out (string.copy (& r.stderr-log))))
 
+;; Decode worker payload strictly, marking each decoded job index in `completed`
+;; (indexed relative to `start`). Returns false if any record is malformed,
+;; out-of-range, duplicated, or truncated.
 (define (decode-worker-results!
+  [start : i64]
+  [end : i64]
   [payload : (& payload str)]
-  [results : (&mut results resvec.Vec)]) : unit
+  [results : (&mut results resvec.Vec)]
+  [completed : (&mut completed ivec.Vec)]) : bool
   (let
     [n : i64 (string.string-length payload)]
     [pos : i64 0]
-    (while (< pos n)
+    [ok : bool true]
+    (while (and ok (< pos n))
       (let
         [nl : i64 (util.index-of-byte-from payload pos 10)]
         (if (< nl 0)
-          (set! pos n)
+          (set! ok false)
           (let
             [hdr : String (string.substring payload pos (- nl pos))]
             [cols : svec.Vec (util.split-by-sep (& hdr) "\t")]
-            (if (< (svec.len (& cols)) 9)
-              (set! pos n)
+            (if (!= (svec.len (& cols)) 9)
+              (set! ok false)
               (let
-                [vidx : i64
-                  (util.parse-i64-strict (svec.get (& cols) 0 "")).value]
-                [fails : i64
-                  (util.parse-i64-strict (svec.get (& cols) 1 "")).value]
-                [rows : i64
-                  (util.parse-i64-strict (svec.get (& cols) 2 "")).value]
-                [skips : i64
-                  (util.parse-i64-strict (svec.get (& cols) 3 "")).value]
-                [sn : i64
-                  (util.parse-i64-strict (svec.get (& cols) 4 "")).value]
-                [se : i64
-                  (util.parse-i64-strict (svec.get (& cols) 5 "")).value]
-                [ss : i64
-                  (util.parse-i64-strict (svec.get (& cols) 6 "")).value]
-                [olen : i64
-                  (util.parse-u64-strict (svec.get (& cols) 7 "")).value]
-                [elen : i64
-                  (util.parse-u64-strict (svec.get (& cols) 8 "")).value]
-                [ostart : i64 (+ nl 1)]
-                [estart : i64 (+ ostart olen)]
-                [next-pos : i64 (+ estart elen)]
-                (if (<= next-pos n)
+                [p0 : util.ParsedI64
+                  (util.parse-i64-strict (svec.get (& cols) 0 ""))]
+                [p1 : util.ParsedI64
+                  (util.parse-i64-strict (svec.get (& cols) 1 ""))]
+                [p2 : util.ParsedI64
+                  (util.parse-i64-strict (svec.get (& cols) 2 ""))]
+                [p3 : util.ParsedI64
+                  (util.parse-i64-strict (svec.get (& cols) 3 ""))]
+                [p4 : util.ParsedI64
+                  (util.parse-i64-strict (svec.get (& cols) 4 ""))]
+                [p5 : util.ParsedI64
+                  (util.parse-i64-strict (svec.get (& cols) 5 ""))]
+                [p6 : util.ParsedI64
+                  (util.parse-i64-strict (svec.get (& cols) 6 ""))]
+                [p7 : util.ParsedI64
+                  (util.parse-u64-strict (svec.get (& cols) 7 ""))]
+                [p8 : util.ParsedI64
+                  (util.parse-u64-strict (svec.get (& cols) 8 ""))]
+                (if (not
+                  (and p0.ok p1.ok p2.ok p3.ok p4.ok p5.ok p6.ok p7.ok p8.ok))
+                  (set! ok false)
                   (let
-                    [out-s : String (string.substring payload ostart olen)]
-                    [err-s : String (string.substring payload estart elen)]
-                    (resvec.set-ref!
-                      results
-                      vidx
-                      (exec.VariantResult
-                        vidx
-                        fails
-                        rows
-                        skips
-                        sn
-                        se
-                        ss
-                        out-s
-                        err-s))
-                    (set! pos next-pos))
-                  (set! pos n))))))))))
+                    [vidx : i64 p0.value]
+                    [olen : i64 p7.value]
+                    [elen : i64 p8.value]
+                    [ostart : i64 (+ nl 1)]
+                    [estart : i64 (+ ostart olen)]
+                    [next-pos : i64 (+ estart elen)]
+                    (if (or
+                      (< vidx start)
+                      (>= vidx end)
+                      (> next-pos n)
+                      (!= (ivec.get completed (- vidx start) 0) 0))
+                      (set! ok false)
+                      (let
+                        [out-s : String (string.substring payload ostart olen)]
+                        [err-s : String (string.substring payload estart elen)]
+                        (resvec.set-ref!
+                          results
+                          vidx
+                          (exec.VariantResult
+                            vidx
+                            p1.value
+                            p2.value
+                            p3.value
+                            p4.value
+                            p5.value
+                            p6.value
+                            out-s
+                            err-s))
+                        (ivec.set-ref! completed (- vidx start) 1)
+                        (set! pos next-pos)))))))))))
+    ok))
+
+;; Fail closed for any job in [start, end) that did not complete cleanly, or if
+;; any worker join or payload decode reported an error.
+(define (finalize-wave-results!
+  [start : i64]
+  [end : i64]
+  [join-err : bool]
+  [decode-err : bool]
+  [completed : (& completed ivec.Vec)]
+  [results : (&mut results resvec.Vec)]) : unit
+  (let
+    [count : i64 (- end start)]
+    [missing : i64 0]
+    [j : i64 0]
+    (while (< j count)
+      (when
+        (= (ivec.get completed j 0) 0)
+        (set! missing (+ missing 1))
+        (let
+          [vidx : i64 (+ start j)]
+          [reason : String
+            (cond
+              [(and join-err decode-err)
+                "worker join error and malformed worker payload"]
+              [join-err "worker thread join failed"]
+              [decode-err "truncated or malformed worker payload"]
+              [else "worker exited without reporting job result"])]
+          (resvec.set-ref!
+            results
+            vidx
+            (exec.VariantResult
+              vidx
+              1
+              0
+              0
+              0
+              0
+              0
+              ""
+              (str_cat.str-cat
+                "FAIL: codegen-cases worker did not complete job "
+                (string.int->string vidx)
+                " ("
+                reason
+                ")\n")))))
+      (set! j (+ j 1)))
+    (when
+      (and (> count 0) (= missing 0) (or join-err decode-err))
+      (let
+        [first : exec.VariantResult
+          (resvec.get
+            results
+            start
+            (exec.VariantResult start 0 0 0 0 0 0 "" ""))]
+        [reason : String
+          (if join-err
+            "worker thread join failed"
+            "truncated or malformed worker payload")]
+        (resvec.set-ref!
+          results
+          start
+          (exec.VariantResult
+            first.index
+            (+ first.failures 1)
+            first.rows
+            first.skipped
+            first.simd-native
+            first.simd-emulated
+            first.simd-skipped
+            first.stdout-log
+            (str_cat.str-cat
+              first.stderr-log
+              "FAIL: codegen-cases wave error ("
+              reason
+              ")\n")))))))
 
 ;; Run one variant job inside a fresh scratch arena, cloning only its small encoded
 ;; VariantResult out to the caller's arena so 800+ variants never bloat RSS!
@@ -227,10 +322,17 @@
     (when
       (> count 0)
       (let
+        [completed : ivec.Vec (ivec.with-capacity count)]
+        [ci : i64 0]
+        [join-err : bool false]
+        [decode-err : bool false]
         [w : i64
           (if (< count workers)
             count
             workers)]
+        (while (< ci count)
+          (ivec.push-ref! (&mut completed) 0)
+          (set! ci (+ ci 1)))
         (set! wave-next-idx start)
         (set! wave-end-idx end)
         (if (<= w 1)
@@ -239,7 +341,15 @@
             (while (< i end)
               (let
                 [enc : String (run-job-in-scratch i)]
-                (decode-worker-results! (& enc) results))
+                (when
+                  (not
+                    (decode-worker-results!
+                      start
+                      end
+                      (& enc)
+                      results
+                      (&mut completed)))
+                  (set! decode-err true)))
               (set! i (+ i 1))))
           (let
             [handles : thvec.Vec (thvec.with-capacity w)]
@@ -259,7 +369,15 @@
               (< (thvec.len (& handles)) w)
               (let
                 [extra : String (worker-loop)]
-                (decode-worker-results! (& extra) results)))
+                (when
+                  (not
+                    (decode-worker-results!
+                      start
+                      end
+                      (& extra)
+                      results
+                      (&mut completed)))
+                  (set! decode-err true))))
             (let
               [nh : i64 (thvec.len (& handles))]
               [k : i64 0]
@@ -270,9 +388,24 @@
                       (ptr-read (ptr-offset (__tl_array-data handles.slots) k)))]
                   (match (thread.join-string h)
                     [(thread.ThreadStringJoinOk payload)
-                      (decode-worker-results! (& payload) results)]
-                    [(thread.ThreadStringJoinErr _) unit]))
-                (set! k (+ k 1))))))))))
+                      (when
+                        (not
+                          (decode-worker-results!
+                            start
+                            end
+                            (& payload)
+                            results
+                            (&mut completed)))
+                        (set! decode-err true))]
+                    [(thread.ThreadStringJoinErr _) (set! join-err true)]))
+                (set! k (+ k 1))))))
+        (finalize-wave-results!
+          start
+          end
+          join-err
+          decode-err
+          (& completed)
+          results)))))
 
 ;; ---------------------------------------------------------------- built-in --self-test
 (define (assert-eq-bool [label : (& label str)] [got : bool] [want : bool]) : i64
@@ -315,6 +448,670 @@
           "\n"))
       1)
     0))
+
+(define (self-test-find-case [pf : (& pf parser.ParsedFile)] [id : (& id str)]) : parser.CaseDef
+  (let
+    [n : i64 (parser.parsed-cases-len pf)]
+    [i : i64 0]
+    [found : parser.CaseDef (parser.parsed-cases-get pf 0)]
+    [matched : bool false]
+    (while (and (not matched) (< i n))
+      (let
+        [c : parser.CaseDef (parser.parsed-cases-get pf i)]
+        (if (string.eq (& c.id) id)
+          (begin
+            (set! found c)
+            (set! matched true))
+          (set! i (+ i 1)))))
+    found))
+
+(define (self-test-run-case
+  [cfg : (& cfg exec.RunnerConfig)]
+  [pf : (& pf parser.ParsedFile)]
+  [work-dir : (& work-dir str)]
+  [id : (& id str)]) : exec.VariantResult
+  (let
+    [cdef : parser.CaseDef (self-test-find-case pf id)]
+    (exec.run-single-variant
+      cfg
+      (& pf.file-path)
+      work-dir
+      work-dir
+      (& cdef)
+      "-"
+      "-"
+      "-"
+      "-"
+      0)))
+
+(define (self-test-runner-fixes) : i64
+  (let
+    [fails : i64 0]
+    [tmp-res : io.ResultIoString (fs.try-create-temp-dir "cc-runner-selftest")]
+    (match tmp-res
+      [(io.ErrIoString _)
+        (io.print-error "SELF-TEST FAIL: could not create temp dir\n")
+        1]
+      [(io.OkIoString tmp-dir)
+        (let
+          [sh-bin : String (env-nonempty-or "TYPELISP_CODEGEN_CASES_SH" "sh")]
+          [cfg : exec.RunnerConfig
+            (exec.RunnerConfig
+              (string.copy (& tmp-dir))
+              (string.copy (& tmp-dir))
+              ""
+              (util.host-name)
+              (str_cat.str-cat (util.host-name) "-x86_64")
+              (if (util.host-is-windows?)
+                ".exe"
+                "")
+              (if (util.host-is-windows?)
+                ""
+                "lib")
+              (if (util.host-is-windows?)
+                ".lib"
+                ".a")
+              (svec.new)
+              ""
+              "auto"
+              ""
+              false
+              ""
+              ""
+              ""
+              (string.copy (& sh-bin)))]
+          [work-dir : String
+            (str_cat.str-cat (string.copy (& tmp-dir)) "/work")]
+          (util.ensure-dir! (& work-dir))
+          ;; Finding 1: barrier analysis across setups, args, source, all row kinds,
+          ;; {{native-work}}/, and pre-file mutations.
+          (let
+            [b-path : String
+              (str_cat.str-cat (string.copy (& tmp-dir)) "/barrier.cases")]
+            [b-text : String
+              (str_cat.str-cat
+                "file pre.tl\n(define (main) : i64 0)\nend-file\n\n"
+                "case read-pre-source\nsource {{work}}/pre.tl\nstderr contains {{native-work}}/pre.tl:1:\n\n"
+                "case read-pre-run\ndo none\nrun check \"{{work}}/pre.tl\"\n\n"
+                "case nonpre-source\nsource {{work}}/other.tl\n\n"
+                "case nonpre-args\nsource {{work}}/pre.tl\nargs --stdlib-root {{work}}/stdlib-root\n\n"
+                "case nonpre-native-in\ndo none\nin file {{native-work}}/gen.txt\ncontains ok\n\n"
+                "case nonpre-prefix-collision\nsource {{work}}/pre.tl.out\n\n"
+                "case nonpre-run\ndo none\nrun check {{work}}/other.tl\n\n"
+                "case nonpre-exec\ndo none\nexec cat {{work}}/other.tl\n\n"
+                "case nonpre-same\ndo none\nsame {{work}}/other.tl {{dir}}/a\n\n"
+                "case nonpre-test\ndo none\ntest -f {{work}}/other.tl\n\n"
+                "case nonpre-cwd\ndo none\ncwd {{work}}/sub\n\n"
+                "case setup-prefile\nsetup dummy {{work}}/pre.tl\ndo none\n\n"
+                "case file-prefile\ndo none\nfile {{work}}/pre.tl\noverwrite\nend-file\n\n"
+                "case sh-prefile\ndo none\nsh rm {{work}}/pre.tl\n\n"
+                "case sh-native-prefile\ndo none\nsh rm {{native-work}}/pre.tl\n")]
+            (util.write-file! (& b-path) (& b-text))
+            (let
+              [pf : parser.ParsedFile
+                (parser.parse-cases-file (& b-path) (& tmp-dir) false)]
+              (set!
+                fails
+                (+ fails (assert-eq-bool "barrier parse ok" pf.ok true)))
+              (when
+                pf.ok
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier read-pre-source"
+                      (self-test-find-case (& pf) "read-pre-source").needs-barrier
+                      false)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier read-pre-run"
+                      (self-test-find-case (& pf) "read-pre-run").needs-barrier
+                      false)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier nonpre-source"
+                      (self-test-find-case (& pf) "nonpre-source").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier nonpre-args"
+                      (self-test-find-case (& pf) "nonpre-args").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier nonpre-native-in"
+                      (self-test-find-case (& pf) "nonpre-native-in").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier nonpre-prefix-collision"
+                      (self-test-find-case (& pf) "nonpre-prefix-collision").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier nonpre-run"
+                      (self-test-find-case (& pf) "nonpre-run").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier nonpre-exec"
+                      (self-test-find-case (& pf) "nonpre-exec").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier nonpre-same"
+                      (self-test-find-case (& pf) "nonpre-same").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier nonpre-test"
+                      (self-test-find-case (& pf) "nonpre-test").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier nonpre-cwd"
+                      (self-test-find-case (& pf) "nonpre-cwd").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier setup-prefile"
+                      (self-test-find-case (& pf) "setup-prefile").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier file-prefile"
+                      (self-test-find-case (& pf) "file-prefile").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier sh-prefile"
+                      (self-test-find-case (& pf) "sh-prefile").needs-barrier
+                      true)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-bool
+                      "barrier sh-native-prefile"
+                      (self-test-find-case (& pf) "sh-native-prefile").needs-barrier
+                      true))))))
+          ;; Finding 2: same-metric fails closed on unknown metrics / missing fns and splits NAME:ARG.
+          (let
+            [asm-a : String
+              ".globl fn\nfn:\n    pushq %r12\n    pushq %r13\n    popq %r13\n    popq %r12\n    ret\n.size fn, .-fn\n"]
+            [asm-b : String
+              ".globl fn\nfn:\n    pushq %r12\n    popq %r12\n    ret\n.size fn, .-fn\n"]
+            [a-file : String (str_cat.str-cat (string.copy (& tmp-dir)) "/a.s")]
+            [b-file : String (str_cat.str-cat (string.copy (& tmp-dir)) "/b.s")]
+            (util.write-file! (& a-file) (& asm-a))
+            (util.write-file! (& b-file) (& asm-b))
+            (set!
+              fails
+              (+
+                fails
+                (assert-eq-i64
+                  "same-metric rejects unknown metric"
+                  (exec.check-same-metric-asm
+                    (& asm-a)
+                    (& a-file)
+                    "fn"
+                    "nonexistent-metric")
+                  1)))
+            (set!
+              fails
+              (+
+                fails
+                (assert-eq-i64
+                  "same-metric rejects missing fn"
+                  (exec.check-same-metric-asm
+                    (& asm-a)
+                    (& a-file)
+                    "no_such_fn"
+                    "csr-pushes")
+                  1)))
+            (set!
+              fails
+              (+
+                fails
+                (assert-eq-i64
+                  "same-metric NAME:ARG match"
+                  (exec.check-same-metric-asm
+                    (& asm-a)
+                    (& a-file)
+                    "fn"
+                    "distinct:%r1[23]")
+                  0)))
+            (set!
+              fails
+              (+
+                fails
+                (assert-eq-i64
+                  "same-metric NAME:ARG diff"
+                  (exec.check-same-metric-asm
+                    (& asm-a)
+                    (& b-file)
+                    "fn"
+                    "distinct:%r1[23]")
+                  1))))
+          ;; Finding 3, 4a, 4b, 5: runtime execution checks via run-single-variant.
+          (let
+            [r-path : String
+              (str_cat.str-cat (string.copy (& tmp-dir)) "/runtime.cases")]
+            [r-text : String
+              (str_cat.str-cat
+                "case simd-native-unavail\ndo none\nexec simd_execute avx512 true\nexit 1\n\n"
+                "case simd-native-unavail-fail\ndo none\nexec simd_execute avx512 true\nexit 0\n\n"
+                "case simd-shell-unavail\ndo none\nexec simd_execute avx512 true && true\nexit 1\n\n"
+                "case simd-scalar-ok\ndo none\nexec simd_execute scalar \""
+                (string.copy (& sh-bin))
+                "\" -c \"exit 0\"\nexit 0\n\n"
+                "case exit-bad-int\ndo none\nexec \""
+                (string.copy (& sh-bin))
+                "\" -c \"exit 0\"\nexit 0a\n\n"
+                "case not-match-bad-re\ndo none\nexec \""
+                (string.copy (& sh-bin))
+                "\" -c \"printf hello\"\nstdout not-match [unclosed\n\n"
+                "case match-bad-re\ndo none\nexec \""
+                (string.copy (& sh-bin))
+                "\" -c \"printf hello\"\nstdout match [unclosed\n\n"
+                "case count-bad-re\ndo none\nexec \""
+                (string.copy (& sh-bin))
+                "\" -c \"printf hello\"\nstdout count = 0 [unclosed\n\n"
+                "case next-line-bad-re\ndo none\nexec \""
+                (string.copy (& sh-bin))
+                "\" -c \"printf 'a\\nb\\n'\"\nstdout after [unclosed\nnext-line b\n\n"
+                "case capture-bad-re\ndo none\nexec \""
+                (string.copy (& sh-bin))
+                "\" -c \"printf hello\"\nstdout capture x [unclosed\n\n"
+                "case sh-source-fail\ndo none\nfile bad.sh\nexit 1\nend-file\nsh . \"{{dir}}/bad.sh\"\n\n"
+                "case sh-source-exec-fn\ndo none\nfile good.sh\ncc_st_fn() { printf 'sourced-fn-ok\\n'; }\nend-file\nsh . \"{{dir}}/good.sh\"\nexec cc_st_fn\nexit 0\nstdout is sourced-fn-ok\n\n"
+                "case sh-mkdir-existing-fails\ndo none\nsh mkdir \"{{dir}}/d1\"\nsh mkdir \"{{dir}}/d1\"\n\n"
+                "case sh-mkdir-p-ok\ndo none\nsh mkdir -p \"{{dir}}/d1\"\nsh mkdir -p \"{{dir}}/d1\"\n\n"
+                "case sh-rm-r-missing-fails\ndo none\nsh rm -r \"{{dir}}/no-such-dir\"\n\n"
+                "case sh-rm-rf-missing-ok\ndo none\nsh rm -rf \"{{dir}}/no-such-dir\"\n\n"
+                "case sh-cp-exec-and-p\ndo none\nfile runme.sh\n#!/bin/sh\nexit 0\nend-file\nsh chmod +x \"{{dir}}/runme.sh\"\nsh cp \"{{dir}}/runme.sh\" \"{{dir}}/runme_copy.sh\"\nsh cp -p \"{{dir}}/runme.sh\" \"{{dir}}/runme_copy_p.sh\"\ntest -x \"{{dir}}/runme_copy.sh\"\ntest -x \"{{dir}}/runme_copy_p.sh\"\n\n"
+                "case sh-mv-into-dir\ndo none\nfile item.txt\nhello\nend-file\nsh mkdir \"{{dir}}/dest\"\nsh mv \"{{dir}}/item.txt\" \"{{dir}}/dest\"\ntest -f \"{{dir}}/dest/item.txt\"\ntest ! -e \"{{dir}}/item.txt\"\n")]
+            (util.write-file! (& r-path) (& r-text))
+            (let
+              [pf : parser.ParsedFile
+                (parser.parse-cases-file (& r-path) (& tmp-dir) false)]
+              (set!
+                fails
+                (+ fails (assert-eq-bool "runtime cases parse ok" pf.ok true)))
+              (when
+                pf.ok
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "simd native unavailable exits 1"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "simd-native-unavail").failures
+                      0)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "simd native unavailable fails exit 0"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "simd-native-unavail-fail").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "simd shell unavailable exits 1"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "simd-shell-unavail").failures
+                      0)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "simd scalar native succeeds"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "simd-scalar-ok").failures
+                      0)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "exit 0a fails closed"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "exit-bad-int").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "not-match invalid regex fails closed"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "not-match-bad-re").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "match invalid regex fails closed"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "match-bad-re").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "count invalid regex fails closed"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "count-bad-re").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "next-line invalid regex fails closed"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "next-line-bad-re").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "capture invalid regex fails closed"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "capture-bad-re").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "sh . failing script fails"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "sh-source-fail").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "sh . enables sourced fn in exec"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "sh-source-exec-fn").failures
+                      0)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "sh mkdir without -p fails on existing"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "sh-mkdir-existing-fails").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "sh mkdir -p ok on existing"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "sh-mkdir-p-ok").failures
+                      0)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "sh rm -r without -f fails on missing"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "sh-rm-r-missing-fails").failures
+                      1)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "sh rm -rf ok on missing"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "sh-rm-rf-missing-ok").failures
+                      0)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "sh cp preserves executable and -p"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "sh-cp-exec-and-p").failures
+                      0)))
+                (set!
+                  fails
+                  (+
+                    fails
+                    (assert-eq-i64
+                      "sh mv into existing dir"
+                      (self-test-run-case
+                        (& cfg)
+                        (& pf)
+                        (& work-dir)
+                        "sh-mv-into-dir").failures
+                      0))))))
+          ;; Finding 4c: wave decode & join error fail-closed checks.
+          (set!
+            fails
+            (+
+              fails
+              (assert-eq-i64
+                "re invalid count returns -1"
+                (regex.regex-count-lines "[unclosed" "abc\n" false)
+                -1)))
+          (let
+            [res1 : resvec.Vec (resvec.with-capacity 2)]
+            [done1 : ivec.Vec (ivec.with-capacity 2)]
+            (resvec.push-ref!
+              (&mut res1)
+              (exec.VariantResult 0 0 0 0 0 0 0 "" ""))
+            (resvec.push-ref!
+              (&mut res1)
+              (exec.VariantResult 1 0 0 0 0 0 0 "" ""))
+            (ivec.push-ref! (&mut done1) 0)
+            (ivec.push-ref! (&mut done1) 0)
+            ;; Truncated payload (declares 10 bytes stdout, only provides 2)
+            (let
+              [ok-trunc : bool
+                (decode-worker-results!
+                  0
+                  2
+                  "0\t0\t1\t0\t0\t0\t0\t10\t0\nhi"
+                  (&mut res1)
+                  (&mut done1))]
+              (set!
+                fails
+                (+
+                  fails
+                  (assert-eq-bool "wave decode truncated fails" ok-trunc false)))
+              (finalize-wave-results!
+                0
+                2
+                false
+                (not ok-trunc)
+                (& done1)
+                (&mut res1))
+              (set!
+                fails
+                (+
+                  fails
+                  (assert-eq-i64
+                    "wave missing job 0 failed"
+                    (resvec.get
+                      (& res1)
+                      0
+                      (exec.VariantResult 0 0 0 0 0 0 0 "" "")).failures
+                    1)))
+              (set!
+                fails
+                (+
+                  fails
+                  (assert-eq-i64
+                    "wave missing job 1 failed"
+                    (resvec.get
+                      (& res1)
+                      1
+                      (exec.VariantResult 0 0 0 0 0 0 0 "" "")).failures
+                    1)))))
+          (let
+            [res2 : resvec.Vec (resvec.with-capacity 1)]
+            [done2 : ivec.Vec (ivec.with-capacity 1)]
+            (resvec.push-ref!
+              (&mut res2)
+              (exec.VariantResult 0 0 0 0 0 0 0 "" ""))
+            (ivec.push-ref! (&mut done2) 0)
+            (let
+              [ok-bad : bool
+                (decode-worker-results!
+                  0
+                  1
+                  "0a\t0\t1\t0\t0\t0\t0\t0\t0\n"
+                  (&mut res2)
+                  (&mut done2))]
+              (set!
+                fails
+                (+
+                  fails
+                  (assert-eq-bool "wave decode non-numeric fails" ok-bad false)))))
+          (let
+            [res3 : resvec.Vec (resvec.with-capacity 1)]
+            [done3 : ivec.Vec (ivec.with-capacity 1)]
+            (resvec.push-ref!
+              (&mut res3)
+              (exec.VariantResult 0 0 0 0 0 0 0 "" ""))
+            (ivec.push-ref! (&mut done3) 0)
+            (let
+              [ok-good : bool
+                (decode-worker-results!
+                  0
+                  1
+                  "0\t0\t1\t0\t0\t0\t0\t0\t0\n"
+                  (&mut res3)
+                  (&mut done3))]
+              (set!
+                fails
+                (+ fails (assert-eq-bool "wave decode valid ok" ok-good true)))
+              ;; Simulated ThreadStringJoinErr must still fail the wave even if job 0 decoded.
+              (finalize-wave-results! 0 1 true false (& done3) (&mut res3))
+              (set!
+                fails
+                (+
+                  fails
+                  (assert-eq-i64
+                    "wave join error fails wave"
+                    (resvec.get
+                      (& res3)
+                      0
+                      (exec.VariantResult 0 0 0 0 0 0 0 "" "")).failures
+                    1)))))
+          (util.rm-rf! (& tmp-dir))
+          fails)])))
 
 (define (run-self-test) : i64
   (let
@@ -679,6 +1476,7 @@
             "C:/Users/runneradmin/AppData/Local/Temp"
             "C:/Program Files/Git")
           "/OUT:foo.exe")))
+    (set! fails (+ fails (self-test-runner-fixes)))
     (if (= fails 0)
       (begin
         (io.stdout-write

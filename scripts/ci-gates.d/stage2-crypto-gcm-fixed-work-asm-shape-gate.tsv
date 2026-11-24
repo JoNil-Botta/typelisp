@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-crypto-gcm-fixed-work-asm-shape-gate	410	linux	stage2 crypto GCM fixed-work asm shape gate	bootstrap-compiler	stage2	512	-	scripts/verify-codegen-cases.sh --only 'gcm-*' tests/codegen/crypto-aes.cases	linux-2	-	compiler,stdlib,corpus	Consumes the typed AES/secret APIs, GCM/GHASH bodies and both-target complete-body pins.

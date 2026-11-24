@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-addr-taken-matrix	330	linux	stage2 address-taken matrix	bootstrap-compiler	stage2	1024	-	scripts/verify-addr-taken-matrix.sh	linux-1	-	compiler,stdlib,corpus	Runs adversarial address-taken-local programs through the produced compiler at opt0, opt1 and opt2.

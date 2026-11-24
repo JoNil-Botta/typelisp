@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+tlci-mutation-bootstrap-fixpoint	1100	all	TLCI mutation bootstrap fixpoint	-	-	6400	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"	linux-2	windows-2	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

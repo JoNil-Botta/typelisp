@@ -1,0 +1,8 @@
+path	required	advisory	reason
+docs/*	stage2-docs-pages-build-path	@docs	Rendered documentation and its links.
+docs/*.tl	stage2-repository-doctests,stage2-codegen-target-parity	@corpus	Runnable documentation and target-bearing source examples.
+README.md	stage2-docs-pages-build-path	@docs	Published landing page and documentation links.
+SPEC.md	stage2-docs-pages-build-path,stage2-public-tool-affected-map,stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora	@docs	Metadata-bearing public-tool examples and the published language reference.
+CONTRIBUTING.md	stage2-docs-pages-build-path	@docs	Published contributor documentation links.
+docs/compiler-x64-executable-templates.md	docs-site-search-manifest-validator-self-tests	@docs	Direct tracked input named by its owning verifier or compile manifest.
+scripts/README.md	@docs	-	Script and CI gate documentation consumed by the documentation gates.

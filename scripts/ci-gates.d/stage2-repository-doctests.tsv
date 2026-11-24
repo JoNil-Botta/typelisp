@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-repository-doctests	550	all	stage2 repository doctests	bootstrap-compiler	stage2	1024	-	scripts/verify-doc-tests.sh	linux-2	windows-2	compiler,stdlib,corpus,docs	Also validates documented examples or renders and validates documentation pages.

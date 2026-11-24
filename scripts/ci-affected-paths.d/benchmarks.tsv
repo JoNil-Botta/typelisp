@@ -1,0 +1,6 @@
+path	required	advisory	reason
+benchmarks/README.md	@docs	-	Benchmark documentation is consumed by the documentation gates.
+benchmarks/borrowed_disjoint_store/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	This pair is in the instruction-main and benchmark suites.
+benchmarks/fp_mixed_recurrence/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	This pair is in the instruction-main and benchmark suites.
+benchmarks/fp_taylor_exp/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	This pair is in the instruction-main and benchmark suites.
+benchmarks/internal_abi_six_positions/baseline.c	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@corpus	C interposer and preserved-register canaries for the six-position native ABI fixture.

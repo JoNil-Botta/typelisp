@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+embedded-stdlib-tlci-resource-verifier-self-tests	1090	all	embedded stdlib TLCI resource verifier self-tests	-	-	256	-	scripts/verify-embedded-stdlib-tlci-resources.sh --self-test	linux-2	windows-2	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

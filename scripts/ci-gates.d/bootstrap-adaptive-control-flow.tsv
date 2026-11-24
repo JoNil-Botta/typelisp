@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+bootstrap-adaptive-control-flow	1350	all	bootstrap adaptive control flow	-	-	256	-	scripts/verify-bootstrap-fixpoint-control.sh	linux-2	windows-2	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

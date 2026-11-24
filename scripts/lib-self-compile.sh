@@ -17,7 +17,7 @@ SC_CI_WORKFLOW=.github/workflows/ci.yml
 SC_REFERENCE_JOB_NAME="Self-compile reference (Linux)"
 SC_LEDGER_JOB_NAME="Self-compile ledger"
 # The CI job that runs linux-self-compile-measurement and uploads its record:
-# the lane scripts/ci-lanes.tsv assigns it (scripts/ci-lane.sh check enforces
+# the lane scripts/ci-gates.d/*.tsv assigns it (scripts/ci-lane.sh check enforces
 # this name). A PR whose last CI predates the lanes (#7767 slice 2) ran it in
 # the Linux job, which the ledger falls back to only when no lane job exists.
 SC_CI_JOB_NAME="CI lane linux-2"

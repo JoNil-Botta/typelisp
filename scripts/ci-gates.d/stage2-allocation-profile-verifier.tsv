@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-allocation-profile-verifier	630	all	stage2 allocation-profile verifier	bootstrap-compiler	stage2	256	-	scripts/verify-allocation-profile.sh	linux-2	windows-2	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

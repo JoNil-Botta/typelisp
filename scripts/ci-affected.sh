@@ -4,6 +4,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 CALLER_DIR=$PWD
 cd "$ROOT"
+. "$ROOT/scripts/lib-ci-gates.sh"
 TAB=$(printf '\t')
 
 usage() {
@@ -13,7 +14,7 @@ usage: scripts/ci-affected.sh --base REF [--tier required|advisory] [--host linu
        scripts/ci-affected.sh --batch FILE
        scripts/ci-affected.sh --self-test
 
-Print the required local minimum gate IDs using ci-affected-paths.tsv.
+Print the required local minimum gate IDs using scripts/ci-affected-paths.d/*.tsv.
 --tier advisory prints a conservative superset for planning additional checks.
 --base compares the merge base of REF and HEAD with the working tree, including
 staged, unstaged, deleted, renamed (both paths) and nonignored untracked files.
@@ -97,71 +98,71 @@ export TYPELISP_INLINE_TEST_WORKERS TYPELISP_BUILD_INVARIANCE_WORKERS TYPELISP_I
 # their graph/host semantics. Listing needs no compiler or runtime setup.
 mkdir -p "$ROOT/target/exp/ci-affected"
 work=$(mktemp -d "$ROOT/target/exp/ci-affected/run.XXXXXX")
-map="$ROOT/scripts/ci-affected-paths.tsv"
+gates_dir="$ROOT/scripts/ci-gates.d"
+paths_dir="$ROOT/scripts/ci-affected-paths.d"
 
 # A query stream shares one cache file per host inventory and per tier map, so
 # a batched replay pays for each of them once instead of once per query.
 inventory() { "$ROOT/scripts/ci-verify.sh" --list-gates "$1" > "$2"; }
 
 expand_map() {
+    if [ ! -f "$work/gates-full.tsv" ]; then
+        ci_gates_load "$gates_dir" > "$work/gates-full.tsv" || exit 1
+    fi
+    if [ ! -f "$work/affected-paths.tsv" ]; then
+        ci_affected_paths_load "$paths_dir" > "$work/affected-paths.tsv" || exit 1
+    fi
+    : > "$work/inventory-ids.txt"
+    for _inv_file in "$work"/inventory.*; do
+        [ -f "$_inv_file" ] || continue
+        sed '1d' "$_inv_file" | cut -f 1 >> "$work/inventory-ids.txt"
+    done
     awk -F '\t' -v tier="$1" '
     function fail(message) {
-        print "ci-affected-paths.tsv: " message > "/dev/stderr"
+        print "ci-affected-paths.d: " message > "/dev/stderr"
         invalid = 1
         exit 1
     }
     { sub(/\r$/, "") }
     FILENAME == ARGV[1] {
-        if (!/^#/ && $1 != "id") { gates[$1] = 1; order[++total] = $1; kind[$1] = $5 }
-        next
-    }
-    FILENAME == ARGV[2] {
-        if (/^#/) next
-        if (!inputs_header++) {
-            if ($0 != "id\tclasses\treason") fail("expected input id/classes/reason header")
-            next
-        }
-        if (NF != 3 || $1 == "" || $2 == "" || $3 == "") fail("empty input classification")
-        if (reviewed[$1]++) fail("duplicate input classification: " $1)
-        if (!($1 in gates)) stale = 1
-        if ($2 != "-") {
-            count = split($2, classes, ",")
+        gates[$1] = 1
+        order[++total] = $1
+        kind[$1] = $6
+        reviewed[$1] = 1
+        if ($12 != "-") {
+            count = split($12, classes, ",")
             for (i = 1; i <= count; i++) {
                 if (classes[i] !~ /^(compiler|stdlib|corpus|docs)$/) fail("unknown input class: " classes[i])
                 member[classes[i], $1] = 1
             }
         }
-        if (kind[$1] != "-" && ($1 in gates) &&
+        if (kind[$1] != "-" &&
             (!member["compiler", $1] || !member["stdlib", $1] || !member["corpus", $1]))
             fail("produced compiler consumer missing source class: " $1)
         next
     }
-    /^#/ { next }
-    !header {
-        if ($0 != "path\trequired\tadvisory\treason") fail("expected path/required/advisory/reason header")
-        header = 1
+    FILENAME == ARGV[2] {
+        if ($1 != "" && !reviewed[$1]) stale = 1
         next
     }
     {
-        if (NF != 4 || $1 == "" || $2 == "" || $3 == "" || $4 == "") fail("line " FNR ": expected four nonempty fields")
+        if (NF != 4 || $1 == "" || $2 == "" || $3 == "" || $4 == "") fail("row " FNR ": expected four nonempty fields")
         if ($1 != "@always" && ($1 !~ /^[A-Za-z0-9_.*\/-]+$/ || $1 ~ /^\// || $1 ~ /(^|\/)\.\.(\/|$)/ || $1 ~ /^\*/))
-            fail("line " FNR ": invalid or catch-all path: " $1)
-        if (seen[$1]++) fail("line " FNR ": duplicate path: " $1)
+            fail("row " FNR ": invalid or catch-all path: " $1)
+        if (seen[$1]++) fail("row " FNR ": duplicate path: " $1)
         rows[++paths] = $0
         for (column = 2; column <= 3; column++)
             if ($column != "-" && $column != "*" && $column ~ /(^|,)(-|\*)(,|$)/)
-                fail("line " FNR ": empty/full marker must stand alone")
+                fail("row " FNR ": empty/full marker must stand alone")
         count = split($2 "," $3, ids, ",")
         for (i = 1; i <= count; i++) {
             if (ids[i] != "*" && ids[i] != "-" && !(ids[i] in gates) && ids[i] !~ /^@(compiler|stdlib|corpus|docs)$/)
-                fail("line " FNR ": unknown gate or group: " ids[i])
+                fail("row " FNR ": unknown gate or group: " ids[i])
         }
     }
     END {
         if (invalid) exit 1
-        if (!header || !seen["@always"]) fail("missing header or @always hygiene row")
-        if (!inputs_header) fail("missing reviewed input classes")
-        for (k = 1; k <= total; k++) if (!reviewed[order[k]]) stale = 1
+        if (!seen["@always"]) fail("missing @always hygiene row")
         if (stale) print "[ci-affected] unreviewed gate inventory; selecting the full table" > "/dev/stderr"
         for (p = 1; p <= paths; p++) {
             split(rows[p], fields, "\t")
@@ -185,7 +186,7 @@ expand_map() {
             print fields[1] "\t" expanded "\t" fields[4] "\t" (fields[2] != "-")
         }
     }
-' "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-affected-inputs.tsv" "$map" > "$2"
+' "$work/gates-full.tsv" "$work/inventory-ids.txt" "$work/affected-paths.tsv" > "$2"
 }
 
 if [ -n "$base" ]; then

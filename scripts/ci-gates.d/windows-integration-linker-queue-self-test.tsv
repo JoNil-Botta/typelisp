@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+windows-integration-linker-queue-self-test	440	windows	Windows integration linker queue self-test	-	-	256	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-integration-linker-self-test.ps1	-	windows-1	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.

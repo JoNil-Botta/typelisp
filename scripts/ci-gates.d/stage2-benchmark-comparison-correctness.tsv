@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-benchmark-comparison-correctness	380	all	stage2 benchmark comparison correctness	bootstrap-compiler	stage2	256	-	gate_benchmark_correctness	linux-2	windows-2	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

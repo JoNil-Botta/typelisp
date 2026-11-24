@@ -35,7 +35,8 @@ finer target and pass contracts remain linked from the
 
 Run [verify-core-ir-dependencies.sh](../scripts/verify-core-ir-dependencies.sh)
 with `TYPELISP_BIN` naming a freshly built compiler. The required gate
-`stage2-core-ir-dependency-boundary` in [ci-gates.tsv](../scripts/ci-gates.tsv)
+`stage2-core-ir-dependency-boundary` in
+[`scripts/ci-gates.d/stage2-core-ir-dependency-boundary.tsv`](../scripts/ci-gates.d/stage2-core-ir-dependency-boundary.tsv)
 depends on the converged bootstrap producer. The existing coverage graph and
 reachability validation protect this invocation; preserve all other gates.
 

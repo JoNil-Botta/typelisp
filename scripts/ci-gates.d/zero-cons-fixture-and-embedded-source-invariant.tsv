@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+zero-cons-fixture-and-embedded-source-invariant	980	all	zero-cons fixture and embedded source invariant	-	-	512	-	scripts/check-zero-cons.sh --fixtures	linux-2	windows-1	compiler,stdlib,corpus	Reads the current source inventory or source invariants directly.

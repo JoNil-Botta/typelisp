@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-sde-fallback-package-calls	130	all	stage2 forced-SDE AVX-512 package calls	bootstrap-compiler,stage2-spmd-package-calls	stage2	256	spmd-package	gate_sde_fallback_package_calls	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

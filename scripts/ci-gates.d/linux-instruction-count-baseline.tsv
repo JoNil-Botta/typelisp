@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+linux-instruction-count-baseline	1230	linux	Linux instruction-count baseline	bootstrap-compiler	stage2	2048	instruction-count	gate_instruction_counts	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

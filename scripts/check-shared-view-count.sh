@@ -27,9 +27,10 @@ usage: scripts/check-shared-view-count.sh [--base <rev>]
        scripts/check-shared-view-count.sh --self-test
 
 Count `*-shared-view*` call uses in src/ and stdlib/ against the git base
-commit (merge-base with origin/$GITHUB_BASE_REF, origin/main or main; or
-HEAD/HEAD^1 when on the base branch). --base <rev> or SHARED_VIEW_COUNT_BASE
-overrides the base revision; --self-test runs the counter's own tests.
+commit (merge-base with origin/$GITHUB_BASE_REF or $GITHUB_BASE_REF when
+GITHUB_BASE_REF is set, otherwise origin/main or main; or HEAD/HEAD^1 when on
+the base branch). --base <rev> or SHARED_VIEW_COUNT_BASE compares directly
+against <rev>; --self-test runs the counter's own tests.
 EOF
 }
 
@@ -289,46 +290,50 @@ resolve_base_commit() {
         exit 1
     }
 
-    _rb_base_ref=""
-    _rb_merge_base=""
-
     if [ -n "$BASE_OVERRIDE" ]; then
-        _rb_base_ref=$BASE_OVERRIDE
         _rb_target=$(git -C "$ROOT" rev-parse --verify --end-of-options "$BASE_OVERRIDE^{commit}" 2>/dev/null) || {
             echo "check-shared-view-count: invalid base revision: $BASE_OVERRIDE" >&2
             exit 1
         }
-        _rb_merge_base=$(git -C "$ROOT" merge-base "$_rb_target" "$_rb_head" 2>/dev/null) || {
-            echo "check-shared-view-count: cannot compute merge-base between $BASE_OVERRIDE and HEAD" >&2
-            exit 1
-        }
-    else
-        # GitHub Actions pull_request workflows (such as .github/workflows/ci.yml)
-        # check out the synthetic two-parent merge commit (github.sha) at
-        # fetch-depth: 2, where HEAD^1 is the exact base commit on the target
-        # branch and HEAD^2 is the PR head commit (without fetching origin/main).
-        if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] &&
-           { [ -z "${GITHUB_SHA:-}" ] || [ "$_rb_head" = "${GITHUB_SHA:-}" ]; }; then
-            _rb_p1=$(git -C "$ROOT" rev-parse --verify HEAD^1 2>/dev/null || true)
-            _rb_p2=$(git -C "$ROOT" rev-parse --verify HEAD^2 2>/dev/null || true)
-            if [ -n "$_rb_p1" ] && [ -n "$_rb_p2" ]; then
-                _rb_base_ref="HEAD^1"
-                _rb_merge_base=$_rb_p1
-            fi
-        fi
+        RESOLVED_BASE_COMMIT=$_rb_target
+        RESOLVED_BASE_LABEL="$BASE_OVERRIDE ($_rb_target)"
+        return 0
+    fi
 
-        if [ -z "$_rb_merge_base" ] && [ -n "${GITHUB_BASE_REF:-}" ]; then
-            _rb_cand="origin/$GITHUB_BASE_REF"
-            if _rb_target=$(git -C "$ROOT" rev-parse --verify --end-of-options "$_rb_cand^{commit}" 2>/dev/null); then
-                _rb_base_ref=$_rb_cand
-                _rb_merge_base=$(git -C "$ROOT" merge-base "$_rb_target" "$_rb_head" 2>/dev/null) || {
-                    echo "check-shared-view-count: cannot compute merge-base between $_rb_cand and HEAD (is the checkout too shallow?)" >&2
-                    exit 1
-                }
-            fi
-        fi
+    _rb_base_ref=""
+    _rb_merge_base=""
 
-        if [ -z "$_rb_merge_base" ]; then
+    # GitHub Actions pull_request workflows (such as .github/workflows/ci.yml)
+    # check out the synthetic two-parent merge commit (github.sha) at
+    # fetch-depth: 2, where HEAD^1 is the exact base commit on the target
+    # branch and HEAD^2 is the PR head commit (without fetching origin/main).
+    if [ "${GITHUB_EVENT_NAME:-}" = pull_request ] &&
+       [ -n "${GITHUB_SHA:-}" ] && [ "$_rb_head" = "$GITHUB_SHA" ]; then
+        _rb_p1=$(git -C "$ROOT" rev-parse --verify HEAD^1 2>/dev/null || true)
+        _rb_p2=$(git -C "$ROOT" rev-parse --verify HEAD^2 2>/dev/null || true)
+        if [ -n "$_rb_p1" ] && [ -n "$_rb_p2" ]; then
+            _rb_base_ref="HEAD^1"
+            _rb_merge_base=$_rb_p1
+        fi
+    fi
+
+    if [ -z "$_rb_merge_base" ]; then
+        if [ -n "${GITHUB_BASE_REF:-}" ]; then
+            for _rb_cand in "origin/$GITHUB_BASE_REF" "$GITHUB_BASE_REF"; do
+                if _rb_target=$(git -C "$ROOT" rev-parse --verify --end-of-options "$_rb_cand^{commit}" 2>/dev/null); then
+                    _rb_base_ref=$_rb_cand
+                    _rb_merge_base=$(git -C "$ROOT" merge-base "$_rb_target" "$_rb_head" 2>/dev/null) || {
+                        echo "check-shared-view-count: cannot compute merge-base between $_rb_cand and HEAD (is the checkout too shallow?)" >&2
+                        exit 1
+                    }
+                    break
+                fi
+            done
+            if [ -z "$_rb_merge_base" ]; then
+                echo "check-shared-view-count: cannot resolve git base ref for GITHUB_BASE_REF=$GITHUB_BASE_REF (checked origin/$GITHUB_BASE_REF, $GITHUB_BASE_REF)" >&2
+                exit 1
+            fi
+        else
             for _rb_cand in origin/main main; do
                 if _rb_target=$(git -C "$ROOT" rev-parse --verify --end-of-options "$_rb_cand^{commit}" 2>/dev/null); then
                     _rb_base_ref=$_rb_cand
@@ -339,11 +344,10 @@ resolve_base_commit() {
                     break
                 fi
             done
-        fi
-
-        if [ -z "$_rb_merge_base" ]; then
-            echo "check-shared-view-count: cannot resolve git base ref (checked ${GITHUB_BASE_REF:+origin/$GITHUB_BASE_REF, }origin/main, main)" >&2
-            exit 1
+            if [ -z "$_rb_merge_base" ]; then
+                echo "check-shared-view-count: cannot resolve git base ref (checked origin/main, main)" >&2
+                exit 1
+            fi
         fi
     fi
 
@@ -476,6 +480,33 @@ EOF
         echo "self-test: single-commit main without HEAD^1 was not rejected" >&2
         exit 1
     fi
+
+    # Explicit --base HEAD / SHARED_VIEW_COUNT_BASE=HEAD compares directly against HEAD
+    # without rewriting to HEAD^1 (works even on a single-commit repo).
+    _st_direct_cli=$(st_run "$_st_repo" --base HEAD 2>&1) || {
+        echo "self-test: explicit --base HEAD on single-commit repo failed: $_st_direct_cli" >&2
+        exit 1
+    }
+    case "$_st_direct_cli" in
+        *"6 shared-view uses (base 6 at HEAD ($_st_c1))"*) ;;
+        *)
+            echo "self-test: --base HEAD did not compare directly against HEAD: $_st_direct_cli" >&2
+            exit 1
+            ;;
+    esac
+    _st_direct_env=$(env -u GITHUB_EVENT_NAME -u GITHUB_BASE_REF -u GITHUB_SHA \
+        TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT="$_st_repo" SHARED_VIEW_COUNT_BASE=HEAD \
+        sh "$SCRIPT" 2>&1) || {
+        echo "self-test: explicit SHARED_VIEW_COUNT_BASE=HEAD failed: $_st_direct_env" >&2
+        exit 1
+    }
+    case "$_st_direct_env" in
+        *"6 shared-view uses (base 6 at HEAD ($_st_c1))"*) ;;
+        *)
+            echo "self-test: SHARED_VIEW_COUNT_BASE=HEAD did not compare directly against HEAD: $_st_direct_env" >&2
+            exit 1
+            ;;
+    esac
 
     # Branch at same count (6 vs 6) passes and reports weighted count 9.
     st_git "$_st_repo" checkout -qb feature
@@ -715,11 +746,39 @@ EOF
         cat "$_st_work/main-reg.out" >&2
         exit 1
     }
+    # Explicit --base HEAD on that regression commit compares directly against HEAD (5 vs 5),
+    # not HEAD^1 (4); and --base <descendant> compares directly against that descendant when
+    # merge-base equals HEAD.
+    _st_reg_head=$(st_git "$_st_repo" rev-parse HEAD)
+    _st_reg_direct=$(st_run "$_st_repo" --base HEAD 2>&1) || {
+        echo "self-test: --base HEAD on regression commit failed: $_st_reg_direct" >&2
+        exit 1
+    }
+    case "$_st_reg_direct" in
+        *"5 shared-view uses (base 5 at HEAD ($_st_reg_head))"*) ;;
+        *)
+            echo "self-test: --base HEAD rewrote to HEAD^1: $_st_reg_direct" >&2
+            exit 1
+            ;;
+    esac
+    st_git "$_st_repo" checkout -q --detach "$_st_c1"
+    if st_run "$_st_repo" --base "$_st_c2" > "$_st_work/direct-desc.out" 2>&1; then
+        echo "self-test: --base <descendant> did not compare directly against descendant" >&2
+        exit 1
+    fi
+    grep -q "6 shared-view uses exceed base 4 ($_st_c2 ($_st_c2))" "$_st_work/direct-desc.out" || {
+        echo "self-test: --base <descendant> diagnostic missing:" >&2
+        cat "$_st_work/direct-desc.out" >&2
+        exit 1
+    }
+    st_git "$_st_repo" checkout -q main
 
-    # 3. Ref precedence (origin/$GITHUB_BASE_REF > origin/main) and GitHub PR depth-2 merge checkout.
+    # 3. Ref precedence (origin/$GITHUB_BASE_REF, $GITHUB_BASE_REF, fail-closed missing
+    # GITHUB_BASE_REF; origin/main) and GitHub PR merge checkouts.
     # History on main is now _st_c1 (6) -> _st_c2 (4) -> HEAD (5).
     st_git "$_st_repo" update-ref refs/remotes/origin/release "$_st_c1"
     st_git "$_st_repo" update-ref refs/remotes/origin/main "$_st_c2"
+    st_git "$_st_repo" branch -f local-base "$_st_c1"
     _st_gh_base=$(env -u GITHUB_EVENT_NAME -u GITHUB_SHA -u SHARED_VIEW_COUNT_BASE \
         GITHUB_BASE_REF=release TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT="$_st_repo" \
         sh "$SCRIPT" 2>&1) || {
@@ -733,6 +792,35 @@ EOF
             exit 1
             ;;
     esac
+    # Local $GITHUB_BASE_REF resolves when origin/$GITHUB_BASE_REF does not exist.
+    _st_gh_local=$(env -u GITHUB_EVENT_NAME -u GITHUB_SHA -u SHARED_VIEW_COUNT_BASE \
+        GITHUB_BASE_REF=local-base TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT="$_st_repo" \
+        sh "$SCRIPT" 2>&1) || {
+        echo "self-test: local \$GITHUB_BASE_REF fallback failed: $_st_gh_local" >&2
+        exit 1
+    }
+    case "$_st_gh_local" in
+        *"5 shared-view uses, below base 6 (local-base ($_st_c1))"*) ;;
+        *)
+            echo "self-test: expected local-base ref, got: $_st_gh_local" >&2
+            exit 1
+            ;;
+    esac
+    # Missing GITHUB_BASE_REF must fail closed even when origin/main (and main) exist
+    # and would otherwise pass.
+    st_git "$_st_repo" update-ref refs/remotes/origin/main "$_st_c1"
+    if env -u GITHUB_EVENT_NAME -u GITHUB_SHA -u SHARED_VIEW_COUNT_BASE \
+        GITHUB_BASE_REF=missing-target TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT="$_st_repo" \
+        sh "$SCRIPT" > "$_st_work/missing-gh-base.out" 2>&1; then
+        echo "self-test: missing GITHUB_BASE_REF silently fell through to origin/main" >&2
+        exit 1
+    fi
+    grep -q 'cannot resolve git base ref for GITHUB_BASE_REF=missing-target' "$_st_work/missing-gh-base.out" || {
+        echo "self-test: missing GITHUB_BASE_REF failure lacks diagnostic:" >&2
+        cat "$_st_work/missing-gh-base.out" >&2
+        exit 1
+    }
+    st_git "$_st_repo" update-ref refs/remotes/origin/main "$_st_c2"
     if st_run "$_st_repo" > "$_st_work/origin-main.out" 2>&1; then
         echo "self-test: origin/main precedence (5 > 4) was not enforced" >&2
         exit 1
@@ -740,6 +828,54 @@ EOF
     grep -q "5 shared-view uses exceed base 4 (origin/main ($_st_c2))" "$_st_work/origin-main.out" || {
         echo "self-test: origin/main diagnostic missing:" >&2
         cat "$_st_work/origin-main.out" >&2
+        exit 1
+    }
+
+    # Normal 2-parent `git merge origin/main` branch with +1 view increase:
+    # GITHUB_EVENT_NAME=pull_request with unset or mismatched GITHUB_SHA must NOT
+    # trust HEAD^1 (the feature branch tip at 3 uses); it must compare against
+    # origin/main (2 uses) and fail closed.
+    _st_mbranch=$_st_work/pr-user-merge
+    st_init_repo "$_st_mbranch" main
+    mkdir -p "$_st_mbranch/src" "$_st_mbranch/stdlib"
+    printf '(define (a [x : i64]) : i64 (v-shared-view x))\n' > "$_st_mbranch/src/a.tl"
+    printf '(define (b [x : i64]) : i64 (v-shared-view x))\n' > "$_st_mbranch/stdlib/b.tl"
+    st_git "$_st_mbranch" add src stdlib
+    st_git "$_st_mbranch" commit -qm "main: 2 uses"
+    st_git "$_st_mbranch" checkout -qb feat
+    printf '(define (b [x : i64]) : i64 (+ (v-shared-view x) (v-shared-view x)))\n' > "$_st_mbranch/stdlib/b.tl"
+    st_git "$_st_mbranch" add stdlib/b.tl
+    st_git "$_st_mbranch" commit -qm "feat: regression to 3 uses"
+    st_git "$_st_mbranch" checkout -q main
+    printf 'main advance\n' > "$_st_mbranch/README.md"
+    st_git "$_st_mbranch" add README.md
+    st_git "$_st_mbranch" commit -qm "main: unrelated commit (still 2 uses)"
+    _st_m_origin=$(st_git "$_st_mbranch" rev-parse HEAD)
+    st_git "$_st_mbranch" update-ref refs/remotes/origin/main "$_st_m_origin"
+    st_git "$_st_mbranch" checkout -q feat
+    st_git "$_st_mbranch" merge -q --no-ff origin/main -m "Merge origin/main into feat"
+    if env -u GITHUB_SHA -u SHARED_VIEW_COUNT_BASE \
+        GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=main \
+        TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT="$_st_mbranch" \
+        sh "$SCRIPT" > "$_st_work/pr-unset-sha.out" 2>&1; then
+        echo "self-test: pull_request with unset GITHUB_SHA trusted HEAD^1 and missed regression" >&2
+        exit 1
+    fi
+    grep -q "3 shared-view uses exceed base 2 (origin/main ($_st_m_origin))" "$_st_work/pr-unset-sha.out" || {
+        echo "self-test: pull_request with unset GITHUB_SHA lacks origin/main diagnostic:" >&2
+        cat "$_st_work/pr-unset-sha.out" >&2
+        exit 1
+    }
+    if env -u SHARED_VIEW_COUNT_BASE \
+        GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=main GITHUB_SHA="$_st_m_origin" \
+        TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT="$_st_mbranch" \
+        sh "$SCRIPT" > "$_st_work/pr-mismatch-sha.out" 2>&1; then
+        echo "self-test: pull_request with mismatched GITHUB_SHA trusted HEAD^1 and missed regression" >&2
+        exit 1
+    fi
+    grep -q "3 shared-view uses exceed base 2 (origin/main ($_st_m_origin))" "$_st_work/pr-mismatch-sha.out" || {
+        echo "self-test: pull_request with mismatched GITHUB_SHA lacks origin/main diagnostic:" >&2
+        cat "$_st_work/pr-mismatch-sha.out" >&2
         exit 1
     }
 
@@ -842,12 +978,16 @@ METRICS_WORK=$(mktemp -d "$ROOT/target/exp/shared-view-count.XXXXXX")
 case "$METRICS_WORK" in "$ROOT/target/exp/shared-view-count."??????) ;; *) exit 1 ;; esac
 cleanup() {
     _status=$?
+    trap - EXIT
     if [ "$SELF_TEST" -eq 0 ] || [ "$_status" -eq 0 ]; then
         rm -rf -- "${METRICS_WORK:?}"
     fi
     exit "$_status"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 . "$FIXTURE_METRICS_TOOLS/lib-fixture-metrics.sh"
 fixture_metrics_init "$METRICS_WORK"
 if [ "$SELF_TEST" -eq 1 ]; then

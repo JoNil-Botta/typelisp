@@ -13657,7 +13657,10 @@
                               (Ok
                                 (ast.ast-expr-struct-set-id-with-pools
                                   (ctfe-env-pools env)
-                                  receiver-box
+                                  (ctfe-expr-rewrap-macro-expansions-with-pools
+                                    (ctfe-env-pools env)
+                                    quoted-target
+                                    receiver-box)
                                   target-field
                                   quoted-value)
                                 (Expr)
@@ -13666,7 +13669,10 @@
                               (Ok
                                 (ast.ast-expr-box-set-with-pools
                                   (ctfe-env-pools env)
-                                  receiver-box
+                                  (ctfe-expr-rewrap-macro-expansions-with-pools
+                                    (ctfe-env-pools env)
+                                    quoted-target
+                                    receiver-box)
                                   quoted-value)
                                 (Expr)
                                 value-fuel)]

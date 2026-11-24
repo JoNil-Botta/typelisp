@@ -3689,11 +3689,20 @@
                 [(StructGet receiver field)
                   (ast.ast-expr-struct-set-id-with-pools
                     pools
-                    receiver
+                    (ctfe_support.ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      place-node
+                      receiver)
                     field
                     value-node)]
                 [(BoxGet receiver)
-                  (ast.ast-expr-box-set-with-pools pools receiver value-node)]
+                  (ast.ast-expr-box-set-with-pools
+                    pools
+                    (ctfe_support.ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      place-node
+                      receiver)
+                    value-node)]
                 [_ -1])]
             (if (< result-node 0)
               (compiler-comptime-host-diagnostic!

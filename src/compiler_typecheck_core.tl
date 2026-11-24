@@ -18966,8 +18966,84 @@
     lease
     intern
     bind)
+  (tc-infer-selected-temporary-borrow-arg-at
+    ctx
+    env
+    arg-id
+    arg-id
+    want
+    source
+    represented?
+    sink))
+
+;; `id` is `arg-id` or an expression its wrappers enclose: each expansion is
+;; entered so the operand types in its own unsafe context (#9259).
+(define (tc-infer-selected-temporary-borrow-arg-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [id : i64]
+  [want : ast.AstType]
+  [source : ownership.OwnershipSource]
+  [represented? : bool]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-context-expr-get ctx id)
+    [(ast.AstExpr.Spanned inner-id _)
+      (tc-infer-selected-temporary-borrow-arg-at
+        ctx
+        env
+        arg-id
+        inner-id
+        want
+        source
+        represented?
+        sink)]
+    [(ast.AstExpr.MacroExpansion inner-id _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result
+              (tc-infer-selected-temporary-borrow-arg-at
+                ctx
+                inner-env
+                arg-id
+                inner-id
+                want
+                source
+                represented?
+                sink)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
+    [_
+      (tc-infer-selected-temporary-borrow-operand
+        ctx
+        env
+        arg-id
+        id
+        want
+        source
+        represented?
+        sink)]))
+
+(define (tc-infer-selected-temporary-borrow-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [id : i64]
+  [want : ast.AstType]
+  [source : ownership.OwnershipSource]
+  [represented? : bool]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
   (let
-    [arg : ast.AstExpr (tc-context-expr-get ctx arg-id)]
+    [arg : ast.AstExpr (tc-context-expr-get ctx id)]
     [operand-id : i64
       (tc-call-temporary-borrow-operand-id
         (tc-context-expr-bases ctx)
@@ -21850,9 +21926,31 @@
     lease
     intern
     bind)
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-bases ctx)
-    (& (tc-context-expr-get ctx id)))
+  (match (tc-context-expr-get ctx id)
+    [(ast.AstExpr.Spanned inner-id _)
+      (tc-infer-selected-raw-place-operands
+        ctx
+        env
+        inner-id
+        children
+        represented?
+        source
+        sink)]
+    [(ast.AstExpr.MacroExpansion inner-id _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result
+              (tc-infer-selected-raw-place-operands
+                ctx
+                inner-env
+                inner-id
+                children
+                represented?
+                source
+                sink)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(ast.AstExpr.BoxTake pointer-id)
       (tc-selected-raw-operand-push
         children
@@ -22264,8 +22362,14 @@
                       source
                       sink)])))]))]
     ;; An expansion or an annotation is transparent to the place it forms.
-    [(ast.AstExpr.MacroExpansion expanded _ _)
-      (tc-infer-selected-place-id ctx env expanded source sink)]
+    [(ast.AstExpr.MacroExpansion expanded _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result
+              (tc-infer-selected-place-id ctx inner-env expanded source sink)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(ast.AstExpr.Ann inner _)
       (tc-infer-selected-place-id ctx env inner source sink)]
     [(ast.AstExpr.Spanned inner span)
@@ -34311,11 +34415,16 @@
 ;; (`macro-name-id >= 0`) pushes the call site's ambient unsafe state; entering
 ;; a caller-origin `MacroExpansion` (`macro-name-id < 0`) pops and restores
 ;; that ambient state (failing closed to safe if unmatched or behind a deferred
-;; lambda barrier).
+;; lambda barrier). Frames are pushed only while an `(unsafe ...)` is open
+;; (`macro-unsafe-open > 0`): a lambda barrier and a cleared caller-origin
+;; operand reset the count and the base together, so with none open no frame
+;; is live above the base, the call site is safe, and entering either kind of
+;; expansion changes nothing.
 (defstruct TcMacroUnsafeSave
   (prev-depth i64)
   (prev-base i64)
   (prev-block i64)
+  (prev-open i64)
   (saved-slot-unsafe bool)
   (saved-slot-block i64)
   (saved-slot-open i64)
@@ -34328,7 +34437,7 @@
   (save TcMacroUnsafeSave))
 
 (define (tc-macro-unsafe-noop-save) : TcMacroUnsafeSave
-  (TcMacroUnsafeSave -1 -1 -1 false -1 0 false -1))
+  (TcMacroUnsafeSave -1 -1 -1 0 false -1 0 false -1))
 
 ;; Typecheck and macro expansion count the `(unsafe ...)` blocks open around
 ;; the current node: a caller-origin operand reached with no more open than
@@ -34457,21 +34566,20 @@
     [state : TcUnusedUnsafeState
       (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
     [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
-    (if (<=
+    [open : i64
       (unsafe
-        (deref data).macro-unsafe-active)
-      0)
+        (deref data).macro-unsafe-open)]
+    ;; While hygiene is enforced every unsafe environment comes from a counted
+    ;; `(unsafe ...)`, so with none open the call site is safe.
+    (if (or
+      (<= open 0)
+      (<=
+        (unsafe
+          (deref data).macro-unsafe-active)
+        0))
       (tc-macro-unsafe-noop-save)
       (let
-        ;; While hygiene is enforced every unsafe environment comes from a
-        ;; counted `(unsafe ...)`, so with none open the call site is safe.
-        [ambient : bool
-          (and
-            (>
-              (unsafe
-                (deref data).macro-unsafe-open)
-              0)
-            (tc-in-unsafe? env))]
+        [ambient : bool (tc-in-unsafe? env)]
         [prev-depth : i64
           (unsafe
             (deref data).macro-unsafe-depth)]
@@ -34487,11 +34595,18 @@
           (set!
             (array-ref (deref data).macro-unsafe-blocks prev-depth)
             prev-block)
-          (set!
-            (array-ref (deref data).macro-unsafe-opens prev-depth)
-            (deref data).macro-unsafe-open)
+          (set! (array-ref (deref data).macro-unsafe-opens prev-depth) open)
           (set! (deref data).macro-unsafe-depth (+ prev-depth 1)))
-        (TcMacroUnsafeSave prev-depth prev-base prev-block false -1 0 false -1)))))
+        (TcMacroUnsafeSave
+          prev-depth
+          prev-base
+          prev-block
+          open
+          false
+          -1
+          0
+          false
+          -1)))))
 
 (define (tc-macro-unsafe-enter-expansion!
   [ctx : TcContext]
@@ -34504,10 +34619,15 @@
         (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
       [data : (MutPtr TcUnusedUnsafeStateData)
         (tc-unused-unsafe-state-ptr state)]
-      (if (<=
+      [open : i64
         (unsafe
-          (deref data).macro-unsafe-active)
-        0)
+          (deref data).macro-unsafe-open)]
+      (if (or
+        (<= open 0)
+        (<=
+          (unsafe
+            (deref data).macro-unsafe-active)
+          0))
         (TcMacroUnsafeEnterResult env (tc-macro-unsafe-noop-save))
         (let
           [prev-depth : i64
@@ -34538,13 +34658,7 @@
           ;; Only an `(unsafe ...)` opened inside the template can make the
           ;; operand's environment unsafe where the call site was not.
           [clear? : bool
-            (and
-              (not ambient)
-              (!=
-                caller-open
-                (unsafe
-                  (deref data).macro-unsafe-open))
-              (tc-in-unsafe? env))]
+            (and (not ambient) (!= caller-open open) (tc-in-unsafe? env))]
           (unsafe
             (when
               matched?
@@ -34559,12 +34673,20 @@
                   state
                   (tc-type-env-scoped-runtime-enter-env! env))]
               [cleared-env : TcTypeEnv (tc-clear-unsafe-context env)]
+              ;; The operand is safe: like a lambda body, it opens no
+              ;; `(unsafe ...)` and sees no enclosing frame.
+              (unsafe
+                (set! (deref data).macro-unsafe-open 0)
+                (set!
+                  (deref data).macro-unsafe-base
+                  (deref data).macro-unsafe-depth))
               (TcMacroUnsafeEnterResult
                 cleared-env
                 (TcMacroUnsafeSave
                   prev-depth
                   prev-base
                   prev-block
+                  open
                   ambient
                   caller-block
                   caller-open
@@ -34576,6 +34698,7 @@
                 prev-depth
                 prev-base
                 prev-block
+                open
                 ambient
                 caller-block
                 caller-open
@@ -34602,10 +34725,23 @@
         [prev-block : i64
           (unsafe
             (deref data).current-block)]
+        [prev-open : i64
+          (unsafe
+            (deref data).macro-unsafe-open)]
         (unsafe
           (set! (deref data).macro-unsafe-base prev-depth)
+          (set! (deref data).macro-unsafe-open 0)
           (when (deref data).enabled (set! (deref data).current-block -1)))
-        (TcMacroUnsafeSave prev-depth prev-base prev-block false -1 0 false -1)))))
+        (TcMacroUnsafeSave
+          prev-depth
+          prev-base
+          prev-block
+          prev-open
+          false
+          -1
+          0
+          false
+          -1)))))
 
 (define (tc-macro-unsafe-leave! [ctx : TcContext] [save : TcMacroUnsafeSave]) : unit
   (match save
@@ -34613,6 +34749,7 @@
         prev-depth
         prev-base
         prev-block
+        prev-open
         saved-slot-unsafe
         saved-slot-block
         saved-slot-open
@@ -34645,6 +34782,7 @@
                 saved-slot-open))
             (set! (deref data).macro-unsafe-depth prev-depth)
             (set! (deref data).macro-unsafe-base prev-base)
+            (set! (deref data).macro-unsafe-open prev-open)
             (when
               (deref data).enabled
               (set! (deref data).current-block prev-block)))))]))
@@ -81939,7 +82077,27 @@
   [env : TcTypeEnv]
   [mutable : bool]
   [expr : ast.AstExpr]) : ResultTcBorrowPlace
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+  (match expr
+    [(ast.AstExpr.Spanned inner _)
+      (tc-borrow-place-with-access
+        ctx
+        expr-bases
+        env
+        mutable
+        (ast.ast-expr-segment-bases-get expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ResultTcBorrowPlace
+              (tc-borrow-place-with-access
+                ctx
+                expr-bases
+                inner-env
+                mutable
+                (ast.ast-expr-segment-bases-get expr-bases inner))]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(ast.AstExpr.Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (match (tc-dotted-local-field-expr-id-after-check
@@ -82081,9 +82239,20 @@
   [env : TcTypeEnv]
   [expr : (& ast.AstExpr)]
   [source : TcBorrowSource]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-segment-bases ctx)
-    expr)
+  (match expr
+    [(Spanned inner _)
+      (let
+        [unspanned : ast.AstExpr (tc-context-expr-get ctx inner)]
+        (tc-mut-borrow-non-call-place-ok ctx env unspanned source))]
+    [(MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [expanded : ast.AstExpr (tc-context-expr-get ctx inner)]
+            [result : ResultTcUnit
+              (tc-mut-borrow-non-call-place-ok ctx inner-env expanded source)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(Var name)
       (let
         [ty
@@ -82175,9 +82344,20 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : ResultTcStorePlaceTarget
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-segment-bases ctx)
-    (& expr))
+  (match expr
+    [(Spanned inner _)
+      (tc-store-place-target ctx env (tc-context-expr-get ctx inner))]
+    [(MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ResultTcStorePlaceTarget
+              (tc-store-place-target
+                ctx
+                inner-env
+                (tc-context-expr-get ctx inner))]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (let
@@ -82550,9 +82730,25 @@
   [env : TcTypeEnv]
   [arg : ast.AstExpr]
   [want : ast.AstType]) : ResultTcType
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-bases ctx)
-    (& arg))
+  (match arg
+    [(ast.AstExpr.Spanned inner _)
+      (tc-call-temporary-borrow-type
+        ctx
+        env
+        (tc-context-expr-get ctx inner)
+        want)]
+    [(ast.AstExpr.MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ResultTcType
+              (tc-call-temporary-borrow-type
+                ctx
+                inner-env
+                (tc-context-expr-get ctx inner)
+                want)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(ast.AstExpr.Borrow mutable lifetime-id operand-box)
       (match (ast.ast-borrow-lifetime-from-id lifetime-id)
         [(ast.AstBorrowLifetime.Named _)

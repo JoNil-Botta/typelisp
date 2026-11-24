@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+cli-tools-benchmark-repetition-self-test	910	linux	CLI tools benchmark repetition self-test	-	-	256	-	sh scripts/benchmark-cli-tools.sh --self-test	linux-2	-	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

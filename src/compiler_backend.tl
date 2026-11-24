@@ -17160,6 +17160,30 @@
           (set! (deref current).sweep-sym-bytes-count (+ start len))
           (set! (deref current).sweep-count (+ idx 1)))))))
 
+;; A squeezed rebase keeps every frame object below the callee-save band at
+;; its original %rsp offset while the var region moves down by `squeeze`
+;; bytes. The sweep spells an object's span from the var-region bias, so lift
+;; this function's recorded objects below `band-lo` by the same amount.
+(define (compiler-backend-sweep-addr-lift!
+  [stream : be_state.CompilerBackendStreamState]
+  [band-lo : i64]
+  [squeeze : i64]) : unit
+  (when
+    (> squeeze 0)
+    (unsafe
+      (let
+        [data : (MutPtr be_state.CompilerBackendStreamStateData)
+          (be_state.compiler-backend-stream-state-ptr stream)]
+        (for [i
+          (iterator.range
+            (deref data).sweep-addr-flushed
+            (deref data).sweep-addr-count)]
+          (let
+            [rbp : i64 (array-ref (deref data).sweep-addr-rbp i)]
+            (when
+              (< rbp band-lo)
+              (set! (array-ref (deref data).sweep-addr-rbp i) (+ rbp squeeze)))))))))
+
 ;; Compute [lo, hi] (the VAR-REGION slot-start span in canonical delta-0
 ;; rsp-relative bytes) and disp (total prologue rsp displacement) for one
 ;; FPO-audited function, then record it. Mirrors the rebase pass's biases:
@@ -17277,6 +17301,7 @@
   [push-count : i64]
   [slot-vars : i64]
   [outgoing : i64]
+  [squeeze : i64]
   [fpo-ok : bool]
   [rebase-ok : bool]
   [shrinkwrap-active? : bool]) : unit
@@ -17310,15 +17335,21 @@
   (cond
     [shrinkwrap-active? unit]
     [fpo-ok
+      (compiler-backend-sweep-addr-lift!
+        (be_state.compiler-backend-state-stream-state backend-state)
+        (- (* -8 slot-vars) squeeze)
+        squeeze)
       (compiler-backend-sweep-record-fpo!
         (be_state.compiler-backend-state-stream-state backend-state)
         symbol
-        frame
+        (- frame squeeze)
         push-count
         slot-vars
-        (be_state.compiler-backend-function-scratch-i64
-          (be_state.compiler-backend-state-function-state backend-state)
-          be_state.compiler-backend-scratch-i64-emergency-slot-offset)
+        (+
+          (be_state.compiler-backend-function-scratch-i64
+            (be_state.compiler-backend-state-function-state backend-state)
+            be_state.compiler-backend-scratch-i64-emergency-slot-offset)
+          squeeze)
         (be_state.compiler-backend-function-scratch-i64
           (be_state.compiler-backend-state-function-state backend-state)
           be_state.compiler-backend-scratch-i64-emergency-used-count)
@@ -23285,7 +23316,7 @@
                     ;; keep-rbp fallback below re-renders from
                     ;; `post-prologue` with the full `frame`, where the
                     ;; mov saves are still present and still need slots.
-                    [fpo-frame : i64
+                    [fpo-frame-full : i64
                       (if (and
                         fpo-attempt
                         (> push-count 0)
@@ -23327,19 +23358,55 @@
                         program-index.backend-state
                         post-prologue
                         fpo-attempt
-                        fpo-frame
+                        fpo-frame-full
                         outgoing-frame-space
                         wrap-active?)]
+                    ;; Push mode leaves the callee-save slot band between the
+                    ;; var slots and the bottom-of-frame regions unwritten.
+                    ;; Squeezing it out moves the hottest var slots (the
+                    ;; frame order puts them lowest) into disp8 range. Only
+                    ;; whole 16-byte units go, so the frame keeps its
+                    ;; alignment. A failed audit keeps the full frame.
+                    [squeeze-slots : i64
+                      (if (and
+                        fpo-attempt
+                        (> push-count 0)
+                        (> fpo-frame-full 0)
+                        (not wrap-active?)
+                        ;; Win64 XMM callee saves are real frame words in
+                        ;; the band; the pushes absorb only GP saves.
+                        (<
+                          (be_operand.compiler-backend-win64-xmm-callee-highest
+                            assignments
+                            program-index.backend-state)
+                          0)
+                        (not
+                          (be_operand.compiler-backend-red-zone?
+                            program-index.backend-state)))
+                        (-
+                          (be_operand.compiler-backend-frame-slots
+                            slot-vars
+                            assignments
+                            program-index.backend-state)
+                          slot-vars)
+                        0)]
+                    [squeeze-attempt : i64 (bit-and (* 8 squeeze-slots) -16)]
                     [rebase-result : be_peephole.CompilerBackendRspRebaseResult
-                      (be_peephole.compiler-backend-rsp-rebase-full-result
+                      (be_peephole.compiler-backend-rsp-rebase-full-result-squeezed
                         (be_state.compiler-backend-global-shared-view
                           post-prologue)
-                        fpo-frame
+                        (- fpo-frame-full squeeze-attempt)
                         fpo-attempt
                         (be_state.compiler-backend-global-shared-view push-regs)
                         push-count
                         slot-vars
+                        squeeze-attempt
                         program-index.backend-state)]
+                    [frame-squeeze : i64
+                      (if rebase-result.ok
+                        squeeze-attempt
+                        0)]
+                    [fpo-frame : i64 (- fpo-frame-full frame-squeeze)]
                     ;; RG-1 fix B. The first pass reported which
                     ;; callee-saved registers the body actually names;
                     ;; anything it saves but never names is a push and a
@@ -23392,6 +23459,7 @@
                             push-regs)
                           push-count
                           slot-vars
+                          frame-squeeze
                           program-index.backend-state)
                         (be_peephole.CompilerBackendRspRebaseResult "" false 0))]
                     ;; A trimmed run that fails the audit changes nothing:
@@ -23792,6 +23860,9 @@
                                 final-push-count
                                 slot-vars
                                 outgoing-frame-space
+                                (if fpo-ok
+                                  frame-squeeze
+                                  0)
                                 fpo-ok
                                 rebase-ok
                                 wrap-active?)
@@ -26099,8 +26170,24 @@ tl_shared_object_init:
     [asm : String (text_buf.render buf)]
     (Ok
       (if (be_state.compiler-backend-state-closed-executable? backend-state)
-        (runtime_prune.prune asm)
+        (compiler-backend-closed-executable-finish backend-state target asm)
         asm))))
+
+;; The closed program is the whole text, so only now are helper fragments
+;; known dead and every surviving return tail known. Interning runs after the
+;; prune: a shared tail must not live in a fragment the prune removes.
+(define (compiler-backend-closed-executable-finish
+  [backend-state : be_state.CompilerBackendState]
+  [target : be_state.CompilerBackendTarget]
+  [asm : String]) : String
+  (let
+    [kept : String (runtime_prune.prune asm)]
+    (if (and
+      (be_state.compiler-backend-state-optimize-for-size? backend-state)
+      (not (be_state.compiler-backend-target-coff? target))
+      (not (compiler_ir_types.compiler-debug-info-enabled?)))
+      (runtime_prune.intern-epilogues kept)
+      kept)))
 
 (define (compiler-backend-lower-mode-for-target
   [target : be_state.CompilerBackendTarget]

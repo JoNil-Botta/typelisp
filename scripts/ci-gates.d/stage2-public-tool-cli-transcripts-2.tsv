@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-public-tool-cli-transcripts-2	1290	all	stage2 public tool CLI transcripts 2	bootstrap-compiler	stage2	3840	-	scripts/verify-public-tools.sh cli-transcripts-2	linux-2	windows-2	compiler,stdlib,corpus	Public CLI transcript group 2 on the produced compiler.

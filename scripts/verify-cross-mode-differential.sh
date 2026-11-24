@@ -117,7 +117,7 @@ validate_manifest() {
             if (!valid_metadata($8)) fail("invalid reference metadata for " $1 ": " $8)
             if (!valid_metadata($9)) fail("invalid candidate metadata for " $1 ": " $9)
             # The producer is the gate whose artifacts the row reuses; this
-            # gate row in scripts/ci-gates.tsv needs it on the hosts of the row.
+            # gate row in scripts/ci-gates.d/*.tsv needs it on the hosts of the row.
             if ($10 !~ /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/)
                 fail("invalid producer gate for " $1 ": " $10)
             if ($11 == "") fail("empty notes for " $1)

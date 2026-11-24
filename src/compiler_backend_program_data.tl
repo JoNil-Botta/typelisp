@@ -13,6 +13,7 @@
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
+(import compiler_backend_runtime_prune as runtime_prune)
 (import compiler_x64_executable_template_catalog as x64_catalog)
 (import stdlib.text_buf)
 (import compiler_object as cobj)
@@ -464,11 +465,26 @@
       [out : byte_buf_core.ByteBufBuilder
         (byte_buf_core.byte-buf-builder-with-capacity 4096)]
       [i : i64 0]
+      ;; A closed build drops each string and header no live code names. The
+      ;; alignment between the two bundles stays a root.
       (byte_buf_core.byte-buf-builder-append-string
         (&mut out)
         "    .section .rodata\n")
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        (runtime_prune.literal-begin))
       (while (< i records.len)
         (match (cobj.compiler-object-data-record-list-ref (& records) i)
+          [(Align alignment)
+            (byte_buf_core.byte-buf-builder-append-string
+              (&mut out)
+              (runtime_prune.literal-end))
+            (object_asm.compiler-object-asm-render-data-record!
+              (&mut out)
+              (Align alignment))
+            (byte_buf_core.byte-buf-builder-append-string
+              (&mut out)
+              (runtime_prune.literal-begin))]
           [(String text)
             (compiler-backend-emit-quoted-literal!
               (&mut out)
@@ -486,6 +502,9 @@
                 records.slots
                 i))])
         (+= i 1))
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        (runtime_prune.literal-end))
       (text_buf.append
         buf
         (byte_buf_core.byte-buf-builder-finish-string (& out))))))

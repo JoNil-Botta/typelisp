@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-sha-512-wipe-asm-shape-gate	1240	linux	stage2 SHA-512 wipe asm shape gate	bootstrap-compiler	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha512-*' tests/codegen/crypto-sha.cases	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

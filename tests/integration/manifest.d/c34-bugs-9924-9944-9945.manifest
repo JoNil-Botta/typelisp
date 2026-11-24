@@ -1,0 +1,7 @@
+# Native integration cases: #9924 float neg -0.0 folding, #9944 process/syscall shadowing, #9945 indirect with cleanup.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+float_neg_zero_fold|all|0,1,2|tests/integration/float_neg_zero_fold.tl|42|-|-|stdlib/io.tl|-
+process_syscall_shadow|all|0,1,2|tests/integration/process_syscall_shadow.tl|42|-|-|process_syscall_shadow_dep.tl|-
+process_syscall_shadow_selected|all|0,1,2|tests/integration/process_syscall_shadow_selected.tl|42|-|-|process_syscall_shadow_dep.tl process_syscall_shadow_selected_dep.tl process_syscall_shadow_other.tl|-
+with_cleanup_indirect|all|0,1,2|tests/integration/with_cleanup_indirect.tl|42|-|-|-|-

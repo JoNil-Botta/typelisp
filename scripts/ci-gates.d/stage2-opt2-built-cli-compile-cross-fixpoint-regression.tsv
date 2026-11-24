@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-opt2-built-cli-compile-cross-fixpoint-regression	820	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-compiler,stage2-opt1-opt2-build-invariance@linux	stage2	7680	build-stamp,root-release	gate_opt2_cli_regression	linux-1	windows-2	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

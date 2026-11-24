@@ -3015,7 +3015,7 @@ publishes.
 
 To select the required local minimum and inspect the advisory superset, use
 the reviewed path map in
-[`ci-affected-paths.tsv`](../scripts/ci-affected-paths.tsv):
+[`scripts/ci-affected-paths.d/`](../scripts/ci-affected-paths.d):
 
 ```sh
 scripts/ci-affected.sh --base origin/main
@@ -3101,7 +3101,7 @@ maps and unreadable path inventories fail before any gate runs. The shared
 source hygiene gates are always selected, even for an empty diff.
 
 The advisory compiler, stdlib and corpus groups select consumers recorded in
-[`ci-affected-inputs.tsv`](../scripts/ci-affected-inputs.tsv): all produced-compiler
+[`scripts/ci-gates.d/`](../scripts/ci-gates.d): all produced-compiler
 gates and their bootstrap dependencies, plus direct source/corpus guards.
 Compiler/backend target references therefore include target parity, and stdlib
 changes include the safety corpus. Independent memory-helper, benchmark-harness
@@ -3124,7 +3124,7 @@ available the test also verifies them against the recorded historical diffs.
 
 Pull requests get Linux and Windows coverage from `scripts/ci-verify.sh`
 (wired in [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Each
-host's gates run in two CI lanes that `scripts/ci-lanes.tsv` assigns; each lane
+host's gates run in two CI lanes that `scripts/ci-gates.d/` assigns; each lane
 runs `ci-verify.sh --gates` with its gates and their needs, and the host's
 required check passes only when every gate passed in its owning lane
 (`scripts/README.md`, CI lanes). Each lane bootstraps the full `src/main.tl`

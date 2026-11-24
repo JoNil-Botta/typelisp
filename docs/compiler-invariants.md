@@ -2887,8 +2887,8 @@ Generated code is compared with `clang -O2` using paired cases under
 tracked with deterministic executed-instruction baselines under
 [`../perf/`](../perf), avoiding wall-clock noise in required CI gates.
 
-Required verification is one table,
-[`scripts/ci-gates.tsv`](../scripts/ci-gates.tsv), run by `scripts/ci-verify.sh`.
+Required verification is one gate table,
+[`scripts/ci-gates.d/`](../scripts/ci-gates.d), run by `scripts/ci-verify.sh`.
 The [scripts README](../scripts/README.md#core-development-loop) describes the
 table and the gates; read it before changing CI structure.
 

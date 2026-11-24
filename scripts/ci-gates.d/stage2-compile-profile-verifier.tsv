@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-compile-profile-verifier	780	all	stage2 compile-profile verifier	bootstrap-compiler,embedded-stdlib-tlci-image	stage2	2304	build-stamp,embedded-image	gate_compile_profile	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

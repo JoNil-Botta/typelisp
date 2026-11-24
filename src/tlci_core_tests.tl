@@ -2,6 +2,7 @@
 ;; out of the production module. The inline test below runs the self-test; the
 ;; loader tests, the inspect tests and tests/tlci/corpus_emit.tl reuse the
 ;; fixtures.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.io)
@@ -518,7 +519,7 @@
   (match (tlci.tlci-emit-image (& image))
     [(Err _) false]
     [(Ok bytes)
-      (match (tlci.tlci-parse-image (& (clone bytes)))
+      (match (tlci.tlci-parse-image (& (clone.deep bytes)))
         [(Err _) false]
         [(Ok parsed)
           (match (tlci.tlci-emit-image (& parsed))
@@ -537,7 +538,7 @@
           (string.eq parsed.package-version "0.1.0"))])))
 
 (define (tlci-test-v2-alpha-specializations?
-  [items : tlci.TlciSpmdSpecializations]) : bool
+  [items : (& tlci.TlciSpmdSpecializations)]) : bool
   (and
     (= (tlci.tlci-spmd-specializations-len items) 2)
     (let
@@ -551,14 +552,14 @@
         (string.eq second.backend "scalar")))))
 
 (define (tlci-test-v2-beta-specializations?
-  [items : tlci.TlciSpmdSpecializations]) : bool
+  [items : (& tlci.TlciSpmdSpecializations)]) : bool
   (and
     (= (tlci.tlci-spmd-specializations-len items) 1)
     (string.eq
       (__tl-project-field (tlci.tlci-spmd-specializations-ref items 0) abi)
       "spmd-call-future")))
 
-(define (tlci-test-v2-callables-shape? [items : tlci.TlciSpmdCallables]) : bool
+(define (tlci-test-v2-callables-shape? [items : (& tlci.TlciSpmdCallables)]) : bool
   (and
     (= (tlci.tlci-spmd-callables-len items) 2)
     (let
@@ -566,15 +567,15 @@
       [beta : tlci.TlciSpmdCallable (tlci.tlci-spmd-callables-ref items 1)]
       (and
         (string.eq alpha.name "demo.alpha")
-        (tlci-test-v2-alpha-specializations? alpha.specializations)
+        (tlci-test-v2-alpha-specializations? (& alpha.specializations))
         (string.eq beta.name "demo.beta")
-        (tlci-test-v2-beta-specializations? beta.specializations)))))
+        (tlci-test-v2-beta-specializations? (& beta.specializations))))))
 
-(define (tlci-test-v2-parsed-shape? [metadata : tlci.TlciMetadata]) : bool
+(define (tlci-test-v2-parsed-shape? [metadata : (& tlci.TlciMetadata)]) : bool
   (and
     (string.eq metadata.version "v2")
     (string.eq metadata.package-name "demo")
-    (tlci-test-v2-callables-shape? metadata.spmd-callables)))
+    (tlci-test-v2-callables-shape? (& metadata.spmd-callables))))
 
 (define (tlci-test-v2-metadata-emit-parse?) : bool
   (let
@@ -583,7 +584,7 @@
       [(Err _) false]
       [(Ok parsed)
         (and
-          (tlci-test-v2-parsed-shape? (clone parsed))
+          (tlci-test-v2-parsed-shape? (& parsed))
           (string.eq source (tlci.tlci-metadata-emit (& parsed))))])))
 
 (define (tlci-test-dense-spmd-sequences?) : bool
@@ -991,11 +992,11 @@
       (tlci.TlciAuxSection
         tlci.tlci-aux-kind-package-identity
         1
-        (clone identity)))
+        (clone.deep identity)))
     (set!
       (array-ref sections 1)
-      (tlci.TlciAuxSection tlci.tlci-aux-kind-frontend-ast 3 (clone ast)))
-    (match (tlci.tlci-aux-pack-rodata (& (clone base)) sections)
+      (tlci.TlciAuxSection tlci.tlci-aux-kind-frontend-ast 3 (clone.deep ast)))
+    (match (tlci.tlci-aux-pack-rodata (& (clone.deep base)) sections)
       [(Err _) false]
       [(Ok packed)
         (and
@@ -1133,7 +1134,7 @@
       (tlci.TlciAuxSection
         tlci.tlci-aux-kind-package-identity
         1
-        (clone identity)))
+        (clone.deep identity)))
     (set!
       (array-ref sections 1)
       (tlci.TlciAuxSection

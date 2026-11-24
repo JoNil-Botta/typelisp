@@ -121,7 +121,11 @@
     (fixture.graph-test-add-root!
       (&mut builder)
       (fixture.graph-test-root "typelisp.root.check" "app" 2 3))
-    (when reverse? (fixture.graph-test-add-node! (&mut builder) (clone parent)))
+    (when
+      reverse?
+      (fixture.graph-test-add-node!
+        (&mut builder)
+        (graph.clone-compiler-incremental-graph-node (& parent))))
     (unless
       (= mode 4)
       (fixture.graph-test-add-node!
@@ -246,6 +250,21 @@
       (set! i (+ i 1)))
     (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
+(define (plan-test-clone-inputs
+  [inputs : (& (__tl_dyn-array plan.CompilerIncrementalPlanInput))]) : (__tl_dyn-array
+    plan.CompilerIncrementalPlanInput)
+  (let
+    [count : i64 (array-length inputs)]
+    [out : (__tl_dyn-array plan.CompilerIncrementalPlanInput)
+      (__tl_make-array plan.CompilerIncrementalPlanInput count)]
+    [i : i64 0]
+    (while (< i count)
+      (set!
+        (array-ref out i)
+        (plan.clone-compiler-incremental-plan-input (& (array-ref inputs i))))
+      (set! i (+ i 1)))
+    out))
+
 (define (plan-test-execute
   [prior : plan.CompilerIncrementalPlanPrior]
   [expected : (& expected graph.CompilerIncrementalGraph)]
@@ -257,7 +276,7 @@
         (plan.compiler-plan-begin
           prior
           (plan-test-roots expected)
-          (clone inputs)
+          (plan-test-clone-inputs (& inputs))
           (plan.compiler-plan-default-limits)))]
     [tickets : (__tl_dyn-array i64) (__tl_make-array i64 128)]
     [done? : bool false]
@@ -490,7 +509,10 @@
           [(= mode 3)
             (set! code plan.compiler-plan-error-ticket)
             (plan-test-require
-              (plan.compiler-plan-success! (&mut state) ticket (clone value)))
+              (plan.compiler-plan-success!
+                (&mut state)
+                ticket
+                (graph.clone-compiler-incremental-graph-node (& value))))
             (plan-test-require
               (not (plan.compiler-plan-success! (&mut state) ticket value)))]
           [(= mode 4)
@@ -563,7 +585,14 @@
         (if repeat?
           2
           1))]
-    (when repeat? (set! (array-ref keys 1) (Child "deps" 0 (clone child))))
+    (when
+      repeat?
+      (set!
+        (array-ref keys 1)
+        (Child
+          "deps"
+          0
+          (identity.clone-compiler-incremental-identity (& child)))))
     (set! (array-ref keys 0) (Child "deps" 0 child))
     keys))
 
@@ -586,7 +615,9 @@
                 (&mut state)
                 ticket
                 (& query)
-                (plan-test-children (clone query) false))))
+                (plan-test-children
+                  (identity.clone-compiler-incremental-identity (& query))
+                  false))))
           (begin
             (plan-test-require
               (plan.compiler-plan-request-children!
@@ -1043,7 +1074,8 @@
       [_ (plan-test-stop)])
     (let
       [builder : trace.CompilerIncrementalTraceBuilder
-        (fixture.graph-test-trace-begin (clone parent-query))]
+        (fixture.graph-test-trace-begin
+          (identity.clone-compiler-incremental-identity (& parent-query)))]
       (fixture.graph-test-note!
         (&mut builder)
         (plan-test-source
@@ -1608,7 +1640,10 @@
           (fixture.graph-test-query kind (+ kind 1))]
         [keys : (__tl_dyn-array trace.CompilerIncrementalTraceKey)
           (__tl_make-array
-            (trace.CompilerIncrementalTraceKey.Child "deps" kind (clone child)))]
+            (trace.CompilerIncrementalTraceKey.Child
+              "deps"
+              kind
+              (identity.clone-compiler-incremental-identity (& child))))]
         (plan-test-require
           (plan.compiler-plan-request-children!
             (&mut state)

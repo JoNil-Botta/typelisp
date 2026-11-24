@@ -1214,7 +1214,7 @@
   [col : i64]
   [origin-line : i64]
   [origin-col : i64]) : bool
-  (match (check_core.compiler-check-source (clone path) source)
+  (match (check_core.compiler-check-source (string.copy (& path)) source)
     [(Ok _ _) false]
     [(Err diagnostics-box _)
       (let

@@ -413,7 +413,7 @@
     (semantic-facts-test-source "(define (first) : i64 42)")
     "first job")
   (let
-    [first : String (clone semantic-facts-test-owned-type)]
+    [first : String (string.copy (& semantic-facts-test-owned-type))]
     (test.assert-true
       (semantic-facts-test-source "(define (second) : bool true)")
       "second job")

@@ -4549,6 +4549,24 @@
   [pools : (& pools AstNodePoolContext)]) : AstNodePoolContext
   (AstNodePoolContext pools.expr-pool pools.type-pool pools.owner-arena))
 
+(define (clone-ast-type-node-pool-state [pool : (& AstTypeNodePoolState)]) : AstTypeNodePoolState
+  (let
+    [count : i64 (array-length pool.dedup-slots)]
+    [dedup-slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref dedup-slots index) (array-ref pool.dedup-slots index)))
+    (AstTypeNodePoolState
+      pool.segment-bases
+      pool.count
+      pool.base-arena
+      pool.exhausted
+      dedup-slots
+      pool.dedup-count
+      pool.storage-arena
+      pool.segment-count
+      pool.revision
+      pool.revision-cell)))
+
 ;; Independent state cells holding deep copies of both states: what `clone`
 ;; of a context produced while the context held its cells as dynamic arrays.
 ;; Like a snapshot, the copy still shares the expression segments, span slots
@@ -4556,9 +4574,11 @@
 (define (ast-node-pool-context-clone [pools : AstNodePoolContext]) : AstNodePoolContext
   (let
     [expr-cell : (__tl_dyn-array AstExprNodePoolState)
-      (__tl_make-array (clone (ast-expr-pool-cell-read pools.expr-pool)))]
+      (__tl_make-array (ast-expr-pool-cell-read pools.expr-pool))]
     [type-cell : (__tl_dyn-array AstTypeNodePoolState)
-      (__tl_make-array (clone (ast-type-pool-cell-read pools.type-pool)))]
+      (__tl_make-array
+        (clone-ast-type-node-pool-state
+          (& (ast-type-pool-cell-read pools.type-pool))))]
     (AstNodePoolContext
       (ast-pool-cell-descriptor expr-cell)
       (ast-pool-cell-descriptor type-cell)
@@ -6192,6 +6212,316 @@
 
 (defenum AstProgram
   (Program (Box AstDeclList)))
+
+(define (clone-ast-param [item : (& AstParam)]) : AstParam
+  (match item
+    [(AstParam.Param name ty mut?)
+      (AstParam.Param name (clone-ast-type ty) mut?)]))
+
+(define (clone-ast-param-list [items : (& AstParamList)]) : AstParamList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array AstParam) (__tl_make-array AstParam count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-param (& (array-ref items.slots index)))))
+    (AstParamList slots count)))
+
+(define (clone-ast-macro-type-kind-list [items : (& AstMacroTypeKindList)]) : AstMacroTypeKindList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref slots index) (array-ref items.slots index)))
+    (AstMacroTypeKindList slots count)))
+
+(define (clone-ast-macro-param [item : (& AstMacroParam)]) : AstMacroParam
+  (match item
+    [(AstMacroParam.Param name ty rest? type-kinds)
+      (AstMacroParam.Param
+        name
+        (clone-ast-type ty)
+        rest?
+        (clone-ast-macro-type-kind-list type-kinds))]))
+
+(define (clone-ast-macro-param-list [items : (& AstMacroParamList)]) : AstMacroParamList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array AstMacroParam)
+      (__tl_make-array AstMacroParam count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-macro-param (& (array-ref items.slots index)))))
+    (AstMacroParamList slots count)))
+
+(define (clone-ast-field-def [item : (& AstFieldDef)]) : AstFieldDef
+  (match item
+    [(AstFieldDef.Def name ty cleanup)
+      (AstFieldDef.Def name (clone-ast-type ty) cleanup)]))
+
+(define (clone-ast-field-def-list [items : (& AstFieldDefList)]) : AstFieldDefList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array AstFieldDef) (__tl_make-array AstFieldDef count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-field-def (& (array-ref items.slots index)))))
+    (AstFieldDefList slots count)))
+
+(define (clone-ast-source-span [span : (& AstSourceSpan)]) : AstSourceSpan
+  (AstSourceSpan span.start-line span.start-col span.end-line span.end-col))
+
+(define (clone-ast-variant-payload-cleanup
+  [item : (& AstVariantPayloadCleanup)]) : AstVariantPayloadCleanup
+  (match item
+    [(AstVariantPayloadCleanup.No) AstVariantPayloadCleanup.No]
+    [(AstVariantPayloadCleanup.Fn name)
+      (AstVariantPayloadCleanup.Fn (ci.InternSyntaxId name.value))]
+    [(AstVariantPayloadCleanup.Owned) AstVariantPayloadCleanup.Owned]))
+
+(define (clone-ast-variant-payload-cleanup-list
+  [items : (& AstVariantPayloadCleanupList)]) : AstVariantPayloadCleanupList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array AstVariantPayloadCleanup)
+      (__tl_make-array AstVariantPayloadCleanup count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-variant-payload-cleanup (& (array-ref items.slots index)))))
+    (AstVariantPayloadCleanupList slots count)))
+
+(define (clone-ast-variant-def [item : (& AstVariantDef)]) : AstVariantDef
+  (match item
+    [(AstVariantDef.Def name types cleanups)
+      (AstVariantDef.Def
+        name
+        (clone-ast-type-list types)
+        (clone-ast-variant-payload-cleanup-list cleanups))]))
+
+(define (clone-ast-variant-def-list [items : (& AstVariantDefList)]) : AstVariantDefList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array AstVariantDef)
+      (__tl_make-array AstVariantDef count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-variant-def (& (array-ref items.slots index)))))
+    (AstVariantDefList slots count)))
+
+(define (clone-ast-extern-abi [abi : (& AstExternAbi)]) : AstExternAbi
+  (match abi
+    [(AstExternAbi.C) AstExternAbi.C]
+    [(AstExternAbi.CVarargsOpen) AstExternAbi.CVarargsOpen]
+    [(AstExternAbi.CVarargsTyped elem)
+      (AstExternAbi.CVarargsTyped (clone-ast-type elem))]
+    [(AstExternAbi.TypeLisp) AstExternAbi.TypeLisp]))
+
+(define (clone-ast-extern-link-input [item : (& AstExternLinkInput)]) : AstExternLinkInput
+  (match item
+    [(AstExternLinkInput.Lib text) (AstExternLinkInput.Lib (string.copy text))]
+    [(AstExternLinkInput.Search text)
+      (AstExternLinkInput.Search (string.copy text))]
+    [(AstExternLinkInput.Arg text) (AstExternLinkInput.Arg (string.copy text))]))
+
+(define (clone-ast-extern-link-input-list [items : (& AstExternLinkInputList)]) : AstExternLinkInputList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array AstExternLinkInput)
+      (__tl_make-array AstExternLinkInput count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-extern-link-input (& (array-ref items.slots index)))))
+    (AstExternLinkInputList slots count)))
+
+(define (clone-ast-extern-metadata [meta : (& AstExternMetadata)]) : AstExternMetadata
+  (match meta
+    [(AstExternMetadata.Metadata abi symbol links flags spmd)
+      (AstExternMetadata.Metadata
+        (clone-ast-extern-abi abi)
+        symbol
+        (clone-ast-extern-link-input-list links)
+        flags
+        (ast-imported-spmd-metadata-clone spmd))]))
+
+(define (clone-ast-dispatch-variant [item : (& AstDispatchVariant)]) : AstDispatchVariant
+  (match item
+    [(AstDispatchVariant.Variant isa name)
+      (AstDispatchVariant.Variant
+        (match isa
+          [(AstDispatchIsa.Scalar) AstDispatchIsa.Scalar]
+          [(AstDispatchIsa.Avx2) AstDispatchIsa.Avx2]
+          [(AstDispatchIsa.Avx512) AstDispatchIsa.Avx512])
+        name)]))
+
+(define (clone-ast-dispatch-variant-list [items : (& AstDispatchVariantList)]) : AstDispatchVariantList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array AstDispatchVariant)
+      (__tl_make-array AstDispatchVariant count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-dispatch-variant (& (array-ref items.slots index)))))
+    (AstDispatchVariantList slots count)))
+
+(define (clone-ast-generated-decl-meta [meta : (& AstGeneratedDeclMeta)]) : AstGeneratedDeclMeta
+  (match meta
+    [(AstGeneratedDeclMeta.No) AstGeneratedDeclMeta.No]
+    [(AstGeneratedDeclMeta.Some generator item args key)
+      (AstGeneratedDeclMeta.Some
+        (string.copy generator)
+        (string.copy item)
+        (clone-ast-expr-list args)
+        (string.copy key))]))
+
+(define (clone-ast-decl-meta [meta : (& AstDeclMeta)]) : AstDeclMeta
+  (match (& (__tl-box-place meta.value))
+    [(AstDeclMetaValue.Runtime markers)
+      (ast-decl-meta-runtime-with-aggregate-markers markers)]
+    [(AstDeclMetaValue.Comptime generated markers)
+      (AstDeclMeta
+        (box
+          (AstDeclMetaValue.Comptime
+            (clone-ast-generated-decl-meta generated)
+            markers)))]))
+
+(define (clone-ast-test-metadata [metadata : (& AstTestMetadata)]) : AstTestMetadata
+  (match (& (__tl-box-place metadata.value))
+    [(AstTestMetadataValue.None) (ast-test-metadata-none-shared-view)]
+    [(AstTestMetadataValue.Metadata ignore-reason slow)
+      (AstTestMetadata
+        (box
+          (AstTestMetadataValue.Metadata
+            (match ignore-reason
+              [(AstTestIgnoreReason.No) AstTestIgnoreReason.No]
+              [(AstTestIgnoreReason.Some reason)
+                (AstTestIgnoreReason.Some (string.copy reason))])
+            slow)))]))
+
+(define (clone-ast-import-spec [spec : (& AstImportSpec)]) : AstImportSpec
+  (match spec
+    [(AstImportSpec.Spec kind path module-name alias span)
+      (AstImportSpec.Spec
+        kind
+        (string.copy path)
+        module-name
+        alias
+        (box (clone-ast-source-span span)))]))
+
+(define (clone-ast-decl [decl : (& AstDecl)]) : AstDecl
+  (match decl
+    [(AstDecl.Module name) (AstDecl.Module name)]
+    [(AstDecl.ModuleBody name body)
+      (AstDecl.ModuleBody name (box (clone-ast-decl-list body)))]
+    [(AstDecl.Def decl-meta name maybe-ty value)
+      (AstDecl.Def
+        (clone-ast-decl-meta decl-meta)
+        name
+        (clone-ast-maybe-type maybe-ty)
+        value)]
+    [(AstDecl.DefFn decl-meta name params ret body metadata)
+      (AstDecl.DefFn
+        (clone-ast-decl-meta decl-meta)
+        name
+        (clone-ast-param-list params)
+        (clone-ast-type ret)
+        body
+        (ast-fn-metadata-clone metadata))]
+    [(AstDecl.DefMacro decl-meta name params ret body)
+      (AstDecl.DefMacro
+        (clone-ast-decl-meta decl-meta)
+        name
+        (clone-ast-macro-param-list params)
+        (clone-ast-type ret)
+        body)]
+    [(AstDecl.Extern decl-meta name kind metadata ty)
+      (AstDecl.Extern
+        (clone-ast-decl-meta decl-meta)
+        name
+        kind
+        (box (clone-ast-extern-metadata metadata))
+        (clone-ast-type ty))]
+    [(AstDecl.DefEnum decl-meta name cleanup variants)
+      (AstDecl.DefEnum
+        (clone-ast-decl-meta decl-meta)
+        name
+        cleanup
+        (clone-ast-variant-def-list variants))]
+    [(AstDecl.DefEnumLifetimes decl-meta name lifetimes cleanup variants)
+      (AstDecl.DefEnumLifetimes
+        (clone-ast-decl-meta decl-meta)
+        name
+        (clone-ast-lifetime-list lifetimes)
+        cleanup
+        (clone-ast-variant-def-list variants))]
+    [(AstDecl.DefStruct decl-meta name repr cleanup fields)
+      (AstDecl.DefStruct
+        (clone-ast-decl-meta decl-meta)
+        name
+        (ast-struct-repr-copy repr)
+        cleanup
+        (clone-ast-field-def-list fields))]
+    [(AstDecl.DefStructLifetimes decl-meta name lifetimes repr cleanup fields)
+      (AstDecl.DefStructLifetimes
+        (clone-ast-decl-meta decl-meta)
+        name
+        (clone-ast-lifetime-list lifetimes)
+        (ast-struct-repr-copy repr)
+        cleanup
+        (clone-ast-field-def-list fields))]
+    [(AstDecl.Import decl-meta spec)
+      (AstDecl.Import
+        (clone-ast-decl-meta decl-meta)
+        (clone-ast-import-spec spec))]
+    [(AstDecl.IncludeStr name path)
+      (AstDecl.IncludeStr name (string.copy path))]
+    [(AstDecl.IncludeStrComptime name path)
+      (AstDecl.IncludeStrComptime name (string.copy path))]
+    [(AstDecl.IncludeStrLzss name path)
+      (AstDecl.IncludeStrLzss name (string.copy path))]
+    [(AstDecl.IncludeBin name path)
+      (AstDecl.IncludeBin name (string.copy path))]
+    [(AstDecl.DefDispatch decl-meta name variants)
+      (AstDecl.DefDispatch
+        (clone-ast-decl-meta decl-meta)
+        name
+        (clone-ast-dispatch-variant-list variants))]
+    [(AstDecl.Test name body metadata span)
+      (AstDecl.Test name body (clone-ast-test-metadata metadata) span)]
+    [(AstDecl.Unsafe inner) (AstDecl.Unsafe (box (clone-ast-decl inner)))]))
+
+(define (clone-ast-decl-list [value : (& value AstDeclList)]) : AstDeclList
+  (let
+    [count : i64 value.len]
+    [src-offset : i64 value.offset]
+    [dst-slots : (__tl_dyn-array AstDecl) (__tl_make-array AstDecl count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref dst-slots index)
+        (clone-ast-decl (& (array-ref value.slots (+ src-offset index))))))
+    (AstDeclList dst-slots 0 count true)))
+
+(define (clone-ast-decl-module-list [value : (& value AstDeclModuleList)]) : AstDeclModuleList
+  (let
+    [count : i64 value.len]
+    [src-offset : i64 value.offset]
+    [dst-slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref dst-slots index)
+        (array-ref value.slots (+ src-offset index))))
+    (AstDeclModuleList dst-slots 0 count true)))
+
+(define (clone-ast-program [program : (& AstProgram)]) : AstProgram
+  (match program
+    [(AstProgram.Program decls)
+      (AstProgram.Program (box (clone-ast-decl-list decls)))]))
 
 (define (ast-type-id-fallback) : i64
   0)
@@ -12284,7 +12614,8 @@
                 [(or (Spanned _ _) (Var _) (Binary _ _ _) (Unary _ _) (If _ _ _)
                      (StructGet _ _) (BoxGet _) (Borrow _ _ _))
                   unit]
-                [(Call _ _) (ptr-write! ptr (clone (ptr-read ptr)))]
+                [(Call callee args)
+                  (ptr-write! ptr (Call callee (clone-ast-expr-list (& args))))]
                 [_
                   (ptr-write!
                     ptr

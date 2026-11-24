@@ -572,8 +572,9 @@
     [state : opt.OptConstEnv env]
     (for [index (iterator.range 0 count)]
       (let
-        [cur : ir.CompilerIrInstr (clone (array-ref instrs.slots index))]
-        ;; the peek clones the next slot only behind a cell-lhs binop, which
+        [cur : ir.CompilerIrInstr
+          (ir.clone-compiler-ir-instr (& (array-ref instrs.slots index)))]
+        ;; the peek borrows the next slot only behind a cell-lhs binop, which
         ;; is rare; every other instruction pays one shape test
         [rmw? : bool
           (and
@@ -581,7 +582,7 @@
             (< (+ index 1) count)
             (opt.opt-fold-rmw-shape?
               (& cur)
-              (& (clone (array-ref instrs.slots (+ index 1))))))]
+              (& (array-ref instrs.slots (+ index 1)))))]
         (match (opt.opt-fold-instr
           type-segment-bases
           (opt.compiler-opt-global-shared-view state)
@@ -601,7 +602,7 @@
     (for [index (iterator.range 0 count)]
       (match (opt.opt-strength-instr
         state
-        (clone (array-ref instrs.slots index)))
+        (ir.clone-compiler-ir-instr (& (array-ref instrs.slots index))))
         [(Result next-state rewritten)
           (set! (array-ref instrs.slots index) rewritten)
           (set! state next-state)
@@ -616,7 +617,8 @@
       (set!
         state
         (let
-          [instr (clone (array-ref instrs.slots index))]
+          [instr
+            (ir.clone-compiler-ir-instr (& (array-ref instrs.slots index)))]
           (opt.opt-collect-instr-uses state instr))))
     state))
 
@@ -627,9 +629,7 @@
   [dst : i64]) : bool
   (if (>= (+ index 1) count)
     false
-    (opt.opt-instr-alloc-dst?
-      (& (clone (array-ref slots (+ index 1))))
-      (+ dst 1))))
+    (opt.opt-instr-alloc-dst? (& (array-ref slots (+ index 1))) (+ dst 1))))
 
 ;; Map-backed block-local DCE for the fixtures: the same dead-instruction rule as
 ;; the pipeline's opt.opt-instr-dead-array?, over an i64 -> count use map.
@@ -673,7 +673,8 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
   (for [index (iterator.range 0 count)]
     (let
-      [instr : ir.CompilerIrInstr (clone (array-ref slots index))]
+      [instr : ir.CompilerIrInstr
+        (ir.clone-compiler-ir-instr (& (array-ref slots index)))]
       (if (opt-instr-dead? set instr)
         (set! prev-alloc-dst -2)
         (match (opt.compiler-opt-global-shared-view instr)
@@ -712,7 +713,7 @@
       (match (opt.opt-cse-instr
         type-segment-bases
         (opt.compiler-opt-global-shared-view state)
-        (clone (array-ref instrs.slots index)))
+        (ir.clone-compiler-ir-instr (& (array-ref instrs.slots index))))
         [(Result next-state rewritten)
           (set! (array-ref instrs.slots index) rewritten)
           (set! state next-state)
@@ -734,9 +735,7 @@
         (opt-test-addr-of-bound (ir.compiler-ir-block-list-view own))
         (& own))]
     (for [index (iterator.range 0 count)]
-      (match (opt.opt-copy-instr
-        (& state)
-        (& (clone (array-ref instrs.slots index))))
+      (match (opt.opt-copy-instr (& state) (& (array-ref instrs.slots index)))
         [(Result next-state rewritten)
           (set! (array-ref instrs.slots index) rewritten)
           (set! state next-state)
@@ -754,7 +753,8 @@
     [state : opt.OptBoundsSeqState (Plain facts casts)]
     (for [index (iterator.range 0 count)]
       (let
-        [instr : ir.CompilerIrInstr (clone (array-ref instrs.slots index))]
+        [instr : ir.CompilerIrInstr
+          (ir.clone-compiler-ir-instr (& (array-ref instrs.slots index)))]
         [step : opt.OptBoundsSeqStep
           (match state
             [(Plain current-facts current-casts)
@@ -1846,7 +1846,7 @@
   [expected : i64]) : bool
   (let
     [items : opt_global_fact_vec.Vec facts.items]
-    (match (clone (array-ref (opt_global_fact_vec.slots (& items)) index))
+    (match (& (array-ref items.slots index))
       [(Copy dst src _ _)
         (and
           (= dst expected)
@@ -2989,7 +2989,10 @@
     [dead : ir.CompilerIrInstr (Mov 0 (I64 1) (I64))]
     [live : ir.CompilerIrInstr (irt.instr "%1 = call opaque() : i64")]
     [instrs : ir.CompilerIrInstrSeq
-      (opt-test-instrs (clone dead) (clone live) (irt.instr "return %1"))]
+      (opt-test-instrs
+        (ir.clone-compiler-ir-instr (& dead))
+        (ir.clone-compiler-ir-instr (& live))
+        (irt.instr "return %1"))]
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr
         (ir.compiler-source-spans-insert-instr
@@ -3096,7 +3099,10 @@
     [producer : ir.CompilerIrInstr (irt.instr "%2 = add %0, %1 : i64")]
     [addr : ir.CompilerIrInstr (AddrOf 3 2 0)]
     [instrs : ir.CompilerIrInstrSeq
-      (opt-test-instrs (clone producer) (clone addr) (irt.instr "return 42"))]
+      (opt-test-instrs
+        (ir.clone-compiler-ir-instr (& producer))
+        (ir.clone-compiler-ir-instr (& addr))
+        (irt.instr "return 42"))]
     (match (with-test-inline-mode
       (opt.optimize-program-with-spans-and-level
         (& (opt-spans-program instrs))
@@ -4057,8 +4063,8 @@
         (test.assert-true
           (opt-test-program-eq
             (ast.ast-node-pool-context-type-segment-bases pools)
-            (clone control)
-            (clone result))
+            (ir.clone-compiler-ir-program (& control))
+            (ir.clone-compiler-ir-program (& result)))
           "retirement preserves the complete optimized program")
         (unless
           (= (array-ref state.source 0) 0)
@@ -4648,12 +4654,13 @@
     (for [i (iterator.range 0 callers)]
       (let
         [suffix : String (string.int->string i)]
-        [callee-name : String (str_cat.str-cat "lin_callee_" (clone suffix))]
+        [callee-name : String
+          (str_cat.str-cat "lin_callee_" (string.copy suffix))]
         (set!
           spans
           (ir.compiler-source-spans-insert-instr-located
             spans
-            (opt-test-span-symbol (clone callee-name))
+            (opt-test-span-symbol (string.copy callee-name))
             (& (irt.instr "bounds_check %0, %1 message \"lin_ok\""))
             613
             (opt-test-span 57 29)))
@@ -4662,7 +4669,7 @@
           (ir.compiler-ir-function-seq-prepend
             (&
               (Function
-                (opt-test-symbol (clone callee-name))
+                (opt-test-symbol (string.copy callee-name))
                 (irt.params "idx=%0:i64, len=%1:i64")
                 (I64)
                 3
@@ -4696,8 +4703,7 @@
                     Ordinary))
                 (& functions)))))))
     (let
-      [input-rows : i64
-        (ir.compiler-source-spans-instr-count (& (clone spans)))]
+      [input-rows : i64 (ir.compiler-source-spans-instr-count (& spans))]
       (match (opt-test-inline-program-with-spans
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -4724,7 +4730,9 @@
   (let
     [call : ir.CompilerIrInstr (irt.instr "%1 = call opaque(5) : i64")]
     [instrs : ir.CompilerIrInstrSeq
-      (opt-test-instrs (clone call) (irt.instr "return %1"))]
+      (opt-test-instrs
+        (ir.clone-compiler-ir-instr (& call))
+        (irt.instr "return %1"))]
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr
         (opt-spans-base)
@@ -6061,21 +6069,21 @@
             (opt.opt-verify-function
               (&
                 (opt-sret-role-verify-function
-                  (clone (array-ref valid i))
-                  (clone call))))))
+                  (string.copy (array-ref valid i))
+                  (string.copy call))))))
         "inline storage survives address-preserving aliases"))
     (for [i (iterator.range 0 (array-length invalid))]
       (test.assert-true
         (opt-sret-role-rejected?
-          (clone (array-ref invalid i))
-          (clone call)
-          (clone error))
+          (string.copy (array-ref invalid i))
+          (string.copy call)
+          (string.copy error))
         "scalar, loaded, offset and mixed-origin values do not prove inline storage"))
     (test.assert-true
       (opt-sret-role-rejected?
         ""
         "%1 = call sret_callee([sret arg 0] %0) : u64"
-        (clone error))
+        (string.copy error))
       "a scalar parameter is not an output pointer")
     (test.assert-true
       (opt.opt-verify-ok?
@@ -6154,7 +6162,7 @@
     [before : ir.CompilerIrFunction
       (opt-sret-role-verify-function
         "%1 = alloc (Array i64 2)\n%2 = addr_of %1"
-        (clone call))]
+        (string.copy call))]
     [after : ir.CompilerIrFunction
       (opt-sret-role-verify-function
         "%1 = alloc (Array i64 2)\n%2 = mov %0 : u64"
@@ -6183,7 +6191,7 @@
             "%"
             (string.int->string i)
             " = select true, %"
-            (clone prior)
+            (string.copy prior)
             ", %"
             prior
             " lanes 0 : u64\n"))))
@@ -8889,7 +8897,12 @@
   [count : i64]
   [acc : i64]) : i64
   (for [index (iterator.range 0 count)]
-    (set! acc (+ acc (opt-word-instr-count (clone (array-ref slots index))))))
+    (set!
+      acc
+      (+
+        acc
+        (opt-word-instr-count
+          (ir.clone-compiler-ir-instr (& (array-ref slots index)))))))
   acc)
 
 (define (opt-count-word-instr-seq [instrs : ir.CompilerIrInstrSeq]) : i64
@@ -9489,9 +9502,10 @@
       (let
         [expected
           (opt-load-sink-run
-            (irt.blocks (clone (array-ref cases (+ (* index 2) 1)))))]
+            (irt.blocks (string.copy (array-ref cases (+ (* index 2) 1)))))]
         [actual
-          (opt-load-sink-run (irt.blocks (clone (array-ref cases (* index 2)))))]
+          (opt-load-sink-run
+            (irt.blocks (string.copy (array-ref cases (* index 2)))))]
         (test.assert-true
           (opt.opt-block-eq
             (ast.ast-node-pool-reader-type-segment-bases)
@@ -9502,7 +9516,9 @@
           (opt.opt-block-eq
             (ast.ast-node-pool-reader-type-segment-bases)
             (& actual)
-            (& (opt-load-sink-run (ir.compiler-ir-blocks (clone actual)))))
+            (&
+              (opt-load-sink-run
+                (ir.compiler-ir-blocks (ir.clone-compiler-ir-block (& actual))))))
           "address scheduling is idempotent"))))
   (let
     [refused
@@ -9540,12 +9556,15 @@
            return %11")]
     (for [index (iterator.range 0 (array-length refused))]
       (let
-        [text (clone (array-ref refused index))]
-        [expected (irt.blocks (clone text))]
+        [text (string.copy (array-ref refused index))]
+        [expected (irt.blocks (string.copy text))]
         [fixture (irt.blocks text)]
         [_addr-taken : unit
           (opt.opt-function-addr-taken-install! 32 (& fixture))]
-        [actual (opt.opt-load-sink-blocks 32 (clone fixture))]
+        [actual
+          (opt.opt-load-sink-blocks
+            32
+            (ir.clone-compiler-ir-block-list (& fixture)))]
         (test.assert-true
           (opt.opt-block-list-eq
             (ast.ast-node-pool-reader-type-segment-bases)
@@ -13642,16 +13661,10 @@
               (while (and same? (< index afunctions.len))
                 (set!
                   same?
-                  (let
-                    [a
-                      (opt.compiler-opt-borrowed-array-element-shared-view
-                        afunctions.slots
-                        index)]
-                    [b
-                      (opt.compiler-opt-borrowed-array-element-shared-view
-                        bfunctions.slots
-                        index)]
-                    (opt.opt-function-eq type-segment-bases a b)))
+                  (opt.opt-function-eq
+                    type-segment-bases
+                    (& (array-ref afunctions.slots index))
+                    (& (array-ref bfunctions.slots index))))
                 (+= index 1))
               (set! index 0)
               (while (and same? (< index aexterns.len))
@@ -14059,7 +14072,10 @@
       (let
         [with-main? (= variant 0)]
         [input (opt-static-array-test-program with-main?)]
-        [expected (clone (opt-program-functions (& input)))]
+        [expected
+          (let
+            [funcs (opt-program-functions (& input))]
+            (ir.clone-compiler-ir-function-seq (& funcs)))]
         [actual (opt-test-optimize-program-with-level input 0)]
         [functions (opt-program-functions (& actual))]
         [globals (opt-program-globals actual)]
@@ -14076,8 +14092,8 @@
           (test.assert-true
             (opt-global-list-defines?
               (& globals)
-              (clone (array-ref names index)))
-            (clone (array-ref names index))))
+              (string.copy (array-ref names index)))
+            (string.copy (array-ref names index))))
         (test.assert-i64-eq
           functions.len
           expected.len
@@ -28201,10 +28217,14 @@
     (for [index (iterator.range 0 64)]
       (set!
         facts
-        (opt-global-facts-push facts (Expr (clone other) (+ index 10) 0 1))))
+        (opt-global-facts-push
+          facts
+          (Expr (opt.clone-opt-global-expr-key (& other)) (+ index 10) 0 1))))
     (set!
       (array-ref buckets 0)
-      (opt-global-facts-push facts (Expr (clone key) 7 0 1)))
+      (opt-global-facts-push
+        facts
+        (Expr (opt.clone-opt-global-expr-key (& key)) 7 0 1)))
     (let
       [table : opt.OptGlobalFactTable (opt.OptGlobalFactTable buckets)]
       [probe : opt.OptGlobalFact (Expr key 8 0 0)]
@@ -28409,7 +28429,7 @@
 ;; cross-block copy step can fold it, and with it the check.
 (define (opt-slice-walk-function [bound : String]) : ir.CompilerIrFunction
   (opt-gvn-function
-    (str_cat.str-cat "slice_walk_" (clone bound))
+    (str_cat.str-cat "slice_walk_" (string.copy bound))
     (irt.params "data=%0:u64, len=%1:i64, other=%2:i64")
     (I64)
     (irt.blocks
@@ -34636,7 +34656,10 @@
         (let
           [params : ir.CompilerIrParamSeq
             (ir.compiler-ir-param-seq-prepend
-              (Param (clone (array-ref names n)) (clone (array-ref types t)) 0)
+              (Param
+                (string.copy (array-ref names n))
+                (ast.clone-ast-type (& (array-ref types t)))
+                0)
               (ir.compiler-ir-param-seq-empty))]
           (test.assert-true
             (not (opt.opt-inline-param-is-sret? (& params) 0))
@@ -47418,7 +47441,7 @@ exit:
         (irt.params "base=%0:u64, value=%1:i64")
         (I64)
         5
-        (clone blocks)
+        (ir.clone-compiler-ir-block-list (& blocks))
         Ordinary)]
     [rewritten : ir.CompilerIrFunction
       (opt.opt-gep-split-function
@@ -47461,8 +47484,8 @@ exit:
       (for [effect (iterator.range 0 2)]
         (test.assert-true
           (opt-gep-split-mutable-source-check
-            (clone (array-ref bases mode))
-            (clone (array-ref offsets mode))
+            (string.copy (array-ref bases mode))
+            (string.copy (array-ref offsets mode))
             (= effect 1)
             (>= mode 5)
             (not (or (= mode 1) (= mode 3))))
@@ -47492,7 +47515,7 @@ exit:
           (irt.params "base=%0:u64, value=%1:i64")
           (I64)
           7
-          (clone blocks)
+          (ir.clone-compiler-ir-block-list (& blocks))
           Ordinary)]
       [_addr-taken : unit
         (opt.opt-function-addr-taken-install!
@@ -67325,13 +67348,13 @@ done:
           false))]
     (for [index (iterator.range 0 (array-length cases))]
       (let
-        [case (clone (array-ref cases index))]
+        [case (& (array-ref cases index))]
         (test.assert-true
           (opt-snapshot-test-ok?
-            (clone case.before)
-            case.after
+            (string.copy (& case.before))
+            (string.copy (& case.after))
             case.address-taken)
-          case.before)))))
+          (string.copy (& case.before)))))))
 
 (test
   global-snapshot-barriers
@@ -67409,9 +67432,9 @@ done:
            return %1")]
     (for [index (iterator.range 0 (array-length cases))]
       (let
-        [text (clone (array-ref cases index))]
+        [text (string.copy (array-ref cases index))]
         (test.assert-true
-          (opt-snapshot-test-ok? (clone text) (clone text) false)
+          (opt-snapshot-test-ok? (string.copy text) (string.copy text) false)
           text))))
   (let
     [cases
@@ -67425,9 +67448,9 @@ done:
            return %0")]
     (for [index (iterator.range 0 (array-length cases))]
       (let
-        [text (clone (array-ref cases index))]
+        [text (string.copy (array-ref cases index))]
         (test.assert-true
-          (opt-snapshot-test-ok? (clone text) text true)
+          (opt-snapshot-test-ok? (string.copy text) text true)
           "an address-taken global preserves its snapshot")))))
 
 (define (opt-snapshot-early-test-ok? [before : String] [after : String]) : bool
@@ -67564,8 +67587,8 @@ done:
     (for [index (iterator.range 0 (/ (array-length cases) 2))]
       (test.assert-true
         (opt-snapshot-early-test-ok?
-          (clone (array-ref cases (* index 2)))
-          (clone (array-ref cases (+ (* index 2) 1))))
+          (string.copy (array-ref cases (* index 2)))
+          (string.copy (array-ref cases (+ (* index 2) 1))))
         "read-only call facts apply before inlining; address uses stop forwarding at writes"))))
 
 (test
@@ -67737,7 +67760,7 @@ done:
     [output
       (opt.opt-global-cell-function
         (opt.opt-program-summaries-empty-for priced?)
-        (clone input))]
+        (ir.clone-compiler-ir-function (& input)))]
     (opt.opt-function-eq
       (ast.ast-node-pool-reader-type-segment-bases)
       (& input)
@@ -67873,9 +67896,9 @@ done:
           false))]
     (for [index (iterator.range 0 (array-length cases))]
       (let
-        [case (clone (array-ref cases index))]
-        [input (irt.func (clone case.before))]
-        [expected (irt.func case.after)]
+        [case (& (array-ref cases index))]
+        [input (irt.func (string.copy (& case.before)))]
+        [expected (irt.func (string.copy (& case.after)))]
         [actual
           (opt.opt-global-cell-function (opt.opt-program-summaries-empty) input)]
         (test.assert-true
@@ -67883,7 +67906,7 @@ done:
             (ast.ast-node-pool-reader-type-segment-bases)
             (& actual)
             (& expected))
-          case.before)))))
+          (string.copy (& case.before)))))))
 
 ;; --- IAG-2: the header hoist itself -------------------------------------------
 ;;
@@ -67982,7 +68005,7 @@ return 0" true)
         (OptExternalModRefCase "return 0" false))]
     (for [index (iterator.range 0 (array-length cases))]
       (let
-        [case (clone (array-ref cases index))]
+        [case (& (array-ref cases index))]
         [program
           (irt.program
             (str_cat.str-cat
@@ -68007,7 +68030,7 @@ return 0" true)
                function @leaf(pointer=%0:u64) -> i64 vars 2 {
                entry:
 "
-              (clone case.body)
+              (string.copy (& case.body))
               "
 }
                function @callback() -> i64 vars 0 {
@@ -68034,19 +68057,19 @@ return 0" true)
               (test.assert-true objects.built? "storage table is available")
               (for [at (iterator.range 0 (array-length names))]
                 (let
-                  [name (opt-test-symbol (clone (array-ref names at)))]
+                  [name (opt-test-symbol (string.copy (array-ref names at)))]
                   (test.assert-true
                     (=
                       (opt.opt-global-mod-ref-any?
                         (opt.opt-global-mod-ref-call-mask cells.mod-ref name))
                       case.may-write)
-                    (clone case.body))
+                    (string.copy (& case.body)))
                   (test.assert-true
                     (=
                       (opt.opt-global-mod-ref-any?
                         (opt.opt-global-mod-ref-call-mask objects name))
                       case.may-write)
-                    (clone case.body))))
+                    (string.copy (& case.body)))))
               (test.assert-i64-eq
                 (opt.opt-global-mod-ref-call-mask
                   objects
@@ -68088,7 +68111,7 @@ return 0" true)
     (for [index (iterator.range 0 (array-length ids))]
       (let
         [id (array-ref ids index)]
-        [generated (opt-test-symbol (clone (array-ref names index)))]
+        [generated (opt-test-symbol (string.copy (array-ref names index)))]
         (test.assert-i64-eq
           (opt.opt-global-mod-ref-external-mask id)
           0
@@ -68133,7 +68156,7 @@ return 0" true)
           (if provided
             "internal"
             "alias")]
-        [name (opt-test-symbol (clone callee))]
+        [name (opt-test-symbol (string.copy callee))]
         [builder (ir.compiler-ir-extern-builder-with-capacity 2)]
         [_extern
           (ir.compiler-ir-extern-builder-push!
@@ -68288,10 +68311,10 @@ return 0" true)
     (profile_state.compiler-profile-state-metrics
       (profile_state.compiler-profile-state-new))
     (ast.ast-node-pool-reader-type-segment-bases)
-    (opt.opt-cfg-context-build (clone blocks))
+    (opt.opt-cfg-context-build (ir.clone-compiler-ir-block-list (& blocks)))
     params
-    (clone summaries.call-memory)
-    (clone summaries.global-cell)
+    (opt_i64_i64_map.clone-map (& summaries.call-memory))
+    (opt.clone-opt-global-cell-summary (& summaries.global-cell))
     blocks))
 
 ;; Cell operands left in the reader after load GVN.
@@ -68347,47 +68370,47 @@ return 0" true)
               (opt.opt-direct-call-effect mark)
               (ir.CompilerIrEffect.MemoryRead))
             matching?)
-          (clone label))
+          (string.copy label))
         (test.assert-true
           (=
             (opt.opt-direct-call-noreturn? cbi.compiler-builtin-id-tl-oob-abort)
             matching?)
-          (clone label))
+          (string.copy label))
         (test.assert-true
           (=
             (opt.opt-licm-store-summary-for-direct-call (& empty) mark).call-or-unknown?
             (not matching?))
-          (clone label))
+          (string.copy label))
         (test.assert-true
           (=
             (opt.opt-global-mod-ref-any?
               (opt.opt-load-call-table-row (& empty) (& none) mark))
             (not matching?))
-          (clone label))
+          (string.copy label))
         (test.assert-true
           (=
             (opt.opt-guard-dedup-call-clean? (& empty) (& none) mark)
             matching?)
-          (clone label))
+          (string.copy label))
         (test.assert-true
           (=
             (opt_i64_i64_map.contains?
               (& summaries.call-memory)
               cbi.compiler-builtin-id-tl-alloc)
             matching?)
-          (clone label))
+          (string.copy label))
         (test.assert-true
           (=
             (opt.opt-call-memory-summary-unknown?
               (opt_i64_i64_map.get-value-or (& summaries.call-memory) wrapper 0))
             (not matching?))
-          (clone label))
+          (string.copy label))
         (test.assert-true
           (=
             (opt.opt-global-mod-ref-any?
               (opt.opt-global-mod-ref-call-mask (& cells.mod-ref) mark))
             (not matching?))
-          (clone label))
+          (string.copy label))
         ;; straight-line reuse, directly and through the wrapper
         (test.assert-i64-eq
           (opt-alias-test-reads-after-gvn
@@ -68396,7 +68419,7 @@ return 0" true)
           (if matching?
             0
             1)
-          (clone label))
+          (string.copy label))
         (test.assert-i64-eq
           (opt-alias-test-reads-after-gvn
             (& summaries)
@@ -68404,7 +68427,7 @@ return 0" true)
           (if matching?
             0
             1)
-          (clone label))
+          (string.copy label))
         (test.assert-i64-eq
           (opt-alias-test-loads-after-gvn
             (& summaries)
@@ -68412,7 +68435,7 @@ return 0" true)
           (if matching?
             1
             2)
-          (clone label))
+          (string.copy label))
         ;; loop promotion
         (test.assert-i64-eq
           (opt-lp-loop-body-cell-operands
@@ -68421,7 +68444,7 @@ return 0" true)
           (if matching?
             0
             2)
-          (clone label))))))
+          (string.copy label))))))
 
 ;; One program that may pass `esc_obj`'s storage to an extern and one that
 ;; does not. Both store a cell so the tables are built.
@@ -71242,7 +71265,7 @@ return 0" true)
         (opt-licm-params)
         (I64)
         64
-        (clone blocks)
+        (ir.clone-compiler-ir-block-list (& blocks))
         Ordinary)]
     (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
       (ast.ast-node-pool-reader-type-segment-bases)
@@ -71529,7 +71552,7 @@ return 0" true)
         (opt-licm-params)
         (I64)
         64
-        (clone blocks)
+        (ir.clone-compiler-ir-block-list (& blocks))
         Ordinary)]
     [after : ir.CompilerIrBlockList
       (match (opt.opt-licm-function-with-context-result-and-direct-call-clean
@@ -71544,7 +71567,9 @@ return 0" true)
         [(Result next _) (opt.opt-function-blocks next)])]
     (cond
       [(not (= (opt-fz-preheader-loads (& after)) 14)) 1]
-      [(not (= (opt-fz-body-loads (clone after)) 2)) 2]
+      [(not
+          (= (opt-fz-body-loads (ir.clone-compiler-ir-block-list (& after))) 2))
+        2]
       ;; the most-referenced global is among the fourteen
       [(not (opt-lpc-defines? (& after) (ir.compiler-ir-label "entry") 7)) 3]
       [else 42])))
@@ -72371,7 +72396,15 @@ done:
 
 (define (opt-bt-expand-witness-run [k : i64]) : i64
   (let
-    [arr : (__tl_dyn-array i64) (clone opt-bt-expand-witness-arr)]
+    [arr : (__tl_dyn-array i64)
+      (let
+        [len : i64 (array-length opt-bt-expand-witness-arr)]
+        [copy : (__tl_dyn-array i64) (__tl_make-array i64 len)]
+        (for [index (iterator.range 0 len)]
+          (set!
+            (array-ref copy index)
+            (array-ref opt-bt-expand-witness-arr index)))
+        copy)]
     (if (= (bit-and (array-ref arr 3) 2) 0)
       (+ k 100)
       (+ k 200))))
@@ -72568,11 +72601,13 @@ done:
       (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "empty")
-          (clone no-exprs))
-        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "first") (clone first))
+          (ir.clone-compiler-ir-instr-seq (& no-exprs)))
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "first")
+          (ir.clone-compiler-ir-instr-seq (& first)))
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "second")
-          (clone second)))]
+          (ir.clone-compiler-ir-instr-seq (& second))))]
     ;; Raw block walks use the enclosing function's address-taken facts.
     [_own-facts : unit (opt.opt-function-addr-taken-install! 6 (& own))]
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
@@ -72641,9 +72676,9 @@ done:
       (opt.opt-expr-key-hash bases (& b))
       (opt.opt-expr-key-hash bases (& c))
       "all three share one bucket")
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone a)) 11))
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone b)) 22))
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone c)) 33))
+    (set! table (opt.opt-expr-table-add bases (& table) (& a) 11))
+    (set! table (opt.opt-expr-table-add bases (& table) (& b) 22))
+    (set! table (opt.opt-expr-table-add bases (& table) (& c) 33))
     (test.assert-i64-eq
       (opt-cse-table-result bases (& table) (& a))
       11
@@ -72674,19 +72709,19 @@ done:
       (opt-cse-table-result bases (& table) (& c))
       33
       "removing that successor preserves the live head")
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone b)) 44))
+    (set! table (opt.opt-expr-table-add bases (& table) (& b) 44))
     (test.assert-i64-eq
       (opt-cse-table-result bases (& table) (& a))
       -1
       "a removed successor stays absent when a second live key restores indexed lookup")
     (set! table (opt.opt-expr-table-clear (& table)))
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone a)) 11))
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone c)) 33))
+    (set! table (opt.opt-expr-table-add bases (& table) (& a) 11))
+    (set! table (opt.opt-expr-table-add bases (& table) (& c) 33))
     (test.assert-i64-eq
       (opt-cse-table-result bases (& table) (& b))
       -1
       "a prior generation cannot leak a missing colliding key into the new index")
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone b)) 22))
+    (set! table (opt.opt-expr-table-add bases (& table) (& b) 22))
     (set! table (opt.opt-expr-invalidate-var (& table) 22))
     (set! table (opt.opt-expr-invalidate-var (& table) 33))
     (test.assert-i64-eq
@@ -72697,7 +72732,7 @@ done:
       (opt-cse-table-result bases (& table) (& a))
       11
       "unlinking the head advances the bucket")
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone b)) 44))
+    (set! table (opt.opt-expr-table-add bases (& table) (& b) 44))
     (test.assert-i64-eq
       (opt-cse-table-result bases (& table) (& c))
       -1
@@ -72717,7 +72752,7 @@ done:
       -1
       "the last removal empties the bucket")
     (set! table (opt.opt-expr-table-clear (& table)))
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone a)) 0))
+    (set! table (opt.opt-expr-table-add bases (& table) (& a) 0))
     (test.assert-i64-eq
       (opt-cse-table-result bases (& table) (& a))
       0
@@ -72745,7 +72780,7 @@ done:
       (opt-cse-table-index-capacity (& table))
       0
       "invalidation and clear leave a never-used table unallocated")
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone missing)) 7))
+    (set! table (opt.opt-expr-table-add bases (& table) (& missing) 7))
     (set! table (opt.opt-expr-invalidate-var (& table) 7))
     (for [index (iterator.range 0 65)]
       (let
@@ -72785,7 +72820,7 @@ done:
       (opt-cse-table-result bases (& table) (& missing))
       -1
       "a cleared index contains no earlier key")
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone missing)) 7))
+    (set! table (opt.opt-expr-table-add bases (& table) (& missing) 7))
     (test.assert-i64-eq
       (opt-cse-table-result bases (& table) (& missing))
       7
@@ -72802,12 +72837,12 @@ done:
     [key : opt.OptExprKey (opt-cse-table-key "%0 = add %7, 2 : i64")]
     [current-collision : opt.OptExprKey
       (opt-cse-table-key "%0 = add %7, 2147483649 : i64")]
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone retired)) 9))
+    (set! table (opt.opt-expr-table-add bases (& table) (& retired) 9))
     (set!
       table
       (opt.opt-expr-table-add bases (& table) (& retired-collision) 10))
     (set! table (opt.opt-expr-table-clear (& table)))
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone key)) 11))
+    (set! table (opt.opt-expr-table-add bases (& table) (& key) 11))
     (set!
       table
       (opt.opt-expr-table-add bases (& table) (& current-collision) 12))
@@ -72858,7 +72893,7 @@ done:
       (opt-cse-table-result bases (& table) (& key))
       -1
       "rollover retires every old bucket")
-    (set! table (opt.opt-expr-table-add bases (& table) (& (clone key)) 0))
+    (set! table (opt.opt-expr-table-add bases (& table) (& key) 0))
     (test.assert-i64-eq
       (opt-cse-table-result bases (& table) (& key))
       0
@@ -79713,7 +79748,8 @@ done:
           (opt-call-memory-test-function
             symbols.caller
             (ir.compiler-ir-param-seq-empty)
-            (opt-test-instr-seq-copy (clone instrs)))))]
+            (opt-test-instr-seq-copy
+              (ir.clone-compiler-ir-instr-seq (& instrs))))))]
     [globals (opt-t22-storage-globals symbols)]
     [cells
       (opt-test-global-obj-attach
@@ -85114,7 +85150,7 @@ done:
   (opt.opt-ssa-rename-blocks-prepend-owned
     blocks
     label
-    (ir.CompilerIrInstrSeq (clone instrs.slots) instrs.len)))
+    (ir.clone-compiler-ir-instr-seq instrs)))
 
 (define (opt-ssa-rewrite-spmd-call-args
   [env : opt.OptSsaRenameEnv]
@@ -85426,22 +85462,46 @@ done:
     [i64-ty : ast.AstType (I64)]
     [dynamic : ir.CompilerIrValue (Var 7)]
     (test.assert-true
-      (opt-fault-rule-case? (Shl (clone i64-ty)) (I64 63) true true)
+      (opt-fault-rule-case?
+        (Shl (ast.clone-ast-type (& i64-ty)))
+        (I64 63)
+        true
+        true)
       "a literal in-range shift cannot fault")
     (test.assert-true
-      (opt-fault-rule-case? (Shl (clone i64-ty)) (clone dynamic) false false)
+      (opt-fault-rule-case?
+        (Shl (ast.clone-ast-type (& i64-ty)))
+        (ir.compiler-ir-clone-value (& dynamic))
+        false
+        false)
       "a dynamic shl count can fault")
     (test.assert-true
-      (opt-fault-rule-case? (Shr (clone i64-ty)) (clone dynamic) false false)
+      (opt-fault-rule-case?
+        (Shr (ast.clone-ast-type (& i64-ty)))
+        (ir.compiler-ir-clone-value (& dynamic))
+        false
+        false)
       "a dynamic shr count can fault")
     (test.assert-true
-      (opt-fault-rule-case? (Shl (clone i64-ty)) (I64 64) false false)
+      (opt-fault-rule-case?
+        (Shl (ast.clone-ast-type (& i64-ty)))
+        (I64 64)
+        false
+        false)
       "an out-of-range literal count faults")
     (test.assert-true
-      (opt-fault-rule-case? (Div) (clone dynamic) false false)
+      (opt-fault-rule-case?
+        (Div)
+        (ir.compiler-ir-clone-value (& dynamic))
+        false
+        false)
       "a division can fault")
     (test.assert-true
-      (opt-fault-rule-case? (SafeDiv) (clone dynamic) true false)
+      (opt-fault-rule-case?
+        (SafeDiv)
+        (ir.compiler-ir-clone-value (& dynamic))
+        true
+        false)
       "a proven division is skippable but not run once")
     (test.assert-true
       (opt-fault-rule-case? (Add) dynamic true true)
@@ -87342,7 +87402,7 @@ return
         (opt.opt-verify-test-seen? (& (array-ref expected i)))
         (str_cat.str-cat
           "missing planted-defect pass coverage: "
-          (clone (array-ref expected i)))))))
+          (string.copy (array-ref expected i)))))))
 
 ;; Goldens captured with the base full verifier on 0bc228b76. Each case checks
 ;; the complete first diagnostic, including the two faults in the final rows.
@@ -87395,7 +87455,7 @@ return
         "Ok")]
     (for [i (iterator.range 0 (array-length cases))]
       (let
-        [func (irt.func (clone (array-ref cases i)))]
+        [func (irt.func (string.copy (array-ref cases i)))]
         [actual : String
           (match (opt.opt-verify-function (& func))
             [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
@@ -87431,7 +87491,7 @@ return
         "block entry instruction 0: optimizer verify: use before definition")]
     (for [i (iterator.range 0 (array-length cases))]
       (let
-        [func (irt.func (clone (array-ref cases i)))]
+        [func (irt.func (string.copy (array-ref cases i)))]
         [verdict (opt.opt-verify-final-function (& func))]
         [actual : String
           (match verdict
@@ -87457,7 +87517,7 @@ return
         "function @term() -> unit vars 1 {\nentry:\n%0 = call resume() : unit\nreturn\n}")]
     (for [i (iterator.range 0 (array-length cases))]
       (let
-        [func (irt.func (clone (array-ref cases i)))]
+        [func (irt.func (string.copy (array-ref cases i)))]
         [expected : String
           (if (< i 5)
             "optimizer verify: instruction after terminator in block entry"
@@ -87520,7 +87580,9 @@ return
     [i64-id : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
     [reg-str-ty : ast.AstType (ast.AstType.Region owner-id str-id)]
     [reg-str-id : i64
-      (ast.ast-node-pool-context-type-push pools (clone reg-str-ty))]
+      (ast.ast-node-pool-context-type-push
+        pools
+        (ast.clone-ast-type (& reg-str-ty)))]
     [nested-reg-str-ty : ast.AstType (ast.AstType.Region owner-id reg-str-id)]
     [inv-str-ty : ast.AstType (ast.AstType.Invalidate owner-id str-id)]
     [reg-i64-ty : ast.AstType (ast.AstType.Region owner-id i64-id)]
@@ -87531,7 +87593,7 @@ return
             (ir.compiler-ir-param-seq-prepend
               (ir.CompilerIrParam.Param "dst" (ast.AstType.Ptr i64-id) 0)
               (ir.compiler-ir-param-seq-prepend
-                (ir.CompilerIrParam.Param "val" (clone ty) 1)
+                (ir.CompilerIrParam.Param "val" (ast.clone-ast-type (& ty)) 1)
                 (ir.compiler-ir-param-seq-empty)))]
           [instrs : ir.CompilerIrInstrBuilder
             (ir.compiler-ir-instr-builder-with-capacity 2)]
@@ -87614,7 +87676,7 @@ return
         [program
           (opt-tailrec-array-authorize
             (ast.ast-node-pool-reader-context-current)
-            (irt.program (clone (array-ref cases i))))]
+            (irt.program (string.copy (array-ref cases i))))]
         [actual : String
           (match (opt.opt-verify-program (& program))
             [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
@@ -87642,7 +87704,7 @@ return
         [program
           (opt-tailrec-array-authorize
             (ast.ast-node-pool-reader-context-current)
-            (irt.program (clone (array-ref cases i))))]
+            (irt.program (string.copy (array-ref cases i))))]
         [actual : String
           (match (opt.opt-verify-program (& program))
             [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
@@ -88550,13 +88612,13 @@ inl.entry.0.cont:
                     (irt.params
                       (str_cat.str-cat
                         "value=%0:"
-                        (clone (array-ref types ty))
+                        (string.copy (array-ref types ty))
                         ", ptr=%1:u64"))]
                   [blocks
                     (irt.blocks
                       (str_cat.str-cat
                         "entry:\n"
-                        (clone (array-ref bodies body))))]
+                        (string.copy (array-ref bodies body))))]
                   [args
                     (ir.CompilerIrCallArgs.Two
                       (Global (ir.compiler-ir-symbol "capture_a"))

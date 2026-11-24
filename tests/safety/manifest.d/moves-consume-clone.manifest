@@ -1,0 +1,93 @@
+# Safety corpus cases: moves, consumption, cloning, and ownership splitting.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+clone_reference_prefix_move_reject|check-fail|tests/safety/clone_reference_prefix_move_reject.tl|-|use of moved value `cell`
+clone_reference_prefix_deref_reject|check-fail|tests/safety/clone_reference_prefix_deref_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_shadow_reject|check-fail|tests/safety/clone_reference_shadow_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_let_move_reject|check-fail|tests/safety/clone_reference_let_move_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_direct_ref_reject|check-fail|tests/safety/clone_reference_direct_ref_reject.tl|-|clone unsupported type (& source Cell)
+clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper at LocalRawWrapper.item.ptr: (Ptr i64) has no clone capability
+clone_deep_missing_owner_reject|check-fail|tests/safety/clone_deep_missing_owner_reject.tl|-|at clone.deep from owner clone_deep_missing_owner; invoke gen-clone in its owner module first
+clone_deep_function_reject|check-fail|tests/safety/clone_deep_function_reject.tl|-|gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep
+clone_deep_reference_reject|check-fail|tests/safety/clone_deep_reference_reject.tl|-|gen-clone: unsupported type ref_source_i64 at clone.deep
+clone_deep_pointer_reject|check-fail|tests/safety/clone_deep_pointer_reject.tl|-|gen-clone: unsupported type ptr_i64 at clone.deep[0]
+clone_deep_cleanup_reject|check-fail|tests/safety/clone_deep_cleanup_reject.tl|-|gen-clone: unsupported cleanup-owning type struct_Resource at clone.deep
+clone_deep_conditional_reject|check-fail|tests/safety/clone_deep_conditional_reject.tl|-|use of moved value `left`
+move_value_if_reuse_reject|check-fail|tests/safety/move_value_if_reuse_reject.tl|-|use of moved value `x`
+move_value_match_reuse_reject|check-fail|tests/safety/move_value_match_reuse_reject.tl|-|use of moved value `x`
+move_value_begin_reuse_reject|check-fail|tests/safety/move_value_begin_reuse_reject.tl|-|use of moved value `x`
+move_value_let_body_reuse_reject|check-fail|tests/safety/move_value_let_body_reuse_reject.tl|-|use of moved value `x`
+move_value_with_tail_reuse_reject|check-fail|tests/safety/move_value_with_tail_reuse_reject.tl|-|use of moved value `x`
+move_value_box_reuse_reject|check-fail|tests/safety/move_value_box_reuse_reject.tl|-|use of moved value `x`
+move_value_loop_carried_reject|check-fail|tests/safety/move_value_loop_carried_reject.tl|-|cannot move loop-carried owner value `x`
+move_value_tail_shadow_ok|run-exit|tests/safety/move_value_tail_shadow_ok.tl|42|-
+move_value_plain_if_reuse_reject|check-fail|tests/safety/move_value_plain_if_reuse_reject.tl|-|use of moved value `x`
+move_value_plain_match_reuse_reject|check-fail|tests/safety/move_value_plain_match_reuse_reject.tl|-|use of moved value `z`
+move_value_plain_cond_reuse_reject|check-fail|tests/safety/move_value_plain_cond_reuse_reject.tl|-|use of moved value `x`
+move_value_string_let_reuse_reject|check-fail|tests/safety/move_value_string_let_reuse_reject.tl|-|use of moved value `name`
+move_value_array_begin_reuse_reject|check-fail|tests/safety/move_value_array_begin_reuse_reject.tl|-|use of moved value `items`
+move_value_plain_if_once_defined|run-exit|tests/safety/move_value_plain_if_once_defined.tl|42|-
+move_value_copy_if_reuse_defined|run-exit|tests/safety/move_value_copy_if_reuse_defined.tl|42|-
+move_value_borrow_if_reuse_defined|run-exit|tests/safety/move_value_borrow_if_reuse_defined.tl|42|-
+move_diverging_if_return_ok|run-exit|tests/safety/move_diverging_if_return_ok.tl|42|-
+move_diverging_match_return_ok|run-exit|tests/safety/move_diverging_match_return_ok.tl|42|-
+move_diverging_never_call_ok|run-exit|tests/safety/move_diverging_never_call_ok.tl|42|-
+move_diverging_nested_join_ok|run-exit|tests/safety/move_diverging_nested_join_ok.tl|42|-
+move_diverging_reinit_other_arm_ok|run-exit|tests/safety/move_diverging_reinit_other_arm_ok.tl|42|-
+move_diverging_loop_break_continue_ok|run-exit|tests/safety/move_diverging_loop_break_continue_ok.tl|42|-
+move_normal_arm_after_join_reject|check-fail|tests/safety/move_normal_arm_after_join_reject.tl|-|typecheck: use of moved value `t`
+move_diverging_and_normal_arm_reject|check-fail|tests/safety/move_diverging_and_normal_arm_reject.tl|-|typecheck: use of moved value `t`
+move_diverging_arm_reuse_reject|check-fail|tests/safety/move_diverging_arm_reuse_reject.tl|-|use of moved value `t`
+move_before_diverging_branch_reject|check-fail|tests/safety/move_before_diverging_branch_reject.tl|-|use of moved value `t`
+move_try_arm_after_join_reject|check-fail|tests/safety/move_try_arm_after_join_reject.tl|-|use of moved value `t`
+move_lambda_return_arm_after_join_reject|check-fail|tests/safety/move_lambda_return_arm_after_join_reject.tl|-|use of moved value `t`
+move_shadow_let_reuse_reject|check-fail|tests/safety/move_shadow_let_reuse_reject.tl|-|use of moved value `t`
+move_shadow_let_init_reuse_reject|check-fail|tests/safety/move_shadow_let_init_reuse_reject.tl|-|use of moved value `t`
+move_shadow_loop_let_reuse_reject|check-fail|tests/safety/move_shadow_loop_let_reuse_reject.tl|-|use of moved value `t`
+move_shadow_with_binding_reuse_reject|check-fail|tests/safety/move_shadow_with_binding_reuse_reject.tl|-|use of moved value `t`
+move_shadow_inner_move_ok|run-exit|tests/safety/move_shadow_inner_move_ok.tl|42|-
+consume_parameter_use_after_move_reject|check-fail|tests/safety/consume_parameter_use_after_move_reject.tl|-|use of moved value `text`
+consume_parameter_borrow_live_reject|check-fail|tests/safety/consume_parameter_borrow_live_reject.tl|-|cannot move borrowed place `text`
+consume_parameter_function_type_mismatch_reject|check-fail|tests/safety/consume_parameter_function_type_mismatch_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_reference_reject|check-fail|tests/safety/consume_parameter_reference_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_extern_reject|check-fail|tests/safety/consume_parameter_extern_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_comptime_reject|check-fail|tests/safety/consume_parameter_comptime_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_projection_use_after_move_reject|check-fail|tests/safety/consume_parameter_projection_use_after_move_reject.tl|-|use of moved value `pair.text`
+consume_parameter_mut_reference_reject|check-fail|tests/safety/consume_parameter_mut_reference_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_function_reference_reject|check-fail|tests/safety/consume_parameter_function_reference_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_plain_struct_read_ok|check-ok|tests/safety/consume_parameter_plain_struct_read_ok.tl|-|-
+consume_parameter_plain_struct_mutation_ok|check-ok|tests/safety/consume_parameter_plain_struct_mutation_ok.tl|-|-
+consume_parameter_plain_struct_twice_ok|check-ok|tests/safety/consume_parameter_plain_struct_twice_ok.tl|-|-
+consume_parameter_mut_borrow_copy_ok|check-ok|tests/safety/consume_parameter_mut_borrow_copy_ok.tl|-|-
+consume_parameter_qualified_struct_ok|check-ok|tests/safety/consume_parameter_qualified_struct_ok.tl|tests/safety/consume_parameter_qualified_struct_ok_helper.tl|-
+consume_parameter_generated_struct_ok|check-ok|tests/safety/consume_parameter_generated_struct_ok.tl|-|-
+consume_parameter_unknown_metadata_reject|check-fail|tests/safety/consume_parameter_unknown_metadata_reject.tl|-|parse: unknown parameter metadata :unknown
+consume_parameter_duplicate_metadata_reject|check-fail|tests/safety/consume_parameter_duplicate_metadata_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+consume_parameter_function_metadata_arity_reject|check-fail|tests/safety/consume_parameter_function_metadata_arity_reject.tl|-|parse: :consume has been removed; by-value parameters move non-Copy values
+move_out_of_reference_call_arg_reject|check-fail|tests/safety/move_out_of_reference_call_arg_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_call_arg_help_reject|check-fail|tests/safety/move_out_of_reference_call_arg_reject.tl|-|help: pass an owned clone, or make the parameter a reference and pass `(& ...)`
+move_out_of_reference_local_borrow_reject|check-fail|tests/safety/move_out_of_reference_local_borrow_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_let_reject|check-fail|tests/safety/move_out_of_reference_let_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_let_help_reject|check-fail|tests/safety/move_out_of_reference_let_reject.tl|-|help: bind a borrow `(& ...)` of it instead, or an owned clone
+move_out_of_reference_let_inferred_reject|check-fail|tests/safety/move_out_of_reference_let_inferred_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_constructor_reject|check-fail|tests/safety/move_out_of_reference_constructor_reject.tl|-|help: construct with an owned clone of it, or make the field a reference
+move_out_of_reference_return_reject|check-fail|tests/safety/move_out_of_reference_return_reject.tl|-|help: return an owned clone, or return a reference tied to a parameter's lifetime
+move_out_of_reference_field_reject|check-fail|tests/safety/move_out_of_reference_field_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_string_field_reject|check-fail|tests/safety/move_out_of_reference_string_field_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+move_out_of_reference_tuple_element_reject|check-fail|tests/safety/move_out_of_reference_tuple_element_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+move_out_of_reference_tuple_auto_deref_reject|check-fail|tests/safety/move_out_of_reference_tuple_auto_deref_reject.tl|tests/safety/move_out_of_reference_tuple_auto_deref_reject.tl:8:20|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+move_out_of_mut_reference_tuple_auto_deref_reject|check-fail|tests/safety/move_out_of_mut_reference_tuple_auto_deref_reject.tl|tests/safety/move_out_of_mut_reference_tuple_auto_deref_reject.tl:5:3|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
+move_out_of_reference_mut_reject|check-fail|tests/safety/move_out_of_reference_mut_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a mutable reference; `Pt` is not Copy
+move_out_of_reference_branch_reject|check-fail|tests/safety/move_out_of_reference_branch_reject.tl|-|help: borrow it with `(& ...)` instead, or use an owned clone
+move_out_of_reference_borrow_ok|run-exit|tests/safety/move_out_of_reference_borrow_ok.tl|42|-
+move_out_view_element_return_reject|check-fail|tests/safety/move_out_view_element_return_reject.tl|tests/safety/move_out_view_element_return_reject.tl:12:3|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+move_out_view_element_argument_reject|check-fail|tests/safety/move_out_view_element_argument_reject.tl|tests/safety/move_out_view_element_argument_reject.tl:16:9|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+clone_read_positions_ok|run-exit|tests/safety/clone_read_positions_ok.tl|42|-
+clone_read_condition_move_reject|check-fail|tests/safety/clone_read_condition_move_reject.tl|tests/safety/clone_read_condition_move_reject.tl:17:19|use of moved value `a`
+ownership_split_chain_reject|check-fail|tests/safety/ownership_split_chain_reject.tl|tests/safety/ownership_split_chain_reject.tl:20:13|cannot assign to borrowed place `pair.right`
+clone_cleanup_owned_reject|check-fail|tests/safety/clone_cleanup_owned_reject.tl|-|error[E0206]: typecheck: clone unsupported type Res at Res: cleanup-owning type Res cannot be cloned
+clone_cleanup_deref_reject|check-fail|tests/safety/clone_cleanup_deref_reject.tl|-|error[E0206]: typecheck: clone unsupported type Res at Res: cleanup-owning type Res cannot be cloned
+clone_cleanup_enum_reject|check-fail|tests/safety/clone_cleanup_enum_reject.tl|-|error[E0206]: typecheck: clone unsupported type Handle at Handle: cleanup-owning type Handle cannot be cloned
+clone_cleanup_containing_aggregate_reject|check-fail|tests/safety/clone_cleanup_containing_aggregate_reject.tl|-|error[E0206]: typecheck: clone unsupported type Wrapper at Wrapper: cleanup-owning type Wrapper cannot be cloned
+clone_cleanup_tuple_reject|check-fail|tests/safety/clone_cleanup_tuple_reject.tl|-|error[E0206]: typecheck: clone unsupported type (Tuple Res i64)
+clone_non_cleanup_control_ok|run-exit|tests/safety/clone_non_cleanup_control_ok.tl|42|-

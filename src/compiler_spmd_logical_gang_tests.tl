@@ -2,6 +2,7 @@
 (import compiler_spmd_numeric_policy as numeric)
 (import stdlib.iterator)
 (import stdlib.io)
+(import stdlib.string)
 (import stdlib.test)
 
 (define (gang-test-plan
@@ -342,5 +343,5 @@
     (for [index (iterator.range 0 9)]
       (test.assert-owned-string-eq
         (gang.compiler-spmd-gang-error-message (array-ref errors index))
-        (clone (array-ref messages index))
+        (string.copy (array-ref messages index))
         "stable planner diagnostic"))))

@@ -1,0 +1,110 @@
+# Safety corpus cases: MIR ownership checks for borrows, references, reborrows, views, closures, and calls.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+mir_view_array_literal_move_out_reject|check-fail|tests/safety/mir_view_array_literal_move_out_reject.tl|-|cannot move a `String` out of a shared reference
+mir_call_use_after_move_reject|check-fail|tests/safety/mir_call_use_after_move_reject.tl|tests/safety/mir_call_use_after_move_reject.tl:7:30|use of moved value `text`
+mir_call_branch_move_reject|check-fail|tests/safety/mir_call_branch_move_reject.tl|tests/safety/mir_call_branch_move_reject.tl:11:23|use of moved value `text`
+mir_call_loop_move_reject|check-fail|tests/safety/mir_call_loop_move_reject.tl|tests/safety/mir_call_loop_move_reject.tl:12:41|cannot move loop-carried owner value `text`
+mir_call_moves_ok|run-exit|tests/safety/mir_call_moves_ok.tl|42|-
+mir_ref_nested_write_owned_reject|check-fail|tests/safety/mir_ref_nested_write_owned_reject.tl|tests/safety/mir_ref_nested_write_owned_reject.tl:19:15|cannot assign to borrowed place `v`
+mir_ref_two_phase_ok|run-exit|tests/safety/mir_ref_two_phase_ok.tl|42|-
+mir_ref_two_phase_move_reject|check-fail|tests/safety/mir_ref_two_phase_move_reject.tl|tests/safety/mir_ref_two_phase_move_reject.tl:12:24|cannot move borrowed place `d`
+mir_ref_alias_mut_param_reject|check-fail|tests/safety/mir_ref_alias_mut_param_reject.tl|tests/safety/mir_ref_alias_mut_param_reject.tl:9:10|cannot mutably borrow borrowed place `c`
+mir_ref_implicit_reborrow_shared_arg_reject|check-fail|tests/safety/mir_ref_implicit_reborrow_shared_arg_reject.tl|tests/safety/mir_ref_implicit_reborrow_shared_arg_reject.tl:14:21|error[E0207]: typecheck: cannot mutably borrow borrowed place `p`
+mir_ref_implicit_reborrow_replace_reservation_reject|check-fail|tests/safety/mir_ref_implicit_reborrow_replace_reservation_reject.tl|tests/safety/mir_ref_implicit_reborrow_replace_reservation_reject.tl:15:13|error[E0207]: typecheck: cannot mutably borrow borrowed place `p`
+mir_ref_implicit_reborrow_deref_arg_reject|check-fail|tests/safety/mir_ref_implicit_reborrow_deref_arg_reject.tl|tests/safety/mir_ref_implicit_reborrow_deref_arg_reject.tl:14:27|error[E0207]: typecheck: cannot mutably borrow borrowed place `p`
+mir_ref_shared_while_mut_reject|check-fail|tests/safety/mir_ref_shared_while_mut_reject.tl|tests/safety/mir_ref_shared_while_mut_reject.tl:14:20|cannot immutably borrow mutably borrowed place `c`
+mir_nll_dead_mut_borrow_ok|run-exit|tests/safety/mir_nll_dead_mut_borrow_ok.tl|42|-
+mir_nll_loop_if_join_reference_ok|run-exit|tests/safety/mir_nll_loop_if_join_reference_ok.tl|42|-
+mir_nll_loop_if_join_reference_live_reject|check-fail|tests/safety/mir_nll_loop_if_join_reference_live_reject.tl|tests/safety/mir_nll_loop_if_join_reference_live_reject.tl:16:26|cannot assign to borrowed place `values`
+mir_nll_loop_if_join_reference_copy_reject|check-fail|tests/safety/mir_nll_loop_if_join_reference_copy_reject.tl|tests/safety/mir_nll_loop_if_join_reference_copy_reject.tl:17:26|cannot assign to borrowed place `values`
+mir_reference_copy_then_write_reject|check-fail|tests/safety/mir_reference_copy_then_write_reject.tl|tests/safety/mir_reference_copy_then_write_reject.tl:9:13|cannot assign to borrowed place `a`
+mir_reference_holder_move_then_write_reject|check-fail|tests/safety/mir_reference_holder_move_then_write_reject.tl|tests/safety/mir_reference_holder_move_then_write_reject.tl:14:13|cannot assign to borrowed place `a`
+mir_reference_loop_reissue_held_reject|check-fail|tests/safety/mir_reference_loop_reissue_held_reject.tl|tests/safety/mir_reference_loop_reissue_held_reject.tl:18:24|cannot assign to borrowed place `p.a[0]`
+mir_reference_loop_reissue_shared_ok|run-exit|tests/safety/mir_reference_loop_reissue_shared_ok.tl|42|-
+mir_reference_loop_reissue_borrowed_holder_reject|check-fail|tests/safety/mir_reference_loop_reissue_borrowed_holder_reject.tl|tests/safety/mir_reference_loop_reissue_borrowed_holder_reject.tl:22:24|cannot assign to borrowed place `p.a[0]`
+mir_reference_loop_reissue_borrowed_holder_ok|run-exit|tests/safety/mir_reference_loop_reissue_borrowed_holder_ok.tl|42|-
+mir_local_ref_conflict_reject|check-fail|tests/safety/mir_local_ref_conflict_reject.tl|tests/safety/mir_local_ref_conflict_reject.tl:7:25|cannot assign to borrowed place `items`
+mir_local_ref_field_read_ok|run-exit|tests/safety/mir_local_ref_field_read_ok.tl|42|-
+mir_local_ref_field_set_shared_reject|check-fail|tests/safety/mir_local_ref_field_set_shared_reject.tl|tests/safety/mir_local_ref_field_set_shared_reject.tl:10:24|cannot mutably borrow `cache.ready` behind a shared reference
+mir_reference_array_loan_reject|check-fail|tests/safety/mir_reference_array_loan_reject.tl|tests/safety/mir_reference_array_loan_reject.tl:7:25|cannot assign to borrowed place `items`
+mir_call_result_loan_ok|run-exit|tests/safety/mir_call_result_loan_ok.tl|42|-
+mir_call_result_loan_reject|check-fail|tests/safety/mir_call_result_loan_reject.tl|tests/safety/mir_call_result_loan_reject.tl:13:13|cannot assign to borrowed place `pair.right`
+mir_global_ok|run-exit|tests/safety/mir_global_ok.tl|42|-
+mir_global_borrow_conflict_reject|check-fail|tests/safety/mir_global_borrow_conflict_reject.tl|tests/safety/mir_global_borrow_conflict_reject.tl:12:24|cannot assign to borrowed place `items[0]`
+mir_mut_borrow_through_shared_reject|check-fail|tests/safety/mir_mut_borrow_through_shared_reject.tl|tests/safety/mir_mut_borrow_through_shared_reject.tl:21:23|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+mir_holder_ok|run-exit|tests/safety/mir_holder_ok.tl|5|-
+mir_holder_borrow_conflict_reject|check-fail|tests/safety/mir_holder_borrow_conflict_reject.tl|tests/safety/mir_holder_borrow_conflict_reject.tl:16:13|cannot mutably borrow borrowed place `items`
+mir_call_result_lifetime_ok|run-exit|tests/safety/mir_call_result_lifetime_ok.tl|42|-
+mir_reborrow_shared_from_mut_reject|check-fail|tests/safety/mir_reborrow_shared_from_mut_reject.tl|tests/safety/mir_reborrow_shared_from_mut_reject.tl:14:13|cannot assign to borrowed place `exclusive.value`
+mir_call_result_deref_reject|check-fail|tests/safety/mir_call_result_deref_reject.tl|tests/safety/mir_call_result_deref_reject.tl:14:13|cannot assign to borrowed place `x.value`
+mir_global_assign_ok|run-exit|tests/safety/mir_global_assign_ok.tl|42|-
+mir_global_assign_borrowed_reject|check-fail|tests/safety/mir_global_assign_borrowed_reject.tl|tests/safety/mir_global_assign_borrowed_reject.tl:12:13|cannot assign to borrowed place `names`
+mir_reference_element_shift_ok|check-ok|tests/safety/mir_reference_element_shift_ok.tl|-|-
+mir_in_arena_bare_ok|run-exit|tests/safety/mir_in_arena_bare_ok.tl|42|-
+mir_in_arena_borrow_conflict_reject|check-fail|tests/safety/mir_in_arena_borrow_conflict_reject.tl|tests/safety/mir_in_arena_borrow_conflict_reject.tl:13:26|cannot assign to borrowed place `items[0]`
+mir_slice_view_ok|run-exit|tests/safety/mir_slice_view_ok.tl|42|-
+mir_slice_mut_view_ok|run-exit|tests/safety/mir_slice_mut_view_ok.tl|42|-
+mir_slice_view_conflict_reject|check-fail|tests/safety/mir_slice_view_conflict_reject.tl|tests/safety/mir_slice_view_conflict_reject.tl:7:24|cannot assign to borrowed place `items[1]`
+mir_slice_mut_view_conflict_reject|check-fail|tests/safety/mir_slice_mut_view_conflict_reject.tl|-|cannot read mutably borrowed place `items[1]`
+mir_reborrow_outlives_reference_reject|check-fail|tests/safety/mir_reborrow_outlives_reference_reject.tl|tests/safety/mir_reborrow_outlives_reference_reject.tl:19:13|cannot assign to borrowed place `x.len`
+mir_reborrow_shared_outlives_reference_reject|check-fail|tests/safety/mir_reborrow_shared_outlives_reference_reject.tl|tests/safety/mir_reborrow_shared_outlives_reference_reject.tl:18:13|cannot assign to borrowed place `x.len`
+mir_view_scrutinee_ok|run-exit|tests/safety/mir_view_scrutinee_ok.tl|42|-
+mir_view_scrutinee_conflict_reject|check-fail|tests/safety/mir_view_scrutinee_conflict_reject.tl|tests/safety/mir_view_scrutinee_conflict_reject.tl:17:15|cannot assign to borrowed place `decl.kind`
+mir_view_if_move_out_reject|check-fail|tests/safety/mir_view_if_move_out_reject.tl|tests/safety/mir_view_if_move_out_reject.tl:9:5|cannot move a `String` out of a shared reference
+mir_view_return_move_out_reject|check-fail|tests/safety/mir_view_return_move_out_reject.tl|tests/safety/mir_view_return_move_out_reject.tl:7:3|cannot move a `String` out of a shared reference
+mir_view_binder_write_reject|check-fail|tests/safety/mir_view_binder_write_reject.tl|tests/safety/mir_view_binder_write_reject.tl:11:24|cannot mutably borrow `counts.items` behind a shared reference
+mir_view_binder_mut_borrow_reject|check-fail|tests/safety/mir_view_binder_mut_borrow_reject.tl|tests/safety/mir_view_binder_mut_borrow_reject.tl:13:14|cannot mutably borrow `counts.items` behind a shared reference
+mir_view_copy_read_ok|run-exit|tests/safety/mir_view_copy_read_ok.tl|42|-
+mir_view_binder_read_ok|run-exit|tests/safety/mir_view_binder_read_ok.tl|42|-
+mir_view_if_owned_ok|run-exit|tests/safety/mir_view_if_owned_ok.tl|42|-
+mir_indirect_call_ok|run-exit|tests/safety/mir_indirect_call_ok.tl|42|-
+mir_indirect_call_moved_reject|check-fail|tests/safety/mir_indirect_call_moved_reject.tl|tests/safety/mir_indirect_call_moved_reject.tl:8:19|use of moved value `items`
+mir_indirect_call_borrow_reject|check-fail|tests/safety/mir_indirect_call_borrow_reject.tl|tests/safety/mir_indirect_call_borrow_reject.tl:10:10|cannot mutably borrow borrowed place `items`
+mir_arena_destroy_shadowed_use_reject|check-fail|tests/safety/mir_arena_destroy_shadowed_use_reject.tl|tests/safety/mir_arena_destroy_shadowed_use_reject.tl:16:29|use of moved value `text`
+mir_arena_owner_handle_ok|run-exit|tests/safety/mir_arena_owner_handle_ok.tl|42|-
+mir_closure_escape_argument_reject|check-fail|tests/safety/mir_closure_escape_argument_reject.tl|tests/safety/mir_closure_escape_argument_reject.tl:12:7|non-Copy closure ownership would be erased by escaping the direct local binding
+mir_closure_escape_field_reject|check-fail|tests/safety/mir_closure_escape_field_reject.tl|tests/safety/mir_closure_escape_field_reject.tl:13:9|non-Copy closure ownership would be erased by escaping the direct local binding
+mir_closure_escape_branch_return_reject|check-fail|tests/safety/mir_closure_escape_branch_return_reject.tl|tests/safety/mir_closure_escape_branch_return_reject.tl:7:5|non-Copy closure ownership would be erased by escaping the direct local binding
+mir_closure_mut_capture_calls_ok|run-exit|tests/safety/mir_closure_mut_capture_calls_ok.tl|42|-
+mir_closure_moved_local_call_ok|run-exit|tests/safety/mir_closure_moved_local_call_ok.tl|42|-
+mir_closure_once_per_branch_ok|run-exit|tests/safety/mir_closure_once_per_branch_ok.tl|42|-
+mir_closure_shared_capture_write_reject|check-fail|tests/safety/mir_closure_shared_capture_write_reject.tl|tests/safety/mir_closure_shared_capture_write_reject.tl:12:13|cannot assign to borrowed place `x`
+mir_thread_send_branch_destroy_reject|check-fail|tests/safety/mir_thread_send_branch_destroy_reject.tl|tests/safety/mir_thread_send_branch_destroy_reject.tl:22:11|cannot prove atomic arena `owner` is released after an owner-tagged value was sent to a channel
+mir_thread_send_other_branch_destroy_ok|check-ok|tests/safety/mir_thread_send_other_branch_destroy_ok.tl|-|-
+mir_thread_unjoined_handle_destroy_reject|check-fail|tests/safety/mir_thread_unjoined_handle_destroy_reject.tl|tests/safety/mir_thread_unjoined_handle_destroy_reject.tl:17:7|requires atomic arena user `spawned` to be joined or released before invalidating `owner`
+mir_thread_join_then_destroy_ok|check-ok|tests/safety/mir_thread_join_then_destroy_ok.tl|-|-
+mir_view_field_assign_reject|check-fail|tests/safety/mir_view_field_assign_reject.tl|tests/safety/mir_view_field_assign_reject.tl:18:13|cannot assign to borrowed place `outer.inner`
+mir_view_field_after_last_use_ok|run-exit|tests/safety/mir_view_field_after_last_use_ok.tl|42|-
+mir_slice_split_halves_ok|run-exit|tests/safety/mir_slice_split_halves_ok.tl|42|-
+mir_slice_split_source_write_reject|check-fail|tests/safety/mir_slice_split_source_write_reject.tl|tests/safety/mir_slice_split_source_write_reject.tl:11:24|cannot assign to borrowed place `items[0]`
+mir_slice_child_parent_reuse_ok|run-exit|tests/safety/mir_slice_child_parent_reuse_ok.tl|42|-
+mir_slice_element_place_ok|run-exit|tests/safety/mir_slice_element_place_ok.tl|42|-
+mir_lifetime_foreign_calls_ok|check-ok|tests/safety/mir_lifetime_foreign_calls_ok.tl|-|-
+mir_referent_match_move_out_reject|check-fail|tests/safety/mir_referent_match_move_out_reject.tl|tests/safety/mir_referent_match_move_out_reject.tl:15:28|cannot move a `String` out of a shared reference
+mir_referent_box_match_move_out_reject|check-fail|tests/safety/mir_referent_box_match_move_out_reject.tl|tests/safety/mir_referent_box_match_move_out_reject.tl:15:26|cannot move a `String` out of a shared reference
+mir_referent_match_test_ok|run-exit|tests/safety/mir_referent_match_test_ok.tl|42|-
+mir_referent_nested_match_move_out_reject|check-fail|tests/safety/mir_referent_nested_match_move_out_reject.tl|tests/safety/mir_referent_nested_match_move_out_reject.tl:18:32|cannot move a `String` out of a shared reference
+mir_referent_copy_payload_ok|run-exit|tests/safety/mir_referent_copy_payload_ok.tl|42|-
+mir_reference_array_push_reject|check-fail|tests/safety/mir_reference_array_push_reject.tl|tests/safety/mir_reference_array_push_reject.tl:12:13|cannot mutably borrow borrowed place `value`
+mir_reference_array_store_reject|check-fail|tests/safety/mir_reference_array_store_reject.tl|tests/safety/mir_reference_array_store_reject.tl:17:13|cannot mutably borrow borrowed place `pair`
+mir_reference_array_return_ok|check-ok|tests/safety/mir_reference_array_return_ok.tl|-|-
+mir_reference_slice_param_ok|check-ok|tests/safety/mir_reference_slice_param_ok.tl|-|-
+mir_lifetime_shortening_ok|run-exit|tests/safety/mir_lifetime_shortening_ok.tl|42|-
+mir_call_reference_field_mut_reject|check-fail|tests/safety/mir_call_reference_field_mut_reject.tl|tests/safety/mir_call_reference_field_mut_reject.tl:13:20|cannot assign to borrowed place `holder`
+mir_arena_branded_construct_destroy_reject|check-fail|tests/safety/mir_arena_branded_construct_destroy_reject.tl|tests/safety/mir_arena_branded_construct_destroy_reject.tl:17:29|use of moved value `box`
+mir_arena_atomic_place_destroy_unjoined_reject|check-fail|tests/safety/mir_arena_atomic_place_destroy_unjoined_reject.tl|tests/safety/mir_arena_atomic_place_destroy_unjoined_reject.tl:23:11|arena.destroy-safe!/rewind-safe! requires atomic arena user `worker` to be joined or released before
+mir_arena_branded_construct_ok|run-exit|tests/safety/mir_arena_branded_construct_ok.tl|42|-
+mir_reference_scalar_match_ok|run-exit|tests/safety/mir_reference_scalar_match_ok.tl|42|-
+mir_reference_scalar_match_move_reject|check-fail|tests/safety/mir_reference_scalar_match_move_reject.tl|tests/safety/mir_reference_scalar_match_move_reject.tl:10:18|use of moved value `c`
+mir_in_arena_literal_in_scratch_ok|run-exit|tests/safety/mir_in_arena_literal_in_scratch_ok.tl|42|-
+mir_reborrow_call_store_reject|check-fail|tests/safety/mir_reborrow_call_store_reject.tl|tests/safety/mir_reborrow_call_store_reject.tl:26:11|cannot assign to borrowed place `p.r`
+mir_reborrow_param_call_store_reject|check-fail|tests/safety/mir_reborrow_param_call_store_reject.tl|tests/safety/mir_reborrow_param_call_store_reject.tl:22:3|cannot assign to borrowed place `p.r`
+mir_reborrow_holder_ok|run-exit|tests/safety/mir_reborrow_holder_ok.tl|42|-
+mir_closure_result_loan_reject|check-fail|tests/safety/mir_closure_result_loan_reject.tl|tests/safety/mir_closure_result_loan_reject.tl:15:11|cannot assign to borrowed place `p.l`
+mir_closure_result_loan_ok|run-exit|tests/safety/mir_closure_result_loan_ok.tl|42|-
+mir_shared_mut_reference_push_reject|check-fail|tests/safety/mir_shared_mut_reference_push_reject.tl|tests/safety/mir_shared_mut_reference_push_reject.tl:4:21|mutable borrow through a shared reference
+mir_shared_mut_reference_field_push_reject|check-fail|tests/safety/mir_shared_mut_reference_field_push_reject.tl|tests/safety/mir_shared_mut_reference_field_push_reject.tl:8:21|mutable borrow through a shared reference
+mir_shared_mut_reference_field_set_reject|check-fail|tests/safety/mir_shared_mut_reference_field_set_reject.tl|tests/safety/mir_shared_mut_reference_field_set_reject.tl:7:3|mutable borrow through a shared reference
+mir_holder_disjoint_lifetime_store_ok|run-exit|tests/safety/mir_holder_disjoint_lifetime_store_ok.tl|42|-
+mir_reborrow_returned_holder_ok|run-exit|tests/safety/mir_reborrow_returned_holder_ok.tl|42|-

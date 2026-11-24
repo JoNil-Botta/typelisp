@@ -1,0 +1,147 @@
+# Safety corpus cases: SPMD, foreach, SIMD lanes, and lane bounds.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+bounds_spmd_comptime_defined|run-exit|tests/safety/bounds_spmd_comptime_defined.tl|42|-
+spmd_helper_direct_recursion_reject|check-fail|tests/safety/spmd_helper_direct_recursion_reject.tl|-|recursive SPMD helper call is not supported
+spmd_helper_mutual_recursion_reject|check-fail|tests/safety/spmd_helper_mutual_recursion_reject.tl|-|recursive SPMD helper call is not supported
+spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|typecheck: foreach cannot set binding declared outside foreach
+spmd_compact_body_type_reject|check-fail|tests/safety/spmd_compact_body_type_reject.tl|-|spmd-compact body must be unit
+spmd_compact_duplicate_binding_reject|check-fail|tests/safety/spmd_compact_duplicate_binding_reject.tl|-|spmd-compact index and slot bindings must have distinct names
+spmd_compact_index_type_reject|check-fail|tests/safety/spmd_compact_index_type_reject.tl|-|spmd-compact index type must be i64
+spmd_compact_helper_input_scatter_reject|check-fail|tests/safety/spmd_compact_helper_input_scatter_reject.tl|-|spmd-compact varying array destination indexes must use the compact slot plus a uniform offset
+spmd_compact_input_scatter_reject|check-fail|tests/safety/spmd_compact_input_scatter_reject.tl|-|spmd-compact varying array destination indexes must use the compact slot plus a uniform offset
+spmd_compact_nested_reject|check-fail|tests/safety/spmd_compact_nested_reject.tl|-|spmd-compact inside SPMD is not supported
+spmd_compact_predicate_type_reject|check-fail|tests/safety/spmd_compact_predicate_type_reject.tl|-|spmd-compact predicate must have type bool
+spmd_compact_slot_mutation_reject|check-fail|tests/safety/spmd_compact_slot_mutation_reject.tl|-|spmd-compact slot binding is read-only
+spmd_compact_slot_type_reject|check-fail|tests/safety/spmd_compact_slot_type_reject.tl|-|spmd-compact slot type must be i64
+spmd_reduce_f32_min_reject|check-fail|tests/safety/spmd_reduce_f32_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
+spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
+spmd_scan_f32_sum_reject|check-fail|tests/safety/spmd_scan_f32_sum_reject.tl|-|spmd-scan sum requires an i32 or i64 type; floating-point scan ordering is deferred
+spmd_scan_f64_sum_reject|check-fail|tests/safety/spmd_scan_f64_sum_reject.tl|-|spmd-scan sum requires an i32 or i64 type; floating-point scan ordering is deferred
+spmd_scan_malformed_range_reject|check-fail|tests/safety/spmd_scan_malformed_range_reject.tl|-|malformed spmd-scan range binding
+spmd_scan_unsupported_exclusive_reject|check-fail|tests/safety/spmd_scan_unsupported_exclusive_reject.tl|-|unsupported spmd-scan operator `exclusive`
+spmd_scan_impure_value_reject|check-fail|tests/safety/spmd_scan_impure_value_reject.tl|-|array element assignment is not allowed inside a spmd-reduce value expression
+spmd_scan_non_unit_body_reject|check-fail|tests/safety/spmd_scan_non_unit_body_reject.tl|-|spmd-scan body must be unit
+spmd_scan_nested_foreach_reject|check-fail|tests/safety/spmd_scan_nested_foreach_reject.tl|-|nested foreach inside spmd-scan is not supported
+spmd_scan_outer_mutation_reject|check-fail|tests/safety/spmd_scan_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
+spmd_scan_reduce_value_reject|check-fail|tests/safety/spmd_scan_reduce_value_reject.tl|-|nested spmd-scan is not allowed inside a spmd-reduce value expression
+spmd_scan_broadcast_value_reject|check-fail|tests/safety/spmd_scan_broadcast_value_reject.tl|-|spmd-scan body
+spmd_broadcast_outside_reject|check-fail|tests/safety/spmd_broadcast_outside_reject.tl|-|typecheck: spmd-broadcast is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body
+spmd_program_index_outside_reject|check-fail|tests/safety/spmd_program_index_outside_reject.tl|-|program-index is only
+spmd_program_count_foreach_bound_reject|check-fail|tests/safety/spmd_program_count_foreach_bound_reject.tl|-|program-count is only
+spmd_program_index_reduce_init_reject|check-fail|tests/safety/spmd_program_index_reduce_init_reject.tl|-|program-index is only
+spmd_program_index_scan_body_reject|check-fail|tests/safety/spmd_program_index_scan_body_reject.tl|-|program-index is not
+spmd_broadcast_varying_lane_reject|check-fail|tests/safety/spmd_broadcast_varying_lane_reject.tl|-|spmd-broadcast lane must be uniform
+spmd_broadcast_bool_reject|check-fail|tests/safety/spmd_broadcast_bool_reject.tl|-|spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred
+spmd_broadcast_masked_if_reject|check-fail|tests/safety/spmd_broadcast_masked_if_reject.tl|-|SPMD masked if does not support spmd-broadcast inside masked branches
+spmd_shuffle_outside_reject|check-fail|tests/safety/spmd_shuffle_outside_reject.tl|-|typecheck: spmd-shuffle is only valid inside a foreach body, spmd-reduce value expression, or spmd-scan body
+spmd_shuffle_scan_value_reject|check-fail|tests/safety/spmd_shuffle_scan_value_reject.tl|-|spmd-scan body
+spmd_shuffle_lane_type_reject|check-fail|tests/safety/spmd_shuffle_lane_type_reject.tl|-|spmd-shuffle lane must have type i64
+spmd_shuffle_bool_reject|check-fail|tests/safety/spmd_shuffle_bool_reject.tl|-|spmd-shuffle value must have type i32, u32, i64, u64, f32, or f64; bool shuffle remains deferred
+spmd_shuffle_masked_if_reject|check-fail|tests/safety/spmd_shuffle_masked_if_reject.tl|-|SPMD masked if does not support spmd-shuffle inside masked branches
+foreach_active_outside_reject|check-fail|tests/safety/foreach_active_outside_reject.tl|-|foreach-active is only valid inside a foreach body
+foreach_active_reduce_value_reject|check-fail|tests/safety/foreach_active_reduce_value_reject.tl|-|foreach-active is only valid inside a foreach body
+foreach_active_nested_reject|check-fail|tests/safety/foreach_active_nested_reject.tl|-|foreach-active cannot be nested inside foreach-active
+foreach_active_lane_type_reject|check-fail|tests/safety/foreach_active_lane_type_reject.tl|-|foreach-active lane binding must have type i64
+foreach_active_missing_body_reject|check-fail|tests/safety/foreach_active_missing_body_reject.tl|-|foreach-active requires a body
+foreach_active_malformed_binding_reject|check-fail|tests/safety/foreach_active_malformed_binding_reject.tl|-|malformed foreach-active binding; expected [lane : i64]
+foreach_active_body_type_reject|check-fail|tests/safety/foreach_active_body_type_reject.tl|-|foreach-active body must be unit
+foreach_active_varying_read_reject|check-fail|tests/safety/foreach_active_varying_read_reject.tl|-|foreach-active body reads varying `i`; read it with (lane-value i)
+foreach_active_varying_let_read_reject|check-fail|tests/safety/foreach_active_varying_let_read_reject.tl|-|foreach-active body reads varying `twice`; read it with (lane-value twice)
+foreach_active_program_index_reject|check-fail|tests/safety/foreach_active_program_index_reject.tl|-|foreach-active body reads varying program-index
+foreach_active_lambda_capture_reject|check-fail|tests/safety/foreach_active_lambda_capture_reject.tl|-|a lambda inside foreach-active cannot capture varying `i`
+foreach_active_gang_function_reject|check-fail|tests/safety/foreach_active_gang_function_reject.tl|-|foreach-active body reads gang-local value `lane-index`
+foreach_active_gang_tuple_closure_reject|check-fail|tests/safety/foreach_active_gang_tuple_closure_reject.tl|-|foreach-active body reads gang-local value `pair`
+foreach_active_lane_set_reject|check-fail|tests/safety/foreach_active_lane_set_reject.tl|-|foreach-active lane binding is read-only
+foreach_active_set_varying_reject|check-fail|tests/safety/foreach_active_set_varying_reject.tl|-|foreach-active body cannot set varying binding `v`
+foreach_active_return_reject|check-fail|tests/safety/foreach_active_return_reject.tl|-|return inside foreach-active is not supported
+foreach_active_break_reject|check-fail|tests/safety/foreach_active_break_reject.tl|-|break inside foreach-active is not supported
+foreach_active_continue_reject|check-fail|tests/safety/foreach_active_continue_reject.tl|-|continue inside foreach-active is not supported
+foreach_active_try_reject|check-fail|tests/safety/foreach_active_try_reject.tl|-|try inside foreach-active is not supported
+foreach_active_nested_foreach_reject|check-fail|tests/safety/foreach_active_nested_foreach_reject.tl|-|a nested foreach inside foreach-active is not supported
+foreach_active_spmd_reduce_reject|check-fail|tests/safety/foreach_active_spmd_reduce_reject.tl|-|spmd-reduce inside foreach-active is not supported
+foreach_active_spmd_scan_reject|check-fail|tests/safety/foreach_active_spmd_scan_reject.tl|-|spmd-scan inside foreach-active is not supported
+foreach_active_spmd_compact_reject|check-fail|tests/safety/foreach_active_spmd_compact_reject.tl|-|spmd-compact inside foreach-active is not supported
+foreach_active_broadcast_reject|check-fail|tests/safety/foreach_active_broadcast_reject.tl|-|spmd-broadcast inside foreach-active is not supported
+foreach_active_move_reject|check-fail|tests/safety/foreach_active_move_reject.tl|-|cannot move loop-carried owner value `items`
+lane_value_outside_active_reject|check-fail|tests/safety/lane_value_outside_active_reject.tl|-|lane-value is only valid inside a foreach-active body
+lane_value_nested_reject|check-fail|tests/safety/lane_value_nested_reject.tl|-|lane-value cannot be nested inside a lane-value operand
+lane_value_call_reject|check-fail|tests/safety/lane_value_call_reject.tl|-|a lane-value operand may only read gang values
+lane_value_enum_reject|check-fail|tests/safety/lane_value_enum_reject.tl|-|lane-value operand must have a scalar lane type (an integer, float or bool type), found Color
+foreach_active_effects_defined|run-exit|tests/safety/foreach_active_effects_defined.tl|42|-
+foreach_active_outer_function_defined|run-exit|tests/safety/foreach_active_outer_function_defined.tl|42|-
+foreach_active_gang_scalar_defined|run-exit|tests/safety/foreach_active_gang_scalar_defined.tl|42|-
+foreach_active_masked_defined|run-exit|tests/safety/foreach_active_masked_defined.tl|42|-
+foreach_active_bounds_trap|run-trap|tests/safety/foreach_active_bounds_trap.tl|134|array index out of bounds: index=4 length=4
+spmd_foreach2_rank0_reject|check-fail|tests/safety/spmd_foreach2_rank0_reject.tl|-|parse: foreach requires one or two domain bindings
+spmd_foreach2_rank3_reject|check-fail|tests/safety/spmd_foreach2_rank3_reject.tl|-|parse: foreach supports at most two domain bindings (rank 2)
+spmd_foreach2_duplicate_name_reject|check-fail|tests/safety/spmd_foreach2_duplicate_name_reject.tl|-|parse: foreach domain bindings must use distinct names
+spmd_foreach2_coordinate_type_reject|check-fail|tests/safety/spmd_foreach2_coordinate_type_reject.tl|-|rank-2 foreach coordinate types must be i64
+spmd_foreach2_bound_type_reject|check-fail|tests/safety/spmd_foreach2_bound_type_reject.tl|-|rank-2 foreach bounds must have type i64
+spmd_foreach2_bound_scope_reject|check-fail|tests/safety/spmd_foreach2_bound_scope_reject.tl|-|unbound name y
+spmd_foreach2_body_type_reject|check-fail|tests/safety/spmd_foreach2_body_type_reject.tl|-|foreach body must be unit
+spmd_foreach2_return_reject|check-fail|tests/safety/spmd_foreach2_return_reject.tl|-|return inside foreach is not supported
+spmd_foreach2_nonuniform_bound_reject|check-fail|tests/safety/spmd_foreach2_nonuniform_bound_reject.tl|-|foreach bounds must be uniform
+spmd_foreach2_coordinate_mutation_reject|check-fail|tests/safety/spmd_foreach2_coordinate_mutation_reject.tl|-|rank-2 foreach coordinate bindings are read-only
+spmd_foreach2_inner_write_reject|check-fail|tests/safety/spmd_foreach2_inner_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_outer_write_reject|check-fail|tests/safety/spmd_foreach2_outer_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_diagonal_write_reject|check-fail|tests/safety/spmd_foreach2_diagonal_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_stride_write_reject|check-fail|tests/safety/spmd_foreach2_stride_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_negated_column_write_reject|check-fail|tests/safety/spmd_foreach2_negated_column_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_shadowed_span_write_reject|check-fail|tests/safety/spmd_foreach2_shadowed_span_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_assigned_span_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_span_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_masked_write_reject|check-fail|tests/safety/spmd_foreach2_masked_write_reject.tl|-|SPMD masked if does not support rank-2 array indexes other than the row-major form
+spmd_foreach2_helper_write_reject|check-fail|tests/safety/spmd_foreach2_helper_write_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_nested_write_reject|check-fail|tests/safety/spmd_foreach2_nested_write_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_assigned_base_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_base_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_assigned_row_offset_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_row_offset_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_assigned_column_offset_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_column_offset_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_memory_offset_write_reject|check-fail|tests/safety/spmd_foreach2_memory_offset_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_assigned_base_masked_reject|check-fail|tests/safety/spmd_foreach2_assigned_base_masked_reject.tl|-|SPMD masked if does not support rank-2 array indexes other than the row-major form with stable uniform offsets
+spmd_foreach2_row_major_ok|run-exit|tests/safety/spmd_foreach2_row_major_ok.tl|42|-
+spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_reject.tl|-|public SPMD vector source types are deferred
+spmd_public_mask_type_reject|check-fail|tests/safety/spmd_public_mask_type_reject.tl|-|public SPMD mask source types are deferred
+spmd_varying_type_reject|check-fail|tests/safety/spmd_varying_type_reject.tl|-|public SPMD varying source types are deferred
+spmd_varying_call_reject|check-fail|tests/safety/spmd_varying_call_reject.tl|-|foreach calls with varying arguments are not supported
+spmd_atomic_order_arg_reject|check-fail|tests/safety/spmd_atomic_order_arg_reject.tl|-|typecheck: call arity mismatch: atomic.atomic-i64-add! expected 3 arguments, got 4 arguments
+spmd_atomic_reduce_call_reject|check-fail|tests/safety/spmd_atomic_reduce_call_reject.tl|-|function calls are not allowed inside a spmd-reduce value expression
+spmd_atomic_shadow_call_reject|check-fail|tests/safety/spmd_atomic_shadow_call_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_atomic_u64_reject|check-fail|tests/safety/spmd_atomic_u64_reject.tl|-|typecheck: call `atomic.atomic-i64-add!` argument 1 type mismatch: expected (& source stdlib.atomic/AtomicI64Buffer), found (& out stdlib.atomic/AtomicI32Buffer)
+spmd_foreach_return_reject|check-fail|tests/safety/spmd_foreach_return_reject.tl|-|typecheck: return inside foreach is not supported
+spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|typecheck: try inside foreach is not supported
+spmd_foreach_break_reject|check-fail|tests/safety/spmd_foreach_break_reject.tl|-|break inside foreach is not supported
+spmd_foreach_continue_reject|check-fail|tests/safety/spmd_foreach_continue_reject.tl|-|continue inside foreach is not supported
+spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_varying_value_reject|check-fail|tests/safety/spmd_uniform_index_varying_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_local_value_reject|check-fail|tests/safety/spmd_uniform_index_local_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_conditional_value_reject|check-fail|tests/safety/spmd_uniform_index_conditional_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_slice_value_reject|check-fail|tests/safety/spmd_uniform_index_slice_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_uniform_index_reject|check-fail|tests/safety/spmd_foreach2_uniform_index_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_compact_uniform_index_reject|check-fail|tests/safety/spmd_compact_uniform_index_reject.tl|-|spmd-compact varying array destination indexes must use the compact slot plus a uniform offset
+spmd_scan_foreach_uniform_index_reject|check-fail|tests/safety/spmd_scan_foreach_uniform_index_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_masked_value_reject|check-fail|tests/safety/spmd_uniform_index_masked_value_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_uniform_index_masked_uniform_reject|check-fail|tests/safety/spmd_uniform_index_masked_uniform_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_uniform_index_write|run-exit|tests/integration/spmd_uniform_index_write.tl|42|-
+spmd_uniform_index_struct_field_reject|check-fail|tests/safety/spmd_uniform_index_struct_field_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_tuple_element_reject|check-fail|tests/safety/spmd_uniform_index_tuple_element_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_outer_struct_field_reject|check-fail|tests/safety/spmd_outer_struct_field_reject.tl|-|foreach cannot set binding declared outside foreach
+spmd_private_array_shared_store_reject|check-fail|tests/safety/spmd_private_array_shared_store_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_private_helper_shared_store_reject|check-fail|tests/safety/spmd_private_helper_shared_store_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_scan_helper_foreach_reject|check-fail|tests/safety/spmd_scan_helper_foreach_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_private_storage_write|run-exit|tests/safety/spmd_private_storage_write.tl|42|-
+spmd_slice_alias_call_reject|check-fail|tests/safety/spmd_slice_alias_call_reject.tl|-|cannot mutably borrow borrowed place `items`
+spmd_slice_lane_mut_ref_escape_reject|check-fail|tests/safety/spmd_slice_lane_mut_ref_escape_reject.tl|-|foreach varying value type is not supported: (&mut output i64)
+spmd_slice_scatter_reject|check-fail|tests/safety/spmd_slice_scatter_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_masked_if_while_reject|check-fail|tests/safety/spmd_masked_if_while_reject.tl|-|SPMD masked if does not support uniform while
+spmd_masked_if_bitwise_float_reject|check-fail|tests/safety/spmd_masked_if_bitwise_float_reject.tl|-|integer operator expects matching integer operands
+spmd_varying_match_string_reject|check-fail|tests/safety/spmd_varying_match_string_reject.tl|-|SPMD masked if result type is not supported: String
+spmd_varying_match_enum_string_payload_reject|check-fail|tests/safety/spmd_varying_match_enum_string_payload_reject.tl|-|foreach varying match pattern binding type is not supported: String
+spmd_masked_if_call_reject|check-fail|tests/safety/spmd_masked_if_call_reject.tl|-|SPMD masked if does not support varying calls
+spmd_masked_if_scatter_index_reject|check-fail|tests/safety/spmd_masked_if_scatter_index_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_masked_if_gather_read_reject|check-fail|tests/safety/spmd_masked_if_gather_read_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_masked_if_nested_foreach_reject|check-fail|tests/safety/spmd_masked_if_nested_foreach_reject.tl|-|SPMD masked if does not support nested foreach
+spmd_masked_if_nested_reduce_reject|check-fail|tests/safety/spmd_masked_if_nested_reduce_reject.tl|-|SPMD masked if does not support nested spmd-reduce
+spmd_masked_if_side_effect_reject|check-fail|tests/safety/spmd_masked_if_side_effect_reject.tl|-|SPMD masked if does not support side effects other than contiguous array writes
+spmd_masked_if_lane_type_reject|check-fail|tests/safety/spmd_masked_if_lane_type_reject.tl|-|SPMD masked if lane type is not supported: String
+spmd_masked_if_allocation_reject|check-fail|tests/safety/spmd_masked_if_allocation_reject.tl|-|SPMD masked if does not support allocations that can escape masked branches
+spmd_foreach2_body_move_reject|check-fail|tests/safety/spmd_foreach2_body_move_reject.tl|-|cannot move loop-carried owner value `text`

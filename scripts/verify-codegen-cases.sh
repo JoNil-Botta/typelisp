@@ -4,38 +4,50 @@ set -eu
 # verify-codegen-cases.sh - table-driven compile / run / assembly-shape and CLI
 # transcript runner.
 #
-# usage: scripts/verify-codegen-cases.sh [--list | --list-fixtures] [--only CASE-GLOB] FILE.cases...
+# usage: scripts/verify-codegen-cases.sh [--list | --list-fixtures] [--only CASE-GLOB] FILE_OR_DIR...
+#        scripts/verify-codegen-cases.sh --self-test
 #
 # Execution is performed by the native zero-dependency TypeLisp runner under
 # tools/codegen-cases-runner/, built once per compiler/source/host key and
 # cached under target/codegen-cases-runner/<key>/.
 #
 # --list and --list-fixtures run without a compiler (used by ci-affected map
-# audits and app corpus discovery).
+# audits and app corpus discovery). Passing a directory loads all *.cases files
+# directly inside it in LC_ALL=C sorted order with isolated per-file defaults
+# and pre-files and global unique case-ID enforcement.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 set -f
 
 usage() {
-    echo "usage: scripts/verify-codegen-cases.sh [--list | --list-fixtures] [--only CASE-GLOB] FILE.cases..." >&2
+    echo "usage: scripts/verify-codegen-cases.sh [--list | --list-fixtures] [--only CASE-GLOB] FILE_OR_DIR..." >&2
+    echo "       scripts/verify-codegen-cases.sh --self-test" >&2
     exit 2
 }
 
 CC_LIST=0
 CC_FIXTURES=0
+CC_SELF_TEST=0
 CC_ONLY='*'
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --list) CC_LIST=1; shift ;;
         --list-fixtures) CC_LIST=1; CC_FIXTURES=1; shift ;;
+        --self-test) CC_SELF_TEST=1; shift ;;
         --only) [ "$#" -ge 2 ] || usage; CC_ONLY=$2; shift 2 ;;
         --) shift; break ;;
         -*) usage ;;
         *) break ;;
     esac
 done
-[ "$#" -gt 0 ] || usage
+if [ "$CC_SELF_TEST" -eq 1 ]; then
+    if [ "$CC_LIST" -ne 0 ] || [ "$CC_ONLY" != '*' ] || [ "$#" -ne 0 ]; then
+        usage
+    fi
+else
+    [ "$#" -gt 0 ] || usage
+fi
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
@@ -65,7 +77,7 @@ cc_native_path() {
 # ---------------------------------------------------------------- front end (--list / --list-fixtures / stub-only)
 
 cc_translate() {
-    awk -v file="$1" -v fixtures="$CC_FIXTURES" -v root="$ROOT" '
+    awk -v file="$1" -v fixtures="$CC_FIXTURES" -v root="${CODEGEN_CASES_FIXTURE_ROOT:-$ROOT}" '
     function sq(s) { gsub(/\047/, "\047\\\047\047", s); return "\047" s "\047" }
     function die(msg) { printf "%s:%d: %s\n", file, NR, msg > "/dev/stderr"; bad = 1; exit 1 }
     function words(s, arr) { return split(s, arr, /[ \t]+/) }
@@ -306,6 +318,72 @@ cc_translate() {
     ' "$1"
 }
 
+cc_expand_inputs() {
+    _ce_out=$1
+    shift
+    : > "$_ce_out"
+    for _ce_arg do
+        _ce_probe=$_ce_arg
+        while :; do
+            case "$_ce_probe" in
+                / | [A-Za-z]:/) break ;;
+                */) _ce_probe=${_ce_probe%/} ;;
+                *) break ;;
+            esac
+        done
+        if [ -L "$_ce_probe" ]; then
+            echo "case input cannot be a symlink: $_ce_arg" >&2
+            return 2
+        fi
+        if [ -d "$_ce_arg" ]; then
+            _ce_dir=$_ce_probe
+            _ce_entries=$(find "$_ce_dir" -print | LC_ALL=C sort) || return 2
+            _ce_count=0
+            while IFS= read -r _ce_entry; do
+                [ -n "$_ce_entry" ] || continue
+                [ "$_ce_entry" != "$_ce_dir" ] || continue
+                if [ "$_ce_dir" = "/" ]; then
+                    _ce_rel=${_ce_entry#/}
+                else
+                    _ce_rel=${_ce_entry#"$_ce_dir"/}
+                fi
+                case "$_ce_rel" in
+                    */*)
+                        echo "case directory $_ce_dir contains nested entry: $_ce_rel" >&2
+                        return 2
+                        ;;
+                    .cases)
+                        echo "case directory $_ce_dir contains invalid filename: $_ce_rel" >&2
+                        return 2
+                        ;;
+                    *.cases) ;;
+                    *)
+                        echo "case directory $_ce_dir contains unexpected non-.cases entry: $_ce_rel" >&2
+                        return 2
+                        ;;
+                esac
+                if [ ! -f "$_ce_entry" ] || [ -L "$_ce_entry" ]; then
+                    echo "case directory $_ce_dir contains non-regular entry: $_ce_rel" >&2
+                    return 2
+                fi
+                printf '%s\n' "$_ce_entry" >> "$_ce_out"
+                _ce_count=$((_ce_count + 1))
+            done <<EOF
+$_ce_entries
+EOF
+            if [ "$_ce_count" -eq 0 ]; then
+                echo "case directory is empty (no *.cases files): $_ce_dir" >&2
+                return 2
+            fi
+        elif [ -f "$_ce_arg" ]; then
+            printf '%s\n' "$_ce_arg" >> "$_ce_out"
+        else
+            echo "missing case file: $_ce_arg" >&2
+            return 2
+        fi
+    done
+}
+
 CC_WORK_ROOT=${CODEGEN_CASES_WORKDIR:-$ROOT/target/codegen-cases}
 CC_WORK_SUFFIX=
 if [ "$CC_ONLY" != '*' ]; then
@@ -313,13 +391,47 @@ if [ "$CC_ONLY" != '*' ]; then
 fi
 
 if [ "$CC_LIST" -eq 1 ]; then
-    for CC_FILE do
-        [ -f "$CC_FILE" ] || {
-            echo "missing case file: $CC_FILE" >&2
-            exit 2
-        }
+    mkdir -p "$CC_WORK_ROOT"
+    CC_EXPANDED=$(mktemp "$CC_WORK_ROOT/.expanded.XXXXXX")
+    CC_LIST_OUT=$(mktemp "$CC_WORK_ROOT/.list.XXXXXX")
+    CC_SEEN_IDS=$(mktemp "$CC_WORK_ROOT/.seen-ids.XXXXXX")
+    CC_SEEN_SRCS=$(mktemp "$CC_WORK_ROOT/.seen-srcs.XXXXXX")
+    trap 'rm -f "$CC_EXPANDED" "$CC_LIST_OUT" "$CC_SEEN_IDS" "$CC_SEEN_SRCS"' EXIT
+    cc_expand_inputs "$CC_EXPANDED" "$@" || exit 2
+    while IFS= read -r CC_FILE; do
+        [ -n "$CC_FILE" ] || continue
         if [ "$CC_FIXTURES" -eq 1 ]; then
-            cc_translate "$CC_FILE" || exit 2
+            CC_FIX_TMP=$(mktemp "$CC_WORK_ROOT/.fix.XXXXXX")
+            if ! cc_translate "$CC_FILE" > "$CC_FIX_TMP"; then
+                rm -f "$CC_FIX_TMP"
+                exit 2
+            fi
+            if ! awk -F '\t' -v file="$CC_FILE" '
+                FILENAME == ARGV[1] { seen_id[$0] = 1; next }
+                FILENAME == ARGV[2] { seen_src[$0] = 1; next }
+                {
+                    if ($1 in seen_id) {
+                        printf "%s: duplicate case %s\n", file, $1 > "/dev/stderr"
+                        bad = 1
+                        exit 1
+                    }
+                    if ($2 in seen_src) {
+                        printf "%s: duplicate fixture source: %s\n", file, $2 > "/dev/stderr"
+                        bad = 1
+                        exit 1
+                    }
+                    seen_id[$1] = 1
+                    seen_src[$2] = 1
+                }
+                END { if (bad) exit 1 }
+            ' "$CC_SEEN_IDS" "$CC_SEEN_SRCS" "$CC_FIX_TMP"; then
+                rm -f "$CC_FIX_TMP"
+                exit 2
+            fi
+            cut -f 1 "$CC_FIX_TMP" >> "$CC_SEEN_IDS"
+            cut -f 2 "$CC_FIX_TMP" >> "$CC_SEEN_SRCS"
+            cat "$CC_FIX_TMP" >> "$CC_LIST_OUT"
+            rm -f "$CC_FIX_TMP"
             continue
         fi
         CC_NAME=$(basename "$CC_FILE" .cases)
@@ -327,11 +439,205 @@ if [ "$CC_LIST" -eq 1 ]; then
         rm -rf "$CC_WORK"
         mkdir -p "$CC_WORK"
         cc_translate "$CC_FILE" > "$CC_WORK/plan.sh" || exit 2
+        if ! awk -v file="$CC_FILE" '
+            FILENAME == ARGV[1] { seen[$0] = 1; next }
+            /^cc_case / {
+                line = $2
+                id = $3
+                gsub(/\047/, "", id)
+                if (id in seen) {
+                    printf "%s:%s: duplicate case %s\n", file, line, id > "/dev/stderr"
+                    bad = 1
+                    exit 1
+                }
+                seen[id] = 1
+            }
+            END { if (bad) exit 1 }
+        ' "$CC_SEEN_IDS" "$CC_WORK/plan.sh"; then
+            exit 2
+        fi
+        awk '/^cc_case / { id = $3; gsub(/\047/, "", id); print id }' "$CC_WORK/plan.sh" >> "$CC_SEEN_IDS"
         awk -v file="$CC_FILE" '
             /^cc_case / { id = $3; gsub(/\047/, "", id); next }
             /^cc_variant / { v = $3 " " $4 " " $5 ($6 == "\047-\047" ? "" : " " $6); gsub(/\047/, "", v); printf "%s %s [%s]\n", file, id, v }
-        ' "$CC_WORK/plan.sh"
+        ' "$CC_WORK/plan.sh" >> "$CC_LIST_OUT"
+    done < "$CC_EXPANDED"
+    cat "$CC_LIST_OUT"
+    exit 0
+fi
+
+# ---------------------------------------------------------------- native runner build helper
+
+cc_ensure_runner_bin() {
+    RUNNER_SOURCE_DIR="tools/codegen-cases-runner"
+    RUNNER_STDLIB_ROOT="stdlib"
+    RUNNER_SOURCE_HASHES=$(
+        find -L "$RUNNER_SOURCE_DIR" "$RUNNER_STDLIB_ROOT" -type f -exec sha256sum -- {} +
+    )
+    RUNNER_SOURCE_HASH=$(printf '%s\n' "$RUNNER_SOURCE_HASHES" | LC_ALL=C sort | ci_compiler_artifact_sha256_stdin)
+    COMPILER_HASH=$(ci_compiler_artifact_sha256_stdin < "$COMPILER")
+    RUNNER_KEY=$(printf '%s\n' "$COMPILER_HASH" "$RUNNER_SOURCE_HASH" "$CC_HOST" "opt1" |
+        ci_compiler_artifact_sha256_stdin)
+    RUNNER_CACHE="$ROOT/target/codegen-cases-runner/$RUNNER_KEY"
+    RUNNER_BIN="$RUNNER_CACHE/runner$BIN_EXT"
+
+    if [ ! -x "$RUNNER_BIN" ]; then
+        (
+            mkdir -p "$RUNNER_CACHE/build-lock"
+            bounded_pool_lock "$RUNNER_CACHE/build-lock"
+            RUNNER_TEMP=
+            trap '[ -z "$RUNNER_TEMP" ] || rm -rf -- "$RUNNER_TEMP"; bounded_pool_unlock "$RUNNER_CACHE/build-lock"' EXIT
+            trap 'exit 1' HUP INT TERM
+            if [ ! -x "$RUNNER_BIN" ]; then
+                RUNNER_TEMP=$(mktemp -d "$RUNNER_CACHE/.build.XXXXXX")
+                "$COMPILER" build "$RUNNER_SOURCE_DIR/main.tl" \
+                    --stdlib-root "$RUNNER_STDLIB_ROOT" \
+                    --stdlib-root "$RUNNER_SOURCE_DIR" \
+                    --opt-level 1 \
+                    -o "$RUNNER_TEMP/runner$BIN_EXT" >&2
+                [ -s "$RUNNER_TEMP/runner$BIN_EXT" ] && [ -x "$RUNNER_TEMP/runner$BIN_EXT" ] || {
+                    echo "codegen-cases-runner build emitted no executable" >&2
+                    exit 1
+                }
+                mv -- "$RUNNER_TEMP/runner$BIN_EXT" "$RUNNER_BIN"
+            fi
+        )
+    fi
+}
+
+if [ "$CC_SELF_TEST" -eq 1 ]; then
+    gate_compiler
+    gate_compiler_absolute
+    gate_require_compiler
+    cc_ensure_runner_bin
+
+    mkdir -p "$CC_WORK_ROOT"
+    ST_DIR=$(mktemp -d "$CC_WORK_ROOT/self-test.XXXXXX")
+    ST_ARG=$(cc_native_path "$ST_DIR")
+    trap 'rm -rf -- "$ST_DIR"' EXIT
+
+    # 1. Native runner built-in self-test (including directory loading & global uniqueness).
+    "$RUNNER_BIN" --self-test
+
+    # 2. Shell front-end vs native runner parity on directories (--list & --list-fixtures).
+    mkdir -p "$ST_DIR/valid.d" "$ST_DIR/dup.d" "$ST_DIR/empty.d" "$ST_DIR/stray.d" "$ST_DIR/nested.d/sub" "$ST_DIR/symlink.d" "$ST_DIR/fix.d" "$ST_DIR/fix-dup.d"
+    cat > "$ST_DIR/valid.d/02-second.cases" <<'EOF'
+file local_b.tl
+(define (main) : i64 2)
+end-file
+case case-b
+source {{work}}/local_b.tl
+EOF
+    cat > "$ST_DIR/valid.d/01-first.cases" <<'EOF'
+opt 1
+file local_a.tl
+(define (main) : i64 1)
+end-file
+case case-a
+source {{work}}/local_a.tl
+EOF
+    CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$ST_ARG/valid.d" > "$ST_DIR/sh.list"
+    "$RUNNER_BIN" --list "$ST_ARG/valid.d" > "$ST_DIR/bin.list"
+    cmp -s "$ST_DIR/sh.list" "$ST_DIR/bin.list" || {
+        echo "verify-codegen-cases --self-test: --list parity mismatch between shell and runner" >&2
+        diff -u "$ST_DIR/sh.list" "$ST_DIR/bin.list" >&2 || true
+        exit 1
+    }
+    printf '%s\n%s\n' \
+        "$ST_ARG/valid.d/01-first.cases case-a [linux-x86_64 1 -]" \
+        "$ST_ARG/valid.d/02-second.cases case-b [linux-x86_64 2 -]" > "$ST_DIR/want.list"
+    cmp -s "$ST_DIR/sh.list" "$ST_DIR/want.list" || {
+        echo "verify-codegen-cases --self-test: directory order or default isolation mismatch" >&2
+        diff -u "$ST_DIR/want.list" "$ST_DIR/sh.list" >&2 || true
+        exit 1
+    }
+
+    # --list-fixtures directory parity (using synthetic fixtures under $ST_DIR/fake-root).
+    mkdir -p "$ST_DIR/fake-root/tests"
+    printf '(define (main) : i64 0)\n' > "$ST_DIR/fake-root/tests/cc_selftest_a.tl"
+    printf '(define (main) : i64 0)\n' > "$ST_DIR/fake-root/tests/cc_selftest_b.tl"
+    cat > "$ST_DIR/fix.d/01-a.cases" <<'EOF'
+do none
+case fix-one
+source tests/cc_selftest_a.tl
+EOF
+    cat > "$ST_DIR/fix.d/02-b.cases" <<'EOF'
+do none
+case fix-two
+source tests/cc_selftest_b.tl
+EOF
+    CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" CODEGEN_CASES_FIXTURE_ROOT="$ST_ARG/fake-root" sh "$ROOT/scripts/verify-codegen-cases.sh" --list-fixtures "$ST_ARG/fix.d" > "$ST_DIR/sh.fix"
+    TYPELISP_CODEGEN_CASES_ROOT="$ST_ARG/fake-root" "$RUNNER_BIN" --list-fixtures "$ST_ARG/fix.d" > "$ST_DIR/bin.fix"
+    cmp -s "$ST_DIR/sh.fix" "$ST_DIR/bin.fix" || {
+        echo "verify-codegen-cases --self-test: --list-fixtures parity mismatch between shell and runner" >&2
+        diff -u "$ST_DIR/sh.fix" "$ST_DIR/bin.fix" >&2 || true
+        exit 1
+    }
+
+    # Global duplicate case-ID, duplicate fixture-source, empty, stray, nested, and symlink rejection.
+    printf 'case dup-id\nsource tests/cc_selftest_a.tl\n' > "$ST_DIR/dup.d/a.cases"
+    printf 'case dup-id\nsource tests/cc_selftest_b.tl\n' > "$ST_DIR/dup.d/b.cases"
+    printf 'case ok\nsource tests/cc_selftest_a.tl\n' > "$ST_DIR/stray.d/a.cases"
+    printf 'stray\n' > "$ST_DIR/stray.d/notes.txt"
+    printf 'case ok\nsource tests/cc_selftest_a.tl\n' > "$ST_DIR/nested.d/a.cases"
+    ln -s "$ST_DIR/valid.d/01-first.cases" "$ST_DIR/symlink.d/link.cases" 2>/dev/null || true
+    ln -s "$ST_DIR/valid.d" "$ST_DIR/valid-link.d" 2>/dev/null || true
+    ln -s "$ST_DIR/valid.d/01-first.cases" "$ST_DIR/file-link.cases" 2>/dev/null || true
+    printf 'do none\ncase fa\nsource tests/cc_selftest_a.tl\n' > "$ST_DIR/fix-dup.d/a.cases"
+    printf 'do none\ncase fb\nsource tests/cc_selftest_a.tl\n' > "$ST_DIR/fix-dup.d/b.cases"
+
+    for bad_dir in "$ST_ARG/dup.d" "$ST_ARG/empty.d" "$ST_ARG/stray.d" "$ST_ARG/nested.d"; do
+        if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$bad_dir" >/dev/null 2>&1; then
+            echo "verify-codegen-cases --self-test: shell accepted invalid directory $bad_dir" >&2
+            exit 1
+        fi
+        if "$RUNNER_BIN" --list "$bad_dir" >/dev/null 2>&1; then
+            echo "verify-codegen-cases --self-test: runner accepted invalid directory $bad_dir" >&2
+            exit 1
+        fi
     done
+    if [ -L "$ST_DIR/symlink.d/link.cases" ]; then
+        if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$ST_ARG/symlink.d" >/dev/null 2>&1; then
+            echo "verify-codegen-cases --self-test: shell accepted symlink in directory" >&2
+            exit 1
+        fi
+        if "$RUNNER_BIN" --list "$ST_ARG/symlink.d" >/dev/null 2>&1; then
+            echo "verify-codegen-cases --self-test: runner accepted symlink in directory" >&2
+            exit 1
+        fi
+    fi
+    if [ -L "$ST_DIR/valid-link.d" ]; then
+        for bad_link in "$ST_ARG/valid-link.d" "$ST_ARG/valid-link.d/"; do
+            if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$bad_link" >/dev/null 2>&1; then
+                echo "verify-codegen-cases --self-test: shell accepted symlinked directory $bad_link" >&2
+                exit 1
+            fi
+            if "$RUNNER_BIN" --list "$bad_link" >/dev/null 2>&1; then
+                echo "verify-codegen-cases --self-test: runner accepted symlinked directory $bad_link" >&2
+                exit 1
+            fi
+        done
+    fi
+    if [ -L "$ST_DIR/file-link.cases" ]; then
+        if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" sh "$ROOT/scripts/verify-codegen-cases.sh" --list "$ST_ARG/file-link.cases" >/dev/null 2>&1; then
+            echo "verify-codegen-cases --self-test: shell accepted symlinked case file" >&2
+            exit 1
+        fi
+        if "$RUNNER_BIN" --list "$ST_ARG/file-link.cases" >/dev/null 2>&1; then
+            echo "verify-codegen-cases --self-test: runner accepted symlinked case file" >&2
+            exit 1
+        fi
+    fi
+    if CODEGEN_CASES_WORKDIR="$ST_DIR/w-sh" CODEGEN_CASES_FIXTURE_ROOT="$ST_ARG/fake-root" sh "$ROOT/scripts/verify-codegen-cases.sh" --list-fixtures "$ST_ARG/fix-dup.d" >/dev/null 2>&1; then
+        echo "verify-codegen-cases --self-test: shell accepted duplicate fixture source across directory" >&2
+        exit 1
+    fi
+    if TYPELISP_CODEGEN_CASES_ROOT="$ST_ARG/fake-root" "$RUNNER_BIN" --list-fixtures "$ST_ARG/fix-dup.d" >/dev/null 2>&1; then
+        echo "verify-codegen-cases --self-test: runner accepted duplicate fixture source across directory" >&2
+        exit 1
+    fi
+
+    echo "[verify-codegen-cases] self-test passed"
     exit 0
 fi
 
@@ -407,8 +713,13 @@ if cc_compiler_is_script_stub "$COMPILER"; then
         "$1"
         [ "$CV_FAILED" -ne 0 ] || echo "[codegen-cases] PASS $CC_CASE [default]"
     }
-    for CC_FILE do
-        [ -f "$CC_FILE" ] || { echo "missing case file: $CC_FILE" >&2; exit 2; }
+    mkdir -p "$CC_WORK_ROOT"
+    CC_STUB_EXPANDED=$(mktemp "$CC_WORK_ROOT/.stub-expanded.XXXXXX")
+    CC_STUB_SEEN=$(mktemp "$CC_WORK_ROOT/.stub-seen.XXXXXX")
+    trap 'rm -f "$CC_STUB_EXPANDED" "$CC_STUB_SEEN"' EXIT
+    cc_expand_inputs "$CC_STUB_EXPANDED" "$@" || exit 2
+    while IFS= read -r CC_FILE; do
+        [ -n "$CC_FILE" ] || continue
         CC_NAME=$(basename "$CC_FILE" .cases)
         CC_WORK="$CC_WORK_ROOT/$CC_NAME$CC_WORK_SUFFIX"
         CCV_work=$CC_WORK
@@ -416,8 +727,23 @@ if cc_compiler_is_script_stub "$COMPILER"; then
         rm -rf "$CC_WORK"
         mkdir -p "$CC_WORK"
         cc_translate "$CC_FILE" > "$CC_WORK/plan.sh" || exit 2
+        if ! awk -v file="$CC_FILE" '
+            FILENAME == ARGV[1] { seen[$0] = 1; next }
+            /^cc_case / {
+                line = $2; id = $3; gsub(/\047/, "", id)
+                if (id in seen) {
+                    printf "%s:%s: duplicate case %s\n", file, line, id > "/dev/stderr"
+                    bad = 1; exit 1
+                }
+                seen[id] = 1
+            }
+            END { if (bad) exit 1 }
+        ' "$CC_STUB_SEEN" "$CC_WORK/plan.sh"; then
+            exit 2
+        fi
+        awk '/^cc_case / { id = $3; gsub(/\047/, "", id); print id }' "$CC_WORK/plan.sh" >> "$CC_STUB_SEEN"
         . "$CC_WORK/plan.sh"
-    done
+    done < "$CC_STUB_EXPANDED"
     [ "$CC_FAILURES" -eq 0 ] || exit 1
     simd_execution_summary codegen-cases
     echo "[codegen-cases] passed: $CC_ROWS expectation(s) checked, $CC_SKIPPED skipped"
@@ -426,40 +752,7 @@ fi
 
 # ---------------------------------------------------------------- native runner cache & exec
 
-RUNNER_SOURCE_DIR="tools/codegen-cases-runner"
-RUNNER_STDLIB_ROOT="stdlib"
-RUNNER_SOURCE_HASHES=$(
-    find -L "$RUNNER_SOURCE_DIR" "$RUNNER_STDLIB_ROOT" -type f -exec sha256sum -- {} +
-)
-RUNNER_SOURCE_HASH=$(printf '%s\n' "$RUNNER_SOURCE_HASHES" | LC_ALL=C sort | ci_compiler_artifact_sha256_stdin)
-COMPILER_HASH=$(ci_compiler_artifact_sha256_stdin < "$COMPILER")
-RUNNER_KEY=$(printf '%s\n' "$COMPILER_HASH" "$RUNNER_SOURCE_HASH" "$CC_HOST" "opt1" |
-    ci_compiler_artifact_sha256_stdin)
-RUNNER_CACHE="$ROOT/target/codegen-cases-runner/$RUNNER_KEY"
-RUNNER_BIN="$RUNNER_CACHE/runner$BIN_EXT"
-
-if [ ! -x "$RUNNER_BIN" ]; then
-    (
-        mkdir -p "$RUNNER_CACHE/build-lock"
-        bounded_pool_lock "$RUNNER_CACHE/build-lock"
-        RUNNER_TEMP=
-        trap '[ -z "$RUNNER_TEMP" ] || rm -rf -- "$RUNNER_TEMP"; bounded_pool_unlock "$RUNNER_CACHE/build-lock"' EXIT
-        trap 'exit 1' HUP INT TERM
-        if [ ! -x "$RUNNER_BIN" ]; then
-            RUNNER_TEMP=$(mktemp -d "$RUNNER_CACHE/.build.XXXXXX")
-            "$COMPILER" build "$RUNNER_SOURCE_DIR/main.tl" \
-                --stdlib-root "$RUNNER_STDLIB_ROOT" \
-                --stdlib-root "$RUNNER_SOURCE_DIR" \
-                --opt-level 1 \
-                -o "$RUNNER_TEMP/runner$BIN_EXT" >&2
-            [ -s "$RUNNER_TEMP/runner$BIN_EXT" ] && [ -x "$RUNNER_TEMP/runner$BIN_EXT" ] || {
-                echo "codegen-cases-runner build emitted no executable" >&2
-                exit 1
-            }
-            mv -- "$RUNNER_TEMP/runner$BIN_EXT" "$RUNNER_BIN"
-        fi
-    )
-fi
+cc_ensure_runner_bin
 
 CC_NATIVE_ROOT=$(cc_native_path "$ROOT")
 CC_RUNNER_ROOT=$ROOT

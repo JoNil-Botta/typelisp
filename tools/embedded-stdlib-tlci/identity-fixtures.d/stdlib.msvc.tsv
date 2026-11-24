@@ -1,0 +1,4 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.msvc/msvc-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
+stdlib.msvc/msvc-array-element-shared-view	2	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly
+stdlib.msvc/msvc-box-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly

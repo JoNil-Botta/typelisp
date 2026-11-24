@@ -121,6 +121,23 @@ fi
 
 # The corpora part is the series below: everything the single gate ran after
 # its transcripts, unchanged and in the same order.
+BOUNDED_POOL_LABEL=spec-corpus
+. "$ROOT/scripts/lib-bounded-pool.sh"
+
+SPEC_CORPUS_WORKERS=${TYPELISP_SPEC_CORPUS_WORKERS:-4}
+case "$SPEC_CORPUS_WORKERS" in
+    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) ;;
+    *)
+        echo "invalid TYPELISP_SPEC_CORPUS_WORKERS: $SPEC_CORPUS_WORKERS (expected 1-8)" >&2
+        exit 2
+        ;;
+esac
+
+SPEC_IS_WINDOWS=0
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) SPEC_IS_WINDOWS=1 ;;
+esac
+
 require_compiler
 
 echo "[public-tools] package artifact freshness"
@@ -355,35 +372,105 @@ END {
 }
 ' SPEC.md > "$SPEC_MANIFEST"
 
+SPEC_POOL_DIR="$SPEC_WORK/pool"
+SPEC_POOL_JOBS="$SPEC_WORK/pool-jobs"
+SPEC_POOL_QUEUE="$SPEC_WORK/pool.queue"
+mkdir -p "$SPEC_POOL_JOBS"
+: > "$SPEC_POOL_QUEUE"
+
+spec_active_count=0
+spec_ignored_count=0
 while IFS='|' read -r spec_name spec_mode spec_value; do
     [ -n "$spec_name" ] || continue
+    case "$spec_mode" in
+        ignore)
+            spec_ignored_count=$((spec_ignored_count + 1))
+            continue
+            ;;
+        check | compile | run) ;;
+        *) fail "unknown SPEC manifest mode for $spec_name: $spec_mode" ;;
+    esac
+    spec_active_count=$((spec_active_count + 1))
+    job_id=$(printf 'spec-%03d' "$spec_active_count")
+    printf '%s|%s|%s\n' "$spec_name" "$spec_mode" "$spec_value" > "$SPEC_POOL_JOBS/$job_id.row"
+    printf '%s|1\n' "$job_id" >> "$SPEC_POOL_QUEUE"
+done < "$SPEC_MANIFEST"
+
+run_spec_example_job() {
+    _job=$1
+    _job_err="$SPEC_POOL_JOBS/$_job.err"
+    : > "$_job_err"
+    IFS='|' read -r spec_name spec_mode spec_value < "$SPEC_POOL_JOBS/$_job.row"
     out="$SPEC_WORK/$spec_name.out"
     err="$SPEC_WORK/$spec_name.err"
     case "$spec_mode" in
-        ignore) continue ;;
         check) set -- check "$SPEC_WORK/$spec_name.tl"; spec_value=0 ;;
         compile) set -- compile "$SPEC_WORK/$spec_name.tl" -o "$SPEC_WORK/$spec_name.s"; spec_value=0 ;;
         run) set -- run "$SPEC_WORK/$spec_name.tl" ;;
-        *) fail "unknown SPEC manifest mode for $spec_name: $spec_mode" ;;
+        *)
+            echo "FAIL: unknown SPEC manifest mode for $spec_name: $spec_mode" > "$_job_err"
+            return 1
+            ;;
     esac
     set +e
     "$COMPILER" "$@" > "$out" 2> "$err"
     code=$?
     set -e
     if [ "$code" -ne "$spec_value" ]; then
-        sed 's/^/  /' "$out" "$err" >&2 || true
-        fail "spec-$spec_name expected exit $spec_value, got $code"
+        {
+            sed 's/^/  /' "$out" "$err" || true
+            echo "FAIL: spec-$spec_name expected exit $spec_value, got $code"
+        } > "$_job_err"
+        return 1
     fi
-    [ "$spec_mode" = run ] || continue
+    [ "$spec_mode" = run ] || return 0
     cp "$SPEC_WORK/$spec_name.stdout" "$out.expected"
-    case "$(uname -s)" in
-        MINGW* | MSYS* | CYGWIN*)
-            tr -d '\r' < "$out" > "$out.lf" && mv "$out.lf" "$out"
-            tr -d '\r' < "$SPEC_WORK/$spec_name.stdout" > "$out.expected"
-            ;;
-    esac
-    cmp -s "$out" "$out.expected" || fail "spec-$spec_name produced unexpected stdout"
-    [ ! -s "$err" ] || fail "spec-$spec_name wrote unexpected stderr: $(cat "$err")"
-done < "$SPEC_MANIFEST"
+    if [ "$SPEC_IS_WINDOWS" -eq 1 ]; then
+        tr -d '\r' < "$out" > "$out.lf" && mv "$out.lf" "$out"
+        tr -d '\r' < "$SPEC_WORK/$spec_name.stdout" > "$out.expected"
+    fi
+    if ! cmp -s "$out" "$out.expected"; then
+        echo "FAIL: spec-$spec_name produced unexpected stdout" > "$_job_err"
+        return 1
+    fi
+    if [ -s "$err" ]; then
+        echo "FAIL: spec-$spec_name wrote unexpected stderr: $(cat "$err")" > "$_job_err"
+        return 1
+    fi
+    return 0
+}
+
+bounded_pool_run_job() {
+    _bp_job=$1
+    _job_rc=0
+    run_spec_example_job "$_bp_job" || _job_rc=$?
+    printf '%s\n' "$_job_rc" > "$SPEC_POOL_JOBS/$_bp_job.status"
+    return "$_job_rc"
+}
+
+if [ "$spec_active_count" -gt 0 ]; then
+    echo "[public-tools] running $spec_active_count SPEC example(s) ($spec_ignored_count ignored) with $SPEC_CORPUS_WORKERS worker(s)"
+    bounded_pool_init "$SPEC_POOL_DIR" "$SPEC_CORPUS_WORKERS" "$SPEC_POOL_QUEUE" || exit 1
+    bounded_pool_start "$SPEC_POOL_DIR" "$SPEC_CORPUS_WORKERS"
+    spec_pool_status=0
+    bounded_pool_join "$SPEC_POOL_DIR" || spec_pool_status=$?
+
+    spec_passed=0
+    replay_idx=0
+    while [ "$replay_idx" -lt "$spec_active_count" ]; do
+        replay_idx=$((replay_idx + 1))
+        job_id=$(printf 'spec-%03d' "$replay_idx")
+        [ ! -s "$SPEC_POOL_JOBS/$job_id.err" ] || cat "$SPEC_POOL_JOBS/$job_id.err" >&2
+        if [ -f "$SPEC_POOL_JOBS/$job_id.status" ]; then
+            read -r _rc < "$SPEC_POOL_JOBS/$job_id.status"
+            [ "$_rc" -eq 0 ] || exit 1
+            spec_passed=$((spec_passed + 1))
+        fi
+    done
+
+    if [ "$spec_pool_status" -ne 0 ] || [ "$spec_passed" -ne "$spec_active_count" ]; then
+        fail "SPEC metadata worker pool did not complete all examples ($spec_passed/$spec_active_count)"
+    fi
+fi
 
 echo "public tool verification passed"

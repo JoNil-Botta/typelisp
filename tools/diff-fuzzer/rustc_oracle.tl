@@ -629,9 +629,9 @@
         [seed : i64 (+ seed-start i)]
         [pair : PairOut (generate-pair seed)]
         [tl-path : String
-          (str_cat.str-cat (clone out-dir) "/case_" (nstr seed) ".tl")]
+          (str_cat.str-cat (string.copy out-dir) "/case_" (nstr seed) ".tl")]
         [rs-path : String
-          (str_cat.str-cat (clone out-dir) "/case_" (nstr seed) ".rs")]
+          (str_cat.str-cat (string.copy out-dir) "/case_" (nstr seed) ".rs")]
         (io.write-file (& tl-path) (byte_buf.str-as-bytes (& pair.tl)))
         (io.write-file (& rs-path) (byte_buf.str-as-bytes (& pair.rs)))
         (text_buf.append!

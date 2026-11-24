@@ -1,0 +1,119 @@
+# opt2 assembly-shape gates for the regalloc/backend/optimizer fixtures (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+
+# #5238: an immutable global mask reaches the same BCE-versioned x16 unrolled
+# fast path as the literal spelling.
+case const-global-mask-unroll
+source tests/integration/const_global_mask_unroll.tl
+in fn _tl_const_global_mask_unroll_mask_sum
+contains __bce_fast__unroll_body
+contains __bce_fast__unroll_guard
+in fn _tl_const_global_mask_unroll_mask_sum_literal
+contains __bce_fast__unroll_body
+
+# CB-2(c): the measured tier copies the hash leaf into its loop-depth-0 site;
+# the cold second reference still calls it.
+case checked-depth0-site
+source tests/integration/checked_depth0_site.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_depth0_site_probe
+not-match ^[[:space:]]+call _tl_checked_depth0_site_hash_words$
+match ^[[:space:]]+movl \$2166136261, %(e[a-z]+|r[0-9]+d)$
+match ^\.L[A-Za-z0-9_]+_inl\.
+in asm
+match ^_tl_checked_depth0_site_hash_words:$
+count = 1 ^[[:space:]]+call _tl_checked_depth0_site_hash_words$
+
+# A seven-parameter setup builder at a hot caller's entry is offered to the
+# verdict and kept; its cold second reference still calls it.
+case checked-setup-helper
+source tests/integration/checked_setup_helper.tl
+target linux-x86_64 windows-x86_64
+not-match ^_tl_checked_setup_helper_run:$
+in fn main
+match ^\.L[A-Za-z0-9_]+_inl\.
+in asm
+match ^_tl_checked_setup_helper_build_csr:$
+count = 1 ^[[:space:]]+call _tl_checked_setup_helper_build_csr$
+
+# CB-2b: the relaxed depth floor claims `hash-words` at probe's entry without
+# taking the free tiny-leaf inlines away; the claimed callee is copied.
+case checked-cheap-tier-claim
+source tests/integration/checked_cheap_tier_claim.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_checked_cheap_tier_claim_probe
+not-match ^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$
+match ^[[:space:]]+movl \$2166136261, %(e[a-z]+|r[0-9]+d)$
+not-match ^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$
+in asm
+count = 0 ^[[:space:]]+call _tl_checked_cheap_tier_claim_mix$
+not-match ^_tl_checked_cheap_tier_claim_mix:$
+match ^_tl_checked_cheap_tier_claim_hash_words:$
+count = 1 ^[[:space:]]+call _tl_checked_cheap_tier_claim_hash_words$
+
+# INL-5/6: a helper advancing a global cursor (a global-cell Store) inlines at
+# all five sites, leaving no out-of-line body; the copies live in main.
+case global-cursor-helper
+source tests/integration/global_cursor_helper.tl
+target linux-x86_64 windows-x86_64
+count = 0 ^[[:space:]]+call _tl_global_cursor_helper_gc_next$
+not-match ^_tl_global_cursor_helper_gc_next:$
+in fn main
+count = 5 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*:$
+count = 5 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*\.cold:$
+count = 2 ^[[:space:]]+movq _tl_global_cursor_helper_gc_tokens\(%rip\), %r
+count = 5 ^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_helper_gc_cursor\(%rip\)$
+count = 3 ^[[:space:]]+movq _tl_global_cursor_helper_gc_cursor\(%rip\), %r
+
+# ...and the multiblock guarded variant inlines into its three loop sites.
+case global-cursor-guarded
+source tests/integration/global_cursor_guarded.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_global_cursor_guarded_gcg_run
+count = 0 ^[[:space:]]+call _tl_global_cursor_guarded_gcg_step$
+in asm
+match ^_tl_global_cursor_guarded_gcg_step:$
+in fn _tl_global_cursor_guarded_gcg_run
+count = 3 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*:$
+count = 3 ^\.[A-Za-z0-9_.]*inl\.[A-Za-z0-9_.]*bounds_ok(\.[0-9]+|[A-Za-z0-9_]+)*\.cold:$
+count = 3 ^[[:space:]]+movq %r[a-z0-9]+, _tl_global_cursor_guarded_gcg_cursor\(%rip\)$
+count = 3 ^[[:space:]]+movq _tl_global_cursor_guarded_gcg_cursor\(%rip\), %r
+count = 1 ^[[:space:]]+movq _tl_global_cursor_guarded_gcg_tokens\(%rip\), %r
+
+# The asm_render benchmark's fold accumulator is never homed in a frame slot.
+case asm-render-fold-accumulator
+source benchmarks/asm_render/bench.tl
+target linux-x86_64 windows-x86_64
+metric frame-homed-fold-accumulators = 0
+
+# INL-7: sccp_lattice's rewrite-phi is not imported into rewrite-rows, whose
+# frame traffic stays under an upper bound (per target).
+case sccp-rewrite-phi-import-linux
+source benchmarks/sccp_lattice/bench.tl
+match ^_tl_bench_sccp_rewrite_phi:$
+in fn _tl_bench_sccp_rewrite_rows
+count = 1 ^[[:space:]]+call _tl_bench_sccp_rewrite_phi$
+count <= 27 [-0-9]+\(%rsp\)
+
+case sccp-rewrite-phi-import-windows
+source benchmarks/sccp_lattice/bench.tl
+target windows-x86_64
+match ^_tl_bench_sccp_rewrite_phi:$
+in fn _tl_bench_sccp_rewrite_rows
+count = 1 ^[[:space:]]+call _tl_bench_sccp_rewrite_phi$
+count <= 38 [-0-9]+\(%rsp\)
+
+# A loop-bearing recursive helper is imported into both callers.
+case recursive-loop-import
+source tests/integration/recursive_loop_import.tl
+target linux-x86_64 windows-x86_64
+not-match ^_tl_recursive_loop_import_rli_scan:$
+in fn _tl_recursive_loop_import_rli_rows
+count = 0 ^[[:space:]]+call _tl_recursive_loop_import_rli_scan$
+count >= 1 1099511628211
+in fn _tl_recursive_loop_import_rli_peek
+count = 0 ^[[:space:]]+call _tl_recursive_loop_import_rli_scan$
+count >= 1 1099511628211

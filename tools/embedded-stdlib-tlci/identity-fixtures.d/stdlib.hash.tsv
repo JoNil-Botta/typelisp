@@ -1,0 +1,11 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.hash/hash-ref	1	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/hash-value	1	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/inline-hash	3	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/struct-hash-fields	5	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/tuple-hash-elements	5	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/inline-fixed-array-hash	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/enum-hash-payloads	6	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/enum-hash-dispatch	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/hash-once	1	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/hash	1	fixed	module	tests/integration/stdlib_hash_generated.tl	ok	default	assembly

@@ -76,11 +76,6 @@
   `(unsafe
     (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
 
-(defmacro (compiler-opt-borrowed-array-element-shared-view
-  [items : Expr]
-  [index : Expr]) : Expr
-  `(clone (array-ref ,items ,index)))
-
 ;; A value that is not a Box is already the boxed value: a `(Box T)` payload
 ;; matched through a shared reference binds `(& T)` (SPEC section 5.13).
 (defmacro (compiler-opt-box-shared-view [value : Expr]) : Expr
@@ -600,7 +595,7 @@
       (compiler-opt-global-shared-view compiler-opt-owned-state.debug-state)]
     [cell : OptDebugTextBufCell state.dump-buf]
     [buf : text_buf.TextBuf (compiler-opt-box-shared-view cell.slot)]
-    (text_buf.render (clone buf))))
+    (text_buf.render (text_buf.clone-text-buf (& buf)))))
 
 (cfg
   test
@@ -8316,7 +8311,8 @@
           (opt-copy-resolve-mask env active-mask)
           (opt-copy-subst-spmd-call-args env (& args))
           result
-          (clone (compiler-opt-box-field-shared-view payload-box origin))))]
+          (ir.clone-compiler-ir-spmd-call-origin
+            (& (compiler-opt-box-field-shared-view payload-box origin)))))]
     [(TailCall name args ty)
       (TailCall name (opt-copy-subst-call-args env (& args)) ty)]
     [(Store name value ty)
@@ -8600,6 +8596,9 @@
   (dst i64)
   (src ir.CompilerIrValue))
 
+(define (clone-opt-bounds-cast-binding [item : (& OptBoundsCastBinding)]) : OptBoundsCastBinding
+  (OptBoundsCastBinding item.dst (ir.compiler-ir-clone-value (& item.src))))
+
 (import (vector.vector OptBoundsCastBinding core) as opt_bounds_cast_binding_vec)
 
 (defstruct OptBoundsCastState
@@ -8622,9 +8621,8 @@
         (for [read (iterator.range 0 count)]
           (let
             [binding : OptBoundsCastBinding
-              (compiler-opt-borrowed-array-element-shared-view
-                (opt_bounds_cast_binding_vec.slots (& content.bindings))
-                read)]
+              (clone-opt-bounds-cast-binding
+                (& (array-ref content.bindings.slots read)))]
             (if (or (= binding.dst var) (opt-value-is-var? binding.src var))
               (opt_dense_i64_vec.set-ref!
                 (&mut content.indices)
@@ -8706,12 +8704,10 @@
                 (if (< slot 0)
                   value
                   (let
-                    [binding : OptBoundsCastBinding
-                      (compiler-opt-borrowed-array-element-shared-view
-                        (opt_bounds_cast_binding_vec.slots
-                          (& (deref state).bindings))
-                        slot)]
-                    binding.src))))])]
+                    [slots
+                      (opt_bounds_cast_binding_vec.slots
+                        (& (deref state).bindings))]
+                    (clone-opt-bounds-cast-binding (& (array-ref slots slot))).src))))])]
       [_ value])))
 
 ;; Record an `I64->U64` reinterpret cast (the index/length unsigned-compare form)
@@ -8966,7 +8962,8 @@
     [state : OptBoundsSeqState (Plain (Nil) (Empty))]
     (for [read (iterator.range 0 count)]
       (let
-        [instr : ir.CompilerIrInstr (clone (array-ref instrs.slots read))]
+        [instr : ir.CompilerIrInstr
+          (ir.clone-compiler-ir-instr (& (array-ref instrs.slots read)))]
         [step : OptBoundsSeqStep
           (match state
             [(Plain facts casts)
@@ -13776,6 +13773,9 @@
   (present bool)
   (ty ast.AstType))
 
+(define (clone-opt-ssa-var-type-entry [item : (& OptSsaVarTypeEntry)]) : OptSsaVarTypeEntry
+  (OptSsaVarTypeEntry item.present (ast.clone-ast-type (& item.ty))))
+
 (import (vector.vector OptSsaVarTypeEntry core) as opt_ssa_var_type_vec)
 
 ;; Dense SSA var -> AstType table. Function-local vreg ids are dense, so the
@@ -13798,9 +13798,7 @@
       (No)
       (let
         [entry : OptSsaVarTypeEntry
-          (compiler-opt-borrowed-array-element-shared-view
-            (opt_ssa_var_type_vec.slots (& entries))
-            var)]
+          (clone-opt-ssa-var-type-entry (& (array-ref entries.slots var)))]
         (if entry.present
           (Some entry.ty)
           (No))))))
@@ -14342,7 +14340,10 @@
           [entry-index : i64 (- slot 1)]
           [entry : (&mut entries OptSsaVarBlockEntry)
             (&mut (array-ref entries entry-index))]
-          [labels : OptLabelSet (clone entry.labels)]
+          [labels : OptLabelSet
+            (match entry.labels
+              [(Nil) (Nil)]
+              [(Dense handle len) (Dense handle len)])]
           ;; The consumed table owns this entry. Retain its membership array
           ;; while appending definitions, rather than cloning it per block.
           (set!
@@ -14912,7 +14913,15 @@
           [previous : i64 (array-ref uses.offsets id)]
           (+= (array-ref uses.offsets (+ id 1)) previous)))
       (let
-        [heads : (__tl_dyn-array i64) (clone uses.offsets)]
+        [heads : (__tl_dyn-array i64)
+          (let
+            [offsets-len : i64 (array-length uses.offsets)]
+            [copy : (__tl_dyn-array i64) (__tl_make-array i64 offsets-len)]
+            (for [offset-idx (iterator.range 0 offsets-len)]
+              (set!
+                (array-ref copy offset-idx)
+                (array-ref uses.offsets offset-idx)))
+            copy)]
         (for [row (iterator.range 0 count)]
           (let
             [pred : i64 (array-ref pred-ids row)]
@@ -15870,6 +15879,29 @@
   (BinKey ir.CompilerIrBinOp ir.CompilerIrValue ir.CompilerIrValue ast.AstType)
   (UnKey ir.CompilerIrUnOp ir.CompilerIrValue ast.AstType))
 
+(define (clone-opt-global-expr-key [key : (& OptGlobalExprKey)]) : OptGlobalExprKey
+  (match key
+    [(MovKey value ty)
+      (MovKey (ir.compiler-ir-clone-value value) (ast.clone-ast-type ty))]
+    [(GepKey base offset ty)
+      (GepKey
+        (ir.compiler-ir-clone-value base)
+        (ir.compiler-ir-clone-value offset)
+        (ast.clone-ast-type ty))]
+    [(CastKey value from-ty to-ty)
+      (CastKey
+        (ir.compiler-ir-clone-value value)
+        (ast.clone-ast-type from-ty)
+        (ast.clone-ast-type to-ty))]
+    [(BinKey op lhs rhs ty)
+      (BinKey
+        (ir.clone-compiler-ir-bin-op op)
+        (ir.compiler-ir-clone-value lhs)
+        (ir.compiler-ir-clone-value rhs)
+        (ast.clone-ast-type ty))]
+    [(UnKey op value ty)
+      (UnKey op (ir.compiler-ir-clone-value value) (ast.clone-ast-type ty))]))
+
 (defenum OptMaybeGlobalExprKey
   (No)
   (Some OptGlobalExprKey))
@@ -16217,7 +16249,7 @@
     [capacity : i64 1]
     [hashed? : bool false]
     (for [index (iterator.range 0 count)]
-      (match (compiler-opt-borrowed-array-element-shared-view slots index)
+      (match (& (array-ref slots index))
         [(Expr _ _ _ _) (set! hashed? true)]
         [(Copy dst _ _ _)
           (if (>= dst capacity)
@@ -16279,7 +16311,7 @@
               use-block-id
               use-pos
               doms))
-            (Some (clone src))
+            (Some (ir.compiler-ir-clone-value (& src)))
             (No))]
         [_ (No)])]
     [(PackWord group index _ _ _)
@@ -16294,7 +16326,7 @@
               use-block-id
               use-pos
               doms))
-            (Some (clone word))
+            (Some (ir.compiler-ir-clone-value (& word)))
             (No))]
         [_ (No)])]))
 
@@ -22823,9 +22855,16 @@
     [kinds (& env.kinds)]
     (if (or (< var 0) (>= var (opt_licm_ptr_kind_vec.len (& kinds))))
       (Unknown)
-      (compiler-opt-borrowed-array-element-shared-view
-        (opt_licm_ptr_kind_vec.slots (& kinds))
-        var))))
+      (match (array-ref (opt_licm_ptr_kind_vec.slots (& kinds)) var)
+        [(Unknown) (Unknown)]
+        [(HeaderSlot id) (HeaderSlot id)]
+        [(DataSlot id) (DataSlot id)]
+        [(DataBuffer id) (DataBuffer id)]
+        [(DataElement id) (DataElement id)]
+        [(GlobalSlot id) (GlobalSlot id)]
+        [(GlobalDataSlot id) (GlobalDataSlot id)]
+        [(LocalObject id) (LocalObject id)]
+        [(LocalSlot id) (LocalSlot id)]))))
 
 (define (opt-licm-type-env-bind
   [types : (& OptSsaVarTypes)]
@@ -33109,13 +33148,25 @@
           (+= index 1))
         found)]))
 
+(define (clone-opt-induction-derived [item : (& OptInductionDerived)]) : OptInductionDerived
+  (match item
+    [(Mul a b ty) (Mul a b (ast.clone-ast-type ty))]
+    [(Gep base scale ty)
+      (Gep (ir.compiler-ir-clone-value base) scale (ast.clone-ast-type ty))]
+    [(GepScaled base scale ty)
+      (GepScaled
+        (ir.compiler-ir-clone-value base)
+        scale
+        (ast.clone-ast-type ty))]
+    [(AddInv base scale ty)
+      (AddInv (ir.compiler-ir-clone-value base) scale (ast.clone-ast-type ty))]))
+
 (define (opt-induction-derived-list-ref
   [deriveds : (& deriveds OptInductionDerivedList)]
   [index : i64]) : OptInductionDerived
   (match deriveds
     [(Nil) (Mul 0 0 (I64))]
-    [(Dense items _)
-      (compiler-opt-borrowed-array-element-shared-view items index)]))
+    [(Dense items _) (clone-opt-induction-derived (& (array-ref items index)))]))
 
 (define (opt-induction-derived-list-append
   [deriveds : (& deriveds OptInductionDerivedList)]
@@ -33142,7 +33193,7 @@
           (for [index (iterator.range 0 len)]
             (set!
               (array-ref bigger index)
-              (compiler-opt-borrowed-array-element-shared-view items index)))
+              (clone-opt-induction-derived (& (array-ref items index)))))
           (set!
             (array-ref bigger len)
             (owned_view.compiler-owned-reference-shared-view derived))
@@ -36162,7 +36213,7 @@
       [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
       (when
         (opt-label-contains keys input.label)
-        (return (Some (clone input.value))))))
+        (return (Some (ir.compiler-ir-clone-value (& input.value)))))))
   (No))
 
 (define (opt-flag-exit-keyed-any-closure?
@@ -38796,7 +38847,7 @@
             def-label)
             (begin
               (set! outside-count (+ outside-count 1))
-              (set! kept (clone input.value)))
+              (set! kept (ir.compiler-ir-clone-value (& input.value))))
             (return (No))))))
     (if (and (= outside-count 1) (= inside-count 1))
       (Some kept seed-var)
@@ -40318,7 +40369,7 @@
         (unless
           (opt-value-is-var? (& input.value) dst)
           (if (opt-phi-uniform-agrees? (& agreed) (& input.value))
-            (set! agreed (Some (clone input.value)))
+            (set! agreed (Some (ir.compiler-ir-clone-value (& input.value))))
             (return (No))))))
     agreed))
 
@@ -40392,8 +40443,11 @@
         (when
           (> read write)
           (let
-            [displaced : ir.CompilerIrInstr (clone (array-ref slots write))]
-            (set! (array-ref slots write) (clone (array-ref slots read)))
+            [displaced : ir.CompilerIrInstr
+              (ir.clone-compiler-ir-instr (& (array-ref slots write)))]
+            (set!
+              (array-ref slots write)
+              (ir.clone-compiler-ir-instr (& (array-ref slots read))))
             (set! (array-ref slots read) displaced)))
         (+= write 1)))))
 
@@ -40509,7 +40563,8 @@
     (for [read (iterator.range 0 count)]
       (if (array-ref reachable read)
         (let
-          [block : ir.CompilerIrBlock (clone (array-ref slots read))]
+          [block : ir.CompilerIrBlock
+            (ir.clone-compiler-ir-block (& (array-ref slots read)))]
           (match (compiler-opt-global-shared-view block)
             [(Block label instrs)
               (opt-cfg-clean-instr-seq-rewrite!
@@ -42156,7 +42211,11 @@
     (let
       [first (ir.compiler-ir-phi-input-seq-borrow inputs 0)]
       [second (ir.compiler-ir-phi-input-seq-borrow inputs 1)]
-      (Two (clone first.value) first.label (clone second.value) second.label))
+      (Two
+        (ir.compiler-ir-clone-value (& first.value))
+        first.label
+        (ir.compiler-ir-clone-value (& second.value))
+        second.label))
     (No)))
 
 (define (opt-bool-branch-constant-inputs-acc
@@ -42634,7 +42693,7 @@
   (if (= inputs.len 1)
     (let
       [input (ir.compiler-ir-phi-input-seq-borrow inputs 0)]
-      (Some (clone input.value) input.label))
+      (Some (ir.compiler-ir-clone-value (& input.value)) input.label))
     (No)))
 
 (define (opt-bool-branch-fuse-single-compare-phi!
@@ -43262,7 +43321,7 @@
           [(Var _)
             (when (> vars 0) (return (No)))
             (set! the-var-label input.label)
-            (set! the-var-value (clone input.value))
+            (set! the-var-value (ir.compiler-ir-clone-value (& input.value)))
             (set! vars 1)]
           [_
             (match (opt-phi-cmp-fold-verdict
@@ -43901,7 +43960,7 @@
           [(Var _)
             (when (> vars 0) (return (No)))
             (set! the-var-label input.label)
-            (set! the-var-value (clone input.value))
+            (set! the-var-value (ir.compiler-ir-clone-value (& input.value)))
             (set! vars 1)]
           [_
             (match (opt-phi-cmp-fold-chain-exit
@@ -44639,7 +44698,9 @@
   (for [index (iterator.range 0 inputs.len)]
     (let
       [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
-      (when (= input.label label) (return (Some (clone input.value))))))
+      (when
+        (= input.label label)
+        (return (Some (ir.compiler-ir-clone-value (& input.value)))))))
   (No))
 
 (define (opt-thread-phi-inputs-drop
@@ -53901,7 +53962,10 @@
               block-label
               self
               len
-              (& (opt-bounds-dom-resolve env.copies (clone input.value)))
+              (&
+                (opt-bounds-dom-resolve
+                  env.copies
+                  (ir.compiler-ir-clone-value (& input.value))))
               input.label)
             (return false))))
       true)))
@@ -54108,6 +54172,11 @@
   (Nil)
   (Cons i64 (Box OptNonnegPhis)))
 
+(define (clone-opt-nonneg-phis [phis : (& OptNonnegPhis)]) : OptNonnegPhis
+  (match phis
+    [(Nil) (Nil)]
+    [(Cons head rest) (Cons head (box (clone-opt-nonneg-phis rest)))]))
+
 (define (opt-nonneg-phis-member? [phis : (& phis OptNonnegPhis)] [var : i64]) : bool
   (match phis
     [(Nil) false]
@@ -54268,7 +54337,7 @@
             (opt-bounds-dom-nonneg-inputs?
               env
               cmp-facts
-              (& (Cons var (box (clone (deref phis)))))
+              (& (Cons var (box (clone-opt-nonneg-phis phis))))
               inputs
               fuel))]
         [_ false])]
@@ -55125,7 +55194,7 @@
             (opt-bounds-dom-induct-inputs?
               env
               cmp-facts
-              (& (Cons var (box (clone (deref phis)))))
+              (& (Cons var (box (clone-opt-nonneg-phis phis))))
               label
               nonneg?
               below?
@@ -55871,7 +55940,10 @@
               block-id
               len-positive?
               len
-              (& (opt-bounds-dom-resolve env.copies (clone input.value)))
+              (&
+                (opt-bounds-dom-resolve
+                  env.copies
+                  (ir.compiler-ir-clone-value (& input.value))))
               depth
               seen
               seen-len
@@ -58389,7 +58461,8 @@
           (= input.label label)
           (match only
             [(Some _) (return (No))]
-            [(No) (set! only (Some (clone input.value)))]))))
+            [(No)
+              (set! only (Some (ir.compiler-ir-clone-value (& input.value))))]))))
     only))
 
 (define (opt-bounds-dom-phi-edge-operand
@@ -59548,7 +59621,9 @@
   (for [index (iterator.range 0 inputs.len)]
     (let
       [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
-      (when (= input.label needle) (return (Some (clone input.value))))))
+      (when
+        (= input.label needle)
+        (return (Some (ir.compiler-ir-clone-value (& input.value)))))))
   (No))
 
 (define (opt-bounds-dom-range-phis-agree-from?
@@ -61503,6 +61578,43 @@
   ;; Whole-program verified scalar-to-length and struct-field length invariants.
   (len-inv OptLenInvariants))
 
+(define (clone-opt-global-mod-ref [mr : (& OptGlobalModRef)]) : OptGlobalModRef
+  (OptGlobalModRef
+    mr.built?
+    (opt_i64_i64_map.clone-map (& mr.index))
+    (opt_i64_i64_map.clone-map (& mr.writes))))
+
+(define (clone-opt-len-invariants [inv : (& OptLenInvariants)]) : OptLenInvariants
+  (OptLenInvariants
+    (opt_i64_i64_map.clone-map (& inv.scalar-map))
+    (opt_i64_i64_map.clone-map (& inv.scalar-excluded))
+    (opt_i64_i64_map.clone-map (& inv.struct-fits))
+    (opt_i64_i64_map.clone-map (& inv.struct-excluded))
+    (opt_i64_i64_map.clone-map (& inv.global-struct-types))))
+
+(define (clone-opt-global-cell-summary [cell : (& OptGlobalCellSummary)]) : OptGlobalCellSummary
+  (let
+    [types-len : i64 (array-length cell.types)]
+    [types : (__tl_dyn-array ast.AstType)
+      (__tl_make-array ast.AstType types-len)]
+    (for [index (iterator.range 0 types-len)]
+      (set!
+        (array-ref types index)
+        (ast.clone-ast-type (& (array-ref cell.types index)))))
+    (OptGlobalCellSummary
+      (opt_i64_i64_map.clone-map (& cell.addr-taken))
+      (opt_i64_i64_map.clone-map (& cell.type-index))
+      types
+      cell.word-cell
+      (clone-opt-global-mod-ref (& cell.mod-ref))
+      (opt_i64_i64_map.clone-map (& cell.nonneg))
+      (opt_i64_i64_map.clone-map (& cell.len-eq))
+      (opt_i64_i64_map.clone-map (& cell.len-eq-clean))
+      (opt_i64_i64_map.clone-map (& cell.arg-global))
+      (clone-opt-global-mod-ref (& cell.obj-mod-ref))
+      (opt_i64_i64_map.clone-map (& cell.call-memory))
+      (clone-opt-len-invariants (& cell.len-inv)))))
+
 (define (opt-global-cell-summary-empty) : OptGlobalCellSummary
   (OptGlobalCellSummary
     (opt_i64_i64_map.with-capacity 1)
@@ -61654,6 +61766,15 @@
   (dst i64)
   (rec OptAffineRec))
 
+(define (clone-opt-affine-rec [rec : (& OptAffineRec)]) : OptAffineRec
+  (match rec
+    [(No) (No)]
+    [(AddC base k) (AddC base k)]
+    [(MulC base c idx) (MulC base c idx)]))
+
+(define (clone-opt-affine-binding [item : (& OptAffineBinding)]) : OptAffineBinding
+  (OptAffineBinding item.dst (clone-opt-affine-rec (& item.rec))))
+
 (import (vector.vector OptAffineBinding core) as opt_affine_binding_vec)
 
 (defstruct OptAffineState
@@ -61693,9 +61814,8 @@
         (for [index (iterator.range 0 count)]
           (let
             [binding : OptAffineBinding
-              (compiler-opt-borrowed-array-element-shared-view
-                (opt_affine_binding_vec.slots (& content.bindings))
-                index)]
+              (clone-opt-affine-binding
+                (& (array-ref content.bindings.slots index)))]
             (set! (array-ref content.indices binding.dst) 0)))
         (set! content.bindings.len 0))
       (Dense state)]))
@@ -61745,10 +61865,10 @@
             (if (< slot 0)
               (No)
               (let
+                [slots
+                  (opt_affine_binding_vec.slots (& (deref state).bindings))]
                 [binding : OptAffineBinding
-                  (compiler-opt-borrowed-array-element-shared-view
-                    (opt_affine_binding_vec.slots (& (deref state).bindings))
-                    slot)]
+                  (clone-opt-affine-binding (& (array-ref slots slot)))]
                 binding.rec)))))]))
 
 (define (opt-affine-rec-mentions? [rec : OptAffineRec] [var : i64]) : bool
@@ -61768,9 +61888,8 @@
         (for [read (iterator.range 0 count)]
           (let
             [binding : OptAffineBinding
-              (compiler-opt-borrowed-array-element-shared-view
-                (opt_affine_binding_vec.slots (& content.bindings))
-                read)]
+              (clone-opt-affine-binding
+                (& (array-ref content.bindings.slots read)))]
             (if (or
               (= binding.dst var)
               (opt-affine-rec-mentions? binding.rec var))
@@ -70354,6 +70473,9 @@
   (kmin i64)
   (kmax i64))
 
+(define (clone-opt-uce-group [g : (& OptUceGroup)]) : OptUceGroup
+  (OptUceGroup g.base (ir.compiler-ir-clone-value (& g.length)) g.kmin g.kmax))
+
 (import (vector.vector OptUceGroup core) as opt_uce_group_vec)
 
 (define (opt-unroll-const-guard-value-eq?
@@ -70382,10 +70504,7 @@
   [kmax : i64]) : unit
   (for [index (iterator.range 0 (opt_uce_group_vec.len groups))]
     (let
-      [g : OptUceGroup
-        (compiler-opt-borrowed-array-element-shared-view
-          (opt_uce_group_vec.slots groups)
-          index)]
+      [g : OptUceGroup (clone-opt-uce-group (& (array-ref groups.slots index)))]
       (when
         (and
           (= g.base base)
@@ -70814,10 +70933,7 @@
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : i64
   (for [index (iterator.range 0 (opt_uce_group_vec.len groups))]
     (let
-      [g : OptUceGroup
-        (compiler-opt-borrowed-array-element-shared-view
-          (opt_uce_group_vec.slots groups)
-          index)]
+      [g : OptUceGroup (clone-opt-uce-group (& (array-ref groups.slots index)))]
       [base : i64 g.base]
       [length : ir.CompilerIrValue g.length]
       [kmin : i64 g.kmin]
@@ -98199,7 +98315,7 @@
               widened
               (Var condition-var)
               (Bool)
-              (clone ty)))
+              (ast.clone-ast-type (& ty))))
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
             (ir.CompilerIrInstr.BinOp dst (BitXor) (Var widened) (I64 1) ty))))]
@@ -111723,7 +111839,7 @@
       (Mov
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     ;; A callee-frame temp becomes a caller-frame temp.
     ;;
     ;; `alloc T` reserves one word of the enclosing function's frame for the
@@ -111754,7 +111870,8 @@
     ;; body-local (`src >= np`, opt-inline-multiblock-instr-reason), so the
     ;; operand is never a call-site argument and can never become a literal or
     ;; a caller value whose address the callee never had.
-    [(Alloc dst ty) (Alloc (opt-inline-rebase-var dst np base) (clone ty))]
+    [(Alloc dst ty)
+      (Alloc (opt-inline-rebase-var dst np base) (ast.clone-ast-type (& ty)))]
     [(AddrOf dst src _storage-words)
       (AddrOf
         (opt-inline-rebase-var dst np base)
@@ -111765,37 +111882,37 @@
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value b sa np base)
         (opt-inline-remap-value o sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(Load dst src ty)
       (Load
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(Cast dst src from to)
       (Cast
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
-        (clone from)
-        (clone to))]
+        (ast.clone-ast-type (& from))
+        (ast.clone-ast-type (& to)))]
     [(Bitcast dst src from to)
       (Bitcast
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
-        (clone from)
-        (clone to))]
+        (ast.clone-ast-type (& from))
+        (ast.clone-ast-type (& to)))]
     [(BinOp dst op lhs rhs ty)
       (BinOp
         (opt-inline-rebase-var dst np base)
         op
         (opt-inline-remap-value lhs sa np base)
         (opt-inline-remap-value rhs sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(UnOp dst op src ty)
       (UnOp
         (opt-inline-rebase-var dst np base)
         op
         (opt-inline-remap-value src sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     ;; Pack/Word need explicit remap arms; when they were inline-eligible
     ;; without them, inlined register-group instructions kept their CALLEE-local
     ;; var ids inside the caller -- an opt2 self-build miscompile (the
@@ -111805,13 +111922,13 @@
       (Pack
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value-seq (& words) sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(Word dst src index ty)
       (Word
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value src sa np base)
         index
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(BoundsCheck idx len msg)
       (BoundsCheck
         (opt-inline-remap-value idx sa np base)
@@ -111821,12 +111938,12 @@
       (StorePtr
         (opt-inline-remap-value d sa np base)
         (opt-inline-remap-value s sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(StoreOwned d s ty)
       (StoreOwned
         (opt-inline-remap-value d sa np base)
         (opt-inline-remap-value s sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(CopyBytes d s size)
       (CopyBytes
         (opt-inline-remap-value d sa np base)
@@ -111852,25 +111969,25 @@
       (Store
         (ir.compiler-ir-symbol-clone name)
         (opt-inline-remap-value value sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(Call dst name a ty)
       (Call
         (opt-inline-rebase-var dst np base)
         (ir.compiler-ir-symbol-clone name)
         (opt-inline-remap-args a sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(CallIndirect dst callee a ty)
       (CallIndirect
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value callee sa np base)
         (opt-inline-remap-args a sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(CallIndirectC dst callee a ty)
       (CallIndirectC
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-value callee sa np base)
         (opt-inline-remap-args a sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [(CallCAbiStoreResult payload-box)
       (let
         [a (compiler-opt-box-field-shared-view payload-box args)]
@@ -111919,23 +112036,15 @@
           (Mov
             dst
             (opt-inline-remap-value v sa np base)
-            (clone (owned_view.compiler-owned-reference-shared-view ret)))]
-        [(No)
-          (Mov
-            dst
-            (Unit)
-            (clone (owned_view.compiler-owned-reference-shared-view ret)))])]
+            (ast.clone-ast-type ret))]
+        [(No) (Mov dst (Unit) (ast.clone-ast-type ret))])]
     [(TailCall cname cargs _)
       (Call
         dst
         (ir.compiler-ir-symbol-clone cname)
         (opt-inline-remap-args cargs sa np base)
-        (clone (owned_view.compiler-owned-reference-shared-view ret)))]
-    [_
-      (Mov
-        dst
-        (Unit)
-        (clone (owned_view.compiler-owned-reference-shared-view ret)))]))
+        (ast.clone-ast-type ret))]
+    [_ (Mov dst (Unit) (ast.clone-ast-type ret))]))
 
 ;; The tail-call SITE twin of opt-inline-exit->result-instr.
 ;;
@@ -111973,7 +112082,7 @@
       (TailCall
         (ir.compiler-ir-symbol-clone cname)
         (opt-inline-remap-args cargs sa np base)
-        (clone (owned_view.compiler-owned-reference-shared-view ret)))]
+        (ast.clone-ast-type ret))]
     [_ (Return (No))]))
 
 ;; The ordinary (no `-g`) probe for a clone's span. `opt-remap-spans-instr-key`
@@ -112454,7 +112563,7 @@
       (Phi
         (opt-inline-rebase-var dst np base)
         (opt-inline-remap-phi-inputs inputs prefix sa np base)
-        (clone ty))]
+        (ast.clone-ast-type (& ty)))]
     [_ (opt-inline-clone-instr instr sa np base prefix)]))
 
 (define (opt-inline-return-value
@@ -112474,10 +112583,7 @@
     [phi-inputs-at-111255-3 : ir.CompilerIrPhiInputSeq
       (compiler-opt-global-shared-view inputs)]
     (if (<= phi-inputs-at-111255-3.len 0)
-      (Mov
-        dst
-        (Unit)
-        (clone (owned_view.compiler-owned-reference-shared-view ret)))
+      (Mov dst (Unit) (ast.clone-ast-type ret))
       (let
         [phi-input-at-111255-3
           (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-111255-3 0)]
@@ -112492,11 +112598,8 @@
           (Mov
             dst
             (ir.compiler-ir-clone-value (& value))
-            (clone (owned_view.compiler-owned-reference-shared-view ret)))
-          (Phi
-            dst
-            inputs
-            (clone (owned_view.compiler-owned-reference-shared-view ret))))))))
+            (ast.clone-ast-type ret))
+          (Phi dst inputs (ast.clone-ast-type ret)))))))
 
 ;; The site's own location moved onto an instruction the rewrite mints in the
 ;; caller. Located in both build modes for the same reason the clone walk is:
@@ -119325,7 +119428,7 @@
                     tail-dst
                     (ir.compiler-ir-symbol-clone cname)
                     (opt-inline-remap-args cargs sa np base)
-                    (clone cty))]
+                    (ast.clone-ast-type (& cty)))]
                 (ir.compiler-ir-instr-builder-push!
                   (&mut builder)
                   (compiler-opt-global-shared-view converted))
@@ -122175,7 +122278,7 @@
 
 ;; The program's functions, keyed by symbol id.
 (define (opt-program-function-set [index : (& index OptProgramIndex)]) : opt_i64_i64_map.Map
-  (clone index.functions.names.ids))
+  (opt_i64_i64_map.clone-map (& index.functions.names.ids)))
 
 ;; Whether `name` is one of the program's functions.
 (define (opt-program-function? [index : (& index OptProgramIndex)] [name : i64]) : bool
@@ -123727,8 +123830,8 @@
               (and
                 (= dst (array-ref state 3))
                 (let
-                  [offset-2 (clone offset)]
-                  [ty-2 (clone ty)]
+                  [offset-2 (ir.compiler-ir-clone-value (& offset))]
+                  [ty-2 (ast.clone-ast-type (& ty))]
                   (opt-licm-data-slot? offset-2 ty-2)))
               (and
                 (= dst (array-ref state 4))
@@ -123740,7 +123843,7 @@
           (or
             (and
               (= p (array-ref state 3))
-              (match (clone value)
+              (match (& value)
                 [(Var v) (= v (array-ref state 1))]
                 [_ false]))
             (and
@@ -124621,7 +124724,10 @@
                 functions))
             disq
             capacity)))]
-    [out : OptConstLengths (clone built)]
+    [out : OptConstLengths
+      (OptConstLengths
+        (opt_i64_i64_map.clone-map (& built.lengths))
+        (opt_i64_i64_map.clone-map (& built.inits)))]
     (unsafe
       (arena.tl_arena_destroy scratch))
     out))
@@ -135737,7 +135843,7 @@
         (unsafe
           (arena.Arena scratch))
         (opt-nonneg-globals-build type-segment-bases globals functions cell))]
-    [out : opt_i64_i64_map.Map (clone built)]
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.clone-map (& built))]
     (unsafe
       (arena.tl_arena_destroy scratch))
     out))
@@ -142569,7 +142675,7 @@
         (if (not (= write read))
           (set!
             (array-ref instrs.slots write)
-            (clone (array-ref instrs.slots read)))
+            (ir.clone-compiler-ir-instr (& (array-ref instrs.slots read))))
           unit)
         (+= write 1)))
     (set! instrs.len write)))

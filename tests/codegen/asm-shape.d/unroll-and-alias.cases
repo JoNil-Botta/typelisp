@@ -1,0 +1,266 @@
+# opt2 assembly-shape gates for the regalloc/backend/optimizer fixtures (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+
+# Backend jump forwarding retargets branches into jmp-only blocks, never
+# through a self-loop, and leaves no fallthrough jmp.
+case jump-only-forward
+source tests/integration/jump_only_forward.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_jump_only_forward_forward_probe
+metric jumps-into-jump-only-blocks = 0
+metric fallthrough-jmps = 0
+in fn _tl_jump_only_forward_diamond_probe
+metric jumps-into-jump-only-blocks = 0
+metric fallthrough-jmps = 0
+in fn main
+metric jumps-into-jump-only-blocks = 0
+metric fallthrough-jmps = 0
+in fn _tl_jump_only_forward_forward_probe
+count >= 4 ^\.L[^ ]*_if_merge\.[0-9.]+:$
+count >= 4 ^[[:space:]]+j[a-z]+ \.L[^ ]*_if_merge\.[0-9.]+$
+metric backward-branches >= 1
+in fn _tl_jump_only_forward_diamond_probe
+count >= 3 ^[[:space:]]+j[a-z]+ \.L[^ ]*_if_merge\.[0-9.]+$
+in fn main
+metric self-loop-jmps >= 1
+
+# Selects read the compare's flags directly (cmov under its cmp, no setcc/
+# movzb/cmovne); gep indexes are not staged through copies; scaled leas.
+case select-flags-lea
+source tests/integration/select_flags_lea.tl
+in fn tl_sfl_min_scan
+count = 0 ^[[:space:]]+set[a-z]+[ ]
+count = 0 ^[[:space:]]+movzb[lq] %r[a-z0-9]+b,[ ]
+count = 0 ^[[:space:]]+cmovne[ ]
+count = 2 ^[[:space:]]+cmovl[ ]
+count = 2 ^[[:space:]]+cmov
+metric cmov-under-cmp = ok
+in fn tl_sfl_max_scan
+count = 0 ^[[:space:]]+set[a-z]+[ ]
+count = 0 ^[[:space:]]+movzb[lq] %r[a-z0-9]+b,[ ]
+count = 0 ^[[:space:]]+cmovne[ ]
+count = 2 ^[[:space:]]+cmovg[ ]
+count = 2 ^[[:space:]]+cmov
+metric cmov-under-cmp = ok
+in fn tl_sfl_umin_scan
+count = 0 ^[[:space:]]+set[a-z]+[ ]
+count = 0 ^[[:space:]]+movzb[lq] %r[a-z0-9]+b,[ ]
+count = 0 ^[[:space:]]+cmovne[ ]
+count = 2 ^[[:space:]]+cmovb[ ]
+count = 2 ^[[:space:]]+cmov
+metric cmov-under-cmp = ok
+in asm
+metric staged-index-copies = 0
+in fn tl_sfl_scales
+match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,8\),[ ]
+match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,4\),[ ]
+match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,2\),[ ]
+in fn tl_sfl_copy
+match ^[[:space:]]+addq %r[a-z0-9]+, %r[a-z0-9]+$
+
+# Read-modify-write of array words folds into memory-destination ALU ops;
+# shifted, reused, interposed and byte forms refuse.
+case mem-dest-rmw-fold
+source tests/integration/mem_dest_rmw_fold.tl
+in fn _tl_mem_dest_rmw_fold_merge_or
+count = 6 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_and
+count = 6 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_add
+count = 6 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_reg
+count = 6 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r
+in fn _tl_mem_dest_rmw_fold_merge_shifted
+count = 0 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 6 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_reused
+count = 0 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 6 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_interposed
+count = 0 ^[[:space:]]+(orq|andq|addq) (%r[a-z0-9]+|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 6 ^[[:space:]]+(orq|andq|addq) -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+in fn _tl_mem_dest_rmw_fold_merge_bytes
+count = 0 ^[[:space:]]+(orq|orb) (%r[a-z0-9]+b?|%[a-d]l|\$-?[0-9]+), -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,1\)$
+match ^[[:space:]]+orb[ ]
+
+# The same kernels unroll: x4 word groups, x2 byte and mixed groups.
+case word-merge-unroll
+source tests/integration/mem_dest_rmw_fold.tl
+in fn _tl_mem_dest_rmw_fold_merge_or
+narrow unroll-body
+count = 4 ^[[:space:]]+orq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+contains addq $4,
+in fn _tl_mem_dest_rmw_fold_merge_bytes
+narrow unroll-body
+count = 2 ^[[:space:]]+orb[ ]
+contains addq $2,
+in fn _tl_mem_dest_rmw_fold_merge_mixed
+narrow unroll-body
+contains addq $2,
+count = 2 ^[[:space:]]+orq \$1, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+
+# A descending shift loop unrolls x4 with loads before stores (LSLSLSLS), one
+# latch, an adding guard and a scalar remainder.
+case descending-shift-unroll
+source tests/integration/unroll_descending_shift.tl
+in fn _tl_unroll_descending_shift_ud_shift_words_bang
+narrow unroll-body
+count = 4 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 4 ^[[:space:]]+movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+contains addq $-4,
+count = 1 ^[[:space:]]+jge[ ]
+metric memory-order = LSLSLSLS
+in fn _tl_unroll_descending_shift_ud_shift_words_bang
+narrow labeled-block:__unroll_guard:
+match leaq 4\(%r
+not-match subq \$4,
+in fn _tl_unroll_descending_shift_ud_shift_words_bang
+contains subq $1,
+
+# Word copies become one call of the word-copy helper (after the checked
+# store); fixed counts pass the count; short or halfword copies refuse; byte
+# copies use the byte tier; the helper has a scalar and a wide arm.
+case copy-call-word
+source tests/integration/copy_call_word.tl
+in fn _tl_copy_call_word_copy_words
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_shift_up
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_shift_down
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_copy_fixed8
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 0 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+contains movl $8, %edx
+in fn _tl_copy_call_word_copy_fixed4
+count-fixed = 1 call tl_mem_copy8_fwd
+count = 0 ^[[:space:]]+movq %r[a-z0-9]+, -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn _tl_copy_call_word_copy_fixed3
+not-contains call tl_mem_copy8_fwd
+not-contains call tl_mem_copy_fwd
+in fn _tl_copy_call_word_copy_halfwords
+not-contains call tl_mem_copy8_fwd
+not-contains call tl_mem_copy_fwd
+in fn _tl_copy_call_word_copy_bytes
+count-fixed = 1 call tl_mem_copy_fwd
+not-contains call tl_mem_copy8_fwd
+in asm
+contains .Ltl_mem_copy8_fwd_loop:
+match [ ]{4}rep movsq
+
+# A copy loop that bumps its counter before the body indexes both geps by the
+# counter's `next`. It is still one call; the integration twin checks that the
+# call starts at the first element the loop wrote.
+case copy-call-next-index
+source tests/integration/copy_call_next_index.tl
+in fn _tl_copy_call_next_index_grow
+count-fixed = 1 call tl_mem_copy8_fwd
+
+case copy-call-word-peephole
+source benchmarks/peephole_lines/bench.tl
+in fn _tl_bench_pl_run_chunk
+count-fixed = 2 call tl_mem_copy8_fwd
+count-fixed = 2 movl $25, %edx
+
+# Alias rows: a global read that overflows the alias table stays out of the
+# loop body, which still calls the predicate.
+case alias-row-overflow
+source tests/integration/alias_row_overflow.tl
+in fn _tl_alias_row_overflow_aro_scan
+count-fixed = 1 _tl_alias_row_overflow_aro_edge(%rip)
+count-fixed = 1 _tl_alias_row_overflow_aro_mark(%rip)
+narrow after:^\.L[A-Za-z0-9_.]*while_body\.1[A-Za-z0-9_.]*:$
+not-contains _tl_alias_row_overflow_aro_edge(%rip)
+not-contains _tl_alias_row_overflow_aro_mark(%rip)
+contains call _tl_alias_row_overflow_aro_marked_question
+
+# Typed-word alias analysis hoists the descriptor loads into the preheader.
+case alias-typed-word
+source tests/integration/alias_typed_word.tl
+in fn _tl_alias_typed_word_atw_scan_ints
+narrow block-after:^\.L[A-Za-z0-9_.]*while_header\.0__rotate_land:$
+count = 3 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
+in fn _tl_alias_typed_word_atw_scan_ints
+narrow after:^\.L[A-Za-z0-9_.]*while_body\.1:$
+count = 0 ^[[:space:]]+movq (8)?\(%r[a-z0-9]+\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+contains call .L_tl_abort_tl_oob_abort_at
+
+# The versioned global shift loop's fast self-loop is check-free with a folded
+# +24 store and no global reload.
+case alias-global-shift
+source tests/integration/alias_global_shift.tl
+in fn main
+narrow fast-self-loop:, 24(
+not-contains _tl_alias_global_shift_al_vec(%rip)
+not-match call (\.L_tl_abort_)?tl_oob_abort
+count = 0 ^[[:space:]]+j(ae|b)[ ]
+count = 1 ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 24\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+count = 0 ^[[:space:]]+leaq[ ]
+match ^[[:space:]]+subq \$1, %r[a-z0-9]+$
+
+# Value-tracked offsets and derived strides version their loops check-free.
+case vt-offset-copy
+source tests/integration/vt_offset_copy.tl
+in fn main
+narrow fast-region:,8), %r
+not-match call (\.L_tl_abort_)?tl_oob_abort
+count = 0 ^[[:space:]]+j(ae|b)[ ]
+count = 1 ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+in fn main
+match ^[[:space:]]+subq %r[a-z0-9]+, %r[a-z0-9]+$
+
+case vt-derived-stride
+source tests/integration/vt_derived_stride.tl
+in fn main
+narrow fast-region:movq 8(%r
+not-match call (\.L_tl_abort_)?tl_oob_abort
+count = 0 ^[[:space:]]+j(ae|b)[ ]
+count = 1 ^[[:space:]]+movq 8\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+movq %r[a-z0-9]+, 16\(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+match ^[[:space:]]+addq \$3, %r[a-z0-9]+$
+count = 0 ^[[:space:]]+addq \$1, %r[a-z0-9]+$
+
+# A field place through a raw pointer, `(deref p).field`, reads and stores one
+# field of its own width at its offset from the pointer at every level: no
+# pointee copy, no wide move, and nested fields load from their final offset.
+case raw-pointer-field-place
+source tests/integration/raw_pointer_field_place.tl
+opt 0 1 2
+in fn _tl_raw_pointer_field_place_record_bang
+not-contains movups
+not-contains tl_memcpy
+count = 1 ^[[:space:]]+movl %[a-z0-9]+, -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\)$
+count = 2 ^[[:space:]]+movb %[a-z0-9]+, -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\)$
+in fn _tl_raw_pointer_field_place_score
+not-contains movups
+not-contains tl_memcpy
+count = 1 ^[[:space:]]+movslq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r[a-z0-9]+$
+count = 2 ^[[:space:]]+movzbl -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %(e[a-z]+|r[0-9]+d)$
+in fn _tl_raw_pointer_field_place_pair_sum
+count = 2 ^[[:space:]]+movslq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r[a-z0-9]+$
+not-match ^[[:space:]]+movq -?[0-9]*\(%r([abcd]x|[sd]i|[89]|1[0-5])\), %r
+
+# At opt 2 a raw field update is one read-modify-write at the field's offset,
+# without a frame.
+case raw-pointer-field-place-rmw
+source tests/integration/raw_pointer_field_place.tl
+in fn _tl_raw_pointer_field_place_record_bang
+not-match ^[[:space:]]+subq \$[0-9]+, %rsp$
+match ^[[:space:]]+addq 88\(%r[a-z0-9]+\), %r[a-z0-9]+$
+match ^[[:space:]]+movq %r[a-z0-9]+, 88\(%r[a-z0-9]+\)$
+match ^[[:space:]]+movl %[a-z0-9]+, 80\(%r[a-z0-9]+\)$
+match ^[[:space:]]+movb %[a-z0-9]+, 84\(%r[a-z0-9]+\)$

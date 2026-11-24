@@ -1,0 +1,2 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.queue/deque	1	fixed	module	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly

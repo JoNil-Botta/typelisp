@@ -837,6 +837,105 @@
   (slots (__tl_dyn-array AstPattern))
   (len i64))
 
+(define (clone-ast-type-list [items : (& AstTypeList)]) : AstTypeList
+  (let
+    [slots : (__tl_dyn-array i64)
+      (__tl_make-array i64 (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (set! (array-ref slots index) (array-ref items.slots index)))
+    (AstTypeList slots items.len)))
+
+(define (clone-ast-lifetime-list [items : (& AstLifetimeList)]) : AstLifetimeList
+  (let
+    [slots : (__tl_dyn-array i64)
+      (__tl_make-array i64 (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (set! (array-ref slots index) (array-ref items.slots index)))
+    (AstLifetimeList slots items.len)))
+
+(define (clone-ast-type [ty : (& AstType)]) : AstType
+  (match ty
+    [(AstType.I64) AstType.I64]
+    [(AstType.I32) AstType.I32]
+    [(AstType.I16) AstType.I16]
+    [(AstType.I8) AstType.I8]
+    [(AstType.U64) AstType.U64]
+    [(AstType.U32) AstType.U32]
+    [(AstType.U16) AstType.U16]
+    [(AstType.U8) AstType.U8]
+    [(AstType.F64) AstType.F64]
+    [(AstType.F32) AstType.F32]
+    [(AstType.Bool) AstType.Bool]
+    [(AstType.Char) AstType.Char]
+    [(AstType.String) AstType.String]
+    [(AstType.Str) AstType.Str]
+    [(AstType.Bytes) AstType.Bytes]
+    [(AstType.Unit) AstType.Unit]
+    [(AstType.Never) AstType.Never]
+    [(AstType.Expr) AstType.Expr]
+    [(AstType.ExprList) AstType.ExprList]
+    [(AstType.Func params ret)
+      (AstType.Func (box (clone-ast-type-list params)) ret)]
+    [(AstType.Tuple items) (AstType.Tuple (box (clone-ast-type-list items)))]
+    [(AstType.Array elem len) (AstType.Array elem len)]
+    [(AstType.DynArray elem) (AstType.DynArray elem)]
+    [(AstType.Box inner) (AstType.Box inner)]
+    [(AstType.Region region inner) (AstType.Region region inner)]
+    [(AstType.Ref lifetime inner) (AstType.Ref lifetime inner)]
+    [(AstType.MutRef lifetime inner) (AstType.MutRef lifetime inner)]
+    [(AstType.Enum name) (AstType.Enum name)]
+    [(AstType.EnumArgs name lifetimes)
+      (AstType.EnumArgs name (box (clone-ast-lifetime-list lifetimes)))]
+    [(AstType.Struct name) (AstType.Struct name)]
+    [(AstType.StructArgs name lifetimes)
+      (AstType.StructArgs name (box (clone-ast-lifetime-list lifetimes)))]
+    [(AstType.Var name) (AstType.Var name)]
+    [(AstType.VarArgs name lifetimes)
+      (AstType.VarArgs name (box (clone-ast-lifetime-list lifetimes)))]
+    [(AstType.Ptr inner) (AstType.Ptr inner)]
+    [(AstType.MutPtr inner) (AstType.MutPtr inner)]
+    [(AstType.Slice inner) (AstType.Slice inner)]
+    [(AstType.CFunc sig mode) (AstType.CFunc sig mode)]
+    [(AstType.Invalidate lifetime inner) (AstType.Invalidate lifetime inner)]))
+
+(define (clone-ast-maybe-type [ty : (& AstMaybeType)]) : AstMaybeType
+  (match ty
+    [(AstMaybeType.No) AstMaybeType.No]
+    [(AstMaybeType.Some inner) (AstMaybeType.Some (clone-ast-type inner))]))
+
+(define (clone-ast-literal [literal : (& AstLiteral)]) : AstLiteral
+  (match literal
+    [(AstLiteral.Int value text) (AstLiteral.Int value (string.copy text))]
+    [(AstLiteral.Float text) (AstLiteral.Float (string.copy text))]
+    [(AstLiteral.Bool value) (AstLiteral.Bool value)]
+    [(AstLiteral.Char value) (AstLiteral.Char value)]
+    [(AstLiteral.String id) (AstLiteral.String id)]
+    [(AstLiteral.Unit) AstLiteral.Unit]))
+
+(define (clone-ast-pattern [pattern : (& AstPattern)]) : AstPattern
+  (match pattern
+    [(Var name ty) (Var name (clone-ast-maybe-type ty))]
+    [(Tuple items) (Tuple (box (clone-ast-pattern-list items)))]
+    [(Wildcard) Wildcard]
+    [(Binding name) (Binding name)]
+    [(Variant name items) (Variant name (box (clone-ast-pattern-list items)))]
+    [(Literal literal) (Literal (clone-ast-literal literal))]
+    [(Array items) (Array (box (clone-ast-pattern-list items)))]
+    [(Slice items rest?) (Slice (box (clone-ast-pattern-list items)) rest?)]
+    [(Or items) (Or (box (clone-ast-pattern-list items)))]
+    [(Fields items) (Fields (box (clone-ast-pattern-list items)))]
+    [(Field name items) (Field name (box (clone-ast-pattern-list items)))]))
+
+(define (clone-ast-pattern-list [items : (& AstPatternList)]) : AstPatternList
+  (let
+    [slots : (__tl_dyn-array AstPattern)
+      (__tl_make-array AstPattern (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-pattern (& (array-ref items.slots index)))))
+    (AstPatternList slots items.len)))
+
 ;; A Box owns its payload, so by-value ownership correctly forbids extracting an
 ;; owner-bearing list with `__tl-box-place`. These read-only walkers need the
 ;; same shallow handle view used by arena-backed AST nodes, not ownership of the
@@ -5802,6 +5901,83 @@
 (defstruct AstExprBindingClauseList
   (slots (__tl_dyn-array AstExprBindingClause))
   (len i64))
+
+(define (clone-ast-expr-list [items : (& AstExprList)]) : AstExprList
+  (let
+    [slots : (__tl_dyn-array i64)
+      (__tl_make-array i64 (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (set! (array-ref slots index) (array-ref items.slots index)))
+    (AstExprList slots items.len)))
+
+(define (clone-ast-expr-clause [item : (& AstExprClause)]) : AstExprClause
+  (AstExprClause item.first item.second))
+
+(define (clone-ast-expr-clause-list [items : (& AstExprClauseList)]) : AstExprClauseList
+  (let
+    [slots : (__tl_dyn-array AstExprClause)
+      (__tl_make-array AstExprClause (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-expr-clause (& (array-ref items.slots index)))))
+    (AstExprClauseList slots items.len)))
+
+(define (clone-ast-expr-binding-clause [item : (& AstExprBindingClause)]) : AstExprBindingClause
+  (AstExprBindingClause
+    (ci.InternSyntaxId item.name.value)
+    item.has-type
+    item.ty
+    item.init
+    (clone-ast-type (& item.init-produced))
+    item.init-callee-module
+    item.init-callee-name
+    (AstSourceSpan
+      item.span.start-line
+      item.span.start-col
+      item.span.end-line
+      item.span.end-col)))
+
+(define (clone-ast-expr-binding-clause-list
+  [items : (& AstExprBindingClauseList)]) : AstExprBindingClauseList
+  (let
+    [slots : (__tl_dyn-array AstExprBindingClause)
+      (__tl_make-array AstExprBindingClause (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-expr-binding-clause (& (array-ref items.slots index)))))
+    (AstExprBindingClauseList slots items.len)))
+
+(define (clone-ast-let-binding [item : (& AstLetBinding)]) : AstLetBinding
+  (match item
+    [(AstLetBinding.Binding name ty init)
+      (AstLetBinding.Binding name (clone-ast-maybe-type ty) init)]))
+
+(define (clone-ast-let-binding-list [items : (& AstLetBindingList)]) : AstLetBindingList
+  (let
+    [slots : (__tl_dyn-array AstLetBinding)
+      (__tl_make-array AstLetBinding (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-let-binding (& (array-ref items.slots index)))))
+    (AstLetBindingList slots items.len)))
+
+(define (clone-ast-match-arm [item : (& AstMatchArm)]) : AstMatchArm
+  (match item
+    [(AstMatchArm.Arm pattern body)
+      (AstMatchArm.Arm (clone-ast-pattern pattern) body)]))
+
+(define (clone-ast-match-arm-list [items : (& AstMatchArmList)]) : AstMatchArmList
+  (let
+    [slots : (__tl_dyn-array AstMatchArm)
+      (__tl_make-array AstMatchArm (array-length items.slots))]
+    (for [index (iterator.range 0 items.len)]
+      (set!
+        (array-ref slots index)
+        (clone-ast-match-arm (& (array-ref items.slots index)))))
+    (AstMatchArmList slots items.len)))
 
 (defenum AstMaybeModuleName
   (No)

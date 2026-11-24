@@ -1636,7 +1636,7 @@
               -1
               (let
                 [ret-opened : i64
-                  (match (clone maybe-ret)
+                  (match (compiler_ast_types.clone-ast-maybe-type (& maybe-ret))
                     [(No) 0]
                     [(Some ret-ty)
                       (embedded-native-template-type-ops
@@ -9192,7 +9192,7 @@
     (source_buf.byte-buf-builder-finish-string (& out))))
 
 (define (embedded-native-entry-offsets
-  [image : cobj.CompilerObjectImage]
+  [image : (& cobj.CompilerObjectImage)]
   [count : i64]) : (__tl_dyn-array i64)
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -9202,7 +9202,7 @@
       (let
         [offset : i64
           (compiler_tlci_native_image.compiler-tlci-native-entry-offset
-            (owned_view.compiler-owned-shared-view image)
+            image
             ;; The host calls the Platform entry, not the private Internal
             ;; body. This also works in a compiler built by a pre-cutover seed.
             (str_cat.str-cat "tlci_macro_entry_" (string.int->string index)))]
@@ -9305,7 +9305,7 @@
                   (compiler_tlci_native_image.compiler-tlci-native-layout-image
                     (owned_view.compiler-owned-shared-view image)))]
               [entry-offsets : (__tl_dyn-array i64)
-                (embedded-native-entry-offsets image (array-length names))]
+                (embedded-native-entry-offsets (& image) (array-length names))]
               (if (not (= (array-length entry-offsets) (array-length names)))
                 (Err "entry count does not match catalog")
                 (let

@@ -221,3 +221,24 @@ This comparison covered the complete emitted programs, including the round
 loops, address operands, and final wipes. There were 22 retargeted calls in the
 AES audit and 36 in GCM. The other target and optimization pairs retain their
 existing pins.
+
+## Hot scalar spill-slot packing re-pin (PR #9935)
+
+`compiler-reg-color-order-slot-ids-by-references` now packs overlapping storage
+bands toward lower slot IDs while preserving alignment and adjacency, and places
+the hottest scalar spill slots closest to `%rsp` (disp8 range) in frames larger
+than 16 slots. Re-derived pins:
+
+- linux opt1: 12 bodies (`shape-linux-x86_64-opt1.sha256`);
+- linux opt2: unchanged (`shape-linux-x86_64-opt2.sha256`);
+- windows opt1: 12 bodies (`shape-windows-x86_64-opt1.sha256`);
+- windows opt2: 1 body, `expand!` (`shape-windows-x86_64-opt2.sha256`).
+
+Per changed body, checked before re-pinning: inventory, instruction counts,
+frame sizes, opcodes, conditional branches, calls, table/RIP references and
+volatile wipes are byte-identical. Every body except Linux opt1 `main` differs
+only by a strict 1-to-1 permutation of `N(%rsp)` stack-slot displacements. In
+Linux opt1 `main`, the same bijection moves the two argument pointer slots from
+`136(%rsp)`/`128(%rsp)` to `72(%rsp)`/`64(%rsp)`, so four loads that previously
+used negative offsets off `%r8` (`-120(%r8)`/`-128(%r8)` from `leaq 256(%rsp), %r8`)
+now address `72(%rsp)`/`64(%rsp)` directly.

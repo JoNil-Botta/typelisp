@@ -1735,3 +1735,132 @@ run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
 exec "{{dir}}/target/release/free_app{{exe}}"
 exit 5
 
+
+# #8534, #8963, #9745 and #9081: an archive needs the runtime even when the consumer
+# needs no allocation of its own. An unused aggregate extern needs no layout.
+case package-archive-runtime
+opt 0 1 2 s
+file typelisp.pkg
+(package
+  (name "archive_runtime")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "src/main.tl")
+  (dependencies
+    (depabi "vendor/depabi")))
+end-file
+file vendor/depabi/typelisp.pkg
+(package
+  (name "archive_runtime")
+  (version "0.1.0")
+  (kind "staticlib")
+  (entry "src/main.tl"))
+end-file
+file vendor/depabi/src/main.tl
+(defstruct Pt (x i64) (y i64))
+(defstruct WidePt (x i64) (y i64) (z i64))
+(defstruct Word (x i64))
+(defenum Flag (Off) (On) (Number i64))
+(define exported-number : i64 2)
+(define (local-flag [x : i64]) : i64
+  (let [flag : Flag (if (= x 40) On Off)]
+    (match flag [Off 1] [On x] [(Number n) n])))
+(define (unused-word [x : i64]) : Word (Word x))
+(define (unused-archive-function [x : i64]) : i64 (+ x 100))
+(define values : (Array i64 2) (array 0 0))
+(define (rebind [x : i64]) : i64
+  (set! values (array x 1))
+  (array-ref values 0))
+(define (allocate [x : i64]) : i64
+  (let [b : (Box Pt) (box (Pt x 1))]
+    [wide : (Box WidePt) (box (WidePt (__tl-project-field (deref b) x) 2 3))]
+    (__tl-project-field (deref wide) x)))
+end-file
+file src/main.tl
+(import depabi.src.main as dep)
+(extern offset (:symbol "_tl_archive_runtime_src_main_exported_number") : i64)
+(defenum Flag (Off) (On) (Number i64))
+(define (select [x : i64]) : Flag (if (= x 40) On Off))
+(define (from-dependency [x : i64]) : i64
+  (match (select x)
+    [Off 1]
+    [On (+ (dep.local-flag (dep.rebind (dep.allocate x))) offset)]
+    [(Number n) n]))
+(cfg
+  (not archive-allocating-consumer)
+  (define (main) : i64
+    (cfg archive-scalar-consumer
+      (dep.allocate 42)
+      (from-dependency 40))))
+(cfg
+  archive-allocating-consumer
+  (define (main) : i64
+    (let [b : (Box i64) (box 40)]
+      (from-dependency (deref b)))))
+end-file
+# The consumer and dependency intentionally share the package name and entry
+# path, so their synthesized enum objects have the same linker spelling.
+step nonallocating-consumer
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/archive_runtime{{exe}}"
+exit 42
+if-host linux
+step archive-gc
+exec nm "{{dir}}/vendor/depabi/target/release/libarchive_runtime.a"
+stdout contains unused_archive_function
+exec nm "{{dir}}/target/release/archive_runtime"
+stdout not-contains unused_archive_function
+stdout not-contains tl_memchr
+in file {{dir}}/target/release/archive_runtime.s
+not-contains tl_arena_sanitize_enable:
+step direct-object-override
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+exec "{{dir}}/target/release/archive_runtime"
+exit 42
+step direct-object-override-scalar-consumer
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --backend-mode scalar --cfg archive-scalar-consumer
+stderr empty
+exec "{{dir}}/target/release/archive_runtime"
+exit 42
+end-if
+step allocating-consumer
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --cfg archive-allocating-consumer
+stderr empty
+exec "{{dir}}/target/release/archive_runtime{{exe}}"
+exit 42
+
+
+# Keep each ELF jump table collectable with its function and each COFF
+# table in its function's COMDAT.
+case entryless-switch-sections
+opt 2
+file switches.tl
+(defenum Flag (Off) (On) (Number i64) (Three) (Four) (Five))
+
+(define (live-switch [flag : Flag] [x : i64]) : i64
+  (match flag [Off 1] [On x] [(Number n) n] [Three 3] [Four 4] [Five 5]))
+
+(define (unused-switch [flag : Flag]) : i64
+  (match flag [Off 11] [On 12] [(Number n) n] [Three 13] [Four 14] [Five 15]))
+end-file
+step win64-entryless-switch
+run compile "{{dir}}/switches.tl" --no-entry --target windows-x86_64 --backend-mode scalar --opt-level {{opt}} -o "{{dir}}/switches-win64.s"
+in file {{dir}}/switches-win64.s
+count-fixed = 2 _switch_table:
+count-fixed = 2 .section .text,"xr",one_only,_tl_switches_live_switch
+count-fixed = 2 .section .text,"xr",one_only,_tl_switches_unused_switch
+exec clang --target=x86_64-pc-windows-msvc -c "{{dir}}/switches-win64.s" -o "{{dir}}/switches-win64.obj"
+stderr empty
+if-host linux
+step elf-entryless-switch-gc
+run compile "{{dir}}/switches.tl" --no-entry --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} -o "{{dir}}/switches-linux.s"
+in file {{dir}}/switches-linux.s
+count-fixed = 2 _switch_table:
+exec as -o "{{dir}}/switches-linux.o" "{{dir}}/switches-linux.s"
+exec ld --gc-sections -e _tl_switches_live_switch -o "{{dir}}/switches-linux" "{{dir}}/switches-linux.o"
+exec nm "{{dir}}/switches-linux"
+stdout contains _tl_switches_live_switch
+stdout not-contains _tl_switches_unused_switch
+end-if

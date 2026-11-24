@@ -337,11 +337,19 @@
     (= (process.args-count inputs.raw-args) 0)
     (= (process.args-count inputs.archives) 0)))
 
+(define (source-tool-link-inputs-have-archives?
+  [inputs : (& SourceToolLinkInputs)]) : bool
+  (> (process.args-count inputs.archives) 0))
+
 (define (source-tool-linux-crt-entry?
   [target : be_state.CompilerBackendTarget]
   [link-inputs : (& link-inputs SourceToolLinkInputs)]) : bool
   (match target
-    [(Linux) (not (source-tool-link-inputs-empty? link-inputs))]
+    [(Linux)
+      (or
+        (> (process.args-count link-inputs.libs) 0)
+        (> (process.args-count link-inputs.search-dirs) 0)
+        (> (process.args-count link-inputs.raw-args) 0))]
     [(Windows) false]))
 
 (define (source-tool-link-inputs-add-lib
@@ -856,7 +864,10 @@
     (owned_view.compiler-owned-shared-view image))
     [(Fallback reason) (Fallback reason)]
     [(Eligible)
-      (match (compiler_object_elf.compiler-object-elf-render image)
+      (match (match kind
+        [(Bin) (compiler_object_elf.compiler-object-elf-render image)]
+        [(StaticLib)
+          (compiler_object_elf.compiler-object-elf-render-archive image)])
         [(Ok object) (Ok object)]
         [(Err _) (Fallback ObjectEncoding)])]))
 
@@ -1177,39 +1188,47 @@
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : process.ProcessCommand
-  (if (source-tool-link-inputs-empty? link-inputs)
-    ;; No native link inputs: the runtime is pure syscalls and the backend
-    ;; emits its own libc-ABI shims, so link a freestanding static binary with
-    ;; no `-lc` and no dynamic loader. Programs that opt into native libraries
-    ;; (the non-empty branch below) still go through `cc`.
-    (process.command
-      (source-tool-resolve-command "ld")
+  (let
+    [output : process.ProcessStringList
       (process.args-cons
-        "-static"
-        (process.args-cons
-          "-e"
-          (process.args-cons
-            "_tl_start"
-            (process.args-cons
-              obj-path
-              (process.args-cons
-                "-o"
-                (process.args-cons bin-path (process.args-empty))))))))
-    (process.command
-      (source-tool-env-command-or-default
-        "TYPELISP_LINUX_CC"
+        obj-path
+        (process.args-cons "-o" (process.args-single bin-path)))]
+    (if (source-tool-linux-crt-entry? (Linux) (& link-inputs))
+      (process.command
         (source-tool-env-command-or-default
-          "CC"
-          (source-tool-resolve-command "cc")))
-      (process.args-cons
-        "-no-pie"
+          "TYPELISP_LINUX_CC"
+          (source-tool-env-command-or-default
+            "CC"
+            (source-tool-resolve-command "cc")))
         (process.args-cons
-          obj-path
+          "-no-pie"
           (process.args-cons
-            "-o"
+            "-Wl,--gc-sections"
+            (process.args-append
+              output
+              (source-tool-link-inputs-linux-args link-inputs)))))
+      (let
+        [archives : process.ProcessStringList
+          (source-tool-link-inputs-archives (& link-inputs))]
+        [inputs : process.ProcessStringList
+          (if (source-tool-link-inputs-have-archives? (& link-inputs))
+            (process.args-append
+              output
+              (process.args-cons
+                "--start-group"
+                (process.args-append
+                  archives
+                  (process.args-single "--end-group"))))
+            output)]
+        (process.command
+          (source-tool-resolve-command "ld")
+          (process.args-cons
+            "-static"
             (process.args-cons
-              bin-path
-              (source-tool-link-inputs-linux-args link-inputs))))))))
+              "-e"
+              (process.args-cons
+                "_tl_start"
+                (process.args-cons "--gc-sections" inputs)))))))))
 
 ;; Freestanding Win32: no CRT (no vcruntime140/ucrt/msvcrt) and only the
 ;; audited kernel32 plus ntdll system boundary.
@@ -1286,9 +1305,11 @@
       ;; the same objects again produces the same bytes.
       (process.args-cons
         "/Brepro"
-        (if (ir.compiler-debug-info-enabled?)
-          (process.args-cons "/DEBUG" args)
-          args)))))
+        (process.args-cons
+          "/OPT:REF"
+          (if (ir.compiler-debug-info-enabled?)
+            (process.args-cons "/DEBUG" args)
+            args))))))
 
 (define (source-tool-windows-linker-fallback-command
   [obj-path : String]

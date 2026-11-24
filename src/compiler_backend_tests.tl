@@ -2012,12 +2012,12 @@
             symbols
             "foreign_data_exact"
             (Extern)
-            (Function))
+            (Data))
           (cobj.compiler-object-symbol-list-contains?
             symbols
             "foreign_fn_exact"
             (Extern)
-            (Function))
+            (Data))
           (cobj.compiler-object-symbol-list-contains?
             symbols
             "tl_alloc"
@@ -2045,13 +2045,13 @@
               symbols
               "unused_foreign_data"
               (Extern)
-              (Function)))
+              (Data)))
           (not
             (cobj.compiler-object-symbol-list-contains?
               symbols
               "unused_foreign_fn"
               (Extern)
-              (Function)))
+              (Data)))
           (be_state.backend-and8
             (cobj.compiler-object-section-contains-label?
               sections
@@ -4908,7 +4908,9 @@
           ;; sret ABI: aggregate returns write the caller's sret slot
           ;; instead of arena-allocating a 16-byte object.
           (not (compiler-backend-string-contains-alloc-size? asm 16))
-          (asm-has? asm ".globl _tl___enum_obj_Shape_Nothing\n")
+          (and
+            (asm-has? asm "_tl___enum_obj_Shape_Nothing:\n")
+            (asm-lacks? asm ".globl _tl___enum_obj_Shape_Nothing\n"))
           (asm-has? asm "    movq $1, (%r10)\n")
           (asm-has? asm "    movq $2, (%r10)\n")
           (asm-lacks? asm "    call _tl_Point\n")
@@ -17368,6 +17370,7 @@ f:
           (owned_view.compiler-owned-shared-view spans)
           false
           false
+          false
           (profile_state.compiler-profile-state-new)))]
     [object-b1 : be_state.ResultCompilerBackendObject
       (begin
@@ -17379,6 +17382,7 @@ f:
           (be_state.CompilerBackendTarget.Linux)
           (Scalar)
           (owned_view.compiler-owned-shared-view spans)
+          false
           false
           false
           (profile_state.compiler-profile-state-new)))]
@@ -17394,6 +17398,7 @@ f:
           (owned_view.compiler-owned-shared-view spans)
           false
           false
+          false
           (profile_state.compiler-profile-state-new)))]
     [object-b2 : be_state.ResultCompilerBackendObject
       (begin
@@ -17405,6 +17410,7 @@ f:
           (be_state.CompilerBackendTarget.Linux)
           (Scalar)
           (owned_view.compiler-owned-shared-view spans)
+          false
           false
           false
           (profile_state.compiler-profile-state-new)))]
@@ -24659,6 +24665,7 @@ entry:
     (be_data.compiler-backend-runtime-functions-for-target
       target
       features
+      false
       false)))
 
 (define (compiler-backend-runtime-global-inventory-target-ok?
@@ -44924,6 +44931,7 @@ user_fn:
             false
             backtrace
             63)
+          false
           false))]
     (and
       (asm-has?
@@ -44975,7 +44983,8 @@ user_fn:
   [object : bool]
   [as-result : bool]
   [c-abi : bool]
-  [evidence : i64]) : bool
+  [evidence : i64]
+  [referenced : bool]) : bool
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [name : i64 (compiler-backend-test-symbol "package_layout_fixture")]
@@ -45037,9 +45046,20 @@ user_fn:
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)))]
+    [globals : ir.CompilerIrGlobalBuilder
+      (ir.compiler-ir-global-builder-with-capacity 1)]
+    [_address : unit
+      (when
+        referenced
+        (ir.compiler-ir-global-builder-push!
+          (&mut globals)
+          (Global
+            (compiler-backend-test-symbol "package_layout_address")
+            (U64)
+            (GlobalAddr name))))]
     [program : ir.CompilerIrProgram
       (Program
-        (ir.compiler-ir-global-seq-empty)
+        (ir.compiler-ir-global-builder-snapshot-seq (& globals))
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-builder-snapshot-seq (& externs))
         (ir.CompilerIrReturnStorageAuthority.None))]
@@ -45096,6 +45116,7 @@ user_fn:
             (ir.compiler-source-spans-empty)
             false
             false
+            false
             (profile_state.compiler-profile-state-new))
             [(Ok _) ""]
             [(Err diag)
@@ -45115,6 +45136,7 @@ user_fn:
               (cdiag.compiler-diagnostic-message (__tl-box-place diag))]))]
       [reject : bool
         (and
+          referenced
           (not c-abi)
           (or (< evidence 0) (= evidence 4) (= evidence 5) (= evidence 7)))]
       (backend.compiler-backend-state-release-final-arenas! state)
@@ -45137,8 +45159,20 @@ user_fn:
             (not (= (bit-and route 2) 0))
             (not (= (bit-and route 4) 0))
             (= abi 1)
-            evidence)
-          "package aggregate admission lost a missing/conflicting rejection or a valid ABI")))))
+            evidence
+            true)
+          "referenced package extern must have a valid ABI layout")
+        (test.assert-true
+          (compiler-backend-package-layout-admission-ok?
+            (if (= (bit-and route 1) 0)
+              (Linux)
+              (Windows))
+            (not (= (bit-and route 2) 0))
+            (not (= (bit-and route 4) 0))
+            (= abi 1)
+            evidence
+            false)
+          "unused package extern does not require a layout")))))
 
 (test
   backend-call-conventions

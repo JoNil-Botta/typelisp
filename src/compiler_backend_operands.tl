@@ -1910,6 +1910,25 @@
         0))
     (not (compiler-backend-public-function-symbol? name))))
 
+(define (compiler-backend-elf-symbol-section
+  [section : (& str)]
+  [symbol : (& str)]
+  [attributes : (& str)]) : String
+  (let
+    [suffix : String
+      (if (string.is-string-prefix-at symbol "\"" 0)
+        (string.substring symbol 1 (- (string.string-length symbol) 2))
+        (string.copy symbol))]
+    (str_cat.str-cat ".section \"" section "." suffix "\"," attributes "\n")))
+
+(define (compiler-backend-function-section
+  [target : be_state.CompilerBackendTarget]
+  [symbol : (& str)]) : String
+  (match target
+    [(Linux)
+      (compiler-backend-elf-symbol-section ".text" symbol "\"ax\",@progbits")]
+    [(Windows) (str_cat.str-cat ".section .text,\"xr\",one_only," symbol "\n")]))
+
 (define (compiler-backend-function-symbol-index
   [index : be_state.CompilerBackendProgramIndex]
   [name : i64]) : String

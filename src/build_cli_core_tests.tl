@@ -132,8 +132,12 @@
               (CompilerPkgKindLib)
               (owned_view.compiler-owned-shared-view image))
               [(Ok typed)
-                (match (compiler_object_elf.compiler-object-elf-render image)
-                  [(Ok serialized) (string.eq typed serialized)]
+                (match (compiler_object_elf.compiler-object-elf-render-archive
+                  image)
+                  [(Ok serialized)
+                    (and
+                      (string.eq typed serialized)
+                      (string.contains (& typed) ".text.main"))]
                   [_ false])]
               [_ false]))
           (io.panic "Linux package direct-object bytes changed"))])))

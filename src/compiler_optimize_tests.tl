@@ -4950,7 +4950,8 @@
     [body-labels : opt.OptLabelSet (opt.opt-label-add (Nil) body)]
     (and
       (string.eq
-        (ir.compiler-ir-label-text (opt.opt-bce-mb-fast-label body-labels body))
+        (ir.compiler-ir-label-text
+          (opt.opt-bce-mb-fast-label body-labels false body))
         "bce_span_probe_body__bce_fast")
       (string.eq
         (ir.compiler-ir-label-text
@@ -88747,3 +88748,329 @@ inl.entry.0.cont:
                     (test.assert-true
                       (not (string.contains (& reader-text) "@lib_const_cell"))
                       "executable with main still folds constant global"))))])]))))
+
+(test
+  bce-guards-and-licm-hoists
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    ;; 1. Max-trip refusal: guard cost exceeds 2 * uncond * max-trips for a
+    ;;    <= 2 trip loop with a base+i index, while a <= 10 trip loop versions.
+    [max-trip-small-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @f_small(arr=%0:(__tl_dyn-array i64), base=%1:i64) -> i64 vars 20 {
+         entry:
+           %3 = gep %0, 1 : i64
+           %4 = load %3 : i64
+           %5 = gep %0, 0 : i64
+           %6 = load %5 : u64
+           jump pre
+         pre:
+           jump loop
+         loop:
+           %9 = phi [0, pre], [%14, loop] : i64
+           %10 = phi [0, pre], [%13, loop] : i64
+           %11 = add %1, %9 : i64
+           bounds_check %11, %4 message \"bc0\"
+           %12 = gep %6, %11 : i64
+           %15 = load %12 : i64
+           %13 = add %10, %15 : i64
+           %14 = add %9, 1 : i64
+           %16 = lt %14, 2 : i64
+           branch %16, loop, exit
+         exit:
+           return %13
+         }")]
+    [max-trip-large-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @f_large(arr=%0:(__tl_dyn-array i64), base=%1:i64) -> i64 vars 20 {
+         entry:
+           %3 = gep %0, 1 : i64
+           %4 = load %3 : i64
+           %5 = gep %0, 0 : i64
+           %6 = load %5 : u64
+           jump pre
+         pre:
+           jump loop
+         loop:
+           %9 = phi [0, pre], [%14, loop] : i64
+           %10 = phi [0, pre], [%13, loop] : i64
+           %11 = add %1, %9 : i64
+           bounds_check %11, %4 message \"bc0\"
+           %12 = gep %6, %11 : i64
+           %15 = load %12 : i64
+           %13 = add %10, %15 : i64
+           %14 = add %9, 1 : i64
+           %16 = lt %14, 10 : i64
+           branch %16, loop, exit
+         exit:
+           return %13
+         }")]
+    ;; 2. Multi-block 2-cmp unsigned range guard (`base <=u len && n <=u len - base`).
+    [mb-2cmp-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @f_mb2cmp(arr=%0:(__tl_dyn-array i64), base=%1:i64, n=%2:i64, flag=%3:bool) -> i64 vars 20 {
+         entry:
+           %4 = gep %0, 1 : i64
+           %5 = load %4 : i64
+           %6 = gep %0, 0 : i64
+           %7 = load %6 : u64
+           %8 = lt 0, %2 : i64
+           branch %8, pre, exit
+         pre:
+           jump loop
+         loop:
+           %9 = phi [0, pre], [%15, latch] : i64
+           %10 = phi [0, pre], [%14, latch] : i64
+           %11 = add %1, %9 : i64
+           bounds_check %11, %5 message \"bc_mb\"
+           %12 = gep %7, %11 : i64
+           %13 = load %12 : i64
+           branch %3, arm, latch
+         arm:
+           %18 = add %10, %13 : i64
+           jump latch
+         latch:
+           %14 = phi [%10, loop], [%18, arm] : i64
+           %15 = add %9, 1 : i64
+           %16 = lt %15, %2 : i64
+           branch %16, loop, exit
+         exit:
+           %17 = phi [0, entry], [%14, latch] : i64
+           return %17
+         }")]
+    ;; 3. 2-tier partial guard split: counter-bounded read on `src` +
+    ;;    conditionally-advanced bounded-phi write on `dst`.
+    [part-split-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @f_split(src=%0:(__tl_dyn-array i64), dst=%1:(__tl_dyn-array i64), n=%2:i64) -> i64 vars 24 {
+         entry:
+           %3 = gep %0, 1 : i64
+           %4 = load %3 : i64
+           %5 = gep %0, 0 : i64
+           %6 = load %5 : u64
+           %7 = gep %1, 1 : i64
+           %8 = load %7 : i64
+           %9 = gep %1, 0 : i64
+           %10 = load %9 : u64
+           %11 = lt 0, %2 : i64
+           branch %11, pre, exit
+         pre:
+           jump loop
+         loop:
+           %12 = phi [0, pre], [%20, merge] : i64
+           %13 = phi [0, pre], [%19, merge] : i64
+           bounds_check %12, %4 message \"bc_src\"
+           %14 = gep %6, %12 : i64
+           %15 = load %14 : i64
+           %16 = eq %15, 1 : i64
+           branch %16, hit, miss
+         hit:
+           bounds_check %13, %8 message \"bc_dst\"
+           %17 = gep %10, %13 : i64
+           store_ptr %17, %12 : i64
+           %18 = add %13, 1 : i64
+           jump merge
+         miss:
+           jump merge
+         merge:
+           %19 = phi [%13, miss], [%18, hit] : i64
+           %20 = add %12, 1 : i64
+           %21 = lt %20, %2 : i64
+           branch %21, loop, exit
+         exit:
+           %22 = phi [0, entry], [%19, merge] : i64
+           return %22
+         }")]
+    ;; 4. Invariant header BoundsCheck hoist: `bounds_check %inv, %len` in a
+    ;;    top-tested loop header moves to `pre` with zero guard needed.
+    [hdr-check-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @f_hdr_bc(arr=%0:(__tl_dyn-array i64), start=%1:i64, inv=%2:i64) -> i64 vars 16 {
+         entry:
+           %3 = gep %0, 1 : i64
+           %4 = load %3 : i64
+           %5 = gep %0, 0 : i64
+           %6 = load %5 : u64
+           %7 = gep %6, %2 : i64
+           jump pre
+         pre:
+           jump hdr
+         hdr:
+           %8 = phi [%1, pre], [%13, body] : i64
+           bounds_check %8, %4 message \"bc_var\"
+           bounds_check %2, %4 message \"bc_inv\"
+           %9 = load %7 : i64
+           %10 = gep %6, %8 : i64
+           %11 = load %10 : i64
+           %12 = gt %11, %9 : i64
+           branch %12, body, exit
+         body:
+           %13 = sub %8, 1 : i64
+           jump hdr
+         exit:
+           return %8
+         }")]
+    ;; 5. Outer-loop `opt-licm-guard-final` hoist over a loop containing a
+    ;;    nested loop.
+    [outer-guard-prog : ir.CompilerIrProgram
+      (irt.program
+        "function @f_outer_guard(arr=%0:(__tl_dyn-array i64), idx=%1:i64, n=%2:i64, m=%3:i64) -> i64 vars 24 {
+         entry:
+           %4 = gep %0, 1 : i64
+           %5 = load %4 : i64
+           %6 = gep %0, 0 : i64
+           %7 = load %6 : u64
+           %8 = gep %7, %1 : i64
+           %9 = lt 0, %2 : i64
+           branch %9, pre, exit
+         pre:
+           jump outer
+         outer:
+           %10 = phi [0, pre], [%20, olatch] : i64
+           %11 = phi [0, pre], [%19, olatch] : i64
+           %12 = lt 0, %3 : i64
+           branch %12, inner, arm
+         inner:
+           %13 = phi [0, outer], [%14, inner] : i64
+           %14 = add %13, 1 : i64
+           %15 = lt %14, %3 : i64
+           branch %15, inner, arm
+         arm:
+           bounds_check %1, %5 message \"bc_outer\"
+           %16 = load %8 : i64
+           %17 = add %11, %16 : i64
+           jump olatch
+         olatch:
+           %19 = phi [%17, arm] : i64
+           %20 = add %10, 1 : i64
+           %21 = lt %20, %2 : i64
+           branch %21, outer, exit
+         exit:
+           %22 = phi [0, entry], [%19, olatch] : i64
+           return %22
+         }")]
+    (match (& max-trip-small-prog)
+      [(Program _ fns _ _)
+        (let
+          [res : ir.CompilerIrFunction
+            (opt.opt-bce-version-function (& (array-ref fns.slots 0)))]
+          [txt : String
+            (ir.compiler-ir-function-render
+              (cis.InternStructuralSessionHandle 0)
+              bases
+              (& res))]
+          (test.assert-true
+            (match (opt.opt-verify-function (& res))
+              [(Ok) true]
+              [(Err _) false])
+            "max-trip small loop verifies")
+          (test.assert-true
+            (not (string.contains (& txt) "__bce_fast"))
+            "max-trip gate refuses versioning a <= 2 trip loop"))])
+    (match (& max-trip-large-prog)
+      [(Program _ fns _ _)
+        (let
+          [res : ir.CompilerIrFunction
+            (opt.opt-bce-version-function (& (array-ref fns.slots 0)))]
+          [txt : String
+            (ir.compiler-ir-function-render
+              (cis.InternStructuralSessionHandle 0)
+              bases
+              (& res))]
+          (test.assert-true
+            (match (opt.opt-verify-function (& res))
+              [(Ok) true]
+              [(Err _) false])
+            "max-trip large loop verifies")
+          (test.assert-true
+            (string.contains (& txt) "__bce_fast")
+            "max-trip gate admits versioning a <= 10 trip loop"))])
+    (match (& mb-2cmp-prog)
+      [(Program _ fns _ _)
+        (let
+          [res : ir.CompilerIrFunction
+            (opt.opt-bce-version-function (& (array-ref fns.slots 0)))]
+          [txt : String
+            (ir.compiler-ir-function-render
+              (cis.InternStructuralSessionHandle 0)
+              bases
+              (& res))]
+          (test.assert-true
+            (match (opt.opt-verify-function (& res))
+              [(Ok) true]
+              [(Err _) false])
+            "2-cmp multi-block guard verifies")
+          (test.assert-true
+            (string.contains (& txt) "__bce_fast")
+            "2-cmp multi-block guard versions loop")
+          (test.assert-true
+            (string.contains (& txt) " : u64")
+            "2-cmp multi-block guard emits unsigned range compares"))])
+    (match (& part-split-prog)
+      [(Program _ fns _ _)
+        (let
+          [res : ir.CompilerIrFunction
+            (opt.opt-bce-version-function (& (array-ref fns.slots 0)))]
+          [txt : String
+            (ir.compiler-ir-function-render
+              (cis.InternStructuralSessionHandle 0)
+              bases
+              (& res))]
+          (test.assert-true
+            (match (opt.opt-verify-function (& res))
+              [(Ok) true]
+              [(Err _) false])
+            "2-tier partial guard split verifies")
+          (test.assert-true
+            (string.contains (& txt) "__bce_guard_phi")
+            "2-tier partial guard split emits secondary phi guard")
+          (test.assert-true
+            (string.contains (& txt) "__bce_fast_part")
+            "2-tier partial guard split emits counter-only fast clone"))])
+    (match (& hdr-check-prog)
+      [(Program _ fns _ _)
+        (let
+          [res : ir.CompilerIrFunction
+            (opt.opt-licm-function bases (& (array-ref fns.slots 0)))]
+          [out : ir.CompilerIrBlockList (opt.opt-function-blocks res)]
+          (test.assert-true
+            (match (opt.opt-verify-function (& res))
+              [(Ok) true]
+              [(Err _) false])
+            "invariant header check hoist verifies")
+          (test.assert-i64-eq
+            (match (opt.opt-cfg-find-block (& out) (ir.compiler-ir-label "pre"))
+              [(Some (Block _ instrs)) (opt-count-bounds-instrs (& instrs))]
+              [(No) 0])
+            1
+            "invariant header BoundsCheck hoists into preheader")
+          (test.assert-i64-eq
+            (match (opt.opt-cfg-find-block (& out) (ir.compiler-ir-label "hdr"))
+              [(Some (Block _ instrs)) (opt-count-bounds-instrs (& instrs))]
+              [(No) 0])
+            1
+            "variant header BoundsCheck remains in header"))])
+    (match (& outer-guard-prog)
+      [(Program _ fns _ _)
+        (let
+          [f (& (array-ref fns.slots 0))]
+          [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks f)]
+          [res : ir.CompilerIrFunction
+            (opt.opt-licm-guard-final
+              bases
+              (& (opt.opt-program-summaries-empty))
+              (& (opt.opt-cfg-context-build blocks))
+              f)]
+          [txt : String
+            (ir.compiler-ir-function-render
+              (cis.InternStructuralSessionHandle 0)
+              bases
+              (& res))]
+          (test.assert-true
+            (match (opt.opt-verify-function (& res))
+              [(Ok) true]
+              [(Err _) false])
+            "outer-loop licm_guard hoist verifies")
+          (test.assert-true
+            (string.contains (& txt) "pre__licm_guard")
+            "outer-loop licm_guard hoists guarded load to outer preheader"))])))

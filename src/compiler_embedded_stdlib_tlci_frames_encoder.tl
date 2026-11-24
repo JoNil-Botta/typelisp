@@ -1,4 +1,5 @@
 ;; Build-only encoder for independently loadable native entries and one surface.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.byte_buf_core as buf)
@@ -56,7 +57,7 @@
   [lengths : (__tl_dyn-array i64)]) : (__tl_dyn-array i64)
   (let
     [model : lzss.CompilerLzssModel
-      (lzss.compiler-lzss-model-from-lengths (clone lengths))]
+      (lzss.compiler-lzss-model-from-lengths (clone.deep lengths))]
     [counts : encoder.CompilerEmbeddedStdlibTlciEncoderFrequencies
       (encoder.compiler-embedded-stdlib-tlci-encoder-frequencies)]
     [groups : i64
@@ -130,7 +131,7 @@
           (compiler-embedded-stdlib-tlci-frames-refine images refined-once)]
         [spec (encoder.compiler-embedded-stdlib-tlci-encoder-spec (& lengths))]
         [model : lzss.CompilerLzssModel
-          (lzss.compiler-lzss-model-from-lengths (clone lengths))]
+          (lzss.compiler-lzss-model-from-lengths (clone.deep lengths))]
         [record-bytes : i64
           (frames.compiler-embedded-stdlib-tlci-frames-record-bytes)]
         [directory : i64
@@ -271,10 +272,10 @@
               (& (array-ref sorted (- cursor 1))))
             0))
           (let
-            [name : String (clone (array-ref sorted cursor))]
+            [name : String (string.copy (& (array-ref sorted cursor)))]
             (set!
               (array-ref sorted cursor)
-              (clone (array-ref sorted (- cursor 1))))
+              (string.copy (& (array-ref sorted (- cursor 1)))))
             (set! (array-ref sorted (- cursor 1)) name))
           (-= cursor 1))))
     (for [index (iterator.range 1 count)]

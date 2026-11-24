@@ -5,6 +5,20 @@
 (import stdlib.profile)
 (import stdlib.comptime)
 
+;: Public header word INDEX of fixture storage: 0 state, 1 generation, 2 length
+;: and 3 capacity. The header type is opaque outside stdlib.crypto_secret.
+(define (header-word [storage : (MutPtr secret.SecretStorage)] [index : i64]) : u64
+  (unsafe
+    (ptr-read (ptr-offset (ptr-cast storage : (Ptr u64)) index))))
+
+;: A copy of the four public header words of fixture storage.
+(define (header-words [storage : (MutPtr secret.SecretStorage)]) : (Array u64 4)
+  (array
+    (header-word storage 0)
+    (header-word storage 1)
+    (header-word storage 2)
+    (header-word storage 3)))
+
 ;: A wipe assertion returns only a boolean; it never exports secret bytes.
 (define (wiped? [storage : (MutPtr secret.SecretStorage)] [capacity : i64]) : bool
   (let
@@ -23,14 +37,8 @@
       (set! index (+ index 1)))
     (and
       zero
-      (=
-        (unsafe
-          (secret.storage-header storage)).state
-        (secret.state-closed))
-      (=
-        (unsafe
-          (secret.storage-header storage)).length
-        (cast 0 : u64)))))
+      (= (header-word storage 0) (secret.state-closed))
+      (= (header-word storage 2) (cast 0 : u64)))))
 
 (test
   aes-constructor-stale-generation
@@ -38,8 +46,11 @@
     [owner : secret.SecretFixed
       (vectors.fixed-hex (secret.Secret16) "000102030405060708090a0b0c0d0e0f")]
     [stale : secret.SecretFixed
-      (secret.SecretFixed
-        (secret.SecretHandle owner.handle.storage (+ owner.handle.generation 1)))]
+      (unsafe
+        (secret.SecretFixed
+          (secret.SecretHandle
+            owner.handle.storage
+            (+ owner.handle.generation 1))))]
     [before : i64 (profile.alloc-total)]
     (match (aes.new-128 stale)
       [(Aes128Err (AesSecret (SecretClosed))) unit]
@@ -154,13 +165,11 @@
           240
           176))
       "entire expanded schedule closes")
-    (secret.storage-close
-      (secret.SecretHandle
-        schedule-storage
-        (cast
-          (unsafe
-            (secret.storage-header schedule-storage)).generation
-          : i64)))
+    (unsafe
+      (secret.storage-close
+        (secret.SecretHandle
+          schedule-storage
+          (cast (header-word schedule-storage 1) : i64))))
     (test.assert-true
       (wiped?
         schedule-storage
@@ -255,11 +264,14 @@
     [source : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
     [destination : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
     [stale : secret.SecretFixed
-      (secret.SecretFixed
-        (secret.SecretHandle
-          source.handle.storage
-          (+ source.handle.generation 1)))]
-    [alias : secret.SecretFixed (secret.SecretFixed source.handle)]
+      (unsafe
+        (secret.SecretFixed
+          (secret.SecretHandle
+            source.handle.storage
+            (+ source.handle.generation 1))))]
+    [alias : secret.SecretFixed
+      (unsafe
+        (secret.SecretFixed source.handle))]
     (match (aes.new-128 (secret.fixed-zero (secret.Secret16)))
       [(Aes128Ok schedule)
         (match (aes.encrypt-128! (& schedule) (& source) (&mut alias))
@@ -289,23 +301,20 @@
         (ptr-cast
           (ptr-offset (ptr-cast storage : (MutPtr u64)) 1)
           : (MutPtr secret.SecretStorage)))]
-    (unsafe
-      (ptr-write!
-        storage
-        (secret.SecretStorage
-          (cast 0 : u64)
-          (cast 0 : u64)
-          (cast 16 : u64)
-          (cast 16 : u64))))
+    (public-header!
+      storage
+      (array (cast 0 : u64) (cast 0 : u64) (cast 16 : u64) (cast 16 : u64)))
     (unsafe
       (ptr-write!
         (ptr-cast (secret.storage-data storage) : (MutPtr u64))
         (cast 16 : u64)))
     (let
       [source : secret.SecretFixed
-        (secret.SecretFixed (secret.SecretHandle storage 0))]
+        (unsafe
+          (secret.SecretFixed (secret.SecretHandle storage 0)))]
       [destination : secret.SecretFixed
-        (secret.SecretFixed (secret.SecretHandle second 16))]
+        (unsafe
+          (secret.SecretFixed (secret.SecretHandle second 16)))]
       [expected : secret.SecretFixed
         (vectors.fixed-hex (secret.Secret16) "10000000000000000000000000000000")]
       (match (aes.new-128 (secret.fixed-zero (secret.Secret16)))
@@ -358,9 +367,16 @@
 ;: Replace only public fixture metadata, retaining the same allocated backing.
 (define (public-header!
   [storage : (MutPtr secret.SecretStorage)]
-  [header : secret.SecretStorage]) : unit
-  (unsafe
-    (ptr-write! storage header)))
+  [header : (Array u64 4)]) : unit
+  (let
+    [words : (MutPtr u64)
+      (unsafe
+        (ptr-cast storage : (MutPtr u64)))]
+    [index : i64 0]
+    (while (< index 4)
+      (unsafe
+        (ptr-write! (ptr-offset words index) (array-ref header index)))
+      (+= index 1))))
 
 ;: Fixed seed 0x7360, 64 malformed metadata mutations per typed variant. Each
 ;: mutation invalidates exactly one length/capacity/generation/liveness field.
@@ -381,38 +397,36 @@
             (if (= (% index 3) 1)
               source.handle.storage
               destination.handle.storage))]
-        [header : secret.SecretStorage
-          (unsafe
-            (secret.storage-header owner))]
+        [header : (Array u64 4) (header-words owner)]
         [bad : u64
           (+ (cast (bit-and seed (cast 65535 : u32)) : u64) (cast 65537 : u64))]
         (public-header!
           owner
           (match (% index 4)
             [0
-              (secret.SecretStorage
-                header.state
-                header.generation
+              (array
+                (array-ref header 0)
+                (array-ref header 1)
                 bad
-                header.capacity)]
+                (array-ref header 3))]
             [1
-              (secret.SecretStorage
-                header.state
-                header.generation
-                header.length
+              (array
+                (array-ref header 0)
+                (array-ref header 1)
+                (array-ref header 2)
                 bad)]
             [2
-              (secret.SecretStorage
-                header.state
+              (array
+                (array-ref header 0)
                 bad
-                header.length
-                header.capacity)]
+                (array-ref header 2)
+                (array-ref header 3))]
             [_
-              (secret.SecretStorage
+              (array
                 (cast 2 : u64)
-                header.generation
-                header.length
-                header.capacity)]))
+                (array-ref header 1)
+                (array-ref header 2)
+                (array-ref header 3))]))
         (let
           [before : i64 (profile.alloc-total)]
           (match (,encrypt (& ,schedule) (& source) (&mut destination))

@@ -1,6 +1,6 @@
 (module cleanup_hook_unsafe_dep)
 
-;; An unsafe declaration another module names as a cleanup hook (#8267).
+;; An unsafe declaration another module names as a cleanup hook (#9783).
 (unsafe
   (define (raw-close [fd : i64]) : unit
     unit))

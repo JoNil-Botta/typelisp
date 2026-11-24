@@ -558,8 +558,9 @@
       "preflight refusals preserve PRK")
     (let
       [stale
-        (secret.SecretBytes
-          (secret.SecretHandle ikm.handle.storage (+ ikm.handle.generation 1)))]
+        (unsafe
+          (secret.SecretBytes
+            (secret.SecretHandle ikm.handle.storage (+ ikm.handle.generation 1))))]
       (test.assert-i64-eq
         (extract-error (hkdf.extract (& stale) (limits)))
         8
@@ -569,9 +570,8 @@
         8
         "stale salt")
       (secret.close-bytes stale))
-    (secret.nominal-handle-close
-      (unsafe
-        (deref prk.storage).value.handle))
+    (unsafe
+      (secret.nominal-handle-close (deref prk.storage).value.handle))
     (test.assert-i64-eq
       (expand-error (hkdf.expand (& prk) (buf.str-as-bytes "") 0 (limits)))
       6
@@ -589,15 +589,16 @@
       [words : (Ptr u64)
         (unsafe
           (ptr-cast nominal.storage : (Ptr u64)))]
-      (secret.SecretHandle
-        (unsafe
-          (int->ptr
-            (ptr-read (ptr-offset words 2))
-            : (MutPtr secret.SecretStorage)))
-        (cast
+      (unsafe
+        (secret.SecretHandle
           (unsafe
-            (ptr-read (ptr-offset words 3)))
-          : i64)))))
+            (int->ptr
+              (ptr-read (ptr-offset words 2))
+              : (MutPtr secret.SecretStorage)))
+          (cast
+            (unsafe
+              (ptr-read (ptr-offset words 3)))
+            : i64))))))
 
 ;: A full-capacity wipe is observable only in this unsafe test boundary.
 (define (assert-wiped [handle : secret.SecretHandle] [capacity : i64]) : unit
@@ -618,18 +619,19 @@
             : u64)))
       (set! i (+ i 1)))
     (test.assert-true (= bits (cast 0 : u64)) "entire secret capacity wiped")
+    ;; Header words: 0 state, 2 initialized length. The header type is opaque
+    ;; outside stdlib.crypto_secret.
     (test.assert-true
-      (=
-        (unsafe
-          (secret.storage-header handle.storage)).state
-        (secret.state-closed))
+      (= (header-word handle.storage 0) (secret.state-closed))
       "storage closed")
     (test.assert-true
-      (=
-        (unsafe
-          (secret.storage-header handle.storage)).length
-        (cast 0 : u64))
+      (= (header-word handle.storage 2) (cast 0 : u64))
       "initialized length poisoned")))
+
+;: Public header word INDEX of retained test storage.
+(define (header-word [storage : (MutPtr secret.SecretStorage)] [index : i64]) : u64
+  (unsafe
+    (ptr-read (ptr-offset (ptr-cast storage : (Ptr u64)) index))))
 
 ;: Successful outputs stay live; nested lexical cleanup poisons and wipes once.
 (define (owner-cleanup) : unit
@@ -679,10 +681,11 @@
         (ptr-write!
           stale.storage
           (hkdf.HkdfSha256PrkStorage
-            (secret.SecretNominal
-              (secret.SecretNominalHandle
-                nominal.storage
-                (+ nominal.generation 1))))))
+            (unsafe
+              (secret.SecretNominal
+                (secret.SecretNominalHandle
+                  nominal.storage
+                  (+ nominal.generation 1)))))))
       (test.assert-i64-eq
         (expand-error (hkdf.expand (& stale) (buf.str-as-bytes "") 0 (limits)))
         6
@@ -716,7 +719,8 @@
       "outer poisoned/closed")
     (unsafe
       (ptr-write! (secret.storage-data inner.storage) (cast 81 : u8)))
-    (secret.nominal-handle-close nominal)
+    (unsafe
+      (secret.nominal-handle-close nominal))
     (test.assert-i64-eq
       (cast
         (unsafe
@@ -804,11 +808,13 @@
                       (unsafe
                         (ptr->int prior.handle.storage))]
                     [old : secret.SecretHandle
-                      (secret.SecretHandle
-                        (unsafe
-                          (int->ptr address : (MutPtr secret.SecretStorage)))
-                        prior.handle.generation)]
-                    (secret.storage-close old)
+                      (unsafe
+                        (secret.SecretHandle
+                          (unsafe
+                            (int->ptr address : (MutPtr secret.SecretStorage)))
+                          prior.handle.generation))]
+                    (unsafe
+                      (secret.storage-close old))
                     (assert-wiped old 32)
                     (set! retired (+ retired 1)))])
               (hkdf.close-block previous)
@@ -822,11 +828,13 @@
             (unsafe
               (ptr->int final.handle.storage))]
           [old : secret.SecretHandle
-            (secret.SecretHandle
-              (unsafe
-                (int->ptr address : (MutPtr secret.SecretStorage)))
-              final.handle.generation)]
-          (secret.storage-close old)
+            (unsafe
+              (secret.SecretHandle
+                (unsafe
+                  (int->ptr address : (MutPtr secret.SecretStorage)))
+                final.handle.generation))]
+          (unsafe
+            (secret.storage-close old))
           (assert-wiped old 32))]
       [_ (test.assert-true false "final T255 owned")])
     (hkdf.close-block previous)

@@ -1,9 +1,9 @@
-;; An enum payload cleanup hook cannot name an unsafe declaration (#8267).
+;; An enum payload cleanup hook may name an unsafe declaration; the enum is a
+;; sealed handle type its own module family builds in safe code (#9783).
 (unsafe
   (define (raw-close [fd : i64]) : unit
     unit))
 
-; Must fail: `raw-close` is an unsafe declaration.
 (defenum Res
   (:cleanup close-res)
   (Open i64 (:cleanup raw-close))

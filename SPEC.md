@@ -866,8 +866,7 @@ E0221, even inside `unsafe`:
 - projects, sets or borrows one of its fields;
 - matches one of its variants or struct patterns, owned or borrowed;
 - writes the type by value: a parameter, result, `let` annotation, struct field,
-  enum payload, global, tuple or array element, `Box` contents, or a `(type T)`
-  operand, so `(size-of (type T))` is rejected;
+  enum payload, global, tuple or array element, or `Box` contents;
 - binds a value that holds it by value with `let`, even without an annotation;
 - names a value or function whose type holds it by value, such as a function of
   the defining module that returns it;
@@ -878,6 +877,14 @@ E0221, even inside `unsafe`:
   read.
 
 Code a macro expands into a module is checked as that module's code.
+
+A `(type T)` operand may name the type itself. Compile-time code there may ask
+for its `type-kind`, `type-nominal-name`, `type-nominal-module` and `type-key`,
+but `size-of`, `align-of`, `offset-of`, `type-declared-align` and the
+`struct-field-*` and `enum-variant-*` queries fail with E0221 on the type, and
+on a tuple or array holding it by value, whether the operand is written or
+derived from an allowed type, such as the `reference-element-type` of
+`(& a T)`. `type-info` reports the type as `Opaque`.
 
 ```lisp test=ignore name=opaque-aggregate reason="cross-module example"
 (module db)
@@ -896,10 +903,20 @@ Another module may write `(& a db.Connection)` or `(Ptr db.Connection)` and call
 
 Not yet enforced:
 - a module of another package that declares itself inside the family's dotted
-  namespace is still treated as a family member (#8733);
-- layout queries and reflection still reach the representation through a type
-  derived from an allowed one, such as the `reference-element-type` of
-  `(& a T)` (#8735).
+  namespace is still treated as a family member (#8733).
+
+#### 3.5.5 Sealed handle types
+
+A struct or enum is a **sealed handle type** when one of its fields or variant
+payloads names an `unsafe` cleanup hook (§4.3.1), holds a `Ptr` or `MutPtr` to
+an `(:opaque)` aggregate, or embeds a sealed handle type other than through an
+`(:owned)` field. Such a value owns a resource that safe code must not mint:
+outside the type's module family (§3.5.4), a constructor call or nullary
+variant of it, and a `set!`, `&mut` borrow or `replace` of one of its fields,
+require an `unsafe` context (E0209). Holding, passing, returning and moving a
+value, reading its fields, and its implicit cleanup stay safe. There is no
+marker: the rule follows from the declarations, so a module seals a handle by
+marking its storage `(:opaque)` or its cleanup hook `unsafe`.
 
 ### 3.6 Type aliases
 
@@ -4585,9 +4602,11 @@ type:
 
 - `(:cleanup field-cleanup-fn)` marks a direct resource field and names the
   cleanup function for that field. The function must have type `(-> F unit)`,
-  where `F` is the field type. It must not be an unsafe declaration (§4.3.1):
-  the compiler calls it implicitly where the owner's scope ends, in safe code
-  too, so a hook discharges its own unsafety in its body. The same rule applies
+  where `F` is the field type. It may be an unsafe declaration (§4.3.1), such
+  as a hook that releases a raw pointer or handle: the compiler still calls it
+  implicitly where the owner's scope ends, in safe code too, and the owning
+  type is then a sealed handle type (§3.5.5), so outside its module family only
+  unsafe code can build a value whose cleanup runs the hook. The same applies
   to an enum payload's `(:cleanup ...)` metadata.
 - `(:owned)` marks a field whose type is itself cleanup-owning. The field uses
   that type's declared cleanup function.
@@ -8150,8 +8169,8 @@ lifetime-checked. The pointer operand is evaluated before the stored value.
 `stdlib.ffi` provides caller-owned C string marshalling helpers on top of
 this raw-pointer surface. `ffi.c-bytes-required-bytes` computes
 `bytes-length + 1`, `ffi.c-bytes-interior-nul?` rejects byte slices that cannot
-be passed to ordinary NUL-terminated C APIs, and `ffi.c-bytes-copy!` copies into
-a caller-provided `(MutPtr u8)` with an explicit capacity before writing the
+be passed to ordinary NUL-terminated C APIs, and the unsafe `ffi.c-bytes-copy!`
+copies into a caller-provided `(MutPtr u8)` with an explicit capacity before writing the
 trailing NUL byte. The helper returns a structured result for success,
 interior-NUL input, or too-small buffers; it does not allocate, does not create
 implicit `String -> Ptr` or `bytes -> Ptr` coercions, and does not extend the

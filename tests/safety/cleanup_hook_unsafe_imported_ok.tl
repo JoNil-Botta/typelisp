@@ -1,8 +1,6 @@
-;; A cleanup hook naming another module's unsafe declaration is rejected the
-;; same way (#8267).
+;; A cleanup hook may name another module's unsafe declaration (#9783).
 (import cleanup_hook_unsafe_dep as dep)
 
-; Must fail: `dep/raw-close` is an unsafe declaration.
 (defstruct Handle
   (:cleanup close-handle)
   (fd i64 (:cleanup dep/raw-close)))

@@ -133,6 +133,7 @@
 ;: Private mutable state shared by a single cleanup-owning capability. The raw
 ;: pointer wrapper prevents safe callers from projecting or copying `fd`.
 (defstruct FsLinuxRootedHandleState
+  (:opaque)
   (fd i64)
   (result FsLinuxRootedResult)
   (close FsLinuxRootedResult))
@@ -140,6 +141,7 @@
 ;: Private state of one guard. `fd` is live only while an acquired lock is
 ;: held; `device` and `inode` identify the sidecar that lock is on.
 (defstruct FsLinuxRootedGuardState
+  (:opaque)
   (fd i64)
   (result FsLinuxRootedResult)
   (device u64)
@@ -1789,10 +1791,12 @@
 
 ;: Cleanup-field adapter. Close failures are observable only through explicit
 ;: finish/close APIs; lexical cleanup must return unit.
-(define (linux-rooted-state-cleanup [state : (MutPtr FsLinuxRootedHandleState)]) : unit
-  (unsafe
-    (linux-rooted-state-close-result state))
-  unit)
+(unsafe
+  (define (linux-rooted-state-cleanup
+    [state : (MutPtr FsLinuxRootedHandleState)]) : unit
+    (unsafe
+      (linux-rooted-state-close-result state))
+    unit))
 
 ;: Cleanup-owning, move-only rooted directory capability.
 (defstruct FsLinuxRootedDirectory
@@ -1857,26 +1861,15 @@
 ;: Cleanup-field adapter: one close of a still-held descriptor. Closing the
 ;: guard's only open file description releases its lock; the outcome is
 ;: observable only through `linux-rooted-guard-release!`.
-(define (linux-rooted-guard-state-cleanup
-  [state : (MutPtr FsLinuxRootedGuardState)]) : unit
-  (unsafe
-    (let
-      [held : FsLinuxRootedGuardState (linux-rooted-guard-state-read state)]
-      (if (< held.fd 0)
-        unit
-        (begin
-          (linux-rooted-guard-state-write!
-            state
-            (FsLinuxRootedGuardState
-              -1
-              held.result
-              held.device
-              held.inode
-              held.unlock
-              LinuxRootedClosed))
-          (let
-            [close-result : FsLinuxRootedResult
-              (linux-rooted-close-fd-once held.fd)]
+(unsafe
+  (define (linux-rooted-guard-state-cleanup
+    [state : (MutPtr FsLinuxRootedGuardState)]) : unit
+    (unsafe
+      (let
+        [held : FsLinuxRootedGuardState (linux-rooted-guard-state-read state)]
+        (if (< held.fd 0)
+          unit
+          (begin
             (linux-rooted-guard-state-write!
               state
               (FsLinuxRootedGuardState
@@ -1885,7 +1878,19 @@
                 held.device
                 held.inode
                 held.unlock
-                close-result))))))))
+                LinuxRootedClosed))
+            (let
+              [close-result : FsLinuxRootedResult
+                (linux-rooted-close-fd-once held.fd)]
+              (linux-rooted-guard-state-write!
+                state
+                (FsLinuxRootedGuardState
+                  -1
+                  held.result
+                  held.device
+                  held.inode
+                  held.unlock
+                  close-result)))))))))
 
 ;: Cleanup-owning, move-only exclusive lock on one rooted sidecar.
 (defstruct FsLinuxRootedGuard
@@ -1893,6 +1898,24 @@
   (state
     (MutPtr FsLinuxRootedGuardState)
     (:cleanup linux-rooted-guard-state-cleanup)))
+
+;: Swap the recorded result of a read file, keeping its descriptor, and return
+;: the previous result: a test poisons a live capability without reaching its
+;: opaque state.
+(cfg
+  fs-rooted-linux-test-hooks
+  (define (linux-rooted-test-swap-read-file-result!
+    [file : (&mut file FsLinuxRootedReadFile)]
+    [result : FsLinuxRootedResult]) : FsLinuxRootedResult
+    (let
+      [state : FsLinuxRootedHandleState
+        (unsafe
+          (linux-rooted-state-read file.state))]
+      (unsafe
+        (linux-rooted-state-write!
+          file.state
+          (FsLinuxRootedHandleState state.fd result state.close)))
+      state.result)))
 
 ;: Return the stable construction/current result without exposing the fd.
 (define (linux-rooted-directory-result

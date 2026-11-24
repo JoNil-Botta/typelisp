@@ -75,18 +75,20 @@
 
 ;: Nested nominal cleanup checks identity and poisons before the sole inner wipe.
 ;: The retained pointer may be closed repeatedly; it never creates a new lifetime.
-(define (prk-storage-close [storage : (MutPtr HkdfSha256PrkStorage)]) : unit
-  (unless
-    (ptr-null? storage)
-    (unsafe
-      (close-prk-storage (ptr-read storage)))))
+(unsafe
+  (define (prk-storage-close [storage : (MutPtr HkdfSha256PrkStorage)]) : unit
+    (unless
+      (ptr-null? storage)
+      (unsafe
+        (close-prk-storage (ptr-read storage))))))
 
 ;: Nested variable-owner cleanup poisons before wiping the entire capacity.
-(define (okm-storage-close [storage : (MutPtr HkdfSha256OkmStorage)]) : unit
-  (unless
-    (ptr-null? storage)
-    (unsafe
-      (close-okm-storage (ptr-read storage)))))
+(unsafe
+  (define (okm-storage-close [storage : (MutPtr HkdfSha256OkmStorage)]) : unit
+    (unless
+      (ptr-null? storage)
+      (unsafe
+        (close-okm-storage (ptr-read storage))))))
 
 ;: Immediate checked crypto access. Only HKDF can populate the backing storage.
 ;: The unsafe snapshot copies only the checked metadata, retaining the original

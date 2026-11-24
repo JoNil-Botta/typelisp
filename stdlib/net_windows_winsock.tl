@@ -379,14 +379,15 @@
       true)))
 
 ;: Test counters observe actual native calls, not merely requested outcomes.
-(define (winsock-load-system32 [name : (Ptr u16)]) : u64
-  (begin
-    (cfg
-      test
-      (unsafe
-        (atomic-add! (ptr-addr-of winsock-test-load-count) 1))
-      unit)
-    (winsock-load-library-ex-w name (cast 0 : u64) winsock-system32-search)))
+(unsafe
+  (define (winsock-load-system32 [name : (Ptr u16)]) : u64
+    (begin
+      (cfg
+        test
+        (unsafe
+          (atomic-add! (ptr-addr-of winsock-test-load-count) 1))
+        unit)
+      (winsock-load-library-ex-w name (cast 0 : u64) winsock-system32-search))))
 
 ;: Balance exactly the reference acquired for a rejected candidate.
 (define (winsock-release-candidate [module : u64]) : unit
@@ -1114,8 +1115,8 @@
     (let
       [dll-name : (Array u16 11) (winsock-dll-wide-name)]
       [module : u64
-        (winsock-load-system32
-          (unsafe
+        (unsafe
+          (winsock-load-system32
             (ptr-cast (__tl_array-data dll-name) : (Ptr u16))))]
       (when
         (= module (cast 0 : u64))

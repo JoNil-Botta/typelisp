@@ -77,6 +77,7 @@
 ;: the same allocation, and bytes past `length` are zero. Pointers of this type
 ;: come only from this module's constructors.
 (defstruct SecretStorage
+  (:opaque)
   (state u64)
   (generation u64)
   (length u64)
@@ -296,31 +297,32 @@
 ;: Field cleanup of both owners: poison, wipe the whole capacity and the
 ;: length, then mark closed. Null, non-live or mismatched-generation handles
 ;: are no-ops. Check only public metadata before the first mutation.
-(define (storage-close [handle : SecretHandle]) : unit
-  (if (ptr-null? handle.storage)
-    unit
-    (let
-      [header : SecretStorage
-        (unsafe
-          (storage-header handle.storage))]
-      [words : (MutPtr u64)
-        (unsafe
-          (ptr-cast handle.storage : (MutPtr u64)))]
-      (if (and
-        (= header.state (state-live))
-        (= header.generation (cast handle.generation : u64)))
-        (begin
+(unsafe
+  (define (storage-close [handle : SecretHandle]) : unit
+    (if (ptr-null? handle.storage)
+      unit
+      (let
+        [header : SecretStorage
           (unsafe
-            (volatile-store! words (state-poisoned)))
+            (storage-header handle.storage))]
+        [words : (MutPtr u64)
           (unsafe
-            (wipe-words!
-              (ptr-offset words 4)
-              (data-words (cast header.capacity : i64))))
-          (unsafe
-            (volatile-store! (ptr-offset words 2) (cast 0 : u64)))
-          (unsafe
-            (volatile-store! words (state-closed))))
-        unit))))
+            (ptr-cast handle.storage : (MutPtr u64)))]
+        (if (and
+          (= header.state (state-live))
+          (= header.generation (cast handle.generation : u64)))
+          (begin
+            (unsafe
+              (volatile-store! words (state-poisoned)))
+            (unsafe
+              (wipe-words!
+                (ptr-offset words 4)
+                (data-words (cast header.capacity : i64))))
+            (unsafe
+              (volatile-store! (ptr-offset words 2) (cast 0 : u64)))
+            (unsafe
+              (volatile-store! words (state-closed))))
+          unit)))))
 
 ;: Copy exact public bytes into fresh storage and publish them.
 (unsafe
@@ -851,22 +853,23 @@
 
 ;: Poison the outer allocation before invoking the inner owner's cleanup.
 ;: A repeated, closed or stale outer handle cannot invoke that cleanup again.
-(define (nominal-handle-close [handle : SecretNominalHandle]) : unit
-  (when
-    (unsafe
-      (nominal-live? (& handle)))
-    (let
-      [inner : SecretHandle
-        (unsafe
-          (deref handle.storage).inner)]
-      [words : (MutPtr u64)
-        (unsafe
-          (ptr-cast handle.storage : (MutPtr u64)))]
+(unsafe
+  (define (nominal-handle-close [handle : SecretNominalHandle]) : unit
+    (when
       (unsafe
-        (volatile-store! words (state-poisoned)))
-      (close-fixed (SecretFixed inner))
-      (unsafe
-        (volatile-store! words (state-closed))))))
+        (nominal-live? (& handle)))
+      (let
+        [inner : SecretHandle
+          (unsafe
+            (deref handle.storage).inner)]
+        [words : (MutPtr u64)
+          (unsafe
+            (ptr-cast handle.storage : (MutPtr u64)))]
+        (unsafe
+          (volatile-store! words (state-poisoned)))
+        (close-fixed (SecretFixed inner))
+        (unsafe
+          (volatile-store! words (state-closed)))))))
 
 ;: Move one exact live fixed owner into nominal state without copying bytes.
 ;: This is an unsafe immediate-call boundary: only the consuming crypto

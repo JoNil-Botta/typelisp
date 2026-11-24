@@ -290,8 +290,9 @@
     (secret.close-bytes key))
   (let
     [null-key : secret.SecretBytes
-      (secret.SecretBytes
-        (secret.SecretHandle (ptr-null : (MutPtr secret.SecretStorage)) 9))]
+      (unsafe
+        (secret.SecretBytes
+          (secret.SecretHandle (ptr-null : (MutPtr secret.SecretStorage)) 9)))]
     (match (hmac.new (& null-key) (hmac.default-limits))
       [(HmacSha256NewErr (HmacSha256SecretError (secret.SecretClosed))) unit]
       [(HmacSha256NewErr _) (test.assert-true false "null key error")]
@@ -587,8 +588,9 @@
     [bad : secret.SecretBytes (key-from (buf.str-as-bytes "secret"))]
     [empty : secret.SecretBytes (key-from (buf.str-as-bytes ""))]
     [stale : secret.SecretBytes
-      (secret.SecretBytes
-        (secret.SecretHandle bad.handle.storage (+ bad.handle.generation 1)))]
+      (unsafe
+        (secret.SecretBytes
+          (secret.SecretHandle bad.handle.storage (+ bad.handle.generation 1))))]
     [state : hmac.HmacSha256State (state-from (& key) (hmac.default-limits))]
     (require-ok (hmac.update! (&mut state) (buf.str-as-bytes "a")))
     (require-ok (hmac.update-secret! (&mut state) (& empty)))

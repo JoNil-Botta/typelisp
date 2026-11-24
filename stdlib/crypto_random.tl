@@ -76,27 +76,30 @@
   (ErrFillRandom error))
 
 ;: Check that pointer offsets for the complete nonempty view cannot wrap.
-(define (pointer-range-valid? [data : (MutPtr u8)] [length : i64]) : bool
-  (if (<= length 0)
-    (= length 0)
-    (let
-      [base : u64
-        (unsafe
-          (ptr->int (ptr-cast data : (Ptr u8))))]
-      [last-offset : u64 (cast (- length 1) : u64)]
-      (and (!= base (cast 0 : u64)) (<= last-offset (- (cast -1 : u64) base))))))
+(define (pointer-range-valid? [out : (&mut out bytes)]) : bool
+  (let
+    [length : i64 (byte_buf.bytes-mut-length out)]
+    (if (<= length 0)
+      (= length 0)
+      (let
+        [base : u64
+          (unsafe
+            (ptr->int (ptr-cast (byte_buf.bytes-mut-data out) : (Ptr u8))))]
+        [last-offset : u64 (cast (- length 1) : u64)]
+        (and (!= base (cast 0 : u64)) (<= last-offset (- (cast -1 : u64) base)))))))
 
 ;: Fill a range through an injected checked host adapter.
 ;:
-;: `max-request` bounds every adapter call. The adapter must write at most the
-;: returned positive count starting at `data`; the driver validates that count,
+;: `max-request` bounds every adapter call. The adapter receives the next
+;: unfilled chunk as a checked mutable view and must report how many of its
+;: leading bytes it filled; the driver validates that count,
 ;: advances only after valid progress, bounds interruptions, and wipes on every
 ;: failure. This is the low-level deterministic test/provider seam; production
 ;: callers normally use `fill-random!`.
 (define (fill-random-with!
   [out : (&mut out bytes)]
   [max-request : i64]
-  [fill-chunk : (-> (MutPtr u8) i64 CryptoRandomHostStep)]) : ResultFillRandom
+  [fill-chunk : (-> (&mut chunk bytes) CryptoRandomHostStep)]) : ResultFillRandom
   (let
     [length : i64 (byte_buf.bytes-mut-length out)]
     (cond
@@ -105,68 +108,64 @@
         (fill-failure! out (CryptoRandomInvalidChunkLimit max-request))]
       [(= length 0) (OkFillRandom)]
       [else
-        (let
-          [data : (MutPtr u8)
-            (unsafe
-              (byte_buf.bytes-mut-data out))]
-          (if (not (pointer-range-valid? data length))
-            (fill-failure! out (CryptoRandomPointerOverflow length))
-            (let
-              [offset : i64 0]
-              [interruptions : i64 0]
-              [done : bool false]
-              [result : ResultFillRandom (OkFillRandom)]
-              (while (not done)
-                (let
-                  [remaining : i64 (- length offset)]
-                  [requested : i64
-                    (if (> remaining max-request)
-                      max-request
-                      remaining)]
-                  [target : (MutPtr u8)
-                    (unsafe
-                      (ptr-offset data offset))]
-                  (match (fill-chunk target requested)
-                    [(CryptoRandomHostFilled count)
-                      (if (or (<= count 0) (> count requested))
-                        (begin
-                          (set!
-                            result
-                            (fill-failure!
-                              out
-                              (CryptoRandomImpossiblePartial count requested)))
-                          (set! done true))
-                        (begin
-                          (set! offset (+ offset count))
-                          (if (= offset length)
-                            (set! done true)
-                            unit)))]
-                    [(CryptoRandomHostInterrupted)
-                      (set! interruptions (+ interruptions 1))
-                      (when
-                        (>= interruptions (interruption-limit))
+        (if (not (pointer-range-valid? out))
+          (fill-failure! out (CryptoRandomPointerOverflow length))
+          (let
+            [offset : i64 0]
+            [interruptions : i64 0]
+            [done : bool false]
+            [result : ResultFillRandom (OkFillRandom)]
+            (while (not done)
+              (let
+                [remaining : i64 (- length offset)]
+                [requested : i64
+                  (if (> remaining max-request)
+                    max-request
+                    remaining)]
+                (match (fill-chunk
+                  (byte_buf.bytes-mut-slice-view out offset requested))
+                  [(CryptoRandomHostFilled count)
+                    (if (or (<= count 0) (> count requested))
+                      (begin
                         (set!
                           result
                           (fill-failure!
                             out
-                            (CryptoRandomInterruptionExhausted interruptions)))
-                        (set! done true))]
-                    [(CryptoRandomHostFailure error)
-                      (set! result (fill-failure! out error))
-                      (set! done true)])))
-              result)))])))
+                            (CryptoRandomImpossiblePartial count requested)))
+                        (set! done true))
+                      (begin
+                        (set! offset (+ offset count))
+                        (if (= offset length)
+                          (set! done true)
+                          unit)))]
+                  [(CryptoRandomHostInterrupted)
+                    (set! interruptions (+ interruptions 1))
+                    (when
+                      (>= interruptions (interruption-limit))
+                      (set!
+                        result
+                        (fill-failure!
+                          out
+                          (CryptoRandomInterruptionExhausted interruptions)))
+                      (set! done true))]
+                  [(CryptoRandomHostFailure error)
+                    (set! result (fill-failure! out error))
+                    (set! done true)])))
+            result))])))
 
 ;: Linux x86-64 `getrandom` adapter preserving raw negative `-errno` status.
 (cfg
   (not windows)
-  (define (linux-random-step [data : (MutPtr u8)] [requested : i64]) : CryptoRandomHostStep
+  (define (linux-random-step [chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (let
       [status : i64
         (unsafe
           (syscall
             318
-            (cast (ptr->int (ptr-cast data : (Ptr u8))) : i64)
-            requested
+            (cast
+              (ptr->int (ptr-cast (byte_buf.bytes-mut-data chunk) : (Ptr u8)))
+              : i64)
+            (byte_buf.bytes-mut-length chunk)
             0))]
       (cond
         [(= status -4) (CryptoRandomHostInterrupted)]
@@ -237,8 +236,9 @@
 ;: Windows `BCryptGenRandom` adapter with one live DLL reference per call.
 (cfg
   windows
-  (define (windows-random-step [data : (MutPtr u8)] [requested : i64]) : CryptoRandomHostStep
+  (define (windows-random-step [chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (let
+      [requested : i64 (byte_buf.bytes-mut-length chunk)]
       [library-name : (Array u8 11) (windows-bcrypt-library-name)]
       [module : i64
         (windows-load-library
@@ -270,7 +270,7 @@
                   (unsafe
                     (bcrypt-gen-random
                       0
-                      data
+                      (byte_buf.bytes-mut-data chunk)
                       (cast requested : u32)
                       (cast 2 : u32)))]
                 [released : i32 (windows-free-library module)]
@@ -311,81 +311,83 @@
 ;: Write `count` deterministic bytes for inline adapter coverage.
 (cfg
   test
-  (define (test-host-write! [data : (MutPtr u8)] [count : i64] [base : i64]) : unit
+  (define (test-host-write!
+    [chunk : (&mut chunk bytes)]
+    [count : i64]
+    [base : i64]) : unit
     (let
       [index : i64 0]
       (while (< index count)
-        (unsafe
-          (ptr-write! (ptr-offset data index) (cast (+ base index) : u8)))
+        (byte_buf.bytes-set! chunk index (cast (+ base index) : u8))
         (set! index (+ index 1)))
       unit)))
 
 ;: Inline-test adapter that completes one request in two partial writes.
 (cfg
   test
-  (define (test-host-partial [data : (MutPtr u8)] [requested : i64]) : CryptoRandomHostStep
+  (define (test-host-partial [chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (let
+      [requested : i64 (byte_buf.bytes-mut-length chunk)]
       [count : i64
         (if (= test-host-call-count 0)
           (if (> requested 2)
             2
             requested)
           requested)]
-      (test-host-write! data count (+ 40 (* test-host-call-count 10)))
+      (test-host-write! chunk count (+ 40 (* test-host-call-count 10)))
       (set! test-host-call-count (+ test-host-call-count 1))
       (CryptoRandomHostFilled count))))
 
 ;: Inline-test adapter that is interrupted twice and then succeeds.
 (cfg
   test
-  (define (test-host-interrupt-then-fill [data : (MutPtr u8)] [requested : i64]) : CryptoRandomHostStep
+  (define (test-host-interrupt-then-fill [chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (set! test-host-call-count (+ test-host-call-count 1))
     (if (<= test-host-call-count 2)
       (CryptoRandomHostInterrupted)
-      (begin
-        (test-host-write! data requested 70)
+      (let
+        [requested : i64 (byte_buf.bytes-mut-length chunk)]
+        (test-host-write! chunk requested 70)
         (CryptoRandomHostFilled requested)))))
 
 ;: Inline-test adapter that never progresses.
 (cfg
   test
-  (define (test-host-always-interrupted
-    [_data : (MutPtr u8)]
-    [_requested : i64]) : CryptoRandomHostStep
+  (define (test-host-always-interrupted [_chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (set! test-host-call-count (+ test-host-call-count 1))
     (CryptoRandomHostInterrupted)))
 
 ;: Inline-test adapter that reports an impossible zero-byte partial result.
 (cfg
   test
-  (define (test-host-zero-partial [_data : (MutPtr u8)] [_requested : i64]) : CryptoRandomHostStep
+  (define (test-host-zero-partial [_chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (CryptoRandomHostFilled 0)))
 
 ;: Inline-test adapter for a missing Windows library result.
 (cfg
   test
-  (define (test-host-missing-library [_data : (MutPtr u8)] [_requested : i64]) : CryptoRandomHostStep
+  (define (test-host-missing-library [_chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (CryptoRandomHostFailure
       (CryptoRandomWindowsLibraryUnavailable (cast 126 : u32)))))
 
 ;: Inline-test adapter for a missing Windows symbol result.
 (cfg
   test
-  (define (test-host-missing-symbol [_data : (MutPtr u8)] [_requested : i64]) : CryptoRandomHostStep
+  (define (test-host-missing-symbol [_chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (CryptoRandomHostFailure
       (CryptoRandomWindowsSymbolUnavailable (cast 127 : u32)))))
 
 ;: Inline-test adapter for an exact `NTSTATUS` failure result.
 (cfg
   test
-  (define (test-host-windows-status [_data : (MutPtr u8)] [_requested : i64]) : CryptoRandomHostStep
+  (define (test-host-windows-status [_chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (CryptoRandomHostFailure
       (CryptoRandomWindowsStatus (cast -1073741811 : i32)))))
 
 ;: Inline-test adapter for an exact raw Linux `-errno` failure result.
 (cfg
   test
-  (define (test-host-linux-error [_data : (MutPtr u8)] [_requested : i64]) : CryptoRandomHostStep
+  (define (test-host-linux-error [_chunk : (&mut chunk bytes)]) : CryptoRandomHostStep
     (CryptoRandomHostFailure (CryptoRandomLinuxSystemError -5))))
 
 ;: Fill a test buffer with a sentinel before failure-wipe assertions.

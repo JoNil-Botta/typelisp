@@ -67,7 +67,8 @@
       ([original (open context) local_ipc.cleanup-local-ipc-connection])
       (with
         ([copy
-            (local_ipc.LocalIpcConnection original.owner)
+            (unsafe
+              (local_ipc.LocalIpcConnection original.owner))
             local_ipc.cleanup-local-ipc-connection])
         (let
           [first : local_ipc.LocalIpcIoResult
@@ -167,7 +168,8 @@
       ([original (open context) local_ipc.cleanup-local-ipc-connection])
       (with
         ([copy
-            (local_ipc.LocalIpcConnection original.owner)
+            (unsafe
+              (local_ipc.LocalIpcConnection original.owner))
             local_ipc.cleanup-local-ipc-connection])
         (set!
           failed
@@ -223,7 +225,8 @@
       ([original (open context) local_ipc.cleanup-local-ipc-connection])
       (with
         ([copy
-            (local_ipc.LocalIpcConnection original.owner)
+            (unsafe
+              (local_ipc.LocalIpcConnection original.owner))
             local_ipc.cleanup-local-ipc-connection])
         (set!
           failed

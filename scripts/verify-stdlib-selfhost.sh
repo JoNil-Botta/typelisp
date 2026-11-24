@@ -88,12 +88,16 @@ reject_diag() {
         stdlib/tests/crypto_aes_format_reject.tl)
             printf 'format: unsupported nominal type struct_stdlib.crypto_aes_core/Aes256Schedule' ;;
         stdlib/tests/crypto_aes_raw_reject.tl)
-            printf 'ptr-read requires unsafe context' ;;
+            printf 'cannot hold by value the opaque type stdlib.crypto_secret/SecretStorage' ;;
         stdlib/tests/crypto_aes_composed_reject.tl)
             printf 'encrypt-composed-128! requires unsafe context' ;;
         stdlib/tests/crypto_aes_rounds_reject.tl)
             printf 'encrypt-checked! requires unsafe context' ;;
-        stdlib/tests/crypto_hkdf_sha256_construct_reject.tl|stdlib/tests/crypto_hkdf_sha256_consumer_reject.tl|stdlib/tests/crypto_hkdf_sha256_view_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_view_reject.tl)
+        stdlib/tests/crypto_hkdf_sha256_construct_reject.tl|stdlib/tests/crypto_hkdf_sha256_consumer_reject.tl)
+            printf 'construction of sealed handle type stdlib.crypto_hkdf_sha256/HkdfSha256Prk' ;;
+        stdlib/tests/crypto_hkdf_sha256_okm_reject.tl)
+            printf 'construction of sealed handle type stdlib.crypto_hkdf_sha256/HkdfSha256Okm' ;;
+        stdlib/tests/crypto_hkdf_sha256_view_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_view_reject.tl)
             printf 'opaque type' ;;
         stdlib/tests/crypto_hkdf_sha256_clone_reject.tl)
             printf 'clone unsupported type' ;;
@@ -110,7 +114,7 @@ reject_diag() {
         stdlib/tests/crypto_secret_unsafe_accessor_reject.tl)
             printf 'crypto_secret/fixed-read-pointer requires unsafe context' ;;
         stdlib/tests/crypto_secret_storage_read_reject.tl)
-            printf 'ptr-read requires unsafe context' ;;
+            printf 'cannot hold by value the opaque type stdlib.crypto_secret/SecretStorage' ;;
         stdlib/tests/crypto_secret_clone_reject.tl)
             printf 'clone unsupported type stdlib.crypto_secret/SecretFixed' ;;
         stdlib/tests/crypto_secret_use_after_close_reject.tl)
@@ -233,7 +237,7 @@ reject_diag() {
         stdlib/tests/io_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/local_ipc_forged_connection_reject.tl)
-            printf 'int->ptr requires unsafe context' ;;
+            printf 'construction of sealed handle type stdlib.local_ipc/LocalIpcConnection' ;;
         stdlib/tests/local_ipc_connection_copy_reject.tl)
             printf 'cleanup-required resource already has a cleanup owner' ;;
         stdlib/tests/local_ipc_raw_helper_reject.tl)
@@ -241,7 +245,7 @@ reject_diag() {
         stdlib/tests/net_owner_copy_reject.tl)
             printf 'cleanup-required resource already has a cleanup owner' ;;
         stdlib/tests/net_owner_forge_reject.tl)
-            printf 'int->ptr requires unsafe context' ;;
+            printf 'construction of sealed handle type stdlib.net/TcpStream' ;;
         stdlib/tests/net_raw_helper_reject.tl)
             printf 'net/publish requires unsafe context' ;;
         stdlib/tests/math_sqrt_non_float_reject.tl)

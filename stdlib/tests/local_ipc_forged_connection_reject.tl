@@ -1,5 +1,5 @@
-;; Safe code cannot forge a connection's native identity: the private state
-;; pointer can only be produced in an unsafe context.
+;; Safe code cannot forge a connection's native identity: outside its module
+;; family the sealed owner is constructed only in an unsafe context (#9783).
 (import stdlib.local_ipc)
 
 (define (main) : i64

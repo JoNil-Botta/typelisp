@@ -46784,7 +46784,7 @@
       (unsafe
         (ptr-write!
           (int->ptr address : (MutPtr i64))
-          (bit-or (bit-and (ptr-read (int->ptr address : (Ptr i64))) 12) kind))))))
+          (bit-or (bit-and (ptr-read (int->ptr address : (Ptr i64))) 60) kind))))))
 
 ;; The arena-handle fact of LOOKUP-ID's slot (4 yes, 8 no, 0 unknown), in the
 ;; move-kind lane's bits 2-3.
@@ -46815,7 +46815,38 @@
       (unsafe
         (ptr-write!
           (int->ptr address : (MutPtr i64))
-          (bit-or (bit-and (ptr-read (int->ptr address : (Ptr i64))) 3) fact))))))
+          (bit-or (bit-and (ptr-read (int->ptr address : (Ptr i64))) 51) fact))))))
+
+;; The sealed-handle fact of LOOKUP-ID's slot (16 yes, 32 no, 0 unknown), in
+;; the move-kind lane's bits 4-5.
+(define (tc-type-handle-cache-sealed-handle
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]) : i64
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      0
+      (bit-and
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr i64))))
+        48))))
+
+(define (tc-type-handle-cache-sealed-handle-set!
+  [nominal-state : TcNominalCacheState]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [lookup-id : i64]
+  [fact : i64]) : unit
+  (let
+    [address : u64
+      (tc-type-handle-cache-move-kind-address nominal-state symbols lookup-id)]
+    (if (= address (cast 0 : u64))
+      unit
+      (unsafe
+        (ptr-write!
+          (int->ptr address : (MutPtr i64))
+          (bit-or (bit-and (ptr-read (int->ptr address : (Ptr i64))) 15) fact))))))
 
 (define (tc-type-handle-cache-lookup-id
   [nominal-state : TcNominalCacheState]
@@ -50013,7 +50044,10 @@
          (Begin items) (Unsafe items) (WithRegion _ items) (WithScratch items)
          (Syscall items))
       (tc-source-expr-list-policy-ok ctx expr-bases items)]
-    [(TypeLiteral ty-id) (tc-source-type-policy-ok ctx (ast.ty-node-get ty-id))]
+    ;; A type value may name a foreign opaque aggregate; CTFE gates the queries
+    ;; that reach its representation (#8735).
+    [(TypeLiteral ty-id)
+      (tc-source-type-policy-ok-at ctx (ast.ty-node-get ty-id) true)]
     [(If cond-box then-branch-box else-branch-box)
       (let
         [cond : ast.AstExpr
@@ -65883,17 +65917,21 @@
           (tc-env-key-has-name-id? name)
           (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
         (not (tc-dotted-place-name-id? ctx env name)))
-        (tc-opaque-value-reference-ok
+        (tc-sealed-constructor-reference-ok
           ctx
+          env
           name
-          (tc-var-expr-after-local-field-check-mode
+          (tc-opaque-value-reference-ok
             ctx
-            env
             name
-            (tc-hygiene-name-text-id-for-session
-              (tc-context-structural-session ctx)
-              name)
-            true))
+            (tc-var-expr-after-local-field-check-mode
+              ctx
+              env
+              name
+              (tc-hygiene-name-text-id-for-session
+                (tc-context-structural-session ctx)
+                name)
+              true)))
         (Err fallback-message))]
     [_ (Err fallback-message)]))
 
@@ -80003,7 +80041,12 @@
 ;; The CTFE environment for evaluating the source comptime expression `expr`.
 (define (tc-ctfe-env-for-comptime [ctx : TcContext] [expr : ast.AstExpr]) : ctfe_support.CtfeEnv
   (let
-    [env : ctfe_support.CtfeEnv (tc-ctfe-env ctx)]
+    [env : ctfe_support.CtfeEnv
+      (if (tc-job-state-opaque-program? (tc-context-job-state ctx))
+        (ctfe_support.ctfe-env-with-representation-module
+          (tc-ctfe-env ctx)
+          (tc-context-module-id ctx))
+        (tc-ctfe-env ctx))]
     [resolutions : ctfe_support.CtfeTypeLiteralResolutions
       (ctfe_support.ctfe-type-literal-resolutions-empty)]
     (tc-ctfe-type-literal-resolutions-into ctx (&mut resolutions) expr)
@@ -90303,21 +90346,21 @@
     [_ (Err "typecheck: set! tuple element requires tuple")]))
 
 ;; Writing raw representation or exposing an exclusive projection can create
-;; authority just as construction can. Check the resolved receiver at the
-;; ordinary typed-place boundary; reads of the integer remain safe.
+;; authority just as construction can: an Arena handle, or a sealed handle type
+;; outside its module family (#9783). Check the resolved receiver at the
+;; ordinary typed-place boundary; reads of the fields remain safe.
 (define (tc-struct-field-mutation-admission
   [ctx : TcContext]
   [env : TcTypeEnv]
   [receiver-ty : ast.AstType]) : ResultTcUnit
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-    [(ast.AstType.Struct name)
-      (if (tc-arena-nominal-name-id? name)
-        (tc-require-unsafe ctx env "mutation of Arena.handle")
-        ResultTcUnit.Ok)]
-    [(ast.AstType.StructArgs name _)
-      (if (tc-arena-nominal-name-id? name)
-        (tc-require-unsafe ctx env "mutation of Arena.handle")
-        ResultTcUnit.Ok)]
+    [(or (ast.AstType.Struct name) (ast.AstType.StructArgs name _))
+      (cond
+        [(tc-arena-nominal-name-id? name)
+          (tc-require-unsafe ctx env "mutation of Arena.handle")]
+        [(tc-sealed-handle-foreign? ctx env name)
+          (tc-sealed-handle-require-unsafe ctx env name "field mutation")]
+        [else ResultTcUnit.Ok])]
     [(ast.AstType.Ref _ referent)
       (tc-struct-field-mutation-admission
         ctx
@@ -90613,12 +90656,16 @@
   [env : TcTypeEnv]
   [name : i64]
   [name-text : String]) : ResultTcType
-  (if (tc-job-state-opaque-program? (tc-context-job-state ctx))
-    (tc-opaque-value-reference-ok
-      ctx
-      name
-      (tc-var-expr-after-local-field-check-mode ctx env name name-text false))
-    (tc-var-expr-after-local-field-check-mode ctx env name name-text false)))
+  (tc-sealed-constructor-reference-ok
+    ctx
+    env
+    name
+    (if (tc-job-state-opaque-program? (tc-context-job-state ctx))
+      (tc-opaque-value-reference-ok
+        ctx
+        name
+        (tc-var-expr-after-local-field-check-mode ctx env name name-text false))
+      (tc-var-expr-after-local-field-check-mode ctx env name name-text false))))
 
 (define (tc-source-lookup-error-or-variant-constructor
   [ctx : TcContext]
@@ -94310,24 +94357,6 @@
 ;; dotted descendants. Elsewhere the type is usable only behind Ptr, MutPtr, &
 ;; and &mut. Code a macro expands into a module is checked as that module's
 ;; code, like E0220.
-;; Whether USE-MODULE is DEF-MODULE or one of its dotted descendants.
-(define (tc-opaque-module-in-family? [use-module : i64] [def-module : i64]) : bool
-  (if (tc-module-ids-same? use-module def-module)
-    true
-    (if (or
-      (csym.compiler-symbol-root-module-id? use-module)
-      (csym.compiler-symbol-root-module-id? def-module))
-      false
-      (let
-        [def-text : String (ci.intern-syntax-name-text-or def-module "")]
-        [use-text : String (ci.intern-syntax-name-text-or use-module "")]
-        [def-length : i64 (string.string-length def-text)]
-        (and
-          (> def-length 0)
-          (> (string.string-length use-text) def-length)
-          (string.is-string-prefix-at use-text def-text 0)
-          (= (string.string-ref use-text def-length) '.'))))))
-
 ;; The symbol index of the struct or enum NAME-ID when it is declared
 ;; (:opaque), else -1.
 (define (tc-opaque-decl-index [ctx : TcContext] [name-id : i64]) : i64
@@ -94365,7 +94394,10 @@
         symbols
         index
         cbi.compiler-builtin-id-fix-empty)]
-    (not (tc-opaque-module-in-family? (tc-context-module-id ctx) def-module))))
+    (not
+      (ctfe_support.ctfe-module-in-family?
+        (tc-context-module-id ctx)
+        def-module))))
 
 ;; The name of TY when TY is a struct or enum declared (:opaque) whose module
 ;; family excludes the code CTX checks, else -1.
@@ -94520,6 +94552,317 @@
     (if (< name 0)
       Ok
       (Err (tc-opaque-representation-message name use)))))
+
+;; Handle sealing (#9783). A struct or enum is sealed when a field or payload
+;; owns a raw resource: it names an unsafe `(:cleanup f)` hook, holds a Ptr or
+;; MutPtr to an (:opaque) aggregate, or embeds a sealed type other than through
+;; an (:owned) field. Outside the type's module family, constructing it, or
+;; mutating or mutably borrowing one of its fields, requires `unsafe` (E0209).
+;; Holding, passing, returning, moving and implicit cleanup stay safe.
+(define (tc-sealed-handle-nominal?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [stack : TcNameIdList]) : bool
+  (let
+    [nominal-state : TcNominalCacheState
+      (tc-job-state-nominal-cache (tc-context-job-state ctx))]
+    [cached : i64
+      (tc-type-handle-cache-sealed-handle
+        nominal-state
+        (tc-context-symbols-ref (& ctx))
+        name-id)]
+    (cond
+      [(= cached 16) true]
+      [(= cached 32) false]
+      [else
+        (let
+          [answer : bool (tc-sealed-handle-walk ctx env name-id stack)]
+          ;; A yes holds on every path; a no is final only for a walk from no
+          ;; enclosing nominal, since one cut off by `stack` is partial.
+          (when
+            (or
+              answer
+              (match stack
+                [(Nil) true]
+                [_ false]))
+            (tc-type-handle-cache-sealed-handle-set!
+              nominal-state
+              (tc-context-symbols-ref (& ctx))
+              name-id
+              (if answer
+                16
+                32)))
+          answer)])))
+
+(define (tc-sealed-handle-walk
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [stack : TcNameIdList]) : bool
+  (let
+    [handle : i64
+      (tc-type-handle-lookup-id
+        (tc-job-state-nominal-cache (tc-context-job-state ctx))
+        (tc-context-symbols-ref (& ctx))
+        name-id
+        tc-type-handle-lookup-caller-aggregate-layout)]
+    [nominal-id : i64
+      (if (csym.compiler-symbols-handle-found? handle)
+        (tc-nominal-owner-id-or ctx handle name-id)
+        -1)]
+    (if (or (< nominal-id 0) (tc-name-id-list-contains stack nominal-id))
+      false
+      (let
+        [owner-ctx : TcContext
+          (tc-context-with-nominal-owner-index-module
+            ctx
+            (csym.compiler-symbol-handle-index handle))]
+        [next : TcNameIdList (tc-name-id-list-add stack nominal-id)]
+        (match (csym.compiler-symbols-decl-at-index
+          (tc-context-symbols-ref (& owner-ctx))
+          (csym.compiler-symbol-handle-index handle))
+          [(Ok decl)
+            (match decl
+              [(or (DefStruct _ _ _ _ fields)
+                   (DefStructLifetimes _ _ _ _ _ fields))
+                (tc-sealed-handle-fields?
+                  owner-ctx
+                  env
+                  nominal-id
+                  (& fields)
+                  next
+                  0)]
+              [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
+                (tc-sealed-handle-variants?
+                  owner-ctx
+                  env
+                  nominal-id
+                  (& variants)
+                  next
+                  0)]
+              [_ false])]
+          [(Err _) false])))))
+
+(define (tc-sealed-handle-fields?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [fields : (& fields ast.AstFieldDefList)]
+  [stack : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-field-def-list-len fields))
+    false
+    (or
+      (match (ast.ast-field-def-list-get
+        fields
+        index
+        (ast.ast-field-def-fallback))
+        [(Def _ ty cleanup)
+          (match cleanup
+            [(Fn hook)
+              (or
+                (tc-sealed-handle-hook-unsafe? ctx env owner-id hook)
+                (tc-sealed-handle-type? ctx env ty stack))]
+            [(Owned) false]
+            [(No) (tc-sealed-handle-type? ctx env ty stack)])])
+      (tc-sealed-handle-fields? ctx env owner-id fields stack (+ index 1)))))
+
+(define (tc-sealed-handle-variants?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [variants : (& variants ast.AstVariantDefList)]
+  [stack : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-variant-def-list-len variants))
+    false
+    (or
+      (match (ast.ast-variant-def-list-get
+        variants
+        index
+        (ast.ast-variant-def-fallback))
+        [(Def _ payloads cleanups)
+          (tc-sealed-handle-payloads?
+            ctx
+            env
+            owner-id
+            (& payloads)
+            (& cleanups)
+            stack
+            0)])
+      (tc-sealed-handle-variants? ctx env owner-id variants stack (+ index 1)))))
+
+(define (tc-sealed-handle-payloads?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [payloads : (& payloads ast.AstTypeList)]
+  [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
+  [stack : TcNameIdList]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len payloads))
+    false
+    (or
+      (let
+        [ty : ast.AstType
+          (tc-context-type-get
+            ctx
+            (ast.ast-type-list-get payloads index (ast.ast-type-id-fallback)))]
+        (match (if (< index (ast.ast-variant-payload-cleanup-list-len cleanups))
+          (ast.ast-variant-payload-cleanup-list-get
+            cleanups
+            index
+            (ast.ast-variant-payload-cleanup-fallback))
+          (ast.AstVariantPayloadCleanup.No))
+          [(Fn hook)
+            (or
+              (tc-sealed-handle-hook-unsafe? ctx env owner-id hook)
+              (tc-sealed-handle-type? ctx env ty stack))]
+          [(Owned) false]
+          [(No) (tc-sealed-handle-type? ctx env ty stack)]))
+      (tc-sealed-handle-payloads?
+        ctx
+        env
+        owner-id
+        payloads
+        cleanups
+        stack
+        (+ index 1)))))
+
+;; Whether the cleanup HOOK a field or payload of OWNER-ID names is an unsafe
+;; declaration. The symbol table indexes declarations without their `unsafe`
+;; wrapper, so the binding's unsafe marker answers.
+(define (tc-sealed-handle-hook-unsafe?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner-id : i64]
+  [hook : ci.InternSyntaxId]) : bool
+  (match (tc-lookup-unsafe-key-id
+    env
+    (tc-env-name-key-id
+      (tc-type-env-structural-session env)
+      (tc-cleanup-field-helper-name
+        ctx
+        owner-id
+        (ci.intern-syntax-id-value hook))))
+    [(Ok _ unsafe) unsafe]
+    [(Err _) false]))
+
+;; Whether a field or payload of type TY makes its owner sealed.
+(define (tc-sealed-handle-type?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [ty : ast.AstType]
+  [stack : TcNameIdList]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(or (Ptr inner) (MutPtr inner))
+      (match (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx inner)))
+        [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
+          (>= (tc-opaque-decl-index ctx name) 0)]
+        [_ false])]
+    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
+      (tc-sealed-handle-nominal? ctx env name stack)]
+    [(Tuple elems)
+      (tc-sealed-handle-type-list? ctx env (& (deref elems)) stack 0)]
+    [(or (Array inner _) (DynArray inner) (Box inner))
+      (tc-sealed-handle-type? ctx env (tc-context-type-get ctx inner) stack)]
+    [_ false]))
+
+(define (tc-sealed-handle-type-list?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [types : (& types ast.AstTypeList)]
+  [stack : TcNameIdList]
+  [index : i64]) : bool
+  (and
+    (< index (ast.ast-type-list-len types))
+    (or
+      (tc-sealed-handle-type?
+        ctx
+        env
+        (tc-context-type-get
+          ctx
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+        stack)
+      (tc-sealed-handle-type-list? ctx env types stack (+ index 1)))))
+
+;; Whether NAME is a sealed struct or enum whose module family excludes the
+;; code CTX checks.
+(define (tc-sealed-handle-foreign?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]) : bool
+  (let
+    [handle : i64
+      (csym.compiler-symbols-lookup-type-id-or
+        (tc-context-symbols ctx)
+        name
+        (csym.compiler-symbols-missing-handle))]
+    (and
+      (csym.compiler-symbols-handle-found? handle)
+      (tc-sealed-handle-nominal? ctx env name Nil)
+      (tc-opaque-foreign-index? ctx (csym.compiler-symbol-handle-index handle)))))
+
+;; E0209 unless ENV is an unsafe context; USE names the operation on the
+;; foreign sealed type NAME, such as "construction".
+(define (tc-sealed-handle-require-unsafe
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [use : String]) : ResultTcUnit
+  (tc-require-unsafe
+    ctx
+    env
+    (str_cat.str-cat
+      use
+      " of sealed handle type "
+      (tc-nominal-name-id-display name)
+      " outside its module family")))
+
+;; Whether NAME names a constructor of NOMINAL: one of its variants, or the
+;; struct itself, which a module-qualified name such as `dep.Handle` reaches
+;; only through the importing module's aliases.
+(define (tc-sealed-constructor-name?
+  [ctx : TcContext]
+  [name : i64]
+  [nominal : i64]) : bool
+  (or
+    (tc-constructor-name-id? ctx name)
+    (match (tc-type-strip-region (tc-resolve-type ctx (ast.AstType.Var name)))
+      [(or (Struct resolved) (StructArgs resolved _)) (= resolved nominal)]
+      [_ false])))
+
+;; RESULT, the type of the name NAME, or E0209 when NAME is a constructor of a
+;; sealed handle type named outside its module family and outside `unsafe`.
+(define (tc-sealed-constructor-reference-ok
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [result : ResultTcType]) : ResultTcType
+  (match result
+    [(Ok ty)
+      (match (& ty)
+        [(Func _ ret)
+          (match (tc-type-strip-region
+            (tc-resolve-type ctx (ast.ty-node-get ret)))
+            [(or (Struct nominal) (StructArgs nominal _) (Enum nominal)
+                 (EnumArgs nominal _))
+              (if (and
+                (tc-sealed-handle-foreign? ctx env nominal)
+                (tc-sealed-constructor-name? ctx name nominal))
+                (match (tc-sealed-handle-require-unsafe
+                  ctx
+                  env
+                  nominal
+                  "construction")
+                  [(ResultTcUnit.Ok) (Ok ty)]
+                  [(ResultTcUnit.Err message) (Err message)])
+                (Ok ty))]
+            [_ (Ok ty)])]
+        [_ (Ok ty)])]
+    [(Err message) (Err message)]))
 
 (define (tc-move-global-owner-module-id [ctx : TcContext] [handle : i64]) : i64
   (csym.compiler-symbols-owner-module-id-at-index-or
@@ -129100,44 +129443,13 @@
     [cleanup-ty (try (tc-lookup-visible-id ctx env lookup-name))]
     [cleanup-display : String
       (ci.intern-syntax-name-text-or cleanup-name-id "<structural-name>")]
-    [_
-      (try
-        (tc-expect
-          cleanup-ty
-          (tc-fn1 (tc-type-without-regions field-ty) (Unit))
-          (tc-struct-field-cleanup-fn-mismatch-message
-            (tc-global-shared-view struct-name)
-            (tc-global-shared-view field-name)
-            (tc-global-shared-view cleanup-display))))]
-    (tc-check-cleanup-hook-safe
-      env
-      lookup-name
-      (str_cat.str-cat "struct " struct-name " field " field-name)
-      cleanup-display)))
-
-;; A cleanup hook runs implicitly wherever its owner's scope ends, in safe code
-;; too, so no call site can supply the `unsafe` context an unsafe declaration
-;; requires (SPEC 4.3.1). The hook must discharge its own unsafety (#8267).
-(define (tc-check-cleanup-hook-safe
-  [env : TcTypeEnv]
-  [lookup-name : i64]
-  [owner : String]
-  [cleanup-display : String]) : ResultTcUnit
-  (match (tc-lookup-unsafe-key-id
-    env
-    (tc-env-name-key-id (tc-type-env-structural-session env) lookup-name))
-    [(Ok _ unsafe)
-      (if unsafe
-        (Err
-          (str_cat.str-cat
-            (cdiag.compiler-diagnostic-typecheck-tag (UnsafeCallableEffect))
-            "typecheck: "
-            owner
-            " cleanup function "
-            cleanup-display
-            " is an unsafe declaration; a cleanup hook runs implicitly, so it must discharge its own unsafety"))
-        Ok)]
-    [(Err _) Ok]))
+    (tc-expect
+      cleanup-ty
+      (tc-fn1 (tc-type-without-regions field-ty) (Unit))
+      (tc-struct-field-cleanup-fn-mismatch-message
+        (tc-global-shared-view struct-name)
+        (tc-global-shared-view field-name)
+        (tc-global-shared-view cleanup-display)))))
 
 (define (tc-check-cleanup-struct-field
   [ctx : TcContext]
@@ -129338,20 +129650,13 @@
     [cleanup-ty (try (tc-lookup-visible-id ctx env lookup-name))]
     [cleanup-display : String
       (ci.intern-syntax-name-text-or cleanup-name-id "<structural-name>")]
-    [_
-      (try
-        (tc-expect
-          cleanup-ty
-          (tc-fn1 (tc-type-without-regions payload-ty) (Unit))
-          (tc-enum-payload-cleanup-fn-mismatch-message
-            (tc-global-shared-view enum-name)
-            (tc-global-shared-view variant-name)
-            (tc-global-shared-view cleanup-display))))]
-    (tc-check-cleanup-hook-safe
-      env
-      lookup-name
-      (str_cat.str-cat "enum " enum-name " variant " variant-name)
-      cleanup-display)))
+    (tc-expect
+      cleanup-ty
+      (tc-fn1 (tc-type-without-regions payload-ty) (Unit))
+      (tc-enum-payload-cleanup-fn-mismatch-message
+        (tc-global-shared-view enum-name)
+        (tc-global-shared-view variant-name)
+        (tc-global-shared-view cleanup-display)))))
 
 (define (tc-check-cleanup-enum-payloads
   [ctx : TcContext]

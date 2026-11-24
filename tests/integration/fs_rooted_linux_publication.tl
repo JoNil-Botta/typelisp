@@ -1031,28 +1031,23 @@
 ;; cleanup. No arbitrary pointer or out-of-lifetime access is exercised.
 (define (rewind-poisoned-live?
   [reader : (&mut reader rooted.FsLinuxRootedReadFile)]) : bool
-  (unsafe
+  (let
+    [saved : rooted.FsLinuxRootedResult
+      (rooted.linux-rooted-test-swap-read-file-result!
+        reader
+        LinuxRootedIoFailure)]
+    (rooted.linux-rooted-test-reset!)
     (let
-      [saved : rooted.FsLinuxRootedHandleState
-        (rooted.linux-rooted-state-read reader.state)]
-      (rooted.linux-rooted-test-reset!)
-      (rooted.linux-rooted-state-write!
-        reader.state
-        (rooted.FsLinuxRootedHandleState
-          saved.fd
-          LinuxRootedIoFailure
-          saved.close))
-      (let
-        [code : i64
-          (result-code
-            (rooted.linux-rooted-read-file-rewind!
-              reader
-              rooted.linux-rooted-never-cancelled))]
-        [calls : i64
-          (rooted.linux-rooted-test-call-count
-            rooted.fs-linux-rooted-syscall-kind-lseek)]
-        (rooted.linux-rooted-state-write! reader.state saved)
-        (and (= code 14) (= calls 0) (rewind-reader reader))))))
+      [code : i64
+        (result-code
+          (rooted.linux-rooted-read-file-rewind!
+            reader
+            rooted.linux-rooted-never-cancelled))]
+      [calls : i64
+        (rooted.linux-rooted-test-call-count
+          rooted.fs-linux-rooted-syscall-kind-lseek)]
+      (rooted.linux-rooted-test-swap-read-file-result! reader saved)
+      (and (= code 14) (= calls 0) (rewind-reader reader)))))
 
 (define (rewind-faults [root : (& root rooted.FsLinuxRootedDirectory)]) : bool
   (with

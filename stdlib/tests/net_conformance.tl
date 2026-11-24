@@ -416,7 +416,10 @@
     (with
       ([stream (open-stream f) net.cleanup-tcp-stream])
       (with
-        ([copy (net.TcpStream stream.owner) net.cleanup-tcp-stream])
+        ([copy
+            (unsafe
+              (net.TcpStream stream.owner))
+            net.cleanup-tcp-stream])
         (net.tcp-stream-try-read!
           (&mut stream)
           (byte_buf.as-mut-bytes (&mut bytes))
@@ -474,7 +477,10 @@
     (with
       ([listener (open-listener f) net.cleanup-tcp-listener])
       (with
-        ([wrong (net.TcpStream listener.owner) net.cleanup-tcp-stream])
+        ([wrong
+            (unsafe
+              (net.TcpStream listener.owner))
+            net.cleanup-tcp-stream])
         (assert-kind
           (net.tcp-stream-try-read!
             (&mut wrong)

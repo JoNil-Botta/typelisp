@@ -16,7 +16,7 @@
 ;# constructor is inaccessible outside this module family. The pointer owns
 ;# one fixed-size public value in the active arena and must stay within that
 ;# arena's lifetime. The key schedule must accept only this opaque hash and
-;# use `boundary-digest` with its expected tag. It must not accept an arbitrary
+;# use the unsafe `boundary-digest` with its expected tag. It must not accept an arbitrary
 ;# untagged digest. Local kind checks do not establish message order or roles;
 ;# the client engine still validates the complete protocol sequence.
 ;#
@@ -412,19 +412,20 @@
 ;: Check a protocol consumer's expected tag and return a by-value public
 ;: digest only on an exact match. Null is a typed refusal. Non-null pointers
 ;: must originate from snapshot-boundary and remain within their arena lifetime.
-(define (boundary-digest
-  [value : (Ptr TlsTranscriptHash)]
-  [expected : TlsTranscriptBoundary]) : TlsTranscriptDigestResult
-  (if (ptr-null? value)
-    (TlsTranscriptDigestErr (TlsTranscriptInvalidHash))
-    (let
-      [hash : TlsTranscriptHash
-        (unsafe
-          (ptr-read value))]
-      (if (= hash.boundary expected)
-        (TlsTranscriptDigestOk hash.digest)
-        (TlsTranscriptDigestErr
-          (TlsTranscriptWrongBoundary hash.boundary expected))))))
+(unsafe
+  (define (boundary-digest
+    [value : (Ptr TlsTranscriptHash)]
+    [expected : TlsTranscriptBoundary]) : TlsTranscriptDigestResult
+    (if (ptr-null? value)
+      (TlsTranscriptDigestErr (TlsTranscriptInvalidHash))
+      (let
+        [hash : TlsTranscriptHash
+          (unsafe
+            (ptr-read value))]
+        (if (= hash.boundary expected)
+          (TlsTranscriptDigestOk hash.digest)
+          (TlsTranscriptDigestErr
+            (TlsTranscriptWrongBoundary hash.boundary expected)))))))
 
 ;: Finalize exactly once; failure leaves the live transcript unchanged.
 (define (finalize! [state : (&mut state TlsTranscript)]) : TlsTranscriptDigestResult

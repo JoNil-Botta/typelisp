@@ -434,8 +434,9 @@
   (let
     [raw : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
     [stale : secret.SecretFixed
-      (secret.SecretFixed
-        (secret.SecretHandle raw.handle.storage (+ raw.handle.generation 1)))]
+      (unsafe
+        (secret.SecretFixed
+          (secret.SecretHandle raw.handle.storage (+ raw.handle.generation 1))))]
     (match (gcm.new stale)
       [(GcmKeyErr (GcmAes (AesSecret (SecretClosed)))) unit]
       [(GcmKeyErr _) (test.assert-true false "stale key status")]

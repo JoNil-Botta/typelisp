@@ -1338,7 +1338,11 @@
   (reflections CtfeReflectInfoList)
   (source-names ci.InternSourceNameSessionHandle)
   ;; The boxed CtfeTypeLiteralResolutions of one comptime evaluation, or 0.
-  (type-literals u64))
+  (type-literals u64)
+  ;; The module whose code one comptime evaluation runs as, which decides the
+  ;; (:opaque) aggregates whose representation it may reach (#8735), or
+  ;; `ctfe-representation-unchecked`.
+  (representation-module i64))
 
 ;; The binding arena and the metadata are boxed and shared by every snapshot of
 ;; an environment; the environment keeps the two box pointers as addresses, so
@@ -1405,7 +1409,13 @@
     -1
     (None)
     (ctfe-env-metadata-box-new
-      (CtfeEnvMetadata pools layouts reflections source-names 0))
+      (CtfeEnvMetadata
+        pools
+        layouts
+        reflections
+        source-names
+        0
+        (ctfe-representation-unchecked)))
     macro-state))
 
 (define (ctfe-env-empty-with-pools-and-source-names-and-macro-state
@@ -2156,8 +2166,56 @@
           metadata.layouts
           metadata.reflections
           metadata.source-names
-          address))
+          address
+          metadata.representation-module))
       env.macro-state)))
+
+;; `env` evaluating as code of MODULE-ID: outside an (:opaque) aggregate's
+;; module family, its layout and reflection queries fail (#8735).
+(define (ctfe-env-with-representation-module [env : CtfeEnv] [module-id : i64]) : CtfeEnv
+  (let
+    [env-view : CtfeEnv env]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read env-view.metadata)]
+    (CtfeEnv
+      env.arena-store
+      env.head
+      env.syntax-pools
+      (ctfe-env-metadata-box-new
+        (CtfeEnvMetadata
+          metadata.pools
+          metadata.layouts
+          metadata.reflections
+          metadata.source-names
+          metadata.type-literals
+          module-id))
+      env.macro-state)))
+
+;; The representation module of an evaluation no module's code runs, such as
+;; a lowering-time refold of a comptime form typecheck already admitted.
+(define (ctfe-representation-unchecked) : i64
+  -2)
+
+;; Whether USE-MODULE is DEF-MODULE or one of its dotted descendants, so in
+;; the module family that owns DEF-MODULE's (:opaque) representations (#6999).
+;; Files without a `(module ...)` declaration share the entry module, which
+;; a negative id or the empty name denotes.
+(define (ctfe-module-in-family? [use-module : i64] [def-module : i64]) : bool
+  (let
+    [use-root : bool (or (< use-module 0) (ctfe-root-module-id? use-module))]
+    [def-root : bool (or (< def-module 0) (ctfe-root-module-id? def-module))]
+    (cond
+      [(or use-root def-root) (and use-root def-root)]
+      [(= use-module def-module) true]
+      [else
+        (let
+          [def-text : String (ci.intern-syntax-name-text-or def-module "")]
+          [use-text : String (ci.intern-syntax-name-text-or use-module "")]
+          [def-length : i64 (string.string-length def-text)]
+          (and
+            (> def-length 0)
+            (> (string.string-length use-text) def-length)
+            (string.is-string-prefix-at use-text def-text 0)
+            (= (string.string-ref use-text def-length) '.')))])))
 
 ;; The type a TypeLiteral with type id `id` denotes: the caller's resolution
 ;; when it recorded one, otherwise the written type.
@@ -2199,7 +2257,8 @@
           metadata.layouts
           metadata.reflections
           metadata.source-names
-          metadata.type-literals))
+          metadata.type-literals
+          metadata.representation-module))
       env.macro-state)))
 
 ;; `env` reading `reflections` as its reflection metadata.
@@ -2219,7 +2278,8 @@
           metadata.layouts
           reflections
           metadata.source-names
-          metadata.type-literals))
+          metadata.type-literals
+          metadata.representation-module))
       env.macro-state)))
 
 ;; Binding-clause syntax values predate the pool-bearing CapturedExpr variants.
@@ -2244,7 +2304,8 @@
           metadata.layouts
           metadata.reflections
           metadata.source-names
-          metadata.type-literals))
+          metadata.type-literals
+          metadata.representation-module))
       env.macro-state)))
 
 (define (ctfe-ast-get [env : (& env CtfeEnv)] [id : i64]) : ast.AstExpr
@@ -2964,6 +3025,10 @@
 ;; shared budget across all sub-evaluations.
 (defenum ResultCtfe
   (Ok CompilerCtfeValue i64)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultCtfeUnit
+  (Ok)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum CtfePatternMatch
@@ -4895,36 +4960,39 @@
   (let
     [infos : CtfeReflectInfoList (ctfe-env-reflections env)]
     (match (ctfe-reflect-info-for-type-with-pools (ctfe-env-pools env) infos ty)
+      ;; A foreign opaque aggregate has no reflected representation (#8735).
       [(Some info)
-        (match info
-          [(Struct _ _ _ _ _ fields _)
-            (if want-struct
-              (if (ctfe-pattern-variant-name? variant "Struct")
-                (ctfe-match-pattern-list
-                  args
-                  (&
-                    (ctfe-value-list2
-                      (&
-                        (ctfe-generated-string-value
-                          (ctfe-type-info-key-in-env env ty)))
-                      (& (TypeFieldList fields))))
-                  env)
-                (No))
-              (No))]
-          [(Enum _ _ _ _ _ variants _)
-            (if want-struct
-              (No)
-              (if (ctfe-pattern-variant-name? variant "Enum")
-                (ctfe-match-pattern-list
-                  args
-                  (&
-                    (ctfe-value-list2
-                      (&
-                        (ctfe-generated-string-value
-                          (ctfe-type-info-key-in-env env ty)))
-                      (& (TypeVariantList variants))))
-                  env)
-                (No)))])]
+        (if (ctfe-opaque-foreign-info? (& env) (& info))
+          (ctfe-match-type-info-opaque variant args ty env)
+          (match info
+            [(Struct _ _ _ _ _ fields _)
+              (if want-struct
+                (if (ctfe-pattern-variant-name? variant "Struct")
+                  (ctfe-match-pattern-list
+                    args
+                    (&
+                      (ctfe-value-list2
+                        (&
+                          (ctfe-generated-string-value
+                            (ctfe-type-info-key-in-env env ty)))
+                        (& (TypeFieldList fields))))
+                    env)
+                  (No))
+                (No))]
+            [(Enum _ _ _ _ _ variants _)
+              (if want-struct
+                (No)
+                (if (ctfe-pattern-variant-name? variant "Enum")
+                  (ctfe-match-pattern-list
+                    args
+                    (&
+                      (ctfe-value-list2
+                        (&
+                          (ctfe-generated-string-value
+                            (ctfe-type-info-key-in-env env ty)))
+                        (& (TypeVariantList variants))))
+                    env)
+                  (No)))]))]
       [(None) (ctfe-match-type-info-opaque variant args ty env)])))
 
 (define (ctfe-match-type-info-variant
@@ -5249,6 +5317,116 @@
     (ctfe-type-size-with-pools pools layouts ty)
     (ctfe-type-align-with-pools pools layouts ty)))
 
+;; Representation authority over (:opaque) aggregates (#8735). Outside the
+;; module family of an opaque struct or enum, comptime code may name the type
+;; (`type-kind`, `type-nominal-name`, `type-nominal-module`, `type-key`), but
+;; layout queries and field or variant reflection fail with E0221, whether the
+;; query's operand is written or derived from an allowed type, such as the
+;; `reference-element-type` of `(& a T)`.
+(define (ctfe-opaque-foreign-info?
+  [env : (& env CtfeEnv)]
+  [info : (& CtfeReflectInfo)]) : bool
+  (let
+    [view : CtfeEnv (deref env)]
+    [authority : i64
+      (__tl-project-field
+        (ctfe-env-metadata-read view.metadata)
+        representation-module)]
+    [markers : i64
+      (match info
+        [(or (Struct _ _ _ _ _ _ markers) (Enum _ _ _ _ _ _ markers)) markers])]
+    (and
+      (not (= authority (ctfe-representation-unchecked)))
+      (not (= (bit-and markers 2) 0))
+      (not
+        (ctfe-module-in-family?
+          authority
+          (ctfe-reflect-info-nominal-module-id info))))))
+
+;; The display name of the foreign opaque aggregate TY is or holds by value as
+;; a tuple or array element, else "".
+(define (ctfe-opaque-foreign-by-value-name
+  [env : (& env CtfeEnv)]
+  [ty : (& ast.AstType)]) : String
+  (let
+    [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+    (match ty
+      [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Var _)
+           (VarArgs _ _))
+        (match (ctfe-reflect-info-for-type-with-pools
+          pools
+          (& (ctfe-env-reflections env))
+          ty)
+          [(Some info)
+            (if (ctfe-opaque-foreign-info? env (& info))
+              (match info
+                [(or (Struct _ module name _ _ _ _)
+                     (Enum _ module name _ _ _ _))
+                  (if (= (string.string-length module) 0)
+                    name
+                    (str_cat.str-cat module "/" name))])
+              "")]
+          [(None) ""])]
+      [(Tuple elems)
+        (let
+          [found : String ""]
+          [index : i64 0]
+          (while (and
+            (= (string.string-length found) 0)
+            (< index (ast.ast-type-list-len (& (deref elems)))))
+            (set!
+              found
+              (ctfe-opaque-foreign-by-value-name
+                env
+                (&
+                  (ast.ast-node-pool-context-type-get
+                    pools
+                    (ast.ast-type-list-get
+                      (& (deref elems))
+                      index
+                      (ast.ast-type-id-fallback))))))
+            (+= index 1))
+          found)]
+      [(or (Array elem _) (Region _ elem) (Invalidate _ elem))
+        (ctfe-opaque-foreign-by-value-name
+          env
+          (& (ast.ast-node-pool-context-type-get pools elem)))]
+      [_ ""])))
+
+;; Ok, or the E0221 failure of the representation query QUERY on TY at EXPR.
+(define (ctfe-opaque-representation-ok
+  [env : (& env CtfeEnv)]
+  [query : String]
+  [ty : (& ast.AstType)]
+  [expr : (& ast.AstExpr)]) : ResultCtfeUnit
+  (let
+    [name : String (ctfe-opaque-foreign-by-value-name env ty)]
+    (if (= (string.string-length name) 0)
+      ResultCtfeUnit.Ok
+      (ResultCtfeUnit.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
+            expr
+            (cdiag.compiler-diagnostic-typecheck-tagged
+              (OpaqueRepresentation)
+              (str_cat.str-cat
+                "typecheck: "
+                query
+                " cannot reach the representation of the opaque type "
+                name
+                " outside its module family"))))))))
+
+;; Whether the reflection query NAME reads a struct's or enum's representation.
+(define (ctfe-representation-reflection? [name : (& name str)]) : bool
+  (or
+    (ctfe-struct-field-reflection? name)
+    (string.eq name "type-declared-align")
+    (string.eq name "enum-variant-count")
+    (string.eq name "enum-variant-name")
+    (string.eq name "enum-variant-payload-count")
+    (string.eq name "enum-variant-payload-type")))
+
 ;; Evaluate `(size-of (type T))` / `(align-of (type T))` to an `i64` in comptime.
 (define (ctfe-eval-size-align-query
   [name : String]
@@ -5265,6 +5443,13 @@
           (match value
             [(Type ty)
               (let
+                [_
+                  (try
+                    (ctfe-opaque-representation-ok
+                      (& env)
+                      (string.copy name)
+                      (& ty)
+                      (& arg)))]
                 [answer : i64
                   (ctfe-layout-query-value-with-pools
                     (ctfe-env-pools env)
@@ -5353,6 +5538,17 @@
               "offset-of requires struct layout type"))))]))
 
 (define (ctfe-eval-offset-from-type
+  [ty : (& ast.AstType)]
+  [field-name-id : i64]
+  [type-arg : (& ast.AstExpr)]
+  [expr : (& ast.AstExpr)]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (let
+    [_ (try (ctfe-opaque-representation-ok (& env) "offset-of" ty type-arg))]
+    (ctfe-eval-offset-from-layout-type ty field-name-id type-arg expr env fuel)))
+
+(define (ctfe-eval-offset-from-layout-type
   [ty : (& ast.AstType)]
   [field-name-id : i64]
   [type-arg : (& ast.AstExpr)]
@@ -5690,6 +5886,22 @@
           second-index))]))
 
 (define (ctfe-eval-type-reflection-at
+  [name : String]
+  [ty : (& ast.AstType)]
+  [index : i64]
+  [second-index : i64]
+  [expr : (& ast.AstExpr)]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (let
+    [_
+      (try
+        (if (ctfe-representation-reflection? name)
+          (ctfe-opaque-representation-ok (& env) (string.copy name) ty expr)
+          ResultCtfeUnit.Ok))]
+    (ctfe-eval-type-reflection-built name ty index second-index expr env fuel)))
+
+(define (ctfe-eval-type-reflection-built
   [name : String]
   [ty : (& ast.AstType)]
   [index : i64]

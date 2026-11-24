@@ -7,7 +7,7 @@ set -eu
 # benchmarks/*/ directory that carries optimization.tsv metadata. The
 # default timing report is a local Linux tool. `--correctness` is the
 # required-CI gate and performs no timing work. Linux CI passes positive suite
-# membership from perf/benchmark-ci-cases.tsv.
+# membership from perf/benchmarks/*.tsv.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"

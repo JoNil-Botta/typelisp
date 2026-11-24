@@ -1,0 +1,2 @@
+suites	instruction-main
+benchmark/c-scalar/loop_call_literal	100006683

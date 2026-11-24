@@ -8,7 +8,7 @@ and prevent the affine recurrence folding exercised by `arith_loop`.
 The trip count is 50,000,000 plus runtime argc. TypeLisp uses `u64` and the C
 baseline uses `uint64_t`, so overflow and shift behavior agree. The correctness
 suite compares stdout, stderr, and exit status, and the case is registered in
-`perf/benchmark-ci-cases.tsv`.
+`perf/benchmarks/mul_small_constants.tsv`.
 
 The serial dependency chain exposes multiply latency. The backend lowers a
 multiply by 3, 5, or 9 to one `leaq (src,src,scale)` instead of `imulq`

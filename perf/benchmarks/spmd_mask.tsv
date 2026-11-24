@@ -1,0 +1,3 @@
+suites	instruction-heavy
+benchmark/c/spmd_mask	7069833225
+benchmark/c-scalar/spmd_mask	9833444481

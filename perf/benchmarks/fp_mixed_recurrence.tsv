@@ -1,0 +1,2 @@
+suites	benchmark,instruction-main
+benchmark/c-scalar/fp_mixed_recurrence	150005415

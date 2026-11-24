@@ -1,0 +1,108 @@
+{
+  "schema": 1,
+  "status": "measured",
+  "complete": true,
+  "origin": {
+    "repository": "JoNil-Botta/typelisp",
+    "run_id": "44580870111",
+    "attempt": "1",
+    "workflow": "JoNil-Botta/typelisp/.github/workflows/ci.yml@refs/pull/9782/merge",
+    "job": "lane",
+    "commit": "5aefc4a5321f6f1e297c8cb746bc952a88babd08"
+  },
+  "environment": {
+    "compiler": {
+      "path": "/usr/lib/llvm-18/bin/clang",
+      "sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
+      "version": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+      "target": "x86_64-pc-linux-gnu"
+    },
+    "valgrind": {
+      "path": "/usr/bin/valgrind",
+      "sha256": "4652774bd116cb49951ef74115ad4237cad5021b2bd4d80002f09d986ec438b9",
+      "version": "valgrind-3.22.0"
+    },
+    "linker": {
+      "path": "/usr/bin/x86_64-linux-gnu-ld.bfd",
+      "sha256": "e9ceb054c12207970f2726dfc07e9a66b411602748628baf27399f02a9bbb31b",
+      "version": "GNU ld (GNU Binutils for Ubuntu) 2.42\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis program is free software; you may redistribute it under the terms of\nthe GNU General Public License version 3 or (at your option) a later version.\nThis program has absolutely no warranty."
+    },
+    "libc_version": "glibc 2.39",
+    "arch": "x86_64",
+    "os_release": "PRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.5 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo",
+    "wrapper_sha256": "8ff551a59011dad2728cb76fe78cb3b65934697ed31f01e0cc424f517957eca8",
+    "cwd": "/home/runner/work/typelisp/typelisp",
+    "cachegrind_argv": [
+      "--quiet",
+      "--tool=cachegrind",
+      "--instr-at-start=no",
+      "--vex-guest-chase=no"
+    ],
+    "runtime_env": [
+      "LC_ALL=C"
+    ]
+  },
+  "info": {
+    "kernel": "7.0.0-1014-aws",
+    "image_os": "ubuntu24",
+    "image_version": "20261116.133.1"
+  },
+  "rows": {
+    "benchmark/c/cfg_domloops": {
+      "ir_count": 419300733,
+      "source_sha256": "6e9727557e77fc0617195597f1796d3e7eeac67fd0e3ae261c03664fba7b4f73",
+      "metadata_sha256": "44eadd57f9e7f70a7886d9a7ebe2caf44c806789d3ddb1b7256a02aea01a31e4",
+      "binary_sha256": "2d0485964e2f69ff18e6d50c240fc6b8fa27cbd220c1ca10e6d7f4fe8212fed8",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "755a371e86cc9f564ab54f66140747700fb0a103f698f659f2060f707897e09a"
+      },
+      "inputs": {
+        "benchmarks/cfg_domloops/data/cfg-blocks.txt": "c777fb6cea8af61efa69ebc103b38cffdd657fedbd4e351fbb202b4a2d4ea1ca"
+      },
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/cfg_domloops/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-check/measure/bin/cfg_domloops.c"
+      ],
+      "run_argv": [
+        "target/instruction-count-check/measure/bin/cfg_domloops.c",
+        "benchmarks/cfg_domloops/data/cfg-blocks.txt",
+        "12"
+      ]
+    },
+    "benchmark/c-scalar/cfg_domloops": {
+      "ir_count": 423071025,
+      "source_sha256": "6e9727557e77fc0617195597f1796d3e7eeac67fd0e3ae261c03664fba7b4f73",
+      "metadata_sha256": "44eadd57f9e7f70a7886d9a7ebe2caf44c806789d3ddb1b7256a02aea01a31e4",
+      "binary_sha256": "3594358db2a9f1c12e13a9d277e7c918b0b4553af46982c2b1f2727d116831bd",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "755a371e86cc9f564ab54f66140747700fb0a103f698f659f2060f707897e09a"
+      },
+      "inputs": {
+        "benchmarks/cfg_domloops/data/cfg-blocks.txt": "c777fb6cea8af61efa69ebc103b38cffdd657fedbd4e351fbb202b4a2d4ea1ca"
+      },
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/cfg_domloops/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-check/measure/bin/cfg_domloops.c-scalar"
+      ],
+      "run_argv": [
+        "target/instruction-count-check/measure/bin/cfg_domloops.c-scalar",
+        "benchmarks/cfg_domloops/data/cfg-blocks.txt",
+        "12"
+      ]
+    }
+  }
+}

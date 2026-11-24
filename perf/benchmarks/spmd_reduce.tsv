@@ -1,0 +1,2 @@
+suites	benchmark,instruction-main
+benchmark/c-scalar/spmd_reduce	3381322971

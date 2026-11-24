@@ -1,0 +1,2 @@
+suites	benchmark,instruction-main
+benchmark/c-scalar/array_sum	1651021940

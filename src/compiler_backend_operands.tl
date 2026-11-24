@@ -1708,14 +1708,19 @@
 (define (compiler-backend-frame-offset-with-backend-state
   [state : be_state.CompilerBackendState]
   [offset : i64]) : String
-  (be_state.compiler-backend-function-state-set-bool!
-    (be_state.compiler-backend-state-function-state state)
-    be_state.compiler-backend-function-bool-frame-slot-referenced
-    true)
-  (be_state.compiler-backend-function-state-set-bool!
-    (be_state.compiler-backend-state-function-state state)
-    be_state.compiler-backend-function-bool-nonsave-frame-slot-referenced
-    true)
+  ;; Only negative offsets reference local frame slots; positive offsets
+  ;; reference caller-frame incoming stack arguments and do not demand a
+  ;; local frame allocation.
+  (when
+    (< offset 0)
+    (be_state.compiler-backend-function-state-set-bool!
+      (be_state.compiler-backend-state-function-state state)
+      be_state.compiler-backend-function-bool-frame-slot-referenced
+      true)
+    (be_state.compiler-backend-function-state-set-bool!
+      (be_state.compiler-backend-state-function-state state)
+      be_state.compiler-backend-function-bool-nonsave-frame-slot-referenced
+      true))
   (compiler-backend-frame-offset-render state offset))
 
 (define (compiler-backend-state-immediate-render

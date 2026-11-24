@@ -969,313 +969,126 @@
       (compiler-ast-protected-restore-ok?)
       (io.panic "in-place writes below the protected floor were not undone"))))
 
-(defenum AstMapTestResult
-  (Ok i64)
-  (Err i64))
-
-(defenum AstFoldTryResult
-  (Ok)
-  (Err i64))
-
-(define (ast-map-test-id-replace [target : i64] [replacement : i64] [id : i64]) : i64
-  (if (= id target)
-    replacement
-    id))
-
-(define (ast-map-test-id-try-replace
-  [fail-on : i64]
-  [target : i64]
-  [replacement : i64]
-  [visited : (&mut v i64)]
-  [id : i64]) : AstMapTestResult
-  (+= (deref visited) 1)
-  (if (= id fail-on)
-    (Err fail-on)
-    (Ok
-      (if (= id target)
-        replacement
-        id))))
-
-(define (ast-map-test-type-replace
-  [should-change? : bool]
-  [ty : (& ast.AstType)]) : ast.AstMaybeType
-  (if should-change?
-    (match ty
-      [(ast.AstType.I64) (ast.AstMaybeType.Some ast.AstType.Bool)]
-      [_ ast.AstMaybeType.No])
-    ast.AstMaybeType.No))
-
-(define (ast-map-test-pat-replace
-  [should-change? : bool]
-  [pat : (& ast.AstPattern)]) : ast.AstMaybePattern
-  (if should-change?
-    (match pat
-      [(ast.AstPattern.Wildcard)
-        (ast.AstMaybePattern.Some (ast.AstPattern.Binding 99))]
-      [_ ast.AstMaybePattern.No])
-    ast.AstMaybePattern.No))
-
-(define (ast-map-test-try-walk-node
+(define (ast-children-test-walk-ids
   [expr-id : i64]
-  [fail-on : i64]
+  [scratch : (&mut scratch ast.AstExprList)]
   [target : i64]
-  [replacement : i64]
-  [visited : (&mut v i64)]) : AstMapTestResult
+  [replacement : i64]) : i64
   (let
+    [start : i64 scratch.len]
     [expr : ast.AstExpr (ast.ast-node-get expr-id)]
-    [changed? : bool false]
-    [mapped : ast.AstExpr
-      (ast.ast-expr-map-children-try-if-changed
-        expr
-        changed?
-        ast-map-test-id-try-replace
-        ast.ast-child-keep
-        ast.ast-child-no-type
-        ast.ast-child-no-pattern
-        ast.ast-child-no-literal
-        ast.ast-child-no-bytes
-        fail-on
-        target
-        replacement
-        visited)]
-    (if changed?
-      (Ok (ast.ast-node-push mapped))
-      (Ok expr-id))))
+    (ast.ast-expr-child-ids-into! expr scratch)
+    (let
+      [end : i64 scratch.len]
+      [changed? : bool false]
+      [index : i64 start]
+      (while (< index end)
+        (let
+          [orig : i64 (ast.ast-expr-list-get (& (deref scratch)) index -1)]
+          [next : i64
+            (if (= orig target)
+              replacement
+              orig)]
+          (when
+            (!= next orig)
+            (ast.ast-expr-list-set! scratch index next)
+            (set! changed? true)))
+        (set! index (+ index 1)))
+      (if changed?
+        (let
+          [rebuilt : ast.AstExpr
+            (ast.ast-expr-with-child-ids-from
+              (ast.ast-node-get expr-id)
+              (& (deref scratch))
+              start)]
+          (ast.ast-expr-list-truncate! scratch start)
+          (ast.ast-node-push rebuilt))
+        (begin
+          (ast.ast-expr-list-truncate! scratch start)
+          expr-id)))))
 
-(define (ast-fold-test-lt [limit : i64] [visited : (&mut v i64)] [id : i64]) : bool
-  (+= (deref visited) 1)
-  (< id limit))
-
-(define (ast-fold-test-try-visit
-  [fail-on : i64]
-  [visited : (&mut v i64)]
-  [id : i64]) : AstFoldTryResult
-  (+= (deref visited) 1)
-  (if (= id fail-on)
-    (Err id)
-    (Ok)))
-
-(define (ast-fold-test-try-skip
-  [_fail-on : i64]
-  [_visited : (&mut v i64)]
-  [_ignored : i64]) : AstFoldTryResult
-  (Ok))
-
-(define (ast-fold-test-try-skip-type
-  [_fail-on : i64]
-  [_visited : (&mut v i64)]
-  [_ignored : ast.AstType]) : AstFoldTryResult
-  (Ok))
-
-(define (ast-fold-test-try-skip-pat
-  [_fail-on : i64]
-  [_visited : (&mut v i64)]
-  [_ignored : ast.AstPattern]) : AstFoldTryResult
-  (Ok))
-
-(define (ast-fold-test-run-and
-  [expr : ast.AstExpr]
-  [limit : i64]
-  [visited : (&mut v i64)]) : bool
-  (ast.ast-expr-fold-children
-    expr
-    ast.ast-fold-and
-    true
-    ast-fold-test-lt
-    ast.ast-child-true
-    ast.ast-child-true
-    ast.ast-child-true
-    limit
-    visited))
-
-(define (ast-fold-test-run-try
-  [expr : ast.AstExpr]
-  [fail-on : i64]
-  [visited : (&mut v i64)]) : AstFoldTryResult
-  (ast.ast-expr-fold-children
-    expr
-    ast.ast-fold-try
-    unit
-    ast-fold-test-try-visit
-    ast-fold-test-try-skip
-    ast-fold-test-try-skip-type
-    ast-fold-test-try-skip-pat
-    fail-on
-    visited)
-  (Ok))
-
-(define (ast-fold-test-state-push-digit [acc : i64] [child : i64]) : i64
-  (+ (* acc 10) child))
-
-(define (ast-map-test-expr-ids
-  [expr : ast.AstExpr]
-  [changed? : (&mut ch bool)]
-  [target : i64]
-  [replacement : i64]) : ast.AstExpr
+(define (ast-children-test-walk-all
+  [expr-id : i64]
+  [scratch : (&mut scratch ast.AstExprChildList)]
+  [target-expr : i64]
+  [repl-expr : i64]
+  [target-ty-id : i64]
+  [repl-ty-id : i64]
+  [rewrite-ty-pat? : bool]) : i64
   (let
-    [local-changed? : bool false]
-    [mapped : ast.AstExpr
-      (ast.ast-expr-map-children-if-changed
-        expr
-        local-changed?
-        ast-map-test-id-replace
-        ast.ast-child-keep
-        ast.ast-child-no-type
-        ast.ast-child-no-pattern
-        ast.ast-child-no-literal
-        ast.ast-child-no-bytes
-        target
-        replacement)]
-    (when local-changed? (set! (deref changed?) true))
-    mapped))
+    [start : i64 scratch.len]
+    [expr : ast.AstExpr (ast.ast-node-get expr-id)]
+    (ast.ast-expr-children-into! expr scratch)
+    (let
+      [end : i64 scratch.len]
+      [changed? : bool false]
+      [index : i64 start]
+      (while (< index end)
+        (match (ast.ast-expr-child-list-get
+          (& (deref scratch))
+          index
+          (ast.ast-expr-child-fallback))
+          [(ast.AstExprChild.Expr id)
+            (when
+              (= id target-expr)
+              (ast.ast-expr-child-list-set!
+                scratch
+                index
+                (ast.AstExprChild.Expr repl-expr))
+              (set! changed? true))]
+          [(ast.AstExprChild.TypeId id)
+            (when
+              (= id target-ty-id)
+              (ast.ast-expr-child-list-set!
+                scratch
+                index
+                (ast.AstExprChild.TypeId repl-ty-id))
+              (set! changed? true))]
+          [(ast.AstExprChild.Type ty)
+            (when
+              rewrite-ty-pat?
+              (match ty
+                [(ast.AstType.I64)
+                  (ast.ast-expr-child-list-set!
+                    scratch
+                    index
+                    (ast.AstExprChild.Type ast.AstType.Bool))
+                  (set! changed? true)]
+                [_ unit]))]
+          [(ast.AstExprChild.Pattern pat)
+            (when
+              rewrite-ty-pat?
+              (match pat
+                [(ast.AstPattern.Wildcard)
+                  (ast.ast-expr-child-list-set!
+                    scratch
+                    index
+                    (ast.AstExprChild.Pattern (ast.AstPattern.Binding 99)))
+                  (set! changed? true)]
+                [_ unit]))])
+        (set! index (+ index 1)))
+      (if changed?
+        (let
+          [rebuilt : ast.AstExpr
+            (ast.ast-expr-with-children-from!
+              (ast.ast-node-get expr-id)
+              scratch
+              start)]
+          (ast.ast-expr-child-list-truncate! scratch start)
+          (ast.ast-node-push rebuilt))
+        (begin
+          (ast.ast-expr-child-list-truncate! scratch start)
+          expr-id)))))
 
-(define (ast-map-test-expr-type-ids
-  [expr : ast.AstExpr]
-  [changed? : (&mut ch bool)]
-  [target : i64]
-  [replacement : i64]) : ast.AstExpr
-  (let
-    [local-changed? : bool false]
-    [mapped : ast.AstExpr
-      (ast.ast-expr-map-children-if-changed
-        expr
-        local-changed?
-        ast.ast-child-keep
-        ast-map-test-id-replace
-        ast.ast-child-no-type
-        ast.ast-child-no-pattern
-        ast.ast-child-no-literal
-        ast.ast-child-no-bytes
-        target
-        replacement)]
-    (when local-changed? (set! (deref changed?) true))
-    mapped))
-
-(define (ast-map-test-expr-type-pat
-  [expr : ast.AstExpr]
-  [changed? : (&mut ch bool)]
-  [should-change? : bool]) : ast.AstExpr
-  (let
-    [local-changed? : bool false]
-    [mapped : ast.AstExpr
-      (ast.ast-expr-map-children-if-changed
-        expr
-        local-changed?
-        ast.ast-child-keep
-        ast.ast-child-keep
-        ast-map-test-type-replace
-        ast-map-test-pat-replace
-        ast.ast-child-no-literal
-        ast.ast-child-no-bytes
-        should-change?)]
-    (when local-changed? (set! (deref changed?) true))
-    mapped))
-
-(define (compiler-ast-map-if-changed-scalar-and-type-ok?) : bool
+(define (compiler-ast-child-ids-into-and-from-ok?) : bool
   (let
     [base-pool : i64 (ast.ast-node-pool-len)]
-    [base-ty : i64 (ast.ty-node-pool-len)]
-    [a : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
-    [b : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
-    [c : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 3)))]
-    [t0 : i64 (ast.ty-node-push (& (ast.AstType.I64)))]
-    [t1 : i64 (ast.ty-node-push (& (ast.AstType.Bool)))]
-    [bin-id : i64 (ast.ast-node-push (ast.AstExpr.Binary ast.AstBinOp.Add a b))]
-    [ann-id : i64 (ast.ast-node-push (ast.AstExpr.Ann a t0))]
-    [ptr-null-id : i64 (ast.ast-node-push (ast.AstExpr.PtrNull t0))]
-    [mk-id : i64 (ast.ast-node-push (ast.AstExpr.FixedMakeArray t0 a))]
-    [pool-before : i64 (ast.ast-node-pool-len)]
-    [mark-before : arena.ArenaMark (arena.mark)]
-    [unchanged-bin : bool false]
-    [mapped-bin : ast.AstExpr
-      (ast-map-test-expr-ids
-        (ast.ast-node-get bin-id)
-        (&mut unchanged-bin)
-        -999
-        c)]
-    [unchanged-ann : bool false]
-    [mapped-ann : ast.AstExpr
-      (ast-map-test-expr-type-ids
-        (ast.ast-node-get ann-id)
-        (&mut unchanged-ann)
-        -999
-        t1)]
-    [unchanged-ptr-null : bool false]
-    [mapped-ptr-null : ast.AstExpr
-      (ast-map-test-expr-type-ids
-        (ast.ast-node-get ptr-null-id)
-        (&mut unchanged-ptr-null)
-        -999
-        t1)]
-    [unchanged-mk : bool false]
-    [mapped-mk : ast.AstExpr
-      (ast-map-test-expr-type-ids
-        (ast.ast-node-get mk-id)
-        (&mut unchanged-mk)
-        -999
-        t1)]
-    [mark-after : arena.ArenaMark (arena.mark)]
-    [pool-after : i64 (ast.ast-node-pool-len)]
-    [changed-bin : bool false]
-    [rebuilt-bin : ast.AstExpr
-      (ast-map-test-expr-ids (ast.ast-node-get bin-id) (&mut changed-bin) b c)]
-    [changed-ann : bool false]
-    [rebuilt-ann : ast.AstExpr
-      (ast-map-test-expr-type-ids
-        (ast.ast-node-get ann-id)
-        (&mut changed-ann)
-        t0
-        t1)]
-    [changed-mk : bool false]
-    [rebuilt-mk : ast.AstExpr
-      (ast-map-test-expr-type-ids
-        (ast.ast-node-get mk-id)
-        (&mut changed-mk)
-        t0
-        t1)]
-    [ok : bool
-      (and
-        (not unchanged-bin)
-        (not unchanged-ann)
-        (not unchanged-ptr-null)
-        (not unchanged-mk)
-        (arena.mark-eq? mark-before mark-after)
-        (= pool-before pool-after)
-        changed-bin
-        changed-ann
-        changed-mk
-        (match mapped-bin
-          [(ast.AstExpr.Binary _ ma mb) (and (= ma a) (= mb b))]
-          [_ false])
-        (match mapped-ann
-          [(ast.AstExpr.Ann ma mt) (and (= ma a) (= mt t0))]
-          [_ false])
-        (match mapped-ptr-null
-          [(ast.AstExpr.PtrNull mt) (= mt t0)]
-          [_ false])
-        (match mapped-mk
-          [(ast.AstExpr.FixedMakeArray mt ma) (and (= mt t0) (= ma a))]
-          [_ false])
-        (match rebuilt-bin
-          [(ast.AstExpr.Binary _ ra rb) (and (= ra a) (= rb c))]
-          [_ false])
-        (match rebuilt-ann
-          [(ast.AstExpr.Ann ra rt) (and (= ra a) (= rt t1))]
-          [_ false])
-        (match rebuilt-mk
-          [(ast.AstExpr.FixedMakeArray rt ra) (and (= rt t1) (= ra a))]
-          [_ false]))]
-    (ast.ast-node-pool-reset-to! base-pool)
-    (ast.ty-node-pool-reset-to! base-ty)
-    ok))
-
-(define (compiler-ast-map-if-changed-list-and-boxed-ok?) : bool
-  (let
-    [base-pool : i64 (ast.ast-node-pool-len)]
-    [e0 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 10)))]
-    [e1 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 20)))]
-    [e2 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 30)))]
-    [e3 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 40)))]
+    [e0 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [e1 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
+    [e2 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 3)))]
+    [e3 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 4)))]
+    [bin-id : i64
+      (ast.ast-node-push (ast.AstExpr.Binary ast.AstBinOp.Add e0 e1))]
     [args : ast.AstExprList (ast.ast-expr-list-with-capacity 3)]
     [_p0 : unit (ast.ast-expr-list-push (&mut args) e0)]
     [_p1 : unit (ast.ast-expr-list-push (&mut args) e1)]
@@ -1287,6 +1100,71 @@
     [_s2 : unit (ast.ast-expr-list-push (&mut step-slots) e1)]
     [_s3 : unit (ast.ast-expr-list-push (&mut step-slots) e2)]
     [step-id : i64 (ast.ast-node-push (ast.AstExpr.ForOwnedStep step-slots))]
+    ;; Pre-populated scratch buffer with sentinel prefix to test non-zero `start`
+    ;; and `ast-expr-list-truncate!` restoration with zero arena/pool growth.
+    [scratch : ast.AstExprList (ast.ast-expr-list-with-capacity 16)]
+    [_pre0 : unit (ast.ast-expr-list-push (&mut scratch) 777)]
+    [_pre1 : unit (ast.ast-expr-list-push (&mut scratch) 888)]
+    [pool-before : i64 (ast.ast-node-pool-len)]
+    [mark-before : arena.ArenaMark (arena.mark)]
+    [same-bin : i64 (ast-children-test-walk-ids bin-id (&mut scratch) -999 e3)]
+    [same-call : i64
+      (ast-children-test-walk-ids call-id (&mut scratch) -999 e3)]
+    [same-step : i64
+      (ast-children-test-walk-ids step-id (&mut scratch) -999 e3)]
+    [mark-after : arena.ArenaMark (arena.mark)]
+    [pool-after : i64 (ast.ast-node-pool-len)]
+    [new-bin : i64 (ast-children-test-walk-ids bin-id (&mut scratch) e1 e3)]
+    [new-call : i64 (ast-children-test-walk-ids call-id (&mut scratch) e1 e3)]
+    [new-step : i64 (ast-children-test-walk-ids step-id (&mut scratch) e1 e3)]
+    [ok : bool
+      (and
+        (= same-bin bin-id)
+        (= same-call call-id)
+        (= same-step step-id)
+        (arena.mark-eq? mark-before mark-after)
+        (= pool-before pool-after)
+        (= scratch.len 2)
+        (= (ast.ast-expr-list-get (& scratch) 0 0) 777)
+        (= (ast.ast-expr-list-get (& scratch) 1 0) 888)
+        (!= new-bin bin-id)
+        (!= new-call call-id)
+        (!= new-step step-id)
+        (match (ast.ast-node-get new-bin)
+          [(ast.AstExpr.Binary _ ra rb) (and (= ra e0) (= rb e3))]
+          [_ false])
+        (match (ast.ast-node-get new-call)
+          [(ast.AstExpr.Call rf rargs)
+            (and
+              (= rf e0)
+              (= (ast.ast-expr-list-len (& rargs)) 3)
+              (= (ast.ast-expr-list-get (& rargs) 0 0) e0)
+              (= (ast.ast-expr-list-get (& rargs) 1 0) e3)
+              (= (ast.ast-expr-list-get (& rargs) 2 0) e2))]
+          [_ false])
+        (match (ast.ast-node-get new-step)
+          [(ast.AstExpr.ForOwnedStep slots)
+            (and
+              (= (ast.ast-expr-list-get (& slots) 0 0) e0)
+              (= (ast.ast-expr-list-get (& slots) 1 0) -1)
+              (= (ast.ast-expr-list-get (& slots) 2 0) e3)
+              (= (ast.ast-expr-list-get (& slots) 3 0) e2))]
+          [_ false]))]
+    (ast.ast-node-pool-reset-to! base-pool)
+    ok))
+
+(define (compiler-ast-children-into-and-with-children-ok?) : bool
+  (let
+    [base-pool : i64 (ast.ast-node-pool-len)]
+    [base-ty : i64 (ast.ty-node-pool-len)]
+    [e0 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 10)))]
+    [e1 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 20)))]
+    [e2 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 30)))]
+    [e3 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 40)))]
+    [t0 : i64 (ast.ty-node-push (& (ast.AstType.I64)))]
+    [t1 : i64 (ast.ty-node-push (& (ast.AstType.Bool)))]
+    [ann-id : i64 (ast.ast-node-push (ast.AstExpr.Ann e0 t0))]
+    [mk-id : i64 (ast.ast-node-push (ast.AstExpr.FixedMakeArray t0 e0))]
     [let-bindings : ast.AstLetBindingList
       (ast.ast-let-binding-list-with-capacity 1)]
     [_lb : unit
@@ -1308,169 +1186,62 @@
       (ast.ast-node-push
         (ast.AstExpr.Foreach
           (box (ast.AstForeach.Foreach 7 ast.AstType.I64 e0 e1 e2))))]
+    [fe2-id : i64
+      (ast.ast-node-push
+        (ast.AstExpr.Foreach
+          (box
+            (ast.AstForeach.Foreach2
+              7
+              ast.AstType.I64
+              e0
+              e1
+              8
+              ast.AstType.I64
+              e1
+              e2
+              e0))))]
+    [scratch : ast.AstExprChildList (ast.ast-expr-child-list-with-capacity 32)]
+    [_pre : unit
+      (ast.ast-expr-child-list-push (&mut scratch) (ast.AstExprChild.Expr 555))]
     [pool-before : i64 (ast.ast-node-pool-len)]
     [mark-before : arena.ArenaMark (arena.mark)]
-    [ch-call : bool false]
-    [m-call : ast.AstExpr
-      (ast-map-test-expr-ids (ast.ast-node-get call-id) (&mut ch-call) -999 e3)]
-    [ch-step : bool false]
-    [m-step : ast.AstExpr
-      (ast-map-test-expr-ids (ast.ast-node-get step-id) (&mut ch-step) -999 e3)]
-    [ch-let : bool false]
-    [m-let : ast.AstExpr
-      (ast-map-test-expr-type-pat (ast.ast-node-get let-id) (&mut ch-let) false)]
-    [ch-match : bool false]
-    [m-match : ast.AstExpr
-      (ast-map-test-expr-type-pat
-        (ast.ast-node-get match-id)
-        (&mut ch-match)
-        false)]
-    [ch-fe : bool false]
-    [m-fe : ast.AstExpr
-      (ast-map-test-expr-type-pat (ast.ast-node-get fe-id) (&mut ch-fe) false)]
+    [same-ann : i64
+      (ast-children-test-walk-all ann-id (&mut scratch) -999 e3 -999 t1 false)]
+    [same-let : i64
+      (ast-children-test-walk-all let-id (&mut scratch) -999 e3 -999 t1 false)]
+    [same-match : i64
+      (ast-children-test-walk-all match-id (&mut scratch) -999 e3 -999 t1 false)]
+    [same-fe : i64
+      (ast-children-test-walk-all fe-id (&mut scratch) -999 e3 -999 t1 false)]
+    [same-fe2 : i64
+      (ast-children-test-walk-all fe2-id (&mut scratch) -999 e3 -999 t1 false)]
     [mark-after : arena.ArenaMark (arena.mark)]
     [pool-after : i64 (ast.ast-node-pool-len)]
-    ;; Now verify changed rebuilds across list, for-owned, let-type, match-pat, foreach-type.
-    [rc-call : bool false]
-    [r-call : ast.AstExpr (ast-map-test-expr-ids m-call (&mut rc-call) e1 e3)]
-    [rc-step : bool false]
-    [r-step : ast.AstExpr (ast-map-test-expr-ids m-step (&mut rc-step) e1 e3)]
-    [rc-let : bool false]
-    [r-let : ast.AstExpr (ast-map-test-expr-type-pat m-let (&mut rc-let) true)]
-    [rc-match : bool false]
-    [r-match : ast.AstExpr
-      (ast-map-test-expr-type-pat m-match (&mut rc-match) true)]
-    [rc-fe : bool false]
-    [r-fe : ast.AstExpr (ast-map-test-expr-type-pat m-fe (&mut rc-fe) true)]
-    [ok : bool
-      (and
-        (not ch-call)
-        (not ch-step)
-        (not ch-let)
-        (not ch-match)
-        (not ch-fe)
-        (arena.mark-eq? mark-before mark-after)
-        (= pool-before pool-after)
-        rc-call
-        rc-step
-        rc-let
-        rc-match
-        rc-fe
-        (match r-call
-          [(ast.AstExpr.Call rf rargs)
-            (and
-              (= rf e0)
-              (= (ast.ast-expr-list-len (& rargs)) 3)
-              (= (ast.ast-expr-list-get (& rargs) 0 0) e0)
-              (= (ast.ast-expr-list-get (& rargs) 1 0) e3)
-              (= (ast.ast-expr-list-get (& rargs) 2 0) e2))]
-          [_ false])
-        (match r-step
-          [(ast.AstExpr.ForOwnedStep slots)
-            (and
-              (= (ast.ast-expr-list-get (& slots) 0 0) e0)
-              (= (ast.ast-expr-list-get (& slots) 1 0) -1)
-              (= (ast.ast-expr-list-get (& slots) 2 0) e3)
-              (= (ast.ast-expr-list-get (& slots) 3 0) e2))]
-          [_ false])
-        (match r-let
-          [(ast.AstExpr.Let payload)
-            (match (& (__tl-box-place payload))
-              [(ast.AstLet.Let bs body)
-                (and
-                  (= body e1)
-                  (match (ast.ast-let-binding-list-get
-                    bs
-                    0
-                    (ast.ast-let-binding-fallback))
-                    [(ast.AstLetBinding.Binding
-                        _
-                        (ast.AstMaybeType.Some (ast.AstType.Bool))
-                        init)
-                      (= init e0)]
-                    [_ false]))])]
-          [_ false])
-        (match r-match
-          [(ast.AstExpr.Match payload)
-            (match (& (__tl-box-place payload))
-              [(ast.AstMatch.Match scr arms)
-                (and
-                  (= scr e0)
-                  (match (ast.ast-match-arm-list-get
-                    arms
-                    0
-                    (ast.ast-match-arm-fallback))
-                    [(ast.AstMatchArm.Arm (ast.AstPattern.Binding 99) body)
-                      (= body e1)]
-                    [_ false]))])]
-          [_ false])
-        (match r-fe
-          [(ast.AstExpr.Foreach payload)
-            (match (& (__tl-box-place payload))
-              [(ast.AstForeach.Foreach 7 (ast.AstType.Bool) a b d)
-                (and (= a e0) (= b e1) (= d e2))]
-              [_ false])]
-          [_ false]))]
-    (ast.ast-node-pool-reset-to! base-pool)
-    ok))
-
-(define (compiler-ast-map-try-and-fold-and-kind-name-ok?) : bool
-  (let
-    [base-pool : i64 (ast.ast-node-pool-len)]
-    [e0 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
-    [e1 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
-    [e2 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 3)))]
-    [e3 : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 4)))]
-    [items : ast.AstExprList (ast.ast-expr-list-with-capacity 3)]
-    [_i0 : unit (ast.ast-expr-list-push (&mut items) e0)]
-    [_i1 : unit (ast.ast-expr-list-push (&mut items) e1)]
-    [_i2 : unit (ast.ast-expr-list-push (&mut items) e2)]
-    [begin-id : i64 (ast.ast-node-push (ast.AstExpr.Begin items))]
-    [pool-before : i64 (ast.ast-node-pool-len)]
-    [mark-before : arena.ArenaMark (arena.mark)]
-    [v0 : i64 0]
-    [res-unchanged : AstMapTestResult
-      (ast-map-test-try-walk-node begin-id -999 -999 e3 (&mut v0))]
-    [mark-after : arena.ArenaMark (arena.mark)]
-    [pool-after : i64 (ast.ast-node-pool-len)]
-    [v1 : i64 0]
-    [res-changed : AstMapTestResult
-      (ast-map-test-try-walk-node begin-id -999 e1 e3 (&mut v1))]
-    [v2 : i64 0]
-    [res-err : AstMapTestResult
-      (ast-map-test-try-walk-node begin-id e1 e2 e3 (&mut v2))]
-    ;; ast-fold-and short-circuits on the 2nd child (never visits 3rd).
-    [and-visits : i64 0]
-    [and-false : bool
-      (ast-fold-test-run-and (ast.AstExpr.If 1 50 2) 10 (&mut and-visits))]
-    [and-visits-ok : i64 0]
-    [and-true : bool
-      (ast-fold-test-run-and (ast.AstExpr.If 1 2 3) 10 (&mut and-visits-ok))]
-    ;; ast-fold-try short-circuits on error.
-    [try-visits-err : i64 0]
-    [try-res-err : AstFoldTryResult
-      (ast-fold-test-run-try (ast.AstExpr.If 1 2 3) 2 (&mut try-visits-err))]
-    [try-visits-ok : i64 0]
-    [try-res-ok : AstFoldTryResult
-      (ast-fold-test-run-try (ast.AstExpr.If 1 2 3) 99 (&mut try-visits-ok))]
-    ;; ast-expr-fold-state-children threads state in payload order.
-    [seed-zero : i64 0]
-    [folded-if : i64
-      (ast.ast-expr-fold-state-children
-        (ast.AstExpr.If 1 2 3)
-        seed-zero
-        ast-fold-test-state-push-digit
-        ast.ast-child-keep-state
-        ast.ast-child-keep-state
-        ast.ast-child-keep-state)]
-    [folded-ann : i64
-      (ast.ast-expr-fold-state-children
-        (ast.AstExpr.Ann 5 6)
-        seed-zero
-        ast-fold-test-state-push-digit
-        ast-fold-test-state-push-digit
-        ast.ast-child-keep-state
-        ast.ast-child-keep-state)]
+    ;; Changed rebuilds across TypeId, inline Type, Pattern, Foreach2, and
+    ;; `ast-expr-with-children!` wrapper.
+    [new-ann : i64
+      (ast-children-test-walk-all ann-id (&mut scratch) e0 e3 t0 t1 false)]
+    [new-mk : i64
+      (ast-children-test-walk-all mk-id (&mut scratch) -999 e3 t0 t1 false)]
+    [new-let : i64
+      (ast-children-test-walk-all let-id (&mut scratch) e1 e3 -999 t1 true)]
+    [new-match : i64
+      (ast-children-test-walk-all match-id (&mut scratch) -999 e3 -999 t1 true)]
+    [new-fe : i64
+      (ast-children-test-walk-all fe-id (&mut scratch) e1 e3 -999 t1 true)]
+    [new-fe2 : i64
+      (ast-children-test-walk-all fe2-id (&mut scratch) e2 e3 -999 t1 true)]
+    [direct-children : ast.AstExprChildList
+      (ast.ast-expr-children (ast.ast-node-get ann-id))]
+    [_set0 : unit
+      (ast.ast-expr-child-list-set!
+        (&mut direct-children)
+        0
+        (ast.AstExprChild.Expr e2))]
+    [direct-rebuilt : ast.AstExpr
+      (ast.ast-expr-with-children!
+        (ast.ast-node-get ann-id)
+        (&mut direct-children))]
     [kind-names-ok? : bool
       (and
         (string.eq
@@ -1493,69 +1264,102 @@
           "clone-out"))]
     [ok : bool
       (and
+        (= same-ann ann-id)
+        (= same-let let-id)
+        (= same-match match-id)
+        (= same-fe fe-id)
+        (= same-fe2 fe2-id)
         (arena.mark-eq? mark-before mark-after)
         (= pool-before pool-after)
-        (= v0 3)
-        (match res-unchanged
-          [(Ok id) (= id begin-id)]
-          [(Err _) false])
-        (= v1 3)
-        (match res-changed
-          [(Ok id)
-            (and
-              (!= id begin-id)
-              (match (ast.ast-node-get id)
-                [(ast.AstExpr.Begin out)
-                  (and
-                    (= (ast.ast-expr-list-get (& out) 0 0) e0)
-                    (= (ast.ast-expr-list-get (& out) 1 0) e3)
-                    (= (ast.ast-expr-list-get (& out) 2 0) e2))]
-                [_ false]))]
-          [(Err _) false])
-        (= v2 2)
-        (match res-err
-          [(Err code) (= code e1)]
-          [(Ok _) false])
-        (not and-false)
-        (= and-visits 2)
-        and-true
-        (= and-visits-ok 3)
-        (= try-visits-err 2)
-        (match try-res-err
-          [(Err code) (= code 2)]
-          [(Ok) false])
-        (= try-visits-ok 3)
-        (match try-res-ok
-          [(Ok) true]
-          [(Err _) false])
-        (= folded-if 123)
-        (= folded-ann 56)
+        (= scratch.len 1)
+        (match (ast.ast-expr-child-list-get
+          (& scratch)
+          0
+          (ast.ast-expr-child-fallback))
+          [(ast.AstExprChild.Expr id) (= id 555)]
+          [_ false])
+        (match (ast.ast-node-get new-ann)
+          [(ast.AstExpr.Ann ra rt) (and (= ra e3) (= rt t1))]
+          [_ false])
+        (match (ast.ast-node-get new-mk)
+          [(ast.AstExpr.FixedMakeArray rt ra) (and (= rt t1) (= ra e0))]
+          [_ false])
+        (match (ast.ast-node-get new-let)
+          [(ast.AstExpr.Let payload)
+            (match (& (__tl-box-place payload))
+              [(ast.AstLet.Let bs body)
+                (and
+                  (= body e3)
+                  (match (ast.ast-let-binding-list-get
+                    bs
+                    0
+                    (ast.ast-let-binding-fallback))
+                    [(ast.AstLetBinding.Binding
+                        _
+                        (ast.AstMaybeType.Some (ast.AstType.Bool))
+                        init)
+                      (= init e0)]
+                    [_ false]))])]
+          [_ false])
+        (match (ast.ast-node-get new-match)
+          [(ast.AstExpr.Match payload)
+            (match (& (__tl-box-place payload))
+              [(ast.AstMatch.Match scr arms)
+                (and
+                  (= scr e0)
+                  (match (ast.ast-match-arm-list-get
+                    arms
+                    0
+                    (ast.ast-match-arm-fallback))
+                    [(ast.AstMatchArm.Arm (ast.AstPattern.Binding 99) body)
+                      (= body e1)]
+                    [_ false]))])]
+          [_ false])
+        (match (ast.ast-node-get new-fe)
+          [(ast.AstExpr.Foreach payload)
+            (match (& (__tl-box-place payload))
+              [(ast.AstForeach.Foreach 7 (ast.AstType.Bool) a b d)
+                (and (= a e0) (= b e3) (= d e2))]
+              [_ false])]
+          [_ false])
+        (match (ast.ast-node-get new-fe2)
+          [(ast.AstExpr.Foreach payload)
+            (match (& (__tl-box-place payload))
+              [(ast.AstForeach.Foreach2
+                  7
+                  (ast.AstType.Bool)
+                  a0
+                  b0
+                  8
+                  (ast.AstType.Bool)
+                  a1
+                  b1
+                  d)
+                (and (= a0 e0) (= b0 e1) (= a1 e1) (= b1 e3) (= d e0))]
+              [_ false])]
+          [_ false])
+        (match direct-rebuilt
+          [(ast.AstExpr.Ann ra rt) (and (= ra e2) (= rt t0))]
+          [_ false])
         kind-names-ok?)]
     (ast.ast-node-pool-reset-to! base-pool)
+    (ast.ty-node-pool-reset-to! base-ty)
     ok))
 
 (cfg
   test
   (test
-    compiler-ast-map-if-changed-scalar-and-type
+    compiler-ast-child-ids-into-and-from
     (unless
-      (compiler-ast-map-if-changed-scalar-and-type-ok?)
+      (compiler-ast-child-ids-into-and-from-ok?)
       (io.panic
-        "ast-expr-map-children-if-changed scalar/type-bearing identity failed"))))
+        "ast-expr-child-ids-into! / ast-expr-with-child-ids-from failed"))))
 
 (cfg
   test
   (test
-    compiler-ast-map-if-changed-list-and-boxed
+    compiler-ast-children-into-and-with-children
     (unless
-      (compiler-ast-map-if-changed-list-and-boxed-ok?)
-      (io.panic "ast-expr-map-children-if-changed list/boxed identity failed"))))
-
-(cfg
-  test
-  (test
-    compiler-ast-map-try-fold-and-kind-name
-    (unless
-      (compiler-ast-map-try-and-fold-and-kind-name-ok?)
+      (compiler-ast-children-into-and-with-children-ok?)
       (io.panic
-        "ast-expr-map-children-try-if-changed, fold combinators, or ast-expr-kind-name failed"))))
+        "ast-expr-children-into!, ast-expr-with-children-from!, or ast-expr-kind-name failed"))))

@@ -313,7 +313,8 @@
   (generated ast.AstDeclList)
   (cache spec_id_i64_map.Map)
   (ctfe-env ctfe.CtfeEnv)
-  (pools SpecOwnerContext))
+  (pools SpecOwnerContext)
+  (scratch-ids ast.AstExprList))
 
 ;; Specialization identity is a one-word handle into the compile session's
 ;; canonical structural table. The handle is intentionally distinct from an
@@ -428,6 +429,10 @@
 (defenum SpecHeldFailure
   (None)
   (Held (Box cdiag.CompilerDiagnostic)))
+
+(defstruct SpecSubstWalk
+  (held SpecHeldFailure)
+  (scratch ast.AstExprChildList))
 
 (define (spec-value-subst-from-slots
   [slots : (& (__tl_dyn-array SpecValueBinding))]
@@ -715,7 +720,7 @@
 
 (define (spec-state-ctfe-env [state : (& state SpecState)]) : ctfe.CtfeEnv
   (match state
-    [(SpecState _ _ env _) env]))
+    [(SpecState _ _ env _ _) env]))
 
 (define (spec-state-owner [state : (& state SpecState)]) : (&
     state
@@ -4254,32 +4259,113 @@
       [(No) ty-id]
       [(Some mapped) (spec-owner-type-push owner (& mapped))])))
 
+(defmacro (spec-copy-push!
+  [k : Expr]
+  [ch : Expr]
+  [out : Expr]
+  [src : Expr]
+  [idx : Expr]
+  [ich : Expr]
+  [item : Expr]) : Expr
+  (let
+    [tag : String
+      (match k
+        [(Expr.Var v) v]
+        [_ ""])]
+    [cap : Expr
+      (match tag
+        ["type" `ast.ast-type-list-with-capacity]
+        ["param" `ast.ast-param-list-with-capacity]
+        ["let" `ast.ast-let-binding-list-with-capacity]
+        ["arm" `ast.ast-match-arm-list-with-capacity]
+        ["res" `ast.ast-resource-binding-list-with-capacity]
+        [_ `ast.ast-expr-list-with-capacity])]
+    [push : Expr
+      (match tag
+        ["type" `ast.ast-type-list-push]
+        ["param" `ast.ast-param-list-push]
+        ["let" `ast.ast-let-binding-list-push]
+        ["arm" `ast.ast-match-arm-list-push]
+        ["res" `ast.ast-resource-binding-list-push]
+        [_ `ast.ast-expr-list-push])]
+    [get : Expr
+      (match tag
+        ["type" `ast.ast-type-list-get]
+        ["param" `ast.ast-param-list-get]
+        ["let" `ast.ast-let-binding-list-get]
+        ["arm" `ast.ast-match-arm-list-get]
+        ["res" `ast.ast-resource-binding-list-get]
+        [_ `ast.ast-expr-list-get])]
+    [fb : Expr
+      (match tag
+        ["type" `(ast.ast-type-id-fallback)]
+        ["param" `(ast.ast-param-fallback)]
+        ["let" `(ast.ast-let-binding-fallback)]
+        ["arm" `(ast.ast-match-arm-fallback)]
+        ["res" `(ast.ast-resource-binding-fallback)]
+        [_ `0])]
+    `(if ,ch
+      (,push (&mut ,out) ,item)
+      (when
+        ,ich
+        (set! ,out (,cap (__tl-project-field-name ,src "len")))
+        (let
+          [spec-p : i64 0]
+          (while (< spec-p ,idx)
+            (,push (&mut ,out) (,get ,src spec-p ,fb))
+            (set! spec-p (+ spec-p 1))))
+        (,push (&mut ,out) ,item)
+        (set! ,ch true)))))
+
 (define (spec-substitute-type-list-if-changed-with-owner
   [owner : (& owner SpecOwnerContext)]
   [types : (& ast.AstTypeList)]
   [subs : (& subs SpecTypeSubst)]
   [changed? : (&mut ch bool)]) : ast.AstTypeList
   (let
-    [len : i64 (ast.ast-type-list-len types)]
     [out : ast.AstTypeList (ast.ast-type-list-with-capacity 0)]
-    [list-changed? : bool false]
-    (for [index (iterator.range 0 len)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i types.len)
       (let
-        [orig : i64
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))]
-        [mapped : i64 (spec-substitute-type-id-with-owner owner orig subs)]
-        (if list-changed?
-          (ast.ast-type-list-push (&mut out) mapped)
-          (when
-            (!= mapped orig)
-            (set! out (ast.ast-type-list-with-capacity len))
-            (for [prefix (iterator.range 0 index)]
-              (ast.ast-type-list-push
-                (&mut out)
-                (ast.ast-type-list-get types prefix (ast.ast-type-id-fallback))))
-            (ast.ast-type-list-push (&mut out) mapped)
-            (set! list-changed? true)))))
-    (when list-changed? (set! (deref changed?) true))
+        [orig : i64 (ast.ast-type-list-get types i (ast.ast-type-id-fallback))]
+        [m : i64 (spec-substitute-type-id-with-owner owner orig subs)]
+        (spec-copy-push! type ch out types i (!= m orig) m))
+      (set! i (+ i 1)))
+    (when ch (set! (deref changed?) true))
+    out))
+
+(define (spec-substitute-param-list-if-changed-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [params : (& ast.AstParamList)]
+  [subs : (& subs SpecTypeSubst)]
+  [changed? : (&mut ch bool)]) : ast.AstParamList
+  (let
+    [out : ast.AstParamList (ast.ast-param-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i params.len)
+      (match (ast.ast-param-list-get params i (ast.ast-param-fallback))
+        [(Param name ty is-comptime)
+          (let
+            [ich : bool false]
+            [mt : ast.AstMaybeType
+              (spec-substitute-type-step owner subs (& ty) (&mut ich))]
+            (spec-copy-push!
+              param
+              ch
+              out
+              params
+              i
+              ich
+              (ast.ast-param-id
+                name
+                (match mt
+                  [(Some nt) nt]
+                  [(No) ty])
+                is-comptime)))])
+      (set! i (+ i 1)))
+    (when ch (set! (deref changed?) true))
     out))
 
 (defmacro (spec-subst-ty-1
@@ -4391,18 +4477,16 @@
   [params : (& ast.AstParamList)]
   [subs : (& subs SpecTypeSubst)]) : ast.AstParamList
   (let
+    [ch : bool false]
     [out : ast.AstParamList
-      (ast.ast-param-list-with-capacity (ast.ast-param-list-len params))]
-    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param name ty _)
-          (ast.ast-param-list-push
-            (&mut out)
-            (ast.AstParam.Param
-              name
-              (spec-substitute-type-with-owner owner ty subs)
-              false))]))
-    out))
+      (spec-substitute-param-list-if-changed-with-owner
+        owner
+        params
+        subs
+        (&mut ch))]
+    (if ch
+      out
+      (ast.clone-ast-param-list params))))
 
 (define (spec-ctfe-value-to-expr-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -4583,43 +4667,38 @@
       [_ (None)])))
 
 (define (spec-rewrite-let-bindings
-  [bindings : ast.AstLetBindingList]
+  [bs : ast.AstLetBindingList]
   [templates : (& templates SpecTemplateEnv)]
   [state : (&mut state SpecState)]
   [changed? : (&mut ch bool)]) : ResultSpecSubLetBindingList
   (let
-    [len : i64 (ast.ast-let-binding-list-len (& bindings))]
     [scope : SpecTemplateEnv (deref templates)]
-    [out : ast.AstLetBindingList (ast.ast-let-binding-list-empty-shared)]
-    [list-changed? : bool false]
-    (for [index (iterator.range 0 len)]
+    [out : ast.AstLetBindingList (ast.ast-let-binding-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i bs.len)
       (match (ast.ast-let-binding-list-get
-        (& bindings)
-        index
+        (& bs)
+        i
         (ast.ast-let-binding-fallback))
-        [(Binding name ty value-box)
+        [(Binding name ty v)
           (let
-            [rewritten : i64
-              (try (spec-rewrite-expr (& scope) state value-box))]
+            [r : i64 (try (spec-rewrite-expr (& scope) state v))]
             (set! scope (spec-template-env-shadow-name (& scope) name))
-            (if list-changed?
-              (ast.ast-let-binding-list-push
-                (&mut out)
-                (ast.ast-let-binding-id name ty rewritten))
-              (when
-                (!= rewritten value-box)
-                (set!
-                  out
-                  (ast.ast-let-binding-list-fork-prefix
-                    (& bindings)
-                    index
-                    (ast.ast-let-binding-id name ty rewritten)))
-                (set! list-changed? true))))]))
-    (if list-changed?
+            (spec-copy-push!
+              let
+              ch
+              out
+              (& bs)
+              i
+              (!= r v)
+              (ast.ast-let-binding-id name ty r)))])
+      (set! i (+ i 1)))
+    (if ch
       (begin
         (set! (deref changed?) true)
         (Ok out))
-      (Ok bindings))))
+      (Ok bs))))
 
 (define (spec-rewrite-match-arms
   [arms : ast.AstMatchArmList]
@@ -4627,34 +4706,29 @@
   [state : (&mut state SpecState)]
   [changed? : (&mut ch bool)]) : ResultSpecSubMatchArmList
   (let
-    [len : i64 arms.len]
-    [out : ast.AstMatchArmList (ast.ast-match-arm-list-empty-shared)]
-    [list-changed? : bool false]
-    (for [index (iterator.range 0 len)]
+    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i arms.len)
       (match (ast.ast-match-arm-list-get
         (& arms)
-        index
+        i
         (ast.ast-match-arm-fallback))
-        [(Arm pattern body-box)
+        [(Arm pat b)
           (let
-            [body-templates : SpecTemplateEnv
-              (spec-template-env-shadow-pattern templates (& pattern))]
-            [rewritten : i64
-              (try (spec-rewrite-expr (& body-templates) state body-box))]
-            (if list-changed?
-              (ast.ast-match-arm-list-push
-                (&mut out)
-                (ast.ast-match-arm pattern rewritten))
-              (when
-                (!= rewritten body-box)
-                (set!
-                  out
-                  (ast.ast-match-arm-list-fork-prefix
-                    (& arms)
-                    index
-                    (ast.ast-match-arm pattern rewritten)))
-                (set! list-changed? true))))]))
-    (if list-changed?
+            [bt : SpecTemplateEnv
+              (spec-template-env-shadow-pattern templates (& pat))]
+            [r : i64 (try (spec-rewrite-expr (& bt) state b))]
+            (spec-copy-push!
+              arm
+              ch
+              out
+              (& arms)
+              i
+              (!= r b)
+              (ast.ast-match-arm pat r)))])
+      (set! i (+ i 1)))
+    (if ch
       (begin
         (set! (deref changed?) true)
         (Ok out))
@@ -4962,10 +5036,10 @@
   [ch : Expr]
   [owner : Expr]
   [subs : Expr]
-  [held : Expr]
+  [walk : Expr]
   [id : Expr]) : Expr
   `(let
-    [next : i64 (try (spec-substitute-walk-with-owner ,owner ,subs ,held ,id))]
+    [next : i64 (try (spec-substitute-walk-with-owner ,owner ,subs ,walk ,id))]
     (when (!= next ,id) (set! ,ch true))
     next))
 
@@ -4977,6 +5051,7 @@
   [expr-id : i64]) : ResultSpecSubExpr
   (let
     [expr : ast.AstExpr (spec-state-expr-get state expr-id)]
+    [p : ast.AstNodePoolContext (spec-state-pools state)]
     (match (ast.ast-place-shared-view expr)
       [(Call func-box args)
         (let
@@ -4994,24 +5069,7 @@
                 templates
                 state
                 (& expr))]
-            [(None)
-              (let
-                [ch : bool false]
-                [rf : i64 (spec-rw-step ch templates state func-box)]
-                [ra : ast.AstExprList
-                  (ast.ast-expr-list-map-try-if-changed
-                    args
-                    ch
-                    spec-rewrite-expr
-                    templates
-                    state)]
-                (if ch
-                  (Ok
-                    (ast.ast-expr-call-with-pools
-                      (spec-state-pools state)
-                      rf
-                      ra))
-                  (Ok expr-id)))]))]
+            [(None) (spec-rewrite-expr-default templates state expr-id expr)]))]
       [(Let let-box)
         (match (__tl-box-place let-box)
           [(Let bindings body-box)
@@ -5024,11 +5082,7 @@
                   (spec-rewrite-let-bindings bindings templates state (&mut ch)))]
               [rbody : i64 (spec-rw-step ch (& body-t) state body-box)]
               (if ch
-                (Ok
-                  (ast.ast-expr-let-with-pools
-                    (spec-state-pools state)
-                    rb
-                    rbody))
+                (Ok (ast.ast-expr-let-with-pools p rb rbody))
                 (Ok expr-id)))])]
       [(Lambda lambda-box)
         (match (__tl-box-place lambda-box)
@@ -5039,12 +5093,7 @@
                 (spec-template-env-shadow-params templates params)]
               [rbody : i64 (spec-rw-step ch (& body-t) state body-box)]
               (if ch
-                (Ok
-                  (ast.ast-expr-lambda-with-pools
-                    (spec-state-pools state)
-                    params
-                    ret
-                    rbody))
+                (Ok (ast.ast-expr-lambda-with-pools p params ret rbody))
                 (Ok expr-id)))])]
       [(Match match-box)
         (match (__tl-box-place match-box)
@@ -5055,8 +5104,7 @@
               [ra : ast.AstMatchArmList
                 (try (spec-rewrite-match-arms arms templates state (&mut ch)))]
               (if ch
-                (Ok
-                  (ast.ast-expr-match-with-pools (spec-state-pools state) rs ra))
+                (Ok (ast.ast-expr-match-with-pools p rs ra))
                 (Ok expr-id)))])]
       [(Foreach fe-box)
         (match (__tl-box-place fe-box)
@@ -5070,13 +5118,7 @@
               [rb : i64 (spec-rw-step ch (& bt) state b)]
               (if ch
                 (Ok
-                  (ast.ast-expr-foreach-id-with-pools
-                    (spec-state-pools state)
-                    index
-                    index-ty
-                    rs
-                    re
-                    rb))
+                  (ast.ast-expr-foreach-id-with-pools p index index-ty rs re rb))
                 (Ok expr-id)))]
           [(Foreach2 outer o-ty os oe inner i-ty is ie b)
             (let
@@ -5093,7 +5135,7 @@
               (if ch
                 (Ok
                   (ast.ast-expr-foreach2-id-with-pools
-                    (spec-state-pools state)
+                    p
                     outer
                     o-ty
                     ros
@@ -5110,11 +5152,7 @@
           [bt : SpecTemplateEnv (spec-template-env-shadow-name templates lane)]
           [rb : i64 (spec-rw-step ch (& bt) state body-box)]
           (if ch
-            (Ok
-              (ast.ast-expr-foreach-active-with-pools
-                (spec-state-pools state)
-                lane
-                rb))
+            (Ok (ast.ast-expr-foreach-active-with-pools p lane rb))
             (Ok expr-id)))]
       [(SpmdReduce reduce-box)
         (match (__tl-box-place reduce-box)
@@ -5130,7 +5168,7 @@
               (if ch
                 (Ok
                   (ast.ast-expr-spmd-reduce-id-with-pools
-                    (spec-state-pools state)
+                    p
                     op
                     index
                     ty
@@ -5156,7 +5194,7 @@
               (if ch
                 (Ok
                   (ast.ast-expr-spmd-scan-id-with-pools
-                    (spec-state-pools state)
+                    p
                     op
                     index
                     ty
@@ -5184,7 +5222,7 @@
               (if ch
                 (Ok
                   (ast.ast-expr-spmd-compact-id-with-pools
-                    (spec-state-pools state)
+                    p
                     index
                     ty
                     rs
@@ -5199,7 +5237,7 @@
         (match (__tl-box-place wr-box)
           [(WithResource bindings body)
             (spec-rewrite-resource expr-id bindings body templates state)])]
-      [(Borrow _ _ _) (Ok expr-id)]
+      [(or (Borrow _ _ _) (Literal _) (Var _)) (Ok expr-id)]
       [_ (spec-rewrite-expr-default templates state expr-id expr)])))
 
 (define (spec-rewrite-expr-default
@@ -5208,22 +5246,38 @@
   [expr-id : i64]
   [expr : ast.AstExpr]) : ResultSpecSubExpr
   (let
-    [changed? : bool false]
-    [mapped : ast.AstExpr
-      (ast.ast-expr-map-children-try-if-changed
-        expr
-        changed?
-        spec-rewrite-expr
-        ast.ast-child-keep
-        ast.ast-child-no-type
-        ast.ast-child-no-pattern
-        ast.ast-child-no-literal
-        ast.ast-child-no-bytes
-        templates
-        state)]
-    (if changed?
-      (Ok (spec-owner-expr-push (& state.pools) (& mapped)))
-      (Ok expr-id))))
+    [start : i64 state.scratch-ids.len]
+    (ast.ast-expr-child-ids-into! expr (&mut state.scratch-ids))
+    (let
+      [end : i64 state.scratch-ids.len]
+      [ch : bool false]
+      [i : i64 start]
+      (while (< i end)
+        (let
+          [cid : i64 (ast.ast-expr-list-get (& state.scratch-ids) i -1)]
+          (match (spec-rewrite-expr templates state cid)
+            [(Ok next)
+              (when
+                (!= next cid)
+                (ast.ast-expr-list-set! (&mut state.scratch-ids) i next)
+                (set! ch true))]
+            [(Err diag)
+              (ast.ast-expr-list-truncate! (&mut state.scratch-ids) start)
+              (return (Err diag))]))
+        (set! i (+ i 1)))
+      (let
+        [out : i64
+          (if ch
+            (spec-owner-expr-push
+              (& state.pools)
+              (&
+                (ast.ast-expr-with-child-ids-from
+                  (spec-state-expr-get state expr-id)
+                  (& state.scratch-ids)
+                  start)))
+            expr-id)]
+        (ast.ast-expr-list-truncate! (&mut state.scratch-ids) start)
+        (Ok out)))))
 
 (define (spec-ptr-addr-of-place-value-conflict-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -5251,50 +5305,39 @@
   (let
     [scope : SpecTemplateEnv (deref templates)]
     [out : ast.AstResourceBindingList
-      (ast.ast-resource-binding-list-empty-shared)]
-    [bindings-changed? : bool false]
-    (for [index (iterator.range 0 bindings.len)]
+      (ast.ast-resource-binding-list-with-capacity 0)]
+    [bch : bool false]
+    [i : i64 0]
+    (while (< i bindings.len)
       (match (ast.ast-resource-binding-list-get
         (& bindings)
-        index
+        i
         (ast.ast-resource-binding-fallback))
-        [(Binding name init cleanup move-aware?)
+        [(Binding name init cleanup mv)
           (let
-            [next-init : i64 (try (spec-rewrite-expr (& scope) state init))]
-            [next-cleanup : i64
-              (try (spec-rewrite-expr (& scope) state cleanup))]
+            [ni : i64 (try (spec-rewrite-expr (& scope) state init))]
+            [nc : i64 (try (spec-rewrite-expr (& scope) state cleanup))]
             (set! scope (spec-template-env-shadow-name (& scope) name))
-            (if bindings-changed?
-              (ast.ast-resource-binding-list-push
-                (&mut out)
-                (ast.AstResourceBinding.Binding
-                  name
-                  next-init
-                  next-cleanup
-                  move-aware?))
-              (when
-                (or (!= next-init init) (!= next-cleanup cleanup))
-                (set!
-                  out
-                  (ast.ast-resource-binding-list-fork-prefix
-                    (& bindings)
-                    index
-                    (ast.AstResourceBinding.Binding
-                      name
-                      next-init
-                      next-cleanup
-                      move-aware?)))
-                (set! bindings-changed? true))))]))
+            (spec-copy-push!
+              res
+              bch
+              out
+              (& bindings)
+              i
+              (or (!= ni init) (!= nc cleanup))
+              (ast.AstResourceBinding.Binding name ni nc mv)))])
+      (set! i (+ i 1)))
     (let
-      [body-changed? : bool false]
-      [next-body : ast.AstExprList
-        (ast.ast-expr-list-map-try-if-changed
-          body
-          body-changed?
-          spec-rewrite-expr
-          (& scope)
-          state)]
-      (if (or bindings-changed? body-changed?)
+      [bout : ast.AstExprList (ast.ast-expr-list-with-capacity 0)]
+      [ich : bool false]
+      [j : i64 0]
+      (while (< j body.len)
+        (let
+          [orig : i64 (ast.ast-expr-list-get (& body) j 0)]
+          [next : i64 (try (spec-rewrite-expr (& scope) state orig))]
+          (spec-copy-push! expr ich bout (& body) j (!= next orig) next))
+        (set! j (+ j 1)))
+      (if (or bch ich)
         (Ok
           (spec-owner-expr-push
             (& state.pools)
@@ -5302,10 +5345,12 @@
               (WithResource
                 (box
                   (ast.AstWithResource.WithResource
-                    (if bindings-changed?
+                    (if bch
                       out
                       bindings)
-                    next-body))))))
+                    (if ich
+                      bout
+                      body)))))))
         (Ok expr-id)))))
 
 (define (spec-subst-holding? [held : (& held SpecHeldFailure)]) : bool
@@ -5327,6 +5372,14 @@
     expr-id
     (spec-owner-expr-push owner expr)))
 
+(define (spec-substitute-expr-load
+  [owner : (& owner SpecOwnerContext)]
+  [expr-id : i64]
+  [expr : (& ast.AstExpr)]) : ast.AstExpr
+  (if (>= expr-id 0)
+    (spec-owner-expr-get owner expr-id)
+    (owned_view.compiler-owned-reference-shared-view expr)))
+
 ;: Applies a specialization's type and value bindings to `expr` in one walk
 ;: that rebuilds each node once. A type failure ends the walk. A value failure
 ;: is held while the walk goes on checking types, because a type failure
@@ -5337,11 +5390,12 @@
   [expr : (& ast.AstExpr)]
   [subs : (& subs SpecSubst)]) : ResultSpecSubExpr
   (let
-    [held : SpecHeldFailure (None)]
+    [walk : SpecSubstWalk
+      (SpecSubstWalk (None) (ast.ast-expr-child-list-with-capacity 16))]
     [rewritten : i64
       (try
-        (spec-substitute-walk-node-with-owner owner subs (&mut held) -1 expr))]
-    (match held
+        (spec-substitute-walk-node-with-owner owner subs (&mut walk) -1 expr))]
+    (match walk.held
       [(None) (Ok rewritten)]
       [(Held diag) (Err diag)])))
 
@@ -5352,57 +5406,47 @@
   [bindings : (& bindings ast.AstResourceBindingList)]
   [body : (& body ast.AstExprList)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]) : ResultSpecSubExpr
+  [walk : (&mut walk SpecSubstWalk)]) : ResultSpecSubExpr
   (let
     [scope : SpecSubst (deref subs)]
     [out : ast.AstResourceBindingList
-      (ast.ast-resource-binding-list-empty-shared)]
-    [bindings-changed? : bool false]
-    (for [index (iterator.range 0 bindings.len)]
+      (ast.ast-resource-binding-list-with-capacity 0)]
+    [bch : bool false]
+    [i : i64 0]
+    (while (< i bindings.len)
       (match (ast.ast-resource-binding-list-get
         bindings
-        index
+        i
         (ast.ast-resource-binding-fallback))
-        [(Binding name init cleanup move-aware?)
+        [(Binding name init cleanup mv)
           (let
-            [next-init : i64
-              (try (spec-substitute-walk-with-owner owner (& scope) held init))]
-            [next-cleanup : i64
+            [ni : i64
+              (try (spec-substitute-walk-with-owner owner (& scope) walk init))]
+            [nc : i64
               (try
-                (spec-substitute-walk-with-owner owner (& scope) held cleanup))]
+                (spec-substitute-walk-with-owner owner (& scope) walk cleanup))]
             (set! scope (spec-subst-remove-name (& scope) name))
-            (if bindings-changed?
-              (ast.ast-resource-binding-list-push
-                (&mut out)
-                (ast.AstResourceBinding.Binding
-                  name
-                  next-init
-                  next-cleanup
-                  move-aware?))
-              (when
-                (or (!= next-init init) (!= next-cleanup cleanup))
-                (set!
-                  out
-                  (ast.ast-resource-binding-list-fork-prefix
-                    bindings
-                    index
-                    (ast.AstResourceBinding.Binding
-                      name
-                      next-init
-                      next-cleanup
-                      move-aware?)))
-                (set! bindings-changed? true))))]))
+            (spec-copy-push!
+              res
+              bch
+              out
+              bindings
+              i
+              (or (!= ni init) (!= nc cleanup))
+              (ast.AstResourceBinding.Binding name ni nc mv)))])
+      (set! i (+ i 1)))
     (let
-      [body-changed? : bool false]
-      [next-body : ast.AstExprList
-        (ast.ast-expr-list-map-try-if-changed-ref
-          body
-          body-changed?
-          spec-substitute-walk-with-owner
-          owner
-          (& scope)
-          held)]
-      (if (or bindings-changed? body-changed?)
+      [bout : ast.AstExprList (ast.ast-expr-list-with-capacity 0)]
+      [ich : bool false]
+      [j : i64 0]
+      (while (< j body.len)
+        (let
+          [orig : i64 (ast.ast-expr-list-get body j 0)]
+          [next : i64
+            (try (spec-substitute-walk-with-owner owner (& scope) walk orig))]
+          (spec-copy-push! expr ich bout body j (!= next orig) next))
+        (set! j (+ j 1)))
+      (if (or bch ich)
         (Ok
           (spec-owner-expr-push
             owner
@@ -5410,38 +5454,41 @@
               (WithResource
                 (box
                   (ast.AstWithResource.WithResource
-                    (if bindings-changed?
+                    (if bch
                       out
-                      (ast.clone-ast-resource-binding-list bindings))
-                    (if body-changed?
-                      next-body
+                      (let
+                        [c : ast.AstResourceBindingList
+                          (ast.ast-resource-binding-list-with-capacity
+                            bindings.len)]
+                        (ast.ast-resource-binding-list-append-from
+                          (&mut c)
+                          bindings
+                          0)
+                        c))
+                    (if ich
+                      bout
                       (ast.clone-ast-expr-list body))))))))
         (Ok (spec-substitute-keep-or-push owner expr-id expr))))))
-
-(define (spec-substitute-type-id-hook
-  [owner : (& owner SpecOwnerContext)]
-  [subs : (& subs SpecSubst)]
-  [_held : (&mut held SpecHeldFailure)]
-  [ty-id : i64]) : i64
-  (spec-substitute-type-id-with-owner owner ty-id (& subs.types)))
-
-(define (spec-substitute-type-hook
-  [owner : (& owner SpecOwnerContext)]
-  [subs : (& subs SpecSubst)]
-  [_held : (&mut held SpecHeldFailure)]
-  [ty : (& ast.AstType)]) : ast.AstMaybeType
-  (spec-substitute-type-if-changed-with-owner owner ty (& subs.types)))
 
 (define (spec-substitute-type-step
   [owner : (& owner SpecOwnerContext)]
   [subs : (& subs SpecTypeSubst)]
   [ty : (& ast.AstType)]
   [changed? : (&mut ch bool)]) : ast.AstMaybeType
-  (let
-    [mapped : ast.AstMaybeType
-      (spec-substitute-type-if-changed-with-owner owner ty subs)]
-    (when (ast.ast-maybe-type-some? (& mapped)) (set! (deref changed?) true))
-    mapped))
+  (match (spec-substitute-type-if-changed-with-owner owner ty subs)
+    [(Some next)
+      (set! (deref changed?) true)
+      (Some next)]
+    [(No) No]))
+
+(define (spec-substitute-maybe-type-step
+  [owner : (& owner SpecOwnerContext)]
+  [subs : (& subs SpecTypeSubst)]
+  [maybe-ty : (& ast.AstMaybeType)]
+  [changed? : (&mut ch bool)]) : ast.AstMaybeType
+  (match maybe-ty
+    [(No) No]
+    [(Some ty) (spec-substitute-type-step owner subs ty changed?)]))
 
 (define (spec-substitute-type-or-clone
   [mapped : ast.AstMaybeType]
@@ -5453,46 +5500,92 @@
 (define (spec-substitute-walk-default-with-owner
   [owner : (& owner SpecOwnerContext)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]
+  [walk : (&mut walk SpecSubstWalk)]
   [expr-id : i64]
-  [expr : ast.AstExpr]) : ResultSpecSubExpr
+  [expr : (& ast.AstExpr)]
+  [expr-view : ast.AstExpr]) : ResultSpecSubExpr
   (let
-    [changed? : bool false]
-    [mapped : ast.AstExpr
-      (ast.ast-expr-map-children-try-if-changed
-        expr
-        changed?
-        spec-substitute-walk-with-owner
-        spec-substitute-type-id-hook
-        spec-substitute-type-hook
-        ast.ast-child-no-pattern
-        ast.ast-child-no-literal
-        ast.ast-child-no-bytes
-        owner
-        subs
-        held)]
-    (if changed?
-      (Ok (spec-owner-expr-push owner (& mapped)))
-      (Ok (spec-substitute-keep-or-push owner expr-id (& mapped))))))
+    [start : i64 walk.scratch.len]
+    (ast.ast-expr-children-into! expr-view (&mut walk.scratch))
+    (let
+      [end : i64 walk.scratch.len]
+      [ch : bool false]
+      [i : i64 start]
+      (while (< i end)
+        (match (ast.ast-expr-child-list-get
+          (& walk.scratch)
+          i
+          (ast.ast-expr-child-fallback))
+          [(ast.AstExprChild.Expr cid)
+            (match (spec-substitute-walk-with-owner owner subs walk cid)
+              [(Ok next)
+                (when
+                  (!= next cid)
+                  (ast.ast-expr-child-list-set!
+                    (&mut walk.scratch)
+                    i
+                    (ast.AstExprChild.Expr next))
+                  (set! ch true))]
+              [(Err diag)
+                (ast.ast-expr-child-list-truncate! (&mut walk.scratch) start)
+                (return (Err diag))])]
+          [(ast.AstExprChild.TypeId tid)
+            (let
+              [nt : i64
+                (spec-substitute-type-id-with-owner owner tid (& subs.types))]
+              (when
+                (!= nt tid)
+                (ast.ast-expr-child-list-set!
+                  (&mut walk.scratch)
+                  i
+                  (ast.AstExprChild.TypeId nt))
+                (set! ch true)))]
+          [(ast.AstExprChild.Type ty)
+            (match (spec-substitute-type-if-changed-with-owner
+              owner
+              (& ty)
+              (& subs.types))
+              [(Some nt)
+                (ast.ast-expr-child-list-set!
+                  (&mut walk.scratch)
+                  i
+                  (ast.AstExprChild.Type nt))
+                (set! ch true)]
+              [(No) unit])]
+          [(ast.AstExprChild.Pattern _) unit])
+        (set! i (+ i 1)))
+      (let
+        [out : i64
+          (if ch
+            (spec-owner-expr-push
+              owner
+              (&
+                (ast.ast-expr-with-children-from!
+                  (spec-substitute-expr-load owner expr-id expr)
+                  (&mut walk.scratch)
+                  start)))
+            (spec-substitute-keep-or-push owner expr-id expr))]
+        (ast.ast-expr-child-list-truncate! (&mut walk.scratch) start)
+        (Ok out)))))
 
 (define (spec-substitute-walk-with-owner
   [owner : (& owner SpecOwnerContext)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]
+  [walk : (&mut walk SpecSubstWalk)]
   [expr-id : i64]) : ResultSpecSubExpr
   (let
     [expr : ast.AstExpr (spec-owner-expr-get owner expr-id)]
-    (spec-substitute-walk-node-with-owner owner subs held expr-id (& expr))))
+    (spec-substitute-walk-node-with-owner owner subs walk expr-id (& expr))))
 
 (define (spec-substitute-walk-node-with-owner
   [owner : (& owner SpecOwnerContext)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]
+  [walk : (&mut walk SpecSubstWalk)]
   [expr-id : i64]
   [expr : (& ast.AstExpr)]) : ResultSpecSubExpr
   (let
-    [expr-view : ast.AstExpr
-      (owned_view.compiler-owned-reference-shared-view expr)]
+    [expr-view : ast.AstExpr (spec-substitute-expr-load owner expr-id expr)]
+    [p : ast.AstNodePoolContext (spec-owner-pools owner)]
     (match expr-view
       [(Var name)
         (match (spec-type-subst-lookup (& subs.types) name)
@@ -5516,7 +5609,7 @@
                   expr)
                   [(Ok literal) (Ok literal)]
                   [(Err diag)
-                    (spec-subst-hold-value-failure! held diag)
+                    (spec-subst-hold-value-failure! (&mut walk.held) diag)
                     (Ok (spec-substitute-keep-or-push owner expr-id expr))])]
               [(None) (Ok (spec-substitute-keep-or-push owner expr-id expr))])])]
       [(Lambda lambda-box)
@@ -5527,27 +5620,23 @@
               [r-ch : bool false]
               [b-ch : bool false]
               [mp : ast.AstParamList
-                (ast.ast-param-list-map-if-changed-ref
+                (spec-substitute-param-list-if-changed-with-owner
+                  owner
                   params
-                  p-ch
-                  spec-substitute-type-hook
-                  owner
-                  subs
-                  held)]
+                  (& subs.types)
+                  (&mut p-ch))]
               [mr : ast.AstMaybeType
-                (ast.ast-maybe-type-map-if-changed-ref
-                  ret
-                  r-ch
-                  spec-substitute-type-hook
+                (spec-substitute-maybe-type-step
                   owner
-                  subs
-                  held)]
+                  (& subs.types)
+                  ret
+                  (&mut r-ch))]
               [bs : SpecSubst (spec-subst-remove-params subs params)]
-              [mb : i64 (spec-sub-step b-ch owner (& bs) held body-box)]
+              [mb : i64 (spec-sub-step b-ch owner (& bs) walk body-box)]
               (if (or p-ch r-ch b-ch)
                 (Ok
                   (ast.ast-expr-lambda-with-pools
-                    (spec-owner-pools owner)
+                    p
                     (if p-ch
                       mp
                       (ast.clone-ast-param-list params))
@@ -5568,13 +5657,13 @@
                   index-ty
                   (&mut ch))]
               [bs : SpecSubst (spec-subst-remove-name subs index)]
-              [ms : i64 (spec-sub-step ch owner subs held s)]
-              [me : i64 (spec-sub-step ch owner subs held e)]
-              [mb : i64 (spec-sub-step ch owner (& bs) held b)]
+              [ms : i64 (spec-sub-step ch owner subs walk s)]
+              [me : i64 (spec-sub-step ch owner subs walk e)]
+              [mb : i64 (spec-sub-step ch owner (& bs) walk b)]
               (if ch
                 (Ok
                   (ast.ast-expr-foreach-id-with-pools
-                    (spec-owner-pools owner)
+                    p
                     index
                     (spec-substitute-type-or-clone mt index-ty)
                     ms
@@ -5590,15 +5679,15 @@
                 (spec-substitute-type-step owner (& subs.types) i-ty (&mut ch))]
               [osubs : SpecSubst (spec-subst-remove-name subs outer)]
               [bsubs : SpecSubst (spec-subst-remove-name (& osubs) inner)]
-              [ms0 : i64 (spec-sub-step ch owner subs held os)]
-              [me0 : i64 (spec-sub-step ch owner subs held oe)]
-              [ms1 : i64 (spec-sub-step ch owner subs held is)]
-              [me1 : i64 (spec-sub-step ch owner subs held ie)]
-              [mb : i64 (spec-sub-step ch owner (& bsubs) held b)]
+              [ms0 : i64 (spec-sub-step ch owner subs walk os)]
+              [me0 : i64 (spec-sub-step ch owner subs walk oe)]
+              [ms1 : i64 (spec-sub-step ch owner subs walk is)]
+              [me1 : i64 (spec-sub-step ch owner subs walk ie)]
+              [mb : i64 (spec-sub-step ch owner (& bsubs) walk b)]
               (if ch
                 (Ok
                   (ast.ast-expr-foreach2-id-with-pools
-                    (spec-owner-pools owner)
+                    p
                     outer
                     (spec-substitute-type-or-clone mt0 o-ty)
                     ms0
@@ -5615,13 +5704,9 @@
         (let
           [ch : bool false]
           [bs : SpecSubst (spec-subst-remove-name subs lane)]
-          [mb : i64 (spec-sub-step ch owner (& bs) held body-box)]
+          [mb : i64 (spec-sub-step ch owner (& bs) walk body-box)]
           (if ch
-            (Ok
-              (ast.ast-expr-foreach-active-with-pools
-                (spec-owner-pools owner)
-                lane
-                mb))
+            (Ok (ast.ast-expr-foreach-active-with-pools p lane mb))
             (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
       [(SpmdReduce reduce-box)
         (match (& (__tl-box-place reduce-box))
@@ -5631,14 +5716,14 @@
               [mt : ast.AstMaybeType
                 (spec-substitute-type-step owner (& subs.types) ty (&mut ch))]
               [vs : SpecSubst (spec-subst-remove-name subs index)]
-              [ms : i64 (spec-sub-step ch owner subs held s)]
-              [me : i64 (spec-sub-step ch owner subs held e)]
-              [mi : i64 (spec-sub-step ch owner subs held init)]
-              [mv : i64 (spec-sub-step ch owner (& vs) held val)]
+              [ms : i64 (spec-sub-step ch owner subs walk s)]
+              [me : i64 (spec-sub-step ch owner subs walk e)]
+              [mi : i64 (spec-sub-step ch owner subs walk init)]
+              [mv : i64 (spec-sub-step ch owner (& vs) walk val)]
               (if ch
                 (Ok
                   (ast.ast-expr-spmd-reduce-id-with-pools
-                    (spec-owner-pools owner)
+                    p
                     op
                     index
                     (spec-substitute-type-or-clone mt ty)
@@ -5658,15 +5743,15 @@
                 (spec-substitute-type-step owner (& subs.types) p-ty (&mut ch))]
               [vs : SpecSubst (spec-subst-remove-name subs index)]
               [bs : SpecSubst (spec-subst-remove-name (& vs) prefix)]
-              [ms : i64 (spec-sub-step ch owner subs held s)]
-              [me : i64 (spec-sub-step ch owner subs held e)]
-              [mi : i64 (spec-sub-step ch owner subs held init)]
-              [mv : i64 (spec-sub-step ch owner (& vs) held val)]
-              [mb : i64 (spec-sub-step ch owner (& bs) held body)]
+              [ms : i64 (spec-sub-step ch owner subs walk s)]
+              [me : i64 (spec-sub-step ch owner subs walk e)]
+              [mi : i64 (spec-sub-step ch owner subs walk init)]
+              [mv : i64 (spec-sub-step ch owner (& vs) walk val)]
+              [mb : i64 (spec-sub-step ch owner (& bs) walk body)]
               (if ch
                 (Ok
                   (ast.ast-expr-spmd-scan-id-with-pools
-                    (spec-owner-pools owner)
+                    p
                     op
                     index
                     (spec-substitute-type-or-clone mt0 ty)
@@ -5689,15 +5774,15 @@
                 (spec-substitute-type-step owner (& subs.types) s-ty (&mut ch))]
               [ks : SpecSubst (spec-subst-remove-name subs index)]
               [bs : SpecSubst (spec-subst-remove-name (& ks) slot)]
-              [ms : i64 (spec-sub-step ch owner subs held s)]
-              [me : i64 (spec-sub-step ch owner subs held e)]
-              [mi : i64 (spec-sub-step ch owner subs held init)]
-              [mk : i64 (spec-sub-step ch owner (& ks) held keep)]
-              [mb : i64 (spec-sub-step ch owner (& bs) held body)]
+              [ms : i64 (spec-sub-step ch owner subs walk s)]
+              [me : i64 (spec-sub-step ch owner subs walk e)]
+              [mi : i64 (spec-sub-step ch owner subs walk init)]
+              [mk : i64 (spec-sub-step ch owner (& ks) walk keep)]
+              [mb : i64 (spec-sub-step ch owner (& bs) walk body)]
               (if ch
                 (Ok
                   (ast.ast-expr-spmd-compact-id-with-pools
-                    (spec-owner-pools owner)
+                    p
                     index
                     (spec-substitute-type-or-clone mt0 ty)
                     ms
@@ -5721,14 +5806,14 @@
                     owner
                     bindings
                     subs
-                    held
+                    walk
                     (&mut b-ch)))]
               [ch : bool b-ch]
-              [rbody : i64 (spec-sub-step ch owner (& bs) held body-box)]
+              [rbody : i64 (spec-sub-step ch owner (& bs) walk body-box)]
               (if ch
                 (Ok
                   (ast.ast-expr-let-with-pools
-                    (spec-owner-pools owner)
+                    p
                     (if b-ch
                       rb
                       (ast.clone-ast-let-binding-list bindings))
@@ -5744,30 +5829,24 @@
           [in : i64 (ast.ast-for-owned-state-index-name (& payload))]
           [ws : SpecSubst (spec-subst-remove-binder-expr owner subs sn)]
           [is : SpecSubst (spec-subst-remove-binder-expr owner (& ws) in)]
-          [msn : i64 (spec-sub-step ch owner (& is) held sn)]
-          [min : i64 (spec-sub-step ch owner (& is) held in)]
+          [msn : i64 (spec-sub-step ch owner (& is) walk sn)]
+          [min : i64 (spec-sub-step ch owner (& is) walk in)]
           [msrc : i64
             (spec-sub-step
               ch
               owner
               subs
-              held
+              walk
               (ast.ast-for-owned-state-source (& payload)))]
           [mbody : i64
             (spec-sub-step
               ch
               owner
               (& is)
-              held
+              walk
               (ast.ast-for-owned-state-body (& payload)))]
           (if ch
-            (Ok
-              (ast.ast-expr-for-owned-state-with-pools
-                (spec-owner-pools owner)
-                msn
-                min
-                msrc
-                mbody))
+            (Ok (ast.ast-expr-for-owned-state-with-pools p msn min msrc mbody))
             (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
       ;; A step binds its item and done names in its body. Its source and index
       ;; names are uses of the enclosing state's binders, and its expected type
@@ -5786,32 +5865,32 @@
               ch
               owner
               subs
-              held
+              walk
               (ast.ast-for-owned-step-source-name (& payload)))]
           [min : i64
             (spec-sub-step
               ch
               owner
               subs
-              held
+              walk
               (ast.ast-for-owned-step-index-name (& payload)))]
-          [mbn : i64 (spec-sub-step ch owner (& is) held bn)]
+          [mbn : i64 (spec-sub-step ch owner (& is) walk bn)]
           [met : i64
             (if (>= et 0)
-              (spec-sub-step ch owner subs held et)
+              (spec-sub-step ch owner subs walk et)
               -1)]
-          [mdn : i64 (spec-sub-step ch owner (& is) held dn)]
+          [mdn : i64 (spec-sub-step ch owner (& is) walk dn)]
           [mbody : i64
             (spec-sub-step
               ch
               owner
               (& is)
-              held
+              walk
               (ast.ast-for-owned-step-body (& payload)))]
           (if ch
             (Ok
               (ast.ast-expr-for-owned-step-with-pools
-                (spec-owner-pools owner)
+                p
                 msn
                 min
                 mbn
@@ -5836,7 +5915,7 @@
             (match (spec-value-subst-lookup (& subs.values) name)
               [(Some _)
                 (spec-subst-hold-value-failure!
-                  held
+                  (&mut walk.held)
                   (box
                     (spec-diagnostic-at-expr
                       expr
@@ -5850,13 +5929,9 @@
             (let
               [rewritten : i64
                 (try
-                  (spec-substitute-walk-with-owner owner subs held value-box))]
+                  (spec-substitute-walk-with-owner owner subs walk value-box))]
               (if (!= rewritten value-box)
-                (Ok
-                  (ast.ast-expr-set-id-with-pools
-                    (spec-owner-pools owner)
-                    name
-                    rewritten))
+                (Ok (ast.ast-expr-set-id-with-pools p name rewritten))
                 (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
       [(Match match-box)
         (match (& (__tl-box-place match-box))
@@ -5868,7 +5943,7 @@
                   (spec-substitute-walk-with-owner
                     owner
                     subs
-                    held
+                    walk
                     scrutinee-box))]
               [rewritten-arms : ast.AstMatchArmList
                 (try
@@ -5876,12 +5951,12 @@
                     owner
                     arms
                     subs
-                    held
+                    walk
                     (&mut arms-changed?)))]
               (if (or (!= rewritten-scrutinee scrutinee-box) arms-changed?)
                 (Ok
                   (ast.ast-expr-match-with-pools
-                    (spec-owner-pools owner)
+                    p
                     rewritten-scrutinee
                     (if arms-changed?
                       rewritten-arms
@@ -5897,7 +5972,7 @@
               bindings
               body
               subs
-              held)])]
+              walk)])]
       [(PtrAddrOf place-box)
         (let
           [place : ast.AstExpr (spec-owner-expr-get owner place-box)]
@@ -5907,7 +5982,7 @@
             (& subs.values))
             [(Some name-id)
               (spec-subst-hold-value-failure!
-                held
+                (&mut walk.held)
                 (box
                   (spec-diagnostic-at-expr
                     expr
@@ -5920,118 +5995,85 @@
             [(None) unit])
           (let
             [rewritten : i64
-              (try (spec-substitute-walk-with-owner owner subs held place-box))]
+              (try (spec-substitute-walk-with-owner owner subs walk place-box))]
             (if (!= rewritten place-box)
-              (Ok
-                (ast.ast-expr-ptr-addr-of-id-with-pools
-                  (spec-owner-pools owner)
-                  rewritten))
+              (Ok (ast.ast-expr-ptr-addr-of-id-with-pools p rewritten))
               (Ok (spec-substitute-keep-or-push owner expr-id expr)))))]
-      [(Borrow _ _ _) (Ok (spec-substitute-keep-or-push owner expr-id expr))]
+      [(or (Borrow _ _ _) (Literal _))
+        (Ok (spec-substitute-keep-or-push owner expr-id expr))]
       [_
         (spec-substitute-walk-default-with-owner
           owner
           subs
-          held
+          walk
           expr-id
+          expr
           expr-view)])))
 
 (define (spec-substitute-walk-let-bindings-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [bindings : (& ast.AstLetBindingList)]
+  [bs : (& ast.AstLetBindingList)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]
+  [walk : (&mut walk SpecSubstWalk)]
   [changed? : (&mut ch bool)]) : ResultSpecSubLetBindingList
   (let
-    [len : i64 (ast.ast-let-binding-list-len bindings)]
     [scope : SpecSubst (deref subs)]
-    [out : ast.AstLetBindingList (ast.ast-let-binding-list-empty-shared)]
-    [list-changed? : bool false]
-    (for [index (iterator.range 0 len)]
-      (match (ast.ast-let-binding-list-get
-        bindings
-        index
-        (ast.ast-let-binding-fallback))
-        [(Binding name ty value-box)
+    [out : ast.AstLetBindingList (ast.ast-let-binding-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i bs.len)
+      (match (ast.ast-let-binding-list-get bs i (ast.ast-let-binding-fallback))
+        [(Binding name ty v)
           (let
-            [ty-changed? : bool false]
-            [mapped-ty : ast.AstMaybeType
-              (ast.ast-maybe-type-map-if-changed-ref
-                (& ty)
-                ty-changed?
-                spec-substitute-type-hook
+            [tch : bool false]
+            [mty : ast.AstMaybeType
+              (spec-substitute-maybe-type-step
                 owner
-                (& scope)
-                held)]
-            [rewritten : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& scope) held value-box))]
+                (& scope.types)
+                (& ty)
+                (&mut tch))]
+            [r : i64
+              (try (spec-substitute-walk-with-owner owner (& scope) walk v))]
+            [item : ast.AstLetBinding
+              (ast.ast-let-binding-id
+                name
+                (if tch
+                  mty
+                  ty)
+                r)]
             (set! scope (spec-subst-remove-name (& scope) name))
-            (if list-changed?
-              (ast.ast-let-binding-list-push
-                (&mut out)
-                (ast.ast-let-binding-id
-                  name
-                  (if ty-changed?
-                    mapped-ty
-                    ty)
-                  rewritten))
-              (when
-                (or ty-changed? (!= rewritten value-box))
-                (set!
-                  out
-                  (ast.ast-let-binding-list-fork-prefix
-                    bindings
-                    index
-                    (ast.ast-let-binding-id
-                      name
-                      (if ty-changed?
-                        mapped-ty
-                        ty)
-                      rewritten)))
-                (set! list-changed? true))))]))
-    (when list-changed? (set! (deref changed?) true))
+            (spec-copy-push! let ch out bs i (or tch (!= r v)) item))])
+      (set! i (+ i 1)))
+    (when ch (set! (deref changed?) true))
     (Ok out)))
 
 (define (spec-substitute-walk-match-arms-with-owner
   [owner : (& owner SpecOwnerContext)]
   [arms : (& ast.AstMatchArmList)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]
+  [walk : (&mut walk SpecSubstWalk)]
   [changed? : (&mut ch bool)]) : ResultSpecSubMatchArmList
   (let
-    [len : i64 arms.len]
-    [out : ast.AstMatchArmList (ast.ast-match-arm-list-empty-shared)]
-    [list-changed? : bool false]
-    (for [index (iterator.range 0 len)]
-      (match (ast.ast-match-arm-list-get
-        arms
-        index
-        (ast.ast-match-arm-fallback))
-        [(Arm pattern body-box)
+    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i arms.len)
+      (match (ast.ast-match-arm-list-get arms i (ast.ast-match-arm-fallback))
+        [(Arm pat b)
           (let
-            [body-subs : SpecSubst (spec-subst-remove-pattern subs (& pattern))]
-            [rewritten : i64
-              (try
-                (spec-substitute-walk-with-owner
-                  owner
-                  (& body-subs)
-                  held
-                  body-box))]
-            (if list-changed?
-              (ast.ast-match-arm-list-push
-                (&mut out)
-                (ast.ast-match-arm pattern rewritten))
-              (when
-                (!= rewritten body-box)
-                (set!
-                  out
-                  (ast.ast-match-arm-list-fork-prefix
-                    arms
-                    index
-                    (ast.ast-match-arm pattern rewritten)))
-                (set! list-changed? true))))]))
-    (when list-changed? (set! (deref changed?) true))
+            [bsubs : SpecSubst (spec-subst-remove-pattern subs (& pat))]
+            [r : i64
+              (try (spec-substitute-walk-with-owner owner (& bsubs) walk b))]
+            (spec-copy-push!
+              arm
+              ch
+              out
+              arms
+              i
+              (!= r b)
+              (ast.ast-match-arm pat r)))])
+      (set! i (+ i 1)))
+    (when ch (set! (deref changed?) true))
     (Ok out)))
 
 (define (spec-rewrite-decl-with-owner
@@ -6411,7 +6453,8 @@
                   (spec-owner-ctfe-env
                     owner
                     (& (ctfe.ctfe-reflections-from-program (& normalized))))
-                  (spec-place-shared-view owner))]
+                  (spec-place-shared-view owner)
+                  (ast.ast-expr-list-with-capacity 16))]
               (match (spec-rewrite-decls-with-owner
                 owner
                 (& decls)
@@ -6463,7 +6506,8 @@
                       (spec-owner-ctfe-env
                         owner
                         (& (ctfe.ctfe-reflections-from-program (& normalized))))
-                      (spec-place-shared-view owner))]
+                      (spec-place-shared-view owner)
+                      (ast.ast-expr-list-with-capacity 16))]
                   (match (spec-rewrite-decls-with-paths-with-owner
                     owner
                     decls

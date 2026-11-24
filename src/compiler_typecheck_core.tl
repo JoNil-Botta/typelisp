@@ -76051,15 +76051,25 @@
         bound)]
     [(Var name)
       (tc-name-is-free-cleanup-owner? owners (tc-env-key-name-text name) bound)]
-    ;; Every child of these is in result position.
+    ;; The last expression child of these is in result position.
     [(or (MacroExpansion _ _ _) (Ann _ _) (Cast _ _) (Comptime _) (Try _)
          (Return _) (BoxGet _) (BoxTake _) (LaneValue _) (Begin _) (Unsafe _)
-         (WithRegion _ _) (WithScratch _) (BoxSet _ _))
+         (WithRegion _ _) (WithScratch _))
       (tc-expr-list-result-uses-cleanup-owner?
         expr-bases
         (ast.ast-expr-child-ids expr)
         owners
         bound)]
+    ;; Both the box and the stored value are in result position.
+    [(BoxSet _ _)
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        (tc-expr-list-any-result-uses-cleanup-owner-at?
+          expr-bases
+          (& children)
+          0
+          owners
+          bound))]
     [(If _ then-branch-box else-branch-box)
       (let
         [then-branch : ast.AstExpr

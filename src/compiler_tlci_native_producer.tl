@@ -526,6 +526,7 @@
     [(SpmdCompact _) "spmd-compact"]
     [(ForeachActive _ _) "foreach-active"]
     [(LaneValue _) "lane-value"]
+    [(CloneOut _ _) "clone-out"]
     [(Unsafe _) "unsafe"]
     [(Literal (Float _)) "float-literal"]
     [(Literal _) "literal"]
@@ -610,6 +611,17 @@
 (defenum ResultProducerBytes
   (Ok (__tl_dyn-array u8))
   (Err String))
+
+(define (clone-result-producer-bytes [value : (& value ResultProducerBytes)]) : ResultProducerBytes
+  (match value
+    [(Ok bytes)
+      (let
+        [count : i64 (array-length bytes)]
+        [dst : (__tl_dyn-array u8) (__tl_make-array u8 count)]
+        (for [index (iterator.range 0 count)]
+          (set! (array-ref dst index) (array-ref bytes index)))
+        (Ok dst))]
+    [(Err message) (Err (string.copy message))]))
 
 ;; Per-body op budget. A template node costs its construction op plus the
 ;; span op that rebuilds the parser's wrapper, so a body needs about two ops

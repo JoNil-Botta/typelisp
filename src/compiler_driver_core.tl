@@ -5053,6 +5053,14 @@
   (Ok compiler_ast_types.AstDeclPathList)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
+(define (clone-result-compiler-driver-package-paths
+  [value : (& value ResultCompilerDriverPackagePaths)]) : ResultCompilerDriverPackagePaths
+  (match value
+    [(Ok paths) (Ok (compiler_ast_types.clone-ast-decl-path-list paths))]
+    [(Err diag)
+      (Err
+        (box (compiler_diagnostic.clone-compiler-diagnostic (& (deref diag)))))]))
+
 ;; Only copied strings cross the discovery boundary. Interned ownership and
 ;; provenance ids belong to the retiring session, and are deliberately absent.
 (define (compiler-driver-copy-package-discovery-paths

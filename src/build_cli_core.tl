@@ -10,6 +10,8 @@
 (import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.fs)
+
+;; lint-allow: unused-import -- used only by cfg-gated code.
 (import stdlib.arena)
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -3531,6 +3533,18 @@
   (Ok String (__tl_dyn-array String) String)
   (Err String))
 
+(define (clone-result-build-package-tlci-exports
+  [value : (& value ResultBuildPackageTlciExports)]) : ResultBuildPackageTlciExports
+  (match value
+    [(Ok metadata names native-source)
+      (let
+        [count : i64 (array-length names)]
+        [dst : (__tl_dyn-array String) (__tl_make-array String count)]
+        (for [index (iterator.range 0 count)]
+          (set! (array-ref dst index) (string.copy (& (array-ref names index)))))
+        (Ok (string.copy metadata) dst (string.copy native-source)))]
+    [(Err message) (Err (string.copy message))]))
+
 (define (build-package-tlci-capture-exports
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [manifest : (& manifest load.CompilerPkgManifest)]
@@ -3538,30 +3552,16 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [source-set : (& source-set package_source_core.PackageSourceSet)]) : ResultBuildPackageTlciExports
-  (let
-    [home : arena.Arena (arena.current)]
-    (with-scratch
-      (match (unsafe
-        ;; unsafe: the native report strings are read before this arena ends
-        (build-package-tlci-collect-exports
-          context
-          manifest
-          mode
-          decls
-          paths
-          source-set))
-        [(Err message) (in-arena home (Err (string.copy message)))]
-        [(Ok metadata names native-source)
-          (in-arena
-            home
-            (let
-              [count : i64 (array-length names)]
-              [copied : (__tl_dyn-array String) (__tl_make-array String count)]
-              (for [index (iterator.range 0 count)]
-                (set!
-                  (array-ref copied index)
-                  (string.copy (array-ref names index))))
-              (Ok (string.copy metadata) copied (string.copy native-source))))]))))
+  ;; The clone-out copies the native report strings before this arena ends.
+  (with-scratch
+    (unsafe
+      (build-package-tlci-collect-exports
+        context
+        manifest
+        mode
+        decls
+        paths
+        source-set))))
 
 (define (build-package-tlci-collect-exports
   [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
@@ -5560,6 +5560,15 @@
   (defenum ResultBuildPackageEmit
     (Finished i64)
     (Preflight cli_svec.Vec bool)))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (clone-result-build-package-emit
+    [value : (& value ResultBuildPackageEmit)]) : ResultBuildPackageEmit
+    (match value
+      [(Finished status) (Finished status)]
+      [(Preflight inline-sources doctests)
+        (Preflight (cli_svec.clone-vec inline-sources) doctests)])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

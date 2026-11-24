@@ -14614,6 +14614,354 @@
           (& dst)
           ty)))))
 
+(define (compiler-backend-direct-stack-param-note-use!
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [var : i64]
+  [remaining : i64]) : i64
+  (when
+    (and
+      (>= var 0)
+      (< var (array-length offsets))
+      (> (array-ref offsets var) 0))
+    (let
+      [next : i64 (+ (array-ref refs var) 1)]
+      (set! (array-ref refs var) next)
+      (when (> next 16) (set! (array-ref offsets var) 0) (-= remaining 1))))
+  remaining)
+
+(define (compiler-backend-direct-stack-param-count-uses!
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [instr : (& compiler_ir_types.CompilerIrInstr)]
+  [remaining : i64]) : i64
+  (let
+    [ids : (__tl_dyn-array i64) (compiler_liveness.compiler-live-instr-ids)]
+    [id-count : i64 (compiler_liveness.compiler-live-instr-use-ids! instr)]
+    (if (< id-count 0)
+      (let
+        [uses : compiler_liveness.CompilerLiveI64Set
+          (compiler_liveness.compiler-live-instr-uses instr)]
+        [word-count : i64
+          (compiler_liveness.compiler-live-set-word-count (& uses))]
+        [word-bits : i64 (compiler_liveness.compiler-live-set-word-bits)]
+        (for [w (iterator.range 0 word-count)]
+          (let
+            [bits : i64
+              (compiler_liveness.compiler-live-set-word-at-bounded (& uses) w)]
+            [base : i64 (* w word-bits)]
+            (while (!= bits 0)
+              (let
+                [bit : i64
+                  (compiler_regalloc.compiler-reg-low-bit-index32 bits)]
+                (set!
+                  remaining
+                  (compiler-backend-direct-stack-param-note-use!
+                    offsets
+                    refs
+                    (+ base bit)
+                    remaining))
+                (when (<= remaining 0) (return 0))
+                (set! bits (bit-and bits (- bits 1))))))))
+      (for [index (iterator.range 0 id-count)]
+        (set!
+          remaining
+          (compiler-backend-direct-stack-param-note-use!
+            offsets
+            refs
+            (array-ref ids index)
+            remaining))
+        (when (<= remaining 0) (return 0))))
+    remaining))
+
+(define (compiler-backend-direct-stack-param-filter-instr!
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [source-function : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [block-label : i64]
+  [frame-may-escape-state : (&mut frame-may-escape-state (__tl_dyn-array i64))]
+  [instr : (& compiler_ir_types.CompilerIrInstr)]
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [count-hot? : bool]
+  [remaining : i64]) : i64
+  (match instr
+    [(TailCallIndirect _ _ _) (return 0)]
+    [(TailCall callee args _)
+      (when
+        (be_calls.compiler-backend-tail-call-writes-stack-args?
+          type-segment-bases
+          target
+          source-function
+          callee
+          (compiler_ir_types.compiler-ir-call-args-count (& args))
+          program-index)
+        (let
+          [known : i64 (array-ref frame-may-escape-state 0)]
+          [may-escape? : bool
+            (if (= known 0)
+              (let
+                [computed : bool
+                  (compiler_ir_types.compiler-ir-blocks-frame-may-escape?
+                    blocks)]
+                (set!
+                  (array-ref frame-may-escape-state 0)
+                  (if computed
+                    2
+                    1))
+                computed)
+              (= known 2))]
+          (unless
+            (compiler_ir_types.compiler-ir-blocks-expose-frame-at-given?
+              blocks
+              may-escape?
+              block-label)
+            (return 0))))]
+    [(AddrOf _ src _)
+      (when
+        (and
+          (>= src 0)
+          (< src (array-length offsets))
+          (> (array-ref offsets src) 0))
+        (set! (array-ref offsets src) 0)
+        (-= remaining 1))]
+    [_ unit])
+  (let
+    [dst : i64 (compiler_ir_types.compiler-ir-instr-dst instr)]
+    (when
+      (and
+        (>= dst 0)
+        (< dst (array-length offsets))
+        (> (array-ref offsets dst) 0))
+      (set! (array-ref offsets dst) 0)
+      (-= remaining 1)))
+  (if (and count-hot? (> remaining 0))
+    (compiler-backend-direct-stack-param-count-uses!
+      offsets
+      refs
+      instr
+      remaining)
+    remaining))
+
+(define (compiler-backend-direct-stack-param-filter-instrs!
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [source-function : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [block-label : i64]
+  [frame-may-escape-state : (&mut frame-may-escape-state (__tl_dyn-array i64))]
+  [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [refs : (&mut refs (__tl_dyn-array i64))]
+  [count-hot? : bool]
+  [remaining : i64]) : i64
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
+    (for [i (iterator.range 0 count)]
+      (set!
+        remaining
+        (compiler-backend-direct-stack-param-filter-instr!
+          type-segment-bases
+          target
+          source-function
+          program-index
+          blocks
+          block-label
+          frame-may-escape-state
+          (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
+          offsets
+          refs
+          count-hot?
+          remaining))
+      (when (<= remaining 0) (return 0))))
+  remaining)
+
+;; Filter candidate direct-home incoming stack parameters against the function
+;; body in one pass: any TailCallIndirect or stack-arg-writing direct TailCall
+;; disqualifies the whole function (caller incoming stack-arg slots can be
+;; overwritten before the tail jump), any AddrOf or instruction/Phi write
+;; disqualifies that parameter, and in large frames (`count-hot?`) any
+;; candidate with >16 body uses is disqualified so it keeps a disp8 local slot.
+(define (compiler-backend-direct-stack-param-filter-blocks!
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [source-function : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [offsets : (&mut offsets (__tl_dyn-array i64))]
+  [count-hot? : bool]
+  [remaining : i64]) : i64
+  (let
+    [frame-may-escape-state : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [refs : (__tl_dyn-array i64)
+      (if count-hot?
+        (__tl_make-array i64 (array-length offsets))
+        (__tl_make-array i64 0))]
+    (match blocks
+      [(Array seq)
+        (for [b
+          (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count seq))]
+          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+            [(Block block-label instrs)
+              (set!
+                remaining
+                (compiler-backend-direct-stack-param-filter-instrs!
+                  type-segment-bases
+                  target
+                  source-function
+                  program-index
+                  blocks
+                  block-label
+                  (&mut frame-may-escape-state)
+                  (& instrs)
+                  offsets
+                  (&mut refs)
+                  count-hot?
+                  remaining))
+              (when (<= remaining 0) (return 0))]))]))
+  remaining)
+
+;; Identify incoming 8-byte scalar/f64 stack parameters that can be read
+;; directly from their caller-frame stack homes (`16+8*idx` SysV,
+;; `48+8*idx` Win64) without a prologue copy or local spill slot.
+(define (compiler-backend-direct-stack-param-offsets
+  [type-segment-bases : i64]
+  [target : be_state.CompilerBackendTarget]
+  [mode : be_state.CompilerBackendMode]
+  [scalar-registers-enabled : bool]
+  [name : i64]
+  [params : (& compiler_ir_types.CompilerIrParamSeq)]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [plan : (& compiler_regalloc.CompilerRegPlan)]
+  [fn-group-vars : (& compiler_liveness.CompilerLiveI64Set)]
+  [vars : i64]
+  [slot-candidate-vars : i64]
+  [program-index : be_state.CompilerBackendProgramIndex]) : (__tl_dyn-array i64)
+  (let
+    [plan-assignments : compiler_regalloc.CompilerRegAssignmentTable
+      (compiler_regalloc.compiler-reg-plan-assignments plan)]
+    (when
+      (or
+        (not scalar-registers-enabled)
+        (not (be_state.compiler-backend-mode-scalar? mode))
+        (compiler_ir_types.compiler-debug-info-enabled?)
+        (= params.len 0)
+        (<= vars 0)
+        (compiler_regalloc.compiler-reg-assignment-table-empty?
+          plan-assignments)
+        (compiler-backend-spmd-private-function?
+          program-index.backend-state
+          name)
+        (be_operand.compiler-backend-index-c-export? program-index name))
+      (return (__tl_make-array i64 0)))
+    (let
+      [offsets : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+      [candidate-count : i64 0]
+      [banks : (Array i64 4) (make-array i64 4)]
+      (for [param-index (iterator.range 0 params.len)]
+        (match (compiler_ir_types.compiler-ir-param-seq-borrow
+          params
+          param-index)
+          [(Param param-name ty var-id)
+            (let
+              [param-stack-idx : i64
+                (be_calls.compiler-backend-abi-bank-step!
+                  type-segment-bases
+                  target
+                  (Internal)
+                  program-index
+                  (& ty)
+                  (&mut banks))]
+              (when
+                (>= param-stack-idx 0)
+                (let
+                  [incoming-offset : i64
+                    (be_facts.compiler-backend-incoming-stack-arg-offset
+                      target
+                      param-stack-idx)]
+                  [stack-homed? : bool
+                    (match (compiler_regalloc.compiler-reg-assignment-table-lookup
+                      plan-assignments
+                      var-id)
+                      [(Some location)
+                        (match location
+                          [(Spill _) true]
+                          [_ false])]
+                      [(No) true])]
+                  (when
+                    (and
+                      (> incoming-offset 0)
+                      (>= var-id 0)
+                      (< var-id vars)
+                      (< var-id slot-candidate-vars)
+                      stack-homed?
+                      (not
+                        (compiler_regalloc.compiler-reg-spmd-wide-param?
+                          param-name))
+                      (not
+                        (compiler_liveness.compiler-live-set-contains?
+                          fn-group-vars
+                          var-id))
+                      (=
+                        (be_operand.compiler-backend-type-size
+                          type-segment-bases
+                          (& ty))
+                        8))
+                    (when
+                      (= (array-length offsets) 0)
+                      (set! offsets (__tl_make-array i64 vars)))
+                    (when
+                      (= (array-ref offsets var-id) 0)
+                      (set! (array-ref offsets var-id) incoming-offset)
+                      (+= candidate-count 1))))))]))
+      (if (= candidate-count 0)
+        (__tl_make-array i64 0)
+        (let
+          [remaining : i64
+            (compiler-backend-direct-stack-param-filter-blocks!
+              type-segment-bases
+              target
+              name
+              program-index
+              blocks
+              (&mut offsets)
+              (> vars 16)
+              candidate-count)]
+          (if (<= remaining 0)
+            (__tl_make-array i64 0)
+            offsets))))))
+
+;; Overlay positive caller-frame `(Spill +offset)` homes onto the post-coloring
+;; assignment table for eligible direct-home incoming stack parameters.
+(define (compiler-backend-overlay-direct-stack-params
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [coloring : (& compiler_regalloc.CompilerRegColoring)]
+  [direct-stack-offsets : (& (__tl_dyn-array i64))]) : compiler_regalloc.CompilerRegAssignmentTable
+  (let
+    [n : i64 (array-length direct-stack-offsets)]
+    (if (= n 0)
+      assignments
+      (match coloring
+        [(None) assignments]
+        [(Remap remap _)
+          (let
+            [out : compiler_regalloc.CompilerRegAssignmentTable assignments]
+            (for [v (iterator.range 0 n)]
+              (let
+                [off : i64 (array-ref direct-stack-offsets v)]
+                (when
+                  (> off 0)
+                  (set!
+                    out
+                    (compiler_regalloc.compiler-reg-assignment-table-insert
+                      out
+                      (compiler_regalloc.compiler-reg-remap-id (& remap) v)
+                      (Spill off))))))
+            out)]))))
+
 (define (compiler-backend-emit-param-spills-from
   [entry : (&mut entry be_state.CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
@@ -14886,93 +15234,122 @@
                 float-idx
                 position)
                 (let
-                  [addr : String
-                    (be_operand.compiler-backend-frame-offset-with-backend-state
+                  [incoming-offset : i64
+                    (be_facts.compiler-backend-incoming-stack-arg-offset
+                      target
+                      stack-idx)]
+                  [direct-home? : bool
+                    (match (be_operand.compiler-backend-emit-assignment-lookup
                       backend-state
-                      (be_facts.compiler-backend-incoming-stack-arg-offset
-                        target
-                        stack-idx))]
-                  ;; A float with a register home loads straight into it
-                  ;; below.
-                  [entry-copy? : bool
-                    (compiler-backend-param-entry-float-copy?
-                      is-float
                       assignments
-                      var-id
-                      backend-state)]
-                  [_entry-copy : unit
-                    (when
-                      entry-copy?
-                      (compiler-backend-param-entry-float-copy!
-                        entry
-                        target
-                        assignments
-                        var-id
-                        addr
-                        ty
-                        backend-state))]
-                  [tail
-                    (try
-                      (compiler-backend-emit-param-spills-from
-                        entry
-                        type-segment-bases
-                        target
-                        assignments
-                        (be_state.compiler-backend-global-shared-view
-                          all-params)
-                        params
-                        (+ param-index 1)
-                        next-int
-                        next-float
-                        (+ position 1)
-                        (+ stack-idx 1)
-                        program-index
-                        vars
-                        backend-state))]
-                  (Ok
+                      var-id)
+                      [(Some location)
+                        (match location
+                          [(Spill offset) (= offset incoming-offset)]
+                          [_ false])]
+                      [(No) false])]
+                  (if direct-home?
+                    (compiler-backend-emit-param-spills-from
+                      entry
+                      type-segment-bases
+                      target
+                      assignments
+                      all-params
+                      params
+                      (+ param-index 1)
+                      next-int
+                      next-float
+                      (+ position 1)
+                      (+ stack-idx 1)
+                      program-index
+                      vars
+                      backend-state)
                     (let
-                      [exclude-n : i64
-                        (be_scalar.compiler-backend-param-register-exclude-count
+                      [addr : String
+                        (be_operand.compiler-backend-frame-offset-with-backend-state
                           backend-state
-                          (be_state.compiler-backend-global-shared-view
-                            all-params)
-                          assignments)]
-                      [exclude : (__tl_dyn-array String)
-                        (be_scalar.compiler-backend-param-register-exclude
-                          backend-state
-                          all-params
-                          assignments)]
-                      (str_cat.str-cat
-                        (cond
-                          [entry-copy? ""]
-                          [is-float
-                            (be_scalar.compiler-backend-emit-load-float-address-to-var
-                              assignments
-                              var-id
-                              addr
-                              ty
-                              backend-state)]
-                          [else
-                            (be_scalar.compiler-backend-emit-load-scalar-address-to-var
-                              type-segment-bases
-                              assignments
-                              var-id
-                              addr
-                              ty
+                          incoming-offset)]
+                      ;; A float with a register home loads straight into it
+                      ;; below.
+                      [entry-copy? : bool
+                        (compiler-backend-param-entry-float-copy?
+                          is-float
+                          assignments
+                          var-id
+                          backend-state)]
+                      [_entry-copy : unit
+                        (when
+                          entry-copy?
+                          (compiler-backend-param-entry-float-copy!
+                            entry
+                            target
+                            assignments
+                            var-id
+                            addr
+                            ty
+                            backend-state))]
+                      [tail
+                        (try
+                          (compiler-backend-emit-param-spills-from
+                            entry
+                            type-segment-bases
+                            target
+                            assignments
+                            (be_state.compiler-backend-global-shared-view
+                              all-params)
+                            params
+                            (+ param-index 1)
+                            next-int
+                            next-float
+                            (+ position 1)
+                            (+ stack-idx 1)
+                            program-index
+                            vars
+                            backend-state))]
+                      (Ok
+                        (let
+                          [exclude-n : i64
+                            (be_scalar.compiler-backend-param-register-exclude-count
+                              backend-state
                               (be_state.compiler-backend-global-shared-view
-                                exclude)
-                              exclude-n
-                              (be_operand.compiler-backend-scavenge-pick-with-mask
-                                (be_state.compiler-backend-state-function-state
-                                  backend-state)
-                                true
-                                0
-                                0
-                                exclude
-                                exclude-n
-                                "%r8")
-                              backend-state)])
-                        tail))))
+                                all-params)
+                              assignments)]
+                          [exclude : (__tl_dyn-array String)
+                            (be_scalar.compiler-backend-param-register-exclude
+                              backend-state
+                              all-params
+                              assignments)]
+                          (str_cat.str-cat
+                            (cond
+                              [entry-copy? ""]
+                              [is-float
+                                (be_scalar.compiler-backend-emit-load-float-address-to-var
+                                  assignments
+                                  var-id
+                                  addr
+                                  ty
+                                  backend-state)]
+                              [else
+                                (be_scalar.compiler-backend-emit-load-scalar-address-to-var
+                                  type-segment-bases
+                                  assignments
+                                  var-id
+                                  addr
+                                  ty
+                                  (be_state.compiler-backend-global-shared-view
+                                    exclude)
+                                  exclude-n
+                                  (be_operand.compiler-backend-scavenge-pick-with-mask
+                                    (be_state.compiler-backend-state-function-state
+                                      backend-state)
+                                    true
+                                    0
+                                    0
+                                    exclude
+                                    exclude-n
+                                    "%r8")
+                                  backend-state)])
+                            tail))))))
                 (match (if is-float
                   (be_facts.compiler-backend-target-float-arg-reg-for-banks
                     target
@@ -21270,6 +21647,25 @@
             fusion-pinned-vars
             (be_state.compiler-backend-global-shared-view
               source-span-pinned-vars))]
+        ;; Direct caller-frame stack homes for eligible read-only 8-byte
+        ;; incoming stack parameters: skip local spill slots during coloring
+        ;; and elide their prologue copies.
+        [direct-stack-offsets : (__tl_dyn-array i64)
+          (if (not color-stack-slots?)
+            (__tl_make-array i64 0)
+            (compiler-backend-direct-stack-param-offsets
+              type-segment-bases
+              target
+              mode
+              scalar-registers-enabled
+              name
+              (& params)
+              (& rewritten-blocks)
+              (& rewritten-reg-plan)
+              (& fn-group-vars)
+              scratch-vars
+              rewritten-vars
+              program-index))]
         ;; Compact the frame after planning by renumbering stack-resident
         ;; values into a dense slot prefix. Scalar stack-only opt0/opt1 plans
         ;; carry conservative CFG intervals specifically for this pass; plans
@@ -21294,6 +21690,7 @@
               scratch-vars
               rewritten-vars
               (& coloring-pinned-vars)
+              (& direct-stack-offsets)
               (and
                 (be_state.compiler-backend-mode-scalar? mode)
                 (not scalar-registers-enabled))))]
@@ -21324,16 +21721,19 @@
                   remap)
                 (owned_view.compiler-owned-shared-view coloring-spans))])]
         [assignments : compiler_regalloc.CompilerRegAssignmentTable
-          (match (be_state.compiler-backend-global-shared-view coloring)
-            [(None)
-              (compiler_regalloc.compiler-reg-plan-assignments
-                (& rewritten-reg-plan))]
-            [(Remap remap _)
-              (compiler_regalloc.compiler-reg-color-rebuild-assignments
-                (& remap)
-                emit-vars
+          (compiler-backend-overlay-direct-stack-params
+            (match (be_state.compiler-backend-global-shared-view coloring)
+              [(None)
                 (compiler_regalloc.compiler-reg-plan-assignments
-                  (& rewritten-reg-plan)))])]
+                  (& rewritten-reg-plan))]
+              [(Remap remap _)
+                (compiler_regalloc.compiler-reg-color-rebuild-assignments
+                  (& remap)
+                  emit-vars
+                  (compiler_regalloc.compiler-reg-plan-assignments
+                    (& rewritten-reg-plan)))])
+            (& coloring)
+            (& direct-stack-offsets))]
         ;; Install the final authoritative table for direct operand-home lookup
         ;; in large functions. Caller-save and
         ;; slot-coloring re-plans are all folded into this table, so no emission
@@ -22243,9 +22643,9 @@
                               function-state
                               be_state.compiler-backend-function-bool-frame-slot-referenced))
                           (not
-                            (compiler-backend-blocks-have-returning-call?
-                              (compiler_ir_types.compiler-ir-block-list-view
-                                emit-blocks-list)))))]
+                            (be_state.compiler-backend-function-state-bool?
+                              function-state
+                              be_state.compiler-backend-function-bool-call-align-needed))))]
                     ;; GAP1 corollary: in PUSH mode the callee-save slot
                     ;; region is never written -- the rebase deletes the
                     ;; mov save/restore pairs and rewrites the pop-run

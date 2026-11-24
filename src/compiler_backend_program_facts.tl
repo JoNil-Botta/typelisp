@@ -940,9 +940,9 @@
           value
           0)))))
 
-(define (compiler-backend-abi-memory-size
+(define (compiler-backend-abi-memory-size-ref
   [type-segment-bases : i64]
-  [ty : compiler_ast_types.AstType]) : i64
+  [ty : (& ty compiler_ast_types.AstType)]) : i64
   (match ty
     [(or (Struct name) (StructArgs name _))
       (if (compiler_ir_types.compiler-ir-symbol-owned? name)
@@ -950,10 +950,18 @@
           (compiler_ir_types.compiler-ir-symbol-text name))
         0)]
     [(Region _ inner)
-      (compiler-backend-abi-memory-size
+      (compiler-backend-abi-memory-size-ref
         type-segment-bases
-        (compiler_ast_types.ast-type-segment-bases-get type-segment-bases inner))]
+        (&
+          (compiler_ast_types.ast-type-segment-bases-get
+            type-segment-bases
+            inner)))]
     [_ 0]))
+
+(define (compiler-backend-abi-memory-size
+  [type-segment-bases : i64]
+  [ty : compiler_ast_types.AstType]) : i64
+  (compiler-backend-abi-memory-size-ref type-segment-bases (& ty)))
 
 ;; Share the function/block traversal while keeping each instruction
 ;; sequence leaf direct, avoiding a callback or tagged dispatch per instruction.

@@ -6135,7 +6135,8 @@
 ;; other, so the loop is not a leaf region and the constant hoister must not
 ;; carry the `% 3` magic across it in %r8 (#8198). A declined hoist
 ;; rematerializes the magic at its use; `movabsq` then sits right before the
-;; `imulq`, never at the preheader label.
+;; unsigned `mulq` (since `cvp_range` proves `i >= 0`), never at the preheader
+;; label.
 (define compiler-backend-spmd-call-loop-divmod-source : String
   "(define (store-flags
   [out : (&mut out (__tl_dyn-array i64))]
@@ -6162,8 +6163,8 @@
     [(Ok asm)
       (and
         (asm-has? asm "    call _tl_f0\n")
-        (asm-has? asm "    movabsq $6148914691236517206, %r8\n    imulq %r8\n")
-        (asm-lacks? asm "__preheader:\n    movabsq $6148914691236517206"))]
+        (asm-has? asm "    movabsq $-6148914691236517205, %r8\n    mulq %r8\n")
+        (asm-lacks? asm "__preheader:\n    movabsq $-6148914691236517205"))]
     [(Err _) false]))
 
 (define (compiler-backend-spmd-call-loop-divmod-ok?) : bool

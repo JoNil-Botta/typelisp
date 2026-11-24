@@ -14,6 +14,7 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-timing.sh"
 . "$ROOT/scripts/lib-bounded-pool.sh"
+. "$ROOT/scripts/lib-manifest.sh"
 BOUNDED_POOL_LABEL=selfhost-compile
 
 # --self-test-pool runs only the self-tests (the expectation checker on
@@ -43,7 +44,7 @@ case "$(uname -s)" in
     *) ;;
 esac
 
-MANIFEST=${TYPELISP_COMPILE_MANIFEST:-src/compile_manifest.txt}
+MANIFEST=${TYPELISP_COMPILE_MANIFEST:-src/compile_manifest.d}
 WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
 # The batch driver scopes each entry's compile in its own arena region
@@ -127,14 +128,14 @@ if [ "$SELF_TEST_POOL" -eq 0 ]; then
         exit 1
     fi
 
-    if [ ! -f "$MANIFEST" ]; then
-        echo "compile manifest does not exist: $MANIFEST" >&2
+    if [ ! -d "$MANIFEST" ]; then
+        echo "compile manifest directory does not exist: $MANIFEST" >&2
         exit 1
     fi
 
     rm -rf "$WORKDIR"
     mkdir -p "$WORKDIR"
-    tr -d '\r' < "$MANIFEST" > "$MANIFEST_INPUT"
+    manifest_concat_dir "$MANIFEST" > "$MANIFEST_INPUT"
 fi
 
 GATE_FAIL_PREFIX='FAIL: '

@@ -1,0 +1,73 @@
+# Selfhost compile manifest: integration driver assembly/symbol expectations.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|integration_calc|tests/integration/calc.tl|assembly|exactly-one|direct
+contains|call tl_alloc
+contains|call tl_oob_abort
+contains|call _tl_panic_at
+contains|call _tl_lex
+contains|call _tl_parse
+contains|call _tl_parse_expr
+contains|call _tl_parse_term
+contains|call _tl_parse_factor
+contains|call _tl_eval
+end
+
+case|integration_ownership_certified_scalar_control|tests/integration/ownership_certified_scalar_control.tl|assembly|exactly-one|direct
+contains|_tl_ownership_certified_scalar_control_captured_left:
+end
+
+case|integration_clone_macro_handoff|tests/integration/clone_macro_handoff.tl|assembly|exactly-one|direct
+contains|_tl_clone_macro_handoff_clone_u24CloneMacroUsed:
+contains|_tl_clone_macro_handoff_clone_u24CloneMacroChoice:
+not-contains|_tl_clone_macro_handoff_clone_u24CloneMacroUnused
+end
+
+case|integration_lexer|tests/integration/lexer.tl|assembly|present|direct
+contains|call tl_alloc
+contains|substring_copy_checked
+not-contains|call tl_substring
+end
+
+case|integration_parser|tests/integration/parser.tl|assembly|present|direct
+contains|call tl_alloc
+contains|call tl_oob_abort
+contains|call _tl_panic_at
+contains|call _tl_parse_term
+contains|call _tl_parse_factor
+contains|call _tl_parse_expr
+contains|call _tl_eval
+end
+
+case|integration_maybe_result|tests/integration/maybe_result.tl|assembly|present|direct
+not-contains|tl_string_eq:
+not-contains|call tl_string_eq
+contains|string_append
+not-contains|tl_string_concat:
+not-contains|call tl_string_concat
+not-contains|tl_string_to_int:
+not-contains|call tl_string_to_int
+not-contains|tl_hash_string:
+not-contains|call tl_hash_string
+contains|call tl_alloc
+end
+
+case|integration_nested_eval|tests/integration/nested_eval.tl|assembly|present|direct
+contains|match_nested
+contains|string_eq
+contains|call _tl_eval_sexpr
+contains|call _tl_eval_atom
+contains|call _tl_panic_at
+end
+
+case|integration_nullary_variant_call|tests/integration/nullary_variant_call.tl|assembly|skip|direct
+not-contains|call _tl_Red
+not-contains|call _tl_Green
+end
+
+case|integration_sym_i64_env|tests/integration/sym_i64_env.tl|assembly|present|stage
+copy|src/sym_i64_env.tl|sym_i64_env_core.tl
+not-contains|tl_string_eq:
+not-contains|call tl_string_eq
+count-at-least|call _tl_sym_i64_lookup_id|2
+end

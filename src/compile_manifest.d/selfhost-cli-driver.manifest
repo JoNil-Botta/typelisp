@@ -1,0 +1,29 @@
+# Selfhost compile manifest: CLI entry point, driver, loader, and module/state orchestration.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|selfhost_main|src/main.tl|assembly|exactly-one|direct
+not-contains|root_list_append
+end
+
+case|selfhost_build_run_core|src/build_run_core.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_dependency_trace|src/compiler_dependency_trace.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_driver_core|src/compiler_driver_core.tl|assembly|none|direct
+not-contains|_tl_compiler_driver_emit_package_loaded:
+not-contains|_tl_compiler_driver_emit_package_loaded_object_image:
+end
+
+case|selfhost_compiler_load|src/compiler_load.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_state_schema|src/compiler_state_schema.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_module_name|src/compiler_module_name.tl|assembly|none|direct
+end

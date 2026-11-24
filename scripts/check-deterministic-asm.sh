@@ -43,6 +43,7 @@ esac
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
+. "$ROOT/scripts/lib-manifest.sh"
 
 WORKDIR=${DETERMINISTIC_ASM_DIR:-target/deterministic-asm}
 RUN1="$WORKDIR/run1"
@@ -143,7 +144,7 @@ compile_source_for_case() {
 # is still two independent compiles by the same binary, compared byte-for-byte
 # (and the shared entries additionally assert batch/single-compile parity).
 MANIFEST_SHARE_DIR=${TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR:-}
-MANIFEST_FILE=${TYPELISP_COMPILE_MANIFEST:-src/compile_manifest.txt}
+MANIFEST_DIR=${TYPELISP_COMPILE_MANIFEST:-src/compile_manifest.d}
 
 compiler_input_path() {
     if command -v cygpath >/dev/null 2>&1; then
@@ -155,10 +156,15 @@ compiler_input_path() {
 
 manifest_case_id_for_source() {
     [ -n "$MANIFEST_SHARE_DIR" ] || return 1
-    [ -f "$MANIFEST_FILE" ] || return 1
-    _id=$(tr -d '\r' < "$MANIFEST_FILE" | awk -F'|' -v src="$1" '
+    [ -d "$MANIFEST_DIR" ] || return 1
+    _combined="$WORKDIR/.compile-manifest.combined"
+    if [ ! -f "$_combined" ]; then
+        mkdir -p "$WORKDIR"
+        manifest_concat_dir "$MANIFEST_DIR" > "$_combined" || return 1
+    fi
+    _id=$(awk -F'|' -v src="$1" '
         $1 == "case" && $3 == src && $6 == "direct" { print $2; exit }
-    ')
+    ' "$_combined")
     [ -n "$_id" ] || return 1
     printf '%s\n' "$_id"
 }

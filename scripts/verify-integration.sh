@@ -373,7 +373,8 @@ if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     fi
 fi
 
-MANIFEST="$ROOT/tests/integration/native.manifest"
+. "$ROOT/scripts/lib-manifest.sh"
+MANIFEST_DIR="$ROOT/tests/integration/manifest.d"
 WORKDIR="$ROOT/target/integration-verify/$HOST_OS$WORK_SUFFIX"
 _work_root_owned=0
 case "$WORKDIR" in
@@ -399,9 +400,11 @@ source_location_self_test "$WORKDIR/source-location-self-test"
 # manifest's $SRC placeholder use, so two shards never share a staged case.
 # validate_manifest below checks every row of them; integration_select_shard
 # derives the rows this shard runs.
+COMBINED_MANIFEST="$WORKDIR/manifest.combined"
+manifest_concat_dir "$MANIFEST_DIR" > "$COMBINED_MANIFEST"
 HOST_MANIFEST="$WORKDIR/manifest.normalized"
 awk -v host="$HOST_OS" -v work_root="target/integration-verify/$HOST_OS$INTEGRATION_SHARD_SUFFIX" \
-    -f "$ROOT/scripts/expand-integration-manifest.awk" "$MANIFEST" \
+    -f "$ROOT/scripts/expand-integration-manifest.awk" "$COMBINED_MANIFEST" \
     > "$HOST_MANIFEST"
 
 # Batch chunks compile in a bounded pool (scripts/lib-bounded-pool.sh):
@@ -1203,7 +1206,7 @@ validate_manifest() {
     [ "$HOST_OS" = linux ] || _other_host=linux
     awk -v host="$_other_host" -v work_root="target/integration-verify/$_other_host" \
         -f "$ROOT/scripts/expand-integration-manifest.awk" \
-        "$MANIFEST" > "$WORKDIR/manifest.$_other_host" || return 1
+        "$COMBINED_MANIFEST" > "$WORKDIR/manifest.$_other_host" || return 1
     awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known.$_other_host" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \
         "$_catalog" "$WORKDIR/manifest.$_other_host" || return 1
@@ -2082,7 +2085,7 @@ manifest_row_batch_group() {
 # and the summary all read NORMALIZED_MANIFEST, which holds exactly the rows of
 # INTEGRATION_BATCH_GROUPS. Every other row still runs in the shard that names
 # its group. A row whose group no shard names fails the run, so a group added
-# to tests/integration/native.manifest cannot leave CI, and the manifest
+# to tests/integration/manifest.d/*.manifest cannot leave CI, and the manifest
 # validation above still checks every row of both hosts.
 integration_select_shard() {
     NORMALIZED_MANIFEST="$WORKDIR/manifest.selected"

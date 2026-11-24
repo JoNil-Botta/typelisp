@@ -10,6 +10,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
+(import stdlib.fs)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector)
@@ -2822,19 +2823,61 @@
     ""
     (lint_svec.new)))
 
+(define (selfhost-lint-package-dead-compile-manifest-dir-from
+  [manifest-dir : (& manifest-dir str)]
+  [dir-path : (& dir-path str)]
+  [entries : (& entries fs.FsStringVector)]
+  [index : i64]
+  [roots : lint_svec.Vec]) : lint_svec.Vec
+  (if (>= index (fs.string-vector-len entries))
+    roots
+    (let
+      [entry : String (fs.string-vector-get entries index "")]
+      [next-roots : lint_svec.Vec
+        (if (and
+          (string.eq (fs.extension (& entry)) "manifest")
+          (not (string.eq entry ".manifest")))
+          (let
+            [entry-path : String
+              (compiler_load.compiler-load-join-root-path
+                (string.copy dir-path)
+                entry)]
+            (match (fs.try-file-kind-no-follow (& entry-path))
+              [(OkFsFileKind kind)
+                (if (fs.file-kind-regular? kind)
+                  (selfhost-lint-dead-manifest-roots-from
+                    (byte_buf.to-string (io.read-file entry-path))
+                    (string.copy manifest-dir)
+                    0
+                    ""
+                    roots)
+                  roots)]
+              [(ErrFsFileKind _) roots]))
+          roots)]
+      (selfhost-lint-package-dead-compile-manifest-dir-from
+        manifest-dir
+        dir-path
+        entries
+        (+ index 1)
+        next-roots))))
+
 (define (selfhost-lint-package-dead-compile-manifest-roots
   [source-set : package_source_core.PackageSourceSet]) : lint_svec.Vec
   (let
     [manifest-dir : String source-set.manifest-dir]
-    [path : String
+    [dir-path : String
       (compiler_load.compiler-load-join-root-path
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        "src/compile_manifest.txt")]
-    (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
-      (selfhost-lint-dead-manifest-roots
-        (byte_buf.to-string (io.read-file path))
-        manifest-dir)
-      (lint_svec.new))))
+        (string.copy (& manifest-dir))
+        "src/compile_manifest.d")]
+    (match (fs.try-read-dir (& dir-path))
+      [(OkIoStringVector entries)
+        (selfhost-lint-package-dead-compile-manifest-dir-from
+          (& manifest-dir)
+          (& dir-path)
+          (& entries)
+          0
+          (lint_svec.new))]
+      [(ErrIoStringVector _) (lint_svec.new)])))
 
 (define (selfhost-lint-package-dead-repository-test-roots
   [source-set : package_source_core.PackageSourceSet]) : lint_svec.Vec

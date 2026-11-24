@@ -1,9 +1,11 @@
 ;; compiler_embedded_stdlib.tl - Compressed stdlib source fallback: each module's
-;; source with its inline tests blanked (#8713) and its prose comments cut to
-;; their first `;` (#8659).
+;; source with its inline tests blanked (#8713) and its non-directive comments
+;; (including `;:` and `;#` doc comments) stripped while preserving line breaks.
 (import compiler_abort as abort)
 (cfg test (import compiler_embedded_stdlib_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_payload as payload))
+(import stdlib.arena)
+(cfg compile-profile (import compiler_allocation_profile as allocation_profile))
 (import stdlib.iterator)
 (import compiler_lzss as lzss)
 (import lex as lexer)
@@ -14,9 +16,32 @@
   (CompilerEmbeddedStdlibNoSource)
   (CompilerEmbeddedStdlibSomeSource String))
 
-;; The 16 MiB ceiling is far above any individual embedded source module while
-;; rejecting corrupt length headers before they can request an unbounded
-;; allocation.
+(defstruct CompilerEmbeddedStdlibCachedChunk
+  (ready bool)
+  (data (Ptr u8))
+  (bytes (__tl_dyn-array u8)))
+
+;; Process-lifetime cache for decoded solid-container chunks, lazily allocated
+;; on first solid lookup and wired into the compile-profile lifetime ledger.
+(define compiler-embedded-stdlib-solid-arena-handle : i64
+  0)
+(define compiler-embedded-stdlib-solid-ready : bool
+  false)
+(define compiler-embedded-stdlib-solid-index : (__tl_dyn-array
+    lzss.CompilerLzssSolidIndex)
+  (__tl_make-array lzss.CompilerLzssSolidIndex 1))
+(define compiler-embedded-stdlib-solid-chunks : (__tl_dyn-array
+    CompilerEmbeddedStdlibCachedChunk)
+  (__tl_make-array CompilerEmbeddedStdlibCachedChunk 0))
+
+(cfg
+  compile-profile
+  (define (compiler-embedded-stdlib-cache-bytes) : i64
+    (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+      compiler-embedded-stdlib-solid-arena-handle)))
+
+;; The 16 MiB ceiling is far above any individual or solid embedded source
+;; payload while rejecting corrupt length headers before allocating.
 (define (compiler-embedded-stdlib-source-limit) : i64
   16777216)
 
@@ -30,27 +55,115 @@
       (unsafe
         (string-from-bytes (ptr-cast data : (Ptr u8)) (array-length bytes))))))
 
+(define (compiler-embedded-stdlib-ptr-slice->string
+  [data : (Ptr u8)]
+  [offset : i64]
+  [length : i64]) : String
+  (if (= length 0)
+    ""
+    (unsafe
+      (string-from-bytes (ptr-offset data offset) length))))
+
+(define (compiler-embedded-stdlib-solid-ensure-index!
+  [container : (& container (__tl_dyn-array u8))]) : unit
+  (unless
+    compiler-embedded-stdlib-solid-ready
+    (match (lzss.compiler-lzss-solid-parse
+      container
+      (compiler-embedded-stdlib-source-limit))
+      [(Ok index)
+        (let
+          [owner : i64 (arena.tl_arena_make_small)]
+          (in-arena
+            (unsafe
+              (arena.Arena owner))
+            (set!
+              compiler-embedded-stdlib-solid-chunks
+              (__tl_make-array
+                CompilerEmbeddedStdlibCachedChunk
+                index.chunk-count)))
+          (set! (array-ref compiler-embedded-stdlib-solid-index 0) index)
+          (set! compiler-embedded-stdlib-solid-arena-handle owner)
+          (set! compiler-embedded-stdlib-solid-ready true))]
+      [(Err _)
+        (abort.compiler-abort
+          "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid solid embedded stdlib payload\n")])))
+
+(define (compiler-embedded-stdlib-solid-lookup
+  [container : (& container (__tl_dyn-array u8))]
+  [entry-index : i64]) : CompilerEmbeddedStdlibSource
+  (compiler-embedded-stdlib-solid-ensure-index! container)
+  (let
+    [index : lzss.CompilerLzssSolidIndex
+      (array-ref compiler-embedded-stdlib-solid-index 0)]
+    (when
+      (or (< entry-index 0) (>= entry-index index.entry-count))
+      (abort.compiler-abort
+        "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: solid entry index out of range\n"))
+    (let
+      [chunk-idx : i64
+        (lzss.compiler-lzss-solid-entry-chunk container (& index) entry-index)]
+      [offset : i64
+        (lzss.compiler-lzss-solid-entry-offset container (& index) entry-index)]
+      [length : i64
+        (lzss.compiler-lzss-solid-entry-len container (& index) entry-index)]
+      (unless
+        (array-ref compiler-embedded-stdlib-solid-chunks chunk-idx).ready
+        (in-arena
+          (unsafe
+            (arena.Arena compiler-embedded-stdlib-solid-arena-handle))
+          (match (lzss.compiler-lzss-solid-decode-chunk
+            container
+            (& index)
+            chunk-idx)
+            [(Ok bytes)
+              (let
+                [data : (Ptr u8)
+                  (if (= (array-length bytes) 0)
+                    (unsafe
+                      (int->ptr (cast 0 : u64) : (Ptr u8)))
+                    (unsafe
+                      (ptr-cast (__tl_array-data bytes) : (Ptr u8))))]
+                (set!
+                  (array-ref compiler-embedded-stdlib-solid-chunks chunk-idx)
+                  (CompilerEmbeddedStdlibCachedChunk true data bytes)))]
+            [(Err _)
+              (abort.compiler-abort
+                "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid solid embedded stdlib chunk\n")])))
+      (CompilerEmbeddedStdlibSomeSource
+        (compiler-embedded-stdlib-ptr-slice->string
+          (array-ref compiler-embedded-stdlib-solid-chunks chunk-idx).data
+          offset
+          length)))))
+
 (define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource
   (match (payload.compiler-embedded-stdlib-payload-lookup suffix)
     [(CompilerEmbeddedStdlibPayloadNone) (CompilerEmbeddedStdlibNoSource)]
-    [(CompilerEmbeddedStdlibPayloadSome compressed)
-      (match (lzss.compiler-lzss-decode
-        (& compressed)
-        (compiler-embedded-stdlib-source-limit))
-        [(Ok bytes)
-          (CompilerEmbeddedStdlibSomeSource
-            (compiler-embedded-stdlib-bytes->string bytes))]
-        [(Err _)
-          (abort.compiler-abort
-            "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid embedded stdlib payload\n")
-          (CompilerEmbeddedStdlibNoSource)])]))
+    [(CompilerEmbeddedStdlibPayloadSome compressed index)
+      (let
+        [container : (__tl_dyn-array u8)
+          (payload.compiler-embedded-stdlib-payload-container)]
+        (if (lzss.compiler-lzss-prefix?
+          (& container)
+          (& (lzss.compiler-lzss-solid-prefix)))
+          (compiler-embedded-stdlib-solid-lookup (& container) index)
+          (match (lzss.compiler-lzss-decode
+            (& compressed)
+            (compiler-embedded-stdlib-source-limit))
+            [(Ok bytes)
+              (CompilerEmbeddedStdlibSomeSource
+                (compiler-embedded-stdlib-bytes->string bytes))]
+            [(Err _)
+              (abort.compiler-abort
+                "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid embedded stdlib payload\n")
+              (CompilerEmbeddedStdlibNoSource)])))]))
 
 ;; Whether `suffix` names an embedded module, from the payload table alone:
 ;; presence checks need no decoded source.
 (define (compiler-embedded-stdlib-contains? [suffix : String]) : bool
   (match (payload.compiler-embedded-stdlib-payload-lookup suffix)
     [(CompilerEmbeddedStdlibPayloadNone) false]
-    [(CompilerEmbeddedStdlibPayloadSome _) true]))
+    [(CompilerEmbeddedStdlibPayloadSome _ _) true]))
 
 ;; Whether `c` ends an atom: whitespace or one of `()[]";`. Most source bytes
 ;; are letters, past `;`, so they take the two-compare branch.
@@ -109,8 +222,9 @@
       newline)))
 
 ;; Whether the comment at `start..end` of `src` (from its first `;` to its
-;; line break) is prose that nothing reads. A doc comment (`;:` or `;#`) and a
-;; `name:` directive such as `lint-allow:` or `doctest-exit:` are not.
+;; line break) is strippable (prose or `;:`/`;#` doc comment). A `name:`
+;; directive on a `;`/`;;` comment such as `lint-allow:` or `doctest-exit:` is
+;; kept.
 (define (compiler-embedded-stdlib-prose-comment?
   [src : (& src str)]
   [start : i64]
@@ -120,7 +234,7 @@
     (if (and
       (< j end)
       (or (= (__tl_string_ref src j) ':') (= (__tl_string_ref src j) '#')))
-      false
+      true
       (begin
         (while (and (< j end) (= (__tl_string_ref src j) ';'))
           (+= j 1))
@@ -197,12 +311,16 @@
 
 ;; One pass over `src` that finds what its payload drops. Strings, character
 ;; literals and comments are skipped with the lexer's own scanners, so a `(test`
-;; inside one is not a form. A prose comment is cut only outside any form that
-;; may yet be blanked, so the ranges stay in order and disjoint.
+;; inside one is not a form. A strippable comment (prose or `;:`/`;#` doc) is
+;; dropped along with its preceding horizontal whitespace only outside any form
+;; that may yet be blanked, so the ranges stay in order and disjoint and every
+;; kept token retains its exact line and column.
 (define (compiler-embedded-stdlib-inline-test-ranges [src : (& src str)]) : CompilerEmbeddedStdlibTestRanges
   (let
     [n : i64 (string-length src)]
     [i : i64 0]
+    [line-start : i64 0]
+    [line-has-code : bool false]
     [depth : i64 0]
     [start : i64 -1]
     [kind : i64 0]
@@ -215,6 +333,7 @@
         [c : char (__tl_string_ref src i)]
         (cond
           [(not (compiler-embedded-stdlib-delimiter? c))
+            (set! line-has-code true)
             (if (= c '\'')
               (match (lexer.apostrophe-char-literal-result src i n)
                 [(Ok _ end)
@@ -226,7 +345,15 @@
                 (when (= depth 1) (+= elements 1))
                 (set! i (compiler-embedded-stdlib-atom-end src (+ i 1) n))))]
           [(lexer.is-space c)
-            (set! i (compiler-embedded-stdlib-skip-space src (+ i 1) n))]
+            (let
+              [j : i64 i]
+              (while (and (< j n) (lexer.is-space (__tl_string_ref src j)))
+                (when
+                  (= (__tl_string_ref src j) '\n')
+                  (set! line-start (+ j 1))
+                  (set! line-has-code false))
+                (+= j 1))
+              (set! i j))]
           [(= c ';')
             (let
               [end : i64 (compiler-embedded-stdlib-comment-end src (+ i 1) n)]
@@ -237,23 +364,39 @@
               (when
                 (and
                   (or (= depth 0) (= kind 0))
-                  (> cut (+ i 1))
                   (compiler-embedded-stdlib-prose-comment? src i cut))
-                (set!
-                  ranges
-                  (compiler-embedded-stdlib-ranges-push
-                    ranges
-                    count
-                    (+ i 1)
-                    (- cut 1)))
-                (+= count 1))
+                (let
+                  [drop-start : i64
+                    (if (not line-has-code)
+                      line-start
+                      (let
+                        [ws : i64 i]
+                        (while (and
+                          (> ws line-start)
+                          (let
+                            [prev : char (__tl_string_ref src (- ws 1))]
+                            (or (= prev ' ') (= prev '\t'))))
+                          (-= ws 1))
+                        ws))]
+                  (when
+                    (> cut drop-start)
+                    (set!
+                      ranges
+                      (compiler-embedded-stdlib-ranges-push
+                        ranges
+                        count
+                        drop-start
+                        (- cut 1)))
+                    (+= count 1))))
               (set! i end))]
           [(= c '"')
+            (set! line-has-code true)
             (when (= depth 1) (+= elements 1))
             (match (lexer.scan-str-end-result src (+ i 1) n)
               [(Ok end) (set! i (+ end 1))]
               [(Err _) (set! valid false)])]
           [(or (= c '(') (= c '['))
+            (set! line-has-code true)
             (when (= depth 1) (+= elements 1))
             (when
               (and (= depth 0) (= c '('))
@@ -265,6 +408,7 @@
             (+= depth 1)
             (+= i 1)]
           [else
+            (set! line-has-code true)
             (-= depth 1)
             (cond
               [(< depth 0) (set! valid false)]
@@ -284,11 +428,13 @@
 
 ;; The source a module's payload embeds. Each top-level inline test is
 ;; replaced by the line breaks it contained: every `(test ...)` form and every
-;; `(cfg test BODY)` form with exactly one body. Each prose comment outside
-;; those forms keeps only its first `;`, so the line still reads as a comment;
-;; doc comments and directives are kept whole. All other bytes are kept, so
-;; each remaining form keeps its line and column. A source the lexer's scanners
-;; reject, or one whose brackets do not balance, is returned unchanged.
+;; `(cfg test BODY)` form with exactly one body. Each non-directive comment
+;; (prose, `;:` or `;#` doc) outside those forms is dropped along with its
+;; immediately preceding horizontal whitespace while keeping `\r`/`\n` line
+;; breaks; `name:` directives (`lint-allow:`, `doctest-exit:`, etc.) are kept
+;; whole. All other bytes are kept, so each remaining token keeps its exact line
+;; and column. A source the lexer's scanners reject, or one whose brackets do
+;; not balance, is returned unchanged.
 (define (compiler-embedded-stdlib-payload-source [src : String]) : String
   (match (compiler-embedded-stdlib-inline-test-ranges (& src))
     [(Unscannable) src]

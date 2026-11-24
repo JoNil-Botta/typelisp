@@ -1588,33 +1588,537 @@
       (Err error)
       (Ok out))))
 
+;; Decode one complete bitstream slice of `stream-len` bytes into `raw-len`
+;; output bytes under `model`.
+(define (compiler-lzss-decode-stream-slice
+  [payload : (& payload (__tl_dyn-array u8))]
+  [start : i64]
+  [stream-len : i64]
+  [raw-len : i64]
+  [model : (& model CompilerLzssModel)]) : CompilerLzssBytes
+  (if (or
+    (< start 0)
+    (< stream-len 0)
+    (> (+ start stream-len) (array-length payload)))
+    (Err "compiler lzss: stream slice out of bounds")
+    (let
+      [reader : CompilerLzssReader
+        (CompilerLzssReader start stream-len 0 0 0 0)]
+      [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
+      [error : String
+        (if (= raw-len 0)
+          ""
+          (compiler-lzss-decode-body
+            payload
+            (&mut reader)
+            (unsafe
+              (__tl_array-data out))
+            0
+            raw-len
+            0
+            model))]
+      (cond
+        [(> (string.string-length (& error)) 0) (Err error)]
+        [(not (compiler-lzss-tail-ok? payload (& reader)))
+          (Err "compiler lzss: trailing compressed bytes")]
+        [else (Ok out)]))))
+
 ;; Decode one complete bitstream of `raw-len` bytes under `model`.
 (define (compiler-lzss-decode-stream
   [payload : (& payload (__tl_dyn-array u8))]
   [start : i64]
   [raw-len : i64]
   [model : (& model CompilerLzssModel)]) : CompilerLzssBytes
+  (compiler-lzss-decode-stream-slice
+    payload
+    start
+    (- (array-length payload) start)
+    raw-len
+    model))
+
+;; --- solid multi-entry container (s3) ----------------------------------------
+;; Layout: 36-byte magic (`__typelisp_embedded_stdlib_tlss_s3__`), seven LE u64
+;; header fields (`version=1`, `raw_total`, `index_end`, `entry_count`,
+;; `index_hash`, `stream_bytes`, `chunk_count`), `chunk_count` 32-byte chunk
+;; records (`stream_off`, `stream_len`, `raw_off`, `raw_len`), `entry_count`
+;; 24-byte entry records (`chunk_idx`, `chunk_offset`, `raw_len`), then
+;; `chunk_count` standard LZSS v3 bitstreams back to back under the fixed model.
+;; Putting `version=1` at offset 36 guarantees byte 36 is 1 (never NUL), so the
+;; binary scanner immediately skips NUL-terminated marker strings.
+(define (compiler-lzss-solid-prefix) : String
+  "__typelisp_embedded_stdlib_tlss_s3__")
+
+(define (compiler-lzss-solid-version) : i64
+  1)
+
+(define (compiler-lzss-solid-header-bytes) : i64
+  92)
+
+(define (compiler-lzss-solid-chunk-record-bytes) : i64
+  32)
+
+(define (compiler-lzss-solid-entry-record-bytes) : i64
+  24)
+
+;; Default solid chunk count for embedded stdlib packing.
+(define (compiler-lzss-solid-default-chunks) : i64
+  4)
+
+(defstruct CompilerLzssSolidIndex
+  (raw-total i64)
+  (index-end i64)
+  (entry-count i64)
+  (stream-bytes i64)
+  (chunk-count i64))
+
+(defenum CompilerLzssSolidIndexResult
+  (Err String)
+  (Ok CompilerLzssSolidIndex))
+
+(define (compiler-lzss-solid-read-u64
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [offset : i64]) : i64
   (let
-    [reader : CompilerLzssReader
-      (CompilerLzssReader start (- (array-length payload) start) 0 0 0 0)]
-    [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
-    [error : String
-      (if (= raw-len 0)
-        ""
-        (compiler-lzss-decode-body
-          payload
-          (&mut reader)
-          (unsafe
-            (__tl_array-data out))
-          0
-          raw-len
-          0
-          model))]
+    [value : i64 0]
+    [shift : i64 0]
+    [i : i64 0]
+    (while (< i 8)
+      (set!
+        value
+        (bit-or value (shl (cast (array-ref bytes (+ offset i)) : i64) shift)))
+      (+= shift 8)
+      (+= i 1))
+    value))
+
+(define (compiler-lzss-solid-push-u64!
+  [out : (&mut out byte_buf.ByteBufBuilder)]
+  [value : i64]) : unit
+  (let
+    [i : i64 0]
+    [cur : i64 value]
+    (while (< i 8)
+      (byte_buf.byte-buf-builder-push out (cast (bit-and cur 255) : u8))
+      (set! cur (shr cur 8))
+      (+= i 1))))
+
+(define (compiler-lzss-solid-set-u64!
+  [bytes : (&mut bytes (__tl_dyn-array u8))]
+  [offset : i64]
+  [value : i64]) : unit
+  (let
+    [i : i64 0]
+    [cur : i64 value]
+    (while (< i 8)
+      (set! (array-ref bytes (+ offset i)) (cast (bit-and cur 255) : u8))
+      (set! cur (shr cur 8))
+      (+= i 1))))
+
+(define (compiler-lzss-solid-index-hash
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [index-end : i64]) : i64
+  (let
+    [hash : i64 1]
+    [i : i64 0]
+    (while (< i index-end)
+      (let
+        [b : i64
+          (if (and (>= i 68) (< i 76))
+            0
+            (cast (array-ref bytes i) : i64))]
+        (set! hash (% (+ (* hash 131) b) 2147483647)))
+      (+= i 1))
+    hash))
+
+(define (compiler-lzss-solid-chunk-record-offset [chunk-idx : i64]) : i64
+  (+
+    (compiler-lzss-solid-header-bytes)
+    (* chunk-idx (compiler-lzss-solid-chunk-record-bytes))))
+
+(define (compiler-lzss-solid-entry-record-offset
+  [index : (& index CompilerLzssSolidIndex)]
+  [entry-idx : i64]) : i64
+  (+
+    (compiler-lzss-solid-header-bytes)
+    (* index.chunk-count (compiler-lzss-solid-chunk-record-bytes))
+    (* entry-idx (compiler-lzss-solid-entry-record-bytes))))
+
+(define (compiler-lzss-solid-chunk-stream-start
+  [payload : (& payload (__tl_dyn-array u8))]
+  [index : (& index CompilerLzssSolidIndex)]
+  [chunk-idx : i64]) : i64
+  (+
+    index.index-end
+    (compiler-lzss-solid-read-u64
+      payload
+      (compiler-lzss-solid-chunk-record-offset chunk-idx))))
+
+(define (compiler-lzss-solid-chunk-stream-len
+  [payload : (& payload (__tl_dyn-array u8))]
+  [chunk-idx : i64]) : i64
+  (compiler-lzss-solid-read-u64
+    payload
+    (+ (compiler-lzss-solid-chunk-record-offset chunk-idx) 8)))
+
+(define (compiler-lzss-solid-chunk-raw-len
+  [payload : (& payload (__tl_dyn-array u8))]
+  [chunk-idx : i64]) : i64
+  (compiler-lzss-solid-read-u64
+    payload
+    (+ (compiler-lzss-solid-chunk-record-offset chunk-idx) 24)))
+
+(define (compiler-lzss-solid-entry-chunk
+  [payload : (& payload (__tl_dyn-array u8))]
+  [index : (& index CompilerLzssSolidIndex)]
+  [entry-idx : i64]) : i64
+  (compiler-lzss-solid-read-u64
+    payload
+    (compiler-lzss-solid-entry-record-offset index entry-idx)))
+
+(define (compiler-lzss-solid-entry-offset
+  [payload : (& payload (__tl_dyn-array u8))]
+  [index : (& index CompilerLzssSolidIndex)]
+  [entry-idx : i64]) : i64
+  (compiler-lzss-solid-read-u64
+    payload
+    (+ (compiler-lzss-solid-entry-record-offset index entry-idx) 8)))
+
+(define (compiler-lzss-solid-entry-len
+  [payload : (& payload (__tl_dyn-array u8))]
+  [index : (& index CompilerLzssSolidIndex)]
+  [entry-idx : i64]) : i64
+  (compiler-lzss-solid-read-u64
+    payload
+    (+ (compiler-lzss-solid-entry-record-offset index entry-idx) 16)))
+
+;; Validate every header, hash, chunk table and entry table invariant before
+;; allocating any decode buffer.
+(define (compiler-lzss-solid-parse
+  [payload : (& payload (__tl_dyn-array u8))]
+  [raw-limit : i64]) : CompilerLzssSolidIndexResult
+  (let
+    [payload-len : i64 (array-length payload)]
+    [header-bytes : i64 (compiler-lzss-solid-header-bytes)]
     (cond
-      [(> (string.string-length (& error)) 0) (Err error)]
-      [(not (compiler-lzss-tail-ok? payload (& reader)))
-        (Err "compiler lzss: trailing compressed bytes")]
-      [else (Ok out)])))
+      [(< raw-limit 0) (Err "compiler lzss solid: invalid raw length limit")]
+      [(< payload-len header-bytes)
+        (Err "compiler lzss solid: truncated header")]
+      [(not (compiler-lzss-prefix? payload (& (compiler-lzss-solid-prefix))))
+        (Err "compiler lzss solid: bad envelope prefix")]
+      [else
+        (let
+          [version : i64 (compiler-lzss-solid-read-u64 payload 36)]
+          [raw-total : i64 (compiler-lzss-solid-read-u64 payload 44)]
+          [index-end : i64 (compiler-lzss-solid-read-u64 payload 52)]
+          [entry-count : i64 (compiler-lzss-solid-read-u64 payload 60)]
+          [stored-hash : i64 (compiler-lzss-solid-read-u64 payload 68)]
+          [stream-bytes : i64 (compiler-lzss-solid-read-u64 payload 76)]
+          [chunk-count : i64 (compiler-lzss-solid-read-u64 payload 84)]
+          [max-expansion : i64 (compiler-lzss-max-expansion)]
+          (cond
+            [(!= version (compiler-lzss-solid-version))
+              (Err "compiler lzss solid: unsupported container version")]
+            [(or (< raw-total 0) (> raw-total raw-limit))
+              (Err "compiler lzss solid: raw length out of range")]
+            [(or (< entry-count 1) (> entry-count 65536))
+              (Err "compiler lzss solid: invalid entry count")]
+            [(or (< chunk-count 1) (> chunk-count entry-count))
+              (Err "compiler lzss solid: invalid chunk count")]
+            [(or (< stream-bytes 0) (> stream-bytes payload-len))
+              (Err "compiler lzss solid: invalid stream length")]
+            [(!=
+                index-end
+                (+
+                  header-bytes
+                  (* chunk-count (compiler-lzss-solid-chunk-record-bytes))
+                  (* entry-count (compiler-lzss-solid-entry-record-bytes))))
+              (Err "compiler lzss solid: inconsistent index length")]
+            [(!= (+ index-end stream-bytes) payload-len)
+              (Err "compiler lzss solid: payload size mismatch")]
+            [(!= stored-hash (compiler-lzss-solid-index-hash payload index-end))
+              (Err "compiler lzss solid: index hash mismatch")]
+            [else
+              (let
+                [index : CompilerLzssSolidIndex
+                  (CompilerLzssSolidIndex
+                    raw-total
+                    index-end
+                    entry-count
+                    stream-bytes
+                    chunk-count)]
+                [stream-cursor : i64 0]
+                [raw-cursor : i64 0]
+                [chunk-cursors : (__tl_dyn-array i64)
+                  (__tl_make-array i64 chunk-count)]
+                [c : i64 0]
+                [e : i64 0]
+                [prev-chunk : i64 0]
+                (while (< c chunk-count)
+                  (let
+                    [off : i64 (compiler-lzss-solid-chunk-record-offset c)]
+                    [s-off : i64 (compiler-lzss-solid-read-u64 payload off)]
+                    [s-len : i64
+                      (compiler-lzss-solid-read-u64 payload (+ off 8))]
+                    [r-off : i64
+                      (compiler-lzss-solid-read-u64 payload (+ off 16))]
+                    [r-len : i64
+                      (compiler-lzss-solid-read-u64 payload (+ off 24))]
+                    [ratio-safe : bool
+                      (or
+                        (>= s-len (/ 9223372036854775807 max-expansion))
+                        (<= r-len (* s-len max-expansion)))]
+                    (when
+                      (or
+                        (!= s-off stream-cursor)
+                        (< s-len 0)
+                        (> s-len (- stream-bytes stream-cursor))
+                        (!= r-off raw-cursor)
+                        (< r-len 0)
+                        (> r-len (- raw-total raw-cursor))
+                        (and (= r-len 0) (!= s-len 0))
+                        (and (> r-len 0) (< s-len 1))
+                        (not ratio-safe))
+                      (return (Err "compiler lzss solid: invalid chunk table")))
+                    (+= stream-cursor s-len)
+                    (+= raw-cursor r-len))
+                  (+= c 1))
+                (when
+                  (or (!= stream-cursor stream-bytes) (!= raw-cursor raw-total))
+                  (return
+                    (Err
+                      "compiler lzss solid: chunk table does not cover stream")))
+                (set! raw-cursor 0)
+                (while (< e entry-count)
+                  (let
+                    [off : i64
+                      (compiler-lzss-solid-entry-record-offset (& index) e)]
+                    [ec : i64 (compiler-lzss-solid-read-u64 payload off)]
+                    [eo : i64 (compiler-lzss-solid-read-u64 payload (+ off 8))]
+                    [el : i64 (compiler-lzss-solid-read-u64 payload (+ off 16))]
+                    (when
+                      (or
+                        (< ec prev-chunk)
+                        (>= ec chunk-count)
+                        (< eo 0)
+                        (< el 0)
+                        (!= eo (array-ref chunk-cursors ec))
+                        (>
+                          el
+                          (- (compiler-lzss-solid-chunk-raw-len payload ec) eo)))
+                      (return (Err "compiler lzss solid: invalid entry table")))
+                    (set! prev-chunk ec)
+                    (set! (array-ref chunk-cursors ec) (+ eo el))
+                    (+= raw-cursor el))
+                  (+= e 1))
+                (set! c 0)
+                (while (< c chunk-count)
+                  (when
+                    (!=
+                      (array-ref chunk-cursors c)
+                      (compiler-lzss-solid-chunk-raw-len payload c))
+                    (return
+                      (Err "compiler lzss solid: entries do not cover chunk")))
+                  (+= c 1))
+                (if (!= raw-cursor raw-total)
+                  (Err
+                    "compiler lzss solid: entry lengths do not sum to raw total")
+                  (Ok index)))]))])))
+
+(define (compiler-lzss-solid-decode-chunk
+  [payload : (& payload (__tl_dyn-array u8))]
+  [index : (& index CompilerLzssSolidIndex)]
+  [chunk-idx : i64]) : CompilerLzssBytes
+  (if (or (< chunk-idx 0) (>= chunk-idx index.chunk-count))
+    (Err "compiler lzss solid: chunk index out of range")
+    (compiler-lzss-decode-stream-slice
+      payload
+      (compiler-lzss-solid-chunk-stream-start payload index chunk-idx)
+      (compiler-lzss-solid-chunk-stream-len payload chunk-idx)
+      (compiler-lzss-solid-chunk-raw-len payload chunk-idx)
+      (& compiler-lzss-fixed-model))))
+
+(define (compiler-lzss-solid-decode-entry
+  [payload : (& payload (__tl_dyn-array u8))]
+  [entry-idx : i64]
+  [raw-limit : i64]) : CompilerLzssBytes
+  (match (compiler-lzss-solid-parse payload raw-limit)
+    [(Err message) (Err message)]
+    [(Ok index)
+      (if (or (< entry-idx 0) (>= entry-idx index.entry-count))
+        (Err "compiler lzss solid: entry index out of range")
+        (let
+          [chunk-idx : i64
+            (compiler-lzss-solid-entry-chunk payload (& index) entry-idx)]
+          [offset : i64
+            (compiler-lzss-solid-entry-offset payload (& index) entry-idx)]
+          [length : i64
+            (compiler-lzss-solid-entry-len payload (& index) entry-idx)]
+          (match (compiler-lzss-solid-decode-chunk payload (& index) chunk-idx)
+            [(Err message) (Err message)]
+            [(Ok chunk-bytes)
+              (let
+                [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+                [i : i64 0]
+                (while (< i length)
+                  (set! (array-ref out i) (array-ref chunk-bytes (+ offset i)))
+                  (+= i 1))
+                (Ok out))])))]))
+
+;; Pack `entries` into `requested-chunks` balanced contiguous LZSS v3 chunks
+;; under the fixed model.
+(define (compiler-lzss-solid-encode
+  [entries : (& entries (__tl_dyn-array String))]
+  [requested-chunks : i64]) : String
+  (let
+    [entry-count : i64 (array-length entries)]
+    (when
+      (< entry-count 1)
+      (abort.compiler-abort
+        "tl: compiler_lzss.compiler-lzss-solid-encode: empty entry list\n"))
+    (let
+      [chunk-count : i64
+        (cond
+          [(< requested-chunks 1) 1]
+          [(> requested-chunks entry-count) entry-count]
+          [else requested-chunks])]
+      [raw-total : i64 0]
+      [i : i64 0]
+      (while (< i entry-count)
+        (+= raw-total (string.string-length (& (array-ref entries i))))
+        (+= i 1))
+      (let
+        [target : i64 (/ (+ raw-total (- chunk-count 1)) chunk-count)]
+        [entry-chunk : (__tl_dyn-array i64) (__tl_make-array i64 entry-count)]
+        [entry-offset : (__tl_dyn-array i64) (__tl_make-array i64 entry-count)]
+        [entry-len : (__tl_dyn-array i64) (__tl_make-array i64 entry-count)]
+        [chunk-first : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+        [chunk-end : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+        [chunk-raw-off : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+        [chunk-raw-len : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+        [cur-chunk : i64 0]
+        [cur-raw : i64 0]
+        [cur-count : i64 0]
+        [total-off : i64 0]
+        (set! i 0)
+        (set! (array-ref chunk-first 0) 0)
+        (set! (array-ref chunk-raw-off 0) 0)
+        (while (< i entry-count)
+          (let
+            [len : i64 (string.string-length (& (array-ref entries i)))]
+            [remaining-entries : i64 (- entry-count i)]
+            [remaining-chunks : i64 (- chunk-count cur-chunk)]
+            (when
+              (and
+                (> cur-count 0)
+                (< (+ cur-chunk 1) chunk-count)
+                (or
+                  (= remaining-entries (- remaining-chunks 1))
+                  (and
+                    (> (+ cur-raw len) target)
+                    (>= remaining-entries remaining-chunks))))
+              (set! (array-ref chunk-end cur-chunk) i)
+              (set! (array-ref chunk-raw-len cur-chunk) cur-raw)
+              (+= cur-chunk 1)
+              (set! (array-ref chunk-first cur-chunk) i)
+              (set! (array-ref chunk-raw-off cur-chunk) total-off)
+              (set! cur-raw 0)
+              (set! cur-count 0))
+            (set! (array-ref entry-chunk i) cur-chunk)
+            (set! (array-ref entry-offset i) cur-raw)
+            (set! (array-ref entry-len i) len)
+            (+= cur-raw len)
+            (+= total-off len)
+            (+= cur-count 1))
+          (+= i 1))
+        (set! (array-ref chunk-end cur-chunk) entry-count)
+        (set! (array-ref chunk-raw-len cur-chunk) cur-raw)
+        (let
+          [index-end : i64
+            (+
+              (compiler-lzss-solid-header-bytes)
+              (* chunk-count (compiler-lzss-solid-chunk-record-bytes))
+              (* entry-count (compiler-lzss-solid-entry-record-bytes)))]
+          [out : byte_buf.ByteBufBuilder
+            (byte_buf.byte-buf-builder-with-capacity (+ index-end 1024))]
+          [stream : byte_buf.ByteBufBuilder
+            (byte_buf.byte-buf-builder-with-capacity 1024)]
+          [stream-off : i64 0]
+          [c : i64 0]
+          (byte_buf.byte-buf-builder-append-string
+            (&mut out)
+            (compiler-lzss-solid-prefix))
+          (compiler-lzss-solid-push-u64!
+            (&mut out)
+            (compiler-lzss-solid-version))
+          (compiler-lzss-solid-push-u64! (&mut out) raw-total)
+          (compiler-lzss-solid-push-u64! (&mut out) index-end)
+          (compiler-lzss-solid-push-u64! (&mut out) entry-count)
+          (compiler-lzss-solid-push-u64! (&mut out) 0)
+          (compiler-lzss-solid-push-u64! (&mut out) 0)
+          (compiler-lzss-solid-push-u64! (&mut out) chunk-count)
+          (while (< c chunk-count)
+            (let
+              [lo : i64 (array-ref chunk-first c)]
+              [hi : i64 (array-ref chunk-end c)]
+              [raw-len : i64 (array-ref chunk-raw-len c)]
+              [chunk-buf : byte_buf.ByteBufBuilder
+                (byte_buf.byte-buf-builder-with-capacity raw-len)]
+              [k : i64 lo]
+              (while (< k hi)
+                (byte_buf.byte-buf-builder-append-string
+                  (&mut chunk-buf)
+                  (string.copy (& (array-ref entries k))))
+                (+= k 1))
+              (let
+                [chunk-src : String
+                  (byte_buf.byte-buf-builder-to-string (& chunk-buf))]
+                [chunk-bits : String
+                  (if (= raw-len 0)
+                    ""
+                    (let
+                      [tokens : (__tl_dyn-array CompilerLzssToken)
+                        (compiler-lzss-tokenize
+                          (& chunk-src)
+                          (& compiler-lzss-fixed-model))]
+                      [writer : CompilerLzssWriter (compiler-lzss-writer)]
+                      (compiler-lzss-emit
+                        (& chunk-src)
+                        (& tokens)
+                        (& compiler-lzss-fixed-model)
+                        (&mut writer))
+                      (compiler-lzss-finish-writer (&mut writer))))]
+                [s-len : i64 (string.string-length (& chunk-bits))]
+                (compiler-lzss-solid-push-u64! (&mut out) stream-off)
+                (compiler-lzss-solid-push-u64! (&mut out) s-len)
+                (compiler-lzss-solid-push-u64!
+                  (&mut out)
+                  (array-ref chunk-raw-off c))
+                (compiler-lzss-solid-push-u64! (&mut out) raw-len)
+                (byte_buf.byte-buf-builder-append-string
+                  (&mut stream)
+                  chunk-bits)
+                (+= stream-off s-len)))
+            (+= c 1))
+          (set! i 0)
+          (while (< i entry-count)
+            (compiler-lzss-solid-push-u64! (&mut out) (array-ref entry-chunk i))
+            (compiler-lzss-solid-push-u64!
+              (&mut out)
+              (array-ref entry-offset i))
+            (compiler-lzss-solid-push-u64! (&mut out) (array-ref entry-len i))
+            (+= i 1))
+          (let
+            [stream-bytes : i64 (byte_buf.byte-buf-builder-len (& stream))]
+            (compiler-lzss-solid-set-u64! (&mut out.slots) 76 stream-bytes)
+            (byte_buf.byte-buf-builder-append-array-range
+              (&mut out)
+              (& stream.slots)
+              0
+              stream-bytes)
+            (compiler-lzss-solid-set-u64!
+              (&mut out.slots)
+              68
+              (compiler-lzss-solid-index-hash (& out.slots) index-end))
+            (byte_buf.byte-buf-builder-to-string (& out))))))))
 
 ;; Decode one `include-str-lzss` payload after bounded validation of its
 ;; envelope. The published seed writes the v2 envelope, so a compiler built by

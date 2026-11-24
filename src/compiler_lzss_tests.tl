@@ -353,6 +353,93 @@
     (set! (array-ref packed 0) (cast 88 : u8))
     (compiler-lzss-test-rejects? packed 268435456)))
 
+;; --- solid container fixtures ------------------------------------------------
+(define (compiler-lzss-test-solid-entries) : (__tl_dyn-array String)
+  (__tl_make-array
+    "(define (f [x : i64]) : i64 (+ x 1))\n(define (g [x : i64]) : i64 (+ x 2))\n"
+    ""
+    (compiler-lzss-test-match-source)
+    "(define (h [x : i64]) : i64 (+ x 1))\n(define (k [x : i64]) : i64 (+ x 2))\n"
+    (compiler-lzss-test-noise 1337 1200)
+    "let x : i64 (f x) (g x) ; cross-entry repeat\n"))
+
+(define (compiler-lzss-test-solid-round-trip? [chunks : i64]) : bool
+  (let
+    [entries : (__tl_dyn-array String) (compiler-lzss-test-solid-entries)]
+    [packed-str : String (lzss.compiler-lzss-solid-encode (& entries) chunks)]
+    [packed : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& packed-str))]
+    [n : i64 (array-length entries)]
+    [i : i64 0]
+    [ok : bool true]
+    (while (and ok (< i n))
+      (match (lzss.compiler-lzss-solid-decode-entry (& packed) i 268435456)
+        [(Ok bytes)
+          (unless
+            (compiler-lzss-test-same? (& bytes) (& (array-ref entries i)))
+            (set! ok false))]
+        [(Err _) (set! ok false)])
+      (+= i 1))
+    (and
+      ok
+      (match (lzss.compiler-lzss-solid-decode-entry (& packed) -1 268435456)
+        [(Ok _) false]
+        [(Err _) true])
+      (match (lzss.compiler-lzss-solid-decode-entry (& packed) n 268435456)
+        [(Ok _) false]
+        [(Err _) true]))))
+
+(define (compiler-lzss-test-solid-malformed-rejected?) : bool
+  (let
+    [entries : (__tl_dyn-array String) (compiler-lzss-test-solid-entries)]
+    [packed-str : String (lzss.compiler-lzss-solid-encode (& entries) 4)]
+    [clean : (__tl_dyn-array u8) (compiler-lzss-test-bytes-of (& packed-str))]
+    [len : i64 (array-length clean)]
+    ;; Truncated header or body must be rejected.
+    [short-hdr : (__tl_dyn-array u8) (__tl_make-array u8 40)]
+    [short-body : (__tl_dyn-array u8) (__tl_make-array u8 (- len 1))]
+    [extra-byte : (__tl_dyn-array u8) (__tl_make-array u8 (+ len 1))]
+    [bad-hash : (__tl_dyn-array u8)
+      (compiler-lzss-test-bytes-of (& packed-str))]
+    [bad-magic : (__tl_dyn-array u8)
+      (compiler-lzss-test-bytes-of (& packed-str))]
+    [i : i64 0]
+    (while (< i 40)
+      (set! (array-ref short-hdr i) (array-ref clean i))
+      (+= i 1))
+    (set! i 0)
+    (while (< i (- len 1))
+      (set! (array-ref short-body i) (array-ref clean i))
+      (+= i 1))
+    (set! i 0)
+    (while (< i len)
+      (set! (array-ref extra-byte i) (array-ref clean i))
+      (+= i 1))
+    (set! (array-ref extra-byte len) (cast 0 : u8))
+    (set!
+      (array-ref bad-hash 84)
+      (cast (bit-xor (cast (array-ref bad-hash 84) : i64) 1) : u8))
+    (set! (array-ref bad-magic 0) (cast 88 : u8))
+    (and
+      (match (lzss.compiler-lzss-solid-parse (& short-hdr) 268435456)
+        [(Ok _) false]
+        [(Err _) true])
+      (match (lzss.compiler-lzss-solid-parse (& short-body) 268435456)
+        [(Ok _) false]
+        [(Err _) true])
+      (match (lzss.compiler-lzss-solid-parse (& extra-byte) 268435456)
+        [(Ok _) false]
+        [(Err _) true])
+      (match (lzss.compiler-lzss-solid-parse (& bad-hash) 268435456)
+        [(Ok _) false]
+        [(Err _) true])
+      (match (lzss.compiler-lzss-solid-parse (& bad-magic) 268435456)
+        [(Ok _) false]
+        [(Err _) true])
+      ;; Raw limit below raw_total must fail before decoding.
+      (match (lzss.compiler-lzss-solid-parse (& clean) 16)
+        [(Ok _) false]
+        [(Err _) true]))))
+
 (define (compiler-lzss-codec-status) : i64
   (let
     [noise : String (compiler-lzss-test-noise 4242 6000)]
@@ -388,6 +475,10 @@
               (compiler-lzss-test-bytes-of (& payload))]
             (compiler-lzss-test-rejects? packed 8)))
         15]
+      [(not (compiler-lzss-test-solid-round-trip? 1)) 19]
+      [(not (compiler-lzss-test-solid-round-trip? 4)) 20]
+      [(not (compiler-lzss-test-solid-round-trip? 8)) 21]
+      [(not (compiler-lzss-test-solid-malformed-rejected?)) 22]
       [else 0])))
 
 (test

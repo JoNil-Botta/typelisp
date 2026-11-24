@@ -37,6 +37,7 @@
 (import (vector.vector String) as svec)
 (import token)
 (cfg compile-profile (import stdlib.profile))
+(cfg compile-profile (import compiler_embedded_stdlib as embedded_stdlib))
 (cfg
   embedded-stdlib-tlci
   (import compiler_embedded_stdlib_tlci as embedded_tlci))
@@ -28171,10 +28172,12 @@
 (cfg
   compile-profile
   (define (compiler-tc-macro-lifetime-cache-bytes) : i64
-    (cfg
-      embedded-stdlib-tlci
-      (embedded_tlci.compiler-embedded-stdlib-tlci-cache-bytes)
-      0)))
+    (+
+      (cfg
+        embedded-stdlib-tlci
+        (embedded_tlci.compiler-embedded-stdlib-tlci-cache-bytes)
+        0)
+      (embedded_stdlib.compiler-embedded-stdlib-cache-bytes))))
 
 (cfg
   (any compile-profile test)

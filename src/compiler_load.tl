@@ -4934,41 +4934,21 @@
   [resolved : String]
   [name : i64]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
-  (if (io.file-exists? (string.copy resolved))
-    (compiler-load-include-def-with-pools
-      kind
-      pools
-      name
-      (compiler-load-include-contents
+  (match (compiler-load-read-include-contents
+    kind
+    (string.copy importer-path)
+    (string.copy include-path)
+    (string.copy resolved))
+    [(Ok contents)
+      (compiler-load-include-def-with-pools
         kind
+        pools
+        name
+        contents
+        (& importer-path)
         (& include-path)
-        (compiler-load-session-read-source-text (string.copy resolved)))
-      (& importer-path)
-      (& include-path)
-      (& resolved))
-    (match (compiler-load-embedded-stdlib-source-for-path
-      (& (string.copy resolved)))
-      [(CompilerEmbeddedStdlibSomeSource source)
-        (compiler-load-session-state-note-embedded-source!
-          (compiler-load-active-session-state-shared-view)
-          (& resolved)
-          (& source))
-        (compiler-load-include-def-with-pools
-          kind
-          pools
-          name
-          (compiler-load-include-contents kind (& include-path) source)
-          (& importer-path)
-          (& include-path)
-          (& resolved))]
-      [(CompilerEmbeddedStdlibNoSource)
-        (Err
-          (box
-            (compiler-load-include-read-error
-              kind
-              importer-path
-              include-path
-              resolved)))])))
+        (& resolved))]
+    [(Err diag) (Err diag)]))
 
 (define (compiler-load-include-from-resolved
   [kind : CompilerLoadIncludeKind]
@@ -4988,6 +4968,190 @@
         pools)]
     (ast.ast-node-pool-context-install! pools)
     result))
+
+(define (compiler-load-solid-lzss-module? [importer-path : (& str)]) : bool
+  (let
+    [suffix : String "compiler_embedded_stdlib_payload.tl"]
+    [n : i64 (string.string-length importer-path)]
+    [m : i64 (string.string-length (& suffix))]
+    (if (< n m)
+      false
+      (let
+        [start : i64 (- n m)]
+        (and
+          (or
+            (= start 0)
+            (let
+              [prev : char (string.string-ref importer-path (- start 1))]
+              (or (= prev '/') (= prev '\\'))))
+          (string.is-string-prefix-at importer-path (& suffix) start))))))
+
+(defenum ResultCompilerLoadSolidString
+  (Ok String)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultCompilerLoadSolidRun
+  (Ok (__tl_dyn-array ast.AstDecl) ast.AstDeclList)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(define (compiler-load-read-include-contents
+  [kind : CompilerLoadIncludeKind]
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]) : ResultCompilerLoadSolidString
+  (if (io.file-exists? (string.copy resolved))
+    (Ok
+      (compiler-load-include-contents
+        kind
+        (& include-path)
+        (compiler-load-session-read-source-text (string.copy resolved))))
+    (match (compiler-load-embedded-stdlib-source-for-path
+      (& (string.copy resolved)))
+      [(CompilerEmbeddedStdlibSomeSource source)
+        (compiler-load-session-state-note-embedded-source!
+          (compiler-load-active-session-state-shared-view)
+          (& resolved)
+          (& source))
+        (Ok (compiler-load-include-contents kind (& include-path) source))]
+      [(CompilerEmbeddedStdlibNoSource)
+        (Err
+          (box
+            (compiler-load-include-read-error
+              kind
+              importer-path
+              include-path
+              resolved)))])))
+
+(define (compiler-load-solid-lzss-run-count [decls : (& ast.AstDeclList)]) : i64
+  (let
+    [cursor : ast.AstDeclList (ast.clone-ast-decl-list decls)]
+    [count : i64 0]
+    [more : bool true]
+    (while more
+      (match (ast.ast-decl-list-step (& cursor))
+        [(Cons decl rest)
+          (match (& decl)
+            [(IncludeStrLzss _ _)
+              (+= count 1)
+              (set! cursor rest)]
+            [_ (set! more false)])]
+        [(Nil) (set! more false)]))
+    count))
+
+(define (compiler-load-expand-solid-lzss-run-with-pools
+  [first-name : i64]
+  [first-path : String]
+  [rest : (& ast.AstDeclList)]
+  [importer-path : String]
+  [stdlib-roots : (& svec.Vec)]
+  [use-pkg : bool]
+  [manifest-dir : String]
+  [deps : (& CompilerPkgDeps)]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadSolidRun
+  (let
+    [extra : i64 (compiler-load-solid-lzss-run-count rest)]
+    [count : i64 (+ extra 1)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [paths : (__tl_dyn-array String) (__tl_make-array String count)]
+    [contents : (__tl_dyn-array String) (__tl_make-array String count)]
+    [cursor : ast.AstDeclList (ast.clone-ast-decl-list rest)]
+    [i : i64 1]
+    (set! (array-ref names 0) first-name)
+    (set! (array-ref paths 0) first-path)
+    (while (< i count)
+      (match (ast.ast-decl-list-step (& cursor))
+        [(Cons decl next-rest)
+          (match (& decl)
+            [(IncludeStrLzss decl-name decl-path)
+              (set! (array-ref names i) decl-name)
+              (set! (array-ref paths i) (string.copy decl-path))
+              (set! cursor next-rest)]
+            [_ unit])]
+        [(Nil) unit])
+      (+= i 1))
+    (set! i 0)
+    (while (< i count)
+      (let
+        [inc-path : String (string.copy (& (array-ref paths i)))]
+        [resolved : String
+          (match (if (and
+            use-pkg
+            (compiler-load-pkg-import? (string.copy inc-path)))
+            (compiler-load-resolve-pkg-import
+              (string.copy inc-path)
+              (string.copy manifest-dir)
+              deps)
+            (compiler-load-resolve-import-result-with-roots
+              (& (string.copy importer-path))
+              (string.copy inc-path)
+              stdlib-roots))
+            [(Ok path) path]
+            [(Err message)
+              (return
+                (Err
+                  (box
+                    (cdiag.compiler-diagnostic-load
+                      ImportResolution
+                      (cdiag.compiler-diagnostic-at-start
+                        (string.copy importer-path)
+                        message)))))])]
+        (match (compiler-load-read-include-contents
+          LzssString
+          (string.copy importer-path)
+          inc-path
+          resolved)
+          [(Ok text) (set! (array-ref contents i) text)]
+          [(Err diag) (return (Err diag))]))
+      (+= i 1))
+    (let
+      [packed : String
+        (with-scratch
+          (lzss.compiler-lzss-solid-encode
+            (& contents)
+            (lzss.compiler-lzss-solid-default-chunks)))]
+      [defs : (__tl_dyn-array ast.AstDecl) (__tl_make-array ast.AstDecl count)]
+      (set!
+        (array-ref defs 0)
+        (compiler-load-include-bin-def-with-pools
+          pools
+          (array-ref names 0)
+          packed))
+      (set! i 1)
+      (while (< i count)
+        (set!
+          (array-ref defs i)
+          (compiler-load-include-bin-def-with-pools
+            pools
+            (array-ref names i)
+            ""))
+        (+= i 1))
+      (Ok defs cursor))))
+
+(define (compiler-load-prepend-include-batch
+  [defs : (& defs (__tl_dyn-array ast.AstDecl))]
+  [source : (& ast.AstDeclList)]
+  [importer-path : String]
+  [owner-id : i64]
+  [provenance-id : i64]
+  [module-id : i64]
+  [rest : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
+  (let
+    [out : ResultCompilerLoadWithPaths rest]
+    [i : i64 (- (array-length defs) 1)]
+    (while (>= i 0)
+      (set!
+        out
+        (compiler-load-prepend-include
+          LzssString
+          (& (array-ref defs i))
+          source
+          (string.copy importer-path)
+          owner-id
+          provenance-id
+          module-id
+          out))
+      (-= i 1))
+    out))
 
 (define (compiler-load-expand-include-with-pools
   [kind : CompilerLoadIncludeKind]
@@ -10762,36 +10926,58 @@
                   pools)))]
           [(IncludeStrLzss name include-path)
             (let
-              [expanded
-                (try
-                  (compiler-load-expand-include-with-pools
+              [run-result : ResultCompilerLoadSolidRun
+                (if (and
+                  (compiler-load-solid-lzss-module? (& importer-path))
+                  (> (compiler-load-solid-lzss-run-count (& rest)) 0))
+                  (compiler-load-expand-solid-lzss-run-with-pools
+                    name
+                    (string.copy include-path)
+                    (& rest)
+                    (string.copy importer-path)
+                    stdlib-roots
+                    false
+                    ""
+                    (& (compiler-pkg-deps-empty))
+                    pools)
+                  (match (compiler-load-expand-include-with-pools
                     LzssString
                     (string.copy importer-path)
                     (string.copy include-path)
                     name
                     stdlib-roots
-                    pools))]
-              (compiler-load-prepend-include
-                LzssString
-                (& expanded)
-                decls
-                (string.copy importer-path)
-                traversal.importer-decl-owner-id
-                traversal.importer-path-id
-                importer-source-module-id
-                (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-                  traversal
-                  rest
-                  (string.copy importer-path)
-                  importer-module
-                  importer-module-id
-                  (string.copy importer-source-module)
-                  importer-source-module-id
-                  seen
-                  (owned_view.compiler-owned-reference-shared-view stdlib-roots)
-                  (string.copy import-root)
-                  cfgs
-                  pools)))]
+                    pools)
+                    [(Ok expanded)
+                      (let
+                        [one : (__tl_dyn-array ast.AstDecl)
+                          (__tl_make-array ast.AstDecl 1)]
+                        (set! (array-ref one 0) expanded)
+                        (Ok one rest))]
+                    [(Err diag) (Err diag)]))]
+              (match run-result
+                [(Ok defs after-run)
+                  (compiler-load-prepend-include-batch
+                    (& defs)
+                    decls
+                    (string.copy importer-path)
+                    traversal.importer-decl-owner-id
+                    traversal.importer-path-id
+                    importer-source-module-id
+                    (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                      traversal
+                      after-run
+                      (string.copy importer-path)
+                      importer-module
+                      importer-module-id
+                      (string.copy importer-source-module)
+                      importer-source-module-id
+                      seen
+                      (owned_view.compiler-owned-reference-shared-view
+                        stdlib-roots)
+                      (string.copy import-root)
+                      cfgs
+                      pools))]
+                [(Err diag) (Err diag)]))]
           [(IncludeBin name include-path)
             (let
               [expanded
@@ -14226,39 +14412,81 @@
                   deps
                   cfgs)))]
           [(IncludeStrLzss name include-path)
-            (let
-              [expanded
-                (try
-                  (compiler-load-package-expand-include
-                    LzssString
-                    (string.copy importer-path)
-                    (string.copy include-path)
+            (if (and
+              (compiler-load-solid-lzss-module? (& importer-path))
+              (> (compiler-load-solid-lzss-run-count (& rest)) 0))
+              (let
+                [pools : ast.AstNodePoolContext
+                  (ast.ast-node-pool-context-capture-active)]
+                [solid-result : ResultCompilerLoadSolidRun
+                  (compiler-load-expand-solid-lzss-run-with-pools
                     name
+                    (string.copy include-path)
+                    (& rest)
+                    (string.copy importer-path)
                     stdlib-roots
+                    true
                     (string.copy manifest-dir)
-                    deps))]
-              (compiler-load-prepend-include
-                LzssString
-                (& expanded)
-                decls
-                (string.copy importer-path)
-                importer-path-id
-                importer-path-id
-                importer-module-id
-                (compiler-load-package-decls-with-module-and-roots
-                  (& rest)
-                  importer-scan-decls
+                    deps
+                    pools)]
+                (ast.ast-node-pool-context-install! pools)
+                (match solid-result
+                  [(Ok defs after-run)
+                    (compiler-load-prepend-include-batch
+                      (& defs)
+                      decls
+                      (string.copy importer-path)
+                      importer-path-id
+                      importer-path-id
+                      importer-module-id
+                      (compiler-load-package-decls-with-module-and-roots
+                        (& after-run)
+                        importer-scan-decls
+                        (string.copy importer-path)
+                        importer-path-id
+                        importer-module
+                        importer-module-id
+                        (string.copy importer-source-module)
+                        importer-source-module-id
+                        seen
+                        stdlib-roots
+                        (string.copy manifest-dir)
+                        deps
+                        cfgs))]
+                  [(Err diag) (Err diag)]))
+              (let
+                [expanded
+                  (try
+                    (compiler-load-package-expand-include
+                      LzssString
+                      (string.copy importer-path)
+                      (string.copy include-path)
+                      name
+                      stdlib-roots
+                      (string.copy manifest-dir)
+                      deps))]
+                (compiler-load-prepend-include
+                  LzssString
+                  (& expanded)
+                  decls
                   (string.copy importer-path)
                   importer-path-id
-                  importer-module
+                  importer-path-id
                   importer-module-id
-                  (string.copy importer-source-module)
-                  importer-source-module-id
-                  seen
-                  stdlib-roots
-                  (string.copy manifest-dir)
-                  deps
-                  cfgs)))]
+                  (compiler-load-package-decls-with-module-and-roots
+                    (& rest)
+                    importer-scan-decls
+                    (string.copy importer-path)
+                    importer-path-id
+                    importer-module
+                    importer-module-id
+                    (string.copy importer-source-module)
+                    importer-source-module-id
+                    seen
+                    stdlib-roots
+                    (string.copy manifest-dir)
+                    deps
+                    cfgs))))]
           [(IncludeBin name include-path)
             (let
               [expanded

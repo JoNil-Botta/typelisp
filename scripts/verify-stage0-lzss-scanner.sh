@@ -446,6 +446,84 @@ analyze_reject 'payload not found'
 printf '(include-str-lzss catalog "catalog.tsv")\n' > "$work/catalog.tl"
 printf X > "$work/image.bin"
 printf ' (\n include-bin image "image.bin.tlch") ; image\n' >> "$work/manifest.tl"
+# Solid LZSS (s3) multi-entry container: header, authenticated index, chunk
+# table, entry table, and per-chunk LZSS v3 bitstreams.
+stamp_s3_index() {
+    s3_hash=$(od -An -v -tu1 "$work/s3" | awk -v end="$1" '
+        BEGIN { h=1; i=0 }
+        { for (f=1;f<=NF && i<end;f++) { h=(h*131+((i>=68 && i<76)?0:$f))%2147483647; i++ } }
+        END { printf "%.0f",h }')
+    u64 "$s3_hash" | dd of="$work/s3" bs=1 seek=68 conv=notrunc 2>/dev/null
+}
+# Build a 2-chunk, 2-entry solid container from the real v3 token bitstreams
+# of `frame-a` (raw 1 B) and `frame-text` (raw 23 B).
+s3_bits_a_len=$(($(wc -c < "$work/frame-a") - 38))
+s3_bits_t_len=$(($(wc -c < "$work/frame-text") - 39))
+dd if="$work/frame-a" of="$work/s3-bits-a" bs=1 skip=38 2>/dev/null
+dd if="$work/frame-text" of="$work/s3-bits-t" bs=1 skip=39 2>/dev/null
+s3_index_end=$((92 + 2 * 32 + 2 * 24))
+s3_stream_len=$((s3_bits_a_len + s3_bits_t_len))
+write_s3() {
+    {
+        printf '__typelisp_embedded_stdlib_tlss_s3__'
+        u64 1; u64 24; u64 "$s3_index_end"; u64 2; u64 0; u64 "$s3_stream_len"; u64 2
+        u64 0; u64 "$s3_bits_a_len"; u64 0; u64 1
+        u64 "$s3_bits_a_len"; u64 "$s3_bits_t_len"; u64 1; u64 23
+        u64 0; u64 0; u64 1
+        u64 1; u64 0; u64 23
+        cat "$work/s3-bits-a" "$work/s3-bits-t"
+    } > "$work/s3"
+    stamp_s3_index "$s3_index_end"
+}
+write_s3
+label=accept-s3
+expect "$work/s3" \
+    "2 $s3_stream_len $((s3_index_end + s3_stream_len)) 2 24"
+
+# Marker-only s3 string is ignored, real s3 container after it is decoded.
+{ printf '__typelisp_embedded_stdlib_tlss_s3__\000'; cat "$work/s3"; } \
+    > "$work/s3-marker"
+label=s3-marker-constant
+expect "$work/s3-marker" \
+    "2 $s3_stream_len $((s3_index_end + s3_stream_len)) 2 24"
+
+# Corrupted s3 index fails its authenticated hash.
+label=s3-index-hash
+write_s3
+printf X | dd of="$work/s3" bs=1 seek=92 conv=notrunc 2>/dev/null
+reject "$work/s3" 'index hash mismatch'
+
+# Truncated s3 stream fails cleanly.
+label=s3-truncated
+write_s3
+s3_size=$(wc -c < "$work/s3" | tr -d ' ')
+dd if="$work/s3" of="$work/s3-short" bs=1 count="$((s3_size - 1))" 2>/dev/null
+reject "$work/s3-short" 'truncated'
+
+# Nonzero padding bit on an s3 chunk fails cleanly.
+label=s3-nonzero-padding
+write_s3
+s3_last=$(od -An -v -tu1 -j "$((s3_size - 1))" -N 1 "$work/s3" | tr -d ' ')
+printf "\\$(printf '%03o' "$((s3_last | 1))")" |
+    dd of="$work/s3" bs=1 seek="$((s3_size - 1))" conv=notrunc 2>/dev/null
+reject "$work/s3" 'padding bits'
+
+# Analyzer accounting maps a 2-entry s3 container to 2 manifest declarations.
+printf 'hello hello hello world' > "$work/payload2.txt"
+{
+    printf '(include-str-lzss payload "payload.txt")\n'
+    printf '(include-str-lzss payload2 "payload2.txt")\n'
+} > "$work/s3-manifest.tl"
+printf '(define dummy : i64 0)\n' > "$work/s3-empty.tl"
+write_s3
+PATH="$work/bin:$PATH" scripts/analyze-stage0-size.sh \
+    --embedded-stdlib "$work/s3-manifest.tl" \
+    --compiler-sources "$work/s3-empty.tl" "$work/s3" > "$work/s3-report"
+grep -Fx "embedded_stdlib_manifest_lzss_declarations${tab}2" "$work/s3-report" >/dev/null
+grep -Fx "lzss_payload_streams${tab}2" "$work/s3-report" >/dev/null
+grep -Fx "lzss_v3_streams${tab}2" "$work/s3-report" >/dev/null
+grep -Fx "lzss_raw_bytes${tab}24" "$work/s3-report" >/dev/null
+
 if [ "${1:-}" != --target-tmpdir ]; then
     mkdir "$work/target"
     TMPDIR="$work/target" "$ROOT/scripts/verify-stage0-lzss-scanner.sh" --target-tmpdir

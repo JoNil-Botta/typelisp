@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-sde-fallback-cross-mode-differential	110	all	stage2 forced-SDE AVX-512 cross-mode differential	bootstrap-compiler,stage2-cross-mode-semantic-abi-differential,stage2-sde-fallback-spmd-simd	stage2	256	-	gate_sde_fallback_cross_mode_differential	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

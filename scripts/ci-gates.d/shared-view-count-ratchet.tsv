@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+shared-view-count-ratchet	970	all	shared-view count ratchet	-	-	256	-	scripts/check-shared-view-count.sh --self-test && scripts/check-shared-view-count.sh	linux-2	windows-2	compiler,stdlib,corpus	Reads the current source inventory or source invariants directly.

@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+typelisp-source-formatting	260	all	TypeLisp source formatting	bootstrap-compiler	stage2	256	-	env TYPELISP_FORMAT_COMPILER_IS_CURRENT_TREE=1 scripts/check-tl-format.sh	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

@@ -3,6 +3,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 . "$ROOT/scripts/lib-manifest.sh"
+. "$ROOT/scripts/lib-ci-gates.sh"
 mkdir -p "$ROOT/target/exp/ci-affected-test"
 work=$(mktemp -d "$ROOT/target/exp/ci-affected-test/run.XXXXXX")
 selector="$ROOT/scripts/ci-affected.sh"
@@ -15,12 +16,15 @@ case "$work" in
 esac
 
 # Exercise Git's actual Windows checkout filter, including the provenance
-# table and byte-compared historical paths. Their LF attributes must win.
-for path in scripts/ci-affected-paths.tsv scripts/ci-affected-inputs.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv tests/integration/manifest.d/*.manifest src/compile_manifest.d/*.manifest; do
+# tables and byte-compared historical paths. Their LF attributes must win.
+for path in scripts/ci-gates.d/*.tsv scripts/ci-affected-paths.d/*.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv tests/integration/manifest.d/*.manifest src/compile_manifest.d/*.manifest; do
     git cat-file blob ":$path" > "$work/checkout.expected"
     git -c core.autocrlf=true cat-file --filters --path="$path" ":$path" > "$work/checkout.actual"
     cmp "$work/checkout.actual" "$work/checkout.expected" || fail "Windows checkout changed line endings: $path"
 done
+
+ci_gates_load "$ROOT/scripts/ci-gates.d" > "$work/gates-full.tsv" || fail 'gate table load failed'
+ci_affected_paths_load "$ROOT/scripts/ci-affected-paths.d" > "$work/affected-paths.tsv" || fail 'affected-paths load failed'
 
 # Audit tracked literal inputs inside owning scripts, independently of the
 # reviewed map. Synthetic self-test modes do not consume the real corpus.
@@ -28,8 +32,8 @@ git ls-files > "$work/tracked-inputs"
 awk '{path=$0; while (sub(/\/[^/]*$/, "", path)) print path}' "$work/tracked-inputs" | sort -u > "$work/tracked-directories"
 awk -F '\t' '
     {sub(/\r$/, "")}
-    !/^#/ && $1 != "id" {
-        command = $8
+    {
+        command = $9
         while (match(command, /scripts\/[A-Za-z0-9_.-]+\.sh/)) {
             script = substr(command, RSTART, RLENGTH)
             command = substr(command, RSTART + RLENGTH)
@@ -38,10 +42,10 @@ awk -F '\t' '
             print $1 "\t" script
         }
     }
-' "$ROOT/scripts/ci-gates.tsv" > "$work/owning-scripts.tsv"
+' "$work/gates-full.tsv" > "$work/owning-scripts.tsv"
 awk -F '\t' '
     {sub(/\r$/, "")}
-    FILENAME == ARGV[1] { if ($8 ~ /^gate_[a-z0-9_]+$/) gate[$8] = $1; next }
+    FILENAME == ARGV[1] { if ($9 ~ /^gate_[a-z0-9_]+$/) gate[$9] = $1; next }
     /^gate_[a-z0-9_]+\(\)/ { name = $1; sub(/\(\).*/, "", name) }
     /^}/ { name = "" }
     name in gate {
@@ -51,7 +55,7 @@ awk -F '\t' '
             line = substr(line, RSTART + RLENGTH)
         }
     }
-' "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" >> "$work/owning-scripts.tsv"
+' "$work/gates-full.tsv" "$ROOT/scripts/ci-verify.sh" >> "$work/owning-scripts.tsv"
 # Traverse literal shell invocations, retaining the original gate owner across
 # nested guards. A seen set bounds cycles; reading a missing script is an error.
 awk -F '\t' '
@@ -136,7 +140,7 @@ awk -F '|' '$1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$work
 # Primary declarations add exact fixture owners. Imported/staged dependency
 # lists and generic compiler-comparison suites remain advisory source classes.
 awk -F '\t' '$1 ~ /\.cases$/ {print}' "$work/script-inputs.tsv" > "$work/inventory-owners.tsv"
-awk -F '\t' '{sub(/\r$/, "")} !/^#/ && $1 != "id" {n=split($8, words, " "); for(i=1;i<=n;i++) if(words[i] ~ /^tests\/.*\.cases$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" >> "$work/inventory-owners.tsv"
+awk -F '\t' '{sub(/\r$/, "")} {n=split($9, words, " "); for(i=1;i<=n;i++) if(words[i] ~ /^tests\/.*\.cases$/) print words[i] "\t" $1}' "$work/gates-full.tsv" >> "$work/inventory-owners.tsv"
 # The public-tool family runs these transcripts and corpora together, and each
 # map row that owns one of their inputs names the whole family, so every file
 # requires every part.
@@ -324,7 +328,7 @@ awk -F '\t' '
         }
     }
     END {exit failed}
-' "$ROOT/scripts/ci-affected-paths.tsv" "$work/tracked-directories" "$work/primary-inputs.tsv" || fail 'primary inventory ownership is incomplete'
+' "$work/affected-paths.tsv" "$work/tracked-directories" "$work/primary-inputs.tsv" || fail 'primary inventory ownership is incomplete'
 
 for host in linux windows; do
     "$ROOT/scripts/ci-verify.sh" --list-gates "$host" > "$work/$host.table"
@@ -365,7 +369,7 @@ for host in linux windows; do
                 has_gate "$work/trigger.ids" integration-manifest-validator-self-tests ;;
         esac
         has_gate "$work/trigger.ids" zero-cons-fixture-and-embedded-source-invariant
-        awk -F '\t' '!/^#/ && $1 != "id" && $5 != "-" {print $1}' "$ROOT/scripts/ci-gates.tsv" |
+        awk -F '\t' '$6 != "-" {print $1}' "$work/gates-full.tsv" |
         while IFS= read -r gate; do
             if grep -Fx "$gate" "$work/$host.full" >/dev/null; then has_gate "$work/trigger.ids" "$gate"; fi
         done
@@ -383,7 +387,7 @@ for host in linux windows; do
     done
     # Every literal corpus input in a canonical gate command has an owning
     # required trigger, independently of the advisory input classifications.
-    awk -F '\t' '!/^#/ && $1 != "id" {n = split($8, words, " "); for (i = 1; i <= n; i++) if (words[i] ~ /^tests\/[A-Za-z0-9._\/-]+$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" > "$work/literal-inputs.tsv"
+    awk -F '\t' '{n = split($9, words, " "); for (i = 1; i <= n; i++) if (words[i] ~ /^tests\/[A-Za-z0-9._\/-]+$/) print words[i] "\t" $1}' "$work/gates-full.tsv" > "$work/literal-inputs.tsv"
     while IFS=$TAB read -r path gate; do
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
         batched=$((batched + 1))
@@ -464,7 +468,7 @@ for host in linux windows; do
             cmp "$work/advisory-only.ids" "$work/$host.full" || fail 'advisory-only match omitted an unknown required consumer'
         done
     done
-    for path in scripts/ci-verify.sh .github/workflows/ci.yml tests/public-tools/example.sh tests/fixtures/ci-affected/history.tsv; do
+    for path in scripts/ci-verify.sh scripts/lib-ci-gates.sh scripts/ci-gates.d/bootstrap-compiler.tsv .github/workflows/ci.yml tests/public-tools/example.sh tests/fixtures/ci-affected/history.tsv; do
         printf '%s\n' "$path" > "$work/paths"
         "$selector" --host "$host" --paths "$work/paths" > "$work/harness.ids"
         cmp "$work/harness.ids" "$work/$host.full" || fail "harness path did not select full table: $path"
@@ -487,7 +491,8 @@ done
 repo="$work/repo"
 mkdir -p "$repo/scripts" "$repo/tests/safety"
 printf '/target/\n' > "$repo/.gitignore"
-cp "$selector" "$ROOT/scripts/ci-affected-paths.tsv" "$ROOT/scripts/ci-affected-inputs.tsv" "$ROOT/scripts/ci-gates.tsv" "$repo/scripts/"
+cp "$selector" "$ROOT/scripts/lib-ci-gates.sh" "$repo/scripts/"
+cp -R "$ROOT/scripts/ci-gates.d" "$ROOT/scripts/ci-affected-paths.d" "$repo/scripts/"
 cat > "$repo/scripts/ci-verify.sh" <<'STUB'
 #!/usr/bin/env sh
 set -eu
@@ -593,28 +598,68 @@ mv "$repo/line
 break.txt" "$work/newline-file.txt"
 "$fixture_selector" --base "$drift" > "$work/drift.ids" 2> "$work/drift.log"
 cmp "$work/drift.ids" "$work/empty.ids" || fail 'base-only drift entered selection'
-printf 'unknown/path\tnot-a-real-gate\t-\tinvalid test row\n' >> "$repo/scripts/ci-affected-paths.tsv"
+printf 'unknown/path\tnot-a-real-gate\t-\tinvalid test row\n' >> "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
 expect_rejected invalid-map "$fixture_selector" --base "$base" --run
-cp "$ROOT/scripts/ci-affected-paths.tsv" "$repo/scripts/ci-affected-paths.tsv"
-printf 'tests/*\tstage2-safety-corpus\t-\tduplicate test row\n' >> "$repo/scripts/ci-affected-paths.tsv"
+cp "$ROOT/scripts/ci-affected-paths.d/tests-other.tsv" "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
+printf 'path\trequired\tadvisory\treason\ntests/*\tstage2-safety-corpus\t-\tduplicate test row\n' > "$repo/scripts/ci-affected-paths.d/zz-dup.tsv"
 expect_rejected duplicate-map "$fixture_selector" --base "$base"
-awk -F '\t' -v OFS='\t' '$1 == "tests/*" {$2 = ""} {print}' "$ROOT/scripts/ci-affected-paths.tsv" > "$repo/scripts/ci-affected-paths.tsv"
+rm -f "$repo/scripts/ci-affected-paths.d/zz-dup.tsv"
+awk -F '\t' -v OFS='\t' '$1 == "tests/*" {$2 = ""} {print}' "$ROOT/scripts/ci-affected-paths.d/tests-other.tsv" > "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
 cp "$work/run.call" "$work/empty-map-before.call"
 expect_rejected empty-gates "$fixture_selector" --base "$base" --run
 cmp "$work/run.call" "$work/empty-map-before.call" || fail 'invalid map executed a gate'
-cp "$ROOT/scripts/ci-affected-paths.tsv" "$repo/scripts/ci-affected-paths.tsv"
-sed '$d' "$ROOT/scripts/ci-affected-inputs.tsv" > "$repo/scripts/ci-affected-inputs.tsv"
+cp "$ROOT/scripts/ci-affected-paths.d/tests-other.tsv" "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
+mv "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$work/held-gate.tsv"
 printf '%s\n' src/compiler_backend.tl > "$work/paths"
 "$fixture_selector" --paths "$work/paths" > "$work/unreviewed-gate.ids" 2> "$work/unreviewed-gate.log"
 cmp "$work/unreviewed-gate.ids" "$work/$native_host.full" || fail 'unreviewed gate inventory did not fail to full'
-cp "$ROOT/scripts/ci-affected-inputs.tsv" "$repo/scripts/ci-affected-inputs.tsv"
-printf 'bad-gate\tinvalid-class\tinvalid fixture\n' >> "$repo/scripts/ci-affected-inputs.tsv"
+mv "$work/held-gate.tsv" "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
+awk -F '\t' -v OFS='\t' 'NR == 2 {$12 = "invalid-class"} {print}' "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" > "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
 expect_rejected invalid-input-class "$fixture_selector" --base "$base"
-cp "$ROOT/scripts/ci-affected-inputs.tsv" "$repo/scripts/ci-affected-inputs.tsv"
-printf 'tests/unmapped.dat\t-,-\t@corpus\tinvalid empty minimum\n' >> "$repo/scripts/ci-affected-paths.tsv"
+cp "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
+printf 'tests/unmapped.dat\t-,-\t@corpus\tinvalid empty minimum\n' >> "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
 expect_rejected invalid-empty-minimum "$fixture_selector" --base "$base"
+cp "$ROOT/scripts/ci-affected-paths.d/tests-other.tsv" "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
 printf '@@\tlinux\trequired\n' > "$work/malformed.batch"
 expect_rejected malformed-batch "$fixture_selector" --batch "$work/malformed.batch"
+
+# Fail-closed fragment-directory checks for ci-gates.d/ and ci-affected-paths.d/:
+# filename stem != id, duplicate gate row/ID, dependency cycle, stray non-.tsv,
+# symlink, nested entry, and deterministic Kahn (priority desc, id asc) order.
+cp "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/wrong-stem.tsv"
+expect_rejected gates-stem-mismatch ci_gates_load "$repo/scripts/ci-gates.d"
+rm -f "$repo/scripts/ci-gates.d/wrong-stem.tsv"
+tail -n 1 "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" >> "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
+expect_rejected gates-duplicate-row ci_gates_load "$repo/scripts/ci-gates.d"
+cp "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
+printf 'stray\n' > "$repo/scripts/ci-gates.d/stray.txt"
+expect_rejected gates-stray-file ci_gates_load "$repo/scripts/ci-gates.d"
+rm -f "$repo/scripts/ci-gates.d/stray.txt"
+printf 'stray\n' > "$repo/scripts/ci-affected-paths.d/stray.txt"
+expect_rejected paths-stray-file ci_affected_paths_load "$repo/scripts/ci-affected-paths.d"
+rm -f "$repo/scripts/ci-affected-paths.d/stray.txt"
+mkdir -p "$repo/scripts/ci-gates.d/nested"
+cp "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/nested/bootstrap-adaptive-control-flow.tsv"
+expect_rejected gates-nested-entry ci_gates_load "$repo/scripts/ci-gates.d"
+rm -rf "$repo/scripts/ci-gates.d/nested"
+if [ "$native_host" = linux ]; then
+    ln -s "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/link-gate.tsv"
+    expect_rejected gates-symlink-entry ci_gates_load "$repo/scripts/ci-gates.d"
+    rm -f "$repo/scripts/ci-gates.d/link-gate.tsv"
+fi
+mkdir -p "$work/cycle-gates"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ncyc-a\t100\tall\tcycle a\tcyc-b\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tcycle fixture\n' > "$work/cycle-gates/cyc-a.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ncyc-b\t90\tall\tcycle b\tcyc-a\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tcycle fixture\n' > "$work/cycle-gates/cyc-b.tsv"
+expect_rejected gates-dependency-cycle ci_gates_load "$work/cycle-gates"
+grep -F 'dependency cycle' "$work/gates-dependency-cycle.err" >/dev/null || fail 'cycle rejection lost its diagnostic'
+mkdir -p "$work/kahn-gates"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-b\t100\tall\tgate b\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-b.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-a\t100\tall\tgate a\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-a.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-high\t500\tall\tgate high\tgate-b\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-high.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-low\t50\tall\tgate low\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-low.tsv"
+ci_gates_load "$work/kahn-gates" | cut -f 1 > "$work/kahn.actual" || fail 'kahn fixture load failed'
+printf 'gate-a\ngate-b\ngate-high\ngate-low\n' > "$work/kahn.expected"
+cmp "$work/kahn.actual" "$work/kahn.expected" || fail 'Kahn topological (priority desc, id asc) order mismatch'
 
 # The fixture repository's .git must not block clean --experiments after
 # success. Every failure exits above and retains its evidence.

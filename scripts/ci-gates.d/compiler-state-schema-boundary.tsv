@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+compiler-state-schema-boundary	1010	all	compiler state schema boundary	-	-	256	-	scripts/check-compiler-state-schema.sh --self-test && scripts/check-compiler-state-schema.sh	linux-2	windows-2	compiler,stdlib,corpus	Scans src, stdlib and tests for retired generic state accessors.

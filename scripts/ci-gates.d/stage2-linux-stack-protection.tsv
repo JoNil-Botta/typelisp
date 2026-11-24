@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-linux-stack-protection	830	linux	Linux stack guards and probes	bootstrap-compiler	stage2	6144	-	scripts/verify-linux-stack-protection.sh	linux-2	-	compiler,stdlib,corpus	Executes Linux guard, lifetime, probe encoding and full-size overflow witnesses.

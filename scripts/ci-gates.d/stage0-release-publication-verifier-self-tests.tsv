@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage0-release-publication-verifier-self-tests	900	linux	stage0 release publication verifier self-tests	-	-	256	-	scripts/verify-stage0-release.sh --self-test	linux-2	-	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

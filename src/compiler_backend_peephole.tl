@@ -1294,6 +1294,27 @@
   [push-count : i64]
   [slot-vars : i64]
   [backend-state : be_state.CompilerBackendState]) : CompilerBackendRspRebaseResult
+  (compiler-backend-rsp-rebase-full-result-squeezed
+    text
+    frame
+    fpo
+    push-regs
+    push-count
+    slot-vars
+    0
+    backend-state))
+
+;; The ordinary push-mode rebase with an optional callee-save band squeeze
+;; (see compiler-backend-rsp-rebase-full-result-with-saves).
+(define (compiler-backend-rsp-rebase-full-result-squeezed
+  [text : String]
+  [frame : i64]
+  [fpo : bool]
+  [push-regs : (__tl_dyn-array String)]
+  [push-count : i64]
+  [slot-vars : i64]
+  [squeeze : i64]
+  [backend-state : be_state.CompilerBackendState]) : CompilerBackendRspRebaseResult
   (compiler-backend-rsp-rebase-full-result-with-saves
     text
     frame
@@ -1303,6 +1324,7 @@
     push-regs
     push-count
     slot-vars
+    squeeze
     backend-state))
 
 ;; Copy the kept source bytes [start, end) of the rebase input to `out`.
@@ -1382,6 +1404,16 @@
 ;; in `save-regs` but not in `push-regs` has its save/restore deleted like any
 ;; other and its epilogue `popq` dropped with it, so the pass emits neither
 ;; half of a pair the body had no use for.
+;;
+;; `squeeze` > 0 removes the band of that many bytes just below the var
+;; region, which is the start of the callee-save slot area. Push mode deletes
+;; every save that names it, so it would otherwise stay as a hole between the
+;; var slots and the bottom-of-frame regions. `frame` already excludes the
+;; squeezed bytes. References above the band rebase as usual, and those below
+;; it are lifted by `squeeze` so they keep their original %rsp offsets. Any
+;; other frame reference into the band fails the audit, like an unrecognized
+;; saved-CSR-slot reference. A failed pass returns its input whatever the
+;; squeeze, so the caller's keep-rbp fallback is unchanged.
 (define (compiler-backend-rsp-rebase-full-result-with-saves
   [text : String]
   [frame : i64]
@@ -1391,6 +1423,7 @@
   [save-regs : (__tl_dyn-array String)]
   [save-count : i64]
   [slot-vars : i64]
+  [squeeze : i64]
   [backend-state : be_state.CompilerBackendState]) : CompilerBackendRspRebaseResult
   (let
     [n : i64 (string.string-length text)]
@@ -1457,6 +1490,14 @@
       (compiler-backend-frame-bias-neg backend-state fpo frame push-count)]
     [bias-pos : i64
       (compiler-backend-frame-bias-pos backend-state fpo frame push-count)]
+    ;; A negative displacement is a RED-ZONE slot and is legal only there,
+    ;; and only inside the 128 bytes the ABI reserves.
+    [noff-floor : i64
+      (if rz
+        (- 0 compiler-backend-red-zone-limit)
+        0)]
+    ;; The squeezed band is [band-lo, band-lo + squeeze); empty without one.
+    [band-lo : i64 (- (* -8 slot-vars) squeeze)]
     (while (and ok (< i n))
       (let
         ;; The line ends at its newline, or at the text end.
@@ -1841,6 +1882,7 @@
                                               ;; caller-side addresses (bias
                                               ;; sub-s+8n-8). Both equal
                                               ;; `frame` when push-count = 0.
+                                              [band-offset : i64 (- k band-lo)]
                                               [noff : i64
                                                 (+
                                                   (+
@@ -1848,24 +1890,17 @@
                                                       bias-pos
                                                       bias-neg)
                                                     delta)
-                                                  k)]
-                                              ;; A negative
-                                              ;; displacement is a
-                                              ;; RED-ZONE slot and
-                                              ;; is legal only
-                                              ;; there, and only
-                                              ;; inside the 128
-                                              ;; bytes the ABI
-                                              ;; reserves.
-                                              (if (or
-                                                (and (< noff 0) (not rz))
-                                                (<
-                                                  noff
-                                                  (-
-                                                    0
-                                                    compiler-backend-red-zone-limit)))
-                                                (set! ok false)
-                                                (begin
+                                                  (if (< band-offset 0)
+                                                    (+ k squeeze)
+                                                    k))]
+                                              (cond
+                                                [(< noff noff-floor)
+                                                  (set! ok false)]
+                                                [(<
+                                                    (cast band-offset : u64)
+                                                    (cast squeeze : u64))
+                                                  (set! ok false)]
+                                                [else
                                                   (compiler-backend-rsp-rebase-copy-run!
                                                     (&mut out)
                                                     data
@@ -1876,7 +1911,7 @@
                                                     noff)
                                                   (set! last-noff noff)
                                                   (+= ref-count 1)
-                                                  (set! run (+ p 6))))))))))
+                                                  (set! run (+ p 6))])))))))
                                   (set!
                                     p
                                     (if ok
@@ -14320,6 +14355,10 @@
 (define compiler-backend-layout-mode-sink : i64
   2)
 
+;; Size-optimized duplication: a copy may carry only its terminating `jmp`.
+(define compiler-backend-layout-mode-size : i64
+  4)
+
 ;; Production layout: both mechanisms.
 (define compiler-backend-layout-mode : i64
   3)
@@ -14329,6 +14368,17 @@
 ;; `cmp/jcc` + `mov/jmp` join.
 (define compiler-backend-layout-dup-run-cap : i64
   4)
+
+;; Under -Os a copy that carries any instruction besides its `jmp` grows the
+;; code at every site, so only jump threading remains (LLVM's optsize
+;; tail-duplication budget is likewise one instruction).
+(define compiler-backend-layout-dup-size-run-cap : i64
+  1)
+
+(define (compiler-backend-layout-dup-cap [mode : i64]) : i64
+  (if (compiler-backend-layout-flag? mode compiler-backend-layout-mode-size)
+    compiler-backend-layout-dup-size-run-cap
+    compiler-backend-layout-dup-run-cap))
 
 ;; Lines in an out-of-lined region. A cold arm longer than this is a whole
 ;; slow-path loop version, and moving it stops paying for the index it costs.
@@ -16035,7 +16085,8 @@
   [flags : (MutPtr i64)]
   [lines : i64]
   [site : i64]
-  [label : i64]) : i64
+  [label : i64]
+  [cap : i64]) : i64
   (let
     [refuse-bits : i64
       (bit-or
@@ -16063,7 +16114,7 @@
             (set! failed true)]
           [else
             (+= taken 1)
-            (if (> taken compiler-backend-layout-dup-run-cap)
+            (if (> taken cap)
               (set! failed true)
               (if (= (bit-and line-flags compiler-backend-layout-flag-jmp) 0)
                 (+= k 1)
@@ -16158,7 +16209,8 @@
   [sinks : i64]
   [dup-p : (MutPtr i64)]
   [dup-from : (MutPtr i64)]
-  [dup-to : (MutPtr i64)]) : i64
+  [dup-to : (MutPtr i64)]
+  [cap : i64]) : i64
   (let
     [count : i64 0]
     [cursor : i64 0]
@@ -16200,7 +16252,12 @@
                 (>= label 0)
                 (let
                   [term : i64
-                    (compiler-backend-layout-dup-run-end flags lines i label)]
+                    (compiler-backend-layout-dup-run-end
+                      flags
+                      lines
+                      i
+                      label
+                      cap)]
                   (when
                     (and
                       (>= term 0)
@@ -16664,7 +16721,8 @@
                 sinks
                 dup-p-raw
                 dup-from-raw
-                dup-to-raw)
+                dup-to-raw
+                (compiler-backend-layout-dup-cap mode))
               0)]
           ;; `cand-shape` is spent once the sinks are chosen; it carries each
           ;; sink's placement class from here on. Islands are chosen last
@@ -16853,7 +16911,12 @@
           (compiler-backend-layout-analyze
             asm
             n
-            compiler-backend-layout-mode
+            (if (be_state.compiler-backend-state-optimize-for-size?
+              backend-state)
+              (bit-or
+                compiler-backend-layout-mode
+                compiler-backend-layout-mode-size)
+              compiler-backend-layout-mode)
             drop-fallthrough?)]
         [lay-starts : (MutPtr i64)
           (unsafe

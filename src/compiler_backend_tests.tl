@@ -26198,11 +26198,245 @@ entry:
         [(Ok asm) (string.eq asm "")]
         [(Err _) false]))))
 
+(define (compiler-backend-copy-thunk-test-run
+  [ir-text : String]
+  [homes-spec : String]
+  [vars : i64]
+  [loop-block? : bool]
+  [optimize-for-size? : bool]
+  [site-count : i64]
+  [size : i64]) : be_state.ResultCompilerBackend
+  (let
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [saved : EmitterScratch (emitter-scratch-save backend-state)]
+    [assignments : regalloc.CompilerRegAssignmentTable (reg-homes homes-spec)]
+    [instrs : ir.CompilerIrInstrSeq (irt.instrs (string.copy (& ir-text)))]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [blocks : ir.CompilerIrBlockList
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (irt.instrs ir-text)))]
+    [fn-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state backend-state)]
+    [target : be_state.CompilerBackendTarget
+      (be_state.compiler-backend-state-emission-target-policy backend-state).target]
+    [_setup : unit
+      (begin
+        (backend.compiler-backend-copy-thunks-reset! backend-state)
+        (be_state.compiler-backend-state-set-optimize-for-size!
+          backend-state
+          optimize-for-size?)
+        (be_state.compiler-backend-function-state-set-bool!
+          fn-state
+          be_state.compiler-backend-function-bool-has-returning-call
+          true)
+        (be_state.compiler-backend-function-state-set-i64!
+          fn-state
+          be_state.compiler-backend-function-i64-current-block-label
+          (ir.compiler-ir-label "entry"))
+        (when loop-block? (compiler-backend-test-mark-entry-loop! fn-state))
+        (let
+          [data : (MutPtr be_state.CompilerBackendStateData)
+            (be_state.compiler-backend-state-ptr backend-state)]
+          [bucket : i64
+            (be_scalar.compiler-backend-copy-thunk-size-bucket size)]
+          (unsafe
+            (let
+              [counts : (__tl_dyn-array i64)
+                (deref data).copy-thunk-size-counts]
+              (when
+                (and (>= bucket 0) (< bucket (array-length counts)))
+                (set! (array-ref counts bucket) site-count)))))
+        (compiler-backend-test-scavenge-install-ctx!
+          "copy_thunk_test"
+          (ir.compiler-ir-param-seq-empty)
+          (I64)
+          vars
+          blocks
+          assignments
+          backend-state)
+        (set-state-emit-instr-post-base! backend-state count)
+        (set-state-emit-current-count! backend-state count))]
+    [result : be_state.ResultCompilerBackend
+      (match (compiler-backend-emit-test-instrs-target-with-backend-state
+        instrs
+        assignments
+        vars
+        target
+        backend-state)
+        [(Ok asm)
+          (let
+            [index : be_state.CompilerBackendProgramIndex
+              (be_facts.compiler-backend-program-index-build-with-backend-state-and-profile-state
+                backend-state
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (ir.compiler-ir-function-seq-empty)
+                (ir.compiler-ir-extern-seq-empty)
+                (profile_state.compiler-profile-state-new))]
+            (be_state.ResultCompilerBackend.Ok
+              (str_cat.str-cat
+                asm
+                (be_scalar.compiler-backend-copy-thunk-text index))))]
+        [(Err e) (be_state.ResultCompilerBackend.Err e)])]
+    [_restore : unit (emitter-scratch-restore! backend-state saved)]
+    result))
+
+(define (compiler-backend-canonical-copy-thunks-ok?) : bool
+  (and
+    ;; Non-loop 56 B copy with %rbp source base uses canonical (%rax,%rcx,%xmm2)
+    ;; thunk with movsd 8-B tail and zero GP scratch.
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "copy_bytes %0, %1, 56"
+        "%0=%r12 %1=%rbp"
+        3
+        false
+        false
+        8
+        56)
+      (has
+        "    movq %rbp, %rax\n"
+        "    movq %r12, %rcx\n"
+        "    call tl_copy_chunks_0\n"
+        "tl_copy_chunks_0:\n"
+        "    movsd 48(%rax), %xmm2\n"
+        "    movsd %xmm2, 48(%rcx)\n")
+      (lacks "%r8" "    movq 48("))
+    ;; Live-out %rax forces (%r10,%r11) fallback so %rax is never clobbered.
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "copy_bytes %0, %1, 56
+         %3 = mov %2 : i64"
+        "%0=%r12 %1=%r13 %2=%rax"
+        4
+        false
+        false
+        8
+        56)
+      (has
+        "    movq %r13, %r10\n"
+        "    movq %r12, %r11\n"
+        "    call tl_copy_chunks_0\n"
+        "    movups (%r10), %xmm2\n")
+      (lacks "    movq %r13, %rax\n" "    movq %r12, %rax\n"))
+    ;; Live-out %rax already equals src with offset 0: stays in %rax untouched.
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "copy_bytes %0, %1, 56
+         %2 = mov %1 : i64"
+        "%0=%r12 %1=%rax"
+        3
+        false
+        false
+        8
+        56)
+      (has "    movq %r12, %rcx\n" "    call tl_copy_chunks_0\n")
+      (lacks "    movq %rax, %rax\n" "    movq %r12, %rax\n"))
+    ;; bytes % 4 != 0 stays inline (canonical thunk never writes GP regs).
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "copy_bytes %0, %1, 58"
+        "%0=%r12 %1=%r13"
+        3
+        false
+        false
+        8
+        58)
+      (has "    movups (%r13), %xmm2\n")
+      (lacks "call tl_copy_chunks_"))
+    ;; Loop block keeps 56 B inline at -O2; -Os 32 B thunks with >=3 sites;
+    ;; single-use 56 B stays inline.
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "copy_bytes %0, %1, 56"
+        "%0=%r12 %1=%r13"
+        3
+        true
+        false
+        8
+        56)
+      (has "    movups (%r13), %xmm2\n")
+      (lacks "call tl_copy_chunks_"))
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "copy_bytes %0, %1, 32"
+        "%0=%r12 %1=%r13"
+        3
+        false
+        true
+        3
+        32)
+      (has "    call tl_copy_chunks_0\n")
+      (lacks "    movups (%r13), %xmm2\n"))
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "copy_bytes %0, %1, 56"
+        "%0=%r12 %1=%r13"
+        3
+        false
+        true
+        1
+        56)
+      (has "    movups (%r13), %xmm2\n")
+      (lacks "call tl_copy_chunks_"))
+    ;; Enum-payload dst-disp == 8 direct pair (%rax, 8(%r12)) uses zero setup
+    ;; and bakes the +8 destination bias into the canonical thunk body.
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "%2 = gep %0, 1 : u64
+         copy_bytes %2, %1, 56"
+        "%0=%r12 %1=%rax"
+        3
+        false
+        false
+        300
+        56)
+      (has
+        "    call tl_copy_chunks_0\n"
+        "tl_copy_chunks_0:\n"
+        "    movups (%rax), %xmm2\n"
+        "    movups %xmm2, 8(%r12)\n"
+        "    movsd 48(%rax), %xmm2\n"
+        "    movsd %xmm2, 56(%r12)\n")
+      (lacks "    leaq 8(%r12)"))
+    ;; Hot 48 B direct read-only pair (%r13, %r12) uses zero setup and thunks.
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "copy_bytes %0, %1, 48"
+        "%0=%r12 %1=%r13"
+        3
+        false
+        false
+        200
+        48)
+      (has
+        "    call tl_copy_chunks_0\n"
+        "tl_copy_chunks_0:\n"
+        "    movups (%r13), %xmm2\n"
+        "    movups %xmm2, (%r12)\n")
+      (lacks "    movq %r13, " "    movq %r12, "))
+    ;; Non-loop 48 B stays inline at -O2 when setup-cost > 0.
+    (asm-ok?
+      (compiler-backend-copy-thunk-test-run
+        "copy_bytes %0, %1, 48"
+        "%0=%r14 %1=%r15"
+        3
+        false
+        false
+        200
+        48)
+      (has "    movups (%r15), %xmm2\n")
+      (lacks "call tl_copy_chunks_"))))
+
 (define (compiler-backend-scratch-staging-direct-home-shape-ok?) : bool
   (and
     (compiler-backend-copy-bytes-direct-home-shape-ok?)
     (compiler-backend-copy-bytes-live-through-shape-ok?)
     (compiler-backend-copy-bytes-run-protect-shape-ok?)
+    (compiler-backend-canonical-copy-thunks-ok?)
     (be_state.backend-and4
       (compiler-backend-widening-cast-direct-home-shape-ok?)
       (compiler-backend-global-store-direct-home-shape-ok?)

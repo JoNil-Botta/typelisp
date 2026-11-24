@@ -1224,6 +1224,7 @@
   (copy-thunks backend_string_i64_map.Map)
   (copy-thunk-bodies (__tl_dyn-array String))
   (copy-thunk-count i64)
+  (copy-thunk-size-counts (__tl_dyn-array i64))
   ;; Per-program scratch for the registry: a dedicated arena (raw handle +
   ;; start mark) rewound by `compiler-backend-copy-thunks-reset!`, so no thunk
   ;; key, body or table outlives the emission that registered it.
@@ -1305,6 +1306,7 @@
         (backend_string_i64_map.with-capacity 1)
         (__tl_make-array String 0)
         0
+        (__tl_make-array i64 0)
         0
         0
         false))

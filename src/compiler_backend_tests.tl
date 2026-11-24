@@ -16339,7 +16339,7 @@ f:
     (be_peephole.compiler-backend-expand-stack-probes! state (&mut records))
     (let
       [text : String
-        (be_peephole.compiler-backend-peephole-records-render records true)]
+        (be_peephole.compiler-backend-peephole-records-render records true true)]
       (test.assert-true
         (asm-has?
           text
@@ -42412,7 +42412,8 @@ b_keep:
             [rendered : String
               (be_peephole.compiler-backend-peephole-records-render
                 records
-                true)]
+                true
+                false)]
             (backend.compiler-backend-peephole-records-retire! stream)
             rendered))]
       (CompilerBackendPeepholeChunkState
@@ -42585,7 +42586,8 @@ b_keep:
           (text_buf_borrowed.empty-like (& asm))
           records
           asm
-          true))]
+          true
+          false))]
     (backend.compiler-backend-peephole-records-retire! stream)
     result))
 

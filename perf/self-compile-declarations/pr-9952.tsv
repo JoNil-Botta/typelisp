@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-11188.606	opt2 post-emission peephole/layout compaction (dead leaq/copy/load-compare/store-reload folding, XMM zero-store coalescing, trampoline/branch/argless-abort dedup); same-host local delta vs base 2ee5a9feb: 106,567,574,189 -> 105,375,231,639 Ir (-1,192,342,550 Ir, -11,188.6 ppm); no work skipped

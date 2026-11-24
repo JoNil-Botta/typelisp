@@ -25544,6 +25544,8 @@ tl_shared_object_init:
                 (be_peephole.compiler-backend-peephole-records-render
                   records
                   (be_state.compiler-backend-state-tail-merging-enabled?
+                    backend-state)
+                  (be_state.compiler-backend-state-tail-merging-enabled?
                     backend-state))]
               (be_state.CompilerBackendPeepholeSweepChunkState
                 (text_buf.append state.out kept)
@@ -25830,7 +25832,11 @@ tl_shared_object_init:
           (text_buf_borrowed.empty-like (& asm))
           records
           asm
-          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)))]
+          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)
+          (and
+            probe-final?
+            (be_state.compiler-backend-state-tail-merging-enabled?
+              backend-state))))]
     (compiler-backend-peephole-records-retire! stream)
     (compiler-backend-sweep-reset! backend-state stream)
     buf))

@@ -9719,7 +9719,8 @@
 ;; arena.
 (define (compiler-backend-peephole-records-render
   [v : be_state.CompilerBackendPeepholeLineVec]
-  [merge-tails? : bool]) : String
+  [merge-tails? : bool]
+  [compact-branches? : bool]) : String
   (if (= v.abort-cand-len 0)
     (begin
       (when
@@ -9727,7 +9728,9 @@
         (let
           [plan : CompilerBackendColdPlan (compiler-backend-cold-plan-empty)]
           (compiler-backend-peephole-merge-tails! (&mut v) (& plan))
-          (compiler-backend-peephole-compact-branch-jumps! (&mut v) (& plan))))
+          (when
+            compact-branches?
+            (compiler-backend-peephole-compact-branch-jumps! (&mut v) (& plan)))))
       (compiler-backend-peephole-records-render-plain v))
     (let
       [scratch : arena.Arena (arena.make)]
@@ -9741,7 +9744,9 @@
         (when
           merge-tails?
           (compiler-backend-peephole-merge-tails! (&mut v) (& plan))
-          (compiler-backend-peephole-compact-branch-jumps! (&mut v) (& plan)))]
+          (when
+            compact-branches?
+            (compiler-backend-peephole-compact-branch-jumps! (&mut v) (& plan))))]
       [rendered : String (compiler-backend-cold-render v plan)]
       (arena.destroy-safe! scratch)
       rendered)))
@@ -17198,13 +17203,16 @@
   [out : (text_buf_borrowed.TextBufBorrowed asm)]
   [v : be_state.CompilerBackendPeepholeLineVec]
   [asm : (& asm str)]
-  [merge-tails? : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
+  [merge-tails? : bool]
+  [compact-branches? : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
   (when
     merge-tails?
     (let
       [plan : CompilerBackendColdPlan (compiler-backend-cold-plan-empty)]
       (compiler-backend-peephole-merge-tails! (&mut v) (& plan))
-      (compiler-backend-peephole-compact-branch-jumps! (&mut v) (& plan))))
+      (when
+        compact-branches?
+        (compiler-backend-peephole-compact-branch-jumps! (&mut v) (& plan)))))
   (let
     [recs : (__tl_dyn-array be_state.CompilerBackendPeepholeLineRecord) v.lines]
     [live : (__tl_dyn-array i64) v.live]

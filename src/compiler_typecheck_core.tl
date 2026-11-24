@@ -17299,7 +17299,8 @@
           (cond
             [(and (= arm 8) (> index 0))
               (ast.AstMaybeType.Some (clone carried))]
-            [(= arm 13) (ast.AstMaybeType.Some ast.AstType.I64)]
+            [(or (= arm 13) (and (>= arm 24) (<= arm 28)))
+              (ast.AstMaybeType.Some ast.AstType.I64)]
             [else ast.AstMaybeType.No])]
         (match (match (& children)
           [(TcBuiltinChildren.None)
@@ -60053,38 +60054,41 @@
           (not (csym.compiler-symbol-root-module-id? module-id))
           (tc-top-level-value-owned-by-module-id? ctx module-id name-id))))))
 
+(define (tc-default-binding-unshadowed-id? [env : TcTypeEnv] [name-id : i64]) : bool
+  (or
+    tc-builtin-classify-unshadowed?
+    (if (tc-type-env-scoped-runtime-active? env)
+      (let
+        [carrier : TcTypeEnvScopedCarrier
+          (tc-type-env-scoped-runtime-current env)]
+        [name-index : i64
+          (tc-type-env-scoped-carrier-lookup-index carrier name-id)]
+        [boundary-index : i64
+          (tc-type-env-scoped-carrier-lookup-index
+            carrier
+            (tc-default-boundary-id))]
+        [scoped : bool
+          (cond
+            [(>= name-index 0)
+              (and (>= boundary-index 0) (> boundary-index name-index))]
+            [(>= boundary-index 0) true]
+            [else
+              (begin
+                (cfg
+                  compile-profile
+                  (counters.bump! tc-profile-env-scoped-tail-fallbacks))
+                (tc-default-builtin-unshadowed-scan-id?
+                  (__tl-project-field
+                    (__tl-project-field carrier sidecar)
+                    persistent)
+                  name-id))])]
+        scoped)
+      (tc-default-builtin-unshadowed-scan-id? env name-id))))
+
 (define (tc-default-builtin-unshadowed-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (if (cbi.compiler-builtin-typecheck-region-arg-id? name-id)
-    (or
-      tc-builtin-classify-unshadowed?
-      (if (tc-type-env-scoped-runtime-active? env)
-        (let
-          [carrier : TcTypeEnvScopedCarrier
-            (tc-type-env-scoped-runtime-current env)]
-          [name-index : i64
-            (tc-type-env-scoped-carrier-lookup-index carrier name-id)]
-          [boundary-index : i64
-            (tc-type-env-scoped-carrier-lookup-index
-              carrier
-              (tc-default-boundary-id))]
-          [scoped : bool
-            (cond
-              [(>= name-index 0)
-                (and (>= boundary-index 0) (> boundary-index name-index))]
-              [(>= boundary-index 0) true]
-              [else
-                (begin
-                  (cfg
-                    compile-profile
-                    (counters.bump! tc-profile-env-scoped-tail-fallbacks))
-                  (tc-default-builtin-unshadowed-scan-id?
-                    (__tl-project-field
-                      (__tl-project-field carrier sidecar)
-                      persistent)
-                    name-id))])]
-          scoped)
-        (tc-default-builtin-unshadowed-scan-id? env name-id)))
-    false))
+  (and
+    (cbi.compiler-builtin-typecheck-region-arg-id? name-id)
+    (tc-default-binding-unshadowed-id? env name-id)))
 
 ;; The type-handle flat lookup keys by the real intern id (so it misses non-root
 ;; names as intended -- the add path binds those under a
@@ -68772,6 +68776,98 @@
   (arena-owner-kind i64)
   (slice-call-kind TcSliceViewCallKind))
 
+;; CPU query call kinds 0 through 3 are CPUID register indices. Kind 4 is XGETBV.
+(define (tc-cpu-query-spelling-kind [name-id : i64]) : i64
+  (cond
+    [(= name-id (cbi.compiler-builtin-ctfe "cpuid-eax")) 0]
+    [(= name-id (cbi.compiler-builtin-ctfe "cpuid-ebx")) 1]
+    [(= name-id (cbi.compiler-builtin-ctfe "cpuid-ecx")) 2]
+    [(= name-id (cbi.compiler-builtin-ctfe "cpuid-edx")) 3]
+    [(= name-id cbi.compiler-builtin-id-xgetbv) 4]
+    [else -1]))
+
+;; Whether a prebound CPU query builtin (`cpuid` or `xgetbv`) is unshadowed in
+;; `ctx`/`env`. The default alias stays visible in a named module even when the
+;; entry module rebinds the bare name (#9687).
+(define (tc-default-cpu-query-unshadowed?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (cond
+    [(and
+        (not (csym.compiler-symbol-root-module-id? (tc-context-module-id ctx)))
+        (tc-source-name-bound-exact-id?
+          env
+          (tc-module-name-id-by-id (tc-context-module-id ctx) name-id)))
+      false]
+    [(tc-top-level-value-owned-by-module-id?
+        ctx
+        (tc-context-type-module-id ctx)
+        name-id)
+      false]
+    [else
+      (let
+        [key : i64 (tc-entry-hidden-source-key-id ctx env name-id)]
+        (or
+          (= key (tc-entry-hidden-default-alias-key name-id))
+          (and (= key name-id) (tc-default-binding-unshadowed-id? env name-id))))]))
+
+(define (tc-cpu-query-kind
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [raw-name : i64]
+  [name-id : i64]) : i64
+  (let
+    [kind : i64 (tc-cpu-query-spelling-kind name-id)]
+    (cond
+      [(< kind 0) -1]
+      [(tc-runtime-identity-head? (tc-context-structural-session ctx) raw-name)
+        kind]
+      [(and
+          (not
+            (csym.compiler-symbol-root-module-id? (tc-context-module-id ctx)))
+          (tc-source-name-bound-exact-id?
+            env
+            (tc-module-name-id-by-id (tc-context-module-id ctx) name-id)))
+        -1]
+      [(< kind 4)
+        (if (tc-source-value-bound-id? ctx env name-id)
+          -1
+          kind)]
+      [(tc-default-cpu-query-unshadowed? ctx env name-id) kind]
+      [else -1])))
+
+(define (tc-cpu-query-head-kind
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [raw-name : i64]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    (tc-cpu-query-kind
+      ctx
+      env
+      raw-name
+      (tc-builtin-call-name-id
+        session
+        raw-name
+        (tc-hygiene-global-name-id? session raw-name)))))
+
+(define (tc-cpuid-head? [ctx : TcContext] [env : TcTypeEnv] [raw-name : i64]) : bool
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [name-id : i64
+      (tc-builtin-call-name-id
+        session
+        raw-name
+        (tc-hygiene-global-name-id? session raw-name))]
+    (and
+      (cbi.compiler-builtin-lower-cpuid-id? name-id)
+      (or
+        (tc-runtime-identity-head? session raw-name)
+        (tc-default-cpu-query-unshadowed? ctx env name-id)))))
+
 ;; The builtin call dispatch for a named callee, decided once from the name.
 ;; `tc-call-or-array-length-id` and the selected call producer share this one
 ;; classification, so neither route can type a builtin as an ordinary call.
@@ -68851,6 +68947,7 @@
             env
             name-id
             (tc-global-shared-view name))]
+        [cpu-kind : i64 (tc-cpu-query-kind ctx env raw-name name-id)]
         [arm : i64
           (cond
             [(and
@@ -68915,6 +69012,7 @@
                 (cbi.compiler-builtin-typecheck-clone-id? name-id)
                 (not (tc-source-value-bound-id? ctx env name-id)))
               23]
+            [(>= cpu-kind 0) (+ 24 cpu-kind)]
             [else 0])]
         ;; An unclassified name may denote a safe arena operation. An arena
         ;; constructor also needs its declaration for the published call.
@@ -68958,6 +69056,14 @@
         (tc-reflection-query-runtime-call
           (ctfe_support.ctfe-comptime-helper-lookup-name (clone info.name)))]
       [(= arm 19) (tc-reflection-query-runtime-call (clone info.name))]
+      [(and (>= arm 24) (<= arm 27))
+        (if (= args.len 2)
+          (Ok (I64))
+          (Err "typecheck: cpuid register query expects two arguments"))]
+      [(= arm 28)
+        (if (= args.len 1)
+          (Ok (I64))
+          (Err "typecheck: xgetbv expects one argument"))]
       [(= arm 8)
         (let
           [_ (try (tc-require-unsafe ctx env (clone info.name)))]
@@ -69100,6 +69206,8 @@
       [(= arm 20) (tc-float-sqrt-call ctx arg actual)]
       [(= arm 21) (tc-float-bitcast-call ctx name-id arg actual)]
       [(= arm 22) (tc-c-fn-check-call ctx actual)]
+      [(and (>= arm 24) (<= arm 28))
+        (tc-cpu-query-operand-type (= arm 28) index actual)]
       [else
         (let
           [ref? : bool (or (= arm 6) (= arm 7))]
@@ -76424,12 +76532,25 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (if (tc-spmd-array-length-call?
-          expr-bases
-          (tc-context-structural-session ctx)
-          (tc-global-shared-view func))
-          (tc-spmd-array-length-call ctx expr-bases env spmd-env expr-ty args)
-          (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)))]
+        (cond
+          [(tc-spmd-array-length-call?
+              expr-bases
+              (tc-context-structural-session ctx)
+              (tc-global-shared-view func))
+            (tc-spmd-array-length-call ctx expr-bases env spmd-env expr-ty args)]
+          [(>=
+              (tc-cpu-query-head-kind
+                ctx
+                env
+                (tc-expr-var-name-id
+                  expr-bases
+                  (ast.ast-expr-segment-bases-get expr-bases func-box)))
+              0)
+            (match (try (tc-spmd-expr-list ctx expr-bases env spmd-env args))
+              [(TcSpmdExprListInfo class next-env)
+                (tc-spmd-finish expr-ty class next-env)])]
+          [else
+            (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)]))]
     [(If cond-box then-branch-box else-branch-box)
       (let
         [cond : ast.AstExpr
@@ -89617,6 +89738,18 @@
     [_ (try (tc-require-unsafe ctx env name))]
     (Ok (ast.ast-ty-ptr (& (ast.ast-ty-ptr (& (U8))))))))
 
+(define (tc-cpu-query-operand-type
+  [xgetbv? : bool]
+  [index : i64]
+  [actual : ast.AstType]) : ResultTcType
+  (if (tc-integer-type? actual)
+    (Ok (I64))
+    (Err
+      (cond
+        [xgetbv? "typecheck: xgetbv index must be integer"]
+        [(= index 0) "typecheck: cpuid leaf must be integer"]
+        [else "typecheck: cpuid subleaf must be integer"]))))
+
 (define (tc-cpuid-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -89625,25 +89758,20 @@
   (let
     [leaf-ty : ast.AstType
       (try (tc-expr-with-expected-or-actual ctx env leaf (I64)))]
-    (if (tc-integer-type? leaf-ty)
-      (let
-        [subleaf-ty : ast.AstType
-          (try (tc-expr-with-expected-or-actual ctx env subleaf (I64)))]
-        (if (tc-integer-type? subleaf-ty)
-          (Ok (I64))
-          (Err "typecheck: cpuid subleaf must be integer")))
-      (Err "typecheck: cpuid leaf must be integer"))))
+    [_ (try (tc-cpu-query-operand-type false 0 leaf-ty))]
+    (tc-cpu-query-operand-type
+      false
+      1
+      (try (tc-expr-with-expected-or-actual ctx env subleaf (I64))))))
 
 (define (tc-xgetbv-type
   [ctx : TcContext]
   [env : TcTypeEnv]
   [index : ast.AstExpr]) : ResultTcType
-  (let
-    [index-ty : ast.AstType
-      (try (tc-expr-with-expected-or-actual ctx env index (I64)))]
-    (if (tc-integer-type? index-ty)
-      (Ok (I64))
-      (Err "typecheck: xgetbv index must be integer"))))
+  (tc-cpu-query-operand-type
+    true
+    0
+    (try (tc-expr-with-expected-or-actual ctx env index (I64)))))
 
 ;; Each syscall operand (number and arguments) must be an integer; the raw
 ;; kernel result is an i64.
@@ -93893,6 +94021,8 @@
           (tc-global-shared-view bound)
           (tc-global-shared-view name))
         Ok]
+      [(>= (tc-cpu-query-head-kind ctx env name-id) 0)
+        (tc-comptime-purity-error expr-bases expr chain name "host CPU query")]
       [(tc-comptime-purity-banned-qualified? ctx name name-id)
         (tc-comptime-purity-error
           expr-bases
@@ -96434,6 +96564,15 @@
   (scan-words effect_words.Vec)
   (scan-inputs effect_words.Vec))
 
+;; A runtime global initializer checked once every body has supplied its
+;; inferred temporary cleanup edges (#7994).
+(defstruct TcGlobalInitializerQuery
+  (root i64)
+  (module-id i64)
+  (source-path String)
+  (path-bound bool)
+  (next i64))
+
 (defstruct TcGlobalBorrowQuery
   (global i64)
   (callee i64)
@@ -96462,6 +96601,7 @@
   (typed-temporaries tc_i64_i64_map.Map)
   (collected (__tl_dyn-array i64))
   (pending i64)
+  (initializer-pending i64)
   ;; The arena-store summary (#8681) has its own graph, collected only once
   ;; every body is checked, with the stored value nodes typing found
   ;; region-tagged and the call queries it answers then.
@@ -96598,7 +96738,8 @@
       collector.capture-scan
       (or (not collector.scan-for-discovery) (= node collector.graph.indirect)))
     ;; The target is a declaration index or expression ID. Use the low
-    ;; three bits for the indirect caller and the kind (call, write, borrow).
+    ;; three bits for the indirect caller and the kind (call, write, borrow,
+    ;; read).
     (effect_words.push-ref!
       (&mut collector.scan-words)
       (+
@@ -96607,6 +96748,11 @@
         (if (= node collector.graph.indirect)
           1
           0)))))
+
+;; Global reads share `TcGlobalCallEffects.graph` with global writes, using a
+;; disjoint key range past the indirect node (`0..indirect-1` are writes).
+(define (tc-global-effect-read-key [indirect : i64] [global : i64]) : i64
+  (+ indirect (+ 1 global)))
 
 (define (tc-global-effect-insert-call!
   [collector : (&mut collector TcGlobalEffectCollector)]
@@ -97300,6 +97446,8 @@
             (>= builtin 0)
             (< builtin (ci.intern-capacity))
             (or
+              (cbi.compiler-builtin-lower-cpuid-id? builtin)
+              (>= (tc-cpu-query-spelling-kind builtin) 0)
               (cbi.compiler-builtin-typecheck-length-call-id? builtin)
               (cbi.compiler-builtin-typecheck-string-ref-call-id? builtin)
               (cbi.compiler-builtin-typecheck-public-string-ref-id? builtin)
@@ -97628,6 +97776,79 @@
           (arena.tl_arena_destroy scratch))
         contextual))))
 
+(define (tc-global-function-symbol? [ctx : TcContext] [handle : i64]) : bool
+  (when (not (csym.compiler-symbols-handle-found? handle)) (return false))
+  (let
+    [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+    (or
+      (= kind (csym.compiler-symbol-kind-function-define))
+      (= kind (csym.compiler-symbol-kind-defdispatch))
+      (and
+        (= kind (csym.compiler-symbol-kind-extern))
+        (match (csym.compiler-symbols-decl-at-index
+          (tc-context-symbols ctx)
+          (csym.compiler-symbol-handle-index handle))
+          [(Ok (Extern _ _ (Function) _ _)) true]
+          [_ false])))))
+
+;; The static array encoder handles literal bits of the element's kind.
+;; Casts that change the literal's kind need a startup conversion.
+(define (tc-global-static-array-element-kind [ctx : TcContext] [id : i64]) : i64
+  (match (tc-context-expr-get ctx id)
+    [(or (Spanned inner _) (MacroExpansion inner _ _) (Ann inner _)
+         (Cast inner _))
+      (tc-global-static-array-element-kind ctx inner)]
+    [(Literal (Int _ _)) 0]
+    [(Literal (Float _)) 1]
+    [(Literal (Bool _)) 2]
+    [(Literal (Char _)) 3]
+    [_ -1]))
+
+(define (tc-global-static-array?
+  [ctx : TcContext]
+  [values : (& values ast.AstExprList)]
+  [elem-id : i64]
+  [count : i64]) : bool
+  (when (!= values.len count) (return false))
+  (let
+    [elem : ast.AstType (tc-resolve-type ctx (tc-context-type-get ctx elem-id))]
+    [kind : i64
+      (match (& elem)
+        [(Bool) 2]
+        [(Char) 3]
+        [(or (F32) (F64)) 1]
+        [_
+          (if (tc-integer-type? elem)
+            0
+            -2)])]
+    (for [index (iterator.range 0 count)]
+      (when
+        (!=
+          (tc-global-static-array-element-kind
+            ctx
+            (ast.ast-expr-list-get values index 0))
+          kind)
+        (return false)))
+    true))
+
+(define (tc-global-initializer-static?
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [id : i64]) : bool
+  (match (tc-context-expr-get ctx id)
+    [(or (Spanned inner _) (MacroExpansion inner _ _) (Ann inner _)
+         (Cast inner _))
+      (tc-global-initializer-static? ctx ty inner)]
+    [(or (Literal _) (BinaryData _) (SpmdProgramIndex) (SpmdProgramCount)) true]
+    [(Var name)
+      (tc-global-function-symbol? ctx (tc-global-effect-handle ctx Nil name))]
+    [(Array values)
+      (match (tc-resolve-type ctx ty)
+        [(Array elem-id count)
+          (tc-global-static-array? ctx (& values) elem-id count)]
+        [_ false])]
+    [_ false]))
+
 (define (tc-global-effect-scan!
   [ctx : TcContext]
   [collector : (&mut collector TcGlobalEffectCollector)]
@@ -97670,43 +97891,74 @@
                 0)))
           (effect_words.push-ref! (&mut collector.scan-inputs) source-id))
         (unless
-          (or call-head collector.prefix-only)
+          collector.prefix-only
           (let
-            [handle : i64 (tc-global-effect-handle ctx bound name)]
-            [target : i64
-              (if (csym.compiler-symbols-handle-found? handle)
-                (tc-global-effect-resolved-callee
-                  ctx
-                  handle
-                  collector.graph.indirect)
-                -1)]
+            [need-read : bool
+              (and
+                (not collector.arena)
+                (or (not collector.address-only) collector.capture-scan))]
             (when
-              (and (>= target 0) (!= target collector.graph.indirect))
-              (set! collector.contributes true)
-              (if collector.arena
-                (begin
-                  (global_effects.add-call!
-                    (&mut collector.graph)
-                    (tc-arena-store-decl-node
-                      ctx
-                      target
-                      collector.graph.indirect)
-                    target)
-                  (when
-                    (!=
-                      (array-ref collector.collected collector.graph.indirect)
-                      0)
-                    (tc-global-effect-enqueue! collector target)))
-                (begin
-                  (tc-global-effect-record!
-                    collector
-                    collector.graph.indirect
-                    0
-                    target)
-                  (tc-global-effect-insert-call!
-                    collector
-                    collector.graph.indirect
-                    target))))))]
+              (or need-read (not call-head))
+              (let
+                [handle : i64 (tc-global-effect-handle ctx bound name)]
+                (when
+                  (csym.compiler-symbols-handle-found? handle)
+                  (if (=
+                    (csym.compiler-symbol-handle-kind handle)
+                    (csym.compiler-symbol-kind-value-define))
+                    (when
+                      need-read
+                      (let
+                        [global : i64
+                          (csym.compiler-symbol-handle-index handle)]
+                        (tc-global-effect-record! collector node 3 global)
+                        (unless
+                          collector.address-only
+                          (global_effects.add-write!
+                            (&mut collector.graph)
+                            node
+                            (tc-global-effect-read-key
+                              collector.graph.indirect
+                              global)))))
+                    (unless
+                      call-head
+                      (let
+                        [target : i64
+                          (tc-global-effect-resolved-callee
+                            ctx
+                            handle
+                            collector.graph.indirect)]
+                        (when
+                          (and
+                            (>= target 0)
+                            (!= target collector.graph.indirect))
+                          (set! collector.contributes true)
+                          (if collector.arena
+                            (begin
+                              (global_effects.add-call!
+                                (&mut collector.graph)
+                                (tc-arena-store-decl-node
+                                  ctx
+                                  target
+                                  collector.graph.indirect)
+                                target)
+                              (when
+                                (!=
+                                  (array-ref
+                                    collector.collected
+                                    collector.graph.indirect)
+                                  0)
+                                (tc-global-effect-enqueue! collector target)))
+                            (begin
+                              (tc-global-effect-record!
+                                collector
+                                collector.graph.indirect
+                                0
+                                target)
+                              (tc-global-effect-insert-call!
+                                collector
+                                collector.graph.indirect
+                                target))))))))))))]
       [(Call func args)
         (let
           [callee : i64
@@ -98547,6 +98799,7 @@
               (tc_i64_i64_map.with-capacity 0)
               (__tl_make-array i64 (+ count 1))
               0
+              0
               (tc-arena-store-graph-new count)
               (__tl_make-array i64 (+ count (+ 1 (tc-arena-store-union-nodes))))
               (tc_i64_i64_map.with-capacity 0)
@@ -98672,7 +98925,12 @@
                 [0 (tc-global-effect-insert-call! collector node target)]
                 [1
                   (global_effects.add-write! (&mut collector.graph) node target)]
-                [_ (tc-global-effect-temporary! collector node target)]))
+                [2 (tc-global-effect-temporary! collector node target)]
+                [_
+                  (global_effects.add-write!
+                    (&mut collector.graph)
+                    node
+                    (tc-global-effect-read-key collector.graph.indirect target))]))
             (+= cursor 1))))
       (let
         [enclosing : i64 (arena.tl_arena_current)]
@@ -99132,6 +99390,28 @@
                 (set! (deref query).source-path (string.copy (& path)))
                 (set! (deref query).path-bound true)
                 (set! arena-head (deref query).next)))))
+        (let
+          [init-head : i64
+            (unsafe
+              (deref state).initializer-pending)]
+          (while (!= init-head 0)
+            (let
+              [query : (MutPtr TcGlobalInitializerQuery)
+                (unsafe
+                  (int->ptr
+                    (cast init-head : u64)
+                    : (MutPtr TcGlobalInitializerQuery)))]
+              [current : TcGlobalInitializerQuery
+                (unsafe
+                  (ptr-read
+                    (int->ptr
+                      (cast init-head : u64)
+                      : (Ptr TcGlobalInitializerQuery))))]
+              (when current.path-bound (break))
+              (unsafe
+                (set! (deref query).source-path (string.copy (& path)))
+                (set! (deref query).path-bound true)
+                (set! init-head (deref query).next)))))
         (unsafe
           (arena.tl_arena_set enclosing))))))
 
@@ -100127,6 +100407,123 @@
             (set! head query.next)))))
     out))
 
+;; Check queued runtime global initializers against same-module runtime globals
+;; initialized at or after each root, using the shared effect graph and
+;; `typed-temporaries` once every body has been checked (#7994).
+(define (tc-global-initializer-late-diagnostics [ctx : TcContext]) : cdiag.CompilerDiagnosticList
+  (let
+    [out : cdiag.CompilerDiagnosticList (cdiag.compiler-diagnostic-list-empty)]
+    [address : i64
+      (tc-macro-state-slot-address
+        (tc-context-macro-state ctx)
+        tc-macro-state-slot-global-call-effects)]
+    (when (= address 0) (return out))
+    (let
+      [state : (MutPtr TcGlobalCallEffects)
+        (unsafe
+          (int->ptr (cast address : u64) : (MutPtr TcGlobalCallEffects)))]
+      [first : i64
+        (unsafe
+          (deref state).initializer-pending)]
+      (when (= first 0) (return out))
+      (let
+        [reversed : effect_words.Vec (effect_words.new)]
+        [head : i64 first]
+        (while (!= head 0)
+          (effect_words.push-ref! (&mut reversed) head)
+          (let
+            [query : TcGlobalInitializerQuery
+              (unsafe
+                (ptr-read
+                  (int->ptr (cast head : u64) : (Ptr TcGlobalInitializerQuery))))]
+            (set! head query.next)))
+        (let
+          [count : i64 (effect_words.len (& reversed))]
+          [ordered : effect_words.Vec (effect_words.new)]
+          (for [offset (iterator.range 0 count)]
+            (let
+              [entry : i64
+                (effect_words.get (& reversed) (- (- count 1) offset) 0)]
+              (effect_words.push-ref! (&mut ordered) entry)
+              (let
+                [query : TcGlobalInitializerQuery
+                  (unsafe
+                    (ptr-read
+                      (int->ptr
+                        (cast entry : u64)
+                        : (Ptr TcGlobalInitializerQuery))))]
+                ;; Collect every root before querying witnesses so later
+                ;; graph appends do not discard cached witness summaries.
+                (tc-global-call-effects-collect! ctx state query.root false))))
+          (let
+            [indirect : i64
+              (unsafe
+                (deref state).count)]
+            [graph : global_effects.Graph
+              (unsafe
+                (deref state).graph)]
+            (for [index (iterator.range 0 count)]
+              (let
+                [entry : i64 (effect_words.get (& ordered) index 0)]
+                [query : TcGlobalInitializerQuery
+                  (unsafe
+                    (ptr-read
+                      (int->ptr
+                        (cast entry : u64)
+                        : (Ptr TcGlobalInitializerQuery))))]
+                (for [target-index (iterator.range index count)]
+                  (let
+                    [target-entry : i64
+                      (effect_words.get (& ordered) target-index 0)]
+                    [target : TcGlobalInitializerQuery
+                      (unsafe
+                        (ptr-read
+                          (int->ptr
+                            (cast target-entry : u64)
+                            : (Ptr TcGlobalInitializerQuery))))]
+                    (when
+                      (and
+                        (= target.module-id query.module-id)
+                        (>= target.root query.root))
+                      (let
+                        [read-key : i64
+                          (tc-global-effect-read-key indirect target.root)]
+                        (when
+                          (global_effects.written? (& graph) read-key)
+                          (let
+                            [path : effect_words.Vec
+                              (tc-global-effect-witness!
+                                state
+                                query.root
+                                read-key)]
+                            (when
+                              (> (effect_words.len (& path)) 0)
+                              (let
+                                [message : String
+                                  (str_cat.str-cat
+                                    "typecheck: global initializer may read `"
+                                    (tc-global-effect-node-name ctx target.root)
+                                    "` before it is initialized")]
+                                [diag : cdiag.CompilerDiagnostic
+                                  (match (csym.compiler-symbols-decl-at-index
+                                    (tc-context-symbols ctx)
+                                    query.root)
+                                    [(Ok decl)
+                                      (tc-decl-diag
+                                        (tc-context-expr-bases ctx)
+                                        decl
+                                        message)]
+                                    [_ (tc-diag-at-start message)])]
+                                (cdiag.compiler-diagnostic-list-push!
+                                  (&mut out)
+                                  (cdiag.compiler-diagnostic-with-fallback-path
+                                    diag
+                                    (string.copy (& query.source-path)))))
+                              (break))))))))))))
+        (unsafe
+          (set! (deref state).initializer-pending 0))))
+    out))
+
 (define (tc-global-effect-check-result
   [checked : ResultCompilerTypecheckChecked]) : ResultCompilerTypecheckChecked
   (match checked
@@ -100134,6 +100531,16 @@
       (let
         [diagnostics : cdiag.CompilerDiagnosticList
           (tc-global-effect-late-diagnostics ctx)]
+        (let
+          [init-diagnostics : cdiag.CompilerDiagnosticList
+            (tc-global-initializer-late-diagnostics ctx)]
+          (for [index
+            (iterator.range
+              0
+              (cdiag.compiler-diagnostic-list-count init-diagnostics))]
+            (cdiag.compiler-diagnostic-list-push!
+              (&mut diagnostics)
+              (cdiag.compiler-diagnostic-list-get init-diagnostics index))))
         (let
           [arena-diagnostics : cdiag.CompilerDiagnosticList
             (tc-arena-store-late-diagnostics ctx)]
@@ -111693,7 +112100,7 @@
   [source-id : i64]) : bool
   (or
     (cbi.compiler-builtin-lower-cpuid-id? source-id)
-    (cbi.compiler-builtin-lower-xgetbv-id? source-id)
+    (>= (tc-cpu-query-spelling-kind source-id) 0)
     (csym.compiler-symbols-handle-found?
       (csym.compiler-symbols-lookup-value-in-module-id-or
         (tc-context-symbols definition-ctx)
@@ -134198,6 +134605,59 @@
           body-box))]
     [_ (tc-check-decl-scoped ctx top-env global-env decl)]))
 
+(define (tc-global-initializer-record!
+  [ctx : TcContext]
+  [name : i64]
+  [ty : ast.AstType]
+  [init : i64]) : unit
+  (when (not (tc-arena-store-final? ctx)) (return unit))
+  (let
+    [symbols (tc-context-symbols ctx)]
+    [module-id : i64 (tc-context-module-id ctx)]
+    [handle : i64
+      (csym.compiler-symbols-lookup-value-in-module-id-or
+        symbols
+        module-id
+        name
+        (csym.compiler-symbols-missing-handle))]
+    (when (not (csym.compiler-symbols-handle-found? handle)) (return unit))
+    (let
+      [root : i64 (csym.compiler-symbol-handle-index handle)]
+      (match (csym.compiler-symbols-decl-at-index symbols root)
+        [(Ok decl)
+          (when
+            (and
+              (or
+                (not (ast.ast-decl-comptime-only? decl))
+                (match (ast.ast-decl-generated-meta decl)
+                  [(Some _ _ _ _) true]
+                  [(No) false]))
+              (not (tc-global-initializer-static? ctx ty init)))
+            (let
+              [state : (MutPtr TcGlobalCallEffects)
+                (tc-global-call-effects-ensure! ctx)]
+              [enclosing : i64 (arena.tl_arena_current)]
+              (unsafe
+                (arena.tl_arena_set (deref state).arena))
+              (let
+                [cell : (__tl_dyn-array TcGlobalInitializerQuery)
+                  (__tl_make-array TcGlobalInitializerQuery 1)]
+                (set!
+                  (array-ref cell 0)
+                  (TcGlobalInitializerQuery
+                    root
+                    module-id
+                    ""
+                    false
+                    (unsafe
+                      (deref state).initializer-pending)))
+                (unsafe
+                  (set!
+                    (deref state).initializer-pending
+                    (cast (ptr->int (__tl_array-data cell)) : i64))
+                  (arena.tl_arena_set enclosing)))))]
+        [_ unit]))))
+
 (define (tc-check-nonfn-decl-with-global-env
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -134207,63 +134667,73 @@
     ;; A module value's initializer is checked by the ownership graph as a
     ;; body without parameters returning the value (#8449 M5).
     [(Def decl-meta name maybe-ty expr-box)
-      (match maybe-ty
-        [(Some want)
-          (let
-            [resolved-want : ast.AstType (tc-resolve-type ctx want)]
-            [inferred
-              (try
-                (tc-expr-with-expected-or-actual-id
-                  ctx
-                  global-env
-                  expr-box
-                  (tc-global-shared-view resolved-want)))]
-            [matched-got : TcInferredTypeMatch
-              (tc-match-inferred-type-for-expected
-                ctx
-                global-env
-                inferred
-                (tc-global-shared-view resolved-want))]
-            [got : ast.AstType
-              (match (tc-global-shared-view matched-got)
-                [(or (Compatible actual) (Mismatch actual)) actual])]
-            [expect-result : ResultTcUnit
-              (match matched-got
-                [(Compatible _) Ok]
-                [(Mismatch actual)
-                  (Err
-                    (tc-type-mismatch-message-in-context
+      (let
+        [def-ty : ast.AstType
+          (match maybe-ty
+            [(Some want)
+              (let
+                [resolved-want : ast.AstType (tc-resolve-type ctx want)]
+                [inferred
+                  (try
+                    (tc-expr-with-expected-or-actual-id
                       ctx
                       global-env
-                      actual
-                      (tc-global-shared-view resolved-want)
-                      "typecheck: value definition type mismatch"))])]
-            [_ (try expect-result)]
-            (let
-              [_
-                (try
-                  (tc-ensure-region-value-can-flow-into
+                      expr-box
+                      (tc-global-shared-view resolved-want)))]
+                [matched-got : TcInferredTypeMatch
+                  (tc-match-inferred-type-for-expected
+                    ctx
                     global-env
-                    (tc-global-shared-view resolved-want)
-                    got
-                    "top-level value"))]
-              (tc-check-fn-decl-scoped
-                ctx
-                global-env
-                name
-                (ast.ast-param-list-new)
-                resolved-want
-                expr-box)))]
-        [(No)
-          (let
-            [inferred (try (tc-expr-id ctx global-env expr-box))]
-            (tc-check-fn-decl-scoped
-              ctx
-              global-env
-              name
-              (ast.ast-param-list-new)
-              inferred
-              expr-box))])]
+                    inferred
+                    (tc-global-shared-view resolved-want))]
+                [got : ast.AstType
+                  (match (tc-global-shared-view matched-got)
+                    [(or (Compatible actual) (Mismatch actual)) actual])]
+                [expect-result : ResultTcUnit
+                  (match matched-got
+                    [(Compatible _) Ok]
+                    [(Mismatch actual)
+                      (Err
+                        (tc-type-mismatch-message-in-context
+                          ctx
+                          global-env
+                          actual
+                          (tc-global-shared-view resolved-want)
+                          "typecheck: value definition type mismatch"))])]
+                [_ (try expect-result)]
+                (let
+                  [_
+                    (try
+                      (tc-ensure-region-value-can-flow-into
+                        global-env
+                        (tc-global-shared-view resolved-want)
+                        got
+                        "top-level value"))]
+                  [_
+                    (try
+                      (tc-check-fn-decl-scoped
+                        ctx
+                        global-env
+                        name
+                        (ast.ast-param-list-new)
+                        (clone resolved-want)
+                        expr-box))]
+                  resolved-want))]
+            [(No)
+              (let
+                [inferred (try (tc-expr-id ctx global-env expr-box))]
+                [_
+                  (try
+                    (tc-check-fn-decl-scoped
+                      ctx
+                      global-env
+                      name
+                      (ast.ast-param-list-new)
+                      (clone inferred)
+                      expr-box))]
+                inferred)])]
+        (tc-global-initializer-record! ctx name def-ty expr-box)
+        Ok)]
     [(DefFn decl-meta name params ret body-box _)
       ;; Unreachable via the dispatcher above; kept so a direct call can never
       ;; silently skip a function body check.

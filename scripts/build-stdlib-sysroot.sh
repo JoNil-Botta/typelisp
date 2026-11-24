@@ -271,7 +271,9 @@ bounded_pool_run_job() {
     _asm_file=$1
     _obj_file="${_asm_file%.s}.$TARGET_OBJ_EXT"
     if [ "$TARGET" = linux-x86_64 ]; then
-        as "$ASM_DIR/$_asm_file" -o "$OBJ_DIR/$_obj_file"
+        # Module assembly carries no .note.GNU-stack; mark every object
+        # non-executable-stack so linking libstdlib.a stays warning-free.
+        as --noexecstack "$ASM_DIR/$_asm_file" -o "$OBJ_DIR/$_obj_file"
     else
         "$TARGET_CLANG" --target=x86_64-pc-windows-msvc -c "$ASM_DIR/$_asm_file" -o "$OBJ_DIR/$_obj_file"
     fi

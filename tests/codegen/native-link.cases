@@ -205,7 +205,9 @@ file input.tl
 (define (main) : i64
   (+ (__tl_string_length "0123456789") (cast (__tl_string_ref " x" 0) : i64)))
 end-file
-run compile "{{dir}}/input.tl" -o "{{dir}}/output.s"
+# The runtime helpers checked below are emitted only with the source stdlib;
+# a prebuilt-stdlib compile leaves them to the sysroot's libstdlib.a.
+run compile "{{dir}}/input.tl" --no-prebuilt-stdlib -o "{{dir}}/output.s"
 stdout is Wrote {{dir}}/output.s
 stderr empty
 in file {{dir}}/output.s
@@ -272,7 +274,8 @@ file input.tl
           2)]
       [(json.ErrJson _) 1])))
 end-file
-run compile "{{dir}}/input.tl" -o "{{dir}}/output.s"
+# The stdlib bodies checked below are emitted only with the source stdlib.
+run compile "{{dir}}/input.tl" --no-prebuilt-stdlib -o "{{dir}}/output.s"
 stdout is Wrote {{dir}}/output.s
 stderr empty
 in file {{dir}}/output.s
@@ -294,7 +297,8 @@ file array.tl
       (set! (array-ref a 1) 2)
       (+ (array-ref a 0) (array-ref a 1)))))
 end-file
-run compile "{{dir}}/array.tl" -o "{{dir}}/array.s"
+# tl_oob_abort is emitted only with the source stdlib.
+run compile "{{dir}}/array.tl" --no-prebuilt-stdlib -o "{{dir}}/array.s"
 stdout is Wrote {{dir}}/array.s
 stderr empty
 in file {{dir}}/array.s

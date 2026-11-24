@@ -260,12 +260,15 @@
   (cfg (not embedded-stdlib-tlci) (return Inactive))
   ;; Keep -O2 on source stdlib until HAS_COMPACT_IR is populated in Stage 3.
   (when (= opt-level 2) (return Inactive))
+  ;; Settle every sysroot-independent fallback before discovery: discovery
+  ;; reads the executable path, so its cost depends on where the compiler is
+  ;; installed, and a job that keeps the source stdlib must not pay it.
+  (when (tli-sysroot-stdlib-roots-override? stdlib-roots) (return Inactive))
+  (when (tli-sysroot-entry-uses-foreach? entry-path) (return Inactive))
   (match (tli-sysroot-discover options target)
     [(Disabled) Inactive]
     [(Missing) Inactive]
     [(Found dir)
-      (when (tli-sysroot-stdlib-roots-override? stdlib-roots) (return Inactive))
-      (when (tli-sysroot-entry-uses-foreach? entry-path) (return Inactive))
       (let
         [explicit? : bool (tli-sysroot-options-explicit? options)]
         [bundle-path : String (tli-sysroot-bundle-path (& dir))]

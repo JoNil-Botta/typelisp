@@ -2040,7 +2040,7 @@
                     [bin : String (svec.get (& sp.tokens) 2 "")]
                     [obj : String (str_cat.str-cat (string.copy (& bin)) ".o")]
                     [as-a : svec.Vec (svec.new)]
-                    (svec.push-ref! (&mut as-a) asm)
+                    (svec.push-ref! (&mut as-a) (string.copy (& asm)))
                     (svec.push-ref! (&mut as-a) "-o")
                     (svec.push-ref! (&mut as-a) (string.copy (& obj)))
                     (let
@@ -2056,11 +2056,23 @@
                       (if (!= r1.exit-code 0)
                         1
                         (let
+                          [asm-read : util.ReadFileResult
+                            (util.read-file-result (& asm))]
+                          [archive : String
+                            (if asm-read.ok
+                              (linux-stdlib-archive cfg (& asm-read.text))
+                              "")]
                           [ld-a : svec.Vec (svec.new)]
                           (svec.push-ref! (&mut ld-a) obj)
                           (svec.push-ref! (&mut ld-a) "-o")
                           (svec.push-ref! (&mut ld-a) bin)
                           (svec.push-ref! (&mut ld-a) "-static")
+                          (when
+                            (> (string.string-length (& archive)) 0)
+                            (svec.push-ref! (&mut ld-a) "--gc-sections")
+                            (svec.push-ref! (&mut ld-a) "--start-group")
+                            (svec.push-ref! (&mut ld-a) archive)
+                            (svec.push-ref! (&mut ld-a) "--end-group"))
                           (svec.push-ref! (&mut ld-a) "-e")
                           (svec.push-ref! (&mut ld-a) "_tl_start")
                           (let

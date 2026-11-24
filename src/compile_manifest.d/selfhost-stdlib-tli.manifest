@@ -1,0 +1,20 @@
+# Selfhost compile manifest: embedded stdlib payload, LZSS codec, and TLI extraction.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_embedded_stdlib_payload|src/compiler_embedded_stdlib_payload.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_lzss|src/compiler_lzss.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_tli_types|src/compiler_tli_types.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_tli_codec|src/compiler_tli_codec.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_tli_extract|src/compiler_tli_extract.tl|assembly|none|direct
+end

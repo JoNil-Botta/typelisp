@@ -1039,6 +1039,80 @@ typecheck: return type mismatch"))]
           (owned_view.compiler-owned-shared-view report))
         (= (doc_test.doc-test-run-report-count report) 3)))))
 
+(define (doc-test-advisory-list-single [diagnostic : cdiag.CompilerDiagnostic]) : cdiag.CompilerAdvisoryList
+  (let
+    [list : cdiag.CompilerAdvisoryList
+      (cdiag.compiler-advisory-list-with-capacity 1)]
+    (set!
+      (array-ref list.slots 0)
+      (cdiag.CompilerAdvisory (cdiag.CompilerAdvisoryPhase.Semantic) diagnostic))
+    (cdiag.CompilerAdvisoryList list.slots 1)))
+
+(define (doc-test-advisory-capture-smoke-ok?) : bool
+  (let
+    [warning : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-with-level
+        (&
+          (cdiag.compiler-diagnostic-simple
+            "docs/advisory.tl.doctest.0"
+            1
+            22
+            "unnecessary unsafe block"))
+        CompilerDiagnosticWarning)]
+    [advisories-out : doc_svec.Vec (doc_svec.new)]
+    [ok-res : doc_test.DocTestMaybeFailure
+      (doc_test.doc-test-handle-check-result!
+        "docs/advisory.tl"
+        2
+        0
+        false
+        (check_core.ResultCompilerCheck.Ok
+          (CompilerTypecheckSummary 1 0 0)
+          (doc-test-advisory-list-single warning))
+        (&mut advisories-out))]
+    [err-warning : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-with-level
+        (&
+          (cdiag.compiler-diagnostic-simple
+            "docs/advisory.tl.doctest.1"
+            1
+            5
+            "expected-error doctest advisory"))
+        CompilerDiagnosticWarning)]
+    [fatal : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-simple
+        "docs/advisory.tl.doctest.1"
+        1
+        1
+        "intentional error")]
+    [err-res : doc_test.DocTestMaybeFailure
+      (doc_test.doc-test-handle-check-result!
+        "docs/advisory.tl"
+        6
+        1
+        true
+        (check_core.ResultCompilerCheck.Err
+          (cdiag.compiler-diagnostic-list-box-single (box fatal))
+          (doc-test-advisory-list-single err-warning))
+        (&mut advisories-out))]
+    [report : doc_test.DocTestRunReport
+      (doc_test.DocTestRunReport.Report
+        2
+        (doc_test.doc-test-run-failure-list-empty)
+        (doc_test.doc-test-join-advisories (& advisories-out)))]
+    [captured : String (doc_test.doc-test-run-report-advisories (& report))]
+    (and
+      (match ok-res
+        [(No) true]
+        [(Some _) false])
+      (match err-res
+        [(No) true]
+        [(Some _) false])
+      (doc_test.doc-test-run-report-ok? report)
+      (string.contains (& captured) "warning: unnecessary unsafe block")
+      (string.contains (& captured) "docs/advisory.tl.doctest.0:1:22")
+      (string.contains (& captured) "warning: expected-error doctest advisory"))))
+
 (define (doc-test-run-smoke) : i64
   (unless
     (doc-test-error-vector-growth-smoke-ok?)
@@ -1097,6 +1171,9 @@ typecheck: return type mismatch"))]
   (unless
     (doc-test-package-walk-long-list-smoke-ok?)
     (return (io.panic "doc-test-run: package walk long-list mismatch")))
+  (unless
+    (doc-test-advisory-capture-smoke-ok?)
+    (return (io.panic "doc-test-run: advisory capture smoke mismatch")))
   42)
 
 ;; Combined smoke: extraction then runner. Returns 42 iff both

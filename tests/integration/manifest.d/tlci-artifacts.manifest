@@ -1,0 +1,12 @@
+# Native integration cases: TLCI/TLI interfaces and embedded stdlib artifacts.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+embedded_stdlib_exact_include|all|-|tests/integration/embedded_stdlib_exact_include.tl|42|-|-|stdlib/string.tl|-
+embedded_resolver_config|all|-|tests/integration/embedded_resolver_config.tl|42|-|-|stdlib/net/resolver_config_linux.tl|-
+tlci_native_template_nodes|all|-|tests/integration/tlci_native_template_nodes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/math.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl|-
+tlci_identity_owned_views|all|-|tests/integration/tlci_identity_owned_views.tl|42|-|-|stdlib/comptime.tl stdlib/msvc.tl stdlib/process.tl stdlib/process_runtime.tl|-
+tlci_identity_public_gaps|all|-|tests/integration/tlci_identity_public_gaps.tl|42|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/math.tl stdlib/queue.tl stdlib/set.tl stdlib/sort.tl stdlib/str_cat_runtime.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/vector.tl|-
+tlci_native_computed_scrutinee|all|-|tests/integration/tlci_native_computed_scrutinee.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/math.tl stdlib/format.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl|-
+tlci_native_index_folds|all|-|tests/integration/tlci_native_index_folds.tl|42|-|-|stdlib/fs.tl stdlib/string.tl stdlib/str_cat.tl|-
+tlci_native_wildcard_arms|all|-|tests/integration/tlci_native_wildcard_arms.tl|42|-|-|stdlib/eq.tl stdlib/hash.tl|-
+tlci_native_format_scanner|all|-|tests/integration/tlci_native_format_scanner.tl|42|sca: 0x1 {} 10\ndo\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl|-

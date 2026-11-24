@@ -23,15 +23,15 @@ benchmark/typelisp/spmd_reduce	1364174992
 benchmark/c-scalar/spmd_reduce	3381322971
 benchmark/typelisp/cfg_domloops	559564205
 benchmark/c-scalar/cfg_domloops	423071025
-benchmark/typelisp/gvn_table	709942778
+benchmark/typelisp/gvn_table	709377962
 benchmark/c-scalar/gvn_table	620750566
 benchmark/typelisp/intern_table	370419149
 benchmark/c-scalar/intern_table	296291631
 benchmark/typelisp/lex_source	455891021
 benchmark/c-scalar/lex_source	549230984
-benchmark/typelisp/liveness_scan	392392961
+benchmark/typelisp/liveness_scan	392059041
 benchmark/c-scalar/liveness_scan	433426168
-benchmark/typelisp/peephole_lines	420295552
+benchmark/typelisp/peephole_lines	419923712
 benchmark/c-scalar/peephole_lines	442194743
 benchmark/typelisp/read_sexpr	731082414
 benchmark/c-scalar/read_sexpr	598159390
@@ -57,5 +57,5 @@ benchmark/typelisp/graph_dijkstra	477751754
 benchmark/c-scalar/graph_dijkstra	356783833
 benchmark/typelisp/phys_nbody	388448326
 benchmark/c-scalar/phys_nbody	823122036
-benchmark/typelisp/route_http	357021347
+benchmark/typelisp/route_http	357021345
 benchmark/c-scalar/route_http	253907894

@@ -14,6 +14,7 @@
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.cpu)
+(import stdlib.fs)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.random)
@@ -1480,6 +1481,12 @@
   ;; synthesize a String snapshot or source substring call.
   (tltest-reach-mark-name-id names cbi.compiler-builtin-id-runtime-substring))
 
+;; Harness pruning runs before macro expansion expands `with-scratch`,
+;; `with-escape`, or `clone.deep` into calls to owner-written `clone-<name>`
+;; hooks. Mark a sentinel so those hooks and their callees survive pruning.
+(define (tltest-reach-mark-clone-out-hooks [names : tltest_name_map.Map]) : tltest_name_map.Map
+  (tltest-reach-mark-name-id names (ci.intern "__tl-clone-out")))
+
 (define (tltest-reach-mark-atomic-runtime-for-call
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]
@@ -1501,13 +1508,19 @@
     [base-id : i64 (tc_core.tc-qualified-name-base-id name-id)]
     [runtime-names : tltest_name_map.Map
       (tltest-reach-mark-atomic-runtime-for-call session name-id names)]
+    [clone-names : tltest_name_map.Map
+      (if (string.eq
+        (ci.intern-str (tltest-reach-name-dot-leaf-id session name-id))
+        "deep")
+        (tltest-reach-mark-clone-out-hooks runtime-names)
+        runtime-names)]
     (cond
       [(or
           (= base-id cbi.compiler-builtin-id-clone)
           (= base-id cbi.compiler-builtin-id-runtime-substring)
           (= base-id (cbi.compiler-builtin-ctfe-ref 93)))
-        (tltest-reach-mark-string-snapshot-runtime runtime-names)]
-      [else runtime-names])))
+        (tltest-reach-mark-string-snapshot-runtime clone-names)]
+      [else clone-names])))
 
 (define (tltest-reach-mark-expr-list
   [session : cis.InternStructuralSessionHandle]
@@ -1561,11 +1574,17 @@
                 called-names)]
             [_ called-names])]
         (tltest-reach-mark-expr-list session args runtime-names))]
-    [(or (Lambda _) (WithEscape _ _) (WithScratch _))
+    [(Lambda _)
       (tltest-reach-mark-children
         session
         node-id
         (tltest-reach-mark-string-snapshot-runtime names))]
+    [(or (WithEscape _ _) (WithScratch _))
+      (tltest-reach-mark-children
+        session
+        node-id
+        (tltest-reach-mark-clone-out-hooks
+          (tltest-reach-mark-string-snapshot-runtime names)))]
     [(ForOwnedState payload)
       (tltest-reach-mark-expr
         session
@@ -1795,7 +1814,17 @@
         [(No)
           (if (tltest-reachable-name-marked? session names name)
             (tltest-reach-mark-expr session body names)
-            names)])]
+            (if (and
+              (tltest-reachable-name-marked?
+                session
+                names
+                (ci.intern "__tl-clone-out"))
+              (string.is-string-prefix-at (& (ci.intern-str name)) "clone-" 0))
+              (tltest-reach-mark-expr
+                session
+                body
+                (tltest-reach-mark-name-id names name))
+              names))])]
     [(DefDispatch _ _ variants)
       ;; Dispatch declarations survive harness pruning even when uncalled.
       ;; Typechecking needs every variant; the fixpoint follows their bodies.
@@ -2051,20 +2080,24 @@
     (& paths)
     (& (tltest-generated-typecheck-paths tests))))
 
-(define (tltest-inline-typecheck-loaded
+(defenum ResultTlTestInlineCheck
+  (Ok)
+  (Err String))
+
+(define (tltest-inline-typecheck-loaded-result
   [source : String]
   [diagnostic-source : TlTestDiagnosticSource]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope-prefix : String]) : i64
+  [cache-scope-prefix : String]) : ResultTlTestInlineCheck
   (match (tltest-collect source decls paths)
     [(Collect runtime-decls runtime-paths tests)
       (let
         [count : i64 (array-length tests)]
         (if (= count 0)
-          0
+          (ResultTlTestInlineCheck.Ok)
           (match (tltest-prune-runtime-decls
             (tltest-active-structural-session)
             source
@@ -2085,14 +2118,34 @@
                     cache-scope-prefix
                     legacy-roots
                     cfgs))
-                  [(ResultCompilerTypecheck.Ok _) 0]
+                  [(ResultCompilerTypecheck.Ok _) (ResultTlTestInlineCheck.Ok)]
                   [(ResultCompilerTypecheck.Err diag)
-                    (io.print-error
+                    (ResultTlTestInlineCheck.Err
                       (tltest-render-source-diagnostic
                         source
                         diagnostic-source
-                        (cdiag.compiler-diagnostic-list-first (deref diag))))
-                    1]))])))]))
+                        (cdiag.compiler-diagnostic-list-first (deref diag))))]))])))]))
+
+(define (tltest-inline-typecheck-loaded
+  [source : String]
+  [diagnostic-source : TlTestDiagnosticSource]
+  [decls : ast.AstDeclList]
+  [paths : ast.AstDeclPathList]
+  [roots : cli_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [cache-scope-prefix : String]) : i64
+  (match (tltest-inline-typecheck-loaded-result
+    source
+    diagnostic-source
+    decls
+    paths
+    roots
+    cfgs
+    cache-scope-prefix)
+    [(ResultTlTestInlineCheck.Ok) 0]
+    [(ResultTlTestInlineCheck.Err message)
+      (io.print-error message)
+      1]))
 
 (define (tltest-inline-stdlib-source?
   [source : (& source str)]
@@ -2126,18 +2179,18 @@
   (compiler_load.compiler-load-session-reset-pools!)
   (driver.compiler-driver-reset-analysis-state!))
 
-(define (tltest-inline-typecheck-file-with-cfg
+(define (tltest-inline-typecheck-file-with-cfg-result
   [source : String]
   [roots : cli_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
-  [cache-scope-prefix : String]) : i64
+  [cache-scope-prefix : String]) : ResultTlTestInlineCheck
   (if (or
     (tltest-inline-stdlib-source? source (cli_svec.clone-vec (& roots)))
     (not (io.file-exists? (owned_view.compiler-owned-shared-view source)))
     (not
       (tltest-source-has-inline-tests?
         (owned_view.compiler-owned-shared-view source))))
-    0
+    (ResultTlTestInlineCheck.Ok)
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
       [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
@@ -2147,7 +2200,7 @@
         legacy-roots
         test-cfgs)
         [(Ok decls paths _ _)
-          (tltest-inline-typecheck-loaded
+          (tltest-inline-typecheck-loaded-result
             (string.copy (& source))
             (tltest-diagnostic-source source (& decls) (& paths))
             decls
@@ -2156,10 +2209,24 @@
             test-cfgs
             cache-scope-prefix)]
         [(Err diag)
-          (io.print-error
+          (ResultTlTestInlineCheck.Err
             (driver.compiler-driver-render-source-diagnostic
-              (tltest-diagnostic-with-source-fallback source (deref diag))))
-          1]))))
+              (tltest-diagnostic-with-source-fallback source (deref diag))))]))))
+
+(define (tltest-inline-typecheck-file-with-cfg
+  [source : String]
+  [roots : cli_svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [cache-scope-prefix : String]) : i64
+  (match (tltest-inline-typecheck-file-with-cfg-result
+    source
+    roots
+    cfgs
+    cache-scope-prefix)
+    [(ResultTlTestInlineCheck.Ok) 0]
+    [(ResultTlTestInlineCheck.Err message)
+      (io.print-error message)
+      1]))
 
 (define (tltest-inline-typecheck-package-source-with-cfg
   [source : String]
@@ -2828,7 +2895,10 @@
   (let
     [integration-prefix : String
       (tltest-package-tests-subdir-prefix tests-prefix "integration")]
-    (io.file-exists? (str_cat.str-cat integration-prefix "native.manifest"))))
+    [manifest-dir : String (str_cat.str-cat integration-prefix "manifest.d")]
+    (match (fs.try-file-kind (& manifest-dir))
+      [(OkFsFileKind kind) (fs.file-kind-directory? kind)]
+      [(ErrFsFileKind _) false])))
 
 (define (tltest-package-manifest-managed-integration-source-with?
   [normalized : (& normalized str)]
@@ -3209,6 +3279,9 @@
       ;; Reset walkers can inspect entry-owned values. Their replacement
       ;; empty carriers also belong here; no selector retains them below.
       (driver.compiler-driver-reset-file-state!)
+      ;; `compiler-driver-reset-file-state!` recreates `tc-entry-hidden-arena`;
+      ;; release it immediately so isolated batch entries retain no hidden arena.
+      (tc_core.tc-entry-hidden-names-release!)
       (compiler_load.compiler-load-session-state-dotted-path-cache-reset!
         (compiler_load.compiler-load-serial-test-session-state))
       (compiler_load.compiler-load-session-fresh-reset!)

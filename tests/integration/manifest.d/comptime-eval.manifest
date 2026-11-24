@@ -1,0 +1,19 @@
+# Native integration cases: comptime evaluation, CTFE, and embedded payloads.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+include_bin|all|-|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin|-
+include_str_comptime|all|-|tests/integration/include_str_comptime.tl|42|-|-|include/str/comptime/owner.tl include_str_comptime_payload.txt include_bin_payload.bin stdlib/comptime.tl|-
+const_index_bounds|all|-|tests/integration/const_index_bounds.tl|42|-|-|stdlib/io.tl|-
+const_global_mask_unroll|all|-|tests/integration/const_global_mask_unroll.tl|0|-|-|-|-
+comptime_layout_imported|all|0,1,2|tests/integration/comptime_layout_imported.tl|42|-|-|comptime_layout_imported_dep.tl comptime_layout_imported_other.tl|-
+comptime_scalar|all|-|tests/integration/comptime_scalar.tl|42|-|-|-|-
+comptime_type_specialization|all|-|tests/integration/comptime_type_specialization.tl|42|-|-|-|-
+comptime_template_module_identity|all|0,1,2|tests/integration/comptime_template_module_identity.tl|42|-|-|comptime_template_module_identity_dep.tl|-
+comptime_type_macro_operand|all|-,0,2|tests/integration/comptime_type_macro_operand.tl|42|-|-|-|-
+comptime_module_value_reflection|all|-|tests/integration/comptime_module_value_reflection.tl|42|-|-|reflection/signature/provider.tl stdlib/comptime.tl|-
+comptime_current_module|all|-|tests/integration/comptime_current_module.tl|42|-|-|comptime_current/provider.tl comptime_current/user.tl stdlib/comptime.tl|-
+comptime_init_callee|all|-|tests/integration/comptime_init_callee.tl|42|-|-|init_callee/probe.tl init_callee/provider.tl stdlib/comptime.tl stdlib/iterator.tl stdlib/string.tl|-
+comptime_expr_call_args|all|-|tests/integration/comptime_expr_call_args.tl|42|-|-|stdlib/comptime.tl stdlib/iterator.tl|-
+comptime_type_expr_worklist|all|-|tests/integration/comptime_type_expr_worklist.tl|42|-|-|stdlib/comptime.tl|-
+comptime_lambda_reflected_closure|all|-|tests/integration/comptime_lambda_reflected_closure.tl|42|-|-|stdlib/comptime.tl stdlib/string.tl|-
+comptime_captured_list_builders|all|0,1,2|tests/integration/comptime_captured_list_builders.tl|42|-|-|stdlib/comptime.tl|-

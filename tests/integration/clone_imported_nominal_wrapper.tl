@@ -1,5 +1,6 @@
 (import clone_imported_nominal_dep as dep)
 (import stdlib.string)
+(import stdlib.clone as clone_gen)
 
 (defstruct Wrapper
   (item dep.Item)
@@ -10,6 +11,15 @@
   (ImportedItem dep.Item)
   (ImportedWrapper Wrapper)
   (LocalNested (Box LocalOutcome)))
+
+(clone_gen.gen-clone Wrapper)
+
+;; gen-clone does not follow a recursive type, so the owner writes its hook.
+(define (clone-local-outcome [outcome : (& LocalOutcome)]) : LocalOutcome
+  (match outcome
+    [(ImportedItem item) (ImportedItem (dep.clone-item item))]
+    [(ImportedWrapper wrapper) (ImportedWrapper (clone-wrapper wrapper))]
+    [(LocalNested inner) (LocalNested (box (clone-local-outcome inner)))]))
 
 (define (make-wrapper [tag : String]) : Wrapper
   (Wrapper

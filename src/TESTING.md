@@ -1903,7 +1903,7 @@ self-test, and return `42` only when the checks pass. Examples include
 
 Smoke drivers and their fixtures live under `src/tests/` (a reserved package
 test directory, excluded from the source/closure scan). They are built and run
-as exit-42 integration cases by `tests/integration/native.manifest`. Place a
+as exit-42 integration cases by `tests/integration/manifest.d/*.manifest`. Place a
 new smoke beside the others in `src/tests/`; import source modules by canonical
 dotted identity, such as `compiler_parse_core`. A direct repository-root run
 must include `--stdlib-root src`, matching the native integration and
@@ -2042,7 +2042,7 @@ tests to the harness.
 Package integration discovery skips the reserved `tests/format_golden/**`,
 `tests/golden/**`, `tests/inline/**`, `tests/no-libc/**`, `tests/public-tools/**`,
 `tests/safety/**`, `tests/spmd/**`, and `tests/tlci/**` fixture corpora. When
-`tests/integration/native.manifest` exists, package discovery also leaves
+`tests/integration/manifest.d` exists, package discovery also leaves
 `tests/integration/**` to the explicit integration runner. Dedicated
 verification scripts own those files.
 
@@ -2071,7 +2071,7 @@ source name.
 ### Selfhost compile manifest
 
 Compile/symbol smoke coverage is driven by
-[`compile_manifest.txt`](compile_manifest.txt), checked by
+[`compile_manifest.d/*.manifest`](compile_manifest.d), checked by
 [`../scripts/verify-selfhost-compile-manifest.sh`](../scripts/verify-selfhost-compile-manifest.sh).
 The runner compiles each manifest case with an already-built TypeLisp compiler,
 rejects generated `# TODO` assembly, applies the case's `main:` label policy,
@@ -2795,7 +2795,7 @@ tree with `taskkill /T`. A case past its deadline fails its own row as
 `FAIL: <case> (timeout after 300 s)` with the output it wrote. The remaining
 cases still run, and nothing is skipped or retried.
 
-The integration manifest `tests/integration/native.manifest` serves both hosts:
+The integration manifest fragments under `tests/integration/manifest.d/*.manifest` serve both hosts:
 each row names the hosts it runs on and the opt levels it runs at (the default
 level and/or explicit `--opt-level` pins), and
 `scripts/expand-integration-manifest.awk` expands one host's rows. When a
@@ -3299,9 +3299,9 @@ in [`../CONTRIBUTING.md`](../CONTRIBUTING.md)):
   inline-test gate picks them up automatically.
 - Add or update a `src/tests/*_smoke.tl` driver when the module should be
   executable through the compiler boundary, and keep its dependency list in
-  `tests/integration/native.manifest` (and the host fixture sections of
+  `tests/integration/manifest.d/*.manifest` (and the host fixture sections of
   `scripts/verify-integration.sh`) in sync whenever imports change.
-- Add a `src/compile_manifest.txt` case when a new top-level module must
+- Add a `src/compile_manifest.d/*.manifest` case when a new top-level module must
   compile on its own or pins a codegen marker.
 - Add public command, package, docs, LSP, REPL, formatter, or platform cases to
   the matching `tests/cli/*.cases` file, and codegen-shape checks to

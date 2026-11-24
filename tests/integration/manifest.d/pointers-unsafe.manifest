@@ -1,0 +1,18 @@
+# Native integration cases: raw pointers, address-of, handles, and unsafe operations.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+lea_pair_addr_of_addend|all|0,2|tests/integration/lea_pair_addr_of_addend.tl|0|30\n|-|-|stage-stdlib
+ptr_offset_inline_aggregate_stride|all|-|tests/integration/ptr_offset_inline_aggregate_stride.tl|42|-|-|-|-
+ptr_addr_of_places|all|-|tests/integration/ptr_addr_of_places.tl|0|-|-|-|-
+ptr_aggregate_copy|all|-|tests/integration/ptr_aggregate_copy.tl|0|-|-|-|-
+raw_pointer_register_addr_of|all|-|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-|-
+raw_pointer_register_addr_of_levels|all|0,2|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-|-
+raw_pointer_field_place|all|0,1,2|tests/integration/raw_pointer_field_place.tl|42|-|-|stdlib/string.tl|-
+handle_arg_csr|all|-|tests/integration/handle_arg_csr.tl|42|-|-|stdlib/io.tl|-
+handle_param_pin|all|-|tests/integration/handle_param_pin.tl|42|-|-|stdlib/io.tl|-
+addr_taken_frame_slots|all|0,1,2|tests/integration/addr_taken_frame_slots.tl|42|-|-|-|-
+addr_taken_stack_aggregates|all|0,1,2|tests/integration/addr_taken_stack_aggregates.tl|42|-|-|-|-
+addr_taken_frame_join|all|0,1|tests/integration/addr_taken_frame_join.tl|42|-|-|-|-
+unsafe_scaled_index_views|all|0,1,2|tests/integration/unsafe_scaled_index_views.tl|42|-|-|-|-
+addr_taken_local_forwarding|all|0,1,2|tests/integration/addr_taken_local_forwarding.tl|42|-|-|-|stage-stdlib
+ptr_null_check_word|all|0,1,2|tests/integration/ptr_null_check_word.tl|42|-|-|-|-

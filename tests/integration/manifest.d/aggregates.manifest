@@ -1,0 +1,57 @@
+# Native integration cases: structs, enums, tuples, packed/wide layouts, and aggregate returns.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+enum_constructor_owner_layout|all|0,1,2|tests/integration/enum_constructor_owner_layout.tl|42|-|-|enum_constructor_owner_defs.tl|-
+enum_constructor_owner_root|all|0,1,2|tests/integration/enum_constructor_owner_root.tl|42|-|-|enum_constructor_owner_defs.tl|-
+recursive_aggregate_return|all|0,1,2|tests/integration/recursive_aggregate_return.tl|42|-|-|-|-
+recursive_aggregate_return_variants|all|0,1,2|tests/integration/recursive_aggregate_return_variants.tl|42|-|-|-|-
+packed_storage_lifetime|all|0,1,2|tests/integration/packed_storage_lifetime.tl|42|-|-|-|stage-stdlib
+packed_narrow_bitwise_fold|all|0,1,2|tests/integration/packed_narrow_bitwise_fold.tl|42|-|-|-|-
+unit_struct_fields|all|0,1,2|tests/integration/unit_struct_fields.tl|42|-|-|-|stage-stdlib
+aggregate_globals|all|-|tests/integration/aggregate_globals.tl|42|-|-|stdlib/string.tl|-
+result_slot_forwarding|all|0,1,2|tests/integration/result_slot_forwarding.tl|42|15\n|-|-|stage-stdlib
+zero_array_field_growth|all|0,1,2|tests/integration/zero_array_field_growth.tl|42|-|-|stdlib/test.tl|-
+zero_array_field_explicit_init|all|0,1,2|tests/integration/zero_array_field_explicit_init.tl|42|-|-|stdlib/test.tl|-
+wide_const_hoist|all|-|tests/integration/wide_const_hoist.tl|42|-|-|stdlib/io.tl|-
+recursive_loop_import|all|-|tests/integration/recursive_loop_import.tl|42|90189121\n216608050\n15\n|32 8 3|stdlib/io.tl stdlib/string.tl|-
+recursive_loop_import_abort|all|-,2|tests/integration/recursive_loop_import.tl|134|-|8 8 4|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:51:42: array index out of bounds: index=8 length=8\n
+enum_same_name_clone|all|0,1,2|tests/integration/enum_same_name_clone.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
+enum_same_name_scratch|all|0,1,2|tests/integration/enum_same_name_scratch.tl|42|-|-|-|-
+struct_pattern_owner_module|all|-,0,2|tests/integration/struct_pattern_owner_module.tl|42|-|-|struct_pattern_owner_shapes.tl struct_pattern_owner_user.tl|-
+aggregate_return_no_alloc|all|-|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|-
+aggregate_return_no_alloc|all|0,2|tests/integration/aggregate_return_no_alloc.tl|42|-|-|stdlib/profile.tl stdlib/string.tl|stage-stdlib
+tuple_inline_storage_lifetime|all|-|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|-
+tuple_inline_storage_lifetime|all|0,2|tests/integration/tuple_inline_storage_lifetime.tl|42|-|-|stdlib/string.tl|stage-stdlib
+enum_match|all|-|tests/integration/enum_match.tl|42|-|-|-|-
+enum_same_name_qualified|all|0,1,2|tests/integration/enum_same_name_qualified.tl|42|-|-|-|-
+enum_same_name_import|all|0,1,2|tests/integration/enum_same_name_import.tl|42|-|-|enum_same_name_provider.tl|-
+enum_payload_owner|all|-|tests/integration/enum_payload_owner_root.tl|42|-|-|enum_payload_owner_matcher.tl enum_payload_owner_provider.tl|-
+enum_string_payload|all|-|tests/integration/enum_string_payload.tl|5|-|-|stdlib/string.tl|-
+repr_c_f32_fields|all|-|tests/integration/repr_c_f32_fields.tl|42|-|-|-|-
+aggregate_local_value_snapshot|all|0,1,2|tests/integration/aggregate_local_value_snapshot.tl|42|-|-|-|-
+aggregate_assignment_storage|all|0,1,2|tests/integration/aggregate_assignment_storage.tl|42|-|-|-|-
+aggregate_constructor_loop_snapshot|all|0,1,2|tests/integration/aggregate_constructor_loop_snapshot.tl|42|-|-|-|-
+aggregate_parameter_storage|all|0,1,2|tests/integration/aggregate_parameter_storage.tl|42|-|-|-|-
+maybe_result|all|-|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl|-
+variant_expected_resolution|all|-|tests/integration/variant_expected_resolution.tl|42|-|-|variant_expected_resolution_lib.tl stdlib/option.tl|-
+variant_root_clash|all|-,0|tests/integration/variant_root_clash.tl|42|-|-|variant_root_clash_mid.tl variant_root_clash_lib.tl|-
+nullary_variant_call|all|-|tests/integration/nullary_variant_call.tl|42|-|-|-|-
+struct_field_set|all|-|tests/integration/struct_field_set.tl|42|-|-|-|-
+struct_field_set_levels|all|0,2|tests/integration/struct_field_set.tl|42|-|-|-|-
+tuple_values|all|-,0,1,2|tests/integration/tuple_values.tl|42|-|-|-|-
+tuple_nested_place_move|all|0,1,2|tests/integration/tuple_nested_place_move.tl|42|-|-|-|-
+tuple_match_pattern|all|-|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl|-
+tuple_reference_reads|all|0,1,2|tests/integration/tuple_reference_reads.tl|42|-|-|stdlib/string.tl stdlib/test.tl|-
+packed_string_literals|all|0,1,2|tests/integration/packed_string_literals.tl|42|prefix/abcabcbcccabdababbprefixλλbprefix/abc|-|packed_string_literals.in stdlib/io.tl stdlib/byte_buf.tl|stage-stdlib
+repr_c_explicit_alignment|all|-,0,2|tests/integration/repr_c_explicit_alignment.tl|42|-|-|benchmarks/repr_c_explicit_alignment/baseline.c|-
+struct_match_pattern|all|-|tests/integration/struct_match_pattern.tl|42|-|-|struct_match_pattern_geom.tl|-
+packed_bool_payload|all|0,1,2|tests/integration/packed_bool_payload.tl|42|-|-|-|-
+wide_struct_members|all|-|tests/integration/wide_struct_members.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|-
+wide_struct_members|all|0,2|tests/integration/wide_struct_members.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|stage-stdlib
+wide_enum_variants|all|-|tests/integration/wide_enum_variants.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|-
+wide_enum_variants|all|0,2|tests/integration/wide_enum_variants.tl|42|-|-|wide_aggregates.tl stdlib/comptime.tl|stage-stdlib
+wide_struct_literal|all|-|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|-
+wide_struct_literal|all|0,2|tests/integration/wide_struct_literal.tl|42|-|-|wide_struct_literal_decls.tl|stage-stdlib
+wide_power_multiply|all|0,1,2|tests/integration/wide_power_multiply.tl|42|-|-|-|stage-stdlib
+packed_field_receiver|all|-|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-
+packed_field_receiver_levels|all|0,2|tests/integration/packed_field_receiver.tl|42|-|-|stdlib/test.tl|-

@@ -1,0 +1,3 @@
+# #8232/#7073: compiler-special clone form removed; clone is an ordinary name.
+clone_unbound_reject|check-fail|tests/safety/clone_unbound_reject.tl|-|typecheck: unbound name clone
+clone_shadowed_ok|run-exit|tests/safety/clone_shadowed_ok.tl|42|-

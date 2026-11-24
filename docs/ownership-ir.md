@@ -396,26 +396,25 @@ operands made are never activated. An exit leaves no normal edge, so no
 cleanup obligation is checked on it; `return`, `break` and `continue` remain
 checked exits.
 
-The compiler-special `(clone value)` reads its operand without moving it
-(SPEC 7.6), one rule in the producer (`tc-infer-selected-read`): the read
+A compound argument of a shared-reference formal reads its operand without
+moving it (SPEC 7.6), one rule in the producer (`tc-infer-selected-read`;
+compiler-special `(clone value)` was removed in #8232/#7073): the read
 reaches the operand's result positions (annotation, `cast` and expansion
 wrappers, both `if` branches, every match arm body, the `let` body, the last
 form of a `begin` or `unsafe` block, and the receivers of `deref`, field,
-tuple and array projections). A move-only place there is lent shared, as a
-place operand of `clone` always was, and any other move-only value there is
-held in a temporary lent the same way; a Copy or diverging one is evaluated
-as usual. A form the read reaches through therefore yields that shared
-reference and publishes its type (the checked type stays the value's), and a
-projection out of such a form projects through the reference held in its
-receiver temporary, so the parts are read where they lie. `clone` reads
-through the reference. Conditions, scrutinees, initializers, earlier forms,
-indices and arguments keep their ordinary moves. A projection receiver that
-an index evaluated after it can write (a variable the receiver may select,
-named in a writing position, the lowering's snapshot rule) is retained by
-value instead of lent, so the clone copies what the receiver selected before
-the write; any other read's loans live until the clone. A compound argument
-of a shared-reference formal is read the same way (the call borrows it), and
-an annotation is transparent to the place it names.
+tuple and array projections). A move-only place there is lent shared, and any
+other move-only value there is held in a temporary lent the same way; a Copy or
+diverging one is evaluated as usual. A form the read reaches through therefore
+yields that shared reference and publishes its type (the checked type stays the
+value's), and a projection out of such a form projects through the reference
+held in its receiver temporary, so the parts are read where they lie. The call
+borrows through the reference. Conditions, scrutinees, initializers, earlier
+forms, indices and arguments keep their ordinary moves. A projection receiver
+that an index evaluated after it can write (a variable the receiver may select,
+named in a writing position, the lowering's snapshot rule) is retained by value
+instead of lent, so the callee sees what the receiver selected before the write;
+any other read's loans live until the call completes. An annotation is
+transparent to the place it names.
 
 An explicit read through a reference (`deref`, `array-ref` of an array or a
 slice, `tuple-ref`) is the referent's own value, of its plain type `T`, while

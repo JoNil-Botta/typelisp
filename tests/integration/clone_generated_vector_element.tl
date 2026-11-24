@@ -10,6 +10,7 @@
 ;; instantiates the vector (an imported nominal takes a different path), and the
 ;; element must actually require a helper (an all-scalar struct never reaches the
 ;; failing dispatch). Refs #5719.
+(import stdlib.clone)
 (import stdlib.vector)
 (import stdlib.string)
 
@@ -17,10 +18,14 @@
   (n i64)
   (label String))
 
-(import (vector.vector VecItem core) as vec_item_vec)
+(clone.gen-clone VecItem)
+
+(import (vector.vector VecItem) as vec_item_vec)
 
 (defstruct VecItemBag
   (items vec_item_vec.Vec))
+
+(clone.gen-clone VecItemBag)
 
 (define (bag-with-two) : VecItemBag
   (let
@@ -48,7 +53,7 @@
 (define (main) : i64
   (let
     [original : VecItemBag (bag-with-two)]
-    [copy : VecItemBag (clone original)]
+    [copy : VecItemBag (clone.deep original)]
     ;; 7 + 9 = 16 from each bag; the String field is what forces a
     ;; synthesized element clone helper.
     [original-sum : i64 (bag-sum (& original))]

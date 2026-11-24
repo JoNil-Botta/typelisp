@@ -1790,19 +1790,15 @@
 (define (compiler-semantic-decl-retains-checked-let-facts?
   [path : String]
   [decl : ast.AstDecl]) : bool
-  (if (tc.tc-decl-unchecked-clone?
-    (owned_view.compiler-owned-shared-view path)
-    (owned_view.compiler-owned-shared-view decl))
-    false
-    (match decl
-      ;; DefMacro templates are checked by CTFE/macro expansion rather than the
-      ;; final runtime body checker that publishes retained let facts.
-      ;; Test bodies stay in the parsed program for tooling but ordinary source
-      ;; checking deliberately does not execute/typecheck them.
-      [(or (DefMacro _ _ _ _ _) (Test _ _ _ _)) false]
-      [(Unsafe inner)
-        (compiler-semantic-decl-retains-checked-let-facts? path (deref inner))]
-      [_ true])))
+  (match decl
+    ;; DefMacro templates are checked by CTFE/macro expansion rather than the
+    ;; final runtime body checker that publishes retained let facts.
+    ;; Test bodies stay in the parsed program for tooling but ordinary source
+    ;; checking deliberately does not execute/typecheck them.
+    [(or (DefMacro _ _ _ _ _) (Test _ _ _ _)) false]
+    [(Unsafe inner)
+      (compiler-semantic-decl-retains-checked-let-facts? path (deref inner))]
+    [_ true]))
 
 (define (compiler-semantic-use-span-from-origin
   [path : String]

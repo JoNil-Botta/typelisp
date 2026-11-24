@@ -1104,7 +1104,7 @@
   [body : i64]) : ast.AstDecl
   (ast.ast-decl-comptime-decl-with-meta
     (Some
-      "stdlib.clone/synthesize-helpers"
+      "stdlib.clone/gen-clone"
       (string.copy (& name))
       (ast.ast-expr-list-new)
       key)

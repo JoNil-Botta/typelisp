@@ -61,6 +61,9 @@
       "(defstruct Holder (text String))\n"
       "(define (consume [text : String]) : i64 7)\n"
       "(define (observe [text : (& str)]) : i64 7)\n"
+      "(define (observe-item [item : (& Item)]) : i64 7)\n"
+      "(define (observe-box [item : (& (Box i64))]) : i64 7)\n"
+      "(define (observe-arr [item : (& (Array String 1))]) : i64 7)\n"
       "(define (relay [p : ("
       (string.copy reference)
       " p (Array String 2))]) : ("
@@ -143,32 +146,32 @@
           "(let [alias consume] (alias (array-ref p 0)))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (array-ref p (consume (array-ref p 0))))")
+          "i64"
+          "(observe (array-ref p (consume (array-ref p 0))))")
         (tuple
           "(Array String 2)"
           "i64"
-          "(let [clone consume] (clone (array-ref p 0)))")
+          "(let [alias consume] (alias (array-ref p 0)))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (if (= (consume (array-ref p 0)) 0) (array-ref p 1) \"owned\"))")
+          "i64"
+          "(observe (if (= (consume (array-ref p 0)) 0) (array-ref p 1) \"owned\"))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (match (consume (array-ref p 0)) [_ (array-ref p 1)]))")
+          "i64"
+          "(observe (match (consume (array-ref p 0)) [_ (array-ref p 1)]))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (let [moved : (in p String) (array-ref p 0)] moved))")
+          "i64"
+          "(observe (let [moved : (in p String) (array-ref p 0)] moved))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (begin (consume (array-ref p 0)) (array-ref p 1)))")
+          "i64"
+          "(observe (begin (consume (array-ref p 0)) (array-ref p 1)))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (unsafe (consume (array-ref p 0)) (array-ref p 1)))")
+          "i64"
+          "(observe (unsafe (consume (array-ref p 0)) (array-ref p 1)))")
         (tuple
           "(Array (Array String 1) 1)"
           "String"
@@ -212,53 +215,53 @@
           "i64"
           "(tuple-ref (array-ref p 0) 1)")
         (tuple "(Array String 2)" "(& p str)" "(& (array-ref p 0))")
-        (tuple "(Array String 2)" "String" "(clone (array-ref p 0))")
-        (tuple "(Array Item 2)" "Item" "(clone (array-ref p 0))")
-        (tuple "(Array (Box i64) 1)" "(Box i64)" "(clone (array-ref p 0))")
+        (tuple "(Array String 2)" "i64" "(observe (array-ref p 0))")
+        (tuple "(Array Item 2)" "i64" "(observe-item (array-ref p 0))")
+        (tuple "(Array (Box i64) 1)" "i64" "(observe-box (array-ref p 0))")
         (tuple
           "(Array (Array String 1) 1)"
-          "(Array String 1)"
-          "(clone (array-ref p 0))")
+          "i64"
+          "(observe-arr (array-ref p 0))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (ann (array-ref p 0) : (in p String)))")
-        (tuple "(Array i64 2)" "i64" "(clone (cast (array-ref p 0) : i64))")
-        (tuple "(Array String 2)" "String" "(clone (begin 0 (array-ref p 0)))")
-        (tuple "(Array String 2)" "String" "(clone (unsafe 0 (array-ref p 0)))")
+          "i64"
+          "(observe (ann (array-ref p 0) : (in p String)))")
+        (tuple "(Array i64 2)" "i64" "(cast (array-ref p 0) : i64)")
+        (tuple "(Array String 2)" "i64" "(observe (begin 0 (array-ref p 0)))")
+        (tuple "(Array String 2)" "i64" "(observe (unsafe 0 (array-ref p 0)))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (if (= index 0) (array-ref p 0) (array-ref p 1)))")
+          "i64"
+          "(observe (if (= index 0) (array-ref p 0) (array-ref p 1)))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (let [flag true] (if flag (array-ref p 0) (array-ref p 1))))")
+          "i64"
+          "(observe (let [flag true] (if flag (array-ref p 0) (array-ref p 1))))")
         (tuple
           "(Array String 2)"
-          "String"
-          "(clone (match (= index 0) [true (array-ref p 0)] [false (array-ref p 1)]))")
+          "i64"
+          "(observe (match (= index 0) [true (array-ref p 0)] [false (array-ref p 1)]))")
         (tuple
           "(Array (Array String 1) 1)"
-          "String"
-          "(clone (array-ref (if (= index 0) (array-ref p 0) (array-ref p 0)) 0))")
+          "i64"
+          "(observe (array-ref (if (= index 0) (array-ref p 0) (array-ref p 0)) 0))")
         (tuple
           "(Array (Array String 1) 1)"
-          "String"
-          "(clone (array-ref (let [q p] (array-ref q 0)) 0))")
-        (tuple "(Array Item 2)" "String" "(clone (array-ref p 0).text)")
+          "i64"
+          "(observe (array-ref (let [q p] (array-ref q 0)) 0))")
+        (tuple "(Array Item 2)" "i64" "(observe (array-ref p 0).text)")
         (tuple
           "(Array (Tuple String i64) 1)"
-          "String"
-          "(clone (tuple-ref (array-ref p 0) 0))")
+          "i64"
+          "(observe (tuple-ref (array-ref p 0) 0))")
         (tuple
           "(Array (Box String) 1)"
-          "String"
-          "(clone (deref (array-ref p 0)))")
+          "i64"
+          "(observe (deref (array-ref p 0)))")
         (tuple "(Slice i64)" "i64" "(array-ref p index)")
         (tuple "(Slice String)" "i64" "(observe (array-ref p 0))")
         (tuple "(Slice String)" "(& p str)" "(& (array-ref p 0))")
-        (tuple "(Slice String)" "String" "(clone (array-ref p index))")
+        (tuple "(Slice String)" "i64" "(observe (array-ref p index))")
         (tuple
           "(Array String 2)"
           "i64"
@@ -1668,9 +1671,10 @@
       "tests/runtime_boundary_tl"
       "(import stdlib.io)
 (import stdlib.byte_buf)
+(import stdlib.string)
 (define (main [path : String]) : i64
   (let
-    [data : byte_buf.ByteBuf (io.read-file (clone path))]
+    [data : byte_buf.ByteBuf (io.read-file (string.copy (& path)))]
     (begin
       (io.print-format \"{}\" \"\")
       (io.flush-stdout)

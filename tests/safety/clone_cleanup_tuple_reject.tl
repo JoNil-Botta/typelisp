@@ -1,5 +1,7 @@
 ;; #9053: a tuple containing a cleanup-owning struct is transitively
-;; non-cloneable and must fail E0206.
+;; non-cloneable and must be rejected.
+(import stdlib.clone)
+
 (define closes : i64
   0)
 
@@ -11,7 +13,7 @@
   (fd i64 (:cleanup close-fd)))
 
 (define (dup [r : (& r (Tuple Res i64))]) : (Tuple Res i64)
-  (clone (deref r)))
+  (clone.deep (deref r)))
 
 (define (main) : i64
   0)

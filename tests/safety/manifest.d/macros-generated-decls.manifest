@@ -32,7 +32,7 @@ macro_struct_pattern_root_owner_reject|check-fail|tests/safety/macro_struct_patt
 generated_module_unused_invalid_reject|check-fail|tests/safety/generated_module_unused_invalid_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
 generated_module_literal_narrowing_reject|check-fail|tests/safety/generated_module_literal_narrowing_reject.tl|-|typecheck: integer literal 300 does not fit expected type u8
 generated_module_bool_arithmetic_reject|check-fail|tests/safety/generated_module_bool_arithmetic_reject.tl|-|typecheck: integer operator expects matching integer operands
-generated_module_uncloneable_clone_reject|check-fail|tests/safety/generated_module_uncloneable_clone_reject.tl|-|typecheck: clone unsupported type (-> i64 i64)
+generated_module_uncloneable_clone_reject|check-fail|tests/safety/generated_module_uncloneable_clone_reject.tl|-|gen-clone: unsupported type fn_i64_nil_to_i64 at clone.deep
 generated_module_equality_ok|check-ok|tests/safety/generated_module_equality_ok.tl|-|-
 generated_module_cleanup_ownership_reject|check-fail|tests/safety/generated_module_cleanup_ownership_reject.tl|-|field value stores cleanup-owning type FileHandle without :owned
 generated_module_reflection_fixed_shape_reject|check-fail|tests/safety/generated_module_reflection_fixed_shape_reject.tl|-|typecheck: array elements must have same type: expected i64, found bool

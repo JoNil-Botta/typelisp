@@ -91,7 +91,6 @@ src/read.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@comp
 src/sym_i64_env.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/token.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/build_cli_core_tests.tl	stage2-compile-profile-verifier	@compiler	Direct named source input to its owning verifier.
-src/compiler_clone_tests.tl	stage2-public-tool-affected-map,stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 src/compiler_embedded_stdlib_tlci_payload.tl	stage0-size-ratchet	@compiler	Direct named source input to its owning verifier.
 src/compiler_package_surface_producer.tl	package-native-tlci-dependency-macros	@compiler	Direct named source input to its owning verifier.
 src/compiler_profile_summary.tl	stage2-inline-typelisp-tests	@compiler	Direct named source input to its owning verifier.

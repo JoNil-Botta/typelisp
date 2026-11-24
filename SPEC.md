@@ -1882,7 +1882,7 @@ specified here (#8585).
 keeps a type naming it. An `if` or `match`, the elements of an array literal,
 the fields of a constructor, and an expected or annotated type all join: the
 result has the shape of the expected type (or of the other inputs) and every
-arena region of its inputs, scalars included. `(clone x)` inside an arena is
+arena region of its inputs, scalars included. `(clone.deep x)` inside an arena is
 allocated there and carries the active region, not `x`'s. Only the explicit
 clone-out forms, `with-escape` and `with-scratch`, drop the source's place: the
 clone-out result is a fresh allocation in the arena active around the form, so
@@ -1941,8 +1941,9 @@ initializer expressions: an `if` or `match` producing plain `T` still consumes
 its selected value, including when both alternatives name views. A subsequent
 ownership-consuming use of a bound view is rejected at that use; writes and
 mutable lends follow the shared-view and mutable-view rules below. To obtain
-an owned copy, bind an explicit `(clone ...)`; a field/name view binding may
-instead name its visible region explicitly as `(in r T)`.
+an owned copy, bind an explicit `(clone.deep ...)` or call an explicit clone
+helper; a field/name view binding may instead name its visible region explicitly
+as `(in r T)`.
 
 A view keeps the references it was read through. Read
 through `&mut` references only, it is a *mutable view*: writing its elements
@@ -9906,48 +9907,12 @@ and not a general manual memory management feature.
   read.
   Pass a place or an rvalue such as a call result; for a conditional or block
   (`if`, `let`, or `match`), call `clone.deep` in each result position.
-- During the #7073 repository migration, `(clone value)` still uses the
-  compiler-checked clone surface described below. New owner code
-  should use `gen-clone`; the compiler-special spelling, reachable-root
-  discovery, `clone$Type` identities, and the transitional handoff are removed
-  only after existing callers have moved to explicit functions.
-- The clone handoff runs only after typechecking has resolved and deduplicated
-  the reachable named-aggregate closure. `stdlib.clone` is part of the implicit
-  macro prelude and routes every reachable named struct or enum through
-  `stdlib.clone/synthesize-helpers`; the compiler has no compatibility AST
-  producer. Each root has exactly one producer: the stdlib result is
-  typechecked, lowered, and retained. An existing or conflicting `clone$Type`
-  declaration is an error. Struct helpers reconstruct all fields, ordinary
-  enum helpers reconstruct all variants and payloads, and two-variant
-  list-shaped enums use tail-recursive accumulator/reverse helpers so cloning
-  does not consume one native stack frame per element.
-  The helper name is `clone$<unqualified-nominal-name>` in the nominal type's
-  canonical module. The deterministic request/generated-origin key is
-  prefixed by `decls:stdlib.clone:stdlib.clone/synthesize-helpers(` and encodes
-  the ordered module-name/type-literal request pairs; repeated identical root
-  closures reuse that identity and may not emit a second helper. Diagnostics
-  from a generated helper use its generated-decl
-  origin and the compiler handoff request location; producer conflicts name
-  the conflicting helper explicitly.
-- The transitional `(clone value)` reads its operand without moving it and
-  returns independent owned storage, so `(clone (deref reference))` and
-  `(clone (deref box))` leave the reference or Box usable. The read reaches
-  through annotation, `cast` and macro-expansion wrappers, both `if` arms,
-  every `match` arm body, the `let` body, the last form of `begin` or
-  `unsafe`, and the receivers of `deref`, field, tuple and array projections.
-  The rest of the operand keeps its ordinary use rules: `if` conditions,
-  `match` scrutinees, `let` initializers, earlier `begin`/`unsafe` forms,
-  array indices, and call and constructor arguments are used as anywhere
-  else, so a non-Copy value there is moved. This applies
-  only when `clone` names the compiler-special form, not a binding, function
-  or constructor of that name.
-- The transitional compiler-special `clone` rejects unsupported
-  ownership/lifetime forms rather than silently
-  bit-copying them. Unsupported clone operands include function values,
-  references including borrowed `str`, raw pointers,
-  compile-time-only values, cleanup-owning types, and named aggregate shapes
-  containing non-cloneable or cleanup-owning fields. A `(Box T)` operand with a
-  cloneable `T`, owned or read through a reference, clones into a new box.
+- Compiler-special `(clone value)` has been removed (#7073, #8232). `clone` is
+  an ordinary identifier with no compiler-special form, alias, or compatibility
+  diagnostic; calling `clone` without a binding in scope fails as an ordinary
+  unbound name. Use `(clone.gen-clone T)` / `(clone.deep value)`, `string.copy`,
+  or explicit helper functions instead. `with-escape` and `with-scratch`
+  clone-out continues to expand through `stdlib.clone.deep`.
 
 ---
 

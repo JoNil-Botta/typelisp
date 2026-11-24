@@ -49,7 +49,6 @@ macro_qualified_helpers_no_string_import|all|-|tests/integration/macro_qualified
 macro_template_pattern|all|-|tests/integration/macro_template_pattern.tl|42|-|-|macro_template_pattern_user.tl macro_template_variant_provider.tl|-
 decls_macro_scoped_forms|all|-,0,2|tests/integration/decls_macro_scoped_forms.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 decls_macro_nested_arguments|all|-|tests/integration/decls_macro_nested_arguments.tl|42|-|-|stdlib/comptime.tl|-
-generated_macro_clone_handoff|all|-|tests/integration/generated_macro_clone_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 generated_cfg|all|-|tests/integration/generated_cfg.tl|42|-|-|-|-
 generated_cfg|all|0,1,2|tests/integration/generated_cfg.tl|42|-|-|-|stage-stdlib
 macro_layout_operand|all|0,1,2|tests/integration/macro_layout_operand.tl|42|-|-|macro_layout_operand_dep.tl stdlib/comptime.tl|-

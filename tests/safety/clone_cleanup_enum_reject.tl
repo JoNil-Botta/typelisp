@@ -1,4 +1,6 @@
-;; #9053: `(clone e)` on a cleanup-owning enum must fail E0206.
+;; #9053: `(clone.deep e)` on a cleanup-owning enum must be rejected.
+(import stdlib.clone)
+
 (define closes : i64
   0)
 
@@ -11,7 +13,7 @@
   (Closed))
 
 (define (dup [r : (& r Handle)]) : Handle
-  (clone (deref r)))
+  (clone.deep (deref r)))
 
 (define (main) : i64
   (with

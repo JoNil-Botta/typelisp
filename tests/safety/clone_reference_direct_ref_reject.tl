@@ -1,8 +1,10 @@
+(import stdlib.clone)
+
 (defstruct Cell
   (name String))
 
 (define (copy [source : (& source Cell)]) : (& source Cell)
-  (clone source))
+  (clone.deep source))
 
 (define (main) : i64
   0)

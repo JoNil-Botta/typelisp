@@ -28,7 +28,7 @@ gate_require_compiler
 reject_diag() {
     case "$1" in
         stdlib/tests/crypto_aes128_gcm_clone_reject.tl)
-            printf 'clone unsupported type' ;;
+            printf 'gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_aes128_gcm/GcmKey at clone.deep' ;;
         stdlib/tests/crypto_aes128_gcm_format_reject.tl)
             printf 'format: unsupported nominal type' ;;
         stdlib/tests/crypto_aes128_gcm_key_reuse_reject.tl)
@@ -84,7 +84,7 @@ reject_diag() {
         stdlib/tests/crypto_aes_variant_reject.tl)
             printf 'argument 1 type mismatch' ;;
         stdlib/tests/crypto_aes_clone_reject.tl)
-            printf 'clone unsupported type stdlib.crypto_aes_core/Aes128Schedule' ;;
+            printf 'gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_aes_core/Aes128Schedule at clone.deep' ;;
         stdlib/tests/crypto_aes_format_reject.tl)
             printf 'format: unsupported nominal type struct_stdlib.crypto_aes_core/Aes256Schedule' ;;
         stdlib/tests/crypto_aes_raw_reject.tl)
@@ -96,7 +96,7 @@ reject_diag() {
         stdlib/tests/crypto_hkdf_sha256_construct_reject.tl|stdlib/tests/crypto_hkdf_sha256_consumer_reject.tl|stdlib/tests/crypto_hkdf_sha256_view_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_view_reject.tl)
             printf 'opaque type' ;;
         stdlib/tests/crypto_hkdf_sha256_clone_reject.tl)
-            printf 'clone unsupported type' ;;
+            printf 'gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_hkdf_sha256/HkdfSha256Prk at clone.deep' ;;
         stdlib/tests/crypto_hkdf_sha256_unsafe_reject.tl|stdlib/tests/crypto_hkdf_sha256_okm_unsafe_reject.tl)
             printf 'requires unsafe context' ;;
         stdlib/tests/crypto_hmac_sha256_storage_reject.tl)
@@ -104,7 +104,7 @@ reject_diag() {
         stdlib/tests/crypto_hmac_sha256_unsafe_reject.tl)
             printf 'requires unsafe context' ;;
         stdlib/tests/crypto_hmac_sha256_clone_reject.tl)
-            printf 'clone unsupported type' ;;
+            printf 'gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_hmac_sha256/HmacSha256State at clone.deep' ;;
         stdlib/tests/crypto_hmac_sha256_secret_tag_reject.tl)
             printf 'type mismatch' ;;
         stdlib/tests/crypto_secret_unsafe_accessor_reject.tl)
@@ -112,7 +112,7 @@ reject_diag() {
         stdlib/tests/crypto_secret_storage_read_reject.tl)
             printf 'ptr-read requires unsafe context' ;;
         stdlib/tests/crypto_secret_clone_reject.tl)
-            printf 'clone unsupported type stdlib.crypto_secret/SecretFixed' ;;
+            printf 'gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_secret/SecretFixed at clone.deep' ;;
         stdlib/tests/crypto_secret_use_after_close_reject.tl)
             printf 'use of moved value `owner`' ;;
         stdlib/tests/env_nonmatching_count_unsafe_reject.tl)

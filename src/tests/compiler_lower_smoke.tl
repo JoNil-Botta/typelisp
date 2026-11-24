@@ -495,7 +495,7 @@
 ;; A generated module is materialized in FULL and typechecked in full,
 ;; independent of which of its methods a consumer references, because the
 ;; reachability gate runs AFTER typecheck (see
-;; `lower-prune-unreachable-functions-with-clone-roots-and-plan`).
+;; `lower-prune-unreachable-functions-with-plan`).
 ;; Referencing `push` only vs. `push` + `map` therefore adds zero new typecheck
 ;; work on the (vector C43Point) module and cannot surface a new type error from
 ;; its body. Both variants must lower cleanly.
@@ -1010,23 +1010,6 @@
     (lower_tests.compiler-lower-ok?
       (lower_tests.compiler-lower-tuple-return-source))
     (io.panic "lower: tuple return smoke mismatch"))
-  (unless
-    (lower_tests.compiler-lower-clone-shape-ok?)
-    (io.panic "lower: clone smoke mismatch"))
-  (unless
-    (lower_tests.compiler-lower-clone-dynarray-bulk-copy-ok?)
-    (io.panic "lower: clone dynarray bulk smoke mismatch"))
-  (unless
-    (lower_tests.compiler-lower-clone-reachable-helpers-ok?)
-    (io.panic "lower: clone reachable helpers smoke mismatch"))
-  (unless
-    (lower_tests.compiler-lower-clone-chunk-boundary-ok?)
-    (io.panic "lower: clone chunk boundary smoke mismatch"))
-  (unless
-    (lower_tests.compiler-lower-error-ok?
-      (lower_tests.compiler-lower-clone-unsupported-source)
-      "typecheck: clone unsupported type (-> i64 i64)")
-    (io.panic "lower: clone unsupported diagnostic smoke mismatch"))
   (unless
     (lower_tests.compiler-lower-inline-aggregate-tests-ok?)
     (io.panic "lower: inline aggregate smoke mismatch"))

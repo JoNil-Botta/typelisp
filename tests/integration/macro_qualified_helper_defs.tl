@@ -1,13 +1,6 @@
 ;; Functions spelled like the string helpers and builtins, with results the
 ;; builtins never produce. A macro that names them qualified must call these
 ;; (macro_qualified_helpers).
-(defstruct Cell
-  (v i64))
-
-(defstruct Pair
-  (a i64)
-  (b i64))
-
 (define (string-length [_text : String]) : i64
   99)
 
@@ -32,6 +25,3 @@
 
 (define (string-concat [_left : String] [_right : String]) : String
   "user")
-
-(define (clone [cell : (& cell Cell)]) : Pair
-  (Pair 40 2))

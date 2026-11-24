@@ -1,12 +1,16 @@
 ;; #9052: a clone inside an arena is allocated there and carries its region.
+(import stdlib.clone)
+
 (defstruct Cell
   (items (__tl_dyn-array i64)))
+
+(clone.gen-clone Cell)
 
 (define (first [c : (& c Cell)]) : i64
   (array-ref c.items 0))
 
 (define (f [x : Cell]) : Cell
-  (with-arena phase (clone x)))
+  (with-arena phase (clone.deep x)))
 
 (define (main) : i64
   (let

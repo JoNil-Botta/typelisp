@@ -1,4 +1,5 @@
 (import stdlib.arena)
+(import stdlib.clone)
 (import stdlib.string)
 
 (defstruct Bundle
@@ -6,6 +7,8 @@
   (pair (Tuple String String))
   (fixed (Array String 2))
   (items (__tl_dyn-array String)))
+
+(clone.gen-clone Bundle)
 
 (define (score-bool [ok : bool]) : i64
   (if ok
@@ -60,8 +63,8 @@
       (unsafe
         (arena.set! home))
       (let
-        [bundle-copy : Bundle (clone bundle)]
-        [sequence-copy : (__tl_dyn-array String) (clone sequence)]
+        [bundle-copy : Bundle (clone.deep bundle)]
+        [sequence-copy : (__tl_dyn-array String) (clone.deep sequence)]
         (unsafe
           (arena.destroy scratch))
         (+ (bundle-score bundle-copy) (sequence-score sequence-copy))))))

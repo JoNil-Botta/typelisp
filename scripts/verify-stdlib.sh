@@ -437,11 +437,11 @@ stdlib/tests/crypto_hkdf_sha256_view_reject.tl|fail|opaque type
 stdlib/tests/crypto_hkdf_sha256_okm_reject.tl|fail|opaque type
 stdlib/tests/crypto_hkdf_sha256_okm_view_reject.tl|fail|opaque type
 stdlib/tests/crypto_hkdf_sha256_okm_unsafe_reject.tl|fail|requires unsafe context
-stdlib/tests/crypto_hkdf_sha256_clone_reject.tl|fail|clone unsupported type
+stdlib/tests/crypto_hkdf_sha256_clone_reject.tl|fail|gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_hkdf_sha256/HkdfSha256Prk at clone.deep
 stdlib/tests/crypto_hkdf_sha256_unsafe_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_hmac_sha256_storage_reject.tl|fail|opaque type
 stdlib/tests/crypto_hmac_sha256_unsafe_reject.tl|fail|requires unsafe context
-stdlib/tests/crypto_hmac_sha256_clone_reject.tl|fail|clone unsupported type
+stdlib/tests/crypto_hmac_sha256_clone_reject.tl|fail|gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_hmac_sha256/HmacSha256State at clone.deep
 stdlib/tests/crypto_hmac_sha256_secret_tag_reject.tl|fail|type mismatch
 stdlib/tests/net_tls_transcript_construct_reject.tl|fail|opaque type
 stdlib/tests/net_tls_transcript_project_reject.tl|fail|opaque type
@@ -450,7 +450,7 @@ stdlib/tests/crypto_aes_core_inline.tl|pass|-
 stdlib/tests/crypto_aes128_gcm_support.tl|pass|-
 stdlib/tests/crypto_aes128_gcm_inline.tl|pass|-
 stdlib/tests/crypto_aes128_gcm_kat_inline.tl|pass|-
-stdlib/tests/crypto_aes128_gcm_clone_reject.tl|fail|clone unsupported type
+stdlib/tests/crypto_aes128_gcm_clone_reject.tl|fail|gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_aes128_gcm/GcmKey at clone.deep
 stdlib/tests/crypto_aes128_gcm_format_reject.tl|fail|format: unsupported nominal type
 stdlib/tests/crypto_aes128_gcm_key_reuse_reject.tl|fail|use of moved value `key`
 stdlib/tests/crypto_aes128_gcm_tag_reject.tl|fail|argument 5 type mismatch
@@ -462,7 +462,7 @@ stdlib/tests/crypto_aes_lifecycle_inline.tl|pass|-
 stdlib/tests/crypto_aes_work_inline.tl|pass|-
 stdlib/tests/crypto_aes_key_reuse_reject.tl|fail|use of moved value `key`
 stdlib/tests/crypto_aes_variant_reject.tl|fail|argument 1 type mismatch
-stdlib/tests/crypto_aes_clone_reject.tl|fail|clone unsupported type stdlib.crypto_aes_core/Aes128Schedule
+stdlib/tests/crypto_aes_clone_reject.tl|fail|gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_aes_core/Aes128Schedule at clone.deep
 stdlib/tests/crypto_aes_format_reject.tl|fail|format: unsupported nominal type struct_stdlib.crypto_aes_core/Aes256Schedule
 stdlib/tests/crypto_aes_raw_reject.tl|fail|ptr-read requires unsafe context
 stdlib/tests/crypto_aes_rounds_reject.tl|fail|encrypt-checked! requires unsafe context
@@ -470,7 +470,7 @@ stdlib/tests/crypto_aes_composed_reject.tl|fail|encrypt-composed-128! requires u
 stdlib/tests/crypto_secret_inline.tl|pass|-
 stdlib/tests/crypto_secret_unsafe_accessor_reject.tl|fail|crypto_secret/fixed-read-pointer requires unsafe context
 stdlib/tests/crypto_secret_storage_read_reject.tl|fail|ptr-read requires unsafe context
-stdlib/tests/crypto_secret_clone_reject.tl|fail|clone unsupported type stdlib.crypto_secret/SecretFixed
+stdlib/tests/crypto_secret_clone_reject.tl|fail|gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_secret/SecretFixed at clone.deep
 stdlib/tests/crypto_secret_use_after_close_reject.tl|fail|use of moved value `owner`
 stdlib/tests/env_nonmatching_count_unsafe_reject.tl|fail|env/linux-nonmatching-count requires unsafe context
 stdlib/tests/env_rebuild_unsafe_reject.tl|fail|env/linux-rebuild! requires unsafe context

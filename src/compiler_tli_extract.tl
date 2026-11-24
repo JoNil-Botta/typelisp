@@ -1503,6 +1503,11 @@
   [bundle-flags : i64]
   [build : String]
   [target : String]) : tli.TliBundle
+  ;; Macro-expansion CTFE probes aggregate layouts before generated-instance
+  ;; import aliases resolve, and caches what it saw. Recorded layouts must match
+  ;; the ones lowering emits, so start from the same clean view lowering uses.
+  (tc.tc-agg-caches-reset-for-job! (tc.tc-context-job-state ctx))
+  (tc.tc-nominal-owner-cache-reset-for-job! (tc.tc-context-job-state ctx))
   (let
     [facts : TliExtractEffects (tli-extract-effects ctx)]
     [decls : ast.AstDeclList

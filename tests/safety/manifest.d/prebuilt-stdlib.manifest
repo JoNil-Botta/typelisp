@@ -1,0 +1,4 @@
+# Safety corpus cases: arena-store summaries of prebuilt stdlib functions hydrated from stdlib.tli.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+prebuilt_stdlib_arena_store_arg_reject|check-fail|tests/safety/prebuilt_stdlib_arena_store_arg_reject.tl|tests/safety/prebuilt_stdlib_arena_store_arg_reject.tl:9:48|error[E0205]: typecheck: cannot call `env-vec-append!` here: it allocates in the active arena and may store an allocation through this argument, which would outlive the arena

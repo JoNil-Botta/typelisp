@@ -107,54 +107,6 @@
     (cast 0 : u64)
     false))
 
-;: Rotate one 32-bit word right by a checked nonzero count below 32.
-(define (rotate-right [value : u32] [count : i64]) : u32
-  (bit-or (shr value (cast count : u64)) (shl value (cast (- 32 count) : u64))))
-
-;: SHA-256 choose function.
-(define (choose [x : u32] [y : u32] [z : u32]) : u32
-  (bit-xor (bit-and x y) (bit-and (bit-not x) z)))
-
-;: SHA-256 majority function.
-(define (majority [x : u32] [y : u32] [z : u32]) : u32
-  (bit-xor (bit-and x y) (bit-and x z) (bit-and y z)))
-
-;: SHA-256 uppercase sigma zero.
-(define (sigma-big-zero [value : u32]) : u32
-  (bit-xor
-    (rotate-right value 2)
-    (rotate-right value 13)
-    (rotate-right value 22)))
-
-;: SHA-256 uppercase sigma one.
-(define (sigma-big-one [value : u32]) : u32
-  (bit-xor
-    (rotate-right value 6)
-    (rotate-right value 11)
-    (rotate-right value 25)))
-
-;: SHA-256 lowercase sigma zero.
-(define (sigma-small-zero [value : u32]) : u32
-  (bit-xor
-    (rotate-right value 7)
-    (rotate-right value 18)
-    (shr value (cast 3 : u64))))
-
-;: SHA-256 lowercase sigma one.
-(define (sigma-small-one [value : u32]) : u32
-  (bit-xor
-    (rotate-right value 17)
-    (rotate-right value 19)
-    (shr value (cast 10 : u64))))
-
-;: Load one network-order 32-bit word from a validated block offset.
-(define (load-word-be [block : (& block (Array u8 64))] [offset : i64]) : u32
-  (bit-or
-    (shl (cast (array-ref block offset) : u32) (cast 24 : u64))
-    (shl (cast (array-ref block (+ offset 1)) : u32) (cast 16 : u64))
-    (shl (cast (array-ref block (+ offset 2)) : u32) (cast 8 : u64))
-    (cast (array-ref block (+ offset 3)) : u32)))
-
 ;: Store the checked 64-bit bit count in the last eight block bytes.
 (define (write-bit-length!
   [block : (&mut block (Array u8 64))]

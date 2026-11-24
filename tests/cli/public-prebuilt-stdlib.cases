@@ -1,0 +1,39 @@
+# Prebuilt stdlib sysroot discovery, archive linking and the
+# --no-prebuilt-stdlib source fallback (gate stage2-public-tool-cli-transcripts-3).
+# Run by scripts/verify-public-tools.sh.
+do none
+target -
+opt -
+
+case prebuilt-stdlib-sysroot-discovery
+step found
+run inspect sysroot
+stderr empty
+stdout contains format: tli
+stdout contains stdlib.io:
+step flag-disabled
+run inspect sysroot --no-prebuilt-stdlib
+exit nonzero
+stderr contains inspect: prebuilt stdlib disabled
+
+case prebuilt-stdlib-compile-and-fallback
+step prebuilt-compile
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" -o "{{dir}}/prebuilt.s"
+stderr empty
+in file {{dir}}/prebuilt.s
+contains _tl___tl_mod_init_stdlib
+not-contains _tl_stdlib_io_stdlib_io_platform_write:
+step source-compile
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --no-prebuilt-stdlib -o "{{dir}}/source.s"
+stderr empty
+in file {{dir}}/source.s
+contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains _tl___tl_mod_init_stdlib
+step prebuilt-run
+run run "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl"
+exit 42
+stdout contains hello prebuilt
+step source-run
+run run "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --no-prebuilt-stdlib
+exit 42
+stdout contains hello prebuilt

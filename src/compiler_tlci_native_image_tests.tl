@@ -16,9 +16,6 @@
     [empty-data : cobj.CompilerObjectDataRecordList
       (cobj.compiler-object-data-record-builder-finish
         (cobj.compiler-object-data-record-builder-with-capacity 1))]
-    [empty-instrs : cobj.CompilerObjectX64InstrList
-      (cobj.compiler-object-instr-builder-finish
-        (cobj.compiler-object-instr-builder-with-capacity 1))]
     [text0 : cobj.CompilerObjectX64InstrBuilder
       (cobj.compiler-object-instr-builder-with-capacity 5)]
     [text1 : cobj.CompilerObjectX64InstrBuilder
@@ -78,21 +75,24 @@
         (Section
           (Rodata)
           (cobj.compiler-object-data-record-builder-finish rodata2)
-          (clone empty-instrs)))]
+          (cobj.compiler-object-instr-builder-finish
+            (cobj.compiler-object-instr-builder-with-capacity 1))))]
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
         (Section
           (Data)
           (cobj.compiler-object-data-record-builder-finish data2)
-          (clone empty-instrs)))]
+          (cobj.compiler-object-instr-builder-finish
+            (cobj.compiler-object-instr-builder-with-capacity 1))))]
     [sections4 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections3
         (Section
           (Bss)
           (cobj.compiler-object-data-record-builder-finish bss2)
-          (clone empty-instrs)))]
+          (cobj.compiler-object-instr-builder-finish
+            (cobj.compiler-object-instr-builder-with-capacity 1))))]
     [symbols0 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-with-capacity 6)]
     [symbols1 : cobj.CompilerObjectSymbolBuilder
@@ -213,7 +213,7 @@
           (= (byte_le.read-u32 (& bytes) 36) 0)
           (=
             (native_image.compiler-tlci-native-entry-offset
-              (compiler-tlci-native-test-image "host-a" false false)
+              (& (compiler-tlci-native-test-image "host-a" false false))
               "_entry")
             0)))]
     [(Err _) false]))

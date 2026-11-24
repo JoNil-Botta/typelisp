@@ -1144,13 +1144,17 @@
   [wrapper-node : i64]
   [child : i64]) : i64
   (match (ast.ast-node-pool-context-expr-get pools child)
-    [(Spanned _ span)
-      (ctfe-expr-rewrap-macro-expansions-with-span
-        pools
-        wrapper-node
-        child
-        true
-        span)]
+    [(Literal _) child]
+    [(Spanned inner span)
+      (match (ast.ast-node-pool-context-expr-get pools inner)
+        [(Literal _) child]
+        [_
+          (ctfe-expr-rewrap-macro-expansions-with-span
+            pools
+            wrapper-node
+            child
+            true
+            span)])]
     [_
       (ctfe-expr-rewrap-macro-expansions-with-span
         pools

@@ -334,9 +334,17 @@
   (fixed-storage-arena i64)
   (macro-unsafe-frames (__tl_dyn-array bool))
   (macro-unsafe-blocks (__tl_dyn-array i64))
+  ;; `macro-unsafe-open` when each template frame was entered.
+  (macro-unsafe-opens (__tl_dyn-array i64))
   (macro-unsafe-depth i64)
   (macro-unsafe-base i64)
-  (macro-unsafe-active i64))
+  (macro-unsafe-active i64)
+  ;; `(unsafe ...)` blocks open around the current typecheck or expansion node.
+  (macro-unsafe-open i64)
+  ;; Scoped-runtime saves of the caller-origin operands whose environment
+  ;; hygiene cleared, innermost last; kept here so each save stays small.
+  (macro-unsafe-scoped-saves (__tl_dyn-array TcTypeEnvScopedRuntimeSave))
+  (macro-unsafe-scoped-len i64))
 
 (defstruct TcUnusedUnsafeState
   (address i64))
@@ -934,8 +942,12 @@
         (arena.tl_arena_current)
         (__tl_make-array bool 0)
         (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
         0
         0
+        0
+        0
+        (__tl_make-array TcTypeEnvScopedRuntimeSave 0)
         0))
     (TcUnusedUnsafeState
       (cast
@@ -6662,6 +6674,7 @@
     [unused-unsafe : TcUnusedUnsafeState
       (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
     [prev : i64 (tc-unused-unsafe-enter-block unused-unsafe span)]
+    [open : i64 (tc-macro-unsafe-block-enter! ctx)]
     [result : (TcSelectedResult store lease intern bind)
       (tc-infer-selected-begin
         ctx
@@ -6671,6 +6684,7 @@
         expected
         source
         sink)]
+    (tc-macro-unsafe-block-leave! ctx open)
     (tc-unused-unsafe-restore-block! unused-unsafe prev)
     (tc-type-env-scoped-runtime-restore! saved)
     result))
@@ -34298,25 +34312,46 @@
 ;; a caller-origin `MacroExpansion` (`macro-name-id < 0`) pops and restores
 ;; that ambient state (failing closed to safe if unmatched or behind a deferred
 ;; lambda barrier).
-(defenum TcMacroUnsafeScopedSave
-  (No)
-  (Some TcTypeEnvScopedRuntimeSave))
-
 (defstruct TcMacroUnsafeSave
   (prev-depth i64)
   (prev-base i64)
   (prev-block i64)
   (saved-slot-unsafe bool)
   (saved-slot-block i64)
+  (saved-slot-open i64)
   (restore-slot? bool)
-  (scoped-save TcMacroUnsafeScopedSave))
+  ;; Index of this entry's `macro-unsafe-scoped-saves` record, or -1.
+  (scoped-index i64))
 
 (defstruct TcMacroUnsafeEnterResult
   (env TcTypeEnv)
   (save TcMacroUnsafeSave))
 
 (define (tc-macro-unsafe-noop-save) : TcMacroUnsafeSave
-  (TcMacroUnsafeSave -1 -1 -1 false -1 false (TcMacroUnsafeScopedSave.No)))
+  (TcMacroUnsafeSave -1 -1 -1 false -1 0 false -1))
+
+;; Typecheck and macro expansion count the `(unsafe ...)` blocks open around
+;; the current node: a caller-origin operand reached with no more open than
+;; when its template began cannot be made unsafe by the template, so it skips
+;; the environment scan. Returns the count to restore on leaving the block.
+(define (tc-macro-unsafe-block-enter! [ctx : TcContext]) : i64
+  (let
+    [state : TcUnusedUnsafeState
+      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (unsafe
+      (let
+        [prev : i64 (deref data).macro-unsafe-open]
+        (set! (deref data).macro-unsafe-open (+ prev 1))
+        prev))))
+
+(define (tc-macro-unsafe-block-leave! [ctx : TcContext] [prev : i64]) : unit
+  (let
+    [state : TcUnusedUnsafeState
+      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (unsafe
+      (set! (deref data).macro-unsafe-open prev))))
 
 ;; Enable strict macro unsafe hygiene for a typecheck or macro-expansion pass.
 ;; Post-typecheck lowering calls `tc-expr` directly on already-checked subtrees
@@ -34339,6 +34374,40 @@
     [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
     (unsafe
       (set! (deref data).macro-unsafe-active prev))))
+
+;; Pushes `save` on `macro-unsafe-scoped-saves` and returns its index.
+(define (tc-macro-unsafe-push-scoped-save!
+  [state : TcUnusedUnsafeState]
+  [save : TcTypeEnvScopedRuntimeSave]) : i64
+  (let
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (unsafe
+      (let
+        [index : i64 (deref data).macro-unsafe-scoped-len]
+        [old-cap : i64 (array-length (deref data).macro-unsafe-scoped-saves)]
+        (when
+          (<= old-cap index)
+          (let
+            [new-cap : i64
+              (if (<= old-cap 0)
+                16
+                (* old-cap 2))]
+            [owner : arena.Arena (arena.Arena (deref data).fixed-storage-arena)]
+            (in-arena
+              owner
+              (let
+                [grown : (__tl_dyn-array TcTypeEnvScopedRuntimeSave)
+                  (__tl_make-array TcTypeEnvScopedRuntimeSave new-cap)]
+                [at : i64 0]
+                (while (< at index)
+                  (set!
+                    (array-ref grown at)
+                    (array-ref (deref data).macro-unsafe-scoped-saves at))
+                  (set! at (+ at 1)))
+                (set! (deref data).macro-unsafe-scoped-saves grown)))))
+        (set! (array-ref (deref data).macro-unsafe-scoped-saves index) save)
+        (set! (deref data).macro-unsafe-scoped-len (+ index 1))
+        index))))
 
 (define (tc-macro-unsafe-ensure-slot!
   [state : TcUnusedUnsafeState]
@@ -34365,6 +34434,7 @@
                   (__tl_make-array bool new-cap)]
                 [new-blocks : (__tl_dyn-array i64)
                   (__tl_make-array i64 new-cap)]
+                [new-opens : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
                 [copy-len : i64 (deref data).macro-unsafe-depth]
                 [index : i64 0]
                 (while (< index copy-len)
@@ -34374,9 +34444,13 @@
                   (set!
                     (array-ref new-blocks index)
                     (array-ref (deref data).macro-unsafe-blocks index))
+                  (set!
+                    (array-ref new-opens index)
+                    (array-ref (deref data).macro-unsafe-opens index))
                   (set! index (+ index 1)))
                 (set! (deref data).macro-unsafe-frames new-frames)
-                (set! (deref data).macro-unsafe-blocks new-blocks)))))))))
+                (set! (deref data).macro-unsafe-blocks new-blocks)
+                (set! (deref data).macro-unsafe-opens new-opens)))))))))
 
 (define (tc-macro-unsafe-enter-template! [ctx : TcContext] [env : TcTypeEnv]) : TcMacroUnsafeSave
   (let
@@ -34389,7 +34463,15 @@
       0)
       (tc-macro-unsafe-noop-save)
       (let
-        [ambient : bool (tc-in-unsafe? env)]
+        ;; While hygiene is enforced every unsafe environment comes from a
+        ;; counted `(unsafe ...)`, so with none open the call site is safe.
+        [ambient : bool
+          (and
+            (>
+              (unsafe
+                (deref data).macro-unsafe-open)
+              0)
+            (tc-in-unsafe? env))]
         [prev-depth : i64
           (unsafe
             (deref data).macro-unsafe-depth)]
@@ -34405,15 +34487,11 @@
           (set!
             (array-ref (deref data).macro-unsafe-blocks prev-depth)
             prev-block)
+          (set!
+            (array-ref (deref data).macro-unsafe-opens prev-depth)
+            (deref data).macro-unsafe-open)
           (set! (deref data).macro-unsafe-depth (+ prev-depth 1)))
-        (TcMacroUnsafeSave
-          prev-depth
-          prev-base
-          prev-block
-          false
-          -1
-          false
-          (TcMacroUnsafeScopedSave.No))))))
+        (TcMacroUnsafeSave prev-depth prev-base prev-block false -1 0 false -1)))))
 
 (define (tc-macro-unsafe-enter-expansion!
   [ctx : TcContext]
@@ -34452,6 +34530,21 @@
               (unsafe
                 (array-ref (deref data).macro-unsafe-blocks (- prev-depth 1)))
               -1)]
+          [caller-open : i64
+            (if matched?
+              (unsafe
+                (array-ref (deref data).macro-unsafe-opens (- prev-depth 1)))
+              -1)]
+          ;; Only an `(unsafe ...)` opened inside the template can make the
+          ;; operand's environment unsafe where the call site was not.
+          [clear? : bool
+            (and
+              (not ambient)
+              (!=
+                caller-open
+                (unsafe
+                  (deref data).macro-unsafe-open))
+              (tc-in-unsafe? env))]
           (unsafe
             (when
               matched?
@@ -34459,10 +34552,12 @@
             (when
               (deref data).enabled
               (set! (deref data).current-block caller-block)))
-          (if (and (not ambient) (tc-in-unsafe? env))
+          (if clear?
             (let
-              [scoped : TcTypeEnvScopedRuntimeSave
-                (tc-type-env-scoped-runtime-enter-env! env)]
+              [scoped-index : i64
+                (tc-macro-unsafe-push-scoped-save!
+                  state
+                  (tc-type-env-scoped-runtime-enter-env! env))]
               [cleared-env : TcTypeEnv (tc-clear-unsafe-context env)]
               (TcMacroUnsafeEnterResult
                 cleared-env
@@ -34472,8 +34567,9 @@
                   prev-block
                   ambient
                   caller-block
+                  caller-open
                   matched?
-                  (TcMacroUnsafeScopedSave.Some scoped))))
+                  scoped-index)))
             (TcMacroUnsafeEnterResult
               env
               (TcMacroUnsafeSave
@@ -34482,8 +34578,9 @@
                 prev-block
                 ambient
                 caller-block
+                caller-open
                 matched?
-                (TcMacroUnsafeScopedSave.No)))))))))
+                -1))))))))
 
 (define (tc-macro-unsafe-enter-lambda! [ctx : TcContext]) : TcMacroUnsafeSave
   (let
@@ -34508,14 +34605,7 @@
         (unsafe
           (set! (deref data).macro-unsafe-base prev-depth)
           (when (deref data).enabled (set! (deref data).current-block -1)))
-        (TcMacroUnsafeSave
-          prev-depth
-          prev-base
-          prev-block
-          false
-          -1
-          false
-          (TcMacroUnsafeScopedSave.No))))))
+        (TcMacroUnsafeSave prev-depth prev-base prev-block false -1 0 false -1)))))
 
 (define (tc-macro-unsafe-leave! [ctx : TcContext] [save : TcMacroUnsafeSave]) : unit
   (match save
@@ -34525,8 +34615,9 @@
         prev-block
         saved-slot-unsafe
         saved-slot-block
+        saved-slot-open
         restore-slot?
-        scoped-save)
+        scoped-index)
       (if (< prev-depth 0)
         unit
         (let
@@ -34534,10 +34625,12 @@
             (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
           [data : (MutPtr TcUnusedUnsafeStateData)
             (tc-unused-unsafe-state-ptr state)]
-          (match scoped-save
-            [(TcMacroUnsafeScopedSave.Some scoped)
-              (tc-type-env-scoped-runtime-restore! scoped)]
-            [(TcMacroUnsafeScopedSave.No) unit])
+          (when
+            (>= scoped-index 0)
+            (unsafe
+              (tc-type-env-scoped-runtime-restore!
+                (array-ref (deref data).macro-unsafe-scoped-saves scoped-index))
+              (set! (deref data).macro-unsafe-scoped-len scoped-index)))
           (unsafe
             (when
               restore-slot?
@@ -34546,7 +34639,10 @@
                 saved-slot-unsafe)
               (set!
                 (array-ref (deref data).macro-unsafe-blocks (- prev-depth 1))
-                saved-slot-block))
+                saved-slot-block)
+              (set!
+                (array-ref (deref data).macro-unsafe-opens (- prev-depth 1))
+                saved-slot-open))
             (set! (deref data).macro-unsafe-depth prev-depth)
             (set! (deref data).macro-unsafe-base prev-base)
             (when
@@ -76292,7 +76388,17 @@
                       (tc-spmd-env-merge-classes cond-env body-env))])))]))]
     [(Begin exprs) (tc-spmd-begin-list ctx expr-bases env spmd-env exprs)]
     [(Unsafe exprs)
-      (tc-spmd-begin-list ctx expr-bases (tc-enter-unsafe env) spmd-env exprs)]
+      (let
+        [open : i64 (tc-macro-unsafe-block-enter! ctx)]
+        [result
+          (tc-spmd-begin-list
+            ctx
+            expr-bases
+            (tc-enter-unsafe env)
+            spmd-env
+            exprs)]
+        (tc-macro-unsafe-block-leave! ctx open)
+        result)]
     [(Set name value-box)
       (match (tc-spmd-env-lookup-id spmd-env name)
         [(Found _ _ _ (CompactSlot))
@@ -120914,15 +121020,17 @@
               (if (not (macro-expr-tail-has-clone-out? ctx last-id))
                 (Ok expr-id)
                 (let
-                  [nexprs : ast.AstExprList
-                    (try
-                      (macro-reapply-expected-exprs-tail
-                        ctx
-                        (tc-enter-unsafe env)
-                        decls
-                        depth
-                        (& exprs)
-                        expected))]
+                  [open : i64 (tc-macro-unsafe-block-enter! ctx)]
+                  [tail-result
+                    (macro-reapply-expected-exprs-tail
+                      ctx
+                      (tc-enter-unsafe env)
+                      decls
+                      depth
+                      (& exprs)
+                      expected)]
+                  [_open-restore : unit (tc-macro-unsafe-block-leave! ctx open)]
+                  [nexprs : ast.AstExprList (try tail-result)]
                   (Ok (ast.ast-node-push (Unsafe nexprs)))))))]
         [(WithRegion region exprs)
           (if (= exprs.len 0)
@@ -122683,15 +122791,17 @@
       ;; this, an `unsafe`-only primitive under an `(unsafe ...)` reachable here
       ;; is wrongly rejected once the program defines a macro.
       (let
-        [nexprs
-          (try
-            (macro-expand-exprs-expected
-              ctx
-              (tc-enter-unsafe env)
-              decls
-              depth
-              exprs
-              expected))]
+        [open : i64 (tc-macro-unsafe-block-enter! ctx)]
+        [expand-result
+          (macro-expand-exprs-expected
+            ctx
+            (tc-enter-unsafe env)
+            decls
+            depth
+            exprs
+            expected)]
+        [_open-restore : unit (tc-macro-unsafe-block-leave! ctx open)]
+        [nexprs (try expand-result)]
         (Ok (ast.ast-node-push (Unsafe nexprs))))]
     [(Tuple exprs)
       (let

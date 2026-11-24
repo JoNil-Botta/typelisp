@@ -389,7 +389,7 @@ verify_shape() {
                     B "with_capacity," G "gctr_bang," G "prepare_bang," G "validate_lengths," H "authenticate_bang," S "fixed_zero," S "storage_close", "@abort:oob")
                 add_spec(G "validate_lengths", 3, 0, -1, 0, 0, 0, 0, "none", 0, 0, "", "")
 
-                add_spec(H "absorb_bang", 26, 11, -1, 0, 0, 0, 0, "none", 42, 0, H "multiply_bang", "")
+                add_spec(H "absorb_bang", 23, 10, -1, 0, 0, 0, 0, "none", 42, 0, H "multiply_bang", "")
                 add_spec(H "authenticate_bang", 2, 2, -1, 0, 0, 0, 0, "none", 9, 2,
                     H "multiply_bang," H "region_bang," H "store_be_bang," S "wipe_words_bang", "")
                 add_spec(H "multiply_bang", 2, 2, -1, 0, 0, 0, 0, "none", 3, 0, S "wipe_words_bang", "")
@@ -1005,8 +1005,6 @@ _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_absorb_bang:
     jl .L_ga_9
 .L_ga_10:
     jl .L_ga_10
-.L_ga_11:
-    jl .L_ga_11
     jmp _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_multiply_bang
     .size _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_absorb_bang, . - _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_absorb_bang
     .globl _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_authenticate_bang

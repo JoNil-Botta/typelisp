@@ -8699,34 +8699,42 @@
   [target : be_state.CompilerBackendTarget]
   [convention : compiler_abi.CompilerCallConvention]
   [name-id : i64]
+  [library-object? : bool]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : be_state.ResultCompilerBackend
-  (cond
-    [(cbi.compiler-builtin-backend-tls-current-arena-load-id? name-id)
-      (Ok
-        (str_cat.str-cat
-          (be_facts.compiler-backend-current-arena-load target "%rax")
-          "    testb $16, 48(%rax)
-    cmovnzq .L_tl_null_arena(%rip), %rax
-"))]
-    [(cbi.compiler-builtin-backend-tls-current-arena-store-id? name-id)
-      (match (be_facts.compiler-backend-target-arg-reg target convention 0)
-        [(Ok reg)
-          (Ok
-            (str_cat.str-cat
-              "    leaq .L_tl_null_arena(%rip), %r11\n    testq "
-              reg
-              ", "
-              reg
-              "\n    cmovzq %r11, "
-              reg
-              "\n"
-              (be_facts.compiler-backend-current-arena-store target reg)))]
-        [(Err message)
-          (be_state.compiler-backend-instr-error instr-diag message)])]
-    [else
-      (be_state.compiler-backend-instr-error
-        instr-diag
-        "backend: unknown tls current arena helper")]))
+  (let
+    [null-arena-sym : String
+      (if library-object?
+        "__tl_null_arena"
+        ".L_tl_null_arena")]
+    (cond
+      [(cbi.compiler-builtin-backend-tls-current-arena-load-id? name-id)
+        (Ok
+          (str_cat.str-cat
+            (be_facts.compiler-backend-current-arena-load target "%rax")
+            "    testb $16, 48(%rax)\n    cmovnzq "
+            null-arena-sym
+            "(%rip), %rax\n"))]
+      [(cbi.compiler-builtin-backend-tls-current-arena-store-id? name-id)
+        (match (be_facts.compiler-backend-target-arg-reg target convention 0)
+          [(Ok reg)
+            (Ok
+              (str_cat.str-cat
+                "    leaq "
+                null-arena-sym
+                "(%rip), %r11\n    testq "
+                reg
+                ", "
+                reg
+                "\n    cmovzq %r11, "
+                reg
+                "\n"
+                (be_facts.compiler-backend-current-arena-store target reg)))]
+          [(Err message)
+            (be_state.compiler-backend-instr-error instr-diag message)])]
+      [else
+        (be_state.compiler-backend-instr-error
+          instr-diag
+          "backend: unknown tls current arena helper")])))
 
 (define (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
   [type-segment-bases : i64]
@@ -8799,6 +8807,7 @@
               target
               convention
               name
+              (be_state.compiler-backend-state-library-object? backend-state)
               (be_state.compiler-backend-global-shared-view instr-diag))
               [(Ok inline-asm)
                 (Ok

@@ -89,18 +89,22 @@ case "$(uname -s)" in
         BUNDLE_ASSET=
         OUTPUT=typelisp
         NEED_EXEC=1
+        SYSROOT_TRIPLE=x86_64-unknown-linux-gnu
         ;;
     MINGW* | MSYS* | CYGWIN*)
         SINGLE_ASSET=typelisp-stage0-windows.exe
         BUNDLE_ASSET=
         OUTPUT=typelisp.exe
         NEED_EXEC=0
+        SYSROOT_TRIPLE=x86_64-pc-windows-msvc
         ;;
     *)
         echo "stage0 fetch is unsupported on this host: $(uname -s)" >&2
         exit 1
         ;;
 esac
+SYSROOT_TLI_ASSET="typelisp-stdlib-$SYSROOT_TRIPLE.tli"
+SYSROOT_LIB_ASSET="libstdlib-$SYSROOT_TRIPLE.a"
 
 if ! command -v curl >/dev/null 2>&1; then
     echo "stage0 fetch requires curl" >&2
@@ -138,6 +142,41 @@ download_asset() {
     return 1
 }
 
+SYSROOT_TLI_TMP=
+SYSROOT_LIB_TMP=
+HAVE_SUMS=0
+
+download_optional_asset() {
+    opt_asset=$1
+    opt_target="$TMP_DIR/$opt_asset"
+    if opt_status=$(curl -fsSL -w '%{http_code}' "$BASE_URL/$opt_asset" -o "$opt_target" 2>/dev/null); then
+        if [ ! -s "$opt_target" ]; then
+            echo "[stage0] downloaded optional asset is empty (possibly mid-republish): $opt_asset" >&2
+            rm -f "$opt_target"
+            return 2
+        fi
+        return 0
+    fi
+    rm -f "$opt_target"
+    if [ "$opt_status" = 404 ]; then
+        return 1
+    fi
+    return 2
+}
+
+verify_optional_sum() {
+    opt_asset=$1
+    if [ "$HAVE_SUMS" -eq 1 ]; then
+        if grep "  $opt_asset\$" "$SUMS_TMP" > "$SUMS_SELECTED"; then
+            if ! (cd "$TMP_DIR" && sha256sum -c "$(basename "$SUMS_SELECTED")"); then
+                echo "[stage0] SHA256SUMS verification failed for $opt_asset (republish in progress?)" >&2
+                return 1
+            fi
+        fi
+    fi
+    return 0
+}
+
 # Download the host asset (Linux: bundle first, single fallback) plus the
 # SHA256SUMS manifest, and verify them together. Returns non-zero on any
 # transient miss so the caller can retry the whole download+verify as one unit.
@@ -153,6 +192,9 @@ fetch_and_verify() {
     ASSET_TMP=
     ASSET_KIND=single
     RELEASE_MISSING=0
+    SYSROOT_TLI_TMP=
+    SYSROOT_LIB_TMP=
+    HAVE_SUMS=0
 
     if [ -n "$BUNDLE_ASSET" ]; then
         echo "[stage0] downloading $BUNDLE_ASSET from $REPO@$TAG"
@@ -172,6 +214,7 @@ fetch_and_verify() {
     fi
 
     if sums_status=$(curl -fsSL -w '%{http_code}' "$BASE_URL/SHA256SUMS" -o "$SUMS_TMP" 2>/dev/null); then
+        HAVE_SUMS=1
         if ! command -v sha256sum >/dev/null 2>&1; then
             echo "SHA256SUMS is published but sha256sum is not available" >&2
             exit 1
@@ -191,6 +234,29 @@ fetch_and_verify() {
             return 1
         fi
         echo "[stage0] warning: SHA256SUMS not found for $TAG; verified non-empty asset only" >&2
+    fi
+
+    # Download prebuilt stdlib sysroot assets when present in the release;
+    # gracefully skip on older releases that predate sysroot publication.
+    tli_rc=0
+    download_optional_asset "$SYSROOT_TLI_ASSET" || tli_rc=$?
+    lib_rc=0
+    download_optional_asset "$SYSROOT_LIB_ASSET" || lib_rc=$?
+    if [ "$tli_rc" -eq 0 ] && [ "$lib_rc" -eq 0 ]; then
+        verify_optional_sum "$SYSROOT_TLI_ASSET" || return 1
+        verify_optional_sum "$SYSROOT_LIB_ASSET" || return 1
+        SYSROOT_TLI_TMP="$TMP_DIR/$SYSROOT_TLI_ASSET"
+        SYSROOT_LIB_TMP="$TMP_DIR/$SYSROOT_LIB_ASSET"
+    elif [ "$tli_rc" -eq 1 ] && [ "$lib_rc" -eq 1 ]; then
+        # Absent on older releases; only fail if SHA256SUMS claims they exist.
+        if [ "$HAVE_SUMS" -eq 1 ] &&
+            grep -E "  ($SYSROOT_TLI_ASSET|$SYSROOT_LIB_ASSET)\$" "$SUMS_TMP" >/dev/null; then
+            echo "[stage0] SHA256SUMS lists sysroot assets that are not visible yet (republish in progress?)" >&2
+            return 1
+        fi
+    else
+        echo "[stage0] inconsistent prebuilt stdlib sysroot download (tli=$tli_rc, lib=$lib_rc; republish in progress?)" >&2
+        return 1
     fi
 
     return 0
@@ -325,6 +391,16 @@ fi
 if [ "$NEED_EXEC" -eq 1 ] && [ ! -x "$DEST" ]; then
     echo "stage0 compiler is not executable after install: $DEST" >&2
     exit 1
+fi
+
+SYSROOT_DIR="$OUT_DIR/lib/$SYSROOT_TRIPLE"
+if [ -n "$SYSROOT_TLI_TMP" ] && [ -n "$SYSROOT_LIB_TMP" ]; then
+    mkdir -p "$SYSROOT_DIR"
+    mv "$SYSROOT_TLI_TMP" "$SYSROOT_DIR/stdlib.tli"
+    mv "$SYSROOT_LIB_TMP" "$SYSROOT_DIR/libstdlib.a"
+    echo "[stage0] installed sysroot in $SYSROOT_DIR"
+else
+    rm -f "$SYSROOT_DIR/stdlib.tli" "$SYSROOT_DIR/libstdlib.a"
 fi
 
 echo "[stage0] installed $DEST"

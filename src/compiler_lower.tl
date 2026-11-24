@@ -19,6 +19,7 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
 (import compiler_ir_types as ir)
+(import compiler_tli_types as tli)
 (import compiler_pointer_proof_input as pointer_proof)
 (import (vector.vector pointer_proof.PointerProofRef core) as proof_refs)
 (import compiler_ast_types as ast)
@@ -619,6 +620,18 @@
   (cis.intern-structural-session-handle-from-source-names
     (ci.intern-source-name-session-handle-from-state intern-state)))
 
+;; Opt-in module ownership table for archive/sysroot lowering. Disabled by
+;; default so normal executable compilation allocates nothing and does no extra
+;; work.
+(defstruct LowerModuleOwnershipTable
+  (emit-module-inits bool)
+  (function-owners lower_i64_i64_map.Map)
+  (global-owners lower_i64_i64_map.Map))
+
+(defenum LowerModuleOwnership
+  (Disabled)
+  (Enabled LowerModuleOwnershipTable))
+
 ;; The constructor inputs the state's initializers read, besides the directory
 ;; address.
 (defstruct CompilerLowerStateSeed
@@ -715,6 +728,10 @@
     : pointer_proof.PointerProofRequest
     (unobserved pointer_proof.PointerProofRequest.Disabled)]
   [debug-types : LowerDebugTypes (unobserved (lower-debug-types-empty))]
+  [module-ownership-enabled : bool false]
+  [module-ownership
+    : LowerModuleOwnership
+    (unobserved (LowerModuleOwnership.Disabled))]
   [profile : profile_state.CompilerProfileState (unobserved seed.profile-state)])
 
 (define (compiler-lower-state-new-with-intern-state-and-profile-state
@@ -739,6 +756,293 @@
   [state : CompilerLowerState]
   [sink : cdiag.CompilerAdvisorySink]) : unit
   (compiler-lower-state-set-advisory-sink-owner! state sink))
+
+(define (compiler-lower-state-enable-module-ownership!
+  [state : CompilerLowerState]
+  [emit-module-inits : bool]) : unit
+  (compiler-lower-state-set-module-ownership-enabled! state true)
+  (compiler-lower-state-set-module-ownership!
+    state
+    (LowerModuleOwnership.Enabled
+      (LowerModuleOwnershipTable
+        emit-module-inits
+        (lower_i64_i64_map.with-capacity 2048)
+        (lower_i64_i64_map.with-capacity 512)))))
+
+(define (compiler-lower-state-function-owner-module-id
+  [state : CompilerLowerState]
+  [symbol-id : i64]) : i64
+  (if (not (compiler-lower-state-module-ownership-enabled state))
+    -1
+    (match (compiler-lower-state-module-ownership state)
+      [(Disabled) -1]
+      [(Enabled table)
+        (lower_i64_i64_map.get-value-or
+          (& table.function-owners)
+          (ir.compiler-ir-symbol-id symbol-id)
+          -1)])))
+
+(define (compiler-lower-state-global-owner-module-id
+  [state : CompilerLowerState]
+  [symbol-id : i64]) : i64
+  (if (not (compiler-lower-state-module-ownership-enabled state))
+    -1
+    (match (compiler-lower-state-module-ownership state)
+      [(Disabled) -1]
+      [(Enabled table)
+        (lower_i64_i64_map.get-value-or
+          (& table.global-owners)
+          (ir.compiler-ir-symbol-id symbol-id)
+          -1)])))
+
+(define (lower-module-ownership-record-global-id!
+  [state : CompilerLowerState]
+  [symbol-id : i64]
+  [owner-module-id : i64]) : unit
+  (when
+    (compiler-lower-state-module-ownership-enabled state)
+    (match (compiler-lower-state-module-ownership state)
+      [(Disabled) unit]
+      [(Enabled table)
+        (lower_i64_i64_map.insert-ref!
+          (&mut table.global-owners)
+          (ir.compiler-ir-symbol-id symbol-id)
+          owner-module-id)
+        (compiler-lower-state-set-module-ownership!
+          state
+          (LowerModuleOwnership.Enabled table))])))
+
+(define (lower-module-ownership-record-function-id!
+  [state : CompilerLowerState]
+  [symbol-id : i64]
+  [owner-module-id : i64]) : unit
+  (when
+    (compiler-lower-state-module-ownership-enabled state)
+    (match (compiler-lower-state-module-ownership state)
+      [(Disabled) unit]
+      [(Enabled table)
+        (lower_i64_i64_map.insert-ref!
+          (&mut table.function-owners)
+          (ir.compiler-ir-symbol-id symbol-id)
+          owner-module-id)
+        (compiler-lower-state-set-module-ownership!
+          state
+          (LowerModuleOwnership.Enabled table))])))
+
+(define (lower-module-ownership-record-functions!
+  [state : CompilerLowerState]
+  [funcs : (& ir.CompilerIrFunctionSeq)]
+  [owner-module-id : i64]) : unit
+  (when
+    (and (compiler-lower-state-module-ownership-enabled state) (> funcs.len 0))
+    (match (compiler-lower-state-module-ownership state)
+      [(Disabled) unit]
+      [(Enabled table)
+        (for [index (iterator.range 0 funcs.len)]
+          (match (& (array-ref funcs.slots index))
+            [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+              (lower_i64_i64_map.insert-ref!
+                (&mut table.function-owners)
+                (ir.compiler-ir-symbol-id fn-name)
+                owner-module-id)]))
+        (compiler-lower-state-set-module-ownership!
+          state
+          (LowerModuleOwnership.Enabled table))])))
+
+(define (lower-module-ownership-record-globals-range!
+  [state : CompilerLowerState]
+  [globals : (& ir.CompilerIrGlobalBuilder)]
+  [start : i64]
+  [owner-module-id : i64]) : unit
+  (when
+    (and
+      (compiler-lower-state-module-ownership-enabled state)
+      (< start globals.len))
+    (match (compiler-lower-state-module-ownership state)
+      [(Disabled) unit]
+      [(Enabled table)
+        (for [index (iterator.range start globals.len)]
+          (match (& (array-ref globals.slots index))
+            [(ir.CompilerIrGlobal.Global global-name _ _)
+              (lower_i64_i64_map.insert-ref!
+                (&mut table.global-owners)
+                (ir.compiler-ir-symbol-id global-name)
+                owner-module-id)]))
+        (compiler-lower-state-set-module-ownership!
+          state
+          (LowerModuleOwnership.Enabled table))])))
+
+;; Emit an idempotent `() -> unit` startup wrapper `__tl_mod_init_<mod>` (with a
+;; private 1-byte done guard) for every module that defines non-const
+;; `RuntimeGlobal` initializers, invoking its `__global_init_*` functions in
+;; source order and storing each result into its global. Only active when
+;; module-ownership lowering is opted in with `emit-module-inits = true`.
+(define (lower-emit-module-init-wrappers!
+  [lower-state : CompilerLowerState]
+  [cur-globals : (&mut ir.CompilerIrGlobalBuilder)]
+  [cur-functions : (&mut ir.CompilerIrFunctionBuilder)]) : unit
+  (when
+    (compiler-lower-state-module-ownership-enabled lower-state)
+    (let
+      [emit-inits? : bool
+        (match (compiler-lower-state-module-ownership lower-state)
+          [(Disabled) false]
+          [(Enabled table) table.emit-module-inits])]
+      (when
+        emit-inits?
+        (let
+          [initial-global-count : i64 cur-globals.len]
+          [seen-modules : lower_i64_i64_map.Map
+            (lower_i64_i64_map.with-capacity 32)]
+          [init-modules : (__tl_dyn-array i64)
+            (__tl_make-array i64 (+ initial-global-count 1))]
+          [init-module-count : i64 0]
+          (for [index (iterator.range 0 initial-global-count)]
+            (match (& (array-ref cur-globals.slots index))
+              [(ir.CompilerIrGlobal.Global
+                  global-sym
+                  _
+                  (ir.CompilerIrValue.RuntimeGlobal _))
+                (let
+                  [owner-id : i64
+                    (compiler-lower-state-global-owner-module-id
+                      lower-state
+                      global-sym)]
+                  (when
+                    (and
+                      (>= owner-id 0)
+                      (not (csym.compiler-symbol-root-module-id? owner-id))
+                      (not
+                        (lower_i64_i64_map.contains? (& seen-modules) owner-id)))
+                    (lower_i64_i64_map.insert-ref!
+                      (&mut seen-modules)
+                      owner-id
+                      1)
+                    (set! (array-ref init-modules init-module-count) owner-id)
+                    (+= init-module-count 1)))]
+              [_ unit]))
+          (for [mod-index (iterator.range 0 init-module-count)]
+            (let
+              [owner-id : i64 (array-ref init-modules mod-index)]
+              [module-name : String (lower-name-id-text lower-state owner-id)]
+              [wrapper-name : String
+                (tli.tli-module-init-symbol (& module-name))]
+              [guard-name : String
+                (str_cat.str-cat
+                  "__tl_mod_init_done_"
+                  (string.copy (& module-name)))]
+              [interns : ci.InternCompatState
+                (compiler-lower-state-interns lower-state)]
+              [wrapper-id : i64
+                (ci.intern-compat-state-intern (&mut interns) wrapper-name)]
+              [guard-id : i64
+                (ci.intern-compat-state-intern (&mut interns) guard-name)]
+              [entry-label : i64 (ir.compiler-ir-label "entry")]
+              [init-label : i64 (ir.compiler-ir-label "init")]
+              [done-label : i64 (ir.compiler-ir-label "done")]
+              [entry-instrs : ir.CompilerIrInstrBuilder
+                (ir.compiler-ir-instr-builder-new)]
+              [init-instrs : ir.CompilerIrInstrBuilder
+                (ir.compiler-ir-instr-builder-new)]
+              [done-instrs : ir.CompilerIrInstrBuilder
+                (ir.compiler-ir-instr-builder-new)]
+              [blocks : ir.CompilerIrBlockBuilder
+                (ir.compiler-ir-block-builder-new)]
+              [next-var : i64 1]
+              (ci.intern-compat-state-install! (& interns))
+              (compiler-lower-state-set-interns! lower-state interns)
+              (ir.compiler-ir-global-builder-push!
+                cur-globals
+                (ir.CompilerIrGlobal.Global
+                  guard-id
+                  (ast.AstType.Bool)
+                  (ir.CompilerIrValue.Unit)))
+              (lower-module-ownership-record-global-id!
+                lower-state
+                guard-id
+                owner-id)
+              (ir.compiler-ir-instr-builder-push!
+                (&mut entry-instrs)
+                (ir.CompilerIrInstr.Mov
+                  0
+                  (ir.CompilerIrValue.Global guard-id)
+                  (ast.AstType.Bool)))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut entry-instrs)
+                (ir.CompilerIrInstr.Branch
+                  (ir.CompilerIrValue.Var 0)
+                  done-label
+                  init-label))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut init-instrs)
+                (ir.CompilerIrInstr.Store
+                  guard-id
+                  (ir.CompilerIrValue.Bool true)
+                  (ast.AstType.Bool)))
+              (for [g-index (iterator.range 0 initial-global-count)]
+                (match (& (array-ref cur-globals.slots g-index))
+                  [(ir.CompilerIrGlobal.Global
+                      g-sym
+                      g-ty
+                      (ir.CompilerIrValue.RuntimeGlobal init-sym))
+                    (when
+                      (=
+                        (compiler-lower-state-global-owner-module-id
+                          lower-state
+                          g-sym)
+                        owner-id)
+                      (let
+                        [call-ty : ast.AstType (ast.ty-node-persist g-ty)]
+                        [store-ty : ast.AstType (ast.ty-node-persist g-ty)]
+                        (ir.compiler-ir-instr-builder-push!
+                          (&mut init-instrs)
+                          (ir.CompilerIrInstr.Call
+                            next-var
+                            init-sym
+                            (ir.CompilerIrCallArgs.Nil)
+                            call-ty))
+                        (ir.compiler-ir-instr-builder-push!
+                          (&mut init-instrs)
+                          (ir.CompilerIrInstr.Store
+                            g-sym
+                            (ir.CompilerIrValue.Var next-var)
+                            store-ty))
+                        (+= next-var 1)))]
+                  [_ unit]))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut init-instrs)
+                (ir.CompilerIrInstr.Jump done-label))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut done-instrs)
+                (ir.CompilerIrInstr.Return (ir.CompilerIrMaybeValue.No)))
+              (ir.compiler-ir-block-builder-push!
+                (&mut blocks)
+                (ir.CompilerIrBlock.Block
+                  entry-label
+                  (ir.CompilerIrInstrSeq entry-instrs.slots entry-instrs.len)))
+              (ir.compiler-ir-block-builder-push!
+                (&mut blocks)
+                (ir.CompilerIrBlock.Block
+                  init-label
+                  (ir.CompilerIrInstrSeq init-instrs.slots init-instrs.len)))
+              (ir.compiler-ir-block-builder-push!
+                (&mut blocks)
+                (ir.CompilerIrBlock.Block
+                  done-label
+                  (ir.CompilerIrInstrSeq done-instrs.slots done-instrs.len)))
+              (ir.compiler-ir-function-builder-push!
+                cur-functions
+                (ir.CompilerIrFunction.Function
+                  wrapper-id
+                  (ir.compiler-ir-param-seq-empty)
+                  (ast.AstType.Unit)
+                  next-var
+                  (ir.compiler-ir-block-builder-to-list blocks)
+                  (ir.CompilerIrFunctionAbi.Ordinary)))
+              (lower-module-ownership-record-function-id!
+                lower-state
+                wrapper-id
+                owner-id))))))))
 
 (define (compiler-lower-state-intern-str
   [state : CompilerLowerState]
@@ -23130,11 +23434,17 @@
     ""
     (let
       [symbols : (& ctx csym.CompilerSymbols) (tc_core.tc-context-symbols ctx)]
-      [direct : String (lower-atomic-extern-symbol-lookup-id symbols name-id)]
-      [source-name : String (tc_core.tc-hygiene-global-symbol-name name)]
-      (if (> (string.string-length direct) 0)
-        direct
-        (lower-atomic-imported-symbol-for-name ctx source-name)))))
+      [handle : i64 (lower-top-level-value-handle-id ctx name-id)]
+      (if (csym.compiler-symbols-handle-found? handle)
+        (lower-atomic-extern-symbol-from-handle symbols handle)
+        (let
+          [direct : String
+            (lower-atomic-extern-symbol-lookup-id symbols name-id)]
+          (if (> (string.string-length direct) 0)
+            direct
+            (lower-atomic-imported-symbol-for-name
+              ctx
+              (tc_core.tc-hygiene-global-symbol-name name))))))))
 
 (define (lower-atomic-extern-symbol-for-func
   [lower-state : CompilerLowerState]
@@ -78340,6 +78650,10 @@
     (while (not done)
       (match (ast.ast-decl-list-step cur-decls)
         [(Nil)
+          (lower-emit-module-init-wrappers!
+            lower-state
+            (&mut cur-globals)
+            (&mut cur-functions))
           (lower-module-view-epochs-release-before!
             lower-state
             (&mut view-epochs)
@@ -78463,6 +78777,10 @@
                                 global-symbol
                                 global-ty
                                 value))
+                            (lower-module-ownership-record-global-id!
+                              lower-state
+                              global-symbol
+                              logical-module-id)
                             (set! cur-decls rest)]
                           ;; A global whose initializer is not a compile-time
                           ;; constant is evaluated at startup by a hidden
@@ -78497,6 +78815,14 @@
                                       global-symbol
                                       global-ty
                                       (RuntimeGlobal init-symbol)))
+                                  (lower-module-ownership-record-global-id!
+                                    lower-state
+                                    global-symbol
+                                    logical-module-id)
+                                  (lower-module-ownership-record-functions!
+                                    lower-state
+                                    (& init-funcs)
+                                    logical-module-id)
                                   (ir.compiler-ir-function-builder-append-seq!
                                     (&mut cur-functions)
                                     (& init-funcs))
@@ -78707,6 +79033,14 @@
                                     lower-state
                                     "function"
                                     logical-name))
+                                (lower-module-ownership-record-functions!
+                                  lower-state
+                                  (& lowered-functions)
+                                  logical-module-id)
+                                (lower-module-ownership-record-functions!
+                                  lower-state
+                                  (& callable-functions)
+                                  logical-module-id)
                                 (ir.compiler-ir-function-builder-append-seq!
                                   (&mut cur-functions)
                                   (& lowered-functions))
@@ -78743,6 +79077,19 @@
                   [(Ok lowered)
                     (match (deref lowered)
                       [(Decl cache-global lowered-functions function-spans)
+                        (when
+                          (compiler-lower-state-module-ownership-enabled
+                            lower-state)
+                          (match (& cache-global)
+                            [(ir.CompilerIrGlobal.Global cache-sym _ _)
+                              (lower-module-ownership-record-global-id!
+                                lower-state
+                                cache-sym
+                                logical-module-id)])
+                          (lower-module-ownership-record-functions!
+                            lower-state
+                            (& lowered-functions)
+                            logical-module-id))
                         (ir.compiler-ir-global-builder-push!
                           (&mut cur-globals)
                           cache-global)
@@ -78827,20 +79174,31 @@
                       name)]
                   (if (lower-comptime-runtime-skip-module? cur-module)
                     unit
-                    (lower-nullary-variant-globals
-                      (compiler-lower-state-interns lower-state)
-                      (lower-name-cache-lookup-logical-id
-                        (& decl-name-cache)
-                        (lower-module-name-key-id-by-id logical-module-id name)
-                        (lower-module-name-key-id-by-id logical-module-id name))
-                      (lower-current-decl-logical-name-cache-id
-                        decl-name-cache
-                        logical-module
-                        (lower-name-id-text lower-state name)
-                        name)
-                      variants
-                      0
-                      (&mut cur-globals)))
+                    (let
+                      [globals-before : i64 cur-globals.len]
+                      (lower-nullary-variant-globals
+                        (compiler-lower-state-interns lower-state)
+                        (lower-name-cache-lookup-logical-id
+                          (& decl-name-cache)
+                          (lower-module-name-key-id-by-id
+                            logical-module-id
+                            name)
+                          (lower-module-name-key-id-by-id
+                            logical-module-id
+                            name))
+                        (lower-current-decl-logical-name-cache-id
+                          decl-name-cache
+                          logical-module
+                          (lower-name-id-text lower-state name)
+                          name)
+                        variants
+                        0
+                        (&mut cur-globals))
+                      (lower-module-ownership-record-globals-range!
+                        lower-state
+                        (& cur-globals)
+                        globals-before
+                        logical-module-id)))
                   (match (lower-enum-cleanup-decl
                     decl-ctx
                     cur-local-top-env
@@ -78853,6 +79211,10 @@
                     decl-name-cache
                     mode)
                     [(Ok cleanup-functions cleanup-spans)
+                      (lower-module-ownership-record-functions!
+                        lower-state
+                        (& cleanup-functions)
+                        logical-module-id)
                       (ir.compiler-ir-function-builder-append-seq!
                         (&mut cur-functions)
                         (& cleanup-functions))
@@ -78897,20 +79259,31 @@
                       name)]
                   (if (lower-comptime-runtime-skip-module? cur-module)
                     unit
-                    (lower-nullary-variant-globals
-                      (compiler-lower-state-interns lower-state)
-                      (lower-name-cache-lookup-logical-id
-                        (& decl-name-cache)
-                        (lower-module-name-key-id-by-id logical-module-id name)
-                        (lower-module-name-key-id-by-id logical-module-id name))
-                      (lower-current-decl-logical-name-cache-id
-                        decl-name-cache
-                        logical-module
-                        (lower-name-id-text lower-state name)
-                        name)
-                      variants
-                      0
-                      (&mut cur-globals)))
+                    (let
+                      [globals-before : i64 cur-globals.len]
+                      (lower-nullary-variant-globals
+                        (compiler-lower-state-interns lower-state)
+                        (lower-name-cache-lookup-logical-id
+                          (& decl-name-cache)
+                          (lower-module-name-key-id-by-id
+                            logical-module-id
+                            name)
+                          (lower-module-name-key-id-by-id
+                            logical-module-id
+                            name))
+                        (lower-current-decl-logical-name-cache-id
+                          decl-name-cache
+                          logical-module
+                          (lower-name-id-text lower-state name)
+                          name)
+                        variants
+                        0
+                        (&mut cur-globals))
+                      (lower-module-ownership-record-globals-range!
+                        lower-state
+                        (& cur-globals)
+                        globals-before
+                        logical-module-id)))
                   (match (lower-enum-cleanup-decl
                     decl-ctx
                     cur-local-top-env
@@ -78923,6 +79296,10 @@
                     decl-name-cache
                     mode)
                     [(Ok cleanup-functions cleanup-spans)
+                      (lower-module-ownership-record-functions!
+                        lower-state
+                        (& cleanup-functions)
+                        logical-module-id)
                       (ir.compiler-ir-function-builder-append-seq!
                         (&mut cur-functions)
                         (& cleanup-functions))
@@ -78978,6 +79355,10 @@
                     decl-name-cache
                     mode)
                     [(Ok cleanup-functions cleanup-spans)
+                      (lower-module-ownership-record-functions!
+                        lower-state
+                        (& cleanup-functions)
+                        logical-module-id)
                       (ir.compiler-ir-function-builder-append-seq!
                         (&mut cur-functions)
                         (& cleanup-functions))
@@ -79034,6 +79415,10 @@
                     decl-name-cache
                     mode)
                     [(Ok cleanup-functions cleanup-spans)
+                      (lower-module-ownership-record-functions!
+                        lower-state
+                        (& cleanup-functions)
+                        logical-module-id)
                       (ir.compiler-ir-function-builder-append-seq!
                         (&mut cur-functions)
                         (& cleanup-functions))

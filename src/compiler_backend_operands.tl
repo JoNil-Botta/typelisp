@@ -1892,6 +1892,7 @@
     (> (string.string-length name) 16)
     (not (string.eq name "main"))
     (not (compiler-backend-string-prefix-at? name "__global_init_" 0))
+    (not (compiler-backend-string-prefix-at? name "__tl_mod_init_" 0))
     (not (compiler-backend-string-prefix-at? name "__tl_spmd_pkg_" 0))
     (not
       (compiler-backend-string-prefix-at?

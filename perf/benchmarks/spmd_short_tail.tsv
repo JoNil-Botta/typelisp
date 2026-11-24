@@ -1,0 +1,3 @@
+suites	instruction-heavy
+benchmark/c/spmd_short_tail	2773008013
+benchmark/c-scalar/spmd_short_tail	6030013011

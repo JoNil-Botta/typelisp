@@ -238,7 +238,7 @@ mkdir -p "$LINT_CHUNK_DIR"
 awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
     {
         source_rules = ($0 ~ /^src\//)
-        compiler_tool = ($0 == "tools/embedded-stdlib-tli/roundtrip.tl")
+        compiler_tool = ($0 == "tools/embedded-stdlib-tli/roundtrip.tl" || $0 == "tools/build-stdlib-sysroot/main.tl")
         if (count == 0 || count == size || source_rules != previous_rules || compiler_tool != previous_tool) {
             if (count != 0) close(path)
             chunk++
@@ -318,7 +318,7 @@ bounded_pool_run_job() {
         set -- "$@" "$_lint_source"
         case "$_lint_source" in
             src/*) _src_rules=1 ;;
-            tools/embedded-stdlib-tli/roundtrip.tl) _compiler_tool=1 ;;
+            tools/embedded-stdlib-tli/roundtrip.tl | tools/build-stdlib-sysroot/main.tl) _compiler_tool=1 ;;
         esac
     done < "$_lint_chunk"
     if [ "$_src_rules" -eq 1 ]; then

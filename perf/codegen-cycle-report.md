@@ -66,8 +66,7 @@ Choose a logical CPU that is free of other benchmark work.
 ```sh
 compiler=target/bootstrap-fixpoint/stage2
 cpu=12
-kernels=$(awk -F '\t' '$1 == "realistic-kernel" {print $2}' \
-    perf/benchmark-ci-cases.tsv | paste -sd , -)
+kernels=$(. scripts/lib-benchmark.sh && benchmark_ci_case_csv "$PWD" realistic-kernel)
 taskset -c "$cpu" scripts/measure-instruction-counts.sh \
     --benchmarks-only --cases "$kernels,fp_taylor_exp,fp_mixed_recurrence" \
     --c-scalar --runs 1 --cycles "$compiler"

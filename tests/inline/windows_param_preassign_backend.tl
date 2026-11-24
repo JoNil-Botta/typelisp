@@ -168,10 +168,11 @@
         (and
           (be_operand.compiler-backend-string-contains?
             (be_state.compiler-backend-global-shared-view asm)
-            "#t _tl_f0 _tl_win_param_preassign\n")
-          (be_operand.compiler-backend-string-contains?
-            (be_state.compiler-backend-global-shared-view asm)
-            "_tl_f0:\n")
+            "_tl_win_param_preassign:\n")
+          (not
+            (be_operand.compiler-backend-string-contains?
+              (be_state.compiler-backend-global-shared-view asm)
+              "_tl_f0:\n"))
           ;; Params a/b/d keep their incoming Win64 arg-register homes
           ;; (%rcx/%rdx/%r9) and are stored to their globals directly --
           ;; no stack spill.

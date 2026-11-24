@@ -1,0 +1,3 @@
+suites	instruction-heavy
+benchmark/c/spmd_map	3382228100
+benchmark/c-scalar/spmd_map	6760844479

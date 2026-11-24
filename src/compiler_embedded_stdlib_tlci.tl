@@ -4463,11 +4463,17 @@
             (& pools)
             (ast.ast-node-pool-context-expr-get pools node))
             [(Call _ call-args)
-              (compiler-comptime-host-replace!
-                1
-                (if captured
-                  (CapturedExprList call-args pools)
-                  (ExprList call-args)))]
+              (let
+                [wrapped-args : ast.AstExprList
+                  (ctfe_support.ctfe-expr-list-rewrap-macro-expansions-with-pools
+                    pools
+                    node
+                    call-args)]
+                (compiler-comptime-host-replace!
+                  1
+                  (if captured
+                    (CapturedExprList wrapped-args pools)
+                    (ExprList wrapped-args))))]
             [_
               (compiler-comptime-host-replace!
                 1
@@ -4868,10 +4874,17 @@
             pools
             (ast.ast-node-pool-context-expr-get pools node))
             [(Begin items)
-              (match value
-                [(CapturedExpr _ _ pools)
-                  (compiler-comptime-host-push! (CapturedExprList items pools))]
-                [_ (compiler-comptime-host-push! (ExprList items))])]
+              (let
+                [wrapped-items : ast.AstExprList
+                  (ctfe_support.ctfe-expr-list-rewrap-macro-expansions-with-pools
+                    pools
+                    node
+                    items)]
+                (match value
+                  [(CapturedExpr _ _ pools)
+                    (compiler-comptime-host-push!
+                      (CapturedExprList wrapped-items pools))]
+                  [_ (compiler-comptime-host-push! (ExprList wrapped-items))]))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; Read a Bool held in a session local as a data callback result. Like the

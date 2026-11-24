@@ -1214,7 +1214,13 @@ Typed expansion has three checks:
    syntax types.
 3. The expanded expression is checked again by the ordinary typechecker as a
    safety net; failures are compiler or macro diagnostics with expansion
-   spans.
+   spans. Safety context is hygienic across macro expansion: an `(unsafe ...)`
+   written inside a macro template authorizes only template-originated syntax,
+   never operands spliced from the macro's call site (including across nested
+   macro expansions, destructured `comptime.Expr` children, and place
+   subexpressions). Every caller-spliced operand is checked in the call site's
+   ambient safety context (failing closed to safe if unmatched or behind a
+   deferred lambda boundary).
 
 Declaration-emitting macros extend `defmacro` with two module-scope result
 categories:
@@ -8109,7 +8115,11 @@ that expression; it is not a coercion that removes checker-only effects. In
 particular, an unsafe declaration can be called directly there but cannot be
 returned, stored, captured, or otherwise converted to a plain function value.
 Deferred lambda bodies begin in a safe context and must contain their own
-explicit unsafe expression when they perform an unsafe call.
+explicit unsafe expression when they perform an unsafe call. Similarly, an
+`(unsafe ...)` block introduced by a macro template authorizes only syntax
+originating from that macro template; operands spliced from the macro call site
+are checked in the call site's ambient safety context, so a macro cannot grant
+unsafe permission to caller-supplied expressions.
 
 The unsafe operation set:
 

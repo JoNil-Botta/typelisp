@@ -1,0 +1,14 @@
+# Safety corpus cases: macro unsafe hygiene (#9259).
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+macro_unsafe_hygiene_repro_reject|check-fail|tests/safety/macro_unsafe_hygiene_repro_reject.tl|-|typecheck: ptr-read requires unsafe context
+macro_unsafe_hygiene_caller_unsafe_ok|run-exit|tests/safety/macro_unsafe_hygiene_caller_unsafe_ok.tl|42|-
+macro_unsafe_hygiene_operand_unsafe_ok|run-exit|tests/safety/macro_unsafe_hygiene_operand_unsafe_ok.tl|42|-
+macro_unsafe_hygiene_nested_reject|check-fail|tests/safety/macro_unsafe_hygiene_nested_reject.tl|-|typecheck: ptr-read requires unsafe context
+macro_unsafe_hygiene_nested_ok|run-exit|tests/safety/macro_unsafe_hygiene_nested_ok.tl|42|-
+macro_unsafe_hygiene_destructure_reject|check-fail|tests/safety/macro_unsafe_hygiene_destructure_reject.tl|-|typecheck: ptr-read requires unsafe context
+macro_unsafe_hygiene_place_index_reject|check-fail|tests/safety/macro_unsafe_hygiene_place_index_reject.tl|-|typecheck: ptr-read requires unsafe context
+macro_unsafe_hygiene_lambda_reject|check-fail|tests/safety/macro_unsafe_hygiene_lambda_reject.tl|-|typecheck: ptr-read requires unsafe context
+macro_unsafe_hygiene_format_reject|check-fail|tests/safety/macro_unsafe_hygiene_format_reject.tl|-|typecheck: ptr-read requires unsafe context
+macro_unsafe_hygiene_io_array_ptr_reject|check-fail|tests/safety/macro_unsafe_hygiene_io_array_ptr_reject.tl|-|typecheck: ptr-read requires unsafe context
+macro_unsafe_hygiene_text_buf_store_write_reject|check-fail|tests/safety/macro_unsafe_hygiene_text_buf_store_write_reject.tl|-|typecheck: ptr-read requires unsafe context

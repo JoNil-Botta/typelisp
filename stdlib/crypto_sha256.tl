@@ -390,7 +390,16 @@
         (set!
           (array-ref state.words 7)
           (+ (array-ref state.words 7) (array-ref delta 7)))
-        (wipe-schedule-pointer! sched-mut)))))
+        (wipe-schedule-pointer! sched-mut)
+        ;; The round delta is keyed material for HMAC/HKDF callers too.
+        (volatile-store! delta-mut (cast 0 : u32))
+        (volatile-store! (ptr-offset delta-mut 1) (cast 0 : u32))
+        (volatile-store! (ptr-offset delta-mut 2) (cast 0 : u32))
+        (volatile-store! (ptr-offset delta-mut 3) (cast 0 : u32))
+        (volatile-store! (ptr-offset delta-mut 4) (cast 0 : u32))
+        (volatile-store! (ptr-offset delta-mut 5) (cast 0 : u32))
+        (volatile-store! (ptr-offset delta-mut 6) (cast 0 : u32))
+        (volatile-store! (ptr-offset delta-mut 7) (cast 0 : u32))))))
 
 ;: Compress the complete 64-byte block currently stored in `state`.
 (define (compress! [state : (&mut state Sha256State)]) : unit

@@ -1,0 +1,5 @@
+# Safety corpus cases: macros may not run unsafe-wrapper or runtime-abort stdlib functions, prebuilt or source.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+prebuilt_stdlib_comptime_unsafe_wrapper_reject|check-fail|tests/safety/prebuilt_stdlib_comptime_unsafe_wrapper_reject.tl|tests/safety/prebuilt_stdlib_comptime_unsafe_wrapper_reject.tl:1:1|error[E0506]: unsupported compile-time call sha.new
+prebuilt_stdlib_comptime_runtime_abort_reject|check-fail|tests/safety/prebuilt_stdlib_comptime_runtime_abort_reject.tl|tests/safety/prebuilt_stdlib_comptime_runtime_abort_reject.tl:1:1|error[E0506]: unsupported compile-time call test.assert-true

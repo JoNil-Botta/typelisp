@@ -414,7 +414,7 @@ cica_flags() {
         (($producer.n|tonumber)+1) as $stage |
         ($stage==3 or $stage==4) and (($producer.ext//"")==$ext) and
         $a==([$a[0],"compile","src/main.tl","-o","{root}/target/bootstrap-fixpoint/stage"+($stage|tostring)+".s","--target",$h+"-x86_64"] +
-          [$cfg[]|"--cfg",.] + ["--stdlib-root","{root}/src","--opt-level","2"])
+          [$cfg[]|"--cfg",.] + ["--stdlib-root","{root}/src","--opt-level","2","--no-prebuilt-stdlib"])
       else
         (($producer.ext//"")==$ext) and ($a[3]|test("^\\{root\\}/target/build-invariance/batches/opt2-built/opt1/chunks/entries[.][0-9]+[.]txt$")) and
         $a==([$a[0],"compile","--batch",$a[3],"--target","linux-x86_64"] + [$cfg[]|"--cfg",.] + ["--backend-mode","scalar","--opt-level","1","--stdlib-root","stdlib","--stdlib-root","src"])

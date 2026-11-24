@@ -180,7 +180,10 @@ d) `functions` (`TliFnDecl`): `s:name`, `s:module`, `s:link_symbol`, `u8 abi`
    `u64 extern_flags`, `list<(u8 kind, s:name)> extern_link_inputs`,
    `list<(s:name, t:type, u8 is_mut)> params`, `t:return_type`, then
    `TliFnSummary`: `u32 effect_flags` (bit0 `UNSAFE`, bit1 `COMPTIME`,
-   bit2 `PURE`, bit3 `NEVER_RETURNS`, bit4 `STORES_AMBIENT_ARENA_GLOBAL`,
+   bit2 `PURE` for a checked comptime declaration or a runtime function that
+   returns, writes no global, makes no indirect call and reaches no unsafe,
+   extern or comptime-purity-rejected declaration; hydrated references in
+   macro and comptime bodies require it, bit3 `NEVER_RETURNS`, bit4 `STORES_AMBIENT_ARENA_GLOBAL`,
    bit5 `HAS_INDIRECT_EFFECTS`, bit6 `HAS_INLINE_IR`, bit7 `MUST_USE`,
    bit8 `STORES_AMBIENT_ARENA_ARG` for writes of ambient-arena values through
    an argument),

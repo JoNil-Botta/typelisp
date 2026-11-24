@@ -37,3 +37,21 @@ step source-run
 run run "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --no-prebuilt-stdlib
 exit 42
 stdout contains hello prebuilt
+
+case prebuilt-stdlib-comptime-purity
+step prebuilt-unsafe-wrapper
+run check "{{root}}/tests/safety/prebuilt_stdlib_comptime_unsafe_wrapper_reject.tl"
+exit nonzero
+stderr contains unsupported compile-time call sha.new
+step source-unsafe-wrapper
+run check "{{root}}/tests/safety/prebuilt_stdlib_comptime_unsafe_wrapper_reject.tl" --no-prebuilt-stdlib
+exit nonzero
+stderr contains unsupported compile-time call sha.new
+step prebuilt-runtime-abort
+run check "{{root}}/tests/safety/prebuilt_stdlib_comptime_runtime_abort_reject.tl"
+exit nonzero
+stderr contains unsupported compile-time call test.assert-true
+step source-runtime-abort
+run check "{{root}}/tests/safety/prebuilt_stdlib_comptime_runtime_abort_reject.tl" --no-prebuilt-stdlib
+exit nonzero
+stderr contains unsupported compile-time call test.assert-true

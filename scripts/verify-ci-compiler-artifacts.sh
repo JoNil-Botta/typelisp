@@ -165,7 +165,7 @@ build_lane() {
     tool_version=fixture
     [ "$variant" != other-toolchain-payload ] || tool_version=fixture-newer-image
     cica_jq -nS --arg v "$tool_version" '{as:{sha256:("7"*64),version:$v},ld:{sha256:("7"*64),version:$v},clang:{sha256:("7"*64),version:$v},"lld-link":{sha256:("7"*64),version:$v}}' > "$dir/draft/toolchain.json"
-    fixture_cli record "$source" "$dir" "$host" stage3 "$source/target/bootstrap-fixpoint/stage2" compile src/main.tl -o "$source/target/bootstrap-fixpoint/stage3.s" --target linux-x86_64 --cfg linux --cfg unix --cfg target-linux --cfg os-linux --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$source/src" --opt-level 2
+    fixture_cli record "$source" "$dir" "$host" stage3 "$source/target/bootstrap-fixpoint/stage2" compile src/main.tl -o "$source/target/bootstrap-fixpoint/stage3.s" --target linux-x86_64 --cfg linux --cfg unix --cfg target-linux --cfg os-linux --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$source/src" --opt-level 2 --no-prebuilt-stdlib
     for payload in compiler previous-stage; do
         file=$dir/draft/roles/bootstrap-converged/payload/$payload
         dd if=/dev/zero of="$file" bs=128 count=1 2>/dev/null
@@ -213,7 +213,7 @@ build_lane() {
         cp "$work/sources" "$base/source-set.sha256"
         if [ "$role" = bootstrap-converged ]; then
             cica_jq -nS --arg c "$commit" --arg t "$tree" --argjson cfg "$cfg" --arg ext "$ext" --slurpfile r "$dir/draft/records/stage3.json" '
-              {argv:(["{root}/target/bootstrap-fixpoint/stage2"+$ext,"compile","src/main.tl","-o","{root}/target/bootstrap-fixpoint/stage3.s","--target",(if $ext=="" then "linux" else "windows" end)+"-x86_64"] + [$cfg[]|"--cfg",.] + ["--cfg","compiler-build-identity","--cfg","embedded-stdlib-tlci","--stdlib-root","{root}/src","--opt-level","2"]),producer_version:$r[0].producer_version,producer_sha256:$r[0].producer_sha256,producer_identity:$t,compiled_output:$r[0].compiled_output}' > "$work/record.json"
+              {argv:(["{root}/target/bootstrap-fixpoint/stage2"+$ext,"compile","src/main.tl","-o","{root}/target/bootstrap-fixpoint/stage3.s","--target",(if $ext=="" then "linux" else "windows" end)+"-x86_64"] + [$cfg[]|"--cfg",.] + ["--cfg","compiler-build-identity","--cfg","embedded-stdlib-tlci","--stdlib-root","{root}/src","--opt-level","2","--no-prebuilt-stdlib"]),producer_version:$r[0].producer_version,producer_sha256:$r[0].producer_sha256,producer_identity:$t,compiled_output:$r[0].compiled_output}' > "$work/record.json"
             assembly_sha=$(cica_sha "$source/target/bootstrap-fixpoint/stage3.s")
             cica_jq -nS --arg h "$assembly_sha" --arg t "$tree" --arg p "$(cica_jq -r .producer_sha256 "$work/record.json")" --argjson n "$(wc -c < "$source/target/bootstrap-fixpoint/stage3.s")" --argjson seed "$seed" '
               {selected_stage:"stage3",fixpoint_pair:["stage2.s","stage3.s"],output_identity:$t,seed:$seed,input_producer_sha256:$p,

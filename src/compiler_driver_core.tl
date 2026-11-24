@@ -1413,6 +1413,20 @@
         (__tl_make-array String 0))
       (set! compiler-driver-last-hydrated-archive-path-state ""))))
 
+(define (compiler-driver-finish-tli-hydrated-session!
+  [state : (& state CompilerDriverState)]) : unit
+  ;; Lowering is the last TLI consumer. Copy the backend's archive facts into
+  ;; the caller-owned arena that is current here, then retire the catalog and
+  ;; drop the typecheck job's pointer into it.
+  (compiler-driver-apply-tli-hydrated-backend-state!
+    (& state.load-session)
+    (compiler-driver-state-backend state))
+  (compiler_load.compiler-load-session-state-tli-release!
+    (& state.load-session))
+  (compiler_typecheck_core.tc-job-state-set-tli-facts-ptr!
+    (compiler-driver-state-typecheck state)
+    0))
+
 (define (compiler-driver-reset-file-state!) : unit
   ;; Compatibility reset for serial standalone helpers. Driver-state callers
   ;; install their active state before this and capture it again afterward.
@@ -4655,9 +4669,6 @@
                 (match lowered
                   [(Ok program spans lower-state)
                     (begin
-                      (compiler-driver-apply-tli-hydrated-backend-state!
-                        (& state.load-session)
-                        (compiler-driver-state-backend state))
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase
@@ -4715,19 +4726,22 @@
                               (unsafe
                                 (arena.tl_arena_set
                                   compiler-driver-pending-frontend-return-arena)))
+                            (compiler-driver-finish-tli-hydrated-session! state)
                             (compiler-driver-state-retain-lowered-types!
                               state
                               program
                               spans
                               result-pools))
-                          (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
-                            program
-                            spans
-                            result-pools
-                            (compiler-driver-state-profile state)
-                            (compiler-driver-state-backend state)
-                            (compiler-driver-state-typecheck state)
-                            (compiler-driver-state-owned-lower-state state)))))]
+                          (begin
+                            (compiler-driver-finish-tli-hydrated-session! state)
+                            (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
+                              program
+                              spans
+                              result-pools
+                              (compiler-driver-state-profile state)
+                              (compiler-driver-state-backend state)
+                              (compiler-driver-state-typecheck state)
+                              (compiler-driver-state-owned-lower-state state))))))]
                   [(Err diag)
                     (begin
                       (compiler_load.compiler-load-session-state-tli-release!

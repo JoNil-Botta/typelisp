@@ -5,6 +5,7 @@
 (import compiler_abi as cabi)
 (import compiler_ast_types as ast)
 (import compiler_cfg_core as cfg_core)
+(import compiler_float as cfloat)
 (import compiler_intern as intern)
 (import compiler_symbols as csym)
 (import sym_i64_env)
@@ -16,6 +17,7 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as tli_i64_map)
 (import stdlib.iterator)
+(import stdlib.math)
 (import stdlib.sort)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
@@ -952,7 +954,6 @@
   (field-offsets (__tl_dyn-array i64)))
 
 (import (vector.vector TliHydratedFnSummaryRow core) as fn_summary_vec)
-(import (vector.vector tli.TliConst core) as const_vec)
 (import (vector.vector TliHydratedMacroEntry core) as macro_vec)
 (import (vector.vector TliHydratedTypeLayout core) as layout_vec)
 
@@ -963,8 +964,6 @@
   (hydrated-modules tli_i64_map.Map)
   (fn-summary-slots tli_i64_map.Map)
   (fn-summaries fn_summary_vec.Vec)
-  (const-slots tli_i64_map.Map)
-  (consts const_vec.Vec)
   (macro-slots tli_i64_map.Map)
   (macros macro_vec.Vec)
   (type-layout-slots tli_i64_map.Map)
@@ -978,8 +977,6 @@
     (tli_i64_map.with-capacity 32)
     (tli_i64_map.with-capacity 256)
     (fn_summary_vec.new)
-    (tli_i64_map.with-capacity 64)
-    (const_vec.new)
     (tli_i64_map.with-capacity 64)
     (macro_vec.new)
     (tli_i64_map.with-capacity 128)
@@ -1012,16 +1009,6 @@
           (= (array-ref row.arena-arg-store-extra slot) index)
           (return true)))
       false]))
-
-(define (tli-hydrated-facts-const-slot
-  [facts : (& TliHydratedFacts)]
-  [symbol-id : i64]) : i64
-  (tli_i64_map.get-value-or (& facts.const-slots) symbol-id -1))
-
-(define (tli-hydrated-facts-const-at
-  [facts : (& facts TliHydratedFacts)]
-  [slot : i64]) : (& facts tli.TliConst)
-  (& (array-ref facts.consts.slots slot)))
 
 (define (tli-hydrated-facts-macro-slot
   [facts : (& TliHydratedFacts)]
@@ -1096,22 +1083,6 @@
             [_ (ast.AstExternLinkInput.Arg (string.copy (& row.name)))]))))
     (ast.AstExternLinkInputList slots count)))
 
-(define (tli-hydrate-const-copy [value : (& tli.TliConst)]) : tli.TliConst
-  (match value
-    [(None) (tli.TliConst.None)]
-    [(I64 n) (tli.TliConst.I64 n)]
-    [(U64 n) (tli.TliConst.U64 n)]
-    [(F64Bits bits) (tli.TliConst.F64Bits bits)]
-    [(Bool b) (tli.TliConst.Bool b)]
-    [(String s) (tli.TliConst.String (string.copy s))]
-    [(Bytes raw)
-      (let
-        [n : i64 (array-length raw)]
-        [out : (__tl_dyn-array u8) (__tl_make-array u8 n)]
-        (for [i (iterator.range 0 n)]
-          (set! (array-ref out i) (array-ref raw i)))
-        (tli.TliConst.Bytes out))]))
-
 (define (tli-hydrate-const-expr
   [pools : ast.AstNodePoolContext]
   [value : (& tli.TliConst)]
@@ -1124,6 +1095,11 @@
           (match ty
             [(Char) (ast.AstExpr.Literal (ast.AstLiteral.Char (cast n : char)))]
             [_ (ast.AstExpr.Literal (ast.ast-lit-int n))])]
+        [(F64Bits bits)
+          (ast.AstExpr.Literal
+            (ast.AstLiteral.Float
+              (cfloat.compiler-float-format-f64
+                (math.f64-from-bits (cast bits : u64)))))]
         [(Bool b) (ast.AstExpr.Literal (ast.AstLiteral.Bool b))]
         [(String s)
           (ast.AstExpr.Literal (ast.ast-lit-generated-string (string.copy s)))]
@@ -1434,7 +1410,6 @@
           slot)))))
 
 (define (tli-hydrate-project-value!
-  [facts : (&mut TliHydratedFacts)]
   [pools : ast.AstNodePoolContext]
   [decls : (&mut ast.AstDeclList)]
   [paths : (&mut ast.AstDeclPathList)]
@@ -1453,19 +1428,6 @@
         [_ true])]
     [meta : ast.AstDeclMeta (tli-hydrate-decl-meta comptime-only 0)]
     [ty : ast.AstType (ast.ty-node-get val-info.type-id)]
-    [canonical-id : i64
-      (csym.compiler-symbol-module-key-id-by-id mod-id val-info.name)]
-    (when
-      has-const
-      (in-arena
-        (unsafe
-          (arena.Arena facts.owner-arena))
-        (let
-          [slot : i64 (const_vec.len (& facts.consts))]
-          (const_vec.push-ref!
-            (&mut facts.consts)
-            (tli-hydrate-const-copy (& row.const-value)))
-          (tli_i64_map.insert-ref! (&mut facts.const-slots) canonical-id slot))))
     (if (and comptime-only has-const (not row.is-extern))
       (let
         [expr-id : i64
@@ -1704,7 +1666,6 @@
         prov-id))
     (for [i (iterator.range 0 (array-length record.values))]
       (tli-hydrate-project-value!
-        facts
         pools
         decls
         paths

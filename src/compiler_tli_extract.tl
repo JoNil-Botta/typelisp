@@ -447,9 +447,31 @@
   (indirect (__tl_dyn-array i64))
   (global-arena (__tl_dyn-array i64))
   (param-arena (__tl_dyn-array i64))
+  (impure (__tl_dyn-array i64))
   (arena-graph effects.Graph))
 
-(define (tli-extract-effects [ctx : tc.TcContext]) : TliExtractEffects
+;; A declaration is impure on its own when comptime code may not run it: it is
+;; unsafe or extern, or its body fails the comptime-purity walk.
+(define (tli-extract-locally-impure?
+  [ctx : tc.TcContext]
+  [env : tc.TcTypeEnv]
+  [index : i64]) : bool
+  (match (symbols.compiler-symbols-decl-at-index
+    (tc.tc-context-symbols (& ctx))
+    index)
+    [(Ok decl)
+      (match decl
+        [(or (Unsafe _) (Extern _ _ _ _ _)) true]
+        [(or (Def _ _ _ _) (DefFn _ _ _ _ _ _))
+          (not
+            (tc.tc-comptime-pure-decl?
+              (tc.tc-context-with-nominal-owner-index-module ctx index)
+              env
+              decl))]
+        [_ false])]
+    [(Err _) true]))
+
+(define (tli-extract-effects [ctx : tc.TcContext] [env : tc.TcTypeEnv]) : TliExtractEffects
   (let
     [state : (MutPtr tc.TcGlobalCallEffects)
       (tc.tc-global-call-effects-ensure! ctx)]
@@ -493,6 +515,12 @@
       ;; Put a witness on the indirect union itself so callers are detected
       ;; even when the union has no global writer.
       (effects.add-write! (&mut graph) count count)
+      ;; Every locally impure declaration writes one synthetic key, so its
+      ;; summary marks each function that can reach impure code.
+      (for [index (iterator.range 0 count)]
+        (when
+          (tli-extract-locally-impure? ctx env index)
+          (effects.add-write! (&mut graph) index (+ count 1))))
       (TliExtractEffects
         global-writes
         (effects.summary! (&mut graph) count)
@@ -502,6 +530,7 @@
         (effects.summary!
           (&mut arena-graph)
           (tc.tc-arena-store-argument-key count))
+        (effects.summary! (&mut graph) (+ count 1))
         arena-graph))))
 
 (define (tli-extract-summary
@@ -528,9 +557,22 @@
       (+
         (tli-extract-flag unsafe-decl 1)
         (tli-extract-flag comptime-only 2)
-        ;; The checked comptime contract establishes purity. Runtime
-        ;; declarations have no purity certification.
-        (tli-extract-flag (and comptime-only (not unsafe-decl)) 4)
+        ;; PURE: a checked comptime declaration, or a runtime function that
+        ;; returns, writes no global, makes no indirect call and reaches no
+        ;; unsafe, extern or walk-rejected declaration.
+        (tli-extract-flag
+          (and
+            (not unsafe-decl)
+            (or
+              comptime-only
+              (and
+                (= (array-ref facts.impure index) 0)
+                (= (array-ref facts.indirect index) 0)
+                (= (writes.len (& (array-ref facts.globals index))) 0)
+                (match ret
+                  [(Never) false]
+                  [_ true]))))
+          4)
         (tli-extract-flag
           (match ret
             [(Never) true]
@@ -1509,7 +1551,7 @@
   (tc.tc-agg-caches-reset-for-job! (tc.tc-context-job-state ctx))
   (tc.tc-nominal-owner-cache-reset-for-job! (tc.tc-context-job-state ctx))
   (let
-    [facts : TliExtractEffects (tli-extract-effects ctx)]
+    [facts : TliExtractEffects (tli-extract-effects ctx env)]
     [decls : ast.AstDeclList
       (match (tc.tc-context-program ctx)
         [(Program decls) (deref decls)])]

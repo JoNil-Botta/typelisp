@@ -646,3 +646,82 @@
       tli-job
       (unsafe
         (tli-test-lazy-open-and-archive-startup (& wire) (& cfg-digest))))))
+
+;; Find where `text` starts in the encoded string pool (count, then u32 length
+;; and bytes per entry).
+(define (tli-test-pool-text-offset
+  [wire : (& wire (__tl_dyn-array u8))]
+  [text : (& str)]) : i64
+  (let
+    [pool-start : i64 (byte_le.read-u64 wire 24)]
+    [count : i64 (byte_le.read-u32 wire pool-start)]
+    [offset : i64 (+ pool-start 4)]
+    (for [_ (iterator.range 0 count)]
+      (let
+        [length : i64 (byte_le.read-u32 wire offset)]
+        [start : i64 (+ offset 4)]
+        [candidate : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+        (for [index (iterator.range 0 length)]
+          (set! (array-ref candidate index) (array-ref wire (+ start index))))
+        (let
+          [found : String (byte_buf.to-string (byte_buf.from-array candidate))]
+          (when (string.eq (& found) text) (return start)))
+        (set! offset (+ start length))))
+    (io.panic "pool text not found")))
+
+;; Opening rejects a damaged string pool before any hydration: the eager open
+;; through its content SHA-256 and UTF-8 checks, and the compiler's lazy
+;; stdlib.tli open through the UTF-8 check on each pool string it reads.
+(define (tli-test-expect-open-failure
+  [wire : (& wire (__tl_dyn-array u8))]
+  [cfg-digest : (& (Array u8 32))]
+  [lazy? : bool]
+  [utf8? : bool]
+  [message : (& str)]) : unit
+  (match (if lazy?
+    (hydrate.tli-catalog-open-lazy wire "build" "target" cfg-digest)
+    (hydrate.tli-catalog-open wire "build" "target" cfg-digest))
+    [(Err failure)
+      (test.assert-true
+        (match failure.kind
+          [(DigestMismatch) (not utf8?)]
+          [(Utf8) utf8?]
+          [_ false])
+        (string.copy message))]
+    [(Ok _) (io.panic message)]))
+
+(test
+  tli-catalog-open-rejects-modified-pool-and-invalid-utf8
+  (let
+    [bundle : tli.TliBundle (tli-test-extract-io)]
+    [cfg-digest : (Array u8 32)
+      (array-ref bundle.modules 0).cfg-fingerprint-sha256]
+    [wire : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
+    ;; The directory names every module, so both opens read this entry.
+    [text : i64 (tli-test-pool-text-offset (& wire) "stdlib.io")]
+    (set! (array-ref wire text) (cast 0xff : u8))
+    (with-arena
+      tli-job
+      (tli-test-expect-open-failure
+        (& wire)
+        (& cfg-digest)
+        false
+        false
+        "modified string pool bytes fail the content SHA-256")
+      (tli-test-expect-open-failure
+        (& wire)
+        (& cfg-digest)
+        true
+        true
+        "lazy open rejects invalid UTF-8 pool text"))
+    (let
+      [digest : (Array u8 32) (codec.tli-content-digest (& wire))]
+      (codec.tli-copy-digest! (&mut wire) 80 (& digest))
+      (with-arena
+        tli-job
+        (tli-test-expect-open-failure
+          (& wire)
+          (& cfg-digest)
+          false
+          true
+          "re-hashed invalid UTF-8 pool text is rejected")))))

@@ -58,6 +58,9 @@
 (extern (foreign [fixed : i64] [tail : ...i64]) : i64 (:symbol \"external_name\"))
 (extern errno-slot (:symbol \"errno_slot\") (:link-lib \"crt_fixture\") : i64)
 (defmacro (keep [value : Expr]) : Expr value)
+(define (hidden-unsafe) : i64 (unsafe 1))
+(define (via-hidden) : i64 (hidden-unsafe))
+(define (reads-errno) : i64 errno-slot)
 ")
 
 (define (extract-fixture-module [source : String]) : tli.TliModuleRecord
@@ -106,6 +109,14 @@
             "one requested module")
           (tuple-ref (__tl_array-take! decoded.modules live 0) 1))]
       [(Err failure) (io.panic failure.message)])))
+
+(define (extract-assert-impure
+  [row : (& row tli.TliModuleRecord)]
+  [name : (& str)]) : unit
+  (test.assert-i64-eq
+    (bit-and (extract-fixture-fn row name).summary.effect-flags 4)
+    0
+    (string.copy name)))
 
 (define (extract-fixture-fn
   [row : (& row tli.TliModuleRecord)]
@@ -189,6 +200,16 @@
         (bit-and unsafe-id.summary.effect-flags 1)
         1
         "unsafe declaration")
+      ;; PURE (4) certifies the transitive comptime-purity walk.
+      (test.assert-i64-eq
+        (bit-and (extract-fixture-fn (& row) "startup").summary.effect-flags 4)
+        4
+        "pure body")
+      (extract-assert-impure (& row) "hidden-unsafe")
+      (extract-assert-impure (& row) "via-hidden")
+      (extract-assert-impure (& row) "reads-errno")
+      (extract-assert-impure (& row) "stop")
+      (extract-assert-impure (& row) "unsafe-id")
       (test.assert-i64-eq foreign.abi 3 "typed C vararg wire tag")
       (test.assert-string-eq
         (& foreign.link-symbol)

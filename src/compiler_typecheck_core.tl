@@ -91519,7 +91519,7 @@
               [flags : i64 (tc-tli-hydrated-fn-summary-flags ctx canonical-id)]
               (if (and
                 (>= flags 0)
-                (= (bit-and flags 1) 0)
+                (!= (bit-and flags 4) 0)
                 (not
                   (tc-comptime-purity-banned-module?
                     (tc-env-key-name-text owner-mod-id))))
@@ -91617,7 +91617,7 @@
         [flags : i64 (tc-tli-hydrated-fn-summary-flags ctx canonical-id)]
         (if (and
           (>= flags 0)
-          (= (bit-and flags 1) 0)
+          (!= (bit-and flags 4) 0)
           (not
             (tc-comptime-purity-banned-module? (tc-env-key-name-text mod-id))))
           Ok
@@ -92692,6 +92692,17 @@
     (tc-comptime-purity-chain-push Nil "comptime-decl")
     Nil
     template))
+
+;; TLI extraction certifies a declaration as transitively comptime-pure with
+;; the walk that guards macro and comptime bodies, so a hydrated reference is
+;; accepted exactly when its source body would be.
+(define (tc-comptime-pure-decl?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decl : ast.AstDecl]) : bool
+  (match (tc-check-comptime-decl-purity ctx env decl)
+    [(Ok) true]
+    [(Err _) false]))
 
 (define (tc-macro-param-names-at
   [params : (& params ast.AstMacroParamList)]

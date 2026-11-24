@@ -47,11 +47,7 @@
 
 (defstruct OptRangeTrailEntry
   (var i64)
-  (lo i64)
-  (hi i64)
-  (kz u64)
-  (ko u64)
-  (kind i64))
+  (val OptRangeVal))
 
 ;; Scoped relational fact: lhs + offset < rhs (strict? = true) or <= rhs.
 ;; For a passed bounds check `bounds_check idx, len`: when `len` is a runtime
@@ -78,39 +74,24 @@
 ;;   7 = Select (block = block-id, pos = instr-pos)
 ;;   8 = Load (block = block-id, pos = instr-pos)
 ;;   9 = Gep (block = block-id, pos = instr-pos)
+;; `var-flags` bits: 1=desc-handle 2=len-slot-ptr 4=shift-count-var 8=loop-header-phi 16=addr-taken
 (defstruct OptRangeState
   (outer-arena arena.Arena)
   (type-segment-bases i64)
   (frame i64)
   (block-count i64)
-  (lo (__tl_dyn-array i64))
-  (hi (__tl_dyn-array i64))
-  (kz (__tl_dyn-array u64))
-  (ko (__tl_dyn-array u64))
-  (kind (__tl_dyn-array i64))
+  (vals (__tl_dyn-array OptRangeVal))
   (def-count (__tl_dyn-array i64))
   (def-kind (__tl_dyn-array i64))
   (def-block (__tl_dyn-array i64))
   (def-pos (__tl_dyn-array i64))
   (var-width (__tl_dyn-array i64))
   (copy-src (__tl_dyn-array i64))
-  (desc-handle (__tl_dyn-array bool))
-  (len-slot-ptr (__tl_dyn-array bool))
-  (shift-count-var (__tl_dyn-array bool))
-  (loop-header-phi (__tl_dyn-array bool))
-  (addr-taken (__tl_dyn-array bool))
-  (trail-var (__tl_dyn-array i64))
-  (trail-lo (__tl_dyn-array i64))
-  (trail-hi (__tl_dyn-array i64))
-  (trail-kz (__tl_dyn-array u64))
-  (trail-ko (__tl_dyn-array u64))
-  (trail-kind (__tl_dyn-array i64))
+  (var-flags (__tl_dyn-array i64))
+  (trail (__tl_dyn-array OptRangeTrailEntry))
   (trail-len i64)
   (trail-cap i64)
-  (rel-kind (__tl_dyn-array i64))
-  (rel-lhs (__tl_dyn-array i64))
-  (rel-rhs (__tl_dyn-array i64))
-  (rel-off (__tl_dyn-array i64))
+  (rels (__tl_dyn-array OptRangeRelFact))
   (rel-len i64)
   (rel-cap i64)
   (block-dead (__tl_dyn-array bool))
@@ -119,6 +100,40 @@
   (out-blocks (__tl_dyn-array ir.CompilerIrBlock))
   (out-changed (__tl_dyn-array bool))
   (any-changed bool))
+
+(define (opt-range-i64-arr [n : i64]) : (__tl_dyn-array i64)
+  (__tl_make-array i64 n))
+
+(define (opt-range-bool-arr [n : i64]) : (__tl_dyn-array bool)
+  (__tl_make-array bool n))
+
+(define (opt-range-val-arr [n : i64]) : (__tl_dyn-array OptRangeVal)
+  (__tl_make-array OptRangeVal n))
+
+(define (opt-range-val-copy [v : (& OptRangeVal)]) : OptRangeVal
+  (OptRangeVal v.lo v.hi v.kz v.ko v.kind))
+
+(define (opt-range-trail-copy [te : (& OptRangeTrailEntry)]) : OptRangeTrailEntry
+  (OptRangeTrailEntry te.var (opt-range-val-copy (& te.val))))
+
+(define (opt-range-rel-copy [rf : (& OptRangeRelFact)]) : OptRangeRelFact
+  (OptRangeRelFact rf.kind rf.lhs rf.rhs rf.offset))
+
+(define (opt-range-flag? [st : (& OptRangeState)] [var : i64] [bit : i64]) : bool
+  (and
+    (>= var 0)
+    (< var st.frame)
+    (!= (bit-and (array-ref st.var-flags var) bit) 0)))
+
+(define (opt-range-flag-set!
+  [st : (&mut OptRangeState)]
+  [var : i64]
+  [bit : i64]) : unit
+  (when
+    (and (>= var 0) (< var st.frame))
+    (set!
+      (array-ref st.var-flags var)
+      (bit-or (array-ref st.var-flags var) bit))))
 
 ;; --- Wrapping-safe arithmetic helpers ----------------------------------------
 (define (opt-range-min-i64 [a : i64] [b : i64]) : i64
@@ -371,10 +386,7 @@
 
 ;; --- Scoped state & undo trail -----------------------------------------------
 (define (opt-range-addr-taken? [st : (& OptRangeState)] [var : i64]) : bool
-  (or
-    (< var 0)
-    (>= var st.frame)
-    (and (< var (array-length st.addr-taken)) (array-ref st.addr-taken var))))
+  (or (< var 0) (>= var st.frame) (opt-range-flag? st var 16)))
 
 (define (opt-range-var-trackable? [st : (& OptRangeState)] [var : i64]) : bool
   (and
@@ -386,12 +398,7 @@
 (define (opt-range-var-get [st : (& OptRangeState)] [var : i64]) : OptRangeVal
   (if (not (opt-range-var-trackable? st var))
     (opt-range-top)
-    (OptRangeVal
-      (array-ref st.lo var)
-      (array-ref st.hi var)
-      (array-ref st.kz var)
-      (array-ref st.ko var)
-      (array-ref st.kind var))))
+    (opt-range-val-copy (& (array-ref st.vals var)))))
 
 (define (opt-range-trail-grow! [st : (&mut OptRangeState)]) : unit
   (let
@@ -400,25 +407,11 @@
       (if (< old-cap 64)
         64
         (* old-cap 2))]
-    [nv : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
-    [nlo : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
-    [nhi : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
-    [nkz : (__tl_dyn-array u64) (__tl_make-array u64 new-cap)]
-    [nko : (__tl_dyn-array u64) (__tl_make-array u64 new-cap)]
-    [nk : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
+    [nt : (__tl_dyn-array OptRangeTrailEntry)
+      (__tl_make-array OptRangeTrailEntry new-cap)]
     (for [i (iterator.range 0 st.trail-len)]
-      (set! (array-ref nv i) (array-ref st.trail-var i))
-      (set! (array-ref nlo i) (array-ref st.trail-lo i))
-      (set! (array-ref nhi i) (array-ref st.trail-hi i))
-      (set! (array-ref nkz i) (array-ref st.trail-kz i))
-      (set! (array-ref nko i) (array-ref st.trail-ko i))
-      (set! (array-ref nk i) (array-ref st.trail-kind i)))
-    (set! st.trail-var nv)
-    (set! st.trail-lo nlo)
-    (set! st.trail-hi nhi)
-    (set! st.trail-kz nkz)
-    (set! st.trail-ko nko)
-    (set! st.trail-kind nk)
+      (set! (array-ref nt i) (opt-range-trail-copy (& (array-ref st.trail i)))))
+    (set! st.trail nt)
     (set! st.trail-cap new-cap)))
 
 (define (opt-range-var-set!
@@ -428,33 +421,20 @@
   (when
     (opt-range-var-trackable? st var)
     (let
-      [old-kind : i64 (array-ref st.kind var)]
-      [old-lo : i64 (array-ref st.lo var)]
-      [old-hi : i64 (array-ref st.hi var)]
-      [old-kz : u64 (array-ref st.kz var)]
-      [old-ko : u64 (array-ref st.ko var)]
+      [old : OptRangeVal (opt-range-val-copy (& (array-ref st.vals var)))]
       (when
         (or
-          (!= old-kind val.kind)
-          (!= old-lo val.lo)
-          (!= old-hi val.hi)
-          (!= old-kz val.kz)
-          (!= old-ko val.ko))
+          (!= old.kind val.kind)
+          (!= old.lo val.lo)
+          (!= old.hi val.hi)
+          (!= old.kz val.kz)
+          (!= old.ko val.ko))
         (when (>= st.trail-len st.trail-cap) (opt-range-trail-grow! st))
         (let
           [idx : i64 st.trail-len]
-          (set! (array-ref st.trail-var idx) var)
-          (set! (array-ref st.trail-lo idx) old-lo)
-          (set! (array-ref st.trail-hi idx) old-hi)
-          (set! (array-ref st.trail-kz idx) old-kz)
-          (set! (array-ref st.trail-ko idx) old-ko)
-          (set! (array-ref st.trail-kind idx) old-kind)
+          (set! (array-ref st.trail idx) (OptRangeTrailEntry var old))
           (set! st.trail-len (+ idx 1)))
-        (set! (array-ref st.lo var) val.lo)
-        (set! (array-ref st.hi var) val.hi)
-        (set! (array-ref st.kz var) val.kz)
-        (set! (array-ref st.ko var) val.ko)
-        (set! (array-ref st.kind var) val.kind)))))
+        (set! (array-ref st.vals var) (opt-range-val-copy val))))))
 
 (define (opt-range-var-refine!
   [st : (&mut OptRangeState)]
@@ -471,12 +451,9 @@
   (while (> st.trail-len mark)
     (let
       [idx : i64 (- st.trail-len 1)]
-      [var : i64 (array-ref st.trail-var idx)]
-      (set! (array-ref st.lo var) (array-ref st.trail-lo idx))
-      (set! (array-ref st.hi var) (array-ref st.trail-hi idx))
-      (set! (array-ref st.kz var) (array-ref st.trail-kz idx))
-      (set! (array-ref st.ko var) (array-ref st.trail-ko idx))
-      (set! (array-ref st.kind var) (array-ref st.trail-kind idx))
+      [te : OptRangeTrailEntry
+        (opt-range-trail-copy (& (array-ref st.trail idx)))]
+      (set! (array-ref st.vals te.var) te.val)
       (set! st.trail-len idx))))
 
 (define (opt-range-rel-push!
@@ -499,26 +476,15 @@
           (if (< old-cap 32)
             32
             (* old-cap 2))]
-        [nk : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
-        [nl : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
-        [nr : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
-        [no : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
+        [nr : (__tl_dyn-array OptRangeRelFact)
+          (__tl_make-array OptRangeRelFact new-cap)]
         (for [i (iterator.range 0 st.rel-len)]
-          (set! (array-ref nk i) (array-ref st.rel-kind i))
-          (set! (array-ref nl i) (array-ref st.rel-lhs i))
-          (set! (array-ref nr i) (array-ref st.rel-rhs i))
-          (set! (array-ref no i) (array-ref st.rel-off i)))
-        (set! st.rel-kind nk)
-        (set! st.rel-lhs nl)
-        (set! st.rel-rhs nr)
-        (set! st.rel-off no)
+          (set! (array-ref nr i) (opt-range-rel-copy (& (array-ref st.rels i)))))
+        (set! st.rels nr)
         (set! st.rel-cap new-cap)))
     (let
       [idx : i64 st.rel-len]
-      (set! (array-ref st.rel-kind idx) kind)
-      (set! (array-ref st.rel-lhs idx) lhs)
-      (set! (array-ref st.rel-rhs idx) rhs)
-      (set! (array-ref st.rel-off idx) offset)
+      (set! (array-ref st.rels idx) (OptRangeRelFact kind lhs rhs offset))
       (set! st.rel-len (+ idx 1)))))
 
 (define (opt-range-resolve-copy [st : (& OptRangeState)] [var : i64]) : i64
@@ -587,6 +553,26 @@
         [uhi : u64 (bit-not r.kz)]
         (OptRangeVal 0 0 ulo uhi opt-range-kind-known))]))
 
+(define (opt-range-clamp-unsigned [r : (& OptRangeVal)] [w : i64]) : OptRangeVal
+  (let
+    [mask : u64 (opt-range-u64-low-mask w)]
+    [kz : u64 (bit-or r.kz (bit-not mask))]
+    [ko : u64 (bit-and r.ko mask)]
+    [max-u : i64 (cast mask : i64)]
+    (if (and (= r.kind opt-range-kind-known) (>= r.lo 0) (<= r.hi max-u))
+      (opt-range-tighten r.lo r.hi kz ko)
+      (opt-range-tighten 0 max-u kz ko))))
+
+(define (opt-range-clamp-signed [r : (& OptRangeVal)] [ty : (& ast.AstType)]) : OptRangeVal
+  (let
+    [type-r : OptRangeVal (opt-range-range-for-type ty)]
+    (if (and
+      (= r.kind opt-range-kind-known)
+      (>= r.lo type-r.lo)
+      (<= r.hi type-r.hi))
+      (opt-range-val-copy r)
+      type-r)))
+
 (define (opt-range-eval-cast
   [r : (& OptRangeVal)]
   [from-ty : (& ast.AstType)]
@@ -597,48 +583,15 @@
     (cond
       [(or (= fw 0) (= tw 0)) (opt-range-top)]
       [(= r.kind opt-range-kind-bottom) (opt-range-bottom)]
-      ;; Same-width reinterpret (e.g. i64 <-> u64): bit pattern is unchanged.
-      [(and (= fw 64) (= tw 64)) (OptRangeVal r.lo r.hi r.kz r.ko r.kind)]
-      ;; Zero-extending unsigned narrow type to wider integer.
-      [(and (opt-range-type-unsigned? from-ty) (< fw 64) (>= tw fw))
-        (let
-          [mask : u64 (opt-range-u64-low-mask fw)]
-          [kz : u64 (bit-or r.kz (bit-not mask))]
-          [ko : u64 (bit-and r.ko mask)]
-          [max-u : i64 (cast mask : i64)]
-          (if (and (= r.kind opt-range-kind-known) (>= r.lo 0) (<= r.hi max-u))
-            (opt-range-tighten r.lo r.hi kz ko)
-            (opt-range-tighten 0 max-u kz ko)))]
-      ;; Sign-extending narrow signed type to wider integer.
-      [(and (opt-range-type-signed? from-ty) (< fw 64) (>= tw fw))
-        (let
-          [type-r : OptRangeVal (opt-range-range-for-type from-ty)]
-          (if (and
-            (= r.kind opt-range-kind-known)
-            (>= r.lo type-r.lo)
-            (<= r.hi type-r.hi))
-            (OptRangeVal r.lo r.hi r.kz r.ko r.kind)
-            type-r))]
-      ;; Truncating to unsigned narrow type.
-      [(and (opt-range-type-unsigned? to-ty) (< tw 64))
-        (let
-          [mask : u64 (opt-range-u64-low-mask tw)]
-          [kz : u64 (bit-or r.kz (bit-not mask))]
-          [ko : u64 (bit-and r.ko mask)]
-          [max-u : i64 (cast mask : i64)]
-          (if (and (= r.kind opt-range-kind-known) (>= r.lo 0) (<= r.hi max-u))
-            (opt-range-tighten r.lo r.hi kz ko)
-            (opt-range-tighten 0 max-u kz ko)))]
-      ;; Truncating to signed narrow type.
-      [(and (opt-range-type-signed? to-ty) (< tw 64))
-        (let
-          [type-r : OptRangeVal (opt-range-range-for-type to-ty)]
-          (if (and
-            (= r.kind opt-range-kind-known)
-            (>= r.lo type-r.lo)
-            (<= r.hi type-r.hi))
-            (OptRangeVal r.lo r.hi r.kz r.ko r.kind)
-            type-r))]
+      [(and (= fw 64) (= tw 64)) (opt-range-val-copy r)]
+      [(and (< fw 64) (>= tw fw) (opt-range-type-unsigned? from-ty))
+        (opt-range-clamp-unsigned r fw)]
+      [(and (< fw 64) (>= tw fw) (opt-range-type-signed? from-ty))
+        (opt-range-clamp-signed r from-ty)]
+      [(and (< tw 64) (opt-range-type-unsigned? to-ty))
+        (opt-range-clamp-unsigned r tw)]
+      [(and (< tw 64) (opt-range-type-signed? to-ty))
+        (opt-range-clamp-signed r to-ty)]
       [else (opt-range-range-for-type to-ty)])))
 
 (define (opt-range-eval-add [a : (& OptRangeVal)] [b : (& OptRangeVal)]) : OptRangeVal
@@ -739,27 +692,15 @@
       (opt-range-bottom)]
     [(opt-range-type-signed? ty)
       (cond
-        [(> b.lo 0)
-          (cond
-            [(and (opt-range-is-const? a) (opt-range-is-const? b))
-              (opt-range-const (% a.lo b.lo))]
-            [(and (>= a.lo 0) (< a.hi b.lo))
-              (OptRangeVal a.lo a.hi a.kz a.ko a.kind)]
-            [else
-              (let
-                [max-r : i64 (- b.hi 1)]
-                [lo : i64
-                  (if (>= a.lo 0)
-                    0
-                    (opt-range-max-i64 a.lo (- 0 max-r)))]
-                [hi : i64
-                  (if (<= a.hi 0)
-                    0
-                    (opt-range-min-i64 a.hi max-r))]
-                (opt-range-interval lo hi))])]
-        [(and (< b.hi 0) (> b.lo opt-range-i64-min))
+        [(and (> b.lo 0) (opt-range-is-const? a) (opt-range-is-const? b))
+          (opt-range-const (% a.lo b.lo))]
+        [(and (> b.lo 0) (>= a.lo 0) (< a.hi b.lo)) (opt-range-val-copy a)]
+        [(or (> b.lo 0) (and (< b.hi 0) (> b.lo opt-range-i64-min)))
           (let
-            [max-r : i64 (- (- 0 b.lo) 1)]
+            [max-r : i64
+              (if (> b.lo 0)
+                (- b.hi 1)
+                (- (- 0 b.lo) 1))]
             [lo : i64
               (if (>= a.lo 0)
                 0
@@ -911,20 +852,33 @@
     [found : bool false]
     (while (and (>= i 0) (not found))
       (let
-        [k : i64 (array-ref st.rel-kind i)]
-        [fl : i64 (array-ref st.rel-lhs i)]
-        [fr : i64 (array-ref st.rel-rhs i)]
-        [fo : i64 (array-ref st.rel-off i)]
+        [rf : OptRangeRelFact (opt-range-rel-copy (& (array-ref st.rels i)))]
         (when
-          (and (= fl cl) (= fr cr))
+          (and (= rf.lhs cl) (= rf.rhs cr))
           (cond
-            [(and (= k 0) (= fo 0)) (set! found true)]
-            [(and (= k 1) (= fo 0) (not want-strict?)) (set! found true)]
-            [(and (= k 2) (>= fo 0) (>= (array-ref st.lo cl) 0))
+            [(and (= rf.kind 0) (= rf.offset 0)) (set! found true)]
+            [(and (= rf.kind 1) (= rf.offset 0) (not want-strict?))
+              (set! found true)]
+            [(and
+                (= rf.kind 2)
+                (>= rf.offset 0)
+                (>= (array-ref st.vals cl).lo 0))
               (set! found true)]
             [else unit])))
       (-= i 1))
     found))
+
+(define (opt-range-val-rel?
+  [st : (& OptRangeState)]
+  [strict? : bool]
+  [lhs : (& ir.CompilerIrValue)]
+  [rhs : (& ir.CompilerIrValue)]) : bool
+  (match lhs
+    [(Var lv)
+      (match rhs
+        [(Var rv) (opt-range-rel-holds? st strict? lv rv)]
+        [_ false])]
+    [_ false]))
 
 (define (opt-range-eval-compare
   [st : (& OptRangeState)]
@@ -959,11 +913,11 @@
               [else -1])]
           [(Ne)
             (let
-              [eq-res : i64
+              [r : i64
                 (opt-range-eval-compare st nonneg-globals (& (Eq)) lhs rhs ty)]
-              (if (< eq-res 0)
+              (if (< r 0)
                 -1
-                (- 1 eq-res)))]
+                (- 1 r)))]
           [(BitTestEq)
             (cond
               [(= (bit-and (bit-not a.kz) (bit-not b.kz)) (cast 0 : u64)) 1]
@@ -971,7 +925,7 @@
               [else -1])]
           [(BitTestNe)
             (let
-              [bt-res : i64
+              [r : i64
                 (opt-range-eval-compare
                   st
                   nonneg-globals
@@ -979,57 +933,41 @@
                   lhs
                   rhs
                   ty)]
-              (if (< bt-res 0)
+              (if (< r 0)
                 -1
-                (- 1 bt-res)))]
-          [(Lt)
-            (if signed?
-              (cond
-                [(< a.hi b.lo) 1]
-                [(>= a.lo b.hi) 0]
-                [(match lhs
-                    [(Var lv)
-                      (match rhs
-                        [(Var rv) (opt-range-rel-holds? st true lv rv)]
-                        [_ false])]
-                    [_ false])
-                  1]
-                [(match lhs
-                    [(Var lv)
-                      (match rhs
-                        [(Var rv) (opt-range-rel-holds? st false rv lv)]
-                        [_ false])]
-                    [_ false])
-                  0]
-                [else -1])
-              (let
-                [ua : OptRangeVal (opt-range-u64-bounds (& a))]
-                [ub : OptRangeVal (opt-range-u64-bounds (& b))]
-                (cond [(< ua.ko ub.kz) 1] [(>= ua.kz ub.ko) 0] [else -1])))]
-          [(Le)
-            (if signed?
-              (cond
-                [(<= a.hi b.lo) 1]
-                [(> a.lo b.hi) 0]
-                [(match lhs
-                    [(Var lv)
-                      (match rhs
-                        [(Var rv) (opt-range-rel-holds? st false lv rv)]
-                        [_ false])]
-                    [_ false])
-                  1]
-                [(match lhs
-                    [(Var lv)
-                      (match rhs
-                        [(Var rv) (opt-range-rel-holds? st true rv lv)]
-                        [_ false])]
-                    [_ false])
-                  0]
-                [else -1])
-              (let
-                [ua : OptRangeVal (opt-range-u64-bounds (& a))]
-                [ub : OptRangeVal (opt-range-u64-bounds (& b))]
-                (cond [(<= ua.ko ub.kz) 1] [(> ua.kz ub.ko) 0] [else -1])))]
+                (- 1 r)))]
+          [(or (Lt) (Le))
+            (let
+              [strict? : bool
+                (match op
+                  [(Lt) true]
+                  [_ false])]
+              (if signed?
+                (cond
+                  [(if strict?
+                      (< a.hi b.lo)
+                      (<= a.hi b.lo))
+                    1]
+                  [(if strict?
+                      (>= a.lo b.hi)
+                      (> a.lo b.hi))
+                    0]
+                  [(opt-range-val-rel? st strict? lhs rhs) 1]
+                  [(opt-range-val-rel? st (not strict?) rhs lhs) 0]
+                  [else -1])
+                (let
+                  [ua : OptRangeVal (opt-range-u64-bounds (& a))]
+                  [ub : OptRangeVal (opt-range-u64-bounds (& b))]
+                  (cond
+                    [(if strict?
+                        (< ua.ko ub.kz)
+                        (<= ua.ko ub.kz))
+                      1]
+                    [(if strict?
+                        (>= ua.kz ub.ko)
+                        (> ua.kz ub.ko))
+                      0]
+                    [else -1]))))]
           [(Gt) (opt-range-eval-compare st nonneg-globals (& (Lt)) rhs lhs ty)]
           [(Ge) (opt-range-eval-compare st nonneg-globals (& (Le)) rhs lhs ty)]
           [_ -1])])))
@@ -1153,32 +1091,24 @@
                                   (match (& cop)
                                     [(or (Gt) (Ge)) true]
                                     [_ false])]
+                                [same-dir? : bool
+                                  (and
+                                    (opt-range-val-same? st (& cl) on-true)
+                                    (opt-range-val-same? st (& cr) on-false))]
+                                [swap-dir? : bool
+                                  (and
+                                    (opt-range-val-same? st (& cl) on-false)
+                                    (opt-range-val-same? st (& cr) on-true))]
                                 (cond
-                                  [(and
-                                      is-lt?
-                                      (opt-range-val-same? st (& cl) on-true)
-                                      (opt-range-val-same? st (& cr) on-false))
+                                  [(or
+                                      (and is-lt? same-dir?)
+                                      (and is-gt? swap-dir?))
                                     (opt-range-interval
                                       (opt-range-min-i64 tr.lo fr.lo)
                                       (opt-range-min-i64 tr.hi fr.hi))]
-                                  [(and
-                                      is-gt?
-                                      (opt-range-val-same? st (& cl) on-false)
-                                      (opt-range-val-same? st (& cr) on-true))
-                                    (opt-range-interval
-                                      (opt-range-min-i64 tr.lo fr.lo)
-                                      (opt-range-min-i64 tr.hi fr.hi))]
-                                  [(and
-                                      is-gt?
-                                      (opt-range-val-same? st (& cl) on-true)
-                                      (opt-range-val-same? st (& cr) on-false))
-                                    (opt-range-interval
-                                      (opt-range-max-i64 tr.lo fr.lo)
-                                      (opt-range-max-i64 tr.hi fr.hi))]
-                                  [(and
-                                      is-lt?
-                                      (opt-range-val-same? st (& cl) on-false)
-                                      (opt-range-val-same? st (& cr) on-true))
+                                  [(or
+                                      (and is-gt? same-dir?)
+                                      (and is-lt? swap-dir?))
                                     (opt-range-interval
                                       (opt-range-max-i64 tr.lo fr.lo)
                                       (opt-range-max-i64 tr.hi fr.hi))]
@@ -1208,10 +1138,7 @@
         (= idx 1)
         (opt-range-type-is-i64? (& ty))
         (match (& src)
-          [(Var sv)
-            (let
-              [rv : i64 (opt-range-resolve-copy st sv)]
-              (and (>= rv 0) (< rv st.frame) (array-ref st.desc-handle rv)))]
+          [(Var sv) (opt-range-flag? st (opt-range-resolve-copy st sv) 1)]
           [_ false]))
         (opt-range-interval 0 opt-range-i64-max)
         (opt-range-range-for-type (& ty)))]
@@ -1219,10 +1146,7 @@
       (if (and
         (opt-range-type-is-i64? (& ty))
         (match (& ptr)
-          [(Var pv)
-            (let
-              [rp : i64 (opt-range-resolve-copy st pv)]
-              (and (>= rp 0) (< rp st.frame) (array-ref st.len-slot-ptr rp)))]
+          [(Var pv) (opt-range-flag? st (opt-range-resolve-copy st pv) 2)]
           [_ false]))
         (opt-range-interval 0 opt-range-i64-max)
         (opt-range-range-for-type (& ty)))]
@@ -1264,65 +1188,60 @@
         (let
           [a : OptRangeVal (opt-range-value-get st nonneg-globals (& lhs))]
           [b : OptRangeVal (opt-range-value-get st nonneg-globals (& rhs))]
+          [tr : OptRangeVal (opt-range-range-for-type (& ty))]
           (match (& op)
-            [(Add)
+            [(or (Add) (Sub) (Mul))
               (if (opt-range-type-is-i64? (& ty))
-                (opt-range-eval-add (& a) (& b))
-                (opt-range-range-for-type (& ty)))]
-            [(Sub)
-              (if (opt-range-type-is-i64? (& ty))
-                (opt-range-eval-sub (& a) (& b))
-                (opt-range-range-for-type (& ty)))]
-            [(Mul)
-              (if (opt-range-type-is-i64? (& ty))
-                (opt-range-eval-mul (& a) (& b))
-                (opt-range-range-for-type (& ty)))]
+                (match (& op)
+                  [(Add) (opt-range-eval-add (& a) (& b))]
+                  [(Sub) (opt-range-eval-sub (& a) (& b))]
+                  [_ (opt-range-eval-mul (& a) (& b))])
+                tr)]
             [(or (Div) (SafeDiv)) (opt-range-eval-div (& a) (& b) (& ty))]
             [(or (Mod) (SafeMod)) (opt-range-eval-mod (& a) (& b) (& ty))]
-            [(BitAnd)
+            [(or (BitAnd) (BitOr) (BitXor))
               (let
-                [r : OptRangeVal (opt-range-eval-bitand (& a) (& b))]
-                [tr : OptRangeVal (opt-range-range-for-type (& ty))]
-                (opt-range-meet (& r) (& tr)))]
-            [(BitOr)
-              (let
-                [r : OptRangeVal (opt-range-eval-bitor (& a) (& b))]
-                [tr : OptRangeVal (opt-range-range-for-type (& ty))]
-                (opt-range-meet (& r) (& tr)))]
-            [(BitXor)
-              (let
-                [r : OptRangeVal (opt-range-eval-bitxor (& a) (& b))]
-                [tr : OptRangeVal (opt-range-range-for-type (& ty))]
+                [r : OptRangeVal
+                  (match (& op)
+                    [(BitAnd) (opt-range-eval-bitand (& a) (& b))]
+                    [(BitOr) (opt-range-eval-bitor (& a) (& b))]
+                    [_ (opt-range-eval-bitxor (& a) (& b))])]
                 (opt-range-meet (& r) (& tr)))]
             [(Shl _) (opt-range-eval-shl (& a) (& b) (& ty))]
             [(Shr _) (opt-range-eval-shr (& a) (& b) (& ty))]
-            [(And)
-              (cond
-                [(or
-                    (and (opt-range-is-const? (& a)) (= a.lo 0))
-                    (and (opt-range-is-const? (& b)) (= b.lo 0)))
-                  (opt-range-const 0)]
-                [(and
-                    (opt-range-is-const? (& a))
-                    (!= a.lo 0)
-                    (opt-range-is-const? (& b))
-                    (!= b.lo 0))
-                  (opt-range-const 1)]
-                [else (opt-range-interval 0 1)])]
-            [(Or)
-              (cond
-                [(or
-                    (and (opt-range-is-const? (& a)) (!= a.lo 0))
-                    (and (opt-range-is-const? (& b)) (!= b.lo 0)))
-                  (opt-range-const 1)]
-                [(and
-                    (opt-range-is-const? (& a))
-                    (= a.lo 0)
-                    (opt-range-is-const? (& b))
-                    (= b.lo 0))
-                  (opt-range-const 0)]
-                [else (opt-range-interval 0 1)])]
-            [_ (opt-range-range-for-type (& ty))])))]
+            [(or (And) (Or))
+              (let
+                [is-and? : bool
+                  (match (& op)
+                    [(And) true]
+                    [_ false])]
+                [ac : bool (opt-range-is-const? (& a))]
+                [bc : bool (opt-range-is-const? (& b))]
+                [a-abs : bool
+                  (and
+                    ac
+                    (if is-and?
+                      (= a.lo 0)
+                      (!= a.lo 0)))]
+                [b-abs : bool
+                  (and
+                    bc
+                    (if is-and?
+                      (= b.lo 0)
+                      (!= b.lo 0)))]
+                (cond
+                  [(or a-abs b-abs)
+                    (opt-range-const
+                      (if is-and?
+                        0
+                        1))]
+                  [(and ac bc)
+                    (opt-range-const
+                      (if is-and?
+                        1
+                        0))]
+                  [else (opt-range-interval 0 1)]))]
+            [_ tr])))]
     [(Select payload)
       (if (= payload.lanes 1)
         (opt-range-eval-select
@@ -1364,103 +1283,112 @@
         [dk : i64 (array-ref st.def-kind rvar)]
         [rv : OptRangeVal (opt-range-var-get st rvar)]
         (when
-          (= rv.kind opt-range-kind-known)
-          (cond
-            [(= dk 4)
-              (let
-                [db : i64 (array-ref st.def-block rvar)]
-                [dp : i64 (array-ref st.def-pos rvar)]
-                (match (& (array-ref block-dense db))
-                  [(Block _ instrs)
-                    (match (ir.compiler-ir-instr-seq-borrow instrs dp)
-                      [(Cast _ src from-ty to-ty)
-                        (when
-                          (and
-                            (= (opt-range-type-int-width (& from-ty)) 64)
-                            (= (opt-range-type-int-width (& to-ty)) 64))
-                          (match (& src)
-                            [(Var sv) (opt-range-refine-var-both! st sv (& rv))]
-                            [_ unit]))]
-                      [_ unit])]))]
-            [(= dk 2)
-              (let
-                [db : i64 (array-ref st.def-block rvar)]
-                [dp : i64 (array-ref st.def-pos rvar)]
-                (match (& (array-ref block-dense db))
-                  [(Block _ instrs)
-                    (match (ir.compiler-ir-instr-seq-borrow instrs dp)
-                      [(BinOp _ op lhs rhs ty)
-                        (match (& op)
-                          [(or (Div) (SafeDiv))
-                            (when
-                              (and (opt-range-type-is-i64? (& ty)) (>= rv.lo 1))
-                              (match (& lhs)
-                                [(I64 n)
-                                  (when
-                                    (> n 0)
-                                    (match (& rhs)
-                                      [(Var wv)
-                                        (let
-                                          [wr : OptRangeVal
-                                            (opt-range-value-get
-                                              st
-                                              nonneg-globals
-                                              (& rhs))]
-                                          (when
-                                            (>= wr.lo 1)
-                                            (opt-range-refine-var-both!
-                                              st
-                                              wv
-                                              (&
-                                                (opt-range-interval
-                                                  1
-                                                  (/ n rv.lo))))))]
-                                      [_ unit]))]
-                                [_ unit]))]
-                          [(Sub)
-                            (when
-                              (opt-range-type-is-i64? (& ty))
-                              (match (& lhs)
-                                [(Var xv)
+          (and (= rv.kind opt-range-kind-known) (or (= dk 4) (= dk 2)))
+          (let
+            [db : i64 (array-ref st.def-block rvar)]
+            [dp : i64 (array-ref st.def-pos rvar)]
+            (match (& (array-ref block-dense db))
+              [(Block _ instrs)
+                (match (ir.compiler-ir-instr-seq-borrow instrs dp)
+                  [(Cast _ src from-ty to-ty)
+                    (when
+                      (and
+                        (= (opt-range-type-int-width (& from-ty)) 64)
+                        (= (opt-range-type-int-width (& to-ty)) 64))
+                      (match (& src)
+                        [(Var sv) (opt-range-refine-var-both! st sv (& rv))]
+                        [_ unit]))]
+                  [(BinOp _ op lhs rhs ty)
+                    (when
+                      (opt-range-type-is-i64? (& ty))
+                      (match (& op)
+                        [(or (Div) (SafeDiv))
+                          (when
+                            (>= rv.lo 1)
+                            (match (& lhs)
+                              [(I64 n)
+                                (when
+                                  (> n 0)
                                   (match (& rhs)
-                                    [(I64 k)
+                                    [(Var wv)
+                                      (let
+                                        [wr : OptRangeVal
+                                          (opt-range-value-get
+                                            st
+                                            nonneg-globals
+                                            (& rhs))]
+                                        (when
+                                          (>= wr.lo 1)
+                                          (opt-range-refine-var-both!
+                                            st
+                                            wv
+                                            (&
+                                              (opt-range-interval 1 (/ n rv.lo))))))]
+                                    [_ unit]))]
+                              [_ unit]))]
+                        [(Sub)
+                          (match (& lhs)
+                            [(Var xv)
+                              (match (& rhs)
+                                [(I64 k)
+                                  (when
+                                    (> k 0)
+                                    (let
+                                      [xr : OptRangeVal
+                                        (opt-range-value-get
+                                          st
+                                          nonneg-globals
+                                          (& lhs))]
                                       (when
-                                        (> k 0)
-                                        (let
-                                          [xr : OptRangeVal
-                                            (opt-range-value-get
-                                              st
-                                              nonneg-globals
-                                              (& lhs))]
-                                          ;; If x >= 0 or rvar <= x, x - k did not wrap.
-                                          (when
-                                            (or
-                                              (>= xr.lo 0)
-                                              (opt-range-rel-holds?
-                                                st
-                                                false
-                                                rvar
-                                                xv))
-                                            (match (opt-range-safe-add rv.lo k)
-                                              [(Some xlo)
-                                                (match (opt-range-safe-add
-                                                  rv.hi
-                                                  k)
-                                                  [(Some xhi)
-                                                    (opt-range-refine-var-both!
-                                                      st
-                                                      xv
-                                                      (&
-                                                        (opt-range-interval
-                                                          xlo
-                                                          xhi)))]
-                                                  [(None) unit])]
-                                              [(None) unit]))))]
-                                    [_ unit])]
-                                [_ unit]))]
-                          [_ unit])]
-                      [_ unit])]))]
-            [else unit]))))))
+                                        (or
+                                          (>= xr.lo 0)
+                                          (opt-range-rel-holds?
+                                            st
+                                            false
+                                            rvar
+                                            xv))
+                                        (match (opt-range-safe-add rv.lo k)
+                                          [(Some xlo)
+                                            (match (opt-range-safe-add rv.hi k)
+                                              [(Some xhi)
+                                                (opt-range-refine-var-both!
+                                                  st
+                                                  xv
+                                                  (&
+                                                    (opt-range-interval xlo xhi)))]
+                                              [(None) unit])]
+                                          [(None) unit]))))]
+                                [_ unit])]
+                            [_ unit])]
+                        [_ unit]))]
+                  [_ unit])])))))))
+
+(define (opt-range-refine-ne-var!
+  [st : (&mut OptRangeState)]
+  [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
+  [nonneg-globals : (& opt_i64_i64_map.Map)]
+  [val : (& ir.CompilerIrValue)]
+  [r : (& OptRangeVal)]
+  [c : (& OptRangeVal)]) : unit
+  (when
+    (opt-range-is-const? c)
+    (match val
+      [(Var v)
+        (when
+          (and (= r.lo c.lo) (< r.lo opt-range-i64-max))
+          (opt-range-refine-var-both!
+            st
+            v
+            (& (opt-range-interval (+ r.lo 1) r.hi)))
+          (opt-range-back-refine! st block-dense nonneg-globals v))
+        (when
+          (and (= r.hi c.lo) (> r.hi opt-range-i64-min))
+          (opt-range-refine-var-both!
+            st
+            v
+            (& (opt-range-interval r.lo (- r.hi 1))))
+          (opt-range-back-refine! st block-dense nonneg-globals v))]
+      [_ unit])))
 
 (define (opt-range-refine-cmp-signed!
   [st : (&mut OptRangeState)]
@@ -1473,62 +1401,47 @@
     [a : OptRangeVal (opt-range-value-get st nonneg-globals lhs)]
     [b : OptRangeVal (opt-range-value-get st nonneg-globals rhs)]
     (match op
-      [(Lt)
-        (match lhs
-          [(Var lv)
-            (when
-              (> b.hi opt-range-i64-min)
-              (opt-range-refine-var-both!
-                st
-                lv
-                (& (opt-range-interval opt-range-i64-min (- b.hi 1))))
-              (opt-range-back-refine! st block-dense nonneg-globals lv))
-            (match rhs
-              [(Var rv)
-                (opt-range-rel-push!
+      [(or (Lt) (Le))
+        (let
+          [strict? : bool
+            (match op
+              [(Lt) true]
+              [_ false])]
+          [delta : i64
+            (if strict?
+              1
+              0)]
+          (match lhs
+            [(Var lv)
+              (when
+                (or (not strict?) (> b.hi opt-range-i64-min))
+                (opt-range-refine-var-both!
                   st
-                  0
-                  (opt-range-resolve-copy st lv)
-                  (opt-range-resolve-copy st rv)
-                  0)]
-              [_ unit])]
-          [_ unit])
-        (match rhs
-          [(Var rv)
-            (when
-              (< a.lo opt-range-i64-max)
-              (opt-range-refine-var-both!
-                st
-                rv
-                (& (opt-range-interval (+ a.lo 1) opt-range-i64-max)))
-              (opt-range-back-refine! st block-dense nonneg-globals rv))]
-          [_ unit])]
-      [(Le)
-        (match lhs
-          [(Var lv)
-            (opt-range-refine-var-both!
-              st
-              lv
-              (& (opt-range-interval opt-range-i64-min b.hi)))
-            (opt-range-back-refine! st block-dense nonneg-globals lv)
-            (match rhs
-              [(Var rv)
-                (opt-range-rel-push!
+                  lv
+                  (& (opt-range-interval opt-range-i64-min (- b.hi delta))))
+                (opt-range-back-refine! st block-dense nonneg-globals lv))
+              (match rhs
+                [(Var rv)
+                  (opt-range-rel-push!
+                    st
+                    (if strict?
+                      0
+                      1)
+                    (opt-range-resolve-copy st lv)
+                    (opt-range-resolve-copy st rv)
+                    0)]
+                [_ unit])]
+            [_ unit])
+          (match rhs
+            [(Var rv)
+              (when
+                (or (not strict?) (< a.lo opt-range-i64-max))
+                (opt-range-refine-var-both!
                   st
-                  1
-                  (opt-range-resolve-copy st lv)
-                  (opt-range-resolve-copy st rv)
-                  0)]
-              [_ unit])]
-          [_ unit])
-        (match rhs
-          [(Var rv)
-            (opt-range-refine-var-both!
-              st
-              rv
-              (& (opt-range-interval a.lo opt-range-i64-max)))
-            (opt-range-back-refine! st block-dense nonneg-globals rv)]
-          [_ unit])]
+                  rv
+                  (& (opt-range-interval (+ a.lo delta) opt-range-i64-max)))
+                (opt-range-back-refine! st block-dense nonneg-globals rv))]
+            [_ unit]))]
       [(Gt)
         (opt-range-refine-cmp-signed!
           st
@@ -1559,44 +1472,8 @@
               (opt-range-back-refine! st block-dense nonneg-globals rv)]
             [_ unit]))]
       [(Ne)
-        (when
-          (opt-range-is-const? (& b))
-          (match lhs
-            [(Var lv)
-              (when
-                (and (= a.lo b.lo) (< a.lo opt-range-i64-max))
-                (opt-range-refine-var-both!
-                  st
-                  lv
-                  (& (opt-range-interval (+ a.lo 1) a.hi)))
-                (opt-range-back-refine! st block-dense nonneg-globals lv))
-              (when
-                (and (= a.hi b.lo) (> a.hi opt-range-i64-min))
-                (opt-range-refine-var-both!
-                  st
-                  lv
-                  (& (opt-range-interval a.lo (- a.hi 1))))
-                (opt-range-back-refine! st block-dense nonneg-globals lv))]
-            [_ unit]))
-        (when
-          (opt-range-is-const? (& a))
-          (match rhs
-            [(Var rv)
-              (when
-                (and (= b.lo a.lo) (< b.lo opt-range-i64-max))
-                (opt-range-refine-var-both!
-                  st
-                  rv
-                  (& (opt-range-interval (+ b.lo 1) b.hi)))
-                (opt-range-back-refine! st block-dense nonneg-globals rv))
-              (when
-                (and (= b.hi a.lo) (> b.hi opt-range-i64-min))
-                (opt-range-refine-var-both!
-                  st
-                  rv
-                  (& (opt-range-interval b.lo (- b.hi 1))))
-                (opt-range-back-refine! st block-dense nonneg-globals rv))]
-            [_ unit]))]
+        (opt-range-refine-ne-var! st block-dense nonneg-globals lhs (& a) (& b))
+        (opt-range-refine-ne-var! st block-dense nonneg-globals rhs (& b) (& a))]
       [_ unit])))
 
 (define (opt-range-refine-cmp-unsigned!
@@ -1609,49 +1486,47 @@
   (let
     [b : OptRangeVal (opt-range-value-get st nonneg-globals rhs)]
     (match op
-      [(Lt)
-        ;; Unsigned `lhs <u rhs` where rhs is in [0, I64_MAX]:
-        ;; every negative i64 has u64 >= 2^63 > rhs, so 0 <= lhs < rhs.
-        (when
-          (and (>= b.lo 0) (> b.hi 0))
-          (match lhs
-            [(Var lv)
-              (opt-range-refine-var-both!
-                st
-                lv
-                (& (opt-range-interval 0 (- b.hi 1))))
-              (opt-range-back-refine! st block-dense nonneg-globals lv)
+      [(or (Lt) (Le))
+        (let
+          [strict? : bool
+            (match op
+              [(Lt) true]
+              [_ false])]
+          (when
+            (and (>= b.lo 0) (or (not strict?) (> b.hi 0)))
+            (match lhs
+              [(Var lv)
+                (opt-range-refine-var-both!
+                  st
+                  lv
+                  (&
+                    (opt-range-interval
+                      0
+                      (if strict?
+                        (- b.hi 1)
+                        b.hi))))
+                (opt-range-back-refine! st block-dense nonneg-globals lv)
+                (match rhs
+                  [(Var rv)
+                    (opt-range-rel-push!
+                      st
+                      (if strict?
+                        0
+                        1)
+                      (opt-range-resolve-copy st lv)
+                      (opt-range-resolve-copy st rv)
+                      0)]
+                  [_ unit])]
+              [_ unit])
+            (when
+              strict?
               (match rhs
                 [(Var rv)
-                  (opt-range-rel-push!
+                  (opt-range-refine-var-both!
                     st
-                    0
-                    (opt-range-resolve-copy st lv)
-                    (opt-range-resolve-copy st rv)
-                    0)]
-                [_ unit])]
-            [_ unit])
-          (match rhs
-            [(Var rv)
-              (opt-range-refine-var-both! st rv (& (opt-range-interval 1 b.hi)))]
-            [_ unit]))]
-      [(Le)
-        (when
-          (>= b.lo 0)
-          (match lhs
-            [(Var lv)
-              (opt-range-refine-var-both! st lv (& (opt-range-interval 0 b.hi)))
-              (opt-range-back-refine! st block-dense nonneg-globals lv)
-              (match rhs
-                [(Var rv)
-                  (opt-range-rel-push!
-                    st
-                    1
-                    (opt-range-resolve-copy st lv)
-                    (opt-range-resolve-copy st rv)
-                    0)]
-                [_ unit])]
-            [_ unit]))]
+                    rv
+                    (& (opt-range-interval 1 b.hi)))]
+                [_ unit]))))]
       [(Gt)
         (opt-range-refine-cmp-unsigned!
           st
@@ -1668,22 +1543,8 @@
           (& (Le))
           rhs
           lhs)]
-      [(Eq)
-        (opt-range-refine-cmp-signed!
-          st
-          block-dense
-          nonneg-globals
-          (& (Eq))
-          lhs
-          rhs)]
-      [(Ne)
-        (opt-range-refine-cmp-signed!
-          st
-          block-dense
-          nonneg-globals
-          (& (Ne))
-          lhs
-          rhs)]
+      [(or (Eq) (Ne))
+        (opt-range-refine-cmp-signed! st block-dense nonneg-globals op lhs rhs)]
       [_ unit])))
 
 (define (opt-range-flip-cmp [op : (& ir.CompilerIrBinOp)]) : ir.CompilerIrBinOp
@@ -1723,10 +1584,11 @@
             (and (>= rv 0) (< rv st.frame))
             (let
               [dk : i64 (array-ref st.def-kind rv)]
-              [db : i64 (array-ref st.def-block rv)]
-              [dp : i64 (array-ref st.def-pos rv)]
-              (cond
-                [(= dk 3)
+              (when
+                (or (= dk 2) (= dk 3))
+                (let
+                  [db : i64 (array-ref st.def-block rv)]
+                  [dp : i64 (array-ref st.def-pos rv)]
                   (match (& (array-ref block-dense db))
                     [(Block _ instrs)
                       (match (ir.compiler-ir-instr-seq-borrow instrs dp)
@@ -1738,59 +1600,38 @@
                             (& inner)
                             (not taken)
                             (- depth 1))]
-                        [_ unit])])]
-                [(= dk 2)
-                  (match (& (array-ref block-dense db))
-                    [(Block _ instrs)
-                      (match (ir.compiler-ir-instr-seq-borrow instrs dp)
                         [(BinOp _ op lhs rhs ty)
                           (match (& op)
-                            [(And)
-                              (when
-                                taken
-                                (opt-range-refine-cond!
-                                  st
-                                  block-dense
-                                  nonneg-globals
-                                  (& lhs)
-                                  true
-                                  (- depth 1))
-                                (opt-range-refine-cond!
-                                  st
-                                  block-dense
-                                  nonneg-globals
-                                  (& rhs)
-                                  true
-                                  (- depth 1)))]
-                            [(Or)
-                              (when
-                                (not taken)
-                                (opt-range-refine-cond!
-                                  st
-                                  block-dense
-                                  nonneg-globals
-                                  (& lhs)
-                                  false
-                                  (- depth 1))
-                                (opt-range-refine-cond!
-                                  st
-                                  block-dense
-                                  nonneg-globals
-                                  (& rhs)
-                                  false
-                                  (- depth 1)))]
+                            [(or (And) (Or))
+                              (let
+                                [is-and? : bool
+                                  (match (& op)
+                                    [(And) true]
+                                    [_ false])]
+                                (when
+                                  (= is-and? taken)
+                                  (opt-range-refine-cond!
+                                    st
+                                    block-dense
+                                    nonneg-globals
+                                    (& lhs)
+                                    taken
+                                    (- depth 1))
+                                  (opt-range-refine-cond!
+                                    st
+                                    block-dense
+                                    nonneg-globals
+                                    (& rhs)
+                                    taken
+                                    (- depth 1))))]
                             [(or (Lt) (Le) (Gt) (Ge) (Eq) (Ne))
                               (let
+                                [fop : ir.CompilerIrBinOp
+                                  (opt-range-flip-cmp (& op))]
                                 [eff : ir.CompilerIrBinOp
                                   (if taken
-                                    (match (& op)
-                                      [(Lt) (Lt)]
-                                      [(Le) (Le)]
-                                      [(Gt) (Gt)]
-                                      [(Ge) (Ge)]
-                                      [(Eq) (Eq)]
-                                      [_ (Ne)])
-                                    (opt-range-flip-cmp (& op)))]
+                                    (opt-range-flip-cmp (& fop))
+                                    fop)]
                                 (cond
                                   [(opt-range-type-signed? (& ty))
                                     (opt-range-refine-cmp-signed!
@@ -1847,8 +1688,7 @@
                                       [_ unit])]
                                   [_ unit]))]
                             [_ unit])]
-                        [_ unit])])]
-                [else unit]))))]
+                        [_ unit])]))))))]
       [_ unit])))
 
 (define (opt-range-refine-edge!
@@ -2143,8 +1983,8 @@
   (if (< len-r.lo 0)
     false
     (let
-      [base-box : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [off-box : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      [base-box : (__tl_dyn-array i64) (opt-range-i64-arr 1)]
+      [off-box : (__tl_dyn-array i64) (opt-range-i64-arr 1)]
       (if (not
         (opt-range-decompose-add-const
           st
@@ -2164,13 +2004,16 @@
               [i : i64 (- st.rel-len 1)]
               [found : bool false]
               (while (and (>= i 0) (not found))
-                (when
-                  (and
-                    (= (array-ref st.rel-kind i) 2)
-                    (= (array-ref st.rel-lhs i) base)
-                    (= (array-ref st.rel-rhs i) clen)
-                    (>= (array-ref st.rel-off i) off))
-                  (set! found true))
+                (let
+                  [rf : OptRangeRelFact
+                    (opt-range-rel-copy (& (array-ref st.rels i)))]
+                  (when
+                    (and
+                      (= rf.kind 2)
+                      (= rf.lhs base)
+                      (= rf.rhs clen)
+                      (>= rf.offset off))
+                    (set! found true)))
                 (-= i 1))
               found)))))))
 
@@ -2193,10 +2036,7 @@
   [st : (& OptRangeState)]
   [val : (& ir.CompilerIrValue)]) : bool
   (match val
-    [(Var iv)
-      (let
-        [riv : i64 (opt-range-resolve-copy st iv)]
-        (and (>= riv 0) (< riv st.frame) (array-ref st.loop-header-phi riv)))]
+    [(Var iv) (opt-range-flag? st (opt-range-resolve-copy st iv) 8)]
     [_ false]))
 
 (define (opt-range-bounds-check-provable?
@@ -2255,8 +2095,8 @@
           lv
           (& (opt-range-interval 1 opt-range-i64-max)))
         (let
-          [base-box : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-          [off-box : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+          [base-box : (__tl_dyn-array i64) (opt-range-i64-arr 1)]
+          [off-box : (__tl_dyn-array i64) (opt-range-i64-arr 1)]
           (when
             (opt-range-decompose-add-const
               st
@@ -2391,8 +2231,8 @@
   [hid : i64]
   [out-ids : (&mut (__tl_dyn-array i64))]) : i64
   (let
-    [in-loop : (__tl_dyn-array bool) (__tl_make-array bool block-count)]
-    [work : (__tl_dyn-array i64) (__tl_make-array i64 65)]
+    [in-loop : (__tl_dyn-array bool) (opt-range-bool-arr block-count)]
+    [work : (__tl_dyn-array i64) (opt-range-i64-arr 65)]
     [wlen : i64 0]
     [overflow? : bool false]
     (set! (array-ref in-loop hid) true)
@@ -2563,14 +2403,11 @@
             [ti : i64 (- post-edge-mark 1)]
             (while (>= ti edge-mark)
               (let
-                [var : i64 (array-ref st.trail-var ti)]
+                [te : OptRangeTrailEntry
+                  (opt-range-trail-copy (& (array-ref st.trail ti)))]
                 (when
-                  (!= (array-ref st.def-block var) bid)
-                  (set! (array-ref st.lo var) (array-ref st.trail-lo ti))
-                  (set! (array-ref st.hi var) (array-ref st.trail-hi ti))
-                  (set! (array-ref st.kz var) (array-ref st.trail-kz ti))
-                  (set! (array-ref st.ko var) (array-ref st.trail-ko ti))
-                  (set! (array-ref st.kind var) (array-ref st.trail-kind ti))))
+                  (!= (array-ref st.def-block te.var) bid)
+                  (set! (array-ref st.vals te.var) te.val)))
               (-= ti 1)))
           (set! st.rel-len rmark))))))
 
@@ -2701,6 +2538,67 @@
 
 ;; Solve all phis at loop header `hid` using 1-step exact join + widening +
 ;; coupled linear-IV bounds + sound post-fixpoint verification.
+(define (opt-range-sim-backedges!
+  [st : (&mut OptRangeState)]
+  [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
+  [block-labels : (& (__tl_dyn-array i64))]
+  [reachable : (& (__tl_dyn-array bool))]
+  [tin : (& (__tl_dyn-array i64))]
+  [tout : (& (__tl_dyn-array i64))]
+  [pred-off : (& (__tl_dyn-array i64))]
+  [pred-edges : (& (__tl_dyn-array i64))]
+  [nonneg-globals : (& opt_i64_i64_map.Map)]
+  [hid : i64]
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [phi-cnt : i64]
+  [phi-dsts : (& (__tl_dyn-array i64))]
+  [seed-vals : (& (__tl_dyn-array OptRangeVal))]
+  [loop-ids : (& (__tl_dyn-array i64))]
+  [loop-cnt : i64]
+  [out-back : (&mut (__tl_dyn-array OptRangeVal))]) : unit
+  (let
+    [mark : i64 st.trail-len]
+    [rmark : i64 st.rel-len]
+    (for [pi (iterator.range 0 phi-cnt)]
+      (opt-range-var-set!
+        st
+        (array-ref phi-dsts pi)
+        (& (array-ref seed-vals pi))))
+    (opt-range-sim-loop-blocks!
+      st
+      block-dense
+      block-labels
+      reachable
+      tin
+      tout
+      pred-off
+      pred-edges
+      nonneg-globals
+      hid
+      loop-ids
+      loop-cnt)
+    (for [pi (iterator.range 0 phi-cnt)]
+      (match (ir.compiler-ir-instr-seq-borrow instrs pi)
+        [(Phi _ inputs ty)
+          (set!
+            (array-ref out-back pi)
+            (opt-range-eval-phi-inputs
+              st
+              block-dense
+              block-labels
+              reachable
+              tin
+              tout
+              nonneg-globals
+              hid
+              (& inputs)
+              (& ty)
+              false
+              true))]
+        [_ unit]))
+    (opt-range-trail-rollback! st mark)
+    (set! st.rel-len rmark)))
+
 (define (opt-range-solve-loop-header!
   [st : (&mut OptRangeState)]
   [block-dense : (& (__tl_dyn-array ir.CompilerIrBlock))]
@@ -2721,20 +2619,15 @@
         (while (and
           (< phi-cnt n)
           (match (ir.compiler-ir-instr-seq-borrow instrs phi-cnt)
-            [(Phi _ _ _) true]
+            [(Phi dst _ _)
+              (opt-range-flag-set! st dst 8)
+              true]
             [_ false]))
           (+= phi-cnt 1))
-        (for [pi (iterator.range 0 phi-cnt)]
-          (match (ir.compiler-ir-instr-seq-borrow instrs pi)
-            [(Phi dst _ _)
-              (when
-                (and (>= dst 0) (< dst st.frame))
-                (set! (array-ref st.loop-header-phi dst) true))]
-            [_ unit]))
         (when
           (> phi-cnt 0)
           (let
-            [loop-ids : (__tl_dyn-array i64) (__tl_make-array i64 65)]
+            [loop-ids : (__tl_dyn-array i64) (opt-range-i64-arr 65)]
             [loop-cnt : i64
               (opt-range-collect-loop-blocks
                 st.block-count
@@ -2747,7 +2640,6 @@
                 hid
                 (&mut loop-ids))]
             (if (= loop-cnt 0)
-              ;; Loop exceeds 64-block cap: conservatively set header phis to Top.
               (for [pi (iterator.range 0 phi-cnt)]
                 (match (ir.compiler-ir-instr-seq-borrow instrs pi)
                   [(Phi dst _ ty)
@@ -2757,16 +2649,19 @@
                       (& (opt-range-range-for-type (& ty))))]
                   [_ unit]))
               (let
-                [phi-dsts : (__tl_dyn-array i64) (__tl_make-array i64 phi-cnt)]
+                [phi-dsts : (__tl_dyn-array i64) (opt-range-i64-arr phi-cnt)]
+                [phi-top : (__tl_dyn-array OptRangeVal)
+                  (opt-range-val-arr phi-cnt)]
                 [entry-vals : (__tl_dyn-array OptRangeVal)
-                  (__tl_make-array OptRangeVal phi-cnt)]
+                  (opt-range-val-arr phi-cnt)]
                 [step1-vals : (__tl_dyn-array OptRangeVal)
-                  (__tl_make-array OptRangeVal phi-cnt)]
+                  (opt-range-val-arr phi-cnt)]
                 [cand-vals : (__tl_dyn-array OptRangeVal)
-                  (__tl_make-array OptRangeVal phi-cnt)]
-                [iv-steps : (__tl_dyn-array i64) (__tl_make-array i64 phi-cnt)]
-                [coupled : (__tl_dyn-array bool) (__tl_make-array bool phi-cnt)]
-                ;; Count total backedges into hid (needed for coupled-IV soundness).
+                  (opt-range-val-arr phi-cnt)]
+                [back-vals : (__tl_dyn-array OptRangeVal)
+                  (opt-range-val-arr phi-cnt)]
+                [iv-steps : (__tl_dyn-array i64) (opt-range-i64-arr phi-cnt)]
+                [coupled : (__tl_dyn-array bool) (opt-range-bool-arr phi-cnt)]
                 [back-edge-cnt : i64
                   (let
                     [ps : i64 (array-ref pred-off hid)]
@@ -2787,6 +2682,9 @@
                     [(Phi dst inputs ty)
                       (set! (array-ref phi-dsts pi) dst)
                       (set!
+                        (array-ref phi-top pi)
+                        (opt-range-range-for-type (& ty)))
+                      (set!
                         (array-ref iv-steps pi)
                         (opt-range-phi-positive-step
                           st
@@ -2798,181 +2696,119 @@
                           hid
                           dst
                           (& inputs)))
-                      (let
-                        [ev : OptRangeVal
-                          (opt-range-eval-phi-inputs
-                            st
-                            block-dense
-                            block-labels
-                            reachable
-                            tin
-                            tout
-                            nonneg-globals
-                            hid
-                            (& inputs)
-                            (& ty)
-                            true
-                            false)]
-                        (set! (array-ref entry-vals pi) ev))]
+                      (set!
+                        (array-ref entry-vals pi)
+                        (opt-range-eval-phi-inputs
+                          st
+                          block-dense
+                          block-labels
+                          reachable
+                          tin
+                          tout
+                          nonneg-globals
+                          hid
+                          (& inputs)
+                          (& ty)
+                          true
+                          false))]
                     [_ unit]))
                 ;; Phase 1: simulate with entry seeds to get 1st backedge values.
-                (let
-                  [mark1 : i64 st.trail-len]
-                  [rmark1 : i64 st.rel-len]
-                  (for [pi (iterator.range 0 phi-cnt)]
-                    (opt-range-var-set!
-                      st
-                      (array-ref phi-dsts pi)
-                      (& (array-ref entry-vals pi))))
-                  (opt-range-sim-loop-blocks!
-                    st
-                    block-dense
-                    block-labels
-                    reachable
-                    tin
-                    tout
-                    pred-off
-                    pred-edges
-                    nonneg-globals
-                    hid
-                    (& loop-ids)
-                    loop-cnt)
-                  (for [pi (iterator.range 0 phi-cnt)]
-                    (match (ir.compiler-ir-instr-seq-borrow instrs pi)
-                      [(Phi _ inputs ty)
-                        (let
-                          [bv : OptRangeVal
-                            (opt-range-eval-phi-inputs
-                              st
-                              block-dense
-                              block-labels
-                              reachable
-                              tin
-                              tout
-                              nonneg-globals
-                              hid
-                              (& inputs)
-                              (& ty)
-                              false
-                              true)]
-                          [ev : OptRangeVal (array-ref entry-vals pi)]
-                          (set!
-                            (array-ref step1-vals pi)
-                            (opt-range-join (& ev) (& bv))))]
-                      [_ unit]))
-                  (opt-range-trail-rollback! st mark1)
-                  (set! st.rel-len rmark1))
-                ;; Phase 2: simulate with 1-step joined values to test convergence
-                ;; and compute widened candidates.
-                (let
-                  [mark2 : i64 st.trail-len]
-                  [rmark2 : i64 st.rel-len]
-                  (for [pi (iterator.range 0 phi-cnt)]
-                    (opt-range-var-set!
-                      st
-                      (array-ref phi-dsts pi)
-                      (& (array-ref step1-vals pi))))
-                  (opt-range-sim-loop-blocks!
-                    st
-                    block-dense
-                    block-labels
-                    reachable
-                    tin
-                    tout
-                    pred-off
-                    pred-edges
-                    nonneg-globals
-                    hid
-                    (& loop-ids)
-                    loop-cnt)
-                  (for [pi (iterator.range 0 phi-cnt)]
-                    (match (ir.compiler-ir-instr-seq-borrow instrs pi)
-                      [(Phi _ inputs ty)
-                        (let
-                          [bv2 : OptRangeVal
-                            (opt-range-eval-phi-inputs
-                              st
-                              block-dense
-                              block-labels
-                              reachable
-                              tin
-                              tout
-                              nonneg-globals
-                              hid
-                              (& inputs)
-                              (& ty)
-                              false
-                              true)]
-                          [s1 : OptRangeVal (array-ref step1-vals pi)]
-                          [ev : OptRangeVal (array-ref entry-vals pi)]
-                          [tr : OptRangeVal (opt-range-range-for-type (& ty))]
-                          (if (opt-range-subset? (& bv2) (& s1))
-                            ;; Converged in 1 step! Keep exact range.
-                            (set! (array-ref cand-vals pi) s1)
-                            ;; Widen unstable endpoints while preserving guarded bounds.
-                            (let
-                              [step : i64 (array-ref iv-steps pi)]
-                              [guard-hi : i64
-                                (if (and
-                                  (> step 0)
-                                  (= back-edge-cnt 1)
-                                  (>= ev.lo 0))
-                                  (opt-range-phi-backedge-guard-hi
-                                    st
-                                    block-dense
-                                    block-labels
-                                    reachable
-                                    tin
-                                    tout
-                                    nonneg-globals
-                                    hid
-                                    (& inputs)
-                                    ev.lo)
-                                  opt-range-i64-max)]
-                              [cand : OptRangeVal
-                                (cond
-                                  [(and
-                                      (> step 0)
-                                      (= back-edge-cnt 1)
-                                      (>= ev.lo 0)
-                                      (< guard-hi opt-range-i64-max)
-                                      (<= guard-hi (- opt-range-i64-max step)))
-                                    (opt-range-interval
-                                      ev.lo
-                                      (opt-range-max-i64 ev.hi guard-hi))]
-                                  [(and
-                                      (= step 0)
-                                      (= bv2.kind opt-range-kind-known)
-                                      (or (> bv2.lo tr.lo) (< bv2.hi tr.hi)))
-                                    ;; Bounded non-IV recurrence (e.g. modulo/mask
-                                    ;; accumulator): try 2nd exact join; Phase 3
-                                    ;; verifies post-fixpoint or widens to Top.
-                                    (opt-range-join (& s1) (& bv2))]
-                                  [else
-                                    (let
-                                      [wlo : i64
-                                        (if (< bv2.lo s1.lo)
-                                          (opt-range-max-i64
-                                            tr.lo
-                                            opt-range-i64-min)
-                                          s1.lo)]
-                                      [whi : i64
-                                        (if (> bv2.hi s1.hi)
-                                          (opt-range-min-i64
-                                            tr.hi
-                                            opt-range-i64-max)
-                                          s1.hi)]
-                                      (opt-range-interval wlo whi))])]
-                              (set! (array-ref cand-vals pi) cand))))]
-                      [_ unit]))
-                  (opt-range-trail-rollback! st mark2)
-                  (set! st.rel-len rmark2))
-                ;; Coupled linear-IV refinement (sound when back-edge-cnt == 1):
-                ;; if primary IV `p` has constant init `init_p`, step `s_p > 0`,
-                ;; and proven non-wrapping upper bound `hi_p` (`hi_p + s_p <= I64_MAX`),
-                ;; then iteration count `k <= (hi_p - init_p) / s_p`, so any secondary
-                ;; linear IV `q` in the same header with `step_q > 0` and non-negative
-                ;; init satisfies `q <= entry_q.hi + k_max * step_q` (if no overflow).
+                (opt-range-sim-backedges!
+                  st
+                  block-dense
+                  block-labels
+                  reachable
+                  tin
+                  tout
+                  pred-off
+                  pred-edges
+                  nonneg-globals
+                  hid
+                  (& instrs)
+                  phi-cnt
+                  (& phi-dsts)
+                  (& entry-vals)
+                  (& loop-ids)
+                  loop-cnt
+                  (&mut back-vals))
+                (for [pi (iterator.range 0 phi-cnt)]
+                  (set!
+                    (array-ref step1-vals pi)
+                    (opt-range-join
+                      (& (array-ref entry-vals pi))
+                      (& (array-ref back-vals pi)))))
+                ;; Phase 2: simulate with 1-step joined values & widen candidates.
+                (opt-range-sim-backedges!
+                  st
+                  block-dense
+                  block-labels
+                  reachable
+                  tin
+                  tout
+                  pred-off
+                  pred-edges
+                  nonneg-globals
+                  hid
+                  (& instrs)
+                  phi-cnt
+                  (& phi-dsts)
+                  (& step1-vals)
+                  (& loop-ids)
+                  loop-cnt
+                  (&mut back-vals))
+                (for [pi (iterator.range 0 phi-cnt)]
+                  (let
+                    [bv2 : OptRangeVal (array-ref back-vals pi)]
+                    [s1 : OptRangeVal (array-ref step1-vals pi)]
+                    [ev : OptRangeVal (array-ref entry-vals pi)]
+                    [tr : OptRangeVal (array-ref phi-top pi)]
+                    (if (opt-range-subset? (& bv2) (& s1))
+                      (set! (array-ref cand-vals pi) s1)
+                      (let
+                        [step : i64 (array-ref iv-steps pi)]
+                        [guard-hi : i64
+                          (if (and (> step 0) (= back-edge-cnt 1) (>= ev.lo 0))
+                            (match (ir.compiler-ir-instr-seq-borrow instrs pi)
+                              [(Phi _ inputs _)
+                                (opt-range-phi-backedge-guard-hi
+                                  st
+                                  block-dense
+                                  block-labels
+                                  reachable
+                                  tin
+                                  tout
+                                  nonneg-globals
+                                  hid
+                                  (& inputs)
+                                  ev.lo)]
+                              [_ opt-range-i64-max])
+                            opt-range-i64-max)]
+                        [cand : OptRangeVal
+                          (cond
+                            [(and
+                                (> step 0)
+                                (= back-edge-cnt 1)
+                                (>= ev.lo 0)
+                                (< guard-hi opt-range-i64-max)
+                                (<= guard-hi (- opt-range-i64-max step)))
+                              (opt-range-interval
+                                ev.lo
+                                (opt-range-max-i64 ev.hi guard-hi))]
+                            [(and
+                                (= step 0)
+                                (= bv2.kind opt-range-kind-known)
+                                (or (> bv2.lo tr.lo) (< bv2.hi tr.hi)))
+                              (opt-range-join (& s1) (& bv2))]
+                            [else
+                              (opt-range-interval
+                                (if (< bv2.lo s1.lo)
+                                  (opt-range-max-i64 tr.lo opt-range-i64-min)
+                                  s1.lo)
+                                (if (> bv2.hi s1.hi)
+                                  (opt-range-min-i64 tr.hi opt-range-i64-max)
+                                  s1.hi))])]
+                        (set! (array-ref cand-vals pi) cand)))))
+                ;; Coupled linear-IV refinement (sound when back-edge-cnt == 1).
                 (when
                   (= back-edge-cnt 1)
                   (let
@@ -3018,19 +2854,11 @@
                                     (set! (array-ref coupled qi) true)]
                                   [(None) unit])]
                               [(None) unit])))))))
-                ;; Phase 3: sound post-fixpoint verification pass. Any non-coupled
-                ;; phi whose backedge escapes `cand-vals` widens to Top and re-verifies.
+                ;; Phase 3: sound post-fixpoint verification pass.
                 (for [_round (iterator.range 0 2)]
                   (let
-                    [mark3 : i64 st.trail-len]
-                    [rmark3 : i64 st.rel-len]
                     [all-ok? : bool true]
-                    (for [pi (iterator.range 0 phi-cnt)]
-                      (opt-range-var-set!
-                        st
-                        (array-ref phi-dsts pi)
-                        (& (array-ref cand-vals pi))))
-                    (opt-range-sim-loop-blocks!
+                    (opt-range-sim-backedges!
                       st
                       block-dense
                       block-labels
@@ -3041,67 +2869,40 @@
                       pred-edges
                       nonneg-globals
                       hid
+                      (& instrs)
+                      phi-cnt
+                      (& phi-dsts)
+                      (& cand-vals)
                       (& loop-ids)
-                      loop-cnt)
+                      loop-cnt
+                      (&mut back-vals))
                     (for [pi (iterator.range 0 phi-cnt)]
                       (when
-                        (not (array-ref coupled pi))
-                        (match (ir.compiler-ir-instr-seq-borrow instrs pi)
-                          [(Phi _ inputs ty)
-                            (let
-                              [bv3 : OptRangeVal
-                                (opt-range-eval-phi-inputs
-                                  st
-                                  block-dense
-                                  block-labels
-                                  reachable
-                                  tin
-                                  tout
-                                  nonneg-globals
-                                  hid
-                                  (& inputs)
-                                  (& ty)
-                                  false
-                                  true)]
-                              [cv : OptRangeVal (array-ref cand-vals pi)]
-                              (when
-                                (not (opt-range-subset? (& bv3) (& cv)))
-                                (set! all-ok? false)
-                                (set!
-                                  (array-ref cand-vals pi)
-                                  (opt-range-range-for-type (& ty)))))]
-                          [_ unit])))
-                    (opt-range-trail-rollback! st mark3)
-                    (set! st.rel-len rmark3)
-                    ;; If any non-coupled phi failed verification on round 0,
-                    ;; also clear coupled IV assumptions so round 1 re-verifies
-                    ;; strictly from verified bounds.
-                    (when
-                      (and (not all-ok?) (= _round 0))
-                      (for [qi (iterator.range 0 phi-cnt)]
-                        (when
-                          (array-ref coupled qi)
-                          (set! (array-ref coupled qi) false)
-                          (match (ir.compiler-ir-instr-seq-borrow instrs qi)
-                            [(Phi _ _ ty)
-                              (set!
-                                (array-ref cand-vals qi)
-                                (opt-range-range-for-type (& ty)))]
-                            [_ unit]))))
-                    ;; If still unstable on final round, conservatively widen all
-                    ;; remaining unverified non-coupled phis to Top.
-                    (when
-                      (and (not all-ok?) (= _round 1))
-                      (for [pi (iterator.range 0 phi-cnt)]
-                        (when
+                        (and
                           (not (array-ref coupled pi))
-                          (match (ir.compiler-ir-instr-seq-borrow instrs pi)
-                            [(Phi _ _ ty)
-                              (set!
-                                (array-ref cand-vals pi)
-                                (opt-range-range-for-type (& ty)))]
-                            [_ unit]))))))
-                ;; Commit verified header phi ranges into live state.
+                          (not
+                            (opt-range-subset?
+                              (& (array-ref back-vals pi))
+                              (& (array-ref cand-vals pi)))))
+                        (set! all-ok? false)
+                        (set!
+                          (array-ref cand-vals pi)
+                          (opt-range-val-copy (& (array-ref phi-top pi))))))
+                    (when
+                      (not all-ok?)
+                      (for [qi (iterator.range 0 phi-cnt)]
+                        (if (= _round 0)
+                          (when
+                            (array-ref coupled qi)
+                            (set! (array-ref coupled qi) false)
+                            (set!
+                              (array-ref cand-vals qi)
+                              (opt-range-val-copy (& (array-ref phi-top qi)))))
+                          (when
+                            (not (array-ref coupled qi))
+                            (set!
+                              (array-ref cand-vals qi)
+                              (opt-range-val-copy (& (array-ref phi-top qi))))))))))
                 (for [pi (iterator.range 0 phi-cnt)]
                   (opt-range-var-set!
                     st
@@ -3179,7 +2980,7 @@
           ;;   9 = fold mask -> Mov dst rhs
           ;;  10 = fold mask -> Mov dst (I64 0)
           ;;  11 = retype signed Div/Mod/SafeDiv/SafeMod -> U64
-          [actions : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+          [actions : (__tl_dyn-array i64) (opt-range-i64-arr n)]
           [changed? : bool false]
           (for [pos (iterator.range 0 n)]
             (match (ir.compiler-ir-instr-seq-borrow instrs pos)
@@ -3266,7 +3067,7 @@
                           (set! changed? true)))]
                     [(and
                         (not (opt-range-addr-taken? st dst))
-                        (not (array-ref st.shift-count-var dst))
+                        (not (opt-range-flag? st dst 4))
                         (match (& op)
                           [(or (BitAnd) (BitOr) (BitXor)) true]
                           [_ false]))
@@ -3365,139 +3166,13 @@
                 (for [pos (iterator.range 0 n)]
                   (let
                     [act : i64 (array-ref actions pos)]
-                    (cond
-                      [(= act 0)
-                        (ir.compiler-ir-instr-builder-push!
-                          (&mut builder)
-                          (ir.compiler-ir-instr-seq-ref (& instrs) pos))]
-                      [(= act 1) unit]
-                      [(= act 2)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(BinOp dst _ _ _ _)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.Mov dst (Bool true) (Bool)))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [(= act 3)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(BinOp dst _ _ _ _)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.Mov dst (Bool false) (Bool)))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [(= act 4)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(Branch _ t f)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.Branch (Bool true) t f))]
-                          [(TotalEnumBranch _ t f)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.TotalEnumBranch
-                                (Bool true)
-                                t
-                                f))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [(= act 5)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(Branch _ t f)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.Branch (Bool false) t f))]
-                          [(TotalEnumBranch _ t f)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.TotalEnumBranch
-                                (Bool false)
-                                t
-                                f))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [(= act 6)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(Select payload)
-                            (let
-                              [sel : ir.CompilerIrInstrSelectPayload
-                                (deref payload)]
-                              (ir.compiler-ir-instr-builder-push!
-                                (&mut builder)
-                                (ir.CompilerIrInstr.Mov
-                                  sel.dst
-                                  sel.on-true
-                                  sel.ty)))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [(= act 7)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(Select payload)
-                            (let
-                              [sel : ir.CompilerIrInstrSelectPayload
-                                (deref payload)]
-                              (ir.compiler-ir-instr-builder-push!
-                                (&mut builder)
-                                (ir.CompilerIrInstr.Mov
-                                  sel.dst
-                                  sel.on-false
-                                  sel.ty)))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [(= act 8)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(BinOp dst _ lhs _ ty)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.Mov dst lhs ty))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [(= act 9)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(BinOp dst _ _ rhs ty)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.Mov dst rhs ty))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [(= act 10)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(BinOp dst _ _ _ ty)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.Mov dst (I64 0) ty))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [(= act 11)
-                        (match (ir.compiler-ir-instr-seq-ref (& instrs) pos)
-                          [(BinOp dst op lhs rhs _)
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.CompilerIrInstr.BinOp dst op lhs rhs (U64)))]
-                          [_
-                            (ir.compiler-ir-instr-builder-push!
-                              (&mut builder)
-                              (ir.compiler-ir-instr-seq-ref (& instrs) pos))])]
-                      [else unit])))
+                    (when
+                      (!= act 1)
+                      (ir.compiler-ir-instr-builder-push!
+                        (&mut builder)
+                        (if (= act 0)
+                          (ir.compiler-ir-instr-seq-ref (& instrs) pos)
+                          (opt-range-rewrite-instr act (& instrs) pos))))))
                 (set!
                   (array-ref st.out-blocks bid)
                   (ir.CompilerIrBlock.Block
@@ -3505,6 +3180,39 @@
                     (ir.compiler-ir-instr-builder-to-seq builder)))
                 (set! (array-ref st.out-changed bid) true)
                 (set! st.any-changed true)))))])))
+
+(define (opt-range-rewrite-instr
+  [act : i64]
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [pos : i64]) : ir.CompilerIrInstr
+  (match (ir.compiler-ir-instr-seq-ref instrs pos)
+    [(BinOp dst op lhs rhs ty)
+      (cond
+        [(= act 2) (ir.CompilerIrInstr.Mov dst (Bool true) (Bool))]
+        [(= act 3) (ir.CompilerIrInstr.Mov dst (Bool false) (Bool))]
+        [(= act 8) (ir.CompilerIrInstr.Mov dst lhs ty)]
+        [(= act 9) (ir.CompilerIrInstr.Mov dst rhs ty)]
+        [(= act 10) (ir.CompilerIrInstr.Mov dst (I64 0) ty)]
+        [(= act 11) (ir.CompilerIrInstr.BinOp dst op lhs rhs (U64))]
+        [else (ir.CompilerIrInstr.BinOp dst op lhs rhs ty)])]
+    [(Branch c t f)
+      (cond
+        [(= act 4) (ir.CompilerIrInstr.Branch (Bool true) t f)]
+        [(= act 5) (ir.CompilerIrInstr.Branch (Bool false) t f)]
+        [else (ir.CompilerIrInstr.Branch c t f)])]
+    [(TotalEnumBranch c t f)
+      (cond
+        [(= act 4) (ir.CompilerIrInstr.TotalEnumBranch (Bool true) t f)]
+        [(= act 5) (ir.CompilerIrInstr.TotalEnumBranch (Bool false) t f)]
+        [else (ir.CompilerIrInstr.TotalEnumBranch c t f)])]
+    [(Select payload)
+      (let
+        [sel : ir.CompilerIrInstrSelectPayload (deref payload)]
+        (cond
+          [(= act 6) (ir.CompilerIrInstr.Mov sel.dst sel.on-true sel.ty)]
+          [(= act 7) (ir.CompilerIrInstr.Mov sel.dst sel.on-false sel.ty)]
+          [else (ir.CompilerIrInstr.Select (box sel))]))]
+    [_ (ir.compiler-ir-instr-seq-ref instrs pos)]))
 
 ;; --- Dominator-tree DFS walk -------------------------------------------------
 (define (opt-range-dfs!
@@ -3576,7 +3284,7 @@
   [entry-id : i64]) : unit
   (let
     [bc : i64 st.block-count]
-    [counts : (__tl_dyn-array i64) (__tl_make-array i64 bc)]
+    [counts : (__tl_dyn-array i64) (opt-range-i64-arr bc)]
     (for [id (iterator.range 0 bc)]
       (when
         (and (array-ref reachable id) (!= id entry-id))
@@ -3593,13 +3301,12 @@
       (set! (array-ref st.dom-child-off bc) sum)
       (set!
         st.dom-child-ids
-        (__tl_make-array
-          i64
+        (opt-range-i64-arr
           (if (< sum 1)
             1
             sum)))
       (let
-        [cursor : (__tl_dyn-array i64) (__tl_make-array i64 bc)]
+        [cursor : (__tl_dyn-array i64) (opt-range-i64-arr bc)]
         (for [id (iterator.range 0 bc)]
           (set! (array-ref cursor id) (array-ref st.dom-child-off id)))
         (for [id (iterator.range 0 bc)]
@@ -3633,6 +3340,20 @@
                   (-= j 1))
                 (set! (array-ref st.dom-child-ids (+ j 1)) key)))))))))
 
+(define (opt-range-prescan-def-ty!
+  [st : (&mut OptRangeState)]
+  [dst : i64]
+  [kind : i64]
+  [ty : (& ast.AstType)]
+  [set-width? : bool]) : unit
+  (when (> kind 0) (set! (array-ref st.def-kind dst) kind))
+  (when
+    set-width?
+    (set! (array-ref st.var-width dst) (opt-range-type-int-width ty)))
+  (when
+    (opt-range-descriptor-handle-type? st.type-segment-bases ty)
+    (opt-range-flag-set! st dst 1)))
+
 (define (opt-range-prescan!
   [st : (&mut OptRangeState)]
   [params : (& ir.CompilerIrParamSeq)]
@@ -3648,19 +3369,8 @@
             (set!
               (array-ref st.def-count var)
               (+ (array-ref st.def-count var) 1))
-            (set!
-              (array-ref st.var-width var)
-              (opt-range-type-int-width (& ty)))
-            (when
-              (opt-range-descriptor-handle-type? st.type-segment-bases (& ty))
-              (set! (array-ref st.desc-handle var) true))
-            (let
-              [pr : OptRangeVal (opt-range-range-for-type (& ty))]
-              (set! (array-ref st.lo var) pr.lo)
-              (set! (array-ref st.hi var) pr.hi)
-              (set! (array-ref st.kz var) pr.kz)
-              (set! (array-ref st.ko var) pr.ko)
-              (set! (array-ref st.kind var) pr.kind)))])))
+            (opt-range-prescan-def-ty! st var 0 (& ty) true)
+            (set! (array-ref st.vals var) (opt-range-range-for-type (& ty))))])))
   (for [bid (iterator.range 0 st.block-count)]
     (when
       (array-ref reachable bid)
@@ -3682,15 +3392,7 @@
                   (set! (array-ref st.def-pos dst) pos)
                   (match (ir.compiler-ir-instr-seq-borrow instrs pos)
                     [(Mov _ src ty)
-                      (set! (array-ref st.def-kind dst) 1)
-                      (set!
-                        (array-ref st.var-width dst)
-                        (opt-range-type-int-width (& ty)))
-                      (when
-                        (opt-range-descriptor-handle-type?
-                          st.type-segment-bases
-                          (& ty))
-                        (set! (array-ref st.desc-handle dst) true))
+                      (opt-range-prescan-def-ty! st dst 1 (& ty) true)
                       (match (& src)
                         [(Var sv) (set! (array-ref st.copy-src dst) sv)]
                         [_ unit])]
@@ -3704,10 +3406,7 @@
                       (match (& op)
                         [(or (Shl _) (Shr _))
                           (match (& rhs)
-                            [(Var rv)
-                              (when
-                                (and (>= rv 0) (< rv st.frame))
-                                (set! (array-ref st.shift-count-var rv) true))]
+                            [(Var rv) (opt-range-flag-set! st rv 4)]
                             [_ unit])]
                         [_ unit])]
                     [(UnOp _ op _ ty)
@@ -3719,128 +3418,73 @@
                           [_ (opt-range-type-int-width (& ty))]))]
                     [(Cast _ src from-ty to-ty)
                       (set! (array-ref st.def-kind dst) 4)
-                      (set!
-                        (array-ref st.var-width dst)
-                        (opt-range-type-int-width (& to-ty)))
-                      (when
-                        (and
-                          (= (opt-range-type-int-width (& from-ty)) 64)
-                          (= (opt-range-type-int-width (& to-ty)) 64))
-                        (match (& src)
-                          [(Var sv) (set! (array-ref st.copy-src dst) sv)]
-                          [_ unit]))]
+                      (let
+                        [tw : i64 (opt-range-type-int-width (& to-ty))]
+                        (set! (array-ref st.var-width dst) tw)
+                        (when
+                          (and
+                            (= (opt-range-type-int-width (& from-ty)) 64)
+                            (= tw 64))
+                          (match (& src)
+                            [(Var sv) (set! (array-ref st.copy-src dst) sv)]
+                            [_ unit])))]
                     [(Phi _ _ ty)
-                      (set! (array-ref st.def-kind dst) 5)
-                      (set!
-                        (array-ref st.var-width dst)
-                        (opt-range-type-int-width (& ty)))
-                      (when
-                        (opt-range-descriptor-handle-type?
-                          st.type-segment-bases
-                          (& ty))
-                        (set! (array-ref st.desc-handle dst) true))]
+                      (opt-range-prescan-def-ty! st dst 5 (& ty) true)]
                     [(Word _ _ _ ty)
-                      (set! (array-ref st.def-kind dst) 6)
-                      (set!
-                        (array-ref st.var-width dst)
-                        (opt-range-type-int-width (& ty)))
-                      (when
-                        (opt-range-descriptor-handle-type?
-                          st.type-segment-bases
-                          (& ty))
-                        (set! (array-ref st.desc-handle dst) true))]
+                      (opt-range-prescan-def-ty! st dst 6 (& ty) true)]
                     [(Select payload)
                       (set! (array-ref st.def-kind dst) 7)
                       (set!
                         (array-ref st.var-width dst)
                         (opt-range-type-int-width (& payload.ty)))]
                     [(Load _ _ ty)
-                      (set! (array-ref st.def-kind dst) 8)
-                      (set!
-                        (array-ref st.var-width dst)
-                        (opt-range-type-int-width (& ty)))
-                      (when
-                        (opt-range-descriptor-handle-type?
-                          st.type-segment-bases
-                          (& ty))
-                        (set! (array-ref st.desc-handle dst) true))]
+                      (opt-range-prescan-def-ty! st dst 8 (& ty) true)]
                     [(Gep _ _ _ _) (set! (array-ref st.def-kind dst) 9)]
                     [(Pack _ _ ty)
-                      (when
-                        (opt-range-descriptor-handle-type?
-                          st.type-segment-bases
-                          (& ty))
-                        (set! (array-ref st.desc-handle dst) true))]
-                    [(Call _ _ _ ty)
-                      (set!
-                        (array-ref st.var-width dst)
-                        (opt-range-type-int-width (& ty)))
-                      (when
-                        (opt-range-descriptor-handle-type?
-                          st.type-segment-bases
-                          (& ty))
-                        (set! (array-ref st.desc-handle dst) true))]
-                    [(CallIndirect _ _ _ ty)
-                      (set!
-                        (array-ref st.var-width dst)
-                        (opt-range-type-int-width (& ty)))
-                      (when
-                        (opt-range-descriptor-handle-type?
-                          st.type-segment-bases
-                          (& ty))
-                        (set! (array-ref st.desc-handle dst) true))]
+                      (opt-range-prescan-def-ty! st dst 0 (& ty) false)]
+                    [(or (Call _ _ _ ty) (CallIndirect _ _ _ ty))
+                      (opt-range-prescan-def-ty! st dst 0 (& ty) true)]
                     [_ unit])))))])))
-  ;; Invalidate metadata for any multi-def or addr-taken variable so no
-  ;; definition-inspection helper trusts non-SSA or memory-aliased locals.
+  ;; Invalidate metadata for any multi-def or addr-taken variable.
   (for [v (iterator.range 0 st.frame)]
     (when
       (or (> (array-ref st.def-count v) 1) (opt-range-addr-taken? st v))
       (set! (array-ref st.def-kind v) 0)
       (set! (array-ref st.var-width v) 0)
       (set! (array-ref st.copy-src v) -1)
-      (set! (array-ref st.desc-handle v) false)
-      (set! (array-ref st.len-slot-ptr v) false)))
-  ;; Second pass to propagate descriptor-handle copies and mark descriptor length
-  ;; slot GEPs (`gep desc, 1 : i64` or `gep desc, 8 : u8`).
-  (for [bid (iterator.range 0 st.block-count)]
+      (set! (array-ref st.var-flags v) (bit-and (array-ref st.var-flags v) 28))))
+  ;; Second pass: mark descriptor length-slot GEPs via def-block/def-pos.
+  (for [v (iterator.range 0 st.frame)]
     (when
-      (array-ref reachable bid)
-      (match (& (array-ref block-dense bid))
+      (= (array-ref st.def-kind v) 9)
+      (match (& (array-ref block-dense (array-ref st.def-block v)))
         [(Block _ instrs)
-          (let
-            [n : i64 (ir.compiler-ir-instr-seq-count (& instrs))]
-            (for [pos (iterator.range 0 n)]
-              (match (ir.compiler-ir-instr-seq-borrow instrs pos)
-                [(Gep dst base offset elem-ty)
+          (match (ir.compiler-ir-instr-seq-borrow
+            instrs
+            (array-ref st.def-pos v))
+            [(Gep dst base offset elem-ty)
+              (match (& base)
+                [(Var bv)
                   (when
-                    (and (>= dst 0) (< dst st.frame))
-                    (match (& base)
-                      [(Var bv)
-                        (let
-                          [rb : i64 (opt-range-resolve-copy st bv)]
-                          (when
+                    (and
+                      (opt-range-flag? st (opt-range-resolve-copy st bv) 1)
+                      (match (& offset)
+                        [(I64 k)
+                          (or
                             (and
-                              (>= rb 0)
-                              (< rb st.frame)
-                              (array-ref st.desc-handle rb)
-                              (match (& offset)
-                                [(I64 k)
-                                  (or
-                                    (and
-                                      (= k 1)
-                                      (opt-range-type-is-i64? (& elem-ty)))
-                                    (and
-                                      (= k 1)
-                                      (opt-range-type-is-u64? (& elem-ty)))
-                                    (and
-                                      (= k 8)
-                                      (match (& elem-ty)
-                                        [(or (I8) (U8)) true]
-                                        [_ false])))]
-                                [_ false]))
-                            (set! (array-ref st.len-slot-ptr dst) true)))]
-                      [_ unit]))]
-                [_ unit])))]))))
+                              (= k 1)
+                              (or
+                                (opt-range-type-is-i64? (& elem-ty))
+                                (opt-range-type-is-u64? (& elem-ty))))
+                            (and
+                              (= k 8)
+                              (match (& elem-ty)
+                                [(or (I8) (U8)) true]
+                                [_ false])))]
+                        [_ false]))
+                    (opt-range-flag-set! st dst 2))]
+                [_ unit])]
+            [_ unit])]))))
 
 ;; --- Public entry point ------------------------------------------------------
 (define (opt-range-cvp-blocks
@@ -3876,66 +3520,49 @@
         [scratch : arena.Arena (arena.make)]
         [out-blocks : (__tl_dyn-array ir.CompilerIrBlock)
           (__tl_make-array ir.CompilerIrBlock block-count)]
-        [out-changed : (__tl_dyn-array bool) (__tl_make-array bool block-count)]
+        [out-changed : (__tl_dyn-array bool) (opt-range-bool-arr block-count)]
         [any-changed : bool
           (in-arena
             (unsafe
               (arena.Arena (arena.raw-handle scratch)))
             (let
-              [lo-arr : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-              [hi-arr : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-              [kz-arr : (__tl_dyn-array u64) (__tl_make-array u64 frame)]
-              [ko-arr : (__tl_dyn-array u64) (__tl_make-array u64 frame)]
-              [kind-arr : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-              [copy-arr : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-              [at-copy : (__tl_dyn-array bool) (__tl_make-array bool frame)]
+              [vals-arr : (__tl_dyn-array OptRangeVal)
+                (opt-range-val-arr frame)]
+              [copy-arr : (__tl_dyn-array i64) (opt-range-i64-arr frame)]
+              [flags-arr : (__tl_dyn-array i64) (opt-range-i64-arr frame)]
+              [top-v : OptRangeVal (opt-range-top)]
               [_init-vars : unit
                 (for [v (iterator.range 0 frame)]
-                  (set! (array-ref lo-arr v) opt-range-i64-min)
-                  (set! (array-ref hi-arr v) opt-range-i64-max)
+                  (set! (array-ref vals-arr v) (opt-range-val-copy (& top-v)))
                   (set! (array-ref copy-arr v) -1)
                   (when
-                    (< v (array-length addr-taken-marks))
-                    (set! (array-ref at-copy v) (array-ref addr-taken-marks v))))]
+                    (and
+                      (< v (array-length addr-taken-marks))
+                      (array-ref addr-taken-marks v))
+                    (set! (array-ref flags-arr v) 16)))]
               [st : OptRangeState
                 (OptRangeState
                   outer
                   type-segment-bases
                   frame
                   block-count
-                  lo-arr
-                  hi-arr
-                  kz-arr
-                  ko-arr
-                  kind-arr
-                  (__tl_make-array i64 frame)
-                  (__tl_make-array i64 frame)
-                  (__tl_make-array i64 frame)
-                  (__tl_make-array i64 frame)
-                  (__tl_make-array i64 frame)
+                  vals-arr
+                  (opt-range-i64-arr frame)
+                  (opt-range-i64-arr frame)
+                  (opt-range-i64-arr frame)
+                  (opt-range-i64-arr frame)
+                  (opt-range-i64-arr frame)
                   copy-arr
-                  (__tl_make-array bool frame)
-                  (__tl_make-array bool frame)
-                  (__tl_make-array bool frame)
-                  (__tl_make-array bool frame)
-                  at-copy
-                  (__tl_make-array i64 64)
-                  (__tl_make-array i64 64)
-                  (__tl_make-array i64 64)
-                  (__tl_make-array u64 64)
-                  (__tl_make-array u64 64)
-                  (__tl_make-array i64 64)
+                  flags-arr
+                  (__tl_make-array OptRangeTrailEntry 64)
                   0
                   64
-                  (__tl_make-array i64 32)
-                  (__tl_make-array i64 32)
-                  (__tl_make-array i64 32)
-                  (__tl_make-array i64 32)
+                  (__tl_make-array OptRangeRelFact 32)
                   0
                   32
-                  (__tl_make-array bool block-count)
-                  (__tl_make-array i64 (+ block-count 1))
-                  (__tl_make-array i64 1)
+                  (opt-range-bool-arr block-count)
+                  (opt-range-i64-arr (+ block-count 1))
+                  (opt-range-i64-arr 1)
                   out-blocks
                   out-changed
                   false)]

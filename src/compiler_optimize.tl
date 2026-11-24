@@ -66417,6 +66417,34 @@
 ;; checked dividend can wrap past INT64_MAX, so `__unroll_body` soundly proves
 ;; every dividend >= 0 while the scalar tail preserves exact wrapping i64 for
 ;; larger `bound`.
+(defstruct OptUnrollAffineVal
+  (ok bool)
+  (coeff i64)
+  (kconst i64))
+
+(define (opt-unroll-affine-copy [av : (& OptUnrollAffineVal)]) : OptUnrollAffineVal
+  (OptUnrollAffineVal av.ok av.coeff av.kconst))
+
+(define (opt-unroll-affine-read
+  [vals : (& (__tl_dyn-array OptUnrollAffineVal))]
+  [frame : i64]
+  [v : (& ir.CompilerIrValue)]) : OptUnrollAffineVal
+  (match v
+    [(I64 c) (OptUnrollAffineVal (>= c 0) 0 c)]
+    [(Var id)
+      (if (and (>= id 0) (< id frame))
+        (opt-unroll-affine-copy (& (array-ref vals id)))
+        (OptUnrollAffineVal false 0 0))]
+    [_ (OptUnrollAffineVal false 0 0)]))
+
+(define (opt-unroll-affine-mul-const [a : (& OptUnrollAffineVal)] [k : i64]) : OptUnrollAffineVal
+  (match (opt_range.opt-range-safe-mul a.coeff k)
+    [(Some mc)
+      (match (opt_range.opt-range-safe-mul a.kconst k)
+        [(Some mk) (OptUnrollAffineVal true mc mk)]
+        [(None) (OptUnrollAffineVal false 0 0)])]
+    [(None) (OptUnrollAffineVal false 0 0)]))
+
 (define (opt-unroll-divmod-nowrap-max-bound
   [type-segment-bases : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -66455,21 +66483,17 @@
       (if (not has-divmod?)
         (None)
         (let
-          [valid : (__tl_dyn-array bool) (__tl_make-array bool frame)]
-          [coeff : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-          [kconst : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
-          [req-check : (__tl_dyn-array bool) (__tl_make-array bool frame)]
-          [assumed-div : (__tl_dyn-array i64) (__tl_make-array i64 16)]
+          [vals : (__tl_dyn-array OptUnrollAffineVal)
+            (__tl_make-array OptUnrollAffineVal frame)]
+          [req-check : (__tl_dyn-array bool)
+            (opt_range.opt-range-bool-arr frame)]
+          [assumed-div : (__tl_dyn-array i64) (opt_range.opt-range-i64-arr 16)]
           [assumed-cnt : i64 0]
           [other-n : i64 (opt-unroll-phi-list-count others)]
           [_seed-iv : unit
             (when
               (and (>= iphi 0) (< iphi frame))
-              (set! (array-ref valid iphi) true)
-              (set! (array-ref coeff iphi) 1)
-              (set! (array-ref kconst iphi) seed-val))]
-          ;; Classify non-counter phis: linear IVs (`j' = j + stride`) and
-          ;; mod-bounded accumulators (`acc' = dividend % M`).
+              (set! (array-ref vals iphi) (OptUnrollAffineVal true 1 seed-val)))]
           [_seed-others : unit
             (for [oi (iterator.range 0 other-n)]
               (match (opt-unroll-phi-list-ref others oi)
@@ -66498,225 +66522,150 @@
                                   [(BinOp bdst (Add) al ar (I64))
                                     (let
                                       [stride : i64
-                                        (cond
-                                          [(and
-                                              (match (& al)
-                                                [(Var lv) (= lv pvar)]
-                                                [_ false])
+                                        (match (& al)
+                                          [(Var lv)
+                                            (if (= lv pvar)
                                               (match (& ar)
-                                                [(I64 s) (>= s 0)]
-                                                [_ false]))
+                                                [(I64 s) s]
+                                                [_ -1])
+                                              -1)]
+                                          [(I64 s)
                                             (match (& ar)
-                                              [(I64 s) s]
+                                              [(Var rv)
+                                                (if (= rv pvar)
+                                                  s
+                                                  -1)]
                                               [_ -1])]
-                                          [(and
-                                              (match (& ar)
-                                                [(Var rv) (= rv pvar)]
-                                                [_ false])
-                                              (match (& al)
-                                                [(I64 s) (>= s 0)]
-                                                [_ false]))
-                                            (match (& al)
-                                              [(I64 s) s]
-                                              [_ -1])]
-                                          [else -1])]
+                                          [_ -1])]
                                       (when
                                         (>= stride 0)
-                                        (set! (array-ref valid pvar) true)
-                                        (set! (array-ref coeff pvar) stride)
-                                        (set! (array-ref kconst pvar) init-v)
+                                        (set!
+                                          (array-ref vals pvar)
+                                          (OptUnrollAffineVal
+                                            true
+                                            stride
+                                            init-v))
                                         (when
                                           (and (>= bdst 0) (< bdst frame))
                                           (set! (array-ref req-check bdst) true))))]
-                                  [(BinOp _ op dlhs (I64 m) (I64))
+                                  [(BinOp _ op (Var dv) (I64 m) (I64))
                                     (when
                                       (and
                                         (> m 0)
+                                        (>= dv 0)
+                                        (< dv frame)
+                                        (< assumed-cnt 16)
                                         (match (& op)
                                           [(or (Mod) (SafeMod)) true]
                                           [_ false]))
-                                      (match (& dlhs)
-                                        [(Var dv)
-                                          (when
-                                            (and
-                                              (>= dv 0)
-                                              (< dv frame)
-                                              (< assumed-cnt 16))
-                                            (let
-                                              [top-a : i64
-                                                (if (> init-v (- m 1))
-                                                  init-v
-                                                  (- m 1))]
-                                              (set! (array-ref valid pvar) true)
-                                              (set! (array-ref coeff pvar) 0)
-                                              (set!
-                                                (array-ref kconst pvar)
-                                                top-a)
-                                              (set!
-                                                (array-ref req-check dv)
-                                                true)
-                                              (set!
-                                                (array-ref
-                                                  assumed-div
-                                                  assumed-cnt)
-                                                dv)
-                                              (+= assumed-cnt 1)))]
-                                        [_ unit]))]
+                                      (set!
+                                        (array-ref vals pvar)
+                                        (OptUnrollAffineVal
+                                          true
+                                          0
+                                          (if (> init-v (- m 1))
+                                            init-v
+                                            (- m 1))))
+                                      (set! (array-ref req-check dv) true)
+                                      (set!
+                                        (array-ref assumed-div assumed-cnt)
+                                        dv)
+                                      (+= assumed-cnt 1))]
                                   [_ unit])))]
                           [_ unit])]
                       [(None) unit]))]))]
-          ;; Forward affine upper-bound propagation over the loop body.
           [_eval-body : unit
             (for [pos (iterator.range phi-count last)]
               (match (ir.compiler-ir-instr-seq-borrow instrs pos)
                 [(Mov dst src (I64))
                   (when
                     (and (>= dst 0) (< dst frame))
-                    (match (& src)
-                      [(I64 c)
-                        (when
-                          (>= c 0)
-                          (set! (array-ref valid dst) true)
-                          (set! (array-ref coeff dst) 0)
-                          (set! (array-ref kconst dst) c))]
-                      [(Var sv)
-                        (when
-                          (and (>= sv 0) (< sv frame) (array-ref valid sv))
-                          (set! (array-ref valid dst) true)
-                          (set! (array-ref coeff dst) (array-ref coeff sv))
-                          (set! (array-ref kconst dst) (array-ref kconst sv)))]
-                      [_ unit]))]
+                    (set!
+                      (array-ref vals dst)
+                      (opt-unroll-affine-read (& vals) frame (& src))))]
                 [(BinOp dst op lhs rhs (I64))
                   (when
                     (and (>= dst 0) (< dst frame))
                     (let
-                      [lv-ok : bool
-                        (match (& lhs)
-                          [(I64 c) (>= c 0)]
-                          [(Var v)
-                            (and (>= v 0) (< v frame) (array-ref valid v))]
-                          [_ false])]
-                      [lc : i64
-                        (match (& lhs)
-                          [(Var v)
-                            (if (and (>= v 0) (< v frame))
-                              (array-ref coeff v)
-                              0)]
-                          [_ 0])]
-                      [lk : i64
-                        (match (& lhs)
-                          [(I64 c) c]
-                          [(Var v)
-                            (if (and (>= v 0) (< v frame))
-                              (array-ref kconst v)
-                              0)]
-                          [_ 0])]
-                      [rv-ok : bool
-                        (match (& rhs)
-                          [(I64 c) (>= c 0)]
-                          [(Var v)
-                            (and (>= v 0) (< v frame) (array-ref valid v))]
-                          [_ false])]
-                      [rc : i64
-                        (match (& rhs)
-                          [(Var v)
-                            (if (and (>= v 0) (< v frame))
-                              (array-ref coeff v)
-                              0)]
-                          [_ 0])]
-                      [rk : i64
-                        (match (& rhs)
-                          [(I64 c) c]
-                          [(Var v)
-                            (if (and (>= v 0) (< v frame))
-                              (array-ref kconst v)
-                              0)]
-                          [_ 0])]
+                      [la : OptUnrollAffineVal
+                        (opt-unroll-affine-read (& vals) frame (& lhs))]
+                      [ra : OptUnrollAffineVal
+                        (opt-unroll-affine-read (& vals) frame (& rhs))]
                       (match (& op)
                         [(Add)
                           (when
-                            (and lv-ok rv-ok)
-                            (match (opt_range.opt-range-safe-add lc rc)
+                            (and la.ok ra.ok)
+                            (match (opt_range.opt-range-safe-add
+                              la.coeff
+                              ra.coeff)
                               [(Some sc)
-                                (match (opt_range.opt-range-safe-add lk rk)
+                                (match (opt_range.opt-range-safe-add
+                                  la.kconst
+                                  ra.kconst)
                                   [(Some sk)
-                                    (set! (array-ref valid dst) true)
-                                    (set! (array-ref coeff dst) sc)
-                                    (set! (array-ref kconst dst) sk)]
+                                    (set!
+                                      (array-ref vals dst)
+                                      (OptUnrollAffineVal true sc sk))]
                                   [(None) unit])]
                               [(None) unit]))]
                         [(Sub)
                           (when
-                            (and lv-ok rv-ok (= rc 0) (>= lk rk))
-                            (set! (array-ref valid dst) true)
-                            (set! (array-ref coeff dst) lc)
-                            (set! (array-ref kconst dst) (- lk rk)))]
+                            (and
+                              la.ok
+                              ra.ok
+                              (= ra.coeff 0)
+                              (>= la.kconst ra.kconst))
+                            (set!
+                              (array-ref vals dst)
+                              (OptUnrollAffineVal
+                                true
+                                la.coeff
+                                (- la.kconst ra.kconst))))]
                         [(Mul)
                           (when
-                            (and lv-ok rv-ok)
+                            (and la.ok ra.ok)
                             (cond
-                              [(= rc 0)
-                                (match (opt_range.opt-range-safe-mul lc rk)
-                                  [(Some mc)
-                                    (match (opt_range.opt-range-safe-mul lk rk)
-                                      [(Some mk)
-                                        (set! (array-ref valid dst) true)
-                                        (set! (array-ref coeff dst) mc)
-                                        (set! (array-ref kconst dst) mk)]
-                                      [(None) unit])]
-                                  [(None) unit])]
-                              [(= lc 0)
-                                (match (opt_range.opt-range-safe-mul rc lk)
-                                  [(Some mc)
-                                    (match (opt_range.opt-range-safe-mul rk lk)
-                                      [(Some mk)
-                                        (set! (array-ref valid dst) true)
-                                        (set! (array-ref coeff dst) mc)
-                                        (set! (array-ref kconst dst) mk)]
-                                      [(None) unit])]
-                                  [(None) unit])]
+                              [(= ra.coeff 0)
+                                (set!
+                                  (array-ref vals dst)
+                                  (opt-unroll-affine-mul-const (& la) ra.kconst))]
+                              [(= la.coeff 0)
+                                (set!
+                                  (array-ref vals dst)
+                                  (opt-unroll-affine-mul-const (& ra) la.kconst))]
                               [else unit]))]
                         [(BitAnd)
                           (cond
-                            [(and rv-ok (= rc 0))
-                              (set! (array-ref valid dst) true)
-                              (set! (array-ref coeff dst) 0)
-                              (set! (array-ref kconst dst) rk)]
-                            [(and lv-ok (= lc 0))
-                              (set! (array-ref valid dst) true)
-                              (set! (array-ref coeff dst) 0)
-                              (set! (array-ref kconst dst) lk)]
+                            [(and ra.ok (= ra.coeff 0))
+                              (set!
+                                (array-ref vals dst)
+                                (OptUnrollAffineVal true 0 ra.kconst))]
+                            [(and la.ok (= la.coeff 0))
+                              (set!
+                                (array-ref vals dst)
+                                (OptUnrollAffineVal true 0 la.kconst))]
                             [else unit])]
                         [(Shr _)
                           (when
-                            (and lv-ok rv-ok (= rc 0) (>= rk 0) (< rk 64))
-                            (set! (array-ref valid dst) true)
-                            (set! (array-ref coeff dst) lc)
-                            (set! (array-ref kconst dst) lk))]
-                        [(or (Mod) (SafeMod))
+                            (and
+                              la.ok
+                              ra.ok
+                              (= ra.coeff 0)
+                              (>= ra.kconst 0)
+                              (< ra.kconst 64))
+                            (set! (array-ref vals dst) la))]
+                        [(or (Mod) (SafeMod) (Div) (SafeDiv))
                           (when
-                            (and lv-ok rv-ok (= rc 0) (> rk 0))
-                            (set! (array-ref valid dst) true)
-                            (set! (array-ref coeff dst) 0)
-                            (set! (array-ref kconst dst) (- rk 1))
+                            (and la.ok ra.ok (= ra.coeff 0) (> ra.kconst 0))
+                            (set!
+                              (array-ref vals dst)
+                              (match (& op)
+                                [(or (Mod) (SafeMod))
+                                  (OptUnrollAffineVal true 0 (- ra.kconst 1))]
+                                [_ la]))
                             (when
                               (be_div.compiler-backend-unsigned-divmod-profitable?
-                                rk)
-                              (match (& lhs)
-                                [(Var dv)
-                                  (when
-                                    (and (>= dv 0) (< dv frame))
-                                    (set! (array-ref req-check dv) true))]
-                                [_ unit])))]
-                        [(or (Div) (SafeDiv))
-                          (when
-                            (and lv-ok rv-ok (= rc 0) (> rk 0))
-                            (set! (array-ref valid dst) true)
-                            (set! (array-ref coeff dst) lc)
-                            (set! (array-ref kconst dst) lk)
-                            (when
-                              (be_div.compiler-backend-unsigned-divmod-profitable?
-                                rk)
+                                ra.kconst)
                               (match (& lhs)
                                 [(Var dv)
                                   (when
@@ -66725,12 +66674,11 @@
                                 [_ unit])))]
                         [_ unit])))]
                 [_ unit]))]
-          ;; Verify every assumed mod-recurrence dividend is valid.
           [all-assumed-ok? : bool true]
           [_check-assumed : unit
             (for [ai (iterator.range 0 assumed-cnt)]
               (when
-                (not (array-ref valid (array-ref assumed-div ai)))
+                (not (array-ref vals (array-ref assumed-div ai)).ok)
                 (set! all-assumed-ok? false)))]
           (if (not all-assumed-ok?)
             (None)
@@ -66741,16 +66689,18 @@
               (for [v (iterator.range 0 frame)]
                 (when
                   (array-ref req-check v)
-                  (if (not (array-ref valid v))
-                    (set! failed? true)
-                    (let
-                      [c : i64 (array-ref coeff v)]
-                      [k0 : i64 (array-ref kconst v)]
+                  (let
+                    [av : OptUnrollAffineVal (array-ref vals v)]
+                    (if (not av.ok)
+                      (set! failed? true)
                       (when
-                        (> c 0)
+                        (> av.coeff 0)
                         (set! any-linear? true)
                         (let
-                          [kmax : i64 (/ (- opt_range.opt-range-i64-max k0) c)]
+                          [kmax : i64
+                            (/
+                              (- opt_range.opt-range-i64-max av.kconst)
+                              av.coeff)]
                           (match (opt_range.opt-range-safe-add seed-val kmax)
                             [(Some bnd)
                               (when (< bnd best-bound) (set! best-bound bnd))]

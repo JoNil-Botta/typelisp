@@ -82,6 +82,10 @@ case "$INLINE_TEST_WORKERS" in
 esac
 INLINE_TEST_CHUNK_FILES=12
 INLINE_TEST_CHUNK_TARGET_COUNT=32
+INLINE_TEST_COMBINED_HEAVY_CHUNKS=3
+INLINE_TEST_COMBINED_LIGHT_CHUNKS=2
+INLINE_TEST_COMBINED_STDLIB_CHUNKS=2
+INLINE_TEST_COMBINED_HUB_MIN_LINES=40000
 # Linux cgroup MemoryMax bounds resident pages (RSS); Windows Job Objects bound
 # committed virtual memory across the compiler and child test binary (~1.5-1.7x
 # Linux RSS on the largest compiler test suites). Heavy 1-2 file compiler chunks
@@ -117,11 +121,12 @@ show_streams() {
     fi
 }
 
-# Write `<dir>/chunk-NNN.list` files of at most INLINE_TEST_CHUNK_FILES sources
-# in LPT (longest-processing-time-first) order, weighted by transitive import
-# closure plus own line count, and write the pool queue (`chunk-NNN|<cap MiB>`).
-# Heaviest sources land in small chunks at the front of the queue while light
-# sources pack into full chunks at the tail so workers finish together.
+# Write `<dir>/chunk-NNN.list` files and the pool queue (`chunk-NNN|<cap MiB>`).
+# Compatible `src/`, `src/tests/`, `stdlib/`, and compiler-importing
+# `tests/inline/` sources are grouped by shared large-module dependency closure
+# into combined chunks (`<dir>/chunk-NNN.combined`) so each chunk compiles its
+# shared module closure once and executes every source in its own fresh
+# subprocess. Remaining standalone sources use the single-file LPT batch planner.
 inline_test_plan_chunks() {
     _plan_sources=$1
     _plan_dir=$2
@@ -129,11 +134,15 @@ inline_test_plan_chunks() {
     : > "$_plan_queue"
     awk -v size="$INLINE_TEST_CHUNK_FILES" \
         -v target_chunks="$INLINE_TEST_CHUNK_TARGET_COUNT" \
+        -v heavy_chunks="$INLINE_TEST_COMBINED_HEAVY_CHUNKS" \
+        -v light_chunks="$INLINE_TEST_COMBINED_LIGHT_CHUNKS" \
+        -v std_chunks="$INLINE_TEST_COMBINED_STDLIB_CHUNKS" \
+        -v hub_min_lines="$INLINE_TEST_COMBINED_HUB_MIN_LINES" \
         -v dir="$_plan_dir" \
         -v cap="$INLINE_TEST_CHUNK_CAP_MIB" \
         -v light_cap="$INLINE_TEST_LIGHT_CHUNK_CAP_MIB" \
         -v queue="$_plan_queue" '
-        function flush_chunk(    chunk_cap) {
+        function flush_plain_chunk(    chunk_cap) {
             if (last == "") return
             close(dir "/" last ".list")
             chunk_cap = (cf <= 2 && (target_w == 0 || cw * 2 >= target_w)) ? cap : light_cap
@@ -141,6 +150,11 @@ inline_test_plan_chunks() {
         }
         function resolve_mod(mod,    p, _line) {
             p = "src/" mod ".tl"
+            if ((getline _line < p) >= 0) {
+                close(p)
+                return p
+            }
+            p = "src" "/tests/" mod ".tl"
             if ((getline _line < p) >= 0) {
                 close(p)
                 return p
@@ -154,22 +168,65 @@ inline_test_plan_chunks() {
             }
             return ""
         }
-        function scan_file(path,    line, n, mod, dep, i) {
+        function scan_file(path,    line, n, mod, dep, name, i, in_str, ch, esc, k, len) {
             if (path in scanned) return
             scanned[path] = 1
             n = 0
             deg[path] = 0
+            sdef_cnt[path] = 0
+            edef_cnt[path] = 0
+            has_explicit_mod[path] = 0
+            in_str = 0
             while ((getline line < path) > 0) {
                 n++
-                if (line ~ /^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+/) {
-                    mod = line
-                    sub(/^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+\(?/, "", mod)
-                    sub(/[[:space:]\)\r].*/, "", mod)
-                    if (mod != "" && !seen_edge[path SUBSEP mod]++) {
-                        dep = resolve_mod(mod)
-                        if (dep != "" && dep != path) {
-                            deg[path]++
-                            edge[path, deg[path]] = dep
+                if (!in_str) {
+                    if (line ~ /^[[:space:]]*\(module[[:space:]]+/) {
+                        has_explicit_mod[path] = 1
+                    }
+                    if (line ~ /^\(defstruct[[:space:]]+[A-Za-z0-9_-]+/) {
+                        name = line
+                        sub(/^\(defstruct[[:space:]]+/, "", name)
+                        sub(/[^A-Za-z0-9_-].*/, "", name)
+                        if (name != "" && !seen_sdef[path SUBSEP name]++) {
+                            sdef_cnt[path]++
+                            sdef[path, sdef_cnt[path]] = name
+                        }
+                    } else if (line ~ /^\(defenum[[:space:]]+[A-Za-z0-9_-]+/) {
+                        name = line
+                        sub(/^\(defenum[[:space:]]+/, "", name)
+                        sub(/[^A-Za-z0-9_-].*/, "", name)
+                        if (name != "" && !seen_edef[path SUBSEP name]++) {
+                            edef_cnt[path]++
+                            edef[path, edef_cnt[path]] = name
+                        }
+                    }
+                    if (line ~ /^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+/) {
+                        mod = line
+                        sub(/^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+\(?/, "", mod)
+                        sub(/[[:space:]\)\r].*/, "", mod)
+                        if (mod != "" && !seen_edge[path SUBSEP mod]++) {
+                            dep = resolve_mod(mod)
+                            if (dep != "" && dep != path) {
+                                deg[path]++
+                                edge[path, deg[path]] = dep
+                            }
+                        }
+                    }
+                }
+                # Track multi-line string literals so test fixtures inside
+                # strings are not mistaken for top-level type declarations.
+                if (index(line, "\"") > 0) {
+                    len = length(line)
+                    esc = 0
+                    for (k = 1; k <= len; k++) {
+                        ch = substr(line, k, 1)
+                        if (in_str) {
+                            if (esc) { esc = 0 }
+                            else if (ch == "\\") { esc = 1 }
+                            else if (ch == "\"") { in_str = 0 }
+                        } else {
+                            if (ch == ";") { break }
+                            else if (ch == "\"") { in_str = 1 }
                         }
                     }
                 }
@@ -180,24 +237,245 @@ inline_test_plan_chunks() {
                 scan_file(edge[path, i])
             }
         }
-        function closure_weight(root,    qhead, qtail, u, v, i, tot, vis, q) {
+        function closure_weight(root,    qhead, qtail, u, v, i, tot, vis, q, hubs, nh, hkey, fhubs, nfh, fhkey) {
             qhead = 1
             qtail = 1
             q[1] = root
             vis[root] = 1
             tot = 0
+            nh = 0
+            nfh = 0
+            imports_src[root] = 0
+            cl_cnt[root] = 0
             while (qhead <= qtail) {
                 u = q[qhead++]
+                cl_cnt[root]++
+                cl_node[root, cl_cnt[root]] = u
                 tot += lines[u]
+                if (lines[u] >= hub_min_lines) {
+                    fhubs[++nfh] = u
+                    if (!(u ~ /_tests\.tl$/)) {
+                        hubs[++nh] = u
+                    }
+                }
                 for (i = 1; i <= deg[u]; i++) {
                     v = edge[u, i]
                     if (!(v in vis)) {
                         vis[v] = 1
+                        reaches[root SUBSEP v] = 1
+                        if (v ~ /^src\//) imports_src[root] = 1
                         q[++qtail] = v
                     }
                 }
             }
+            sort_asc_path(hubs, nh)
+            hkey = ""
+            for (i = 1; i <= nh; i++) {
+                hkey = (i == 1) ? hubs[i] : (hkey "," hubs[i])
+            }
+            sort_asc_path(fhubs, nfh)
+            fhkey = ""
+            for (i = 1; i <= nfh; i++) {
+                fhkey = (i == 1) ? fhubs[i] : (fhkey "," fhubs[i])
+            }
+            core_hub_count[root] = nh
+            core_hub_key[root] = hkey
+            full_hub_count[root] = nfh
+            full_hub_key[root] = fhkey
             return tot + lines[root] * 16 + 1000
+        }
+        function sort_desc_weight(arr, n,    i, j, kf, kw) {
+            for (i = 2; i <= n; i++) {
+                kf = arr[i]
+                kw = w[kf]
+                j = i - 1
+                while (j >= 1 && (w[arr[j]] < kw || (w[arr[j]] == kw && arr[j] > kf))) {
+                    arr[j + 1] = arr[j]
+                    j--
+                }
+                arr[j + 1] = kf
+            }
+        }
+        function sort_asc_path(arr, n,    i, j, kf) {
+            for (i = 2; i <= n; i++) {
+                kf = arr[i]
+                j = i - 1
+                while (j >= 1 && arr[j] > kf) {
+                    arr[j + 1] = arr[j]
+                    j--
+                }
+                arr[j + 1] = kf
+            }
+        }
+        # Detect cross-module `defstruct` vs `defenum` same-name collisions
+        # between file f'\''s closure and an already-accumulated chunk closure.
+        function chunk_has_type_conflict(f, cs, ce,    i, j, u, nm) {
+            for (i = 1; i <= cl_cnt[f]; i++) {
+                u = cl_node[f, i]
+                for (j = 1; j <= sdef_cnt[u]; j++) {
+                    nm = sdef[u, j]
+                    if ((nm in ce) && ce[nm] != u) return 1
+                }
+                for (j = 1; j <= edef_cnt[u]; j++) {
+                    nm = edef[u, j]
+                    if ((nm in cs) && cs[nm] != u) return 1
+                }
+            }
+            return 0
+        }
+        function chunk_record_types(f, cs, ce,    i, j, u, nm) {
+            for (i = 1; i <= cl_cnt[f]; i++) {
+                u = cl_node[f, i]
+                for (j = 1; j <= sdef_cnt[u]; j++) {
+                    nm = sdef[u, j]
+                    if (!(nm in cs)) cs[nm] = u
+                }
+                for (j = 1; j <= edef_cnt[u]; j++) {
+                    nm = edef[u, j]
+                    if (!(nm in ce)) ce[nm] = u
+                }
+            }
+        }
+        function file_has_chunk_type_dup(b, idx,    f, j, k, m, g, nm) {
+            f = bfile[b, idx]
+            for (k = 1; k <= sdef_cnt[f]; k++) {
+                nm = sdef[f, k]
+                for (j = 1; j <= bcount[b]; j++) {
+                    if (j == idx) continue
+                    g = bfile[b, j]
+                    if ((g SUBSEP nm) in seen_sdef || (g SUBSEP nm) in seen_edef) return 1
+                }
+            }
+            for (k = 1; k <= edef_cnt[f]; k++) {
+                nm = edef[f, k]
+                for (j = 1; j <= bcount[b]; j++) {
+                    if (j == idx) continue
+                    g = bfile[b, j]
+                    if ((g SUBSEP nm) in seen_sdef || (g SUBSEP nm) in seen_edef) return 1
+                }
+            }
+            return 0
+        }
+        function sort_asc_hub_path(arr, n,    i, j, kf, kk) {
+            for (i = 2; i <= n; i++) {
+                kf = arr[i]
+                kk = full_hub_key[kf]
+                j = i - 1
+                while (j >= 1 && (full_hub_key[arr[j]] > kk || (full_hub_key[arr[j]] == kk && arr[j] > kf))) {
+                    arr[j + 1] = arr[j]
+                    j--
+                }
+                arr[j + 1] = kf
+            }
+        }
+        function split_weight(path,    ln) {
+            ln = lines[path]
+            if (ln > 15000) ln = 15000
+            return ln + 4000
+        }
+        # Partition sorted arr[1..n] into k contiguous slices balanced by a
+        # capped file weight so a single huge shared module (already in every
+        # heavy chunk'\''s closure) does not force the remaining files into one
+        # oversized tail chunk, peeling out cross-module struct/enum collisions.
+        # Then promote each chunk'\''s largest non-chunk-imported file to index 1
+        # (the root-module leader) and relocate any importer of that leader.
+        function plan_contiguous_combined(arr, n, k, bcap, use_leader,    i, j, b, nb, tot, target, acc, f, best, best_dup, cur_dup, imp, leader, dst, job, cs, ce, defn, deff) {
+            if (n <= 0) return
+            sort_asc_path(arr, n)
+            nb = (k > 0 && k < n) ? k : n
+            delete bcount
+            delete bfile
+            tot = 0
+            for (i = 1; i <= n; i++) tot += split_weight(arr[i])
+            target = tot / nb
+            b = 1
+            acc = 0
+            defn = 0
+            delete cs
+            delete ce
+            for (i = 1; i <= n; i++) {
+                f = arr[i]
+                if (b < nb && bcount[b] > 0 && acc + split_weight(f) / 2 > target && (n - i + 1) >= (nb - b)) {
+                    b++
+                    acc = 0
+                    delete cs
+                    delete ce
+                }
+                if (chunk_has_type_conflict(f, cs, ce)) {
+                    deff[++defn] = f
+                    continue
+                }
+                bcount[b]++
+                bfile[b, bcount[b]] = f
+                chunk_record_types(f, cs, ce)
+                acc += split_weight(f)
+            }
+            nb = b
+            if (use_leader) {
+                for (b = 1; b <= nb; b++) {
+                    if (bcount[b] <= 1) continue
+                    best = 0
+                    best_dup = 1
+                    for (i = 1; i <= bcount[b]; i++) {
+                        f = bfile[b, i]
+                        imp = 0
+                        for (j = 1; j <= bcount[b]; j++) {
+                            if (i != j && ((bfile[b, j] SUBSEP f) in reaches)) {
+                                imp++
+                            }
+                        }
+                        cur_dup = file_has_chunk_type_dup(b, i)
+                        if ((imp == 0 || (nb > 1 && imp * 4 <= bcount[b])) && (best == 0 || cur_dup < best_dup || (cur_dup == best_dup && lines[f] > lines[bfile[b, best]]))) {
+                            best = i
+                            best_dup = cur_dup
+                        }
+                    }
+                    if (best == 0) {
+                        best = 1
+                        for (i = 2; i <= bcount[b]; i++) {
+                            if (lines[bfile[b, i]] > lines[bfile[b, best]]) best = i
+                        }
+                    }
+                    if (best > 1) {
+                        leader = bfile[b, best]
+                        for (i = best; i > 1; i--) bfile[b, i] = bfile[b, i - 1]
+                        bfile[b, 1] = leader
+                    }
+                    leader = bfile[b, 1]
+                    if (nb > 1) {
+                        dst = (b < nb) ? (b + 1) : (b - 1)
+                        j = 1
+                        for (i = 2; i <= bcount[b]; i++) {
+                            f = bfile[b, i]
+                            if ((f SUBSEP leader) in reaches) {
+                                bcount[dst]++
+                                bfile[dst, bcount[dst]] = f
+                            } else {
+                                j++
+                                bfile[b, j] = f
+                            }
+                        }
+                        bcount[b] = j
+                    }
+                }
+            }
+            for (b = 1; b <= nb; b++) {
+                if (bcount[b] <= 0) continue
+                c++
+                job = sprintf("chunk-%03d", c)
+                for (i = 1; i <= bcount[b]; i++) {
+                    print bfile[b, i] > (dir "/" job ".list")
+                }
+                close(dir "/" job ".list")
+                if (bcount[b] > 1) {
+                    print "1" > (dir "/" job ".combined")
+                    close(dir "/" job ".combined")
+                }
+                print job "|" bcap >> queue
+            }
+            if (defn > 0) {
+                plan_contiguous_combined(deff, defn, 1, bcap, use_leader)
+            }
         }
         {
             sub(/\r$/, "")
@@ -206,43 +484,87 @@ inline_test_plan_chunks() {
             scan_file($0)
         }
         END {
-            total_w = 0
             for (i = 1; i <= nfiles; i++) {
                 f = files[i]
                 w[f] = closure_weight(f)
-                total_w += w[f]
-            }
-            # Sort descending by weight, tie-breaking ascending by path.
-            for (i = 2; i <= nfiles; i++) {
-                kf = files[i]
-                kw = w[kf]
-                j = i - 1
-                while (j >= 1 && (w[files[j]] < kw || (w[files[j]] == kw && files[j] > kf))) {
-                    files[j + 1] = files[j]
-                    j--
+                if (f ~ /^stdlib\//) {
+                    std_files[++nstd] = f
+                } else if ((f ~ /^src\//) || (f ~ /^tests\/inline\// && imports_src[f] && !has_explicit_mod[f])) {
+                    if (core_hub_count[f] >= 2 && full_hub_count[f] > core_hub_count[f]) {
+                        hk = full_hub_key[f]
+                        if (!(hk in extra_hub_seen)) {
+                            extra_hub_seen[hk] = 1
+                            extra_hub_keys[++nextra_hubs] = hk
+                        }
+                        extra_hub_cnt[hk]++
+                        extra_hub_file[hk, extra_hub_cnt[hk]] = f
+                    } else if (core_hub_count[f] >= 2) {
+                        heavy_files[++nheavy] = f
+                    } else if (core_hub_count[f] == 1) {
+                        hk = core_hub_key[f]
+                        if (!(hk in single_hub_seen)) {
+                            single_hub_seen[hk] = 1
+                            single_hub_keys[++nsingle_hubs] = hk
+                        }
+                        single_hub_cnt[hk]++
+                        single_hub_file[hk, single_hub_cnt[hk]] = f
+                    } else if (f ~ /^tests\/inline\//) {
+                        inline_light_files[++ninline_light] = f
+                    } else {
+                        light_files[++nlight] = f
+                    }
+                } else {
+                    plain_files[++nplain] = f
                 }
-                files[j + 1] = kf
             }
-            target_w = (target_chunks > 0) ? (total_w / target_chunks) : 0
             c = 0
-            cf = 0
-            cw = 0
-            last = ""
-            for (i = 1; i <= nfiles; i++) {
-                f = files[i]
-                fw = w[f]
-                if (cf == 0 || cf >= size || (target_w > 0 && cw + fw > target_w)) {
-                    flush_chunk()
-                    c++
-                    last = sprintf("chunk-%03d", c)
-                    cf = 0
-                    cw = 0
-                }
-                print f > (dir "/" last ".list")
-                cf++
-                cw += fw
+            sort_asc_path(extra_hub_keys, nextra_hubs)
+            for (h = 1; h <= nextra_hubs; h++) {
+                hk = extra_hub_keys[h]
+                delete hfiles
+                hn = extra_hub_cnt[hk]
+                for (i = 1; i <= hn; i++) hfiles[i] = extra_hub_file[hk, i]
+                plan_contiguous_combined(hfiles, hn, 1, cap, 1)
             }
-            flush_chunk()
+            plan_contiguous_combined(heavy_files, nheavy, heavy_chunks, cap, 1)
+            sort_asc_path(single_hub_keys, nsingle_hubs)
+            for (h = 1; h <= nsingle_hubs; h++) {
+                hk = single_hub_keys[h]
+                delete hfiles
+                hn = single_hub_cnt[hk]
+                for (i = 1; i <= hn; i++) hfiles[i] = single_hub_file[hk, i]
+                plan_contiguous_combined(hfiles, hn, 1, cap, 1)
+            }
+            plan_contiguous_combined(light_files, nlight, light_chunks, light_cap, 1)
+            plan_contiguous_combined(inline_light_files, ninline_light, 1, light_cap, 1)
+            plan_contiguous_combined(std_files, nstd, std_chunks, light_cap, 0)
+
+            # Standalone / non-combined files in regular LPT chunks.
+            if (nplain > 0) {
+                total_w = 0
+                for (i = 1; i <= nplain; i++) total_w += w[plain_files[i]]
+                sort_desc_weight(plain_files, nplain)
+                plain_target_chunks = (nplain == nfiles) ? target_chunks : 0
+                target_w = (plain_target_chunks > 0) ? (total_w / plain_target_chunks) : 0
+                cf = 0
+                cw = 0
+                last = ""
+                for (i = 1; i <= nplain; i++) {
+                    f = plain_files[i]
+                    fw = w[f]
+                    if (cf == 0 || cf >= size || (target_w > 0 && cw + fw > target_w)) {
+                        flush_plain_chunk()
+                        c++
+                        last = sprintf("chunk-%03d", c)
+                        cf = 0
+                        cw = 0
+                    }
+                    print f > (dir "/" last ".list")
+                    cf++
+                    cw += fw
+                }
+                flush_plain_chunk()
+            }
         }
     ' "$_plan_sources"
 }
@@ -303,6 +625,10 @@ inline_test_settle_chunk() {
             "($_settle_tests test(s) in $_settle_files file(s))" >&2
         show_streams "$_settle_stdout" "$_settle_stderr"
         exit 1
+    fi
+    if [ -f "$_settle_dir/$_settle_job.combined" ] &&
+        grep -qF 'test: --combined fallback to single-file mode' "$_settle_stderr"; then
+        echo "[inline-tests] warning: $_settle_job fell back to single-file mode" >&2
     fi
     cat "$_settle_stdout" >> "$_settle_combined_stdout"
     cat "$_settle_stderr" >> "$_settle_combined_stderr"
@@ -415,14 +741,26 @@ bounded_pool_run_job() {
         TYPELISP_CI_TIMING_FILE="$INLINE_TEST_POOL_DIR/timing/$_pool_job.tsv"
     fi
     _pool_rc=0
-    ci_timing_run "$_pool_job" batch-run \
-        "$ROOT/scripts/run-memory-bounded.sh" \
-        --limit-mib "$_pool_cap" --report "$WORKDIR/$_pool_job.memory" \
-        --timeout-seconds "$INLINE_TEST_JOB_TIMEOUT_SECONDS" -- \
-        "$COMPILER" test --batch "$WORKDIR/$_pool_job.list" --target "$HOST_TARGET" \
-        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-        > "$WORKDIR/$_pool_job.stdout" 2> "$WORKDIR/$_pool_job.stderr" ||
-        _pool_rc=$?
+    if [ -f "$WORKDIR/$_pool_job.combined" ]; then
+        ci_timing_run "$_pool_job" batch-run-combined \
+            "$ROOT/scripts/run-memory-bounded.sh" \
+            --limit-mib "$_pool_cap" --report "$WORKDIR/$_pool_job.memory" \
+            --timeout-seconds "$INLINE_TEST_JOB_TIMEOUT_SECONDS" -- \
+            "$COMPILER" test --batch "$WORKDIR/$_pool_job.list" --combined \
+            --target "$HOST_TARGET" \
+            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+            > "$WORKDIR/$_pool_job.stdout" 2> "$WORKDIR/$_pool_job.stderr" ||
+            _pool_rc=$?
+    else
+        ci_timing_run "$_pool_job" batch-run \
+            "$ROOT/scripts/run-memory-bounded.sh" \
+            --limit-mib "$_pool_cap" --report "$WORKDIR/$_pool_job.memory" \
+            --timeout-seconds "$INLINE_TEST_JOB_TIMEOUT_SECONDS" -- \
+            "$COMPILER" test --batch "$WORKDIR/$_pool_job.list" --target "$HOST_TARGET" \
+            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+            > "$WORKDIR/$_pool_job.stdout" 2> "$WORKDIR/$_pool_job.stderr" ||
+            _pool_rc=$?
+    fi
     printf '%s\n' "$_pool_rc" > "$WORKDIR/$_pool_job.status"
     if ! bounded_pool_read_report "$WORKDIR/$_pool_job.memory" "$_pool_rc" "$_pool_cap" "$HOST_OS"; then
         echo "inline test $_pool_job $BOUNDED_POOL_REPORT_FAILURE" \
@@ -468,6 +806,27 @@ inline_test_self_test_chunks() {
     INLINE_TEST_CHUNK_TARGET_COUNT=$_tier_saved_target
     if [ "$(cat "$_tier_dir/queue")" != "chunk-001|$INLINE_TEST_LIGHT_CHUNK_CAP_MIB" ]; then
         echo "inline test chunk self-test: >=3-file light chunk did not get light cap" >&2
+        exit 1
+    fi
+
+    _comb_dir=$(mktemp -d "$INLINE_TEST_SELF_TEST_ROOT/combined.XXXXXX")
+    mkdir -p "$_comb_dir/src" "$_comb_dir/stdlib"
+    printf '(defstruct Item (v i64))\n(test a unit)\n' > "$_comb_dir/src/a.tl"
+    printf '(defstruct Other (v i64))\n(test b unit)\n' > "$_comb_dir/src/b.tl"
+    printf '(defenum Item (V))\n(test c unit)\n' > "$_comb_dir/src/c.tl"
+    printf '(test s1 unit)\n' > "$_comb_dir/stdlib/s1.tl"
+    printf '(test s2 unit)\n' > "$_comb_dir/stdlib/s2.tl"
+    (
+        cd "$_comb_dir" || exit 1
+        printf '%s\n' src/a.tl src/b.tl src/c.tl stdlib/s1.tl stdlib/s2.tl > discovered.txt
+        INLINE_TEST_COMBINED_LIGHT_CHUNKS=1
+        INLINE_TEST_COMBINED_STDLIB_CHUNKS=1
+        inline_test_plan_chunks discovered.txt "$_comb_dir" "$_comb_dir/queue"
+    )
+    if [ ! -f "$_comb_dir/chunk-001.combined" ] ||
+        [ ! -f "$_comb_dir/chunk-003.combined" ] ||
+        [ "$(cat "$_comb_dir"/chunk-*.list | LC_ALL=C sort)" != "$(printf '%s\n' src/a.tl src/b.tl src/c.tl stdlib/s1.tl stdlib/s2.tl)" ]; then
+        echo "inline test chunk self-test: combined chunk planner did not separate struct/enum conflicts or partition sources" >&2
         exit 1
     fi
 

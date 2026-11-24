@@ -10455,14 +10455,17 @@
 
 (define (compiler-lower-foreach2-row-tests-ok?) : bool
   (compiler-lower-and8
+    ;; Hoisted rectangular bound guard proves each row fits inside every view,
+    ;; eliminating the per-row scalar tail fallback while keeping the single
+    ;; scalar fallback loop (`row_origin_scalar`) for non-rectangular domains.
     (compiler-lower-foreach2-row-counts-are?
       (compiler-lower-foreach2-row-map-source)
       (lower.CompilerLowerMode.Avx2)
-      (array 1 1 1 1 1 2))
+      (array 1 1 1 1 1 1))
     (compiler-lower-foreach2-row-counts-are?
       (compiler-lower-foreach2-row-map-source)
       (lower.CompilerLowerMode.Avx512)
-      (array 1 1 1 1 1 2))
+      (array 1 1 1 1 1 1))
     (compiler-lower-foreach2-row-counts-are?
       (compiler-lower-foreach2-row-map-source)
       (lower.CompilerLowerMode.Scalar)

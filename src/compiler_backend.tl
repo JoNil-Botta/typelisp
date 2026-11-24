@@ -10917,6 +10917,198 @@
             out)]))
     (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
+(define (compiler-backend-vector-bit-and-sign-bit-fused?
+  [backend-state : be_state.CompilerBackendState]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [cmp-index : i64]) : bool
+  (if (< cmp-index instrs.len)
+    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cmp-index)
+      [(VectorCompare cp)
+        (>
+          (be_simd.compiler-backend-avx2-sign-bit-mask-mode-for-var
+            backend-state
+            cp.dst)
+          0)]
+      [_ false])
+    false))
+
+(define (compiler-backend-emit-vector-binop-step
+  [ctx : be_state.CompilerBackendEmissionContext]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [and-lhs : compiler_ir_types.CompilerIrValue]
+  [and-rhs : compiler_ir_types.CompilerIrValue]
+  [and-lanes : i64]
+  [and-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [cursor : i64]
+  [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
+  (if (and
+    (< cursor instrs.len)
+    (be_state.compiler-backend-current-mode-avx2? ctx.function-state))
+    (let
+      [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)
+        [(VectorCompare (box (fields [cmp-dst dst])))
+          (let
+            [sign-mode : i64
+              (be_simd.compiler-backend-avx2-sign-bit-mask-mode-for-var
+                ctx.backend-state
+                cmp-dst)]
+            (if (> sign-mode 0)
+              (let
+                [polarity : i64 (/ sign-mode 256)]
+                [lhs-is-splat : i64 (% (/ sign-mode 64) 2)]
+                [bit-index : i64 (% sign-mode 64)]
+                [src-val : compiler_ir_types.CompilerIrValue
+                  (if (= lhs-is-splat 1)
+                    and-rhs
+                    and-lhs)]
+                [after-cmp : i64 (+ cursor 1)]
+                (if (and
+                  (= bit-index 63)
+                  (< after-cmp instrs.len)
+                  (be_simd.compiler-backend-var-single-use?
+                    ctx.use-counts
+                    cmp-dst))
+                  (let
+                    [sel-instr
+                      (compiler_ir_types.compiler-ir-instr-seq-ref
+                        instrs
+                        after-cmp)]
+                    (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                      instrs
+                      after-cmp)
+                      [(Select
+                          (box
+                            (fields
+                              [sel-dst dst]
+                              [sel-mask mask]
+                              [sel-true on-true]
+                              [sel-false on-false]
+                              [sel-lanes lanes]
+                              [sel-ty ty])))
+                        (if (and
+                          (= sel-lanes 4)
+                          (be_operand.compiler-backend-branch-uses-var?
+                            sel-mask
+                            cmp-dst)
+                          (be_simd.compiler-backend-avx2-sign-bit-select-ty?
+                            (& sel-ty)))
+                          (let
+                            [fused : be_state.ResultCompilerBackend
+                              (be_simd.compiler-backend-emit-avx2-sign-bit-select-direct
+                                ctx.type-segment-bases
+                                ctx.assignments
+                                sel-dst
+                                src-val
+                                polarity
+                                sel-true
+                                sel-false
+                                sel-lanes
+                                sel-ty
+                                (be_state.compiler-backend-instr-diagnostic-ref
+                                  (& ctx.spans)
+                                  ctx.source-function
+                                  (& sel-instr))
+                                ctx.backend-state)]
+                            (compiler-backend-emit-fused-result-rest
+                              ctx
+                              fallthrough
+                              fused
+                              instrs
+                              (+ after-cmp 1)
+                              out))
+                          (let
+                            [fused : be_state.ResultCompilerBackend
+                              (be_simd.compiler-backend-emit-avx2-sign-bit-mask
+                                ctx.type-segment-bases
+                                ctx.assignments
+                                cmp-dst
+                                src-val
+                                bit-index
+                                and-lanes
+                                and-ty
+                                (be_state.compiler-backend-instr-diagnostic-ref
+                                  (& ctx.spans)
+                                  ctx.source-function
+                                  (& next))
+                                ctx.backend-state)]
+                            (compiler-backend-emit-fused-result-rest
+                              ctx
+                              fallthrough
+                              fused
+                              instrs
+                              after-cmp
+                              out)))]
+                      [_
+                        (let
+                          [fused : be_state.ResultCompilerBackend
+                            (be_simd.compiler-backend-emit-avx2-sign-bit-mask
+                              ctx.type-segment-bases
+                              ctx.assignments
+                              cmp-dst
+                              src-val
+                              bit-index
+                              and-lanes
+                              and-ty
+                              (be_state.compiler-backend-instr-diagnostic-ref
+                                (& ctx.spans)
+                                ctx.source-function
+                                (& next))
+                              ctx.backend-state)]
+                          (compiler-backend-emit-fused-result-rest
+                            ctx
+                            fallthrough
+                            fused
+                            instrs
+                            after-cmp
+                            out))]))
+                  (let
+                    [fused : be_state.ResultCompilerBackend
+                      (be_simd.compiler-backend-emit-avx2-sign-bit-mask
+                        ctx.type-segment-bases
+                        ctx.assignments
+                        cmp-dst
+                        src-val
+                        bit-index
+                        and-lanes
+                        and-ty
+                        (be_state.compiler-backend-instr-diagnostic-ref
+                          (& ctx.spans)
+                          ctx.source-function
+                          (& next))
+                        ctx.backend-state)]
+                    (compiler-backend-emit-fused-result-rest
+                      ctx
+                      fallthrough
+                      fused
+                      instrs
+                      after-cmp
+                      out))))
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                instrs
+                cursor
+                out)))]
+        [_
+          (compiler-backend-emit-instrs-normal
+            ctx
+            fallthrough
+            instr
+            instrs
+            cursor
+            out)]))
+    (compiler-backend-emit-instrs-normal
+      ctx
+      fallthrough
+      instr
+      instrs
+      cursor
+      out)))
+
 (define (compiler-backend-emit-vector-load-step
   [ctx : be_state.CompilerBackendEmissionContext]
   [fallthrough : be_state.CompilerBackendMaybeLabel]
@@ -10933,7 +11125,188 @@
     (let
       [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
       [after-binop : i64 (+ cursor 1)]
-      (match (be_state.compiler-backend-global-shared-view next)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)
+        [(VectorLoad load2-dst base2 index2 lanes2 elem-ty2)
+          (if (and
+            (< (+ cursor 2) instrs.len)
+            (= lanes lanes2)
+            (be_simd.compiler-backend-var-single-use? ctx.use-counts load-dst)
+            (be_simd.compiler-backend-var-single-use? ctx.use-counts load2-dst)
+            (compiler_optimize.opt-type-eq
+              ctx.type-segment-bases
+              elem-ty
+              (& elem-ty2)))
+            (let
+              [op2-instr
+                (compiler_ir_types.compiler-ir-instr-seq-ref
+                  instrs
+                  (+ cursor 2))]
+              (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                instrs
+                (+ cursor 1))
+                [(VectorBinOp
+                    (box
+                      (fields
+                        [t1-dst dst]
+                        [op1 op]
+                        [t1-lhs lhs]
+                        [t1-rhs rhs]
+                        [t1-lanes lanes]
+                        [t1-ty ty])))
+                  (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                    instrs
+                    (+ cursor 2))
+                    [(VectorBinOp
+                        (box
+                          (fields
+                            [t2-dst dst]
+                            [op2 op]
+                            [t2-lhs lhs]
+                            [t2-rhs rhs]
+                            [t2-lanes lanes]
+                            [t2-ty ty])))
+                      (let
+                        [loads-match? : bool
+                          (or
+                            (and
+                              (be_operand.compiler-backend-branch-uses-var?
+                                t1-lhs
+                                load-dst)
+                              (be_operand.compiler-backend-branch-uses-var?
+                                t1-rhs
+                                load2-dst))
+                            (and
+                              (be_operand.compiler-backend-branch-uses-var?
+                                t1-lhs
+                                load2-dst)
+                              (be_operand.compiler-backend-branch-uses-var?
+                                t1-rhs
+                                load-dst)))]
+                        [t2-other : be_state.CompilerBackendVectorMemFold
+                          (if (be_operand.compiler-backend-branch-uses-var?
+                            t2-lhs
+                            t1-dst)
+                            (Some t2-rhs)
+                            (if (be_operand.compiler-backend-branch-uses-var?
+                              t2-rhs
+                              t1-dst)
+                              (Some t2-lhs)
+                              (No)))]
+                        (if (and
+                          loads-match?
+                          (= t1-lanes lanes)
+                          (= t2-lanes lanes)
+                          (be_simd.compiler-backend-var-single-use?
+                            ctx.use-counts
+                            t1-dst)
+                          (be_simd.compiler-backend-vector-binop-assoc-comm-int?
+                            (& op1)
+                            (& t1-ty))
+                          (be_simd.compiler-backend-vector-binop-op-eq?
+                            (& op1)
+                            (& op2))
+                          (compiler_optimize.opt-type-eq
+                            ctx.type-segment-bases
+                            elem-ty
+                            (& t1-ty))
+                          (compiler_optimize.opt-type-eq
+                            ctx.type-segment-bases
+                            elem-ty
+                            (& t2-ty))
+                          (be_simd.compiler-backend-vector-binop-memory-source-supported?
+                            (& op1)
+                            t2-lanes
+                            (be_simd.compiler-backend-copy-int-ast-type
+                              (& t2-ty))))
+                          (match t2-other
+                            [(Some reg-value)
+                              (if (and
+                                (not
+                                  (be_operand.compiler-backend-branch-uses-var?
+                                    reg-value
+                                    load-dst))
+                                (not
+                                  (be_operand.compiler-backend-branch-uses-var?
+                                    reg-value
+                                    load2-dst))
+                                (not
+                                  (be_operand.compiler-backend-branch-uses-var?
+                                    reg-value
+                                    t1-dst)))
+                                (let
+                                  [fused : be_state.ResultCompilerBackend
+                                    (be_simd.compiler-backend-emit-vector-binop-dual-memory-source
+                                      (be_operand.compiler-backend-vector-mode
+                                        (& t2-ty)
+                                        t2-lanes)
+                                      ctx.type-segment-bases
+                                      ctx.assignments
+                                      t2-dst
+                                      op2
+                                      reg-value
+                                      base
+                                      index
+                                      base2
+                                      index2
+                                      t2-lanes
+                                      t2-ty
+                                      (be_state.compiler-backend-instr-diagnostic-ref
+                                        (& ctx.spans)
+                                        ctx.source-function
+                                        (& op2-instr))
+                                      ctx.backend-state)]
+                                  (compiler-backend-emit-fused-result-rest
+                                    ctx
+                                    fallthrough
+                                    fused
+                                    instrs
+                                    (+ cursor 3)
+                                    out))
+                                (compiler-backend-emit-instrs-normal
+                                  ctx
+                                  fallthrough
+                                  instr
+                                  instrs
+                                  cursor
+                                  out))]
+                            [(No)
+                              (compiler-backend-emit-instrs-normal
+                                ctx
+                                fallthrough
+                                instr
+                                instrs
+                                cursor
+                                out)])
+                          (compiler-backend-emit-instrs-normal
+                            ctx
+                            fallthrough
+                            instr
+                            instrs
+                            cursor
+                            out)))]
+                    [_
+                      (compiler-backend-emit-instrs-normal
+                        ctx
+                        fallthrough
+                        instr
+                        instrs
+                        cursor
+                        out)])]
+                [_
+                  (compiler-backend-emit-instrs-normal
+                    ctx
+                    fallthrough
+                    instr
+                    instrs
+                    cursor
+                    out)]))
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              cursor
+              out))]
         [(VectorBinOp
             (box
               (fields
@@ -10943,17 +11316,27 @@
                 rhs
                 [bin-lanes lanes]
                 [bin-elem-ty ty])))
-          (if (be_simd.compiler-backend-vector-load-binop-foldable?
-            ctx.type-segment-bases
-            ctx.use-counts
-            load-dst
-            lanes
-            elem-ty
-            op
-            (be_state.compiler-backend-global-shared-view lhs)
-            (be_state.compiler-backend-global-shared-view rhs)
-            bin-lanes
-            (be_state.compiler-backend-global-shared-view bin-elem-ty))
+          (if (and
+            (not
+              (and
+                (match (& op)
+                  [(BitAnd) true]
+                  [_ false])
+                (compiler-backend-vector-bit-and-sign-bit-fused?
+                  ctx.backend-state
+                  (& instrs)
+                  after-binop)))
+            (be_simd.compiler-backend-vector-load-binop-foldable?
+              ctx.type-segment-bases
+              ctx.use-counts
+              load-dst
+              lanes
+              elem-ty
+              op
+              (be_state.compiler-backend-global-shared-view lhs)
+              (be_state.compiler-backend-global-shared-view rhs)
+              bin-lanes
+              (be_state.compiler-backend-global-shared-view bin-elem-ty)))
             (match (be_simd.compiler-backend-vector-load-binop-fold-value
               load-dst
               op
@@ -13698,6 +14081,28 @@
             instrs
             rest
             out)]
+        [(VectorBinOp (box (fields op lhs rhs lanes ty)))
+          (if (match (& op)
+            [(BitAnd) true]
+            [_ false])
+            (compiler-backend-emit-vector-binop-step
+              ctx
+              fallthrough
+              instr
+              lhs
+              rhs
+              lanes
+              ty
+              instrs
+              rest
+              out)
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              rest
+              out))]
         [(Load load-dst ptr load-ty)
           (compiler-backend-emit-load-step
             ctx
@@ -14328,6 +14733,13 @@
           program-index.backend-state)
         be_state.compiler-backend-function-i64-array-edge-index
         (__tl_make-array i64 0))]
+    [_avx2-sign-bit-plan : unit
+      (be_simd.compiler-backend-avx2-sign-bit-mask-plan!
+        (be_state.compiler-backend-state-function-state
+          program-index.backend-state)
+        vars
+        (& all-blocks)
+        (& use-counts))]
     ;; The frame-escape answer is per function too; see
     ;; compiler-backend-blocks-expose-frame-at?.
     [_frame-may-escape-clear : unit
@@ -21926,6 +22338,21 @@
             type-segment-bases
             vars
             raw-blocks)]
+        ;; Pre-regalloc SIMD algebraic select-add/sub factoring: hoist shared
+        ;; `x` out of `select(m, x +- a, x +- b)` so regalloc allocates the
+        ;; factored loop (and hoisted negated splats) cleanly.
+        [select-factored : be_simd.CompilerBackendSelectFactorResult
+          (if (be_state.compiler-backend-mode-scalar? mode)
+            (SelectFactorResult vars folded-blocks)
+            (be_simd.compiler-backend-simd-select-add-factor-blocks
+              vars
+              folded-blocks))]
+        [factored-vars : i64
+          (match (& select-factored)
+            [(SelectFactorResult out-vars _) out-vars])]
+        [factored-blocks : compiler_ir_types.CompilerIrBlockList
+          (match select-factored
+            [(SelectFactorResult _ out-blocks) out-blocks])]
         ;; Cycle 26: split a property-proven frame-free entry region before
         ;; regalloc. Incoming parameters stay in ABI locations until the saving
         ;; edge, whose returned labels drive prologue placement and bare returns.
@@ -21936,8 +22363,8 @@
                 name
                 (be_state.compiler-backend-global-shared-view params)
                 (be_state.compiler-backend-global-shared-view ret-ty)
-                vars
-                folded-blocks
+                factored-vars
+                factored-blocks
                 (be_state.compiler-backend-global-shared-view function-abi))]
             (if (and
               shrinkwrap-enabled

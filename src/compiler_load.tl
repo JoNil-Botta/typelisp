@@ -15128,6 +15128,19 @@
   [manifest-dir : (& str)]
   [deps : (& CompilerPkgDeps)]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  ;; A prebuilt stdlib module hydrates the same way for packages and single
+  ;; files; loading its source as well would declare it twice.
+  (when
+    (and
+      (compiler-load-tli-active?)
+      (compiler-load-tli-has-module?
+        (& (compiler-load-canonical-module-id-from-path path))))
+    (return
+      (compiler-load-stdlib-prelude-file-with-roots-cfg
+        path
+        seen
+        stdlib-roots
+        cfgs)))
   (let
     [suffix : String (compiler-load-stdlib-suffix path)]
     (match (compiler-load-resolve-stdlib-root

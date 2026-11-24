@@ -9990,17 +9990,23 @@
 ;; Length of the one trailing clone suffix `text` carries, or 0.
 (define (compiler-source-spans-bounds-clone-suffix-len [text : (& text str)]) : i64
   (let
-    [fast : String "__bce_fast"]
-    [fast-len : i64 (compiler-source-spans-label-suffix-len text (& fast))]
-    (if (> fast-len 0)
-      fast-len
+    [fast-part : String "__bce_fast_part"]
+    [fast-part-len : i64
+      (compiler-source-spans-label-suffix-len text (& fast-part))]
+    (if (> fast-part-len 0)
+      fast-part-len
       (let
-        [unswitch : String "__licm_false"]
-        [unswitch-len : i64
-          (compiler-source-spans-label-suffix-len text (& unswitch))]
-        (if (> unswitch-len 0)
-          unswitch-len
-          (compiler-source-spans-label-unroll-suffix-len text))))))
+        [fast : String "__bce_fast"]
+        [fast-len : i64 (compiler-source-spans-label-suffix-len text (& fast))]
+        (if (> fast-len 0)
+          fast-len
+          (let
+            [unswitch : String "__licm_false"]
+            [unswitch-len : i64
+              (compiler-source-spans-label-suffix-len text (& unswitch))]
+            (if (> unswitch-len 0)
+              unswitch-len
+              (compiler-source-spans-label-unroll-suffix-len text))))))))
 
 (define (compiler-source-spans-lookup-bounds-with-fuel
   [instr-entries : (& CompilerSourceSpansInstrEntryList)]

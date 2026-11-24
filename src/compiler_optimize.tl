@@ -112501,10 +112501,10 @@
 (define (opt-inline-size-sole-call-max-merged-vars) : i64
   192)
 
-;; Safe argument staging for sole-site absorption: keep param-mutating bodies
-;; and call-carrying sret bodies fail-closed (see the reproducer below), while
-;; permitting global-only staging and call-free sret bodies.
-(define (opt-inline-sole-call-staging-ok?
+;; Safe argument staging for `-Os` sole-site absorption: keep param-mutating
+;; bodies and call-carrying sret bodies fail-closed (see the reproducer below),
+;; while permitting global-only staging and call-free sret bodies.
+(define (opt-inline-size-sole-call-staging-ok?
   [staging : (& staging OptInlineArgStaging)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (and
@@ -112526,7 +112526,7 @@
   [merged-vars : i64]) : bool
   (and
     (= absorb-class 1)
-    (opt-inline-sole-call-staging-ok? staging blocks)
+    (opt-inline-size-sole-call-staging-ok? staging blocks)
     (let
       [merged-blocks : i64 (+ caller-blocks (+ added-so-far added-blocks))]
       (or
@@ -112574,7 +112574,8 @@
   [merged-vars : i64]) : bool
   (and
     (= absorb-class 1)
-    (opt-inline-sole-call-staging-ok? staging blocks)
+    (not staging.all?)
+    (not staging.values?)
     (not opt-inline-caller-single-site?)
     (not opt-inline-caller-cyclic-absorbed?)
     (<= callee-instrs (opt-inline-sole-call-cyclic-max-body))
@@ -112604,7 +112605,8 @@
   [merged-vars : i64]) : bool
   (and
     (= absorb-class 1)
-    (opt-inline-sole-call-staging-ok? staging blocks)
+    (not staging.all?)
+    (not staging.values?)
     (<= merged-vars (opt-inline-sole-call-max-merged-vars))
     (opt-inline-sole-call-pressure-ok? blocks)))
 
@@ -117973,22 +117975,10 @@
                 (opt-inline-bounds-loop-site-in-loop?))]
             [one-block-callee? : bool
               (<= (ir.compiler-ir-block-list-count cblocks) 1)]
-            ;; Sole-site one-block callees past the single-block cap can absorb
-            ;; directly at non-loop sites within bounded variable growth.
-            [sole-site-one-block-ok? : bool
-              (and
-                one-block-callee?
-                (not tail-site?)
-                (= absorb-class 1)
-                (or (not opt-inline-caller-single-site?) (> caller-blocks 1))
-                (opt-inline-sole-call-staging-ok? (& staging) (& cblocks))
-                (<= merged-vars 384)
-                (not (opt-inline-bounds-loop-site-in-loop?))
-                single-site-absorb?)]
             [band-admits? : bool
               (and
                 (not tail-site?)
-                (or (not one-block-callee?) sole-site-one-block-ok?)
+                (not one-block-callee?)
                 (not (opt-inline-checked-tail-only-body? cblocks))
                 bounds-ok?
                 (or bounds-loop-ok? converted-leaf-ok?)

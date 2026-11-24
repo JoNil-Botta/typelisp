@@ -8125,6 +8125,59 @@
             (-= k 1))))
       result)))
 
+;; Kind 0..4 for an argument-free abort call (`call [.L_tl_abort_]tl_*_abort`),
+;; or -1 otherwise.
+(define (compiler-backend-cold-argless-abort-kind
+  [data : (Ptr u8)]
+  [s : i64]
+  [e : i64]) : i64
+  (let
+    [first : i64 (compiler-backend-cold-line-first data s e)]
+    [last : i64 (compiler-backend-cold-line-last data first e)]
+    (if (not (compiler-backend-cold-prefix? data first last "call "))
+      -1
+      (let
+        [callee : i64
+          (if (compiler-backend-cold-prefix?
+            data
+            first
+            last
+            "call .L_tl_abort_")
+            (+ first 17)
+            (+ first 5))]
+        (cond
+          [(be_operand.compiler-backend-peephole-range-eq?
+              data
+              callee
+              last
+              "tl_oob_abort")
+            0]
+          [(be_operand.compiler-backend-peephole-range-eq?
+              data
+              callee
+              last
+              "tl_shift_abort")
+            1]
+          [(be_operand.compiler-backend-peephole-range-eq?
+              data
+              callee
+              last
+              "tl_div_abort")
+            2]
+          [(be_operand.compiler-backend-peephole-range-eq?
+              data
+              callee
+              last
+              "tl_region_abort")
+            3]
+          [(be_operand.compiler-backend-peephole-range-eq?
+              data
+              callee
+              last
+              "tl_oom_abort")
+            4]
+          [else -1])))))
+
 ;; The body of the stub between jump `j` and continuation `t` when it is one
 ;; argument-free abort call and nothing else, else "". Such a body runs the
 ;; same instruction whichever check reaches it, so the stubs of one function
@@ -8159,46 +8212,7 @@
           (=
             (compiler-backend-peephole-record-kind rec)
             compiler-backend-sweep-line-kind-instruction)
-          (let
-            [callee : i64
-              (if (compiler-backend-cold-prefix?
-                data
-                first
-                last
-                "call .L_tl_abort_")
-                (+ first 17)
-                (+ first 5))]
-            (and
-              (> last callee)
-              (or
-                (= callee (+ first 17))
-                (compiler-backend-cold-prefix? data first last "call "))
-              (or
-                (be_operand.compiler-backend-peephole-range-eq?
-                  data
-                  callee
-                  last
-                  "tl_oob_abort")
-                (be_operand.compiler-backend-peephole-range-eq?
-                  data
-                  callee
-                  last
-                  "tl_shift_abort")
-                (be_operand.compiler-backend-peephole-range-eq?
-                  data
-                  callee
-                  last
-                  "tl_div_abort")
-                (be_operand.compiler-backend-peephole-range-eq?
-                  data
-                  callee
-                  last
-                  "tl_region_abort")
-                (be_operand.compiler-backend-peephole-range-eq?
-                  data
-                  callee
-                  last
-                  "tl_oom_abort")))))
+          (>= (compiler-backend-cold-argless-abort-kind data first last) 0))
           (string.substring rec.src first (- last first))
           "")))))
 
@@ -8650,41 +8664,9 @@
       (= (compiler-backend-tail-symbol-end data operand e) e))))
 
 (define (compiler-backend-tail-abort? [data : (Ptr u8)] [s : i64] [e : i64]) : bool
-  (let
-    [prefix : i64
-      (if (compiler-backend-cold-prefix? data s e "    call .L_tl_abort_")
-        21
-        9)]
-    [callee : i64 (+ s prefix)]
-    (and
-      (> e callee)
-      (or (= prefix 21) (compiler-backend-cold-prefix? data s e "    call "))
-      (or
-        (be_operand.compiler-backend-peephole-range-eq?
-          data
-          callee
-          e
-          "tl_oob_abort")
-        (be_operand.compiler-backend-peephole-range-eq?
-          data
-          callee
-          e
-          "tl_shift_abort")
-        (be_operand.compiler-backend-peephole-range-eq?
-          data
-          callee
-          e
-          "tl_div_abort")
-        (be_operand.compiler-backend-peephole-range-eq?
-          data
-          callee
-          e
-          "tl_region_abort")
-        (be_operand.compiler-backend-peephole-range-eq?
-          data
-          callee
-          e
-          "tl_oom_abort")))))
+  (and
+    (compiler-backend-cold-prefix? data s e "    call ")
+    (>= (compiler-backend-cold-argless-abort-kind data s e) 0)))
 
 (define (compiler-backend-tail-line-hash
   [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]) : i64
@@ -10115,6 +10097,25 @@
             "vmaskmovdqu"))]
       [else false])))
 
+(define (compiler-backend-leaq-full-load?
+  [data : (Ptr u8)]
+  [ms : i64]
+  [me : i64]) : bool
+  (and
+    (>= (- me ms) 4)
+    (compiler-backend-cold-prefix? data ms me "mov")
+    (let
+      [b3 : i64 (be_state.compiler-backend-peephole-byte-at data (+ ms 3))]
+      (or
+        (and (= (- me ms) 4) (or (= b3 113) (= b3 108)))
+        (and
+          (>= (- me ms) 6)
+          (or (= b3 122) (= b3 115))
+          (let
+            [last : i64
+              (be_state.compiler-backend-peephole-byte-at data (- me 1))]
+            (or (= last 113) (= last 108))))))))
+
 ;; True iff the record's line fully overwrites `reg` without reading it, which
 ;; ends the death scan on this path. Restricted to `movq SRC, %rX`: the kill set
 ;; may be UNDER-approximated (a missed kill only refuses a fold), so the one
@@ -10124,7 +10125,8 @@
   [ms : i64]
   [me : i64]
   [end : i64]
-  [reg : i64]) : bool
+  [reg : i64]
+  [full-loads? : bool]) : bool
   (let
     [ops : i64
       (if (< me end)
@@ -10152,8 +10154,9 @@
         true]
       ;; Every mnemonic here writes its destination register in FULL: `movq`,
       ;; `movabsq` and `leaq` at 64 bits, `movl` at 32 with the zero-extension
-      ;; x86-64 gives every 32-bit destination. A narrower write (`movb`,
-      ;; `setcc`) would leave the upper bytes live and is deliberately absent.
+      ;; x86-64 gives every 32-bit destination (plus zero/sign-extending loads
+      ;; when `full-loads?` is set). A narrower write (`movb`, `setcc`) would
+      ;; leave the upper bytes live and is deliberately absent.
       [(not
           (or
             (be_operand.compiler-backend-peephole-range-eq? data ms me "movq")
@@ -10163,53 +10166,51 @@
               ms
               me
               "movabsq")
-            (be_operand.compiler-backend-peephole-range-eq? data ms me "leaq")))
+            (be_operand.compiler-backend-peephole-range-eq? data ms me "leaq")
+            (and full-loads? (compiler-backend-leaq-full-load? data ms me))))
         false]
       [else
         (not (compiler-backend-peephole-rmw-mentions-reg? data ops comma reg))])))
 
 ;; The record index of the label definition named [ts,te), or -1 when it is not
 ;; in this group's window. Labels are file-scope in the emitted assembly -- the
-;; assembler rejects a duplicate -- so the first match IS the only match. The
-;; scan starts just after `from` and wraps, because a jump target is usually the
-;; next label forward.
+;; assembler rejects a duplicate -- so the first match IS the only match.
 (define (compiler-backend-peephole-rmw-find-label
-  [recs : (__tl_dyn-array be_state.CompilerBackendPeepholeLineRecord)]
+  [recs : (& recs (__tl_dyn-array be_state.CompilerBackendPeepholeLineRecord))]
   [live : (& live (__tl_dyn-array i64))]
-  [count : i64]
+  [lo : i64]
+  [hi : i64]
   [from : i64]
   [data : (Ptr u8)]
   [ts : i64]
   [te : i64]) : i64
   (let
-    [lo : i64
-      (if (> (- from compiler-backend-peephole-rmw-label-window) 0)
+    [wlo : i64
+      (if (> (- from compiler-backend-peephole-rmw-label-window) lo)
         (- from compiler-backend-peephole-rmw-label-window)
-        0)]
-    [hi : i64
-      (if (< (+ from compiler-backend-peephole-rmw-label-window) count)
+        lo)]
+    [whi : i64
+      (if (< (+ from compiler-backend-peephole-rmw-label-window) hi)
         (+ from compiler-backend-peephole-rmw-label-window)
-        count)]
-    [i : i64 (- lo 1)]
-    (while (< (+ i 1) hi)
-      (+= i 1)
+        hi)]
+    (for [i (iterator.range wlo whi)]
       (when
         (= (array-ref live i) 1)
         (let
-          [rec : be_state.CompilerBackendPeepholeLineRecord
-            (be_state.compiler-backend-global-array-element-shared-view recs i)]
-          [kind : i64 (compiler-backend-peephole-record-kind rec)]
-          [rdata : (Ptr u8) (compiler-backend-peephole-record-data rec)]
-          [rstart : i64 (compiler-backend-peephole-record-start rec)]
-          [rend : i64 (compiler-backend-peephole-record-end rec)]
+          [rec : (& recs be_state.CompilerBackendPeepholeLineRecord)
+            (& (array-ref recs i))]
           (when
             (and
-              (= kind compiler-backend-sweep-line-kind-label)
-              (> rend rstart)
+              (=
+                (compiler-backend-peephole-record-kind rec)
+                compiler-backend-sweep-line-kind-label)
+              (>
+                (compiler-backend-peephole-record-end rec)
+                (compiler-backend-peephole-record-start rec))
               (be_operand.compiler-backend-peephole-ranges-eq?
-                rdata
-                rstart
-                (- rend 1)
+                (compiler-backend-peephole-record-data rec)
+                (compiler-backend-peephole-record-start rec)
+                (- (compiler-backend-peephole-record-end rec) 1)
                 data
                 ts
                 te))
@@ -10264,13 +10265,15 @@
 ;; is where a function body ends), an exhausted budget, and a call that could be
 ;; passing the register all return false.
 (define (compiler-backend-peephole-rmw-reg-dead-after?
-  [recs : (__tl_dyn-array be_state.CompilerBackendPeepholeLineRecord)]
+  [recs : (& recs (__tl_dyn-array be_state.CompilerBackendPeepholeLineRecord))]
   [live : (& live (__tl_dyn-array i64))]
-  [count : i64]
+  [lo : i64]
+  [hi : i64]
   [visited : (&mut visited (__tl_dyn-array i64))]
   [generation : i64]
   [start : i64]
-  [reg : i64]) : bool
+  [reg : i64]
+  [opt2-ext? : bool]) : bool
   (let
     [pending : (__tl_dyn-array i64)
       (__tl_make-array i64 compiler-backend-peephole-rmw-branch-cap)]
@@ -10280,9 +10283,9 @@
     [pc : i64 0]
     ;; The revisit window's origin -- see the note on the visit bounds.
     [base : i64
-      (if (> start compiler-backend-peephole-rmw-visit-back)
+      (if (> (- start compiler-backend-peephole-rmw-visit-back) lo)
         (- start compiler-backend-peephole-rmw-visit-back)
-        0)]
+        lo)]
     [slot : i64 0]
     [walking : bool false]
     (set! (array-ref pending 0) start)
@@ -10292,7 +10295,7 @@
         (-= pending-len 1)
         (set! pc (array-ref pending pending-len))
         (set! walking true))
-      (when (>= pc count) (return false))
+      (when (or (< pc lo) (>= pc hi)) (return false))
       (set! slot (- pc base))
       (when
         (or (< slot 0) (>= slot compiler-backend-peephole-rmw-visit-window))
@@ -10308,10 +10311,8 @@
           (if (not (= (array-ref live pc) 1))
             (+= pc 1)
             (let
-              [rec : be_state.CompilerBackendPeepholeLineRecord
-                (be_state.compiler-backend-global-array-element-shared-view
-                  recs
-                  pc)]
+              [rec : (& recs be_state.CompilerBackendPeepholeLineRecord)
+                (& (array-ref recs pc))]
               [kind : i64 (compiler-backend-peephole-record-kind rec)]
               [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
               [rend : i64 (compiler-backend-peephole-record-end rec)]
@@ -10335,7 +10336,8 @@
                         ms
                         me
                         rend
-                        reg)
+                        reg
+                        opt2-ext?)
                       (set! walking false)]
                     [(compiler-backend-peephole-rmw-mentions-reg?
                         data
@@ -10356,9 +10358,19 @@
                         ms
                         me
                         "call")
-                      (if (compiler-backend-peephole-rmw-callee-saved-reg? reg)
-                        (+= pc 1)
-                        (return false))]
+                      (cond
+                        [(and
+                            opt2-ext?
+                            (>=
+                              (compiler-backend-cold-argless-abort-kind
+                                data
+                                ms
+                                rend)
+                              0))
+                          (set! walking false)]
+                        [(compiler-backend-peephole-rmw-callee-saved-reg? reg)
+                          (+= pc 1)]
+                        [else (return false)])]
                     [(= b0 106)
                       (let
                         [ops : i64
@@ -10378,10 +10390,10 @@
                               lookups
                               compiler-backend-peephole-rmw-label-lookup-cap))
                             (compiler-backend-peephole-rmw-find-label
-                              (be_state.compiler-backend-global-shared-view
-                                recs)
+                              recs
                               live
-                              count
+                              lo
+                              hi
                               pc
                               data
                               ops
@@ -10403,10 +10415,22 @@
                             (set! (array-ref pending pending-len) target)
                             (+= pending-len 1)
                             (+= pc 1))))]
-                    [(compiler-backend-peephole-rmw-transparent-mnemonic?
-                        data
-                        ms
-                        me)
+                    [(and
+                        (compiler-backend-peephole-rmw-transparent-mnemonic?
+                          data
+                          ms
+                          me)
+                        ;; 1-operand `imulq`/`imull` implicitly reads %rax and writes %rdx:%rax.
+                        (or
+                          (!= b0 105)
+                          (>
+                            (compiler-backend-peephole-find-comma-space-range
+                              data
+                              (if (< (+ me 1) rend)
+                                (+ me 1)
+                                rend)
+                              rend)
+                            me)))
                       (+= pc 1)]
                     [else (return false)]))))))))
     true))
@@ -10649,13 +10673,15 @@
               (let
                 [dead? : bool
                   (compiler-backend-peephole-rmw-reg-dead-after?
-                    (be_state.compiler-backend-global-shared-view recs)
-                    live
+                    (& recs)
+                    (& live)
+                    0
                     count
                     (&mut visited)
                     generation
                     (+ store-at 1)
-                    reg)]
+                    reg
+                    false)]
                 ;; RMW-3: the register still holds the result after the
                 ;; store (or the bounded scan could not prove otherwise).
                 ;; The triple folds all the same, and the store's line
@@ -10869,57 +10895,6 @@
       [(and (>= disp -128) (<= disp 127)) 1]
       [else 4])))
 
-(define (compiler-backend-compact-argless-abort-kind
-  [data : (Ptr u8)]
-  [s : i64]
-  [e : i64]) : i64
-  (let
-    [first : i64 (compiler-backend-cold-line-first data s e)]
-    [last : i64 (compiler-backend-cold-line-last data first e)]
-    (if (not (compiler-backend-cold-prefix? data first last "call "))
-      -1
-      (let
-        [callee : i64
-          (if (compiler-backend-cold-prefix?
-            data
-            first
-            last
-            "call .L_tl_abort_")
-            (+ first 17)
-            (+ first 5))]
-        (cond
-          [(be_operand.compiler-backend-peephole-range-eq?
-              data
-              callee
-              last
-              "tl_oob_abort")
-            0]
-          [(be_operand.compiler-backend-peephole-range-eq?
-              data
-              callee
-              last
-              "tl_shift_abort")
-            1]
-          [(be_operand.compiler-backend-peephole-range-eq?
-              data
-              callee
-              last
-              "tl_div_abort")
-            2]
-          [(be_operand.compiler-backend-peephole-range-eq?
-              data
-              callee
-              last
-              "tl_region_abort")
-            3]
-          [(be_operand.compiler-backend-peephole-range-eq?
-              data
-              callee
-              last
-              "tl_oom_abort")
-            4]
-          [else -1])))))
-
 (define (compiler-backend-compact-signed-int?
   [data : (Ptr u8)]
   [s : i64]
@@ -11107,25 +11082,6 @@
 ;; ---------------------------------------------------------------------------
 ;; Compaction 1: Dead-in-block `leaq -> mem` folding (1..6 consumers)
 ;; ---------------------------------------------------------------------------
-(define (compiler-backend-leaq-full-load?
-  [data : (Ptr u8)]
-  [ms : i64]
-  [me : i64]) : bool
-  (and
-    (>= (- me ms) 4)
-    (= (be_state.compiler-backend-peephole-byte-at data ms) 109)
-    (let
-      [b3 : i64 (be_state.compiler-backend-peephole-byte-at data (+ ms 3))]
-      (or
-        (and (= (- me ms) 4) (or (= b3 113) (= b3 108)))
-        (and
-          (>= (- me ms) 6)
-          (or (= b3 122) (= b3 115))
-          (let
-            [last : i64
-              (be_state.compiler-backend-peephole-byte-at data (- me 1))]
-            (or (= last 113) (= last 108))))))))
-
 ;; Reuse RMW's transparent mnemonic list and exclude mnemonics that cannot take
 ;; a general memory operand in place of `d(%R)` (`push`/`pop`/`set`/`cmov`/
 ;; `nop`/`dec`/`bt`/`shl`/`shr`/`sar`/`neg`/`not`/`movabsq`/`leal`, plus
@@ -11162,258 +11118,6 @@
           (be_operand.compiler-backend-peephole-range-eq? data ms me "leaq"))]
       [else true])))
 
-(define (compiler-backend-leaq-clean-overwrite?
-  [data : (Ptr u8)]
-  [ms : i64]
-  [me : i64]
-  [end : i64]
-  [reg : i64]) : bool
-  (or
-    (compiler-backend-peephole-rmw-clean-overwrite? data ms me end reg)
-    (let
-      [ops : i64
-        (if (< me end)
-          (+ me 1)
-          end)]
-      [comma : i64
-        (compiler-backend-peephole-find-comma-space-range data ops end)]
-      (and
-        (> comma ops)
-        (< (+ comma 2) end)
-        (=
-          (compiler-backend-peephole-token-reg-index-range data (+ comma 2) end)
-          reg)
-        (compiler-backend-leaq-full-load? data ms me)
-        (not (compiler-backend-peephole-rmw-mentions-reg? data ops comma reg))))))
-
-(define (compiler-backend-leaq-find-label
-  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
-  [lo : i64]
-  [hi : i64]
-  [from : i64]
-  [data : (Ptr u8)]
-  [ts : i64]
-  [te : i64]) : i64
-  (let
-    [wlo : i64
-      (if (> (- from compiler-backend-peephole-rmw-label-window) lo)
-        (- from compiler-backend-peephole-rmw-label-window)
-        lo)]
-    [whi : i64
-      (if (< (+ from compiler-backend-peephole-rmw-label-window) hi)
-        (+ from compiler-backend-peephole-rmw-label-window)
-        hi)]
-    (for [i (iterator.range wlo whi)]
-      (when
-        (= (array-ref v.live i) 1)
-        (let
-          [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
-            (& (array-ref v.lines i))]
-          (when
-            (and
-              (=
-                (compiler-backend-peephole-record-kind rec)
-                compiler-backend-sweep-line-kind-label)
-              (>
-                (compiler-backend-peephole-record-end rec)
-                (compiler-backend-peephole-record-start rec))
-              (be_operand.compiler-backend-peephole-ranges-eq?
-                (compiler-backend-peephole-record-data rec)
-                (compiler-backend-peephole-record-start rec)
-                (- (compiler-backend-peephole-record-end rec) 1)
-                data
-                ts
-                te))
-            (return i)))))
-    -1))
-
-(define (compiler-backend-peephole-leaq-reg-dead-after?
-  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
-  [lo : i64]
-  [hi : i64]
-  [visited : (&mut visited (__tl_dyn-array i64))]
-  [generation : i64]
-  [start : i64]
-  [reg : i64]) : bool
-  (let
-    [pending : (__tl_dyn-array i64)
-      (__tl_make-array i64 compiler-backend-peephole-rmw-branch-cap)]
-    [pending-len : i64 1]
-    [budget : i64 compiler-backend-peephole-rmw-scan-cap]
-    [lookups : i64 0]
-    [pc : i64 0]
-    [base : i64
-      (if (> (- start compiler-backend-peephole-rmw-visit-back) lo)
-        (- start compiler-backend-peephole-rmw-visit-back)
-        lo)]
-    [walking : bool false]
-    (set! (array-ref pending 0) start)
-    (while (or walking (> pending-len 0))
-      (unless
-        walking
-        (-= pending-len 1)
-        (set! pc (array-ref pending pending-len))
-        (set! walking true))
-      (when (or (< pc lo) (>= pc hi)) (return false))
-      (let
-        [slot : i64 (- pc base)]
-        (when
-          (or (< slot 0) (>= slot compiler-backend-peephole-rmw-visit-window))
-          (return false))
-        (if (= (array-ref visited slot) generation)
-          (set! walking false)
-          (begin
-            (set! (array-ref visited slot) generation)
-            (-= budget 1)
-            (when (<= budget 0) (return false))
-            (if (!= (array-ref v.live pc) 1)
-              (+= pc 1)
-              (let
-                [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
-                  (& (array-ref v.lines pc))]
-                (if (!=
-                  (compiler-backend-peephole-record-kind rec)
-                  compiler-backend-sweep-line-kind-instruction)
-                  (+= pc 1)
-                  (let
-                    [data : (Ptr u8)
-                      (compiler-backend-peephole-record-data rec)]
-                    [rs : i64 (compiler-backend-peephole-record-start rec)]
-                    [rend : i64 (compiler-backend-peephole-record-end rec)]
-                    [ms : i64
-                      (compiler-backend-peephole-record-mnemonic-start rec)]
-                    [me : i64
-                      (compiler-backend-peephole-rmw-mnemonic-end data ms rend)]
-                    [b0 : i64
-                      (be_state.compiler-backend-peephole-byte-at data ms)]
-                    (cond
-                      [(= b0 46) (return false)]
-                      [(compiler-backend-leaq-clean-overwrite?
-                          data
-                          ms
-                          me
-                          rend
-                          reg)
-                        (set! walking false)]
-                      [(compiler-backend-peephole-rmw-mentions-reg?
-                          data
-                          ms
-                          rend
-                          reg)
-                        (return false)]
-                      [(be_operand.compiler-backend-peephole-range-eq?
-                          data
-                          ms
-                          me
-                          "ret")
-                        (if (compiler-backend-peephole-rmw-return-reg? reg)
-                          (return false)
-                          (set! walking false))]
-                      [(be_operand.compiler-backend-peephole-range-eq?
-                          data
-                          ms
-                          me
-                          "call")
-                        (let
-                          [ops : i64
-                            (if (< (+ me 1) rend)
-                              (+ me 1)
-                              rend)]
-                          (cond
-                            [(>=
-                                (compiler-backend-compact-argless-abort-kind
-                                  data
-                                  rs
-                                  rend)
-                                0)
-                              (set! walking false)]
-                            [(compiler-backend-peephole-rmw-callee-saved-reg?
-                                reg)
-                              (+= pc 1)]
-                            [(and
-                                (or (= reg 8) (= reg 9))
-                                (< ops rend)
-                                (let
-                                  [tb : i64
-                                    (be_state.compiler-backend-peephole-byte-at
-                                      data
-                                      ops)]
-                                  (and
-                                    (!= tb 42)
-                                    (!= tb 46)
-                                    (not
-                                      (and
-                                        (>= (- rend ops) 3)
-                                        (be_operand.compiler-backend-peephole-range-eq?
-                                          data
-                                          (- rend 3)
-                                          rend
-                                          "_at"))))))
-                              (set! walking false)]
-                            [else (return false)]))]
-                      [(= b0 106)
-                        (let
-                          [ops : i64
-                            (if (< (+ me 1) rend)
-                              (+ me 1)
-                              rend)]
-                          [te : i64
-                            (compiler-backend-peephole-rmw-branch-target-end
-                              data
-                              ops
-                              rend)]
-                          [_spend : unit (+= lookups 1)]
-                          [target : i64
-                            (if (and
-                              (> te ops)
-                              (<=
-                                lookups
-                                compiler-backend-peephole-rmw-label-lookup-cap))
-                              (compiler-backend-leaq-find-label
-                                v
-                                lo
-                                hi
-                                pc
-                                data
-                                ops
-                                te)
-                              -1)]
-                          (when (< target 0) (return false))
-                          (if (be_operand.compiler-backend-peephole-range-eq?
-                            data
-                            ms
-                            me
-                            "jmp")
-                            (set! pc target)
-                            (begin
-                              (when
-                                (>=
-                                  pending-len
-                                  compiler-backend-peephole-rmw-branch-cap)
-                                (return false))
-                              (set! (array-ref pending pending-len) target)
-                              (+= pending-len 1)
-                              (+= pc 1))))]
-                      [(and
-                          (compiler-backend-peephole-rmw-transparent-mnemonic?
-                            data
-                            ms
-                            me)
-                          ;; 1-operand `imulq`/`imull` implicitly reads %rax and writes %rdx:%rax.
-                          (or
-                            (!= b0 105)
-                            (>
-                              (compiler-backend-peephole-find-comma-space-range
-                                data
-                                (if (< (+ me 1) rend)
-                                  (+ me 1)
-                                  rend)
-                                rend)
-                              me)))
-                        (+= pc 1)]
-                      [else (return false)])))))))))
-    true))
-
 (define (compiler-backend-leaq-intervening-safe?
   [rec : (& rec be_state.CompilerBackendPeepholeLineRecord)]
   [addr-mask : i64]) : bool
@@ -11445,13 +11149,21 @@
       [comma : i64
         (compiler-backend-peephole-find-comma-space-range data ops rend)]
       (when (or (<= comma ops) (>= (+ comma 2) rend)) (return false))
-      (when
-        (or
-          (and (= b0 99) (compiler-backend-cold-prefix? data ms me "cmp"))
-          (and (= b0 116) (compiler-backend-cold-prefix? data ms me "test")))
-        (return true))
       (let
         [ds : i64 (+ comma 2)]
+        ;; Reject 3-operand forms (`imulq $imm, (%rsp), %rbx`, `vpextrq $0, %xmm0, %rbx`)
+        ;; so the destination register after the second `, ` cannot be mistaken for a
+        ;; safe memory/XMM second operand.
+        (when
+          (>=
+            (compiler-backend-peephole-find-comma-space-range data ds rend)
+            ds)
+          (return false))
+        (when
+          (or
+            (and (= b0 99) (compiler-backend-cold-prefix? data ms me "cmp"))
+            (and (= b0 116) (compiler-backend-cold-prefix? data ms me "test")))
+          (return true))
         (cond
           [(<
               (be_operand.compiler-backend-peephole-scan-byte-range
@@ -11954,14 +11666,16 @@
                       (set! visited-ready true))
                     (+= generation 1)
                     (when
-                      (compiler-backend-peephole-leaq-reg-dead-after?
-                        v
+                      (compiler-backend-peephole-rmw-reg-dead-after?
+                        (& v.lines)
+                        (& v.live)
                         lo
                         hi
                         (&mut visited)
                         generation
                         (+ ci 1)
-                        dst-reg)
+                        dst-reg
+                        true)
                       (compiler-backend-compact-replace-insn!
                         v
                         ci
@@ -12127,14 +11841,16 @@
                       (set! visited-ready true))
                     (+= generation 1)
                     (when
-                      (compiler-backend-peephole-leaq-reg-dead-after?
-                        v
+                      (compiler-backend-peephole-rmw-reg-dead-after?
+                        (& v.lines)
+                        (& v.live)
                         lo
                         hi
                         (&mut visited)
                         generation
                         (+ ci 1)
-                        dst-reg)
+                        dst-reg
+                        true)
                       (let
                         [mem : String
                           (string.substring
@@ -12448,12 +12164,13 @@
                                 [(not ok?)
                                   (if (and
                                     (> use-count 0)
-                                    (compiler-backend-leaq-clean-overwrite?
+                                    (compiler-backend-peephole-rmw-clean-overwrite?
                                       cdata
                                       cms
                                       cme
                                       ce
-                                      dst-reg))
+                                      dst-reg
+                                      true))
                                     (set! self-dead? true)
                                     (set! use-count 0))
                                   (set! done true)]
@@ -12488,14 +12205,16 @@
                                   compiler-backend-peephole-rmw-visit-window))
                               (set! visited-ready true))
                             (+= generation 1)
-                            (compiler-backend-peephole-leaq-reg-dead-after?
-                              v
+                            (compiler-backend-peephole-rmw-reg-dead-after?
+                              (& v.lines)
+                              (& v.live)
                               lo
                               hi
                               (&mut visited)
                               generation
                               (+ last-ci 1)
-                              dst-reg))))
+                              dst-reg
+                              true))))
                       (set! folded? true)
                       (if (>= direct-ci 0)
                         (if direct-nop?
@@ -12686,8 +12405,8 @@
   [linux? : bool]
   [has-tail-jmp? : bool]) : i64
   (cond
-    [(and (or (not has-tail-jmp?) (not linux?)) (= (bit-and used-mask 16) 0)) 4]
-    [(and (or (not has-tail-jmp?) (not linux?)) (= (bit-and used-mask 32) 0)) 5]
+    [(and (not has-tail-jmp?) (= (bit-and used-mask 16) 0)) 4]
+    [(and (not has-tail-jmp?) (= (bit-and used-mask 32) 0)) 5]
     [(and (not has-tail-jmp?) (= (bit-and used-mask 4) 0)) 2]
     [(and (not has-tail-jmp?) (= (bit-and used-mask 8) 0)) 3]
     [linux?
@@ -13591,7 +13310,7 @@
                     (compiler-backend-cold-prefix? data s e "    call "))
                   (let
                     [ak : i64
-                      (compiler-backend-compact-argless-abort-kind data s e)]
+                      (compiler-backend-cold-argless-abort-kind data s e)]
                     (when
                       (and
                         (>= ak 0)
@@ -13879,7 +13598,7 @@
                     compiler-backend-sweep-line-kind-instruction)
                   (let
                     [ak : i64
-                      (compiler-backend-compact-argless-abort-kind
+                      (compiler-backend-cold-argless-abort-kind
                         (compiler-backend-peephole-record-data rec)
                         (compiler-backend-peephole-record-start rec)
                         (compiler-backend-peephole-record-end rec))]
@@ -13950,7 +13669,7 @@
                       compiler-backend-sweep-line-kind-instruction)
                     (let
                       [k : i64
-                        (compiler-backend-compact-argless-abort-kind
+                        (compiler-backend-cold-argless-abort-kind
                           (compiler-backend-peephole-record-data rec)
                           (compiler-backend-peephole-record-start rec)
                           (compiler-backend-peephole-record-end rec))]
@@ -14101,7 +13820,7 @@
                     compiler-backend-sweep-line-kind-instruction)
                   (let
                     [ak : i64
-                      (compiler-backend-compact-argless-abort-kind
+                      (compiler-backend-cold-argless-abort-kind
                         (compiler-backend-peephole-record-data rec)
                         (compiler-backend-peephole-record-start rec)
                         (compiler-backend-peephole-record-end rec))]
@@ -14114,10 +13833,10 @@
                           (compiler-backend-compact-step-live v i hi 1)]
                         (while (and
                           (>= scan 0)
-                          (!=
+                          (=
                             (compiler-backend-peephole-record-kind
                               (& (array-ref v.lines scan)))
-                            compiler-backend-sweep-line-kind-instruction))
+                            compiler-backend-sweep-line-kind-label))
                           (set!
                             scan
                             (compiler-backend-compact-step-live v scan hi 1)))
@@ -14125,7 +13844,11 @@
                           (and
                             (>= scan 0)
                             (=
-                              (compiler-backend-compact-argless-abort-kind
+                              (compiler-backend-peephole-record-kind
+                                (& (array-ref v.lines scan)))
+                              compiler-backend-sweep-line-kind-instruction)
+                            (=
+                              (compiler-backend-cold-argless-abort-kind
                                 (compiler-backend-peephole-record-data
                                   (& (array-ref v.lines scan)))
                                 (compiler-backend-peephole-record-start

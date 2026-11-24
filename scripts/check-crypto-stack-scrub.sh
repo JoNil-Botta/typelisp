@@ -89,7 +89,7 @@ function instrument_call(line,n,kind,required,high,  top,d,badphase,after,origin
     if (s ~ /^leaq [0-9]+\(%rsp\),/ && !array_offset_set[current]) {
         t=s; sub(/^leaq /,"",t); sub(/\(.*/,"",t)
         array_offset[current]=t+0; array_offset_set[current]=1
-    } else if (s ~ /^(movq %rsp,|leaq \(%rsp\),)/ && !array_offset_set[current]) {
+    } else if (s ~ /^(movq %rsp,|leaq \(%rsp\),)/ && s !~ /^movq %rsp, %rbp$/ && !array_offset_set[current]) {
         array_offset[current]=0; array_offset_set[current]=1
     }
     if (s ~ /:$/) { delete zero_xmm; delete zero_gp }
@@ -110,22 +110,22 @@ function instrument_call(line,n,kind,required,high,  top,d,badphase,after,origin
         if (s ~ /%xmm[0-9]+$/) {
             zr = s; sub(/^.*, /, "", zr); delete zero_xmm[zr]
         }
-        if (s !~ /^movq %r[a-z0-9]+, / && s ~ /%[er]?[a-z0-9]+$/) {
+        if (s !~ /%[xyz]mm[0-9]+$/ && s ~ /%[a-z0-9]+$/) {
             delete zero_gp
         }
     }
-    if (s ~ /^movq [$]0,/ && !wipe_seen[current]) init_words[current]++
-    if (s ~ /^movups %xmm[0-9]+, / && !wipe_seen[current]) {
-        split(s, za, /[ ,]+/)
-        if (za[2] in zero_xmm) init_words[current] += 2
-    }
-    if (s ~ /^movq %xmm[0-9]+, / && !wipe_seen[current]) {
-        split(s, za, /[ ,]+/)
-        if (za[2] in zero_xmm) init_words[current] += 1
-    }
-    if (s ~ /^movq %r[a-z0-9]+, / && !wipe_seen[current]) {
-        split(s, za, /[ ,]+/)
-        if (za[2] in zero_gp) init_words[current] += 1
+    if (!wipe_seen[current] && s ~ /, [0-9]*\(%[a-z0-9]+\)$/) {
+        if (s ~ /^movq [$]0,/) init_words[current]++
+        else if (s ~ /^movups %xmm[0-9]+, /) {
+            split(s, za, /[ ,]+/)
+            if (za[2] in zero_xmm) init_words[current] += 2
+        } else if (s ~ /^movq %xmm[0-9]+, /) {
+            split(s, za, /[ ,]+/)
+            if (za[2] in zero_xmm) init_words[current] += 1
+        } else if (s ~ /^movq %r[a-z0-9]+, /) {
+            split(s, za, /[ ,]+/)
+            if (za[2] in zero_gp) init_words[current] += 1
+        }
     }
     if (s ~ /^mov[lq] [$][0-9]+, %(esi|edx)$/) chunk_argument[current]=immediate(s)
     if (s ~ /^callq? _tl_stdlib_crypto_stack_scrub_stdlib_crypto_stack_scrub_wipe_chunks_bang$/) {

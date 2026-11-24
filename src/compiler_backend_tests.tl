@@ -47717,7 +47717,7 @@ user_fn:
     [linux : be_state.CompilerBackendTarget
       (be_state.CompilerBackendTarget.Linux)]
     [fold-in : String
-      "f:\n    leaq 16(%rsp), %rax\n    movq (%rax), %rax\n    leaq 24(%rsp), %r10\n    movq %rax, (%r10)\n    movq %rdi, 8(%r10)\n    call helper\n    leaq (%rbx), %rsi\n    movq %rax, %r10\n    movq %r14, (%r10)\n    movq %r12, 88(%rsp)\n    movq 88(%rsp), %r8\n    movq 88(%rsp), %r12\n    movq 16(%rbx), %r9\n    testq %r9, %r9\n    jne .L1\n    movzbl 1(%r12), %r9d\n    testq %r9, %r9\n    je .L1\n    movl $1, %r9d\n.L1:\n    xorl %r9d, %r9d\n    ret\n"]
+      "f:\n    leaq 16(%rsp), %rax\n    movq (%rax), %rax\n    leaq 24(%rsp), %r10\n    movq %rax, (%r10)\n    movq %rdi, 8(%r10)\n    xorl %r10d, %r10d\n    call helper\n    leaq (%rbx), %rsi\n    movq %rax, %r10\n    movq %r14, (%r10)\n    movq %r12, 88(%rsp)\n    movq 88(%rsp), %r8\n    movq 88(%rsp), %r12\n    movq 16(%rbx), %r9\n    testq %r9, %r9\n    jne .L1\n    movzbl 1(%r12), %r9d\n    testq %r9, %r9\n    je .L1\n    movl $1, %r9d\n.L1:\n    xorl %r9d, %r9d\n    ret\n"]
     [opt2 : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         (str_cat.str-cat fold-in "")
@@ -47729,7 +47729,7 @@ user_fn:
         linux
         false)]
     [refuse-in : String
-      "g:\n    leaq 16(%rsp), %r10\n    movq (%r10), %rax\n    call *%r10\n    leaq 16(%rbx), %rcx\n    addq $8, %rbx\n    movq (%rcx), %rdx\n    xorl %ecx, %ecx\n    movq 8(%rax), %rax\n    movq %rax, %r10\n    movabsq $3074457345618258603, %r8\n    imulq %r8\n    movq %rdx, %rax\n    ret\n"]
+      "g:\n    leaq 16(%rsp), %r10\n    movq (%r10), %rax\n    call *%r10\n    leaq 32(%rsp), %r10\n    movq %rax, (%r10)\n    call _tl_spmd_fn\n    xorl %r10d, %r10d\n    leaq 16(%rbx), %rcx\n    addq $8, %rbx\n    movq (%rcx), %rdx\n    xorl %ecx, %ecx\n    leaq 24(%rbx), %rcx\n    imulq $3, (%rsp), %rbx\n    movq (%rcx), %rdx\n    xorl %ecx, %ecx\n    leaq 40(%rbx), %rcx\n    vpextrq $0, %xmm0, %rbx\n    movq (%rcx), %rdx\n    xorl %ecx, %ecx\n    movq 8(%rax), %rax\n    movq %rax, %r10\n    movabsq $3074457345618258603, %r8\n    imulq %r8\n    movq %rdx, %rax\n    ret\n"]
     [refuse-out : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
         refuse-in
@@ -47756,12 +47756,21 @@ user_fn:
     (test.assert-true
       (and
         (asm-has? refuse-out "    leaq 16(%rsp), %r10\n" "    call *%r10\n")
+        (asm-has?
+          refuse-out
+          "    leaq 32(%rsp), %r10\n    movq %rax, (%r10)\n    call _tl_spmd_fn\n")
         (asm-has? refuse-out "    leaq 16(%rbx), %rcx\n" "    addq $8, %rbx\n")
+        (asm-has?
+          refuse-out
+          "    leaq 24(%rbx), %rcx\n    imulq $3, (%rsp), %rbx\n    movq (%rcx), %rdx\n")
+        (asm-has?
+          refuse-out
+          "    leaq 40(%rbx), %rcx\n    vpextrq $0, %xmm0, %rbx\n    movq (%rcx), %rdx\n")
         (asm-has?
           refuse-out
           "    movq 8(%rax), %rax\n    movq %rax, %r10\n"
           "    imulq %r8\n"))
-      "indirect call use, base-modifying insn, and 1-op imulq implicit %rax read block folding")))
+      "indirect/direct %r10 calls, 2-op/3-op base-modifying insns, and 1-op imulq block folding")))
 
 (test
   peephole-compact-zero-store-coalescing-and-xmm-liveness
@@ -47803,11 +47812,11 @@ user_fn:
         tail-win-in
         win
         true)]
-    [win-busy-in : String
-      "z5:\n    .seh_proc z5\n    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n    movaps %xmm4, (%rcx)\n    movaps %xmm5, 16(%rcx)\n    addq $40, %rsp\n    jmp external_tail\n    .seh_endproc\n"]
-    [win-busy-out : String
+    [win-seh-in : String
+      "z5:\n    .seh_proc z5\n    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n    addq $40, %rsp\n    ret\n    .seh_endproc\n"]
+    [win-seh-out : String
       (backend.compiler-backend-peephole-asm-drop-fallthrough-target
-        win-busy-in
+        win-seh-in
         win
         true)]
     [asm-in : String
@@ -47842,12 +47851,12 @@ user_fn:
       "Linux tail-call jmp avoids %xmm0..%xmm7 and picks %xmm8")
     (test.assert-true
       (and
+        (asm-lacks? tail-win-out "xorps")
+        (asm-has? tail-win-out "    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n")
         (asm-has?
-          tail-win-out
-          ".seh_endprologue\n    xorps %xmm4, %xmm4\n    movups %xmm4, (%rsp)\n")
-        (asm-lacks? win-busy-out "xorps")
-        (asm-has? win-busy-out "    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n"))
-      "Win64 preserves SEH prologue, uses only volatile %xmm4/%xmm5 on tail-call, and refuses when both are live")
+          win-seh-out
+          ".seh_endprologue\n    xorps %xmm4, %xmm4\n    movups %xmm4, (%rsp)\n"))
+      "Win64 disables XMM zero-coalescing on tail-call jmp and preserves SEH prologue on normal ret")
     (test.assert-true
       (asm-lacks? asm-out "xorps")
       "inline assembly disables XMM zero-store coalescing")))
@@ -47883,6 +47892,13 @@ user_fn:
         long-lbl-in
         linux
         true)]
+    [skip-dir-in : String
+      "b4:\n    cmpq $0, %rdi\n    jne .Lok\n    call tl_oob_abort\n    .byte 0xcc\n    call tl_oob_abort\n.Lok:\n    ret\n"]
+    [skip-dir-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        skip-dir-in
+        linux
+        true)]
     (test.assert-true
       (and
         (asm-has? opt2 "    jne .Lnext\n")
@@ -47906,4 +47922,9 @@ user_fn:
         (asm-lacks?
           long-lbl-out
           ".Lf18721_inl.make_array_len_ok.15.60.make_array_len_fail.4"))
-      "long labels sharing head/middle/tail bytes redirect cleanly with zero dangling refs")))
+      "long labels sharing head/middle/tail bytes redirect cleanly with zero dangling refs")
+    (test.assert-true
+      (asm-has?
+        skip-dir-out
+        "    call tl_oob_abort\n    .byte 0xcc\n    call tl_oob_abort\n")
+      "fallthrough abort dedup never steps across skip directives like .byte")))

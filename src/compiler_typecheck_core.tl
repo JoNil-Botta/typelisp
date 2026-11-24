@@ -5207,8 +5207,9 @@
           (if (and
             (match (& actual)
               [(ast.AstType.String) true]
-              [(ast.AstType.Region _ inner)
-                (match (ast.ty-node-get inner)
+              [(or (ast.AstType.Region _ inner)
+                   (ast.AstType.Invalidate _ inner))
+                (match (tc-type-strip-region (ast.ty-node-get inner))
                   [(ast.AstType.String) true]
                   [_ false])]
               [_ false])

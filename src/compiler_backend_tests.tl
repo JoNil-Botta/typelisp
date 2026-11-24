@@ -7166,6 +7166,90 @@ high:
     ret
 ")
 
+;; Push mode deletes every save into the callee-save band, so a squeezed
+;; rebase drops 32 of its bytes: var slots move 32 bytes closer to %rsp,
+;; while a bottom-of-frame slot below the band keeps its %rsp offset. With
+;; slot-vars = 3 the squeezed band is -56..-32. A reference into the band
+;; that is not a classified save fails the audit.
+(define (compiler-backend-frame-squeeze-rebase
+  [body : String]
+  [frame : i64]
+  [squeeze : i64]) : be_peephole.CompilerBackendRspRebaseResult
+  (let
+    [backend-state : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [_abi : unit (compiler-backend-set-current-fn-linux! backend-state)]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (compiler-backend-callee-save-assignments3)]
+    [push-regs : (__tl_dyn-array String)
+      (be_peephole.compiler-backend-rsp-rebase-make-push-regs)]
+    [push-count : i64
+      (backend.compiler-backend-fill-push-csr-regs!
+        assignments
+        (&mut push-regs)
+        backend-state)]
+    (be_peephole.compiler-backend-rsp-rebase-full-result-squeezed
+      body
+      (- frame squeeze)
+      true
+      push-regs
+      push-count
+      3
+      squeeze
+      backend-state)))
+
+(define (compiler-backend-frame-squeeze-body [extra : String]) : String
+  (str_cat.str-cat
+    "    movq %r12, -32(%rbp)
+    movq %r13, -40(%rbp)
+    movq %r14, -48(%rbp)
+    movq -8(%rbp), %r12
+    movq %r12, -72(%rbp)
+"
+    extra
+    "    addq %r14, %r13
+    movq -72(%rbp), %rax
+    leaq -48(%rbp), %rsp
+    popq %r14
+    popq %r13
+    popq %r12
+    leave
+    ret
+"))
+
+(define (compiler-backend-frame-squeeze-rebase-ok?) : bool
+  (let
+    [plain : be_peephole.CompilerBackendRspRebaseResult
+      (compiler-backend-frame-squeeze-rebase
+        (compiler-backend-frame-squeeze-body "")
+        96
+        0)]
+    [squeezed : be_peephole.CompilerBackendRspRebaseResult
+      (compiler-backend-frame-squeeze-rebase
+        (compiler-backend-frame-squeeze-body "")
+        96
+        32)]
+    [band-ref : be_peephole.CompilerBackendRspRebaseResult
+      (compiler-backend-frame-squeeze-rebase
+        (compiler-backend-frame-squeeze-body "    movq -56(%rbp), %rax\n")
+        96
+        32)]
+    [plain-text : String plain.text]
+    [squeezed-text : String squeezed.text]
+    (and
+      plain.ok
+      (asm-has? plain-text "    movq 88(%rsp), %r12\n")
+      (asm-has? plain-text "    movq %r12, 24(%rsp)\n")
+      (asm-has? plain-text "    addq $96, %rsp\n")
+      squeezed.ok
+      (asm-has? squeezed-text "    movq 56(%rsp), %r12\n")
+      (asm-has? squeezed-text "    movq %r12, 24(%rsp)\n")
+      (asm-has? squeezed-text "    movq 24(%rsp), %rax\n")
+      (asm-has? squeezed-text "    addq $64, %rsp\n")
+      (asm-lacks? squeezed-text "(%rbp)")
+      (not band-ref.ok))))
+
 ;; The same body with %r13 named through its 32-bit spelling. A register named
 ;; at ANY width is used; reading only the 64-bit spellings makes this body look
 ;; empty of %r13 and trims a save the function needs.
@@ -7256,6 +7340,7 @@ high:
         push-regs
         push-count
         3
+        0
         backend-state)]
     [prologue : String
       (be_scalar.compiler-backend-emit-function-entry-fpo-push
@@ -41525,6 +41610,7 @@ b_keep:
         (compiler-backend-rsp-rebase-indexed-pool-base-ok?)
         (compiler-backend-csr-unused-save-trim-ok?)
         (compiler-backend-csr-narrow-spelling-keeps-save-ok?)
+        (compiler-backend-frame-squeeze-rebase-ok?)
         (compiler-backend-dead-slot-region-push-ok?)
         (compiler-backend-win64-callee-save-homes-ok?)
         (compiler-backend-win64-fpo-seh-prologue-ok?)
@@ -47634,23 +47720,23 @@ user_fn:
       "Linux fallback-TailCall direct-stack-param function aligns %rsp with subq $8, %rsp")
     (test.assert-true
       (and
-        (asm-has? reader "    movq 176(%rsp), %r8\n    addq 184(%rsp), %r8\n")
-        (asm-lacks? reader "movq 176(%rsp), %r8\n    movq %r8, ")
-        (asm-has? tail-reg "    movq 176(%rsp), %r8\n    addq 184(%rsp), %r8\n")
+        (asm-has? reader "    movq 128(%rsp), %r8\n    addq 136(%rsp), %r8\n")
+        (asm-lacks? reader "movq 128(%rsp), %r8\n    movq %r8, ")
+        (asm-has? tail-reg "    movq 128(%rsp), %r8\n    addq 136(%rsp), %r8\n")
         (asm-has? tail-reg "    jmp _tl_dsp_tr_cal\n"))
       "Linux direct stack params and 0-stack-arg tail caller read caller frame directly")
     (test.assert-true
       (and
-        (asm-has? addr "    movq 176(%rsp), %r8\n    movq %r8, 64(%rsp)\n")
-        (asm-has? addr "    leaq 64(%rsp), %rdi\n")
-        (asm-has? addr "    addq 184(%rsp), %rax\n")
-        (asm-has? narrow "    movslq 176(%rsp), %r8\n")
-        (asm-has? narrow "    movzbl 184(%rsp), %r8d\n")
+        (asm-has? addr "    movq 128(%rsp), %r8\n    movq %r8, 16(%rsp)\n")
+        (asm-has? addr "    leaq 16(%rsp), %rdi\n")
+        (asm-has? addr "    addq 136(%rsp), %rax\n")
+        (asm-has? narrow "    movslq 128(%rsp), %r8\n")
+        (asm-has? narrow "    movzbl 136(%rsp), %r8d\n")
         (asm-has?
           tail-stack
-          "    movq 144(%rsp), %r8\n    movq %r8, 72(%rsp)\n")
+          "    movq 112(%rsp), %r8\n    movq %r8, 40(%rsp)\n")
         (asm-has? tail-stack "    jmp _tl_dsp_tc_cal\n")
-        (asm-lacks? mutated ", 176(%rsp)" ", 184(%rsp)"))
+        (asm-lacks? mutated ", 128(%rsp)" ", 136(%rsp)"))
       "Linux excludes AddrOf, narrow <8-byte, and stack-arg tail-call params and never mutates caller slots"))
   ;; End-to-end Windows x64 opt2 checks.
   (let
@@ -47676,14 +47762,14 @@ user_fn:
         (asm-has? win-reader ".seh_stackalloc " ".seh_endprologue")
         (asm-has?
           win-reader
-          "    movq 256(%rsp), %r8\n    addq 264(%rsp), %r8\n")
-        (asm-lacks? win-reader "movq 256(%rsp), %r8\n    movq %r8, "))
+          "    movq 208(%rsp), %r8\n    addq 216(%rsp), %r8\n")
+        (asm-lacks? win-reader "movq 208(%rsp), %r8\n    movq %r8, "))
       "Windows direct stack reader reads incoming caller slots directly with valid SEH")
     (test.assert-true
       (and
         (asm-has? win-narrow ".seh_stackalloc " ".seh_endprologue")
-        (asm-has? win-narrow "    movslq 256(%rsp), %r8\n")
-        (asm-has? win-narrow "    movzbl 264(%rsp), %r8d\n"))
+        (asm-has? win-narrow "    movslq 208(%rsp), %r8\n")
+        (asm-has? win-narrow "    movzbl 216(%rsp), %r8d\n"))
       "Windows excludes narrow <8-byte incoming stack params with valid SEH")))
 
 (test

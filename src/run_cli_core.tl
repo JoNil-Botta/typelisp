@@ -127,7 +127,7 @@
         (cli_option.cli-compile-options
           (target_cfg.compiler-target-cfg-host)
           (opt.compiler-optimize-default-level))]
-      (driver.compiler-driver-reset-sysroot-options!)
+      (tli_cli.tli-reset-active-sysroot-options!)
       (while (cli_option.cli-args-next! (&mut args))
         (cond
           [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
@@ -165,7 +165,7 @@
       (unless
         args.failed
         (ir.compiler-debug-info-set-enabled! options.debug)
-        (driver.compiler-driver-set-sysroot-options! (& sysroot)))
+        (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
       (if args.failed
         (Err args.error)
         (Ok

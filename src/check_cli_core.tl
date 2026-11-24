@@ -62,7 +62,7 @@
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions
       (cli_option.cli-compile-options (Linux) 1)]
-    (compiler_driver_core.compiler-driver-reset-sysroot-options!)
+    (tli_cli.tli-reset-active-sysroot-options!)
     (while (cli_option.cli-args-next! (&mut args))
       (cond
         [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
@@ -94,9 +94,7 @@
         [else
           (set! input-path (string.copy (& args.arg)))
           (set! has-input true)]))
-    (unless
-      args.failed
-      (compiler_driver_core.compiler-driver-set-sysroot-options! (& sysroot)))
+    (unless args.failed (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
       [(and has-batch has-input)

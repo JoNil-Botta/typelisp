@@ -17,7 +17,7 @@
 (import compiler_typecheck_api)
 (import compiler_typecheck_core as tc)
 (import compiler_target_cfg_core as target_cfg)
-(import compiler_driver_core as driver)
+(import tli_cli_core as tli_cli)
 (import sym_i64_env)
 
 ;; The observed consumer runs before checker pools retire. Fact producers
@@ -421,7 +421,8 @@
     (compiler-check-reset-pools!)
     (tc.tc-job-state-reset-advisories! (tc.tc-serial-job-state))
     (cfg compile-profile (compiler-check-profile-start))
-    (match (driver.compiler-driver-open-tli-catalog-active!
+    (match (tli_cli.tli-open-catalog-for-session!
+      (& (compiler_load.compiler-load-serial-test-session-state))
       (compiler-check-target-from-cfgs cfgs)
       (& stdlib-roots)
       cfgs
@@ -495,7 +496,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
   (compiler-check-package-begin! job-state)
-  (match (driver.compiler-driver-open-tli-catalog-active!
+  (match (tli_cli.tli-open-catalog-for-session!
+    (& (compiler_load.compiler-load-serial-test-session-state))
     (compiler-check-target-from-cfgs cfgs)
     (& stdlib-roots)
     cfgs
@@ -588,7 +590,8 @@
     (compiler-check-reset-pools!)
     (tc.tc-job-state-reset-advisories! job-state)
     (cfg compile-profile (compiler-check-profile-start))
-    (match (driver.compiler-driver-open-tli-catalog-active!
+    (match (tli_cli.tli-open-catalog-for-session!
+      (& (compiler_load.compiler-load-serial-test-session-state))
       (compiler-check-target-from-cfgs cfgs)
       (& stdlib-roots)
       cfgs

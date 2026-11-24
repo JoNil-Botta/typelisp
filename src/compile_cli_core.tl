@@ -1860,13 +1860,13 @@
         (set! compile-cli-verify-ir-requested false)
         (set! compile-cli-trace-passes-requested false)
         (set! compile-cli-sysroot-options (tli_cli.tli-sysroot-options))
-        (compiler_driver_core.compiler-driver-reset-sysroot-options!)
+        (tli_cli.tli-reset-active-sysroot-options!)
         (ir.compiler-debug-info-set-enabled! false)
         (ir.compiler-debug-type-graph-verify-set! false)
         (ir.compiler-debug-path-remap-clear!)
         (let
           [parsed : CompileCliAction (compile-cli-dispatch count)]
-          (compiler_driver_core.compiler-driver-set-sysroot-options!
+          (tli_cli.tli-set-active-sysroot-options!
             (& compile-cli-sysroot-options))
           parsed))]
     [profile? : bool compile-cli-allocation-profile-requested]

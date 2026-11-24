@@ -563,7 +563,7 @@
     (unless
       args.failed
       (ir.compiler-debug-info-set-enabled! options.debug)
-      (compiler_driver_core.compiler-driver-set-sysroot-options! (& sysroot)))
+      (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
       [(and has-source has-manifest)
@@ -672,7 +672,7 @@
     (unless
       args.failed
       (ir.compiler-debug-info-set-enabled! options.debug)
-      (compiler_driver_core.compiler-driver-set-sysroot-options! (& sysroot)))
+      (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
       [has-manifest
@@ -6052,8 +6052,7 @@
       (build-package-lock-policy-arg debug-args lock-policy)]
     [args8 : process.ProcessStringList
       (build-package-worker-append-resolved-deps args7 resolved-deps 0)]
-    [sysroot : tli_cli.TliSysrootOptions
-      (compiler_driver_core.compiler-driver-sysroot-options)]
+    [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-active-sysroot-options)]
     [args9 : process.ProcessStringList
       (if (> (string.string-length (& sysroot.explicit-root)) 0)
         (build-package-worker-append-option
@@ -7200,7 +7199,7 @@
     (unless
       args.failed
       (ir.compiler-debug-info-set-enabled! options.debug)
-      (compiler_driver_core.compiler-driver-set-sysroot-options! (& sysroot)))
+      (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
       [has-source
@@ -7268,7 +7267,7 @@
   [start : i64]
   [count : i64]
   [producer-identity : String]) : i64
-  (compiler_driver_core.compiler-driver-reset-sysroot-options!)
+  (tli_cli.tli-reset-active-sysroot-options!)
   (ir.compiler-debug-info-set-enabled! false)
   (ir.compiler-debug-path-remap-clear!)
   (cond

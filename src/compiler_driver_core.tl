@@ -1363,26 +1363,8 @@
     input-path
     (compiler_ast_types.ty-node-pool-exhausted-message)))
 
-(defenum ResultCompilerDriverTliOpen
-  (Ok)
-  (Err String))
-
-(define compiler-driver-sysroot-options-state : tli_cli.TliSysrootOptions
-  (tli_cli.tli-sysroot-options))
 (define compiler-driver-last-hydrated-archive-path-state : String
   "")
-
-(define (compiler-driver-set-sysroot-options!
-  [options : (& tli_cli.TliSysrootOptions)]) : unit
-  (set!
-    compiler-driver-sysroot-options-state
-    (tli_cli.tli-sysroot-options-clone options)))
-
-(define (compiler-driver-reset-sysroot-options!) : unit
-  (set! compiler-driver-sysroot-options-state (tli_cli.tli-sysroot-options)))
-
-(define (compiler-driver-sysroot-options) : tli_cli.TliSysrootOptions
-  (tli_cli.tli-sysroot-options-clone (& compiler-driver-sysroot-options-state)))
 
 (define (compiler-driver-last-hydrated-archive-path) : String
   (string.copy (& compiler-driver-last-hydrated-archive-path-state)))
@@ -1402,61 +1384,15 @@
   [stdlib-roots : (& svec.Vec)]
   [cfgs : sym_i64_env.SymI64Env]
   [opt-level : i64]
-  [require-archive : bool]) : ResultCompilerDriverTliOpen
-  (compiler_load.compiler-load-session-state-tli-release! load-state)
+  [require-archive : bool]) : tli_cli.ResultTliCatalogOpen
   (set! compiler-driver-last-hydrated-archive-path-state "")
-  (let
-    [enclosing : i64 (arena.tl_arena_current)]
-    [tli-arena : i64 (arena.tl_arena_make)]
-    (unsafe
-      (arena.tl_arena_set tli-arena))
-    (let
-      [opened : tli_cli.TliSysrootOpenCatalog
-        (tli_cli.tli-sysroot-open-catalog
-          (& compiler-driver-sysroot-options-state)
-          target
-          stdlib-roots
-          cfgs
-          opt-level
-          require-archive)]
-      (unsafe
-        (arena.tl_arena_set enclosing))
-      (match opened
-        [(Active catalog sysroot-dir archive-path)
-          (compiler_load.compiler-load-session-state-tli-attach!
-            load-state
-            tli-arena
-            sysroot-dir
-            archive-path
-            catalog)
-          ResultCompilerDriverTliOpen.Ok]
-        [(Inactive)
-          (unsafe
-            (arena.tl_arena_destroy tli-arena))
-          ResultCompilerDriverTliOpen.Ok]
-        [(Error message)
-          (let
-            [owned-message : String (string.copy (& message))]
-            (unsafe
-              (arena.tl_arena_destroy tli-arena))
-            (ResultCompilerDriverTliOpen.Err owned-message))]))))
-
-(define (compiler-driver-open-tli-catalog-active!
-  [target : target_cfg.CompilerTargetCfg]
-  [stdlib-roots : (& svec.Vec)]
-  [cfgs : sym_i64_env.SymI64Env]
-  [opt-level : i64]
-  [require-archive : bool]) : ResultCompilerDriverTliOpen
-  (let
-    [load-state : compiler_load.CompilerLoadSessionState
-      (compiler_load.compiler-load-serial-test-session-state)]
-    (compiler-driver-open-tli-catalog-for-session!
-      (& load-state)
-      target
-      stdlib-roots
-      cfgs
-      opt-level
-      require-archive)))
+  (tli_cli.tli-open-catalog-for-session!
+    load-state
+    target
+    stdlib-roots
+    cfgs
+    opt-level
+    require-archive))
 
 (define (compiler-driver-apply-tli-hydrated-backend-state!
   [load-state : (& compiler_load.CompilerLoadSessionState)]
@@ -4186,7 +4122,8 @@
   [cfgs : sym_i64_env.SymI64Env]
   [opt-level : i64]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerDriverLowered
-  (match (compiler-driver-open-tli-catalog-active!
+  (match (compiler-driver-open-tli-catalog-for-session!
+    (& (compiler_load.compiler-load-serial-test-session-state))
     (compiler-driver-target-cfg-from-backend target)
     (& stdlib-roots)
     cfgs

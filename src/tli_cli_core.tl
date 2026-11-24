@@ -2,11 +2,13 @@
 (import compiler_target_cfg_core as target_cfg)
 (import cli_option_core as cli)
 (import compiler_build_identity as identity)
+(import compiler_load)
 (import compiler_embedded_stdlib as embedded)
 (import compiler_tli_codec as tli_codec)
 (import compiler_tli_hydrate as hydrate)
 (import compiler_tli_types as tli)
 (import sym_i64_env)
+(import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.byte_buf_core as buf)
 (import stdlib.crypto_sha256 as sha256)
@@ -317,6 +319,70 @@
                                     failure.message
                                     "\n"))
                                 Inactive)])])])]))]))]))
+
+;; Sysroot options of the running command; every compile it starts opens the
+;; prebuilt stdlib catalog with them.
+(define tli-active-sysroot-options-state : TliSysrootOptions
+  (tli-sysroot-options))
+
+(define (tli-set-active-sysroot-options! [options : (& TliSysrootOptions)]) : unit
+  (set! tli-active-sysroot-options-state (tli-sysroot-options-clone options)))
+
+(define (tli-reset-active-sysroot-options!) : unit
+  (set! tli-active-sysroot-options-state (tli-sysroot-options)))
+
+(define (tli-active-sysroot-options) : TliSysrootOptions
+  (tli-sysroot-options-clone (& tli-active-sysroot-options-state)))
+
+(defenum ResultTliCatalogOpen
+  (Ok)
+  (Err String))
+
+;; Attach the active options' catalog to `load-state` in its own arena, or
+;; leave the session without one when prebuilt stdlib is inactive.
+(define (tli-open-catalog-for-session!
+  [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [target : target_cfg.CompilerTargetCfg]
+  [stdlib-roots : (& svec.Vec)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [opt-level : i64]
+  [require-archive : bool]) : ResultTliCatalogOpen
+  (compiler_load.compiler-load-session-state-tli-release! load-state)
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [tli-arena : i64 (arena.tl_arena_make)]
+    (unsafe
+      (arena.tl_arena_set tli-arena))
+    (let
+      [opened : TliSysrootOpenCatalog
+        (tli-sysroot-open-catalog
+          (& tli-active-sysroot-options-state)
+          target
+          stdlib-roots
+          cfgs
+          opt-level
+          require-archive)]
+      (unsafe
+        (arena.tl_arena_set enclosing))
+      (match opened
+        [(Active catalog sysroot-dir archive-path)
+          (compiler_load.compiler-load-session-state-tli-attach!
+            load-state
+            tli-arena
+            sysroot-dir
+            archive-path
+            catalog)
+          ResultTliCatalogOpen.Ok]
+        [(Inactive)
+          (unsafe
+            (arena.tl_arena_destroy tli-arena))
+          ResultTliCatalogOpen.Ok]
+        [(Error message)
+          (let
+            [owned-message : String (string.copy (& message))]
+            (unsafe
+              (arena.tl_arena_destroy tli-arena))
+            (ResultTliCatalogOpen.Err owned-message))]))))
 
 (define (tli-sysroot-target-dir [root : (& str)] [target : (& str)]) : String
   (let

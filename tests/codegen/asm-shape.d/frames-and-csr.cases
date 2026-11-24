@@ -119,13 +119,16 @@ target windows-x86_64
 in fn tl_dfb_forward$typelisp
 contains jmp _tl_dead_frame_boundary_dfb_sink
 metric call-alignment:0 = ok
-match \.seh_stackalloc[ ]
+capture forward_unwind ^[[:space:]]+\.rva tl_dfb_forward[$]typelisp, \.L_tl_seh_end_[0-9]+, (\.L_tl_xdata_[0-9]+)$
 in fn tl_dfb_abort_only$typelisp
 match call (\.L_tl_abort_)?tl_oob_abort
 match \.seh_stackalloc[ ]
 in fn _tl_dead_frame_boundary_dfb_returning
 contains call _tl_dead_frame_boundary_dfb_probe
 metric call-alignment:pushes = ok
+in asm
+narrow ranges:^{{forward_unwind}}:$~^[[:space:]]+\.popsection$
+match # UWOP_ALLOC_(SMALL|LARGE) [0-9]+$
 
 # Red zone: a call-free leaf with a small frame uses the 128 bytes below %rsp
 # instead of adjusting it; a big frame, a call or Win64 still adjust.

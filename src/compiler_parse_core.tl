@@ -3352,18 +3352,6 @@
 (define (compiler-parse-tag-expr-array-data) : i64
   278)
 
-(define (compiler-parse-tag-expr-program-argc) : i64
-  279)
-
-(define (compiler-parse-tag-expr-program-argv) : i64
-  280)
-
-(define (compiler-parse-tag-expr-program-envp) : i64
-  281)
-
-(define (compiler-parse-tag-expr-syscall) : i64
-  287)
-
 (define (compiler-parse-tag-expr-quote) : i64
   265)
 
@@ -4210,30 +4198,6 @@
         out
         "__tl_array-data"
         (compiler-parse-tag-expr-array-data)))
-    (set!
-      out
-      (compiler-parse-dispatch-bind
-        out
-        "program-argc"
-        (compiler-parse-tag-expr-program-argc)))
-    (set!
-      out
-      (compiler-parse-dispatch-bind
-        out
-        "program-argv"
-        (compiler-parse-tag-expr-program-argv)))
-    (set!
-      out
-      (compiler-parse-dispatch-bind
-        out
-        "program-envp"
-        (compiler-parse-tag-expr-program-envp)))
-    (set!
-      out
-      (compiler-parse-dispatch-bind
-        out
-        "syscall"
-        (compiler-parse-tag-expr-syscall)))
     (set!
       out
       (compiler-parse-dispatch-bind
@@ -8778,29 +8742,6 @@
     [(List (slice) _) (Ok expr)]
     [_ (Err (str_cat.str-cat "parse: " name " expects no arguments"))]))
 
-(define (parse-ast-syscall-count [args : (& args ast.AstExprList)]) : i64
-  args.len)
-
-;; `(syscall number a0 .. a5)`: the syscall number followed by up to six
-;; arguments (1 to 7 operands total). Typechecking requires an enclosing
-;; `(unsafe ...)` context before this lowers to a raw `syscall` instruction.
-(define (parse-ast-syscall
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : ast.AstNodePoolContext]
-  [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (let
-    [args (try (parse-ast-expr-list dispatch pools rest))]
-    [count : i64 (parse-ast-syscall-count args)]
-    (if (< count 1)
-      (Err
-        (parse-kind-message
-          (MalformedForm)
-          "parse: syscall requires a syscall number"))
-      (if (> count 7)
-        (Err
-          "parse: syscall takes at most 7 operands (number plus six arguments)")
-        (Ok (ast.ast-expr-syscall-with-pools pools args))))))
-
 (define (parse-ast-with-region
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -9585,23 +9526,6 @@
       (parse-ast-string-from-bytes dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-array-data))
       (parse-ast-array-data dispatch pools rest)]
-    [(= tag (compiler-parse-tag-expr-program-argc))
-      (parse-ast-no-arg-low-level
-        rest
-        "program-argc"
-        (ast.ast-node-pool-context-expr-push pools (ProgramArgc)))]
-    [(= tag (compiler-parse-tag-expr-program-argv))
-      (parse-ast-no-arg-low-level
-        rest
-        "program-argv"
-        (ast.ast-node-pool-context-expr-push pools (ProgramArgv)))]
-    [(= tag (compiler-parse-tag-expr-program-envp))
-      (parse-ast-no-arg-low-level
-        rest
-        "program-envp"
-        (ast.ast-node-pool-context-expr-push pools (ProgramEnvp)))]
-    [(= tag (compiler-parse-tag-expr-syscall))
-      (parse-ast-syscall dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null))
       (parse-ast-ptr-null dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-ptr-null-check))

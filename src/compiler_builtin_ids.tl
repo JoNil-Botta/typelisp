@@ -3034,7 +3034,12 @@
     (compiler-builtin-typecheck-atomic-pointer-name? (ci.intern-str name-id))
     (and
       (compiler-builtin-typecheck-tls-current-arena-id? name-id)
-      (not (compiler-builtin-typecheck-tls-current-arena-read-id? name-id)))))
+      (not (compiler-builtin-typecheck-tls-current-arena-read-id? name-id)))
+    (compiler-builtin-id-any3?
+      name-id
+      (compiler-builtin-ctfe "program-argv")
+      (compiler-builtin-ctfe "program-envp")
+      (compiler-builtin-ctfe "syscall"))))
 
 (define (compiler-builtin-typecheck-region-arg-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)

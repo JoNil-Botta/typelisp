@@ -1754,10 +1754,22 @@
                 (Some (I64 (opt-normalize-int-to-i64 (- 0 a) result-ty)))]
               [(None) (No)])
             (if (opt-float-type? result-ty)
-              (match (opt-value-to-f64 (& value) result-ty)
-                [(CompilerFloatSomeF64 a)
-                  (opt-f64-to-ir-value (- 0.0 a) result-ty)]
-                [(CompilerFloatNoF64) (No)])
+              (match (& value)
+                [(F64 bits)
+                  (match (opt-value-to-f64 (& value) result-ty)
+                    [(CompilerFloatSomeF64 _)
+                      (Some
+                        (F64
+                          (match result-ty
+                            [(F32)
+                              (cast
+                                (bit-xor
+                                  (cast bits : u32)
+                                  (cast 0x80000000 : u32))
+                                : u64)]
+                            [_ (bit-xor bits (shl (cast 1 : u64) 63))])))]
+                    [(CompilerFloatNoF64) (No)])]
+                [_ (No)])
               (No)))]
         [(Not)
           (if (opt-bool-type? result-ty)

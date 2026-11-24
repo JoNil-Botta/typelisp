@@ -6036,7 +6036,7 @@
   "(defstruct BigNum
   (limbs (__tl_dyn-array u64))
   (len i64))
-(define (bn-norm-len [limbs : (__tl_dyn-array u64)] [len : i64]) : i64
+(define (bn-norm-len [limbs : (& (__tl_dyn-array u64))] [len : i64]) : i64
   (let
     [out : i64 len]
     [done : bool false]
@@ -6074,7 +6074,7 @@
                 (set! borrow (cast 1 : u64))))
             (set! i (+ i 1)))))
       (let
-        [norm-len : i64 (bn-norm-len (clone r) a.len)]
+        [norm-len : i64 (bn-norm-len (& r) a.len)]
         (BigNum r norm-len)))))
 (define keep2 : (-> BigNum BigNum BigNum) bn-sub)
 (define (main) : i64 0)")
@@ -16929,7 +16929,7 @@ f:
     [bridge-disabled-ok : bool
       (asm-ok?
         (backend.compiler-backend-emit-source-for-target
-          (clone bridge-source)
+          (string.copy (& bridge-source))
           (Windows))
         (lacks ".L_tl_c_entry_shared_end" ".L_tl_c_entry_end_tl_bt_six"))]
     [_enable : unit (ir.compiler-debug-info-set-enabled! true)]
@@ -25105,8 +25105,13 @@ entry:
         state
         4
         (& params)
-        (clone blocks)
-        (backend.compiler-backend-function-use-counts 4 (clone blocks)))]
+        blocks
+        (backend.compiler-backend-function-use-counts
+          4
+          (irt.blocks
+            "entry:
+               %3 = load %2 : i64
+               %2 = addr_of %1")))]
     (test.assert-true
       (< (be_operand.compiler-backend-forwarded-addr-of-src state 2) 0)
       "a parameter use cannot become a later address definition")))
@@ -25155,6 +25160,35 @@ entry:
           (lacks "mov" "lea"))
         "an initialized same-home copy remains empty"))))
 
+(define (compiler-backend-test-forwarded-address-phi-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = addr_of %1
+       jump join
+     join:
+       %3 = phi [%2, entry] : (MutPtr i64)
+       %4 = phi [%5, entry] : (MutPtr i64)"))
+
+(define (compiler-backend-test-clone-phi-copy-seq
+  [copies : (& be_state.CompilerBackendPhiCopySeq)]) : be_state.CompilerBackendPhiCopySeq
+  (let
+    [slots : (__tl_dyn-array be_state.CompilerBackendPhiCopy)
+      (__tl_make-array be_state.CompilerBackendPhiCopy copies.len)]
+    (for [index (iterator.range 0 copies.len)]
+      (set!
+        (array-ref slots index)
+        (match (& (array-ref copies.slots index))
+          [(Copy dst source ty)
+            (be_state.CompilerBackendPhiCopy.Copy
+              dst
+              (match source
+                [(Value val)
+                  (be_state.CompilerBackendPhiSource.Value
+                    (ir.compiler-ir-clone-value val))]
+                [(Temp slot) (be_state.CompilerBackendPhiSource.Temp slot)])
+              (ast.clone-ast-type ty))])))
+    (be_state.CompilerBackendPhiCopySeq slots copies.len)))
+
 (test
   backend-forwarded-address-phi-resources
   (let
@@ -25164,26 +25198,21 @@ entry:
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     [state program-index.backend-state]
-    [blocks
-      (irt.blocks
-        "entry:
-                     %2 = addr_of %1
-                     jump join
-                   join:
-                     %3 = phi [%2, entry] : (MutPtr i64)
-                     %4 = phi [%5, entry] : (MutPtr i64)")]
+    [blocks (compiler-backend-test-forwarded-address-phi-blocks)]
     [assignments (reg-homes "%2=%rax %3=%rbx %4=%rax %5=%rbx")]
     [_forward : unit
       (backend.compiler-backend-addr-of-forwarding-enable!
         state
         6
         (& (ir.compiler-ir-param-seq-empty))
-        (clone blocks)
-        (backend.compiler-backend-function-use-counts 6 (clone blocks)))]
+        (compiler-backend-test-forwarded-address-phi-blocks)
+        (backend.compiler-backend-function-use-counts
+          6
+          (compiler-backend-test-forwarded-address-phi-blocks)))]
     [copies
       (match (be_calls.compiler-backend-leading-phi-copies-seq
         state
-        (clone assignments)
+        assignments
         (irt.instrs
           "%3 = phi [%2, entry] : (MutPtr i64)
                      %4 = phi [%5, entry] : (MutPtr i64)")
@@ -25193,15 +25222,15 @@ entry:
     (test.assert-true
       (match (be_calls.compiler-backend-phi-copy-list-decision
         state
-        (clone assignments)
-        (clone copies))
+        assignments
+        (compiler-backend-test-clone-phi-copy-seq (& copies)))
         [(CompilerParallelMoveUnblocked dst) (= dst 4)]
         [_ false])
       "materialization has no source register, so this is not a swap cycle")
     (test.assert-true
       (match (be_calls.compiler-backend-phi-source-replace-home
         state
-        (clone assignments)
+        assignments
         (Value (Var 2))
         4
         cabi.compiler-reg-id-r10)
@@ -25212,14 +25241,14 @@ entry:
       (be_calls.compiler-backend-phi-copy-list-drop-same-home
         state
         (reg-homes "%2=%rax %3=%rax %4=%rcx %5=%rbx")
-        (clone copies)).len
+        (compiler-backend-test-clone-phi-copy-seq (& copies))).len
       2
       "same-home filtering retains the address materialization")
     (test.assert-true
       (asm-ok?
         (be_calls.compiler-backend-emit-phi-edge-copies
           (ast.ast-node-pool-reader-type-segment-bases)
-          (clone assignments)
+          assignments
           blocks
           (ir.compiler-ir-label "join")
           (ir.compiler-ir-label "entry")
@@ -28303,7 +28332,7 @@ entry:
       (and
         (asm-has? asm load)
         (let
-          [needle (str_cat.str-cat "    ucomi" (clone op) " .L_tl_f")]
+          [needle (str_cat.str-cat "    ucomi" (string.copy (& op)) " .L_tl_f")]
           (asm-has? asm needle))
         (let
           [needle (str_cat.str-cat "    sub" op " .L_tl_f")]
@@ -29127,7 +29156,7 @@ entry:
     [from : String \"target/typelisp-fs/from name\"]
     [to : String \"target/typelisp-fs/to name\"]
     (+ (process-id)
-      (+ (mkdir-status (clone dir))
+      (+ (mkdir-status \"target/typelisp-fs\")
         (+ (remove-file-status artifact)
           (+ (remove-dir-status dir)
             (rename-status from to)))))))")
@@ -41237,7 +41266,7 @@ b_keep:
         [expected : String
           (if (= mode 2)
             "_tl_shared_data(%rip)"
-            (str_cat.str-cat (clone link) "(%rip)"))]
+            (str_cat.str-cat (string.copy (& link)) "(%rip)"))]
         (test.assert-true
           (asm-ok?
             (be_operand.compiler-backend-emit-load-value
@@ -41251,7 +41280,7 @@ b_keep:
           (be_facts.compiler-backend-function-or-global-addr-symbol index name)
           (if (= mode 2)
             "_tl_shared_data"
-            (clone link))
+            (string.copy (& link)))
           "typed address emission shares the same symbol authority")
         (test.assert-true
           (asm-ok?
@@ -41263,7 +41292,7 @@ b_keep:
             (has
               (if (= mode 2)
                 "_tl_shared_data"
-                (clone link))))
+                (string.copy (& link)))))
           "static address initializers resolve external data")
         (let
           [parts : object_target.CompilerBackendObjectTargetParts
@@ -41281,7 +41310,7 @@ b_keep:
               (Abs64)
               (if (= mode 2)
                 "_tl_shared_data"
-                (clone link)))
+                (string.copy (& link))))
             "static object address relocations use the current link symbol"))
         (test.assert-owned-string-eq
           (be_scalar.compiler-backend-value-global-memory-operand
@@ -41289,14 +41318,14 @@ b_keep:
             bases
             (ir.CompilerIrValue.Global name)
             ast.AstType.I64)
-          (clone expected)
+          (string.copy (& expected))
           "compare folds use the current program's link symbol")
         (be_state.compiler-backend-state-user-symbol-cache-reset! state)
         (test.assert-owned-string-eq
           (be_operand.compiler-backend-remat-global-cell-operand
             state
             (ir.CompilerIrValue.Global name))
-          (clone expected)
+          (string.copy (& expected))
           "function cache reset keeps program symbol authority")
         (test.assert-owned-string-eq
           (be_scalar.compiler-backend-float-value-memory-operand
@@ -46341,7 +46370,7 @@ user_fn:
 (define (main) : i64 (cast (unsafe (ptr->int (ptr-addr-of address))) : i64))"]
     (test.assert-true
       (match (backend.compiler-backend-emit-source-for-target
-        (clone source)
+        (string.copy (& source))
         (Windows))
         [(Ok _) true]
         [(Err _) false])
@@ -46381,7 +46410,7 @@ user_fn:
         (compiler-backend-export-symbol-source)
         "\n(define (zero) (:export-symbol \"tl_zero\") : i64 0)")]
     (match (backend.compiler-backend-emit-source-for-target
-      (clone source)
+      (string.copy (& source))
       (Windows))
       [(Err _) (test.assert-true false "small C entries assembly")]
       [(Ok asm)
@@ -46468,7 +46497,7 @@ user_fn:
           (array-ref prologues i)
           true)
         (object_target.compiler-backend-object-bytes-from-hex
-          (clone (array-ref expected i)))
+          (string.copy (& (array-ref expected i))))
         "C entry unwind agrees with assembler saves/allocation")))
   (let
     [counts : (Array i64 8) (array 0 4 5 6 7 8 513 514)]
@@ -46494,41 +46523,45 @@ user_fn:
           "C entry frame at register, padding and guard-page boundaries")))
     (backend.compiler-backend-state-release-final-arenas! index.backend-state))
   (let
-    [provided : ir.CompilerIrExtern
-      (Extern
-        (compiler-backend-test-symbol "bridge")
-        (compiler-backend-test-symbol "bridge")
-        "bridge"
-        (ast.ast-ty-func (compiler-backend-type-list-of "iiiiiiii") (& (I64)))
-        (C)
-        (compiler-backend-test-symbol "bridge_c")
-        (ast.ast-extern-link-input-list-new)
-        true
-        (ir.CompilerIrReturnStorage.None))]
-    [program : ir.CompilerIrProgram
-      (Program
-        (ir.compiler-ir-global-seq-empty)
-        (ir.compiler-ir-function-seq-prepend
-          (&
-            (irt.func
-              "function @bridge(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:i64) -> i64 vars 8 {
-          entry:
-            return %7
-          }"))
-          (&
+    [make-program
+      (lambda () : ir.CompilerIrProgram
+        (let
+          [provided : ir.CompilerIrExtern
+            (Extern
+              (compiler-backend-test-symbol "bridge")
+              (compiler-backend-test-symbol "bridge")
+              "bridge"
+              (ast.ast-ty-func
+                (compiler-backend-type-list-of "iiiiiiii")
+                (& (I64)))
+              (C)
+              (compiler-backend-test-symbol "bridge_c")
+              (ast.ast-extern-link-input-list-new)
+              true
+              (ir.CompilerIrReturnStorage.None))]
+          (Program
+            (ir.compiler-ir-global-seq-empty)
             (ir.compiler-ir-function-seq-prepend
               (&
                 (irt.func
-                  "function @main() -> i64 vars 1 {
+                  "function @bridge(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:i64) -> i64 vars 8 {
+          entry:
+            return %7
+          }"))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (&
+                    (irt.func
+                      "function @main() -> i64 vars 1 {
             entry:
               %0 = call bridge(1, 2, 3, 4, 5, 6, 7, 8) : i64
               return %0
             }"))
-              (& (ir.compiler-ir-function-seq-empty)))))
-        (ir.compiler-ir-extern-seq1 provided)
-        (ir.CompilerIrReturnStorageAuthority.None))]
+                  (& (ir.compiler-ir-function-seq-empty)))))
+            (ir.compiler-ir-extern-seq1 provided)
+            (ir.CompilerIrReturnStorageAuthority.None))))]
     (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
-      (clone program)
+      (make-program)
       (be_state.CompilerBackendTarget.Windows)
       (Scalar)
       (ir.compiler-source-spans-empty)
@@ -46599,7 +46632,7 @@ user_fn:
                     "bridge_c$unwind"))
                 "C entry owns its call and complete runtime-function range"))])])
     (match (backend.compiler-backend-emit-program-target-with-mode
-      program
+      (make-program)
       (be_state.CompilerBackendTarget.Windows)
       (Scalar)
       (ir.compiler-source-spans-empty)
@@ -46697,7 +46730,7 @@ user_fn:
 
 (define (compiler-backend-byte-directives-match-reference? [bytes : String]) : bool
   (string.eq
-    (compiler-backend-test-byte-directives (clone bytes))
+    (compiler-backend-test-byte-directives (string.copy (& bytes)))
     (compiler-backend-reference-byte-directives bytes)))
 
 (test
@@ -47041,14 +47074,14 @@ user_fn:
         (test.assert-true
           (compiler-backend-global-pair-store-live-case?
             mask
-            (clone (array-ref registers mask))
+            (string.copy (& (array-ref registers mask)))
             (array-ref targets host)
             false)
           "register pair store preserves GP and SSE live homes")
         (test.assert-true
           (compiler-backend-global-pair-store-live-case?
             mask
-            (clone (array-ref overlapping mask))
+            (string.copy (& (array-ref overlapping mask)))
             (array-ref targets host)
             false)
           "source words in ABI registers are not overwritten during staging")
@@ -47080,9 +47113,9 @@ user_fn:
       (test.assert-true
         (match (be_scalar.compiler-backend-emit-group-copy
           (ast.ast-node-pool-reader-type-segment-bases)
-          (clone assignments)
+          assignments
           (& (array-ref destinations at))
-          (clone (array-ref sources at))
+          (ir.compiler-ir-clone-value (& (array-ref sources at)))
           1
           (compiler-backend-register-group-test-type)
           index

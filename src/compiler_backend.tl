@@ -26682,12 +26682,12 @@ tl_shared_object_init:
       2)
     (let [input : String (io.arg 1)]
       [output : String (io.arg 2)]
-      (let [content : String (raw-read-file (clone input))]
+      (let [content : String (raw-read-file (io.arg 1))]
         (if (io.file-exists? input)
-          (let [n : i64 (string.>int (clone content))]
+          (let [n : i64 (string.>int content)]
             (let [rendered : String (string.int->string (+ n 1))]
               (begin
-                (if (string.eq content \"41\")
+                (if (string.eq (raw-read-file (io.arg 1)) \"41\")
                   (io.print-error \"ok\")
                   (io.print-error \"mismatch\"))
                 (raw-write-file output rendered)

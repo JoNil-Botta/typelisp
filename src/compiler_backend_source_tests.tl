@@ -145,7 +145,7 @@
       (match (parser.parse-ast-source-diagnostic-with-cfg
         "target/private-backend-source.tl"
         (& source)
-        (clone cfgs))
+        cfgs)
         [(Ok program) program]
         [(Err _) (return false)])]
     [context : typecheck.TypecheckRequest

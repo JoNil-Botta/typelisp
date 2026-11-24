@@ -1378,7 +1378,7 @@
   [type-segment-bases : i64]
   [program-index : be_state.CompilerBackendProgramIndex]
   [name : i64]
-  [ty : compiler_ast_types.AstType]) : i64
+  [ty : (& compiler_ast_types.AstType)]) : i64
   (let
     [inline-size : i64
       (be_state.compiler-backend-inline-aggregate-global-size
@@ -1522,7 +1522,7 @@
               type-segment-bases
               program-index
               name
-              (clone ty))
+              (& ty))
             0)]
         (if (and zeroed? (not library?))
           (Ok

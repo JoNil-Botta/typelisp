@@ -352,6 +352,7 @@
     [enclosing : i64 (arena.tl_arena_current)]
     [tli-arena : i64 (arena.tl_arena_make)]
     (unsafe
+      ;; lint-allow: raw-arena-op -- moved from the audited compiler_driver_core module.
       (arena.tl_arena_set tli-arena))
     (let
       [opened : TliSysrootOpenCatalog
@@ -363,6 +364,7 @@
           opt-level
           require-archive)]
       (unsafe
+        ;; lint-allow: raw-arena-op -- moved from the audited compiler_driver_core module.
         (arena.tl_arena_set enclosing))
       (match opened
         [(Active catalog sysroot-dir archive-path)
@@ -375,12 +377,14 @@
           ResultTliCatalogOpen.Ok]
         [(Inactive)
           (unsafe
+            ;; lint-allow: raw-arena-op -- moved from the audited compiler_driver_core module.
             (arena.tl_arena_destroy tli-arena))
           ResultTliCatalogOpen.Ok]
         [(Error message)
           (let
             [owned-message : String (string.copy (& message))]
             (unsafe
+              ;; lint-allow: raw-arena-op -- moved from the audited compiler_driver_core module.
               (arena.tl_arena_destroy tli-arena))
             (ResultTliCatalogOpen.Err owned-message))]))))
 

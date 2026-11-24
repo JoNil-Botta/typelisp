@@ -1,0 +1,3 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.crypto_aes_core/new-128	1	fixed	expr	stdlib/tests/crypto_aes_api.tl	ok	default	assembly
+stdlib.crypto_aes_core/new-256	1	fixed	expr	stdlib/tests/crypto_aes_api.tl	ok	default	assembly

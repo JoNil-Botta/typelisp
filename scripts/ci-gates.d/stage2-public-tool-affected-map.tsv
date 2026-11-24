@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-public-tool-affected-map	1050	linux	stage2 public tool affected map	-	-	256	-	scripts/verify-public-tools.sh affected-map	linux-2	-	compiler,stdlib,corpus,docs	Audits the required-gate map, the corpora and docs inventories it follows, and the Windows checkout bytes.

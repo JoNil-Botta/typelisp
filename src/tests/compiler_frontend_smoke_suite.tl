@@ -515,7 +515,11 @@
     [result : process.ResultProcessOutput
       (process.output
         (process.command (io.arg 0) (process.args-single (string.copy name))))]
-    [status : i64 (process.result-status-or (clone result) -1)]
+    [status : i64
+      (match (& result)
+        [(process.ResultProcessOutput.OkProcessOutput output)
+          (process.output-status output)]
+        [(process.ResultProcessOutput.ErrProcessOutput _) -1])]
     [timing-ok : bool
       (sem_tests.compiler-semantic-index-smoke-timing-record
         (str_cat.str-cat "child-" name)

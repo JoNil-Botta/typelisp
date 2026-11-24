@@ -36,7 +36,7 @@ Primary coverage owners referenced below:
 - `integration`: `tests/integration/*.tl` through
   `tests/integration/native.manifest` and
   `scripts/verify-integration.sh`.
-- `safety`: `tests/safety/manifest.txt` and
+- `safety`: `tests/safety/manifest.d/*.manifest` and
   `scripts/verify-safety-corpus.sh`.
 - `stdlib`: `stdlib/tests/*.tl` through stdlib verification.
 - `inline`: inline `(test ...)` discovery through

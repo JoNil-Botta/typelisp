@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 set -eu
 
-# ci-lane.sh - the CI lanes of scripts/ci-lanes.tsv (#7767 slice 2, D-C42).
+# ci-lane.sh - the CI lanes of scripts/ci-gates.d/*.tsv (#7767 slice 2, D-C42).
 #
 #   scripts/ci-lane.sh check
 #   scripts/ci-lane.sh setup LANE
@@ -33,7 +33,9 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-LANES_FILE=$ROOT/scripts/ci-lanes.tsv
+. "$ROOT/scripts/lib-ci-gates.sh"
+GATES_DIR=$ROOT/scripts/ci-gates.d
+AFFECTED_PATHS_DIR=$ROOT/scripts/ci-affected-paths.d
 LANES_PER_HOST=2
 BUILD_INVARIANCE=stage2-opt1-opt2-build-invariance
 SELF_COMPILE=linux-self-compile-measurement
@@ -69,11 +71,12 @@ lane_closure() {
 # (host, id, owner, declared duplicate lanes or -, label; table order) and
 # $LANE_WORK/lanes.tsv (host, lane, owned IDs, planned IDs; comma lists).
 lane_check() {
+    ci_gates_load "$GATES_DIR" > "$LANE_WORK/gates-full.tsv" || exit 1
     lane_inventory linux > "$LANE_WORK/linux.inv"
     lane_inventory windows > "$LANE_WORK/windows.inv"
     awk -F '\t' -v max="$LANES_PER_HOST" '
         function fail(message) {
-            print "ci-lanes.tsv: " message > "/dev/stderr"
+            print "ci-gates.d: " message > "/dev/stderr"
             bad = 1
             exit 1
         }
@@ -86,33 +89,27 @@ lane_check() {
             if (labels[host, $2]++) fail("duplicate " host " gate label: " $2)
             next
         }
-        /^#/ { next }
-        !header {
-            if ($0 != "id\tlinux\twindows") fail("line " FNR ": expected the id/linux/windows header")
-            header = 1
-            next
-        }
         {
-            if (NF != 3) fail("line " FNR ": expected three fields")
-            if (seen[$1]++) fail("line " FNR ": gate assigned twice: " $1)
-            if (!on["linux", $1] && !on["windows", $1]) fail("line " FNR ": unknown gate: " $1)
-            for (c = 2; c <= 3; c++) {
-                host = (c == 2 ? "linux" : "windows")
+            if (NF != 13) fail("row " FNR ": expected 13 fields")
+            if (seen[$1]++) fail("row " FNR ": gate assigned twice: " $1)
+            if (!on["linux", $1] && !on["windows", $1]) fail("row " FNR ": unknown gate: " $1)
+            for (c = 10; c <= 11; c++) {
+                host = (c == 10 ? "linux" : "windows")
                 if ($c == "-") {
-                    if (on[host, $1]) fail("line " FNR ": " $1 " runs on " host " but no lane owns it")
+                    if (on[host, $1]) fail("row " FNR ": " $1 " runs on " host " but no lane owns it")
                     continue
                 }
-                if (!on[host, $1]) fail("line " FNR ": " $1 " does not run on " host ": " $c)
+                if (!on[host, $1]) fail("row " FNR ": " $1 " does not run on " host ": " $c)
                 n = split($c, part, "+")
                 dups = "-"
                 for (k = 1; k <= n; k++) {
                     tok = part[k]
                     rep = 0
                     if (substr(tok, length(tok)) == "!") { rep = 1; tok = substr(tok, 1, length(tok) - 1) }
-                    if (tok !~ ("^" host "-[1-9]$")) fail("line " FNR ": invalid " host " lane: " part[k])
-                    if (used[$1, host, tok]++) fail("line " FNR ": " $1 " names lane " tok " twice")
+                    if (tok !~ ("^" host "-[1-9]$")) fail("row " FNR ": invalid " host " lane: " part[k])
+                    if (used[$1, host, tok]++) fail("row " FNR ": " $1 " names lane " tok " twice")
                     if (k > 1) dups = (dups == "-" ? tok : dups "," tok)
-                    else if (rep) fail("line " FNR ": " $1 " marks its owning lane as a repeat")
+                    else if (rep) fail("row " FNR ": " $1 " marks its owning lane as a repeat")
                     else owns[host, tok] = 1
                     # `LANE!`: the lane requests the gate itself instead of
                     # reaching it through the needs of a gate it owns, for a
@@ -126,7 +123,6 @@ lane_check() {
         }
         END {
             if (bad) exit 1
-            if (!header) fail("missing the id/linux/windows header")
             for (h = 1; h <= 2; h++) {
                 host = (h == 1 ? "linux" : "windows")
                 if (lanes[host] > max) fail("more than " max " " host " lanes")
@@ -140,7 +136,7 @@ lane_check() {
                     print host "\t" id "\t" owner[host, id] "\t" dup[host, id] "\t" label[host, id] "\t" (repeat[host, id] == "" ? "-" : repeat[host, id])
                 }
             }
-        }' "$LANE_WORK/linux.inv" "$LANE_WORK/windows.inv" "$LANES_FILE" > "$LANE_WORK/cells.tsv" || exit 1
+        }' "$LANE_WORK/linux.inv" "$LANE_WORK/windows.inv" "$LANE_WORK/gates-full.tsv" > "$LANE_WORK/cells.tsv" || exit 1
     : > "$LANE_WORK/lanes.tsv"
     for _lc_host in linux windows; do
         for _lc_lane in $(awk -F '\t' -v h="$_lc_host" '$1 == h { print $3 }' "$LANE_WORK/cells.tsv" | sort -u); do
@@ -153,9 +149,9 @@ lane_check() {
             printf '%s\n' "$_lc_owned" | tr ',' '\n' | LC_ALL=C sort > "$LANE_WORK/owned-sorted"
             LC_ALL=C sort "$LANE_WORK/planned" | LC_ALL=C comm -23 - "$LANE_WORK/owned-sorted" > "$LANE_WORK/needed"
             if ! cmp -s "$LANE_WORK/declared" "$LANE_WORK/needed"; then
-                echo "ci-lanes.tsv: lane $_lc_lane runs exactly these unowned needs; declare them as +$_lc_lane:" >&2
+                echo "ci-gates.d: lane $_lc_lane runs exactly these unowned needs; declare them as +$_lc_lane:" >&2
                 sed 's/^/  /' "$LANE_WORK/needed" >&2
-                echo "ci-lanes.tsv: lane $_lc_lane declares:" >&2
+                echo "ci-gates.d: lane $_lc_lane declares:" >&2
                 sed 's/^/  /' "$LANE_WORK/declared" >&2
                 exit 1
             fi
@@ -180,21 +176,18 @@ lane_scope() {
     _scope_base=$(git rev-parse --verify HEAD^1 2>/dev/null) || return 0
     git -c core.quotePath=true diff --no-relative --no-ext-diff --no-textconv \
         --name-only --no-renames "$_scope_base" HEAD -- > "$LANE_WORK/changed" || return 0
+    ci_affected_paths_load "$AFFECTED_PATHS_DIR" > "$LANE_WORK/affected-paths.tsv" || return 0
 
     # Only independent, source-free self-tests can be omitted. Retain gates
     # that participate in the dependency graph so the closure stays valid.
     if ! awk -F '\t' '
         { sub(/\r$/, "") }
         FILENAME == ARGV[1] {
-            if ($2 == "-" && $1 ~ /-self-tests?$/) meta[$1] = 1
-            next
-        }
-        FILENAME == ARGV[2] {
-            if ($1 == "id" || /^#/) next
-            if ($5 != "-") needed[$1] = 1
-            if ($4 != "-") {
+            if ($12 == "-" && $1 ~ /-self-tests?$/) meta[$1] = 1
+            if ($6 != "-") needed[$1] = 1
+            if ($5 != "-") {
                 needed[$1] = 1
-                n = split($4, ids, ",")
+                n = split($5, ids, ",")
                 for (i = 1; i <= n; i++) {
                     sub(/@.*/, "", ids[i])
                     needed[ids[i]] = 1
@@ -202,8 +195,8 @@ lane_scope() {
             }
             next
         }
-        FILENAME == ARGV[3] {
-            if ($1 == "path" || $1 == "@always" || /^#/) next
+        FILENAME == ARGV[2] {
+            if ($1 == "@always") next
             pattern = "^" $1 "$"
             gsub(/\./, "\\.", pattern)
             gsub(/\*/, ".*", pattern)
@@ -226,8 +219,7 @@ lane_scope() {
             exit
         }
         END { if (!full) for (id in meta) if (!(id in needed)) print id }
-    ' "$ROOT/scripts/ci-affected-inputs.tsv" "$ROOT/scripts/ci-gates.tsv" \
-        "$ROOT/scripts/ci-affected-paths.tsv" "$LANE_WORK/changed" > "$LANE_WORK/skip"; then
+    ' "$LANE_WORK/gates-full.tsv" "$LANE_WORK/affected-paths.tsv" "$LANE_WORK/changed" > "$LANE_WORK/skip"; then
         return 0
     fi
     [ -s "$LANE_WORK/skip" ] || return 0
@@ -264,7 +256,7 @@ lane_host() {
 
 lane_field() {
     awk -F '\t' -v l="$1" -v f="$2" '$2 == l { print $f; found = 1 } END { exit found ? 0 : 1 }' "$LANE_WORK/lanes.tsv" ||
-        lane_fail "scripts/ci-lanes.tsv assigns no gate to lane $1"
+        lane_fail "scripts/ci-gates.d assigns no gate to lane $1"
 }
 
 lane_setup() {
@@ -343,7 +335,7 @@ lane_aggregate() {
         lane_field "$_la_lane" 4 | tr ',' '\n' > "$LANE_WORK/planned-$_la_lane"
         lane_field "$_la_lane" 5 | tr ',' '\n' | LC_ALL=C sort > "$LANE_WORK/requested-$_la_lane"
         cmp -s "$LANE_WORK/requested-$_la_lane" "$_la_bundle/lane/requested.txt" ||
-            lane_fail "$_la_job requested gates other than the ones scripts/ci-lanes.tsv assigns it"
+            lane_fail "$_la_job requested gates other than the ones scripts/ci-gates.d assigns it"
         cmp -s "$LANE_WORK/planned-$_la_lane" "$_la_bundle/lane/plan.txt" ||
             lane_fail "$_la_job planned gates other than its assignment's needs closure"
         printf '%s\t%s\t%s\n' "$_la_lane" "$LANE_WORK/planned-$_la_lane" "$_la_bundle/lane/timing.tsv" >> "$LANE_WORK/timing-args"
@@ -463,7 +455,7 @@ case "${1:-}" in
     check)
         [ "$#" -eq 1 ] || usage
         lane_check
-        echo "[ci-lane] scripts/ci-lanes.tsv assigns every gate of both hosts to exactly one lane"
+        echo "[ci-lane] scripts/ci-gates.d assigns every gate of both hosts to exactly one lane"
         ;;
     setup)
         [ "$#" -eq 2 ] || usage

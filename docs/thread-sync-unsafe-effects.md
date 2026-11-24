@@ -25,7 +25,7 @@ externs, platform ABI symbols, allocation paths, and syscalls are unchanged.
 `thread-windows-entry` has type `(CFunc unsafe-non-null (-> i64 i64))`.
 The unsafe `CreateThread` adapter accepts that exact type, preserving the effect
 while passing its code address. The `thread_windows_entry_*` rows in
-`tests/safety/manifest.txt` pin both directions for the Windows target, through
+`tests/safety/manifest.d/*.manifest` pin both directions for the Windows target, through
 the source and the embedded stdlib, without executing anything:
 - the permitted flow, a local of the exact type passed to the adapter inside
   `unsafe`;

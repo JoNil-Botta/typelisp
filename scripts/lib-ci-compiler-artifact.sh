@@ -6,6 +6,7 @@
 # the lane aggregator compares the lanes' independently built compilers.
 
 [ -z "${ROOT:-}" ] || . "$ROOT/scripts/lib-manifest.sh"
+[ -z "${ROOT:-}" ] || . "$ROOT/scripts/lib-ci-gates.sh"
 
 ci_compiler_artifact_error() {
     echo "[ci-compiler-artifact] $*" >&2
@@ -151,7 +152,7 @@ cica_json() {
     cica_jq -S . "$1" > "$CICA_SCRATCH/json-check"
     cmp -s "$1" "$CICA_SCRATCH/json-check" || cica_fail 'noncanonical or duplicate JSON fields'
 }
-# A CI lane is HOST-N (scripts/ci-lanes.tsv) and its job is "CI lane HOST-N".
+# A CI lane is HOST-N (scripts/ci-gates.d/*.tsv) and its job is "CI lane HOST-N".
 # A producer reads its lane from TYPELISP_CI_LANE and its attempt from Actions.
 # A verifier passes the lane it expects and the attempt in which that lane's
 # job actually ran (scripts/ci-lane.sh), so a "Re-run failed jobs" copy binds
@@ -229,11 +230,15 @@ cica_hash_map() (
     cica_jq -RsS 'split("\n")[:-1]|map(split("\t")|{key:.[0],value:.[1]})|from_entries' "$CICA_SCRATCH/hash-map-entries"
 )
 cica_inventory() {
+    _ci_gates=$(ci_gates_list_dir "$CICA_ROOT/scripts/ci-gates.d") || return 1
     _ci_manifests=$(manifest_list_dir "$CICA_ROOT/tests/integration/manifest.d") || return 1
     {
+        while IFS= read -r _ci_path; do
+            printf '%s\n' "${_ci_path#"$CICA_ROOT"/}"
+        done <<EOF
+$_ci_gates
+EOF
         cat <<'PATHS'
-scripts/ci-gates.tsv
-scripts/ci-lanes.tsv
 scripts/ci-compiler-artifacts.tsv
 scripts/expand-integration-manifest.awk
 PATHS
@@ -251,6 +256,7 @@ scripts/check-bootstrap-fixpoint.sh
 scripts/lib-native-link.sh
 scripts/lib-linux-entry.sh
 scripts/lib-manifest.sh
+scripts/lib-ci-gates.sh
 scripts/lib-build-provenance.sh
 scripts/check-build-invariance.sh
 scripts/lib-build-invariance-batch.sh

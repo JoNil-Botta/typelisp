@@ -1,0 +1,183 @@
+# Safety corpus cases: arena brands, phases, activation, handles, raw constructors, and self-named carriers.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+arena_raw_constructor_reject|check-fail|tests/safety/arena_raw_constructor_reject.tl|-|requires unsafe context
+arena_raw_constructor_helper_reject|check-fail|tests/safety/arena_raw_constructor_helper_reject.tl|-|requires unsafe context
+arena_raw_constructor_alias_reject|check-fail|tests/safety/arena_raw_constructor_alias_reject.tl|-|requires unsafe context
+arena_raw_constructor_value_reject|check-fail|tests/safety/arena_raw_constructor_value_reject.tl|-|requires unsafe context
+arena_raw_constructor_macro_reject|check-fail|tests/safety/arena_raw_constructor_macro_reject.tl|-|requires unsafe context
+arena_raw_field_write_reject|check-fail|tests/safety/arena_raw_field_write_reject.tl|-|mutation of Arena.handle requires unsafe context
+arena_raw_field_replace_reject|check-fail|tests/safety/arena_raw_field_replace_reject.tl|-|mutation of Arena.handle requires unsafe context
+arena_raw_field_borrow_reject|check-fail|tests/safety/arena_raw_field_borrow_reject.tl|-|mutation of Arena.handle requires unsafe context
+arena_raw_field_parameter_reject|check-fail|tests/safety/arena_raw_field_parameter_reject.tl|-|mutation of Arena.handle requires unsafe context
+self_named_carrier_store_reject|check-fail|tests/safety/self_named_carrier_store_reject.tl|-|struct field assignment type mismatch: expected (& m i64), found (& p i64)
+self_named_carrier_alias_store_reject|check-fail|tests/safety/self_named_carrier_alias_store_reject.tl|-|struct field assignment type mismatch: expected (& m i64), found (& p i64)
+self_named_return_reject|check-fail|tests/safety/self_named_return_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`
+self_named_program_param_return_reject|check-fail|tests/safety/self_named_program_param_return_reject.tl|-|source lifetime `program` does not outlive required lifetime `q`
+self_named_other_param_return_reject|check-fail|tests/safety/self_named_other_param_return_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`
+self_named_dangling_caller_reject|check-fail|tests/safety/self_named_dangling_caller_reject.tl|-|source lifetime `a` does not outlive required lifetime `q`
+self_named_nominal_return_reject|check-fail|tests/safety/self_named_nominal_return_reject.tl|-|source lifetime `s` does not outlive required lifetime `q`
+self_named_nominal_store_reject|check-fail|tests/safety/self_named_nominal_store_reject.tl|-|struct field assignment type mismatch: expected (& m i64), found (& s i64)
+self_named_carrier_slot_return_reject|check-fail|tests/safety/self_named_carrier_slot_return_reject.tl|-|return type mismatch: expected (& p (& p i64)), found (& p i64)
+self_named_carrier_controls_ok|check-ok|tests/safety/self_named_carrier_controls_ok.tl|-|-
+self_named_local_shadow_nowindow_ok|check-ok|tests/safety/self_named_local_shadow_nowindow_ok.tl|-|-
+self_named_local_shadow_nowindow_reject|check-fail|tests/safety/self_named_local_shadow_nowindow_reject.tl|-|reference value would escape lexical scope
+self_named_local_shadow_samewindow_ok|check-ok|tests/safety/self_named_local_shadow_samewindow_ok.tl|-|-
+self_named_local_shadow_samewindow_reject|check-fail|tests/safety/self_named_local_shadow_samewindow_reject.tl|-|reference value would escape lexical scope
+self_named_local_shadow_crosswindow_ok|check-ok|tests/safety/self_named_local_shadow_crosswindow_ok.tl|-|-
+self_named_local_shadow_crosswindow_reject|check-fail|tests/safety/self_named_local_shadow_crosswindow_reject.tl|-|reference value would escape lexical scope
+self_named_nominal_slot_return_reject|check-fail|tests/safety/self_named_nominal_slot_return_reject.tl|-|cannot return a reference to parameter `p`
+self_named_nominal_slot_call_return_reject|check-fail|tests/safety/self_named_nominal_slot_call_return_reject.tl|-|cannot return a reference to parameter `p`
+self_named_nominal_slot_store_reject|check-fail|tests/safety/self_named_nominal_slot_store_reject.tl|-|`s` does not live long enough
+arena_brand_storage_spelled_store_reject|check-fail|tests/safety/arena_brand_storage_spelled_store_reject.tl|tests/safety/arena_brand_storage_spelled_store_reject.tl:16:3|struct field assignment type mismatch: expected (& r i64), found (& a i64)
+arena_brand_tuple_self_named_store_reject|check-fail|tests/safety/arena_brand_tuple_self_named_store_reject.tl|tests/safety/arena_brand_tuple_self_named_store_reject.tl:14:3|struct field assignment type mismatch: expected (& r i64), found (& n i64)
+arena_brand_dangling_caller_reject|check-fail|tests/safety/arena_brand_dangling_caller_reject.tl|tests/safety/arena_brand_dangling_caller_reject.tl:15:3|struct field assignment type mismatch: expected (& r i64), found (& a i64)
+arena_brand_self_named_owner_store_reject|check-fail|tests/safety/arena_brand_self_named_owner_store_reject.tl|tests/safety/arena_brand_self_named_owner_store_reject.tl:16:3|struct field assignment type mismatch: expected (& owner i64), found (& a i64)
+arena_brand_with_arena_store_reject|check-fail|tests/safety/arena_brand_with_arena_store_reject.tl|tests/safety/arena_brand_with_arena_store_reject.tl:10:3|struct field assignment type mismatch: expected (& r i64), found (& s i64)
+arena_brand_wrong_return_reject|check-fail|tests/safety/arena_brand_wrong_return_reject.tl|tests/safety/arena_brand_wrong_return_reject.tl:9:3|error[E0205]: typecheck: cannot store region-tagged value into return value
+arena_brand_invalidate_storage_slot_reject|check-fail|tests/safety/arena_brand_invalidate_storage_slot_reject.tl|tests/safety/arena_brand_invalidate_storage_slot_reject.tl:16:3|struct field assignment type mismatch: expected (& a i64), found (& r i64)
+arena_brand_self_named_invalidate_slot_reject|check-fail|tests/safety/arena_brand_self_named_invalidate_slot_reject.tl|tests/safety/arena_brand_self_named_invalidate_slot_reject.tl:15:3|struct field assignment type mismatch: expected (& a i64), found (& owner i64)
+arena_brand_invalidate_type_form_slot_reject|check-fail|tests/safety/arena_brand_invalidate_type_form_slot_reject.tl|tests/safety/arena_brand_invalidate_type_form_slot_reject.tl:14:3|struct field assignment type mismatch: expected (& a i64), found (& r i64)
+arena_brand_store_controls_ok|run-exit|tests/safety/arena_brand_store_controls_ok.tl|42|-
+arena_brand_invalidate_local_launder_reject|check-fail|tests/safety/arena_brand_invalidate_local_launder_reject.tl|tests/safety/arena_brand_invalidate_local_launder_reject.tl:17:22|source lifetime `r` does not outlive required lifetime `y`
+arena_brand_invalidate_local_ref_reject|check-fail|tests/safety/arena_brand_invalidate_local_ref_reject.tl|tests/safety/arena_brand_invalidate_local_ref_reject.tl:17:20|source lifetime `r` does not outlive required lifetime `y`
+arena_brand_invalidate_call_launder_reject|check-fail|tests/safety/arena_brand_invalidate_call_launder_reject.tl|tests/safety/arena_brand_invalidate_call_launder_reject.tl:20:16|source lifetime `y` does not outlive required lifetime `r`
+arena_brand_invalidate_local_store_reject|check-fail|tests/safety/arena_brand_invalidate_local_store_reject.tl|tests/safety/arena_brand_invalidate_local_store_reject.tl:15:3|struct field assignment type mismatch: expected (& y i64), found (& r i64)
+arena_brand_invalidate_self_named_launder_reject|check-fail|tests/safety/arena_brand_invalidate_self_named_launder_reject.tl|tests/safety/arena_brand_invalidate_self_named_launder_reject.tl:19:22|source lifetime `owner` does not outlive required lifetime `y`
+arena_brand_invalidate_lambda_return_reject|check-fail|tests/safety/arena_brand_invalidate_lambda_return_reject.tl|tests/safety/arena_brand_invalidate_lambda_return_reject.tl:15:3|lambda return type mismatch: expected (& y i64), found (& r i64)
+arena_brand_invalidate_lambda_value_reject|check-fail|tests/safety/arena_brand_invalidate_lambda_value_reject.tl|tests/safety/arena_brand_invalidate_lambda_value_reject.tl:15:3|lambda return type mismatch: expected (RefBox y), found (RefBox r)
+arena_brand_invalidate_lambda_store_reject|check-fail|tests/safety/arena_brand_invalidate_lambda_store_reject.tl|tests/safety/arena_brand_invalidate_lambda_store_reject.tl:15:3|struct field assignment type mismatch: expected (& y i64), found (& r i64)
+arena_brand_invalidate_local_controls_ok|run-exit|tests/safety/arena_brand_invalidate_local_controls_ok.tl|42|-
+arena_brand_invalidate_shadow_ok|run-exit|tests/safety/arena_brand_invalidate_shadow_ok.tl|42|-
+arena_brand_invalidate_signature_param_restriction_reject|check-fail|tests/safety/arena_brand_invalidate_signature_param_restriction_reject.tl|tests/safety/arena_brand_invalidate_signature_param_restriction_reject.tl:11:24|source lifetime `r` does not outlive required lifetime `k`
+manual_arena_reset_unsafe_reject|check-fail|tests/safety/manual_arena_reset_unsafe_reject.tl|-|arena/rewind requires unsafe context
+arena_activation_destroy_store_reject|check-fail|tests/safety/arena_activation_destroy_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_activation_rewind_store_reject|check-fail|tests/safety/arena_activation_rewind_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_activation_input_store_reject|check-fail|tests/safety/arena_activation_input_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_owner_after_activation_store_reject|check-fail|tests/safety/arena_owner_after_activation_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_activation_distinct_owner_store_reject|check-fail|tests/safety/arena_activation_distinct_owner_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_with_arena_enum_return_reject|check-fail|tests/safety/arena_with_arena_enum_return_reject.tl|tests/safety/arena_with_arena_enum_return_reject.tl:19:36|region-tagged value cannot escape with-arena 'phase'
+arena_with_arena_wrapper_return_reject|check-fail|tests/safety/arena_with_arena_wrapper_return_reject.tl|tests/safety/arena_with_arena_wrapper_return_reject.tl:12:37|region-tagged value cannot escape with-arena 'local'
+arena_in_arena_scratch_clone_out_store_reject|check-fail|tests/safety/arena_in_arena_scratch_clone_out_store_reject.tl|-|cannot store region-tagged value into assignment
+arena_mark_handle_mismatch_reject|check-fail|tests/safety/arena_mark_handle_mismatch_reject.tl|-|typecheck: call `arena.rewind` argument 1 type mismatch: expected stdlib.arena/ArenaMark, found stdlib.arena/Arena
+arena_phase_rewind_use_after_reject|check-fail|tests/safety/arena_phase_rewind_use_after_reject.tl|-|use of moved value `text`
+arena_branded_distinct_alias_reject|check-fail|tests/safety/arena_branded_distinct_alias_reject.tl|-|lifetime parameter 1 of `stdlib.arena/Arena` is invariant
+arena_branded_operand_wrong_brand_reject|check-fail|tests/safety/arena_branded_operand_wrong_brand_reject.tl|-|lifetime parameter 1 of `stdlib.arena/Arena` is invariant
+arena_bare_operand_brand_reject|check-fail|tests/safety/arena_bare_operand_brand_reject.tl|-|expected (stdlib.arena/Arena r), found stdlib.arena/Arena
+arena_branded_duplicate_reject|check-fail|tests/safety/arena_branded_duplicate_reject.tl|-|use of moved value `owner`
+arena_branded_aggregate_duplicate_reject|check-fail|tests/safety/arena_branded_aggregate_duplicate_reject.tl|-|use of moved value `owner`
+arena_branded_closure_capture_reuse_reject|check-fail|tests/safety/arena_branded_closure_capture_reuse_reject.tl|-|use of moved value `owner`
+arena_branded_control_flow_join_reject|check-fail|tests/safety/arena_branded_control_flow_join_reject.tl|-|if branches must match
+arena_bare_cannot_rebrand_reject|check-fail|tests/safety/arena_bare_cannot_rebrand_reject.tl|-|expected (stdlib.arena/Arena owner), found stdlib.arena/Arena
+arena_branded_arity_reject|check-fail|tests/safety/arena_branded_arity_reject.tl|-|nominal lifetime argument arity mismatch
+arena_branded_return_only_reject|check-fail|tests/safety/arena_branded_return_only_reject.tl|-|returned reference lifetime must be tied to a parameter
+arena_branded_ordinary_aggregate_thread_reject|check-fail|tests/safety/arena_branded_ordinary_aggregate_thread_reject.tl|-|scoped-region and lifetime-parameterized values cannot cross thread boundaries
+arena_branded_in_arena_wrong_assignment_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_assignment_reject.tl|-|cannot store region-tagged value into struct field
+arena_branded_in_arena_wrong_storage_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_storage_reject.tl|-|cannot store region-tagged value into constructor result
+arena_branded_in_arena_wrong_return_reject|check-fail|tests/safety/arena_branded_in_arena_wrong_return_reject.tl|-|cannot store region-tagged value into return value
+arena_branded_in_arena_closure_capture_reject|check-fail|tests/safety/arena_branded_in_arena_closure_capture_reject.tl|-|lambda cannot capture region-tagged value
+arena_branded_in_arena_plain_field_reject|check-fail|tests/safety/arena_branded_in_arena_plain_field_reject.tl|-|cannot pass region-tagged value to function parameter
+arena_phase_rewind_token_reuse_reject|check-fail|tests/safety/arena_phase_rewind_token_reuse_reject.tl|-|use of moved value `phase`
+arena_destroy_owner_use_after_reject|check-fail|tests/safety/arena_destroy_owner_use_after_reject.tl|-|use of moved value `owner`
+arena_destroy_value_use_after_reject|check-fail|tests/safety/arena_destroy_value_use_after_reject.tl|-|use of moved value `text`
+arena_mut_ref_join_element_store_reject|check-fail|tests/safety/arena_mut_ref_join_element_store_reject.tl|-|if branches must match
+arena_mut_ref_join_push_reject|check-fail|tests/safety/arena_mut_ref_join_push_reject.tl|-|if branches must match
+arena_mut_ref_join_same_arena_ok|run-exit|tests/safety/arena_mut_ref_join_same_arena_ok.tl|42|-
+arena_mut_ref_join_store_reject|check-fail|tests/safety/arena_mut_ref_join_store_reject.tl|-|if branches must match
+arena_clone_escape_reject|check-fail|tests/safety/arena_clone_escape_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_clone_deref_escape_reject|check-fail|tests/safety/arena_clone_deref_escape_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_owner_value_scoped_slot_destroy_reject|check-fail|tests/safety/arena_owner_value_scoped_slot_destroy_reject.tl|-|its source arena can be destroyed before the target
+arena_owner_value_slot_while_cond_reject|check-fail|tests/safety/arena_owner_value_slot_while_cond_reject.tl|-|its source arena can be destroyed before the target
+arena_owner_value_scoped_slot_store_reject|check-fail|tests/safety/arena_owner_value_scoped_slot_store_reject.tl|-|its source arena can be destroyed before the target
+arena_branded_destroy_owner_field_reuse_reject|check-fail|tests/safety/arena_branded_destroy_owner_field_reuse_reject.tl|-|use of moved value `state`
+arena_branded_destroy_value_use_reject|check-fail|tests/safety/arena_branded_destroy_value_use_reject.tl|-|use of moved value `text`
+arena_branded_destroy_nested_field_use_reject|check-fail|tests/safety/arena_branded_destroy_nested_field_use_reject.tl|-|use of moved value `payload`
+arena_branded_destroy_container_use_reject|check-fail|tests/safety/arena_branded_destroy_container_use_reject.tl|-|use of moved value `items`
+arena_branded_destroy_borrow_use_reject|check-fail|tests/safety/arena_branded_destroy_borrow_use_reject.tl|-|use of moved value `view`
+arena_branded_destroy_closure_use_reject|check-fail|tests/safety/arena_branded_destroy_closure_use_reject.tl|-|use of moved value `read-text`
+arena_branded_destroy_closure_alias_use_reject|check-fail|tests/safety/arena_branded_destroy_closure_alias_use_reject.tl|-|use of moved value `read-alias`
+arena_branded_destroy_parameter_reject|check-fail|tests/safety/arena_branded_destroy_parameter_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_branded_destroy_parameter_field_reject|check-fail|tests/safety/arena_branded_destroy_parameter_field_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_branded_destroy_parameter_alias_reject|check-fail|tests/safety/arena_branded_destroy_parameter_alias_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_branded_call_operand_ok|run-exit|tests/safety/arena_branded_call_operand_ok.tl|42|-
+arena_branded_call_result_destroy_reject|check-fail|tests/safety/arena_branded_call_result_destroy_reject.tl|tests/safety/arena_branded_call_result_destroy_reject.tl:15:29|use of moved value `text`
+arena_branded_call_other_arena_reject|check-fail|tests/safety/arena_branded_call_other_arena_reject.tl|-|the ownership checker does not support a construct in this function body
+arena_destroy_copied_bare_owner_reject|check-fail|tests/safety/arena_destroy_copied_bare_owner_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_bare_owner_copy_destroy_reject|check-fail|tests/safety/arena_bare_owner_copy_destroy_reject.tl|-|use of moved value `owner`
+arena_bare_owner_field_destroy_reject|check-fail|tests/safety/arena_bare_owner_field_destroy_reject.tl|-|use of moved value `owner`
+arena_bare_owner_tuple_destroy_reject|check-fail|tests/safety/arena_bare_owner_tuple_destroy_reject.tl|-|use of moved value `owner`
+arena_bare_owner_capture_destroy_reject|check-fail|tests/safety/arena_bare_owner_capture_destroy_reject.tl|-|use of moved value `owner`
+arena_bare_owner_if_alias_destroy_reject|check-fail|tests/safety/arena_bare_owner_if_alias_destroy_reject.tl|-|use of moved value `owner`
+arena_bare_owner_copy_in_arena_reject|check-fail|tests/safety/arena_bare_owner_copy_in_arena_reject.tl|-|use of moved value `owner`
+arena_bare_owner_copy_rewind_reject|check-fail|tests/safety/arena_bare_owner_copy_rewind_reject.tl|-|use of moved value `owner`
+arena_atomic_bare_owner_copy_destroy_reject|check-fail|tests/safety/arena_atomic_bare_owner_copy_destroy_reject.tl|-|use of moved value `owner`
+arena_branded_owner_bare_field_destroy_reject|check-fail|tests/safety/arena_branded_owner_bare_field_destroy_reject.tl|-|use of moved value `owner`
+arena_bare_owner_param_borrow_destroy_ok|run-exit|tests/safety/arena_bare_owner_param_borrow_destroy_ok.tl|42|-
+arena_bare_owner_in_arena_destroy_ok|run-exit|tests/safety/arena_bare_owner_in_arena_destroy_ok.tl|42|-
+arena_branded_destroy_inside_field_owner_reject|check-fail|tests/safety/arena_branded_destroy_inside_field_owner_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
+arena_branded_destroy_branch_double_reject|check-fail|tests/safety/arena_branded_destroy_branch_double_reject.tl|-|use of moved value `state`
+arena_branded_destroy_loop_reject|check-fail|tests/safety/arena_branded_destroy_loop_reject.tl|-|cannot move loop-carried owner value `state.arena`
+arena_branded_atomic_destroy_before_join_reject|check-fail|tests/safety/arena_branded_atomic_destroy_before_join_reject.tl|-|requires atomic arena user `worker` to be joined or released
+arena_cookbook_double_buffer_stale_reject|check-fail|tests/safety/arena_cookbook_double_buffer_stale_reject.tl|-|use of moved value `previous`
+arena_cookbook_longer_lived_store_reject|check-fail|tests/safety/arena_cookbook_longer_lived_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_cookbook_closure_capture_reject|check-fail|tests/safety/arena_cookbook_closure_capture_reject.tl|-|lambda cannot capture region-tagged value
+arena_cookbook_channel_unload_reject|check-fail|tests/safety/arena_cookbook_channel_unload_reject.tl|-|cannot prove atomic arena `level` is released after an owner-tagged value was sent to a channel
+arena_cookbook_unload_use_after_reject|check-fail|tests/safety/arena_cookbook_unload_use_after_reject.tl|-|use of moved value `name`
+arena_atomic_destroy_before_join_reject|check-fail|tests/safety/arena_atomic_destroy_before_join_reject.tl|-|requires atomic arena user `worker` to be joined or released
+arena_atomic_destroy_after_channel_send_reject|check-fail|tests/safety/arena_atomic_destroy_after_channel_send_reject.tl|-|cannot prove atomic arena `owner` is released after an owner-tagged value was sent to a channel
+arena_atomic_destroy_value_use_after_reject|check-fail|tests/safety/arena_atomic_destroy_value_use_after_reject.tl|-|use of moved value `text`
+arena_phase_non_direct_owner_reject|check-fail|tests/safety/arena_phase_non_direct_owner_reject.tl|-|arena.phase requires a direct arena owner
+arena_phase_shadowed_make_reject|check-fail|tests/safety/arena_phase_shadowed_make_reject.tl|-|arena.phase requires a direct arena owner
+arena_phase_rewind_inside_owner_reject|check-fail|tests/safety/arena_phase_rewind_inside_owner_reject.tl|-|arena.rewind-safe! cannot run inside the arena it rewinds
+arena_phase_token_after_25_locals_ok|run-exit|tests/safety/arena_phase_token_after_25_locals_ok.tl|42|-
+arena_phase_token_after_57_locals_ok|run-exit|tests/safety/arena_phase_token_after_57_locals_ok.tl|42|-
+arena_destroy_inside_owner_reject|check-fail|tests/safety/arena_destroy_inside_owner_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
+arena_phase_rewind_borrow_live_reject|check-fail|tests/safety/arena_phase_rewind_borrow_live_reject.tl|-|use of moved value `view`
+arena_phase_rewind_branded_reject|check-fail|tests/safety/arena_phase_rewind_branded_reject.tl|-|use of moved value `t`
+arena_phase_rewind_branded_string_reject|check-fail|tests/safety/arena_phase_rewind_branded_string_reject.tl|-|use of moved value `text`
+arena_phase_rewind_branded_pre_phase_defined|run-exit|tests/safety/arena_phase_rewind_branded_pre_phase_defined.tl|42|-
+arena_phase_rewind_outer_later_value_reject|check-fail|tests/safety/arena_phase_rewind_outer_later_value_reject.tl|-|use of moved value `v`
+arena_phase_rewind_outer_later_token_reject|check-fail|tests/safety/arena_phase_rewind_outer_later_token_reject.tl|-|use of moved value `ph2`
+arena_phase_rewind_outer_pre_phase_defined|run-exit|tests/safety/arena_phase_rewind_outer_pre_phase_defined.tl|42|-
+arena_phase_rewind_after_destroy_reject|check-fail|tests/safety/arena_phase_rewind_after_destroy_reject.tl|-|use of moved value `p`
+arena_phase_rewind_after_destroy_with_reject|check-fail|tests/safety/arena_phase_rewind_after_destroy_with_reject.tl|-|cleanup owner `p` moved before with scope exit
+arena_phase_rewind_constructor_reject|check-fail|tests/safety/arena_phase_rewind_constructor_reject.tl|-|use of moved value `h`
+arena_phase_rewind_box_reject|check-fail|tests/safety/arena_phase_rewind_box_reject.tl|-|use of moved value `b`
+arena_phase_rewind_closure_reject|check-fail|tests/safety/arena_phase_rewind_closure_reject.tl|-|use of moved value `f`
+arena_phase_rewind_with_scratch_reject|check-fail|tests/safety/arena_phase_rewind_with_scratch_reject.tl|-|use of moved value `text`
+arena_phase_rewind_match_binder_reject|check-fail|tests/safety/arena_phase_rewind_match_binder_reject.tl|-|use of moved value `text`
+arena_phase_rewind_branded_field_reject|check-fail|tests/safety/arena_phase_rewind_branded_field_reject.tl|-|use of moved value `text`
+arena_phase_inner_scope_annotated_reject|check-fail|tests/safety/arena_phase_inner_scope_annotated_reject.tl|-|use of moved value `v`
+arena_phase_inner_scope_branded_reject|check-fail|tests/safety/arena_phase_inner_scope_branded_reject.tl|-|use of moved value `v`
+arena_phase_shadowed_token_reject|check-fail|tests/safety/arena_phase_shadowed_token_reject.tl|-|use of moved value `v`
+arena_phase_rewind_seventy_phases_reject|check-fail|tests/safety/arena_phase_rewind_seventy_phases_reject.tl|-|use of moved value `v`
+arena_bare_handle_return_reject|check-fail|tests/safety/arena_bare_handle_return_reject.tl|-|use of moved value `t`
+arena_bare_handle_struct_reject|check-fail|tests/safety/arena_bare_handle_struct_reject.tl|-|use of moved value `h`
+arena_bare_handle_function_reject|check-fail|tests/safety/arena_bare_handle_function_reject.tl|-|lambda cannot capture immutable reference
+arena_bare_handle_array_reject|check-fail|tests/safety/arena_bare_handle_array_reject.tl|-|use of moved value `xs`
+arena_bare_handle_ref_reject|check-fail|tests/safety/arena_bare_handle_ref_reject.tl|-|use of moved value `t`
+arena_bare_handle_chain_reject|check-fail|tests/safety/arena_bare_handle_chain_reject.tl|-|use of moved value `u`
+arena_bare_handle_return_defined|run-exit|tests/safety/arena_bare_handle_return_defined.tl|42|-
+arena_bare_handle_chain_defined|run-exit|tests/safety/arena_bare_handle_chain_defined.tl|42|-
+arena_bare_param_branded_caller_reject|check-fail|tests/safety/arena_bare_param_branded_caller_reject.tl|tests/safety/arena_bare_param_branded_caller_reject.tl:9:3|error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+arena_bare_param_callee_store_reject|check-fail|tests/safety/arena_bare_param_callee_store_reject.tl|tests/safety/arena_bare_param_callee_store_reject.tl:15:15|error[E0205]: typecheck: cannot call `keep` here: it allocates in the active arena and may store an allocation through this argument, which would outl
+arena_bare_param_return_reject|check-fail|tests/safety/arena_bare_param_return_reject.tl|tests/safety/arena_bare_param_return_reject.tl:10:3|error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+arena_bare_param_scalar_ok|run-exit|tests/safety/arena_bare_param_scalar_ok.tl|42|-
+arena_handle_borrow_ok|run-exit|tests/safety/arena_handle_borrow_ok.tl|42|-
+arena_phase_rewind_branded_module_helper_reject|check-fail|tests/safety/arena_phase_rewind_branded_module_helper_reject.tl|tests/safety/arena_phase_rewind_branded_module_helper_reject.tl:13:20|error[E0208]: typecheck: use of moved value `text`
+arena_phase_rewind_branded_ref_arena_helper_reject|check-fail|tests/safety/arena_phase_rewind_branded_ref_arena_helper_reject.tl|tests/safety/arena_phase_rewind_branded_ref_arena_helper_reject.tl:15:20|error[E0208]: typecheck: use of moved value `text`
+arena_phase_rewind_branded_mutref_arena_helper_reject|check-fail|tests/safety/arena_phase_rewind_branded_mutref_arena_helper_reject.tl|tests/safety/arena_phase_rewind_branded_mutref_arena_helper_reject.tl:15:20|error[E0208]: typecheck: use of moved value `text`
+arena_phase_rewind_branded_aggregate_helper_reject|check-fail|tests/safety/arena_phase_rewind_branded_aggregate_helper_reject.tl|tests/safety/arena_phase_rewind_branded_aggregate_helper_reject.tl:19:20|error[E0208]: typecheck: use of moved value `pair`
+arena_phase_rewind_branded_ref_result_reject|check-fail|tests/safety/arena_phase_rewind_branded_ref_result_reject.tl|tests/safety/arena_phase_rewind_branded_ref_result_reject.tl:16:20|error[E0208]: typecheck: use of moved value `v`
+arena_phase_rewind_branded_struct_wrap_helper_reject|check-fail|tests/safety/arena_phase_rewind_branded_struct_wrap_helper_reject.tl|tests/safety/arena_phase_rewind_branded_struct_wrap_helper_reject.tl:20:20|error[E0208]: typecheck: use of moved value `text`
+arena_phase_rewind_bare_arena_helper_reject|check-fail|tests/safety/arena_phase_rewind_bare_arena_helper_reject.tl|tests/safety/arena_phase_rewind_bare_arena_helper_reject.tl:15:20|error[E0208]: typecheck: use of moved value `copy`
+arena_phase_rewind_branded_scalar_helper_ok|run-exit|tests/safety/arena_phase_rewind_branded_scalar_helper_ok.tl|42|-
+arena_phase_rewind_branded_ref_before_rewind_ok|run-exit|tests/safety/arena_phase_rewind_branded_ref_before_rewind_ok.tl|42|-
+arena_phase_rewind_branded_ref_struct_helper_reject|check-fail|tests/safety/arena_phase_rewind_branded_ref_struct_helper_reject.tl|tests/safety/arena_phase_rewind_branded_ref_struct_helper_reject.tl:20:20|error[E0208]: typecheck: use of moved value `text`
+arena_phase_rewind_branded_ref_enum_helper_reject|check-fail|tests/safety/arena_phase_rewind_branded_ref_enum_helper_reject.tl|tests/safety/arena_phase_rewind_branded_ref_enum_helper_reject.tl:23:20|error[E0208]: typecheck: use of moved value `text`
+arena_phase_rewind_branded_ref_wrap_helper_reject|check-fail|tests/safety/arena_phase_rewind_branded_ref_wrap_helper_reject.tl|tests/safety/arena_phase_rewind_branded_ref_wrap_helper_reject.tl:25:20|error[E0208]: typecheck: use of moved value `text`
+arena_phase_rewind_branded_erase_arena_reject|check-fail|tests/safety/arena_phase_rewind_branded_erase_arena_reject.tl|tests/safety/arena_phase_rewind_branded_erase_arena_reject.tl:17:20|error[E0208]: typecheck: use of moved value `s`
+arena_phase_rewind_branded_erase_tuple_reject|check-fail|tests/safety/arena_phase_rewind_branded_erase_tuple_reject.tl|tests/safety/arena_phase_rewind_branded_erase_tuple_reject.tl:18:20|error[E0208]: typecheck: use of moved value `s`
+arena_phase_rewind_branded_erase_struct_reject|check-fail|tests/safety/arena_phase_rewind_branded_erase_struct_reject.tl|tests/safety/arena_phase_rewind_branded_erase_struct_reject.tl:20:20|error[E0208]: typecheck: use of moved value `s`
+arena_phase_rewind_bare_arena_copy_alloc_reject|check-fail|tests/safety/arena_phase_rewind_bare_arena_copy_alloc_reject.tl|tests/safety/arena_phase_rewind_bare_arena_copy_alloc_reject.tl:17:20|error[E0208]: typecheck: use of moved value `s`
+arena_phase_rewind_branded_copy_before_rewind_ok|run-exit|tests/safety/arena_phase_rewind_branded_copy_before_rewind_ok.tl|42|-

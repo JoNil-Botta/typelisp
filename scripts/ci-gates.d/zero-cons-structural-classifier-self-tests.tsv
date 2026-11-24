@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+zero-cons-structural-classifier-self-tests	990	all	zero-cons structural classifier self-tests	-	-	256	-	scripts/check-zero-cons.sh --self-test	linux-2	windows-2	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.

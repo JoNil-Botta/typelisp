@@ -1,0 +1,2 @@
+# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
+stdlib.vector/vector	2	variadic	module	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

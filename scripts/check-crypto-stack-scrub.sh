@@ -67,8 +67,8 @@ function instrument_call(line,n,kind,required,high,  top,d,badphase,after,origin
         split(s,a,/ +/); pending=a[2]; current=""
         if (pending ~ /_probe_phase$/) { phase=pending; phase_count++ }
     }
-    if (s==pending ":") { current=pending; defined[current]=1; pending=""; next }
-    if (s ~ /^\.(size|section|seh_endproc)( |$)/) { current=""; next }
+    if (s==pending ":") { current=pending; defined[current]=1; pending=""; delete zero_xmm; delete zero_gp; next }
+    if (s ~ /^\.(size|section|seh_endproc)( |$)/) { current=""; delete zero_xmm; delete zero_gp; next }
     owner[NR]=current
     if (current=="") next
     if (s ~ /^\.seh_stackalloc /) { split(s,a,/ +/); if (a[2]+0>reserve[current]) reserve[current]=a[2]+0 }
@@ -89,8 +89,44 @@ function instrument_call(line,n,kind,required,high,  top,d,badphase,after,origin
     if (s ~ /^leaq [0-9]+\(%rsp\),/ && !array_offset_set[current]) {
         t=s; sub(/^leaq /,"",t); sub(/\(.*/,"",t)
         array_offset[current]=t+0; array_offset_set[current]=1
+    } else if (s ~ /^(movq %rsp,|leaq \(%rsp\),)/ && s !~ /^movq %rsp, %rbp$/ && !array_offset_set[current]) {
+        array_offset[current]=0; array_offset_set[current]=1
     }
-    if (s ~ /^movq [$]0,/ && !wipe_seen[current]) init_words[current]++
+    if (s ~ /:$/) { delete zero_xmm; delete zero_gp }
+    if (s ~ /^xorps %xmm[0-9]+, %xmm[0-9]+$/) {
+        split(s, za, /[ ,]+/)
+        if (za[2] == za[3]) zero_xmm[za[2]] = 1
+        else delete zero_xmm[za[3]]
+    } else if (s ~ /^xorl %[a-z0-9]+, %[a-z0-9]+$/) {
+        split(s, za, /[ ,]+/)
+        if (za[2] == za[3]) {
+            zg = za[2]
+            if (zg ~ /^%e/) { sub(/^%e/, "%r", zg); zero_gp[zg] = 1 }
+            else if (zg ~ /^%r[0-9]+d$/) { sub(/d$/, "", zg); zero_gp[zg] = 1 }
+        } else { delete zero_gp }
+    } else if (s ~ /^(callq?|j|ret)/) {
+        delete zero_xmm; delete zero_gp
+    } else {
+        if (s ~ /%xmm[0-9]+$/) {
+            zr = s; sub(/^.*, /, "", zr); delete zero_xmm[zr]
+        }
+        if (s !~ /%[xyz]mm[0-9]+$/ && s ~ /%[a-z0-9]+$/) {
+            delete zero_gp
+        }
+    }
+    if (!wipe_seen[current] && s ~ /, [0-9]*\(%[a-z0-9]+\)$/) {
+        if (s ~ /^movq [$]0,/) init_words[current]++
+        else if (s ~ /^movups %xmm[0-9]+, /) {
+            split(s, za, /[ ,]+/)
+            if (za[2] in zero_xmm) init_words[current] += 2
+        } else if (s ~ /^movq %xmm[0-9]+, /) {
+            split(s, za, /[ ,]+/)
+            if (za[2] in zero_xmm) init_words[current] += 1
+        } else if (s ~ /^movq %r[a-z0-9]+, /) {
+            split(s, za, /[ ,]+/)
+            if (za[2] in zero_gp) init_words[current] += 1
+        }
+    }
     if (s ~ /^mov[lq] [$][0-9]+, %(esi|edx)$/) chunk_argument[current]=immediate(s)
     if (s ~ /^callq? _tl_stdlib_crypto_stack_scrub_stdlib_crypto_stack_scrub_wipe_chunks_bang$/) {
         wipe_seen[current]=1; chunks[current]=chunk_argument[current]

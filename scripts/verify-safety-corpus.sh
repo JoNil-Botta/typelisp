@@ -11,6 +11,7 @@ cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-source-location.sh"
+. "$ROOT/scripts/lib-manifest.sh"
 BOUNDED_POOL_LABEL=safety-corpus
 . "$ROOT/scripts/lib-bounded-pool.sh"
 
@@ -58,9 +59,9 @@ prepare_tools() {
     fi
 }
 
-MANIFEST=${TYPELISP_SAFETY_MANIFEST:-tests/safety/manifest.txt}
-if [ ! -f "$MANIFEST" ]; then
-    echo "safety corpus manifest does not exist: $MANIFEST" >&2
+MANIFEST=${TYPELISP_SAFETY_MANIFEST:-tests/safety/manifest.d}
+if [ ! -d "$MANIFEST" ]; then
+    echo "safety corpus manifest directory does not exist: $MANIFEST" >&2
     exit 1
 fi
 
@@ -72,7 +73,7 @@ WORKDIR=${TYPELISP_SAFETY_WORKDIR:-$default_workdir}
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
-tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
+manifest_concat_dir "$MANIFEST" > "$NORMALIZED_MANIFEST"
 
 BUILD_TARGET=linux-x86_64
 TARGET_CFG_ARGS="--cfg linux --cfg unix --cfg target-linux --cfg os-linux"
@@ -620,6 +621,100 @@ batch_framing_self_test() {
     echo "safety batch framing self-test passed (CRLF + 5 mutations)"
 }
 
+count_and_validate_manifest() {
+    awk -F '|' '
+        !/^#/ && NF {
+            if (NF != 5 || $1 == "" || seen[$1]++) invalid = 1
+            count++
+        }
+        END { if (invalid) exit 1; print count + 0 }
+    ' "$1"
+}
+
+# Verify fragment-directory loading fails closed on missing/empty/stray/nested/
+# invalid/symlink entries, preserves LC_ALL=C order and LF normalization, and
+# rejects cross-fragment duplicate IDs or malformed rows.
+manifest_dir_self_test() {
+    md_dir="$WORKDIR/manifest-dir-self-test"
+    mkdir -p "$md_dir"
+    md_out="$md_dir/out.manifest"
+    md_err="$md_dir/err.txt"
+
+    expect_md_fail() {
+        _md_label=$1
+        _md_target=$2
+        _md_expected=$3
+        if manifest_concat_dir "$_md_target" > "$md_out" 2> "$md_err"; then
+            fail "manifest-dir self-test unexpectedly passed: $_md_label"
+        fi
+        if [ -s "$md_out" ]; then
+            fail "manifest-dir self-test emitted stdout on failure: $_md_label"
+        fi
+        assert_contains "$md_err" "$_md_expected" ||
+            fail "manifest-dir self-test wrong diagnostic for $_md_label"
+    }
+
+    expect_md_fail missing-dir "$md_dir/does-not-exist" "manifest directory does not exist"
+
+    mkdir -p "$md_dir/empty.d"
+    expect_md_fail empty-dir "$md_dir/empty.d" "manifest directory is empty"
+
+    mkdir -p "$md_dir/stray.d"
+    printf 'ok_a|check-ok|fixture_a.tl|-|-\n' > "$md_dir/stray.d/a.manifest"
+    printf 'stray\n' > "$md_dir/stray.d/README.txt"
+    expect_md_fail stray-file "$md_dir/stray.d" "unexpected non-.manifest entry"
+
+    mkdir -p "$md_dir/nested.d/sub"
+    printf 'ok_a|check-ok|fixture_a.tl|-|-\n' > "$md_dir/nested.d/a.manifest"
+    printf 'ok_b|check-ok|fixture_b.tl|-|-\n' > "$md_dir/nested.d/sub/b.manifest"
+    expect_md_fail nested-dir "$md_dir/nested.d" "unexpected non-.manifest entry"
+
+    mkdir -p "$md_dir/dot.d"
+    printf 'ok_a|check-ok|fixture_a.tl|-|-\n' > "$md_dir/dot.d/.manifest"
+    expect_md_fail dot-manifest "$md_dir/dot.d" "invalid manifest filename"
+
+    if [ "$HOST_OS" = linux ]; then
+        mkdir -p "$md_dir/symlink.d"
+        ln -s "$md_dir/stray.d/a.manifest" "$md_dir/symlink.d/link.manifest"
+        expect_md_fail symlink-entry "$md_dir/symlink.d" "non-regular entry"
+    fi
+
+    # Ordered concatenation, CRLF stripping, and missing trailing newline safety.
+    mkdir -p "$md_dir/ordered.d"
+    printf 'second|check-ok|fixture_b.tl|-|-\r\n' > "$md_dir/ordered.d/b.manifest"
+    printf 'first|check-ok|fixture_a.tl|-|-' > "$md_dir/ordered.d/a.manifest"
+    manifest_concat_dir "$md_dir/ordered.d" > "$md_dir/ordered.combined"
+    printf 'first|check-ok|fixture_a.tl|-|-\nsecond|check-ok|fixture_b.tl|-|-\n' > "$md_dir/ordered.expected"
+    cmp "$md_dir/ordered.combined" "$md_dir/ordered.expected" ||
+        fail "manifest-dir self-test ordering or LF normalization mismatch"
+    md_count=$(count_and_validate_manifest "$md_dir/ordered.combined") ||
+        fail "manifest-dir self-test rejected valid combined fragments"
+    [ "$md_count" -eq 2 ] || fail "manifest-dir self-test counted $md_count of 2 rows"
+
+    # Cross-fragment duplicate IDs must fail validation.
+    mkdir -p "$md_dir/dup.d"
+    printf 'dup_id|check-ok|fixture_a.tl|-|-\n' > "$md_dir/dup.d/a.manifest"
+    printf 'dup_id|check-ok|fixture_b.tl|-|-\n' > "$md_dir/dup.d/b.manifest"
+    manifest_concat_dir "$md_dir/dup.d" > "$md_dir/dup.combined"
+    if count_and_validate_manifest "$md_dir/dup.combined" >/dev/null; then
+        fail "manifest-dir self-test accepted cross-fragment duplicate case ID"
+    fi
+
+    # Malformed field count must fail validation.
+    mkdir -p "$md_dir/bad-nf.d"
+    printf 'bad_row|check-ok|fixture_a.tl|-\n' > "$md_dir/bad-nf.d/a.manifest"
+    manifest_concat_dir "$md_dir/bad-nf.d" > "$md_dir/bad-nf.combined"
+    if count_and_validate_manifest "$md_dir/bad-nf.combined" >/dev/null; then
+        fail "manifest-dir self-test accepted row with NF != 5"
+    fi
+
+    # Validate the live safety manifest directory rows as well.
+    md_live_count=$(count_and_validate_manifest "$NORMALIZED_MANIFEST") ||
+        fail "manifest-dir self-test found malformed or duplicate row in $MANIFEST"
+    [ "$md_live_count" -gt 0 ] || fail "manifest-dir self-test found 0 rows in $MANIFEST"
+    echo "safety manifest directory self-test passed ($md_live_count live rows)"
+}
+
 # Plan all manifest cases into parallel pool jobs:
 #   - check-depth-NN: the 3 slow depth-255..257 fixtures, queued first so they
 #     never tail-straggle
@@ -978,6 +1073,7 @@ bounded_pool_run_job() {
 source_location_self_test "$WORKDIR/source-location-self-test"
 rejection_oracle_self_test
 batch_framing_self_test
+manifest_dir_self_test
 if [ "$SELF_TEST_ONLY" = true ]; then
     exit 0
 fi
@@ -985,13 +1081,7 @@ prepare_tools
 # wide_struct_literal_reject imports the generated wide-struct declarations.
 awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
 mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
-expected_cases=$(awk -F '|' '
-    !/^#/ && NF {
-        if (NF != 5 || $1 == "" || seen[$1]++) invalid = 1
-        count++
-    }
-    END { if (invalid) exit 1; print count + 0 }
-' "$NORMALIZED_MANIFEST") || fail "infrastructure-resource-failure: malformed or duplicate manifest row"
+expected_cases=$(count_and_validate_manifest "$NORMALIZED_MANIFEST") || fail "infrastructure-resource-failure: malformed or duplicate manifest row"
 [ "$expected_cases" -gt 0 ] || fail "infrastructure-resource-failure: manifest contains no cases"
 
 plan_safety_pool

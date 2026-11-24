@@ -404,7 +404,7 @@
 ;; original assoc list gave for an unbound var.
 (define (sccp-env-lookup-in [env : (& e SccpEnv)] [var : i64]) : SccpValue
   (if (and (>= var 0) (< var env.cap))
-    (clone (array-ref env.slots var))
+    (array-ref env.slots var)
     (Unknown)))
 
 ;; The lattice tag alone, read in place: 0 Unknown, 1 Const, 2 Overdefined.

@@ -6036,7 +6036,7 @@
   "(defstruct BigNum
   (limbs (__tl_dyn-array u64))
   (len i64))
-(define (bn-norm-len [limbs : (__tl_dyn-array u64)] [len : i64]) : i64
+(define (bn-norm-len [limbs : (& (__tl_dyn-array u64))] [len : i64]) : i64
   (let
     [out : i64 len]
     [done : bool false]
@@ -6074,7 +6074,7 @@
                 (set! borrow (cast 1 : u64))))
             (set! i (+ i 1)))))
       (let
-        [norm-len : i64 (bn-norm-len (clone r) a.len)]
+        [norm-len : i64 (bn-norm-len (& r) a.len)]
         (BigNum r norm-len)))))
 (define keep2 : (-> BigNum BigNum BigNum) bn-sub)
 (define (main) : i64 0)")
@@ -16339,7 +16339,7 @@ f:
     (be_peephole.compiler-backend-expand-stack-probes! state (&mut records))
     (let
       [text : String
-        (be_peephole.compiler-backend-peephole-records-render records true)]
+        (be_peephole.compiler-backend-peephole-records-render records true true)]
       (test.assert-true
         (asm-has?
           text
@@ -16929,7 +16929,7 @@ f:
     [bridge-disabled-ok : bool
       (asm-ok?
         (backend.compiler-backend-emit-source-for-target
-          (clone bridge-source)
+          (string.copy (& bridge-source))
           (Windows))
         (lacks ".L_tl_c_entry_shared_end" ".L_tl_c_entry_end_tl_bt_six"))]
     [_enable : unit (ir.compiler-debug-info-set-enabled! true)]
@@ -25105,8 +25105,13 @@ entry:
         state
         4
         (& params)
-        (clone blocks)
-        (backend.compiler-backend-function-use-counts 4 (clone blocks)))]
+        blocks
+        (backend.compiler-backend-function-use-counts
+          4
+          (irt.blocks
+            "entry:
+               %3 = load %2 : i64
+               %2 = addr_of %1")))]
     (test.assert-true
       (< (be_operand.compiler-backend-forwarded-addr-of-src state 2) 0)
       "a parameter use cannot become a later address definition")))
@@ -25155,6 +25160,35 @@ entry:
           (lacks "mov" "lea"))
         "an initialized same-home copy remains empty"))))
 
+(define (compiler-backend-test-forwarded-address-phi-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = addr_of %1
+       jump join
+     join:
+       %3 = phi [%2, entry] : (MutPtr i64)
+       %4 = phi [%5, entry] : (MutPtr i64)"))
+
+(define (compiler-backend-test-clone-phi-copy-seq
+  [copies : (& be_state.CompilerBackendPhiCopySeq)]) : be_state.CompilerBackendPhiCopySeq
+  (let
+    [slots : (__tl_dyn-array be_state.CompilerBackendPhiCopy)
+      (__tl_make-array be_state.CompilerBackendPhiCopy copies.len)]
+    (for [index (iterator.range 0 copies.len)]
+      (set!
+        (array-ref slots index)
+        (match (& (array-ref copies.slots index))
+          [(Copy dst source ty)
+            (be_state.CompilerBackendPhiCopy.Copy
+              dst
+              (match source
+                [(Value val)
+                  (be_state.CompilerBackendPhiSource.Value
+                    (ir.compiler-ir-clone-value val))]
+                [(Temp slot) (be_state.CompilerBackendPhiSource.Temp slot)])
+              (ast.clone-ast-type ty))])))
+    (be_state.CompilerBackendPhiCopySeq slots copies.len)))
+
 (test
   backend-forwarded-address-phi-resources
   (let
@@ -25164,26 +25198,21 @@ entry:
         (ir.compiler-ir-function-seq-empty)
         (ir.compiler-ir-extern-seq-empty))]
     [state program-index.backend-state]
-    [blocks
-      (irt.blocks
-        "entry:
-                     %2 = addr_of %1
-                     jump join
-                   join:
-                     %3 = phi [%2, entry] : (MutPtr i64)
-                     %4 = phi [%5, entry] : (MutPtr i64)")]
+    [blocks (compiler-backend-test-forwarded-address-phi-blocks)]
     [assignments (reg-homes "%2=%rax %3=%rbx %4=%rax %5=%rbx")]
     [_forward : unit
       (backend.compiler-backend-addr-of-forwarding-enable!
         state
         6
         (& (ir.compiler-ir-param-seq-empty))
-        (clone blocks)
-        (backend.compiler-backend-function-use-counts 6 (clone blocks)))]
+        (compiler-backend-test-forwarded-address-phi-blocks)
+        (backend.compiler-backend-function-use-counts
+          6
+          (compiler-backend-test-forwarded-address-phi-blocks)))]
     [copies
       (match (be_calls.compiler-backend-leading-phi-copies-seq
         state
-        (clone assignments)
+        assignments
         (irt.instrs
           "%3 = phi [%2, entry] : (MutPtr i64)
                      %4 = phi [%5, entry] : (MutPtr i64)")
@@ -25193,15 +25222,15 @@ entry:
     (test.assert-true
       (match (be_calls.compiler-backend-phi-copy-list-decision
         state
-        (clone assignments)
-        (clone copies))
+        assignments
+        (compiler-backend-test-clone-phi-copy-seq (& copies)))
         [(CompilerParallelMoveUnblocked dst) (= dst 4)]
         [_ false])
       "materialization has no source register, so this is not a swap cycle")
     (test.assert-true
       (match (be_calls.compiler-backend-phi-source-replace-home
         state
-        (clone assignments)
+        assignments
         (Value (Var 2))
         4
         cabi.compiler-reg-id-r10)
@@ -25212,14 +25241,14 @@ entry:
       (be_calls.compiler-backend-phi-copy-list-drop-same-home
         state
         (reg-homes "%2=%rax %3=%rax %4=%rcx %5=%rbx")
-        (clone copies)).len
+        (compiler-backend-test-clone-phi-copy-seq (& copies))).len
       2
       "same-home filtering retains the address materialization")
     (test.assert-true
       (asm-ok?
         (be_calls.compiler-backend-emit-phi-edge-copies
           (ast.ast-node-pool-reader-type-segment-bases)
-          (clone assignments)
+          assignments
           blocks
           (ir.compiler-ir-label "join")
           (ir.compiler-ir-label "entry")
@@ -28303,7 +28332,7 @@ entry:
       (and
         (asm-has? asm load)
         (let
-          [needle (str_cat.str-cat "    ucomi" (clone op) " .L_tl_f")]
+          [needle (str_cat.str-cat "    ucomi" (string.copy (& op)) " .L_tl_f")]
           (asm-has? asm needle))
         (let
           [needle (str_cat.str-cat "    sub" op " .L_tl_f")]
@@ -29127,7 +29156,7 @@ entry:
     [from : String \"target/typelisp-fs/from name\"]
     [to : String \"target/typelisp-fs/to name\"]
     (+ (process-id)
-      (+ (mkdir-status (clone dir))
+      (+ (mkdir-status \"target/typelisp-fs\")
         (+ (remove-file-status artifact)
           (+ (remove-dir-status dir)
             (rename-status from to)))))))")
@@ -41237,7 +41266,7 @@ b_keep:
         [expected : String
           (if (= mode 2)
             "_tl_shared_data(%rip)"
-            (str_cat.str-cat (clone link) "(%rip)"))]
+            (str_cat.str-cat (string.copy (& link)) "(%rip)"))]
         (test.assert-true
           (asm-ok?
             (be_operand.compiler-backend-emit-load-value
@@ -41251,7 +41280,7 @@ b_keep:
           (be_facts.compiler-backend-function-or-global-addr-symbol index name)
           (if (= mode 2)
             "_tl_shared_data"
-            (clone link))
+            (string.copy (& link)))
           "typed address emission shares the same symbol authority")
         (test.assert-true
           (asm-ok?
@@ -41263,7 +41292,7 @@ b_keep:
             (has
               (if (= mode 2)
                 "_tl_shared_data"
-                (clone link))))
+                (string.copy (& link)))))
           "static address initializers resolve external data")
         (let
           [parts : object_target.CompilerBackendObjectTargetParts
@@ -41281,7 +41310,7 @@ b_keep:
               (Abs64)
               (if (= mode 2)
                 "_tl_shared_data"
-                (clone link)))
+                (string.copy (& link))))
             "static object address relocations use the current link symbol"))
         (test.assert-owned-string-eq
           (be_scalar.compiler-backend-value-global-memory-operand
@@ -41289,14 +41318,14 @@ b_keep:
             bases
             (ir.CompilerIrValue.Global name)
             ast.AstType.I64)
-          (clone expected)
+          (string.copy (& expected))
           "compare folds use the current program's link symbol")
         (be_state.compiler-backend-state-user-symbol-cache-reset! state)
         (test.assert-owned-string-eq
           (be_operand.compiler-backend-remat-global-cell-operand
             state
             (ir.CompilerIrValue.Global name))
-          (clone expected)
+          (string.copy (& expected))
           "function cache reset keeps program symbol authority")
         (test.assert-owned-string-eq
           (be_scalar.compiler-backend-float-value-memory-operand
@@ -42383,7 +42412,8 @@ b_keep:
             [rendered : String
               (be_peephole.compiler-backend-peephole-records-render
                 records
-                true)]
+                true
+                false)]
             (backend.compiler-backend-peephole-records-retire! stream)
             rendered))]
       (CompilerBackendPeepholeChunkState
@@ -42556,7 +42586,8 @@ b_keep:
           (text_buf_borrowed.empty-like (& asm))
           records
           asm
-          true))]
+          true
+          false))]
     (backend.compiler-backend-peephole-records-retire! stream)
     result))
 
@@ -46341,7 +46372,7 @@ user_fn:
 (define (main) : i64 (cast (unsafe (ptr->int (ptr-addr-of address))) : i64))"]
     (test.assert-true
       (match (backend.compiler-backend-emit-source-for-target
-        (clone source)
+        (string.copy (& source))
         (Windows))
         [(Ok _) true]
         [(Err _) false])
@@ -46381,7 +46412,7 @@ user_fn:
         (compiler-backend-export-symbol-source)
         "\n(define (zero) (:export-symbol \"tl_zero\") : i64 0)")]
     (match (backend.compiler-backend-emit-source-for-target
-      (clone source)
+      (string.copy (& source))
       (Windows))
       [(Err _) (test.assert-true false "small C entries assembly")]
       [(Ok asm)
@@ -46468,7 +46499,7 @@ user_fn:
           (array-ref prologues i)
           true)
         (object_target.compiler-backend-object-bytes-from-hex
-          (clone (array-ref expected i)))
+          (string.copy (& (array-ref expected i))))
         "C entry unwind agrees with assembler saves/allocation")))
   (let
     [counts : (Array i64 8) (array 0 4 5 6 7 8 513 514)]
@@ -46494,41 +46525,45 @@ user_fn:
           "C entry frame at register, padding and guard-page boundaries")))
     (backend.compiler-backend-state-release-final-arenas! index.backend-state))
   (let
-    [provided : ir.CompilerIrExtern
-      (Extern
-        (compiler-backend-test-symbol "bridge")
-        (compiler-backend-test-symbol "bridge")
-        "bridge"
-        (ast.ast-ty-func (compiler-backend-type-list-of "iiiiiiii") (& (I64)))
-        (C)
-        (compiler-backend-test-symbol "bridge_c")
-        (ast.ast-extern-link-input-list-new)
-        true
-        (ir.CompilerIrReturnStorage.None))]
-    [program : ir.CompilerIrProgram
-      (Program
-        (ir.compiler-ir-global-seq-empty)
-        (ir.compiler-ir-function-seq-prepend
-          (&
-            (irt.func
-              "function @bridge(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:i64) -> i64 vars 8 {
-          entry:
-            return %7
-          }"))
-          (&
+    [make-program
+      (lambda () : ir.CompilerIrProgram
+        (let
+          [provided : ir.CompilerIrExtern
+            (Extern
+              (compiler-backend-test-symbol "bridge")
+              (compiler-backend-test-symbol "bridge")
+              "bridge"
+              (ast.ast-ty-func
+                (compiler-backend-type-list-of "iiiiiiii")
+                (& (I64)))
+              (C)
+              (compiler-backend-test-symbol "bridge_c")
+              (ast.ast-extern-link-input-list-new)
+              true
+              (ir.CompilerIrReturnStorage.None))]
+          (Program
+            (ir.compiler-ir-global-seq-empty)
             (ir.compiler-ir-function-seq-prepend
               (&
                 (irt.func
-                  "function @main() -> i64 vars 1 {
+                  "function @bridge(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:i64) -> i64 vars 8 {
+          entry:
+            return %7
+          }"))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (&
+                    (irt.func
+                      "function @main() -> i64 vars 1 {
             entry:
               %0 = call bridge(1, 2, 3, 4, 5, 6, 7, 8) : i64
               return %0
             }"))
-              (& (ir.compiler-ir-function-seq-empty)))))
-        (ir.compiler-ir-extern-seq1 provided)
-        (ir.CompilerIrReturnStorageAuthority.None))]
+                  (& (ir.compiler-ir-function-seq-empty)))))
+            (ir.compiler-ir-extern-seq1 provided)
+            (ir.CompilerIrReturnStorageAuthority.None))))]
     (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
-      (clone program)
+      (make-program)
       (be_state.CompilerBackendTarget.Windows)
       (Scalar)
       (ir.compiler-source-spans-empty)
@@ -46599,7 +46634,7 @@ user_fn:
                     "bridge_c$unwind"))
                 "C entry owns its call and complete runtime-function range"))])])
     (match (backend.compiler-backend-emit-program-target-with-mode
-      program
+      (make-program)
       (be_state.CompilerBackendTarget.Windows)
       (Scalar)
       (ir.compiler-source-spans-empty)
@@ -46697,7 +46732,7 @@ user_fn:
 
 (define (compiler-backend-byte-directives-match-reference? [bytes : String]) : bool
   (string.eq
-    (compiler-backend-test-byte-directives (clone bytes))
+    (compiler-backend-test-byte-directives (string.copy (& bytes)))
     (compiler-backend-reference-byte-directives bytes)))
 
 (test
@@ -47041,14 +47076,14 @@ user_fn:
         (test.assert-true
           (compiler-backend-global-pair-store-live-case?
             mask
-            (clone (array-ref registers mask))
+            (string.copy (& (array-ref registers mask)))
             (array-ref targets host)
             false)
           "register pair store preserves GP and SSE live homes")
         (test.assert-true
           (compiler-backend-global-pair-store-live-case?
             mask
-            (clone (array-ref overlapping mask))
+            (string.copy (& (array-ref overlapping mask)))
             (array-ref targets host)
             false)
           "source words in ABI registers are not overwritten during staging")
@@ -47080,9 +47115,9 @@ user_fn:
       (test.assert-true
         (match (be_scalar.compiler-backend-emit-group-copy
           (ast.ast-node-pool-reader-type-segment-bases)
-          (clone assignments)
+          assignments
           (& (array-ref destinations at))
-          (clone (array-ref sources at))
+          (ir.compiler-ir-clone-value (& (array-ref sources at)))
           1
           (compiler-backend-register-group-test-type)
           index
@@ -47677,3 +47712,221 @@ user_fn:
                 (asm-lacks? asm "_tl_f0")
                 (asm-lacks? asm "#t _tl_f"))
               "library object never emits compact _tl_f<slot> function symbols")])))))
+
+(test
+  peephole-compact-leaq-and-copy-folding
+  (let
+    [linux : be_state.CompilerBackendTarget
+      (be_state.CompilerBackendTarget.Linux)]
+    [fold-in : String
+      "f:\n    leaq 16(%rsp), %rax\n    movq (%rax), %rax\n    leaq 24(%rsp), %r10\n    movq %rax, (%r10)\n    movq %rdi, 8(%r10)\n    xorl %r10d, %r10d\n    call helper\n    leaq (%rbx), %rsi\n    movq %rax, %r10\n    movq %r14, (%r10)\n    movq %r12, 88(%rsp)\n    movq 88(%rsp), %r8\n    movq 88(%rsp), %r12\n    movq 16(%rbx), %r9\n    testq %r9, %r9\n    jne .L1\n    movzbl 1(%r12), %r9d\n    testq %r9, %r9\n    je .L1\n    movl $1, %r9d\n.L1:\n    xorl %r9d, %r9d\n    ret\n"]
+    [opt2 : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        (str_cat.str-cat fold-in "")
+        linux
+        true)]
+    [opt1 : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        fold-in
+        linux
+        false)]
+    [refuse-in : String
+      "g:\n    leaq 16(%rsp), %r10\n    movq (%r10), %rax\n    call *%r10\n    leaq 32(%rsp), %r10\n    movq %rax, (%r10)\n    call _tl_spmd_fn\n    xorl %r10d, %r10d\n    leaq 16(%rbx), %rcx\n    addq $8, %rbx\n    movq (%rcx), %rdx\n    xorl %ecx, %ecx\n    leaq 24(%rbx), %rcx\n    imulq $3, (%rsp), %rbx\n    movq (%rcx), %rdx\n    xorl %ecx, %ecx\n    leaq 40(%rbx), %rcx\n    vpextrq $0, %xmm0, %rbx\n    movq (%rcx), %rdx\n    xorl %ecx, %ecx\n    movq 8(%rax), %rax\n    movq %rax, %r10\n    movabsq $3074457345618258603, %r8\n    imulq %r8\n    movq %rdx, %rax\n    ret\n"]
+    [refuse-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        refuse-in
+        linux
+        true)]
+    (test.assert-true
+      (and
+        (asm-has? opt2 "    movq 16(%rsp), %rax\n")
+        (asm-lacks? opt2 "    leaq 16(%rsp), %rax\n")
+        (asm-has? opt2 "    movq %rax, 24(%rsp)\n" "    movq %rdi, 32(%rsp)\n")
+        (asm-lacks? opt2 "    leaq 24(%rsp), %r10\n")
+        (asm-has? opt2 "    movq %rbx, %rsi\n")
+        (asm-has? opt2 "    movq %r14, (%rax)\n")
+        (asm-has? opt2 "    movq %r12, %r8\n")
+        (asm-has? opt2 "    cmpq $0, 16(%rbx)\n")
+        (asm-has? opt2 "    cmpb $0, 1(%r12)\n"))
+      "opt2 folds dead leaq, reg copies, store-reloads, and load+test comparisons")
+    (test.assert-true
+      (and
+        (asm-has? opt1 "    leaq 16(%rsp), %rax\n")
+        (asm-has? opt1 "    leaq (%rbx), %rsi\n")
+        (asm-lacks? opt1 "    cmpq $0, 16(%rbx)\n" "    cmpb $0, 1(%r12)\n"))
+      "opt1 leaves opt2 compaction patterns untouched")
+    (test.assert-true
+      (and
+        (asm-has? refuse-out "    leaq 16(%rsp), %r10\n" "    call *%r10\n")
+        (asm-has?
+          refuse-out
+          "    leaq 32(%rsp), %r10\n    movq %rax, (%r10)\n    call _tl_spmd_fn\n")
+        (asm-has? refuse-out "    leaq 16(%rbx), %rcx\n" "    addq $8, %rbx\n")
+        (asm-has?
+          refuse-out
+          "    leaq 24(%rbx), %rcx\n    imulq $3, (%rsp), %rbx\n    movq (%rcx), %rdx\n")
+        (asm-has?
+          refuse-out
+          "    leaq 40(%rbx), %rcx\n    vpextrq $0, %xmm0, %rbx\n    movq (%rcx), %rdx\n")
+        (asm-has?
+          refuse-out
+          "    movq 8(%rax), %rax\n    movq %rax, %r10\n"
+          "    imulq %r8\n"))
+      "indirect/direct %r10 calls, 2-op/3-op base-modifying insns, and 1-op imulq block folding")))
+
+(test
+  peephole-compact-zero-store-coalescing-and-xmm-liveness
+  (let
+    [linux : be_state.CompilerBackendTarget
+      (be_state.CompilerBackendTarget.Linux)]
+    [win : be_state.CompilerBackendTarget
+      (be_state.CompilerBackendTarget.Windows)]
+    [basic-in : String
+      "z1:\n    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n    movq $0, 16(%rsp)\n    movb $0, 25(%rsp)\n    movq $0, 32(%rdi)\n    movq $0, 40(%rdi)\n    call sink\n    movq $0, 48(%rsp)\n    movq $0, 56(%rsp)\n.Lz_gp:\n    xorl %eax, %eax\n    movq $0, 72(%rsp)\n    ret\n"]
+    [basic-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        (str_cat.str-cat basic-in "")
+        linux
+        true)]
+    [basic-opt1 : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        basic-in
+        linux
+        false)]
+    [live-xmm4-in : String
+      "z2:\n    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n    jmp .L2\n.L2:\n    movaps %xmm4, (%rdi)\n    ret\n"]
+    [live-xmm4-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        live-xmm4-in
+        linux
+        true)]
+    [tail-linux-in : String
+      "z3:\n    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n    jmp external_tail\n"]
+    [tail-linux-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        tail-linux-in
+        linux
+        true)]
+    [tail-win-in : String
+      "z4:\n    .seh_proc z4\n    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n    addq $40, %rsp\n    jmp external_tail\n    .seh_endproc\n"]
+    [tail-win-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        tail-win-in
+        win
+        true)]
+    [win-seh-in : String
+      "z5:\n    .seh_proc z5\n    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n    addq $40, %rsp\n    ret\n    .seh_endproc\n"]
+    [win-seh-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        win-seh-in
+        win
+        true)]
+    [asm-in : String
+      "z6:\n    #APP\n    nop\n    #NO_APP\n    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n    ret\n"]
+    [asm-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        asm-in
+        linux
+        true)]
+    (test.assert-true
+      (and
+        (asm-has?
+          basic-out
+          "    xorps %xmm4, %xmm4\n"
+          "    movups %xmm4, (%rsp)\n"
+          "    movq %xmm4, 16(%rsp)\n"
+          "    movb $0, 25(%rsp)\n"
+          "    movups %xmm4, 32(%rdi)\n"
+          "    call sink\n    xorps %xmm4, %xmm4\n    movups %xmm4, 48(%rsp)\n"
+          "    movq %rax, 72(%rsp)\n")
+        (asm-lacks? basic-opt1 "xorps"))
+      "zero-store coalescing merges 16B+ spans, reuses within block, reloads after call, reuses GP zero, and respects opt1")
+    (test.assert-true
+      (and
+        (asm-has? live-xmm4-out "    xorps %xmm5, %xmm5\n")
+        (asm-lacks? live-xmm4-out "    xorps %xmm4, %xmm4\n"))
+      "whole-function XMM liveness skips %xmm4 when used in another block")
+    (test.assert-true
+      (and
+        (asm-has? tail-linux-out "    xorps %xmm8, %xmm8\n")
+        (asm-lacks? tail-linux-out "    xorps %xmm4, %xmm4\n"))
+      "Linux tail-call jmp avoids %xmm0..%xmm7 and picks %xmm8")
+    (test.assert-true
+      (and
+        (asm-lacks? tail-win-out "xorps")
+        (asm-has? tail-win-out "    movq $0, 0(%rsp)\n    movq $0, 8(%rsp)\n")
+        (asm-has?
+          win-seh-out
+          ".seh_endprologue\n    xorps %xmm4, %xmm4\n    movups %xmm4, (%rsp)\n"))
+      "Win64 disables XMM zero-coalescing on tail-call jmp and preserves SEH prologue on normal ret")
+    (test.assert-true
+      (asm-lacks? asm-out "xorps")
+      "inline assembly disables XMM zero-store coalescing")))
+
+(test
+  peephole-compact-branches-trampolines-and-abort-stubs
+  (let
+    [linux : be_state.CompilerBackendTarget
+      (be_state.CompilerBackendTarget.Linux)]
+    [in-asm : String
+      "b1:\n    cmpq $0, %rdi\n    je .Lskip\n    jmp .Ltramp\n.Lother:\n.Lskip:\n    cmpq $1, %rdi\n    jb .Lok1\n    call tl_oob_abort\n.Lok1:\n    cmpq $2, %rdi\n    jb .Lok2\n.Lfail2:\n    call tl_oob_abort\n.Lok2:\n    jmp .Lnext\n.Lalias:\n.Lnext:\n    ret\n.Ltramp:\n    jmp .Lnext\n.Loob_a:\n    call tl_oob_abort\n.Loob_b:\n    call tl_oob_abort\n"]
+    [opt2 : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        (str_cat.str-cat in-asm "")
+        linux
+        true)]
+    [opt1 : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        in-asm
+        linux
+        false)]
+    [loc-in : String
+      "b2:\n    .loc 1 10 0\n    cmpq $1, %rdi\n    jb .Lok\n.Lfail:\n    call tl_oob_abort\n.Lok:\n    ret\n.Loob:\n    call tl_oob_abort\n"]
+    [loc-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        loc-in
+        linux
+        true)]
+    [long-lbl-in : String
+      "b3:\n    testq %rdi, %rdi\n    jl .Lf18721_inl.make_array_len_ok.15.20.make_array_len_fail.4\n    cmpq $9, %rdi\n    jle .Lf18721_inl.make_array_len_ok.15.20.make_array_len_ok.5\n.Lf18721_inl.make_array_len_ok.15.20.make_array_len_fail.4:\n    call tl_oob_abort\n.Lf18721_inl.make_array_len_ok.15.20.make_array_len_ok.5:\n    testq %rsi, %rsi\n    jl .Lf18721_inl.make_array_len_ok.15.60.make_array_len_fail.4\n    cmpq $9, %rsi\n    jle .Lf18721_inl.make_array_len_ok.15.60.make_array_len_ok.5\n.Lf18721_inl.make_array_len_ok.15.60.make_array_len_fail.4:\n    call tl_oob_abort\n.Lf18721_inl.make_array_len_ok.15.60.make_array_len_ok.5:\n    ret\n"]
+    [long-lbl-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        long-lbl-in
+        linux
+        true)]
+    [skip-dir-in : String
+      "b4:\n    cmpq $0, %rdi\n    jne .Lok\n    call tl_oob_abort\n    .byte 0xcc\n    call tl_oob_abort\n.Lok:\n    ret\n"]
+    [skip-dir-out : String
+      (backend.compiler-backend-peephole-asm-drop-fallthrough-target
+        skip-dir-in
+        linux
+        true)]
+    (test.assert-true
+      (and
+        (asm-has? opt2 "    jne .Lnext\n")
+        (asm-lacks? opt2 "    jmp .Ltramp\n" "    jmp .Lnext\n")
+        (asm-has? opt2 "    jae .Loob_a\n" ".Loob_a:\n    call tl_oob_abort\n")
+        (asm-lacks? opt2 ".Loob_b:\n"))
+      "opt2 inverts jcc;jmp across multi-labels, threads trampolines, drops fallthrough jmp, and deduplicates argless abort stubs")
+    (test.assert-true
+      (and
+        (asm-has? opt1 ".Ltramp:\n" ".Loob_b:\n")
+        (asm-lacks? opt1 "    jne .Lnext\n"))
+      "opt1 disables trampoline threading and abort-stub deduplication")
+    (test.assert-true
+      (asm-has? loc-out ".Lfail:\n    call tl_oob_abort\n")
+      "presence of .loc disables abort-stub deduplication")
+    (test.assert-true
+      (and
+        (asm-has?
+          long-lbl-out
+          ".Lf18721_inl.make_array_len_ok.15.20.make_array_len_fail.4:\n")
+        (asm-lacks?
+          long-lbl-out
+          ".Lf18721_inl.make_array_len_ok.15.60.make_array_len_fail.4"))
+      "long labels sharing head/middle/tail bytes redirect cleanly with zero dangling refs")
+    (test.assert-true
+      (asm-has?
+        skip-dir-out
+        "    call tl_oob_abort\n    .byte 0xcc\n    call tl_oob_abort\n")
+      "fallthrough abort dedup never steps across skip directives like .byte")))

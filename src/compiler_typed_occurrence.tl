@@ -1443,7 +1443,14 @@
 
 (define (typed-arena-regions-copy [store : (& store TypedStore)]) : (__tl_dyn-array
     i64)
-  (clone store.arena-regions))
+  (let
+    [count : i64 (array-length store.arena-regions)]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    (while (< index count)
+      (set! (array-ref out index) (array-ref store.arena-regions index))
+      (set! index (+ index 1)))
+    out))
 
 (define (typed-arena-region? [store : (& store TypedStore)] [region : i64]) : bool
   (let
@@ -2012,7 +2019,8 @@
   [_lease : (& lease (TypedBodyLease intern))]
   [index : i64]) : TypedTypeValueResult
   (if (typed-index-ok? (& store) index store.type-count)
-    (TypedTypeValueResult.Ok (clone (array-ref store.types index).value))
+    (TypedTypeValueResult.Ok
+      (ast.clone-ast-type (& (array-ref store.types index).value)))
     (TypedTypeValueResult.Err (typed-index-error (& store)))))
 
 ;; A borrowed view of one type record's canonical value, read in place. Like

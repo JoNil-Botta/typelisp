@@ -276,6 +276,25 @@
 (defenum CompilerRegIntervalSelection
   (Selection CompilerRegIntervalSeq CompilerRegIntervalIndex))
 
+(define (clone-compiler-reg-location [value : (& value CompilerRegLocation)]) : CompilerRegLocation
+  (match value
+    [(Register reg) (Register reg)]
+    [(RegisterPair word0 word1) (RegisterPair word0 word1)]
+    [(Spill offset) (Spill offset)]
+    [(Remat inner) (Remat (ir.compiler-ir-clone-value inner))]))
+
+(define (clone-compiler-reg-id-seq [value : (& value CompilerRegIdSeq)]) : CompilerRegIdSeq
+  (let
+    [count : i64 value.len]
+    [cap : i64
+      (if (< count 1)
+        1
+        count)]
+    [dst : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref dst index) (array-ref value.slots index)))
+    (CompilerRegIdSeq dst count)))
+
 (define (clone-compiler-reg-interval-seq
   [value : (& value CompilerRegIntervalSeq)]) : CompilerRegIntervalSeq
   (let
@@ -1271,16 +1290,21 @@
           (cabi.compiler-abi-mask-register-id index))))
     out))
 
-(define (compiler-reg-id-seq-contains? [regs : CompilerRegIdSeq] [want : i64]) : bool
+(define (compiler-reg-id-seq-contains-ref?
+  [regs : (& regs CompilerRegIdSeq)]
+  [want : i64]) : bool
   (let
     [index : i64 0]
     [found : bool false]
-    (while (and (< index (compiler-reg-id-seq-count regs)) (not found))
-      (if (= (compiler-reg-id-seq-ref regs index) want)
+    (while (and (< index regs.len) (not found))
+      (if (= (array-ref regs.slots index) want)
         (set! found true)
         unit)
       (+= index 1))
     found))
+
+(define (compiler-reg-id-seq-contains? [regs : CompilerRegIdSeq] [want : i64]) : bool
+  (compiler-reg-id-seq-contains-ref? (& regs) want))
 
 (define (compiler-reg-float-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
@@ -2500,7 +2524,9 @@
       (set! (array-ref present index) (array-ref old-present index))
       (if (= (array-ref old-present index) 0)
         unit
-        (set! (array-ref items index) (clone (array-ref old-items index))))
+        (set!
+          (array-ref items index)
+          (clone-compiler-reg-location (& (array-ref old-items index)))))
       (set! index (+ index 1)))
     out))
 
@@ -2543,7 +2569,7 @@
           (compiler-reg-assignment-table-insert
             dst
             index
-            (clone (array-ref items index)))
+            (clone-compiler-reg-location (& (array-ref items index))))
           unit))
       (set! index (+ index 1)))
     unit))
@@ -2576,7 +2602,7 @@
       No
       (if (= (array-ref present var) 0)
         No
-        (Some (clone (array-ref items var)))))))
+        (Some (clone-compiler-reg-location (& (array-ref items var))))))))
 
 (define (compiler-reg-assignment-table-has-spill-from?
   [assignments : CompilerRegAssignmentTable]
@@ -5477,9 +5503,7 @@
             (array-ref ends var))
           (if (compiler-reg-interval-index-var-has-segments? interval-index var)
             (compiler-reg-segments-span-clobber?
-              (compiler-reg-global-array-element-shared-view
-                interval-index.segments
-                var)
+              (& (array-ref interval-index.segments var))
               clobber-points
               (array-ref starts var)
               true)
@@ -9391,18 +9415,17 @@
 ;; segment": the guard is exact, and a function without holes-that-matter pays
 ;; exactly what it paid before.
 (define (compiler-reg-segments-span-clobber?
-  [segments : CompilerRegIntervalSeq]
+  [segments : (& segments CompilerRegIntervalSeq)]
   [clobber-points : (& clobber-points live.CompilerLiveI64Set)]
   [hull-start : i64]
   [inclusive-hull-start? : bool]) : bool
   (let
-    [count : i64 (compiler-reg-interval-seq-count segments)]
+    [count : i64 segments.len]
     [index : i64 0]
     [hit : bool false]
     (while (and (< index count) (not hit))
       (let
-        [segment : CompilerRegInterval
-          (compiler-reg-interval-seq-ref segments index)]
+        [segment : CompilerRegInterval (array-ref segments.slots index)]
         [segment-start : i64 segment.start]
         ;; compiler-reg-call-set-in-range? accepts `start < c < end`; passing
         ;; `s - 1` turns that into the inclusive-start `s <= c < e`.
@@ -20663,17 +20686,16 @@
 ;; before instruction zero, even when their first body use starts an interval
 ;; later, so their call-spanning range starts inclusively at entry.
 (define (compiler-reg-mark-spanning-in-set
-  [intervals : CompilerRegIntervalSeq]
+  [intervals : (& intervals CompilerRegIntervalSeq)]
   [member-set : (& live.CompilerLiveI64Set)]
   [params : (& live.CompilerLiveI64Set)]
   [call-points : (& live.CompilerLiveI64Set)]
   [ineligible : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (let
     [out : live.CompilerLiveI64Set ineligible]
-    (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
+    (for [index (iterator.range 0 intervals.len)]
       (let
-        [interval : CompilerRegInterval
-          (compiler-reg-interval-seq-ref intervals index)]
+        [interval : CompilerRegInterval (array-ref intervals.slots index)]
         [var : i64 interval.var]
         (if (if (live.compiler-live-set-contains? member-set var)
           (if (live.compiler-live-set-contains? params var)
@@ -23420,9 +23442,7 @@
           (array-ref ends var))
         (if (compiler-reg-interval-index-var-has-segments? interval-index var)
           (compiler-reg-segments-span-clobber?
-            (compiler-reg-global-array-element-shared-view
-              interval-index.segments
-              var)
+            (& (array-ref interval-index.segments var))
             clobber-points
             (array-ref starts var)
             false)
@@ -23437,21 +23457,27 @@
   [pos : i64]) : i64
   (cabi.compiler-abi-gp-arg-register-id target-abi convention pos))
 
-(define (compiler-reg-id-seq-index-of
-  [regs : CompilerRegIdSeq]
+(define (compiler-reg-id-seq-index-of-ref
+  [regs : (& regs CompilerRegIdSeq)]
   [want : i64]
   [i : i64]) : i64
   (let
     [index : i64 0]
     [result : i64 -1]
     [done : bool false]
-    (while (and (< index (compiler-reg-id-seq-count regs)) (not done))
-      (if (= (compiler-reg-id-seq-ref regs index) want)
+    (while (and (< index regs.len) (not done))
+      (if (= (array-ref regs.slots index) want)
         (begin
           (set! result (+ i index))
           (set! done true))
         (+= index 1)))
     result))
+
+(define (compiler-reg-id-seq-index-of
+  [regs : CompilerRegIdSeq]
+  [want : i64]
+  [i : i64]) : i64
+  (compiler-reg-id-seq-index-of-ref (& regs) want i))
 
 ;; Greedy-integer-pool INDEX of the ABI register for integer arg position `pos`,
 ;; or -1 if `pos` is not a register-passed argument. Computed by searching the
@@ -23465,10 +23491,7 @@
     [reg : i64 (compiler-reg-abi-arg-reg target-abi convention pos)]
     (if (= reg cabi.compiler-reg-id-invalid)
       -1
-      (compiler-reg-id-seq-index-of
-        (owned_view.compiler-owned-reference-shared-view pool)
-        reg
-        0))))
+      (compiler-reg-id-seq-index-of-ref pool reg 0))))
 
 ;; Record arg-var -> ABI-register preference (greedy-pool index) for one call
 ;; argument at integer position `pos`. Only `Var` args take a home; the
@@ -25808,13 +25831,15 @@
     [vector-and-mask-vars : live.CompilerLiveI64Set
       (if vector-mask-empty?
         (live.compiler-live-set-empty)
-        (live.compiler-live-set-union (clone vector-vars) (clone mask-vars)))]
+        (live.compiler-live-set-union
+          (live.clone-compiler-live-i64-set (& vector-vars))
+          (live.clone-compiler-live-i64-set (& mask-vars))))]
     [non-coalesce-vars : live.CompilerLiveI64Set
       (if vector-mask-empty?
-        (clone group-vars)
+        (live.clone-compiler-live-i64-set (& group-vars))
         (live.compiler-live-set-union
-          (clone group-vars)
-          (clone vector-and-mask-vars)))]
+          (live.clone-compiler-live-i64-set (& group-vars))
+          (live.clone-compiler-live-i64-set (& vector-and-mask-vars))))]
     [xmm-call-points : live.CompilerLiveI64Set (compiler-reg-call-points func)]
     [sv-parents : (__tl_dyn-array i64)
       (compiler-reg-function-same-value-parents-multi
@@ -25900,10 +25925,10 @@
         (owned_view.compiler-owned-reference-shared-view blocked))]
     [scalar-eff-blocked : live.CompilerLiveI64Set
       (if vector-mask-empty?
-        (clone eff-blocked)
+        (live.clone-compiler-live-i64-set (& eff-blocked))
         (live.compiler-live-set-union
-          (clone eff-blocked)
-          (clone vector-and-mask-vars)))]
+          (live.clone-compiler-live-i64-set (& eff-blocked))
+          (live.clone-compiler-live-i64-set (& vector-and-mask-vars))))]
     [_pin-demote : unit
       (compiler-reg-param-pins-demote!
         func
@@ -26366,17 +26391,17 @@
                     (compiler-reg-ineligible-params
                       (& params)
                       (& non-param-ineligible))])
-                (clone private-param-vars))
+                (live.clone-compiler-live-i64-set (& private-param-vars)))
               (live.compiler-live-set-minus
                 non-param-ineligible
-                (clone private-param-vars)))]
+                (live.clone-compiler-live-i64-set (& private-param-vars))))]
           [base-ineligible : live.CompilerLiveI64Set
             (compiler-reg-mark-spanning-in-set
-              (clone intervals)
+              (& intervals)
               (&
                 (live.compiler-live-set-union
                   vector-mask-defs.defs
-                  (clone private-param-vars)))
+                  (live.clone-compiler-live-i64-set (& private-param-vars))))
               (& private-param-vars)
               (& call-points)
               structural-ineligible)]
@@ -26389,7 +26414,7 @@
               intervals
               (& interval-index)
               (compiler-reg-assignment-table-make vars)
-              (clone base-ineligible)
+              (live.clone-compiler-live-i64-set (& base-ineligible))
               (& base-ineligible)
               false
               mask-vars-use-vector-registers

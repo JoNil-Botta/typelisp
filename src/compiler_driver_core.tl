@@ -43,6 +43,219 @@
 (cfg
   compile-startup-profile
   (import compiler_startup_profile as startup_profile))
+
+(define (driver-clone-spmd-form [form : (& compiler_ir_types.CompilerSpmdForm)]) : compiler_ir_types.CompilerSpmdForm
+  (match form
+    [(compiler_ir_types.CompilerSpmdForm.Foreach)
+      compiler_ir_types.CompilerSpmdForm.Foreach]
+    [(compiler_ir_types.CompilerSpmdForm.Reduce)
+      compiler_ir_types.CompilerSpmdForm.Reduce]
+    [(compiler_ir_types.CompilerSpmdForm.Scan)
+      compiler_ir_types.CompilerSpmdForm.Scan]
+    [(compiler_ir_types.CompilerSpmdForm.Compact)
+      compiler_ir_types.CompilerSpmdForm.Compact]
+    [(compiler_ir_types.CompilerSpmdForm.Broadcast)
+      compiler_ir_types.CompilerSpmdForm.Broadcast]
+    [(compiler_ir_types.CompilerSpmdForm.Shuffle)
+      compiler_ir_types.CompilerSpmdForm.Shuffle]))
+
+(define (driver-clone-spmd-backend
+  [backend : (& compiler_ir_types.CompilerSpmdBackend)]) : compiler_ir_types.CompilerSpmdBackend
+  (match backend
+    [(compiler_ir_types.CompilerSpmdBackend.Scalar)
+      compiler_ir_types.CompilerSpmdBackend.Scalar]
+    [(compiler_ir_types.CompilerSpmdBackend.Avx2)
+      compiler_ir_types.CompilerSpmdBackend.Avx2]
+    [(compiler_ir_types.CompilerSpmdBackend.Avx512)
+      compiler_ir_types.CompilerSpmdBackend.Avx512]))
+
+(define (driver-clone-spmd-route
+  [route : (& compiler_ir_types.CompilerSpmdRoute)]) : compiler_ir_types.CompilerSpmdRoute
+  (match route
+    [(compiler_ir_types.CompilerSpmdRoute.NativeGangs)
+      compiler_ir_types.CompilerSpmdRoute.NativeGangs]
+    [(compiler_ir_types.CompilerSpmdRoute.CompilerFallback)
+      compiler_ir_types.CompilerSpmdRoute.CompilerFallback]
+    [(compiler_ir_types.CompilerSpmdRoute.SpecifiedScalar)
+      compiler_ir_types.CompilerSpmdRoute.SpecifiedScalar]
+    [(compiler_ir_types.CompilerSpmdRoute.ScalarBackend)
+      compiler_ir_types.CompilerSpmdRoute.ScalarBackend]
+    [(compiler_ir_types.CompilerSpmdRoute.Inactive)
+      compiler_ir_types.CompilerSpmdRoute.Inactive]
+    [(compiler_ir_types.CompilerSpmdRoute.Rejected)
+      compiler_ir_types.CompilerSpmdRoute.Rejected]))
+
+(define (driver-clone-spmd-reason
+  [reason : (& compiler_ir_types.CompilerSpmdReason)]) : compiler_ir_types.CompilerSpmdReason
+  (match reason
+    [(compiler_ir_types.CompilerSpmdReason.DirectMap)
+      compiler_ir_types.CompilerSpmdReason.DirectMap]
+    [(compiler_ir_types.CompilerSpmdReason.MaskedMap)
+      compiler_ir_types.CompilerSpmdReason.MaskedMap]
+    [(compiler_ir_types.CompilerSpmdReason.ContiguousReduction)
+      compiler_ir_types.CompilerSpmdReason.ContiguousReduction]
+    [(compiler_ir_types.CompilerSpmdReason.FusedReduction)
+      compiler_ir_types.CompilerSpmdReason.FusedReduction]
+    [(compiler_ir_types.CompilerSpmdReason.ContiguousScan)
+      compiler_ir_types.CompilerSpmdReason.ContiguousScan]
+    [(compiler_ir_types.CompilerSpmdReason.ScalarBackendSelected)
+      compiler_ir_types.CompilerSpmdReason.ScalarBackendSelected]
+    [(compiler_ir_types.CompilerSpmdReason.OrderedCompact)
+      compiler_ir_types.CompilerSpmdReason.OrderedCompact]
+    [(compiler_ir_types.CompilerSpmdReason.ExplicitAtomic)
+      compiler_ir_types.CompilerSpmdReason.ExplicitAtomic]
+    [(compiler_ir_types.CompilerSpmdReason.ScalarCrossLane)
+      compiler_ir_types.CompilerSpmdReason.ScalarCrossLane]
+    [(compiler_ir_types.CompilerSpmdReason.IndexType)
+      compiler_ir_types.CompilerSpmdReason.IndexType]
+    [(compiler_ir_types.CompilerSpmdReason.MapShape)
+      compiler_ir_types.CompilerSpmdReason.MapShape]
+    [(compiler_ir_types.CompilerSpmdReason.DuplicateDestination)
+      compiler_ir_types.CompilerSpmdReason.DuplicateDestination]
+    [(compiler_ir_types.CompilerSpmdReason.DependentStores)
+      compiler_ir_types.CompilerSpmdReason.DependentStores]
+    [(compiler_ir_types.CompilerSpmdReason.MixedLaneShape)
+      compiler_ir_types.CompilerSpmdReason.MixedLaneShape]
+    [(compiler_ir_types.CompilerSpmdReason.ReductionValueShape)
+      compiler_ir_types.CompilerSpmdReason.ReductionValueShape]
+    [(compiler_ir_types.CompilerSpmdReason.ScanInputShape)
+      compiler_ir_types.CompilerSpmdReason.ScanInputShape]
+    [(compiler_ir_types.CompilerSpmdReason.ScanOutputShape)
+      compiler_ir_types.CompilerSpmdReason.ScanOutputShape]
+    [(compiler_ir_types.CompilerSpmdReason.LaneType)
+      compiler_ir_types.CompilerSpmdReason.LaneType]
+    [(compiler_ir_types.CompilerSpmdReason.Operator)
+      compiler_ir_types.CompilerSpmdReason.Operator]
+    [(compiler_ir_types.CompilerSpmdReason.NumericPolicy)
+      compiler_ir_types.CompilerSpmdReason.NumericPolicy]
+    [(compiler_ir_types.CompilerSpmdReason.VaryingWhile)
+      compiler_ir_types.CompilerSpmdReason.VaryingWhile]
+    [(compiler_ir_types.CompilerSpmdReason.VaryingIf)
+      compiler_ir_types.CompilerSpmdReason.VaryingIf]
+    [(compiler_ir_types.CompilerSpmdReason.VaryingEnumMatch)
+      compiler_ir_types.CompilerSpmdReason.VaryingEnumMatch]
+    [(compiler_ir_types.CompilerSpmdReason.VaryingMatch)
+      compiler_ir_types.CompilerSpmdReason.VaryingMatch]
+    [(compiler_ir_types.CompilerSpmdReason.ShuffleShape)
+      compiler_ir_types.CompilerSpmdReason.ShuffleShape]
+    [(compiler_ir_types.CompilerSpmdReason.UnsupportedShift)
+      compiler_ir_types.CompilerSpmdReason.UnsupportedShift]
+    [(compiler_ir_types.CompilerSpmdReason.UnsupportedMap)
+      compiler_ir_types.CompilerSpmdReason.UnsupportedMap]
+    [(compiler_ir_types.CompilerSpmdReason.ForeachActive)
+      compiler_ir_types.CompilerSpmdReason.ForeachActive]
+    [(compiler_ir_types.CompilerSpmdReason.PrivateHelper)
+      compiler_ir_types.CompilerSpmdReason.PrivateHelper]
+    [(compiler_ir_types.CompilerSpmdReason.NotLowered)
+      compiler_ir_types.CompilerSpmdReason.NotLowered]
+    [(compiler_ir_types.CompilerSpmdReason.UnsupportedSource)
+      compiler_ir_types.CompilerSpmdReason.UnsupportedSource]))
+
+(define (driver-clone-source-location
+  [location : (& compiler_ir_types.CompilerSourceLocation)]) : compiler_ir_types.CompilerSourceLocation
+  (compiler_ir_types.CompilerSourceLocation
+    location.path-id
+    (compiler_ast_types.clone-ast-source-span (& location.span))))
+
+(define (driver-clone-spmd-decision
+  [item : (& compiler_ir_types.CompilerSpmdDecision)]) : compiler_ir_types.CompilerSpmdDecision
+  (compiler_ir_types.CompilerSpmdDecision
+    (compiler_ir_types.CompilerSpmdSiteId
+      (compiler_ir_types.CompilerIrSymbolId item.site.function.value)
+      item.site.ordinal)
+    item.parent-ordinal
+    (driver-clone-spmd-form (& item.form))
+    (driver-clone-spmd-backend (& item.backend))
+    item.lanes
+    (driver-clone-spmd-route (& item.route))
+    (driver-clone-spmd-reason (& item.reason))
+    (driver-clone-source-location (& item.primary))
+    (driver-clone-source-location (& item.actionable))
+    item.frame-start
+    item.frame-count))
+
+(define (driver-clone-source-spans-entry
+  [item : (& compiler_ir_types.CompilerSourceSpansEntry)]) : compiler_ir_types.CompilerSourceSpansEntry
+  (compiler_ir_types.CompilerSourceSpansEntry
+    (compiler_ir_types.CompilerIrSymbolId item.name.value)
+    item.path-id
+    (compiler_ast_types.clone-ast-source-span (& item.span))))
+
+(define (driver-clone-source-spans-instr-entry
+  [item : (& compiler_ir_types.CompilerSourceSpansInstrEntry)]) : compiler_ir_types.CompilerSourceSpansInstrEntry
+  (compiler_ir_types.CompilerSourceSpansInstrEntry
+    (compiler_ir_types.CompilerIrSymbolId item.function.value)
+    item.id
+    item.path-id
+    (compiler_ast_types.clone-ast-source-span (& item.span))
+    item.kind))
+
+(define (clone-compiler-source-spans
+  [spans : (& compiler_ir_types.CompilerSourceSpans)]) : compiler_ir_types.CompilerSourceSpans
+  (match spans
+    [(compiler_ir_types.CompilerSourceSpans.Spans
+        entries
+        instructions
+        count
+        facts)
+      (let
+        [entry-count : i64 entries.len]
+        [entry-slots : (__tl_dyn-array
+          compiler_ir_types.CompilerSourceSpansEntry)
+          (__tl_make-array
+            compiler_ir_types.CompilerSourceSpansEntry
+            entry-count)]
+        [instr-count : i64 instructions.len]
+        [instr-slots : (__tl_dyn-array
+          compiler_ir_types.CompilerSourceSpansInstrEntry)
+          (__tl_make-array
+            compiler_ir_types.CompilerSourceSpansInstrEntry
+            instr-count)]
+        [decision-count : i64 facts.decisions.len]
+        [decision-slots : (__tl_dyn-array
+          compiler_ir_types.CompilerSpmdDecision)
+          (__tl_make-array
+            compiler_ir_types.CompilerSpmdDecision
+            decision-count)]
+        [frame-count : i64 facts.frames.len]
+        [frame-slots : (__tl_dyn-array compiler_ir_types.CompilerSpmdMacroFrame)
+          (__tl_make-array compiler_ir_types.CompilerSpmdMacroFrame frame-count)]
+        (for [index (iterator.range 0 entry-count)]
+          (set!
+            (array-ref entry-slots index)
+            (driver-clone-source-spans-entry
+              (& (array-ref entries.slots index)))))
+        (for [index (iterator.range 0 instr-count)]
+          (set!
+            (array-ref instr-slots index)
+            (driver-clone-source-spans-instr-entry
+              (& (array-ref instructions.slots index)))))
+        (for [index (iterator.range 0 decision-count)]
+          (set!
+            (array-ref decision-slots index)
+            (driver-clone-spmd-decision
+              (& (array-ref facts.decisions.slots index)))))
+        (for [index (iterator.range 0 frame-count)]
+          (set!
+            (array-ref frame-slots index)
+            (compiler_ir_types.CompilerSpmdMacroFrame
+              (array-ref facts.frames.slots index).name-id)))
+        (compiler_ir_types.CompilerSourceSpans.Spans
+          (compiler_ir_types.CompilerSourceSpansEntryList
+            entry-slots
+            entry-count)
+          (compiler_ir_types.CompilerSourceSpansInstrEntryList
+            instr-slots
+            instr-count)
+          count
+          (compiler_ir_types.CompilerSpmdDecisions
+            (compiler_ir_types.CompilerSpmdDecisionList
+              decision-slots
+              decision-count)
+            (compiler_ir_types.CompilerSpmdMacroFrameList
+              frame-slots
+              frame-count))))]))
+
 (import compiler_optimize)
 (import compiler_opt_level as opt_level)
 (import stdlib.text_buf)
@@ -3135,7 +3348,7 @@
             unit)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (clone spans)
+            (clone-compiler-source-spans (& spans))
             spans)]
         [_profile-spans-finish : unit
           (cfg
@@ -5656,7 +5869,7 @@
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (clone spans)
+            (clone-compiler-source-spans (& spans))
             spans)]
         [out : ResultCompilerDriver
           (begin
@@ -5818,7 +6031,7 @@
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (clone spans)
+            (clone-compiler-source-spans (& spans))
             spans)]
         [out : ResultCompilerDriver
           (begin

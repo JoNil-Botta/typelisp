@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-arena-sanitizer-selfhost	840	linux	stage2 arena sanitizer self-host	bootstrap-compiler,embedded-stdlib-tlci-image	stage2	2816	build-stamp,embedded-image	scripts/verify-arena-sanitizer-selfhost.sh	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

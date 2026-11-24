@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-spmd-broadcast	850	all	stage2 SPMD broadcast	bootstrap-compiler	stage2	256	-	scripts/verify-codegen-cases.sh --only 'broadcast-*' tests/spmd/gang-width.cases	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

@@ -1,0 +1,90 @@
+# Safety corpus cases: conditionals, if/loop/while/for/try control flow, never types, and exits.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+result_macro_try_error_mismatch_reject|check-fail|tests/safety/result_macro_try_error_mismatch_reject.tl|-|typecheck: try error type mismatch
+while_break_outside_reject|check-fail|tests/safety/while_break_outside_reject.tl|-|typecheck: break requires enclosing scalar while
+while_continue_outside_reject|check-fail|tests/safety/while_continue_outside_reject.tl|-|typecheck: continue requires enclosing scalar while
+while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_boundary_reject.tl|-|typecheck: break requires enclosing scalar while
+while_when_break_lambda_boundary_reject|check-fail|tests/safety/while_when_break_lambda_boundary_reject.tl|-|typecheck: macro operand typecheck failed: typecheck: break requires enclosing scalar while
+while_break_value_reject|check-fail|tests/safety/while_break_value_reject.tl|-|parse: break expects no arguments
+while_continue_value_reject|check-fail|tests/safety/while_continue_value_reject.tl|-|parse: continue expects no arguments
+while_nonunit_first_reject|check-fail|tests/safety/while_nonunit_first_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_nonunit_macro_reject|check-fail|tests/safety/while_nonunit_macro_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_nonunit_decls_reject|check-fail|tests/safety/while_nonunit_decls_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_empty_splice_reject|check-fail|tests/safety/while_empty_splice_reject.tl|-|typecheck: while requires at least one body expression
+while_ignored_result_reject|check-fail|tests/safety/while_ignored_result_reject.tl|-|typecheck: while body must be unit: expected unit, found Outcome
+if_literal_branch_join_range_reject|check-fail|tests/safety/if_literal_branch_join_range_reject.tl|-|if branches must match
+if_value_branch_join_reject|check-fail|tests/safety/if_value_branch_join_reject.tl|-|if branches must match
+if_bool_int_branch_join_reject|check-fail|tests/safety/if_bool_int_branch_join_reject.tl|-|if branches must match
+exit_slice_store_value_ok|run-exit|tests/safety/exit_slice_store_value_ok.tl|42|-
+exit_for_source_ok|run-exit|tests/safety/exit_for_source_ok.tl|42|-
+exit_for_source_body_typed_reject|check-fail|tests/safety/exit_for_source_body_typed_reject.tl|tests/safety/exit_for_source_body_typed_reject.tl:6:7|assignment type mismatch: expected i64, found String
+for_owned_source_reuse_reject|check-fail|tests/safety/for_owned_source_reuse_reject.tl|-|use of moved value `items`
+for_native_mut_item_capture_reject|check-fail|tests/safety/for_native_mut_item_capture_reject.tl|-|lambda cannot capture mutable reference
+for_reference_item_annotation_mismatch_reject|check-fail|tests/safety/for_reference_item_annotation_mismatch_reject.tl|stdlib/core_macros.tl|pattern binding type mismatch: expected (& a i32), found (& a i64)
+loop_move_return_paths_ok|check-ok|tests/safety/loop_move_return_paths_ok.tl|-|-
+loop_move_break_paths_ok|check-ok|tests/safety/loop_move_break_paths_ok.tl|-|-
+loop_move_break_post_use_reject|check-fail|tests/safety/loop_move_break_post_use_reject.tl|-|use of moved value `text`
+loop_move_fallthrough_reject|check-fail|tests/safety/loop_move_fallthrough_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_continue_edge_reject|check-fail|tests/safety/loop_move_continue_edge_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_use_across_backedge_reject|check-fail|tests/safety/loop_move_use_across_backedge_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_nested_break_reject|check-fail|tests/safety/loop_move_nested_break_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_nested_return_ok|check-ok|tests/safety/loop_move_nested_return_ok.tl|-|-
+loop_move_generated_for_return_ok|check-ok|tests/safety/loop_move_generated_for_return_ok.tl|-|-
+loop_move_generated_for_backedge_reject|check-fail|tests/safety/loop_move_generated_for_backedge_reject.tl|-|cannot move loop-carried owner value `text`
+loop_move_diverge_ok|check-ok|tests/safety/loop_move_diverge_ok.tl|-|-
+loop_move_operand_edges_ok|run-exit|tests/safety/loop_move_operand_edges_ok.tl|42|-
+loop_move_operand_break_post_use_reject|check-fail|tests/safety/loop_move_operand_break_post_use_reject.tl|-|use of moved value `text`
+loop_mut_borrow_exit_paths_ok|check-ok|tests/safety/loop_mut_borrow_exit_paths_ok.tl|-|-
+loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_return_ok.tl|-|-
+loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
+loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
+loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot mutably borrow borrowed place `items[0]`
+loop_mut_borrow_operand_edges_ok|check-ok|tests/safety/loop_mut_borrow_operand_edges_ok.tl|-|-
+loop_mut_borrow_operand_break_reject|check-fail|tests/safety/loop_mut_borrow_operand_break_reject.tl|-|cannot assign to borrowed place `items[0]`
+loop_mut_borrow_operand_continue_reject|check-fail|tests/safety/loop_mut_borrow_operand_continue_reject.tl|-|cannot mutably borrow borrowed place `items[0]`
+try_loop_break_move_reject|check-fail|tests/safety/try_loop_break_move_reject.tl|-|use of moved value `t`
+try_loop_carried_move_reject|check-fail|tests/safety/try_loop_carried_move_reject.tl|-|cannot move loop-carried owner value `t`
+try_loop_return_move_ok|run-exit|tests/safety/try_loop_return_move_ok.tl|42|-
+try_loop_return_borrow_ok|check-ok|tests/safety/try_loop_return_borrow_ok.tl|-|-
+try_quasiquote_unquote_reject|check-fail|tests/safety/try_quasiquote_unquote_reject.tl|-|typecheck: unquote expects Expr
+try_multi_payload_return_ok|run-exit|tests/safety/try_multi_payload_return_ok.tl|42|-
+never_let_initializer_ok|run-exit|tests/safety/never_let_initializer_ok.tl|42|-
+never_let_initializer_obligation_reject|check-fail|tests/safety/never_let_initializer_obligation_reject.tl|tests/safety/never_let_initializer_obligation_reject.tl:14:19|cleanup obligation of `h` is not discharged before this return
+never_operand_ok|run-exit|tests/safety/never_operand_ok.tl|42|-
+never_operand_moved_reject|check-fail|tests/safety/never_operand_moved_reject.tl|tests/safety/never_operand_moved_reject.tl:16:38|use of moved value `t`
+never_operand_obligation_reject|check-fail|tests/safety/never_operand_obligation_reject.tl|tests/safety/never_operand_obligation_reject.tl:21:20|cleanup obligation of `h` is not discharged before this break leaves its loop
+for_item_loan_array_reject|check-fail|tests/safety/for_item_loan_array_reject.tl|tests/safety/for_item_loan_array_reject.tl:18:15|cannot assign to borrowed place `p.l`
+for_owned_array_cleanup_item_reject|check-fail|tests/safety/for_owned_array_cleanup_item_reject.tl|stdlib/core_macros.tl|cleanup obligation of `token` is not discharged
+for_owned_array_cleanup_item_ok|run-exit|tests/safety/for_owned_array_cleanup_item_ok.tl|11|-
+literal_exit_return_type_reject|check-fail|tests/safety/literal_exit_return_type_reject.tl|-|return type mismatch
+literal_exit_return_type_reject-windows|check-fail-windows|tests/safety/literal_exit_return_type_reject.tl|-|return type mismatch
+cond_missing_else_reject|check-fail|tests/safety/cond_missing_else_reject.tl|tests/safety/cond_missing_else_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_nested_reject|check-fail|tests/safety/cond_missing_else_nested_reject.tl|tests/safety/cond_missing_else_nested_reject.tl:2:15|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_qualified_reject|check-fail|tests/safety/cond_missing_else_qualified_reject.tl|tests/safety/cond_missing_else_qualified_reject.tl:4:3|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_empty_reject|check-fail|tests/safety/cond_missing_else_empty_reject.tl|tests/safety/cond_missing_else_empty_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_test_reject|check-fail|tests/safety/cond_missing_else_test_reject.tl|tests/safety/cond_missing_else_test_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_generated_reject|check-fail|tests/safety/cond_missing_else_generated_reject.tl|tests/safety/cond_missing_else_generated_reject.tl:2:4|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_spliced_reject|check-fail|tests/safety/cond_missing_else_spliced_reject.tl|tests/safety/cond_missing_else_spliced_reject.tl:5:13|error[E0505]: cond requires a final [else ...] arm
+cond_else_not_final_reject|check-fail|tests/safety/cond_else_not_final_reject.tl|tests/safety/cond_else_not_final_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
+cond_else_not_final_middle_reject|check-fail|tests/safety/cond_else_not_final_middle_reject.tl|tests/safety/cond_else_not_final_middle_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
+cond_else_not_final_nested_reject|check-fail|tests/safety/cond_else_not_final_nested_reject.tl|tests/safety/cond_else_not_final_nested_reject.tl:2:15|error[E0505]: cond allows [else ...] only as the final arm
+cond_else_not_final_qualified_reject|check-fail|tests/safety/cond_else_not_final_qualified_reject.tl|tests/safety/cond_else_not_final_qualified_reject.tl:4:3|error[E0505]: cond allows [else ...] only as the final arm
+cond_else_not_final_generated_reject|check-fail|tests/safety/cond_else_not_final_generated_reject.tl|tests/safety/cond_else_not_final_generated_reject.tl:2:4|error[E0505]: cond allows [else ...] only as the final arm
+cond_else_not_final_spliced_reject|check-fail|tests/safety/cond_else_not_final_spliced_reject.tl|tests/safety/cond_else_not_final_spliced_reject.tl:5:13|error[E0505]: cond allows [else ...] only as the final arm
+cond_missing_else_capture_reject|check-fail|tests/safety/cond_missing_else_capture_reject.tl|tests/safety/cond_missing_else_capture_reject.tl:7:5|error[E0505]: cond requires a final [else ...] arm
+cond_else_not_final_capture_reject|check-fail|tests/safety/cond_else_not_final_capture_reject.tl|tests/safety/cond_else_not_final_capture_reject.tl:4:5|error[E0505]: cond allows [else ...] only as the final arm
+cond_missing_else_comptime_reject|check-fail|tests/safety/cond_missing_else_comptime_reject.tl|tests/safety/cond_missing_else_comptime_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
+cond_else_not_final_comptime_reject|check-fail|tests/safety/cond_else_not_final_comptime_reject.tl|tests/safety/cond_else_not_final_comptime_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
+cond_else_not_final_comptime_capture_reject|check-fail|tests/safety/cond_else_not_final_comptime_capture_reject.tl|tests/safety/cond_else_not_final_comptime_capture_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
+cond_missing_else_generated_capture_reject|check-fail|tests/safety/cond_missing_else_generated_capture_reject.tl|tests/safety/cond_missing_else_generated_capture_reject.tl:7:6|error[E0505]: cond requires a final [else ...] arm
+cond_else_not_final_generated_capture_reject|check-fail|tests/safety/cond_else_not_final_generated_capture_reject.tl|tests/safety/cond_else_not_final_generated_capture_reject.tl:7:6|error[E0505]: cond allows [else ...] only as the final arm
+cond_else_not_final_generated_capture_comptime_reject|check-fail|tests/safety/cond_else_not_final_generated_capture_comptime_reject.tl|tests/safety/cond_else_not_final_generated_capture_comptime_reject.tl:10:3|error[E0505]: cond allows [else ...] only as the final arm
+cond_missing_else_generated_capture_comptime_reject|check-fail|tests/safety/cond_missing_else_generated_capture_comptime_reject.tl|tests/safety/cond_missing_else_generated_capture_comptime_reject.tl:10:3|error[E0505]: cond requires a final [else ...] arm
+cond_else_not_final_error_binding_reject|check-fail|tests/safety/cond_else_not_final_error_binding_reject.tl|tests/safety/cond_else_not_final_error_binding_reject.tl:7:6|error[E0505]: cond allows [else ...] only as the final arm
+cond_missing_else_error_binding_reject|check-fail|tests/safety/cond_missing_else_error_binding_reject.tl|tests/safety/cond_missing_else_error_binding_reject.tl:4:57|error[E0505]: cond requires a final [else ...] arm
+cond_missing_else_comptime_const_reject|check-fail|tests/safety/cond_missing_else_comptime_const_reject.tl|tests/safety/cond_missing_else_comptime_const_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
+cond_else_not_final_comptime_const_reject|check-fail|tests/safety/cond_else_not_final_comptime_const_reject.tl|tests/safety/cond_else_not_final_comptime_const_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
+cond_missing_else_comptime_nested_reject|check-fail|tests/safety/cond_missing_else_comptime_nested_reject.tl|tests/safety/cond_missing_else_comptime_nested_reject.tl:2:3|error[E0505]: cond requires a final [else ...] arm
+cond_else_not_final_comptime_nested_reject|check-fail|tests/safety/cond_else_not_final_comptime_nested_reject.tl|tests/safety/cond_else_not_final_comptime_nested_reject.tl:2:3|error[E0505]: cond allows [else ...] only as the final arm
+loop_address_stored_mut_borrow_reject|check-fail|tests/safety/loop_address_stored_mut_borrow_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument

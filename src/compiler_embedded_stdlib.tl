@@ -1,6 +1,6 @@
 ;; compiler_embedded_stdlib.tl - Compressed stdlib source fallback: each module's
-;; source with its inline tests blanked (#8713) and its prose comments cut to
-;; their first `;` (#8659).
+;; source with its inline tests blanked (#8713) and its non-directive comments
+;; (including `;:` and `;#` doc comments) stripped while preserving line breaks.
 (import compiler_abort as abort)
 (cfg test (import compiler_embedded_stdlib_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_payload as payload))
@@ -109,8 +109,9 @@
       newline)))
 
 ;; Whether the comment at `start..end` of `src` (from its first `;` to its
-;; line break) is prose that nothing reads. A doc comment (`;:` or `;#`) and a
-;; `name:` directive such as `lint-allow:` or `doctest-exit:` are not.
+;; line break) is strippable (prose or `;:`/`;#` doc comment). A `name:`
+;; directive on a `;`/`;;` comment such as `lint-allow:` or `doctest-exit:` is
+;; kept.
 (define (compiler-embedded-stdlib-prose-comment?
   [src : (& src str)]
   [start : i64]
@@ -120,7 +121,7 @@
     (if (and
       (< j end)
       (or (= (__tl_string_ref src j) ':') (= (__tl_string_ref src j) '#')))
-      false
+      true
       (begin
         (while (and (< j end) (= (__tl_string_ref src j) ';'))
           (+= j 1))
@@ -165,9 +166,9 @@
 
 ;; What the payload drops from a source, as byte ranges whose line breaks
 ;; alone are kept: each top-level inline test, every `(test ...)` form and
-;; every `(cfg test BODY)` form with exactly one body (#8713); and the tail of
-;; each prose comment outside those forms, after its first `;` and before its
-;; line break (#8659), which holds no line break.
+;; every `(cfg test BODY)` form with exactly one body (#8713); and each
+;; non-directive comment (prose or `;:`/`;#` doc) outside those forms along
+;; with its immediately preceding horizontal whitespace before its line break.
 (defenum CompilerEmbeddedStdlibTestRanges
   ;; The lexer's scanners reject a string or character literal, or the
   ;; brackets do not balance: nothing is blanked.
@@ -197,12 +198,16 @@
 
 ;; One pass over `src` that finds what its payload drops. Strings, character
 ;; literals and comments are skipped with the lexer's own scanners, so a `(test`
-;; inside one is not a form. A prose comment is cut only outside any form that
-;; may yet be blanked, so the ranges stay in order and disjoint.
+;; inside one is not a form. A strippable comment (prose or `;:`/`;#` doc) is
+;; dropped along with its preceding horizontal whitespace only outside any form
+;; that may yet be blanked, so the ranges stay in order and disjoint and every
+;; kept token retains its exact line and column.
 (define (compiler-embedded-stdlib-inline-test-ranges [src : (& src str)]) : CompilerEmbeddedStdlibTestRanges
   (let
     [n : i64 (string-length src)]
     [i : i64 0]
+    [line-start : i64 0]
+    [line-has-code : bool false]
     [depth : i64 0]
     [start : i64 -1]
     [kind : i64 0]
@@ -215,6 +220,7 @@
         [c : char (__tl_string_ref src i)]
         (cond
           [(not (compiler-embedded-stdlib-delimiter? c))
+            (set! line-has-code true)
             (if (= c '\'')
               (match (lexer.apostrophe-char-literal-result src i n)
                 [(Ok _ end)
@@ -226,7 +232,15 @@
                 (when (= depth 1) (+= elements 1))
                 (set! i (compiler-embedded-stdlib-atom-end src (+ i 1) n))))]
           [(lexer.is-space c)
-            (set! i (compiler-embedded-stdlib-skip-space src (+ i 1) n))]
+            (let
+              [j : i64 i]
+              (while (and (< j n) (lexer.is-space (__tl_string_ref src j)))
+                (when
+                  (= (__tl_string_ref src j) '\n')
+                  (set! line-start (+ j 1))
+                  (set! line-has-code false))
+                (+= j 1))
+              (set! i j))]
           [(= c ';')
             (let
               [end : i64 (compiler-embedded-stdlib-comment-end src (+ i 1) n)]
@@ -237,23 +251,39 @@
               (when
                 (and
                   (or (= depth 0) (= kind 0))
-                  (> cut (+ i 1))
                   (compiler-embedded-stdlib-prose-comment? src i cut))
-                (set!
-                  ranges
-                  (compiler-embedded-stdlib-ranges-push
-                    ranges
-                    count
-                    (+ i 1)
-                    (- cut 1)))
-                (+= count 1))
+                (let
+                  [drop-start : i64
+                    (if (not line-has-code)
+                      line-start
+                      (let
+                        [ws : i64 i]
+                        (while (and
+                          (> ws line-start)
+                          (let
+                            [prev : char (__tl_string_ref src (- ws 1))]
+                            (or (= prev ' ') (= prev '\t'))))
+                          (-= ws 1))
+                        ws))]
+                  (when
+                    (> cut drop-start)
+                    (set!
+                      ranges
+                      (compiler-embedded-stdlib-ranges-push
+                        ranges
+                        count
+                        drop-start
+                        (- cut 1)))
+                    (+= count 1))))
               (set! i end))]
           [(= c '"')
+            (set! line-has-code true)
             (when (= depth 1) (+= elements 1))
             (match (lexer.scan-str-end-result src (+ i 1) n)
               [(Ok end) (set! i (+ end 1))]
               [(Err _) (set! valid false)])]
           [(or (= c '(') (= c '['))
+            (set! line-has-code true)
             (when (= depth 1) (+= elements 1))
             (when
               (and (= depth 0) (= c '('))
@@ -265,6 +295,7 @@
             (+= depth 1)
             (+= i 1)]
           [else
+            (set! line-has-code true)
             (-= depth 1)
             (cond
               [(< depth 0) (set! valid false)]
@@ -284,11 +315,13 @@
 
 ;; The source a module's payload embeds. Each top-level inline test is
 ;; replaced by the line breaks it contained: every `(test ...)` form and every
-;; `(cfg test BODY)` form with exactly one body. Each prose comment outside
-;; those forms keeps only its first `;`, so the line still reads as a comment;
-;; doc comments and directives are kept whole. All other bytes are kept, so
-;; each remaining form keeps its line and column. A source the lexer's scanners
-;; reject, or one whose brackets do not balance, is returned unchanged.
+;; `(cfg test BODY)` form with exactly one body. Each non-directive comment
+;; (prose, `;:` or `;#` doc) outside those forms is dropped along with its
+;; immediately preceding horizontal whitespace while keeping `\r`/`\n` line
+;; breaks; `name:` directives (`lint-allow:`, `doctest-exit:`, etc.) are kept
+;; whole. All other bytes are kept, so each remaining token keeps its exact line
+;; and column. A source the lexer's scanners reject, or one whose brackets do
+;; not balance, is returned unchanged.
 (define (compiler-embedded-stdlib-payload-source [src : String]) : String
   (match (compiler-embedded-stdlib-inline-test-ranges (& src))
     [(Unscannable) src]

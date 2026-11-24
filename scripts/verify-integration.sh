@@ -781,11 +781,10 @@ WINDOWS_DIRECT_POWERSHELL_STARTS=0
 WINDOWS_DIRECT_CYGPATH_CONVERSIONS=0
 WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS=0
 WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=0
-# Four link jobs is the conservative CI default: eight gives a faster median
-# but a worse tail and substantially more summed child time. Set
-# TYPELISP_WINDOWS_LINK_JOBS=1 for serial debugging or override it up to 64 for
-# host-specific measurements.
-WINDOWS_LINK_JOBS=${TYPELISP_WINDOWS_LINK_JOBS:-4}
+# Eight link jobs matches the faster median for the Windows COFF linker queue.
+# Set TYPELISP_WINDOWS_LINK_JOBS=1 for serial debugging or override it up to 64
+# for host-specific measurements.
+WINDOWS_LINK_JOBS=${TYPELISP_WINDOWS_LINK_JOBS:-8}
 
 if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     case "$WINDOWS_LINK_JOBS" in

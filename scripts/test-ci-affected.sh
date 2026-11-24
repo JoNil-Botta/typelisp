@@ -3,6 +3,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 . "$ROOT/scripts/lib-manifest.sh"
+. "$ROOT/scripts/lib-ci-gates.sh"
 mkdir -p "$ROOT/target/exp/ci-affected-test"
 work=$(mktemp -d "$ROOT/target/exp/ci-affected-test/run.XXXXXX")
 selector="$ROOT/scripts/ci-affected.sh"
@@ -15,12 +16,15 @@ case "$work" in
 esac
 
 # Exercise Git's actual Windows checkout filter, including the provenance
-# table and byte-compared historical paths. Their LF attributes must win.
-for path in scripts/ci-affected-paths.tsv scripts/ci-affected-inputs.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv tests/integration/manifest.d/*.manifest src/compile_manifest.d/*.manifest; do
+# tables and byte-compared historical paths. Their LF attributes must win.
+for path in scripts/ci-gates.d/*.tsv scripts/ci-affected-paths.d/*.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv tests/integration/manifest.d/*.manifest src/compile_manifest.d/*.manifest tests/safety/manifest.d/*.manifest scripts/codegen-target-dispatch.d/*.tsv tools/embedded-stdlib-tlci/identity-fixtures.d/*.tsv tests/codegen/asm-shape.d/*.cases tests/spmd/simd.d/*.cases; do
     git cat-file blob ":$path" > "$work/checkout.expected"
     git -c core.autocrlf=true cat-file --filters --path="$path" ":$path" > "$work/checkout.actual"
     cmp "$work/checkout.actual" "$work/checkout.expected" || fail "Windows checkout changed line endings: $path"
 done
+
+ci_gates_load "$ROOT/scripts/ci-gates.d" > "$work/gates-full.tsv" || fail 'gate table load failed'
+ci_affected_paths_load "$ROOT/scripts/ci-affected-paths.d" > "$work/affected-paths.tsv" || fail 'affected-paths load failed'
 
 # Audit tracked literal inputs inside owning scripts, independently of the
 # reviewed map. Synthetic self-test modes do not consume the real corpus.
@@ -28,8 +32,8 @@ git ls-files > "$work/tracked-inputs"
 awk '{path=$0; while (sub(/\/[^/]*$/, "", path)) print path}' "$work/tracked-inputs" | sort -u > "$work/tracked-directories"
 awk -F '\t' '
     {sub(/\r$/, "")}
-    !/^#/ && $1 != "id" {
-        command = $8
+    {
+        command = $9
         while (match(command, /scripts\/[A-Za-z0-9_.-]+\.sh/)) {
             script = substr(command, RSTART, RLENGTH)
             command = substr(command, RSTART + RLENGTH)
@@ -38,10 +42,10 @@ awk -F '\t' '
             print $1 "\t" script
         }
     }
-' "$ROOT/scripts/ci-gates.tsv" > "$work/owning-scripts.tsv"
+' "$work/gates-full.tsv" > "$work/owning-scripts.tsv"
 awk -F '\t' '
     {sub(/\r$/, "")}
-    FILENAME == ARGV[1] { if ($8 ~ /^gate_[a-z0-9_]+$/) gate[$8] = $1; next }
+    FILENAME == ARGV[1] { if ($9 ~ /^gate_[a-z0-9_]+$/) gate[$9] = $1; next }
     /^gate_[a-z0-9_]+\(\)/ { name = $1; sub(/\(\).*/, "", name) }
     /^}/ { name = "" }
     name in gate {
@@ -51,7 +55,7 @@ awk -F '\t' '
             line = substr(line, RSTART + RLENGTH)
         }
     }
-' "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" >> "$work/owning-scripts.tsv"
+' "$work/gates-full.tsv" "$ROOT/scripts/ci-verify.sh" >> "$work/owning-scripts.tsv"
 # Traverse literal shell invocations, retaining the original gate owner across
 # nested guards. A seen set bounds cycles; reading a missing script is an error.
 awk -F '\t' '
@@ -136,7 +140,17 @@ awk -F '|' '$1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$work
 # Primary declarations add exact fixture owners. Imported/staged dependency
 # lists and generic compiler-comparison suites remain advisory source classes.
 awk -F '\t' '$1 ~ /\.cases$/ {print}' "$work/script-inputs.tsv" > "$work/inventory-owners.tsv"
-awk -F '\t' '{sub(/\r$/, "")} !/^#/ && $1 != "id" {n=split($8, words, " "); for(i=1;i<=n;i++) if(words[i] ~ /^tests\/.*\.cases$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" >> "$work/inventory-owners.tsv"
+awk -F '\t' '{sub(/\r$/, "")} {n=split($9, words, " "); for(i=1;i<=n;i++) if(words[i] ~ /^tests\/.*\.cases$/) print words[i] "\t" $1}' "$work/gates-full.tsv" >> "$work/inventory-owners.tsv"
+{
+    awk -F '\t' '$1 ~ /^tests\/.*\.d$/ {print $1 "\t" $2}' "$work/script-inputs.tsv"
+    awk -F '\t' '{sub(/\r$/, "")} {n=split($9, words, " "); for(i=1;i<=n;i++) if(words[i] ~ /^tests\/.*\.d$/) print words[i] "\t" $1}' "$work/gates-full.tsv"
+} | sort -u | while IFS=$TAB read -r case_dir case_gate; do
+    [ -d "$ROOT/$case_dir" ] || continue
+    for case_file in "$ROOT/$case_dir"/*.cases; do
+        [ -f "$case_file" ] || continue
+        printf '%s\t%s\n' "${case_file#"$ROOT"/}" "$case_gate"
+    done
+done >> "$work/inventory-owners.tsv"
 # The public-tool family runs these transcripts and corpora together, and each
 # map row that owns one of their inputs names the whole family, so every file
 # requires every part.
@@ -239,7 +253,8 @@ inventory_inputs() {
             for(j=1;j<=n;j++) if(names[j] != "") print "src/tests/" names[j] "\tstage2-native-integration-corpus"
         }
     }' "$2/integration-manifest.combined" || return
-    awk -F '|' '{sub(/\r$/, "")} !/^#/ && NF >= 3 {print $3 "\tstage2-safety-corpus"}' "$1/tests/safety/manifest.txt" || return
+    manifest_concat_dir "$1/tests/safety/manifest.d" > "$2/safety-manifest.combined" || return
+    awk -F '|' '{sub(/\r$/, "")} !/^#/ && NF >= 3 {print $3 "\tstage2-safety-corpus"}' "$2/safety-manifest.combined" || return
     manifest_concat_dir "$1/src/compile_manifest.d" > "$2/compile-manifest.combined" || return
     awk -F '|' '{sub(/\r$/, "")} $1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$2/compile-manifest.combined" || return
 }
@@ -274,8 +289,8 @@ second_inventory=$(sed -n '2p' "$work/inventory-plans/inventories")
 [ -n "$second_inventory" ] || fail 'failure regression needs two inventories'
 manifest_list_dir "$ROOT/tests/integration/manifest.d" | sed "s#^$ROOT/##" > "$work/manifest-fragment-files" || fail 'integration manifest list failed'
 manifest_list_dir "$ROOT/src/compile_manifest.d" | sed "s#^$ROOT/##" >> "$work/manifest-fragment-files" || fail 'compile manifest list failed'
+manifest_list_dir "$ROOT/tests/safety/manifest.d" | sed "s#^$ROOT/##" >> "$work/manifest-fragment-files" || fail 'safety manifest list failed'
 cat "$work/inventory-plans/inventories" "$work/manifest-fragment-files" > "$work/failure-inputs"
-printf '%s\n' tests/safety/manifest.txt >> "$work/failure-inputs"
 for failure_kind in missing partial; do
     omitted_inventory=$first_inventory
     [ "$failure_kind" != partial ] || omitted_inventory=$second_inventory
@@ -292,7 +307,7 @@ done
 [ -s "$work/partial.raw" ] || fail 'late extraction failure probe emitted no initial ownership'
 # Exercise the same inventory reader against Git actual Windows checkout bytes.
 mkdir -p "$work/crlf-inputs"
-{ cut -f 1 "$work/inventory-owners.tsv"; cat "$work/manifest-fragment-files"; printf '%s\n' tests/safety/manifest.txt; } | sort -u > "$work/inventory-files"
+{ cut -f 1 "$work/inventory-owners.tsv"; cat "$work/manifest-fragment-files"; } | sort -u > "$work/inventory-files"
 while IFS= read -r affected_inventory; do
     mkdir -p "$work/crlf-inputs/$(dirname "$affected_inventory")"
     git -c core.autocrlf=true cat-file --filters --path="$affected_inventory" ":$affected_inventory" > "$work/crlf-inputs/$affected_inventory"
@@ -324,7 +339,7 @@ awk -F '\t' '
         }
     }
     END {exit failed}
-' "$ROOT/scripts/ci-affected-paths.tsv" "$work/tracked-directories" "$work/primary-inputs.tsv" || fail 'primary inventory ownership is incomplete'
+' "$work/affected-paths.tsv" "$work/tracked-directories" "$work/primary-inputs.tsv" || fail 'primary inventory ownership is incomplete'
 
 for host in linux windows; do
     "$ROOT/scripts/ci-verify.sh" --list-gates "$host" > "$work/$host.table"
@@ -365,7 +380,7 @@ for host in linux windows; do
                 has_gate "$work/trigger.ids" integration-manifest-validator-self-tests ;;
         esac
         has_gate "$work/trigger.ids" zero-cons-fixture-and-embedded-source-invariant
-        awk -F '\t' '!/^#/ && $1 != "id" && $5 != "-" {print $1}' "$ROOT/scripts/ci-gates.tsv" |
+        awk -F '\t' '$6 != "-" {print $1}' "$work/gates-full.tsv" |
         while IFS= read -r gate; do
             if grep -Fx "$gate" "$work/$host.full" >/dev/null; then has_gate "$work/trigger.ids" "$gate"; fi
         done
@@ -383,9 +398,12 @@ for host in linux windows; do
     done
     # Every literal corpus input in a canonical gate command has an owning
     # required trigger, independently of the advisory input classifications.
-    awk -F '\t' '!/^#/ && $1 != "id" {n = split($8, words, " "); for (i = 1; i <= n; i++) if (words[i] ~ /^tests\/[A-Za-z0-9._\/-]+$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" > "$work/literal-inputs.tsv"
+    awk -F '\t' '{n = split($9, words, " "); for (i = 1; i <= n; i++) if (words[i] ~ /^tests\/[A-Za-z0-9._\/-]+$/) print words[i] "\t" $1}' "$work/gates-full.tsv" > "$work/literal-inputs.tsv"
     while IFS=$TAB read -r path gate; do
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
+        if grep -Fx "$path" "$work/tracked-directories" >/dev/null; then
+            path="$path/__ci_affected_directory_probe__.cases"
+        fi
         batched=$((batched + 1))
         printf '@@\t%s\trequired\t%s\n%s\n' "$host" "$work/$host-replay.$batched.ids" "$path" >> "$work/$host-replay.batch"
         printf '%s\t%s\t%s\n' "$batched" "$path" "$gate" >> "$work/$host-replay.rows"
@@ -440,7 +458,7 @@ for host in linux windows; do
     printf '%s\n' docs/testing-guide.md > "$work/paths"
     "$selector" --host "$host" --paths "$work/paths" --tier advisory > "$work/single-advisory.ids"
     cmp "$work/batch-advisory.ids" "$work/single-advisory.ids" || fail 'batched advisory record differs from its replay'
-    for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity'; do
+    for row in 'scripts/codegen-target-dispatch.d/compiler_backend.tsv stage2-codegen-target-parity' 'tools/embedded-stdlib-tlci/identity-fixtures.d/stdlib.clone.tsv embedded-stdlib-tlci-image,stage2-compile-profile-verifier'; do
         path=${row% *}
         gate=${row##* }
         printf '%s\n' "$path" > "$work/paths"
@@ -449,7 +467,7 @@ for host in linux windows; do
         sed '1d' "$work/subset.table" | cut -f 1 > "$work/subset.expected"
         cmp "$work/subset.ids" "$work/subset.expected" || fail "wrong dependency closure: $path"
     done
-    printf '%s\n' tests/safety/manifest.txt scripts/codegen-target-dispatch-inventory.tsv tests/safety/manifest.txt > "$work/paths"
+    printf '%s\n' tests/safety/manifest.d/arena-brands-phases.manifest scripts/codegen-target-dispatch.d/compiler_backend.tsv tests/safety/manifest.d/arena-brands-phases.manifest > "$work/paths"
     "$selector" --host "$host" --paths "$work/paths" > "$work/union.ids"
     has_gate "$work/union.ids" stage2-safety-corpus
     has_gate "$work/union.ids" stage2-codegen-target-parity
@@ -464,7 +482,7 @@ for host in linux windows; do
             cmp "$work/advisory-only.ids" "$work/$host.full" || fail 'advisory-only match omitted an unknown required consumer'
         done
     done
-    for path in scripts/ci-verify.sh .github/workflows/ci.yml tests/public-tools/example.sh tests/fixtures/ci-affected/history.tsv; do
+    for path in scripts/ci-verify.sh scripts/lib-ci-gates.sh scripts/ci-gates.d/bootstrap-compiler.tsv .github/workflows/ci.yml tests/public-tools/example.sh tests/fixtures/ci-affected/history.tsv; do
         printf '%s\n' "$path" > "$work/paths"
         "$selector" --host "$host" --paths "$work/paths" > "$work/harness.ids"
         cmp "$work/harness.ids" "$work/$host.full" || fail "harness path did not select full table: $path"
@@ -485,9 +503,10 @@ done
 # repository. Only its ci-verify entry point is a recording stub; its listing
 # delegates to the real planner above. There is no production command override.
 repo="$work/repo"
-mkdir -p "$repo/scripts" "$repo/tests/safety"
+mkdir -p "$repo/scripts" "$repo/tests/safety/manifest.d"
 printf '/target/\n' > "$repo/.gitignore"
-cp "$selector" "$ROOT/scripts/ci-affected-paths.tsv" "$ROOT/scripts/ci-affected-inputs.tsv" "$ROOT/scripts/ci-gates.tsv" "$repo/scripts/"
+cp "$selector" "$ROOT/scripts/lib-ci-gates.sh" "$repo/scripts/"
+cp -R "$ROOT/scripts/ci-gates.d" "$ROOT/scripts/ci-affected-paths.d" "$repo/scripts/"
 cat > "$repo/scripts/ci-verify.sh" <<'STUB'
 #!/usr/bin/env sh
 set -eu
@@ -501,7 +520,7 @@ export CI_AFFECTED_TEST_VERIFY="$ROOT/scripts/ci-verify.sh"
 export CI_AFFECTED_TEST_CALL="$work/run.call"
 export CI_AFFECTED_TEST_EXECUTIONS="$work/run.executions"
 : > "$CI_AFFECTED_TEST_EXECUTIONS"
-printf 'initial\n' > "$repo/tests/safety/manifest.txt"
+printf 'initial\n' > "$repo/tests/safety/manifest.d/sample.manifest"
 git -C "$repo" init -q
 git -C "$repo" add .
 git -C "$repo" -c user.name=Test -c user.email=test@example.invalid commit -qm initial
@@ -512,10 +531,10 @@ fixture_selector="$repo/scripts/ci-affected.sh"
 has_gate "$work/empty.ids" shared-view-count-ratchet
 has_gate "$work/empty.ids" typelisp-source-formatting
 has_gate "$work/empty.ids" typelisp-source-lint
-printf 'unstaged\n' >> "$repo/tests/safety/manifest.txt"
+printf 'unstaged\n' >> "$repo/tests/safety/manifest.d/sample.manifest"
 "$fixture_selector" --base "$base" > "$work/unstaged.ids" 2> "$work/unstaged.log"
 has_gate "$work/unstaged.ids" stage2-safety-corpus
-git -C "$repo" add tests/safety/manifest.txt
+git -C "$repo" add tests/safety/manifest.d/sample.manifest
 "$fixture_selector" --base "$base" > "$work/staged.ids" 2> "$work/staged.log"
 cmp "$work/staged.ids" "$work/unstaged.ids" || fail 'staged edit missed'
 git -C "$repo" -c user.name=Test -c user.email=test@example.invalid commit -qm edit
@@ -561,12 +580,12 @@ CI_AFFECTED_TEST_EXIT=19 "$fixture_selector" --base "$base" --run > "$work/exit.
 [ "$status" = 19 ] || fail "ci-verify failure not propagated: $status"
 
 # Deletion must keep its old mapped path; renames must include both paths.
-git -C "$repo" mv tests/safety/manifest.txt unknown.txt
+git -C "$repo" mv tests/safety/manifest.d/sample.manifest unknown.txt
 "$fixture_selector" --base "$base" > "$work/renamed.ids" 2> "$work/renamed.log"
 cmp "$work/renamed.ids" "$work/$native_host.full" || fail 'rename destination did not fail safe'
 git -C "$repo" reset -q --hard "$base"
-git -C "$repo" update-index --force-remove tests/safety/manifest.txt
-mv "$repo/tests/safety/manifest.txt" "$work/deleted-manifest.txt"
+git -C "$repo" update-index --force-remove tests/safety/manifest.d/sample.manifest
+mv "$repo/tests/safety/manifest.d/sample.manifest" "$work/deleted-manifest.txt"
 "$fixture_selector" --base "$base" > "$work/deleted.ids" 2> "$work/deleted.log"
 has_gate "$work/deleted.ids" stage2-safety-corpus
 printf 'unknown\n' > "$repo/untracked file.txt"
@@ -593,28 +612,73 @@ mv "$repo/line
 break.txt" "$work/newline-file.txt"
 "$fixture_selector" --base "$drift" > "$work/drift.ids" 2> "$work/drift.log"
 cmp "$work/drift.ids" "$work/empty.ids" || fail 'base-only drift entered selection'
-printf 'unknown/path\tnot-a-real-gate\t-\tinvalid test row\n' >> "$repo/scripts/ci-affected-paths.tsv"
+printf 'unknown/path\tnot-a-real-gate\t-\tinvalid test row\n' >> "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
 expect_rejected invalid-map "$fixture_selector" --base "$base" --run
-cp "$ROOT/scripts/ci-affected-paths.tsv" "$repo/scripts/ci-affected-paths.tsv"
-printf 'tests/*\tstage2-safety-corpus\t-\tduplicate test row\n' >> "$repo/scripts/ci-affected-paths.tsv"
+cp "$ROOT/scripts/ci-affected-paths.d/tests-other.tsv" "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
+printf 'path\trequired\tadvisory\treason\ntests/*\tstage2-safety-corpus\t-\tduplicate test row\n' > "$repo/scripts/ci-affected-paths.d/zz-dup.tsv"
 expect_rejected duplicate-map "$fixture_selector" --base "$base"
-awk -F '\t' -v OFS='\t' '$1 == "tests/*" {$2 = ""} {print}' "$ROOT/scripts/ci-affected-paths.tsv" > "$repo/scripts/ci-affected-paths.tsv"
+rm -f "$repo/scripts/ci-affected-paths.d/zz-dup.tsv"
+awk -F '\t' -v OFS='\t' '$1 == "tests/*" {$2 = ""} {print}' "$ROOT/scripts/ci-affected-paths.d/tests-other.tsv" > "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
 cp "$work/run.call" "$work/empty-map-before.call"
 expect_rejected empty-gates "$fixture_selector" --base "$base" --run
 cmp "$work/run.call" "$work/empty-map-before.call" || fail 'invalid map executed a gate'
-cp "$ROOT/scripts/ci-affected-paths.tsv" "$repo/scripts/ci-affected-paths.tsv"
-sed '$d' "$ROOT/scripts/ci-affected-inputs.tsv" > "$repo/scripts/ci-affected-inputs.tsv"
+cp "$ROOT/scripts/ci-affected-paths.d/tests-other.tsv" "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
+mv "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$work/held-gate.tsv"
 printf '%s\n' src/compiler_backend.tl > "$work/paths"
 "$fixture_selector" --paths "$work/paths" > "$work/unreviewed-gate.ids" 2> "$work/unreviewed-gate.log"
 cmp "$work/unreviewed-gate.ids" "$work/$native_host.full" || fail 'unreviewed gate inventory did not fail to full'
-cp "$ROOT/scripts/ci-affected-inputs.tsv" "$repo/scripts/ci-affected-inputs.tsv"
-printf 'bad-gate\tinvalid-class\tinvalid fixture\n' >> "$repo/scripts/ci-affected-inputs.tsv"
+mv "$work/held-gate.tsv" "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
+awk -F '\t' -v OFS='\t' 'NR == 2 {$12 = "invalid-class"} {print}' "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" > "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
 expect_rejected invalid-input-class "$fixture_selector" --base "$base"
-cp "$ROOT/scripts/ci-affected-inputs.tsv" "$repo/scripts/ci-affected-inputs.tsv"
-printf 'tests/unmapped.dat\t-,-\t@corpus\tinvalid empty minimum\n' >> "$repo/scripts/ci-affected-paths.tsv"
+cp "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
+printf 'tests/unmapped.dat\t-,-\t@corpus\tinvalid empty minimum\n' >> "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
 expect_rejected invalid-empty-minimum "$fixture_selector" --base "$base"
+cp "$ROOT/scripts/ci-affected-paths.d/tests-other.tsv" "$repo/scripts/ci-affected-paths.d/tests-other.tsv"
 printf '@@\tlinux\trequired\n' > "$work/malformed.batch"
 expect_rejected malformed-batch "$fixture_selector" --batch "$work/malformed.batch"
+
+# Fail-closed fragment-directory checks for ci-gates.d/ and ci-affected-paths.d/:
+# filename stem != id, duplicate gate row/ID, dependency cycle, stray non-.tsv,
+# symlink, nested entry, and deterministic Kahn (priority desc, id asc) order.
+cp "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/wrong-stem.tsv"
+expect_rejected gates-stem-mismatch ci_gates_load "$repo/scripts/ci-gates.d"
+rm -f "$repo/scripts/ci-gates.d/wrong-stem.tsv"
+tail -n 1 "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" >> "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
+expect_rejected gates-duplicate-row ci_gates_load "$repo/scripts/ci-gates.d"
+cp "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv"
+printf 'stray\n' > "$repo/scripts/ci-gates.d/stray.txt"
+expect_rejected gates-stray-file ci_gates_load "$repo/scripts/ci-gates.d"
+rm -f "$repo/scripts/ci-gates.d/stray.txt"
+printf 'stray\n' > "$repo/scripts/ci-affected-paths.d/stray.txt"
+expect_rejected paths-stray-file ci_affected_paths_load "$repo/scripts/ci-affected-paths.d"
+rm -f "$repo/scripts/ci-affected-paths.d/stray.txt"
+mkdir -p "$repo/scripts/ci-gates.d/nested"
+cp "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/nested/bootstrap-adaptive-control-flow.tsv"
+expect_rejected gates-nested-entry ci_gates_load "$repo/scripts/ci-gates.d"
+rm -rf "$repo/scripts/ci-gates.d/nested"
+if [ "$native_host" = linux ]; then
+    ln -s "$ROOT/scripts/ci-gates.d/bootstrap-adaptive-control-flow.tsv" "$repo/scripts/ci-gates.d/link-gate.tsv"
+    expect_rejected gates-symlink-entry ci_gates_load "$repo/scripts/ci-gates.d"
+    rm -f "$repo/scripts/ci-gates.d/link-gate.tsv"
+fi
+mkdir -p "$work/cycle-gates"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ncyc-a\t100\tall\tcycle a\tcyc-b\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tcycle fixture\n' > "$work/cycle-gates/cyc-a.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ncyc-b\t90\tall\tcycle b\tcyc-a\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tcycle fixture\n' > "$work/cycle-gates/cyc-b.tsv"
+expect_rejected gates-dependency-cycle ci_gates_load "$work/cycle-gates"
+grep -F 'dependency cycle' "$work/gates-dependency-cycle.err" >/dev/null || fail 'cycle rejection lost its diagnostic'
+mkdir -p "$work/dup-need-gates"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ng-a\t100\tall\tgate a\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tdup need fixture\n' > "$work/dup-need-gates/g-a.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ng-b\t90\tall\tgate b\tg-a,g-a@linux\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tdup need fixture\n' > "$work/dup-need-gates/g-b.tsv"
+expect_rejected gates-duplicate-effective-need ci_gates_load "$work/dup-need-gates"
+grep -F 'duplicate linux need' "$work/gates-duplicate-effective-need.err" >/dev/null || fail 'duplicate effective-host need rejection lost its diagnostic'
+mkdir -p "$work/kahn-gates"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-b\t100\tall\tgate b\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-b.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-a\t100\tall\tgate a\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-a.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-high\t500\tall\tgate high\tgate-b\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-high.tsv"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\ngate-low\t50\tall\tgate low\t-\t-\t256\t-\ttrue\tlinux-1\twindows-1\t-\tkahn fixture\n' > "$work/kahn-gates/gate-low.tsv"
+ci_gates_load "$work/kahn-gates" | cut -f 1 > "$work/kahn.actual" || fail 'kahn fixture load failed'
+printf 'gate-a\ngate-b\ngate-high\ngate-low\n' > "$work/kahn.expected"
+cmp "$work/kahn.actual" "$work/kahn.expected" || fail 'Kahn topological (priority desc, id asc) order mismatch'
 
 # The fixture repository's .git must not block clean --experiments after
 # success. Every failure exits above and retains its evidence.

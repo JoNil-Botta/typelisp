@@ -655,12 +655,74 @@ linux_memory_limit_record_oom_peak() {
     fi
 }
 
+# Current memory charge of cgroup $1 in KiB (rounded up), in
+# _linux_memory_limit_current_kib, or 0 if unavailable.
+linux_memory_limit_read_current_kib() {
+    _linux_memory_limit_current_kib=0
+    _linux_memory_limit_current_bytes=0
+    if [ -n "${1:-}" ] && [ -r "$1/memory.current" ]; then
+        read -r _linux_memory_limit_current_bytes < "$1/memory.current" ||
+            _linux_memory_limit_current_bytes=0
+    fi
+    case "$_linux_memory_limit_current_bytes" in
+        "" | *[!0-9]* | 0) _linux_memory_limit_current_kib=0 ;;
+        *) _linux_memory_limit_current_kib=$(((_linux_memory_limit_current_bytes + 1023) / 1024)) ;;
+    esac
+}
+
 linux_memory_limit_process_group_rss_kib() {
     _linux_memory_limit_group=$1
-    ps -e -o pid= -o pgid= -o rss= | awk \
-        -v group="$_linux_memory_limit_group" '
-            $2 == group { total += $3 }
-            END { print total + 0 }
+    _linux_memory_limit_cgroup_dir=${2:-}
+    linux_memory_limit_read_current_kib "$_linux_memory_limit_cgroup_dir"
+    # Deduplicate threads (-L -> one RSS per PID) and exclude vfork() /
+    # clone(CLONE_VFORK|CLONE_VM) children sharing their parent's mm_struct:
+    # a vfork parent blocks in state D in kernel_clone/wait_for_vfork_done
+    # while the child still carries PF_FORKNOEXEC (ps flag bit 1) before
+    # execve or _exit. For any remaining pre-exec child (such as a PID-order
+    # race or clean COW fork), cap the shared overlap by cgroup v2
+    # memory.current when active so shared memory is never double-counted
+    # while distinct processes and dirty-COW allocations still enforce the cap.
+    ps -eL -o pid= -o ppid= -o pgid= -o rss= -o s= -o f= -o wchan:32= | awk \
+        -v group="$_linux_memory_limit_group" \
+        -v cgroup_kib="$_linux_memory_limit_current_kib" '
+            $3 == group {
+                pid = $1
+                if (!(pid in seen)) {
+                    seen[pid] = 1
+                    ppid[pid] = $2
+                    rss[pid] = $4 + 0
+                    flags[pid] = $6
+                }
+                if ($5 == "D" && $7 ~ /^(wait_for_vfork_done|kernel_clone|_do_fork|do_fork|do_vfork)$/) {
+                    vfork_parent[pid] = 1
+                }
+            }
+            END {
+                base = 0
+                overlap = 0
+                for (pid in seen) {
+                    p = ppid[pid]
+                    if ((p in seen) && (flags[pid] ~ /[13579bdfBDF]$/)) {
+                        if (p in vfork_parent) {
+                            continue
+                        }
+                        overlap += rss[pid]
+                        continue
+                    }
+                    base += rss[pid]
+                }
+                total = base + overlap
+                if (overlap > 0 && cgroup_kib > 0) {
+                    capped = base
+                    if (cgroup_kib > capped) {
+                        capped = cgroup_kib
+                    }
+                    if (total > capped) {
+                        total = capped
+                    }
+                }
+                print total + 0
+            }
         '
 }
 
@@ -798,7 +860,7 @@ linux_memory_limit_sample_process_group() {
     while [ "$_linux_memory_limit_rss" -eq 0 ] \
         && [ "$_linux_memory_limit_sample_attempt" -lt 20 ]; do
         _linux_memory_limit_rss=$(linux_memory_limit_process_group_rss_kib \
-            "$_linux_memory_limit_pid") || {
+            "$_linux_memory_limit_pid" "$_linux_memory_limit_workload") || {
                 kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
                 wait "$_linux_memory_limit_pid" 2>/dev/null || true
                 linux_memory_limit_release_gate || true
@@ -858,7 +920,7 @@ linux_memory_limit_sample_process_group() {
             return 137
         fi
         _linux_memory_limit_rss=$(linux_memory_limit_process_group_rss_kib \
-            "$_linux_memory_limit_pid") || {
+            "$_linux_memory_limit_pid" "$_linux_memory_limit_workload") || {
                 kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
                 wait "$_linux_memory_limit_pid" 2>/dev/null || true
                 linux_memory_limit_release_gate || true

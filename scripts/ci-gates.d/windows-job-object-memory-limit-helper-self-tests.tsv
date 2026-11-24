@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+windows-job-object-memory-limit-helper-self-tests	1080	windows	Windows Job Object memory limit helper self-tests	-	-	256	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-memory-limit.ps1	-	windows-2	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

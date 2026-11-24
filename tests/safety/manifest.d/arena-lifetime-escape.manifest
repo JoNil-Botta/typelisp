@@ -1,0 +1,251 @@
+# Safety corpus cases: arena lifetime invalidation, escape, stores, returns, closures, scratch, and with-blocks.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+with_scratch_function_reject|check-fail|tests/safety/with_scratch_function_reject.tl|-|with-scratch clone-out of
+with_scratch_closure_struct_reject|check-fail|tests/safety/with_scratch_closure_struct_reject.tl|-|with-scratch clone-out of FnBox
+with_scratch_closure_tuple_reject|check-fail|tests/safety/with_scratch_closure_tuple_reject.tl|-|with-scratch clone-out of (Tuple (-> i64 i64) i64)
+with_scratch_raw_ptr_struct_reject|check-fail|tests/safety/with_scratch_raw_ptr_struct_reject.tl|-|with-scratch clone-out of PtrBox
+with_scratch_clone_hook_ref_escape_reject|check-fail|tests/safety/with_scratch_clone_hook_ref_escape_reject.tl|-|with-scratch result still refers to the scratch result binding after clone-out
+with_scratch_clone_hook_type_change_reject|check-fail|tests/safety/with_scratch_clone_hook_type_change_reject.tl|-|with-scratch clone-out must preserve result type: expected Boxed, got i64
+with_scratch_bare_arena_reject|check-fail|tests/safety/with_scratch_bare_arena_reject.tl|-|with-scratch clone-out of stdlib.arena/Arena
+with_scratch_arena_struct_reject|check-fail|tests/safety/with_scratch_arena_struct_reject.tl|-|with-scratch clone-out of ArenaHolder
+with_scratch_tuple_arena_reject|check-fail|tests/safety/with_scratch_tuple_arena_reject.tl|-|with-scratch clone-out of (Tuple stdlib.arena/Arena String)
+with_scratch_box_fn_hook_reject|check-fail|tests/safety/with_scratch_box_fn_hook_reject.tl|-|with-scratch clone-out of (Box FnBox)
+with_scratch_box_arena_hook_reject|check-fail|tests/safety/with_scratch_box_arena_hook_reject.tl|-|with-scratch clone-out of (Box ArenaHolder)
+with_scratch_array_fn_hook_reject|check-fail|tests/safety/with_scratch_array_fn_hook_reject.tl|-|with-scratch clone-out of (Array FnBox 1)
+with_scratch_array_arena_hook_reject|check-fail|tests/safety/with_scratch_array_arena_hook_reject.tl|-|with-scratch clone-out of (Array ArenaHolder 1)
+in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
+with_escape_raw_i64_reject|check-fail|tests/safety/with_escape_raw_i64_reject.tl|-|with-escape arena must be Arena
+arena_return_box_reject|check-fail|tests/safety/arena_return_box_reject.tl|tests/safety/arena_return_box_reject.tl:2:29|region-tagged value cannot escape with-arena 'phase'
+arena_return_local_owner_reject|check-fail|tests/safety/arena_return_local_owner_reject.tl|tests/safety/arena_return_local_owner_reject.tl:7:29|region-tagged value cannot escape arena owner '
+arena_return_nested_tuple_reject|check-fail|tests/safety/arena_return_nested_tuple_reject.tl|tests/safety/arena_return_nested_tuple_reject.tl:8:15|region-tagged value cannot escape with-arena 'phase'
+arena_return_outer_reject|check-fail|tests/safety/arena_return_outer_reject.tl|tests/safety/arena_return_outer_reject.tl:8:33|region-tagged value cannot escape with-arena 'outer'
+arena_return_string_reject|check-fail|tests/safety/arena_return_string_reject.tl|tests/safety/arena_return_string_reject.tl:5:45|region-tagged value cannot escape with-arena 'phase'
+arena_return_shadowed_input_reject|check-fail|tests/safety/arena_return_shadowed_input_reject.tl|tests/safety/arena_return_shadowed_input_reject.tl:5:3|with-arena 'source' reuses the name of a visible lifetime or owner; rename the arena
+arena_try_array_reject|check-fail|tests/safety/arena_try_array_reject.tl|tests/safety/arena_try_array_reject.tl:12:41|region-tagged value cannot escape with-arena 'phase'
+arena_try_nested_array_reject|check-fail|tests/safety/arena_try_nested_array_reject.tl|tests/safety/arena_try_nested_array_reject.tl:12:41|region-tagged value cannot escape with-arena 'phase'
+arena_try_outer_reject|check-fail|tests/safety/arena_try_outer_reject.tl|tests/safety/arena_try_outer_reject.tl:15:30|region-tagged value cannot escape with-arena 'outer'
+arena_try_string_reject|check-fail|tests/safety/arena_try_string_reject.tl|tests/safety/arena_try_string_reject.tl:14:41|region-tagged value cannot escape with-arena 'phase'
+arena_return_untied_input_reject|check-fail|tests/safety/arena_return_untied_input_reject.tl|tests/safety/arena_return_untied_input_reject.tl:5:11|cannot store region-tagged value into return value
+arena_return_untied_when_reject|check-fail|tests/safety/arena_return_untied_when_reject.tl|tests/safety/arena_return_untied_when_reject.tl:5:41|cannot store region-tagged value into return value
+arena_return_untied_match_reject|check-fail|tests/safety/arena_return_untied_match_reject.tl|tests/safety/arena_return_untied_match_reject.tl:13:27|cannot store region-tagged value into return value
+arena_return_untied_brand_reject|check-fail|tests/safety/arena_return_untied_brand_reject.tl|tests/safety/arena_return_untied_brand_reject.tl:8:25|cannot store region-tagged value into return value
+arena_return_untied_call_reject|check-fail|tests/safety/arena_return_untied_call_reject.tl|tests/safety/arena_return_untied_call_reject.tl:10:25|cannot store region-tagged value into return value
+arena_return_untied_lambda_reject|check-fail|tests/safety/arena_return_untied_lambda_reject.tl|tests/safety/arena_return_untied_lambda_reject.tl:8:17|cannot store region-tagged value into return value
+arena_try_untied_input_reject|check-fail|tests/safety/arena_try_untied_input_reject.tl|tests/safety/arena_try_untied_input_reject.tl:15:39|cannot store region-tagged value into try's error exit
+arena_return_untied_copy_reject|check-fail|tests/safety/arena_return_untied_copy_reject.tl|tests/safety/arena_return_untied_copy_reject.tl:8:19|cannot store region-tagged value into return value
+arena_tail_untied_copy_reject|check-fail|tests/safety/arena_tail_untied_copy_reject.tl|tests/safety/arena_tail_untied_copy_reject.tl:8:3|cannot store region-tagged value into return value
+arena_return_late_activation_reject|check-fail|tests/safety/arena_return_late_activation_reject.tl|tests/safety/arena_return_late_activation_reject.tl:12:19|cannot store region-tagged value into return value
+arena_return_prior_activation_reject|check-fail|tests/safety/arena_return_prior_activation_reject.tl|tests/safety/arena_return_prior_activation_reject.tl:13:19|cannot store region-tagged value into return value
+arena_return_untied_enum_reject|check-fail|tests/safety/arena_return_untied_enum_reject.tl|tests/safety/arena_return_untied_enum_reject.tl:20:36|cannot store region-tagged value into return value
+arena_return_untied_wrapper_reject|check-fail|tests/safety/arena_return_untied_wrapper_reject.tl|tests/safety/arena_return_untied_wrapper_reject.tl:12:35|cannot store region-tagged value into return value
+arena_tail_untied_wrapper_reject|check-fail|tests/safety/arena_tail_untied_wrapper_reject.tl|tests/safety/arena_tail_untied_wrapper_reject.tl:12:3|cannot store region-tagged value into return value
+arena_return_untied_struct_reject|check-fail|tests/safety/arena_return_untied_struct_reject.tl|tests/safety/arena_return_untied_struct_reject.tl:11:37|cannot store region-tagged value into return value
+arena_try_untied_wrapper_reject|check-fail|tests/safety/arena_try_untied_wrapper_reject.tl|tests/safety/arena_try_untied_wrapper_reject.tl:16:15|cannot store region-tagged value into try's error exit
+arena_return_lambda_late_activation_reject|check-fail|tests/safety/arena_return_lambda_late_activation_reject.tl|tests/safety/arena_return_lambda_late_activation_reject.tl:15:28|cannot store region-tagged value into return value
+scratch_body_with_escape_store_reject|check-fail|tests/safety/scratch_body_with_escape_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_with_scratch_store_reject|check-fail|tests/safety/scratch_body_with_scratch_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_global_store_reject|check-fail|tests/safety/scratch_body_global_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_return_reject|check-fail|tests/safety/scratch_body_return_reject.tl|-|scratch-allocated value cannot leave with-scratch or with-escape through return
+scratch_body_try_array_error_exit_reject|check-fail|tests/safety/scratch_body_try_array_error_exit_reject.tl|tests/safety/scratch_body_try_array_error_exit_reject.tl:12:37|scratch-allocated value cannot leave with-scratch or with-escape through try's error exit
+scratch_body_try_error_exit_reject|check-fail|tests/safety/scratch_body_try_error_exit_reject.tl|-|scratch-allocated value cannot leave with-scratch or with-escape through try's error exit
+scratch_body_owner_region_reject|check-fail|tests/safety/scratch_body_owner_region_reject.tl|-|assignment type mismatch
+arena_scratch_clone_out_box_reject|check-fail|tests/safety/arena_scratch_clone_out_box_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_escape_clone_out_box_reject|check-fail|tests/safety/arena_escape_clone_out_box_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_scratch_clone_out_dynarray_reject|check-fail|tests/safety/arena_scratch_clone_out_dynarray_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_scratch_clone_out_string_reject|check-fail|tests/safety/arena_scratch_clone_out_string_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_scratch_clone_out_macro_reject|check-fail|tests/safety/arena_scratch_clone_out_macro_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_scratch_clone_out_store_reject|check-fail|tests/safety/arena_scratch_clone_out_store_reject.tl|-|cannot store region-tagged value into assignment
+arena_scratch_nested_clone_out_store_reject|check-fail|tests/safety/arena_scratch_nested_clone_out_store_reject.tl|-|cannot store region-tagged value into assignment
+arena_scratch_clone_out_in_arena_ok|run-exit|tests/safety/arena_scratch_clone_out_in_arena_ok.tl|42|-
+in_arena_raw_i64_reject|check-fail|tests/safety/in_arena_raw_i64_reject.tl|-|in-arena arena must be Arena
+in_arena_ordinary_assignment_reject|check-fail|tests/safety/in_arena_ordinary_assignment_reject.tl|-|cannot store region-tagged value into assignment
+in_arena_ordinary_return_reject|check-fail|tests/safety/in_arena_ordinary_return_reject.tl|-|reference value would escape lexical scope
+in_arena_ordinary_lambda_capture_reject|check-fail|tests/safety/in_arena_ordinary_lambda_capture_reject.tl|-|lambda cannot capture region-tagged value
+with_owner_value_begin_move_reject|check-fail|tests/safety/with_owner_value_begin_move_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_string_value_move_reject|check-fail|tests/safety/with_owner_string_value_move_reject.tl|-|cleanup owner `name` moved before with scope exit
+with_owner_move_in_returning_if_reject|check-fail|tests/safety/with_owner_move_in_returning_if_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_move_in_returning_match_reject|check-fail|tests/safety/with_owner_move_in_returning_match_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_field_move_in_returning_if_reject|check-fail|tests/safety/with_owner_field_move_in_returning_if_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_move_in_breaking_if_reject|check-fail|tests/safety/with_owner_move_in_breaking_if_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_moved_then_shadowed_reject|check-fail|tests/safety/with_owner_moved_then_shadowed_reject.tl|-|cleanup owner `h` moved before with scope exit
+with_owner_destroy_use_reject|check-fail|tests/safety/with_owner_destroy_use_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+with_owner_destroy_cleanup_only_reject|check-fail|tests/safety/with_owner_destroy_cleanup_only_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+with_owner_destroy_nested_inner_reject|check-fail|tests/safety/with_owner_destroy_nested_inner_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `inner` holds values from it
+with_owner_destroy_shadowed_reject|check-fail|tests/safety/with_owner_destroy_shadowed_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+with_owner_rewind_reject|check-fail|tests/safety/with_owner_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
+with_owner_destroy_moved_reject|check-fail|tests/safety/with_owner_destroy_moved_reject.tl|-|error[E0211]: typecheck: cleanup owner `owner` moved before with scope exit
+with_owner_other_arena_destroy_ok|run-exit|tests/safety/with_owner_other_arena_destroy_ok.tl|42|-
+with_owner_destroy_unannotated_reject|check-fail|tests/safety/with_owner_destroy_unannotated_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_invalidate_call_reject|check-fail|tests/safety/with_owner_invalidate_call_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_invalidate_call_second_brand_reject|check-fail|tests/safety/with_owner_invalidate_call_second_brand_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `second` while `with` cleanup owner `w` holds values from it
+with_owner_invalidate_call_place_reject|check-fail|tests/safety/with_owner_invalidate_call_place_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_invalidate_call_alias_reject|check-fail|tests/safety/with_owner_invalidate_call_alias_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_scope_fed_invalidate_reject|check-fail|tests/safety/with_owner_scope_fed_invalidate_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+arena_if_join_copy_out_reject|check-fail|tests/safety/arena_if_join_copy_out_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_if_join_scalar_tag_reject|check-fail|tests/safety/arena_if_join_scalar_tag_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_if_join_struct_tag_reject|check-fail|tests/safety/arena_if_join_struct_tag_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+with_owner_if_init_destroy_reject|check-fail|tests/safety/with_owner_if_init_destroy_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_if_init_rewind_reject|check-fail|tests/safety/with_owner_if_init_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `w` holds values from it
+with_owner_match_init_destroy_reject|check-fail|tests/safety/with_owner_match_init_destroy_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_if_init_invalidate_call_reject|check-fail|tests/safety/with_owner_if_init_invalidate_call_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+arena_fixed_array_tail_reject|check-fail|tests/safety/arena_fixed_array_tail_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_fixed_array_return_reject|check-fail|tests/safety/arena_fixed_array_return_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+arena_fixed_array_box_deref_reject|check-fail|tests/safety/arena_fixed_array_box_deref_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_box_deref_string_reject|check-fail|tests/safety/arena_fixed_array_box_deref_string_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_locals_reject|check-fail|tests/safety/arena_fixed_array_locals_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_store_reject|check-fail|tests/safety/arena_fixed_array_store_reject.tl|-|cannot store region-tagged value into assignment
+arena_fixed_array_box_local_reject|check-fail|tests/safety/arena_fixed_array_box_local_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_boxes_reject|check-fail|tests/safety/arena_fixed_array_boxes_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_strings_reject|check-fail|tests/safety/arena_fixed_array_strings_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_annotated_reject|check-fail|tests/safety/arena_fixed_array_annotated_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_let_bound_reject|check-fail|tests/safety/arena_fixed_array_let_bound_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_call_result_reject|check-fail|tests/safety/arena_fixed_array_call_result_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_struct_elements_reject|check-fail|tests/safety/arena_fixed_array_struct_elements_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_fixed_array_outer_param_ok|run-exit|tests/safety/arena_fixed_array_outer_param_ok.tl|42|-
+arena_fixed_array_outer_box_ok|run-exit|tests/safety/arena_fixed_array_outer_box_ok.tl|42|-
+arena_closure_escape_reject|check-fail|tests/safety/arena_closure_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_escape_param_reject|check-fail|tests/safety/arena_closure_escape_param_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_local_capture_escape_reject|check-fail|tests/safety/arena_closure_local_capture_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_store_escape_reject|check-fail|tests/safety/arena_closure_store_escape_reject.tl|-|cannot store region-tagged value into assignment
+arena_closure_escape_poison_reject|check-fail|tests/safety/arena_closure_escape_poison_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+closure_no_arena_poison_ok|run-exit|tests/safety/closure_no_arena_poison_ok.tl|42|-
+arena_closure_called_inside_ok|run-exit|tests/safety/arena_closure_called_inside_ok.tl|42|-
+arena_closure_field_escape_reject|check-fail|tests/safety/arena_closure_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_constructor_field_escape_reject|check-fail|tests/safety/arena_closure_constructor_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_annotated_field_escape_reject|check-fail|tests/safety/arena_closure_annotated_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_box_field_escape_reject|check-fail|tests/safety/arena_closure_box_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_array_field_escape_reject|check-fail|tests/safety/arena_closure_array_field_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_field_store_escape_reject|check-fail|tests/safety/arena_closure_field_store_escape_reject.tl|-|cannot store region-tagged value into assignment
+arena_closure_match_binder_escape_reject|check-fail|tests/safety/arena_closure_match_binder_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_try_escape_reject|check-fail|tests/safety/arena_closure_try_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_call_result_escape_reject|check-fail|tests/safety/arena_closure_call_result_escape_reject.tl|-|region-tagged value cannot escape with-arena 'r'
+arena_closure_reference_field_store_reject|check-fail|tests/safety/arena_closure_reference_field_store_reject.tl|-|cannot store region-tagged value into assignment
+with_owner_rewind_unannotated_reject|check-fail|tests/safety/with_owner_rewind_unannotated_reject.tl|-|arena.rewind-safe! cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_end_inside_arena_destroy_reject|check-fail|tests/safety/with_owner_end_inside_arena_destroy_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot run inside the arena it destroys
+with_owner_end_inside_arena_rewind_reject|check-fail|tests/safety/with_owner_end_inside_arena_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot run inside the arena it rewinds
+with_owner_end_inside_arena_invalidate_call_reject|check-fail|tests/safety/with_owner_end_inside_arena_invalidate_call_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot run inside the arena it destroys
+arena_invalidate_caller_value_use_reject|check-fail|tests/safety/arena_invalidate_caller_value_use_reject.tl|-|use of moved value `text`
+arena_invalidate_caller_borrow_use_reject|check-fail|tests/safety/arena_invalidate_caller_borrow_use_reject.tl|-|use of moved value `view`
+arena_invalidate_caller_container_use_reject|check-fail|tests/safety/arena_invalidate_caller_container_use_reject.tl|-|use of moved value `items`
+arena_invalidate_caller_closure_use_reject|check-fail|tests/safety/arena_invalidate_caller_closure_use_reject.tl|-|use of moved value `read-text`
+arena_invalidate_caller_struct_use_reject|check-fail|tests/safety/arena_invalidate_caller_struct_use_reject.tl|-|use of moved value `text`
+arena_invalidate_caller_atomic_before_join_reject|check-fail|tests/safety/arena_invalidate_caller_atomic_before_join_reject.tl|-|requires atomic arena user `worker` to be joined or released
+arena_invalidate_inside_owner_reject|check-fail|tests/safety/arena_invalidate_inside_owner_reject.tl|-|an :invalidate call cannot run inside the arena it destroys
+arena_invalidate_unannotated_forward_reject|check-fail|tests/safety/arena_invalidate_unannotated_forward_reject.tl|-|an :invalidate argument must be a branded local arena owner or a value the caller itself invalidates
+arena_invalidate_result_tied_reject|check-fail|tests/safety/arena_invalidate_result_tied_reject.tl|-|an :invalidate call cannot return a value tied to the arena it destroys
+arena_invalidate_duplicate_argument_reject|check-fail|tests/safety/arena_invalidate_duplicate_argument_reject.tl|-|a call cannot invalidate the same arena through two arguments
+arena_invalidate_missing_destroy_reject|check-fail|tests/safety/arena_invalidate_missing_destroy_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_branch_one_arm_reject|check-fail|tests/safety/arena_invalidate_branch_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths through this branch
+arena_invalidate_match_one_arm_reject|check-fail|tests/safety/arena_invalidate_match_one_arm_reject.tl|-|invalidation obligation of `owner` is discharged on only some paths
+arena_invalidate_loop_reject|check-fail|tests/safety/arena_invalidate_loop_reject.tl|-|cannot move loop-carried owner value `owner`
+arena_invalidate_double_destroy_reject|check-fail|tests/safety/arena_invalidate_double_destroy_reject.tl|-|use of moved value `owner`
+arena_invalidate_return_before_destroy_reject|check-fail|tests/safety/arena_invalidate_return_before_destroy_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged before this return
+arena_invalidate_try_before_destroy_reject|check-fail|tests/safety/arena_invalidate_try_before_destroy_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged before this try can propagate an error
+arena_invalidate_moved_elsewhere_reject|check-fail|tests/safety/arena_invalidate_moved_elsewhere_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_raw_teardown_reject|check-fail|tests/safety/arena_invalidate_raw_teardown_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_nested_owner_move_reject|check-fail|tests/safety/arena_invalidate_nested_owner_move_reject.tl|-|invalidation obligation of `state` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_wrong_brand_reject|check-fail|tests/safety/arena_invalidate_wrong_brand_reject.tl|-|invalidation obligation of `owner` (:invalidate r) is not discharged at the end of its function
+arena_invalidate_callee_use_after_destroy_reject|check-fail|tests/safety/arena_invalidate_callee_use_after_destroy_reject.tl|-|use of moved value `text`
+arena_invalidate_lambda_no_effect_reject|check-fail|tests/safety/arena_invalidate_lambda_no_effect_reject.tl|-|arena.destroy-safe! requires a direct arena owner or branded local owner place
+arena_invalidate_return_owner_reject|check-fail|tests/safety/arena_invalidate_return_owner_reject.tl|-|a result cannot contain lifetime `r` that its function invalidates
+arena_invalidate_duplicate_lifetime_reject|check-fail|tests/safety/arena_invalidate_duplicate_lifetime_reject.tl|-|lifetime `r` is invalidated by more than one parameter
+arena_invalidate_lifetime_absent_reject|check-fail|tests/safety/arena_invalidate_lifetime_absent_reject.tl|-|:invalidate lifetime `r` does not appear in the parameter type
+arena_invalidate_reference_reject|check-fail|tests/safety/arena_invalidate_reference_reject.tl|-|:invalidate requires an owned parameter, not a reference
+arena_invalidate_extern_reject|check-fail|tests/safety/arena_invalidate_extern_reject.tl|-|an extern function cannot declare an :invalidate parameter
+arena_invalidate_comptime_reject|check-fail|tests/safety/arena_invalidate_comptime_reject.tl|-|parse: :invalidate requires a runtime parameter
+arena_invalidate_malformed_reject|check-fail|tests/safety/arena_invalidate_malformed_reject.tl|-|parse: malformed :invalidate metadata; expected (:invalidate lifetime)
+arena_invalidate_duplicate_metadata_reject|check-fail|tests/safety/arena_invalidate_duplicate_metadata_reject.tl|-|parse: duplicate :invalidate parameter metadata
+arena_invalidate_local_type_reject|check-fail|tests/safety/arena_invalidate_local_type_reject.tl|-|(:invalidate r T) is only valid as a parameter type
+arena_invalidate_function_drop_effect_reject|check-fail|tests/safety/arena_invalidate_function_drop_effect_reject.tl|-|the function types differ in a parameter's :invalidate effect
+arena_invalidate_function_add_effect_reject|check-fail|tests/safety/arena_invalidate_function_add_effect_reject.tl|-|the function types differ in a parameter's :invalidate effect
+arena_invalidate_forward_defined|run-exit|tests/safety/arena_invalidate_forward_defined.tl|42|-
+arena_invalidate_two_effects_defined|run-exit|tests/safety/arena_invalidate_two_effects_defined.tl|42|-
+arena_invalidate_branch_defined|run-exit|tests/safety/arena_invalidate_branch_defined.tl|42|-
+arena_invalidate_try_defined|run-exit|tests/safety/arena_invalidate_try_defined.tl|42|-
+arena_invalidate_transfer_defined|run-exit|tests/safety/arena_invalidate_transfer_defined.tl|42|-
+arena_invalidate_function_value_defined|run-exit|tests/safety/arena_invalidate_function_value_defined.tl|42|-
+arena_end_macro_use_after_reject|check-fail|tests/safety/arena_end_macro_use_after_reject.tl|-|use of moved value `text`
+arena_end_macro_double_destroy_reject|check-fail|tests/safety/arena_end_macro_double_destroy_reject.tl|-|use of moved value `scratch`
+arena_end_macro_rewind_with_owner_reject|check-fail|tests/safety/arena_end_macro_rewind_with_owner_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `w` holds values from it
+arena_end_macro_imported_use_after_reject|check-fail|tests/safety/arena_end_macro_imported_use_after_reject.tl|-|use of moved value `text`
+arena_end_macro_invalidate_discharge_defined|run-exit|tests/safety/arena_end_macro_invalidate_discharge_defined.tl|42|-
+arena_end_value_local_reject|check-fail|tests/safety/arena_end_value_local_reject.tl|-|arena.destroy-safe! ends an arena and cannot be used as a function value
+arena_end_value_with_owner_reject|check-fail|tests/safety/arena_end_value_with_owner_reject.tl|-|arena.destroy-safe! ends an arena and cannot be used as a function value
+arena_end_value_argument_reject|check-fail|tests/safety/arena_end_value_argument_reject.tl|-|arena.destroy-safe! ends an arena and cannot be used as a function value
+arena_end_value_rewind_reject|check-fail|tests/safety/arena_end_value_rewind_reject.tl|-|arena.rewind-safe! ends an arena and cannot be used as a function value
+arena_end_with_cleanup_use_after_reject|check-fail|tests/safety/arena_end_with_cleanup_use_after_reject.tl|-|use of moved value `text`
+arena_end_with_cleanup_owner_live_reject|check-fail|tests/safety/arena_end_with_cleanup_owner_live_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `a` while `with` cleanup owner `w` holds values from it
+arena_end_with_result_escape_reject|check-fail|tests/safety/arena_end_with_result_escape_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
+arena_end_with_result_box_reject|check-fail|tests/safety/arena_end_with_result_box_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
+arena_end_with_result_local_reject|check-fail|tests/safety/arena_end_with_result_local_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
+arena_end_with_result_fixed_array_reject|check-fail|tests/safety/arena_end_with_result_fixed_array_reject.tl|-|the with result holds values of `a`, which its cleanup arena.destroy-safe! ends when the scope exits
+arena_end_with_rewind_result_reject|check-fail|tests/safety/arena_end_with_rewind_result_reject.tl|-|the with result holds values of `p`, which its cleanup arena.rewind-safe! ends when the scope exits
+arena_end_with_break_reject|check-fail|tests/safety/arena_end_with_break_reject.tl|-|use of moved value `text`
+arena_end_with_break_owner_live_reject|check-fail|tests/safety/arena_end_with_break_owner_live_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `a` while `with` cleanup owner `w` holds values from it
+arena_end_alias_call_reject|check-fail|tests/safety/arena_end_alias_call_reject.tl|-|use of moved value `text`
+arena_end_alias_value_reject|check-fail|tests/safety/arena_end_alias_value_reject.tl|-|arena.destroy-safe! ends an arena and cannot be used as a function value
+arena_end_alias_with_reject|check-fail|tests/safety/arena_end_alias_with_reject.tl|-|use of moved value `text`
+arena_end_with_double_destroy_reject|check-fail|tests/safety/arena_end_with_double_destroy_reject.tl|-|arena.destroy-safe! cannot end `a`, whose with cleanup ends it when its scope exits
+arena_end_with_atomic_reject|check-fail|tests/safety/arena_end_with_atomic_reject.tl|-|a with cleanup cannot end atomic arena `a`
+arena_end_with_invalidate_use_after_reject|check-fail|tests/safety/arena_end_with_invalidate_use_after_reject.tl|-|use of moved value `t`
+arena_end_with_cleanup_scope_defined|run-exit|tests/safety/arena_end_with_cleanup_scope_defined.tl|42|-
+arena_end_with_cleanup_param_result_defined|run-exit|tests/safety/arena_end_with_cleanup_param_result_defined.tl|42|-
+arena_end_with_cleanup_moved_owner_defined|run-exit|tests/safety/arena_end_with_cleanup_moved_owner_defined.tl|42|-
+arena_end_with_rewind_defined|run-exit|tests/safety/arena_end_with_rewind_defined.tl|42|-
+arena_end_with_invalidate_defined|run-exit|tests/safety/arena_end_with_invalidate_defined.tl|42|-
+arena_end_with_inner_loop_defined|run-exit|tests/safety/arena_end_with_inner_loop_defined.tl|42|-
+arena_end_with_break_defined|run-exit|tests/safety/arena_end_with_break_defined.tl|42|-
+arena_end_with_continue_defined|run-exit|tests/safety/arena_end_with_continue_defined.tl|42|-
+arena_end_nested_with_arena_reject|check-fail|tests/safety/arena_end_nested_with_arena_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
+arena_end_nested_with_arena_other_defined|run-exit|tests/safety/arena_end_nested_with_arena_other_defined.tl|42|-
+arena_end_lambda_captured_reject|check-fail|tests/safety/arena_end_lambda_captured_reject.tl|-|arena.destroy-safe! cannot end an arena reached through `o`, which the closure captures
+arena_end_lambda_captured_field_reject|check-fail|tests/safety/arena_end_lambda_captured_field_reject.tl|-|arena.destroy-safe! cannot end an arena reached through `state`, which the closure captures
+arena_invalidate_independent_ref_reject|check-fail|tests/safety/arena_invalidate_independent_ref_reject.tl|-|an :invalidate call cannot pass a value tied to the arena it destroys
+arena_invalidate_independent_ref_other_defined|run-exit|tests/safety/arena_invalidate_independent_ref_other_defined.tl|42|-
+arena_store_callee_global_in_arena_reject|check-fail|tests/safety/arena_store_callee_global_in_arena_reject.tl|tests/safety/arena_store_callee_global_in_arena_reject.tl:15:20|error[E0205]: typecheck: cannot call `stash` here: it allocates in the active arena and may store an allocation into a global, which would outlive the
+arena_store_callee_global_reject|check-fail|tests/safety/arena_store_callee_global_reject.tl|tests/safety/arena_store_callee_global_reject.tl:12:22|error[E0205]: typecheck: cannot call `stash` here: it allocates in the active arena and may store an allocation into a global, which would outlive the
+arena_store_callee_mut_param_reject|check-fail|tests/safety/arena_store_callee_mut_param_reject.tl|tests/safety/arena_store_callee_mut_param_reject.tl:14:28|error[E0205]: typecheck: cannot call `put` here: it allocates in the active arena and may store an allocation through this argument, which would outli
+arena_store_closure_reject|check-fail|tests/safety/arena_store_closure_reject.tl|tests/safety/arena_store_closure_reject.tl:13:24|error[E0205]: typecheck: cannot call `<indirect call/lambda>` here: it allocates in the active arena and may store an allocation into a global, which 
+arena_store_constructor_flow_reject|check-fail|tests/safety/arena_store_constructor_flow_reject.tl|tests/safety/arena_store_constructor_flow_reject.tl:14:18|error[E0205]: typecheck: cannot call `stash` here: it allocates in the active arena and may store an allocation into a global, which would outlive the
+arena_store_container_growth_reject|check-fail|tests/safety/arena_store_container_growth_reject.tl|tests/safety/arena_store_container_growth_reject.tl:9:39|error[E0205]: typecheck: cannot call `push-ref!` here: it allocates in the active arena and may store an allocation through this argument, which would
+arena_store_indirect_reject|check-fail|tests/safety/arena_store_indirect_reject.tl|tests/safety/arena_store_indirect_reject.tl:14:20|error[E0205]: typecheck: cannot call `<indirect call/lambda>` here: it allocates in the active arena and may store an allocation into a global, which 
+arena_store_scratch_box_store_reject|check-fail|tests/safety/arena_store_scratch_box_store_reject.tl|tests/safety/arena_store_scratch_box_store_reject.tl:12:30|error[E0205]: typecheck: cannot call `store-box` here: it allocates in the active arena and may store an allocation through this argument, which would
+arena_store_scratch_outer_container_reject|check-fail|tests/safety/arena_store_scratch_outer_container_reject.tl|tests/safety/arena_store_scratch_outer_container_reject.tl:10:35|error[E0205]: typecheck: cannot call `push-ref!` here: it allocates in the active arena and may store an allocation through this argument, which would
+arena_store_scratch_param_global_reject|check-fail|tests/safety/arena_store_scratch_param_global_reject.tl|tests/safety/arena_store_scratch_param_global_reject.tl:12:18|error[E0205]: typecheck: cannot call `stash` here: it allocates in the active arena and may store an allocation into a global, which would outlive the
+arena_store_spawn_task_reject|check-fail|tests/safety/arena_store_spawn_task_reject.tl|tests/safety/arena_store_spawn_task_reject.tl:10:5|error[E0205]: typecheck: cannot pass `<indirect call/lambda>` to `spawn-box-i64`: it calls the function inside an arena scope, and `<indirect call/lam
+arena_store_transitive_reject|check-fail|tests/safety/arena_store_transitive_reject.tl|tests/safety/arena_store_transitive_reject.tl:14:18|error[E0205]: typecheck: cannot call `stash2` here: it allocates in the active arena and may store an allocation into a global, which would outlive th
+arena_store_local_head_reject|check-fail|tests/safety/arena_store_local_head_reject.tl|tests/safety/arena_store_local_head_reject.tl:17:24|error[E0205]: typecheck: cannot call `<indirect call/lambda>` here: it allocates in the active arena and may store an allocation into a global, which 
+arena_store_local_function_argument_reject|check-fail|tests/safety/arena_store_local_function_argument_reject.tl|tests/safety/arena_store_local_function_argument_reject.tl:20:10|error[E0205]: typecheck: cannot pass `<indirect call/lambda>` to `run`: it calls the function inside an arena scope, and `<indirect call/lambda>` may 
+arena_store_closure_capture_reject|check-fail|tests/safety/arena_store_closure_capture_reject.tl|tests/safety/arena_store_closure_capture_reject.tl:14:24|error[E0205]: typecheck: cannot call `<indirect call/lambda>` here: it allocates in the active arena and may store an allocation through this argument
+arena_store_explicit_arena_outside_value_reject|check-fail|tests/safety/arena_store_explicit_arena_outside_value_reject.tl|tests/safety/arena_store_explicit_arena_outside_value_reject.tl:22:22|error[E0205]: typecheck: cannot call `add-fact` here: it allocates in the active arena and may store an allocation into a global, which would outlive 
+arena_store_explicit_arena_result_reject|check-fail|tests/safety/arena_store_explicit_arena_result_reject.tl|tests/safety/arena_store_explicit_arena_result_reject.tl:18:22|error[E0205]: typecheck: cannot call `keep!` here: it allocates in the active arena and may store an allocation into a global, which would outlive the
+arena_store_outer_array_growth_reject|check-fail|tests/safety/arena_store_outer_array_growth_reject.tl|tests/safety/arena_store_outer_array_growth_reject.tl:5:3|error[E0205]: typecheck: cannot store region-tagged value into the array this push grows; region value would escape
+arena_store_helper_push_outside_ok|run-exit|tests/safety/arena_store_helper_push_outside_ok.tl|42|-
+arena_store_helper_returns_string_ok|run-exit|tests/safety/arena_store_helper_returns_string_ok.tl|42|-
+arena_store_read_only_callee_ok|run-exit|tests/safety/arena_store_read_only_callee_ok.tl|42|-
+arena_store_scalar_through_mut_ok|run-exit|tests/safety/arena_store_scalar_through_mut_ok.tl|42|-
+arena_store_scratch_local_container_ok|run-exit|tests/safety/arena_store_scratch_local_container_ok.tl|42|-
+arena_store_unsafe_exempt_ok|run-exit|tests/safety/arena_store_unsafe_exempt_ok.tl|42|-
+arena_store_explicit_arena_ok|run-exit|tests/safety/arena_store_explicit_arena_ok.tl|42|-
+arena_store_local_array_growth_ok|run-exit|tests/safety/arena_store_local_array_growth_ok.tl|42|-
+arena_store_outer_array_slot_ok|run-exit|tests/safety/arena_store_outer_array_slot_ok.tl|42|-
+arena_store_with_cleanup_global_reject|check-fail|tests/safety/arena_store_with_cleanup_global_reject.tl|tests/safety/arena_store_with_cleanup_global_reject.tl:12:29|error[E0205]: typecheck: cannot call `leak` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via leak); region value would escape
+arena_store_with_cleanup_arg_mut_reject|check-fail|tests/safety/arena_store_with_cleanup_arg_mut_reject.tl|tests/safety/arena_store_with_cleanup_arg_mut_reject.tl:7:30|error[E0205]: typecheck: cannot call `leak-mut` here: it allocates in the active arena and may store an allocation through this argument, which would outlive the arena (via leak-mut); region value would escape
+arena_store_with_scratch_cleanup_global_reject|check-fail|tests/safety/arena_store_with_scratch_cleanup_global_reject.tl|tests/safety/arena_store_with_scratch_cleanup_global_reject.tl:13:41|error[E0205]: typecheck: cannot call `leak` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via leak); region value would escape
+arena_store_temp_disposer_global_reject|check-fail|tests/safety/arena_store_temp_disposer_global_reject.tl|tests/safety/arena_store_temp_disposer_global_reject.tl:19:27|error[E0205]: typecheck: cannot call `close-guard` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via close-guard -> leak-fd); region value would escape
+arena_store_temp_disposer_arg_mut_reject|check-fail|tests/safety/arena_store_temp_disposer_arg_mut_reject.tl|tests/safety/arena_store_temp_disposer_arg_mut_reject.tl:16:27|error[E0205]: typecheck: cannot call `close-mut-guard` here: it allocates in the active arena and may store an allocation through this argument, which would outlive the arena (via close-mut-guard -> leak-mut); region value would escape
+arena_store_struct_cleanup_with_reject|check-fail|tests/safety/arena_store_struct_cleanup_with_reject.tl|tests/safety/arena_store_struct_cleanup_with_reject.tl:16:37|error[E0205]: typecheck: cannot call `close-guard` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via close-guard -> leak-fd); region value would escape
+arena_store_struct_cleanup_arg_mut_reject|check-fail|tests/safety/arena_store_struct_cleanup_arg_mut_reject.tl|tests/safety/arena_store_struct_cleanup_arg_mut_reject.tl:12:27|error[E0205]: typecheck: cannot call `close-mut-guard` here: it allocates in the active arena and may store an allocation through this argument, which would outlive the arena (via close-mut-guard -> leak-mut); region value would escape
+arena_store_early_return_inner_with_reject|check-fail|tests/safety/arena_store_early_return_inner_with_reject.tl|tests/safety/arena_store_early_return_inner_with_reject.tl:12:29|error[E0205]: typecheck: cannot call `leak` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via leak); region value would escape
+arena_store_with_escape_cleanup_global_reject|check-fail|tests/safety/arena_store_with_escape_cleanup_global_reject.tl|tests/safety/arena_store_with_escape_cleanup_global_reject.tl:15:42|error[E0205]: typecheck: cannot call `leak` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via leak); region value would escape
+arena_store_in_arena_destroy_with_cleanup_reject|check-fail|tests/safety/arena_store_in_arena_destroy_with_cleanup_reject.tl|tests/safety/arena_store_in_arena_destroy_with_cleanup_reject.tl:15:33|error[E0205]: typecheck: cannot call `leak` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via leak); region value would escape
+arena_store_nested_owned_struct_cleanup_reject|check-fail|tests/safety/arena_store_nested_owned_struct_cleanup_reject.tl|tests/safety/arena_store_nested_owned_struct_cleanup_reject.tl:20:45|error[E0205]: typecheck: cannot call `close-outer` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via close-outer -> close-inner -> leak-fd); region value would escape
+arena_store_early_break_inner_with_reject|check-fail|tests/safety/arena_store_early_break_inner_with_reject.tl|tests/safety/arena_store_early_break_inner_with_reject.tl:15:33|error[E0205]: typecheck: cannot call `leak` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via leak); region value would escape
+arena_store_enum_temp_disposer_reject|check-fail|tests/safety/arena_store_enum_temp_disposer_reject.tl|tests/safety/arena_store_enum_temp_disposer_reject.tl:20:27|error[E0205]: typecheck: cannot call `close-eguard` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via close-eguard -> leak-fd); region value would escape
+arena_store_in_arena_phase_with_cleanup_reject|check-fail|tests/safety/arena_store_in_arena_phase_with_cleanup_reject.tl|tests/safety/arena_store_in_arena_phase_with_cleanup_reject.tl:16:33|error[E0205]: typecheck: cannot call `leak` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via leak); region value would escape
+arena_store_with_cleanup_param_reject|check-fail|tests/safety/arena_store_with_cleanup_param_reject.tl|tests/safety/arena_store_with_cleanup_param_reject.tl:15:13|error[E0205]: typecheck: cannot pass `leak` to `run-with`: it calls the function inside an arena scope, and `leak` may store an allocation of that arena where it would outlive it (via leak); region value would escape
+arena_store_with_cleanup_param_ok|check-ok|tests/safety/arena_store_with_cleanup_param_ok.tl|-|-
+arena_store_with_cleanup_safe_ok|run-exit|tests/safety/arena_store_with_cleanup_safe_ok.tl|42|-
+arena_store_with_cleanup_local_reject|check-fail|tests/safety/arena_store_with_cleanup_local_reject.tl|tests/safety/arena_store_with_cleanup_local_reject.tl:14:31|error[E0205]: typecheck: cannot call `<indirect call/lambda>` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via <indirect call/lambda> -> leak); region value would escape
+arena_store_with_escape_scratch_effect_reject|check-fail|tests/safety/arena_store_with_escape_scratch_effect_reject.tl|tests/safety/arena_store_with_escape_scratch_effect_reject.tl:20:20|error[E0205]: typecheck: cannot call `run` here: it allocates in the active arena and may store an allocation into a global, which would outlive the arena (via run -> pick-scratch); region value would escape

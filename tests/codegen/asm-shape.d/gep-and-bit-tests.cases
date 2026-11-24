@@ -1,0 +1,160 @@
+# opt2 assembly-shape gates for the regalloc/backend/optimizer fixtures (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+
+# string.append addresses its destination with one scaled lea, no add.
+case gep-value-direct
+source tests/integration/gep_value_direct.tl
+capture append ^(_tl_.*stdlib_string_append):$
+in fn {{append}}
+match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %rdi$
+not-match ^[[:space:]]+addq .*%rdi$
+count-fixed = 2 call tl_memcpy
+
+# 32-byte element copies use SIB-addressed movups chunks: no address lea and
+# no staged frame address; constant indexes fold into the displacement.
+case gep-copy-sib
+source tests/integration/gep_copy_sib_shape.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_gep_copy_sib_shape_take
+contains shlq $5
+count = 2 ^[[:space:]]+movups (16)?\(%r[a-z0-9]+,%r[a-z0-9]+,1\), %xmm[0-9]+$
+not-match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$
+not-match ^[[:space:]]+leaq -?[0-9]*\((%rsp|%rbp)\), %r[a-z0-9]+$
+in fn _tl_gep_copy_sib_shape_put
+contains shlq $5
+count = 2 ^[[:space:]]+movups %xmm[0-9]+, (16)?\(%r[a-z0-9]+,%r[a-z0-9]+,1\)$
+not-match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %r[a-z0-9]+$
+not-match ^[[:space:]]+leaq -?[0-9]*\((%rsp|%rbp)\), %r[a-z0-9]+$
+in fn _tl_gep_copy_sib_shape_take_const
+count = 2 ^[[:space:]]+movups (96|112)\(%r[a-z0-9]+\), %xmm[0-9]+$
+not-match ^[[:space:]]+leaq 96\(%r[a-z0-9]+\), %r[a-z0-9]+$
+
+# A widening cast of a loaded byte folds into the load; a stored byte refuses.
+case load-widen-cast-fold
+source tests/integration/load_widen_cast_fold.tl
+in fn _tl_load_widen_cast_fold_classify
+count = 1 ^[[:space:]]+movzbl \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %(e[a-z]+|r[0-9]+d)$
+not-match ^[[:space:]]+movzb[lq] %[a-z0-9]+[lb],
+in fn _tl_load_widen_cast_fold_refused
+match ^[[:space:]]+movzbl \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %(e[a-z]+|r[0-9]+d)$
+match movb[ ]
+
+# Single-bit and matching-mask tests become `test` + the right jcc sense;
+# multi-bit, mismatched, ordered and dynamic masks keep and/cmp.
+case mask-test-admission
+source tests/integration/bit_test_mask_admission.tl
+in fn _tl_bit_test_mask_admission_parity_set
+count = 1 ^[[:space:]]+testb [$]1, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
+after ^[[:space:]]+testb [$]1, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
+next-line ^[[:space:]]+je[ ]
+not-match ^[[:space:]]+and[bwlq] [$]1, %[a-z0-9]+$
+not-match ^[[:space:]]+cmp[bwlq] [$]1, %[a-z0-9]+$
+in fn _tl_bit_test_mask_admission_bit3_clear
+count = 1 ^[[:space:]]+testb [$]8, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
+after ^[[:space:]]+testb [$]8, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
+next-line ^[[:space:]]+jne[ ]
+not-match ^[[:space:]]+and[bwlq] [$]8, %[a-z0-9]+$
+in fn _tl_bit_test_mask_admission_pair_both_set
+match ^[[:space:]]+andl [$]3, %(e[a-z]+|r[0-9]+d)$
+match ^[[:space:]]+cmpq [$]3, %r
+not-match ^[[:space:]]+test[bwlq] [$]3, %[a-z0-9]+$
+in fn _tl_bit_test_mask_admission_mismatched_const
+match ^[[:space:]]+andl [$]4, %(e[a-z]+|r[0-9]+d)$
+match ^[[:space:]]+cmpq [$]1, %r
+not-match ^[[:space:]]+test[bwlq] [$]4, %[a-z0-9]+$
+in fn _tl_bit_test_mask_admission_mask_le
+match ^[[:space:]]+andl [$]1, %(e[a-z]+|r[0-9]+d)$
+match ^[[:space:]]+cmpq [$]1, %r
+in fn _tl_bit_test_mask_admission_dynamic_mask
+match ^[[:space:]]+andq %r[a-z0-9]+, %r[a-z0-9]+$
+in fn _tl_bit_test_mask_admission_bit63_set
+match ^[[:space:]]+andq %r[a-z0-9]+, %r[a-z0-9]+$
+match ^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$
+
+# A bit test whose target carries a loop phi still fuses to `bt` + jcc, with
+# the phi copies on an edge block (none here: the counter keeps its register),
+# not a variable shift.
+case bit-test-phi-edge
+source tests/integration/bit_test_phi_edge.tl
+in fn _tl_bit_test_phi_edge_count_defs
+match ^[[:space:]]+btq %r[a-z0-9]+, %r[a-z0-9]+$
+not-match ^[[:space:]]+shrq %cl, %r
+
+# sqrt lowers to sqrtsd/sqrtss with no call and no private helper.
+case stdlib-math-sqrt
+source tests/integration/stdlib_math_ieee.tl
+target linux-x86_64 windows-x86_64
+if-fn tl_test_math_sqrt_f64$typelisp
+in fn tl_test_math_sqrt_f64$typelisp
+else
+in fn tl_test_math_sqrt_f64
+end-if
+contains sqrtsd
+not-match ^[[:space:]]+call[ ]
+if-fn tl_test_math_sqrt_f32$typelisp
+in fn tl_test_math_sqrt_f32$typelisp
+else
+in fn tl_test_math_sqrt_f32
+end-if
+contains sqrtss
+not-match ^[[:space:]]+call[ ]
+in asm
+not-contains __tl_float_sqrt
+
+# Inlined allocation sites get unique labels: the whole backend test driver
+# links as one opt2 executable. The smoke driver supplies its `main` (#7071)
+# and reaches every backend test.
+case inline-alloc-unique-labels-link
+source src/tests/compiler_backend_smoke.tl
+do build
+exit 0
+
+# A spilled gep load folds into its compare instead of a store/reload pair.
+case gep-load-cmp-spilled-stage
+source tests/integration/gep_load_cmp_spilled_stage.tl
+in fn _tl_gep_load_cmp_spilled_stage_changed_question
+count >= 4 ^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+metric store-then-cmp-same-slot = 0
+in fn _tl_gep_load_cmp_spilled_stage_refused
+count = 0 ^[[:space:]]+cmpq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+match ^[[:space:]]+movq \(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r[a-z0-9]+$
+
+# A signed range check with a non-negative lower bound merges into one
+# unsigned compare; a paired or global window keeps the right shape.
+case range-merge-unsigned
+source tests/integration/range_merge_unsigned.tl
+in fn _tl_range_merge_unsigned_literal_window
+match ^[[:space:]]+cmpq \$16, %r[a-z0-9]+$
+match ^[[:space:]]+jae[ ]
+not-match ^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$
+not-match ^[[:space:]]+j(l|ge)[ ]
+in fn _tl_range_merge_unsigned_paired_window
+count = 1 ^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$
+count = 1 ^[[:space:]]+jae[ ]
+count = 2 ^[[:space:]]+j(l|ge)[ ]
+count = 2 ^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$
+in fn _tl_range_merge_unsigned_global_window
+match ^[[:space:]]+cmpq _tl_range_merge_unsigned_rm_len\(%rip\), %r[a-z0-9]+$
+count = 1 ^[[:space:]]+jae[ ]
+not-match ^[[:space:]]+testq %r[a-z0-9]+, %r[a-z0-9]+$
+not-match ^[[:space:]]+j(l|ge)[ ]
+
+# DCE-2: no branch on a literal and no dead literal move reaches the backend.
+case dce-late-flag-loop
+source tests/integration/dce_late_flag_loop.tl
+in fn main
+metric literal-then-test = 0
+metric literal-then-redef = 0
+not-match ^[[:space:]]+movq \$-1, %[a-z0-9]+$
+
+case dce-late-flag-loop-win64
+source tests/integration/dce_late_flag_loop.tl
+target windows-x86_64
+in fn main
+narrow seh-endproc
+metric literal-then-test = 0
+metric literal-then-redef = 0
+not-match ^[[:space:]]+movq \$-1, %[a-z0-9]+$

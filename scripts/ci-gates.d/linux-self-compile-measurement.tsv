@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+linux-self-compile-measurement	370	linux	Linux self-compile measurement	bootstrap-compiler	stage2	2048	instruction-count	gate_self_compile_measurement	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

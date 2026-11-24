@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-by-value-aggregate-abi-shape-gate	1160	linux	stage2 by-value aggregate ABI shape gate	bootstrap-compiler	stage2	256	-	scripts/verify-codegen-cases.sh tests/codegen/by-value-aggregate-abi.cases	linux-2	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

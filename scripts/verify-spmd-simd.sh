@@ -17,7 +17,7 @@ set -eu
 # foreach lanes across i64/i32/i8/u8/f64/f32, and reductions across the scalar
 # supported operator/type surface. The per-program assembly shapes and the
 # trap-path programs (bounds, shift and selector traps in every mode) are
-# tests/spmd/simd.cases, run afterwards by scripts/verify-codegen-cases.sh.
+# tests/spmd/simd.d, run afterwards by scripts/verify-codegen-cases.sh.
 #
 # A forced-SDE duplicate run (TYPELISP_SIMD_MODE_FILTER=avx512, set by
 # scripts/ci-verify.sh) repeats only the AVX-512 route: every other mode
@@ -542,10 +542,10 @@ if [ -n "${SIMD_MODE_FILTER:-}" ] && [ "$SIMD_MODE_SELECTED" -eq 0 ]; then
     exit 1
 fi
 
-# Codegen shapes and trap paths: tests/spmd/simd.cases.
+# Codegen shapes and trap paths: tests/spmd/simd.d.
 if ! TYPELISP_BIN=$COMPILER CODEGEN_CASES_WORKDIR="$WORKDIR/cases" \
-    sh "$ROOT/scripts/verify-codegen-cases.sh" tests/spmd/simd.cases; then
-    echo "tests/spmd/simd.cases" >> "$FAILURES"
+    sh "$ROOT/scripts/verify-codegen-cases.sh" tests/spmd/simd.d; then
+    echo "tests/spmd/simd.d" >> "$FAILURES"
 fi
 
 if [ -s "$FAILURES" ]; then

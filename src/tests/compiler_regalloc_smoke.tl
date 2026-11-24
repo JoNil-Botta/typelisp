@@ -60,22 +60,23 @@
 (define (compiler-reg-smoke-spmd-call-shape-ok?) : bool
   (let
     [func : ir.CompilerIrFunction (compiler-reg-smoke-spmd-call-function)]
-    [blocks : ir.CompilerIrBlockList
-      (match (clone func)
-        [(Function _ _ _ _ inner _) inner])]
     [call-args : live.CompilerLiveI64Set
-      (reg.compiler-reg-call-arg-vars-blocks
-        (& (clone blocks))
-        (live.compiler-live-set-empty))]
+      (match (& func)
+        [(Function _ _ _ _ blocks _)
+          (reg.compiler-reg-call-arg-vars-blocks
+            blocks
+            (live.compiler-live-set-empty))])]
     [liveness : live.CompilerFunctionLiveness
-      (live.compiler-live-analyze-function (& (clone func)))]
+      (live.compiler-live-analyze-function (& func))]
     [call-live : live.CompilerLiveI64Set
-      (reg_tests.compiler-reg-call-live-blocks
-        blocks
-        liveness
-        (live.compiler-live-set-empty))]
+      (match (& func)
+        [(Function _ _ _ _ blocks _)
+          (reg_tests.compiler-reg-call-live-blocks
+            blocks
+            liveness
+            (live.compiler-live-set-empty))])]
     [direct-calls : live.CompilerLiveI64Set
-      (reg_tests.compiler-reg-direct-call-points (clone func))]
+      (reg_tests.compiler-reg-direct-call-points (& func))]
     (match (reg_tests.compiler-reg-plan-function func)
       [(Plan _ ineligible _ _ _)
         (and

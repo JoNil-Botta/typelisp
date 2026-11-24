@@ -3763,8 +3763,24 @@
     [(Neg)
       (match v
         [(I64 n) (Ok (I64 (- 0 n)) fuel)]
-        [(F64 n) (ctfe-f64-result (- 0.0 n) expr fuel)]
-        [(F32 n) (ctfe-f32-result (- 0.0 n) expr fuel)]
+        [(F64 n)
+          (ctfe-f64-result
+            (cfloat.compiler-float-f64-from-bits
+              (bit-xor
+                (cfloat.compiler-float-f64-bits n)
+                (shl (cast 1 : u64) 63)))
+            expr
+            fuel)]
+        [(F32 n)
+          (ctfe-f32-result
+            (cast
+              (cfloat.compiler-float-f32-from-bits
+                (bit-xor
+                  (cfloat.compiler-float-f32-bits-from-f64 n)
+                  (cast 0x80000000 : u32)))
+              : f64)
+            expr
+            fuel)]
         [_
           (Err
             (box

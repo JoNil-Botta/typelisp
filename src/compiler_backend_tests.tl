@@ -40883,62 +40883,54 @@ b_keep:
     (ir.compiler-ir-extern-seq-empty)
     (ir.CompilerIrReturnStorageAuthority.None)))
 
-(define (compiler-backend-placement-test-last-before
-  [text : (& text str)]
-  [needle : String]
-  [limit : i64]) : i64
-  (let
-    [pos : i64 -1]
-    [scan : i64 0]
-    [next : i64 0]
-    (while (>= scan 0)
-      (set! next (backend.compiler-backend-string-find-from text needle scan))
-      (if (and (>= next 0) (< next limit))
-        (begin
-          (set! pos next)
-          (set! scan (+ next 1)))
-        (set! scan -1)))
-    pos))
-
 ;; Rotation moves whole blocks, and on Windows the unwind description is
-;; positional: `.seh_` notes describe the prologue and nothing else may sit
-;; between them and `.seh_endprologue`. The entry-first rule is what guarantees
-;; that, and this is the check that it holds while a loop below it is rotated.
+;; positional: the prologue notes describe the entry instructions and nothing
+;; else may sit between them and the end of the prologue. The entry-first rule
+;; is what guarantees that, and this is the check that it holds while a loop
+;; below it is rotated. The unwind lowering only accepts that shape: any other
+;; line in the prologue, or a note in the body, keeps the `.seh_` directives.
 (define (compiler-backend-placement-windows-seh-shape-ok?) : bool
   (match (backend.compiler-backend-emit-program-for-target
     (compiler-backend-placement-seh-program)
     (be_state.CompilerBackendTarget.Windows))
     [(Ok asm)
       (let
+        [entry : i64
+          (backend.compiler-backend-string-find-from
+            asm
+            "_tl_placement_loop:\n"
+            0)]
         ;; the loop test's own label, and the first place anything JUMPS to it
         ;; (a jump operand ends the line, a label definition ends in a colon)
         [label : i64
           (backend.compiler-backend-string-find-from asm "_header:\n" 0)]
         [operand : i64
           (backend.compiler-backend-string-find-from asm "_header\n" 0)]
-        [prologue : i64
-          (compiler-backend-placement-test-last-before
-            asm
-            "    .seh_endprologue\n"
-            (if (>= label 0)
-              label
-              0))]
+        [end : i64
+          (if (< entry 0)
+            -1
+            (backend.compiler-backend-string-find-from
+              asm
+              ".L_tl_seh_end_"
+              entry))]
         (and
-          (>= label 0)
-          (>= operand 0)
-          (>= prologue 0)
+          (>= entry 0)
+          (< entry operand)
           ;; rotation put the test below the body, so the function reaches it by
           ;; a jump before ever defining the label ...
           (< operand label)
-          (< prologue operand)
-          ;; ... and no `.seh_` note travelled into the rotated body with a
-          ;; block: the next one is not until the test itself
-          (>=
-            (backend.compiler-backend-string-find-from
-              asm
-              "    .seh_"
-              (+ prologue 1))
-            label)))]
+          (< label end)
+          ;; ... the lowering accepted the function: no `.seh_` note is left in
+          ;; it ...
+          (let
+            [note : i64
+              (backend.compiler-backend-string-find-from asm "    .seh_" entry)]
+            (or (< note 0) (> note end)))
+          ;; ... and its record's 4-byte prologue is the entry `subq` alone
+          (compiler-backend-win64-row-describes?
+            (& asm)
+            "_tl_placement_loop"
+            "    .byte 1, 4, 1, 0\n    .byte 4, 98    # UWOP_ALLOC_SMALL 56\n    .byte 0, 0\n")))]
     [(Err _) false]))
 
 (define (compiler-backend-placement-ok?) : bool

@@ -2284,10 +2284,10 @@
             (compiler_regalloc.compiler-reg-max
               max-space
               (+
-                (be_facts.compiler-backend-outgoing-shadow-space
+                (be_facts.compiler-backend-call-instr-outgoing-shadow-space
                   target
-                  (compiler_regalloc.compiler-reg-call-instr-convention
-                    (& instr)))
+                  (& instr)
+                  program-index)
                 (compiler-backend-instr-outgoing-stack-space
                   type-segment-bases
                   target
@@ -7986,6 +7986,13 @@
           frame-safe
           (= call-space 0)
           (= tail-stack-count 0)
+          (=
+            (be_facts.compiler-backend-direct-call-outgoing-shadow-space
+              target
+              convention
+              program-index
+              name)
+            (be_facts.compiler-backend-outgoing-shadow-space target (Internal)))
           (string.eq return-normalize ""))
           (Ok
             (str_cat.str-cat
@@ -10037,10 +10044,10 @@
         (be_state.compiler-backend-global-shared-view args)
         0
         true)]
-    ;; The private mask block lives below the ordinary outgoing call layout.
-    ;; This includes Win64's callee-owned shadow space and every stack-passed
-    ;; uniform argument, so neither the callee nor emit-call-args can overwrite
-    ;; masks while the call is active.
+    ;; The private mask block lives below the ordinary outgoing call layout
+    ;; (every stack-passed uniform argument, plus any convention shadow space),
+    ;; so neither the callee nor emit-call-args can overwrite masks while the
+    ;; call is active.
     [call-space : i64
       (compiler-backend-call-stack-arg-layout-space
         type-segment-bases
@@ -10161,9 +10168,9 @@
         (be_state.compiler-backend-global-shared-view args)
         0
         true)]
-    ;; Keep the private vector block disjoint from ordinary outgoing storage.
-    ;; Win64 callees own the first 32 bytes at %rsp, and uniform arguments on
-    ;; either ABI may occupy stack slots beyond their register banks.
+    ;; Keep the private vector block disjoint from ordinary outgoing storage
+    ;; (any convention shadow space plus uniform stack arguments beyond the
+    ;; register banks).
     [call-space : i64
       (compiler-backend-call-stack-arg-layout-space
         type-segment-bases

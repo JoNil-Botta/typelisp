@@ -1158,7 +1158,10 @@
     [limits : graph.CompilerIncrementalGraphLimits
       (graph.compiler-graph-default-limits)]
     [edge : trace.CompilerIncrementalTraceEdge
-      (graph-test-child-edge 0 (clone child) (graph-test-output 11))]
+      (graph-test-child-edge
+        0
+        (identity.clone-compiler-incremental-identity (& child))
+        (graph-test-output 11))]
     [record : trace.CompilerIncrementalTraceRecord
       (match (trace.compiler-trace-record (& edge) (& parent) (& limits.trace))
         [(Ok value) value]

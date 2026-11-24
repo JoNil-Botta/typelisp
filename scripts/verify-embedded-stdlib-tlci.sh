@@ -203,8 +203,9 @@ FULL_BLOCKER_STDERR=$WORKDIR/full-blockers.stderr
 IDENTITY_IMAGE=$WORKDIR/stdlib-identity-manifest.tlci
 IDENTITY_STDOUT=$WORKDIR/identity-manifest.stdout
 IDENTITY_ACTUAL=$WORKDIR/identity-manifest.actual.tsv
+IDENTITY_ACTUAL_SORTED=$WORKDIR/identity-manifest.actual.sorted.tsv
 IDENTITY_EXPECTED=$WORKDIR/identity-manifest.expected.tsv
-IDENTITY_FIXTURES=tools/embedded-stdlib-tlci/identity-fixtures.tsv
+IDENTITY_FIXTURES_DIR=tools/embedded-stdlib-tlci/identity-fixtures.d
 MUTATED_ROOT=$WORKDIR/stdlib-mutated
 MUTATED_IMAGE=$WORKDIR/stdlib-mutated.tlci
 MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
@@ -400,15 +401,84 @@ if ! awk -F '\t' '
     echo "identity-manifest diagnostics emitted a malformed or duplicate row" >&2
     exit 1
 fi
-if [ ! -f "$IDENTITY_FIXTURES" ]; then
-    echo "embedded stdlib tlci identity fixture manifest is missing" >&2
+if [ ! -d "$IDENTITY_FIXTURES_DIR" ]; then
+    echo "embedded stdlib tlci identity fixture directory is missing: $IDENTITY_FIXTURES_DIR" >&2
     exit 1
 fi
-awk -F '\t' '!/^#/ && NF { print $1 "\t" $2 "\t" $3 "\t" $4 }' \
-    "$IDENTITY_FIXTURES" > "$IDENTITY_EXPECTED"
-if ! cmp -s "$IDENTITY_EXPECTED" "$IDENTITY_ACTUAL"; then
+IDENTITY_FIXTURE_FILES=$WORKDIR/identity-fixture-files.txt
+: > "$IDENTITY_FIXTURE_FILES"
+_if_entries=$(find "$IDENTITY_FIXTURES_DIR" -print | LC_ALL=C sort)
+_if_count=0
+while IFS= read -r _if_entry; do
+    [ -n "$_if_entry" ] || continue
+    [ "$_if_entry" != "$IDENTITY_FIXTURES_DIR" ] || continue
+    _if_rel=${_if_entry#"$IDENTITY_FIXTURES_DIR"/}
+    case "$_if_rel" in
+        */*)
+            echo "embedded stdlib tlci identity fixture directory contains nested entry: $_if_rel" >&2
+            exit 1
+            ;;
+        .tsv)
+            echo "embedded stdlib tlci identity fixture directory contains invalid filename: $_if_rel" >&2
+            exit 1
+            ;;
+        *.tsv) ;;
+        *)
+            echo "embedded stdlib tlci identity fixture directory contains unexpected non-.tsv entry: $_if_rel" >&2
+            exit 1
+            ;;
+    esac
+    if [ ! -f "$_if_entry" ] || [ -L "$_if_entry" ]; then
+        echo "embedded stdlib tlci identity fixture directory contains non-regular entry: $_if_rel" >&2
+        exit 1
+    fi
+    printf '%s\n' "$_if_entry" >> "$IDENTITY_FIXTURE_FILES"
+    _if_count=$((_if_count + 1))
+done <<EOF
+$_if_entries
+EOF
+if [ "$_if_count" -eq 0 ]; then
+    echo "embedded stdlib tlci identity fixture directory is empty: $IDENTITY_FIXTURES_DIR" >&2
+    exit 1
+fi
+if ! awk -F '\t' '
+    {
+        path = $0
+        sub(/\r$/, "", path)
+        if (path == "") next
+        mod = path
+        sub(/^.*\//, "", mod)
+        sub(/\.tsv$/, "", mod)
+        file_rows = 0
+        while ((st = (getline raw < path)) > 0) {
+            sub(/\r$/, "", raw)
+            if (raw == "" || raw ~ /^#/) continue
+            file_rows++
+            nf = split(raw, f, "\t")
+            if (nf != 8) { bad = 1; continue }
+            if (f[1] !~ /^stdlib\.[^\/]+\/[^\/]+$/) { bad = 1 }
+            if (index(f[1], mod "/") != 1) { bad = 1 }
+            if (f[2] !~ /^[0-9]+$/) { bad = 1 }
+            if (f[3] != "fixed" && f[3] != "variadic") { bad = 1 }
+            if (f[4] != "expr" && f[4] != "module" && f[4] != "decls") { bad = 1 }
+            if (f[5] !~ /^(tests\/integration|stdlib\/tests)\/[^\/]+\.tl$/) { bad = 1 }
+            if (f[6] != "ok" || f[7] != "default" || f[8] != "assembly") { bad = 1 }
+            if (seen[f[1]]++) { duplicate = 1 }
+            print f[1] "\t" f[2] "\t" f[3] "\t" f[4]
+        }
+        if (st < 0 || file_rows == 0) { bad = 1 }
+        close(path)
+    }
+    END { exit bad || duplicate }
+' "$IDENTITY_FIXTURE_FILES" > "$WORKDIR/identity-manifest.expected.unsorted.tsv"; then
+    echo "embedded stdlib tlci identity fixture inventory has a malformed, mismatched, empty, or duplicate row" >&2
+    exit 1
+fi
+LC_ALL=C sort "$WORKDIR/identity-manifest.expected.unsorted.tsv" > "$IDENTITY_EXPECTED"
+LC_ALL=C sort "$IDENTITY_ACTUAL" > "$IDENTITY_ACTUAL_SORTED"
+if ! cmp -s "$IDENTITY_EXPECTED" "$IDENTITY_ACTUAL_SORTED"; then
     echo "embedded stdlib tlci identity fixture inventory is out of date" >&2
-    diff -u "$IDENTITY_EXPECTED" "$IDENTITY_ACTUAL" >&2 || true
+    diff -u "$IDENTITY_EXPECTED" "$IDENTITY_ACTUAL_SORTED" >&2 || true
     exit 1
 fi
 IDENTITY_ROWS=$(wc -l < "$IDENTITY_ACTUAL" | tr -d ' ')

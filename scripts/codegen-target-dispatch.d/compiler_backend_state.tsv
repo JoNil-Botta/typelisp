@@ -1,0 +1,10 @@
+# Codegen target-dispatch boundary inventory (#5347); see scripts/check-codegen-target-dispatch.sh.
+# file	scope	boundary	category	token-regex	count	rationale
+src/compiler_backend_state.tl	compiler-backend-function-state-new	policy	abi	CompilerBackendTarget[.]Linux	1	A fresh function state defaults its abort target until the function target is installed.
+src/compiler_backend_state.tl	compiler-backend-function-state-reset!	policy	abi	CompilerBackendTarget[.]Linux	1	A reset function state defaults its abort target until the function target is installed.
+src/compiler_backend_state.tl	compiler-backend-raw-syscall-diagnostic	policy	abi	linux-x86_64	1	Raw syscalls are Linux-only; the diagnostic names that target as a literal.
+src/compiler_backend_state.tl	compiler-backend-state-new-with-metrics	policy	backend-mode	CompilerBackendTarget[.]Linux	1	A fresh backend state holds the Linux policy until a prepared emission installs its own.
+src/compiler_backend_state.tl	compiler-backend-target-abi	policy	abi	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Maps a target to its ABI tables.
+src/compiler_backend_state.tl	compiler-backend-target-policy-new	policy	abi	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	The one place a target maps to its ABI, unwind, object-format and runtime policy.
+src/compiler_backend_state.tl	compiler-backend-target-triple	policy	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|linux-x86_64|windows-x86_64	4	Spells a target name for diagnostics and fallback categories.
+src/compiler_backend_state.tl	enum:CompilerBackendTarget	policy	backend-mode	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	The closed set of backend targets.

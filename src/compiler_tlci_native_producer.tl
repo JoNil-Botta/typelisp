@@ -681,8 +681,8 @@
 (define (embedded-native-fuel-open) : String
   "  (let [q99 : i64 (comptime-host-fuel-check host session 0 0 0)] (if (not (= q99 0)) q99\n")
 
-(define (embedded-native-name-arg [name : String]) : String
-  (str_cat.str-cat
+(define (embedded-native-name-arg [name : (& name str)]) : String
+  (string.concat3-borrowed
     "(cast (unsafe (ptr->int (string-data \""
     name
     "\"))) : i64)"))
@@ -952,7 +952,7 @@
 ;; Escape `text` for embedding inside a generated source string literal. The
 ;; generated transformer source is re-lexed by the ordinary lexer, whose
 ;; string escapes are \\, \", \n, \t, and \r.
-(define (embedded-native-escape-string [text : String]) : String
+(define (embedded-native-escape-string [text : (& text str)]) : String
   (let
     [out : String ""]
     [length : i64 (string.string-length text)]
@@ -1022,86 +1022,259 @@
     [(= ordinal 10) ">="]
     [else "="]))
 
-;; Emit the op chain for a template node that wraps exactly one subexpression
-;; (Return, Box, and BoxGet AST nodes): the operand's chain followed by `op`. Returns
-;; the opened op-let count or -1 when the operand is outside the supported
-;; subset. Refs #5605.
-(define (embedded-native-template-binary-node-ops
-  [context : (& context TlciNativeSourceContext)]
-  [params : (& params compiler_ast_types.AstMacroParamList)]
-  [first-node : i64]
-  [second-node : i64]
-  [op : String]
-  [ops : (&mut ops (__tl_dyn-array String))]
-  [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
-  (let
-    [first-opened : i64
-      (embedded-native-template-ops context params first-node ops ops-count)]
-    (if (< first-opened 0)
-      -1
-      (let
-        [second-opened : i64
-          (embedded-native-template-ops
-            context
-            params
-            second-node
-            ops
-            ops-count)]
-        (if (< second-opened 0)
-          -1
-          (begin
-            (embedded-native-template-push! ops ops-count op "0" "0" "0")
-            (+ first-opened second-opened 1)))))))
+;; Descriptor for a template expression lowered uniformly: walk its Expr and
+;; TypeId children in payload order via `ast-expr-children`, bail on -1, and
+;; push one host callback with fixed immediates.
+(defstruct EmbeddedNativeTemplateOpSpec
+  (op String)
+  (arg-a String)
+  (arg-b String)
+  (arg-c String))
 
-(define (embedded-native-template-unary-node-ops
-  [context : (& context TlciNativeSourceContext)]
-  [params : (& params compiler_ast_types.AstMacroParamList)]
-  [inner-node : i64]
-  [op : String]
-  [ops : (&mut ops (__tl_dyn-array String))]
-  [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
-  (let
-    [inner-opened : i64
-      (embedded-native-template-ops context params inner-node ops ops-count)]
-    (if (< inner-opened 0)
-      -1
-      (begin
-        (embedded-native-template-push! ops ops-count op "0" "0" "0")
-        (+ inner-opened 1)))))
+(define (embedded-native-op-spec [op : String] [arg-a : String]) : EmbeddedNativeTemplateOpSpec
+  (EmbeddedNativeTemplateOpSpec op arg-a "0" "0"))
 
-;; Emit the op chain for one `make-array` template node: the element type,
-;; then the size expression, then the callback that rebuilds the parser's
-;; matching array node. `callback` selects the fixed-length or runtime-sized
-;; node kind. Returns the opened op-let count, or -1 when an operand is
-;; outside the supported subset.
-(define (embedded-native-template-make-array-ops
+(define (embedded-native-text-op-spec
+  [op : String]
+  [text : (& text str)]
+  [escape? : bool]) : EmbeddedNativeTemplateOpSpec
+  (EmbeddedNativeTemplateOpSpec
+    op
+    (if escape?
+      (embedded-native-name-arg (embedded-native-escape-string text))
+      (embedded-native-name-arg text))
+    (string.int->string (string.string-length text))
+    "0"))
+
+(define (embedded-native-name-op-spec
   [context : (& context TlciNativeSourceContext)]
-  [params : (& params compiler_ast_types.AstMacroParamList)]
-  [elem-type-id : i64]
-  [size-node : i64]
-  [callback : String]
-  [ops : (&mut ops (__tl_dyn-array String))]
-  [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
+  [op : String]
+  [name-id : i64]) : EmbeddedNativeTemplateOpSpec
   (let
-    [type-opened : i64
-      (embedded-native-template-type-ops
+    [name : String (ci.intern-compat-state-str context.intern-state name-id)]
+    (embedded-native-text-op-spec op (& name) false)))
+
+;; Per-variant TLCI host callback name for uniform zero-immediate template
+;; expressions whose children walk in payload order via `ast-expr-children`.
+(define (embedded-native-template-uniform-callback
+  [expr : (& expr compiler_ast_types.AstExpr)]) : String
+  (match expr
+    [(Break) (tlci_core.tlci-host-callback-name expr-break)]
+    [(Continue) (tlci_core.tlci-host-callback-name expr-continue)]
+    [(If _ _ _) (tlci_core.tlci-host-callback-name expr-if)]
+    [(ArraySet _ _ _) (tlci_core.tlci-host-callback-name expr-array-set)]
+    [(ArrayTake _ _ _) (tlci_core.tlci-host-callback-name expr-array-take)]
+    [(Return _) (tlci_core.tlci-host-callback-name expr-return)]
+    [(Box _) (tlci_core.tlci-host-callback-name expr-box)]
+    [(BoxGet _) (tlci_core.tlci-host-callback-name expr-box-get)]
+    [(BoxTake _) (tlci_core.tlci-host-callback-name expr-box-take)]
+    [(PtrRead _) (tlci_core.tlci-host-callback-name expr-ptr-read)]
+    [(PtrAddrOf _) (tlci_core.tlci-host-callback-name expr-ptr-addr-of)]
+    [(PtrToInt _) (tlci_core.tlci-host-callback-name expr-ptr-to-int)]
+    [(IntToPtr _ _) (tlci_core.tlci-host-callback-name expr-int-to-ptr)]
+    [(StringData _) (tlci_core.tlci-host-callback-name expr-string-data)]
+    [(PtrWrite _ _) (tlci_core.tlci-host-callback-name expr-ptr-write)]
+    [(PtrOffset _ _) (tlci_core.tlci-host-callback-name expr-ptr-offset)]
+    [(PtrCast _ _) (tlci_core.tlci-host-callback-name expr-ptr-cast)]
+    [(ArrayData _) (tlci_core.tlci-host-callback-name expr-array-data)]
+    [(StringFromBytes _ _)
+      (tlci_core.tlci-host-callback-name expr-string-from-bytes)]
+    [(Comptime _) (tlci_core.tlci-host-callback-name expr-comptime)]
+    [(Cast _ _) (tlci_core.tlci-host-callback-name expr-cast)]
+    [(Ann _ _) (tlci_core.tlci-host-callback-name expr-ann)]
+    [(ArrayRef _ _) (tlci_core.tlci-host-callback-name expr-array-ref)]
+    [(Replace _ _) (tlci_core.tlci-host-callback-name expr-replace)]
+    [(ArrayPush _ _) (tlci_core.tlci-host-callback-name expr-array-push)]
+    [(MakeArray _ _) (tlci_core.tlci-host-callback-name expr-make-array)]
+    [(FixedMakeArray _ _)
+      (tlci_core.tlci-host-callback-name expr-fixed-make-array)]
+    [_ ""]))
+
+;; Map every uniform template expression (zero-immediate or scalar/name
+;; immediate) to its callback descriptor; empty `op` marks unsupported nodes.
+(define (embedded-native-template-uniform-spec
+  [context : (& context TlciNativeSourceContext)]
+  [expr : (& expr compiler_ast_types.AstExpr)]) : EmbeddedNativeTemplateOpSpec
+  (match expr
+    [(Var name-id)
+      (embedded-native-name-op-spec
         context
-        params
-        (compiler_ast_types.ast-node-pool-context-type-get
-          context.pools
-          elem-type-id)
-        ops
-        ops-count)]
-    (if (< type-opened 0)
-      -1
+        (tlci_core.tlci-host-callback-name expr-var)
+        name-id)]
+    [(StructGet _ field)
+      (embedded-native-name-op-spec
+        context
+        (tlci_core.tlci-host-callback-name expr-struct-get)
+        field)]
+    [(Set name-id _)
+      (embedded-native-name-op-spec
+        context
+        (tlci_core.tlci-host-callback-name expr-set-var)
+        name-id)]
+    [(StructSet _ field _)
+      ;; Sentinel field id marks `(set! ,place value)`; see #6550.
+      (if (and
+        (>= context.unquote-set-target-id 0)
+        (= field context.unquote-set-target-id))
+        (embedded-native-op-spec
+          (tlci_core.tlci-host-callback-name expr-set-from-place)
+          "0")
+        (embedded-native-name-op-spec
+          context
+          (tlci_core.tlci-host-callback-name expr-struct-set)
+          field))]
+    [(TupleRef _ index)
+      (embedded-native-op-spec
+        (tlci_core.tlci-host-callback-name expr-tuple-ref)
+        (string.int->string index))]
+    [(Binary op _ _)
+      (embedded-native-op-spec
+        (tlci_core.tlci-host-callback-name expr-binary-op)
+        (string.int->string (embedded-native-binop-ordinal op)))]
+    [(Unary op _)
+      (embedded-native-op-spec
+        (tlci_core.tlci-host-callback-name expr-unary-op)
+        (string.int->string (embedded-native-unop-ordinal op)))]
+    [(Borrow mutable lifetime-id _)
       (let
-        [size-opened : i64
-          (embedded-native-template-ops context params size-node ops ops-count)]
-        (if (< size-opened 0)
-          -1
+        [mut-flag : String
+          (if mutable
+            "1"
+            "0")]
+        (match (compiler_ast_types.ast-borrow-lifetime-from-id lifetime-id)
+          [(Inferred)
+            (embedded-native-op-spec
+              (tlci_core.tlci-host-callback-name expr-borrow)
+              mut-flag)]
+          [(Named lid)
+            (let
+              [lname : String
+                (ci.intern-compat-state-str context.intern-state lid)]
+              (EmbeddedNativeTemplateOpSpec
+                (tlci_core.tlci-host-callback-name expr-borrow)
+                mut-flag
+                (embedded-native-name-arg (& lname))
+                (string.int->string (string.string-length (& lname)))))]))]
+    [_
+      (embedded-native-op-spec
+        (embedded-native-template-uniform-callback expr)
+        "0")]))
+
+;; Walk every Expr and TypeId child of `expr` in payload order via
+;; `ast-expr-children`, bailing on -1, then push `spec` and return sum + 1.
+(define (embedded-native-template-uniform-ops
+  [context : (& context TlciNativeSourceContext)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [expr : compiler_ast_types.AstExpr]
+  [spec : EmbeddedNativeTemplateOpSpec]
+  [ops : (&mut ops (__tl_dyn-array String))]
+  [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
+  (let
+    [children : compiler_ast_types.AstExprChildList
+      (compiler_ast_types.ast-expr-children expr)]
+    [index : i64 0]
+    [opened : i64 0]
+    [ok : bool true]
+    (while (and ok (< index children.len))
+      (let
+        [child-opened : i64
+          (match (compiler_ast_types.ast-expr-child-list-get
+            (& children)
+            index
+            (compiler_ast_types.ast-expr-child-fallback))
+            [(Expr child-id)
+              (embedded-native-template-ops
+                context
+                params
+                child-id
+                ops
+                ops-count)]
+            [(TypeId type-id)
+              (embedded-native-template-type-ops
+                context
+                params
+                (compiler_ast_types.ast-node-pool-context-type-get
+                  context.pools
+                  type-id)
+                ops
+                ops-count)]
+            [_ -1])]
+        (if (< child-opened 0)
+          (set! ok false)
           (begin
-            (embedded-native-template-push! ops ops-count callback "0" "0" "0")
-            (+ type-opened size-opened 1)))))))
+            (+= opened child-opened)
+            (+= index 1)))))
+    (if ok
+      (begin
+        (embedded-native-template-push!
+          ops
+          ops-count
+          spec.op
+          spec.arg-a
+          spec.arg-b
+          spec.arg-c)
+        (+ opened 1))
+      -1)))
+
+;; Lower template nodes carrying a spliceable `AstExprList` (`Begin`, `Tuple`,
+;; `Array`, `BracketClause`, `Unsafe`, `Call`, `While`); returns -2 when `expr`
+;; is not one.
+(define (embedded-native-template-list-ops
+  [context : (& context TlciNativeSourceContext)]
+  [params : (& params compiler_ast_types.AstMacroParamList)]
+  [expr : (& expr compiler_ast_types.AstExpr)]
+  [ops : (&mut ops (__tl_dyn-array String))]
+  [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
+  (let
+    [op : String
+      (match expr
+        [(Call _ _) (tlci_core.tlci-host-callback-name expr-call)]
+        [(While _ _) (tlci_core.tlci-host-callback-name expr-while)]
+        [(Begin _) (tlci_core.tlci-host-callback-name expr-begin)]
+        [(Tuple _) (tlci_core.tlci-host-callback-name expr-tuple)]
+        [(Array _) (tlci_core.tlci-host-callback-name expr-array)]
+        [(BracketClause _)
+          (tlci_core.tlci-host-callback-name expr-bracket-clause)]
+        [(Unsafe _) (tlci_core.tlci-host-callback-name expr-unsafe)]
+        [_ ""])]
+    (if (= (string.string-length (& op)) 0)
+      -2
+      (let
+        [head : i64
+          (match expr
+            [(or (Call h _) (While h _)) h]
+            [_ -1])]
+        [head-opened : i64
+          (if (< head 0)
+            0
+            (embedded-native-template-ops context params head ops ops-count))]
+        (if (< head-opened 0)
+          -1
+          (let
+            [items-opened : i64
+              (match expr
+                [(or (Call _ items) (While _ items) (Begin items) (Tuple items)
+                     (Array items) (BracketClause items) (Unsafe items))
+                  (embedded-native-template-args-ops
+                    context
+                    params
+                    items
+                    ops
+                    ops-count)]
+                [_ -1])]
+            (if (< items-opened 0)
+              -1
+              (begin
+                (embedded-native-template-push!
+                  ops
+                  ops-count
+                  op
+                  (match expr
+                    [(While _ _) "1"]
+                    [_ "0"])
+                  "0"
+                  "0")
+                (+ head-opened items-opened 1)))))))))
 
 ;; Emit the op chain that pushes exactly one session-stack value for one
 ;; quasiquoted template node, mirroring the interpreted quote's reconstruction
@@ -1170,1026 +1343,232 @@
   [node : i64]
   [ops : (&mut ops (__tl_dyn-array String))]
   [ops-count : (&mut ops-count (__tl_dyn-array i64))]) : i64
-  (match (embedded-stdlib-tlci-unwrap-expr context node)
-    [(Unquote inner)
-      (match (embedded-stdlib-tlci-unwrap-expr context inner)
-        [(Var pname)
-          (embedded-native-unquote-ops context params pname ops ops-count)]
-        ;; Any other unquoted operand is a computed comptime expression whose
-        ;; value substitutes into the template, matching the interpreted
-        ;; quote's unquote step. Refs #5617.
-        [_
-          (embedded-native-computed-expr-ops context params inner ops ops-count)])]
-    [(Literal lit)
-      (match lit
-        [(Bool flag)
-          (embedded-native-template-push!
-            ops
-            ops-count
-            (tlci_core.tlci-host-callback-name expr-bool-literal)
-            (if flag
-              "1"
-              "0")
-            "0"
-            "0")
-          1]
-        [(Int value text)
-          (if (or
-            (= (string.string-length text) 0)
-            (string.eq text (string.int->string value)))
+  (let
+    [expr : compiler_ast_types.AstExpr
+      (embedded-stdlib-tlci-unwrap-expr context node)]
+    (match (& expr)
+      [(Unquote inner)
+        (match (embedded-stdlib-tlci-unwrap-expr context inner)
+          [(Var pname)
+            (embedded-native-unquote-ops context params pname ops ops-count)]
+          ;; Any other unquoted operand is a computed comptime expression whose
+          ;; value substitutes into the template, matching the interpreted
+          ;; quote's unquote step. Refs #5617.
+          [_
+            (embedded-native-computed-expr-ops
+              context
+              params
+              inner
+              ops
+              ops-count)])]
+      [(Literal lit)
+        (let
+          [spec : EmbeddedNativeTemplateOpSpec
+            (match lit
+              [(Bool flag)
+                (embedded-native-op-spec
+                  (tlci_core.tlci-host-callback-name expr-bool-literal)
+                  (if flag
+                    "1"
+                    "0"))]
+              [(Int value text)
+                (if (or
+                  (= (string.string-length text) 0)
+                  (string.eq text (string.int->string value)))
+                  (embedded-native-op-spec
+                    (tlci_core.tlci-host-callback-name expr-int-literal)
+                    (string.int->string value))
+                  (embedded-native-op-spec "" "0"))]
+              [(String sid)
+                (let
+                  [text : String
+                    (ci.intern-compat-state-str context.intern-state sid)]
+                  (embedded-native-text-op-spec
+                    (tlci_core.tlci-host-callback-name expr-string)
+                    (& text)
+                    true))]
+              [(Char c)
+                (embedded-native-op-spec
+                  (tlci_core.tlci-host-callback-name expr-char-literal)
+                  (string.int->string (cast c : i64)))]
+              [(Unit)
+                (embedded-native-op-spec
+                  (tlci_core.tlci-host-callback-name expr-unit-literal)
+                  "0")]
+              [(Float text)
+                (embedded-native-text-op-spec
+                  (tlci_core.tlci-host-callback-name expr-float-literal)
+                  text
+                  true)]
+              [_ (embedded-native-op-spec "" "0")])]
+          (if (= (string.string-length (& spec.op)) 0)
+            -1
             (begin
               (embedded-native-template-push!
                 ops
                 ops-count
-                (tlci_core.tlci-host-callback-name expr-int-literal)
-                (string.int->string value)
-                "0"
-                "0")
-              1)
-            -1)]
-        [(String sid)
-          (let
-            [text : String
-              (ci.intern-compat-state-str context.intern-state sid)]
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name expr-string)
-              (embedded-native-name-arg
-                (embedded-native-escape-string
-                  (owned_view.compiler-owned-shared-view text)))
-              (string.int->string (string.string-length text))
-              "0")
-            1)]
-        [(Char c)
-          (embedded-native-template-push!
-            ops
-            ops-count
-            (tlci_core.tlci-host-callback-name expr-char-literal)
-            (string.int->string (cast c : i64))
-            "0"
-            "0")
-          1]
-        [(Unit)
-          (embedded-native-template-push!
-            ops
-            ops-count
-            (tlci_core.tlci-host-callback-name expr-unit-literal)
-            "0"
-            "0"
-            "0")
-          1]
-        [(Float text)
-          (embedded-native-template-push!
-            ops
-            ops-count
-            (tlci_core.tlci-host-callback-name expr-float-literal)
-            (embedded-native-name-arg
-              (embedded-native-escape-string
-                (owned_view.compiler-owned-shared-view text)))
-            (string.int->string (string.string-length text))
-            "0")
-          1]
-        [_ -1])]
-    [(Break)
-      (embedded-native-template-push!
-        ops
-        ops-count
-        (tlci_core.tlci-host-callback-name expr-break)
-        "0"
-        "0"
-        "0")
-      1]
-    [(Continue)
-      (embedded-native-template-push!
-        ops
-        ops-count
-        (tlci_core.tlci-host-callback-name expr-continue)
-        "0"
-        "0"
-        "0")
-      1]
-    [(Var name-id)
-      (let
-        [name : String
-          (ci.intern-compat-state-str context.intern-state name-id)]
-        (embedded-native-template-push!
-          ops
-          ops-count
-          (tlci_core.tlci-host-callback-name expr-var)
-          (embedded-native-name-arg
-            (owned_view.compiler-owned-shared-view name))
-          (string.int->string (string.string-length name))
-          "0")
-        1)]
-    [(Call func-id args)
-      ;; The head builds like any other template expression -- a plain symbol,
-      ;; an unquoted macro parameter, or a let-bound local -- so it carries its
-      ;; own span wrapper and expr-call needs no immediates of its own.
-      (let
-        [head-opened : i64
-          (embedded-native-template-ops context params func-id ops ops-count)]
-        (if (< head-opened 0)
-          -1
-          (let
-            [arg-opened : i64
-              (embedded-native-template-args-ops
-                context
-                params
-                (& args)
-                ops
-                ops-count)]
-            (if (< arg-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-call)
-                  "0"
-                  "0"
-                  "0")
-                (+ head-opened arg-opened 1))))))]
-    [(If cond-node then-node else-node)
-      (let
-        [cond-opened : i64
-          (embedded-native-template-ops context params cond-node ops ops-count)]
-        (if (< cond-opened 0)
-          -1
-          (let
-            [then-opened : i64
-              (embedded-native-template-ops
-                context
-                params
-                then-node
-                ops
-                ops-count)]
-            (if (< then-opened 0)
-              -1
-              (let
-                [else-opened : i64
-                  (embedded-native-template-ops
-                    context
-                    params
-                    else-node
-                    ops
-                    ops-count)]
-                (if (< else-opened 0)
-                  -1
-                  (begin
-                    (embedded-native-template-push!
-                      ops
-                      ops-count
-                      (tlci_core.tlci-host-callback-name expr-if)
-                      "0"
-                      "0"
-                      "0")
-                    (+ cond-opened then-opened else-opened 1))))))))]
-    [(Begin exprs)
-      (let
-        [arg-opened : i64
-          (embedded-native-template-args-ops
-            context
-            params
-            (& exprs)
-            ops
-            ops-count)]
-        (if (< arg-opened 0)
-          -1
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name expr-begin)
-              "0"
-              "0"
-              "0")
-            (+ arg-opened 1))))]
-    [(Tuple items)
-      (let
-        [item-opened : i64
-          (embedded-native-template-args-ops
-            context
-            params
-            (& items)
-            ops
-            ops-count)]
-        (if (< item-opened 0)
-          -1
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name expr-tuple)
-              "0"
-              "0"
-              "0")
-            (+ item-opened 1))))]
-    [(Array items)
-      (let
-        [item-opened : i64
-          (embedded-native-template-args-ops
-            context
-            params
-            (& items)
-            ops
-            ops-count)]
-        (if (< item-opened 0)
-          -1
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name expr-array)
-              "0"
-              "0"
-              "0")
-            (+ item-opened 1))))]
-    [(TupleRef target index)
-      (let
-        [target-opened : i64
-          (embedded-native-template-ops context params target ops ops-count)]
-        (if (< target-opened 0)
-          -1
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name expr-tuple-ref)
-              (string.int->string index)
-              "0"
-              "0")
-            (+ target-opened 1))))]
-    [(BracketClause items)
-      (let
-        [arg-opened : i64
-          (embedded-native-template-args-ops
-            context
-            params
-            (& items)
-            ops
-            ops-count)]
-        (if (< arg-opened 0)
-          -1
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name expr-bracket-clause)
-              "0"
-              "0"
-              "0")
-            (+ arg-opened 1))))]
-    [(Borrow mutable lifetime-id place)
-      (let
-        [lifetime : compiler_ast_types.AstBorrowLifetime
-          (compiler_ast_types.ast-borrow-lifetime-from-id lifetime-id)]
-        [place-opened : i64
-          (embedded-native-template-ops context params place ops ops-count)]
-        (if (< place-opened 0)
-          -1
-          (match lifetime
-            [(Inferred)
-              (embedded-native-template-push!
-                ops
-                ops-count
-                (tlci_core.tlci-host-callback-name expr-borrow)
-                (if mutable
-                  "1"
-                  "0")
-                "0"
-                "0")
-              (+ place-opened 1)]
-            [(Named lifetime-id)
-              (let
-                [lifetime-name : String
-                  (ci.intern-compat-state-str context.intern-state lifetime-id)]
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-borrow)
-                  (if mutable
-                    "1"
-                    "0")
-                  (embedded-native-name-arg
-                    (owned_view.compiler-owned-shared-view lifetime-name))
-                  (string.int->string (string.string-length lifetime-name)))
-                (+ place-opened 1))]
-            [_ -1])))]
-    [(Match match-box)
-      (match (__tl-box-place match-box)
-        [(Match scrutinee arms)
-          (let
-            [scrut-opened : i64
-              (embedded-native-template-ops
-                context
-                params
-                scrutinee
-                ops
-                ops-count)]
-            (if (< scrut-opened 0)
-              -1
-              (let
-                [arms-opened : i64
-                  (embedded-native-template-match-arms-ops
-                    context
-                    params
-                    (& arms)
-                    ops
-                    ops-count)]
-                (if (< arms-opened 0)
-                  -1
-                  (begin
-                    (embedded-native-template-push!
-                      ops
-                      ops-count
-                      (tlci_core.tlci-host-callback-name expr-match)
-                      "0"
-                      "0"
-                      "0")
-                    (+ scrut-opened arms-opened 1))))))])]
-    [(StructGet target field)
-      (let
-        [target-opened : i64
-          (embedded-native-template-ops context params target ops ops-count)]
-        (if (< target-opened 0)
-          -1
-          (let
-            [field-name : String
-              (ci.intern-compat-state-str context.intern-state field)]
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name expr-struct-get)
-              (embedded-native-name-arg
-                (owned_view.compiler-owned-shared-view field-name))
-              (string.int->string (string.string-length field-name))
-              "0")
-            (+ target-opened 1))))]
-    [(ArraySet target index value)
-      (let
-        [target-opened : i64
-          (embedded-native-template-ops context params target ops ops-count)]
-        (if (< target-opened 0)
-          -1
-          (let
-            [index-opened : i64
-              (embedded-native-template-ops context params index ops ops-count)]
-            (if (< index-opened 0)
-              -1
-              (let
-                [value-opened : i64
-                  (embedded-native-template-ops
-                    context
-                    params
-                    value
-                    ops
-                    ops-count)]
-                (if (< value-opened 0)
-                  -1
-                  (begin
-                    (embedded-native-template-push!
-                      ops
-                      ops-count
-                      (tlci_core.tlci-host-callback-name expr-array-set)
-                      "0"
-                      "0"
-                      "0")
-                    (+ target-opened index-opened value-opened 1))))))))]
-    [(ArrayTake target live index)
-      (let
-        [target-opened : i64
-          (embedded-native-template-ops context params target ops ops-count)]
-        (if (< target-opened 0)
-          -1
-          (let
-            [live-opened : i64
-              (embedded-native-template-ops context params live ops ops-count)]
-            (if (< live-opened 0)
-              -1
-              (let
-                [index-opened : i64
-                  (embedded-native-template-ops
-                    context
-                    params
-                    index
-                    ops
-                    ops-count)]
-                (if (< index-opened 0)
-                  -1
-                  (begin
-                    (embedded-native-template-push!
-                      ops
-                      ops-count
-                      (tlci_core.tlci-host-callback-name expr-array-take)
-                      "0"
-                      "0"
-                      "0")
-                    (+ target-opened live-opened index-opened 1))))))))]
-    [(Let let-box)
-      (match (deref let-box)
-        [(Let bindings body)
-          (embedded-native-template-push!
-            ops
-            ops-count
-            (tlci_core.tlci-host-callback-name let-binding-list-empty)
-            "0"
-            "0"
-            "0")
-          (let
-            [bindings-opened : i64
-              (embedded-native-template-let-bindings-ops
-                context
-                params
-                (& bindings)
-                0
-                ops
-                ops-count)]
-            (if (< bindings-opened 0)
-              -1
-              (let
-                [body-opened : i64
-                  (embedded-native-template-ops
-                    context
-                    params
-                    body
-                    ops
-                    ops-count)]
-                (if (< body-opened 0)
-                  -1
-                  (begin
-                    (embedded-native-template-push!
-                      ops
-                      ops-count
-                      (tlci_core.tlci-host-callback-name expr-let)
-                      "0"
-                      "0"
-                      "0")
-                    (+ bindings-opened body-opened 2))))))])]
-    [(Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(Lambda lambda-params maybe-ret body)
-          (let
-            [param-count : i64
-              (compiler_ast_types.ast-param-list-len (& lambda-params))]
-            [payload : String
-              (embedded-native-template-lambda-param-payload
-                context
-                (& lambda-params))]
-            [params-opened : i64
-              (embedded-native-template-lambda-param-type-ops
-                context
-                params
-                (& lambda-params)
-                0
-                ops
-                ops-count)]
-            (if (< params-opened 0)
-              -1
-              (let
-                [ret-opened : i64
-                  (match (compiler_ast_types.clone-ast-maybe-type (& maybe-ret))
-                    [(No) 0]
-                    [(Some ret-ty)
-                      (embedded-native-template-type-ops
-                        context
-                        params
-                        ret-ty
-                        ops
-                        ops-count)])]
-                (if (< ret-opened 0)
-                  -1
-                  (let
-                    [body-opened : i64
-                      (embedded-native-template-ops
-                        context
-                        params
-                        body
-                        ops
-                        ops-count)]
-                    (if (< body-opened 0)
-                      -1
-                      (begin
-                        (embedded-native-template-push!
-                          ops
-                          ops-count
-                          (tlci_core.tlci-host-callback-name expr-lambda)
-                          (embedded-native-name-arg
-                            (embedded-native-escape-string
-                              (string.copy payload)))
-                          (string.int->string (string.string-length payload))
-                          (string.int->string
-                            (+
-                              (* param-count 2)
-                              (match maybe-ret
-                                [(No) 0]
-                                [(Some _) 1]))))
-                        (+ params-opened ret-opened body-opened 1))))))))])]
-    [(Binary op left-node right-node)
-      (let
-        [left-opened : i64
-          (embedded-native-template-ops context params left-node ops ops-count)]
-        (if (< left-opened 0)
-          -1
-          (let
-            [right-opened : i64
-              (embedded-native-template-ops
-                context
-                params
-                right-node
-                ops
-                ops-count)]
-            (if (< right-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-binary-op)
-                  (string.int->string (embedded-native-binop-ordinal op))
-                  "0"
-                  "0")
-                (+ left-opened right-opened 1))))))]
-    [(Unary op inner-node)
-      (let
-        [inner-opened : i64
-          (embedded-native-template-ops context params inner-node ops ops-count)]
-        (if (< inner-opened 0)
-          -1
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name expr-unary-op)
-              (string.int->string (embedded-native-unop-ordinal op))
-              "0"
-              "0")
-            (+ inner-opened 1))))]
-    [(Return inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-return)
-        ops
-        ops-count)]
-    [(Box inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-box)
-        ops
-        ops-count)]
-    [(BoxGet inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-box-get)
-        ops
-        ops-count)]
-    [(BoxTake inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-box-take)
-        ops
-        ops-count)]
-    ;; Raw-pointer and `unsafe` template nodes, the last shapes the
-    ;; `stdlib.text_buf_family` generators need. Refs #5605.
-    [(PtrRead inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-ptr-read)
-        ops
-        ops-count)]
-    [(PtrAddrOf inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-ptr-addr-of)
-        ops
-        ops-count)]
-    [(PtrToInt inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-ptr-to-int)
-        ops
-        ops-count)]
-    [(IntToPtr inner-node cast-type-id)
-      (let
-        [value-opened : i64
-          (embedded-native-template-ops context params inner-node ops ops-count)]
-        (if (< value-opened 0)
-          -1
-          (let
-            [type-opened : i64
-              (embedded-native-template-type-ops
-                context
-                params
-                (compiler_ast_types.ast-node-pool-context-type-get
-                  context.pools
-                  cast-type-id)
-                ops
-                ops-count)]
-            (if (< type-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-int-to-ptr)
-                  "0"
-                  "0"
-                  "0")
-                (+ value-opened type-opened 1))))))]
-    [(StringData inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-string-data)
-        ops
-        ops-count)]
-    [(PtrWrite ptr-node value-node)
-      (embedded-native-template-binary-node-ops
-        context
-        params
-        ptr-node
-        value-node
-        (tlci_core.tlci-host-callback-name expr-ptr-write)
-        ops
-        ops-count)]
-    [(PtrOffset ptr-node offset-node)
-      (embedded-native-template-binary-node-ops
-        context
-        params
-        ptr-node
-        offset-node
-        (tlci_core.tlci-host-callback-name expr-ptr-offset)
-        ops
-        ops-count)]
-    ;; `(ptr-cast p : T)`: the pointer expression then the type template, the
-    ;; same operand order expr-make-array uses. Refs #5605.
-    [(PtrCast ptr-node cast-type-id)
-      (let
-        [ptr-opened : i64
-          (embedded-native-template-ops context params ptr-node ops ops-count)]
-        (if (< ptr-opened 0)
-          -1
-          (let
-            [type-opened : i64
-              (embedded-native-template-type-ops
-                context
-                params
-                (compiler_ast_types.ast-node-pool-context-type-get
-                  context.pools
-                  cast-type-id)
-                ops
-                ops-count)]
-            (if (< type-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-ptr-cast)
-                  "0"
-                  "0"
-                  "0")
-                (+ ptr-opened type-opened 1))))))]
-    [(ArrayData inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-array-data)
-        ops
-        ops-count)]
-    [(StringFromBytes data-node length-node)
-      (embedded-native-template-binary-node-ops
-        context
-        params
-        data-node
-        length-node
-        (tlci_core.tlci-host-callback-name expr-string-from-bytes)
-        ops
-        ops-count)]
-    [(Comptime inner-node)
-      (embedded-native-template-unary-node-ops
-        context
-        params
-        inner-node
-        (tlci_core.tlci-host-callback-name expr-comptime)
-        ops
-        ops-count)]
-    [(Unsafe body-exprs)
-      (let
-        [arg-opened : i64
-          (embedded-native-template-args-ops
-            context
-            params
-            (& body-exprs)
-            ops
-            ops-count)]
-        (if (< arg-opened 0)
-          -1
-          (begin
-            (embedded-native-template-push!
-              ops
-              ops-count
-              (tlci_core.tlci-host-callback-name expr-unsafe)
-              "0"
-              "0"
-              "0")
-            (+ arg-opened 1))))]
-    ;; an internal StructSet node. The parser folds the place into
-    ;; the node, so the field name travels as an immediate like StructGet's.
-    ;; The sentinel field id marks `(set! ,place value)`: evaluate the unquoted
-    ;; place and value in source order, then let the value-consuming callback
-    ;; select Var, StructGet, or BoxGet assignment reconstruction. Refs #6550.
-    [(StructSet target-node field value-node)
-      (if (and
-        (>= context.unquote-set-target-id 0)
-        (= field context.unquote-set-target-id))
-        (let
-          [target-opened : i64
-            (embedded-native-template-ops
-              context
-              params
-              target-node
-              ops
-              ops-count)]
-          (if (< target-opened 0)
-            -1
+                spec.op
+                spec.arg-a
+                spec.arg-b
+                spec.arg-c)
+              1)))]
+      [(Match match-node)
+        (match match-node
+          [(Match scrutinee arms)
             (let
-              [value-opened : i64
+              [scrut-opened : i64
                 (embedded-native-template-ops
                   context
                   params
-                  value-node
+                  scrutinee
                   ops
                   ops-count)]
-              (if (< value-opened 0)
-                -1
-                (begin
-                  (embedded-native-template-push!
-                    ops
-                    ops-count
-                    (tlci_core.tlci-host-callback-name expr-set-from-place)
-                    "0"
-                    "0"
-                    "0")
-                  (+ target-opened value-opened 1))))))
-        (let
-          [target-opened : i64
-            (embedded-native-template-ops
-              context
-              params
-              target-node
-              ops
-              ops-count)]
-          (if (< target-opened 0)
-            -1
-            (let
-              [value-opened : i64
-                (embedded-native-template-ops
-                  context
-                  params
-                  value-node
-                  ops
-                  ops-count)]
-              (if (< value-opened 0)
+              (if (< scrut-opened 0)
                 -1
                 (let
-                  [field-name : String
-                    (ci.intern-compat-state-str context.intern-state field)]
-                  (embedded-native-template-push!
-                    ops
-                    ops-count
-                    (tlci_core.tlci-host-callback-name expr-struct-set)
-                    (embedded-native-name-arg
-                      (owned_view.compiler-owned-shared-view field-name))
-                    (string.int->string (string.string-length field-name))
-                    "0")
-                  (+ target-opened value-opened 1)))))))]
-    ;; `(cast e : T)`: the operand template then the type template, matching
-    ;; the interpreted quote's cast reconstruction. Refs #5604.
-    [(Cast value-node ty-id)
-      (let
-        [value-opened : i64
-          (embedded-native-template-ops context params value-node ops ops-count)]
-        (if (< value-opened 0)
-          -1
-          (let
-            [type-opened : i64
-              (embedded-native-template-type-ops
-                context
-                params
-                (compiler_ast_types.ast-node-pool-context-type-get
-                  context.pools
-                  ty-id)
-                ops
-                ops-count)]
-            (if (< type-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-cast)
-                  "0"
-                  "0"
-                  "0")
-                (+ value-opened type-opened 1))))))]
-    ;; `(ann e : T)` has the same stack shape as `cast`, but preserves the
-    ;; annotation node so integer literals keep their requested scalar type.
-    [(Ann value-node ty-id)
-      (let
-        [value-opened : i64
-          (embedded-native-template-ops context params value-node ops ops-count)]
-        (if (< value-opened 0)
-          -1
-          (let
-            [type-opened : i64
-              (embedded-native-template-type-ops
-                context
-                params
-                (compiler_ast_types.ast-node-pool-context-type-get
-                  context.pools
-                  ty-id)
-                ops
-                ops-count)]
-            (if (< type-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-ann)
-                  "0"
-                  "0"
-                  "0")
-                (+ value-opened type-opened 1))))))]
-    [(Set name-id value-node)
-      (let
-        [value-opened : i64
-          (embedded-native-template-ops context params value-node ops ops-count)]
-        (if (< value-opened 0)
-          -1
-          (let
-            [name : String
-              (ci.intern-compat-state-str context.intern-state name-id)]
+                  [arms-opened : i64
+                    (embedded-native-template-match-arms-ops
+                      context
+                      params
+                      arms
+                      ops
+                      ops-count)]
+                  (if (< arms-opened 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        (tlci_core.tlci-host-callback-name expr-match)
+                        "0"
+                        "0"
+                        "0")
+                      (+ scrut-opened arms-opened 1))))))])]
+      [(Let let-node)
+        (match let-node
+          [(Let bindings body)
             (embedded-native-template-push!
               ops
               ops-count
-              (tlci_core.tlci-host-callback-name expr-set-var)
-              (embedded-native-name-arg
-                (owned_view.compiler-owned-shared-view name))
-              (string.int->string (string.string-length name))
+              (tlci_core.tlci-host-callback-name let-binding-list-empty)
+              "0"
+              "0"
               "0")
-            (+ value-opened 1))))]
-    [(While cond-node body-node)
-      (let
-        [cond-opened : i64
-          (embedded-native-template-ops context params cond-node ops ops-count)]
-        (if (< cond-opened 0)
-          -1
-          (let
-            [body-opened : i64
-              (embedded-native-template-args-ops
-                context
-                params
-                (& body-node)
-                ops
-                ops-count)]
-            (if (< body-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
+            (let
+              [bindings-opened : i64
+                (embedded-native-template-let-bindings-ops
+                  context
+                  params
+                  bindings
+                  0
                   ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-while)
-                  "1"
-                  "0"
-                  "0")
-                (+ cond-opened body-opened 1))))))]
-    [(ArrayRef target-node index-node)
-      (let
-        [target-opened : i64
-          (embedded-native-template-ops
-            context
-            params
-            target-node
-            ops
-            ops-count)]
-        (if (< target-opened 0)
-          -1
-          (let
-            [index-opened : i64
-              (embedded-native-template-ops
-                context
-                params
-                index-node
-                ops
-                ops-count)]
-            (if (< index-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
+                  ops-count)]
+              (if (< bindings-opened 0)
+                -1
+                (let
+                  [body-opened : i64
+                    (embedded-native-template-ops
+                      context
+                      params
+                      body
+                      ops
+                      ops-count)]
+                  (if (< body-opened 0)
+                    -1
+                    (begin
+                      (embedded-native-template-push!
+                        ops
+                        ops-count
+                        (tlci_core.tlci-host-callback-name expr-let)
+                        "0"
+                        "0"
+                        "0")
+                      (+ bindings-opened body-opened 2))))))])]
+      [(Lambda lambda-node)
+        (match lambda-node
+          [(Lambda lambda-params maybe-ret body)
+            (let
+              [param-count : i64
+                (compiler_ast_types.ast-param-list-len lambda-params)]
+              [payload : String
+                (embedded-native-template-lambda-param-payload
+                  context
+                  lambda-params)]
+              [params-opened : i64
+                (embedded-native-template-lambda-param-type-ops
+                  context
+                  params
+                  lambda-params
+                  0
                   ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-array-ref)
-                  "0"
-                  "0"
-                  "0")
-                (+ target-opened index-opened 1))))))]
-    [(Replace place-node replacement-node)
-      (let
-        [place-opened : i64
-          (embedded-native-template-ops context params place-node ops ops-count)]
-        (if (< place-opened 0)
-          -1
-          (let
-            [replacement-opened : i64
-              (embedded-native-template-ops
-                context
-                params
-                replacement-node
-                ops
-                ops-count)]
-            (if (< replacement-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
+                  ops-count)]
+              (if (< params-opened 0)
+                -1
+                (let
+                  [ret-opened : i64
+                    (match (compiler_ast_types.clone-ast-maybe-type maybe-ret)
+                      [(No) 0]
+                      [(Some ret-ty)
+                        (embedded-native-template-type-ops
+                          context
+                          params
+                          ret-ty
+                          ops
+                          ops-count)])]
+                  (if (< ret-opened 0)
+                    -1
+                    (let
+                      [body-opened : i64
+                        (embedded-native-template-ops
+                          context
+                          params
+                          body
+                          ops
+                          ops-count)]
+                      (if (< body-opened 0)
+                        -1
+                        (begin
+                          (embedded-native-template-push!
+                            ops
+                            ops-count
+                            (tlci_core.tlci-host-callback-name expr-lambda)
+                            (embedded-native-name-arg
+                              (embedded-native-escape-string (& payload)))
+                            (string.int->string
+                              (string.string-length (& payload)))
+                            (string.int->string
+                              (+
+                                (* param-count 2)
+                                (match maybe-ret
+                                  [(No) 0]
+                                  [(Some _) 1]))))
+                          (+ params-opened ret-opened body-opened 1))))))))])]
+      [_
+        (let
+          [list-opened : i64
+            (embedded-native-template-list-ops
+              context
+              params
+              (& expr)
+              ops
+              ops-count)]
+          (if (not (= list-opened -2))
+            list-opened
+            (let
+              [spec : EmbeddedNativeTemplateOpSpec
+                (embedded-native-template-uniform-spec context (& expr))]
+              (if (> (string.string-length (& spec.op)) 0)
+                (embedded-native-template-uniform-ops
+                  context
+                  params
+                  expr
+                  spec
                   ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-replace)
-                  "0"
-                  "0"
-                  "0")
-                (+ place-opened replacement-opened 1))))))]
-    [(ArrayPush target-node value-node)
-      (let
-        [target-opened : i64
-          (embedded-native-template-ops
-            context
-            params
-            target-node
-            ops
-            ops-count)]
-        (if (< target-opened 0)
-          -1
-          (let
-            [value-opened : i64
-              (embedded-native-template-ops
-                context
-                params
-                value-node
-                ops
-                ops-count)]
-            (if (< value-opened 0)
-              -1
-              (begin
-                (embedded-native-template-push!
-                  ops
-                  ops-count
-                  (tlci_core.tlci-host-callback-name expr-array-push)
-                  "0"
-                  "0"
-                  "0")
-                (+ target-opened value-opened 1))))))]
-    [(MakeArray elem-type-id size-node)
-      (embedded-native-template-make-array-ops
-        context
-        params
-        elem-type-id
-        size-node
-        (tlci_core.tlci-host-callback-name expr-make-array)
-        ops
-        ops-count)]
-    [(FixedMakeArray elem-type-id size-node)
-      (embedded-native-template-make-array-ops
-        context
-        params
-        elem-type-id
-        size-node
-        (tlci_core.tlci-host-callback-name expr-fixed-make-array)
-        ops
-        ops-count)]
-    [_
-      (embedded-native-fallback-opened
-        (str_cat.str-cat
-          "template-node:"
-          (embedded-native-expr-kind-name
-            (embedded-stdlib-tlci-unwrap-expr context node))))]))
+                  ops-count)
+                (embedded-native-fallback-opened
+                  (str_cat.str-cat
+                    "template-node:"
+                    (embedded-native-expr-kind-name expr)))))))])))
 
 ;; Emit ops building one template argument/expression list: expr-list-empty,
 ;; then per item either list-append of a pushed template value or expr-splice

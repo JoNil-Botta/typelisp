@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-5857.502	opt2 post-emission peephole/layout compaction (dead leaq/copy/load-compare/store-reload folding, XMM zero-store coalescing, trampoline/branch/argless-abort dedup); CI own cost -624,199,751 Ir (M(T) 105,939,948,681 vs M(B) 106,564,148,432 from reference run 45345220522 attempt 1); no work skipped

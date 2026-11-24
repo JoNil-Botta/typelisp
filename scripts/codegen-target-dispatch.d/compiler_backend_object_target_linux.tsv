@@ -1,0 +1,3 @@
+# Codegen target-dispatch boundary inventory (#5347); see scripts/check-codegen-target-dispatch.sh.
+# file	scope	boundary	category	token-regex	count	rationale
+src/compiler_backend_object_target_linux.tl	compiler-backend-object-target-linux-image	leaf	object-format	target-linux	1	The Linux leaf owns ELF entry and image policy.

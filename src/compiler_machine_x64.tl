@@ -89,7 +89,7 @@
 ;; `instr` itself, or an internal-error diagnostic naming why its form cannot
 ;; encode it.
 (define (compiler-machine-x64-checked [instr : MachineInstr]) : MachineInstr
-  (match (compiler-machine-x64-check (clone instr))
+  (match (compiler-machine-x64-check instr)
     [(Ok) instr]
     [(Err message) (io.panic message)]))
 

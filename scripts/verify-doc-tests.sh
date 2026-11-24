@@ -27,6 +27,17 @@ esac
 . "$ROOT/scripts/lib-gate.sh"
 gate_compiler
 gate_require_compiler
+BOUNDED_POOL_LABEL=doc-tests
+. "$ROOT/scripts/lib-bounded-pool.sh"
+
+DOC_TEST_WORKERS=${TYPELISP_DOC_TEST_WORKERS:-4}
+case "$DOC_TEST_WORKERS" in
+    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) ;;
+    *)
+        echo "invalid TYPELISP_DOC_TEST_WORKERS: $DOC_TEST_WORKERS (expected 1-8)" >&2
+        exit 2
+        ;;
+esac
 
 WORKDIR="$ROOT/target/doc-test-verify"
 rm -rf "$WORKDIR"
@@ -49,28 +60,33 @@ for root in stdlib src examples tests docs; do
     fi
 done | sort > "$CANDIDATES"
 
-has_public_docs_or_fences() {
-    grep -Eq '^[[:space:]]*(;#|;:)|```[[:space:]]*(typelisp|tl)([[:space:]]|$)' "$1"
-}
-
-has_runnable_doctest() {
-    grep -Eq '```[[:space:]]*(typelisp|tl)[[:space:]]+run([[:space:]]|$)' "$1"
-}
-
 safe_name() {
     printf '%s' "$1" | sed 's#[/\\:]#_#g'
 }
 
-runnable_count=0
-while IFS= read -r source; do
-    [ -n "$source" ] || continue
-    if has_public_docs_or_fences "$source"; then
-        printf '%s\n' "$source" >> "$DISCOVERED"
-        if has_runnable_doctest "$source"; then
-            runnable_count=$((runnable_count + 1))
-        fi
-    fi
-done < "$CANDIDATES"
+runnable_count=$(awk -v discovered="$DISCOVERED" '
+    {
+        path = $0
+        if (path == "") next
+        has_doc = 0
+        has_run = 0
+        while ((rc = (getline line < path)) > 0) {
+            if (!has_doc && line ~ /^[[:space:]]*(;#|;:)|```[[:space:]]*(typelisp|tl)([[:space:]]|$)/) {
+                has_doc = 1
+            }
+            if (!has_run && line ~ /```[[:space:]]*(typelisp|tl)[[:space:]]+run([[:space:]]|$)/) {
+                has_run = 1
+                has_doc = 1
+                break
+            }
+        }
+        close(path)
+        if (rc < 0) exit 1
+        if (has_doc) print path >> discovered
+        if (has_run) runnable++
+    }
+    END { print runnable + 0 }
+' "$CANDIDATES")
 
 if [ ! -s "$DISCOVERED" ]; then
     echo "doc test verification found no documented TypeLisp files" >&2
@@ -82,10 +98,11 @@ if [ "$runnable_count" -eq 0 ]; then
 fi
 
 run_doc_tests_per_file() {
-    count=0
+    _probe_list=$1
+    _probe_count=0
     while IFS= read -r source; do
         [ -n "$source" ] || continue
-        count=$((count + 1))
+        _probe_count=$((_probe_count + 1))
         case_name=$(safe_name "$source")
         stdout="$WORKDIR/$case_name.stdout"
         stderr="$WORKDIR/$case_name.stderr"
@@ -109,38 +126,125 @@ run_doc_tests_per_file() {
             sed 's/^/  /' "$stderr" >&2 || true
             exit 1
         fi
-    done < "$DISCOVERED"
+    done < "$_probe_list"
 }
 
 count=$(wc -l < "$DISCOVERED" | tr -d ' ')
-BATCH_STDOUT="$WORKDIR/batch.stdout"
-BATCH_STDERR="$WORKDIR/batch.stderr"
+CHUNK_COUNT=$DOC_TEST_WORKERS
+if [ "$CHUNK_COUNT" -gt "$count" ]; then
+    CHUNK_COUNT=$count
+fi
 
-echo "[doc-tests] batch $count file(s)"
-if "$COMPILER" doc --test --batch "$DISCOVERED" --stdlib-root "$ROOT/stdlib" \
-    > "$BATCH_STDOUT" 2> "$BATCH_STDERR"; then
-    summaries=$(grep -c '^Doc tests passed:' "$BATCH_STDOUT" || true)
-    if [ "$summaries" -ne "$count" ]; then
-        echo "doc test verification failed for batched run: expected $count success summaries, saw $summaries" >&2
-        echo "stdout:" >&2
-        sed 's/^/  /' "$BATCH_STDOUT" >&2 || true
-        echo "stderr:" >&2
-        sed 's/^/  /' "$BATCH_STDERR" >&2 || true
+CHUNK_DIR="$WORKDIR/chunks"
+POOL_DIR="$WORKDIR/pool"
+POOL_QUEUE="$WORKDIR/pool.queue"
+mkdir -p "$CHUNK_DIR"
+: > "$POOL_QUEUE"
+
+# Distribute discovered files round-robin across chunks so heavy directories
+# (docs, src, stdlib, tests) and runnable doctests balance evenly.
+awk -v outdir="$CHUNK_DIR" -v nchunks="$CHUNK_COUNT" '
+    {
+        idx = ((NR - 1) % nchunks) + 1
+        path = sprintf("%s/chunk-%02d.list", outdir, idx)
+        print $0 >> path
+    }
+' "$DISCOVERED"
+
+chunk_idx=0
+assigned_total=0
+while [ "$chunk_idx" -lt "$CHUNK_COUNT" ]; do
+    chunk_idx=$((chunk_idx + 1))
+    chunk_id=$(printf 'chunk-%02d' "$chunk_idx")
+    chunk_list="$CHUNK_DIR/$chunk_id.list"
+    [ -s "$chunk_list" ] || {
+        echo "doc test verification chunk $chunk_id is missing or empty" >&2
         exit 1
-    fi
-else
-    echo "[doc-tests] batched run failed; probing files one by one" >&2
-    run_doc_tests_per_file
-    # The probe exits on the first file that fails alone. Reaching here means
-    # every file passes alone, so the failure is batch-only, such as state one
-    # file's examples leave behind for the next (#8580). The probe only locates
-    # failures; it must not turn a batch failure into a pass.
-    echo "doc test verification failed: the batched run failed, but every file passes on its own (a batch-only failure)" >&2
-    echo "batched stdout:" >&2
-    sed 's/^/  /' "$BATCH_STDOUT" >&2 || true
-    echo "batched stderr:" >&2
-    sed 's/^/  /' "$BATCH_STDERR" >&2 || true
+    }
+    chunk_files=$(wc -l < "$chunk_list" | tr -d ' ')
+    assigned_total=$((assigned_total + chunk_files))
+    printf '%s|1\n' "$chunk_id" >> "$POOL_QUEUE"
+done
+if [ "$assigned_total" -ne "$count" ]; then
+    echo "doc test verification chunk partition mismatch: $assigned_total vs $count" >&2
     exit 1
 fi
 
-echo "doc test verification passed for $count file(s), including $runnable_count runnable doctest file(s)"
+bounded_pool_run_job() {
+    _job=$1
+    _chunk_list="$CHUNK_DIR/$_job.list"
+    _chunk_out="$CHUNK_DIR/$_job.stdout"
+    _chunk_err="$CHUNK_DIR/$_job.stderr"
+    _chunk_status="$CHUNK_DIR/$_job.status"
+    _rc=0
+    "$COMPILER" doc --test --batch "$_chunk_list" --stdlib-root "$ROOT/stdlib" \
+        > "$_chunk_out" 2> "$_chunk_err" || _rc=$?
+    printf '%s\n' "$_rc" > "$_chunk_status"
+    # Return 0 so every chunk completes and parent reports/probes in deterministic order.
+    return 0
+}
+
+echo "[doc-tests] batch $count file(s) across $CHUNK_COUNT chunk(s) with $DOC_TEST_WORKERS worker(s)"
+bounded_pool_init "$POOL_DIR" "$DOC_TEST_WORKERS" "$POOL_QUEUE" || exit 1
+bounded_pool_start "$POOL_DIR" "$DOC_TEST_WORKERS"
+bounded_pool_join "$POOL_DIR" || exit 1
+
+total_summaries=0
+total_examples=0
+chunk_idx=0
+while [ "$chunk_idx" -lt "$CHUNK_COUNT" ]; do
+    chunk_idx=$((chunk_idx + 1))
+    chunk_id=$(printf 'chunk-%02d' "$chunk_idx")
+    chunk_list="$CHUNK_DIR/$chunk_id.list"
+    chunk_out="$CHUNK_DIR/$chunk_id.stdout"
+    chunk_err="$CHUNK_DIR/$chunk_id.stderr"
+    chunk_status_file="$CHUNK_DIR/$chunk_id.status"
+    chunk_files=$(wc -l < "$chunk_list" | tr -d ' ')
+
+    if [ ! -f "$chunk_status_file" ]; then
+        echo "doc test verification failed: chunk $chunk_id left no exit status" >&2
+        exit 1
+    fi
+    read -r chunk_rc < "$chunk_status_file"
+    if [ "$chunk_rc" -ne 0 ]; then
+        echo "[doc-tests] batched $chunk_id failed (exit $chunk_rc); probing its $chunk_files file(s) one by one" >&2
+        run_doc_tests_per_file "$chunk_list"
+        # The probe exits on the first file that fails alone. Reaching here means
+        # every file passes alone, so the failure is batch-only, such as state one
+        # file's examples leave behind for the next (#8580). The probe only locates
+        # failures; it must not turn a batch failure into a pass.
+        echo "doc test verification failed: batched $chunk_id failed, but every file passes on its own (a batch-only failure)" >&2
+        echo "batched stdout:" >&2
+        sed 's/^/  /' "$chunk_out" >&2 || true
+        echo "batched stderr:" >&2
+        sed 's/^/  /' "$chunk_err" >&2 || true
+        exit 1
+    fi
+
+    chunk_counts=$(awk '
+        /^Doc tests passed: [0-9]+ example\(s\)$/ {
+            summaries++
+            examples += $4 + 0
+        }
+        END { printf "%d %d\n", summaries + 0, examples + 0 }
+    ' "$chunk_out")
+    chunk_summaries=${chunk_counts%% *}
+    chunk_examples=${chunk_counts##* }
+    if [ "$chunk_summaries" -ne "$chunk_files" ]; then
+        echo "doc test verification failed for batched $chunk_id: expected $chunk_files success summaries, saw $chunk_summaries" >&2
+        echo "stdout:" >&2
+        sed 's/^/  /' "$chunk_out" >&2 || true
+        echo "stderr:" >&2
+        sed 's/^/  /' "$chunk_err" >&2 || true
+        exit 1
+    fi
+    total_summaries=$((total_summaries + chunk_summaries))
+    total_examples=$((total_examples + chunk_examples))
+done
+
+if [ "$total_summaries" -ne "$count" ]; then
+    echo "doc test verification failed: expected $count total success summaries, saw $total_summaries" >&2
+    exit 1
+fi
+
+echo "doc test verification passed for $count file(s) ($total_examples example(s)), including $runnable_count runnable doctest file(s)"

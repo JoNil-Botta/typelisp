@@ -62,7 +62,7 @@
     [root : identity.CompilerIncrementalIdentity (plan-stress-query 0 true)]
     [root-trace : trace.CompilerIncrementalTraceBuilder
       (match (trace.compiler-trace-begin
-        (clone root)
+        (identity.clone-compiler-incremental-identity (& root))
         (plan-stress-trace-limits))
         [(Ok value) value]
         [_ (pt.plan-test-stop)])]
@@ -83,7 +83,7 @@
           (&mut root-trace)
           (fixture.graph-test-child-edge
             i
-            (clone query)
+            (identity.clone-compiler-incremental-identity (& query))
             (fixture.graph-test-output output)))
         (fixture.graph-test-add-node!
           (&mut builder)
@@ -97,7 +97,7 @@
       (&mut builder)
       (graph.CompilerIncrementalGraphRoot
         (graph.CompilerIncrementalGraphRootName "typelisp.root.check" "star")
-        (clone root)))
+        (identity.clone-compiler-incremental-identity (& root))))
     (fixture.graph-test-add-node!
       (&mut builder)
       (graph.CompilerIncrementalGraphNode
@@ -303,7 +303,8 @@
         [query : identity.CompilerIncrementalIdentity
           (plan-stress-query i false)]
         [trace : trace.CompilerIncrementalTraceBuilder
-          (fixture.graph-test-trace-begin (clone query))]
+          (fixture.graph-test-trace-begin
+            (identity.clone-compiler-incremental-identity (& query)))]
         (fixture.graph-test-note!
           (&mut trace)
           (pt.plan-test-source

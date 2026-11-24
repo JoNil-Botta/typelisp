@@ -151,8 +151,8 @@
   ;; SPEC 4.4.3: a use spelled with the imported module's full canonical path
   ;; keeps the import loaded without any alias use (#8812).
   (let
-    [nested : String (str_cat.str-cat (clone dir) "/nested")]
-    [entry : String (str_cat.str-cat (clone dir) "/entry.tl")]
+    [nested : String (str_cat.str-cat (string.copy (& dir)) "/nested")]
+    [entry : String (str_cat.str-cat (string.copy (& dir)) "/entry.tl")]
     (load.compiler-load-test-mkdir (& dir))
     (load.compiler-load-test-mkdir (& nested))
     (lazy-write-text
@@ -229,8 +229,8 @@
   ;; through the types it names. A cleanup owner, a typed varargs extern and
   ;; a local macro stay eager (#9682).
   (let
-    [nested : String (str_cat.str-cat (clone dir) "/nested")]
-    [entry : String (str_cat.str-cat (clone dir) "/entry.tl")]
+    [nested : String (str_cat.str-cat (string.copy (& dir)) "/nested")]
+    [entry : String (str_cat.str-cat (string.copy (& dir)) "/entry.tl")]
     (load.compiler-load-test-mkdir (& dir))
     (load.compiler-load-test-mkdir (& nested))
     (lazy-write-text

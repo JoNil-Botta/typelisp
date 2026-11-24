@@ -1,0 +1,94 @@
+# Safety corpus cases: composite values, structs, tuples, dotted fields, and wide aggregate limits.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+copy_view_binder_value_ok|run-exit|tests/safety/copy_view_binder_value_ok.tl|42|-
+composite_arg_loan_if_then_reject|check-fail|tests/safety/composite_arg_loan_if_then_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_if_else_reject|check-fail|tests/safety/composite_arg_loan_if_else_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
+composite_arg_loan_begin_reject|check-fail|tests/safety/composite_arg_loan_begin_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
+composite_arg_loan_let_reject|check-fail|tests/safety/composite_arg_loan_let_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_match_arm_reject|check-fail|tests/safety/composite_arg_loan_match_arm_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
+composite_arg_loan_match_scrutinee_reject|check-fail|tests/safety/composite_arg_loan_match_scrutinee_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_destructure_reject|check-fail|tests/safety/composite_arg_loan_destructure_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_nested_reject|check-fail|tests/safety/composite_arg_loan_nested_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_tuple_reject|check-fail|tests/safety/composite_arg_loan_tuple_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_array_reject|check-fail|tests/safety/composite_arg_loan_array_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_replace_old_value_bytes_reject|check-fail|tests/safety/composite_arg_loan_replace_old_value_bytes_reject.tl|tests/safety/composite_arg_loan_replace_old_value_bytes_reject.tl:38:32|error[E0207]: typecheck: cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_replace_old_value_ok|run-exit|tests/safety/composite_arg_loan_replace_old_value_ok.tl|42|-
+composite_arg_loan_replace_old_value_reject|check-fail|tests/safety/composite_arg_loan_replace_old_value_reject.tl|tests/safety/composite_arg_loan_replace_old_value_reject.tl:37:13|error[E0207]: typecheck: cannot assign to borrowed place `pair.left`
+composite_arg_loan_dynamic_array_index_reject|check-fail|tests/safety/composite_arg_loan_dynamic_array_index_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_box_reject|check-fail|tests/safety/composite_arg_loan_box_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_try_reject|check-fail|tests/safety/composite_arg_loan_try_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_with_resource_reject|check-fail|tests/safety/composite_arg_loan_with_resource_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assigned_view_begin_reject|check-fail|tests/safety/composite_arg_loan_assigned_view_begin_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assigned_bound_view_reject|check-fail|tests/safety/composite_arg_loan_assigned_bound_view_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assignment_chain_reject|check-fail|tests/safety/composite_arg_loan_assignment_chain_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_nested_assignment_chain_reject|check-fail|tests/safety/composite_arg_loan_nested_assignment_chain_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_nested_let_assignment_reject|check-fail|tests/safety/composite_arg_loan_nested_let_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_match_assignment_reject|check-fail|tests/safety/composite_arg_loan_match_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_match_pattern_assignment_reject|check-fail|tests/safety/composite_arg_loan_match_pattern_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_conditional_assigned_view_reject|check-fail|tests/safety/composite_arg_loan_conditional_assigned_view_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_condition_assignment_reject|check-fail|tests/safety/composite_arg_loan_condition_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_let_init_assignment_reject|check-fail|tests/safety/composite_arg_loan_let_init_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_loop_assignment_reject|check-fail|tests/safety/composite_arg_loan_loop_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_loop_carried_assignment_reject|check-fail|tests/safety/composite_arg_loan_loop_carried_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_loop_break_assignment_reject|check-fail|tests/safety/composite_arg_loan_loop_break_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_field_store_reject|check-fail|tests/safety/composite_arg_loan_field_store_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_shadowed_assignment_reject|check-fail|tests/safety/composite_arg_loan_shadowed_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assignment_move_reject|check-fail|tests/safety/composite_arg_loan_assignment_move_reject.tl|-|cannot move borrowed place `pair.left`
+composite_arg_loan_untracked_for_store_reject|check-fail|tests/safety/composite_arg_loan_untracked_for_store_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_returned_assignment_reject|check-fail|tests/safety/composite_arg_loan_returned_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_mut_lend_reject|check-fail|tests/safety/composite_arg_loan_mut_lend_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_move_reject|check-fail|tests/safety/composite_arg_loan_move_reject.tl|-|cannot move borrowed place `pair`
+composite_arg_loan_returned_reject|check-fail|tests/safety/composite_arg_loan_returned_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
+composite_arg_loan_unrelated_ok|check-ok|tests/safety/composite_arg_loan_unrelated_ok.tl|-|-
+composite_arg_loan_scoped_ok|check-ok|tests/safety/composite_arg_loan_scoped_ok.tl|-|-
+composite_arg_loan_unused_ref_let_ok|check-ok|tests/safety/composite_arg_loan_unused_ref_let_ok.tl|-|-
+composite_arg_loan_condition_only_ref_let_ok|check-ok|tests/safety/composite_arg_loan_condition_only_ref_let_ok.tl|-|-
+composite_arg_loan_nested_condition_only_ref_let_ok|check-ok|tests/safety/composite_arg_loan_nested_condition_only_ref_let_ok.tl|-|-
+composite_arg_loan_unselected_tuple_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_tuple_view_ok.tl|-|-
+composite_arg_loan_unselected_array_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_array_view_ok.tl|-|-
+composite_arg_loan_unselected_fixed_array_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_fixed_array_view_ok.tl|-|-
+composite_arg_loan_unselected_match_scrutinee_ok|check-ok|tests/safety/composite_arg_loan_unselected_match_scrutinee_ok.tl|-|-
+composite_arg_loan_unselected_assigned_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_assigned_view_ok.tl|-|-
+composite_arg_loan_unrelated_nested_let_assignment_ok|check-ok|tests/safety/composite_arg_loan_unrelated_nested_let_assignment_ok.tl|-|-
+composite_arg_loan_overwritten_assignment_ok|check-ok|tests/safety/composite_arg_loan_overwritten_assignment_ok.tl|-|-
+composite_arg_loan_overwritten_origin_ok|check-ok|tests/safety/composite_arg_loan_overwritten_origin_ok.tl|-|-
+composite_arg_loan_loop_then_overwrite_ok|check-ok|tests/safety/composite_arg_loan_loop_then_overwrite_ok.tl|-|-
+composite_arg_loan_assignment_after_last_use_ok|check-ok|tests/safety/composite_arg_loan_assignment_after_last_use_ok.tl|-|-
+composite_arg_loan_for_unrelated_store_ok|check-ok|tests/safety/composite_arg_loan_for_unrelated_store_ok.tl|-|-
+invalid_struct_field_reject|check-fail|tests/safety/invalid_struct_field_reject.tl|-|unknown struct field Point.z
+dotted_field_numeric_reject|check-fail|tests/safety/dotted_field_numeric_reject.tl|-|typecheck: dotted field access p.0 cannot use numeric field segments; use tuple-ref or array-ref
+dotted_field_mut_borrow_dotted_dotted_reject|check-fail|tests/safety/dotted_field_mut_borrow_dotted_dotted_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+dotted_field_mut_borrow_bound_reject|check-fail|tests/safety/dotted_field_mut_borrow_bound_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+dotted_field_shared_borrow_write_reject|check-fail|tests/safety/dotted_field_shared_borrow_write_reject.tl|-|cannot assign to borrowed place `pair.left.x`
+dotted_field_cleanup_move_reject|check-fail|tests/safety/dotted_field_cleanup_move_reject.tl|-|cleanup owner `h` moved before with scope exit
+dotted_field_disjoint_mut_borrow_ok|check-ok|tests/safety/dotted_field_disjoint_mut_borrow_ok.tl|-|-
+struct_field_set_immutable_ref_reject|check-fail|tests/safety/struct_field_set_immutable_ref_reject.tl|-|set! struct field requires mutable struct access
+struct_field_set_temporary_reject|check-fail|tests/safety/struct_field_set_temporary_reject.tl|-|expression is not a storage place
+struct_match_pattern_arity_reject|check-fail|tests/safety/struct_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
+struct_match_pattern_wrong_head_reject|check-fail|tests/safety/struct_match_pattern_wrong_head_reject.tl|-|struct pattern head Size does not match struct Point
+struct_match_pattern_refutable_field_reject|check-fail|tests/safety/struct_match_pattern_refutable_field_reject.tl|-|struct field pattern only supports binding, wildcard, or nested struct patterns
+struct_match_pattern_unreachable_reject|check-fail|tests/safety/struct_match_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
+tuple_match_pattern_arity_reject|check-fail|tests/safety/tuple_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
+tuple_match_pattern_source_reuse_reject|check-fail|tests/safety/tuple_match_pattern_source_reuse_reject.tl|-|use of moved value `pair.0`
+tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_after_move_reject.tl|-|use of moved value `pair.0`
+tuple_nested_second_move_reject|check-fail|tests/safety/tuple_nested_second_move_reject.tl|tests/safety/tuple_nested_second_move_reject.tl:6:25|use of moved value `pair.0.1`
+tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_reject.tl|-|use of moved value `pair`
+tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move a `(Box i64)` out of a shared reference
+tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+tuple_set_immutable_ref_reject|check-fail|tests/safety/tuple_set_immutable_ref_reject.tl|-|set! tuple element requires mutable tuple access
+wide_struct_1001_next_reject|check-fail|tests/safety/wide_struct_1001_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1002_next_reject|check-fail|tests/safety/wide_struct_1002_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1002_alone_reject|check-fail|tests/safety/wide_struct_1002_alone_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1003_next_reject|check-fail|tests/safety/wide_struct_1003_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_1003_alone_reject|check-fail|tests/safety/wide_struct_1003_alone_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_2500_next_reject|check-fail|tests/safety/wide_struct_2500_next_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_2500_next_span_reject|check-fail|tests/safety/wide_struct_2500_next_reject.tl|tests/safety/wide_struct_2500_next_reject.tl:20:3|if condition must be bool: expected bool, found i64
+wide_struct_2500_alone_reject|check-fail|tests/safety/wide_struct_2500_alone_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_struct_literal_reject|check-fail|tests/safety/wide_struct_literal_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_enum_1003_next_constructor_reject|check-fail|tests/safety/wide_enum_1003_next_constructor_reject.tl|-|call `Big.V1001` argument 1 type mismatch: expected i64, found bool
+wide_enum_1003_next_match_reject|check-fail|tests/safety/wide_enum_1003_next_match_reject.tl|-|if condition must be bool: expected bool, found i64
+wide_enum_2500_alone_constructor_reject|check-fail|tests/safety/wide_enum_2500_alone_constructor_reject.tl|-|call `Big.V2499` argument 1 type mismatch: expected i64, found bool
+wide_aggregates_count_reject|check-fail|tests/safety/wide_aggregates_count_reject.tl|tests/integration/wide_aggregates.tl:39:10|unbound name wide-aggregates-count-must-be-an-integer-literal
+tuple_exit_unreachable_type_reject|check-fail|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch
+tuple_exit_unreachable_type_reject-windows|check-fail-windows|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch

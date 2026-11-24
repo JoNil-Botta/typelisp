@@ -16,9 +16,12 @@
 # families below. A module's role follows from its name: `*_tests.tl` is test,
 # `*_linux.tl` / `*_windows.tl` is leaf, `compiler_lower*` is lower, anything
 # else is shared core. Every target token found must match exactly one row of
-# the inventory, with that row's exact count and a boundary its module's role
-# admits. A test module may cover itself with one `*`-scope row; every other row
-# names its scope. The optimizer may have no row at all.
+# the per-module inventory directory (`scripts/codegen-target-dispatch.d/<module>.tsv`),
+# with that row's count and a boundary its module's role admits. Production
+# modules require exact positive integer counts; `role == test` (`*_tests.tl`)
+# modules may use `*` (meaning >=1 observed match) as well as exact counts.
+# A test module may cover itself with one `*`-scope row; every other row names
+# its scope. The optimizer may have no row at all.
 #
 # Usage: scripts/check-codegen-target-dispatch.sh [--self-test]
 set -eu
@@ -32,7 +35,7 @@ fi
 if [ "${1:-}" != "--run-self-test" ]; then
     ROOT=${CODEGEN_TARGET_DISPATCH_ROOT:-$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)}
     cd "$ROOT"
-    INVENTORY=${CODEGEN_TARGET_DISPATCH_INVENTORY:-scripts/codegen-target-dispatch-inventory.tsv}
+    INVENTORY=${CODEGEN_TARGET_DISPATCH_INVENTORY:-scripts/codegen-target-dispatch.d}
     WORKDIR=${CODEGEN_TARGET_DISPATCH_DIR:-target/codegen-target-dispatch}
 fi
 
@@ -55,6 +58,59 @@ discover_modules() {
         esac
         printf '%s\t%s\n' "$path" "$role"
     done
+}
+
+# Validate inventory directory and print `DIR/*.tsv` in LC_ALL=C sorted order.
+list_inventory_files() {
+    _dir=$1
+    case "$_dir" in
+        /) ;;
+        */) _dir=${_dir%/} ;;
+    esac
+    if [ ! -d "$_dir" ]; then
+        echo "missing codegen target dispatch inventory directory: $_dir" >&2
+        return 1
+    fi
+    _entries=$(find "$_dir" -print | LC_ALL=C sort) || return 1
+    _count=0
+    while IFS= read -r _entry; do
+        [ -n "$_entry" ] || continue
+        [ "$_entry" != "$_dir" ] || continue
+        _rel=${_entry#"$_dir"/}
+        case "$_rel" in
+            */*)
+                echo "target dispatch inventory directory $_dir contains nested entry: $_rel" >&2
+                return 1
+                ;;
+            .tsv)
+                echo "target dispatch inventory directory $_dir contains invalid filename: $_rel" >&2
+                return 1
+                ;;
+            *.tsv) ;;
+            *)
+                echo "target dispatch inventory directory $_dir contains unexpected non-.tsv entry: $_rel" >&2
+                return 1
+                ;;
+        esac
+        if [ ! -f "$_entry" ] || [ -L "$_entry" ]; then
+            echo "target dispatch inventory directory $_dir contains non-regular entry: $_rel" >&2
+            return 1
+        fi
+        _count=$((_count + 1))
+    done <<EOF
+$_entries
+EOF
+    if [ "$_count" -eq 0 ]; then
+        echo "target dispatch inventory directory is empty (no *.tsv files): $_dir" >&2
+        return 1
+    fi
+    while IFS= read -r _entry; do
+        [ -n "$_entry" ] || continue
+        [ "$_entry" != "$_dir" ] || continue
+        printf '%s\n' "$_entry"
+    done <<EOF
+$_entries
+EOF
 }
 
 # Print `file<TAB>scope<TAB>token<TAB>line` for every target token.
@@ -125,11 +181,9 @@ FNR == 1 {
 }
 
 run_check() {
-    if [ ! -f "$INVENTORY" ]; then
-        echo "missing codegen target dispatch inventory: $INVENTORY" >&2
-        return 1
-    fi
     mkdir -p "$WORKDIR"
+    inv_files="$WORKDIR/inventory-files.txt"
+    list_inventory_files "$INVENTORY" > "$inv_files" || return 1
     modules="$WORKDIR/modules.tsv"
     observed="$WORKDIR/observed.tsv"
     discover_modules > "$modules"
@@ -140,7 +194,7 @@ run_check() {
     # shellcheck disable=SC2046
     scan_tokens $(cut -f1 "$modules") | sort > "$observed"
 
-    awk -F '\t' -v inventory="$INVENTORY" -v modules="$modules" -v observed="$observed" '
+    awk -F '\t' -v inv_list="$inv_files" -v modules="$modules" -v observed="$observed" '
 BEGIN {
     valid_category["abi"] = 1
     valid_category["backend-mode"] = 1
@@ -160,62 +214,97 @@ FILENAME == modules {
     role[$1] = $2
     next
 }
-FILENAME == inventory {
-    if ($0 == "" || $0 ~ /^#/) {
+FILENAME == inv_list {
+    inv_path = $0
+    sub(/\r$/, "", inv_path)
+    if (inv_path == "") {
         next
     }
-    if (NF != 7) {
-        printf "malformed target dispatch inventory row %d: expected 7 tab-separated fields\n", FNR > "/dev/stderr"
-        failed = 1
-        next
+    mod_name = inv_path
+    sub(/^.*\//, "", mod_name)
+    sub(/\.tsv$/, "", mod_name)
+    expected_src = "src/" mod_name ".tl"
+    lno = 0
+    file_rows = 0
+    while ((st = (getline raw < inv_path)) > 0) {
+        lno += 1
+        sub(/\r$/, "", raw)
+        if (raw == "" || raw ~ /^#/) {
+            continue
+        }
+        file_rows += 1
+        nf = split(raw, f, "\t")
+        if (nf != 7) {
+            printf "malformed target dispatch inventory %s:%d: expected 7 tab-separated fields\n", inv_path, lno > "/dev/stderr"
+            failed = 1
+            continue
+        }
+        if (f[1] != expected_src) {
+            printf "target dispatch inventory %s:%d names `%s`, expected `%s` for module file\n", inv_path, lno, f[1], expected_src > "/dev/stderr"
+            failed = 1
+        }
+        if (!(f[1] in role)) {
+            printf "target dispatch inventory %s:%d names `%s`, which is not a covered module\n", inv_path, lno, f[1] > "/dev/stderr"
+            failed = 1
+        }
+        if (!((f[3] == "policy") || (f[3] == "adapter") || (f[3] == "lower") || (f[3] == "leaf") || (f[3] == "test"))) {
+            printf "target dispatch inventory %s:%d: unknown boundary `%s`\n", inv_path, lno, f[3] > "/dev/stderr"
+            failed = 1
+        } else if ((f[1] in role) && !((role[f[1]], f[3]) in admits)) {
+            printf "target dispatch inventory %s:%d: boundary `%s` is not allowed in %s module %s\n", inv_path, lno, f[3], role[f[1]], f[1] > "/dev/stderr"
+            failed = 1
+        }
+        if (!(f[4] in valid_category)) {
+            printf "target dispatch inventory %s:%d: unknown category `%s`\n", inv_path, lno, f[4] > "/dev/stderr"
+            failed = 1
+        }
+        if ((f[3] == "test") != (f[4] == "test-only")) {
+            printf "target dispatch inventory %s:%d: boundary test and category test-only go together\n", inv_path, lno > "/dev/stderr"
+            failed = 1
+        }
+        if (f[1] ~ /^src\/compiler_optimize/) {
+            printf "target dispatch inventory %s:%d: the optimizer must stay target-free\n", inv_path, lno > "/dev/stderr"
+            failed = 1
+        }
+        if (f[6] == "*") {
+            if (!(f[1] in role) || role[f[1]] != "test" || f[3] != "test") {
+                printf "target dispatch inventory %s:%d: wildcard count `*` is only allowed for test modules (*_tests.tl)\n", inv_path, lno > "/dev/stderr"
+                failed = 1
+            }
+        } else if (f[6] !~ /^[1-9][0-9]*$/) {
+            printf "target dispatch inventory %s:%d: count must be a positive integer\n", inv_path, lno > "/dev/stderr"
+            failed = 1
+        }
+        if ((f[2] == "*") && (f[3] != "test")) {
+            printf "target dispatch inventory %s:%d: only a test row may cover a whole module (scope *)\n", inv_path, lno > "/dev/stderr"
+            failed = 1
+        }
+        if (f[7] ~ /^[[:space:]]*$/) {
+            printf "target dispatch inventory %s:%d: rationale is empty\n", inv_path, lno > "/dev/stderr"
+            failed = 1
+        }
+        key = f[1] SUBSEP f[2] SUBSEP f[5]
+        if (key in seen_row) {
+            printf "duplicate target dispatch inventory %s:%d for %s\t%s\t%s\n", inv_path, lno, f[1], f[2], f[5] > "/dev/stderr"
+            failed = 1
+        }
+        seen_row[key] = 1
+        rows += 1
+        row_file[rows] = f[1]
+        row_scope[rows] = f[2]
+        row_boundary[rows] = f[3]
+        row_regex[rows] = f[5]
+        row_expected[rows] = (f[6] == "*" ? "*" : (f[6] + 0))
     }
-    if (!($1 in role)) {
-        printf "target dispatch inventory row %d names `%s`, which is not a covered module\n", FNR, $1 > "/dev/stderr"
+    if (st < 0) {
+        printf "failed to read target dispatch inventory file: %s\n", inv_path > "/dev/stderr"
         failed = 1
     }
-    if (!(($3 == "policy") || ($3 == "adapter") || ($3 == "lower") || ($3 == "leaf") || ($3 == "test"))) {
-        printf "target dispatch inventory row %d: unknown boundary `%s`\n", FNR, $3 > "/dev/stderr"
-        failed = 1
-    } else if (($1 in role) && !((role[$1], $3) in admits)) {
-        printf "target dispatch inventory row %d: boundary `%s` is not allowed in %s module %s\n", FNR, $3, role[$1], $1 > "/dev/stderr"
+    close(inv_path)
+    if (file_rows == 0) {
+        printf "target dispatch inventory file is empty: %s\n", inv_path > "/dev/stderr"
         failed = 1
     }
-    if (!($4 in valid_category)) {
-        printf "target dispatch inventory row %d: unknown category `%s`\n", FNR, $4 > "/dev/stderr"
-        failed = 1
-    }
-    if (($3 == "test") != ($4 == "test-only")) {
-        printf "target dispatch inventory row %d: boundary test and category test-only go together\n", FNR > "/dev/stderr"
-        failed = 1
-    }
-    if ($1 ~ /^src\/compiler_optimize/) {
-        printf "target dispatch inventory row %d: the optimizer must stay target-free\n", FNR > "/dev/stderr"
-        failed = 1
-    }
-    if ($6 !~ /^[1-9][0-9]*$/) {
-        printf "target dispatch inventory row %d: count must be a positive integer\n", FNR > "/dev/stderr"
-        failed = 1
-    }
-    if (($2 == "*") && ($3 != "test")) {
-        printf "target dispatch inventory row %d: only a test row may cover a whole module (scope *)\n", FNR > "/dev/stderr"
-        failed = 1
-    }
-    if ($7 ~ /^[[:space:]]*$/) {
-        printf "target dispatch inventory row %d: rationale is empty\n", FNR > "/dev/stderr"
-        failed = 1
-    }
-    key = $1 SUBSEP $2 SUBSEP $5
-    if (key in seen_row) {
-        printf "duplicate target dispatch inventory row %d for %s\t%s\t%s\n", FNR, $1, $2, $5 > "/dev/stderr"
-        failed = 1
-    }
-    seen_row[key] = 1
-    rows += 1
-    row_file[rows] = $1
-    row_scope[rows] = $2
-    row_boundary[rows] = $3
-    row_regex[rows] = $5
-    row_expected[rows] = $6 + 0
     next
 }
 FILENAME == observed {
@@ -246,7 +335,12 @@ END {
     }
     for (idx = 1; idx <= rows; idx += 1) {
         count = actual[idx] + 0
-        if (count != row_expected[idx]) {
+        if (row_expected[idx] == "*") {
+            if (count < 1) {
+                printf "target dispatch count mismatch: %s scope=%s regex=%s expected=>=1 observed=%d\n", row_file[idx], row_scope[idx], row_regex[idx], count > "/dev/stderr"
+                failed = 1
+            }
+        } else if (count != row_expected[idx]) {
             printf "target dispatch count mismatch: %s scope=%s regex=%s expected=%d observed=%d\n", row_file[idx], row_scope[idx], row_regex[idx], row_expected[idx], count > "/dev/stderr"
             failed = 1
         }
@@ -258,20 +352,22 @@ END {
     }
     printf "codegen target dispatch inventory covers %d occurrences across %d rows (policy %d, adapter %d, lower %d, leaf %d, test %d)\n", total, rows, per_boundary["policy"], per_boundary["adapter"], per_boundary["lower"], per_boundary["leaf"], per_boundary["test"]
 }
-' "$modules" "$INVENTORY" "$observed"
+' "$modules" "$inv_files" "$observed"
 }
 
 # Each case builds a small tree, runs the real check against it, and expects
 # success or one specific failure.
 run_self_test() {
-    base=$(mktemp -d "${TMPDIR:-/tmp}/codegen-target-dispatch-self-test.XXXXXX")
+    selftest_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+    mkdir -p "$selftest_root/target/codegen-target-dispatch"
+    base=$(mktemp -d "$selftest_root/target/codegen-target-dispatch/self-test.XXXXXX")
     trap 'rm -rf "$base"' EXIT
     failures=0
     cases=0
 
     write_tree() {
         tree=$1
-        mkdir -p "$tree/src" "$tree/scripts"
+        mkdir -p "$tree/src" "$tree/scripts/inventory.d"
         cat > "$tree/src/compiler_backend.tl" <<'EOF'
 (define (compiler-backend-target-policy-new [target : CompilerBackendTarget]) : i64
   (match target
@@ -288,8 +384,11 @@ EOF
         printf '%s\n' \
             '# file	scope	boundary	category	token-regex	count	rationale' \
             'src/compiler_backend.tl	compiler-backend-target-policy-new	policy	abi	CompilerBackendTarget[.](Linux|Windows)	2	Builds the target policy.' \
+            > "$tree/scripts/inventory.d/compiler_backend.tsv"
+        printf '%s\n' \
+            '# file	scope	boundary	category	token-regex	count	rationale' \
             'src/compiler_backend_runtime_linux.tl	compiler-backend-runtime-name	leaf	runtime	linux-x86_64	1	The Linux runtime names its target.' \
-            > "$tree/scripts/inventory.tsv"
+            > "$tree/scripts/inventory.d/compiler_backend_runtime_linux.tsv"
     }
 
     # expect NAME pass|fail [MESSAGE] -- with the tree already edited
@@ -301,7 +400,7 @@ EOF
         cases=$((cases + 1))
         set +e
         out=$(CODEGEN_TARGET_DISPATCH_ROOT="$tree" \
-            CODEGEN_TARGET_DISPATCH_INVENTORY=scripts/inventory.tsv \
+            CODEGEN_TARGET_DISPATCH_INVENTORY=scripts/inventory.d \
             CODEGEN_TARGET_DISPATCH_DIR="$tree/work" \
             sh "$SELF" 2>&1)
         status=$?
@@ -347,29 +446,35 @@ EOF
     # Two rows match one token.
     write_tree "$base/ambiguous"
     printf '%s\n' 'src/compiler_backend.tl	compiler-backend-target-policy-new	policy	abi	CompilerBackendTarget[.]Linux	1	Overlaps the row above.' \
-        >> "$base/ambiguous/scripts/inventory.tsv"
+        >> "$base/ambiguous/scripts/inventory.d/compiler_backend.tsv"
     expect ambiguous fail "ambiguous target dispatch"
+
+    # Duplicate (file, scope, regex) row is rejected.
+    write_tree "$base/duplicate-row"
+    printf '%s\n' 'src/compiler_backend.tl	compiler-backend-target-policy-new	policy	abi	CompilerBackendTarget[.](Linux|Windows)	2	Duplicate row.' \
+        >> "$base/duplicate-row/scripts/inventory.d/compiler_backend.tsv"
+    expect duplicate-row fail "duplicate target dispatch inventory"
 
     # A count that no longer matches the source.
     write_tree "$base/stale-count"
-    sed 's/Linux|Windows)	2	/Linux|Windows)	3	/' "$base/stale-count/scripts/inventory.tsv" > "$base/stale-count/scripts/inventory.new"
-    mv "$base/stale-count/scripts/inventory.new" "$base/stale-count/scripts/inventory.tsv"
+    sed 's/Linux|Windows)	2	/Linux|Windows)	3	/' "$base/stale-count/scripts/inventory.d/compiler_backend.tsv" > "$base/stale-count/scripts/inventory.d/compiler_backend.new"
+    mv "$base/stale-count/scripts/inventory.d/compiler_backend.new" "$base/stale-count/scripts/inventory.d/compiler_backend.tsv"
     expect stale-count fail "count mismatch"
 
     # An unknown category, and the retired `transitional` one.
     write_tree "$base/illegal-category"
-    sed 's/	policy	abi	/	policy	transitional	/' "$base/illegal-category/scripts/inventory.tsv" > "$base/illegal-category/scripts/inventory.new"
-    mv "$base/illegal-category/scripts/inventory.new" "$base/illegal-category/scripts/inventory.tsv"
+    sed 's/	policy	abi	/	policy	transitional	/' "$base/illegal-category/scripts/inventory.d/compiler_backend.tsv" > "$base/illegal-category/scripts/inventory.d/compiler_backend.new"
+    mv "$base/illegal-category/scripts/inventory.d/compiler_backend.new" "$base/illegal-category/scripts/inventory.d/compiler_backend.tsv"
     expect illegal-category fail "unknown category \`transitional\`"
 
     # An unknown boundary, and a boundary the module's role does not admit.
     write_tree "$base/illegal-boundary"
-    sed 's/	policy	abi	/	shared	abi	/' "$base/illegal-boundary/scripts/inventory.tsv" > "$base/illegal-boundary/scripts/inventory.new"
-    mv "$base/illegal-boundary/scripts/inventory.new" "$base/illegal-boundary/scripts/inventory.tsv"
+    sed 's/	policy	abi	/	shared	abi	/' "$base/illegal-boundary/scripts/inventory.d/compiler_backend.tsv" > "$base/illegal-boundary/scripts/inventory.d/compiler_backend.new"
+    mv "$base/illegal-boundary/scripts/inventory.d/compiler_backend.new" "$base/illegal-boundary/scripts/inventory.d/compiler_backend.tsv"
     expect illegal-boundary fail "unknown boundary \`shared\`"
     write_tree "$base/wrong-boundary"
-    sed 's/	policy	abi	/	leaf	abi	/' "$base/wrong-boundary/scripts/inventory.tsv" > "$base/wrong-boundary/scripts/inventory.new"
-    mv "$base/wrong-boundary/scripts/inventory.new" "$base/wrong-boundary/scripts/inventory.tsv"
+    sed 's/	policy	abi	/	leaf	abi	/' "$base/wrong-boundary/scripts/inventory.d/compiler_backend.tsv" > "$base/wrong-boundary/scripts/inventory.d/compiler_backend.new"
+    mv "$base/wrong-boundary/scripts/inventory.d/compiler_backend.new" "$base/wrong-boundary/scripts/inventory.d/compiler_backend.tsv"
     expect wrong-boundary fail "boundary \`leaf\` is not allowed in core module"
 
     # A new module in the covered family is scanned without being listed.
@@ -391,8 +496,10 @@ EOF
     write_tree "$base/target-cfg-classified"
     cp "$base/target-cfg-unclassified/src/compiler_target_cfg_core.tl" \
         "$base/target-cfg-classified/src/compiler_target_cfg_core.tl"
-    printf '%s\n' 'src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs	policy	target-cfg	target-linux	1	Shared Linux cfg preset.' \
-        >> "$base/target-cfg-classified/scripts/inventory.tsv"
+    printf '%s\n' \
+        '# file	scope	boundary	category	token-regex	count	rationale' \
+        'src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs	policy	target-cfg	target-linux	1	Shared Linux cfg preset.' \
+        > "$base/target-cfg-classified/scripts/inventory.d/compiler_target_cfg_core.tsv"
     expect target-cfg-classified pass
 
     # The optimizer may not be classified at all.
@@ -401,15 +508,87 @@ EOF
 (define (opt-target-name) : String
   "linux-x86_64")
 EOF
-    printf '%s\n' 'src/compiler_optimize.tl	opt-target-name	policy	abi	linux-x86_64	1	Not allowed.' \
-        >> "$base/optimizer-row/scripts/inventory.tsv"
+    printf '%s\n' \
+        '# file	scope	boundary	category	token-regex	count	rationale' \
+        'src/compiler_optimize.tl	opt-target-name	policy	abi	linux-x86_64	1	Not allowed.' \
+        > "$base/optimizer-row/scripts/inventory.d/compiler_optimize.tsv"
     expect optimizer-row fail "the optimizer must stay target-free"
 
     # A row for a file outside the covered family.
     write_tree "$base/uncovered-row"
-    printf '%s\n' 'src/compile_cli_core.tl	main	policy	abi	linux-x86_64	1	Not covered.' \
-        >> "$base/uncovered-row/scripts/inventory.tsv"
+    printf '%s\n' \
+        '# file	scope	boundary	category	token-regex	count	rationale' \
+        'src/compile_cli_core.tl	main	policy	abi	linux-x86_64	1	Not covered.' \
+        > "$base/uncovered-row/scripts/inventory.d/compile_cli_core.tsv"
     expect uncovered-row fail "is not a covered module"
+
+    # A row placed in the wrong module file is rejected.
+    write_tree "$base/wrong-module-file"
+    printf '%s\n' 'src/compiler_backend.tl	compiler-backend-emit-call	policy	abi	linux-x86_64	1	Wrong module file.' \
+        >> "$base/wrong-module-file/scripts/inventory.d/compiler_backend_runtime_linux.tsv"
+    expect wrong-module-file fail "expected \`src/compiler_backend_runtime_linux.tl\` for module file"
+
+    # Stray non-.tsv file in inventory directory is rejected.
+    write_tree "$base/stray-file"
+    printf 'stray\n' > "$base/stray-file/scripts/inventory.d/notes.txt"
+    expect stray-file fail "unexpected non-.tsv entry: notes.txt"
+
+    # Nested subdirectory in inventory directory is rejected.
+    write_tree "$base/nested-dir"
+    mkdir -p "$base/nested-dir/scripts/inventory.d/sub"
+    expect nested-dir fail "unexpected non-.tsv entry: sub"
+
+    # Empty .tsv fragment file is rejected.
+    write_tree "$base/empty-fragment"
+    printf '# empty\n' > "$base/empty-fragment/scripts/inventory.d/compiler_backend_empty.tsv"
+    expect empty-fragment fail "target dispatch inventory file is empty"
+
+    # Empty inventory directory is rejected.
+    write_tree "$base/empty-dir"
+    rm -f "$base/empty-dir/scripts/inventory.d/"*.tsv
+    expect empty-dir fail "inventory directory is empty"
+
+    # Wildcard count `*` is allowed on test modules (*_tests.tl) with >=1 match.
+    write_tree "$base/test-wildcard-pass"
+    cat > "$base/test-wildcard-pass/src/compiler_backend_tests.tl" <<'EOF'
+(define (test-targets) : i64
+  (match (CompilerBackendTarget.Linux)
+    [(CompilerBackendTarget.Linux) 1]
+    [(CompilerBackendTarget.Windows) 2]))
+EOF
+    printf '%s\n' \
+        '# file	scope	boundary	category	token-regex	count	rationale' \
+        'src/compiler_backend_tests.tl	*	test	test-only	CompilerBackendTarget[.](Linux|Windows)	*	Backend tests name the targets they exercise.' \
+        > "$base/test-wildcard-pass/scripts/inventory.d/compiler_backend_tests.tsv"
+    expect test-wildcard-pass pass
+
+    # Wildcard count `*` on test modules still requires >=1 observed match.
+    write_tree "$base/test-wildcard-zero"
+    cat > "$base/test-wildcard-zero/src/compiler_backend_tests.tl" <<'EOF'
+(define (test-no-targets) : i64 42)
+EOF
+    printf '%s\n' \
+        '# file	scope	boundary	category	token-regex	count	rationale' \
+        'src/compiler_backend_tests.tl	*	test	test-only	CompilerBackendTarget[.](Linux|Windows)	*	Unused wildcard row.' \
+        > "$base/test-wildcard-zero/scripts/inventory.d/compiler_backend_tests.tsv"
+    expect test-wildcard-zero fail "expected=>=1 observed=0"
+
+    # Wildcard count `*` is rejected on non-test production modules (policy/adapter/lower/leaf).
+    write_tree "$base/prod-wildcard-reject"
+    sed 's/Linux|Windows)	2	/Linux|Windows)	*	/' "$base/prod-wildcard-reject/scripts/inventory.d/compiler_backend.tsv" > "$base/prod-wildcard-reject/scripts/inventory.d/compiler_backend.new"
+    mv "$base/prod-wildcard-reject/scripts/inventory.d/compiler_backend.new" "$base/prod-wildcard-reject/scripts/inventory.d/compiler_backend.tsv"
+    expect prod-wildcard-reject fail "wildcard count \`*\` is only allowed for test modules"
+
+    # Wildcard count `*` is also rejected on inline test rows inside a core module.
+    write_tree "$base/core-inline-test-wildcard-reject"
+    cat >> "$base/core-inline-test-wildcard-reject/src/compiler_backend.tl" <<'EOF'
+
+(define (compiler-backend-inline-test) : String
+  "windows-x86_64")
+EOF
+    printf '%s\n' 'src/compiler_backend.tl	compiler-backend-inline-test	test	test-only	windows-x86_64	*	Inline test in core module.' \
+        >> "$base/core-inline-test-wildcard-reject/scripts/inventory.d/compiler_backend.tsv"
+    expect core-inline-test-wildcard-reject fail "wildcard count \`*\` is only allowed for test modules"
 
     if [ "$failures" -ne 0 ]; then
         echo "codegen target dispatch self-test: $failures of $cases cases failed" >&2

@@ -395,7 +395,7 @@ verify_shape() {
                 add_spec(H "multiply_bang", 2, 2, -1, 0, 0, 0, 0, "none", 3, 0, S "wipe_words_bang", "")
                 add_spec(H "region_bang", 2, 1, -1, 0, 0, 0, 0, "none", 0, 2, H "multiply_bang," H "absorb_bang", "")
                 add_spec(H "store_be_bang", 1, 1, -1, 0, 0, 0, 0, "none", 1, 0, "", "")
-                add_spec(S "wipe_words_bang", 2, 1, -1, 0, 0, 0, 0, "none", 0, 1, "", "")
+                add_spec(S "wipe_words_bang", 2, 1, -1, 0, 0, 0, 0, "none", 1, 0, "", "")
 
                 if (is_win) {
                     add_spec("gcm_audit_open", 0, 0, 0, 0, 0, 0, 0, "none", 0, 0, "gcm_audit_open$typelisp", "")
@@ -444,7 +444,7 @@ verify_shape() {
     function audit_function(sym,   path, line, lbl, op, ops, rest, target_lbl, norm_t,
                             op_arr, op_n, oi, operand, is_direct_ctrl,
                             jcc, jmp_local, back_br, loops, setcc, cmov, divs, vshift, ind_ctrl, bcmp,
-                            rip_bad, idx_mem, idx_lea, idx_scale0_mem, bad_mul_idx,
+                            rip_bad, idx_mem, idx_lea, idx_scale0_mem, bad_mul_idx, bad_wipe_idx,
                             has_vol_store, has_imm_63, has_imm_64,
                             in_open_tag_win, open_tag_cmp16, open_tag_back, open_tag_early_jcc,
                             seen_lbl, open_tag_lbl, calls_seen, call_seq, call_n,
@@ -462,7 +462,7 @@ verify_shape() {
         path = work "/" sym ".resolved"
         jcc = 0; jmp_local = 0; back_br = 0; loops = 0; setcc = 0; cmov = 0
         divs = 0; vshift = 0; ind_ctrl = 0; bcmp = 0
-        rip_bad = 0; idx_mem = 0; idx_lea = 0; idx_scale0_mem = 0; bad_mul_idx = 0
+        rip_bad = 0; idx_mem = 0; idx_lea = 0; idx_scale0_mem = 0; bad_mul_idx = 0; bad_wipe_idx = 0
         has_vol_store = 0; has_imm_63 = 0; has_imm_64 = 0
         in_open_tag_win = 0; open_tag_cmp16 = 0; open_tag_back = 0; open_tag_early_jcc = 0
         call_n = 0
@@ -601,6 +601,11 @@ verify_shape() {
                         if (sym == H "multiply_bang" && operand !~ /\([[:space:]]*%[a-z0-9]+[[:space:]]*,[[:space:]]*%[a-z0-9]+[[:space:]]*,[[:space:]]*8[[:space:]]*\)/) {
                             bad_mul_idx++
                         }
+                        if (sym == S "wipe_words_bang" && op !~ /^lea[lq]?$/) {
+                            if (op != "movq" || oi != 2 || operand !~ /^\([[:space:]]*%[a-z0-9]+[[:space:]]*,[[:space:]]*%[a-z0-9]+[[:space:]]*,[[:space:]]*8[[:space:]]*\)$/ || operand ~ /\([[:space:]]*%rsp|\([[:space:]]*%rbp/) {
+                                bad_wipe_idx++
+                            }
+                        }
                     }
                 }
             }
@@ -633,6 +638,7 @@ verify_shape() {
         if (idx_mem > s_max_idx_mem[sym]) fail(sym ": indexed memory operands " idx_mem " exceed contract bound " s_max_idx_mem[sym])
         if (idx_lea > s_max_idx_lea[sym]) fail(sym ": indexed lea operands " idx_lea " exceed contract bound " s_max_idx_lea[sym])
         if (bad_mul_idx > 0) fail(sym ": ghash multiply has non-word-indexed memory operand")
+        if (bad_wipe_idx > 0) fail(sym ": wipe_words_bang has non-word-indexed store memory operand")
 
         # Validate call-target closure: every emitted call must be allowed, every required call must occur.
         delete allowed
@@ -1129,6 +1135,15 @@ run_self_test() {
     ' "$work/aes.s" > "$work/benign-aes.s"
     verify_shape "$work/benign-aes.s" "$work/pos-benign" linux-x86_64 2 aes || fail_st "benign backend mutation rejected"
 
+    # Benign backend mutation: opt2 folded word-indexed volatile store in wipe_words_bang
+    awk '
+        /^_tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang:$/ { in_fn=1 }
+        /\.size _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang,/ { in_fn=0 }
+        in_fn && /movq %rsi, \(%rdi\)/ { print "    movq %rsi, (%r14,%r12,8)"; next }
+        { print }
+    ' "$work/gcm.s" > "$work/benign-gcm-wipe.s"
+    verify_shape "$work/benign-gcm-wipe.s" "$work/pos-benign-gcm-wipe" linux-x86_64 2 gcm || fail_st "benign opt2 folded wipe_words_bang rejected"
+
     expect_reject() {
         name=$1
         fam=$2
@@ -1349,8 +1364,12 @@ EOF
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    shrxq %rcx, %rax, %rdx"; next } { print }' "$work/aes.s" > "$work/m-bmi2-shift.s"
     expect_reject planted-bmi2-variable-shift aes "$work/m-bmi2-shift.s" "sub_bytes_bang: variable shift count 1 exceeds contract bound 0"
 
+    # 37. Planted non-word-indexed load in wipe_words_bang
+    awk '/^_tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang:$/ { print; print "    movzbl (%rdi,%rax,1), %eax"; next } { print }' "$work/gcm.s" > "$work/m-wipe-bad-idx.s"
+    expect_reject planted-wipe-bad-indexed-load gcm "$work/m-wipe-bad-idx.s" "wipe_words_bang: wipe_words_bang has non-word-indexed store memory operand"
+
     rm -rf -- "${work:?}"
-    echo 'crypto-shape self-test passed (4 positive/benign controls + 36 fail-closed mutations)'
+    echo 'crypto-shape self-test passed (5 positive/benign controls + 37 fail-closed mutations)'
 }
 
 if [ "$#" -eq 1 ] && [ "$1" = --self-test ]; then

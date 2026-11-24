@@ -25,7 +25,7 @@ directly. Public-surface coverage uses native `Slice`/`Vec` values
 - `scripts/verify-spmd-package-calls.sh` builds `package_callable/` and
   `package_consumer/` as separate packages and checks the TLCI-described
   private SPMD calls between them.
-- Unsupported SPMD shapes are diagnostics in `tests/safety/manifest.txt`;
+- Unsupported SPMD shapes are diagnostics in `tests/safety/manifest.d/*.manifest`;
   compiler-internal lowering and private-call ABI tests are the
   `src/tests/compiler_spmd_*_smoke.tl` drivers.
 

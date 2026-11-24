@@ -1953,10 +1953,12 @@
     [message : String
       "parse: init was removed; use (T ...), (make-array T n), (__tl_make-array), or pass a T in"]
     (and
-      (compiler-parse-error-ok? "(define (main) : i64 (init))" (clone message))
+      (compiler-parse-error-ok?
+        "(define (main) : i64 (init))"
+        (string.copy (& message)))
       (compiler-parse-error-ok?
         "(define (main) : i64 (init : i64))"
-        (clone message))
+        (string.copy (& message)))
       (compiler-parse-diagnostic-code-is?
         "(define (main) : i64 (init))"
         (cdiag.compiler-diagnostic-code-parse))

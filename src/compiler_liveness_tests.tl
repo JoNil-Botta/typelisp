@@ -196,8 +196,7 @@
 (define (compiler-live-instr-ids-match-set? [instr : ir.CompilerIrInstr]) : bool
   (let
     [uses : live.CompilerLiveI64Set (live.compiler-live-instr-uses instr)]
-    [defs : live.CompilerLiveI64Set
-      (live.compiler-live-instr-defs (& (clone instr)))]
+    [defs : live.CompilerLiveI64Set (live.compiler-live-instr-defs (& instr))]
     [def-var : i64 (ir.compiler-ir-instr-dst instr)]
     [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
     [id-count : i64 (live.compiler-live-instr-use-ids! (& instr))]
@@ -453,7 +452,7 @@
     (and
       (= (ir.compiler-ir-instr-dst store) -1)
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-defs (& (clone store)))
+        (live.compiler-live-instr-defs (& store))
         (live.compiler-live-set-empty))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses store)
@@ -656,12 +655,13 @@
   (let
     [instr : ir.CompilerIrInstr
       (irt.instr "switch %9 base 4 [4:four, 5:five] default other")]
-    [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq1 instr)]
     [block : ir.CompilerIrBlock
-      (Block (ir.compiler-ir-label "entry") (clone instrs))]
+      (Block (ir.compiler-ir-label "entry") (ir.compiler-ir-instr-seq1 instr))]
     [successors : live.CompilerLiveLabelSet
       (live.compiler-live-block-successors (& block))]
-    [use-def : live.CompilerLiveUseDef (compiler-live-block-use-def instrs)]
+    [use-def : live.CompilerLiveUseDef
+      (match block
+        [(Block _ instrs) (compiler-live-block-use-def instrs)])]
     (and
       (live.compiler-live-set-eq? use-def.uses (live.compiler-live-set1 9))
       (live.compiler-live-set-eq? use-def.defs (live.compiler-live-set-empty))

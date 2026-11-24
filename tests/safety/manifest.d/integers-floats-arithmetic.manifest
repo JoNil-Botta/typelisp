@@ -1,0 +1,31 @@
+# Safety corpus cases: integer/float arithmetic, division/shift traps, literals, and scalar conversions.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+integer_wrap_cast_defined|run-exit|tests/safety/integer_wrap_cast_defined.tl|42|-
+float_literal_signed_zero_defined|run-exit|tests/safety/float_literal_signed_zero_defined.tl|42|-
+division_by_zero_trap|run-trap|tests/safety/division_by_zero_trap.tl|135|integer division or remainder error: dividend=1 divisor=0
+shift_count_trap|run-trap|tests/safety/shift_count_trap.tl|129|shift count out of range: count=-1 width=32
+integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
+integer_literal_u8_overflow_reject|check-fail|tests/safety/integer_literal_u8_overflow_reject.tl|-|integer literal 256 does not fit expected type u8
+integer_literal_unsigned_negative_reject|check-fail|tests/safety/integer_literal_unsigned_negative_reject.tl|-|integer literal -1 does not fit expected type u8
+integer_literal_i64_overflow_reject|check-fail|tests/safety/integer_literal_i64_overflow_reject.tl|-|integer literal 9223372036854775808 does not fit expected type i64
+integer_literal_i64_based_overflow_reject|check-fail|tests/safety/integer_literal_i64_based_overflow_reject.tl|-|integer literal 0x8000000000000000 does not fit expected type i64
+integer_literal_u64_overflow_reject|check-fail|tests/safety/integer_literal_u64_overflow_reject.tl|-|integer literal 18446744073709551616 does not fit expected type u64
+integer_literal_u64_based_overflow_reject|check-fail|tests/safety/integer_literal_u64_based_overflow_reject.tl|-|integer literal 0x10000000000000000 does not fit expected type u64
+integer_literal_u64_negative_reject|check-fail|tests/safety/integer_literal_u64_negative_reject.tl|-|integer literal -1 does not fit expected type u64
+integer_literal_u64_negative_zero_reject|check-fail|tests/safety/integer_literal_u64_negative_zero_reject.tl|-|integer literal -0 does not fit expected type u64
+float_literal_f64_overflow_reject|check-fail|tests/safety/float_literal_f64_overflow_reject.tl|-|non-finite f64 literal is not supported
+float_literal_f32_overflow_reject|check-fail|tests/safety/float_literal_f32_overflow_reject.tl|-|non-finite f32 literal is not supported
+float_literal_nan_reject|check-fail|tests/safety/float_literal_nan_reject.tl|-|unbound name NaN
+float_literal_nan_lower_reject|check-fail|tests/safety/float_literal_nan_lower_reject.tl|-|unbound name nan
+float_literal_infinity_reject|check-fail|tests/safety/float_literal_infinity_reject.tl|-|unbound name Infinity
+float_literal_inf_reject|check-fail|tests/safety/float_literal_inf_reject.tl|-|unbound name inf
+float_exponent_malformed_1e|check-fail|tests/safety/float_exponent_malformed_1e.tl.invalid|-|lexer: malformed number literal
+float_exponent_malformed_1e_plus|check-fail|tests/safety/float_exponent_malformed_1e_plus.tl.invalid|-|lexer: malformed number literal
+float_exponent_malformed_fraction|check-fail|tests/safety/float_exponent_malformed_fraction.tl.invalid|-|lexer: malformed number literal
+float_exponent_malformed_fraction_minus|check-fail|tests/safety/float_exponent_malformed_fraction_minus.tl.invalid|-|lexer: malformed number literal
+float_exponent_overflow_f64|check-fail|tests/safety/float_exponent_overflow_f64.tl|-|non-finite f64 literal is not supported
+float_exponent_overflow_f32|check-fail|tests/safety/float_exponent_overflow_f32.tl|-|non-finite f32 literal is not supported
+scalar_implicit_widening_reject|check-fail|tests/safety/scalar_implicit_widening_reject.tl|tests/safety/scalar_implicit_widening_reject.tl:5:3|return type mismatch: expected f64, found f32
+operator_snapshot_div_overflow_trap|run-trap|tests/safety/operator_snapshot_div_overflow_trap.tl|135|integer division or remainder error: dividend=-128 divisor=-1
+operator_snapshot_type_reject|check-fail|tests/safety/operator_snapshot_type_reject.tl|-|integer operator expects matching integer operands: expected i64, found bool

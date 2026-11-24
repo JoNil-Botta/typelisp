@@ -25522,6 +25522,12 @@ tl_shared_object_init:
       [_compact : unit
         (be_peephole.compiler-backend-peephole-compact-stack-addresses!
           (&mut records))]
+      [_compact-opt2 : unit
+        (when
+          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)
+          (be_peephole.compiler-backend-peephole-compact-records!
+            backend-state
+            (&mut records)))]
       [finished : be_state.CompilerBackendPeepholeSweepChunkState
         (unsafe
           ;; unsafe: a bare handle to the same home arena keeps an `in-arena`
@@ -25537,6 +25543,8 @@ tl_shared_object_init:
               [kept : String
                 (be_peephole.compiler-backend-peephole-records-render
                   records
+                  (be_state.compiler-backend-state-tail-merging-enabled?
+                    backend-state)
                   (be_state.compiler-backend-state-tail-merging-enabled?
                     backend-state))]
               (be_state.CompilerBackendPeepholeSweepChunkState
@@ -25799,16 +25807,24 @@ tl_shared_object_init:
         backend-state
         stream
         (be_state.compiler-backend-global-shared-view records))]
+    [_compact : unit
+      (when
+        probe-final?
+        (be_peephole.compiler-backend-peephole-compact-stack-addresses!
+          (&mut records)))]
+    [_compact-opt2 : unit
+      (when
+        (and
+          probe-final?
+          (be_state.compiler-backend-state-tail-merging-enabled? backend-state))
+        (be_peephole.compiler-backend-peephole-compact-records!
+          backend-state
+          (&mut records)))]
     [_probed : unit
       (when
         probe-final?
         (be_peephole.compiler-backend-expand-stack-probes!
           backend-state
-          (&mut records)))]
-    [_compact : unit
-      (when
-        probe-final?
-        (be_peephole.compiler-backend-peephole-compact-stack-addresses!
           (&mut records)))]
     [buf : text_buf.TextBuf
       (compiler-backend-borrowed-copy-to-owned
@@ -25816,7 +25832,11 @@ tl_shared_object_init:
           (text_buf_borrowed.empty-like (& asm))
           records
           asm
-          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)))]
+          (be_state.compiler-backend-state-tail-merging-enabled? backend-state)
+          (and
+            probe-final?
+            (be_state.compiler-backend-state-tail-merging-enabled?
+              backend-state))))]
     (compiler-backend-peephole-records-retire! stream)
     (compiler-backend-sweep-reset! backend-state stream)
     buf))
@@ -26696,12 +26716,12 @@ tl_shared_object_init:
       2)
     (let [input : String (io.arg 1)]
       [output : String (io.arg 2)]
-      (let [content : String (raw-read-file (clone input))]
+      (let [content : String (raw-read-file (io.arg 1))]
         (if (io.file-exists? input)
-          (let [n : i64 (string.>int (clone content))]
+          (let [n : i64 (string.>int content)]
             (let [rendered : String (string.int->string (+ n 1))]
               (begin
-                (if (string.eq content \"41\")
+                (if (string.eq (raw-read-file (io.arg 1)) \"41\")
                   (io.print-error \"ok\")
                   (io.print-error \"mismatch\"))
                 (raw-write-file output rendered)

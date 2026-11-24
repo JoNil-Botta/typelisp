@@ -1,0 +1,73 @@
+# Safety corpus cases: threads, synchronization, and concurrency safety.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+thread_local_word_unsafe_call_reject|check-fail|tests/safety/thread_local_word_unsafe_call_reject.tl|-|storage requires unsafe context
+sync_atomic_raw_alias_safe_reject|check-fail|tests/safety/sync_atomic_raw_alias_safe_reject.tl|-|sync/atomic-i64-load-ptr requires unsafe context
+sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.tl|-|cleanup obligation of `guard` is not discharged at the end of its let scope
+sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope
+sync_mutex_guard_capture_reject|check-fail|tests/safety/sync_mutex_guard_capture_reject.tl|-|lambda cannot capture cleanup-required resource; resource value would escape
+sync_mutex_guard_store_reject|check-fail|tests/safety/sync_mutex_guard_store_reject.tl|-|struct Bad field guard stores cleanup-owning type stdlib.sync.mutex.generated.i64/Guard without :owned
+sync_channel_i64_pair_reuse_after_send_ok|check-ok|tests/safety/sync_channel_i64_pair_reuse_after_send_ok.tl|-|-
+sync_channel_send_raw_pointer_reject|check-fail|tests/safety/sync_channel_send_raw_pointer_reject.tl|-|raw pointers cannot cross thread boundaries in safe code
+sync_channel_string_atomic_send_ok|check-ok|tests/safety/sync_channel_string_atomic_send_ok.tl|-|-
+sync_channel_string_default_arena_reject|check-fail|tests/safety/sync_channel_string_default_arena_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+sync_channel_string_ordinary_arena_reject|check-fail|tests/safety/sync_channel_string_ordinary_arena_reject.tl|-|cannot pass region-tagged value to function parameter
+sync_channel_string_use_after_send_reject|check-fail|tests/safety/sync_channel_string_use_after_send_reject.tl|-|use of moved value `message`
+thread_spawn_i64_aggregate_capture_ok|check-ok|tests/safety/thread_spawn_i64_aggregate_capture_ok.tl|-|-
+thread_spawn_i64_atomic_string_capture_ok|check-ok|tests/safety/thread_spawn_i64_atomic_string_capture_ok.tl|-|-
+thread_spawn_i64_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_string_capture_reject.tl|-|thread_i64.spawn cannot capture `text` of type String
+thread_spawn_i64_struct_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_struct_string_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_ordinary_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_capture_reject.tl|-|cannot capture ordinary arena handle `owner`
+thread_spawn_i64_ordinary_arena_string_capture_reject|check-fail|tests/safety/thread_spawn_i64_ordinary_arena_string_capture_reject.tl|-|lambda cannot capture region-tagged value
+thread_spawn_i64_shadowed_atomic_arena_capture_reject|check-fail|tests/safety/thread_spawn_i64_shadowed_atomic_arena_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_dynarray_capture_reject|check-fail|tests/safety/thread_spawn_i64_dynarray_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_box_capture_reject|check-fail|tests/safety/thread_spawn_i64_box_capture_reject.tl|-|owned heap storage needs a static/program or spanning atomic owner proof
+thread_spawn_i64_borrowed_str_capture_reject|check-fail|tests/safety/thread_spawn_i64_borrowed_str_capture_reject.tl|-|lambda cannot capture immutable reference
+thread_spawn_i64_reference_capture_reject|check-fail|tests/safety/thread_spawn_i64_reference_capture_reject.tl|-|lambda cannot capture immutable reference
+thread_spawn_i64_raw_pointer_capture_reject|check-fail|tests/safety/thread_spawn_i64_raw_pointer_capture_reject.tl|-|thread_i64.spawn cannot capture `ptr` of type (Ptr i64)
+thread_spawn_i64_struct_raw_pointer_capture_reject|check-fail|tests/safety/thread_spawn_i64_struct_raw_pointer_capture_reject.tl|-|raw pointers cannot cross thread boundaries in safe code
+thread_spawn_i64_non_direct_reject|check-fail|tests/safety/thread_spawn_i64_non_direct_reject.tl|-|thread_i64.spawn requires a direct nullary lambda argument
+thread_spawn_i64_scoped_arena_reject|check-fail|tests/safety/thread_spawn_i64_scoped_arena_reject.tl|-|thread_i64.spawn cannot spawn from scoped arena
+thread_spawn_unrelated_dotted_spawn_ok|check-ok|tests/safety/thread_spawn_unrelated_dotted_spawn_ok.tl|tests/safety/thread_spawn_unrelated_dotted_spawn_lib.tl|-
+thread_join_i64_double_reject|check-fail|tests/safety/thread_join_i64_double_reject.tl|-|use of moved value `worker`
+thread_spawn_bool_string_capture_reject|check-fail|tests/safety/thread_spawn_bool_string_capture_reject.tl|-|error[E0217]: typecheck: thread_bool.spawn cannot capture `text` of type String
+thread_join_bool_double_reject|check-fail|tests/safety/thread_join_bool_double_reject.tl|-|use of moved value `worker`
+thread_spawn_string_capture_reject|check-fail|tests/safety/thread_spawn_string_capture_reject.tl|-|error[E0217]: typecheck: thread.spawn-string cannot capture `text` of type String
+thread_join_string_double_reject|check-fail|tests/safety/thread_join_string_double_reject.tl|-|use of moved value `worker`
+thread_spawn_i64_vec_capture_reject|check-fail|tests/safety/thread_spawn_i64_vec_capture_reject.tl|-|error[E0217]: typecheck: thread.spawn-i64-vec cannot capture `items`
+thread_spawn_i64_vec_atomic_capture_ok|check-ok|tests/safety/thread_spawn_i64_vec_atomic_capture_ok.tl|-|-
+thread_spawn_i64_vec_use_after_move_reject|check-fail|tests/safety/thread_spawn_i64_vec_use_after_move_reject.tl|-|use of moved value `items`
+thread_join_i64_vec_double_reject|check-fail|tests/safety/thread_join_i64_vec_double_reject.tl|-|use of moved value `worker`
+thread_spawn_box_i64_capture_reject|check-fail|tests/safety/thread_spawn_box_i64_capture_reject.tl|-|error[E0217]: typecheck: thread.spawn-box-i64 cannot capture `cell` of type (Box i64)
+thread_join_box_i64_double_reject|check-fail|tests/safety/thread_join_box_i64_double_reject.tl|-|use of moved value `worker`
+thread_spawn_i64_shadow_local_ok|check-ok|tests/safety/thread_spawn_i64_shadow_local_ok.tl|-|-
+thread_raw_spawn_safe_reject|check-fail|tests/safety/thread_raw_spawn_safe_reject.tl|-|thread/spawn requires unsafe context
+thread_raw_result_projection_safe_reject|check-fail|tests/safety/thread_raw_result_projection_safe_reject.tl|-|thread/spawn-result-handle-or requires unsafe context
+thread_raw_address_safe_reject|check-fail|tests/safety/thread_raw_address_safe_reject.tl|-|thread/addr->mut-i64 requires unsafe context
+thread_raw_timespec_safe_reject|check-fail|tests/safety/thread_raw_timespec_safe_reject.tl|-|thread/linux-monotonic-ms requires unsafe context
+thread_raw_callable_launder_reject|check-fail|tests/safety/thread_raw_callable_launder_reject.tl|-|thread/semaphore-close is an unsafe callable and cannot be used as a plain function value
+thread_windows_entry_create_thread_ok|check-ok-windows|tests/safety/thread_windows_entry_create_thread_ok.tl|-|-
+thread_windows_entry_call_reject|check-fail-windows|tests/safety/thread_windows_entry_call_reject.tl|-|C function pointer requires unsafe context
+thread_windows_entry_alias_call_reject|check-fail-windows|tests/safety/thread_windows_entry_alias_call_reject.tl|-|C function pointer requires unsafe context
+thread_windows_entry_plain_alias_reject|check-fail-windows|tests/safety/thread_windows_entry_plain_alias_reject.tl|-|let binding `entry` type mismatch: expected (-> i64 i64), found (CFunc unsafe-non-null (-> i64 i64))
+thread_windows_entry_capture_reject|check-fail-windows|tests/safety/thread_windows_entry_capture_reject.tl|-|C function pointer requires unsafe context
+thread_windows_entry_return_reject|check-fail-windows|tests/safety/thread_windows_entry_return_reject.tl|-|return type mismatch: expected (-> i64 i64), found (CFunc unsafe-non-null (-> i64 i64))
+thread_windows_entry_field_reject|check-fail-windows|tests/safety/thread_windows_entry_field_reject.tl|-|call `Holder` argument 1 (parameter `entry`) type mismatch: expected (-> i64 i64), found (CFunc unsafe-non-null (-> i64 i64))
+thread_windows_entry_field_call_reject|check-fail-windows|tests/safety/thread_windows_entry_field_call_reject.tl|-|C function pointer requires unsafe context
+thread_windows_entry_global_reject|check-fail-windows|tests/safety/thread_windows_entry_global_reject.tl|-|value definition type mismatch: expected (-> i64 i64), found (CFunc unsafe-non-null (-> i64 i64))
+thread_windows_entry_global_call_reject|check-fail-windows|tests/safety/thread_windows_entry_global_call_reject.tl|-|C function pointer requires unsafe context
+thread_windows_entry_cast_reject|check-fail-windows|tests/safety/thread_windows_entry_cast_reject.tl|-|cast requires scalar numeric
+thread_windows_entry_param_reject|check-fail-windows|tests/safety/thread_windows_entry_param_reject.tl|-|call `invoke` argument 1 (parameter `f`) type mismatch: expected (-> i64 i64), found (CFunc unsafe-non-null (-> i64 i64))
+thread_windows_entry_generated_alias_reject|check-fail-windows|tests/safety/thread_windows_entry_generated_alias_reject.tl|-|return type mismatch: expected (-> i64 i64), found (CFunc unsafe-non-null (-> i64 i64))
+thread_windows_entry_generated_call_reject|check-fail-windows|tests/safety/thread_windows_entry_generated_call_reject.tl|-|C function pointer requires unsafe context
+thread_raw_semaphore_safe_reject|check-fail|tests/safety/thread_raw_semaphore_safe_reject.tl|-|thread/semaphore-close requires unsafe context
+sync_raw_atomic_safe_reject|check-fail|tests/safety/sync_raw_atomic_safe_reject.tl|-|sync/atomic-i64-load requires unsafe context
+sync_raw_free_safe_reject|check-fail|tests/safety/sync_raw_free_safe_reject.tl|-|sync/runtime-free requires unsafe context
+sync_raw_channel_record_safe_reject|check-fail|tests/safety/sync_raw_channel_record_safe_reject.tl|-|sync/i64-channel-send requires unsafe context
+sync_raw_mutex_record_safe_reject|check-fail|tests/safety/sync_raw_mutex_record_safe_reject.tl|-|sync/i64-mutex-lock-grant requires unsafe context
+sync_mutex_handle_copy_reject|check-fail|tests/safety/sync_mutex_handle_copy_reject.tl|-|use of moved value `mutex`
+sync_raw_callable_launder_reject|check-fail|tests/safety/sync_raw_callable_launder_reject.tl|-|sync/atomic-i64-load is an unsafe callable and cannot be used as a plain function value
+sync_generated_raw_alias_safe_reject|check-fail|tests/safety/sync_generated_raw_alias_safe_reject.tl|-|channel_alias/load-raw requires unsafe context
+sync_generated_mutex_raw_safe_reject|check-fail|tests/safety/sync_generated_mutex_raw_safe_reject.tl|-|mutex_alias/load-raw requires unsafe context
+thread_sync_raw_explicit_unsafe_ok|check-ok|tests/safety/thread_sync_raw_explicit_unsafe_ok.tl|-|-
+thread_sync_typed_safe_control_ok|check-ok|tests/safety/thread_sync_typed_safe_control_ok.tl|-|-

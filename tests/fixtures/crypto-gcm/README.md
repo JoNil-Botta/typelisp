@@ -49,13 +49,17 @@ that these smaller transport limits do not constrain the generic primitive.
 ## Assembly regression boundary
 
 The required `gcm-*` rows compile [audit.tl](audit.tl) twice at opt1/opt2 for
-Linux and Windows x86-64 and assemble every result. Complete instruction,
-label, operand and symbol-inventory hashes cover all emitted shared AES,
-GHASH and GCM bodies, the real exported seal/open callers (including Windows
-bridges), `crypto_secret` comparison/wiping when retained, and ordinary main.
-Only assembler metadata and comments are omitted. Missing, added, changed or
-newly inlined work fails closed and needs renewed review. Existing `aes-*`
-and `secret-*` gates remain required and unchanged in coverage.
+Linux and Windows x86-64 and assemble every result. Structural contracts in
+`scripts/check-crypto-aes-shape.sh` cover all emitted shared AES, GHASH, GCM,
+and `crypto_stack_scrub` bodies, the real exported seal/open callers (including
+Windows bridges), `crypto_secret` comparison/wiping when retained, and ordinary
+`main`. Private `"__tl_arg_entry:N"` stubs are validated to contain only
+register-to-register moves/nops and resolved to their real callees. Missing or
+unexpected symbols, disallowed branches/`cmov`/`set`/`div`/variable-shifts/
+indirect-calls/table-loads/`cmpb`/`testb`, missing `wipe_words_bang`/scrub calls,
+unauthorized call targets, or verify-before-decrypt order regressions fail
+closed. Existing `aes-*` and `secret-*` gates remain required and unchanged in
+coverage.
 
 The multiplier has two public loops bounded by 2 and 64. Its only indexed
 secret-memory access selects the public half of X; V/Z use fixed offsets.
@@ -298,3 +302,16 @@ frame sizes, opcodes, conditional branches, calls, table/RIP references,
 GHASH multiply loop shape and volatile wipes are byte-identical. Every changed
 body differs strictly by a 1-to-1 permutation of `N(%rsp)` stack-slot
 displacements.
+
+## Structural constant-time shape contracts
+
+Raw-assembly SHA-256 pin files (`shape-{linux,windows}-x86_64-opt{1,2}.sha256`)
+were removed and replaced by exact per-target/opt structural contracts in
+`scripts/check-crypto-aes-shape.sh` (verified by `--self-test`). Every retained
+and inlined AES/GHASH/GCM/secret/scrub body is audited for closed symbol
+inventory, branch/instruction/address bans, exact call-target closures,
+mandatory volatile wipes and stack scrubs, GHASH 64-bit fixed-work loop shape,
+and verify-before-decrypt ordering (including the inlined 16-byte tag comparison
+loop between `authenticate_bang` and `gctr_bang` at opt2) without failing on
+benign spill-slot, register, label, tail-merge, literal-encoding, or abort-stub
+changes.

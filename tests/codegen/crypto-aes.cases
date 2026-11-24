@@ -1,11 +1,12 @@
 # AES-specific required both-target opt1/opt2 shape boundary. Public vector,
 # lifecycle and source-work checks live in stdlib/tests/crypto_aes_*_inline.tl.
 #
-# Pin every emitted AES helper AND retain explicit production roots alongside
-# ordinary-entry consuming constructors and typed repeated-use callers. The complete normalized instruction/label bodies of
-# ALL AES functions and these production roots are pinned, not only unused
-# helpers. Every changed branch, address, call or wipe fails closed and requires
-# renewed assembly review; see tests/fixtures/crypto-aes/shape-review.md.
+# Enforce exact structural constant-time, completeness, wipe and call-order
+# contracts over every emitted AES helper AND retained production roots
+# alongside ordinary-entry consuming constructors and typed repeated-use
+# callers. Every symbol-inventory drift, disallowed branch, indirect control
+# transfer, table/indexed load, missing wipe or call-order regression fails
+# closed; see tests/fixtures/crypto-aes/shape-review.md.
 
 file aes_audit.tl
 (import stdlib.crypto_aes_core as aes)
@@ -93,7 +94,13 @@ not-match ^[[:space:]]+(j[a-z]+|set[a-z]+|cmov[a-z]+|loop[a-z]*|call[[:space:]]*
 not-match \(%rip\)|\(,%|\(%[a-z0-9]+,%
 in fn _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang
 match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang$
-exec scripts/check-crypto-aes-shape.sh "{{dir}}/out.s" "{{dir}}/audit" "{{root}}/tests/fixtures/crypto-aes/shape-{{target}}-opt{{opt}}.sha256"
+exec scripts/check-crypto-aes-shape.sh "{{dir}}/out.s" "{{dir}}/audit" "{{target}}" "{{opt}}" aes
+
+case aes-shape-checker-self-test
+do none
+target -
+opt -
+exec scripts/check-crypto-aes-shape.sh --self-test
 
 case aes-no-escape-surface
 do none
@@ -106,8 +113,8 @@ not-match ^\(define \((to-string|debug|show|format|clone|hash|serialize|to-bytes
 not-match ^\(defdispatch
 not-match (S[Bb][Oo][Xx].*[Tt]able|[Tt]-[Tt]able)
 
-# Every retained and actual inlined AES/GHASH/GCM caller is hash-pinned.
-# The complete body/inventory pins fail closed on changed or missing work.
+# Every retained and actual inlined AES/GHASH/GCM caller is checked against its
+# structural constant-time, wipe and verify-before-decrypt contract.
 case gcm-production-shape
 source tests/fixtures/crypto-gcm/audit.tl
 args --stdlib-root {{root}}/stdlib
@@ -120,7 +127,7 @@ contains $63
 not-match ^[[:space:]]+(cmpb|testb|set[a-z]+|cmov[a-z]+)
 not-match \(%rip\)|\(,%
 match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang$
-exec scripts/check-crypto-aes-shape.sh "{{dir}}/out.s" "{{dir}}/audit" "{{root}}/tests/fixtures/crypto-gcm/shape-{{target}}-opt{{opt}}.sha256" gcm
+exec scripts/check-crypto-aes-shape.sh "{{dir}}/out.s" "{{dir}}/audit" "{{target}}" "{{opt}}" gcm
 if-fn _tl_stdlib_crypto_aes128_gcm_stdlib_crypto_aes128_gcm_open_operation
   in file {{dir}}/audit/_tl_stdlib_crypto_aes128_gcm_stdlib_crypto_aes128_gcm_open_operation.resolved
 else

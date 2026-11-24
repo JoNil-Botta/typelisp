@@ -165,7 +165,9 @@
       (overlay-test-plain-check-ok? "a.tl")
       (=
         (overlay-test-check
-          (overlay-test-admit (clone both) (clone both-texts)))
+          (overlay-test-admit
+            (svec.clone-vec (& both))
+            (svec.clone-vec (& both-texts))))
         1)
       (=
         (overlay-test-check
@@ -173,8 +175,11 @@
             (overlay-test-names-1 "a.tl")
             (overlay-test-names-1 (string.copy overlay-test-a-renamed))))
         0)
-      (= (overlay-test-check (overlay-test-admit (clone both) other-texts)) 0)
-      (= (overlay-test-check (overlay-test-admit (clone both) both-texts)) 1)
+      (=
+        (overlay-test-check
+          (overlay-test-admit (svec.clone-vec (& both)) other-texts))
+        0)
+      (= (overlay-test-check (overlay-test-admit both both-texts)) 1)
       (overlay-test-plain-check-ok? "a.tl"))))
 
 (define (overlay-test-class-name [class : source_overlay.CompilerSourceClass]) : String
@@ -343,7 +348,7 @@
     (and
       (=
         (overlay-test-admit-code
-          (overlay-test-admit-with 0 (svec.new) (svec.new) (clone defaults)))
+          (overlay-test-admit-with 0 (svec.new) (svec.new) defaults))
         source_overlay.compiler-source-overlay-error-generation)
       (=
         (overlay-test-admit-code
@@ -351,7 +356,7 @@
             1
             (overlay-test-names-2 (string.copy (& a)) (string.copy (& a)))
             (overlay-test-names-2 "(define x : i64 1)" "(define x : i64 2)")
-            (clone defaults)))
+            defaults))
         source_overlay.compiler-source-overlay-error-duplicate)
       (=
         (overlay-test-admit-code
@@ -359,7 +364,7 @@
             1
             (overlay-test-names-1 (overlay-test-path "a.tl"))
             (overlay-test-names-1 "(define x : i64 1)")
-            (clone defaults)))
+            defaults))
         source_overlay.compiler-source-overlay-error-path)
       (=
         (overlay-test-admit-code
@@ -368,7 +373,7 @@
             (overlay-test-names-1
               (str_cat.str-cat (string.copy (& root)) "/../a.tl"))
             (overlay-test-names-1 "(define x : i64 1)")
-            (clone defaults)))
+            defaults))
         source_overlay.compiler-source-overlay-error-path)
       (=
         (overlay-test-admit-code
@@ -377,7 +382,7 @@
             (overlay-test-names-1
               (overlay-test-canonical "target/outside_overlay.tl"))
             (overlay-test-names-1 "(define x : i64 1)")
-            (clone defaults)))
+            defaults))
         source_overlay.compiler-source-overlay-error-path)
       (=
         (overlay-test-admit-code
@@ -386,7 +391,7 @@
             (overlay-test-names-1
               (overlay-test-canonical (overlay-test-path "notes.txt")))
             (overlay-test-names-1 "text")
-            (clone defaults)))
+            defaults))
         source_overlay.compiler-source-overlay-error-path)
       (=
         (overlay-test-admit-code
@@ -395,7 +400,7 @@
             (overlay-test-names-1
               (overlay-test-canonical (overlay-test-path "missing.tl")))
             (overlay-test-names-1 "(define x : i64 1)")
-            (clone defaults)))
+            defaults))
         source_overlay.compiler-source-overlay-error-missing)
       (=
         (overlay-test-admit-code
@@ -404,7 +409,7 @@
             (string.copy (& root))
             (string.copy (& cwd))
             stale-inputs
-            (clone defaults)))
+            defaults))
         source_overlay.compiler-source-overlay-error-stale-base)
       (=
         (overlay-test-admit-code
@@ -560,7 +565,7 @@
     (let
       [both
         (overlay-test-package-check
-          (clone deps)
+          (compiler_load.clone-compiler-pkg-deps (& deps))
           (overlay-test-admit-with
             1
             (overlay-test-names-2
@@ -572,7 +577,7 @@
             (source_overlay.compiler-source-overlay-default-limits)))]
       [entry-only
         (overlay-test-package-check
-          (clone deps)
+          (compiler_load.clone-compiler-pkg-deps (& deps))
           (overlay-test-admit-with
             1
             (overlay-test-names-1 (overlay-test-canonical (string.copy entry)))
@@ -593,7 +598,7 @@
             "not a tlci image"))]
       [with-tlci
         (overlay-test-package-check
-          (clone deps)
+          (compiler_load.clone-compiler-pkg-deps (& deps))
           (overlay-test-admit-with
             1
             (overlay-test-names-2

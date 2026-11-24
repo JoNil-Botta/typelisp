@@ -241,7 +241,7 @@
       (load.compiler-load-session-state-lazy-qualified-observer-reset! state)
       (let
         [frame : load.CompilerLoadLazyQualifiedObserverFrame
-          (clone (array-ref stack.slots (- len 1)))]
+          (array-ref stack.slots (- len 1))]
         [observer : (&mut state load.CompilerLoadLazyQualifiedObserverState)
           (&mut state.lazy-qualified-observer)]
         (set!

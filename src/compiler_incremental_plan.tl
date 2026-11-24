@@ -278,6 +278,74 @@
   (key trace.CompilerIncrementalTraceKey)
   (answer CompilerIncrementalPlanInputAnswer))
 
+(define (plan-clone-graph-limits
+  [limits : (& graph.CompilerIncrementalGraphLimits)]) : graph.CompilerIncrementalGraphLimits
+  (graph.CompilerIncrementalGraphLimits
+    limits.max-bytes
+    limits.max-roots
+    limits.max-nodes
+    limits.max-edges
+    limits.max-name-bytes
+    limits.max-key-bytes
+    limits.max-work
+    (trace.CompilerIncrementalTraceLimits
+      limits.trace.max-bytes
+      limits.trace.max-edges
+      limits.trace.max-edge-bytes
+      limits.trace.max-depth
+      limits.trace.max-owned-bytes
+      limits.trace.max-work)))
+
+(define (plan-clone-trace-key [key : (& trace.CompilerIncrementalTraceKey)]) : trace.CompilerIncrementalTraceKey
+  (match key
+    [(trace.CompilerIncrementalTraceKey.Source path)
+      (trace.CompilerIncrementalTraceKey.Source (string.copy path))]
+    [(trace.CompilerIncrementalTraceKey.ImportSurface a b)
+      (trace.CompilerIncrementalTraceKey.ImportSurface
+        (string.copy a)
+        (string.copy b))]
+    [(trace.CompilerIncrementalTraceKey.ImportResolution a b)
+      (trace.CompilerIncrementalTraceKey.ImportResolution
+        (string.copy a)
+        (string.copy b))]
+    [(trace.CompilerIncrementalTraceKey.Configuration text)
+      (trace.CompilerIncrementalTraceKey.Configuration (string.copy text))]
+    [(trace.CompilerIncrementalTraceKey.CompilerBuild)
+      trace.CompilerIncrementalTraceKey.CompilerBuild]
+    [(trace.CompilerIncrementalTraceKey.Stdlib text)
+      (trace.CompilerIncrementalTraceKey.Stdlib (string.copy text))]
+    [(trace.CompilerIncrementalTraceKey.Package a b)
+      (trace.CompilerIncrementalTraceKey.Package
+        (string.copy a)
+        (string.copy b))]
+    [(trace.CompilerIncrementalTraceKey.MacroComptime name child)
+      (trace.CompilerIncrementalTraceKey.MacroComptime
+        (string.copy name)
+        (identity.clone-compiler-incremental-child-identity child))]
+    [(trace.CompilerIncrementalTraceKey.Child domain kind child)
+      (trace.CompilerIncrementalTraceKey.Child
+        (string.copy domain)
+        kind
+        (identity.clone-compiler-incremental-identity child))]))
+
+(define (clone-compiler-incremental-plan-input-answer
+  [answer : (& CompilerIncrementalPlanInputAnswer)]) : CompilerIncrementalPlanInputAnswer
+  (match answer
+    [(CompilerIncrementalPlanInputAnswer.Known record)
+      (CompilerIncrementalPlanInputAnswer.Known
+        (trace.clone-compiler-incremental-trace-record record))]
+    [(CompilerIncrementalPlanInputAnswer.Missing)
+      CompilerIncrementalPlanInputAnswer.Missing]
+    [(CompilerIncrementalPlanInputAnswer.Failed code)
+      (CompilerIncrementalPlanInputAnswer.Failed code)]))
+
+(define (clone-compiler-incremental-plan-input
+  [input : (& CompilerIncrementalPlanInput)]) : CompilerIncrementalPlanInput
+  (CompilerIncrementalPlanInput
+    (identity.clone-compiler-incremental-identity (& input.query))
+    (plan-clone-trace-key (& input.key))
+    (clone-compiler-incremental-plan-input-answer (& input.answer))))
+
 (defenum PlanFactAnswer
   (Known trace.CompilerIncrementalTraceRecord)
   (Missing)
@@ -367,6 +435,12 @@
   (key String)
   (root graph.CompilerIncrementalGraphRoot)
   (node i64))
+
+(define (clone-plan-root [source : (& PlanRoot)]) : PlanRoot
+  (PlanRoot
+    (string.copy (& source.key))
+    (graph.clone-compiler-incremental-graph-root (& source.root))
+    source.node))
 
 (import (stdlib.vector.vector PlanRoot core) as root_vec)
 
@@ -663,7 +737,7 @@
     (Err compiler-plan-error-limit)
     (let
       [empty : graph.CompilerIncrementalGraph
-        (match (graph.compiler-graph-begin (clone limits.graph))
+        (match (graph.compiler-graph-begin limits.graph)
           [(Ok builder)
             (match (graph.compiler-graph-finalize builder)
               [(Ok value) value]
@@ -839,15 +913,15 @@
           (while (< i plan.roots.len)
             (order_vec.push-ref!
               (&mut order)
-              (PlanOrder (clone (array-ref plan.roots.slots i).key) i))
+              (PlanOrder (string.copy (& (array-ref plan.roots.slots i).key)) i))
             (set! i (+ i 1)))
           (plan-sort-order! (&mut order))
           (set! i 0)
           (while (< i order.len)
             (root_vec.push-ref!
               (&mut sorted)
-              (clone
-                (array-ref plan.roots.slots (array-ref order.slots i).index)))
+              (clone-plan-root
+                (& (array-ref plan.roots.slots (array-ref order.slots i).index))))
             (set! i (+ i 1)))
           (set! plan.roots sorted)))
       (let
@@ -881,7 +955,8 @@
       (while (and (= plan.budget.error 0) (< i plan.roots.len))
         (let
           [query : identity.CompilerIncrementalIdentity
-            (clone (array-ref plan.roots.slots i).root.query)]
+            (identity.clone-compiler-incremental-identity
+              (& (array-ref plan.roots.slots i).root.query))]
           [absent? : bool
             (and
               (= plan.cold 0)
@@ -1815,7 +1890,8 @@
                       (array-ref plan.nodes.slots node).dependencies.slots
                       j)))
                 (set! j (+ j 1)))))))
-      (match (graph.compiler-graph-begin (clone plan.limits.graph))
+      (match (graph.compiler-graph-begin
+        (plan-clone-graph-limits (& plan.limits.graph)))
         [(Err error) (Err error)]
         [(Ok builder)
           (set! i 0)

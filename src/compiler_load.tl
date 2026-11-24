@@ -414,10 +414,159 @@
   [imports : (& imports CompilerLoadSurfaceImportList)]) : i64
   imports.len)
 
+(define (clone-compiler-load-surface-maybe-string
+  [value : (& CompilerLoadSurfaceMaybeString)]) : CompilerLoadSurfaceMaybeString
+  (match value
+    [(CompilerLoadSurfaceNoString) CompilerLoadSurfaceNoString]
+    [(CompilerLoadSurfaceSomeString text)
+      (CompilerLoadSurfaceSomeString (string.copy text))]))
+
+(define (clone-compiler-load-surface-import-kind
+  [kind : (& CompilerLoadSurfaceImportKind)]) : CompilerLoadSurfaceImportKind
+  (match kind
+    [(CompilerLoadSurfaceImportModule) CompilerLoadSurfaceImportModule]
+    [(CompilerLoadSurfaceImportMacro) CompilerLoadSurfaceImportMacro]
+    [(CompilerLoadSurfaceImportMacroDecls) CompilerLoadSurfaceImportMacroDecls]))
+
+(define (clone-compiler-load-surface-decl-kind
+  [kind : (& CompilerLoadSurfaceDeclKind)]) : CompilerLoadSurfaceDeclKind
+  (match kind
+    [(CompilerLoadSurfaceValue) CompilerLoadSurfaceValue]
+    [(CompilerLoadSurfaceFunction) CompilerLoadSurfaceFunction]
+    [(CompilerLoadSurfaceExtern) CompilerLoadSurfaceExtern]
+    [(CompilerLoadSurfaceStruct) CompilerLoadSurfaceStruct]
+    [(CompilerLoadSurfaceEnum) CompilerLoadSurfaceEnum]
+    [(CompilerLoadSurfaceMacro) CompilerLoadSurfaceMacro]
+    [(CompilerLoadSurfaceDispatch) CompilerLoadSurfaceDispatch]
+    [(CompilerLoadSurfaceTest) CompilerLoadSurfaceTest]
+    [(CompilerLoadSurfaceIncludeStr) CompilerLoadSurfaceIncludeStr]
+    [(CompilerLoadSurfaceIncludeStrComptime)
+      CompilerLoadSurfaceIncludeStrComptime]
+    [(CompilerLoadSurfaceIncludeBin) CompilerLoadSurfaceIncludeBin]))
+
+(define (clone-compiler-load-surface-macro-result-kind
+  [kind : (& CompilerLoadSurfaceMacroResultKind)]) : CompilerLoadSurfaceMacroResultKind
+  (match kind
+    [(CompilerLoadSurfaceMacroExpr) CompilerLoadSurfaceMacroExpr]
+    [(CompilerLoadSurfaceMacroModule) CompilerLoadSurfaceMacroModule]
+    [(CompilerLoadSurfaceMacroDecls) CompilerLoadSurfaceMacroDecls]
+    [(CompilerLoadSurfaceMacroOther) CompilerLoadSurfaceMacroOther]))
+
+(define (clone-compiler-load-lazy-import-policy
+  [policy : (& CompilerLoadLazyImportPolicy)]) : CompilerLoadLazyImportPolicy
+  (match policy
+    [(CompilerLoadLazyImportEager) CompilerLoadLazyImportEager]
+    [(CompilerLoadLazyImportQualified) CompilerLoadLazyImportQualified]
+    [(CompilerLoadLazyImportDirect) CompilerLoadLazyImportDirect]))
+
+(define (clone-compiler-load-surface-import
+  [item : (& CompilerLoadSurfaceImport)]) : CompilerLoadSurfaceImport
+  (CompilerLoadSurfaceImport
+    (clone-compiler-load-surface-import-kind (& item.kind))
+    item.module
+    (string.copy (& item.source-path))
+    (string.copy (& item.import-path))
+    (clone-compiler-load-surface-maybe-string (& item.module-name))
+    (clone-compiler-load-surface-maybe-string (& item.alias))
+    (clone-compiler-load-surface-maybe-string (& item.default-alias))
+    (ast.clone-ast-source-span (& item.span))))
+
+(define (clone-compiler-load-surface-import-list
+  [items : (& CompilerLoadSurfaceImportList)]) : CompilerLoadSurfaceImportList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array CompilerLoadSurfaceImport)
+      (__tl_make-array CompilerLoadSurfaceImport count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-load-surface-import (& (array-ref items.slots index)))))
+    (CompilerLoadSurfaceImportList slots count)))
+
+(define (clone-compiler-load-surface-signature
+  [sig : (& CompilerLoadSurfaceSignature)]) : CompilerLoadSurfaceSignature
+  (match sig
+    [(CompilerLoadSurfaceNoSignature) CompilerLoadSurfaceNoSignature]
+    [(CompilerLoadSurfaceValueSignature maybe-ty)
+      (CompilerLoadSurfaceValueSignature (ast.clone-ast-maybe-type maybe-ty))]
+    [(CompilerLoadSurfaceFunctionSignature params ret)
+      (CompilerLoadSurfaceFunctionSignature
+        (ast.clone-ast-param-list params)
+        (ast.clone-ast-type ret))]
+    [(CompilerLoadSurfaceExternSignature kind meta ty)
+      (CompilerLoadSurfaceExternSignature
+        kind
+        (ast.clone-ast-extern-metadata meta)
+        (ast.clone-ast-type ty))]
+    [(CompilerLoadSurfaceStructSignature lifetimes repr cleanup markers fields)
+      (CompilerLoadSurfaceStructSignature
+        (ast.clone-ast-lifetime-list lifetimes)
+        (ast.ast-struct-repr-copy repr)
+        cleanup
+        markers
+        (ast.clone-ast-field-def-list fields))]
+    [(CompilerLoadSurfaceEnumSignature lifetimes cleanup markers variants)
+      (CompilerLoadSurfaceEnumSignature
+        (ast.clone-ast-lifetime-list lifetimes)
+        cleanup
+        markers
+        (ast.clone-ast-variant-def-list variants))]
+    [(CompilerLoadSurfaceMacroSignature params ret body)
+      (CompilerLoadSurfaceMacroSignature
+        (ast.clone-ast-macro-param-list params)
+        (ast.clone-ast-type ret)
+        body)]
+    [(CompilerLoadSurfaceDispatchSignature variants)
+      (CompilerLoadSurfaceDispatchSignature
+        (ast.clone-ast-dispatch-variant-list variants))]))
+
+(define (clone-compiler-load-surface-decl [item : (& CompilerLoadSurfaceDecl)]) : CompilerLoadSurfaceDecl
+  (CompilerLoadSurfaceDecl
+    (clone-compiler-load-surface-decl-kind (& item.kind))
+    item.name
+    item.module
+    (clone-compiler-load-surface-signature (& item.signature))
+    (clone-compiler-load-surface-macro-result-kind (& item.macro-result))
+    item.has-cleanup
+    item.has-export
+    item.has-generated-meta
+    item.was-unsafe
+    (ast.clone-ast-source-span (& item.span))))
+
+(define (clone-compiler-load-surface-decl-list
+  [items : (& CompilerLoadSurfaceDeclList)]) : CompilerLoadSurfaceDeclList
+  (let
+    [count : i64 items.len]
+    [slots : (__tl_dyn-array CompilerLoadSurfaceDecl)
+      (__tl_make-array CompilerLoadSurfaceDecl count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref slots index)
+        (clone-compiler-load-surface-decl (& (array-ref items.slots index)))))
+    (CompilerLoadSurfaceDeclList slots count)))
+
+(define (clone-compiler-load-surface-summary
+  [summary : (& CompilerLoadSurfaceSummary)]) : CompilerLoadSurfaceSummary
+  (CompilerLoadSurfaceSummary
+    summary.module-id
+    summary.declaration-module-id
+    summary.explicit-module
+    summary.qualified-load
+    summary.source-path-id
+    (string.copy (& summary.source-path))
+    (string.copy (& summary.root-id))
+    (clone-compiler-load-surface-import-list (& summary.imports))
+    (clone-compiler-load-surface-decl-list (& summary.decls))
+    summary.has-tests
+    summary.has-export-metadata
+    summary.has-generated-decls
+    summary.has-decl-emitting-macro
+    (clone-compiler-load-lazy-import-policy (& summary.lazy-policy))))
+
 (define (compiler-load-surface-import-list-at
   [imports : (& imports CompilerLoadSurfaceImportList)]
   [index : i64]) : CompilerLoadSurfaceImport
-  (clone (array-ref imports.slots index)))
+  (clone-compiler-load-surface-import (& (array-ref imports.slots index))))
 
 (define (compiler-load-surface-decl-list-empty) : CompilerLoadSurfaceDeclList
   (CompilerLoadSurfaceDeclList (__tl_make-array CompilerLoadSurfaceDecl 0) 0))
@@ -429,7 +578,7 @@
 (define (compiler-load-surface-decl-list-at
   [decls : (& decls CompilerLoadSurfaceDeclList)]
   [index : i64]) : CompilerLoadSurfaceDecl
-  (clone (array-ref decls.slots index)))
+  (clone-compiler-load-surface-decl (& (array-ref decls.slots index))))
 
 ;; Read-only searches borrow candidates; retained payloads use the owning accessor.
 (define (compiler-load-surface-decl-list-borrow-at
@@ -2253,13 +2402,19 @@
         [(CompilerLoadProgramFile) false]
         [(CompilerLoadProgramEmbedded) true])]))
 
+(define (clone-compiler-load-program-source-kind
+  [kind : (& CompilerLoadProgramSourceKind)]) : CompilerLoadProgramSourceKind
+  (match kind
+    [(CompilerLoadProgramFile) CompilerLoadProgramFile]
+    [(CompilerLoadProgramEmbedded) CompilerLoadProgramEmbedded]))
+
 (define (compiler-load-program-cache-key-equal?
   [left : (& left CompilerLoadProgramCacheKey)]
   [right : (& right CompilerLoadProgramCacheKey)]) : bool
   (and
     (compiler-load-program-source-kind-equal?
-      (clone left.kind)
-      (clone right.kind))
+      (clone-compiler-load-program-source-kind (& left.kind))
+      (clone-compiler-load-program-source-kind (& right.kind)))
     (= left.path-id right.path-id)
     (compiler-load-cfg-key-equal? left.cfgs right.cfgs)))
 
@@ -2272,7 +2427,7 @@
 (define (compiler-load-program-cache-key-copy
   [key : (& key CompilerLoadProgramCacheKey)]) : CompilerLoadProgramCacheKey
   (CompilerLoadProgramCacheKey
-    (clone key.kind)
+    (clone-compiler-load-program-source-kind (& key.kind))
     key.path-id
     (compiler-load-cfg-key-copy (sym_i64_env.sym-i64-shared-view (& key.cfgs)))))
 
@@ -2280,16 +2435,12 @@
   [state : (& CompilerLoadSessionState)]
   [key : (& key CompilerLoadProgramCacheKey)]) : CompilerLoadProgramCacheLookup
   (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
-    (match (clone
-      (array-ref
-        (owned_view.compiler-owned-reference-shared-view
-          (& state.program-cache))
-        index))
+    (match (& (array-ref state.program-cache index))
       [(CompilerLoadProgramCacheEmpty) (break)]
       [(CompilerLoadProgramCacheFull slot-key program)
         (when
-          (compiler-load-program-cache-key-equal? slot-key key)
-          (return (CompilerLoadProgramCacheHit program)))]))
+          (compiler-load-program-cache-key-equal? (& slot-key) key)
+          (return (CompilerLoadProgramCacheHit (ast.clone-ast-program program))))]))
   (CompilerLoadProgramCacheMiss))
 
 (define (compiler-load-session-state-program-cache-lookup
@@ -2310,23 +2461,19 @@
   [key : CompilerLoadProgramCacheKey]
   [program : ast.AstProgram]) : bool
   (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
-    (match (clone (array-ref state.program-cache index))
-      [(CompilerLoadProgramCacheEmpty)
+    (let
+      [store? : bool
+        (match (& (array-ref state.program-cache index))
+          [(CompilerLoadProgramCacheEmpty) true]
+          [(CompilerLoadProgramCacheFull slot-key _)
+            (compiler-load-program-cache-key-equal? (& slot-key) (& key))])]
+      (when
+        store?
         (set!
           (array-ref state.program-cache index)
           (CompilerLoadProgramCacheFull key program))
         (compiler-load-session-state-program-cache-note-store! state)
-        (return true)]
-      [(CompilerLoadProgramCacheFull slot-key _)
-        (when
-          (compiler-load-program-cache-key-equal? slot-key key)
-          (return
-            (begin
-              (set!
-                (array-ref state.program-cache index)
-                (CompilerLoadProgramCacheFull key program))
-              (compiler-load-session-state-program-cache-note-store! state)
-              true)))]))
+        (return true))))
   false)
 
 (define (compiler-load-session-state-program-cache-store
@@ -2352,15 +2499,11 @@
   [state : (& CompilerLoadSessionState)]
   [key : (& key CompilerLoadProgramCacheKey)]) : bool
   (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
-    (match (clone
-      (array-ref
-        (owned_view.compiler-owned-reference-shared-view
-          (& state.program-cache))
-        index))
+    (match (& (array-ref state.program-cache index))
       [(CompilerLoadProgramCacheEmpty) (return true)]
       [(CompilerLoadProgramCacheFull slot-key _)
         (when
-          (compiler-load-program-cache-key-equal? slot-key key)
+          (compiler-load-program-cache-key-equal? (& slot-key) key)
           (return true))]))
   false)
 
@@ -2403,15 +2546,11 @@
   [state : (& CompilerLoadSessionState)]
   [key : (& key CompilerLoadProgramCacheKey)]) : bool
   (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
-    (match (clone
-      (array-ref
-        (owned_view.compiler-owned-reference-shared-view
-          (& state.program-admission))
-        index))
+    (match (array-ref state.program-admission index)
       [(CompilerLoadProgramAdmissionEmpty) (break)]
       [(CompilerLoadProgramAdmissionFull slot-key)
         (when
-          (compiler-load-program-cache-key-equal? slot-key key)
+          (compiler-load-program-cache-key-equal? (& slot-key) key)
           (return true))]))
   false)
 
@@ -2432,7 +2571,7 @@
   [state : (&mut state CompilerLoadSessionState)]
   [key : CompilerLoadProgramCacheKey]) : bool
   (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
-    (match (clone (array-ref state.program-admission index))
+    (match (array-ref state.program-admission index)
       [(CompilerLoadProgramAdmissionEmpty)
         (set!
           (array-ref state.program-admission index)
@@ -2440,7 +2579,7 @@
         (return true)]
       [(CompilerLoadProgramAdmissionFull slot-key)
         (when
-          (compiler-load-program-cache-key-equal? slot-key key)
+          (compiler-load-program-cache-key-equal? (& slot-key) (& key))
           (return true))]))
   false)
 
@@ -3360,16 +3499,17 @@
   [state : (& CompilerLoadSessionState)]
   [key : (& key CompilerLoadPreludeCacheKey)]) : CompilerLoadPreludeCacheLookup
   (for [index (iterator.range 0 compiler-load-runtime-prelude-cache-capacity)]
-    (match (clone
-      (array-ref
-        (owned_view.compiler-owned-reference-shared-view
-          (& state.runtime-prelude-cache))
-        index))
+    (match (& (array-ref state.runtime-prelude-cache index))
       [(CompilerLoadPreludeCacheEmpty) (break)]
       [(CompilerLoadPreludeCacheFull slot-key decls paths modules seen)
         (when
           (compiler-load-prelude-cache-key-equal? slot-key key)
-          (return (CompilerLoadPreludeCacheHit decls paths modules seen)))]))
+          (return
+            (CompilerLoadPreludeCacheHit
+              (ast.clone-ast-decl-list decls)
+              (ast.clone-ast-decl-path-list paths)
+              (ast.clone-ast-decl-module-list modules)
+              seen)))]))
   (CompilerLoadPreludeCacheMiss))
 
 (define (compiler-load-session-state-runtime-prelude-cache-lookup
@@ -3387,21 +3527,19 @@
   [modules : ast.AstDeclModuleList]
   [seen : sym_i64_env.SymI64Env]) : unit
   (for [index (iterator.range 0 compiler-load-runtime-prelude-cache-capacity)]
-    (match (clone (array-ref state.runtime-prelude-cache index))
-      [(CompilerLoadPreludeCacheEmpty)
+    (let
+      [store? : bool
+        (match (& (array-ref state.runtime-prelude-cache index))
+          [(CompilerLoadPreludeCacheEmpty) true]
+          [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
+            (compiler-load-prelude-cache-key-equal? slot-key (& key))])]
+      (when
+        store?
         (return
           (owned_view.compiler-owned-cell-set!
             state.runtime-prelude-cache
             index
-            (CompilerLoadPreludeCacheFull key decls paths modules seen)))]
-      [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
-        (when
-          (compiler-load-prelude-cache-key-equal? slot-key key)
-          (return
-            (owned_view.compiler-owned-cell-set!
-              state.runtime-prelude-cache
-              index
-              (CompilerLoadPreludeCacheFull key decls paths modules seen))))])))
+            (CompilerLoadPreludeCacheFull key decls paths modules seen)))))))
 
 (define (compiler-load-session-state-runtime-prelude-cache-store
   [state : CompilerLoadSessionState]
@@ -3841,7 +3979,7 @@
   (match (compiler-load-resolve-import-result-with-roots
     (& (string.copy importer-path))
     (string.copy import-path)
-    (& (clone (owned_view.compiler-owned-reference-shared-view stdlib-roots))))
+    stdlib-roots)
     [(Ok resolved) resolved]
     [(Err _) import-path]))
 
@@ -5197,7 +5335,7 @@
       ;; Copy first: callers share one `roots` across sources, and pushing
       ;; would publish this source's root (and its arena) to the next one.
       (compiler-load-string-vec-push-copy
-        (clone roots)
+        (svec.clone-vec (& roots))
         (string.substring (& normalized) 0 7))
       roots)))
 
@@ -5529,7 +5667,7 @@
     [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
-        (match (clone decl)
+        (match decl
           [(Module name)
             (match found
               [(CompilerLoadNoModuleId)
@@ -5748,7 +5886,7 @@
     [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
-        (match (clone decl)
+        (match decl
           [(Module name) (ci.intern-str name)]
           [_ (compiler-load-decls-source-module (& rest))]))]))
 
@@ -6573,7 +6711,7 @@
         (let
           [owned : CompilerLoadSurfaceSummary
             (if copy-into-owner?
-              (clone (owned_view.compiler-owned-reference-shared-view summary))
+              (clone-compiler-load-surface-summary summary)
               (owned_view.compiler-owned-reference-shared-view summary))]
           (owned_view.compiler-owned-cell-set!
             state.surface-summaries
@@ -6769,13 +6907,16 @@
           (__tl_make-array CompilerLoadSurfaceSummary kept)]
         [write-index : i64 0]
         (for [read-index (iterator.range 0 len)]
-          (let
-            [summary : CompilerLoadSurfaceSummary
-              (clone (array-ref summaries.slots read-index))]
-            (when
-              (not (= summary.source-path-id source-path-id))
-              (set! (array-ref slots write-index) summary)
-              (+= write-index 1))))
+          (when
+            (not
+              (=
+                (array-ref summaries.slots read-index).source-path-id
+                source-path-id))
+            (set!
+              (array-ref slots write-index)
+              (clone-compiler-load-surface-summary
+                (& (array-ref summaries.slots read-index))))
+            (+= write-index 1)))
         (CompilerLoadSurfaceSummaryList slots kept)))))
 
 (define (compiler-load-session-state-surface-summary-remove-source!
@@ -8016,7 +8157,7 @@
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-session-state-lazy-pattern-demand
             (owned_view.compiler-owned-reference-shared-view state)
-            (clone pattern)
+            (ast.clone-ast-pattern (& pattern))
             alias
             canonical
             summary
@@ -9451,7 +9592,7 @@
           (compiler-load-surface-module-maybe module-name)
           (compiler-load-surface-alias-maybe alias)
           (compiler-load-surface-import-default-alias kind (& import-path))
-          (clone (__tl-box-place span)))
+          (__tl-box-place span))
         (compiler-load-surface-import-decl-emitting? kind))]
     [(Def decl-meta name maybe-ty _)
       (compiler-load-surface-build-add-decl
@@ -9761,7 +9902,7 @@
   (compiler-load-surface-build-decl-inner
     source-path
     module-id
-    (clone (owned_view.compiler-owned-reference-shared-view decl))
+    (ast.clone-ast-decl decl)
     (or
       generated
       (compiler-load-surface-generated-meta?
@@ -9779,7 +9920,7 @@
     [(Cons decl rest-box)
       (let
         [rest : ast.AstDeclList rest-box]
-        (match (clone decl)
+        (match (& decl)
           [(Module next-module)
             (compiler-load-surface-build-decls-into
               (string.copy source-path)
@@ -9794,7 +9935,7 @@
               (compiler-load-surface-build-decls-into
                 source-path
                 nested-module
-                (& (deref body-box))
+                body-box
                 build))]
           [_
             (compiler-load-surface-build-decls-into
@@ -10191,11 +10332,11 @@
     [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
-        (match (clone decl)
+        (match (& decl)
           [(ModuleBody target-module-id body-box)
             (let
               [target-module : String (ci.intern-str target-module-id)]
-              [body : ast.AstDeclList (deref body-box)]
+              [body : ast.AstDeclList (ast.clone-ast-decl-list body-box)]
               (if (or
                 (compiler-load-decl-list-has-module-id?
                   (& body)
@@ -10307,7 +10448,7 @@
                 (owned_view.compiler-owned-shared-view importer-path)
                 (owned_view.compiler-owned-shared-view import-root)
                 kind
-                import-path
+                (string.copy import-path)
                 expected-module
                 alias
                 stdlib-roots)
@@ -10326,17 +10467,17 @@
                         (not
                           (compiler-load-expected-module-seen?
                             seen
-                            (clone expected-module)))
+                            expected-module))
                         (compiler-load-session-state-lazy-import-preload-candidate?
                           (& traversal.load-state)
                           (& (string.copy importer-path))
-                          (clone kind)
-                          (clone alias)))]
+                          kind
+                          alias))]
                     [preload-demand : CompilerLoadLazyAliasDemand
                       (compiler-load-session-state-lazy-import-preload-demand
                         (& traversal.load-state)
                         preload-candidate
-                        (clone alias)
+                        alias
                         (& traversal.importer-scan-decls)
                         pools)]
                     [preload-summary-needed : bool
@@ -10352,7 +10493,7 @@
                           (& (string.copy resolved))
                           resolved-id
                           stdlib-roots
-                          (clone expected-module)
+                          expected-module
                           (& (string.copy import-root))
                           cfgs
                           pools)
@@ -10362,14 +10503,14 @@
                         (compiler-load-lazy-import-skip-with-state?
                           (& traversal.load-state)
                           (& (string.copy importer-path))
-                          (clone kind)
+                          kind
                           (& (string.copy resolved))
                           resolved-id
-                          (clone expected-module)
-                          (clone alias)
+                          expected-module
+                          alias
                           (& traversal.importer-scan-decls)
                           pools
-                          (clone preload-demand)
+                          preload-demand
                           stdlib-roots)
                         false)]
                     (match (if preload-skip
@@ -10385,9 +10526,9 @@
                         resolved-id
                         seen
                         stdlib-roots
-                        (clone kind)
+                        kind
                         (string.copy import-path)
-                        (clone expected-module)
+                        expected-module
                         (& (string.copy import-root))
                         cfgs
                         pools
@@ -10429,7 +10570,7 @@
                                     SelectedItem
                                     (cdiag.compiler-diagnostic-from-ast-span
                                       importer-path
-                                      (__tl-box-place span)
+                                      (ast.clone-ast-source-span span)
                                       (compiler-load-missing-selected-item-message
                                         import-path
                                         kind)))))))
@@ -10471,7 +10612,7 @@
                                         resolved
                                         after-import-expected
                                         after-import-alias
-                                        (__tl-box-place span)
+                                        (ast.clone-ast-source-span span)
                                         (& importer-source-module)
                                         importer-source-module-id
                                         decls
@@ -10499,7 +10640,7 @@
                                         resolved
                                         after-import-expected
                                         after-import-alias
-                                        (__tl-box-place span)
+                                        (ast.clone-ast-source-span span)
                                         (& importer-source-module)
                                         importer-source-module-id
                                         decls
@@ -10536,7 +10677,7 @@
                           [origin : cdiag.CompilerDiagnostic
                             (cdiag.compiler-diagnostic-from-ast-span
                               importer-path
-                              (__tl-box-place span)
+                              (ast.clone-ast-source-span span)
                               "")]
                           (Err
                             (box
@@ -10553,7 +10694,7 @@
                         ImportResolution
                         (cdiag.compiler-diagnostic-from-ast-span
                           importer-path
-                          (__tl-box-place span)
+                          (ast.clone-ast-source-span span)
                           message))))]))]
           [(IncludeStr name include-path)
             (let
@@ -10562,7 +10703,7 @@
                   (compiler-load-expand-include-with-pools
                     RuntimeString
                     (string.copy importer-path)
-                    include-path
+                    (string.copy include-path)
                     name
                     stdlib-roots
                     pools))]
@@ -10594,7 +10735,7 @@
                   (compiler-load-expand-include-with-pools
                     ComptimeString
                     (string.copy importer-path)
-                    include-path
+                    (string.copy include-path)
                     name
                     stdlib-roots
                     pools))]
@@ -10626,7 +10767,7 @@
                   (compiler-load-expand-include-with-pools
                     LzssString
                     (string.copy importer-path)
-                    include-path
+                    (string.copy include-path)
                     name
                     stdlib-roots
                     pools))]
@@ -10658,7 +10799,7 @@
                   (compiler-load-expand-include-with-pools
                     Binary
                     (string.copy importer-path)
-                    include-path
+                    (string.copy include-path)
                     name
                     stdlib-roots
                     pools))]
@@ -10781,14 +10922,14 @@
             (+ base-offset run-length)
             (- base-len run-length)
             false)
-          (clone importer-path)
+          (string.copy (& importer-path))
           importer-module
           importer-module-id
-          (clone importer-source-module)
+          (string.copy (& importer-source-module))
           importer-source-module-id
           seen
           stdlib-roots
-          (clone import-root)
+          (string.copy (& import-root))
           cfgs
           pools)
           [(Ok rest-decls rest-paths rest-modules rest-seen)
@@ -10812,7 +10953,7 @@
                 (set!
                   out-paths
                   (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
-                    (clone importer-path)
+                    (string.copy (& importer-path))
                     traversal.importer-decl-owner-id
                     traversal.importer-path-id
                     out-paths))
@@ -10952,7 +11093,7 @@
               [(Ok module-id module-name-id)
                 (match (compiler-load-check-expected-module
                   (& (string.copy source-path))
-                  (clone expected-module)
+                  expected-module
                   (string.copy module-id)
                   module-name-id)
                   [(Ok _ _)
@@ -10989,7 +11130,7 @@
                                 (compiler-load-decl-list-has-module? decls)
                                 (not
                                   (compiler-load-no-expected-module?
-                                    (clone expected-module)))
+                                    expected-module))
                                 (& load-decls))))
                           (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                             (CompilerLoadTraversalContext
@@ -11949,7 +12090,7 @@
                       program
                       seen
                       stdlib-roots
-                      (clone expected-module)
+                      expected-module
                       (string.copy import-root)
                       parse-cfgs
                       parse-identity)
@@ -12018,7 +12159,7 @@
     (if (compiler-load-session-state-surface-summary-seen-expected-module?
       load-state
       source-path-id
-      (clone expected-module)
+      expected-module
       seen)
       (compiler-load-seen-expected-module-with-paths
         (& load-state)
@@ -12038,7 +12179,7 @@
               source-path-id
               (compiler-load-module-fallback-id-for-parse
                 (& (string.copy module-id-fallback))
-                (clone expected-module))
+                expected-module)
               decl-owner-id)]
           [module-id-fallback-id : i64 parse-identity.module-fallback-id]
           [source-module-fallback-id : i64
@@ -12076,12 +12217,12 @@
                   program
                   seen
                   stdlib-roots
-                  (clone expected-module)
+                  expected-module
                   (string.copy import-root)
                   parse-cfgs
                   pools
                   (string.copy module-id-fallback)
-                  (clone parse-identity)
+                  parse-identity
                   (string.copy source-module-fallback)
                   source-module-fallback-id)
                 path-dedup
@@ -12116,12 +12257,12 @@
                       program
                       seen
                       stdlib-roots
-                      (clone expected-module)
+                      expected-module
                       (string.copy import-root)
                       parse-cfgs
                       pools
                       (string.copy module-id-fallback)
-                      (clone parse-identity)
+                      parse-identity
                       (string.copy source-module-fallback)
                       source-module-fallback-id)
                     path-dedup
@@ -12610,12 +12751,12 @@
           module)
         (ci.intern-str name))]
     [callables : ast.AstImportedSpmdCallableList
-      (match (clone interface)
+      (match (& interface)
         [(Unavailable) (ast.ast-imported-spmd-callable-list-new)]
         [(Available _ items)
           (compiler-load-imported-spmd-callables-for
             (string.copy canonical-name)
-            (& items))])]
+            items)])]
     (Package
       (string.copy package-owner)
       (match interface
@@ -12686,87 +12827,85 @@
   [symbols : (& csym.CompilerSymbols)]
   [module-id : i64]
   [decl : ast.AstDecl]) : CompilerLoadMaybeDecl
-  (match (clone decl)
-    [(DefFn decl-meta name params ret _ metadata)
-      (CompilerLoadSomeDecl
-        (ast.ast-decl-with-meta
-          decl-meta
-          (compiler-load-package-def-fn-extern
+  (if (match (& decl)
+    [(or (DefMacro _ _ _ _ _) (DefStruct _ _ _ _ _) (Module _)) true]
+    [_ false])
+    (CompilerLoadSomeDecl decl)
+    (match decl
+      [(DefFn decl-meta name params ret _ metadata)
+        (CompilerLoadSomeDecl
+          (ast.ast-decl-with-meta
+            decl-meta
+            (compiler-load-package-def-fn-extern
+              package-owner
+              package-root
+              stdlib-roots
+              decl-path
+              module
+              name
+              (& params)
+              (& ret)
+              (ast.ast-fn-metadata-export (& metadata))
+              spmd-interface)))]
+      [(DefDispatch decl-meta name variants)
+        ;; The archive owns the resolver and its cache. Import only its shared
+        ;; signature, using normal symbol resolution for qualified variants too.
+        (match (ast.ast-dispatch-variant-list-get
+          (& variants)
+          0
+          (ast.ast-dispatch-variant-fallback))
+          [(Variant _ variant-name)
+            (let
+              [handle : i64
+                (if (ci.intern-qualified? variant-name)
+                  (csym.compiler-symbols-lookup-value-id-or
+                    symbols
+                    variant-name
+                    -1)
+                  (csym.compiler-symbols-lookup-value-in-module-id-or
+                    symbols
+                    module-id
+                    variant-name
+                    -1))]
+              (match (csym.compiler-symbols-decl-at-index
+                symbols
+                (csym.compiler-symbol-handle-index handle))
+                [(Ok variant)
+                  (match (ast.ast-decl-unwrapped (& variant))
+                    [(DefFn _ _ params ret _ _)
+                      (CompilerLoadSomeDecl
+                        (ast.ast-decl-with-meta
+                          decl-meta
+                          (compiler-load-package-def-fn-extern
+                            package-owner
+                            package-root
+                            stdlib-roots
+                            decl-path
+                            module
+                            name
+                            (& params)
+                            (& ret)
+                            (ast.AstFnExport.No)
+                            spmd-interface)))]
+                    [_ (CompilerLoadNoDecl)])]
+                [(Err _) (CompilerLoadNoDecl)]))])]
+      [(Unsafe inner-box)
+        (let
+          [inner : ast.AstDecl (deref inner-box)]
+          (match (compiler-load-package-transform-decl
             package-owner
             package-root
             stdlib-roots
             decl-path
             module
-            name
-            (& params)
-            (& ret)
-            (ast.ast-fn-metadata-export (& metadata))
-            spmd-interface)))]
-    [(DefDispatch decl-meta name variants)
-      ;; The archive owns the resolver and its cache. Import only its shared
-      ;; signature, using normal symbol resolution for qualified variants too.
-      (match (ast.ast-dispatch-variant-list-get
-        (& variants)
-        0
-        (ast.ast-dispatch-variant-fallback))
-        [(Variant _ variant-name)
-          (let
-            [handle : i64
-              (if (ci.intern-qualified? variant-name)
-                (csym.compiler-symbols-lookup-value-id-or
-                  symbols
-                  variant-name
-                  -1)
-                (csym.compiler-symbols-lookup-value-in-module-id-or
-                  symbols
-                  module-id
-                  variant-name
-                  -1))]
-            (match (csym.compiler-symbols-decl-at-index
-              symbols
-              (csym.compiler-symbol-handle-index handle))
-              [(Ok variant)
-                (match (ast.ast-decl-unwrapped (& variant))
-                  [(DefFn _ _ params ret _ _)
-                    (CompilerLoadSomeDecl
-                      (ast.ast-decl-with-meta
-                        decl-meta
-                        (compiler-load-package-def-fn-extern
-                          package-owner
-                          package-root
-                          stdlib-roots
-                          decl-path
-                          module
-                          name
-                          (& params)
-                          (& ret)
-                          (ast.AstFnExport.No)
-                          spmd-interface)))]
-                  [_ (CompilerLoadNoDecl)])]
-              [(Err _) (CompilerLoadNoDecl)]))])]
-    ;; Package macro declarations remain source-backed until #2755 commits
-    ;; dependency-native results. Retaining the declaration also ensures the
-    ;; catalog registry is consulted only after ordinary import visibility and
-    ;; shadowing resolve this exact transformer.
-    [(or (DefMacro _ _ _ _ _) (DefStruct _ _ _ _ _) (Module _))
-      (CompilerLoadSomeDecl decl)]
-    [(Unsafe inner-box)
-      (let
-        [inner : ast.AstDecl (deref inner-box)]
-        (match (compiler-load-package-transform-decl
-          package-owner
-          package-root
-          stdlib-roots
-          decl-path
-          module
-          spmd-interface
-          symbols
-          module-id
-          inner)
-          [(CompilerLoadSomeDecl transformed)
-            (CompilerLoadSomeDecl (ast.ast-decl-unsafe transformed))]
-          [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
-    [_ (CompilerLoadNoDecl)]))
+            spmd-interface
+            symbols
+            module-id
+            inner)
+            [(CompilerLoadSomeDecl transformed)
+              (CompilerLoadSomeDecl (ast.ast-decl-unsafe transformed))]
+            [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
+      [_ (CompilerLoadNoDecl)])))
 
 (define (compiler-load-path-list-head-or
   [paths : (& ast.AstDeclPathList)]
@@ -12844,7 +12983,7 @@
                 (string.copy normalized-entry-path)
                 (& (string.copy current-module))
                 (& (string.copy decl-path))
-                (& (clone decl)))
+                (& decl))
                 cbi.compiler-builtin-id-fix-empty
                 (compiler-load-package-owned-path-cached!
                   (&mut owned-cache)
@@ -12924,7 +13063,7 @@
             (string.copy decl-path))]
         [rest-paths : ast.AstDeclPathList (compiler-load-path-list-tail paths)]
         [next-module : String
-          (match (clone decl)
+          (match (& decl)
             ;; The archive was compiled with this source as its root, so the
             ;; dotted identity its importer gives it is not part of link names.
             ;; A same-named module body owns its marker and keeps its module.
@@ -12936,7 +13075,7 @@
                 (ci.intern-str name))]
             [_ (string.copy module)])]
         [next-module-id : i64
-          (match (clone decl)
+          (match (& decl)
             [(Module name) name]
             [_ module-id])]
         (match (compiler-load-package-extern-decls-from
@@ -12950,9 +13089,7 @@
           next-module-id
           moduleless-context-id
           symbols
-          (&
-            (clone
-              (owned_view.compiler-owned-reference-shared-view spmd-interface))))
+          spmd-interface)
           [(Ok rest-decls rest-decl-paths rest-modules rest-seen)
             (match (compiler-load-package-transform-decl
               package-owner
@@ -13639,11 +13776,11 @@
     [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
-        (match (clone decl)
+        (match (& decl)
           [(ModuleBody target-module-id body-box)
             (let
               [target-module : String (ci.intern-str target-module-id)]
-              [body : ast.AstDeclList (deref body-box)]
+              [body : ast.AstDeclList (ast.clone-ast-decl-list body-box)]
               (match (compiler-load-package-decls-with-module-and-roots
                 (& body)
                 importer-scan-decls
@@ -13740,7 +13877,7 @@
               (match (compiler-load-resolve-package-import-spec-classified
                 (owned_view.compiler-owned-shared-view importer-path)
                 kind
-                import-path
+                (string.copy import-path)
                 expected-module
                 alias
                 stdlib-roots
@@ -13757,40 +13894,40 @@
                     [resolved-id : i64 (compiler-load-source-path-id resolved)]
                     [package-externs : bool
                       (compiler-load-package-import-externs?
-                        (clone kind)
+                        kind
                         (& (string.copy import-path))
-                        (clone expected-module)
+                        expected-module
                         deps)]
                     [source-expected-module : ast.AstMaybeModuleName
                       (compiler-load-package-source-expected-module
-                        (clone kind)
-                        (clone expected-module)
+                        kind
+                        expected-module
                         package-externs)]
                     [fallback : String
                       (compiler-load-canonical-module-id-from-import
-                        (clone kind)
+                        kind
                         (string.copy import-path)
                         (& (string.copy resolved)))]
                     [source-fallback : String
                       (compiler-load-canonical-source-module-from-import
-                        (clone kind)
+                        kind
                         (string.copy import-path)
                         (& (string.copy resolved))
-                        (clone expected-module)
+                        expected-module
                         (& (string.copy importer-source-module)))]
                     [preload-candidate : bool
                       (and
                         (not package-externs)
                         (compiler-load-lazy-import-preload-candidate?
                           (& (string.copy importer-path))
-                          (clone kind)
-                          (clone alias)))]
+                          kind
+                          alias))]
                     [preload-pools : ast.AstNodePoolContext
                       (ast.ast-node-pool-context-capture-active)]
                     [preload-demand : CompilerLoadLazyAliasDemand
                       (compiler-load-lazy-import-preload-demand
                         preload-candidate
-                        (clone alias)
+                        alias
                         importer-scan-decls
                         preload-pools)]
                     [preload-summary-needed : bool
@@ -13804,7 +13941,7 @@
                           (& (string.copy resolved))
                           resolved-id
                           stdlib-roots
-                          (clone expected-module)
+                          expected-module
                           (& (string.copy manifest-dir))
                           cfgs
                           preload-pools)
@@ -13813,14 +13950,14 @@
                       (if preload-summary-needed
                         (compiler-load-lazy-import-skip?
                           (& (string.copy importer-path))
-                          (clone kind)
+                          kind
                           (& (string.copy resolved))
                           resolved-id
-                          (clone expected-module)
-                          (clone alias)
+                          expected-module
+                          alias
                           importer-scan-decls
                           preload-pools
-                          (clone preload-demand)
+                          preload-demand
                           stdlib-roots)
                         false)]
                     (match (if preload-skip
@@ -13834,7 +13971,7 @@
                           (string.copy resolved)
                           seen
                           stdlib-roots
-                          (clone source-expected-module)
+                          source-expected-module
                           cfgs
                           (string.copy fallback)
                           (& (string.copy fallback)))
@@ -13843,7 +13980,7 @@
                           resolved-id
                           seen
                           stdlib-roots
-                          (clone expected-module)
+                          expected-module
                           (& (string.copy manifest-dir))
                           deps
                           cfgs
@@ -13877,7 +14014,7 @@
                           (when
                             (compiler-load-package-import-identity-taken?
                               resolved-id
-                              (clone validated-module)
+                              validated-module
                               seen
                               package-externs
                               (& manifest-dir)
@@ -13889,7 +14026,7 @@
                                     AmbiguousImport
                                     (cdiag.compiler-diagnostic-from-ast-span
                                       importer-path
-                                      (__tl-box-place span)
+                                      (ast.clone-ast-source-span span)
                                       "compiler-load: import has the module identity of another loaded source; declare a distinct module in one of them"))))))
                           (when
                             (not
@@ -13908,7 +14045,7 @@
                                     SelectedItem
                                     (cdiag.compiler-diagnostic-from-ast-span
                                       importer-path
-                                      (__tl-box-place span)
+                                      (ast.clone-ast-source-span span)
                                       (compiler-load-missing-selected-item-message
                                         import-path
                                         kind)))))))
@@ -13950,7 +14087,7 @@
                                         resolved
                                         after-import-expected
                                         after-import-alias
-                                        (__tl-box-place span)
+                                        (ast.clone-ast-source-span span)
                                         (& importer-source-module)
                                         importer-source-module-id
                                         decls
@@ -13978,7 +14115,7 @@
                                         resolved
                                         after-import-expected
                                         after-import-alias
-                                        (__tl-box-place span)
+                                        (ast.clone-ast-source-span span)
                                         (& importer-source-module)
                                         importer-source-module-id
                                         decls
@@ -14018,7 +14155,7 @@
                         ImportResolution
                         (cdiag.compiler-diagnostic-from-ast-span
                           importer-path
-                          (__tl-box-place span)
+                          (ast.clone-ast-source-span span)
                           message))))]))]
           [(IncludeStr name include-path)
             (let
@@ -14027,7 +14164,7 @@
                   (compiler-load-package-expand-include
                     RuntimeString
                     (string.copy importer-path)
-                    include-path
+                    (string.copy include-path)
                     name
                     stdlib-roots
                     (string.copy manifest-dir)
@@ -14061,7 +14198,7 @@
                   (compiler-load-package-expand-include
                     ComptimeString
                     (string.copy importer-path)
-                    include-path
+                    (string.copy include-path)
                     name
                     stdlib-roots
                     (string.copy manifest-dir)
@@ -14095,7 +14232,7 @@
                   (compiler-load-package-expand-include
                     LzssString
                     (string.copy importer-path)
-                    include-path
+                    (string.copy include-path)
                     name
                     stdlib-roots
                     (string.copy manifest-dir)
@@ -14129,7 +14266,7 @@
                   (compiler-load-package-expand-include
                     Binary
                     (string.copy importer-path)
-                    include-path
+                    (string.copy include-path)
                     name
                     stdlib-roots
                     (string.copy manifest-dir)
@@ -14247,7 +14384,7 @@
               [(Ok module-id module-name-id)
                 (match (compiler-load-check-expected-module
                   (& (string.copy source-path))
-                  (clone expected-module)
+                  expected-module
                   (string.copy module-id)
                   module-name-id)
                   [(Ok _ _)
@@ -14282,7 +14419,7 @@
                                 (compiler-load-decl-list-has-module? decls)
                                 (not
                                   (compiler-load-no-expected-module?
-                                    (clone expected-module)))
+                                    expected-module))
                                 (& load-decls))))
                           (compiler-load-package-decls-with-module-and-roots
                             (& load-decls)
@@ -14365,7 +14502,7 @@
         source-path-id
         (compiler-load-module-fallback-id-for-parse
           (& (string.copy module-id-fallback))
-          (clone expected-module))
+          expected-module)
         cbi.compiler-builtin-id-fix-empty)]
     [module-id-fallback-id : i64 parse-identity.module-fallback-id]
     [source-module-fallback-id : i64
@@ -14394,12 +14531,12 @@
           program
           seen
           stdlib-roots
-          (clone expected-module)
+          expected-module
           (& (string.copy manifest-dir))
           deps
           parse-cfgs
           (string.copy module-id-fallback)
-          (clone parse-identity)
+          parse-identity
           (string.copy source-module-fallback)
           source-module-fallback-id))
       (match (compiler-load-embedded-stdlib-source-for-path
@@ -14425,12 +14562,12 @@
               program
               seen
               stdlib-roots
-              (clone expected-module)
+              expected-module
               (& (string.copy manifest-dir))
               deps
               parse-cfgs
               (string.copy module-id-fallback)
-              (clone parse-identity)
+              parse-identity
               (string.copy source-module-fallback)
               source-module-fallback-id))]
         [(CompilerEmbeddedStdlibNoSource)
@@ -14694,10 +14831,11 @@
 
 (define (compiler-load-dependency-surfaces-restore-base!
   [surface-state : (& surface-state CompilerLoadDependencySurfaceState)]) : unit
-  (match (array-ref surface-state.base-facts 0)
+  (match (& (array-ref surface-state.base-facts 0))
     [(None) (surface_facts.surface-typecheck-facts-clear!)]
     [(Some facts)
-      (if (surface_facts.surface-typecheck-facts-publish! (clone facts))
+      (if (surface_facts.surface-typecheck-facts-publish!
+        (surface_facts.clone-surface-typecheck-facts facts))
         unit
         (surface_facts.surface-typecheck-facts-clear!))]))
 
@@ -14718,7 +14856,8 @@
             (compiler-load-dependency-surfaces-restore-base! surface-state)
             (Ok decls paths modules seen))
           (match (surface_facts.surface-typecheck-facts-builder-finish
-            (clone (array-ref surface-state.facts-builder 0)))
+            (surface_facts.clone-surface-typecheck-facts-builder
+              (& (array-ref surface-state.facts-builder 0))))
             [(Err _)
               (compiler-load-dependency-surfaces-restore-base! surface-state)
               (Ok decls paths modules seen)]
@@ -15388,15 +15527,35 @@
         (set! set.args vec)
         set))))
 
+(define (clone-compiler-pkg-link-vec [vec : (& fs.FsStringVector)]) : fs.FsStringVector
+  (let
+    [out : fs.FsStringVector (fs.string-vector-new)]
+    [count : i64 (fs.string-vector-len vec)]
+    (for [index (iterator.range 0 count)]
+      (fs.string-vector-push!
+        (&mut out)
+        (string.copy (& (fs.string-vector-get vec index "")))))
+    out))
+
+(define (clone-compiler-pkg-link-set [set : (& CompilerPkgLinkSet)]) : CompilerPkgLinkSet
+  (CompilerPkgLinkSet
+    (clone-compiler-pkg-link-vec (& set.libraries))
+    (clone-compiler-pkg-link-vec (& set.search-paths))
+    (clone-compiler-pkg-link-vec (& set.args))))
+
+(define (clone-compiler-pkg-link [link : (& CompilerPkgLink)]) : CompilerPkgLink
+  (CompilerPkgLink
+    (clone-compiler-pkg-link-set (& link.all))
+    (clone-compiler-pkg-link-set (& link.linux))
+    (clone-compiler-pkg-link-set (& link.windows))))
+
 ;: The value list for a (scope, category) pair.
 (define (compiler-pkg-link-get-vec
   [link : (& CompilerPkgLink)]
   [scope : i64]
   [cat : i64]) : fs.FsStringVector
   (compiler-pkg-link-set-category
-    (compiler-pkg-link-scope-set
-      (clone (owned_view.compiler-owned-reference-shared-view link))
-      scope)
+    (compiler-pkg-link-scope-set (clone-compiler-pkg-link link) scope)
     cat))
 
 ;: Return `link` with the (scope, category) value list replaced.
@@ -15406,14 +15565,12 @@
   [cat : i64]
   [vec : (& fs.FsStringVector)]) : CompilerPkgLink
   (compiler-pkg-link-replace-scope
-    (clone (owned_view.compiler-owned-reference-shared-view link))
+    (clone-compiler-pkg-link link)
     scope
     (compiler-pkg-link-set-replace-category
-      (compiler-pkg-link-scope-set
-        (clone (owned_view.compiler-owned-reference-shared-view link))
-        scope)
+      (compiler-pkg-link-scope-set (clone-compiler-pkg-link link) scope)
       cat
-      (owned_view.compiler-owned-reference-shared-view vec))))
+      (clone-compiler-pkg-link-vec vec))))
 
 ;: Parse the one-or-more non-empty string values of one `link` sub-field.
 (define (compiler-load-manifest-link-values
@@ -15747,7 +15904,7 @@
 (define (compiler-load-manifest-needs-kind-inference?
   [form : reader.SpannedSexpr]) : bool
   (and
-    (not (compiler-load-manifest-form-has-field? (clone form) "kind"))
+    (not (compiler-load-manifest-form-has-field? form "kind"))
     (not (compiler-load-manifest-form-has-field? form "entry"))))
 
 (define (compiler-load-manifest-convention-path
@@ -15780,12 +15937,12 @@
   [err : (& token.SourceError)]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-from-span
     path
-    (token.source-error-span
-      (clone (owned_view.compiler-owned-reference-shared-view err)))
-    (str_cat.str-cat
-      "manifest: "
-      (token.source-error-message
-        (owned_view.compiler-owned-reference-shared-view err)))))
+    (token.SourceSpan
+      err.span.start-line
+      err.span.start-col
+      err.span.end-line
+      err.span.end-col)
+    (str_cat.str-cat "manifest: " (string.copy (& err.message)))))
 
 (define (compiler-load-manifest-validation-diagnostic
   [path : String]
@@ -15836,7 +15993,7 @@
 (define (compiler-load-manifest-first-dependency-span
   [form : reader.SpannedSexpr]) : token.SourceSpan
   (let
-    [fallback : token.SourceSpan (reader.spanned-sexpr-span (clone form))]
+    [fallback : token.SourceSpan (reader.spanned-sexpr-span form)]
     (match (reader.spanned-sexpr-view form)
       [(List (slice _ & _) _)
         (let

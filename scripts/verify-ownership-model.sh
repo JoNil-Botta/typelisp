@@ -12,6 +12,14 @@ GATE_FAIL_PREFIX='ownership model: '
 gate_compiler
 gate_compiler_absolute
 gate_require_compiler
+BOUNDED_POOL_LABEL=ownership-model
+. "$ROOT/scripts/lib-bounded-pool.sh"
+
+OWNERSHIP_WORKERS=${TYPELISP_OWNERSHIP_MODEL_WORKERS:-4}
+case "$OWNERSHIP_WORKERS" in
+    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) ;;
+    *) fail "invalid TYPELISP_OWNERSHIP_MODEL_WORKERS: $OWNERSHIP_WORKERS (expected 1-8)" ;;
+esac
 
 [ "$#" -eq 0 ] || fail "usage: scripts/verify-ownership-model.sh"
 case "$(uname -s)" in
@@ -67,9 +75,7 @@ input_identities() {
     sha256sum "$SOURCE_CLEANUP_COMPARE" "$SOURCE_CLEANUP_CFG" "$SOURCE_CLEANUP_RENAME"
     sha256sum "$SOURCE_LOAN_LAWS" "$SOURCE_LOAN_VALUE"
     sha256sum "$SOURCE_ALLOCATION_MODEL"
-    while IFS= read -r dependency; do
-        sha256sum "$dependency"
-    done < "$WORKDIR/stdlib-files.txt"
+    xargs sha256sum < "$WORKDIR/stdlib-files.txt"
 }
 
 input_identities > "$WORKDIR/identities.before.sha256"
@@ -102,6 +108,33 @@ copy_core_dependencies() {
     cp "$SOURCE_OWNED_VIEW" "$1/compiler_owned_view.tl"
 }
 
+verify_bounded_report() {
+    _vbr_phase=$1
+    _vbr_limit=$2
+    _vbr_expected_status=$3
+    _vbr_host=$4
+    _vbr_report="$WORKDIR/$_vbr_phase.report"
+    [ -s "$_vbr_report" ] || fail "$_vbr_phase has no resource report"
+    _vbr_reason=success
+    [ "$_vbr_expected_status" -eq 0 ] || _vbr_reason=command-failure
+    grep -Fx "reason=$_vbr_reason" "$_vbr_report" >/dev/null || {
+        cat "$WORKDIR/$_vbr_phase.stdout" "$WORKDIR/$_vbr_phase.stderr" "$_vbr_report" >&2 2>/dev/null || true
+        fail "$_vbr_phase incomplete"
+    }
+    grep -Fx "exit_code=$_vbr_expected_status" "$_vbr_report" >/dev/null || {
+        cat "$WORKDIR/$_vbr_phase.stdout" "$WORKDIR/$_vbr_phase.stderr" "$_vbr_report" >&2 2>/dev/null || true
+        fail "$_vbr_phase wrong exit report"
+    }
+    bounded_pool_read_report "$_vbr_report" "$_vbr_expected_status" "$_vbr_limit" "$_vbr_host" || {
+        cat "$_vbr_report" >&2
+        fail "$_vbr_phase failed bounded report validation ($BOUNDED_POOL_REPORT_FAILURE)"
+    }
+    [ ! -s "$WORKDIR/$_vbr_phase.stderr" ] || {
+        cat "$WORKDIR/$_vbr_phase.stderr" >&2
+        fail "$_vbr_phase produced stderr"
+    }
+}
+
 bounded() {
     _phase=$1
     _limit=$2
@@ -123,15 +156,40 @@ bounded() {
             "$WORKDIR/$_phase.wrapper.stdout" "$WORKDIR/$_phase.wrapper.stderr" >&2
         fail "$_phase failed with status $_status; artifacts: $WORKDIR"
     fi
-    [ -s "$WORKDIR/$_phase.report" ] || fail "$_phase has no resource report"
-    _reason=success
-    [ "$_expected_status" -eq 0 ] || _reason=command-failure
-    grep -Fx "reason=$_reason" "$WORKDIR/$_phase.report" >/dev/null || fail "$_phase incomplete"
-    grep -Fx "exit_code=$_expected_status" "$WORKDIR/$_phase.report" >/dev/null || fail "$_phase wrong exit report"
-    [ ! -s "$WORKDIR/$_phase.stderr" ] || {
-        cat "$WORKDIR/$_phase.stderr" >&2
-        fail "$_phase produced stderr"
-    }
+    verify_bounded_report "$_phase" "$_limit" "$_expected_status" linux
+}
+
+UNITS_DIR="$WORKDIR/units"
+rm -rf "$UNITS_DIR"
+mkdir -p "$UNITS_DIR"
+UNIT_COUNT=0
+
+# Register one independent (build, run, output-verify) unit. All 92 units are
+# prepared up front and executed in parallel with isolated per-phase limits.
+register_unit() {
+    _ru_phase=$1
+    _ru_source=$2
+    _ru_opt=$3
+    _ru_src_root=$4
+    _ru_exe=$5
+    _ru_expected_status=$6
+    _ru_expected_mode=$7
+    _ru_fail_msg=$8
+    _ru_pass_msg=$9
+    UNIT_COUNT=$((UNIT_COUNT + 1))
+    _ru_id=$(printf 'unit-%03d' "$UNIT_COUNT")
+    rm -f "$_ru_exe" \
+        "$WORKDIR/$_ru_phase-build.report" "$WORKDIR/$_ru_phase-build.stdout" "$WORKDIR/$_ru_phase-build.stderr" \
+        "$WORKDIR/$_ru_phase-run.report" "$WORKDIR/$_ru_phase-run.stdout" "$WORKDIR/$_ru_phase-run.stderr"
+    printf '%s\n' "$_ru_phase" > "$UNITS_DIR/$_ru_id.phase"
+    printf '%s\n' "$_ru_source" > "$UNITS_DIR/$_ru_id.source"
+    printf '%s\n' "$_ru_opt" > "$UNITS_DIR/$_ru_id.opt"
+    printf '%s\n' "$_ru_src_root" > "$UNITS_DIR/$_ru_id.src_root"
+    printf '%s\n' "$_ru_exe" > "$UNITS_DIR/$_ru_id.exe"
+    printf '%s\n' "$_ru_expected_status" > "$UNITS_DIR/$_ru_id.expected_status"
+    printf '%s\n' "$_ru_expected_mode" > "$UNITS_DIR/$_ru_id.expected_mode"
+    printf '%s\n' "$_ru_fail_msg" > "$UNITS_DIR/$_ru_id.fail_msg"
+    printf '%s\n' "$_ru_pass_msg" > "$UNITS_DIR/$_ru_id.pass_msg"
 }
 
 # Literal replacement supports multiline proof guards without treating source
@@ -217,18 +275,9 @@ for opt in 0 1 2; do
         fi
         phase="$program-opt$opt"
         executable="$WORKDIR/$phase$SUFFIX"
-        rm -f "$executable"
-        bounded "$phase-build" 1024 0 "$COMPILER" build "$source" \
-            --target "$TARGET" --opt-level "$opt" \
-            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$executable"
-        [ -s "$executable" ] || fail "$phase produced no executable"
-        bounded "$phase-run" 256 0 "$executable"
         printf '%s\n' "$expected" > "$WORKDIR/$phase.expected"
-        cmp "$WORKDIR/$phase.expected" "$WORKDIR/$phase-run.stdout" >/dev/null || {
-            cat "$WORKDIR/$phase-run.stdout" >&2
-            fail "$phase produced incomplete or malformed output"
-        }
-        printf '%s\n' "$phase passed"
+        register_unit "$phase" "$source" "$opt" 1 "$executable" 0 cmp \
+            "$phase produced incomplete or malformed output" "$phase passed"
     done
 done
 
@@ -294,17 +343,9 @@ EOF
         > "$mutant_dir/identities.sha256"
     record_mutation "$mutation" "$obligation" "$expected"
     executable="$mutant_dir/check$SUFFIX"
-    rm -f "$executable"
-    bounded "$mutation-build" 1024 0 "$COMPILER" build "$mutant_dir/crosscheck.tl" \
-        --target "$TARGET" --opt-level 1 --stdlib-root "$ROOT/stdlib" -o "$executable"
-    [ -s "$executable" ] || fail "$mutation produced no executable"
-    bounded "$mutation-run" 256 1 "$executable"
     printf '%s\n' "$expected" > "$WORKDIR/$mutation.expected"
-    cmp "$WORKDIR/$mutation.expected" "$WORKDIR/$mutation-run.stdout" >/dev/null || {
-        cat "$WORKDIR/$mutation-run.stdout" >&2
-        fail "$mutation failed without its independently specified witness"
-    }
-    printf '%s\n' "$mutation detected"
+    register_unit "$mutation" "$mutant_dir/crosscheck.tl" 1 0 "$executable" 1 cmp \
+        "$mutation failed without its independently specified witness" "$mutation detected"
 done
 
 # Mutate the model implementation itself, leaving its concrete semantics and
@@ -348,19 +389,11 @@ for mutation in move join cleanup backedge; do
     sha256sum "$mutant_dir/main.tl" "$mutant_dir/mutation_witness.tl" > "$mutant_dir/identities.sha256"
     phase="model-$mutation"
     executable="$mutant_dir/check$SUFFIX"
-    rm -f "$executable"
-    bounded "$phase-build" 1024 0 "$COMPILER" build "$mutant_dir/mutation_witness.tl" \
-        --target "$TARGET" --opt-level 1 --stdlib-root "$ROOT/stdlib" -o "$executable"
-    [ -s "$executable" ] || fail "$phase produced no executable"
-    bounded "$phase-run" 256 1 "$executable"
     expected="ownership-model mutation mismatch: $mutation"
     printf '%s\n' "$expected" > "$WORKDIR/$phase.expected"
-    cmp "$WORKDIR/$phase.expected" "$WORKDIR/$phase-run.stdout" >/dev/null || {
-        cat "$WORKDIR/$phase-run.stdout" >&2
-        fail "$phase failed without its specified semantic witness"
-    }
     record_mutation "$phase" "Abstract model preserves $mutation semantics" "$expected"
-    printf '%s\n' "$phase detected"
+    register_unit "$phase" "$mutant_dir/mutation_witness.tl" 1 0 "$executable" 1 cmp \
+        "$phase failed without its specified semantic witness" "$phase detected"
 done
 
 for mutation in parent-retention shared-write end-demand loan-join second-successor backedge issue-conflict ancestor-retention grant-ancestors definition-retention parent-reissue; do
@@ -469,18 +502,10 @@ for mutation in parent-retention shared-write end-demand loan-join second-succes
     sha256sum "$mutant_dir"/*.tl > "$mutant_dir/identities.sha256"
     phase="loan-$mutation"
     executable="$mutant_dir/check$SUFFIX"
-    rm -f "$executable"
-    bounded "$phase-build" 1024 0 "$COMPILER" build "$mutant_dir/loan_crosscheck.tl" \
-        --target "$TARGET" --opt-level 1 --stdlib-root "$ROOT/stdlib" -o "$executable"
-    [ -s "$executable" ] || fail "$phase produced no executable"
-    bounded "$phase-run" 256 1 "$executable"
     printf '%s\n' "$expected" > "$WORKDIR/$phase.expected"
-    cmp "$WORKDIR/$phase.expected" "$WORKDIR/$phase-run.stdout" >/dev/null || {
-        cat "$WORKDIR/$phase-run.stdout" >&2
-        fail "$phase failed without its independent semantic witness"
-    }
     record_mutation "$phase" "$obligation" "$expected"
-    printf '%s\n' "$phase detected"
+    register_unit "$phase" "$mutant_dir/loan_crosscheck.tl" 1 0 "$executable" 1 cmp \
+        "$phase failed without its independent semantic witness" "$phase detected"
 done
 
 for mutation in copy-destination consume-copy move-source branch return; do
@@ -584,18 +609,10 @@ for mutation in copy-destination consume-copy move-source branch return; do
     sha256sum "$mutant_dir"/*.tl > "$mutant_dir/identities.sha256"
     phase="loan-value-$mutation"
     executable="$mutant_dir/check$SUFFIX"
-    rm -f "$executable"
-    bounded "$phase-build" 1024 0 "$COMPILER" build "$mutant_dir/loan_value_crosscheck.tl" \
-        --target "$TARGET" --opt-level 1 --stdlib-root "$ROOT/stdlib" -o "$executable"
-    [ -s "$executable" ] || fail "$phase produced no executable"
-    bounded "$phase-run" 256 1 "$executable"
     printf '%s\n' "$expected" > "$WORKDIR/$phase.expected"
-    cmp "$WORKDIR/$phase.expected" "$WORKDIR/$phase-run.stdout" >/dev/null || {
-        cat "$WORKDIR/$phase-run.stdout" >&2
-        fail "$phase failed without its independent semantic witness"
-    }
     record_mutation "$phase" "$obligation" "$expected"
-    printf '%s\n' "$phase detected"
+    register_unit "$phase" "$mutant_dir/loan_value_crosscheck.tl" 1 0 "$executable" 1 cmp \
+        "$phase failed without its independent semantic witness" "$phase detected"
 done
 
 for mutation in shared-write parent-retention end-demand expiry issue-conflict ancestor-retention; do
@@ -645,19 +662,11 @@ for mutation in shared-write parent-retention end-demand expiry issue-conflict a
     sha256sum "$mutant_dir"/*.tl > "$mutant_dir/identities.sha256"
     phase="loan-model-$mutation"
     executable="$mutant_dir/check$SUFFIX"
-    rm -f "$executable"
-    bounded "$phase-build" 1024 0 "$COMPILER" build "$mutant_dir/loan_mutation_witness.tl" \
-        --target "$TARGET" --opt-level 1 --stdlib-root "$ROOT/stdlib" -o "$executable"
-    [ -s "$executable" ] || fail "$phase produced no executable"
-    bounded "$phase-run" 256 1 "$executable"
     expected="ownership-loan-model mutation mismatch: $mutation"
     printf '%s\n' "$expected" > "$WORKDIR/$phase.expected"
-    cmp "$WORKDIR/$phase.expected" "$WORKDIR/$phase-run.stdout" >/dev/null || {
-        cat "$WORKDIR/$phase-run.stdout" >&2
-        fail "$phase failed without its specified semantic witness"
-    }
     record_mutation "$phase" "Concrete loan model preserves $mutation semantics" "$expected"
-    printf '%s\n' "$phase detected"
+    register_unit "$phase" "$mutant_dir/loan_mutation_witness.tl" 1 0 "$executable" 1 cmp \
+        "$phase failed without its specified semantic witness" "$phase detected"
 done
 
 for mutation in join expiry borrow; do
@@ -691,18 +700,10 @@ for mutation in join expiry borrow; do
     sha256sum "$mutant_dir"/*.tl > "$mutant_dir/identities.sha256"
     phase="loan-laws-$mutation"
     executable="$mutant_dir/check$SUFFIX"
-    rm -f "$executable"
-    bounded "$phase-build" 1024 0 "$COMPILER" build "$mutant_dir/loan_laws.tl" \
-        --target "$TARGET" --opt-level 1 --stdlib-root "$ROOT/stdlib" -o "$executable"
-    [ -s "$executable" ] || fail "$phase produced no executable"
-    bounded "$phase-run" 256 1 "$executable"
     printf '%s\n' "$expected" > "$WORKDIR/$phase.expected"
-    cmp "$WORKDIR/$phase.expected" "$WORKDIR/$phase-run.stdout" >/dev/null || {
-        cat "$WORKDIR/$phase-run.stdout" >&2
-        fail "$phase failed without its specified semantic witness"
-    }
     record_mutation "$phase" "Loan domain preserves $mutation semantics" "$expected"
-    printf '%s\n' "$phase detected"
+    register_unit "$phase" "$mutant_dir/loan_laws.tl" 1 0 "$executable" 1 cmp \
+        "$phase failed without its specified semantic witness" "$phase detected"
 done
 
 for mutation in required-exit cleanup-order live-overwrite partial-discharge activation-order construction-leak premature-activation; do
@@ -755,19 +756,11 @@ for mutation in required-exit cleanup-order live-overwrite partial-discharge act
     sha256sum "$mutant_dir"/*.tl > "$mutant_dir/identities.sha256"
     phase="cleanup-model-$mutation"
     executable="$mutant_dir/check$SUFFIX"
-    rm -f "$executable"
-    bounded "$phase-build" 1024 0 "$COMPILER" build "$mutant_dir/cleanup_mutation_witness.tl" \
-        --target "$TARGET" --opt-level 1 --stdlib-root "$ROOT/stdlib" -o "$executable"
-    [ -s "$executable" ] || fail "$phase produced no executable"
-    bounded "$phase-run" 256 1 "$executable"
     expected="ownership-cleanup-model mutation mismatch: $witness"
     printf '%s\n' "$expected" > "$WORKDIR/$phase.expected"
-    cmp "$WORKDIR/$phase.expected" "$WORKDIR/$phase-run.stdout" >/dev/null || {
-        cat "$WORKDIR/$phase-run.stdout" >&2
-        fail "$phase failed without its specified semantic witness"
-    }
     record_mutation "$phase" "Concrete cleanup model preserves $mutation semantics" "$expected"
-    printf '%s\n' "$phase detected"
+    register_unit "$phase" "$mutant_dir/cleanup_mutation_witness.tl" 1 0 "$executable" 1 cmp \
+        "$phase failed without its specified semantic witness" "$phase detected"
 done
 
 # Cleanup elaboration is compared to a token interpreter, including static
@@ -948,18 +941,10 @@ ownership-cleanup-crosscheck direct mismatch: modes=0 initial=1 operation=7'
     sha256sum "$mutant_dir"/*.tl > "$mutant_dir/identities.sha256"
     phase="cleanup-$mutation"
     executable="$mutant_dir/check$SUFFIX"
-    rm -f "$executable"
-    bounded "$phase-build" 1024 0 "$COMPILER" build "$source" \
-        --target "$TARGET" --opt-level 1 --stdlib-root "$ROOT/stdlib" -o "$executable"
-    [ -s "$executable" ] || fail "$phase produced no executable"
-    bounded "$phase-run" 256 1 "$executable"
     printf '%s\n' "$expected" > "$WORKDIR/$phase.expected"
-    cmp "$WORKDIR/$phase.expected" "$WORKDIR/$phase-run.stdout" >/dev/null || {
-        cat "$WORKDIR/$phase-run.stdout" >&2
-        fail "$phase failed without its independent semantic witness"
-    }
     record_mutation "$phase" "$obligation" "$expected"
-    printf '%s\n' "$phase detected"
+    register_unit "$phase" "$source" 1 0 "$executable" 1 cmp \
+        "$phase failed without its independent semantic witness" "$phase detected"
 done
 
 for mutation in owner generation serial lifetime extent; do
@@ -976,16 +961,181 @@ for mutation in owner generation serial lifetime extent; do
     mutate_literal "$SOURCE_ALLOCATION_MODEL" "$mutant" "$original" true
     sha256sum "$mutant" > "$mutant_dir/identities.sha256"
     executable="$mutant_dir/check$SUFFIX"
-    rm -f "$executable"
     phase="allocation-model-$mutation"
-    bounded "$phase-build" 1024 0 "$COMPILER" build "$mutant" \
-        --target "$TARGET" --opt-level 1 --stdlib-root "$ROOT/stdlib" -o "$executable"
-    [ -s "$executable" ] || fail "$phase produced no executable"
-    bounded "$phase-run" 256 1 "$executable"
-    [ ! -s "$WORKDIR/$phase-run.stdout" ] || fail "$phase produced unexpected output"
     record_mutation "$phase" "Allocation access retains $mutation authority" 'normal exit 1'
-    printf '%s\n' "$phase detected"
+    register_unit "$phase" "$mutant" 1 0 "$executable" 1 empty \
+        "$phase produced unexpected output" "$phase detected"
 done
+
+verify_unit_output() {
+    _vu_phase=$1
+    _vu_mode=$2
+    _vu_fail_msg=$3
+    if [ "$_vu_mode" = cmp ]; then
+        cmp "$WORKDIR/$_vu_phase.expected" "$WORKDIR/$_vu_phase-run.stdout" >/dev/null || {
+            cat "$WORKDIR/$_vu_phase-run.stdout" >&2
+            fail "$_vu_fail_msg"
+        }
+    else
+        [ ! -s "$WORKDIR/$_vu_phase-run.stdout" ] || fail "$_vu_fail_msg"
+    fi
+}
+
+if [ "$TARGET" = windows-x86_64 ]; then
+    if command -v powershell.exe >/dev/null 2>&1; then
+        WIN_PS=powershell.exe
+    elif command -v pwsh >/dev/null 2>&1; then
+        WIN_PS=pwsh
+    else
+        fail "Windows Job Object batch runner requires PowerShell"
+    fi
+    if command -v cygpath >/dev/null 2>&1; then
+        WIN_ROOT=$(cygpath -w "$ROOT")
+        WIN_WORKDIR=$(cygpath -w "$WORKDIR")
+        WIN_COMPILER=$(cygpath -w "$COMPILER")
+        WIN_BATCH_PS1=$(cygpath -w "$ROOT/scripts/run-bounded-batch.ps1")
+    else
+        WIN_ROOT=$ROOT
+        WIN_WORKDIR=$WORKDIR
+        WIN_COMPILER=$COMPILER
+        WIN_BATCH_PS1="$ROOT/scripts/run-bounded-batch.ps1"
+    fi
+    WIN_STDLIB="$WIN_ROOT\\stdlib"
+    WIN_SRC="$WIN_ROOT\\src"
+    to_win_path() {
+        case "$1" in
+            "$WORKDIR"/*)
+                _rel=${1#"$WORKDIR"/}
+                printf '%s\\%s' "$WIN_WORKDIR" "$(printf '%s' "$_rel" | tr '/' '\\')"
+                ;;
+            "$ROOT"/*)
+                _rel=${1#"$ROOT"/}
+                printf '%s\\%s' "$WIN_ROOT" "$(printf '%s' "$_rel" | tr '/' '\\')"
+                ;;
+            *)
+                if command -v cygpath >/dev/null 2>&1; then
+                    cygpath -w "$1"
+                else
+                    printf '%s' "$1"
+                fi
+                ;;
+        esac
+    }
+
+    WIN_REQ="$WORKDIR/windows-batch.req"
+    WIN_REQ_WIN=$(to_win_path "$WIN_REQ")
+    {
+        printf 'tlbb1\0%s\0' "$UNIT_COUNT"
+        _idx=0
+        while [ "$_idx" -lt "$UNIT_COUNT" ]; do
+            _idx=$((_idx + 1))
+            _uid=$(printf 'unit-%03d' "$_idx")
+            read -r _phase < "$UNITS_DIR/$_uid.phase"
+            read -r _source < "$UNITS_DIR/$_uid.source"
+            read -r _opt < "$UNITS_DIR/$_uid.opt"
+            read -r _src_root < "$UNITS_DIR/$_uid.src_root"
+            read -r _exe < "$UNITS_DIR/$_uid.exe"
+            read -r _exp_status < "$UNITS_DIR/$_uid.expected_status"
+            _win_source=$(to_win_path "$_source")
+            _win_exe=$(to_win_path "$_exe")
+            _win_build_out="$WIN_WORKDIR\\$_phase-build.stdout"
+            _win_build_err="$WIN_WORKDIR\\$_phase-build.stderr"
+            _win_build_rep="$WIN_WORKDIR\\$_phase-build.report"
+            _win_run_out="$WIN_WORKDIR\\$_phase-run.stdout"
+            _win_run_err="$WIN_WORKDIR\\$_phase-run.stderr"
+            _win_run_rep="$WIN_WORKDIR\\$_phase-run.report"
+            printf '2\0'
+            if [ "$_src_root" -eq 1 ]; then
+                printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+                    "$_phase-build" 1024 120 0 "$_win_exe" \
+                    "$_win_build_out" "$_win_build_err" "$_win_build_rep" \
+                    "$WIN_ROOT" "$WIN_COMPILER" 12
+                printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+                    build "$_win_source" --target "$TARGET" --opt-level "$_opt" \
+                    --stdlib-root "$WIN_STDLIB" --stdlib-root "$WIN_SRC" -o "$_win_exe"
+            else
+                printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+                    "$_phase-build" 1024 120 0 "$_win_exe" \
+                    "$_win_build_out" "$_win_build_err" "$_win_build_rep" \
+                    "$WIN_ROOT" "$WIN_COMPILER" 10
+                printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+                    build "$_win_source" --target "$TARGET" --opt-level "$_opt" \
+                    --stdlib-root "$WIN_STDLIB" -o "$_win_exe"
+            fi
+            printf '%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0%s\0' \
+                "$_phase-run" 256 120 "$_exp_status" "" \
+                "$_win_run_out" "$_win_run_err" "$_win_run_rep" \
+                "$WIN_ROOT" "$_win_exe" 0
+        done
+    } > "$WIN_REQ"
+
+    "$WIN_PS" -NoProfile -ExecutionPolicy Bypass \
+        -File "$WIN_BATCH_PS1" -RequestPath "$WIN_REQ_WIN" -Workers "$OWNERSHIP_WORKERS" \
+        || fail "Windows Job Object batch runner failed; artifacts: $WORKDIR"
+
+    _idx=0
+    while [ "$_idx" -lt "$UNIT_COUNT" ]; do
+        _idx=$((_idx + 1))
+        _uid=$(printf 'unit-%03d' "$_idx")
+        read -r _phase < "$UNITS_DIR/$_uid.phase"
+        read -r _exe < "$UNITS_DIR/$_uid.exe"
+        read -r _exp_status < "$UNITS_DIR/$_uid.expected_status"
+        read -r _exp_mode < "$UNITS_DIR/$_uid.expected_mode"
+        read -r _fail_msg < "$UNITS_DIR/$_uid.fail_msg"
+        read -r _pass_msg < "$UNITS_DIR/$_uid.pass_msg"
+        verify_bounded_report "$_phase-build" 1024 0 windows
+        [ -s "$_exe" ] || fail "$_phase produced no executable"
+        verify_bounded_report "$_phase-run" 256 "$_exp_status" windows
+        verify_unit_output "$_phase" "$_exp_mode" "$_fail_msg"
+        printf '%s\n' "$_pass_msg"
+    done
+else
+    POOL_DIR="$WORKDIR/pool"
+    POOL_QUEUE="$WORKDIR/pool.queue"
+    : > "$POOL_QUEUE"
+    _idx=0
+    while [ "$_idx" -lt "$UNIT_COUNT" ]; do
+        _idx=$((_idx + 1))
+        printf 'unit-%03d|1024\n' "$_idx" >> "$POOL_QUEUE"
+    done
+
+    bounded_pool_run_job() {
+        _uid=$1
+        read -r _u_phase < "$UNITS_DIR/$_uid.phase"
+        read -r _u_source < "$UNITS_DIR/$_uid.source"
+        read -r _u_opt < "$UNITS_DIR/$_uid.opt"
+        read -r _u_src_root < "$UNITS_DIR/$_uid.src_root"
+        read -r _u_exe < "$UNITS_DIR/$_uid.exe"
+        read -r _u_exp_status < "$UNITS_DIR/$_uid.expected_status"
+        read -r _u_exp_mode < "$UNITS_DIR/$_uid.expected_mode"
+        read -r _u_fail_msg < "$UNITS_DIR/$_uid.fail_msg"
+        if [ "$_u_src_root" -eq 1 ]; then
+            bounded "$_u_phase-build" 1024 0 "$COMPILER" build "$_u_source" \
+                --target "$TARGET" --opt-level "$_u_opt" \
+                --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$_u_exe"
+        else
+            bounded "$_u_phase-build" 1024 0 "$COMPILER" build "$_u_source" \
+                --target "$TARGET" --opt-level "$_u_opt" \
+                --stdlib-root "$ROOT/stdlib" -o "$_u_exe"
+        fi
+        [ -s "$_u_exe" ] || fail "$_u_phase produced no executable"
+        bounded "$_u_phase-run" 256 "$_u_exp_status" "$_u_exe"
+        verify_unit_output "$_u_phase" "$_u_exp_mode" "$_u_fail_msg"
+    }
+
+    POOL_BUDGET_MIB=$((OWNERSHIP_WORKERS * 1024))
+    bounded_pool_init "$POOL_DIR" "$POOL_BUDGET_MIB" "$POOL_QUEUE" || exit 1
+    bounded_pool_start "$POOL_DIR" "$OWNERSHIP_WORKERS"
+    bounded_pool_join "$POOL_DIR" || exit 1
+
+    _idx=0
+    while [ "$_idx" -lt "$UNIT_COUNT" ]; do
+        _idx=$((_idx + 1))
+        _uid=$(printf 'unit-%03d' "$_idx")
+        read -r _pass_msg < "$UNITS_DIR/$_uid.pass_msg"
+        printf '%s\n' "$_pass_msg"
+    done
+fi
 
 input_identities > "$WORKDIR/identities.after.sha256"
 cmp "$WORKDIR/identities.before.sha256" "$WORKDIR/identities.after.sha256" >/dev/null \

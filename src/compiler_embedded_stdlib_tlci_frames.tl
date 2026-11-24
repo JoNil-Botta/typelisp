@@ -1,10 +1,10 @@
 ;; Indexed catalog deployment: one stored model, one surface, independently
 ;; loadable native images, and one token stream split into groups so a reader
 ;; expands only the group holding the frame it needs.
+(import stdlib.clone)
 (import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.byte_buf_core as buf)
-(import compiler_owned_view as view)
 (import compiler_embedded_stdlib_tlci_codec as codec)
 (import compiler_lzss as lzss)
 (import tlci_core as tlci)
@@ -618,6 +618,6 @@
               (buf.byte-buf-builder-to-array (& imports))
               offsets
               fixup-count
-              (clone (view.compiler-owned-reference-shared-view names))
+              (clone.deep (deref names))
               entries
               count)))))))

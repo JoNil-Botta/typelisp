@@ -49,6 +49,17 @@ esac
 . "$ROOT/scripts/lib-gate.sh"
 gate_compiler
 gate_require_compiler
+BOUNDED_POOL_LABEL=spmd-simd
+. "$ROOT/scripts/lib-bounded-pool.sh"
+
+SPMD_SIMD_WORKERS=${TYPELISP_SPMD_SIMD_WORKERS:-4}
+case "$SPMD_SIMD_WORKERS" in
+    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) ;;
+    *)
+        echo "invalid TYPELISP_SPMD_SIMD_WORKERS: $SPMD_SIMD_WORKERS (expected 1-8)" >&2
+        exit 2
+        ;;
+esac
 
 # Windows uses the host-default native toolchain (clang/lld-link); Linux uses
 # the default GNU pipeline.
@@ -314,28 +325,18 @@ run_spmd_mode() {
         set -e
     else
         simd_execution_mode "$_mode" || return 1
-        if [ "$SIMDEX_MODE" = sde ]; then
-            _bin="$WORKDIR/$_tag.$_mode.exe"
-            if ! "$COMPILER" build "$_prog" --backend-mode "$_mode" -o "$_bin" \
-                > "$mode_out" 2> "$mode_err"; then
-                mode_code=1
-                return
-            fi
-            simd_execution_record "$_prog" "$_mode"
-            printf '%s\n' "$SIMDEX_MODE" > "$mode_execution"
-            set +e
-            simd_execute "$_mode" "$_bin" > "$mode_out" 2> "$mode_err"
-            mode_code=$?
-            set -e
-        else
-            simd_execution_record "$_prog" "$_mode"
-            printf '%s\n' "$SIMDEX_MODE" > "$mode_execution"
-            set +e
-            "$COMPILER" run "$_prog" --backend-mode "$_mode" \
-                > "$mode_out" 2> "$mode_err"
-            mode_code=$?
-            set -e
+        _bin="$WORKDIR/$_tag.$_mode.exe"
+        if ! "$COMPILER" build "$_prog" --backend-mode "$_mode" -o "$_bin" \
+            > "$mode_out" 2> "$mode_err"; then
+            mode_code=1
+            return
         fi
+        simd_execution_record "$_prog" "$_mode"
+        printf '%s\n' "$SIMDEX_MODE" > "$mode_execution"
+        set +e
+        simd_execute "$_mode" "$_bin" > "$mode_out" 2> "$mode_err"
+        mode_code=$?
+        set -e
     fi
     printf '%s\n' "$mode_code" > "$mode_exit"
 }
@@ -385,30 +386,65 @@ compile_spmd_mode() {
     set -e
 }
 
-SIMD_MODE_SELECTED=0
+POOL_DIR="$WORKDIR/pool"
+POOL_JOBS_DIR="$WORKDIR/pool-jobs"
+POOL_QUEUE="$WORKDIR/pool.queue"
+mkdir -p "$POOL_JOBS_DIR"
+: > "$POOL_QUEUE"
+
+corpus_idx=0
 while IFS= read -r prog; do
     [ -n "$prog" ] || continue
-    if [ ! -f "$prog" ]; then
-        echo "spmd-simd: corpus program not found: $prog" >&2
-        echo "$prog (missing)" >> "$FAILURES"
-        continue
+    corpus_idx=$((corpus_idx + 1))
+    job_id=$(printf 'prog-%03d' "$corpus_idx")
+    printf '%s\n' "$prog" > "$POOL_JOBS_DIR/$job_id.prog"
+    printf '%s|1\n' "$job_id" >> "$POOL_QUEUE"
+done < "$CORPUS"
+
+run_spmd_corpus_job() {
+    _job=$1
+    _prog=$(cat "$POOL_JOBS_DIR/$_job.prog")
+    _job_out="$POOL_JOBS_DIR/$_job.stdout"
+    _job_err="$POOL_JOBS_DIR/$_job.stderr"
+    _job_fail="$POOL_JOBS_DIR/$_job.failures"
+    _job_selected=0
+    SIMDEX_NATIVE=0
+    SIMDEX_EMULATED=0
+    SIMDEX_SKIPPED=0
+    : > "$_job_out"
+    : > "$_job_err"
+    : > "$_job_fail"
+
+    if [ ! -f "$_prog" ]; then
+        echo "spmd-simd: corpus program not found: $_prog" >> "$_job_err"
+        echo "$_prog (missing)" >> "$_job_fail"
+        printf '%s\n' "$_job_selected" > "$POOL_JOBS_DIR/$_job.selected"
+        printf '%s %s %s\n' "$SIMDEX_NATIVE" "$SIMDEX_EMULATED" "$SIMDEX_SKIPPED" > "$POOL_JOBS_DIR/$_job.simdex"
+        return 0
     fi
 
     if simd_mode_selected scalar; then
-        SIMD_MODE_SELECTED=$((SIMD_MODE_SELECTED + 1))
+        _job_selected=$((_job_selected + 1))
         # scalar is the always-run reference.
-        run_spmd_mode "$prog" scalar
+        run_spmd_mode "$_prog" scalar >> "$_job_out" 2>> "$_job_err"
         scalar_code=$mode_code
         if [ -s "$mode_err" ]; then
-            echo "[spmd-simd] $prog scalar build/run error:" >&2
-            sed 's/^/    /' "$mode_err" >&2
-            echo "$prog scalar" >> "$FAILURES"
-            continue
+            {
+                echo "[spmd-simd] $_prog scalar build/run error:"
+                sed 's/^/    /' "$mode_err"
+            } >> "$_job_err"
+            echo "$_prog scalar" >> "$_job_fail"
+            printf '%s\n' "$_job_selected" > "$POOL_JOBS_DIR/$_job.selected"
+            printf '%s %s %s\n' "$SIMDEX_NATIVE" "$SIMDEX_EMULATED" "$SIMDEX_SKIPPED" > "$POOL_JOBS_DIR/$_job.simdex"
+            return 0
         fi
-        echo "[spmd-simd] $prog scalar -> $scalar_code"
+        echo "[spmd-simd] $_prog scalar -> $scalar_code" >> "$_job_out"
     else
-        scalar_code=$(spmd_scalar_reference "$prog") || exit 1
-        echo "[spmd-simd] $prog scalar -> $scalar_code (ordinary run reference)"
+        if ! scalar_code=$(spmd_scalar_reference "$_prog" 2>> "$_job_err"); then
+            printf '1\n' > "$POOL_JOBS_DIR/$_job.fatal"
+            return 1
+        fi
+        echo "[spmd-simd] $_prog scalar -> $scalar_code (ordinary run reference)" >> "$_job_out"
     fi
 
     for pair in "avx2 avx2" "avx512 avx512"; do
@@ -417,40 +453,89 @@ while IFS= read -r prog; do
         if ! simd_mode_selected "$mode"; then
             continue
         fi
-        SIMD_MODE_SELECTED=$((SIMD_MODE_SELECTED + 1))
-        if expected_diag=$(spmd_mode_expected_compile_diagnostic "$prog" "$mode"); then
-            compile_spmd_mode "$prog" "$mode"
+        _job_selected=$((_job_selected + 1))
+        if expected_diag=$(spmd_mode_expected_compile_diagnostic "$_prog" "$mode"); then
+            compile_spmd_mode "$_prog" "$mode"
             if [ "$mode_code" = 0 ]; then
-                echo "[spmd-simd]   $mode unexpectedly compiled; wanted diagnostic:" >&2
-                echo "    $expected_diag" >&2
-                echo "$prog $mode (missing diagnostic)" >> "$FAILURES"
+                {
+                    echo "[spmd-simd]   $mode unexpectedly compiled; wanted diagnostic:"
+                    echo "    $expected_diag"
+                } >> "$_job_err"
+                echo "$_prog $mode (missing diagnostic)" >> "$_job_fail"
             elif ! grep -F -- "$expected_diag" "$mode_err" > /dev/null; then
-                echo "[spmd-simd]   $mode diagnostic mismatch:" >&2
-                sed 's/^/    /' "$mode_err" >&2
-                echo "$prog $mode (wrong diagnostic)" >> "$FAILURES"
+                {
+                    echo "[spmd-simd]   $mode diagnostic mismatch:"
+                    sed 's/^/    /' "$mode_err"
+                } >> "$_job_err"
+                echo "$_prog $mode (wrong diagnostic)" >> "$_job_fail"
             else
-                echo "[spmd-simd]   $mode -> expected diagnostic OK"
+                echo "[spmd-simd]   $mode -> expected diagnostic OK" >> "$_job_out"
             fi
             continue
         fi
         if ! isa_available "$isa"; then
-            simd_execution_record "$prog" "$mode"
-            echo "[spmd-simd]   skip $mode ($isa not runnable on this $HOST_OS host)"
+            simd_execution_record "$_prog" "$mode" >> "$_job_out" 2>> "$_job_err"
+            echo "[spmd-simd]   skip $mode ($isa not runnable on this $HOST_OS host)" >> "$_job_out"
             continue
         fi
-        run_spmd_mode "$prog" "$mode"
+        run_spmd_mode "$_prog" "$mode" >> "$_job_out" 2>> "$_job_err"
         if [ -s "$mode_err" ]; then
-            echo "[spmd-simd]   $mode build/run error:" >&2
-            sed 's/^/    /' "$mode_err" >&2
-            echo "$prog $mode" >> "$FAILURES"
+            {
+                echo "[spmd-simd]   $mode build/run error:"
+                sed 's/^/    /' "$mode_err"
+            } >> "$_job_err"
+            echo "$_prog $mode" >> "$_job_fail"
         elif [ "$mode_code" != "$scalar_code" ]; then
-            echo "[spmd-simd]   $mode -> $mode_code MISMATCH (scalar=$scalar_code)" >&2
-            echo "$prog $mode ($mode_code vs scalar $scalar_code)" >> "$FAILURES"
+            echo "[spmd-simd]   $mode -> $mode_code MISMATCH (scalar=$scalar_code)" >> "$_job_err"
+            echo "$_prog $mode ($mode_code vs scalar $scalar_code)" >> "$_job_fail"
         else
-            echo "[spmd-simd]   $mode -> $mode_code OK"
+            echo "[spmd-simd]   $mode -> $mode_code OK" >> "$_job_out"
         fi
     done
-done < "$CORPUS"
+
+    printf '%s\n' "$_job_selected" > "$POOL_JOBS_DIR/$_job.selected"
+    printf '%s %s %s\n' "$SIMDEX_NATIVE" "$SIMDEX_EMULATED" "$SIMDEX_SKIPPED" > "$POOL_JOBS_DIR/$_job.simdex"
+    return 0
+}
+
+bounded_pool_run_job() {
+    run_spmd_corpus_job "$1"
+}
+
+echo "[spmd-simd] running $corpus_idx corpus program(s) with $SPMD_SIMD_WORKERS worker(s)"
+bounded_pool_init "$POOL_DIR" "$SPMD_SIMD_WORKERS" "$POOL_QUEUE" || exit 1
+bounded_pool_start "$POOL_DIR" "$SPMD_SIMD_WORKERS"
+pool_status=0
+bounded_pool_join "$POOL_DIR" || pool_status=$?
+
+SIMD_MODE_SELECTED=0
+SIMDEX_NATIVE=0
+SIMDEX_EMULATED=0
+SIMDEX_SKIPPED=0
+fatal_error=0
+replay_idx=0
+while [ "$replay_idx" -lt "$corpus_idx" ]; do
+    replay_idx=$((replay_idx + 1))
+    job_id=$(printf 'prog-%03d' "$replay_idx")
+    [ ! -s "$POOL_JOBS_DIR/$job_id.stdout" ] || cat "$POOL_JOBS_DIR/$job_id.stdout"
+    [ ! -s "$POOL_JOBS_DIR/$job_id.stderr" ] || cat "$POOL_JOBS_DIR/$job_id.stderr" >&2
+    [ ! -s "$POOL_JOBS_DIR/$job_id.failures" ] || cat "$POOL_JOBS_DIR/$job_id.failures" >> "$FAILURES"
+    [ ! -f "$POOL_JOBS_DIR/$job_id.fatal" ] || fatal_error=1
+    if [ -f "$POOL_JOBS_DIR/$job_id.selected" ]; then
+        read -r _s < "$POOL_JOBS_DIR/$job_id.selected"
+        SIMD_MODE_SELECTED=$((SIMD_MODE_SELECTED + _s))
+    fi
+    if [ -f "$POOL_JOBS_DIR/$job_id.simdex" ]; then
+        read -r _n _e _k < "$POOL_JOBS_DIR/$job_id.simdex"
+        SIMDEX_NATIVE=$((SIMDEX_NATIVE + _n))
+        SIMDEX_EMULATED=$((SIMDEX_EMULATED + _e))
+        SIMDEX_SKIPPED=$((SIMDEX_SKIPPED + _k))
+    fi
+done
+
+if [ "$fatal_error" -ne 0 ] || [ "$pool_status" -ne 0 ]; then
+    exit 1
+fi
 
 if [ -n "${SIMD_MODE_FILTER:-}" ] && [ "$SIMD_MODE_SELECTED" -eq 0 ]; then
     echo "spmd-simd: TYPELISP_SIMD_MODE_FILTER=$SIMD_MODE_FILTER selected no corpus mode" >&2

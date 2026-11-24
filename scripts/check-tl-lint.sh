@@ -29,6 +29,17 @@ esac
 gate_compiler
 gate_compiler_absolute
 gate_require_compiler
+BOUNDED_POOL_LABEL=tl-lint
+. "$ROOT/scripts/lib-bounded-pool.sh"
+
+LINT_WORKERS=${TYPELISP_LINT_WORKERS:-4}
+case "$LINT_WORKERS" in
+    1 | 2 | 3 | 4 | 5 | 6 | 7 | 8) ;;
+    *)
+        echo "invalid TYPELISP_LINT_WORKERS: $LINT_WORKERS (expected 1-8)" >&2
+        exit 2
+        ;;
+esac
 
 WORKDIR="$ROOT/target/tl-lint-check"
 rm -rf "$WORKDIR"
@@ -243,38 +254,102 @@ awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
 
 : > "$STDOUT"
 : > "$STDERR"
-lint_status=0
+
+LINT_POOL_DIR="$WORKDIR/pool"
+LINT_POOL_QUEUE="$WORKDIR/pool.queue"
+LINT_POOL_SRC_QUEUE="$WORKDIR/pool-src.queue"
+LINT_POOL_OTHER_QUEUE="$WORKDIR/pool-other.queue"
+: > "$LINT_POOL_SRC_QUEUE"
+: > "$LINT_POOL_OTHER_QUEUE"
+
+# Schedule src/ chunks first (LPT) so heavier compiler-source chunks start
+# immediately while lighter stdlib/test/tool chunks pack around them. Each src/
+# chunk reserves half of a 2048 MiB nominal budget (1024) while non-src chunks
+# reserve 256 so at most 2 src/ chunks run concurrently when budget is 2048.
+LINT_POOL_BUDGET_MIB=${TYPELISP_LINT_BUDGET_MIB:-2048}
+case "$LINT_POOL_BUDGET_MIB" in
+    '' | *[!0-9]* | 0*)
+        echo "TYPELISP_LINT_BUDGET_MIB must be a positive integer" >&2
+        exit 2
+        ;;
+esac
+LINT_SRC_CAP_MIB=1024
+if [ "$LINT_SRC_CAP_MIB" -gt "$LINT_POOL_BUDGET_MIB" ]; then
+    LINT_SRC_CAP_MIB=$LINT_POOL_BUDGET_MIB
+fi
+LINT_OTHER_CAP_MIB=256
+if [ "$LINT_OTHER_CAP_MIB" -gt "$LINT_POOL_BUDGET_MIB" ]; then
+    LINT_OTHER_CAP_MIB=$LINT_POOL_BUDGET_MIB
+fi
+
 lint_chunk_index=0
 src_concat_chunk_index=0
 for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
     [ -f "$lint_chunk" ] || continue
     lint_chunk_index=$((lint_chunk_index + 1))
-    set --
-    src_rules=0
-    compiler_tool=0
+    chunk_id=$(basename "$lint_chunk" .txt)
+    chunk_is_src=0
     while IFS= read -r lint_source; do
         [ -n "$lint_source" ] || continue
-        set -- "$@" "$lint_source"
         case "$lint_source" in
-            src/*) src_rules=1 ;;
-            tools/embedded-stdlib-tli/roundtrip.tl) compiler_tool=1 ;;
+            src/*) chunk_is_src=1; break ;;
         esac
     done < "$lint_chunk"
-    if [ "$src_rules" -eq 1 ]; then
-        set -- --deprecated-string-concat --redundant-begin --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" "$@"
+    if [ "$chunk_is_src" -eq 1 ]; then
         src_concat_chunk_index=$((src_concat_chunk_index + 1))
-    elif [ "$compiler_tool" -eq 1 ]; then
+        printf '%s|%s\n' "$chunk_id" "$LINT_SRC_CAP_MIB" >> "$LINT_POOL_SRC_QUEUE"
+    else
+        printf '%s|%s\n' "$chunk_id" "$LINT_OTHER_CAP_MIB" >> "$LINT_POOL_OTHER_QUEUE"
+    fi
+done
+cat "$LINT_POOL_SRC_QUEUE" "$LINT_POOL_OTHER_QUEUE" > "$LINT_POOL_QUEUE"
+
+bounded_pool_run_job() {
+    _chunk_id=$1
+    _lint_chunk="$LINT_CHUNK_DIR/$_chunk_id.txt"
+    _chunk_out="$LINT_CHUNK_DIR/$_chunk_id.stdout"
+    _chunk_err="$LINT_CHUNK_DIR/$_chunk_id.stderr"
+    _chunk_status_file="$LINT_CHUNK_DIR/$_chunk_id.status"
+    set --
+    _src_rules=0
+    _compiler_tool=0
+    while IFS= read -r _lint_source; do
+        [ -n "$_lint_source" ] || continue
+        set -- "$@" "$_lint_source"
+        case "$_lint_source" in
+            src/*) _src_rules=1 ;;
+            tools/embedded-stdlib-tli/roundtrip.tl) _compiler_tool=1 ;;
+        esac
+    done < "$_lint_chunk"
+    if [ "$_src_rules" -eq 1 ]; then
+        set -- --deprecated-string-concat --redundant-begin --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" "$@"
+    elif [ "$_compiler_tool" -eq 1 ]; then
         set -- --stdlib-root "$ROOT/src" "$@"
     fi
     if [ "$NAME_CASE_CURRENT" -eq 1 ]; then
         set -- --name-case "$@"
     fi
-    if ci_timing_run "chunk-$lint_chunk_index" lint \
+    _chunk_status=0
+    ci_timing_run "$_chunk_id" lint \
         "$COMPILER" lint --format flat --check --redundant-function-name "$@" \
-            >> "$STDOUT" 2>> "$STDERR"; then
-        :
-    else
-        chunk_status=$?
+            > "$_chunk_out" 2> "$_chunk_err" || _chunk_status=$?
+    printf '%s\n' "$_chunk_status" > "$_chunk_status_file"
+    # Always return 0 so every chunk runs and all findings across the corpus are collected.
+    return 0
+}
+
+bounded_pool_init "$LINT_POOL_DIR" "$LINT_POOL_BUDGET_MIB" "$LINT_POOL_QUEUE" || exit 1
+bounded_pool_start "$LINT_POOL_DIR" "$LINT_WORKERS"
+bounded_pool_join "$LINT_POOL_DIR" || exit 1
+
+lint_status=0
+for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
+    [ -f "$lint_chunk" ] || continue
+    chunk_id=$(basename "$lint_chunk" .txt)
+    [ ! -s "$LINT_CHUNK_DIR/$chunk_id.stdout" ] || cat "$LINT_CHUNK_DIR/$chunk_id.stdout" >> "$STDOUT"
+    [ ! -s "$LINT_CHUNK_DIR/$chunk_id.stderr" ] || cat "$LINT_CHUNK_DIR/$chunk_id.stderr" >> "$STDERR"
+    read -r chunk_status < "$LINT_CHUNK_DIR/$chunk_id.status"
+    if [ "$chunk_status" -ne 0 ]; then
         [ "$lint_status" -ne 0 ] || lint_status=$chunk_status
     fi
 done

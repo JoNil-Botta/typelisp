@@ -47660,3 +47660,53 @@ user_fn:
         (asm-has? win-narrow "    movslq 256(%rsp), %r8\n")
         (asm-has? win-narrow "    movzbl 264(%rsp), %r8d\n"))
       "Windows excludes narrow <8-byte incoming stack params with valid SEH")))
+
+(test
+  library-object-disables-iag-and-compact-symbols
+  ;; In library-object mode (`emit-entry = false`), the backend must:
+  ;; (1) disable IAG-1 inline aggregate globals so 16..64B runtime globals stay
+  ;;     8-byte box pointers compatible with external consumers, and
+  ;; (2) disable compact `_tl_f<slot>` function symbol renaming so exported
+  ;;     symbols match `stdlib.tli` and cannot collide across archive members.
+  (let
+    [source : String
+      "(defstruct Cell (slots (__tl_dyn-array i64)) (len i64))
+(defstruct Triple (a i64) (b i64) (c i64))
+(define cell : Cell (Cell (__tl_make-array i64 4) 4))
+(define triple : Triple (Triple 1 2 3))
+(define (library_exported_long_function_name [n : i64]) : i64
+  (+ n (+ cell.len triple.c)))"]
+    [targets : (Array be_state.CompilerBackendTarget 2)
+      (array
+        (be_state.CompilerBackendTarget.Linux)
+        (be_state.CompilerBackendTarget.Windows))]
+    (for [ti (iterator.range 0 2)]
+      (let
+        [target : be_state.CompilerBackendTarget (array-ref targets ti)]
+        (match (compiler-backend-emit-source-opt2-for-target-and-entry
+          (string.copy (& source))
+          target
+          false)
+          [(Err _)
+            (test.assert-true false "library object emission should succeed")]
+          [(Ok asm)
+            (test.assert-true
+              (and
+                ;; IAG-1 disabled: global accessed via box pointer, never inline.
+                (asm-has? asm "    movq _tl_cell(%rip), %")
+                (asm-has? asm "    movq _tl_triple(%rip), %")
+                (asm-lacks? asm "    movq _tl_cell+8(%rip),")
+                (asm-lacks? asm "    movq _tl_triple+16(%rip),")
+                (asm-lacks? asm "    leaq _tl_cell(%rip),")
+                (asm-lacks? asm "    movups %xmm0, _tl_cell(%rip)"))
+              "library object disables IAG-1 inline aggregate globals")
+            (test.assert-true
+              (and
+                ;; Compact _tl_f<slot> renaming disabled for library objects.
+                (asm-has?
+                  asm
+                  ".globl _tl_library_exported_long_function_name\n")
+                (asm-has? asm "_tl_library_exported_long_function_name:\n")
+                (asm-lacks? asm "_tl_f0")
+                (asm-lacks? asm "#t _tl_f"))
+              "library object never emits compact _tl_f<slot> function symbols")])))))

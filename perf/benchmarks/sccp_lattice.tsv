@@ -1,0 +1,2 @@
+suites	instruction-main,realistic-kernel
+benchmark/c-scalar/sccp_lattice	400603743

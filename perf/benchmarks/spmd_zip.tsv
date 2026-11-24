@@ -1,0 +1,3 @@
+suites	instruction-heavy
+benchmark/c/spmd_zip	10755056774
+benchmark/c-scalar/spmd_zip	9218460867

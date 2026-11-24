@@ -9,8 +9,8 @@ benchmarks/README.md	@docs	-	Benchmark documentation is consumed by the document
 benchmarks/borrowed_disjoint_store/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	This pair is in the instruction-main and benchmark suites.
 benchmarks/fp_mixed_recurrence/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	This pair is in the instruction-main and benchmark suites.
 benchmarks/fp_taylor_exp/*	linux-instruction-count-baseline,stage2-benchmark-comparison-correctness	-	This pair is in the instruction-main and benchmark suites.
-perf/benchmark-ci-cases.tsv	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,stage2-benchmark-comparison-correctness,stage2-optimization-corpus-opt2-runtime-correctness	-	Positive case membership for the benchmark-related gates.
-perf/insn-exec-baseline.tsv	linux-instruction-count-baseline,instruction-count-comparison-self-tests	-	Exact main-suite pins and paired-row contract.
+perf/benchmarks/*	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,instruction-count-comparison-self-tests,stage2-benchmark-comparison-correctness,stage2-optimization-corpus-opt2-runtime-correctness	-	Per-benchmark suite membership, C instruction baselines, and C provenance records.
+perf/insn-exec-declarations/*	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,instruction-count-comparison-self-tests	-	PR instruction-count regression declarations consumed by the main and heavy instruction-count gates.
 perf/codegen-cycle-report.md	@docs	-	Recorded performance report.
 perf/README.md	@docs	-	Benchmark and self-compile documentation.
 scripts/check-instruction-counts.sh	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,instruction-count-comparison-self-tests	-	Exact main and heavy instruction-count checker and comparison fixtures.
@@ -769,3 +769,5 @@ scripts/run-bounded-batch.ps1	stage2-ownership-model	-	Windows multi-worker Job 
 tests/addr-taken-matrix/*	stage2-addr-taken-matrix	@corpus	Adversarial address-taken-local programs compiled and run at opt0/1/2/s; pending/ leaders move here as their fixes land.
 tools/embedded-stdlib-tli/roundtrip.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Checked embedded stdlib interface round trip.
 tools/codegen-cases-runner/*	*	-	Native codegen-cases runner drives all .cases gates across Linux and Windows.
+tools/build-stdlib-sysroot/main.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Single-pass prebuilt stdlib sysroot builder.
+scripts/build-stdlib-sysroot.sh	bootstrap-compiler,stage2-codegen-target-parity	@compiler	Prebuilt stdlib sysroot build and deterministic archive script.

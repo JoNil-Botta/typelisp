@@ -13,6 +13,7 @@
 (import compiler_typecheck_core as tc)
 (import compiler_profile_state as profile)
 (import stdlib.iterator)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.test)
 (import stdlib.vector)
@@ -312,7 +313,18 @@
             spans
             false)
             [(Ok text)
-              (be_operand.compiler-backend-string-contains? text "_tl_f0:\n")]
+              (let
+                [expected : String
+                  (str_cat.str-cat
+                    (be_state.compiler-backend-user-symbol-uncached
+                      "library-entries.entry")
+                    ":\n")]
+                (and
+                  (be_operand.compiler-backend-string-contains? text expected)
+                  (not
+                    (be_operand.compiler-backend-string-contains?
+                      text
+                      "_tl_f0:\n"))))]
             [(Err _) false])]
         (lower.compiler-lower-arena-state-release!
           (lower.compiler-lower-state-arenas owner))

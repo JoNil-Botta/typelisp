@@ -381,6 +381,14 @@ gate_bootstrap_compiler() {
     ci_verify_load_handoffs bootstrap-compiler || return 1
     echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
 
+    # Build the prebuilt stdlib sysroot beside the converged handed-off compiler
+    # AFTER bootstrap_resolve_fixpoint succeeds so downstream CI gates see it
+    # without affecting fixpoint.
+    sysroot_target=linux-x86_64
+    [ "$HOST_OS" != windows ] || sysroot_target=windows-x86_64
+    scripts/build-stdlib-sysroot.sh "$STAGE2_BIN" "$(dirname -- "$STAGE2_BIN")" \
+        --target "$sysroot_target" --opt-level 2 || return $?
+
     # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
     # RUN a native program before the run-assert tiers may execute. A failed
     # probe is a CI failure, never a reason to omit gates.
@@ -536,7 +544,7 @@ gate_compile_profile() {
     ci_verify_load_handoffs stage2-compile-profile-verifier
 }
 
-# On Linux the benchmark suites run the cases perf/benchmark-ci-cases.tsv
+# On Linux the benchmark suites run the cases perf/benchmarks/*.tsv
 # assigns them; Windows runs every case.
 gate_benchmark_correctness() {
     if [ "$HOST_OS" = windows ]; then
@@ -565,7 +573,10 @@ gate_optimization_opt2_correctness() {
 # paths reach the counts, including a C benchmark's input path), so they share
 # the `instruction-count` lock.
 gate_instruction_counts() {
-    TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh
+    TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh \
+        --suite instruction-main \
+        --cached-base-only \
+        --output target/instruction-count-check
 }
 
 # self_compile has no checked row: this gate records the measurement and its
@@ -581,11 +592,9 @@ gate_self_compile_check() {
 }
 
 gate_heavy_instruction_counts() {
-    _ci_cases=$(benchmark_ci_case_csv "$ROOT" instruction-heavy) || return $?
     TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh \
-        --baseline perf/insn-exec-heavy-baseline.tsv \
-        --benchmarks "$_ci_cases" \
-        --benchmarks-only \
+        --suite instruction-heavy \
+        --cached-base-only \
         --runs 1 \
         --output target/instruction-count-heavy
 }

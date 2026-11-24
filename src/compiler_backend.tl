@@ -2591,14 +2591,22 @@
         (be_calls.compiler-backend-emit-entry-load
           ctx.assignments
           dst
-          (compiler_ir_types.compiler-ir-label ".L_tl_argc")
+          (compiler_ir_types.compiler-ir-label
+            (if (be_state.compiler-backend-state-library-object?
+              ctx.backend-state)
+              "__tl_argc"
+              ".L_tl_argc"))
           (I64)
           ctx.backend-state)]
       [(EntryArgv dst)
         (be_calls.compiler-backend-emit-entry-load
           ctx.assignments
           dst
-          (compiler_ir_types.compiler-ir-label ".L_tl_argv")
+          (compiler_ir_types.compiler-ir-label
+            (if (be_state.compiler-backend-state-library-object?
+              ctx.backend-state)
+              "__tl_argv"
+              ".L_tl_argv"))
           (compiler_ast_types.ast-ty-ptr
             (& (compiler_ast_types.ast-ty-ptr (& (U8)))))
           ctx.backend-state)]
@@ -2606,7 +2614,11 @@
         (be_calls.compiler-backend-emit-entry-load
           ctx.assignments
           dst
-          (compiler_ir_types.compiler-ir-label ".L_tl_envp")
+          (compiler_ir_types.compiler-ir-label
+            (if (be_state.compiler-backend-state-library-object?
+              ctx.backend-state)
+              "__tl_envp"
+              ".L_tl_envp"))
           (compiler_ast_types.ast-ty-ptr
             (& (compiler_ast_types.ast-ty-ptr (& (U8)))))
           ctx.backend-state)]
@@ -8434,6 +8446,8 @@
             target
             convention
             name
+            (be_state.compiler-backend-state-library-object?
+              program-index.backend-state)
             (be_state.compiler-backend-global-shared-view instr-diag))
             [(Ok inline-asm)
               (Ok

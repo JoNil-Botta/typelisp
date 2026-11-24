@@ -71610,17 +71610,6 @@
                             cut)
                           next))])])]))])))
 
-(define (tc-resource-cleanup-direct-name-ok
-  [expr-bases : i64]
-  [cleanup : (& ast.AstExpr)]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases cleanup)
-    [(Var _) Ok]
-    [_
-      (Err
-        (tc-kind-message
-          (ResourceOwnership)
-          "typecheck: with cleanup must be a direct function name"))]))
-
 (define (tc-resource-cleanup-resource-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -94702,7 +94691,7 @@
   [items : (& items ast.AstMacroParamList)]) : ast.AstMacroParamList
   (let
     [slots : (__tl_dyn-array ast.AstMacroParam)
-      (__tl_make-array ast.AstMacroParam (array-length items.slots))]
+      (__tl_make-array ast.AstMacroParam items.len)]
     (for [index (iterator.range 0 items.len)]
       (set!
         (array-ref slots index)

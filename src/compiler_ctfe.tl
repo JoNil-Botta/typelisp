@@ -1089,7 +1089,100 @@
                 (ci.intern-composite-pair-id -1 path-id)
                 -1))
             span)]
-        [_ node]))))
+        [_
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (MacroExpansion node (ci.intern-composite-pair-id -1 path-id) -1))]))))
+
+(define (ctfe-expr-has-macro-expansion-wrapper-with-pools?
+  [pools : ast.AstNodePoolContext]
+  [node : i64]) : bool
+  (match (ast.ast-node-pool-context-expr-get pools node)
+    [(Spanned inner _)
+      (ctfe-expr-has-macro-expansion-wrapper-with-pools? pools inner)]
+    [(MacroExpansion _ _ _) true]
+    [_ false]))
+
+(define (ctfe-expr-rewrap-macro-expansions-with-span
+  [pools : ast.AstNodePoolContext]
+  [wrapper-node : i64]
+  [child : i64]
+  [has-span? : bool]
+  [span : ast.AstSourceSpan]) : i64
+  (match (ast.ast-node-pool-context-expr-get pools wrapper-node)
+    [(Spanned inner _)
+      (ctfe-expr-rewrap-macro-expansions-with-span
+        pools
+        inner
+        child
+        has-span?
+        span)]
+    [(MacroExpansion inner provenance-id macro-name-id)
+      (let
+        [rewrapped : i64
+          (ctfe-expr-rewrap-macro-expansions-with-span
+            pools
+            inner
+            child
+            has-span?
+            span)]
+        [effective-name : i64
+          (if (= macro-name-id (ctfe-compact-caller-origin-name))
+            -1
+            macro-name-id)]
+        [marker : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (MacroExpansion rewrapped provenance-id effective-name))]
+        (if has-span?
+          (ast.ast-expr-spanned-with-pools pools marker span)
+          marker))]
+    [_ child]))
+
+(define (ctfe-expr-rewrap-macro-expansions-with-pools
+  [pools : ast.AstNodePoolContext]
+  [wrapper-node : i64]
+  [child : i64]) : i64
+  (match (ast.ast-node-pool-context-expr-get pools child)
+    [(Literal _) child]
+    [(Spanned inner span)
+      (match (ast.ast-node-pool-context-expr-get pools inner)
+        [(Literal _) child]
+        [_
+          (ctfe-expr-rewrap-macro-expansions-with-span
+            pools
+            wrapper-node
+            child
+            true
+            span)])]
+    [_
+      (ctfe-expr-rewrap-macro-expansions-with-span
+        pools
+        wrapper-node
+        child
+        false
+        (ast.ast-source-span 0 0 0 0))]))
+
+(define (ctfe-expr-list-rewrap-macro-expansions-with-pools
+  [pools : ast.AstNodePoolContext]
+  [wrapper-node : i64]
+  [items : ast.AstExprList]) : ast.AstExprList
+  (if (not
+    (ctfe-expr-has-macro-expansion-wrapper-with-pools? pools wrapper-node))
+    items
+    (let
+      [count : i64 items.len]
+      [out : ast.AstExprList (ast.ast-expr-list-with-capacity count)]
+      [index : i64 0]
+      (while (< index count)
+        (ast.ast-expr-list-push
+          (&mut out)
+          (ctfe-expr-rewrap-macro-expansions-with-pools
+            pools
+            wrapper-node
+            (ast.ast-expr-list-get (& items) index 0)))
+        (set! index (+ index 1)))
+      out)))
 
 (define (ctfe-captured-expr-type-with-pools
   [pools : ast.AstNodePoolContext]
@@ -11083,59 +11176,141 @@
         (No))]
     [(If cond then-branch else-branch)
       (if (ctfe-pattern-variant-name? variant "If")
-        (ctfe-match-pattern-list
-          args
-          (&
-            (ctfe-value-list3
-              (& (Expr cond (Bool)))
-              (& (Expr then-branch (ast.clone-ast-type (& ty))))
-              (& (Expr else-branch ty))))
-          env)
+        (let
+          [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+          (ctfe-match-pattern-list
+            args
+            (&
+              (ctfe-value-list3
+                (&
+                  (Expr
+                    (ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      cond)
+                    (Bool)))
+                (&
+                  (Expr
+                    (ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      then-branch)
+                    (ast.clone-ast-type (& ty))))
+                (&
+                  (Expr
+                    (ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      else-branch)
+                    ty))))
+            env))
         (No))]
     [(Call callee args-list)
       (if (ctfe-pattern-variant-name? variant "Call")
-        (ctfe-match-pattern-list
-          args
-          (&
-            (ctfe-value-list2
-              (& (Expr callee (ctfe-untyped-expr-type)))
-              (& (ExprList args-list))))
-          env)
+        (let
+          [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+          (ctfe-match-pattern-list
+            args
+            (&
+              (ctfe-value-list2
+                (&
+                  (Expr
+                    (ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      callee)
+                    (ctfe-untyped-expr-type)))
+                (&
+                  (ExprList
+                    (ctfe-expr-list-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      args-list)))))
+            env))
         (No))]
     [(Begin exprs)
       (if (ctfe-pattern-variant-name? variant "Begin")
-        (ctfe-match-pattern-list
-          args
-          (& (ctfe-value-list1 (& (ExprList exprs))))
-          env)
+        (let
+          [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+          (ctfe-match-pattern-list
+            args
+            (&
+              (ctfe-value-list1
+                (&
+                  (ExprList
+                    (ctfe-expr-list-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      exprs)))))
+            env))
         (No))]
     [(Quote inner)
       (if (ctfe-pattern-variant-name? variant "Quote")
-        (ctfe-match-pattern-list
-          args
-          (& (ctfe-value-list1 (& (Expr inner (ctfe-untyped-expr-type)))))
-          env)
+        (let
+          [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+          (ctfe-match-pattern-list
+            args
+            (&
+              (ctfe-value-list1
+                (&
+                  (Expr
+                    (ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      inner)
+                    (ctfe-untyped-expr-type)))))
+            env))
         (No))]
     [(Quasiquote inner)
       (if (ctfe-pattern-variant-name? variant "Quasiquote")
-        (ctfe-match-pattern-list
-          args
-          (& (ctfe-value-list1 (& (Expr inner (ctfe-untyped-expr-type)))))
-          env)
+        (let
+          [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+          (ctfe-match-pattern-list
+            args
+            (&
+              (ctfe-value-list1
+                (&
+                  (Expr
+                    (ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      inner)
+                    (ctfe-untyped-expr-type)))))
+            env))
         (No))]
     [(Unquote inner)
       (if (ctfe-pattern-variant-name? variant "Unquote")
-        (ctfe-match-pattern-list
-          args
-          (& (ctfe-value-list1 (& (Expr inner (ctfe-untyped-expr-type)))))
-          env)
+        (let
+          [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+          (ctfe-match-pattern-list
+            args
+            (&
+              (ctfe-value-list1
+                (&
+                  (Expr
+                    (ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      inner)
+                    (ctfe-untyped-expr-type)))))
+            env))
         (No))]
     [(UnquoteSplicing inner)
       (if (ctfe-pattern-variant-name? variant "UnquoteSplicing")
-        (ctfe-match-pattern-list
-          args
-          (& (ctfe-value-list1 (& (Expr inner (ctfe-untyped-expr-type)))))
-          env)
+        (let
+          [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+          (ctfe-match-pattern-list
+            args
+            (&
+              (ctfe-value-list1
+                (&
+                  (Expr
+                    (ctfe-expr-rewrap-macro-expansions-with-pools
+                      pools
+                      node
+                      inner)
+                    (ctfe-untyped-expr-type)))))
+            env))
         (No))]
     [_ (No)]))
 
@@ -12915,7 +13090,10 @@
                       (Ok
                         (ast.ast-expr-struct-set-id-with-pools
                           (ctfe-env-pools env)
-                          receiver-box
+                          (ctfe-expr-rewrap-macro-expansions-with-pools
+                            (ctfe-env-pools env)
+                            quoted-target
+                            receiver-box)
                           target-field
                           quoted-value)
                         (Expr)
@@ -12924,7 +13102,10 @@
                       (Ok
                         (ast.ast-expr-box-set-with-pools
                           (ctfe-env-pools env)
-                          receiver-box
+                          (ctfe-expr-rewrap-macro-expansions-with-pools
+                            (ctfe-env-pools env)
+                            quoted-target
+                            receiver-box)
                           quoted-value)
                         (Expr)
                         value-fuel)]
@@ -13558,12 +13739,18 @@
   [env : CtfeEnv]
   [clause : ast.AstExprBindingClause]) : i64
   (let
+    [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
+    [init-node : i64
+      (ctfe-caller-origin-expr-node-with-pools
+        pools
+        clause.init
+        (& clause.init-produced))]
     [name-expr : i64
       (ctfe-ast-push env (Var (ci.intern-syntax-id-value clause.name)))]
     [bracket : i64
       (if clause.has-type
         (ast.ast-expr-bracket-clause-with-pools
-          (ctfe-env-pools env)
+          pools
           (ast.ast-expr-cons
             name-expr
             (&
@@ -13573,16 +13760,13 @@
                   (ast.ast-expr-cons
                     clause.ty
                     (&
-                      (ast.ast-expr-cons
-                        clause.init
-                        (& (ast.ast-expr-list-new))))))))))
+                      (ast.ast-expr-cons init-node (& (ast.ast-expr-list-new))))))))))
         (ast.ast-expr-bracket-clause-with-pools
-          (ctfe-env-pools env)
+          pools
           (ast.ast-expr-cons
             name-expr
-            (& (ast.ast-expr-cons clause.init (& (ast.ast-expr-list-new)))))))]
-    [span-pools : ast.AstNodePoolContext (ctfe-env-pools env)]
-    (ast.ast-expr-spanned-with-pools span-pools bracket clause.span)))
+            (& (ast.ast-expr-cons init-node (& (ast.ast-expr-list-new)))))))]
+    (ast.ast-expr-spanned-with-pools pools bracket clause.span)))
 
 (define (ctfe-expr-binding-clause-list->expr-list-in-env
   [env : CtfeEnv]

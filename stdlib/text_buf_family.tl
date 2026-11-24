@@ -38,15 +38,26 @@
   [store : comptime.Expr]
   [index : comptime.Expr]
   [entry : comptime.Expr]) : unit
-  `(unsafe
-    (ptr-write!
-      (ptr-offset
-        (ptr-cast
-          (__tl_array-data
-            ,(comptime.expr-struct-get `(box-get ,store) "slots"))
-          : (MutPtr String))
-        ,index)
-      ,entry)))
+  (let
+    [index-name : String (comptime.syntax-name-fresh "__tl_tbf_write_index")]
+    [entry-name : String (comptime.syntax-name-fresh "__tl_tbf_write_entry")]
+    [index-var : comptime.Expr (comptime.expr-var index-name)]
+    [entry-var : comptime.Expr (comptime.expr-var entry-name)]
+    (comptime.expr-let-scope
+      index-name
+      index
+      (comptime.expr-let-scope
+        entry-name
+        entry
+        `(unsafe
+          (ptr-write!
+            (ptr-offset
+              (ptr-cast
+                (__tl_array-data
+                  ,(comptime.expr-struct-get `(box-get ,store) "slots"))
+                : (MutPtr String))
+              ,index-var)
+            ,entry-var))))))
 
 ;: Inline only the same-head owned-prefix commit fast path at each chunk-cons
 ;: call site.  All other ownership/COW recovery and allocation decisions stay

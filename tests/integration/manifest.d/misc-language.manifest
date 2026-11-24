@@ -24,6 +24,9 @@ select_flags_lea|all|-|tests/integration/select_flags_lea.tl|42|-|-|stdlib/io.tl
 save_reload_elide|all|-|tests/integration/save_reload_elide.tl|42|-|-|stdlib/io.tl|-
 crossblock_reload_elide|all|-|tests/integration/crossblock_reload_elide.tl|42|-|-|stdlib/io.tl|-
 cpuid_operand_homes|all|-|tests/integration/cpuid_operand_homes.tl|42|-|-|stdlib/io.tl|-
+xgetbv_user_define|all|0,1,2|tests/integration/xgetbv_user_define.tl|9|-|-|cpu_query_intrinsics_dep.tl|-
+cpuid_register_user_defines|all|0,1,2|tests/integration/cpuid_register_user_defines.tl|7|-|-|cpu_query_intrinsics_dep.tl|-
+cpu_query_selected_import|all|0,1,2|tests/integration/cpu_query_selected_import.tl|42|-|-|cpu_query_selected_import_dep.tl cpu_query_selected_import_other.tl cpu_query_intrinsics_dep.tl|-
 gvn_addr_taken_compare|all|0,1,2|tests/integration/gvn_addr_taken_compare.tl|42|-|-|-|-
 total_switch_runtime|all|-|tests/integration/total_switch_runtime.tl|42|-|-|-|-
 gap_switch_runtime|all|-|tests/integration/gap_switch_runtime.tl|42|-|-|-|-

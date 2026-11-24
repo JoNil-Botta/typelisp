@@ -38,8 +38,14 @@
 (import compiler_intern as ci)
 (import compiler_ir_types as ir)
 (import compiler_lower as lower)
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_opt_level as opt_level))
 (import compiler_optimize as opt)
 (import compiler_object as cobj)
+(import linker_archive_core as archive)
+(import linker_ar_dialect_reader as ar)
+(import linker_elf_object_reader as elf)
 (import compiler_windows_coff_core)
 (import doc_test)
 (import test_cli_core)
@@ -5174,11 +5180,105 @@
           (be_object.compiler-direct-object-fallback-transcript reason)))]
     [(Err message) (Err message)]))
 
+(define (build-package-elf-member-needs-runtime?
+  [bytes : (& bytes str)]
+  [request : (& elf.ElfReadRequest)]) : bool
+  (let
+    [size : i64 (string.string-length bytes)]
+    (when (> size request.limits.max-input-bytes) (return true))
+    (let
+      [data : (__tl_dyn-array u8) (__tl_make-array u8 size)]
+      (unsafe
+        (string.str-copy-borrowed-bytes-into
+          bytes
+          (__tl_array-data data)
+          0
+          size))
+      (match (elf.read-object (& data) request)
+        [(ReadFailed _) true]
+        [(ReadObject object)
+          (for [symbol (& object.symbols)]
+            (match (& symbol.section)
+              [(Undefined)
+                (let
+                  [name
+                    (string.substring-view
+                      bytes
+                      symbol.name.offset
+                      symbol.name.size)]
+                  ;; Package symbols are mangled with _tl_. The native
+                  ;; runtime supplies the unprefixed tl_ ABI.
+                  (when (string.is-string-prefix-at name "tl_" 0) (return true)))]
+              [_ unit]))
+          false]))))
+
+(define (build-package-elf-archive-needs-runtime? [path : (& str)]) : bool
+  (let
+    [limits : elf.ElfLimits (elf.default-limits)]
+    [size : i64 (fs.file-size path)]
+    (when (or (< size 0) (> size limits.max-input-bytes)) (return true))
+    (match (io.try-read-file path)
+      [(ErrIoBytes _) true]
+      [(OkIoBytes buffer)
+        (let
+          [bytes : String (byte_buf.to-string buffer)]
+          [request : elf.ElfReadRequest
+            (elf.ElfReadRequest (elf.ElfIdentity 0 0) limits)]
+          (match (ar.read
+            (& bytes)
+            (archive.ArchiveIdentity 0 0)
+            (GnuSystemV)
+            (archive.ArchiveLimits
+              request.limits.max-input-bytes
+              65536
+              16777216
+              4
+              1048576
+              1
+              67108864))
+            [(ReadFailed _) true]
+            [(ReadArchive parsed)
+              (for [member (& parsed.members)]
+                (match (& member.kind)
+                  [(Ordinary)
+                    (when
+                      (build-package-elf-member-needs-runtime?
+                        (string.substring-view
+                          (& bytes)
+                          member.content-offset
+                          member.content-size)
+                        (& request))
+                      (return true))]
+                  [_ unit]))
+              false]))])))
+
+(define (build-package-archives-need-runtime?
+  [target : be_state.CompilerBackendTarget]
+  [inputs : (& inputs build_run_core.SourceToolLinkInputs)]) : bool
+  (and
+    (build_run_core.source-tool-link-inputs-have-archives? inputs)
+    (if (and
+      (be_state.compiler-backend-target-elf? target)
+      (build_run_core.source-tool-linux-direct-object-enabled?))
+      (let
+        [archives (build_run_core.source-tool-link-inputs-archives inputs)]
+        (for [i (iterator.range 0 (process.args-count archives))]
+          (let
+            [path : String (process.args-ref archives i)]
+            (when
+              (with-arena
+                archive-check
+                (build-package-elf-archive-needs-runtime? (& path)))
+              (return true))))
+        false)
+      true)))
+
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-prepare-owned-runtime
     [scope : compiler_driver_core.CompilerDriverPackageRuntimeScope]
-    [request : BuildPackageDirectObjectRequest]) : ResultBuildPackagePreparedRuntime
+    [request : BuildPackageDirectObjectRequest]
+    [archive-runtime : bool]) : ResultBuildPackagePreparedRuntime
     (let
       [preflight : BuildPackageDirectObjectPreflight
         (build-package-direct-object-preflight
@@ -5200,6 +5300,11 @@
           request.paths
           request.cfgs
           request.opt-level)]
+      [_archive-runtime : unit
+        (when
+          archive-runtime
+          (compiler_driver_core.compiler-driver-lowered-result-enable-archive-runtime!
+            (& lowered)))]
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-emit-preflighted-runtime
           request.entry-path
@@ -5209,7 +5314,11 @@
           request.mode
           request.emit-entry
           request.crt-entry
-          preflight
+          ;; Archive members can need runtime entry points that the consumer's
+          ;; IR does not reference. The assembly runtime provides them.
+          (if archive-runtime
+            (Fallback ForcedAssembly)
+            preflight)
           lowered)]
       (if request.require-direct-object
         (build-package-require-direct-object prepared)
@@ -5300,7 +5409,10 @@
             decls
             owned-paths
             cfgs
-            (owned_view.compiler-owned-shared-view entry-path)))]
+            (owned_view.compiler-owned-shared-view entry-path))
+          (and
+            emit-entry
+            (build-package-archives-need-runtime? target (& link-inputs))))]
       [captured : package_surface.ResultPackageSurfacePayloads
         (if (> (string.string-length (& tlci-path)) 0)
           (begin

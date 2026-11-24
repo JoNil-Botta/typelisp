@@ -1785,20 +1785,51 @@
 ;; program only through here. An executable (`emit-entry`) must define `main`:
 ;; nothing synthesizes one, so a program without it is rejected before any
 ;; code is emitted rather than linked against a missing symbol.
+(define (compiler-backend-extern-symbol-referenced?
+  [runtime-index : (& runtime-index be_state.CompilerBackendRuntimeIndex)]
+  [referenced-functions : (& referenced-functions be_state.BackendSymbolSeq)]
+  [extern-name-id : i64]
+  [source-name-id : i64]
+  [link-symbol-id : i64]) : bool
+  (or
+    (be_state.backend-or4
+      (backend_i64_i64_map.contains? (& runtime-index.calls) extern-name-id)
+      (backend_i64_i64_map.contains? (& runtime-index.calls) source-name-id)
+      (backend_i64_i64_map.contains? (& runtime-index.calls) link-symbol-id)
+      (be_state.compiler-backend-symbol-list-contains-id?
+        referenced-functions
+        extern-name-id))
+    (be_state.compiler-backend-symbol-list-contains-id?
+      referenced-functions
+      source-name-id)
+    (be_state.compiler-backend-symbol-list-contains-id?
+      referenced-functions
+      link-symbol-id)))
+
 (define (compiler-backend-validate-program
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [externs : compiler_ir_types.CompilerIrExternSeq]
   [plan : be_state.CompilerBackendRuntimePlan]
   [index : be_state.CompilerBackendProgramIndex]
+  [runtime-index : (& be_state.CompilerBackendRuntimeIndex)]
+  [referenced : (& be_state.BackendSymbolSeq)]
   [emit-entry : bool]) : be_state.ResultCompilerBackendSymbolValidation
   (for [position (iterator.range 0 externs.len)]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs position)
-      [(Extern _ _ name ty abi _ _ _ _)
+      [(Extern id source name ty abi link _ _ _)
         (match abi
           [(TypeLisp)
-            (unless
-              (compiler-backend-typelisp-extern-layout-known? index (& ty))
+            (when
+              (and
+                (compiler-backend-extern-symbol-referenced?
+                  runtime-index
+                  referenced
+                  id
+                  source
+                  link)
+                (not
+                  (compiler-backend-typelisp-extern-layout-known? index (& ty))))
               (return
                 (compiler-backend-symbol-validation-error
                   (str_cat.str-cat
@@ -2229,29 +2260,39 @@
             0
             buf))])))
 
-;; Every switch table of the program, in one run: `.rodata` for the 32-bit
-;; absolute entries a non-PIC ELF image can relocate, `.text` for the relative
-;; entries every other model folds at assembly time.
+;; Executables share a section for their switch tables. Library objects
+;; split the tables so a linker can collect each function independently.
 (define (compiler-backend-emit-switch-tables-functions-into
+  [target : be_state.CompilerBackendTarget]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : be_state.CompilerBackendProgramIndex]
   [absolute : bool]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (compiler-backend-emit-switch-tables-function-seq-into
-    functions
-    program-index
-    absolute
-    0
-    (text_buf.append
-      buf
-      (if absolute
-        "    .section .rodata\n"
-        "    .text\n"))))
+  (let
+    [sectioned? : bool
+      (be_state.compiler-backend-state-library-object?
+        program-index.backend-state)]
+    (compiler-backend-emit-switch-tables-function-seq-into
+      target
+      functions
+      program-index
+      absolute
+      sectioned?
+      0
+      (if sectioned?
+        buf
+        (text_buf.append
+          buf
+          (if absolute
+            "    .section .rodata\n"
+            "    .text\n"))))))
 
 (define (compiler-backend-emit-switch-tables-function-seq-into
+  [target : be_state.CompilerBackendTarget]
   [functions : compiler_ir_types.CompilerIrFunctionSeq]
   [program-index : be_state.CompilerBackendProgramIndex]
   [absolute : bool]
+  [sectioned? : bool]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
@@ -2266,21 +2307,59 @@
               (compiler-backend-phi-target-labels-for-blocks
                 (be_state.compiler-backend-global-shared-view blocks)))]
           (compiler-backend-emit-switch-tables-function-seq-into
+            target
             functions
             program-index
             absolute
+            sectioned?
             (+ index 1)
             (match (be_state.compiler-backend-global-shared-view blocks)
               [(Array seq)
-                (compiler-backend-emit-switch-tables-seq-into
-                  (compiler-backend-function-label-scope program-index name)
-                  (be_state.compiler-backend-function-state-phi-targets
-                    (be_state.compiler-backend-state-function-state
-                      program-index.backend-state))
-                  absolute
-                  seq
-                  0
-                  buf)])))])))
+                (let
+                  [scope
+                    (compiler-backend-function-label-scope program-index name)]
+                  [targets
+                    (be_state.compiler-backend-function-state-phi-targets
+                      (be_state.compiler-backend-state-function-state
+                        program-index.backend-state))]
+                  (if sectioned?
+                    (let
+                      [tables
+                        (compiler-backend-emit-switch-tables-seq-into
+                          scope
+                          targets
+                          absolute
+                          seq
+                          0
+                          (text_buf.empty))]
+                      (if (text_buf.empty? (& tables))
+                        buf
+                        (let
+                          [symbol
+                            (be_operand.compiler-backend-function-symbol-index
+                              program-index
+                              name)]
+                          [section
+                            (if absolute
+                              (be_operand.compiler-backend-elf-symbol-section
+                                ".rodata"
+                                (& symbol)
+                                "\"a\",@progbits")
+                              ;; COFF case-minus-table expressions stay inside
+                              ;; the same COMDAT as the function body.
+                              (be_operand.compiler-backend-function-section
+                                target
+                                (& symbol)))]
+                          (text_buf.append
+                            (text_buf.append buf section)
+                            (text_buf.render tables)))))
+                    (compiler-backend-emit-switch-tables-seq-into
+                      scope
+                      targets
+                      absolute
+                      seq
+                      0
+                      buf)))])))])))
 
 (define (compiler-backend-switch-validate-one
   [targets : be_state.BackendSymbolSeq]

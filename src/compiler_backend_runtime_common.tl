@@ -19,8 +19,14 @@
   [bit : i64]) : bool
   (!= (bit-and features.leaf-mask bit) 0))
 
-(define (compiler-backend-runtime-fast-alloc-label [size : i64]) : String
-  (str_cat.str-cat ".L_tl_alloc" (string.int->string size) "" ""))
+(define (compiler-backend-runtime-fast-alloc-label
+  [size : i64]
+  [public? : bool]) : String
+  (str_cat.str-cat
+    (if public?
+      "tl_alloc"
+      ".L_tl_alloc")
+    (string.int->string size)))
 
 ;; Arena-debug instrumentation exists only in compiler-arena-debug (and test)
 ;; builds; elsewhere the runtime text is the plain one whatever the program
@@ -528,7 +534,7 @@ tl_startup_profile_process_entry_tick:
   (let
     [size-text : String (string.int->string size)]
     [size-imm : String (str_cat.str-cat "$" size-text)]
-    [label : String (compiler-backend-runtime-fast-alloc-label size)]
+    [label : String (compiler-backend-runtime-fast-alloc-label size false)]
     [slow-label : String (str_cat.str-cat label "_slow")]
     [atomic-label : String (str_cat.str-cat label "_atomic")]
     [atomic-cas-label : String (str_cat.str-cat label "_atomic_cas")]

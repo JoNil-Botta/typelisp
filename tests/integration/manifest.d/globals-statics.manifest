@@ -24,7 +24,7 @@ global_cursor_guarded|all|-|tests/integration/global_cursor_guarded.tl|42|107629
 global_cursor_guarded_abort|all|-,2|tests/integration/global_cursor_guarded.tl|134|-|20 8 64|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:44:42: array index out of bounds: index=20 length=20\n
 global_initializer|all|-|tests/integration/global_initializer.tl|120|-|-|-|-
 global_reference_initializers|all|-|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|-
-global_reference_initializers|all|0,2|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|stage-stdlib
+global_reference_initializers|all|0,1,2|tests/integration/global_reference_initializers.tl|42|-|-|global_reference_initializer_dep.tl|stage-stdlib
 global_aggregate_storage_lifetime|all|0,1,2|tests/integration/global_aggregate_storage_lifetime.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl stdlib/test.tl|-
 global_aggregate_storage_threads|all|0,1,2|tests/integration/global_aggregate_storage_threads.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_storage_boundary.tl|42|-|-|stdlib/profile.tl|-

@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	-8826.591	Unify call signature and argument checking into one selected-inference path, removing duplicate legacy call-argument walks and reusing call operand evidence without skipping checks; hosted CI 104,591,119,569 vs 105,522,523,724 Ir at ce384915e (-931,404,155 Ir; local pre-rebase -8682 ppm).

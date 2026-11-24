@@ -3,8 +3,6 @@
 (import stdlib.clone)
 (import stdlib.byte_le as le)
 (import stdlib.byte_reader as bytes)
-(import stdlib.vector)
-(import stdlib.sort)
 (import stdlib.string)
 
 (defstruct ElfIdentity
@@ -512,9 +510,6 @@
   (end i64)
   (section i64)
   (field i64))
-
-(import (vector.vector ElfFileRange) as ranges)
-(import (sort.vec ElfFileRange) as range_sort)
 
 (define (flag? [flags : u64] [mask : i64]) : bool
   (not (= (bit-and flags (cast mask : u64)) (cast 0 : u64))))
@@ -1280,6 +1275,93 @@
         (< left.end right.end)
         (and (= left.end right.end) (< left.section right.section))))))
 
+(define (sort-ranges!
+  [slots : (&mut s (__tl_dyn-array ElfFileRange))]
+  [n : i64]) : unit
+  (let
+    [chunk-start : i64 0]
+    (while (< chunk-start n)
+      (let
+        [chunk-end : i64
+          (if (> 16 (- n chunk-start))
+            n
+            (+ chunk-start 16))]
+        [i : i64 (+ chunk-start 1)]
+        (while (< i chunk-end)
+          (let
+            [value : ElfFileRange (array-ref slots i)]
+            [j : i64 i]
+            (while (if (> j chunk-start)
+              (range-less? value (array-ref slots (- j 1)))
+              false)
+              (set! (array-ref slots j) (array-ref slots (- j 1)))
+              (set! j (- j 1)))
+            (set! (array-ref slots j) value)
+            (set! i (+ i 1))))
+        (set! chunk-start chunk-end)))
+    (when
+      (> n 16)
+      (let
+        [scratch : (__tl_dyn-array ElfFileRange)
+          (__tl_make-array ElfFileRange n)]
+        [width : i64 16]
+        (while (< width n)
+          (let
+            [left : i64 0]
+            (while (< left n)
+              (let
+                [mid : i64
+                  (if (> width (- n left))
+                    n
+                    (+ left width))]
+                [right : i64
+                  (if (> width (- n mid))
+                    n
+                    (+ mid width))]
+                (when
+                  (and
+                    (< mid right)
+                    (range-less?
+                      (array-ref slots mid)
+                      (array-ref slots (- mid 1))))
+                  (let
+                    [left-index : i64 left]
+                    [right-index : i64 mid]
+                    [out : i64 left]
+                    (while (< out right)
+                      (let
+                        [take-left : bool
+                          (if (< left-index mid)
+                            (if (< right-index right)
+                              (not
+                                (range-less?
+                                  (array-ref slots right-index)
+                                  (array-ref slots left-index)))
+                              true)
+                            false)]
+                        (if take-left
+                          (begin
+                            (set!
+                              (array-ref scratch out)
+                              (array-ref slots left-index))
+                            (set! left-index (+ left-index 1)))
+                          (begin
+                            (set!
+                              (array-ref scratch out)
+                              (array-ref slots right-index))
+                            (set! right-index (+ right-index 1))))
+                        (set! out (+ out 1))))
+                    (set! out left)
+                    (while (< out right)
+                      (set! (array-ref slots out) (array-ref scratch out))
+                      (set! out (+ out 1)))))
+                (set! left right)))
+            (set!
+              width
+              (if (>= width (- n width))
+                n
+                (* width 2)))))))))
+
 (define (check-overlaps!
   [header : (& h ElfHeader)]
   [sections : (& s (__tl_dyn-array ElfSection))]
@@ -1295,18 +1377,22 @@
     (charge-records! check count (+ (* 4 levels) 64) header.section-offset)
     (unless check.ok (return unit))
     (let
-      [files : ranges.Vec (ranges.with-capacity count)]
+      [files : (__tl_dyn-array ElfFileRange)
+        (__tl_make-array ElfFileRange count)]
+      [file-count : i64 0]
       [index : i64 0]
-      (ranges.push! files (ElfFileRange 0 64 -2 0))
+      (set! (array-ref files file-count) (ElfFileRange 0 64 -2 0))
+      (set! file-count (+ file-count 1))
       (when
         (> header.section-count 0)
-        (ranges.push!
-          files
+        (set!
+          (array-ref files file-count)
           (ElfFileRange
             header.section-offset
             (+ header.section-offset (* header.section-count 64))
             -1
-            40)))
+            40))
+        (set! file-count (+ file-count 1)))
       (while (< index header.section-count)
         (let
           [section : (& s ElfSection) (& (array-ref sections index))]
@@ -1315,22 +1401,21 @@
               (= section.section-type 0)
               (= section.section-type 8)
               (= section.payload.size 0))
-            (ranges.push!
-              files
+            (set!
+              (array-ref files file-count)
               (ElfFileRange
                 section.payload.offset
                 (+ section.payload.offset section.payload.size)
                 index
-                (+ section.id.offset 24)))))
+                (+ section.id.offset 24)))
+            (set! file-count (+ file-count 1))))
         (set! index (+ index 1)))
-      (range_sort.sort! (&mut files) range-less?)
+      (sort-ranges! (&mut files) file-count)
       (set! index 1)
-      (while (and check.ok (< index (ranges.len (& files))))
+      (while (and check.ok (< index file-count))
         (let
-          [left : ElfFileRange
-            (ranges.get (& files) (- index 1) (ElfFileRange 0 0 0 0))]
-          [right : ElfFileRange
-            (ranges.get (& files) index (ElfFileRange 0 0 0 0))]
+          [left : ElfFileRange (array-ref files (- index 1))]
+          [right : ElfFileRange (array-ref files index)]
           ;; If a payload sorts before the header at the same byte, report
           ;; its sh_offset rather than blaming the fixed header at offset zero.
           [bad : ElfFileRange

@@ -3164,3 +3164,4 @@ arena_phase_rewind_branded_erase_tuple_reject|check-fail|tests/safety/arena_phas
 arena_phase_rewind_branded_erase_struct_reject|check-fail|tests/safety/arena_phase_rewind_branded_erase_struct_reject.tl|tests/safety/arena_phase_rewind_branded_erase_struct_reject.tl:20:20|error[E0208]: typecheck: use of moved value `s`
 arena_phase_rewind_bare_arena_copy_alloc_reject|check-fail|tests/safety/arena_phase_rewind_bare_arena_copy_alloc_reject.tl|tests/safety/arena_phase_rewind_bare_arena_copy_alloc_reject.tl:17:20|error[E0208]: typecheck: use of moved value `s`
 arena_phase_rewind_branded_copy_before_rewind_ok|run-exit|tests/safety/arena_phase_rewind_branded_copy_before_rewind_ok.tl|42|-
+register_view_match_shared_reject|check-fail|tests/safety/register_view_match_shared_reject.tl|-|cannot mutably borrow `token.id` behind a shared reference

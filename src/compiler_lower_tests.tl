@@ -18678,6 +18678,46 @@
         (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
       false]))
 
+(test
+  compiler-lower-with-scratch-return-cleanup
+  (let
+    [source : String "(define (main) : i64 (with-scratch (return 42)))"]
+    (match (lower-test-functions (lower.lower-compiler-source source))
+      [(Some functions)
+        (match (lower-test-function-seq-find functions "main")
+          [(Some (Function _ _ _ _ blocks _))
+            (let
+              [view (ir.compiler-ir-block-list-view blocks)]
+              (test.assert-true
+                (lower-test-block-exits? view)
+                "with-scratch return terminates its block")
+              (match view
+                [(slice block)
+                  (match block
+                    [(Block _ instrs)
+                      (test.assert-true
+                        (and
+                          (>= instrs.len 3)
+                          (match (& (array-ref instrs.slots (- instrs.len 3)))
+                            [(Call _ name _ _)
+                              (string.eq
+                                (ir.compiler-ir-symbol-text name)
+                                "tl_arena_set")]
+                            [_ false])
+                          (match (& (array-ref instrs.slots (- instrs.len 2)))
+                            [(Call _ name _ _)
+                              (string.eq
+                                (ir.compiler-ir-symbol-text name)
+                                "tl_arena_destroy")]
+                            [_ false])
+                          (match (& (array-ref instrs.slots (- instrs.len 1)))
+                            [(Return _) true]
+                            [_ false]))
+                        "with-scratch return restores and destroys its arena before returning")])]
+                [_ (test.assert-true false "with-scratch return has one block")]))]
+          [_ (test.assert-true false "with-scratch return has main")])]
+      [_ (test.assert-true false "with-scratch return lowers")])))
+
 (define (lower-test-unit-field-memory-count
   [count : i64]
   [instr : ir.CompilerIrInstr]) : i64

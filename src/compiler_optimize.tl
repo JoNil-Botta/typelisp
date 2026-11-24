@@ -128477,17 +128477,47 @@
                     bad
                     (ir.compiler-ir-instr-seq-borrow instrs pos)))])))])))
 
-(define (opt-len-eq-value-mentions-cand?
-  [cand : (& opt_i64_i64_map.Map)]
+;; Shared `compiler-ir-instr-fold-uses` expansion for P-B / length-invariant
+;; scans (avoids duplicating the large instruction-operand match macro):
+;;   mode = 0: bit 0 = Global/GlobalAddr in `watch`, bit 1 = any Function operand
+;;   mode = 1: bit 0 = Global/GlobalAddr == `target`
+;;   mode = 2: bit 0 = Function == `target`
+(define (opt-len-inv-fold-use-step
+  [mode : i64]
+  [target : i64]
+  [watch : (& opt_i64_i64_map.Map)]
   [_role : ir.CompilerIrOperandRole]
-  [found? : bool]
-  [value : ir.CompilerIrValue]) : bool
-  (if found?
-    true
-    (match (& value)
-      [(or (Global name) (GlobalAddr name))
-        (opt_i64_i64_map.contains? cand (ir.compiler-ir-symbol-id name))]
-      [_ false])))
+  [mask : i64]
+  [value : ir.CompilerIrValue]) : i64
+  (match (& value)
+    [(or (Global name) (GlobalAddr name))
+      (let
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        (cond
+          [(and (= mode 0) (opt_i64_i64_map.contains? watch id))
+            (bit-or mask 1)]
+          [(and (= mode 1) (= id target)) (bit-or mask 1)]
+          [else mask]))]
+    [(Function name)
+      (cond
+        [(= mode 0) (bit-or mask 2)]
+        [(and (= mode 2) (= (ir.compiler-ir-symbol-id name) target))
+          (bit-or mask 1)]
+        [else mask])]
+    [_ mask]))
+
+(define (opt-len-inv-instr-use-mask
+  [mode : i64]
+  [target : i64]
+  [watch : (& opt_i64_i64_map.Map)]
+  [instr : ir.CompilerIrInstr]) : i64
+  (ir.compiler-ir-instr-fold-uses
+    instr
+    (cast 0 : i64)
+    opt-len-inv-fold-use-step
+    mode
+    target
+    watch))
 
 (define (opt-len-eq-instr-mentions-cand?
   [cand : (& opt_i64_i64_map.Map)]
@@ -128497,11 +128527,7 @@
       [(Store name _ _)
         (opt_i64_i64_map.contains? cand (ir.compiler-ir-symbol-id name))]
       [_ false])
-    (ir.compiler-ir-instr-fold-uses
-      instr
-      false
-      opt-len-eq-value-mentions-cand?
-      cand)))
+    (not (= (bit-and (opt-len-inv-instr-use-mask 0 (- 0 1) cand instr) 1) 0))))
 
 (define (opt-len-eq-scan-function!
   [ctx : OptLenEqCtx]
@@ -130900,11 +130926,18 @@
                                                 (and
                                                   forbid-scalar-read?
                                                   (>= scalar-global 0)
-                                                  (opt-len-eq-instr-mentions-one?
-                                                    scalar-global
-                                                    (ir.compiler-ir-instr-seq-ref
-                                                      binstrs
-                                                      pi)))
+                                                  (not
+                                                    (=
+                                                      (bit-and
+                                                        (opt-len-inv-instr-use-mask
+                                                          1
+                                                          scalar-global
+                                                          arg-global
+                                                          (ir.compiler-ir-instr-seq-ref
+                                                            binstrs
+                                                            pi))
+                                                        1)
+                                                      0)))
                                                 (set! body-ok? false)))
                                             (if (and
                                               body-ok?
@@ -130919,27 +130952,6 @@
                                               none))))])))))]
                         [_ none])]
                     [_ none])))])]))))
-
-(define (opt-len-eq-value-mentions-one?
-  [target : i64]
-  [_role : ir.CompilerIrOperandRole]
-  [found? : bool]
-  [value : ir.CompilerIrValue]) : bool
-  (if found?
-    true
-    (match (& value)
-      [(or (Global name) (GlobalAddr name))
-        (= (ir.compiler-ir-symbol-id name) target)]
-      [_ false])))
-
-(define (opt-len-eq-instr-mentions-one?
-  [target : i64]
-  [instr : ir.CompilerIrInstr]) : bool
-  (ir.compiler-ir-instr-fold-uses
-    instr
-    false
-    opt-len-eq-value-mentions-one?
-    target))
 
 ;; Check if a post-dominating checked loop (either an inline `while` immediately
 ;; following block `sb` or a direct call to a checked-loop helper in `sb` after
@@ -131079,9 +131091,16 @@
                       (and
                         clean?
                         (>= scalar-global 0)
-                        (opt-len-eq-instr-mentions-one?
-                          scalar-global
-                          (ir.compiler-ir-instr-seq-ref instrs pos)))
+                        (not
+                          (=
+                            (bit-and
+                              (opt-len-inv-instr-use-mask
+                                1
+                                scalar-global
+                                arg-global
+                                (ir.compiler-ir-instr-seq-ref instrs pos))
+                              1)
+                            0)))
                       (set! clean? false))
                     (when
                       (and
@@ -132669,6 +132688,7 @@
       (let
         [calls-from-main : i64 0]
         [other-refs : bool false]
+        [empty-watch : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
         (for [i (iterator.range 0 functions.len)]
           (match (ir.compiler-ir-function-seq-borrow functions i)
             [(Function name _ _ _ blocks _)
@@ -132699,24 +132719,18 @@
                               [_ unit])
                             ;; Address-taken function escapes.
                             (when
-                              (ir.compiler-ir-instr-fold-uses
-                                (ir.compiler-ir-instr-seq-ref instrs pi)
-                                false
-                                opt-len-scalar-val-fn-addr?
-                                target-fn)
+                              (not
+                                (=
+                                  (bit-and
+                                    (opt-len-inv-instr-use-mask
+                                      2
+                                      target-fn
+                                      (& empty-watch)
+                                      (ir.compiler-ir-instr-seq-ref instrs pi))
+                                    1)
+                                  0))
                               (set! other-refs true)))]))]))]))
         (and (= calls-from-main 1) (not other-refs))))))
-
-(define (opt-len-scalar-val-fn-addr?
-  [target : i64]
-  [_role : ir.CompilerIrOperandRole]
-  [found? : bool]
-  [val : ir.CompilerIrValue]) : bool
-  (if found?
-    true
-    (match (& val)
-      [(Function name) (= (ir.compiler-ir-symbol-id name) target)]
-      [_ false])))
 
 ;; Check if block `target-blk` in `func` is outside any loop (i.e. no backedge
 ;; reaches `target-blk`, and `target-blk` is dominated by entry with no cycle).
@@ -132732,22 +132746,6 @@
     (if (and (>= target-blk 0) (< target-blk (array-length loops)))
       (array-ref loops target-blk)
       true)))
-
-;; Single-pass use fold returning bitmask:
-;;   bit 0 (1): mentions any global in `watch`
-;;   bit 1 (2): mentions any `Function` operand (potential C callback)
-(define (opt-len-scalar-fold-uses
-  [watch : (& opt_i64_i64_map.Map)]
-  [_role : ir.CompilerIrOperandRole]
-  [mask : i64]
-  [val : ir.CompilerIrValue]) : i64
-  (match (& val)
-    [(or (Global name) (GlobalAddr name))
-      (if (opt_i64_i64_map.contains? watch (ir.compiler-ir-symbol-id name))
-        (bit-or mask 1)
-        mask)]
-    [(Function _) (bit-or mask 2)]
-    [_ mask]))
 
 ;; Cleanliness check specialized for non-addr-taken globals: external C/runtime
 ;; functions without callback function-pointer arguments cannot read or write
@@ -132785,11 +132783,7 @@
       (let
         [mask : i64
           (if (or reads? (= call-kind 2))
-            (ir.compiler-ir-instr-fold-uses
-              instr
-              (cast 0 : i64)
-              opt-len-scalar-fold-uses
-              watch)
+            (opt-len-inv-instr-use-mask 0 (- 0 1) watch instr)
             0)]
         (and
           (or (not reads?) (= (bit-and mask 1) 0))
@@ -133253,15 +133247,22 @@
                             (iterator.range 0 (array-ref arr-info.count 0))]
                             (let
                               [agid : i64 (array-ref arr-info.global-id row)]
+                              [single : opt_i64_i64_map.Map
+                                (opt_i64_i64_map.with-capacity 1)]
                               [touched? : bool
-                                (or
-                                  (and
-                                    (= (array-ref arr-info.write-kind row) 1)
-                                    (= (array-ref arr-info.reset-fn row) fid))
-                                  (opt-blocks-any?
-                                    blocks
-                                    opt-len-eq-instr-mentions-one-val?
-                                    agid))]
+                                (begin
+                                  (opt_i64_i64_map.insert-ref!
+                                    (&mut single)
+                                    agid
+                                    1)
+                                  (or
+                                    (and
+                                      (= (array-ref arr-info.write-kind row) 1)
+                                      (= (array-ref arr-info.reset-fn row) fid))
+                                    (opt-blocks-any?
+                                      blocks
+                                      opt-len-eq-instr-mentions-cand?
+                                      (& single))))]
                               ;; Also check arg-global params of `fid` and helper calls.
                               (unless
                                 touched?
@@ -133357,19 +133358,6 @@
                 capacity
                 scalar-map
                 scalar-excluded))))))))
-
-(define (opt-len-eq-instr-mentions-one-val?
-  [target : i64]
-  [instr : ir.CompilerIrInstr]) : bool
-  (or
-    (match (& instr)
-      [(Store name _ _) (= (ir.compiler-ir-symbol-id name) target)]
-      [_ false])
-    (ir.compiler-ir-instr-fold-uses
-      instr
-      false
-      opt-len-eq-value-mentions-one?
-      target)))
 
 ;; Verify one candidate pair `(sid, row)` whole-program for `MaskLtLen` (strict)
 ;; or `LeLen` (non-strict), and insert into `scalar-map` + `scalar-excluded` on success.
@@ -133674,6 +133662,8 @@
         [excl-fns : (__tl_dyn-array i64) (__tl_make-array i64 64)]
         [excl-n : i64 0]
         [helper-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        [sid-watch : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+        (opt_i64_i64_map.insert-ref! (&mut sid-watch) sid 1)
         (for [fi (iterator.range 0 functions.len)]
           (when
             (or le-ok? mask-ok?)
@@ -133684,8 +133674,8 @@
                   (when
                     (opt-blocks-any?
                       fblocks
-                      opt-len-eq-instr-mentions-one-val?
-                      sid)
+                      opt-len-eq-instr-mentions-cand?
+                      (& sid-watch))
                     (let
                       [ftables : OptLenEqDefs
                         (opt-len-eq-defs-build

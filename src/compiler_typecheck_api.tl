@@ -484,7 +484,18 @@
               top-env
               decls
               (CompilerTypecheckSummary 0 0 0))
-              [(Ok _) (tc_core.tc-expr ctx top-env expr)]
+              [(Ok _)
+                (let
+                  [job-state : tc_core.TcJobState
+                    (tc_core.tc-context-job-state ctx)]
+                  [prev-unsafe-active : i64
+                    (tc_core.tc-macro-unsafe-enforcement-enter! job-state)]
+                  [result : tc_core.ResultTcType
+                    (tc_core.tc-expr ctx top-env expr)]
+                  (tc_core.tc-macro-unsafe-enforcement-leave!
+                    job-state
+                    prev-unsafe-active)
+                  result)]
               [(Err diag)
                 (let
                   [diagnostics : cdiag.CompilerDiagnosticList

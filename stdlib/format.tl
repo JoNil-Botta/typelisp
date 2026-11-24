@@ -2266,17 +2266,19 @@
       (if (string.eq source-kind "ref")
         true
         (string.eq source-kind "mut-ref"))]
+    [addr-name : String (comptime.syntax-name-fresh "__tl_format_direct_addr")]
     [slot-name : String (comptime.syntax-name-fresh "__tl_format_direct_slot")]
     [formatter-name : String
       (comptime.syntax-name-fresh "__tl_format_direct_formatter")]
     [value-name : String
       (comptime.syntax-name-fresh "__tl_format_direct_value")]
+    [addr-var : comptime.Expr (comptime.expr-var addr-name)]
     [value-ref : comptime.Expr (comptime.expr-var value-name)]
     [slot : comptime.Expr (comptime.expr-var slot-name)]
     [formatter : comptime.Expr (comptime.expr-var formatter-name)]
     [slot-init : comptime.Expr
       `(unsafe
-        (int->ptr (cast ,address : u64) : (MutPtr stdlib.format.Formatter)))]
+        (int->ptr (cast ,addr-var : u64) : (MutPtr stdlib.format.Formatter)))]
     [formatter-init : comptime.Expr
       `(unsafe
         (ptr-read (ptr-cast ,slot : (Ptr stdlib.format.Formatter))))]
@@ -2292,9 +2294,12 @@
         "")]
     [scoped : comptime.Expr
       (comptime.expr-let-scope
-        slot-name
-        slot-init
-        (comptime.expr-let-scope formatter-name formatter-init body))]
+        addr-name
+        address
+        (comptime.expr-let-scope
+          slot-name
+          slot-init
+          (comptime.expr-let-scope formatter-name formatter-init body)))]
     (if borrowed?
       scoped
       (comptime.expr-shared-let-scope value-name runtime-value scoped))))
@@ -2428,13 +2433,21 @@
         ,(comptime.type-expr precision-source)
         ,precision-value
         ,selector-expr)]
+    [fallback-addr-name : String
+      (comptime.syntax-name-fresh "__tl_format_stream_addr")]
+    [fallback-addr-var : comptime.Expr (comptime.expr-var fallback-addr-name)]
     [fallback-body : comptime.Expr
       `(begin
         (unsafe
-          (stdlib.format.formatter-write-string-at! ,address ,fallback-var))
+          (stdlib.format.formatter-write-string-at!
+            ,fallback-addr-var
+            ,fallback-var))
         "")]
     [fallback : comptime.Expr
-      (comptime.expr-let-scope fallback-name fallback-value fallback-body)]
+      (comptime.expr-let-scope
+        fallback-name
+        fallback-value
+        (comptime.expr-let-scope fallback-addr-name address fallback-body))]
     [direct : comptime.Expr
       `(stdlib.format.format-stream-value-at-default-resolved!
         ,(comptime.type-expr source-type)
@@ -2547,13 +2560,21 @@
         ,(comptime.type-expr source-type)
         0
         "")]
+    [fallback-addr-name : String
+      (comptime.syntax-name-fresh "__tl_format_stream_addr")]
+    [fallback-addr-var : comptime.Expr (comptime.expr-var fallback-addr-name)]
     [fallback-body : comptime.Expr
       `(begin
         (unsafe
-          (stdlib.format.formatter-write-string-at! ,address ,fallback-var))
+          (stdlib.format.formatter-write-string-at!
+            ,fallback-addr-var
+            ,fallback-var))
         "")]
     [fallback : comptime.Expr
-      (comptime.expr-let-scope fallback-name fallback-value fallback-body)]
+      (comptime.expr-let-scope
+        fallback-name
+        fallback-value
+        (comptime.expr-let-scope fallback-addr-name address fallback-body))]
     (match dispatch
       [3
         (comptime.comptime-error
@@ -2639,13 +2660,21 @@
         ,(comptime.type-expr precision-source)
         ,precision-value
         ,selector-expr)]
+    [fallback-addr-name : String
+      (comptime.syntax-name-fresh "__tl_format_stream_addr")]
+    [fallback-addr-var : comptime.Expr (comptime.expr-var fallback-addr-name)]
     [fallback-body : comptime.Expr
       `(begin
         (unsafe
-          (stdlib.format.formatter-write-string-at! ,address ,fallback-var))
+          (stdlib.format.formatter-write-string-at!
+            ,fallback-addr-var
+            ,fallback-var))
         "")]
     [fallback : comptime.Expr
-      (comptime.expr-let-scope fallback-name fallback-value fallback-body)]
+      (comptime.expr-let-scope
+        fallback-name
+        fallback-value
+        (comptime.expr-let-scope fallback-addr-name address fallback-body))]
     (match value-kind
       ["arguments"
         `(begin
@@ -3906,7 +3935,13 @@
                                               1)]
                                           (if (= sink-mode 1)
                                             unit
-                                            (begin
+                                            (let
+                                              [stream-addr-name : String
+                                                (comptime.syntax-name-fresh
+                                                  "__tl_format_stream_addr")]
+                                              [stream-addr-var : comptime.Expr
+                                                (comptime.expr-var
+                                                  stream-addr-name)]
                                               (while (>= write-index 0)
                                                 (let
                                                   [write-name : String
@@ -3922,7 +3957,7 @@
                                                   [write-body : comptime.Expr
                                                     `(unsafe
                                                       (stdlib.format.formatter-write-string-at!
-                                                        ,stream-address
+                                                        ,stream-addr-var
                                                         ,write-var))]
                                                   (set!
                                                     write-items
@@ -3937,11 +3972,14 @@
                                                     (- write-index 1))))
                                               (set!
                                                 result
-                                                `(begin
-                                                  ,@write-items
-                                                  (unsafe
-                                                    (stdlib.format.formatter-status-at
-                                                      ,stream-address))))))
+                                                (comptime.expr-let-scope
+                                                  stream-addr-name
+                                                  stream-address
+                                                  `(begin
+                                                    ,@write-items
+                                                    (unsafe
+                                                      (stdlib.format.formatter-status-at
+                                                        ,stream-addr-var)))))))
                                           ;; Captures are reverse template
                                           ;; order; supplied bindings are
                                           ;; forward source order. The letter
@@ -5529,6 +5567,9 @@
         [address-name : String
           (comptime.syntax-name-fresh "__tl_format_anchors_address")]
         [address-var : comptime.Expr (comptime.expr-var address-name)]
+        [stream-addr-name : String
+          (comptime.syntax-name-fresh "__tl_format_arguments_stream_addr")]
+        [stream-addr-var : comptime.Expr (comptime.expr-var stream-addr-name)]
         [address-value : comptime.Expr
           (if (= borrowed 1)
             `(unsafe
@@ -5543,14 +5584,17 @@
           `(unsafe
             (stdlib.format.arguments-renderer-call-at
               ,address-var
-              ,stream-address
+              ,stream-addr-var
               (+ ,address-var stdlib.format.arguments-renderer-byte-size)))]
         ;; Force validation of the package shape at the resolved boundary.
         (if (= (tuple-element-count arguments-type) 2)
           unit
           (comptime.comptime-error
             "format: malformed retained Arguments package"))
-        (comptime.expr-let-scope address-name address-value call))]
+        (comptime.expr-let-scope
+          address-name
+          address-value
+          (comptime.expr-let-scope stream-addr-name stream-address call)))]
     [_
       (comptime.comptime-error
         "format: internal Arguments borrow marker is malformed")]))

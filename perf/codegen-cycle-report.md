@@ -1,7 +1,7 @@
 # Codegen hardware cycle reference
 
-TypeLisp opt2 from compiler revision `dcd110ffd`, measured against Clang
-23.1.3 on an AMD Ryzen 9 9950X pinned to logical CPU 12. The host used Linux
+TypeLisp opt2 from compiler revision `1faeb5067`, measured against Clang
+23.1.3 on an AMD Ryzen 9 9950X pinned to logical CPU 14. The host used Linux
 7.2.15-1-omarchy, glibc 2.44, Valgrind 3.25.1 and perf 7.2.11-1. Cycle
 counts are the median of five whole-process user-mode samples.
 Ratios are TypeLisp divided by Clang. The published CI Ir pins are
@@ -9,9 +9,9 @@ measured separately with Ubuntu Clang 18.
 
 | Workload group | C reference | Pairs | Ir geomean | Cycle geomean |
 | --- | --- | ---: | ---: | ---: |
-| Realistic kernels | Scalar Clang `-O2` | 18 | 1.114× | 1.175× |
-| Realistic kernels | Auto-vectorized Clang `-O2` | 18 | 1.121× | 1.179× |
-| AVX2 SPMD | Clang `-O2 -mavx2 -mno-avx512f` | 8 | 1.980× | 2.150× |
+| Realistic kernels | Scalar Clang `-O2` | 18 | 1.107× | 1.100× |
+| Realistic kernels | Auto-vectorized Clang `-O2` | 18 | 1.114× | 1.103× |
+| AVX2 SPMD | Clang `-O2 -mavx2 -mno-avx512f` | 8 | 1.059× | 0.989× |
 
 ## Realistic kernels and FP probes
 
@@ -19,44 +19,44 @@ The per-pair rows below use Clang `-O2 -fno-vectorize -fno-slp-vectorize`.
 
 | Benchmark | Ir ratio | TypeLisp cycles | Clang cycles | Cycle ratio |
 | --- | ---: | ---: | ---: | ---: |
-| `cfg_domloops` | 1.262× | 175,827,660 | 160,943,035 | 1.092× |
-| `gvn_table` | 1.078× | 351,971,806 | 253,776,190 | 1.387× |
-| `intern_table` | 1.209× | 217,316,950 | 167,008,365 | 1.301× |
-| `lex_source` | 0.846× | 305,508,899 | 254,012,862 | 1.203× |
-| `liveness_scan` | 0.724× | 202,800,159 | 175,857,789 | 1.153× |
-| `peephole_lines` | 0.853× | 204,779,219 | 106,622,197 | 1.921× |
-| `read_sexpr` | 1.104× | 258,524,950 | 336,734,624 | 0.768× |
-| `callgraph_scc` | 1.277× | 167,867,583 | 135,594,383 | 1.238× |
-| `ssa_construct` | 1.403× | 202,404,274 | 201,861,622 | 1.003× |
-| `sccp_lattice` | 1.326× | 405,229,081 | 202,167,793 | 2.004× |
-| `regalloc_greedy` | 1.356× | 245,406,374 | 215,188,083 | 1.140× |
-| `asm_render` | 1.068× | 533,043,726 | 339,543,699 | 1.570× |
-| `opt_bytecode_vm` | 1.045× | 261,257,980 | 221,629,054 | 1.179× |
-| `opt_crc32` | 0.806× | 493,753,924 | 498,491,083 | 0.990× |
-| `opt_quicksort` | 1.015× | 647,038,614 | 638,992,811 | 1.013× |
-| `graph_dijkstra` | 1.343× | 431,669,583 | 419,766,321 | 1.028× |
-| `phys_nbody` | 1.333× | 170,776,593 | 212,880,933 | 0.802× |
-| `route_http` | 1.404× | 97,482,826 | 93,180,049 | 1.046× |
+| `cfg_domloops` | 1.256× | 168,854,679 | 157,314,842 | 1.073× |
+| `gvn_table` | 1.076× | 210,098,228 | 159,491,844 | 1.317× |
+| `intern_table` | 1.192× | 148,274,039 | 124,549,956 | 1.190× |
+| `lex_source` | 0.846× | 191,417,049 | 185,013,988 | 1.035× |
+| `liveness_scan` | 0.720× | 130,451,305 | 112,139,627 | 1.163× |
+| `peephole_lines` | 0.854× | 109,535,598 | 100,175,377 | 1.093× |
+| `read_sexpr` | 1.102× | 255,607,283 | 234,995,592 | 1.088× |
+| `callgraph_scc` | 1.271× | 160,553,685 | 128,672,997 | 1.248× |
+| `ssa_construct` | 1.371× | 189,112,642 | 169,993,388 | 1.112× |
+| `sccp_lattice` | 1.308× | 202,146,146 | 167,816,173 | 1.205× |
+| `regalloc_greedy` | 1.336× | 208,552,196 | 178,155,302 | 1.171× |
+| `asm_render` | 1.067× | 300,139,000 | 271,222,997 | 1.107× |
+| `opt_bytecode_vm` | 1.045× | 151,971,143 | 151,363,878 | 1.004× |
+| `opt_crc32` | 0.806× | 484,590,954 | 484,732,755 | 1.000× |
+| `opt_quicksort` | 1.015× | 571,781,648 | 550,727,791 | 1.038× |
+| `graph_dijkstra` | 1.323× | 346,635,812 | 342,790,299 | 1.011× |
+| `phys_nbody` | 1.331× | 168,051,585 | 161,252,183 | 1.042× |
+| `route_http` | 1.392× | 90,039,500 | 92,556,175 | 0.973× |
 
 ### FP probes
 
 | Benchmark | Ir ratio | TypeLisp cycles | Clang cycles | Cycle ratio |
 | --- | ---: | ---: | ---: | ---: |
-| `fp_taylor_exp` | 1.106× | 107,818,306 | 84,632,204 | 1.274× |
-| `fp_mixed_recurrence` | 1.342× | 203,351,864 | 132,908,875 | 1.530× |
+| `fp_taylor_exp` | 1.021× | 77,147,327 | 76,739,683 | 1.005× |
+| `fp_mixed_recurrence` | 1.083× | 134,089,206 | 133,130,992 | 1.007× |
 
 ## Eight AVX2 SPMD pairs
 
 | Benchmark | Ir ratio | TypeLisp cycles | Clang cycles | Cycle ratio |
 | --- | ---: | ---: | ---: | ---: |
-| `spmd_map` | 1.570× | 854,345,406 | 624,404,350 | 1.368× |
-| `spmd_zip` | 1.169× | 1,173,364,407 | 904,262,218 | 1.298× |
-| `spmd_reduce` | 1.182× | 588,729,652 | 318,668,326 | 1.847× |
-| `spmd_scan` | 1.433× | 5,580,423,212 | 1,436,791,604 | 3.884× |
-| `spmd_shuffle` | 3.631× | 958,915,635 | 354,217,266 | 2.707× |
-| `spmd_short_tail` | 1.701× | 556,499,274 | 442,847,745 | 1.257× |
-| `spmd_mask` | 2.444× | 1,131,869,760 | 409,393,034 | 2.765× |
-| `spmd_foreach_2d` | 5.027× | 877,098,477 | 230,475,113 | 3.806× |
+| `spmd_map` | 0.905× | 674,504,059 | 619,379,997 | 1.089× |
+| `spmd_zip` | 0.979× | 999,755,525 | 806,088,815 | 1.240× |
+| `spmd_reduce` | 1.200× | 173,794,382 | 319,079,526 | 0.545× |
+| `spmd_scan` | 1.004× | 935,643,988 | 1,238,322,357 | 0.756× |
+| `spmd_shuffle` | 1.186× | 343,446,331 | 380,023,470 | 0.904× |
+| `spmd_short_tail` | 0.982× | 315,517,618 | 281,285,529 | 1.122× |
+| `spmd_mask` | 1.097× | 359,834,134 | 313,380,939 | 1.148× |
+| `spmd_foreach_2d` | 1.160× | 282,081,188 | 198,663,382 | 1.420× |
 
 ## Reproduction
 
@@ -65,7 +65,7 @@ Choose a logical CPU that is free of other benchmark work.
 
 ```sh
 compiler=target/bootstrap-fixpoint/stage2
-cpu=12
+cpu=14
 kernels=$(. scripts/lib-benchmark.sh && benchmark_ci_case_csv "$PWD" realistic-kernel)
 taskset -c "$cpu" scripts/measure-instruction-counts.sh \
     --benchmarks-only --cases "$kernels,fp_taylor_exp,fp_mixed_recurrence" \

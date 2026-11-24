@@ -330,7 +330,20 @@
   (block-spans (__tl_dyn-array ast.AstSourceSpan))
   (block-paths (__tl_dyn-array String))
   (block-used (__tl_dyn-array bool))
-  (fixed-storage-arena i64))
+  (fixed-storage-arena i64)
+  (macro-unsafe-frames (__tl_dyn-array bool))
+  (macro-unsafe-blocks (__tl_dyn-array i64))
+  ;; `macro-unsafe-open` when each template frame was entered.
+  (macro-unsafe-opens (__tl_dyn-array i64))
+  (macro-unsafe-depth i64)
+  (macro-unsafe-base i64)
+  (macro-unsafe-active i64)
+  ;; `(unsafe ...)` blocks open around the current typecheck or expansion node.
+  (macro-unsafe-open i64)
+  ;; Scoped-runtime saves of the caller-origin operands whose environment
+  ;; hygiene cleared, innermost last; kept here so each save stays small.
+  (macro-unsafe-scoped-saves (__tl_dyn-array TcTypeEnvScopedRuntimeSave))
+  (macro-unsafe-scoped-len i64))
 
 (defstruct TcUnusedUnsafeState
   (address i64))
@@ -909,7 +922,16 @@
         (__tl_make-array ast.AstSourceSpan 0)
         (__tl_make-array String 0)
         (__tl_make-array bool 0)
-        (arena.tl_arena_current)))
+        (arena.tl_arena_current)
+        (__tl_make-array bool 0)
+        (__tl_make-array i64 0)
+        (__tl_make-array i64 0)
+        0
+        0
+        0
+        0
+        (__tl_make-array TcTypeEnvScopedRuntimeSave 0)
+        0))
     (TcUnusedUnsafeState
       (cast
         (unsafe
@@ -5306,6 +5328,26 @@
             ,allow-mut
             ,ordinary
             ,sink)]
+        [(Spanned _ _)
+          (tc-infer-selected-transparent-id
+            ,ctx
+            ,env
+            ,id
+            TcMaybeAstSourceSpan.No
+            ,syntax
+            ,expected
+            (if ,ordinary
+              ,source
+              (ownership.OwnershipSource
+                (__tl-project-field ,source path)
+                (tc-selected-span-line (__tl-project-field ,source line) ,at)
+                (tc-selected-span-column
+                  (__tl-project-field ,source column)
+                  ,at)
+                (__tl-project-field ,source expansion)))
+            ,allow-mut
+            ,ordinary
+            ,sink)]
         [_
           (if ,ordinary
             (match (match ,expected
@@ -6118,17 +6160,23 @@
             ordinary?
             sink)]
         [(TcMaybeAstSourceSpan.No)
-          (tc-infer-selected-transparent-id
-            ctx
-            env
-            expanded
-            TcMaybeAstSourceSpan.No
-            syntax
-            expected
-            source
-            allow-mut-by-value-borrow
-            ordinary?
-            sink)])]
+          (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+            [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+              (let
+                [result
+                  (tc-infer-selected-transparent-id
+                    ctx
+                    inner-env
+                    expanded
+                    TcMaybeAstSourceSpan.No
+                    syntax
+                    expected
+                    source
+                    allow-mut-by-value-borrow
+                    ordinary?
+                    sink)]
+                (tc-macro-unsafe-leave! ctx unsafe-save)
+                result)])])]
     [(ast.AstExpr.Match match-box)
       (tc-infer-selected-match ctx env match-box syntax expected source sink)]
     ;; Outside a call argument a borrow keeps its own type, like the legacy
@@ -6407,34 +6455,36 @@
               ordinary?
               TcSelectedSink.Query)]))]
     [(TcSelectedSink.Capture store lease bindings)
-      (match span
-        [(TcMaybeAstSourceSpan.No)
-          (tc-infer-selected-result-id
-            ctx
-            env
-            (& syntax)
+      (if (and
+        (not allow-mut-by-value-borrow)
+        (match (& span)
+          [(TcMaybeAstSourceSpan.No) true]
+          [_ false]))
+        (tc-infer-selected-result-id
+          ctx
+          env
+          (& syntax)
+          id
+          expected
+          source
+          (TcSelectedSink.Capture store lease bindings))
+        (tc-infer-selected-view-id-validated
+          ctx
+          env
+          id
+          (match (tc-context-expr-get ctx id)
+            ;; Unsafe and compact expansion chains inherit read-through.
+            [(or (Unsafe _) (MacroExpansion _ _ _)) syntax]
+            [_ (typed.TypedSyntax.Source id)])
+          expected
+          source
+          (tc-selected-id-bound-ok
             id
-            expected
-            source
-            (TcSelectedSink.Capture store lease bindings))]
-        [(TcMaybeAstSourceSpan.Some _)
-          (tc-infer-selected-view-id-validated
-            ctx
-            env
-            id
-            (match (tc-context-expr-get ctx id)
-              ;; Unsafe and compact expansion chains inherit read-through.
-              [(or (Unsafe _) (MacroExpansion _ _ _)) syntax]
-              [_ (typed.TypedSyntax.Source id)])
-            expected
-            source
-            (tc-selected-id-bound-ok
-              id
-              (ast.ast-node-pool-context-expr-len lease.pools))
-            span
-            allow-mut-by-value-borrow
-            false
-            (TcSelectedSink.Capture store lease bindings))])]))
+            (ast.ast-node-pool-context-expr-len lease.pools))
+          span
+          allow-mut-by-value-borrow
+          false
+          (TcSelectedSink.Capture store lease bindings)))]))
 
 (define (tc-infer-selected-expansion
   [ctx : TcContext]
@@ -6464,57 +6514,60 @@
         ctx
         env
         (ExpansionEnter origin-path-id macro-name-id span)))
-    (let
-      [result
-        (tc-infer-selected-transparent-id
-          ctx
-          env
-          id
-          (if compact?
-            (tc-infer-needed-span (& (tc-context-expr-get ctx id)) span)
-            TcMaybeAstSourceSpan.No)
-          syntax
-          expected
-          (match (& sink)
-            [(TcSelectedSink.Query) source]
-            [_
-              (tc-selected-expansion-source
-                (& source)
-                span
-                provenance-id
-                macro-name-id)])
-          allow-mut-by-value-borrow
-          ordinary?
-          sink)]
-      (when
-        observed?
-        (tc-semantic-observer-send!
-          (tc-context-semantic-observer ctx)
-          ctx
-          env
-          ExpansionLeave))
-      (match result
-        [(TcSelectedResult.Err message next)
-          (tc-selected-unrepresented
-            (tc-macro-expansion-result-with-frame
+    (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+      [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+        (let
+          [result
+            (tc-infer-selected-transparent-id
               ctx
+              inner-env
               id
-              compact?
-              (macro-expansion-invocation-path-id provenance-id)
-              origin-path-id
-              macro-name-id
-              span
               (if compact?
-                (tc-locate-spanned-error-with-context
+                (tc-infer-needed-span (& (tc-context-expr-get ctx id)) span)
+                TcMaybeAstSourceSpan.No)
+              syntax
+              expected
+              (match (& sink)
+                [(TcSelectedSink.Query) source]
+                [_
+                  (tc-selected-expansion-source
+                    (& source)
+                    span
+                    provenance-id
+                    macro-name-id)])
+              allow-mut-by-value-borrow
+              ordinary?
+              sink)]
+          (tc-macro-unsafe-leave! ctx unsafe-save)
+          (when
+            observed?
+            (tc-semantic-observer-send!
+              (tc-context-semantic-observer ctx)
+              ctx
+              env
+              ExpansionLeave))
+          (match result
+            [(TcSelectedResult.Err message next)
+              (tc-selected-unrepresented
+                (tc-macro-expansion-result-with-frame
                   ctx
-                  env
-                  (tc-context-expr-get ctx id)
+                  id
+                  compact?
+                  (macro-expansion-invocation-path-id provenance-id)
+                  origin-path-id
+                  macro-name-id
                   span
-                  message)
-                (ResultTcType.Err message)))
-            next)]
-        [(TcSelectedResult.Ok ty occurrence next)
-          (TcSelectedResult.Ok ty occurrence next)]))))
+                  (if compact?
+                    (tc-locate-spanned-error-with-context
+                      ctx
+                      env
+                      (tc-context-expr-get ctx id)
+                      span
+                      message)
+                    (ResultTcType.Err message)))
+                next)]
+            [(TcSelectedResult.Ok ty occurrence next)
+              (TcSelectedResult.Ok ty occurrence next)]))])))
 
 (define (tc-infer-selected-unsafe
   [ctx : TcContext]
@@ -6535,6 +6588,7 @@
     [unused-unsafe : TcUnusedUnsafeState
       (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
     [prev : i64 (tc-unused-unsafe-enter-block unused-unsafe span)]
+    [open : i64 (tc-macro-unsafe-block-enter! ctx)]
     [result : (TcSelectedResult store lease intern bind)
       (tc-infer-selected-begin
         ctx
@@ -6544,6 +6598,7 @@
         expected
         source
         sink)]
+    (tc-macro-unsafe-block-leave! ctx open)
     (tc-unused-unsafe-restore-block! unused-unsafe prev)
     (tc-type-env-scoped-runtime-restore! saved)
     result))
@@ -7656,6 +7711,61 @@
           [(TcSelectedResult.Ok ty occurrence next)
             (TcSelectedResult.Ok ty occurrence next)])]
       [(TcMaybeAstSourceSpan.No) result])))
+
+;; A `(&mut place)` call argument reached through macro expansion or nested
+;; span wrappers: preserve expansion hygiene, ownership frames, and spans
+;; while enabling the immediate call-argument by-value borrow policy.
+(define (tc-infer-selected-mut-borrow-wrapped-arg
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [source : ownership.OwnershipSource]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (if (tc-type-env-scoped-identity-exhausted? env)
+    (TcSelectedResult.Err (tc-selected-error typed.TypedError.Exhausted) sink)
+    (match sink
+      [(TcSelectedSink.Query)
+        (tc-selected-speculative-query
+          ctx
+          (tc-infer-selected-view-id-validated
+            ctx
+            env
+            arg-id
+            (typed.TypedSyntax.Source arg-id)
+            ast.AstMaybeType.No
+            source
+            (tc-context-expr-query-id-ok ctx arg-id)
+            TcMaybeAstSourceSpan.No
+            true
+            false
+            TcSelectedSink.Query))]
+      [(TcSelectedSink.Capture store lease bindings)
+        (match (tc-selected-context-lease-ok ctx lease)
+          [(typed.TypedResult.Err error)
+            (tc-selected-failed error store lease bindings)]
+          [(typed.TypedResult.Ok _)
+            (match (typed.typed-lease-ok (& store) lease)
+              [(typed.TypedResult.Err error)
+                (tc-selected-failed error store lease bindings)]
+              [(typed.TypedResult.Ok _)
+                (tc-infer-selected-view-id-validated
+                  ctx
+                  env
+                  arg-id
+                  (typed.TypedSyntax.Source arg-id)
+                  ast.AstMaybeType.No
+                  source
+                  (tc-selected-id-bound-ok
+                    arg-id
+                    (ast.ast-node-pool-context-expr-len lease.pools))
+                  TcMaybeAstSourceSpan.No
+                  true
+                  false
+                  (TcSelectedSink.Capture store lease bindings))])])])))
 
 ;; --- Match (#8449) ------------------------------------------------------------
 ;;
@@ -14067,6 +14177,8 @@
             (tc-clear-unsafe-context
               (tc-clear-loop-target
                 (tc-type-env-scoped-carrier-env (& carrier))))]
+          [macro-unsafe-save : TcMacroUnsafeSave
+            (tc-macro-unsafe-enter-lambda! ctx)]
           [closed : TcSelectedClosedResult
             (let
               [current : TcTypeEnvScopedCarrier
@@ -14086,6 +14198,8 @@
                       (tc-global-shared-view ret)
                       (ownership.ownership-source-copy (& source))
                       (TcSelectedSink.Capture store lease (&mut bindings))))]))]
+          [_macro-unsafe-restore : unit
+            (tc-macro-unsafe-leave! ctx macro-unsafe-save)]
           [return-result : ResultTcType
             (match (& closed)
               [(TcSelectedClosedResult.Err message)
@@ -18651,8 +18765,84 @@
     lease
     intern
     bind)
+  (tc-infer-selected-temporary-borrow-arg-at
+    ctx
+    env
+    arg-id
+    arg-id
+    want
+    source
+    represented?
+    sink))
+
+;; `id` is `arg-id` or an expression its wrappers enclose: each expansion is
+;; entered so the operand types in its own unsafe context (#9259).
+(define (tc-infer-selected-temporary-borrow-arg-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [id : i64]
+  [want : ast.AstType]
+  [source : ownership.OwnershipSource]
+  [represented? : bool]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match (tc-context-expr-get ctx id)
+    [(ast.AstExpr.Spanned inner-id _)
+      (tc-infer-selected-temporary-borrow-arg-at
+        ctx
+        env
+        arg-id
+        inner-id
+        want
+        source
+        represented?
+        sink)]
+    [(ast.AstExpr.MacroExpansion inner-id _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result
+              (tc-infer-selected-temporary-borrow-arg-at
+                ctx
+                inner-env
+                arg-id
+                inner-id
+                want
+                source
+                represented?
+                sink)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
+    [_
+      (tc-infer-selected-temporary-borrow-operand
+        ctx
+        env
+        arg-id
+        id
+        want
+        source
+        represented?
+        sink)]))
+
+(define (tc-infer-selected-temporary-borrow-operand
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg-id : i64]
+  [id : i64]
+  [want : ast.AstType]
+  [source : ownership.OwnershipSource]
+  [represented? : bool]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
   (let
-    [arg : ast.AstExpr (tc-context-expr-get ctx arg-id)]
+    [arg : ast.AstExpr (tc-context-expr-get ctx id)]
     [operand-id : i64
       (tc-call-temporary-borrow-operand-id
         (tc-context-expr-bases ctx)
@@ -18841,26 +19031,42 @@
               (tc-global-shared-view source)
               sink)]
           [(TcSelectedMutBorrowArg.No)
-            (if (tc-selected-raw-spawn-entry?
-              ctx
-              env
-              (tc-global-shared-view func)
-              args
-              params
-              index)
-              (tc-infer-selected-spawn-entry
-                ctx
-                env
-                arg-id
-                (ast.clone-ast-type want)
-                (tc-global-shared-view source)
-                sink)
-              (if (and
-                (not constructor?)
-                (tc-arena-type? ctx (ast.clone-ast-type want))
-                (not
-                  (tc-call-param-moves-argument? ctx (ast.clone-ast-type want)))
-                (tc-selected-arena-handle-operand? ctx env arg-id))
+            (cond
+              [(and
+                  (not constructor?)
+                  (>=
+                    (tc-mut-borrow-arg-place-id
+                      ctx
+                      (tc-context-expr-get ctx arg-id))
+                    0))
+                (tc-infer-selected-mut-borrow-wrapped-arg
+                  ctx
+                  env
+                  arg-id
+                  (ownership.ownership-source-copy (& source))
+                  sink)]
+              [(tc-selected-raw-spawn-entry?
+                  ctx
+                  env
+                  (tc-global-shared-view func)
+                  args
+                  params
+                  index)
+                (tc-infer-selected-spawn-entry
+                  ctx
+                  env
+                  arg-id
+                  (ast.clone-ast-type want)
+                  (tc-global-shared-view source)
+                  sink)]
+              [(and
+                  (not constructor?)
+                  (tc-arena-type? ctx (ast.clone-ast-type want))
+                  (not
+                    (tc-call-param-moves-argument?
+                      ctx
+                      (ast.clone-ast-type want)))
+                  (tc-selected-arena-handle-operand? ctx env arg-id))
                 ;; A bare `Arena` parameter reads an owner without
                 ;; moving it (`tc-call-param-moves-argument?`).
                 (match (tc-expr-with-expected-or-actual-id
@@ -18877,7 +19083,8 @@
                       arg-id
                       got
                       (tc-global-shared-view source)
-                      sink)])
+                      sink)])]
+              [else
                 ;; A shared-reference formal borrows its argument for
                 ;; the call, so a compound one, or an element read
                 ;; through a temporary (no auto-borrowed place), is
@@ -18921,7 +19128,7 @@
                         (ast.AstMaybeType.Some (ast.clone-ast-type want))
                         arg-source
                         true
-                        sink)]))))])])))
+                        sink)]))])])])))
 
 ;; Evidence from lifetime inference is local to one call. Only a value
 ;; operand checked with the same formal and without an implicit borrow can
@@ -21516,9 +21723,31 @@
     lease
     intern
     bind)
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-bases ctx)
-    (& (tc-context-expr-get ctx id)))
+  (match (tc-context-expr-get ctx id)
+    [(ast.AstExpr.Spanned inner-id _)
+      (tc-infer-selected-raw-place-operands
+        ctx
+        env
+        inner-id
+        children
+        represented?
+        source
+        sink)]
+    [(ast.AstExpr.MacroExpansion inner-id _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result
+              (tc-infer-selected-raw-place-operands
+                ctx
+                inner-env
+                inner-id
+                children
+                represented?
+                source
+                sink)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(ast.AstExpr.BoxTake pointer-id)
       (tc-selected-raw-operand-push
         children
@@ -21930,8 +22159,14 @@
                       source
                       sink)])))]))]
     ;; An expansion or an annotation is transparent to the place it forms.
-    [(ast.AstExpr.MacroExpansion expanded _ _)
-      (tc-infer-selected-place-id ctx env expanded source sink)]
+    [(ast.AstExpr.MacroExpansion expanded _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result
+              (tc-infer-selected-place-id ctx inner-env expanded source sink)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(ast.AstExpr.Ann inner _)
       (tc-infer-selected-place-id ctx env inner source sink)]
     [(ast.AstExpr.Spanned inner span)
@@ -33958,6 +34193,383 @@
     (if (and data.enabled (>= current 0) (< current data.block-len))
       (set! (array-ref data.block-used current) true)
       unit)))
+
+;; Macro unsafe hygiene (#9259): an `(unsafe ...)` inside a macro template
+;; authorizes only template-origin syntax. Entering a template `MacroExpansion`
+;; (`macro-name-id >= 0`) pushes the call site's ambient unsafe state; entering
+;; a caller-origin `MacroExpansion` (`macro-name-id < 0`) pops and restores
+;; that ambient state (failing closed to safe if unmatched or behind a deferred
+;; lambda barrier). Frames are pushed only while an `(unsafe ...)` is open
+;; (`macro-unsafe-open > 0`): a lambda barrier and a cleared caller-origin
+;; operand reset the count and the base together, so with none open no frame
+;; is live above the base, the call site is safe, and entering either kind of
+;; expansion changes nothing.
+(defstruct TcMacroUnsafeSave
+  (prev-depth i64)
+  (prev-base i64)
+  (prev-block i64)
+  (prev-open i64)
+  (saved-slot-unsafe bool)
+  (saved-slot-block i64)
+  (saved-slot-open i64)
+  (restore-slot? bool)
+  ;; Index of this entry's `macro-unsafe-scoped-saves` record, or -1.
+  (scoped-index i64))
+
+(defstruct TcMacroUnsafeEnterResult
+  (env TcTypeEnv)
+  (save TcMacroUnsafeSave))
+
+(define (tc-macro-unsafe-noop-save) : TcMacroUnsafeSave
+  (TcMacroUnsafeSave -1 -1 -1 0 false -1 0 false -1))
+
+;; Typecheck and macro expansion count the `(unsafe ...)` blocks open around
+;; the current node: a caller-origin operand reached with no more open than
+;; when its template began cannot be made unsafe by the template, so it skips
+;; the environment scan. Returns the count to restore on leaving the block.
+(define (tc-macro-unsafe-block-enter! [ctx : TcContext]) : i64
+  (let
+    [state : TcUnusedUnsafeState
+      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (unsafe
+      (let
+        [prev : i64 (deref data).macro-unsafe-open]
+        (set! (deref data).macro-unsafe-open (+ prev 1))
+        prev))))
+
+(define (tc-macro-unsafe-block-leave! [ctx : TcContext] [prev : i64]) : unit
+  (let
+    [state : TcUnusedUnsafeState
+      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (unsafe
+      (set! (deref data).macro-unsafe-open prev))))
+
+;; Enable strict macro unsafe hygiene for a typecheck or macro-expansion pass.
+;; Post-typecheck lowering calls `tc-expr` directly on already-checked subtrees
+;; after stripping enclosing template wrappers, where `macro-unsafe-active` is 0.
+(define (tc-macro-unsafe-enforcement-enter! [job-state : TcJobState]) : i64
+  (let
+    [state : TcUnusedUnsafeState (tc-job-state-unused-unsafe job-state)]
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (unsafe
+      (let
+        [prev : i64 (deref data).macro-unsafe-active]
+        (set! (deref data).macro-unsafe-active (+ prev 1))
+        prev))))
+
+(define (tc-macro-unsafe-enforcement-leave!
+  [job-state : TcJobState]
+  [prev : i64]) : unit
+  (let
+    [state : TcUnusedUnsafeState (tc-job-state-unused-unsafe job-state)]
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (unsafe
+      (set! (deref data).macro-unsafe-active prev))))
+
+;; Pushes `save` on `macro-unsafe-scoped-saves` and returns its index.
+(define (tc-macro-unsafe-push-scoped-save!
+  [state : TcUnusedUnsafeState]
+  [save : TcTypeEnvScopedRuntimeSave]) : i64
+  (let
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (unsafe
+      (let
+        [index : i64 (deref data).macro-unsafe-scoped-len]
+        [old-cap : i64 (array-length (deref data).macro-unsafe-scoped-saves)]
+        (when
+          (<= old-cap index)
+          (let
+            [new-cap : i64
+              (if (<= old-cap 0)
+                16
+                (* old-cap 2))]
+            [owner : arena.Arena (arena.Arena (deref data).fixed-storage-arena)]
+            (in-arena
+              owner
+              (let
+                [grown : (__tl_dyn-array TcTypeEnvScopedRuntimeSave)
+                  (__tl_make-array TcTypeEnvScopedRuntimeSave new-cap)]
+                [at : i64 0]
+                (while (< at index)
+                  (set!
+                    (array-ref grown at)
+                    (array-ref (deref data).macro-unsafe-scoped-saves at))
+                  (set! at (+ at 1)))
+                (set! (deref data).macro-unsafe-scoped-saves grown)))))
+        (set! (array-ref (deref data).macro-unsafe-scoped-saves index) save)
+        (set! (deref data).macro-unsafe-scoped-len (+ index 1))
+        index))))
+
+(define (tc-macro-unsafe-ensure-slot!
+  [state : TcUnusedUnsafeState]
+  [slot : i64]) : unit
+  (let
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (unsafe
+      (let
+        [old-cap : i64 (array-length (deref data).macro-unsafe-frames)]
+        (when
+          (<= old-cap slot)
+          (let
+            [new-cap : i64
+              (if (<= old-cap 0)
+                64
+                (* old-cap 2))]
+            [owner : arena.Arena (arena.Arena (deref data).fixed-storage-arena)]
+            (while (<= new-cap slot)
+              (set! new-cap (* new-cap 2)))
+            (in-arena
+              owner
+              (let
+                [new-frames : (__tl_dyn-array bool)
+                  (__tl_make-array bool new-cap)]
+                [new-blocks : (__tl_dyn-array i64)
+                  (__tl_make-array i64 new-cap)]
+                [new-opens : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
+                [copy-len : i64 (deref data).macro-unsafe-depth]
+                [index : i64 0]
+                (while (< index copy-len)
+                  (set!
+                    (array-ref new-frames index)
+                    (array-ref (deref data).macro-unsafe-frames index))
+                  (set!
+                    (array-ref new-blocks index)
+                    (array-ref (deref data).macro-unsafe-blocks index))
+                  (set!
+                    (array-ref new-opens index)
+                    (array-ref (deref data).macro-unsafe-opens index))
+                  (set! index (+ index 1)))
+                (set! (deref data).macro-unsafe-frames new-frames)
+                (set! (deref data).macro-unsafe-blocks new-blocks)
+                (set! (deref data).macro-unsafe-opens new-opens)))))))))
+
+(define (tc-macro-unsafe-enter-template! [ctx : TcContext] [env : TcTypeEnv]) : TcMacroUnsafeSave
+  (let
+    [state : TcUnusedUnsafeState
+      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    [open : i64
+      (unsafe
+        (deref data).macro-unsafe-open)]
+    ;; While hygiene is enforced every unsafe environment comes from a counted
+    ;; `(unsafe ...)`, so with none open the call site is safe.
+    (if (or
+      (<= open 0)
+      (<=
+        (unsafe
+          (deref data).macro-unsafe-active)
+        0))
+      (tc-macro-unsafe-noop-save)
+      (let
+        [ambient : bool (tc-in-unsafe? env)]
+        [prev-depth : i64
+          (unsafe
+            (deref data).macro-unsafe-depth)]
+        [prev-base : i64
+          (unsafe
+            (deref data).macro-unsafe-base)]
+        [prev-block : i64
+          (unsafe
+            (deref data).current-block)]
+        (tc-macro-unsafe-ensure-slot! state prev-depth)
+        (unsafe
+          (set! (array-ref (deref data).macro-unsafe-frames prev-depth) ambient)
+          (set!
+            (array-ref (deref data).macro-unsafe-blocks prev-depth)
+            prev-block)
+          (set! (array-ref (deref data).macro-unsafe-opens prev-depth) open)
+          (set! (deref data).macro-unsafe-depth (+ prev-depth 1)))
+        (TcMacroUnsafeSave
+          prev-depth
+          prev-base
+          prev-block
+          open
+          false
+          -1
+          0
+          false
+          -1)))))
+
+(define (tc-macro-unsafe-enter-expansion!
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [macro-name-id : i64]) : TcMacroUnsafeEnterResult
+  (if (>= macro-name-id 0)
+    (TcMacroUnsafeEnterResult env (tc-macro-unsafe-enter-template! ctx env))
+    (let
+      [state : TcUnusedUnsafeState
+        (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+      [data : (MutPtr TcUnusedUnsafeStateData)
+        (tc-unused-unsafe-state-ptr state)]
+      [open : i64
+        (unsafe
+          (deref data).macro-unsafe-open)]
+      (if (or
+        (<= open 0)
+        (<=
+          (unsafe
+            (deref data).macro-unsafe-active)
+          0))
+        (TcMacroUnsafeEnterResult env (tc-macro-unsafe-noop-save))
+        (let
+          [prev-depth : i64
+            (unsafe
+              (deref data).macro-unsafe-depth)]
+          [prev-base : i64
+            (unsafe
+              (deref data).macro-unsafe-base)]
+          [prev-block : i64
+            (unsafe
+              (deref data).current-block)]
+          [matched? : bool (> prev-depth prev-base)]
+          [ambient : bool
+            (if matched?
+              (unsafe
+                (array-ref (deref data).macro-unsafe-frames (- prev-depth 1)))
+              false)]
+          [caller-block : i64
+            (if matched?
+              (unsafe
+                (array-ref (deref data).macro-unsafe-blocks (- prev-depth 1)))
+              -1)]
+          [caller-open : i64
+            (if matched?
+              (unsafe
+                (array-ref (deref data).macro-unsafe-opens (- prev-depth 1)))
+              -1)]
+          ;; Only an `(unsafe ...)` opened inside the template can make the
+          ;; operand's environment unsafe where the call site was not.
+          [clear? : bool
+            (and (not ambient) (!= caller-open open) (tc-in-unsafe? env))]
+          (unsafe
+            (when
+              matched?
+              (set! (deref data).macro-unsafe-depth (- prev-depth 1)))
+            (when
+              (deref data).enabled
+              (set! (deref data).current-block caller-block)))
+          (if clear?
+            (let
+              [scoped-index : i64
+                (tc-macro-unsafe-push-scoped-save!
+                  state
+                  (tc-type-env-scoped-runtime-enter-env! env))]
+              [cleared-env : TcTypeEnv (tc-clear-unsafe-context env)]
+              ;; The operand is safe: like a lambda body, it opens no
+              ;; `(unsafe ...)` and sees no enclosing frame.
+              (unsafe
+                (set! (deref data).macro-unsafe-open 0)
+                (set!
+                  (deref data).macro-unsafe-base
+                  (deref data).macro-unsafe-depth))
+              (TcMacroUnsafeEnterResult
+                cleared-env
+                (TcMacroUnsafeSave
+                  prev-depth
+                  prev-base
+                  prev-block
+                  open
+                  ambient
+                  caller-block
+                  caller-open
+                  matched?
+                  scoped-index)))
+            (TcMacroUnsafeEnterResult
+              env
+              (TcMacroUnsafeSave
+                prev-depth
+                prev-base
+                prev-block
+                open
+                ambient
+                caller-block
+                caller-open
+                matched?
+                -1))))))))
+
+(define (tc-macro-unsafe-enter-lambda! [ctx : TcContext]) : TcMacroUnsafeSave
+  (let
+    [state : TcUnusedUnsafeState
+      (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+    [data : (MutPtr TcUnusedUnsafeStateData) (tc-unused-unsafe-state-ptr state)]
+    (if (<=
+      (unsafe
+        (deref data).macro-unsafe-active)
+      0)
+      (tc-macro-unsafe-noop-save)
+      (let
+        [prev-depth : i64
+          (unsafe
+            (deref data).macro-unsafe-depth)]
+        [prev-base : i64
+          (unsafe
+            (deref data).macro-unsafe-base)]
+        [prev-block : i64
+          (unsafe
+            (deref data).current-block)]
+        [prev-open : i64
+          (unsafe
+            (deref data).macro-unsafe-open)]
+        (unsafe
+          (set! (deref data).macro-unsafe-base prev-depth)
+          (set! (deref data).macro-unsafe-open 0)
+          (when (deref data).enabled (set! (deref data).current-block -1)))
+        (TcMacroUnsafeSave
+          prev-depth
+          prev-base
+          prev-block
+          prev-open
+          false
+          -1
+          0
+          false
+          -1)))))
+
+(define (tc-macro-unsafe-leave! [ctx : TcContext] [save : TcMacroUnsafeSave]) : unit
+  (match save
+    [(TcMacroUnsafeSave
+        prev-depth
+        prev-base
+        prev-block
+        prev-open
+        saved-slot-unsafe
+        saved-slot-block
+        saved-slot-open
+        restore-slot?
+        scoped-index)
+      (if (< prev-depth 0)
+        unit
+        (let
+          [state : TcUnusedUnsafeState
+            (tc-job-state-unused-unsafe (tc-context-job-state ctx))]
+          [data : (MutPtr TcUnusedUnsafeStateData)
+            (tc-unused-unsafe-state-ptr state)]
+          (when
+            (>= scoped-index 0)
+            (unsafe
+              (tc-type-env-scoped-runtime-restore!
+                (array-ref (deref data).macro-unsafe-scoped-saves scoped-index))
+              (set! (deref data).macro-unsafe-scoped-len scoped-index)))
+          (unsafe
+            (when
+              restore-slot?
+              (set!
+                (array-ref (deref data).macro-unsafe-frames (- prev-depth 1))
+                saved-slot-unsafe)
+              (set!
+                (array-ref (deref data).macro-unsafe-blocks (- prev-depth 1))
+                saved-slot-block)
+              (set!
+                (array-ref (deref data).macro-unsafe-opens (- prev-depth 1))
+                saved-slot-open))
+            (set! (deref data).macro-unsafe-depth prev-depth)
+            (set! (deref data).macro-unsafe-base prev-base)
+            (set! (deref data).macro-unsafe-open prev-open)
+            (when
+              (deref data).enabled
+              (set! (deref data).current-block prev-block)))))]))
 
 (define (tc-bind-return-type [env : TcTypeEnv] [ty : ast.AstType]) : TcTypeEnv
   (tc-bind-runtime-marker-id env (tc-return-type-id) ty Other))
@@ -52664,9 +53276,20 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [place : ast.AstExpr]) : ResultTcType
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-segment-bases ctx)
-    (& place))
+  (match (& place)
+    [(Spanned inner _)
+      (tc-ptr-addr-of-place ctx env (tc-context-expr-get ctx inner))]
+    [(MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ResultTcType
+              (tc-ptr-addr-of-place
+                ctx
+                inner-env
+                (tc-context-expr-get ctx inner))]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(Var name)
       (match (tc-ptr-addr-of-local-lookup env name)
         [(Ok ty) (tc-ptr-addr-of-root-type ctx ty)]
@@ -73648,14 +74271,20 @@
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-spmd-expr-typed ctx expr-bases env spmd-env inner expr-ty))]
-    [(MacroExpansion inner-box _ _)
-      (tc-spmd-expr-typed
-        ctx
-        expr-bases
-        env
-        spmd-env
-        (ast.ast-expr-segment-bases-get expr-bases inner-box)
-        expr-ty)]
+    [(MacroExpansion inner-box _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ResultTcSpmdExprInfo
+              (tc-spmd-expr-typed
+                ctx
+                expr-bases
+                inner-env
+                spmd-env
+                (ast.ast-expr-segment-bases-get expr-bases inner-box)
+                expr-ty)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(ForOwnedState payload)
       (tc-spmd-for-owned-state
         ctx
@@ -74153,7 +74782,17 @@
                       (tc-spmd-env-merge-classes cond-env body-env))])))]))]
     [(Begin exprs) (tc-spmd-begin-list ctx expr-bases env spmd-env exprs)]
     [(Unsafe exprs)
-      (tc-spmd-begin-list ctx expr-bases (tc-enter-unsafe env) spmd-env exprs)]
+      (let
+        [open : i64 (tc-macro-unsafe-block-enter! ctx)]
+        [result
+          (tc-spmd-begin-list
+            ctx
+            expr-bases
+            (tc-enter-unsafe env)
+            spmd-env
+            exprs)]
+        (tc-macro-unsafe-block-leave! ctx open)
+        result)]
     [(Set name value-box)
       (match (tc-spmd-env-lookup-id spmd-env name)
         [(Found _ _ _ (CompactSlot))
@@ -79702,7 +80341,27 @@
   [env : TcTypeEnv]
   [mutable : bool]
   [expr : ast.AstExpr]) : ResultTcBorrowPlace
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+  (match expr
+    [(ast.AstExpr.Spanned inner _)
+      (tc-borrow-place-with-access
+        ctx
+        expr-bases
+        env
+        mutable
+        (ast.ast-expr-segment-bases-get expr-bases inner))]
+    [(ast.AstExpr.MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ResultTcBorrowPlace
+              (tc-borrow-place-with-access
+                ctx
+                expr-bases
+                inner-env
+                mutable
+                (ast.ast-expr-segment-bases-get expr-bases inner))]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(ast.AstExpr.Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (match (tc-dotted-local-field-expr-id-after-check
@@ -79844,9 +80503,20 @@
   [env : TcTypeEnv]
   [expr : (& ast.AstExpr)]
   [source : TcBorrowSource]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-segment-bases ctx)
-    expr)
+  (match expr
+    [(Spanned inner _)
+      (let
+        [unspanned : ast.AstExpr (tc-context-expr-get ctx inner)]
+        (tc-mut-borrow-non-call-place-ok ctx env unspanned source))]
+    [(MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [expanded : ast.AstExpr (tc-context-expr-get ctx inner)]
+            [result : ResultTcUnit
+              (tc-mut-borrow-non-call-place-ok ctx inner-env expanded source)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(Var name)
       (let
         [ty
@@ -79938,9 +80608,20 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : ResultTcStorePlaceTarget
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-segment-bases ctx)
-    (& expr))
+  (match expr
+    [(Spanned inner _)
+      (tc-store-place-target ctx env (tc-context-expr-get ctx inner))]
+    [(MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ResultTcStorePlaceTarget
+              (tc-store-place-target
+                ctx
+                inner-env
+                (tc-context-expr-get ctx inner))]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (let
@@ -80313,9 +80994,25 @@
   [env : TcTypeEnv]
   [arg : ast.AstExpr]
   [want : ast.AstType]) : ResultTcType
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-bases ctx)
-    (& arg))
+  (match arg
+    [(ast.AstExpr.Spanned inner _)
+      (tc-call-temporary-borrow-type
+        ctx
+        env
+        (tc-context-expr-get ctx inner)
+        want)]
+    [(ast.AstExpr.MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ResultTcType
+              (tc-call-temporary-borrow-type
+                ctx
+                inner-env
+                (tc-context-expr-get ctx inner)
+                want)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(ast.AstExpr.Borrow mutable lifetime-id operand-box)
       (match (ast.ast-borrow-lifetime-from-id lifetime-id)
         [(ast.AstBorrowLifetime.Named _)
@@ -86280,9 +86977,20 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [receiver : ast.AstExpr]) : ast.AstMaybeType
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-bases ctx)
-    (& receiver))
+  (match (& receiver)
+    [(Spanned inner _)
+      (tc-raw-deref-pointer-type ctx env (tc-context-expr-get ctx inner))]
+    [(MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ast.AstMaybeType
+              (tc-raw-deref-pointer-type
+                ctx
+                inner-env
+                (tc-context-expr-get ctx inner))]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(BoxTake pointer-box)
       (match (tc-expr-id ctx env pointer-box)
         [(Ok pointer-ty)
@@ -86301,9 +87009,20 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [place : ast.AstExpr]) : ast.AstMaybeType
-  (match (ast.ast-expr-unspan-with-segment-bases
-    (tc-context-expr-bases ctx)
-    (& place))
+  (match (& place)
+    [(Spanned inner _)
+      (tc-raw-deref-place-pointer-type ctx env (tc-context-expr-get ctx inner))]
+    [(MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ast.AstMaybeType
+              (tc-raw-deref-place-pointer-type
+                ctx
+                inner-env
+                (tc-context-expr-get ctx inner))]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
     [(BoxTake _) (tc-raw-deref-pointer-type ctx env place)]
     [(or (StructGet receiver-box _) (TupleRef receiver-box _)
          (ArrayRef receiver-box _))
@@ -86329,13 +87048,33 @@
   [env : TcTypeEnv]
   [receiver : ast.AstExpr]
   [message : String]) : ResultTcType
-  (match (tc-raw-deref-pointer-type ctx env receiver)
-    [(Some pointer-ty)
-      (let
-        [_ (try (tc-require-unsafe ctx env "deref of a raw pointer"))]
-        [elem (try (tc-raw-pointer-elem pointer-ty message))]
-        (Ok (tc-resolve-type ctx elem)))]
-    [(No) (Err message)]))
+  (match (& receiver)
+    [(Spanned inner _)
+      (tc-raw-deref-field-receiver-type
+        ctx
+        env
+        (tc-context-expr-get ctx inner)
+        message)]
+    [(MacroExpansion inner _ macro-name-id)
+      (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+        [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+          (let
+            [result : ResultTcType
+              (tc-raw-deref-field-receiver-type
+                ctx
+                inner-env
+                (tc-context-expr-get ctx inner)
+                message)]
+            (tc-macro-unsafe-leave! ctx unsafe-save)
+            result)])]
+    [_
+      (match (tc-raw-deref-pointer-type ctx env receiver)
+        [(Some pointer-ty)
+          (let
+            [_ (try (tc-require-unsafe ctx env "deref of a raw pointer"))]
+            [elem (try (tc-raw-pointer-elem pointer-ty message))]
+            (Ok (tc-resolve-type ctx elem)))]
+        [(No) (Err message)])]))
 
 (define (tc-box-set-inner-type [ctx : TcContext] [box-ty : ast.AstType]) : ResultTcType
   (match (tc-type-strip-region
@@ -87845,17 +88584,21 @@
               [(ast.AstMaybeType.Some declared)
                 (owned_view.compiler-owned-reference-shared-view declared)]
               [(ast.AstMaybeType.No) ast.AstType.Never]))]
-        [result
-          (try
-            (match (& input.ret)
-              [(ast.AstMaybeType.Some want)
-                (tc-expr-with-expected-or-actual
-                  ctx
-                  lambda-env
-                  (tc-global-shared-view input.body)
-                  (owned_view.compiler-owned-reference-shared-view want))]
-              [(ast.AstMaybeType.No)
-                (tc-expr ctx lambda-env (tc-global-shared-view input.body))]))]
+        [macro-unsafe-save : TcMacroUnsafeSave
+          (tc-macro-unsafe-enter-lambda! ctx)]
+        [raw-result : ResultTcType
+          (match (& input.ret)
+            [(ast.AstMaybeType.Some want)
+              (tc-expr-with-expected-or-actual
+                ctx
+                lambda-env
+                (tc-global-shared-view input.body)
+                (owned_view.compiler-owned-reference-shared-view want))]
+            [(ast.AstMaybeType.No)
+              (tc-expr ctx lambda-env (tc-global-shared-view input.body))])]
+        [_macro-unsafe-restore : unit
+          (tc-macro-unsafe-leave! ctx macro-unsafe-save)]
+        [result (try raw-result)]
         [return-ty
           (try
             (tc-lambda-return-type
@@ -114213,7 +114956,14 @@
                     (ctfe_support.ctfe-compact-caller-origin-name)
                     -1)))
               span))]
-        [(No) captured])
+        [(No)
+          (tc-context-expr-push-cell-addresses
+            expr-cell-address
+            type-cell-address
+            (MacroExpansion
+              captured
+              (macro-expansion-provenance-id -1 (macro-invocation-path-id ctx))
+              -1))])
       captured)))
 
 (define (macro-env-extend-captured-param
@@ -117426,8 +118176,9 @@
         ;; The produced code is rewalked as written in the macro's file. A
         ;; private place bridge splices its operands without a caller-origin
         ;; marker, so its expansion keeps the caller's file.
+        [private-bridge? : bool (macro-private-place-bridge-name? macro-name)]
         [definition-path-id : i64
-          (if (macro-private-place-bridge-name? macro-name)
+          (if private-bridge?
             -1
             (macro-definition-path-id
               ctx
@@ -117456,20 +118207,41 @@
                 (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                 (let
                   [rewalk-result : ResultMacroExpr
-                    (macro-hygiene-rewalk-expansion
-                      ctx
-                      type-env
-                      decls
-                      (tc-context-type-pools ctx)
-                      expanded
-                      (MacroHygieneContext
-                        macro-name-id
-                        definition-module-id
-                        declaration-id
-                        ctx.shared)
-                      (+ depth 1)
-                      definition-path-id
-                      expected)]
+                    (if private-bridge?
+                      (macro-hygiene-rewalk-expansion
+                        ctx
+                        type-env
+                        decls
+                        (tc-context-type-pools ctx)
+                        expanded
+                        (MacroHygieneContext
+                          macro-name-id
+                          definition-module-id
+                          declaration-id
+                          ctx.shared)
+                        (+ depth 1)
+                        definition-path-id
+                        expected)
+                      (let
+                        [unsafe-save : TcMacroUnsafeSave
+                          (tc-macro-unsafe-enter-template! ctx type-env)]
+                        [res : ResultMacroExpr
+                          (macro-hygiene-rewalk-expansion
+                            ctx
+                            type-env
+                            decls
+                            (tc-context-type-pools ctx)
+                            expanded
+                            (MacroHygieneContext
+                              macro-name-id
+                              definition-module-id
+                              declaration-id
+                              ctx.shared)
+                            (+ depth 1)
+                            definition-path-id
+                            expected)]
+                        (tc-macro-unsafe-leave! ctx unsafe-save)
+                        res))]
                   (begin
                     (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                     rewalk-result)))
@@ -117493,20 +118265,41 @@
                 (cfg compile-profile (compiler-tc-walk-rewalk-start!))
                 (let
                   [rewalk-result : ResultMacroExpr
-                    (macro-hygiene-rewalk-expansion
-                      ctx
-                      type-env
-                      decls
-                      pools
-                      expanded
-                      (MacroHygieneContext
-                        macro-name-id
-                        definition-module-id
-                        declaration-id
-                        ctx.shared)
-                      (+ depth 1)
-                      definition-path-id
-                      expected)]
+                    (if private-bridge?
+                      (macro-hygiene-rewalk-expansion
+                        ctx
+                        type-env
+                        decls
+                        pools
+                        expanded
+                        (MacroHygieneContext
+                          macro-name-id
+                          definition-module-id
+                          declaration-id
+                          ctx.shared)
+                        (+ depth 1)
+                        definition-path-id
+                        expected)
+                      (let
+                        [unsafe-save : TcMacroUnsafeSave
+                          (tc-macro-unsafe-enter-template! ctx type-env)]
+                        [res : ResultMacroExpr
+                          (macro-hygiene-rewalk-expansion
+                            ctx
+                            type-env
+                            decls
+                            pools
+                            expanded
+                            (MacroHygieneContext
+                              macro-name-id
+                              definition-module-id
+                              declaration-id
+                              ctx.shared)
+                            (+ depth 1)
+                            definition-path-id
+                            expected)]
+                        (tc-macro-unsafe-leave! ctx unsafe-save)
+                        res))]
                   (begin
                     (cfg compile-profile (compiler-tc-walk-rewalk-finish!))
                     rewalk-result)))
@@ -118584,6 +119377,18 @@
     [(ast.AstExpr.WithRegion region _) (tc-push-region env region)]
     [_ env]))
 
+;; An Unsafe NODE opens an `(unsafe ...)` block around its body. Returns the
+;; open count to restore on leaving it, or -1 for any other form.
+(define (macro-list-form-unsafe-enter!
+  [ctx : TcContext]
+  [node : (& ast.AstExpr)]) : i64
+  (match node
+    [(ast.AstExpr.Unsafe _) (tc-macro-unsafe-block-enter! ctx)]
+    [_ -1]))
+
+(define (macro-list-form-unsafe-leave! [ctx : TcContext] [open : i64]) : unit
+  (when (>= open 0) (tc-macro-unsafe-block-leave! ctx open)))
+
 ;; NODE, a Begin, Unsafe, WithRegion, Array or DynArray form, over ITEMS.
 (define (macro-list-form-with
   [node : (& ast.AstExpr)]
@@ -118635,15 +119440,17 @@
     (Ok expr-id)
     (let
       [node : ast.AstExpr (tc-context-expr-get ctx expr-id)]
-      [nexprs : ast.AstExprList
-        (try
-          (macro-reapply-expected-exprs-tail
-            ctx
-            (macro-list-form-env env (& node))
-            decls
-            depth
-            exprs
-            expected))]
+      [open : i64 (macro-list-form-unsafe-enter! ctx (& node))]
+      [tail-result : ResultMacroExprList
+        (macro-reapply-expected-exprs-tail
+          ctx
+          (macro-list-form-env env (& node))
+          decls
+          depth
+          exprs
+          expected)]
+      [_open-restore : unit (macro-list-form-unsafe-leave! ctx open)]
+      [nexprs : ast.AstExprList (try tail-result)]
       (Ok (ast.ast-node-push (macro-list-form-with (& node) nexprs))))))
 
 (define (macro-reapply-expected-node
@@ -118695,26 +119502,29 @@
             (when
               (>= origin 0)
               (tc-macro-call-site-state-set-expansion-path-id! state origin))
-            (let
-              [result : ResultMacroExpr
-                (macro-reapply-expected-node
-                  ctx
-                  env
-                  decls
-                  depth
-                  inner-box
-                  expected)]
-              (tc-macro-call-site-state-set-expansion-path-id! state saved)
-              (match result
-                [(Ok ninner)
-                  (if (= ninner inner-box)
-                    (Ok expr-id)
-                    (Ok
-                      (ast.ast-expr-macro-expansion
-                        ninner
-                        provenance-id
-                        macro-name-id)))]
-                [(Err error) (Err error)])))]
+            (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+              [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+                (let
+                  [result : ResultMacroExpr
+                    (macro-reapply-expected-node
+                      ctx
+                      inner-env
+                      decls
+                      depth
+                      inner-box
+                      expected)]
+                  (tc-macro-unsafe-leave! ctx unsafe-save)
+                  (tc-macro-call-site-state-set-expansion-path-id! state saved)
+                  (match result
+                    [(Ok ninner)
+                      (if (= ninner inner-box)
+                        (Ok expr-id)
+                        (Ok
+                          (ast.ast-expr-macro-expansion
+                            ninner
+                            provenance-id
+                            macro-name-id)))]
+                    [(Err error) (Err error)]))]))]
         [(CloneOut form-box _)
           (macro-reapply-clone-out
             ctx
@@ -118957,18 +119767,23 @@
                                 (tc-bind-return-type
                                   (tc-bind-params
                                     ctx
-                                    (tc-clear-loop-target env)
+                                    (tc-clear-unsafe-context
+                                      (tc-clear-loop-target env))
                                     (& params))
                                   (ast.clone-ast-type (& ret-ty)))]
-                              [nbody : i64
-                                (try
-                                  (macro-reapply-expected-node
-                                    ctx
-                                    body-env
-                                    decls
-                                    depth
-                                    body-box
-                                    (ast.AstMaybeType.Some ret-ty)))]
+                              [unsafe-save : TcMacroUnsafeSave
+                                (tc-macro-unsafe-enter-lambda! ctx)]
+                              [nbody-result : ResultMacroExpr
+                                (macro-reapply-expected-node
+                                  ctx
+                                  body-env
+                                  decls
+                                  depth
+                                  body-box
+                                  (ast.AstMaybeType.Some ret-ty))]
+                              [_unsafe-restore : unit
+                                (tc-macro-unsafe-leave! ctx unsafe-save)]
+                              [nbody : i64 (try nbody-result)]
                               (if (= nbody body-box)
                                 (Ok expr-id)
                                 (Ok
@@ -120418,24 +121233,27 @@
           (when
             (>= origin 0)
             (tc-macro-call-site-state-set-expansion-path-id! state origin))
-          (let
-            [result : ResultMacroExpr
-              (macro-expand-node-expected
-                ctx
-                env
-                decls
-                depth
-                inner-box
-                expected)]
-            (tc-macro-call-site-state-set-expansion-path-id! state saved)
-            (match result
-              [(Ok ninner)
-                (Ok
-                  (ast.ast-expr-macro-expansion
-                    ninner
-                    provenance-id
-                    macro-name-id))]
-              [(Err error) (Err error)])))]
+          (match (tc-macro-unsafe-enter-expansion! ctx env macro-name-id)
+            [(TcMacroUnsafeEnterResult inner-env unsafe-save)
+              (let
+                [result : ResultMacroExpr
+                  (macro-expand-node-expected
+                    ctx
+                    inner-env
+                    decls
+                    depth
+                    inner-box
+                    expected)]
+                (tc-macro-unsafe-leave! ctx unsafe-save)
+                (tc-macro-call-site-state-set-expansion-path-id! state saved)
+                (match result
+                  [(Ok ninner)
+                    (Ok
+                      (ast.ast-expr-macro-expansion
+                        ninner
+                        provenance-id
+                        macro-name-id))]
+                  [(Err error) (Err error)]))]))]
       [(Call func-box args)
         (let
           [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
@@ -120813,12 +121631,20 @@
                 (match (ast.clone-ast-maybe-type (& body-expected))
                   [(Some ret)
                     (tc-bind-return-type
-                      (tc-bind-params ctx (tc-clear-loop-target env) params)
+                      (tc-bind-params
+                        ctx
+                        (tc-clear-unsafe-context (tc-clear-loop-target env))
+                        params)
                       ret)]
                   [(No)
                     (tc-bind-return-type
-                      (tc-bind-params ctx (tc-clear-loop-target env) params)
+                      (tc-bind-params
+                        ctx
+                        (tc-clear-unsafe-context (tc-clear-loop-target env))
+                        params)
                       (Never))])]
+              [unsafe-save : TcMacroUnsafeSave
+                (tc-macro-unsafe-enter-lambda! ctx)]
               [nbody-result : ResultMacroExpr
                 (macro-expand-node-expected
                   ctx
@@ -120827,6 +121653,7 @@
                   depth
                   body-box
                   body-expected)]
+              [_unsafe-restore : unit (tc-macro-unsafe-leave! ctx unsafe-save)]
               [_restore : unit
                 (match (& maybe-ret)
                   [(Some _)
@@ -121112,15 +121939,17 @@
       [(or (Begin exprs) (Unsafe exprs) (WithRegion _ exprs))
         (let
           [body-env : TcTypeEnv (macro-list-form-env env (& expr))]
-          [nexprs
-            (try
-              (macro-expand-exprs-expected
-                ctx
-                body-env
-                decls
-                depth
-                exprs
-                expected))]
+          [open : i64 (macro-list-form-unsafe-enter! ctx (& expr))]
+          [expand-result
+            (macro-expand-exprs-expected
+              ctx
+              body-env
+              decls
+              depth
+              exprs
+              expected)]
+          [_open-restore : unit (macro-list-form-unsafe-leave! ctx open)]
+          [nexprs (try expand-result)]
           (Ok (ast.ast-node-push (macro-list-form-with (& expr) nexprs))))]
       [(or (Array exprs) (DynArray exprs))
         (let
@@ -126237,18 +127066,22 @@
     [macro-state : TcMacroState (tc-job-state-macro-state job-state)]
     [_scratch-begin : unit (macro-expand-scratch-begin! macro-state)]
     [scratch : i64 (macro-expand-scratch-arena-get macro-state)]
-    (in-arena
-      (unsafe
-        (arena.Arena scratch))
-      (macro-expand-program-pass-in-scratch-with-paths-and-pools
-        load-state
-        program
-        paths
-        pools
-        source-names
-        job-state
-        stdlib-roots
-        cfgs))))
+    [prev-unsafe-active : i64 (tc-macro-unsafe-enforcement-enter! job-state)]
+    [result : ResultMacroExpand
+      (in-arena
+        (unsafe
+          (arena.Arena scratch))
+        (macro-expand-program-pass-in-scratch-with-paths-and-pools
+          load-state
+          program
+          paths
+          pools
+          source-names
+          job-state
+          stdlib-roots
+          cfgs))]
+    (tc-macro-unsafe-enforcement-leave! job-state prev-unsafe-active)
+    result))
 
 (defenum MacroMaybeGeneratedNormalImport
   (No)
@@ -133070,29 +133903,38 @@
   [global-env : TcTypeEnv]
   [decl : ast.AstDecl]) : ResultTcUnit
   (tc-unbound-suggestion-snapshot-reset!)
-  (if (ast.ast-decl-comptime-only? decl)
-    (let
-      [template : ast.AstDecl
-        (ast.ast-decl-with-meta
-          (ast.ast-decl-meta-runtime-shared-view)
-          (tc-global-shared-view decl))]
-      (match (ast.ast-decl-generated-meta decl)
-        [(Some _ _ _ _)
-          (tc-check-decl-with-global-env-inner ctx top-env global-env template)]
-        [(No)
-          (let
-            [_
-              (try
-                (tc-check-comptime-decl-purity
-                  ctx
-                  top-env
-                  (tc-global-shared-view template)))]
-            (tc-check-decl-with-global-env-inner
-              ctx
-              top-env
-              global-env
-              template))]))
-    (tc-check-decl-with-global-env-inner ctx top-env global-env decl)))
+  (let
+    [job-state : TcJobState (tc-context-job-state ctx)]
+    [prev-unsafe-active : i64 (tc-macro-unsafe-enforcement-enter! job-state)]
+    [result : ResultTcUnit
+      (if (ast.ast-decl-comptime-only? decl)
+        (let
+          [template : ast.AstDecl
+            (ast.ast-decl-with-meta
+              (ast.ast-decl-meta-runtime-shared-view)
+              (tc-global-shared-view decl))]
+          (match (ast.ast-decl-generated-meta decl)
+            [(Some _ _ _ _)
+              (tc-check-decl-with-global-env-inner
+                ctx
+                top-env
+                global-env
+                template)]
+            [(No)
+              (match (tc-check-comptime-decl-purity
+                ctx
+                top-env
+                (tc-global-shared-view template))
+                [(Ok)
+                  (tc-check-decl-with-global-env-inner
+                    ctx
+                    top-env
+                    global-env
+                    template)]
+                [(Err message) (Err message)])]))
+        (tc-check-decl-with-global-env-inner ctx top-env global-env decl))]
+    (tc-macro-unsafe-enforcement-leave! job-state prev-unsafe-active)
+    result))
 
 (define (tc-check-decl-scoped-name-id [ctx : TcContext] [name : i64]) : i64
   (if (and

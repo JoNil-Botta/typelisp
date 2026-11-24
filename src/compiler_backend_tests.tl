@@ -10201,16 +10201,16 @@ high:
   (let
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 12)]
     (backend.compiler-backend-count-instr-uses
-      (owned_view.compiler-owned-shared-view counts)
+      (&mut counts)
       (irt.instr "%0 = call* %1(%2, %3) : i64"))
     (backend.compiler-backend-count-instr-uses
-      (owned_view.compiler-owned-shared-view counts)
+      (&mut counts)
       (irt.instr "%4 = call_c* %4(%5) : i64"))
     (backend.compiler-backend-count-instr-uses
-      (owned_view.compiler-owned-shared-view counts)
+      (&mut counts)
       (TailCall (ci.intern "tail") (Two (Var 6) (Var 7)) (I64)))
     (backend.compiler-backend-count-instr-uses
-      (owned_view.compiler-owned-shared-view counts)
+      (&mut counts)
       (irt.instr "tailcall* %8(%9, %10) : i64"))
     (and
       (be_state.backend-and8

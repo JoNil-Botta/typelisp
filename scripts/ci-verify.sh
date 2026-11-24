@@ -381,6 +381,14 @@ gate_bootstrap_compiler() {
     ci_verify_load_handoffs bootstrap-compiler || return 1
     echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
 
+    # Build the prebuilt stdlib sysroot beside the converged handed-off compiler
+    # AFTER bootstrap_resolve_fixpoint succeeds so downstream CI gates see it
+    # without affecting fixpoint.
+    sysroot_target=linux-x86_64
+    [ "$HOST_OS" != windows ] || sysroot_target=windows-x86_64
+    scripts/build-stdlib-sysroot.sh "$STAGE2_BIN" "$(dirname -- "$STAGE2_BIN")" \
+        --target "$sysroot_target" --opt-level 2 || return $?
+
     # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
     # RUN a native program before the run-assert tiers may execute. A failed
     # probe is a CI failure, never a reason to omit gates.

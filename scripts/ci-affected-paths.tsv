@@ -768,5 +768,6 @@ scripts/verify-addr-taken-matrix.sh	stage2-addr-taken-matrix	-	Native address-ta
 scripts/run-bounded-batch.ps1	stage2-ownership-model	-	Windows multi-worker Job Object batch runner for verify-ownership-model.sh.
 tests/addr-taken-matrix/*	stage2-addr-taken-matrix	@corpus	Adversarial address-taken-local programs compiled and run at opt0/1/2/s; pending/ leaders move here as their fixes land.
 tools/embedded-stdlib-tli/roundtrip.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Checked embedded stdlib interface round trip.
+tools/codegen-cases-runner/*	*	-	Native codegen-cases runner drives all .cases gates across Linux and Windows.
 tools/build-stdlib-sysroot/main.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Single-pass prebuilt stdlib sysroot builder.
 scripts/build-stdlib-sysroot.sh	bootstrap-compiler,stage2-codegen-target-parity	@compiler	Prebuilt stdlib sysroot build and deterministic archive script.

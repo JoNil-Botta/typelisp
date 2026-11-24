@@ -405,7 +405,7 @@ count >= 2 ^[[:space:]]+movq %r[a-z0-9]+, [0-9]+\(%rsp\)$
 count >= 1 ^[[:space:]]+addq \$8, %r
 count = 1 ^[[:space:]]+call _tl_addr_taken_stack_aggregates_read_slot
 in fn _tl_addr_taken_stack_aggregates_scalar_case
-count >= 1 ^[[:space:]]+leaq [0-9]+\(%rsp\), %r
+count >= 1 ^[[:space:]]+(leaq [0-9]+\(%rsp\)|movq %rsp), %r
 count >= 1 ^[[:space:]]+movq %r[a-z0-9]+, [0-9]+\(%rsp\)$
 count = 1 ^[[:space:]]+call _tl_addr_taken_stack_aggregates_read_slot
 

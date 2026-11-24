@@ -112,7 +112,7 @@ source {{work}}/sha1.tl
 opt 0 1 2
 in fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_wipe_schedule_pointer_bang
 contains $80
-match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
 metric backward-branches >= 1
 in fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_compress_bang
 contains $80
@@ -125,17 +125,17 @@ else
 end-if
 contains $5
 contains $8
-match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
-match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
+match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
 if-fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_wipe_digest_bang
   in fn _tl_stdlib_crypto_sha1_git_stdlib_crypto_sha1_git_wipe_digest_bang
   contains $5
-  match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+  match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   metric backward-branches >= 1
 else
   in fn main
   contains $5
-  match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+  match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
 end-if
 
 case sha1-opt2-repeatable
@@ -156,7 +156,7 @@ source {{work}}/sha256.tl
 opt 0 1 2
 in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_schedule_pointer_bang
 contains $64
-match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
 metric backward-branches >= 1
 in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_compress_bang
 contains $64
@@ -165,49 +165,49 @@ match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe
 if-fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_state_bang
   in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_state_bang
   contains $8
-  match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+  match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   metric backward-branches >= 2
   contains $16
-  match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+  match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   if-fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_digest_bang
     in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_digest_bang
     contains $8
-    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 1
   else
     # the digest wipe inlined into main: one loop, one eight-word bound
     in fn main
     contains $8
-    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 1
     count >= 1 ^[[:space:]]+cmpq \$8,
-    count >= 1 ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    count >= 1 ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   end-if
 else
   # the state wipe inlined into main: its partial-block bound and scalar stores
   in fn main
   contains $16
-  match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+  match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   if-fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_digest_bang
     in fn _tl_stdlib_crypto_sha256_stdlib_crypto_sha256_wipe_digest_bang
     contains $8
-    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 1
     # main carries the state wipe's two loops and one eight-word bound
     in fn main
     contains $8
-    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 2
     count >= 1 ^[[:space:]]+cmpq \$8,
-    count >= 2 ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    count >= 2 ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   else
     # main carries all three loops and both eight-word bounds
     in fn main
     contains $8
-    match ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 3
     count >= 2 ^[[:space:]]+cmpq \$8,
-    count >= 3 ^[[:space:]]+movl %[a-z0-9]+, \(%[a-z0-9]+\)$
+    count >= 3 ^[[:space:]]+movl %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   end-if
 end-if
 
@@ -223,28 +223,28 @@ source {{work}}/sha512.tl
 opt 0 1 2
 in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_schedule_pointer_bang
 contains $80
-match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
 metric backward-branches >= 1
 in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_compress_bang
 match ^[[:space:]]+(call|jmp) _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_schedule_pointer_bang$
 if-fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_state_bang
   in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_state_bang
   contains $8
-  match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+  match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   metric backward-branches >= 2
   contains $16
   if-fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_digest_bang
     in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_digest_bang
     contains $8
-    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 1
   else
     in fn main
     contains $8
-    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 1
     count >= 1 ^[[:space:]]+cmpq \$8,
-    count >= 1 ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    count >= 1 ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   end-if
 else
   in fn main
@@ -252,21 +252,21 @@ else
   if-fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_digest_bang
     in fn _tl_stdlib_crypto_sha512_stdlib_crypto_sha512_wipe_digest_bang
     contains $8
-    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 1
     in fn main
     contains $8
-    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 2
     count >= 1 ^[[:space:]]+cmpq \$8,
-    count >= 2 ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    count >= 2 ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   else
     in fn main
     contains $8
-    match ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    match ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
     metric backward-branches >= 3
     count >= 2 ^[[:space:]]+cmpq \$8,
-    count >= 3 ^[[:space:]]+movq %[a-z0-9]+, \(%[a-z0-9]+\)$
+    count >= 3 ^[[:space:]]+movq %[a-z0-9]+, (-?[0-9]+)?\(%[a-z0-9]+(,%[a-z0-9]+,[1248])?\)$
   end-if
 end-if
 

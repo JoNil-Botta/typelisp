@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+docs-site-search-manifest-validator-self-tests	480	all	docs-site search manifest validator self-tests	-	-	256	-	scripts/verify-doc-site.sh --self-test-search-manifests	linux-2	windows-1	corpus,docs	Documentation and corpus manifest validation coverage.

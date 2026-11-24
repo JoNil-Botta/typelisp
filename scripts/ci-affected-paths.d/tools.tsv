@@ -1,0 +1,8 @@
+path	required	advisory	reason
+tools/crypto-gcm-bench/*	stage2-crypto-gcm-native-report	@corpus	GCM setup, one-block and bulk measurement driver.
+tools/crypto-gcm-kat/*	stage2-inline-typelisp-tests	@corpus	Hash-pinned public GCM vector conversion.
+tools/linux-stack-protection/*	stage2-linux-stack-protection	@compiler	Production-admitted direct-object and probe encoding oracle.
+tools/embedded-stdlib-tli/roundtrip.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Checked embedded stdlib interface round trip.
+tools/embedded-stdlib-tlci/identity-fixtures.d/*	embedded-stdlib-tlci-image,stage2-compile-profile-verifier	-	Per-module embedded stdlib TLCI identity fixtures consumed by the image and identity-differential verifiers.
+tools/codegen-cases-runner/*	*	-	Native codegen-cases runner drives all .cases gates across Linux and Windows.
+tools/build-stdlib-sysroot/main.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Single-pass prebuilt stdlib sysroot builder.

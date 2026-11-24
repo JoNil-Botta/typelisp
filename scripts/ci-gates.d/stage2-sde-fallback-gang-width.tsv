@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-sde-fallback-gang-width	320	all	stage2 forced-SDE AVX-512 gang width	bootstrap-compiler,stage2-spmd-lane-identity,stage2-spmd-broadcast	stage2	256	-	gate_sde_fallback_gang_width	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

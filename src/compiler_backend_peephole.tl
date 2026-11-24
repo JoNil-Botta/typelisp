@@ -14320,6 +14320,10 @@
 (define compiler-backend-layout-mode-sink : i64
   2)
 
+;; Size-optimized duplication: a copy may carry only its terminating `jmp`.
+(define compiler-backend-layout-mode-size : i64
+  4)
+
 ;; Production layout: both mechanisms.
 (define compiler-backend-layout-mode : i64
   3)
@@ -14329,6 +14333,17 @@
 ;; `cmp/jcc` + `mov/jmp` join.
 (define compiler-backend-layout-dup-run-cap : i64
   4)
+
+;; Under -Os a copy that carries any instruction besides its `jmp` grows the
+;; code at every site, so only jump threading remains (LLVM's optsize
+;; tail-duplication budget is likewise one instruction).
+(define compiler-backend-layout-dup-size-run-cap : i64
+  1)
+
+(define (compiler-backend-layout-dup-cap [mode : i64]) : i64
+  (if (compiler-backend-layout-flag? mode compiler-backend-layout-mode-size)
+    compiler-backend-layout-dup-size-run-cap
+    compiler-backend-layout-dup-run-cap))
 
 ;; Lines in an out-of-lined region. A cold arm longer than this is a whole
 ;; slow-path loop version, and moving it stops paying for the index it costs.
@@ -16035,7 +16050,8 @@
   [flags : (MutPtr i64)]
   [lines : i64]
   [site : i64]
-  [label : i64]) : i64
+  [label : i64]
+  [cap : i64]) : i64
   (let
     [refuse-bits : i64
       (bit-or
@@ -16063,7 +16079,7 @@
             (set! failed true)]
           [else
             (+= taken 1)
-            (if (> taken compiler-backend-layout-dup-run-cap)
+            (if (> taken cap)
               (set! failed true)
               (if (= (bit-and line-flags compiler-backend-layout-flag-jmp) 0)
                 (+= k 1)
@@ -16158,7 +16174,8 @@
   [sinks : i64]
   [dup-p : (MutPtr i64)]
   [dup-from : (MutPtr i64)]
-  [dup-to : (MutPtr i64)]) : i64
+  [dup-to : (MutPtr i64)]
+  [cap : i64]) : i64
   (let
     [count : i64 0]
     [cursor : i64 0]
@@ -16200,7 +16217,12 @@
                 (>= label 0)
                 (let
                   [term : i64
-                    (compiler-backend-layout-dup-run-end flags lines i label)]
+                    (compiler-backend-layout-dup-run-end
+                      flags
+                      lines
+                      i
+                      label
+                      cap)]
                   (when
                     (and
                       (>= term 0)
@@ -16664,7 +16686,8 @@
                 sinks
                 dup-p-raw
                 dup-from-raw
-                dup-to-raw)
+                dup-to-raw
+                (compiler-backend-layout-dup-cap mode))
               0)]
           ;; `cand-shape` is spent once the sinks are chosen; it carries each
           ;; sink's placement class from here on. Islands are chosen last
@@ -16853,7 +16876,12 @@
           (compiler-backend-layout-analyze
             asm
             n
-            compiler-backend-layout-mode
+            (if (be_state.compiler-backend-state-optimize-for-size?
+              backend-state)
+              (bit-or
+                compiler-backend-layout-mode
+                compiler-backend-layout-mode-size)
+              compiler-backend-layout-mode)
             drop-fallthrough?)]
         [lay-starts : (MutPtr i64)
           (unsafe

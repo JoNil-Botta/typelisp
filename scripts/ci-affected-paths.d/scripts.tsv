@@ -1,0 +1,22 @@
+path	required	advisory	reason
+scripts/check-instruction-counts.sh	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,instruction-count-comparison-self-tests	-	Exact main and heavy instruction-count checker and comparison fixtures.
+scripts/measure-instruction-counts.sh	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,linux-self-compile-measurement,c-measured-region-instruction-harness-self-tests	-	Benchmark and self-compile instruction measurement.
+scripts/measure-spmd-mode-instruction-counts.sh	spmd-mode-instruction-count-harness-self-tests	-	SPMD mode harness and parser fixtures.
+scripts/lib-benchmark-cycles.sh	spmd-mode-instruction-count-harness-self-tests	-	Opt-in hardware measurement and reporting helpers exercised by harness fixtures.
+scripts/lib-benchmark.sh	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,linux-self-compile-measurement,c-measured-region-instruction-harness-self-tests,instruction-count-comparison-self-tests,spmd-mode-instruction-count-harness-self-tests,stage2-benchmark-comparison-correctness,benchmark-wall-clock-harness-self-tests,stage2-optimization-corpus-correctness,stage2-optimization-corpus-opt2-runtime-correctness	-	Shared benchmark builds, case inventories and measurement helpers.
+scripts/check-crypto-aes-shape.sh	stage2-crypto-aes-fixed-work-asm-shape-gate,stage2-crypto-gcm-fixed-work-asm-shape-gate	@corpus	Shared AES/GCM structural constant-time shape contract checker and self-test.
+scripts/measure-crypto-gcm.sh	stage2-crypto-gcm-native-report	@corpus	Both-target native GCM measurement wrapper.
+scripts/regenerate-crypto-gcm-kat.sh	stage2-inline-typelisp-tests	@corpus	Offline official GCM vector regeneration, pinned by source hashes and count.
+scripts/codegen-target-dispatch.d/*	stage2-codegen-target-parity	-	Only target parity consumes the per-module target-dispatch inventory.
+.github/*	*	-	Workflow and action changes can alter every gate contract.
+scripts/verify-linux-stack-protection.sh	stage2-linux-stack-protection	-	Linux stack witness harness.
+scripts/verify-linux-stack-combinations.sh	stage2-linux-stack-protection	-	Entry/transient combinations on the minimum foreign guard.
+scripts/verify-linux-stack-edges.sh	stage2-linux-stack-protection	-	Linux stack failure, host and unwind witnesses.
+scripts/check-crypto-stack-scrub.sh	stage2-crypto-stack-residue	@corpus	Actual interval analysis and emitted-code residue probes.
+scripts/verify-crypto-stack-scrub.sh	stage2-crypto-stack-residue	@corpus	Both-host native coverage and pinned negative execution.
+scripts/ci-affected-paths.d/*	stage2-public-tool-affected-map	-	The affected-map audit verifies the reviewed path inventory and fallback behavior.
+scripts/verify-addr-taken-matrix.sh	stage2-addr-taken-matrix	-	Native address-taken-local matrix runner.
+scripts/run-bounded-batch.ps1	stage2-ownership-model	-	Windows multi-worker Job Object batch runner for verify-ownership-model.sh.
+scripts/build-stdlib-sysroot.sh	bootstrap-compiler,stage2-codegen-target-parity	@compiler	Prebuilt stdlib sysroot build and deterministic archive script.
+scripts/ci-gates.d/*	*	-	Gate definitions, lane assignments, and input classifications alter the CI verification contract.
+scripts/lib-ci-gates.sh	*	-	Shared CI gate, lane, and affected-path table loader used across all CI verification entry points.

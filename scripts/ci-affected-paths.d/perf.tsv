@@ -1,0 +1,6 @@
+path	required	advisory	reason
+perf/benchmarks/*	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,instruction-count-comparison-self-tests,stage2-benchmark-comparison-correctness,stage2-optimization-corpus-opt2-runtime-correctness	-	Per-benchmark suite membership, C instruction baselines, and C provenance records.
+perf/insn-exec-declarations/*	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline,instruction-count-comparison-self-tests	-	PR instruction-count regression declarations consumed by the main and heavy instruction-count gates.
+perf/codegen-cycle-report.md	@docs	-	Recorded performance report.
+perf/README.md	@docs	-	Benchmark and self-compile documentation.
+perf/self-compile-declarations/*	linux-self-compile-check	-	PR own-cost declarations consumed by the self-compile check.

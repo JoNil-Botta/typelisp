@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-crypto-gcm-native-report	1300	all	stage2 crypto GCM native performance report	bootstrap-compiler	stage2	6144	-	scripts/measure-crypto-gcm.sh	linux-2	windows-1	compiler,stdlib,corpus	Reports both optimization levels through the exact native AES-128-GCM implementation.

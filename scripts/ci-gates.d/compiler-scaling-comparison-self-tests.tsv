@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+compiler-scaling-comparison-self-tests	920	linux	compiler scaling comparison self-tests	-	-	256	-	scripts/check-compiler-scaling.sh --self-test	linux-2	-	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.

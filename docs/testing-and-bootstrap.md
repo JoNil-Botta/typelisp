@@ -112,7 +112,7 @@ byte-identical.
 
 The corpus deliberately reuses binaries and observations left by integration,
 TLCI, SPMD, and Windows COFF gates. Each row names its producer's gate ID,
-and the cross-mode gate's row in `scripts/ci-gates.tsv` needs those gates, so
+and the cross-mode gate's entry in `scripts/ci-gates.d/` needs those gates, so
 `scripts/ci-verify.sh --gates stage2-cross-mode-semantic-abi-differential`
 runs them first. Its only fresh
 compiles are one compact fixture with the previous and successor compiler
@@ -213,7 +213,7 @@ gates without running tests or fetching a compiler, and
 `sh scripts/ci-verify.sh --gates <id>[,<id>...]` reproduces one gate locally
 together with the gates it needs, ending with a partial result rather than
 verification success. The gate table,
-[`ci-gates.tsv`](../scripts/ci-gates.tsv), is described in
+[`scripts/ci-gates.d/`](../scripts/ci-gates.d), is described in
 [`scripts/README.md`](../scripts/README.md#core-development-loop).
 
 ## Documentation site

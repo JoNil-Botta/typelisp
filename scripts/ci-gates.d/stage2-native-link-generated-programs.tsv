@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-native-link-generated-programs	90	linux	stage2 native link generated programs	bootstrap-compiler	stage2	2048	build-stamp	scripts/verify-native-link-linux.sh	linux-1	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

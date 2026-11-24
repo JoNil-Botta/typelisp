@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+typelisp-format-compiler-selection-control	710	all	TypeLisp format compiler selection control	-	-	256	-	scripts/check-tl-format.sh --self-test-current-compiler-mode	linux-2	windows-1	compiler,stdlib,corpus	Reads the current source inventory or source invariants directly.

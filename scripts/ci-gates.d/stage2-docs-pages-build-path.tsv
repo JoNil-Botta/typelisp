@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stage2-docs-pages-build-path	530	all	stage2 docs Pages build path	bootstrap-compiler	stage2	1280	-	env DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site" scripts/verify-doc-site.sh	linux-1	windows-2	compiler,stdlib,corpus,docs	Also validates documented examples or renders and validates documentation pages.

@@ -8344,6 +8344,43 @@
       (ast.ast-expr-children (ast.ast-node-get node-id))]
     (lint-unused-variable-children-at (& children) 0 state span)))
 
+;; The name-case scan of the local NAME a FORM-HEAD form binds, when that rule
+;; runs.
+(define (lint-unused-variable-scan-form-binder
+  [state : LintUnusedVariableState]
+  [name : i64]
+  [span : ast.AstSourceSpan]
+  [form-head : String]) : LintNameCaseLocalScan
+  (if state.name-case
+    (lint-unused-variable-scan-form-local-name
+      state
+      (ci.intern-str name)
+      span
+      form-head)
+    (LintNameCaseLocalScan state 0)))
+
+;; The same scan of a second local NAME the form binds after the one FIRST
+;; scanned.
+(define (lint-unused-variable-scan-next-binder
+  [first : LintNameCaseLocalScan]
+  [name : i64]
+  [span : ast.AstSourceSpan]) : LintNameCaseLocalScan
+  (let
+    [state : LintUnusedVariableState first.state]
+    (if state.name-case
+      (let
+        [limit : i64 (lint-source-span-end-index state.source span)]
+        [end : i64
+          (if (< limit 0)
+            (string.string-length state.source)
+            limit)]
+        (lint-unused-variable-scan-local-name
+          state
+          (ci.intern-str name)
+          first.next-index
+          end))
+      (LintNameCaseLocalScan state 0))))
+
 (define (lint-unused-variable-expr
   [node-id : i64]
   [state : LintUnusedVariableState]
@@ -8445,13 +8482,11 @@
         [(Foreach index index-ty start end body)
           (let
             [scanned : LintNameCaseLocalScan
-              (if state.name-case
-                (lint-unused-variable-scan-form-local-name
-                  state
-                  (ci.intern-str index)
-                  span
-                  "(foreach")
-                (LintNameCaseLocalScan state 0))]
+              (lint-unused-variable-scan-form-binder
+                state
+                index
+                span
+                "(foreach")]
             (lint-unused-variable-index-scope
               index
               body
@@ -8465,27 +8500,13 @@
         [(Foreach2 outer outer-ty a b inner inner-ty c d body)
           (let
             [outer-scan : LintNameCaseLocalScan
-              (if state.name-case
-                (lint-unused-variable-scan-form-local-name
-                  (owned_view.compiler-owned-shared-view state)
-                  (ci.intern-str outer)
-                  span
-                  "(foreach")
-                (LintNameCaseLocalScan
-                  (owned_view.compiler-owned-shared-view state)
-                  0))]
+              (lint-unused-variable-scan-form-binder
+                state
+                outer
+                span
+                "(foreach")]
             [inner-scan : LintNameCaseLocalScan
-              (if state.name-case
-                (let
-                  [limit : i64 (lint-source-span-end-index state.source span)]
-                  (lint-unused-variable-scan-local-name
-                    outer-scan.state
-                    (ci.intern-str inner)
-                    outer-scan.next-index
-                    (if (< limit 0)
-                      (string.string-length state.source)
-                      limit)))
-                (LintNameCaseLocalScan outer-scan.state 0))]
+              (lint-unused-variable-scan-next-binder outer-scan inner span)]
             (lint-unused-variable-scan-body-scope
               inner
               outer
@@ -8510,13 +8531,11 @@
         [(Reduce _ index index-ty start end init value)
           (let
             [scanned : LintNameCaseLocalScan
-              (if state.name-case
-                (lint-unused-variable-scan-form-local-name
-                  state
-                  (ci.intern-str index)
-                  span
-                  "(spmd-reduce")
-                (LintNameCaseLocalScan state 0))]
+              (lint-unused-variable-scan-form-binder
+                state
+                index
+                span
+                "(spmd-reduce")]
             (lint-unused-variable-index-scope
               index
               value
@@ -8535,27 +8554,13 @@
         [(Scan _ index index-ty start end prefix prefix-ty init value body)
           (let
             [index-scan : LintNameCaseLocalScan
-              (if state.name-case
-                (lint-unused-variable-scan-form-local-name
-                  (owned_view.compiler-owned-shared-view state)
-                  (ci.intern-str index)
-                  span
-                  "(spmd-scan")
-                (LintNameCaseLocalScan
-                  (owned_view.compiler-owned-shared-view state)
-                  0))]
+              (lint-unused-variable-scan-form-binder
+                state
+                index
+                span
+                "(spmd-scan")]
             [prefix-scan : LintNameCaseLocalScan
-              (if state.name-case
-                (let
-                  [limit : i64 (lint-source-span-end-index state.source span)]
-                  (lint-unused-variable-scan-local-name
-                    index-scan.state
-                    (ci.intern-str prefix)
-                    index-scan.next-index
-                    (if (< limit 0)
-                      (string.string-length state.source)
-                      limit)))
-                (LintNameCaseLocalScan index-scan.state 0))]
+              (lint-unused-variable-scan-next-binder index-scan prefix span)]
             [base-state : LintUnusedVariableState
               (lint-unused-variable-type
                 prefix-ty
@@ -8581,27 +8586,13 @@
         [(Compact index index-ty start end slot slot-ty init keep body)
           (let
             [index-scan : LintNameCaseLocalScan
-              (if state.name-case
-                (lint-unused-variable-scan-form-local-name
-                  (owned_view.compiler-owned-shared-view state)
-                  (ci.intern-str index)
-                  span
-                  "(spmd-compact")
-                (LintNameCaseLocalScan
-                  (owned_view.compiler-owned-shared-view state)
-                  0))]
+              (lint-unused-variable-scan-form-binder
+                state
+                index
+                span
+                "(spmd-compact")]
             [slot-scan : LintNameCaseLocalScan
-              (if state.name-case
-                (let
-                  [limit : i64 (lint-source-span-end-index state.source span)]
-                  (lint-unused-variable-scan-local-name
-                    index-scan.state
-                    (ci.intern-str slot)
-                    index-scan.next-index
-                    (if (< limit 0)
-                      (string.string-length state.source)
-                      limit)))
-                (LintNameCaseLocalScan index-scan.state 0))]
+              (lint-unused-variable-scan-next-binder index-scan slot span)]
             [base-state : LintUnusedVariableState
               (lint-unused-variable-type
                 slot-ty
@@ -8646,13 +8637,11 @@
     [(ForeachActive lane body)
       (let
         [scanned : LintNameCaseLocalScan
-          (if state.name-case
-            (lint-unused-variable-scan-form-local-name
-              state
-              (ci.intern-str lane)
-              span
-              "(foreach-active")
-            (LintNameCaseLocalScan state 0))]
+          (lint-unused-variable-scan-form-binder
+            state
+            lane
+            span
+            "(foreach-active")]
         (lint-unused-variable-index-scope lane body scanned.state span))]
     [_ (lint-unused-variable-children node-id state span)]))
 
@@ -9497,74 +9486,77 @@
 ;;; Walk `expr` in a function/lambda/test tail context. The return-path-chain
 ;;; rule is only valid here: in non-tail value contexts, introducing
 ;;; `(return ...)` would change the surrounding expression's behavior.
+;; The forms whose findings take the span of the `Spanned` wrapping them, in a
+;; tail (TAIL?) or value position; any other EXPR is walked as usual.
+(define (lint-walk-spanned-form
+  [expr : ast.AstExpr]
+  [span : ast.AstSourceSpan]
+  [tail? : bool]
+  [threshold : i64]
+  [acc : LintFindings]) : LintFindings
+  (match (owned_view.compiler-owned-shared-view expr)
+    [(If cond-box then-branch-box else-branch-box)
+      (lint-walk-if
+        (ast.ast-node-get cond-box)
+        (ast.ast-node-get then-branch-box)
+        (ast.ast-node-get else-branch-box)
+        span
+        tail?
+        threshold
+        acc)]
+    [(Let let-box)
+      (match (__tl-box-place let-box)
+        [(Let bindings body-box)
+          (if tail?
+            (lint-walk-tail-let
+              bindings
+              (ast.ast-node-get body-box)
+              span
+              threshold
+              acc)
+            (lint-walk-let
+              bindings
+              (ast.ast-node-get body-box)
+              span
+              threshold
+              acc))])]
+    [(Call func-box args)
+      (lint-walk-call (ast.ast-node-get func-box) args span threshold acc)]
+    [(Begin exprs)
+      (if tail?
+        (lint-walk-tail-sequence-expr-list
+          exprs
+          threshold
+          (lint-add-single-begin exprs span acc))
+        (lint-walk-value-sequence-expr-list
+          exprs
+          threshold
+          (lint-add-single-begin exprs span acc)))]
+    [_
+      (if tail?
+        (lint-walk-tail-expr expr threshold acc)
+        (lint-walk-expr expr threshold acc))]))
+
 (define (lint-walk-tail-expr
   [expr : ast.AstExpr]
   [threshold : i64]
   [acc : LintFindings]) : LintFindings
   (match (owned_view.compiler-owned-shared-view expr)
     [(Spanned inner-box span)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (match (owned_view.compiler-owned-shared-view inner)
-          [(If cond-box then-branch-box else-branch-box)
-            (let
-              [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-              [then-branch : ast.AstExpr (ast.ast-node-get then-branch-box)]
-              [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
-              (lint-walk-if
-                cond
-                then-branch
-                else-branch
-                span
-                true
-                threshold
-                acc))]
-          [(Let let-box)
-            (match (__tl-box-place let-box)
-              [(Let bindings body-box)
-                (let
-                  [body : ast.AstExpr (ast.ast-node-get body-box)]
-                  (lint-walk-tail-let bindings body span threshold acc))])]
-          [(Call func-box args)
-            (let
-              [func : ast.AstExpr (ast.ast-node-get func-box)]
-              (lint-walk-call func args span threshold acc))]
-          [(Begin exprs)
-            (lint-walk-tail-sequence-expr-list
-              exprs
-              threshold
-              (lint-add-single-begin exprs span acc))]
-          [_ (lint-walk-tail-expr inner threshold acc)]))]
-    [(If cond-box then-branch-box else-branch-box)
-      (let
-        [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-        [then-branch : ast.AstExpr (ast.ast-node-get then-branch-box)]
-        [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
-        (lint-walk-if
-          cond
-          then-branch
-          else-branch
-          (lint-no-span)
-          true
-          threshold
-          acc))]
-    [(Let let-box)
-      (match (__tl-box-place let-box)
-        [(Let bindings body-box)
-          (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
-            (lint-walk-tail-let bindings body (lint-no-span) threshold acc))])]
+      (lint-walk-spanned-form
+        (ast.ast-node-get inner-box)
+        span
+        true
+        threshold
+        acc)]
+    [(or (If _ _ _) (Let _) (Call _ _) (Begin _))
+      (lint-walk-spanned-form expr (lint-no-span) true threshold acc)]
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda _ _ body-box)
           (let
             [body : ast.AstExpr (ast.ast-node-get body-box)]
             (lint-walk-tail-expr body threshold acc))])]
-    [(Begin exprs)
-      (lint-walk-tail-sequence-expr-list
-        exprs
-        threshold
-        (lint-add-single-begin exprs (lint-no-span) acc))]
     [(Unsafe exprs) (lint-walk-tail-expr-list exprs threshold acc)]
     [(or (Ann inner-box _) (Cast inner-box _) (Try inner-box))
       (let
@@ -9740,63 +9732,14 @@
   ;; list.
   (match (owned_view.compiler-owned-shared-view expr)
     [(Spanned inner-box span)
-      (let
-        [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-        (match (owned_view.compiler-owned-shared-view inner)
-          [(If cond-box then-branch-box else-branch-box)
-            (let
-              [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-              [then-branch : ast.AstExpr (ast.ast-node-get then-branch-box)]
-              [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
-              (lint-walk-if
-                cond
-                then-branch
-                else-branch
-                span
-                false
-                threshold
-                acc))]
-          [(Let let-box)
-            (match (__tl-box-place let-box)
-              [(Let bindings body-box)
-                (let
-                  [body : ast.AstExpr (ast.ast-node-get body-box)]
-                  (lint-walk-let bindings body span threshold acc))])]
-          [(Call func-box args)
-            (let
-              [func : ast.AstExpr (ast.ast-node-get func-box)]
-              (lint-walk-call func args span threshold acc))]
-          [(Begin exprs)
-            (lint-walk-value-sequence-expr-list
-              exprs
-              threshold
-              (lint-add-single-begin exprs span acc))]
-          [_ (lint-walk-expr inner threshold acc)]))]
-    [(Call func-box args)
-      (let
-        [func : ast.AstExpr (ast.ast-node-get func-box)]
-        (lint-walk-call func args (lint-no-span) threshold acc))]
-    [(If cond-box then-branch-box else-branch-box)
-      ;; A directly-reached (unspanned) `if`: no wrapper span, so the finding
-      ;; gets the sentinel. Maximal-ladder dedup lives in lint-walk-if.
-      (let
-        [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-        [then-branch : ast.AstExpr (ast.ast-node-get then-branch-box)]
-        [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
-        (lint-walk-if
-          cond
-          then-branch
-          else-branch
-          (lint-no-span)
-          false
-          threshold
-          acc))]
-    [(Let let-box)
-      (match (__tl-box-place let-box)
-        [(Let bindings body-box)
-          (let
-            [body : ast.AstExpr (ast.ast-node-get body-box)]
-            (lint-walk-let bindings body (lint-no-span) threshold acc))])]
+      (lint-walk-spanned-form
+        (ast.ast-node-get inner-box)
+        span
+        false
+        threshold
+        acc)]
+    [(or (If _ _ _) (Let _) (Call _ _) (Begin _))
+      (lint-walk-spanned-form expr (lint-no-span) false threshold acc)]
     [(ForOwnedState payload)
       (lint-walk-expr
         (ast.ast-node-get (ast.ast-for-owned-state-body (& payload)))
@@ -9814,11 +9757,6 @@
           (if (>= expected-type 0)
             (lint-walk-expr (ast.ast-node-get expected-type) threshold acc)
             acc)))]
-    [(Begin exprs)
-      (lint-walk-value-sequence-expr-list
-        exprs
-        threshold
-        (lint-add-single-begin exprs (lint-no-span) acc))]
     [(Unsafe exprs) (lint-walk-plain-sequence-expr-list exprs threshold acc)]
     [(or (WithRegion _ body) (WithScratch body))
       (lint-walk-value-sequence-expr-list body threshold acc)]

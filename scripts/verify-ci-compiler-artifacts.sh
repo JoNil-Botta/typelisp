@@ -32,29 +32,23 @@ printf '*.tl text eol=lf\n*.sh text eol=lf\n' > "$source/.gitattributes"
 # A small gate table with the real role producers, and its lane assignment:
 # linux-1 isolates build-invariance with its consumer; both hosts duplicate
 # only the bootstrap; fixture-gate-c needs (is checked against) gate-b.
-cat > "$source/scripts/ci-gates.tsv" <<'EOF'
-# fixture gate table
-id	hosts	label	needs	compiler	memory	locks	command
-fixture-self-test	all	fixture self-test	-	-	256	-	true
-bootstrap-compiler	all	bootstrap compiler	-	-	256	-	true
-bootstrap-fixpoint	all	bootstrap fixpoint	bootstrap-compiler	-	256	-	true
-stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-compiler,bootstrap-fixpoint	stage2	256	-	true
-fixture-opt2-cli	all	fixture opt2 CLI	bootstrap-compiler,stage2-opt1-opt2-build-invariance@linux	stage2	256	-	true
-fixture-gate-b	all	fixture gate b	bootstrap-compiler	stage2	256	-	true
-fixture-gate-c	all	fixture gate c	bootstrap-compiler,fixture-gate-b	stage2	256	-	true
-EOF
+mkdir -p "$source/scripts/ci-gates.d"
+write_fixture_gate() {
+    _wfg_id=$1
+    shift
+    {
+        printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\n'
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$_wfg_id" "$@"
+    } > "$source/scripts/ci-gates.d/$_wfg_id.tsv"
+}
+write_fixture_gate fixture-self-test 70 all 'fixture self-test' - - 256 - true linux-2 windows-2 - 'fixture self-test'
+write_fixture_gate bootstrap-compiler 60 all 'bootstrap compiler' - - 256 - true 'linux-2+linux-1' 'windows-1+windows-2' 'compiler,stdlib,corpus' 'fixture bootstrap'
+write_fixture_gate bootstrap-fixpoint 50 all 'bootstrap fixpoint' bootstrap-compiler - 256 - true 'linux-2+linux-1!' 'windows-1+windows-2!' 'compiler,stdlib,corpus' 'fixture fixpoint'
+write_fixture_gate stage2-opt1-opt2-build-invariance 40 linux 'stage2 opt1/opt2 build-invariance' 'bootstrap-compiler,bootstrap-fixpoint' stage2 256 - true linux-1 - 'compiler,stdlib,corpus' 'fixture invariance'
+write_fixture_gate fixture-opt2-cli 30 all 'fixture opt2 CLI' 'bootstrap-compiler,stage2-opt1-opt2-build-invariance@linux' stage2 256 - true linux-1 windows-2 'compiler,stdlib,corpus' 'fixture opt2 cli'
+write_fixture_gate fixture-gate-b 20 all 'fixture gate b' bootstrap-compiler stage2 256 - true linux-2 windows-1 'compiler,stdlib,corpus' 'fixture gate b'
+write_fixture_gate fixture-gate-c 10 all 'fixture gate c' 'bootstrap-compiler,fixture-gate-b' stage2 256 - true linux-2 windows-1 'compiler,stdlib,corpus' 'fixture gate c'
 printf 'tool\thosts\tgates\tcheck\tinstall\n' > "$source/scripts/ci-host-tools.tsv"
-cat > "$source/scripts/ci-lanes.tsv" <<'EOF'
-# fixture lanes
-id	linux	windows
-fixture-self-test	linux-2	windows-2
-bootstrap-compiler	linux-2+linux-1	windows-1+windows-2
-bootstrap-fixpoint	linux-2+linux-1!	windows-1+windows-2!
-stage2-opt1-opt2-build-invariance	linux-1	-
-fixture-opt2-cli	linux-1	windows-2
-fixture-gate-b	linux-2	windows-1
-fixture-gate-c	linux-2	windows-1
-EOF
 cp "$ROOT/scripts/ci-compiler-artifacts.tsv" "$source/scripts/ci-compiler-artifacts.tsv"
 cp "$ROOT/scripts/expand-integration-manifest.awk" "$source/scripts/expand-integration-manifest.awk"
 CICA_ROOT=$ROOT
@@ -141,7 +135,7 @@ build_lane() {
       GITHUB_RUN_ID=1234 GITHUB_RUN_ATTEMPT=$attempt GITHUB_REPOSITORY=owner/repo \
       GITHUB_WORKFLOW_REF=owner/repo/.github/workflows/ci.yml@refs/pull/1/merge GITHUB_EVENT_PATH=$work/event.json \
       TYPELISP_CI_LANE=$lane cica_context github > "$dir/draft/context.json"
-    owned=$(awk -F '\t' -v c="$([ "$host" = linux ] && echo 2 || echo 3)" -v l="$lane" '!/^#/ && $1 != "id" { split($c, p, "+"); if (p[1] == l) print $1; for (i = 2; i <= length(p); i++) { t = p[i]; sub(/!$/, "", t); if (t == l && t != p[i]) print $1 } }' "$source/scripts/ci-lanes.tsv" | paste -sd, -)
+    owned=$(ci_gates_load "$source/scripts/ci-gates.d" | awk -F '\t' -v c="$([ "$host" = linux ] && echo 10 || echo 11)" -v l="$lane" '{ split($c, p, "+"); if (p[1] == l) print $1; for (i = 2; i <= length(p); i++) { t = p[i]; sub(/!$/, "", t); if (t == l && t != p[i]) print $1 } }' | paste -sd, -)
     "$source/scripts/ci-verify.sh" --list-gates "$host" --gates "$owned" | sed 1d | cut -f 1 > "$dir/draft/lane/plan.txt"
     printf '%s\n' "$owned" | tr ',' '\n' > "$work/requested"
     case $variant in
@@ -162,7 +156,8 @@ build_lane() {
     { printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost\n'
       printf 'ungated\tcompiler-envelope\tartifact-init\t10\t0\t%s\n' "$host"
       while IFS= read -r id; do
-          label=$(awk -F '\t' -v id="$id" '$1 == id { print $3 }' "$source/scripts/ci-gates.tsv")
+          label=
+          [ ! -f "$source/scripts/ci-gates.d/$id.tsv" ] || label=$(awk -F '\t' -v id="$id" '$1 == id { print $4 }' "$source/scripts/ci-gates.d/$id.tsv")
           printf '%s\tall\tgate\t1000\t0\t%s\n%s\tchunk-0\tcompile\t400\t0\t%s\n' "${label:-$id}" "$host" "${label:-$id}" "$host"
       done < "$dir/draft/lane/plan.txt"
       printf 'CI verification\tall\tpartial-verification\t%s\t0\t%s\n' "$((5000 + attempt))" "$host"; } > "$inputs/timing.tsv"
@@ -331,7 +326,7 @@ for name in identity producer-digest version-commit target cfg opt profile sourc
       opt) filter='.fields.opt_level="0"' ;;
       profile) filter='.fields.profile="profile"' ;;
       source-set) filter='.fields.source_set_sha256=("f"*64)' ;;
-      inventory) filter='.inventory["scripts/ci-lanes.tsv"]=("f"*64)' ;;
+      inventory) filter='.inventory["scripts/ci-gates.d/bootstrap-compiler.tsv"]=("f"*64)' ;;
       seed) filter='.proof.seed.sha256=("f"*64)' ;;
       partial-fixpoint) filter='.proof["stage2.s"].sha256=("f"*64)' ;;
       path-escape) filter='.files["../outside"]={sha256:("f"*64),bytes:1}' ;;
@@ -589,38 +584,45 @@ aggregate_case stale-envelope-renamed rejected linux success "$work/stale.jobs.j
     "linux-1=$L/linux-1-a1-base/complete@2" "linux-2=$L/linux-2-a2-base/complete@2"
 # The assignment itself fails closed: unassigned, doubly assigned, unknown,
 # undeclared duplicate, stale declaration, a third lane, a gate on a host it
-# does not run on. Each variant is checked, then the file is restored.
+# does not run on. Each variant is checked, then scripts/ci-gates.d is restored.
+lane_restore_gates() {
+    git -C "$source" checkout -q -- scripts/ci-gates.d
+    git -C "$source" clean -qf -- scripts/ci-gates.d
+}
 lane_check_case() {
-    _lc_name=$1 _lc_awk=$2
-    awk -F '\t' -v OFS='\t' "$_lc_awk" "$source/scripts/ci-lanes.tsv" > "$work/ci-lanes.variant"
-    cp "$work/ci-lanes.variant" "$source/scripts/ci-lanes.tsv"
+    _lc_name=$1 _lc_gate=$2 _lc_awk=$3
+    awk -F '\t' -v OFS='\t' "$_lc_awk" "$source/scripts/ci-gates.d/$_lc_gate.tsv" > "$work/ci-gate.variant"
+    cp "$work/ci-gate.variant" "$source/scripts/ci-gates.d/$_lc_gate.tsv"
     if "$source/scripts/ci-lane.sh" check > "$work/check-$_lc_name.stdout" 2> "$work/check-$_lc_name.stderr"; then
-        git -C "$source" checkout -q -- scripts/ci-lanes.tsv
+        lane_restore_gates
         cica_fail "accepted lane assignment variant: $_lc_name"
     fi
-    git -C "$source" checkout -q -- scripts/ci-lanes.tsv
+    lane_restore_gates
     record_result "assignment-$_lc_name" rejected
 }
 "$source/scripts/ci-lane.sh" check > "$work/check-base.stdout"
 record_result assignment-base pass
-lane_check_case unassigned-gate '$1 != "fixture-gate-c"'
-lane_check_case doubly-assigned '{ print } $1 == "fixture-gate-c" { print }'
-lane_check_case unknown-gate '{ print } END { print "fixture-unknown-gate", "linux-2", "windows-1" }'
-lane_check_case undeclared-duplicate '$1 == "bootstrap-fixpoint" { $2 = "linux-2" } { print }'
-lane_check_case stale-duplicate-declaration '$1 == "fixture-self-test" { $2 = "linux-2+linux-1" } { print }'
-lane_check_case moved-need-undeclared '$1 == "fixture-gate-c" { $2 = "linux-1" } { print }'
-lane_check_case third-lane '$1 == "fixture-self-test" { $2 = "linux-3" } { print }'
-lane_check_case wrong-host-lane '$1 == "fixture-gate-b" { $2 = "windows-1" } { print }'
-lane_check_case gate-not-on-host '$1 == "stage2-opt1-opt2-build-invariance" { $3 = "windows-2" } { print }'
+lane_check_case unassigned-gate fixture-gate-c '$1 == "fixture-gate-c" { $10 = "-" } { print }'
+lane_check_case doubly-assigned fixture-gate-c '{ print } $1 == "fixture-gate-c" { print }'
+lane_check_case unknown-gate fixture-gate-c '$1 == "fixture-gate-c" { $5 = $5 ",fixture-unknown-gate" } { print }'
+lane_check_case undeclared-duplicate bootstrap-fixpoint '$1 == "bootstrap-fixpoint" { $10 = "linux-2" } { print }'
+lane_check_case stale-duplicate-declaration fixture-self-test '$1 == "fixture-self-test" { $10 = "linux-2+linux-1" } { print }'
+lane_check_case moved-need-undeclared fixture-gate-c '$1 == "fixture-gate-c" { $10 = "linux-1" } { print }'
+lane_check_case third-lane fixture-self-test '$1 == "fixture-self-test" { $10 = "linux-3" } { print }'
+lane_check_case wrong-host-lane fixture-gate-b '$1 == "fixture-gate-b" { $10 = "windows-1" } { print }'
+lane_check_case gate-not-on-host stage2-opt1-opt2-build-invariance '$1 == "stage2-opt1-opt2-build-invariance" { $11 = "windows-2" } { print }'
 # setup: three build-invariance workers only where nothing can run beside it.
 fixture_setup() { "$source/scripts/ci-lane.sh" setup "$1" | sed -n "s/^$2=//p"; }
 [ "$(fixture_setup linux-1 build_invariance_workers)" = 3 ] && [ -z "$(fixture_setup linux-2 build_invariance_workers)" ] &&
     [ "$(fixture_setup linux-1 gates)" = bootstrap-fixpoint,fixture-opt2-cli,stage2-opt1-opt2-build-invariance ] || cica_fail 'lane setup changed'
-awk -F '\t' -v OFS='\t' '$1 == "fixture-self-test" { $2 = "linux-1" } $1 == "bootstrap-fixpoint" { $2 = "linux-1+linux-2" } { print }' \
-    "$source/scripts/ci-lanes.tsv" > "$work/ci-lanes.shared"
-cp "$work/ci-lanes.shared" "$source/scripts/ci-lanes.tsv"
+awk -F '\t' -v OFS='\t' '$1 == "fixture-self-test" { $10 = "linux-1" } { print }' \
+    "$source/scripts/ci-gates.d/fixture-self-test.tsv" > "$work/ci-gate.shared-self-test"
+cp "$work/ci-gate.shared-self-test" "$source/scripts/ci-gates.d/fixture-self-test.tsv"
+awk -F '\t' -v OFS='\t' '$1 == "bootstrap-fixpoint" { $10 = "linux-1+linux-2" } { print }' \
+    "$source/scripts/ci-gates.d/bootstrap-fixpoint.tsv" > "$work/ci-gate.shared-fixpoint"
+cp "$work/ci-gate.shared-fixpoint" "$source/scripts/ci-gates.d/bootstrap-fixpoint.tsv"
 shared_workers=$(fixture_setup linux-1 build_invariance_workers)
-git -C "$source" checkout -q -- scripts/ci-lanes.tsv
+lane_restore_gates
 [ -z "$shared_workers" ] || cica_fail 'three workers granted to a lane that is not isolated'
 record_result setup-three-workers-only-when-isolated pass
 cica_jq -sS '{schema:4,status:"pass",cases:.}' "$work/results.jsonl" > "$work/self-test.json"

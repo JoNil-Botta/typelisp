@@ -9,7 +9,7 @@ prefix alone does not determine whether a script is required by CI.
 The workflow files are authoritative:
 
 - `.github/workflows/ci.yml` runs each host's gates in two CI lane jobs
-  (`ci-lanes.tsv`, [CI lanes](#ci-lanes)): every lane runs
+  (`scripts/ci-gates.d/*.tsv`, [CI lanes](#ci-lanes)): every lane runs
   `ci-verify.sh --gates` with the gates it owns, and one lane per host also
   runs `check-implementation-languages.sh` and `check-gitignore.sh`. The lane
   that runs `linux-self-compile-measurement` then runs `self-compile.sh check`,
@@ -27,7 +27,7 @@ The workflow files are authoritative:
   successful bootstrap run ID, so it uses the same exact source/compiler pair.
 
 `ci-verify.sh` is the full pull-request development gate. It bootstraps a
-branch compiler and runs every row of `ci-gates.tsv`: the source hygiene,
+branch compiler and runs every gate of `scripts/ci-gates.d/*.tsv`: the source hygiene,
 deterministic codegen, compiler/profile, public-tool, integration, stdlib,
 documentation, SPMD, benchmark, and instruction-count gates. A helper such as
 `measure-instruction-counts.sh` can therefore be CI-critical even though its
@@ -38,11 +38,11 @@ When changing a script, check both direct workflow references and transitive
 references from the gate entry points:
 
 ```sh
-rg -n 'scripts/[^ ]+\.(sh|ps1)' .github/workflows scripts/ci-gates.tsv scripts/ci-verify.sh
+rg -n 'scripts/[^ ]+\.(sh|ps1)' .github/workflows scripts/ci-gates.d scripts/ci-verify.sh
 rg -n 'scripts/<script-name>' .
 ```
 
-A required gate is a row of `ci-gates.tsv`; `ci-verify.sh` rejects a row whose
+A required gate is a fragment file `scripts/ci-gates.d/<id>.tsv`; `ci-verify.sh` rejects a gate whose
 command names a missing script or `gate_*` function. Optional local tools
 should use a `benchmark-`, `measure-`, or `analyze-` name.
 
@@ -202,10 +202,13 @@ the exact PR head; only a push to main can publish releases.
 | Check handwritten x86-64 template ownership | `check-x64-executable-template-registry.sh` pins every runtime/startup composition gate, all target-owned opaque byte helpers, structured contribution boundaries, and Windows data-only unwind relations. |
 | Check performance policy | `check-instruction-counts.sh` (exact benchmark rows), `self-compile.sh` (`self_compile` measurement, the main-relative PR check, the reference record and the ledger; logic in `lib-self-compile.sh`, fixtures in `self-compile-self-test.sh`), `check-compiler-scaling.sh` (compiler cost growth per input dimension against `perf/compiler-scaling-budgets.tsv`), `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `check-tlci-native-route-size.sh`, `check-stage0-size.sh` (the stage0 size ratchet against `stage0-size-policy.tsv`), `bench.sh`, `run-optimization-benchmarks.sh` |
 
-`ci-gates.tsv` is the gate table: one row per gate, in run order, with its
-stable `id`, `hosts` (`all`, `linux` or `windows`), `label` (the display and
-ci-timing name), `needs`, `compiler`, `memory`, `locks` and `command`.
-`ci-verify.sh` runs the rows for its host in table order (under `--jobs`, the
+`scripts/ci-gates.d/<id>.tsv` holds the unified gate table: one file per gate
+(filename stem matching `id`), loaded and validated by `scripts/lib-ci-gates.sh`
+in Kahn topological order `(priority desc, id asc)`, with its stable `id`,
+`priority`, `hosts` (`all`, `linux` or `windows`), `label` (the display and
+ci-timing name), `needs`, `compiler`, `memory`, `locks`, `command`,
+`linux_lane`, `windows_lane`, `input_classes`, and `input_reason`.
+`ci-verify.sh` runs the rows for its host in scheduled order (under `--jobs`, the
 order in which ready gates start) and starts no gate after the first failure.
 List either host without a compiler or side effects, optionally narrowed to a
 dependency-closed selection:
@@ -544,14 +547,15 @@ Before moving or deleting a script:
 
 Required CI runs each host's gates in two lane jobs, `CI lane linux-1`,
 `CI lane linux-2`, `CI lane windows-1` and `CI lane windows-2` (#7767 slice 2,
-council decision D-C42). `ci-lanes.tsv` is the one assignment: every gate of
-`ci-gates.tsv`, on each host it runs on, has exactly one owning lane. A lane
+council decision D-C42). Each gate fragment `scripts/ci-gates.d/<id>.tsv`
+holds the one assignment: every gate, on each host it runs on, has exactly one
+owning lane (`linux_lane` and `windows_lane`). A lane
 runs `ci-verify.sh --gates` with the gates it owns, which adds their needs:
 the scheduler, its memory admission, locks and dependency closure are the same
 as in a local full run, which is unchanged. Each lane bootstraps its own
 compiler from the published stage0; no compiler passes between jobs. A gate
 that a lane runs only because its owned gates need it is a duplicate, and
-`ci-lanes.tsv` must declare it (`OWNER+LANE`). `bootstrap-compiler` runs in both
+its lane column must declare it (`OWNER+LANE`). `bootstrap-compiler` runs in both
 lanes of each host that way, and `bootstrap-fixpoint` is declared with `LANE!`:
 the lane requests it, so both runners of a host bootstrap and prove the fixpoint
 and the aggregator compares their converged compilers.
@@ -561,7 +565,7 @@ assigned to a host it does not run on, when a duplicate is undeclared or a
 declaration is stale, when a host has more than two lanes, or when
 `SC_CI_JOB_NAME` (`lib-self-compile.sh`) does not name the lane that runs
 `linux-self-compile-measurement`. Every lane and aggregator runs it, so a new
-`ci-gates.tsv` row needs a lane before CI can pass. `ci-lane.sh setup LANE`
+`scripts/ci-gates.d/<id>.tsv` file needs a lane before CI can pass. `ci-lane.sh setup LANE`
 gives the workflow a lane's gates and needs. `ci-lane.sh setup` grants the
 three-worker build-invariance pool only to a lane that holds nothing else;
 under this layout lane `linux-1` also carries the gates the replay moved
@@ -598,7 +602,7 @@ row timed as the slowest lane (`partial-verification` rows mark lane runs).
 
 The assignment follows the D-C42 scheduler replay of measured gate times
 (`ci-verify.sh --jobs 4 --memory-mib 14336`, validated against hosted runs).
-Rebalance by editing `ci-lanes.tsv`; keep a lane's duplicates small, because
+Rebalance by editing the lane columns in `scripts/ci-gates.d/*.tsv`; keep a lane's duplicates small, because
 each duplicated gate costs runner time in every run.
 
 ## Same-run compiler stage envelopes (D-C27 slice 1)

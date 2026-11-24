@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+linux-self-compile-check	360	linux	Linux self-compile cached-base check	linux-self-compile-measurement	-	256	-	gate_self_compile_check	linux-2	-	compiler,stdlib,corpus	Compares the measured compiler against the tested base using the self-compile declarations.

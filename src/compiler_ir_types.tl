@@ -5077,6 +5077,15 @@
     (ir_i64_i64_map.with-capacity 1)
     (compiler-ir-return-storage-index-empty)))
 
+(define (compiler-ir-clone-representation-index
+  [pools : ast.AstNodePoolContext]
+  [index : (& index CompilerIrRepresentationIndex)]) : CompilerIrRepresentationIndex
+  (CompilerIrRepresentationIndex
+    (ir_i64_i64_map.clone-map (& index.word-counts))
+    (ir_i64_i64_map.clone-map (& index.class-masks))
+    (ir_i64_i64_map.clone-map (& index.stable-word-masks))
+    (compiler-ir-clone-return-storage-index pools (& index.return-storage))))
+
 (define (compiler-ir-representation-index-stable-mask-known?
   [index : (& index CompilerIrRepresentationIndex)]
   [key : i64]) : bool
@@ -6018,6 +6027,35 @@
   _
   _)
 
+;; Open-addressed label -> block id table (slots hold `id + 1`, zero is
+;; empty; the id identifies its key through `labels`). Fold multiplied high
+;; bits into the slot before masking: pruned labels need not retain the dense
+;; numbering of the original body.
+(define (compiler-ir-label-id-slot [label : i64] [mask : i64]) : i64
+  (let
+    [mixed : i64 (* label -7046029254386353131)]
+    (bit-and (bit-xor mixed (cast (shr (cast mixed : u64) 29) : i64)) mask)))
+
+;; The block id `label` maps to in `slots`, or -1 when it has none.
+(define (compiler-ir-label-id-find
+  [slots : (& slots (__tl_dyn-array i64))]
+  [labels : (& labels (__tl_dyn-array i64))]
+  [label : i64]) : i64
+  (let
+    [mask : i64 (- (array-length slots) 1)]
+    [slot : i64 (compiler-ir-label-id-slot label mask)]
+    (while true
+      (let
+        [entry : i64 (array-ref slots slot)]
+        (if (= entry 0)
+          (return -1)
+          (let
+            [id : i64 (- entry 1)]
+            (if (= (array-ref labels id) label)
+              (return id)
+              (set! slot (bit-and (+ slot 1) mask)))))))
+    -1))
+
 (define (compiler-ir-block-builder-new) : CompilerIrBlockBuilder
   ;; Seed for the common small function: most lowered functions have four
   ;; or fewer blocks, so 4 covers them without a grow and keeps the transient
@@ -6538,6 +6576,16 @@
         compiler-ir-clone-label
         pools)]))
 
+(define (compiler-ir-clone-instr-at
+  [pools : ast.AstNodePoolContext]
+  [src : (& (__tl_dyn-array CompilerIrInstr))]
+  [index : i64]) : CompilerIrInstr
+  (compiler-ir-clone-instr
+    pools
+    (compiler-ir-array-shared-view
+      (owned_view.compiler-owned-reference-shared-view src)
+      index)))
+
 (define (compiler-ir-clone-instr-seq-fill
   [pools : ast.AstNodePoolContext]
   [src : (& (__tl_dyn-array CompilerIrInstr))]
@@ -6545,13 +6593,7 @@
   [index : i64]
   [count : i64]) : unit
   (for [cursor (iterator.range index count)]
-    (set!
-      (array-ref dst cursor)
-      (compiler-ir-clone-instr
-        pools
-        (compiler-ir-array-shared-view
-          (owned_view.compiler-owned-reference-shared-view src)
-          cursor))))
+    (set! (array-ref dst cursor) (compiler-ir-clone-instr-at pools src cursor)))
   unit)
 
 (define (compiler-ir-clone-instr-seq
@@ -9961,17 +10003,23 @@
 ;; Length of the one trailing clone suffix `text` carries, or 0.
 (define (compiler-source-spans-bounds-clone-suffix-len [text : (& text str)]) : i64
   (let
-    [fast : String "__bce_fast"]
-    [fast-len : i64 (compiler-source-spans-label-suffix-len text (& fast))]
-    (if (> fast-len 0)
-      fast-len
+    [fast-part : String "__bce_fast_part"]
+    [fast-part-len : i64
+      (compiler-source-spans-label-suffix-len text (& fast-part))]
+    (if (> fast-part-len 0)
+      fast-part-len
       (let
-        [unswitch : String "__licm_false"]
-        [unswitch-len : i64
-          (compiler-source-spans-label-suffix-len text (& unswitch))]
-        (if (> unswitch-len 0)
-          unswitch-len
-          (compiler-source-spans-label-unroll-suffix-len text))))))
+        [fast : String "__bce_fast"]
+        [fast-len : i64 (compiler-source-spans-label-suffix-len text (& fast))]
+        (if (> fast-len 0)
+          fast-len
+          (let
+            [unswitch : String "__licm_false"]
+            [unswitch-len : i64
+              (compiler-source-spans-label-suffix-len text (& unswitch))]
+            (if (> unswitch-len 0)
+              unswitch-len
+              (compiler-source-spans-label-unroll-suffix-len text))))))))
 
 (define (compiler-source-spans-lookup-bounds-with-fuel
   [instr-entries : (& CompilerSourceSpansInstrEntryList)]

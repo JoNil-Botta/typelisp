@@ -1,4 +1,5 @@
 (import stdlib.arena)
+(import stdlib.clone)
 (import stdlib.string)
 
 (defstruct Pair
@@ -21,7 +22,7 @@
     [n : i64 (array-length items)]
     (while (< i rounds)
       (let
-        [copy : (__tl_dyn-array i64) (clone items)]
+        [copy : (__tl_dyn-array i64) (clone.deep items)]
         (set! acc (+ acc (array-ref copy (% i n))))
         (set! i (+ i 1))))
     acc))
@@ -29,7 +30,7 @@
 (define (i64-copy-independent?) : bool
   (let
     [items : (__tl_dyn-array i64) (make-i64-items)]
-    [copy : (__tl_dyn-array i64) (clone items)]
+    [copy : (__tl_dyn-array i64) (clone.deep items)]
     (set! (array-ref copy 0) 999)
     (and (= (array-ref items 0) 1) (= (array-ref copy 0) 999))))
 
@@ -42,7 +43,7 @@
 (define (pair-copy-independent?) : bool
   (let
     [items : (__tl_dyn-array Pair) (make-pairs)]
-    [copy : (__tl_dyn-array Pair) (clone items)]
+    [copy : (__tl_dyn-array Pair) (clone.deep items)]
     (set! (array-ref copy 1) (Pair 70 80))
     (and
       (= (pair-score (array-ref items 1)) 7)
@@ -61,7 +62,7 @@
       (unsafe
         (arena.set! home))
       (let
-        [copy : (__tl_dyn-array String) (clone items)]
+        [copy : (__tl_dyn-array String) (clone.deep items)]
         (unsafe
           (arena.destroy scratch))
         (and

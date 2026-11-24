@@ -37,32 +37,6 @@
 (import stdlib.text_buf)
 (import stdlib.vector)
 
-;; Raw representation copies. Each expands to raw pointer operations and adds
-;; no `unsafe` of its own, so it compiles only inside the caller's `unsafe`
-;; expression. The caller owes place validity, bounds and ownership: the copy
-;; aliases the source, so the source must be consumed by this read and not
-;; used again as an owner.
-;: Return a representation copy of a JSON value place; requires `unsafe`.
-(defmacro (json-shared-view [place : Expr]) : Expr
-  `(ptr-read (ptr-addr-of ,place)))
-
-;: Return a representation copy of `items[index]`; requires `unsafe`.
-;: The caller proves `0 <= index < array-length items`.
-(defmacro (json-array-element-shared-view [items : Expr] [index : Expr]) : Expr
-  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))
-
-;: Return a representation copy of a boxed JSON value; requires `unsafe`.
-(defmacro (json-box-shared-view [value : Expr]) : Expr
-  (let
-    ;; Spliced into the generated pointer element type.
-    ;; lint-allow: unused-variable
-    [inner-ty : comptime.Expr
-      (comptime.box-element-type (comptime.expr-type value))]
-    `(ptr-read
-      (int->ptr
-        (cast (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))) : u64)
-        : (Ptr ,inner-ty)))))
-
 ;: Canonical JSON value model used by the stdlib parser and serializer.
 (defenum Json
   (JsonNull)
@@ -164,11 +138,9 @@
     [i : i64 0]
     (set! (array-ref slots 0) head)
     (while (< i n)
-      ;; `items` is consumed: each element moves bitwise exactly once.
       (set!
         (array-ref slots (+ i 1))
-        (unsafe
-          (json-array-element-shared-view items.slots i)))
+        (clone-json (& (array-ref items.slots i))))
       (set! i (+ i 1)))
     (JsonSeq slots count)))
 
@@ -188,11 +160,9 @@
     [i : i64 0]
     (set! (array-ref slots 0) (JsonMember key value))
     (while (< i n)
-      ;; `items` is consumed: each element moves bitwise exactly once.
       (set!
         (array-ref slots (+ i 1))
-        (unsafe
-          (json-array-element-shared-view items.slots i)))
+        (clone-json-member (& (array-ref items.slots i))))
       (set! i (+ i 1)))
     (JsonMemberSeq slots count)))
 
@@ -206,7 +176,7 @@
     [slots : (__tl_dyn-array Json) (__tl_make-array Json n)]
     [i : i64 0]
     (while (< i n)
-      (set! (array-ref slots i) (jvec.get (& items) i JsonNull))
+      (set! (array-ref slots i) (clone-json (& (array-ref items.slots i))))
       (set! i (+ i 1)))
     (JsonSeq slots n)))
 
@@ -222,7 +192,7 @@
     (while (< i n)
       (set!
         (array-ref slots i)
-        (jmvec.get (& items) i (JsonMember "" JsonNull)))
+        (clone-json-member (& (array-ref items.slots i))))
       (set! i (+ i 1)))
     (JsonMemberSeq slots n)))
 
@@ -401,11 +371,9 @@
     [slots : (__tl_dyn-array Json) (__tl_make-array Json n)]
     [i : i64 0]
     (while (< i n)
-      ;; `items` is consumed: each element moves bitwise exactly once.
       (set!
         (array-ref slots i)
-        (unsafe
-          (json-array-element-shared-view items.slots (- (- n 1) i))))
+        (clone-json (& (array-ref items.slots (- (- n 1) i)))))
       (set! i (+ i 1)))
     (JsonSeq slots n)))
 
@@ -416,11 +384,9 @@
     [slots : (__tl_dyn-array JsonMember) (__tl_make-array JsonMember n)]
     [i : i64 0]
     (while (< i n)
-      ;; `items` is consumed: each element moves bitwise exactly once.
       (set!
         (array-ref slots i)
-        (unsafe
-          (json-array-element-shared-view items.slots (- (- n 1) i))))
+        (clone-json-member (& (array-ref items.slots (- (- n 1) i)))))
       (set! i (+ i 1)))
     (JsonMemberSeq slots n)))
 
@@ -434,16 +400,7 @@
 
 ;: Look up an array element by zero-based index.
 (define (list-get-index [items : JsonSeq] [index : i64]) : JsonLookup
-  (let
-    [n : i64 (stdlib.json.list-count-ref (& items))]
-    (if (or (< index 0) (>= index n))
-      JsonMissing
-      ;; `items` is consumed by this call and `index` is below its checked
-      ;; live prefix, so the copy moves that element out of storage no owner
-      ;; reads again.
-      (JsonFound
-        (unsafe
-          (json-array-element-shared-view items.slots index))))))
+  (stdlib.json.list-get-index-owned (& items) index))
 
 ;; Return an owned element for generated decoders that must move the lookup
 ;; result out of a boxed sequence.
@@ -466,11 +423,9 @@
     [slots : (__tl_dyn-array Json) (__tl_make-array Json count)]
     [i : i64 0]
     (while (< i count)
-      ;; `items` is consumed: each element moves bitwise exactly once.
       (set!
         (array-ref slots i)
-        (unsafe
-          (json-array-element-shared-view items.slots (+ i 1))))
+        (clone-json (& (array-ref items.slots (+ i 1)))))
       (set! i (+ i 1)))
     (JsonSeq slots count)))
 
@@ -486,18 +441,13 @@
     [slots : (__tl_dyn-array Json) (__tl_make-array Json count)]
     [i : i64 0]
     (while (< i ln)
-      ;; `left` and `right` are consumed: each element moves bitwise once.
-      (set!
-        (array-ref slots i)
-        (unsafe
-          (json-array-element-shared-view left.slots i)))
+      (set! (array-ref slots i) (clone-json (& (array-ref left.slots i))))
       (set! i (+ i 1)))
     (set! i 0)
     (while (< i rn)
       (set!
         (array-ref slots (+ ln i))
-        (unsafe
-          (json-array-element-shared-view right.slots i)))
+        (clone-json (& (array-ref right.slots i))))
       (set! i (+ i 1)))
     (JsonSeq slots count)))
 
@@ -511,19 +461,7 @@
 
 ;: Look up borrowed `key` in an object member sequence.
 (define (member-list-get [items : JsonMemberSeq] [key : (& key str)]) : JsonLookup
-  (let
-    [n : i64 (stdlib.json.member-list-count-ref (& items))]
-    [i : i64 0]
-    (while (< i n)
-      (let
-        ;; `items` is consumed by this call and `i` is below its checked live
-        ;; prefix, so each member is copied out exactly once.
-        [member : JsonMember
-          (unsafe
-            (json-array-element-shared-view items.slots i))]
-        (when (string.eq (& member.key) key) (return (JsonFound member.value)))
-        (set! i (+ i 1))))
-    JsonMissing))
+  (stdlib.json.member-list-get-value-owned (& items) key))
 
 ;: Look up owned `key` in an object member sequence.
 (define (member-list-get-owned [items : JsonMemberSeq] [key : String]) : JsonLookup
@@ -540,13 +478,13 @@
     [i : i64 0]
     [found : JsonLookup JsonMissing]
     (while (< i n)
-      (let
-        [member : JsonMember (clone-json-member (& (array-ref items.slots i)))]
-        (if (string.eq (& member.key) key)
-          (begin
-            (set! found (JsonFound member.value))
-            (set! i n))
-          (set! i (+ i 1)))))
+      (if (string.eq (& (array-ref items.slots i).key) key)
+        (begin
+          (set!
+            found
+            (JsonFound (clone-json (& (array-ref items.slots i).value))))
+          (set! i n))
+        (set! i (+ i 1))))
     found))
 
 ;: Look up borrowed `key` in `value` when it is a JSON object.
@@ -568,15 +506,7 @@
 ;:       (& key))))
 ;: ```
 (define (object-get [value : Json] [key : (& key str)]) : JsonLookup
-  (match value
-    [(JsonObject members)
-      ;; `value` is consumed by this call, so the copy moves its member
-      ;; sequence out of the box.
-      (stdlib.json.member-list-get
-        (unsafe
-          (json-box-shared-view members))
-        key)]
-    [_ JsonMissing]))
+  (stdlib.json.object-get-value-owned-ref (& value) key))
 
 ;: Look up owned `key` in `value`.
 ;:
@@ -584,14 +514,18 @@
 (define (object-get-owned [value : Json] [key : String]) : JsonLookup
   (stdlib.json.object-get value (& key)))
 
+;: Look up an object member through a shared borrow and return an independently
+;: owned value.
+(define (object-get-value-owned-ref
+  [value : (& value Json)]
+  [key : (& key str)]) : JsonLookup
+  (match value
+    [(JsonObject members) (stdlib.json.member-list-get-value-owned members key)]
+    [_ JsonMissing]))
+
 ;: Look up an object member and return an independently owned value.
 (define (object-get-value-owned [value : Json] [key : String]) : JsonLookup
-  (match value
-    [(JsonObject members)
-      (stdlib.json.member-list-get-value-owned
-        (& (__tl-box-place members))
-        (& key))]
-    [_ JsonMissing]))
+  (stdlib.json.object-get-value-owned-ref (& value) (& key)))
 
 ;: Decode a hexadecimal digit char, or return -1 when it is not a hex digit.
 (define (hex-value [c : char]) : i64
@@ -675,10 +609,12 @@
         (string.substring text segment-start (- n segment-start))))
     (text_buf.render out)))
 
-;: Append serialized array elements to `buf`.
-(define (stringify-list-into [items : JsonSeq] [buf : text_buf.TextBuf]) : text_buf.TextBuf
+;: Append serialized array elements from a borrowed sequence to `buf`.
+(define (stringify-list-into-ref
+  [items : (& items JsonSeq)]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [n : i64 (stdlib.json.list-count-ref (& items))]
+    [n : i64 (stdlib.json.list-count-ref items)]
     [i : i64 0]
     [out : text_buf.TextBuf buf]
     (while (< i n)
@@ -689,37 +625,36 @@
         out
         (text_buf.append
           out
-          ;; `items` is consumed by this call and `i` is below its checked
-          ;; live prefix, so each element is copied out exactly once.
-          (stdlib.json.stringify
-            (unsafe
-              (json-array-element-shared-view items.slots i)))))
+          (stdlib.json.stringify-ref (& (array-ref items.slots i)))))
       (set! i (+ i 1)))
     out))
+
+;: Append serialized array elements to `buf`.
+(define (stringify-list-into [items : JsonSeq] [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (stdlib.json.stringify-list-into-ref (& items) buf))
+
+;: Serialize borrowed array `items` without the surrounding brackets.
+(define (stringify-list-ref [items : (& items JsonSeq)]) : String
+  (stdlib.json.list-count-ref items)
+  (text_buf.render (stdlib.json.stringify-list-into-ref items (text_buf.empty))))
 
 ;: Serialize array `items` without the surrounding brackets.
 ;:
 ;: The returned comma-separated string is allocated in the active arena.
 (define (stringify-list [items : JsonSeq]) : String
-  (stdlib.json.list-count-ref (& items))
-  (text_buf.render (stdlib.json.stringify-list-into items (text_buf.empty))))
+  (stdlib.json.stringify-list-ref (& items)))
 
-;: Append serialized object members to `buf`.
-(define (stringify-members-into
-  [items : JsonMemberSeq]
+;: Append serialized object members from a borrowed sequence to `buf`.
+(define (stringify-members-into-ref
+  [items : (& items JsonMemberSeq)]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [n : i64 (stdlib.json.member-list-count-ref (& items))]
+    [n : i64 (stdlib.json.member-list-count-ref items)]
     [i : i64 0]
     [out : text_buf.TextBuf buf]
     (while (< i n)
       (let
-        ;; `items` is consumed by this call and `i` is below its checked live
-        ;; prefix, so each member is copied out exactly once.
-        [member : JsonMember
-          (unsafe
-            (json-array-element-shared-view items.slots i))]
-        [text : String member.key]
+        [member : (& items JsonMember) (& (array-ref items.slots i))]
         (if (> i 0)
           (set! out (text_buf.append out ","))
           unit)
@@ -729,18 +664,45 @@
             (text_buf.append
               (text_buf.append
                 (text_buf.append out "\"")
-                (stdlib.json.escape-string (& text)))
+                (stdlib.json.escape-string (& member.key)))
               "\":")
-            (stdlib.json.stringify member.value)))
+            (stdlib.json.stringify-ref (& member.value))))
         (set! i (+ i 1))))
     out))
+
+;: Append serialized object members to `buf`.
+(define (stringify-members-into
+  [items : JsonMemberSeq]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (stdlib.json.stringify-members-into-ref (& items) buf))
+
+;: Serialize borrowed object `items` without the surrounding braces.
+(define (stringify-members-ref [items : (& items JsonMemberSeq)]) : String
+  (stdlib.json.member-list-count-ref items)
+  (text_buf.render
+    (stdlib.json.stringify-members-into-ref items (text_buf.empty))))
 
 ;: Serialize object `items` without the surrounding braces.
 ;:
 ;: The returned comma-separated member string is allocated in the active arena.
 (define (stringify-members [items : JsonMemberSeq]) : String
-  (stdlib.json.member-list-count-ref (& items))
-  (text_buf.render (stdlib.json.stringify-members-into items (text_buf.empty))))
+  (stdlib.json.stringify-members-ref (& items)))
+
+;: Serialize a borrowed JSON value to canonical compact JSON text.
+(define (stringify-ref [value : (& value Json)]) : String
+  (match value
+    [(JsonNull) "null"]
+    [(JsonBool b)
+      (if b
+        "true"
+        "false")]
+    [(JsonNumber text) (string.copy text)]
+    [(JsonString text)
+      (str_cat.str-cat "\"" (stdlib.json.escape-string text) "\"")]
+    [(JsonArray items)
+      (str_cat.str-cat "[" (stdlib.json.stringify-list-ref items) "]")]
+    [(JsonObject members)
+      (str_cat.str-cat "{" (stdlib.json.stringify-members-ref members) "}")]))
 
 ;: Serialize a JSON value to canonical compact JSON text.
 ;:
@@ -754,31 +716,7 @@
 ;:       (box (json.list-cons (json.JsonBool true) (json.list-empty))))))
 ;: ```
 (define (stringify [value : Json]) : String
-  (match value
-    [(JsonNull) "null"]
-    [(JsonBool b)
-      (if b
-        "true"
-        "false")]
-    [(JsonNumber text) text]
-    [(JsonString text)
-      (str_cat.str-cat "\"" (stdlib.json.escape-string (& text)) "\"")]
-    ;; `value` is consumed by this call, so each copy moves the sequence out of
-    ;; its box.
-    [(JsonArray items)
-      (str_cat.str-cat
-        "["
-        (stdlib.json.stringify-list
-          (unsafe
-            (json-box-shared-view items)))
-        "]")]
-    [(JsonObject members)
-      (str_cat.str-cat
-        "{"
-        (stdlib.json.stringify-members
-          (unsafe
-            (json-box-shared-view members)))
-        "}")]))
+  (stdlib.json.stringify-ref (& value)))
 
 ;: Render an i64 as a JSON number value.
 (define (i64->number [value : i64]) : Json
@@ -1491,8 +1429,7 @@
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
         [(stdlib.json.JsonObject __json_members)
-          (stdlib.json.member-list-count-ref
-            (& (__tl-box-place __json_members)))
+          (stdlib.json.member-list-count-ref __json_members)
           unit]
         [_ (return (,err-ctor "json: expected object"))])]))
 
@@ -1503,7 +1440,7 @@
   [err-ctor : comptime.Expr]) : comptime.Expr
   `(match ,object
     [(stdlib.json.JsonValue __json_object)
-      (match (stdlib.json.object-get-value-owned __json_object ,name)
+      (match (stdlib.json.object-get-value-owned-ref __json_object ,name)
         [(stdlib.json.JsonFound found) (stdlib.json.JsonValue found)]
         [(stdlib.json.JsonMissing) (return (,err-ctor "json: missing field"))])]))
 
@@ -1532,8 +1469,7 @@
   `(match ,value
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
-        [(stdlib.json.JsonArray items)
-          (stdlib.json.list-count-ref (& (__tl-box-place items)))]
+        [(stdlib.json.JsonArray items) (stdlib.json.list-count-ref items)]
         [_ (return (,err-ctor "json: expected array"))])]))
 
 ;: `stdlib.serialize` hook for reading one decoded sequence element.
@@ -1545,9 +1481,7 @@
     [(stdlib.json.JsonValue __json_value)
       (match __json_value
         [(stdlib.json.JsonArray items)
-          (match (stdlib.json.list-get-index-owned
-            (& (__tl-box-place items))
-            ,index)
+          (match (stdlib.json.list-get-index-owned items ,index)
             [(stdlib.json.JsonFound found) (stdlib.json.JsonValue found)]
             [(stdlib.json.JsonMissing)
               (return (,err-ctor "json: missing array element"))])]

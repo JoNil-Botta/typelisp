@@ -1,2 +1,0 @@
-# identity	declared-params	shape	result	fixture	native-status	fuel	comparison
-stdlib.process/process-place-shared-view	1	fixed	expr	tests/integration/tlci_identity_owned_views.tl	ok	default	assembly

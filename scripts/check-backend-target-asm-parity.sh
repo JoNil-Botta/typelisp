@@ -356,10 +356,22 @@ normalize_asm() {
             }
 
             # Object-format symbol metadata, not body code: Win64 unwind
-            # (`.seh_*`) has no ELF spelling, and the ELF symbol type/size
+            # (`.seh_*`, or its lowered end label and pushed `.xdata`/`.pdata`
+            # records) has no ELF spelling, and the ELF symbol type/size
             # (`.type NAME,@function` / `.size NAME, . - NAME`) has no COFF
             # spelling. Neither contributes a byte to .text, so neither belongs
             # in a target-to-target body comparison.
+            if (in_unwind) {
+                if (line == ".popsection") in_unwind = 0
+                next
+            }
+            if (line ~ /^\.pushsection[ \t]+\.(xdata|pdata),/) {
+                in_unwind = 1
+                next
+            }
+            if (line ~ /^\.L_tl_seh_end_[0-9]+:$/) {
+                next
+            }
             if (line == "" || line ~ /^#/ || line ~ /^\.seh_/ ||
                     line ~ /^\.type[ \t]/ || line ~ /^\.size[ \t]/) {
                 next

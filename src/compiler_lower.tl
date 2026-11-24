@@ -23,7 +23,6 @@
 (import compiler_pointer_proof_input as pointer_proof)
 (import (vector.vector pointer_proof.PointerProofRef core) as proof_refs)
 (import compiler_ast_types as ast)
-(import compiler_clone as clone_support)
 (import compiler_ctfe as ctfe)
 (import compiler_float as cfloat)
 (import compiler_intern as ci)
@@ -264,7 +263,6 @@
   (symbol-ids (__tl_dyn-array i64))
   (logical-symbols lower_i64_i64_map.Map)
   (module-paths LowerModulePathIndex)
-  (clone-roots clone_support.CloneRootEntries)
   (module-id i64)
   (parent LowerNameParent)
   ;; Opaque owner address for the per-program caches/selectors used by
@@ -304,7 +302,6 @@
     (__tl_make-array i64 0)
     (lower_i64_i64_map.with-capacity 8)
     (lower-module-path-index-empty)
-    (Empty)
     cbi.compiler-builtin-id-fix-empty
     (None)
     owner-address))
@@ -1282,14 +1279,6 @@
 (defenum LowerMaybeEntryMainModule
   (No)
   (Some String i64))
-
-(defenum ResultLowerCheckedContext
-  (Ok tc_core.TcContext tc_core.TcTypeEnv)
-  (Err String))
-
-(defenum ResultLowerCloneAugment
-  (Ok ast.AstProgram ast.AstDeclList clone_support.CloneRootEntries)
-  (Err String))
 
 (defenum CompilerLowerMode
   (Scalar)
@@ -5002,7 +4991,6 @@
           (lower_i64_i64_map.with-capacity
             (lower-name-cache-capacity logical-alias-count))
           (lower-module-path-index-empty)
-          (Empty)
           cbi.compiler-builtin-id-fix-empty
           (None)
           lower-state.address)))))
@@ -5034,7 +5022,6 @@
           (lower_i64_i64_map.with-capacity
             (lower-name-cache-capacity logical-alias-count))
           (lower-module-path-index-empty)
-          (Empty)
           module-id
           (Global)
           lower-state.address)))))
@@ -5147,58 +5134,9 @@
     cache.symbol-ids
     cache.logical-symbols
     cache.module-paths
-    cache.clone-roots
     module-id
     cache.parent
     cache.owner-address))
-
-(define (lower-name-cache-with-clone-roots
-  [cache : LowerNameCache]
-  [roots : clone_support.CloneRootEntries]) : LowerNameCache
-  (set! cache.clone-roots roots)
-  cache)
-
-(define (lower-name-cache-clone-helper-id
-  [cache : LowerNameCache]
-  [type-key-id : i64]) : i64
-  (let
-    [helper-id : i64
-      (clone_support.clone-root-entries-helper-id-or
-        cache.clone-roots
-        type-key-id
-        -1)]
-    (if (>= helper-id 0)
-      helper-id
-      (match cache.parent
-        [(None) -1]
-        [(Global)
-          (lower-name-cache-clone-helper-id
-            (lower-name-cache-active-global (& cache))
-            type-key-id)]))))
-
-(define (lower-name-cache-clone-key-id
-  [cache : LowerNameCache]
-  [type-key-id : i64]) : i64
-  (if (>=
-    (lower-name-cache-clone-helper-id
-      (lower-global-shared-view cache)
-      type-key-id)
-    0)
-    type-key-id
-    (let
-      [candidate : i64
-        (clone_support.clone-root-entries-unique-key-for-base-id-or
-          cache.clone-roots
-          (clone_support.clone-name-key-base-id type-key-id)
-          -1)]
-      (if (>= candidate 0)
-        candidate
-        (match cache.parent
-          [(None) -1]
-          [(Global)
-            (lower-name-cache-clone-key-id
-              (lower-name-cache-active-global (& cache))
-              type-key-id)])))))
 
 (define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : tc_core.TcMaybeString
   (let
@@ -6621,13 +6559,6 @@
           cleanup-str
           cleanup-name-id))]))
 
-(define (lower-name-has-clone-prefix? [name : String]) : bool
-  (let
-    [source-name : String (tc_core.tc-hygiene-global-call-name name)]
-    (if (>= (string.string-length source-name) 6)
-      (string.eq (string.substring source-name 0 6) "clone$")
-      false)))
-
 (define (lower-resolve-name-id [state : LowerState] [source-id : i64]) : String
   (let
     [names : LowerNameCache (lower-state-names state)]
@@ -7659,195 +7590,6 @@
                     decl)
                   owner-names)))])))
     cur-names))
-
-(define (lower-name-env-add-clone-decl-in-module-inner
-  [lower-state : CompilerLowerState]
-  [names : LowerNameEnv]
-  [roots : clone_support.CloneRootEntries]
-  [bind-syntax? : bool]
-  [entry-path : String]
-  [decl-path : String]
-  [module : String]
-  [module-id : i64]
-  [decl : ast.AstDecl]) : LowerNameEnv
-  (match decl
-    [(DefFn decl-meta name _ _ _ _)
-      (let
-        [name-str : String (lower-name-id-text lower-state name)]
-        (if (lower-name-has-clone-prefix? (lower-global-shared-view name-str))
-          (lower-name-env-add-decl-module-binding-id
-            lower-state
-            names
-            entry-path
-            decl-path
-            module
-            module-id
-            name-str
-            name)
-          names))]
-    [(Unsafe inner-box)
-      (let
-        [inner : ast.AstDecl (deref inner-box)]
-        (lower-name-env-add-clone-decl-in-module
-          lower-state
-          names
-          roots
-          bind-syntax?
-          entry-path
-          decl-path
-          module
-          module-id
-          inner))]
-    [_ names]))
-
-(define (lower-name-env-add-clone-decl-in-module
-  [lower-state : CompilerLowerState]
-  [names : LowerNameEnv]
-  [roots : clone_support.CloneRootEntries]
-  [bind-syntax? : bool]
-  [entry-path : String]
-  [decl-path : String]
-  [module : String]
-  [module-id : i64]
-  [decl : ast.AstDecl]) : LowerNameEnv
-  (match (ast.ast-decl-generated-meta decl)
-    [(Some generator item _ _)
-      (if (string.eq generator "stdlib.clone/synthesize-helpers")
-        (match (ast.ast-decl-unwrapped (& decl))
-          [(DefFn decl-meta name _ _ _ _)
-            (let
-              [with-syntax-id : LowerNameEnv
-                (if bind-syntax?
-                  (lower-name-env-add-decl-module-binding-id
-                    lower-state
-                    names
-                    entry-path
-                    decl-path
-                    module
-                    module-id
-                    item
-                    name)
-                  names)]
-              [root-key-id : i64
-                (lower-clone-handoff-source-helper-root-id
-                  lower-state
-                  name
-                  module-id
-                  roots)]
-              (if (>= root-key-id 0)
-                (let
-                  [helper-id : i64
-                    (clone_support.clone-root-entries-helper-id-or
-                      roots
-                      root-key-id
-                      -1)]
-                  [syntax-key-id : i64
-                    (lower-module-name-key-id-by-id module-id name)]
-                  [logical-id : i64
-                    (lower-name-env-lookup-logical-id
-                      (lower-global-shared-view with-syntax-id)
-                      syntax-key-id
-                      -1)]
-                  [symbol-id : i64
-                    (lower-name-env-lookup-symbol-id-owned
-                      lower-state
-                      (lower-global-shared-view with-syntax-id)
-                      syntax-key-id
-                      -1)]
-                  ;; Alias the role handle to the declaration's exact
-                  ;; logical/symbol identity. Recomputing from helper-id would
-                  ;; create a second IR symbol for the same helper.
-                  (if (and (>= logical-id 0) (>= symbol-id 0))
-                    (lower-name-env-bind-logical-symbol-id-owned
-                      lower-state
-                      (lower-module-name-key-id-by-id module-id helper-id)
-                      logical-id
-                      symbol-id
-                      with-syntax-id)
-                    with-syntax-id))
-                with-syntax-id))]
-          [_ names])
-        (lower-name-env-add-clone-decl-in-module-inner
-          lower-state
-          names
-          roots
-          bind-syntax?
-          entry-path
-          decl-path
-          module
-          module-id
-          decl))]
-    [(No)
-      (lower-name-env-add-clone-decl-in-module-inner
-        lower-state
-        names
-        roots
-        bind-syntax?
-        entry-path
-        decl-path
-        module
-        module-id
-        decl)]))
-
-(define (lower-name-env-add-clone-decls-in-module
-  [lower-state : CompilerLowerState]
-  [decls : ast.AstDeclList]
-  [paths : (& paths ast.AstDeclPathList)]
-  [entry-path : String]
-  [names : LowerNameEnv]
-  [roots : clone_support.CloneRootEntries]
-  [bind-syntax? : bool]
-  [initial-module-id : i64]) : LowerNameEnv
-  (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    [cur-names : LowerNameEnv names]
-    [cur-module-id : i64 initial-module-id]
-    ;; Match the backing slot rather than binding the row to a local first: the
-    ;; local materialised a 104 B copy, while a projection match loads the tag
-    ;; and hands the slot straight on (aggregate arguments pass by reference).
-    [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-    [decl-offset : i64 decls.offset]
-    (for [index (iterator.range 0 count)]
-      (let
-        [decl-path : String (ast.ast-decl-path-list-get (& paths) index "")]
-        (match (lower-global-array-element-shared-view
-          decl-slots
-          (+ decl-offset index))
-          [(Module next-module) (set! cur-module-id next-module)]
-          [_
-            (set!
-              cur-names
-              (lower-name-env-add-clone-decl-in-module
-                lower-state
-                cur-names
-                roots
-                bind-syntax?
-                (lower-global-shared-view entry-path)
-                decl-path
-                (compiler-lower-state-name-text lower-state cur-module-id)
-                cur-module-id
-                (lower-global-array-element-shared-view
-                  decl-slots
-                  (+ decl-offset index))))])))
-    cur-names))
-
-(define (lower-name-env-add-clone-decls
-  [lower-state : CompilerLowerState]
-  [decls : ast.AstDeclList]
-  [paths : (& paths ast.AstDeclPathList)]
-  [entry-path : String]
-  [names : LowerNameEnv]
-  [roots : clone_support.CloneRootEntries]
-  [bind-syntax? : bool]) : LowerNameEnv
-  (lower-name-env-add-clone-decls-in-module
-    lower-state
-    decls
-    paths
-    entry-path
-    names
-    roots
-    bind-syntax?
-    cbi.compiler-builtin-id-fix-empty))
 
 (define (lower-alias-logical-name-id
   [lower-state : CompilerLowerState]
@@ -10847,12 +10589,6 @@
       [_ false])
     false))
 
-(define (lower-reach-string-snapshot-source-call?
-  [session : cis.InternStructuralSessionHandle]
-  [name-id : i64]) : bool
-  (cbi.compiler-builtin-lower-clone-id?
-    (tc_core.macro-hygiene-global-source-name-id-or session name-id name-id)))
-
 (define (lower-reach-add-source-id
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [names : (& names LowerNameCache)]
@@ -11043,586 +10779,6 @@
             arms
             (+ index 1)))])))
 
-(define (lower-clone-handoff-type-args
-  [ctx : tc_core.TcContext]
-  [pools : ast.AstNodePoolContext]
-  [roots : clone_support.CloneRootEntries]) : ast.AstExprList
-  (let
-    [index : i64 (- (clone_support.clone-root-entries-len roots) 1)]
-    [out : ast.AstExprList (ast.ast-expr-list-new)]
-    ;; Dense roots expose logical newest-first order; cons from the oldest
-    ;; logical entry back to index 0 so the list keeps that order.
-    (while (>= index 0)
-      (let
-        [root-key-id : i64
-          (clone_support.clone-root-entries-key-id-at-or roots index -1)]
-        [module-id : i64
-          (if (clone_support.clone-name-key-qualified? root-key-id)
-            (clone_support.clone-name-key-module-id root-key-id)
-            cbi.compiler-builtin-id-fix-empty)]
-        (set!
-          out
-          (ast.ast-expr-cons
-            (ast.ast-node-pool-context-expr-push
-              pools
-              (Literal (String module-id)))
-            (&
-              (ast.ast-expr-cons
-                (ast.ast-node-pool-context-expr-push
-                  pools
-                  (TypeLiteral
-                    (ast.ast-node-pool-context-type-push
-                      pools
-                      (tc_core.tc-resolve-type ctx (Var root-key-id)))))
-                (& out)))))
-        (-= index 1)))
-    out))
-
-(define (lower-clone-handoff-request-decl
-  [ctx : tc_core.TcContext]
-  [pools : ast.AstNodePoolContext]
-  [roots : clone_support.CloneRootEntries]) : ast.AstDecl
-  (let
-    [callee : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (Var
-          (tc_core.macro-hygiene-global-id
-            (tc_core.tc-context-structural-session ctx)
-            cbi.compiler-builtin-id-fix-stdlib_dot_clone
-            cbi.compiler-builtin-id-fix-synthesize_helpers
-            false)))]
-    [call-id : i64
-      (ast.ast-expr-call-with-pools
-        pools
-        callee
-        (lower-clone-handoff-type-args ctx pools roots))]
-    (Import
-      (ast.ast-decl-meta-runtime-shared-view)
-      (Spec (MacroDecls call-id No) "" No No (box (ast.ast-decl-span-fallback))))))
-
-(define (lower-clone-handoff-generated-origin-count-in-module
-  [lower-state : CompilerLowerState]
-  [decls : (& ast.AstDeclList)]
-  [root-key-id : i64]
-  [helper-name-id : i64]
-  [module-id : i64]) : i64
-  (match (ast.ast-decl-list-step decls)
-    [(Nil) 0]
-    [(Cons decl rest)
-      (match (& decl)
-        [(Module next-module)
-          (lower-clone-handoff-generated-origin-count-in-module
-            lower-state
-            rest
-            root-key-id
-            helper-name-id
-            next-module)]
-        [_
-          (+
-            (match (ast.ast-decl-generated-meta decl)
-              [(Some generator item _ key)
-                (if (and
-                  (string.eq generator "stdlib.clone/synthesize-helpers")
-                  (string.eq
-                    item
-                    (compiler-lower-state-intern-str lower-state helper-name-id))
-                  (tc_core.tc-string-prefix?
-                    key
-                    "decls:stdlib.clone:stdlib.clone/synthesize-helpers(")
-                  (if (clone_support.clone-name-key-qualified? root-key-id)
-                    (=
-                      module-id
-                      (clone_support.clone-name-key-module-id root-key-id))
-                    (clone_support.clone-module-id-root? module-id))
-                  (=
-                    (clone_support.clone-helper-decl-count
-                      (&
-                        (ast.ast-decl-cons
-                          (& (ast.ast-decl-module-id module-id))
-                          (&
-                            (ast.ast-decl-cons
-                              (& decl)
-                              (& (ast.ast-decl-list-new))))))
-                      root-key-id
-                      helper-name-id)
-                    1))
-                  1
-                  0)]
-              [(No) 0])
-            (lower-clone-handoff-generated-origin-count-in-module
-              lower-state
-              rest
-              root-key-id
-              helper-name-id
-              module-id))])]))
-
-(define (lower-clone-handoff-generated-origin-count
-  [lower-state : CompilerLowerState]
-  [decls : (& ast.AstDeclList)]
-  [root-key-id : i64]
-  [helper-name-id : i64]) : i64
-  (lower-clone-handoff-generated-origin-count-in-module
-    lower-state
-    decls
-    root-key-id
-    helper-name-id
-    cbi.compiler-builtin-id-fix-empty))
-
-;; Caches that may capture scratch-arena values produced by the handoff
-;; expansion. Each is a pure memo rebuilt on demand; resetting them before the
-;; scratch arena is destroyed mirrors the macro-walk boundary clears.
-(define (lower-clone-handoff-expansion-cache-clear!
-  [job-state : tc_core.TcJobState]) : unit
-  (let
-    [macro-state : tc_core.TcMacroState
-      (tc_core.tc-job-state-macro-state job-state)]
-    (tc_core.macro-generated-decls-memo-reset! macro-state)
-    (tc_core.macro-generated-module-memo-reset! macro-state)
-    (tc_core.tc-macro-helper-env-cache-reset! macro-state)
-    (tc_core.tc-nominal-owner-cache-reset-for-job! job-state)
-    (tc_core.macro-alias-derived-cache-reset-for-state! macro-state)
-    (tc_core.tc-job-state-reset-file-state! job-state)
-    (ctfe.ctfe-module-macro-export-reset-for-state!
-      (tc_core.tc-macro-ctfe-state macro-state))))
-
-;; The handoff expansion runs the full macro/CTFE machinery for every clone
-;; root in one shot. Its working set (CTFE values, env spines, memo entries) is
-;; dead once the generated helper declarations exist, but unlike the main macro
-;; walk it runs after macro_detach -- no later pool compaction retires that
-;; garbage, so it would stay in the persistent base arena for the rest of the
-;; compile. Run the expansion in a scratch arena and
-;; copy only the returned declarations out (the mark/rewind/clone-out shape of
-;; tc-check-fn-decl-scoped): node-pool growth and interned spellings already
-;; live in their persistent owners, type-node payloads are persisted at push
-;; time by ty-node-persist, and ast-program-copy-append-with-pools deep-copies
-;; the decl shells and any scratch-resident expr payloads, remapping the
-;; appended expr/type ids.
-(define (lower-clone-handoff-expansion-copy-out
-  [pools : ast.AstNodePoolContext]
-  [raw : tc_core.ResultMacroDeclExpansion]) : tc_core.ResultMacroDeclExpansion
-  (match raw
-    [(Ok generated generated-paths)
-      (match (ast.ast-program-copy-append-with-pools
-        pools
-        pools
-        (& (ast.ast-program generated)))
-        [(AstProgramCompaction copied _)
-          (match copied
-            [(Program decls-box)
-              (Ok
-                (deref decls-box)
-                (lower-copy-paths-into-pools generated-paths pools))])])]
-    [(Err diag) (Err (box (cdiag.compiler-diagnostic-copy (deref diag))))]))
-
-(define (lower-clone-handoff-expand-one
-  [ctx : tc_core.TcContext]
-  [top-env : tc_core.TcTypeEnv]
-  [source-decls : ast.AstDeclList]
-  [entry-path : String]
-  [pools : ast.AstNodePoolContext]
-  [roots : clone_support.CloneRootEntries]) : tc_core.ResultMacroDeclExpansion
-  (let
-    [request : ast.AstDecl (lower-clone-handoff-request-decl ctx pools roots)]
-    [enclosing : i64 (arena.tl_arena_current)]
-    [scratch : i64 (arena.tl_arena_make)]
-    (unsafe
-      (arena.tl_arena_set scratch))
-    (let
-      [raw : tc_core.ResultMacroDeclExpansion
-        (tc_core.macro-expand-decl-with-path
-          (tc_core.tc-context-with-module-id
-            ctx
-            ""
-            cbi.compiler-builtin-id-fix-empty)
-          top-env
-          top-env
-          source-decls
-          ""
-          cbi.compiler-builtin-id-fix-empty
-          request
-          ;; This internal Clone request uses the closed core-macro prelude,
-          ;; whose source-language cfg set is explicitly empty.
-          (lower-source-language-cfgs)
-          entry-path)]
-      (unsafe
-        (arena.tl_arena_set enclosing))
-      (ast.ast-node-pool-context-capture-active! pools)
-      (let
-        [escaped : tc_core.ResultMacroDeclExpansion
-          (lower-clone-handoff-expansion-copy-out pools raw)]
-        (lower-clone-handoff-expansion-cache-clear!
-          (tc_core.tc-context-job-state ctx))
-        (unsafe
-          (arena.tl_arena_destroy scratch))
-        (ast.ast-node-pool-context-install! pools)
-        escaped))))
-
-(define (lower-clone-handoff-source-helper-root-id
-  [lower-state : CompilerLowerState]
-  [name-id : i64]
-  [module-id : i64]
-  [roots : clone_support.CloneRootEntries]) : i64
-  (let
-    [index : i64 0]
-    [count : i64 (clone_support.clone-root-entries-len roots)]
-    [found : i64 -1]
-    (while (and (< index count) (< found 0))
-      (let
-        [root-key-id : i64
-          (clone_support.clone-root-entries-key-id-at-or roots index -1)]
-        [helper-name-id : i64
-          (clone_support.clone-root-entries-helper-id-at-or roots index -1)]
-        [root-module-id : i64
-          (if (clone_support.clone-name-key-qualified? root-key-id)
-            (clone_support.clone-name-key-module-id root-key-id)
-            cbi.compiler-builtin-id-fix-empty)]
-        (if (and
-          (= module-id root-module-id)
-          (string.eq
-            (tc_core.tc-env-key-name-text name-id)
-            (compiler-lower-state-intern-str lower-state helper-name-id)))
-          (set! found root-key-id)
-          unit)
-        (+= index 1)))
-    found))
-
-(define (lower-clone-handoff-source-conflict-in-module
-  [lower-state : CompilerLowerState]
-  [source-decls : (& source-decls ast.AstDeclList)]
-  [roots : clone_support.CloneRootEntries]
-  [module-id : i64]) : i64
-  ;; Index cursor rather than `ast-decl-list-step`; the first non-negative root
-  ;; key still stops the walk. The wrapper peel stays by value -- it needs owned
-  ;; `Box` storage to walk an `AstDecl.Unsafe` chain -- but it reads the
-  ;; backing slot instead of a stepped-out 104 B copy.
-  ;;
-  ;; The roots are indexed once by helper module: `heads` maps a module to its
-  ;; first root and `next` links the rest in ascending root order, with each
-  ;; helper name rendered once. A function then checks only its own module's
-  ;; roots, in root order, so the first conflict found is the one a scan of
-  ;; every root per function finds.
-  (let
-    [root-count : i64 (clone_support.clone-root-entries-len roots)]
-    [heads : lower_i64_i64_map.Map
-      (lower_i64_i64_map.with-capacity (+ root-count 1))]
-    [next : (__tl_dyn-array i64) (__tl_make-array i64 (+ root-count 1))]
-    [keys : (__tl_dyn-array i64) (__tl_make-array i64 (+ root-count 1))]
-    [texts : (__tl_dyn-array String) (__tl_make-array String (+ root-count 1))]
-    [root : i64 (- root-count 1)]
-    [count : i64 (ast.ast-decl-list-len (& source-decls))]
-    [decl-slots : (__tl_dyn-array ast.AstDecl) source-decls.slots]
-    [decl-offset : i64 source-decls.offset]
-    [index : i64 0]
-    [cur-module-id : i64 module-id]
-    [found : i64 -1]
-    ;; Prepend from the last root so each module's chain ascends.
-    (while (>= root 0)
-      (let
-        [root-key-id : i64
-          (clone_support.clone-root-entries-key-id-at-or roots root -1)]
-        [root-module-id : i64
-          (if (clone_support.clone-name-key-qualified? root-key-id)
-            (clone_support.clone-name-key-module-id root-key-id)
-            cbi.compiler-builtin-id-fix-empty)]
-        (set! (array-ref keys root) root-key-id)
-        (set!
-          (array-ref texts root)
-          (compiler-lower-state-intern-str
-            lower-state
-            (clone_support.clone-root-entries-helper-id-at-or roots root -1)))
-        (set!
-          (array-ref next root)
-          (lower_i64_i64_map.get-value-or (& heads) root-module-id -1))
-        (lower_i64_i64_map.insert-ref! (&mut heads) root-module-id root)
-        (-= root 1)))
-    (while (and (< found 0) (< index count))
-      (match (ast.ast-decl-unwrapped
-        (& (array-ref decl-slots (+ decl-offset index))))
-        [(Module next-module) (set! cur-module-id next-module)]
-        [(DefFn decl-meta name _ _ _ _)
-          (let
-            [candidate : i64
-              (lower_i64_i64_map.get-value-or (& heads) cur-module-id -1)]
-            (when
-              (>= candidate 0)
-              (let
-                [text : String (tc_core.tc-env-key-name-text name)]
-                (while (and (>= candidate 0) (< found 0))
-                  (when
-                    (string.eq text (array-ref texts candidate))
-                    (set! found (array-ref keys candidate)))
-                  (set! candidate (array-ref next candidate))))))]
-        [_ unit])
-      (+= index 1))
-    found))
-
-(define (lower-clone-handoff-source-conflict
-  [lower-state : CompilerLowerState]
-  [source-decls : (& source-decls ast.AstDeclList)]
-  [roots : clone_support.CloneRootEntries]) : i64
-  (lower-clone-handoff-source-conflict-in-module
-    lower-state
-    source-decls
-    roots
-    cbi.compiler-builtin-id-fix-empty))
-
-(define (lower-clone-handoff-generated-roots-ok?
-  [lower-state : CompilerLowerState]
-  [generated : (& ast.AstDeclList)]
-  [roots : clone_support.CloneRootEntries]) : bool
-  (let
-    [index : i64 0]
-    [count : i64 (clone_support.clone-root-entries-len roots)]
-    [ok : bool true]
-    (while (and (< index count) ok)
-      (let
-        [root-key-id : i64
-          (clone_support.clone-root-entries-key-id-at-or roots index -1)]
-        [helper-name-id : i64
-          (clone_support.clone-root-entries-helper-id-at-or roots index -1)]
-        (if (and
-          (=
-            (clone_support.clone-helper-decl-count
-              generated
-              root-key-id
-              helper-name-id)
-            1)
-          (=
-            (lower-clone-handoff-generated-origin-count
-              lower-state
-              generated
-              root-key-id
-              helper-name-id)
-            1))
-          unit
-          (set! ok false))
-        (+= index 1)))
-    ok))
-
-(define (lower-clone-handoff-generated-summary-at
-  [lower-state : CompilerLowerState]
-  [decls : ast.AstDeclList]
-  [remaining : i64]) : String
-  (if (<= remaining 0)
-    "..."
-    (match (ast.ast-decl-list-step decls)
-      [(Nil) "end"]
-      [(Cons decl rest)
-        (let
-          [item : String
-            (match (ast.ast-decl-unwrapped (& decl))
-              [(Module module-id)
-                (str_cat.str-cat
-                  "module:"
-                  (compiler-lower-state-name-text lower-state module-id))]
-              [(DefFn decl-meta name _ _ _ _)
-                (match (ast.ast-decl-generated-meta decl)
-                  [(Some generator generated-item _ _)
-                    (str_cat.str-cat
-                      "fn:"
-                      (compiler-lower-state-name-text lower-state name)
-                      "@"
-                      generator
-                      "/"
-                      generated-item)]
-                  [(No)
-                    (str_cat.str-cat
-                      "fn:"
-                      (compiler-lower-state-name-text lower-state name)
-                      "@plain")])]
-              [_ "other"])]
-          (str_cat.str-cat
-            item
-            ","
-            (lower-clone-handoff-generated-summary-at
-              lower-state
-              rest
-              (- remaining 1))))])))
-
-(define (lower-clone-handoff-generated-summary
-  [lower-state : CompilerLowerState]
-  [decls : ast.AstDeclList]) : String
-  (str_cat.str-cat
-    "count="
-    (string.int->string (ast.ast-decl-list-len (& decls)))
-    "["
-    (lower-clone-handoff-generated-summary-at lower-state decls 8)
-    "]"))
-
-;; Expand roots in bounded chunks: the one-shot expansion's macro/CTFE working
-;; set scales with the whole root list, but only one chunk's worth needs to be
-;; live at a time.
-;; Helpers are generated per type key, so chunking preserves the output union.
-(define (lower-clone-handoff-expand-roots
-  [lower-state : CompilerLowerState]
-  [ctx : tc_core.TcContext]
-  [top-env : tc_core.TcTypeEnv]
-  [source-decls : ast.AstDeclList]
-  [entry-path : String]
-  [pools : ast.AstNodePoolContext]
-  [roots : clone_support.CloneRootEntries]
-  [acc : ast.AstDeclList]) : tc_core.ResultMacroDecls
-  (if (clone_support.clone-root-entries-empty? roots)
-    (Ok acc)
-    (let
-      [chunk : clone_support.CloneRootEntries
-        (clone_support.clone-root-entries-take roots 16)]
-      [rest : clone_support.CloneRootEntries
-        (clone_support.clone-root-entries-drop roots 16)]
-      [expanded : tc_core.ResultMacroDeclExpansion
-        (lower-clone-handoff-expand-one
-          ctx
-          top-env
-          (lower-global-shared-view source-decls)
-          (lower-global-shared-view entry-path)
-          pools
-          chunk)]
-      (match expanded
-        [(Ok generated _)
-          (if (lower-clone-handoff-generated-roots-ok?
-            lower-state
-            generated
-            chunk)
-            (begin
-              (ast.ast-node-pool-context-capture-active! pools)
-              (lower-clone-handoff-expand-roots
-                lower-state
-                ctx
-                top-env
-                source-decls
-                entry-path
-                pools
-                rest
-                (clone_support.clone-decl-list-append acc generated)))
-            (let
-              [root-key-id : i64
-                (clone_support.clone-root-entries-key-id-at-or chunk 0 -1)]
-              [helper-name-id : i64
-                (clone_support.clone-root-entries-helper-id-at-or chunk 0 -1)]
-              [message : String
-                (str_cat.str-cat
-                  "clone: stdlib handoff produced an invalid or conflicting helper for "
-                  (clone_support.clone-name-key-string root-key-id)
-                  " (helper-count="
-                  (string.int->string
-                    (clone_support.clone-helper-decl-count
-                      generated
-                      root-key-id
-                      helper-name-id))
-                  ", origin-count="
-                  (string.int->string
-                    (lower-clone-handoff-generated-origin-count
-                      lower-state
-                      generated
-                      root-key-id
-                      helper-name-id))
-                  ", generated="
-                  (lower-clone-handoff-generated-summary lower-state generated)
-                  ")")]
-              (Err (box (tc_core.tc-diag-at-start message)))))]
-        [(Err diag) (Err diag)]))))
-
-(define (lower-clone-handoff-augment
-  [lower-state : CompilerLowerState]
-  [ctx : tc_core.TcContext]
-  [top-env : tc_core.TcTypeEnv]
-  [entry-path : String]
-  [program : ast.AstProgram]
-  [able : clone_support.CloneNameSet]
-  [roots : clone_support.CloneRootEntries]
-  [pools : ast.AstNodePoolContext]) : ResultLowerCloneAugment
-  (let
-    [_live-start : i64 (cfg compile-profile (profile.alloc-live) 0)]
-    [result : ResultLowerCloneAugment
-      (match program
-        [(Program decls-box)
-          (let
-            [source-decls : ast.AstDeclList (deref decls-box)]
-            [handoff-roots : clone_support.CloneRootEntries
-              (clone_support.clone-stdlib-handoff-roots
-                pools
-                source-decls
-                able
-                roots)]
-            [conflict : i64
-              (begin
-                ;; Clone roots carry structural generated-symbol identities. The
-                ;; macro handoff below is their first text boundary.
-                (clone_support.clone-root-entries-materialize-helper-names!
-                  handoff-roots)
-                (lower-clone-handoff-source-conflict
-                  lower-state
-                  source-decls
-                  handoff-roots))]
-            (if (>= conflict 0)
-              (Err
-                (str_cat.str-cat
-                  "clone: conflicting helper producer for "
-                  (clone_support.clone-helper-name
-                    (clone_support.clone-name-key-string conflict))))
-              (match (lower-clone-handoff-expand-roots
-                lower-state
-                ctx
-                top-env
-                (lower-global-shared-view source-decls)
-                entry-path
-                pools
-                handoff-roots
-                (ast.ast-decl-list-new))
-                [(Ok handoff-decls)
-                  (let
-                    [augmented-decls : ast.AstDeclList
-                      (clone_support.clone-decl-list-append
-                        source-decls
-                        handoff-decls)]
-                    (Ok
-                      (ast.ast-program augmented-decls)
-                      handoff-decls
-                      handoff-roots))]
-                [(Err diag)
-                  (let
-                    [diagnostic : cdiag.CompilerDiagnostic (deref diag)]
-                    (Err (cdiag.compiler-diagnostic-message diagnostic)))])))])]
-    ;; What the handoff leaves live: the helpers it generated, not its
-    ;; working memory.
-    (begin
-      (cfg
-        compile-profile
-        (compiler-lower-profile-counter
-          "clone_handoff.retained_bytes"
-          (- (profile.alloc-live) _live-start))
-        unit)
-      result)))
-
-(define (lower-extend-checked-context-with-clone-decls
-  [ctx : tc_core.TcContext]
-  [top-env : tc_core.TcTypeEnv]
-  [source-decl-count : i64]
-  [program : ast.AstProgram]) : ResultLowerCheckedContext
-  (match (lower-global-shared-view program)
-    [(Program decls-box)
-      (let
-        [decls : ast.AstDeclList (deref decls-box)]
-        [clone-decls : ast.AstDeclList
-          (tc_core.tc-decl-list-drop decls source-decl-count)]
-        [next-ctx : tc_core.TcContext
-          (tc_core.tc-context-with-program ctx program)]
-        [next-env
-          (try (tc_core.env-extend-with-module next-ctx top-env clone-decls))]
-        (tc_core.tc-context-capture-active-pools! next-ctx)
-        (tc_core.tc-hygiene-reset-active-top-env!
-          (tc_core.tc-context-macro-state next-ctx)
-          next-env)
-        (tc_core.tc-macro-helper-env-cache-reset!
-          (tc_core.tc-context-macro-state next-ctx))
-        (match (tc_core.tc-selected-register-generated-decls!
-          next-ctx
-          (tc_core.tc-context-program next-ctx)
-          source-decl-count)
-          [(tc_core.ResultTcUnit.Ok) (Ok next-ctx next-env)]
-          [(tc_core.ResultTcUnit.Err message) (Err message)]))]))
-
 (define (lower-reach-call-callee
   [pools : (& pools ast.AstNodePoolContext)]
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
@@ -11690,19 +10846,7 @@
                   callee-state)
                 callee-state)]
             [_ callee-state])]
-        [runtime-state : LowerReachState
-          (match (ast.ast-expr-unspan-with-pools pools (& callee))
-            [(Var name)
-              (if (lower-reach-string-snapshot-source-call?
-                (lower-name-cache-structural-session (& names))
-                name)
-                (lower-reach-add-string-snapshot-runtime
-                  all-functions
-                  names
-                  concat-state)
-                concat-state)]
-            [_ concat-state])]
-        (lower-reach-expr-list pools all-functions names runtime-state args))]
+        (lower-reach-expr-list pools all-functions names concat-state args))]
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda _ _ body-box)
@@ -13382,26 +12526,6 @@
         (deref inner-box))]
     [_ used]))
 
-;; A synthesized clone$<T> helper (`stdlib/clone.tl`). Clone helpers are
-;; generated as the exact transitive closure the reachable clone roots need and
-;; reference one another through `(clone x)` forms the AST reachability walk does
-;; not resolve to names, so a reachable helper's callees would otherwise be
-;; dropped (undefined-symbol link error). Keep every synthesized helper.
-(define (lower-decl-is-clone-helper-inner? [decl : (& ast.AstDecl)]) : bool
-  (match decl
-    [(DefFn decl-meta name _ _ _ _)
-      (lower-name-has-clone-prefix? (tc_core.tc-env-key-name-text name))]
-    [(Unsafe inner-box) (lower-decl-is-clone-helper? (deref inner-box))]
-    [_ false]))
-
-(define (lower-decl-is-clone-helper? [decl : (& ast.AstDecl)]) : bool
-  (match (ast.ast-decl-generated-meta decl)
-    [(Some generator _ _ _)
-      (if (string.eq generator "stdlib.clone/synthesize-helpers")
-        true
-        (lower-decl-is-clone-helper-inner? decl))]
-    [(No) (lower-decl-is-clone-helper-inner? decl)]))
-
 (define (lower-runtime-decl-kept-by-reach-or-dispatch?
   [lower-state : CompilerLowerState]
   [entry-path : String]
@@ -13412,24 +12536,20 @@
   [reachable : (& reachable lower_i64_i64_map.Map)]
   [dispatch-variants : (& dispatch-variants lower_i64_i64_map.Map)]
   [decl : ast.AstDecl]) : bool
-  (if (lower-decl-is-clone-helper? decl)
-    ;; The clone handoff emits exactly the clone$<T> closure reachable code
-    ;; needs, so keep it all.
-    true
-    (match (lower-function-logical-id-from-decl
-      lower-state
-      entry-path
-      decl-path
-      module
-      module-id
-      decl)
-      [(Some logical-id)
-        (lower-function-kept-by-reach-or-dispatch?
-          all-functions
-          reachable
-          dispatch-variants
-          logical-id)]
-      [(No) true])))
+  (match (lower-function-logical-id-from-decl
+    lower-state
+    entry-path
+    decl-path
+    module
+    module-id
+    decl)
+    [(Some logical-id)
+      (lower-function-kept-by-reach-or-dispatch?
+        all-functions
+        reachable
+        dispatch-variants
+        logical-id)]
+    [(No) true]))
 
 (define (lower-used-types-add-type-decl-name
   [session : cis.InternStructuralSessionHandle]
@@ -13967,53 +13087,6 @@
       (set! (array-ref keep index) 1))
     (LowerDeclKeepPlan keep count)))
 
-(define (lower-decl-required-by-clone-roots?
-  [roots : (& roots clone_support.CloneNameSet)]
-  [module-id : i64]
-  [decl : ast.AstDecl]) : bool
-  (match decl
-    [(or (DefEnum _ name _ _) (DefStruct _ name _ _ _))
-      (clone_support.clone-name-set-contains-canonical-id? roots module-id name)]
-    [(Unsafe inner-box)
-      (lower-decl-required-by-clone-roots? roots module-id (deref inner-box))]
-    [_ false]))
-
-(define (lower-decl-keep-plan-add-clone-roots
-  [plan : LowerDeclKeepPlan]
-  [program : ast.AstProgram]
-  [clone-roots : clone_support.CloneRootEntries]) : LowerDeclKeepPlan
-  ;; Clone-root discovery already computes the exact transitive nominal-type
-  ;; closure required by generated helpers. Merge those type declarations into
-  ;; the retained plan before source-pool compaction can release their AST.
-  (match program
-    [(Program decls-box)
-      (let
-        [decls : ast.AstDeclList (deref decls-box)]
-        [keep : (__tl_dyn-array i64) plan.keep]
-        [source-count : i64 plan.source-count]
-        [roots : clone_support.CloneNameSet
-          (clone_support.clone-root-entries-to-set
-            clone-roots
-            (clone_support.clone-name-set-empty))]
-        [module-id : i64 cbi.compiler-builtin-id-fix-empty]
-        [index : i64 0]
-        [count : i64 (ast.ast-decl-list-len (& decls))]
-        (while (and (< index count) (< index source-count))
-          (let
-            [decl : ast.AstDecl
-              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-            (if (lower-decl-required-by-clone-roots?
-              roots
-              module-id
-              (lower-global-shared-view decl))
-              (set! (array-ref keep index) 1)
-              unit)
-            (match decl
-              [(Module next-module) (set! module-id next-module)]
-              [_ unit])
-            (+= index 1)))
-        (LowerDeclKeepPlan keep source-count))]))
-
 (define (lower-decl-keep-plan-copy-into-pools
   [plan : LowerDeclKeepPlan]
   [pools : (& pools ast.AstNodePoolContext)]) : LowerDeclKeepPlan
@@ -14080,34 +13153,6 @@
             index
             cbi.compiler-builtin-id-fix-empty))))
     out))
-
-(defenum LowerReachStateCell
-  (Occupied LowerReachState))
-
-(define (lower-reach-add-clone-root-helpers
-  [all-functions : (& all-functions lower_i64_i64_map.Map)]
-  [names : (& names LowerNameCache)]
-  [roots : clone_support.CloneRootEntries]
-  [state : LowerReachState]) : LowerReachState
-  (let
-    [cell : LowerReachStateCell (Occupied state)]
-    [count : i64 (clone_support.clone-root-entries-len roots)]
-    (for [index (iterator.range 0 count)]
-      (match cell
-        [(Occupied current)
-          (set!
-            cell
-            (Occupied
-              (lower-reach-add-source-id
-                all-functions
-                names
-                current
-                (clone_support.clone-root-entries-helper-id-at-or
-                  roots
-                  index
-                  -1))))]))
-    (match cell
-      [(Occupied result) result])))
 
 ;; Functions with an `(:export-symbol ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦)` declaration publish a fixed
 ;; ABI symbol and may be called only from outside TypeLisp IR (e.g. the
@@ -14209,14 +13254,13 @@
                 state
                 decl))]))]))
 
-(define (lower-prune-unreachable-functions-with-clone-roots-and-plan
+(define (lower-prune-unreachable-functions-with-plan
   [lower-state : CompilerLowerState]
   [pools : ast.AstNodePoolContext]
   [entry-path : String]
   [program : ast.AstProgram]
   [paths : ast.AstDeclPathList]
-  [names : LowerNameEnv]
-  [clone-roots : clone_support.CloneRootEntries]) : LowerPrunedProgramWithPlan
+  [names : LowerNameEnv]) : LowerPrunedProgramWithPlan
   (match (lower-global-shared-view program)
     [(Program decls-box)
       (let
@@ -14312,12 +13356,6 @@
                       cbi.compiler-builtin-id-fix-empty
                       name-cache
                       export-state)]
-                  [clone-state : LowerReachState
-                    (lower-reach-add-clone-root-helpers
-                      all-functions
-                      name-cache
-                      clone-roots
-                      cleanup-state)]
                   [dispatch-state : LowerReachState
                     (lower-reach-add-dispatch-variant-roots
                       pools
@@ -14325,7 +13363,7 @@
                       all-functions
                       decls
                       name-cache
-                      clone-state)]
+                      cleanup-state)]
                   [global-state : LowerReachState
                     (lower-reach-global-decls
                       pools
@@ -23095,22 +22133,13 @@
           (tc_core.tc-context-type-get ctx elem-ty))
         ty)]
     [(Tuple elem-tys)
-      (lower-copy-tuple-value
-        ctx
-        state
-        env
-        type-env
-        (Snapshot)
-        value
-        (deref elem-tys)
-        ty)]
+      (lower-copy-tuple-value ctx state env type-env value (deref elem-tys) ty)]
     [(Array elem-ty count)
       (lower-copy-fixed-array-value
         ctx
         state
         env
         type-env
-        (Snapshot)
         value
         (tc_core.tc-type-without-regions
           (tc_core.tc-context-type-get ctx elem-ty))
@@ -23238,54 +22267,24 @@
                       buf-var
                       result-ty)])]))])]))
 
-;; The two deep copies of an aggregate into fresh heap storage: `(clone x)`,
-;; and the snapshot a capturing lambda takes of a captured value. Tuples and
-;; fixed arrays copy element by element the same way in both; only the copy
-;; of each element differs.
-(defenum LowerCopyMode
-  (Clone)
-  (Snapshot))
-
-(define (lower-copy-value
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [copy-mode : LowerCopyMode]
-  [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : ResultLowerExpr
-  (match copy-mode
-    [(Clone) (lower-clone-dispatch ctx state env type-env value ty)]
-    [(Snapshot) (lower-capture-snapshot-value ctx state env type-env value ty)]))
-
+;; Deep copy of a tuple or fixed array into fresh heap storage for the snapshot
+;; a capturing lambda takes of a captured value.
 (define (lower-copy-type-list
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [copy-mode : LowerCopyMode]
   [src : ir.CompilerIrValue]
   [dst : (& ir.CompilerIrValue)]
   [types : ast.AstTypeList]
   [cursor : i64]) : ResultLowerState
-  (lower-copy-type-list-at
-    ctx
-    state
-    env
-    type-env
-    copy-mode
-    src
-    dst
-    (& types)
-    cursor
-    0))
+  (lower-copy-type-list-at ctx state env type-env src dst (& types) cursor 0))
 
 (define (lower-copy-type-list-at
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [copy-mode : LowerCopyMode]
   [src : ir.CompilerIrValue]
   [dst : (& ir.CompilerIrValue)]
   [types : (& types ast.AstTypeList)]
@@ -23313,12 +22312,11 @@
             (let
               [copied
                 (try
-                  (lower-copy-value
+                  (lower-capture-snapshot-value
                     ctx
                     load-state
                     env
                     type-env
-                    copy-mode
                     field-value
                     (lower-global-shared-view resolved)))]
               (match copied
@@ -23335,7 +22333,6 @@
                       size)
                     env
                     type-env
-                    copy-mode
                     src
                     dst
                     types
@@ -23346,7 +22343,6 @@
           state
           env
           type-env
-          copy-mode
           src
           dst
           types
@@ -23358,7 +22354,6 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [copy-mode : LowerCopyMode]
   [value : ir.CompilerIrValue]
   [elem-tys : ast.AstTypeList]
   [result-ty : ast.AstType]) : ResultLowerExpr
@@ -23376,7 +22371,6 @@
               dst-state
               env
               type-env
-              copy-mode
               value
               dst
               elem-tys
@@ -23388,7 +22382,6 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [copy-mode : LowerCopyMode]
   [src : ir.CompilerIrValue]
   [dst : (& ir.CompilerIrValue)]
   [elem-ty : ast.AstType]
@@ -23410,12 +22403,11 @@
             (let
               [copied
                 (try
-                  (lower-copy-value
+                  (lower-capture-snapshot-value
                     ctx
                     load-state
                     env
                     type-env
-                    copy-mode
                     elem-value
                     (lower-global-shared-view elem-ty)))]
               (match copied
@@ -23432,7 +22424,6 @@
                       elem-size)
                     env
                     type-env
-                    copy-mode
                     src
                     dst
                     elem-ty
@@ -23444,7 +22435,6 @@
           state
           env
           type-env
-          copy-mode
           src
           dst
           elem-ty
@@ -23457,7 +22447,6 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [copy-mode : LowerCopyMode]
   [value : ir.CompilerIrValue]
   [elem-ty : ast.AstType]
   [count : i64]
@@ -23478,7 +22467,6 @@
                 dst-state
                 env
                 type-env
-                copy-mode
                 value
                 dst
                 elem-ty
@@ -23522,7 +22510,6 @@
                       dst-state
                       env
                       type-env
-                      (Snapshot)
                       value
                       dst
                       field-types
@@ -23584,7 +22571,6 @@
                                 branch-state
                                 env
                                 type-env
-                                (Snapshot)
                                 (lower-global-shared-view src)
                                 dst
                                 fields
@@ -24525,7 +23511,7 @@
         (if (csym.compiler-symbols-handle-found? cleanup-local-id)
           (match (tc_core.tc-lookup-id type-env cleanup-name-id)
             [(Ok fn-ty)
-              (if (lower-function-type? (clone fn-ty))
+              (if (lower-function-type? (ast.clone-ast-type (& fn-ty)))
                 (let
                   [arg-id : i64
                     (ast.ast-node-pool-context-expr-push
@@ -25894,123 +24880,12 @@
           origin
           "lower: float bitcast expects exactly one argument")))))
 
-;; Lower `(clone x)`: the canonical deep-copy / arena-escape. A String
-;; copies its buffer through `tl_substring`; tuple, fixed-array, and dynamic-
-;; array values allocate fresh storage and recursively clone each element; Box
-;; values allocate a fresh box for the cloned inner value; named aggregates
-;; dispatch to synthesized `clone$<Name>` helpers (compiler_clone.tl) so
-;; recursive enum/struct values recurse at runtime instead of lower time; and
-;; scalar values are returned as-is.
-;; sret ABI: the synthesized `clone$<Name>` helper returns an aggregate,
-;; so it carries the hidden sret param; append the result-slot pointer here to
-;; match (the same gate as the helper's definition, so a non-aggregate clone$
-;; target -- e.g. a type variable -- passes only the value).
-(define (lower-clone-type-key-id [ctx : tc_core.TcContext] [name-id : i64]) : i64
-  (let
-    [fallback : i64
-      (if (csym.compiler-composite-pair-key-id? name-id)
-        name-id
-        (clone_support.clone-name-key-id-in-module
-          (tc_core.tc-context-module-id ctx)
-          name-id))]
-    [handle : i64
-      (csym.compiler-symbols-lookup-type-id-or
-        (tc_core.tc-context-symbols ctx)
-        name-id
-        (csym.compiler-symbols-missing-handle))]
-    (if (csym.compiler-symbols-handle-found? handle)
-      (tc_core.tc-nominal-owner-id-or ctx handle fallback)
-      fallback)))
-
-(define (lower-clone-helper-lookup-id
-  [type-key-id : i64]
-  [helper-name-id : i64]) : i64
-  (if (clone_support.clone-name-key-qualified? type-key-id)
-    (csym.compiler-symbol-module-key-id-by-id
-      (clone_support.clone-name-key-module-id type-key-id)
-      helper-name-id)
-    helper-name-id))
-
-(define (lower-clone-named
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [name-id : i64]
-  [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : ResultLowerExpr
-  (let
-    [requested-key-id : i64 (lower-clone-type-key-id ctx name-id)]
-    [type-key-id : i64
-      (lower-name-cache-clone-key-id (lower-state-names state) requested-key-id)]
-    [helper-name-id : i64
-      (if (< type-key-id 0)
-        -1
-        (lower-name-cache-clone-helper-id (lower-state-names state) type-key-id))]
-    (if (< helper-name-id 0)
-      (Err
-        (box
-          (lower-diagnostic
-            (str_cat.str-cat
-              "lower: missing generated clone helper for "
-              (tc_core.tc-nominal-name-id-display name-id)))))
-      ;; The source is passed in place even when it has no root: a generated
-      ;; clone helper only reads its source and allocates the copy, and never
-      ;; runs user code, so nothing can write the source during the call (the
-      ;; stability the by-value contract asks of other callers).
-      (match (lower-call-append-sret-arg
-        ctx
-        state
-        (ir.compiler-ir-value-seq1 value)
-        (lower-global-shared-view ty))
-        [(Ok sret-state sret-values)
-          (match (lower-state-alloc-var sret-state)
-            [(Alloc allocated var-id)
-              (let
-                [_derived : unit
-                  (lower-call-result-derive-return-slot!
-                    ctx
-                    allocated
-                    var-id
-                    (& sret-values)
-                    (lower-global-shared-view ty))]
-                [call-name : i64
-                  (lower-resolve-call-name-id
-                    allocated
-                    env
-                    (lower-clone-helper-lookup-id type-key-id helper-name-id))]
-                (Ok
-                  (Expr
-                    (lower-state-emit
-                      allocated
-                      (Call
-                        var-id
-                        call-name
-                        (lower-call-args-with-nominal-sret
-                          ctx
-                          sret-values
-                          (lower-global-shared-view ty))
-                        (lower-global-shared-view ty)))
-                    (Var var-id)
-                    ty)))])]
-        [(Err message) (Err message)]))))
-
 (define (lower-clone-scalar-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
     [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
          (Unit) (Never))
       true]
     [_ false]))
-
-(define (lower-clone-bulk-copy-type?
-  [ctx : tc_core.TcContext]
-  [ty : ast.AstType]) : bool
-  (let
-    [clone-ty : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    (match (& clone-ty)
-      [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _))
-        (lower-type-register-resident? ctx clone-ty)]
-      [_ (lower-clone-scalar-type? clone-ty)])))
 
 (define (lower-array-loop-advance
   [state : LowerState]
@@ -26029,399 +24904,6 @@
               (Mov index-var (Var inc-var) (I64)))
             (Jump header-label))
           exit-label))]))
-
-(define (lower-clone-dynarray-store-and-advance
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [new-buf : ir.CompilerIrValue]
-  [index-var : i64]
-  [header-label : i64]
-  [exit-label : i64]
-  [clone-value : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]) : ResultLowerState
-  (match (lower-emit-elem-addr-gep
-    ctx
-    state
-    new-buf
-    (Var index-var)
-    (lower-global-shared-view elem-ty))
-    [(Expr dst-gep-state dst-ptr _)
-      (lower-array-loop-advance
-        (lower-array-elem-store-state
-          ctx
-          dst-gep-state
-          dst-ptr
-          clone-value
-          elem-ty)
-        index-var
-        header-label
-        exit-label)]))
-
-(define (lower-clone-dynarray-copy-body
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [old-buf : ir.CompilerIrValue]
-  [new-buf : ir.CompilerIrValue]
-  [index-var : i64]
-  [header-label : i64]
-  [exit-label : i64]
-  [elem-ty : ast.AstType]) : ResultLowerState
-  (match (lower-emit-elem-addr-gep
-    ctx
-    state
-    old-buf
-    (Var index-var)
-    (lower-global-shared-view elem-ty))
-    [(Expr src-gep-state src-ptr _)
-      (match (lower-load-inline-value-at-offset
-        ctx
-        src-gep-state
-        src-ptr
-        0
-        (lower-global-shared-view elem-ty))
-        [(Expr load-state elem-value _)
-          (let
-            [cloned
-              (try
-                (lower-clone-dispatch
-                  ctx
-                  load-state
-                  env
-                  type-env
-                  elem-value
-                  (lower-global-shared-view elem-ty)))]
-            (match cloned
-              [(Expr clone-state clone-value _)
-                (lower-clone-dynarray-store-and-advance
-                  ctx
-                  clone-state
-                  new-buf
-                  index-var
-                  header-label
-                  exit-label
-                  clone-value
-                  elem-ty)]))])]))
-
-(define (lower-clone-dynarray-copy-nonempty
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [old-buf : ir.CompilerIrValue]
-  [new-buf : ir.CompilerIrValue]
-  [len : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]) : ResultLowerState
-  (match (lower-state-fresh-label state "clone_array_header")
-    [(Label header-label-state header-label)
-      (match (lower-state-fresh-label header-label-state "clone_array_body")
-        [(Label body-label-state body-label)
-          (match (lower-state-fresh-label body-label-state "clone_array_exit")
-            [(Label exit-label-state exit-label)
-              (match (lower-state-alloc-var exit-label-state)
-                [(Alloc index-alloc index-var)
-                  (let
-                    [header-start : LowerState
-                      (lower-state-finish-block
-                        (lower-state-emit
-                          (lower-state-emit
-                            index-alloc
-                            (Mov index-var (I64 0) (I64)))
-                          (Jump header-label))
-                        header-label)]
-                    (match (lower-state-alloc-var header-start)
-                      [(Alloc cond-alloc cond-var)
-                        (let
-                          [body-start : LowerState
-                            (lower-state-finish-block
-                              (lower-state-emit
-                                (lower-state-emit
-                                  cond-alloc
-                                  (BinOp cond-var Lt (Var index-var) len (I64)))
-                                (Branch (Var cond-var) body-label exit-label))
-                              body-label)]
-                          (lower-clone-dynarray-copy-body
-                            ctx
-                            body-start
-                            env
-                            type-env
-                            old-buf
-                            new-buf
-                            index-var
-                            header-label
-                            exit-label
-                            elem-ty))]))])])])]))
-
-(define (lower-clone-dynarray-copy-loop
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [old-buf : ir.CompilerIrValue]
-  [new-buf : ir.CompilerIrValue]
-  [len : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]
-  [elem-size : i64]
-  [byte-count : ir.CompilerIrValue]) : ResultLowerState
-  (if (= elem-size 0)
-    (Ok state)
-    (if (lower-clone-bulk-copy-type? ctx (lower-global-shared-view elem-ty))
-      (Ok (lower-emit-memcpy-value state new-buf 0 old-buf 0 byte-count))
-      (lower-clone-dynarray-copy-nonempty
-        ctx
-        state
-        env
-        type-env
-        old-buf
-        new-buf
-        len
-        elem-ty))))
-
-(define (lower-clone-dynarray-finish
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [old-buf : ir.CompilerIrValue]
-  [len : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]
-  [elem-size : i64]
-  [byte-count : ir.CompilerIrValue]
-  [buf-var : i64]
-  [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-reserve-heap-storage state 16 result-ty (lower-tl-alloc-symbol))
-    [(Expr arr-state arr-value _)
-      (let
-        [copied-state
-          (try
-            (lower-clone-dynarray-copy-loop
-              ctx
-              arr-state
-              env
-              type-env
-              old-buf
-              (Var buf-var)
-              (lower-global-shared-view len)
-              elem-ty
-              elem-size
-              byte-count))]
-        (Ok
-          (Expr
-            (lower-store-at-offset
-              (lower-store-at-offset
-                copied-state
-                arr-value
-                0
-                (Var buf-var)
-                (U64))
-              arr-value
-              8
-              len
-              (I64))
-            arr-value
-            result-ty)))]))
-
-(define (lower-clone-dynarray-value
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [value : ir.CompilerIrValue]
-  [elem-ty : ast.AstType]
-  [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (lower-load-at-offset state value 8 (I64))
-    [(Expr len-state len _)
-      (match (lower-load-at-offset len-state value 0 (U64))
-        [(Expr ptr-state old-buf _)
-          (let
-            [elem-size : i64 (lower-type-size ctx elem-ty)]
-            (match (if (= elem-size 0)
-              (Expr ptr-state (I64 1) (I64))
-              (lower-emit-binop
-                ptr-state
-                Mul
-                (lower-global-shared-view len)
-                (I64 elem-size)
-                (I64)))
-              [(Expr byte-state byte-count _)
-                (match (lower-state-alloc-var byte-state)
-                  [(Alloc buf-alloc buf-var)
-                    (lower-clone-dynarray-finish
-                      ctx
-                      (lower-state-emit
-                        buf-alloc
-                        (Call
-                          buf-var
-                          (lower-tl-alloc-symbol)
-                          (One (lower-global-shared-view byte-count))
-                          (U64)))
-                      env
-                      type-env
-                      old-buf
-                      len
-                      elem-ty
-                      elem-size
-                      byte-count
-                      buf-var
-                      result-ty)])]))])]))
-
-(define (lower-clone-box-value
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [value : ir.CompilerIrValue]
-  [inner-ty : ast.AstType]
-  [result-ty : ast.AstType]) : ResultLowerExpr
-  ;; A (Box T) with inline struct/enum T addresses the T storage at the
-  ;; box pointer; load it as a value (pointer) rather than scalar-loading the
-  ;; leading word, mirroring lower-box-get.
-  (match (lower-load-inline-value-at-offset
-    ctx
-    state
-    value
-    0
-    (lower-global-shared-view inner-ty))
-    [(Expr load-state inner-value _)
-      (let
-        [cloned
-          (try
-            (lower-clone-dispatch
-              ctx
-              load-state
-              env
-              type-env
-              inner-value
-              (lower-global-shared-view inner-ty)))]
-        (match cloned
-          [(Expr clone-state clone-value _)
-            (match (lower-reserve-heap-storage
-              clone-state
-              (lower-type-size ctx inner-ty)
-              result-ty
-              (lower-tl-alloc-symbol))
-              [(Expr box-state box-value _)
-                (Ok
-                  (Expr
-                    (lower-store-inline-value-at-offset
-                      ctx
-                      box-state
-                      box-value
-                      0
-                      clone-value
-                      (lower-global-shared-view inner-ty)
-                      (lower-type-size ctx inner-ty))
-                    box-value
-                    result-ty))])]))]))
-
-;; SROA-2 item 2. A memory-resident nominal aggregate whose every field and
-;; payload is Copy -- no owning handle anywhere inside it, no `cleanup`
-;; destructor on any declaration it reaches, which is exactly what the move
-;; checker's `tc-type-copyable?` decides -- has nothing for a generated clone
-;; helper to do beyond reproducing its bytes. The helper spells that as a match
-;; on the tag with a per-arm rebuild into an sret buffer, and after the
-;; aggregate word split that match survives as phis over the arms even though
-;; the value it produces is the source verbatim. Lower it as the whole-buffer
-;; copy it is: one fresh inline buffer and one `copy_bytes`, which the split
-;; then turns into word loads from the source with no match at all.
-;;
-;; This is the lowering half of the packet's item 2 rather than a fold in the
-;; split, because the split can only ever recover the copy from a shape it has
-;; to re-prove per call site, and this decides it once from the type.
-(define (lower-clone-whole-buffer-copy?
-  [ctx : tc_core.TcContext]
-  [ty : ast.AstType]) : bool
-  (tc_core.tc-type-copyable? ctx ty))
-
-(define (lower-clone-dispatch
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : ResultLowerExpr
-  (let
-    [clone-ty : ast.AstType
-      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ty))]
-    (match (lower-global-shared-view clone-ty)
-      [(String) (lower-capture-snapshot-string-value state value)]
-      [(Tuple elem-tys)
-        (lower-copy-tuple-value
-          ctx
-          state
-          env
-          type-env
-          (Clone)
-          value
-          (deref elem-tys)
-          clone-ty)]
-      [(Array elem-ty count)
-        (lower-copy-fixed-array-value
-          ctx
-          state
-          env
-          type-env
-          (Clone)
-          value
-          (tc_core.tc-type-without-regions
-            (tc_core.tc-context-type-get ctx elem-ty))
-          count
-          clone-ty)]
-      [(DynArray elem-ty)
-        (lower-clone-dynarray-value
-          ctx
-          state
-          env
-          type-env
-          value
-          (tc_core.tc-type-without-regions
-            (tc_core.tc-context-type-get ctx elem-ty))
-          clone-ty)]
-      [(Box elem-ty)
-        (lower-clone-box-value
-          ctx
-          state
-          env
-          type-env
-          value
-          (tc_core.tc-type-without-regions
-            (tc_core.tc-context-type-get ctx elem-ty))
-          clone-ty)]
-      ;; A register-resident aggregate is word-class POD held in a
-      ;; register, so cloning it is a value copy -- no deep-clone helper, no
-      ;; memory traversal.
-      [(or (Enum name) (Struct name))
-        (cond
-          [(lower-type-register-resident? ctx clone-ty)
-            (Ok (Expr state value clone-ty))]
-          [(lower-clone-whole-buffer-copy?
-              ctx
-              (lower-global-shared-view clone-ty))
-            (lower-copy-inline-aggregate-to-inline ctx state value clone-ty)]
-          [else (lower-clone-named ctx state env name value clone-ty)])]
-      [(Var name) (lower-clone-named ctx state env name value clone-ty)]
-      [_
-        (if (lower-clone-scalar-type? clone-ty)
-          (Ok (Expr state value clone-ty))
-          (Err
-            (box
-              (lower-diagnostic
-                (str_cat.str-cat
-                  "lower: clone unsupported type "
-                  (tc_core.tc-type-render clone-ty))))))])))
-
-(define (lower-clone-call
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [arg : ast.AstExpr]) : ResultLowerExpr
-  (let
-    [lowered : LowerExpr (try (lower-expr ctx state env type-env arg))]
-    (match lowered
-      [(Expr arg-state arg-value arg-ty)
-        (lower-clone-dispatch ctx arg-state env type-env arg-value arg-ty)])))
 
 (define (lower-call-explicit-mut-borrow-place
   [ctx : tc_core.TcContext]
@@ -28350,9 +26832,6 @@
                   (ast.AstType.Unit))
                 origin)])])]))
 
-(define lower-arg-writeback-fallback : LowerArgWriteback
-  (Writeback 0 (I64 0) (I64) (Literal (ast.ast-lit-int 0))))
-
 (define (lower-apply-arg-writebacks
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -28364,15 +26843,14 @@
         [count : i64 (lower_arg_writeback_vec.len (& items))]
         [out : LowerState state]
         (for [index (iterator.range 0 count)]
+          ;; `items` is consumed here; each live writeback moves out once.
           (set!
             out
             (lower-apply-arg-writeback
               ctx
               out
-              (lower_arg_writeback_vec.get
-                (& items)
-                index
-                (lower-global-shared-view lower-arg-writeback-fallback)))))
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data items.slots) index))))))
         out)]))
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
@@ -30129,9 +28607,9 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [type-cache : LowerTypeCache]
-  [function-state : CompilerLowerFunctionState]
+  [_function-state : CompilerLowerFunctionState]
   [func : ast.AstExpr]
-  [args : ast.AstExprList]) : tc_core.ResultTcType
+  [_args : ast.AstExprList]) : tc_core.ResultTcType
   (match (ast.ast-expr-unspan (& func))
     [(Var name)
       (let
@@ -30140,58 +28618,32 @@
             (tc_core.tc-context-structural-session ctx)
             name
             name)]
-        (if (and
-          (cbi.compiler-builtin-lower-clone-id? source-id)
-          (= args.len 1)
-          (not
-            (tc_core.macro-hygiene-global-user-binding-id?
-              (tc_core.tc-context-structural-session ctx)
-              name)))
-          (lower-expr-result-type-fast
-            ctx
-            env
-            type-env
-            type-cache
-            function-state
-            (lower-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0)))
-          (match (lower-lookup-type-id
-            ctx
-            (lower-global-shared-view type-cache)
-            env
-            type-env
-            name)
-            [(Ok fn-ty)
-              (match (tc_core.tc-type-strip-region
-                (tc_core.tc-resolve-type ctx (lower-global-shared-view fn-ty)))
-                [(Func _ ret)
-                  (Ok
-                    (tc_core.tc-type-without-regions
-                      (tc_core.tc-resolve-type
-                        ctx
-                        (tc_core.tc-context-type-get ctx ret))))]
-                [(Enum _) (Ok (tc_core.tc-type-without-regions fn-ty))]
-                [_ (Err "lower: call result type is not fast-pathable")])]
-            [(Err message)
-              (if (lower-builtin-call-available-id? ctx env source-id)
-                (cond
-                  [(cbi.compiler-builtin-lower-length-call-id? source-id)
-                    (Ok (I64))]
-                  [(cbi.compiler-builtin-lower-string-ref-call-id? source-id)
-                    (Ok (Char))]
-                  [(cbi.compiler-builtin-lower-clone-id? source-id)
-                    (if (= args.len 1)
-                      (lower-expr-result-type-fast
-                        ctx
-                        env
-                        type-env
-                        type-cache
-                        function-state
-                        (lower-context-expr-get
-                          ctx
-                          (ast.ast-expr-list-get (& args) 0 0)))
-                      (Err "lower: call result type is not fast-pathable"))]
-                  [else (Err message)])
-                (Err message))])))]
+        (match (lower-lookup-type-id
+          ctx
+          (lower-global-shared-view type-cache)
+          env
+          type-env
+          name)
+          [(Ok fn-ty)
+            (match (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type ctx (lower-global-shared-view fn-ty)))
+              [(Func _ ret)
+                (Ok
+                  (tc_core.tc-type-without-regions
+                    (tc_core.tc-resolve-type
+                      ctx
+                      (tc_core.tc-context-type-get ctx ret))))]
+              [(Enum _) (Ok (tc_core.tc-type-without-regions fn-ty))]
+              [_ (Err "lower: call result type is not fast-pathable")])]
+          [(Err message)
+            (if (lower-builtin-call-available-id? ctx env source-id)
+              (cond
+                [(cbi.compiler-builtin-lower-length-call-id? source-id)
+                  (Ok (I64))]
+                [(cbi.compiler-builtin-lower-string-ref-call-id? source-id)
+                  (Ok (Char))]
+                [else (Err message)])
+              (Err message))]))]
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params maybe-ret body-box)
@@ -40888,22 +39340,6 @@
                             result-ty)]
                         [(and
                             builtin-available
-                            (cbi.compiler-builtin-lower-clone-id? name-id))
-                          (if (= args.len 1)
-                            (lower-clone-call
-                              ctx
-                              state
-                              env
-                              type-env
-                              (lower-context-expr-get
-                                ctx
-                                (ast.ast-expr-list-get (& args) 0 0)))
-                            (Err
-                              (box
-                                (lower-diagnostic
-                                  "lower: clone expects one argument"))))]
-                        [(and
-                            builtin-available
                             (lower-arena-builtin-id? name-id))
                           (lower-arena-builtin-call
                             ctx
@@ -47811,7 +46247,7 @@
       (Ok (Binding state bound-env bound-type-env cleanup-name-id))
       (match (tc_core.tc-lookup-id outer-type-env cleanup-name-id)
         [(Ok fn-ty)
-          (if (lower-function-type? (clone fn-ty))
+          (if (lower-function-type? (ast.clone-ast-type (& fn-ty)))
             (match (lower-state-alloc-var state)
               [(Alloc allocated cleanup-var-id)
                 (let
@@ -47925,7 +46361,7 @@
                                     (tc_core.tc-bind-id
                                       type-env
                                       hidden-name-id
-                                      (clone binding-ty))
+                                      (ast.clone-ast-type (& binding-ty)))
                                     name
                                     binding-ty)]
                                 [cleanup-bound : LowerResourceCleanupBinding
@@ -50242,6 +48678,595 @@
                     x1
                     body)])])])]))
 
+(defenum LowerRowOriginYStride
+  (StrideZero)
+  (StrideOne)
+  (StrideExpr i64)
+  (StrideUnsupported))
+
+(define (lower-row-origin-y-stride-to-expr
+  [pools : ast.AstNodePoolContext]
+  [stride : (& stride LowerRowOriginYStride)]) : i64
+  (match stride
+    [(StrideZero)
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 0)))]
+    [(StrideOne)
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 1)))]
+    [(StrideExpr id) id]
+    [(StrideUnsupported) -1]))
+
+;; Exact linear slope of `outer-id` in a row-origin expression ID (which only
+;; uses `+`, `-`, `*`, literals, and stable names), or `StrideUnsupported` if nonlinear.
+(define (lower-row-origin-y-stride
+  [ctx : tc_core.TcContext]
+  [outer-id : i64]
+  [id : i64]) : LowerRowOriginYStride
+  (let
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    (match (lower-context-expr-get ctx id)
+      [(or (Spanned inner-box _) (Ann inner-box _))
+        (lower-row-origin-y-stride ctx outer-id inner-box)]
+      [(Literal (Int _ _)) (StrideZero)]
+      [(Var name)
+        (if (= name outer-id)
+          (StrideOne)
+          (StrideZero))]
+      [(Binary op left-box right-box)
+        (let
+          [ls : LowerRowOriginYStride
+            (lower-row-origin-y-stride ctx outer-id left-box)]
+          [rs : LowerRowOriginYStride
+            (lower-row-origin-y-stride ctx outer-id right-box)]
+          (match (& ls)
+            [(StrideUnsupported) (StrideUnsupported)]
+            [_
+              (match (& rs)
+                [(StrideUnsupported) (StrideUnsupported)]
+                [_
+                  (match op
+                    [(Add)
+                      (match (& ls)
+                        [(StrideZero) rs]
+                        [_
+                          (match (& rs)
+                            [(StrideZero) ls]
+                            [_
+                              (StrideExpr
+                                (ast.ast-expr-binary-with-pools
+                                  pools
+                                  (Add)
+                                  (lower-row-origin-y-stride-to-expr
+                                    pools
+                                    (& ls))
+                                  (lower-row-origin-y-stride-to-expr
+                                    pools
+                                    (& rs))))])])]
+                    [(Sub)
+                      (match (& rs)
+                        [(StrideZero) ls]
+                        [_
+                          (StrideExpr
+                            (ast.ast-expr-binary-with-pools
+                              pools
+                              (Sub)
+                              (lower-row-origin-y-stride-to-expr pools (& ls))
+                              (lower-row-origin-y-stride-to-expr pools (& rs))))])]
+                    [(Mul)
+                      (match (& ls)
+                        [(StrideZero)
+                          (match (& rs)
+                            [(StrideZero) (StrideZero)]
+                            [(StrideOne) (StrideExpr left-box)]
+                            [(StrideExpr rid)
+                              (StrideExpr
+                                (ast.ast-expr-binary-with-pools
+                                  pools
+                                  (Mul)
+                                  left-box
+                                  rid))]
+                            [(StrideUnsupported) (StrideUnsupported)])]
+                        [(StrideOne)
+                          (match (& rs)
+                            [(StrideZero) (StrideExpr right-box)]
+                            [_ (StrideUnsupported)])]
+                        [(StrideExpr lid)
+                          (match (& rs)
+                            [(StrideZero)
+                              (StrideExpr
+                                (ast.ast-expr-binary-with-pools
+                                  pools
+                                  (Mul)
+                                  lid
+                                  right-box))]
+                            [_ (StrideUnsupported)])]
+                        [(StrideUnsupported) (StrideUnsupported)])]
+                    [_ (StrideUnsupported)])])]))]
+      [_ (StrideUnsupported)])))
+
+(define (lower-foreach2-has-private-helper-fallback?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [inner-id : i64]
+  [body-id : i64]) : bool
+  (if (lower-spmd-expr-has-call?
+    ctx
+    (lower-state-function-state state)
+    env
+    type-env
+    (OutOfLine)
+    (lower-context-expr-get ctx body-id))
+    (match (lower-spmd-numeric-failure
+      ctx
+      (lower-state-function-state state)
+      (lower-state-mode state)
+      env
+      (tc_core.tc-bind-id type-env inner-id (I64))
+      (DirectMap)
+      (lower-context-expr-get ctx body-id))
+      [(Some _ decision)
+        (match decision.context
+          [(PrivateHelper) true]
+          [_ false])]
+      [(No) false])
+    false))
+
+;; Emit `stride >= 0` and overflow-checked `max_mul = (y_span - 1) * stride`
+;; into RES-OK (`ok-var` and'ed with the guard) and RES-MUL.
+(define (lower-foreach2-rect-stride-guard
+  [s : LowerState]
+  [ok-var : i64]
+  [y-span-m1-var : i64]
+  [x-span-var : i64]
+  [stride-var : i64]
+  [res-ok : i64]
+  [res-mul : i64]) : unit
+  (let
+    [pos-label : i64 (lower-row-origin-label s "foreach2_rect_stride_pos")]
+    [pos-fast-label : i64
+      (lower-row-origin-label s "foreach2_rect_stride_fast")]
+    [pos-div-label : i64 (lower-row-origin-label s "foreach2_rect_stride_div")]
+    [nonpos-label : i64
+      (lower-row-origin-label s "foreach2_rect_stride_nonpos")]
+    [join-label : i64 (lower-row-origin-label s "foreach2_rect_stride_join")]
+    (lower-row-origin-close
+      s
+      (Branch
+        (Var (lower-row-origin-binop s Gt (Var stride-var) (I64 0) (I64)))
+        pos-label
+        nonpos-label)
+      pos-label)
+    ;; `foreach2_checks` already proved `y_span * x_span <= INT64_MAX`, so
+    ;; `0 < stride <= x_span` guarantees `(y_span - 1) * stride` cannot overflow
+    ;; without emitting a second `idivq`.
+    (lower-row-origin-close
+      s
+      (Branch
+        (Var
+          (lower-row-origin-binop s Le (Var stride-var) (Var x-span-var) (I64)))
+        pos-fast-label
+        pos-div-label)
+      pos-fast-label)
+    (lower-foreach2-rect-stride-result
+      s
+      res-ok
+      (Var ok-var)
+      res-mul
+      (Var
+        (lower-row-origin-binop
+          s
+          Mul
+          (Var y-span-m1-var)
+          (Var stride-var)
+          (I64)))
+      join-label
+      pos-div-label)
+    ;; Larger positive stride (> x_span): safe_div(INT64_MAX, stride) cannot divide by zero or -1.
+    (let
+      [q : i64
+        (lower-row-origin-binop
+          s
+          SafeDiv
+          (I64 9223372036854775807)
+          (Var stride-var)
+          (I64))]
+      (lower-foreach2-rect-stride-result
+        s
+        res-ok
+        (Var (lower-row-origin-and s ok-var Le (Var y-span-m1-var) (Var q)))
+        res-mul
+        (Var
+          (lower-row-origin-binop
+            s
+            Mul
+            (Var y-span-m1-var)
+            (Var stride-var)
+            (I64)))
+        join-label
+        nonpos-label))
+    ;; Non-positive stride: stride == 0 is valid with max_mul = 0; stride < 0 fails guard.
+    (lower-foreach2-rect-stride-result
+      s
+      res-ok
+      (Var (lower-row-origin-and s ok-var Eq (Var stride-var) (I64 0)))
+      res-mul
+      (I64 0)
+      join-label
+      join-label)))
+
+;; Close a stride-guard arm with `res_ok = ok; res_mul = mul`, jumping to
+;; JOIN-LABEL and opening NEXT-LABEL.
+(define (lower-foreach2-rect-stride-result
+  [s : LowerState]
+  [res-ok : i64]
+  [ok : ir.CompilerIrValue]
+  [res-mul : i64]
+  [mul : ir.CompilerIrValue]
+  [join-label : i64]
+  [next-label : i64]) : unit
+  (lower-state-emit s (Mov res-ok ok (Bool)))
+  (lower-state-emit s (Mov res-mul mul (I64)))
+  (lower-row-origin-close s (Jump join-label) next-label))
+
+;; Hoist one overflow-checked rectangular guard above the rank-2 row loop when
+;; every row-origin view is affine in `outer-id`. On pass, the fast row loop
+;; skips per-row origin checks, view-length subtractions, vector-limit min
+;; clamps, and tail bounds checks; on fail (partial/ragged, negative, or
+;; overflowing bounds), it branches once to the exact per-row checked loop.
+(define (lower-foreach2-rect-domain
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [outer-id : i64]
+  [inner-id : i64]
+  [y0 : i64]
+  [y1 : i64]
+  [x0 : i64]
+  [x1 : i64]
+  [body : i64]
+  [inlined-id : i64]
+  [plan : LowerRowOriginPlan]
+  [strides : (& strides (__tl_dyn-array LowerRowOriginYStride))]
+  [exit-label : i64]) : ResultLowerExpr
+  (let
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    [s : LowerState state]
+    [count : i64 plan.count]
+    [ptr-vars : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [len-vars : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [view-ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [view-vars : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    ;; Items sharing an origin share one group: its running row origin
+    ;; (`group-cur`), its y-stride var (-1 when constant), and `req_len`.
+    [group-of : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [group-cur : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [group-stride : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [group-req-len : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [row-index : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-private-identity state SpmdRowIndex))]
+    [row-start : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-private-identity state SpmdRowStart))]
+    [y-span-var : i64 (lower-row-origin-binop s Sub (Var y1) (Var y0) (I64))]
+    [y-span-m1-var : i64
+      (lower-row-origin-binop s Sub (Var y-span-var) (I64 1) (I64))]
+    [x-span-var : i64 (lower-row-origin-binop s Sub (Var x1) (Var x0) (I64))]
+    ;; Keep x_span <= INT64_MAX - 64 so vector headers (index + lanes, up to
+    ;; 64 narrow lanes) cannot overflow.
+    [rect-ok-var : i64
+      (lower-row-origin-binop
+        s
+        Le
+        (Var x-span-var)
+        (I64 9223372036854775743)
+        (I64))]
+    (for [item-index (iterator.range 0 count)]
+      (let
+        [item : LowerRowOrigin (array-ref plan.items item-index)]
+        [fields
+          (try
+            (lower-slice-view-source-fields
+              ctx
+              s
+              env
+              type-env
+              (lower-context-expr-get
+                ctx
+                (ast.ast-node-pool-context-expr-push pools (Var item.name)))))]
+        [matched-group : i64 -1]
+        [prev : i64 0]
+        (match fields
+          [(Fields fields-state ptr len _)
+            (set! s fields-state)
+            (set!
+              (array-ref ptr-vars item-index)
+              (lower-row-origin-hold s ptr (U64)))
+            (set!
+              (array-ref len-vars item-index)
+              (lower-row-origin-hold s len (I64)))])
+        (while (and (< matched-group 0) (< prev item-index))
+          (let
+            [prev-item : LowerRowOrigin (array-ref plan.items prev)]
+            (when
+              (lower-row-origin-same? ctx prev-item.origin item.origin)
+              (set! matched-group (array-ref group-of prev))))
+          (+= prev 1))
+        (when
+          (< matched-group 0)
+          (set! matched-group (array-length group-cur))
+          (let
+            [first-lowered
+              (try
+                (lower-expr
+                  ctx
+                  s
+                  (sym_i64_env.sym-i64-bind-id env outer-id y0)
+                  (tc_core.tc-bind-id type-env outer-id (I64))
+                  (lower-context-expr-get ctx item.origin)))]
+            [first-var : i64 0]
+            [stride-var : i64 -1]
+            [max-mul-var : i64 0]
+            (match first-lowered
+              [(Expr orig-state orig-val _)
+                (set! s orig-state)
+                (set!
+                  first-var
+                  (lower-row-origin-binop s Add orig-val (Var x0) (I64)))])
+            (set!
+              rect-ok-var
+              (lower-row-origin-and s rect-ok-var Ge (Var first-var) (I64 0)))
+            (match (array-ref strides item-index)
+              [(StrideZero)
+                (set! max-mul-var (lower-row-origin-hold s (I64 0) (I64)))]
+              [(StrideOne)
+                (set! stride-var (lower-row-origin-hold s (I64 1) (I64)))
+                (set! max-mul-var y-span-m1-var)]
+              [(StrideExpr stride-expr-id)
+                (let
+                  [stride-lowered
+                    (try
+                      (lower-expr
+                        ctx
+                        s
+                        env
+                        type-env
+                        (lower-context-expr-get ctx stride-expr-id)))]
+                  [guard-ok : i64 0]
+                  (match stride-lowered
+                    [(Expr st-state st-val _)
+                      (set! s st-state)
+                      (set! stride-var (lower-row-origin-hold s st-val (I64)))
+                      (set! guard-ok (lower-row-origin-var s))
+                      (set! max-mul-var (lower-row-origin-var s))
+                      (lower-foreach2-rect-stride-guard
+                        s
+                        rect-ok-var
+                        y-span-m1-var
+                        x-span-var
+                        stride-var
+                        guard-ok
+                        max-mul-var)
+                      (set! rect-ok-var guard-ok)]))]
+              [(StrideUnsupported) unit])
+            ;; Compute overflow-checked `req_len = first + x_span + max_mul` once per group.
+            (let
+              [max-first : i64
+                (lower-row-origin-binop
+                  s
+                  Sub
+                  (I64 9223372036854775807)
+                  (Var x-span-var)
+                  (I64))]
+              [ok1 : i64
+                (lower-row-origin-binop
+                  s
+                  Le
+                  (Var first-var)
+                  (Var max-first)
+                  (I64))]
+              [base-end : i64
+                (lower-row-origin-binop
+                  s
+                  Add
+                  (Var first-var)
+                  (Var x-span-var)
+                  (I64))]
+              [max-rem : i64
+                (lower-row-origin-binop
+                  s
+                  Sub
+                  (I64 9223372036854775807)
+                  (Var base-end)
+                  (I64))]
+              [ok2 : i64
+                (lower-row-origin-binop
+                  s
+                  Le
+                  (Var max-mul-var)
+                  (Var max-rem)
+                  (I64))]
+              [req-v : i64
+                (lower-row-origin-binop
+                  s
+                  Add
+                  (Var base-end)
+                  (Var max-mul-var)
+                  (I64))]
+              [ok12 : i64
+                (lower-row-origin-binop s And (Var ok1) (Var ok2) (Bool))]
+              (set!
+                rect-ok-var
+                (lower-row-origin-binop
+                  s
+                  And
+                  (Var rect-ok-var)
+                  (Var ok12)
+                  (Bool)))
+              (__tl_array-push! group-req-len req-v))
+            (__tl_array-push! group-cur first-var)
+            (__tl_array-push! group-stride stride-var)))
+        (set! (array-ref group-of item-index) matched-group)
+        ;; Single comparison per participating slice/array: `req_len <= len_i`.
+        (set!
+          rect-ok-var
+          (lower-row-origin-and
+            s
+            rect-ok-var
+            Le
+            (Var (array-ref group-req-len matched-group))
+            (Var (array-ref len-vars item-index))))
+        (set!
+          (array-ref view-ids item-index)
+          (cis.intern-lower-private-identity-raw
+            (lower-private-identity s (SpmdRowView item-index))))))
+    (let
+      [rect-entry-label : i64 (lower-row-origin-label s "row_origin_native")]
+      [rect-header-label : i64 (lower-row-origin-label s "foreach2_header")]
+      [rect-row-label : i64 (lower-row-origin-label s "foreach2_row")]
+      [checked-entry-label : i64 (lower-row-origin-label s "row_origin_scalar")]
+      [checked-header-label : i64
+        (lower-row-origin-label s "foreach2_checked_header")]
+      [checked-row-label : i64
+        (lower-row-origin-label s "foreach2_checked_row")]
+      [group-count : i64 (array-length group-cur)]
+      [row-var : i64 0]
+      [checked-row-var : i64 0]
+      [rect-env : sym_i64_env.SymI64Env env]
+      [rect-type-env : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id type-env outer-id (I64))]
+      (lower-row-origin-close
+        s
+        (Branch (Var rect-ok-var) rect-entry-label checked-entry-label)
+        rect-entry-label)
+      ;; Fast rectangular path: initialize row counter and running row origins.
+      (set! row-var (lower-row-origin-hold s (Var y0) (I64)))
+      (set! rect-env (sym_i64_env.sym-i64-bind-id env outer-id row-var))
+      (for [g (iterator.range 0 group-count)]
+        (set!
+          (array-ref group-cur g)
+          (lower-row-origin-hold s (Var (array-ref group-cur g)) (I64))))
+      (lower-row-origin-close s (Jump rect-header-label) rect-header-label)
+      (lower-row-origin-close
+        s
+        (Branch
+          (Var (lower-row-origin-binop s Lt (Var row-var) (Var y1) (I64)))
+          rect-row-label
+          exit-label)
+        rect-row-label)
+      (for [item-index (iterator.range 0 count)]
+        (let
+          [item : LowerRowOrigin (array-ref plan.items item-index)]
+          [elem-id : i64 (lower-row-origin-elem-id ctx env type-env item.name)]
+          [slice : i64
+            (ast.ast-node-pool-context-type-push pools (Slice elem-id))]
+          (match (lower-emit-elem-addr-gep
+            ctx
+            s
+            (Var (array-ref ptr-vars item-index))
+            (Var (array-ref group-cur (array-ref group-of item-index)))
+            (tc_core.tc-context-type-get ctx elem-id))
+            [(Expr ptr-state view-ptr _)
+              (match (lower-slice-view-pack
+                ptr-state
+                view-ptr
+                (Var x-span-var)
+                (lower-row-origin-view-ty item.write slice))
+                [(Expr view-state view-value _)
+                  (set! s view-state)
+                  (let
+                    [view-var : i64
+                      (lower-row-origin-hold
+                        s
+                        view-value
+                        (lower-row-origin-view-ty item.write slice))]
+                    (set! (array-ref view-vars item-index) view-var)
+                    (set!
+                      rect-env
+                      (sym_i64_env.sym-i64-bind-id
+                        rect-env
+                        (array-ref view-ids item-index)
+                        view-var))
+                    (set!
+                      rect-type-env
+                      (tc_core.tc-bind-id
+                        rect-type-env
+                        (array-ref view-ids item-index)
+                        (lower-row-origin-view-ty item.write slice))))])])))
+      (let
+        [rewritten : i64
+          (lower-row-origin-rewrite
+            ctx
+            rect-env
+            rect-type-env
+            inner-id
+            (& plan)
+            (& view-ids)
+            row-index
+            row-start
+            inlined-id)]
+        [row-lowered
+          (try
+            (lower-foreach-lowered-inlined
+              ctx
+              s
+              (sym_i64_env.sym-i64-bind-id rect-env row-start x0)
+              (tc_core.tc-bind-id rect-type-env row-start (I64))
+              row-index
+              (tc_core.tc-env-key-name-text row-index)
+              (I64)
+              (I64 0)
+              (Var x-span-var)
+              (lower-context-expr-get ctx body)
+              (lower-context-expr-get ctx rewritten)
+              true
+              (& view-vars)))]
+        (match row-lowered
+          [(Expr row-state _ _) (set! s row-state)]))
+      (for [g (iterator.range 0 group-count)]
+        (let
+          [cur-var : i64 (array-ref group-cur g)]
+          [st-var : i64 (array-ref group-stride g)]
+          (when (>= st-var 0) (lower-row-origin-step s cur-var (Var st-var)))))
+      (lower-row-origin-step s row-var (I64 1))
+      (lower-row-origin-close s (Jump rect-header-label) checked-entry-label)
+      ;; Fallback checked path: exact existing per-row guarded loop.
+      (set! checked-row-var (lower-row-origin-hold s (Var y0) (I64)))
+      (lower-row-origin-close
+        s
+        (Jump checked-header-label)
+        checked-header-label)
+      (lower-row-origin-close
+        s
+        (Branch
+          (Var
+            (lower-row-origin-binop s Lt (Var checked-row-var) (Var y1) (I64)))
+          checked-row-label
+          exit-label)
+        checked-row-label)
+      (let
+        [checked-row
+          (try
+            (lower-scalar-foreach-lowered
+              ctx
+              s
+              (sym_i64_env.sym-i64-bind-id env outer-id checked-row-var)
+              (tc_core.tc-bind-id type-env outer-id (I64))
+              inner-id
+              (tc_core.tc-env-key-name-text inner-id)
+              (I64)
+              (Var x0)
+              (Var x1)
+              (lower-context-expr-get ctx inlined-id)))]
+        (match checked-row
+          [(Expr row-state _ _)
+            (set! s row-state)
+            (lower-row-origin-step s checked-row-var (I64 1))
+            (lower-row-origin-close s (Jump checked-header-label) exit-label)
+            (Ok (Expr s Unit (Unit)))])))))
+
 (define (lower-foreach2-domain
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -50293,14 +49318,6 @@
       [(Label next-s label)
         (set! s next-s)
         (set! checks-label label)])
-    (match (lower-state-fresh-label s "foreach2_header")
-      [(Label next-s label)
-        (set! s next-s)
-        (set! header-label label)])
-    (match (lower-state-fresh-label s "foreach2_row")
-      [(Label next-s label)
-        (set! s next-s)
-        (set! row-label label)])
     (match (lower-state-fresh-label s "foreach2_exit")
       [(Label next-s label)
         (set! s next-s)
@@ -50340,17 +49357,109 @@
               ctx
               (lower-foreach2-checks pools (& bound-ids)))))]
       (match checked
-        [(Expr checked-state _ _)
-          (match (lower-state-alloc-var checked-state)
-            [(Alloc row-alloc var)
-              (set! row-var var)
-              (set!
-                s
-                (lower-state-finish-block
-                  (lower-state-emit
-                    (lower-state-emit row-alloc (Mov row-var (Var y0) (I64)))
-                    (Jump header-label))
-                  header-label))])]))
+        [(Expr checked-state _ _) (set! s checked-state)]))
+    ;; Try hoisting a single overflow-checked rectangular guard above the row loop.
+    (when
+      (lower-mode-simd? (lower-state-mode s))
+      (let
+        [probe-env : sym_i64_env.SymI64Env
+          (sym_i64_env.sym-i64-bind-id env outer-id y0)]
+        [probe-type-env : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id type-env outer-id (I64))]
+        (when
+          (not
+            (lower-foreach2-has-private-helper-fallback?
+              ctx
+              s
+              probe-env
+              probe-type-env
+              inner-id
+              body))
+          (let
+            [inlined-body
+              (try
+                (let
+                  [function-state (lower-state-function-state s)]
+                  [expr (lower-context-expr-get ctx body)]
+                  [subst (lower-spmd-inline-subst-empty)]
+                  [shadowed (lower-id-set-insert (lower-id-set-empty) inner-id)]
+                  (lower-spmd-inline-expr
+                    ctx
+                    function-state
+                    probe-env
+                    probe-type-env
+                    expr
+                    subst
+                    shadowed)))]
+            [inlined-id : i64 (lower-context-expr-push ctx inlined-body)]
+            ;; Plan before the views: a declined plan leaves `s` untouched.
+            ;; Array views keep each name's element type, so the plan is
+            ;; the same under the pre-view environment.
+            [plan : LowerRowOriginPlan
+              (lower-row-origin-plan
+                ctx
+                probe-env
+                probe-type-env
+                inner-id
+                (lower-context-expr-get ctx inlined-id))]
+            [strides : (__tl_dyn-array LowerRowOriginYStride)
+              (__tl_make-array LowerRowOriginYStride 0)]
+            [all-affine? : bool (> plan.count 0)]
+            (for [idx (iterator.range 0 plan.count)]
+              (let
+                [item : LowerRowOrigin (array-ref plan.items idx)]
+                [st : LowerRowOriginYStride
+                  (lower-row-origin-y-stride ctx outer-id item.origin)]
+                (match (& st)
+                  [(StrideUnsupported) (set! all-affine? false)]
+                  [_ unit])
+                (__tl_array-push! strides st)))
+            (when
+              all-affine?
+              (match (try
+                (lower-spmd-array-views
+                  ctx
+                  s
+                  env
+                  type-env
+                  (I64)
+                  (lower-context-expr-get ctx inlined-id)))
+                [(Views view-state view-env view-type-env)
+                  (return
+                    (lower-foreach2-rect-domain
+                      ctx
+                      view-state
+                      view-env
+                      view-type-env
+                      outer-id
+                      inner-id
+                      y0
+                      y1
+                      x0
+                      x1
+                      body
+                      inlined-id
+                      plan
+                      (& strides)
+                      exit-label))]))))))
+    (match (lower-state-fresh-label s "foreach2_header")
+      [(Label next-s label)
+        (set! s next-s)
+        (set! header-label label)])
+    (match (lower-state-fresh-label s "foreach2_row")
+      [(Label next-s label)
+        (set! s next-s)
+        (set! row-label label)])
+    (match (lower-state-alloc-var s)
+      [(Alloc row-alloc var)
+        (set! row-var var)
+        (set!
+          s
+          (lower-state-finish-block
+            (lower-state-emit
+              (lower-state-emit row-alloc (Mov row-var (Var y0) (I64)))
+              (Jump header-label))
+            header-label))])
     (match (lower-state-alloc-var s)
       [(Alloc next-s cond-var)
         (set!
@@ -60804,6 +59913,16 @@
                 Unit
                 (Unit))))])]))
 
+(define (lower-ir-copy-value [value : (& value ir.CompilerIrValue)]) : ir.CompilerIrValue
+  (match value
+    [(Var id) (Var id)]
+    [(I64 n) (I64 n)]
+    [(F64 bits) (F64 bits)]
+    [(Bool b) (Bool b)]
+    [(Char c) (Char c)]
+    [(Unit) Unit]
+    [_ Unit]))
+
 (define (lower-avx512-masked-if
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -66170,6 +65289,30 @@
       lanes
       body)))
 
+(define (lower-array-var-set-all-proven?
+  [arrays : (& arrays LowerArrayVarSet)]
+  [proven-views : (& proven-views (__tl_dyn-array i64))]) : bool
+  (let
+    [pcount : i64 (array-length proven-views)]
+    (if (= pcount 0)
+      false
+      (let
+        [ok : bool true]
+        [idx : i64 0]
+        (while (and ok (< idx arrays.count))
+          (if (!= (array-ref arrays.offsets idx) 0)
+            (set! ok false)
+            (let
+              [target : i64 (lower-sequence-var-id (array-ref arrays.vars idx))]
+              [found : bool false]
+              [p : i64 0]
+              (while (and (not found) (< p pcount))
+                (when (= (array-ref proven-views p) target) (set! found true))
+                (+= p 1))
+              (when (not found) (set! ok false))))
+          (+= idx 1))
+        ok))))
+
 (define (lower-avx512-masked-foreach-lowered
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -66181,7 +65324,8 @@
   [start-value : ir.CompilerIrValue]
   [end-value : ir.CompilerIrValue]
   [body : ast.AstExpr]
-  [plan : LowerMaybeMaskedVectorMap]) : ResultLowerExpr
+  [plan : LowerMaybeMaskedVectorMap]
+  [proven-views : (& proven-views (__tl_dyn-array i64))]) : ResultLowerExpr
   (match plan
     [(Some lanes)
       (lower-spmd-select! state (NativeGangs) (MaskedMap) lanes)
@@ -66256,18 +65400,26 @@
               [(Label next-s label)
                 (set! s next-s)
                 (set! preheader-label label)])
-            (match (lower-vector-loop-limit
-              s
-              (lower-global-shared-view end-value)
-              arrays
-              lanes)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! vector-limit value)])
-            (match (lower-vector-loop-start-ok s index-var lanes)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! vector-start-ok value)])
+            (let
+              [all-proven? : bool
+                (lower-array-var-set-all-proven? (& arrays) proven-views)]
+              (if all-proven?
+                (begin
+                  (set! vector-limit (lower-ir-copy-value (& end-value)))
+                  (set! vector-start-ok (Bool true)))
+                (begin
+                  (match (lower-vector-loop-limit
+                    s
+                    (lower-global-shared-view end-value)
+                    arrays
+                    lanes)
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! vector-limit value)])
+                  (match (lower-vector-loop-start-ok s index-var lanes)
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! vector-start-ok value)]))))
             (lower-masked-preheader-cache-set! s preheader-cache)
             (set! s (lower-masked-preheader-cache-array-data s arrays))
             (set!
@@ -66351,100 +65503,116 @@
               [(Expr next-s value _)
                 (set! s next-s)
                 (set! tail-cond value)])
-            (set!
-              s
-              (lower-state-finish-block
-                (lower-state-emit
-                  s
-                  (Branch tail-cond tail-check-label exit-label))
-                tail-check-label))
-            (match (lower-predicated-tail-ok
-              s
-              index-var
-              (lower-global-shared-view end-value)
-              arrays)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! tail-safe value)])
-            (set!
-              s
-              (lower-state-finish-block
-                (lower-state-emit
-                  s
-                  (Branch tail-safe tail-mask-label tail-body-label))
-                tail-mask-label))
-            (match (lower-emit-tail-mask s (Var index-var) end-value lanes)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! active-mask value)])
             (let
-              [lowered-tail
-                (try
-                  (lower-avx512-masked-map-body
-                    ctx
-                    s
-                    env
-                    type-env
-                    index-id
-                    index
-                    (lower-global-shared-view index-ty)
-                    index-var
-                    (Some active-mask)
-                    lanes
-                    (lower-global-shared-view body)))]
-              (match lowered-tail
-                [(Expr tail-state _ _)
+              [all-proven-tail? : bool
+                (lower-array-var-set-all-proven? (& arrays) proven-views)]
+              (if all-proven-tail?
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (Branch tail-cond tail-mask-label exit-label))
+                    tail-mask-label))
+                (begin
                   (set!
                     s
                     (lower-state-finish-block
-                      (lower-state-emit tail-state (Jump exit-label))
-                      tail-body-label))]))
-            (match (lower-state-masked-preheader-cache s)
-              [(Some cache)
-                (ir.compiler-ir-instr-builder-push!
-                  (&mut
-                    (__tl-project-field (__tl-box-place cache) uniform-instrs))
-                  (ir.CompilerIrInstr.Branch
-                    vector-start-ok
-                    header-label
-                    tail-header-label))
-                (let
-                  [data : (Box LowerStateData) (lower-state-box s)]
-                  [blocks : ir.CompilerIrBlockBuilder
-                    (lower-box-field-shared-view data blocks)]
+                      (lower-state-emit
+                        s
+                        (Branch tail-cond tail-check-label exit-label))
+                      tail-check-label))
+                  (match (lower-predicated-tail-ok
+                    s
+                    index-var
+                    (lower-global-shared-view end-value)
+                    arrays)
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! tail-safe value)])
                   (set!
-                    (array-ref blocks.slots preheader-block-index)
-                    (ir.CompilerIrBlock.Block
-                      preheader-label
-                      (ir.compiler-ir-instr-builder-to-seq
-                        (lower-box-field-shared-view cache uniform-instrs)))))]
-              [(No) unit])
-            (lower-masked-preheader-cache-disable! s)
-            (let
-              [scalar-tail-lowered : LowerExpr
-                (try (lower-expr ctx s body-env body-type-env body))]
-              (match scalar-tail-lowered
-                [(Expr post-body-state _ _)
-                  (match (lower-state-alloc-var post-body-state)
-                    [(Alloc inc-alloc inc-var)
-                      (Ok
-                        (Expr
-                          (lower-state-finish-block
-                            (lower-state-emit
-                              (lower-state-emit
+                    s
+                    (lower-state-finish-block
+                      (lower-state-emit
+                        s
+                        (Branch tail-safe tail-mask-label tail-body-label))
+                      tail-mask-label))))
+              (match (lower-emit-tail-mask s (Var index-var) end-value lanes)
+                [(Expr next-s value _)
+                  (set! s next-s)
+                  (set! active-mask value)])
+              (let
+                [lowered-tail
+                  (try
+                    (lower-avx512-masked-map-body
+                      ctx
+                      s
+                      env
+                      type-env
+                      index-id
+                      index
+                      (lower-global-shared-view index-ty)
+                      index-var
+                      (Some active-mask)
+                      lanes
+                      (lower-global-shared-view body)))]
+                (match lowered-tail
+                  [(Expr tail-state _ _)
+                    (set!
+                      s
+                      (lower-state-finish-block
+                        (lower-state-emit tail-state (Jump exit-label))
+                        (if all-proven-tail?
+                          exit-label
+                          tail-body-label)))]))
+              (match (lower-state-masked-preheader-cache s)
+                [(Some cache)
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut
+                      (__tl-project-field (__tl-box-place cache) uniform-instrs))
+                    (ir.CompilerIrInstr.Branch
+                      vector-start-ok
+                      header-label
+                      tail-header-label))
+                  (let
+                    [data : (Box LowerStateData) (lower-state-box s)]
+                    [blocks : ir.CompilerIrBlockBuilder
+                      (lower-box-field-shared-view data blocks)]
+                    (set!
+                      (array-ref blocks.slots preheader-block-index)
+                      (ir.CompilerIrBlock.Block
+                        preheader-label
+                        (ir.compiler-ir-instr-builder-to-seq
+                          (lower-box-field-shared-view cache uniform-instrs)))))]
+                [(No) unit])
+              (lower-masked-preheader-cache-disable! s)
+              (if all-proven-tail?
+                (Ok (Expr s Unit (Unit)))
+                (let
+                  [scalar-tail-lowered : LowerExpr
+                    (try (lower-expr ctx s body-env body-type-env body))]
+                  (match scalar-tail-lowered
+                    [(Expr post-body-state _ _)
+                      (match (lower-state-alloc-var post-body-state)
+                        [(Alloc inc-alloc inc-var)
+                          (Ok
+                            (Expr
+                              (lower-state-finish-block
                                 (lower-state-emit
-                                  inc-alloc
-                                  (BinOp
-                                    inc-var
-                                    Add
-                                    (Var index-var)
-                                    (I64 1)
-                                    (lower-global-shared-view index-ty)))
-                                (Mov index-var (Var inc-var) index-ty))
-                              (Jump tail-header-label))
-                            exit-label)
-                          Unit
-                          (Unit)))])])))])]
+                                  (lower-state-emit
+                                    (lower-state-emit
+                                      inc-alloc
+                                      (BinOp
+                                        inc-var
+                                        Add
+                                        (Var index-var)
+                                        (I64 1)
+                                        (lower-global-shared-view index-ty)))
+                                    (Mov index-var (Var inc-var) index-ty))
+                                  (Jump tail-header-label))
+                                exit-label)
+                              Unit
+                              (Unit)))])])))))])]
     [(No _)
       (lower-scalar-foreach-lowered
         ctx
@@ -66577,7 +65745,8 @@
   [start-value : ir.CompilerIrValue]
   [end-value : ir.CompilerIrValue]
   [body : ast.AstExpr]
-  [plan : LowerMaybeVectorMap]) : ResultLowerExpr
+  [plan : LowerMaybeVectorMap]
+  [proven-views : (& proven-views (__tl_dyn-array i64))]) : ResultLowerExpr
   (match (lower-global-shared-view plan)
     [(Some stores elem-ty lanes)
       (lower-spmd-select! state (NativeGangs) (DirectMap) lanes)
@@ -66637,18 +65806,28 @@
               [(Label next-s label)
                 (set! s next-s)
                 (set! exit-label label)])
-            (match (lower-vector-loop-limit
-              s
-              (lower-global-shared-view end-value)
-              arrays
-              lanes)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! vector-limit value)])
-            (match (lower-vector-loop-start-ok s index-var lanes)
-              [(Expr next-s value _)
-                (set! s next-s)
-                (set! vector-start-ok value)])
+            (let
+              [all-proven? : bool
+                (and
+                  (not (lower-maybe-vector-map-has-gather? plan))
+                  (lower-array-var-set-all-proven? (& arrays) proven-views))]
+              (if all-proven?
+                (begin
+                  (set! vector-limit (lower-ir-copy-value (& end-value)))
+                  (set! vector-start-ok (Bool true)))
+                (begin
+                  (match (lower-vector-loop-limit
+                    s
+                    (lower-global-shared-view end-value)
+                    arrays
+                    lanes)
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! vector-limit value)])
+                  (match (lower-vector-loop-start-ok s index-var lanes)
+                    [(Expr next-s value _)
+                      (set! s next-s)
+                      (set! vector-start-ok value)]))))
             (match (lower-vector-map-preheader-cache-stores
               s
               arrays
@@ -66710,6 +65889,37 @@
               [(Expr next-s value _)
                 (set! s next-s)
                 (set! tail-cond value)])
+            (let
+              [proven-tail? : bool
+                (and
+                  predicated-tail?
+                  (not (lower-maybe-vector-map-has-gather? plan))
+                  (lower-array-var-set-all-proven? (& arrays) proven-views))]
+              (when
+                proven-tail?
+                (set!
+                  s
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      s
+                      (Branch tail-cond tail-mask-label exit-label))
+                    tail-mask-label))
+                (set!
+                  s
+                  (lower-predicated-tail-map-body
+                    ctx
+                    s
+                    index-var
+                    (lower-ir-copy-value (& end-value))
+                    plan))
+                (return
+                  (Ok
+                    (Expr
+                      (lower-state-finish-block
+                        (lower-state-emit s (Jump exit-label))
+                        exit-label)
+                      Unit
+                      (Unit))))))
             (set!
               s
               (if predicated-tail?
@@ -67023,7 +66233,8 @@
   [end-value : ir.CompilerIrValue]
   [diagnostic-body : ast.AstExpr]
   [body : ast.AstExpr]
-  [row? : bool]) : ResultLowerExpr
+  [row? : bool]
+  [proven-views : (& proven-views (__tl_dyn-array i64))]) : ResultLowerExpr
   (match (lower-plan-foreach
     ctx
     state
@@ -67047,7 +66258,8 @@
         start-value
         end-value
         body
-        (Some stores elem-ty lanes))]
+        (Some stores elem-ty lanes)
+        proven-views)]
     [(NativeMasked lanes)
       (lower-avx512-masked-foreach-lowered
         ctx
@@ -67060,7 +66272,8 @@
         start-value
         end-value
         body
-        (Some lanes))]
+        (Some lanes)
+        proven-views)]
     [(Scalar reason)
       (lower-spmd-select!
         state
@@ -68013,23 +67226,73 @@
     0
     (lower_i64_i64_map.with-capacity 0)))
 
+;; Row-origin lowering threads one `LowerState` handle, so these emit through
+;; it and return only the new var or label.
+(define (lower-row-origin-var [state : LowerState]) : i64
+  (match (lower-state-alloc-var state)
+    [(Alloc _ var) var]))
+
+(define (lower-row-origin-label [state : LowerState] [prefix : String]) : i64
+  (match (lower-state-fresh-label state prefix)
+    [(Label _ label) label]))
+
 ;; Emit `(BinOp var op left right ty)` into a fresh var.
 (define (lower-row-origin-binop
   [state : LowerState]
   [op : ir.CompilerIrBinOp]
   [left : ir.CompilerIrValue]
   [right : ir.CompilerIrValue]
-  [ty : ast.AstType]) : LowerAlloc
-  (match (lower-state-alloc-var state)
-    [(Alloc next var)
-      (Alloc (lower-state-emit next (BinOp var op left right ty)) var)]))
+  [ty : ast.AstType]) : i64
+  (let
+    [var : i64 (lower-row-origin-var state)]
+    (lower-state-emit state (BinOp var op left right ty))
+    var))
 
 (define (lower-row-origin-hold
   [state : LowerState]
   [value : ir.CompilerIrValue]
-  [ty : ast.AstType]) : LowerAlloc
-  (match (lower-state-alloc-var state)
-    [(Alloc next var) (Alloc (lower-state-emit next (Mov var value ty)) var)]))
+  [ty : ast.AstType]) : i64
+  (let
+    [var : i64 (lower-row-origin-var state)]
+    (lower-state-emit state (Mov var value ty))
+    var))
+
+;; `ok && (left op right)` as a fresh bool var.
+(define (lower-row-origin-and
+  [state : LowerState]
+  [ok : i64]
+  [op : ir.CompilerIrBinOp]
+  [left : ir.CompilerIrValue]
+  [right : ir.CompilerIrValue]) : i64
+  (let
+    [cond : i64 (lower-row-origin-binop state op left right (I64))]
+    (lower-row-origin-binop state And (Var ok) (Var cond) (Bool))))
+
+;; `var += step`.
+(define (lower-row-origin-step
+  [state : LowerState]
+  [var : i64]
+  [step : ir.CompilerIrValue]) : unit
+  (lower-state-emit
+    state
+    (Mov
+      var
+      (Var (lower-row-origin-binop state Add (Var var) step (I64)))
+      (I64)))
+  unit)
+
+;; End the current block with TERM and open NEXT-LABEL.
+(define (lower-row-origin-close
+  [state : LowerState]
+  [term : ir.CompilerIrInstr]
+  [next-label : i64]) : unit
+  (lower-state-finish-block (lower-state-emit state term) next-label)
+  unit)
+
+(define (lower-row-origin-view-ty [write : bool] [slice : i64]) : ast.AstType
+  (if write
+    (MutRef -1 slice)
+    (Ref -1 slice)))
 
 ;; A rank-2 row whose PLAN has views. The guard, computed once per row, takes
 ;; the native row when the row is non-empty, its span does not overflow, and
@@ -68050,17 +67313,10 @@
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     [s : LowerState state]
-    [start-var : i64 0]
-    [end-var : i64 0]
-    [span-var : i64 0]
-    [ok-var : i64 0]
     [origin-vars : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
     [ptr-vars : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
     [len-vars : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
     [view-ids : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
-    [native-label : i64 (ir.compiler-ir-label-none)]
-    [scalar-label : i64 (ir.compiler-ir-label-none)]
-    [join-label : i64 (ir.compiler-ir-label-none)]
     [row-index : i64
       (cis.intern-lower-private-identity-raw
         (lower-private-identity state SpmdRowIndex))]
@@ -68069,29 +67325,18 @@
         (lower-private-identity state SpmdRowStart))]
     [native-env : sym_i64_env.SymI64Env env]
     [native-type-env : tc_core.TcTypeEnv type-env]
-    (match (lower-row-origin-hold s start-value (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! start-var var)])
-    (match (lower-row-origin-hold s end-value (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! end-var var)])
-    (match (lower-row-origin-binop s Sub (Var end-var) (Var start-var) (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! span-var var)])
+    [start-var : i64 (lower-row-origin-hold s start-value (I64))]
+    [end-var : i64 (lower-row-origin-hold s end-value (I64))]
+    [span-var : i64
+      (lower-row-origin-binop s Sub (Var end-var) (Var start-var) (I64))]
     ;; Non-empty with a span that did not wrap.
-    (match (lower-row-origin-binop s Lt (Var start-var) (Var end-var) (I64))
-      [(Alloc next var)
-        (set! s next)
-        (set! ok-var var)])
-    (match (lower-row-origin-binop s Gt (Var span-var) (I64 0) (I64))
-      [(Alloc next var)
-        (match (lower-row-origin-binop next And (Var ok-var) (Var var) (Bool))
-          [(Alloc joined ok)
-            (set! s joined)
-            (set! ok-var ok)])])
+    [ok-var : i64
+      (lower-row-origin-and
+        s
+        (lower-row-origin-binop s Lt (Var start-var) (Var end-var) (I64))
+        Gt
+        (Var span-var)
+        (I64 0))]
     (for [item-index (iterator.range 0 plan.count)]
       (let
         [item : LowerRowOrigin (array-ref plan.items item-index)]
@@ -68105,15 +67350,10 @@
               (lower-context-expr-get ctx item.origin)))]
         (match origin
           [(Expr origin-state origin-value _)
-            (match (lower-row-origin-binop
-              origin-state
-              Add
-              origin-value
-              (Var start-var)
-              (I64))
-              [(Alloc next var)
-                (set! s next)
-                (set! (array-ref origin-vars item-index) var)])])
+            (set! s origin-state)
+            (set!
+              (array-ref origin-vars item-index)
+              (lower-row-origin-binop s Add origin-value (Var start-var) (I64)))])
         (let
           [fields
             (try
@@ -68127,171 +67367,145 @@
                   (ast.ast-node-pool-context-expr-push pools (Var item.name)))))]
           (match fields
             [(Fields fields-state ptr len _)
-              (match (lower-row-origin-hold fields-state ptr (U64))
-                [(Alloc ptr-state ptr-var)
-                  (match (lower-row-origin-hold ptr-state len (I64))
-                    [(Alloc len-state len-var)
-                      (set! s len-state)
-                      (set! (array-ref ptr-vars item-index) ptr-var)
-                      (set! (array-ref len-vars item-index) len-var)])])]))
-        (match (lower-row-origin-binop
-          s
-          Ge
-          (Var (array-ref origin-vars item-index))
-          (I64 0)
-          (I64))
-          [(Alloc ge-state ge)
-            (match (lower-row-origin-binop
-              ge-state
+              (set! s fields-state)
+              (set!
+                (array-ref ptr-vars item-index)
+                (lower-row-origin-hold s ptr (U64)))
+              (set!
+                (array-ref len-vars item-index)
+                (lower-row-origin-hold s len (I64)))]))
+        (let
+          [origin-var : i64 (array-ref origin-vars item-index)]
+          [ge : i64
+            (lower-row-origin-binop s Ge (Var origin-var) (I64 0) (I64))]
+          [le : i64
+            (lower-row-origin-binop
+              s
               Le
-              (Var (array-ref origin-vars item-index))
+              (Var origin-var)
               (Var (array-ref len-vars item-index))
-              (I64))
-              [(Alloc le-state le)
-                (match (lower-row-origin-binop
-                  le-state
-                  And
-                  (Var ge)
-                  (Var le)
-                  (Bool))
-                  [(Alloc in-state within)
-                    (match (lower-row-origin-binop
-                      in-state
-                      And
-                      (Var ok-var)
-                      (Var within)
-                      (Bool))
-                      [(Alloc next ok)
-                        (set! s next)
-                        (set! ok-var ok)])])])])
+              (I64))]
+          [within : i64 (lower-row-origin-binop s And (Var ge) (Var le) (Bool))]
+          (set!
+            ok-var
+            (lower-row-origin-binop s And (Var ok-var) (Var within) (Bool))))
         (set!
           (array-ref view-ids item-index)
           (cis.intern-lower-private-identity-raw
             (lower-private-identity s (SpmdRowView item-index))))))
-    (match (lower-state-fresh-label s "row_origin_native")
-      [(Label next label)
-        (set! s next)
-        (set! native-label label)])
-    (match (lower-state-fresh-label s "row_origin_scalar")
-      [(Label next label)
-        (set! s next)
-        (set! scalar-label label)])
-    (match (lower-state-fresh-label s "row_origin_join")
-      [(Label next label)
-        (set! s next)
-        (set! join-label label)])
-    (set!
-      s
-      (lower-state-finish-block
-        (lower-state-emit s (Branch (Var ok-var) native-label scalar-label))
-        native-label))
-    ;; The native row: one view per plan item, then the rewritten body over the
-    ;; row index from 0.
-    (for [item-index (iterator.range 0 plan.count)]
+    (let
+      [native-label : i64 (lower-row-origin-label s "row_origin_native")]
+      [scalar-label : i64 (lower-row-origin-label s "row_origin_scalar")]
+      [join-label : i64 (lower-row-origin-label s "row_origin_join")]
+      (lower-row-origin-close
+        s
+        (Branch (Var ok-var) native-label scalar-label)
+        native-label)
+      ;; The native row: one view per plan item, then the rewritten body over the
+      ;; row index from 0.
+      (for [item-index (iterator.range 0 plan.count)]
+        (let
+          [item : LowerRowOrigin (array-ref plan.items item-index)]
+          [elem-id : i64 (lower-row-origin-elem-id ctx env type-env item.name)]
+          [slice : i64
+            (ast.ast-node-pool-context-type-push pools (Slice elem-id))]
+          [view-ty : ast.AstType
+            (if item.write
+              (MutRef -1 slice)
+              (Ref -1 slice))]
+          [origin-var : i64 (array-ref origin-vars item-index)]
+          (match (lower-emit-elem-addr-gep
+            ctx
+            s
+            (Var (array-ref ptr-vars item-index))
+            (Var origin-var)
+            (tc_core.tc-context-type-get ctx elem-id))
+            [(Expr ptr-state view-ptr _)
+              (set! s ptr-state)
+              (match (lower-slice-view-pack
+                s
+                view-ptr
+                (Var
+                  (lower-row-origin-binop
+                    s
+                    Sub
+                    (Var (array-ref len-vars item-index))
+                    (Var origin-var)
+                    (I64)))
+                (lower-global-shared-view view-ty))
+                [(Expr view-state view-value _)
+                  (set! s view-state)
+                  (let
+                    [view-var : i64
+                      (lower-row-origin-hold
+                        s
+                        view-value
+                        (lower-global-shared-view view-ty))]
+                    (set!
+                      native-env
+                      (sym_i64_env.sym-i64-bind-id
+                        native-env
+                        (array-ref view-ids item-index)
+                        view-var))
+                    (set!
+                      native-type-env
+                      (tc_core.tc-bind-id
+                        native-type-env
+                        (array-ref view-ids item-index)
+                        view-ty)))])])))
       (let
-        [item : LowerRowOrigin (array-ref plan.items item-index)]
-        [elem-id : i64 (lower-row-origin-elem-id ctx env type-env item.name)]
-        [slice : i64
-          (ast.ast-node-pool-context-type-push pools (Slice elem-id))]
-        [view-ty : ast.AstType
-          (if item.write
-            (MutRef -1 slice)
-            (Ref -1 slice))]
-        (match (lower-emit-elem-addr-gep
-          ctx
-          s
-          (Var (array-ref ptr-vars item-index))
-          (Var (array-ref origin-vars item-index))
-          (tc_core.tc-context-type-get ctx elem-id))
-          [(Expr ptr-state view-ptr _)
-            (match (lower-row-origin-binop
-              ptr-state
-              Sub
-              (Var (array-ref len-vars item-index))
-              (Var (array-ref origin-vars item-index))
-              (I64))
-              [(Alloc len-state view-len)
-                (match (lower-slice-view-pack
-                  len-state
-                  view-ptr
-                  (Var view-len)
-                  (lower-global-shared-view view-ty))
-                  [(Expr view-state view-value _)
-                    (match (lower-row-origin-hold
-                      view-state
-                      view-value
-                      (lower-global-shared-view view-ty))
-                      [(Alloc next view-var)
-                        (set! s next)
-                        (set!
-                          native-env
-                          (sym_i64_env.sym-i64-bind-id
-                            native-env
-                            (array-ref view-ids item-index)
-                            view-var))
-                        (set!
-                          native-type-env
-                          (tc_core.tc-bind-id
-                            native-type-env
-                            (array-ref view-ids item-index)
-                            view-ty))])])])])))
-    (let
-      [rewritten : i64
-        (lower-row-origin-rewrite
-          ctx
-          env
-          type-env
-          index-id
-          (& plan)
-          (& view-ids)
-          row-index
-          row-start
-          (lower-context-expr-push ctx (lower-global-shared-view inlined-body)))]
-      [native
-        (try
-          (lower-foreach-lowered-inlined
+        [rewritten : i64
+          (lower-row-origin-rewrite
             ctx
-            s
-            (sym_i64_env.sym-i64-bind-id native-env row-start start-var)
-            (tc_core.tc-bind-id native-type-env row-start (I64))
-            row-index
-            (tc_core.tc-env-key-name-text row-index)
-            (I64)
-            (I64 0)
-            (Var span-var)
-            body
-            (lower-context-expr-get ctx rewritten)
-            true))]
-      (match native
-        [(Expr native-state _ _)
-          (set!
-            s
-            (lower-state-finish-block
-              (lower-state-emit native-state (Jump join-label))
-              scalar-label))]))
-    (let
-      [scalar
-        (try
-          (lower-scalar-foreach-lowered
-            ctx
-            s
             env
             type-env
             index-id
-            index
-            index-ty
-            (Var start-var)
-            (Var end-var)
-            inlined-body))]
-      (match scalar
-        [(Expr scalar-state _ _)
-          (Ok
-            (Expr
-              (lower-state-finish-block
-                (lower-state-emit scalar-state (Jump join-label))
-                join-label)
-              Unit
-              (Unit)))]))))
+            (& plan)
+            (& view-ids)
+            row-index
+            row-start
+            (lower-context-expr-push
+              ctx
+              (lower-global-shared-view inlined-body)))]
+        [empty-proven : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+        [native
+          (try
+            (lower-foreach-lowered-inlined
+              ctx
+              s
+              (sym_i64_env.sym-i64-bind-id native-env row-start start-var)
+              (tc_core.tc-bind-id native-type-env row-start (I64))
+              row-index
+              (tc_core.tc-env-key-name-text row-index)
+              (I64)
+              (I64 0)
+              (Var span-var)
+              body
+              (lower-context-expr-get ctx rewritten)
+              true
+              (& empty-proven)))]
+        (match native
+          [(Expr native-state _ _)
+            (lower-row-origin-close native-state (Jump join-label) scalar-label)
+            (set! s native-state)]))
+      (let
+        [scalar
+          (try
+            (lower-scalar-foreach-lowered
+              ctx
+              s
+              env
+              type-env
+              index-id
+              index
+              index-ty
+              (Var start-var)
+              (Var end-var)
+              inlined-body))]
+        (match scalar
+          [(Expr scalar-state _ _)
+            (lower-row-origin-close scalar-state (Jump join-label) join-label)
+            (Ok (Expr scalar-state Unit (Unit)))])))))
 
 (define (lower-foreach-lowered-after-numeric-admission
   [ctx : tc_core.TcContext]
@@ -68356,19 +67570,22 @@
               body
               inlined-body
               plan)
-            (lower-foreach-lowered-inlined
-              ctx
-              view-state
-              view-env
-              view-type-env
-              index-id
-              index
-              index-ty
-              start-value
-              end-value
-              body
-              inlined-body
-              row?)))])))
+            (let
+              [empty-proven : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+              (lower-foreach-lowered-inlined
+                ctx
+                view-state
+                view-env
+                view-type-env
+                index-id
+                index
+                index-ty
+                start-value
+                end-value
+                body
+                inlined-body
+                row?
+                (& empty-proven)))))])))
 
 (define (lower-foreach-lowered
   [ctx : tc_core.TcContext]
@@ -78265,7 +77482,6 @@
   [externs : ir.CompilerIrExternSeq]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameEnv]
-  [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultLowerDecls
   (compiler-lower-state-set-spmd-source-present!
     lower-state
@@ -78276,9 +77492,7 @@
   (compiler-lower-state-set-active-symbols-ready! lower-state true)
   (let
     [dispatch-name-cache : LowerNameCache
-      (lower-name-cache-with-clone-roots
-        (lower-name-cache-from-env lower-state (lower-global-shared-view names))
-        clone-roots)]
+      (lower-name-cache-from-env lower-state (lower-global-shared-view names))]
     ;; Build the shared global name/type caches once; per-module caches
     ;; are small overlays that fall through to them. The initial cur caches are
     ;; empty overlays (everything resolves via the global caches) for decls in
@@ -79839,7 +79053,6 @@
   [paths : ast.AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
-  [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match (compiler-lower-state-pointer-proof-request lower-state)
     [(Disabled) unit]
@@ -79854,9 +79067,9 @@
           (if (> (string.string-length (& entry-path)) 0)
             (lower-global-shared-view entry-path)
             "<source>")))])
-  ;; Clone-root discovery and checked typechecking can probe aggregate layout
-  ;; with helper contexts before final lowering. Emitted code must use one
-  ;; internally consistent layout view for all functions in this pass.
+  ;; Checked typechecking can probe aggregate layout with helper contexts
+  ;; before final lowering. Emitted code must use one internally consistent
+  ;; layout view for all functions in this pass.
   (tc_core.tc-agg-caches-reset-for-job! (tc_core.tc-context-job-state ctx))
   (tc_core.tc-nominal-owner-cache-reset-for-job!
     (tc_core.tc-context-job-state ctx))
@@ -79876,7 +79089,6 @@
           (ir.compiler-ir-extern-seq-empty)
           (ir.compiler-source-spans-empty)
           names
-          clone-roots
           mode)
           [(Ok payload)
             (let
@@ -79961,9 +79173,6 @@
             "<source>"
             Nil
             false)])]
-    (tc_core.tc-clone-root-collection-use!
-      (tc_core.tc-serial-job-state)
-      (lower-global-shared-view specialized))
     (lower-typecheck-clone-and-lower
       lower-state
       "<source>"
@@ -80074,218 +79283,138 @@
         typecheck-intern-state
         true
         false)
-        [(Ok summary source-ctx source-top-env _)
+        [(Ok summary ctx top-env _)
           (let
             [_freeze-let-facts : unit
               (tc_core.tc-checked-let-binding-facts-freeze! let-facts)]
-            [clone-roots : clone_support.CloneRootEntries
-              (tc_core.tc-clone-root-collection-finish! source-ctx)]
-            [source-decl-count : i64
-              (match (lower-global-shared-view program)
-                [(Program decls-box)
-                  (let
-                    [decls : ast.AstDeclList (deref decls-box)]
-                    (ast.ast-decl-list-len (& decls)))])]
             [_finish-package-surface : unit
               (cfg
                 (any
                   compiler-surface-producer
                   compiler-build-identity
                   embedded-stdlib-tlci)
-                (match summary
-                  [(CompilerTypecheckSummary values functions externs)
-                    (package_surface.package-surface-capture-finish!
-                      source-decl-count
-                      values
-                      functions
-                      externs)])
+                (let
+                  [source-decl-count : i64
+                    (match (lower-global-shared-view program)
+                      [(Program decls-box)
+                        (let
+                          [decls : ast.AstDeclList (deref decls-box)]
+                          (ast.ast-decl-list-len (& decls)))])]
+                  (match summary
+                    [(CompilerTypecheckSummary values functions externs)
+                      (package_surface.package-surface-capture-finish!
+                        source-decl-count
+                        values
+                        functions
+                        externs)]))
                 unit)]
-            [checked-keep-plan : LowerDeclKeepPlan
-              (lower-decl-keep-plan-add-clone-roots
-                keep-plan
-                (lower-global-shared-view program)
-                clone-roots)]
-            [clone-able : clone_support.CloneNameSet
-              (tc_core.tc-clone-able-set source-ctx)]
-            [_install-clone-pools : unit
-              (ast.ast-node-pool-context-install! pools)]
-            [clone-augmentation : ResultLowerCloneAugment
-              (lower-clone-handoff-augment
-                lower-state
-                source-ctx
-                source-top-env
-                (lower-global-shared-view entry-path)
-                (lower-global-shared-view program)
-                clone-able
-                clone-roots
-                pools)]
-            [checked-program : ast.AstProgram
-              (match (lower-global-shared-view clone-augmentation)
-                [(Ok augmented _ _) augmented]
-                [(Err _) program])]
-            [all-clone-roots : clone_support.CloneRootEntries
-              (match (lower-global-shared-view clone-augmentation)
-                [(Ok _ _ handoff-roots) handoff-roots]
-                [(Err _) clone-roots])]
-            [_install-augmented-pools : unit
-              (ast.ast-node-pool-context-install! pools)]
-            [checked-context : ResultLowerCheckedContext
-              (match clone-augmentation
-                [(Ok _ _ _)
-                  (lower-extend-checked-context-with-clone-decls
-                    source-ctx
-                    source-top-env
-                    source-decl-count
-                    (lower-global-shared-view checked-program))]
-                [(Err message) (Err message)])]
+            [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
             [lower-names : LowerNameEnv
-              (match (lower-global-shared-view checked-program)
+              (match (lower-global-shared-view program)
                 [(Program decls-box)
                   (let
                     [decls : ast.AstDeclList (deref decls-box)]
-                    [base-names : LowerNameEnv
-                      (if needs-specialization
-                        escaped-names
-                        (lower-name-env-from-decls-with-state
-                          lower-state
-                          decls
-                          paths
-                          (lower-global-shared-view entry-path)
-                          Nil))]
-                    (lower-name-env-add-clone-decls
-                      lower-state
-                      decls
-                      paths
-                      (lower-global-shared-view entry-path)
-                      base-names
-                      all-clone-roots
-                      needs-specialization))])]
+                    (if needs-specialization
+                      escaped-names
+                      (lower-name-env-from-decls-with-state
+                        lower-state
+                        decls
+                        paths
+                        (lower-global-shared-view entry-path)
+                        Nil)))])]
             (begin
               (cfg
                 compile-profile
                 (compiler-lower-profile-finish lower-state "typecheck"))
+              (cfg
+                compile-profile
+                (compiler-lower-profile-pools "typecheck" pools))
+              (cfg
+                compile-profile
+                (compiler-lower-profile-pools "pre_decls" pools))
+              (cfg
+                compile-profile
+                (compiler-lower-profile-program-counts
+                  "pre_decls"
+                  (lower-global-shared-view program)))
               (cfg compile-profile (compiler-lower-profile-start lower-state))
-              (match checked-context
-                [(Ok ctx top-env)
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-finish
-                        lower-state
-                        "clone_augment_names"))
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-pools "typecheck" pools))
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-pools "pre_decls" pools))
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-program-counts
-                        "pre_decls"
-                        (lower-global-shared-view checked-program)))
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-start lower-state))
-                    ;; Whole-program source typecheck is complete. Apply the
-                    ;; declaration decisions retained by reachability; clone
-                    ;; helpers are appended and marked by add-clone-roots.
-                    (let
-                      [pruned-program : ast.AstProgram
-                        (lower-decl-keep-plan-apply
-                          checked-keep-plan
-                          checked-program)]
+              ;; Whole-program source typecheck is complete. Apply the
+              ;; declaration decisions retained by reachability.
+              (let
+                [pruned-program : ast.AstProgram
+                  (lower-decl-keep-plan-apply keep-plan program)]
+                (begin
+                  (cfg
+                    compile-profile
+                    (compiler-lower-profile-finish lower-state "prune_apply"))
+                  (cfg
+                    compile-profile
+                    (compiler-lower-profile-program-counts
+                      "reachable"
+                      (lower-global-shared-view pruned-program)))
+                  (cfg
+                    compile-profile
+                    (compiler-lower-profile-start lower-state))
+                  (cfg
+                    compile-profile
+                    (compiler-lower-profile-string-concat-reset lower-state))
+                  (match (lower-compiler-program-checked-with-names-mode
+                    lower-state
+                    ctx
+                    ;; Additive macro splices intentionally retain a
+                    ;; shallow forest of delta layers. Lowering performs
+                    ;; repeated whole-program lookups after the final
+                    ;; splice, so publish one flat front cache at this
+                    ;; phase boundary instead of paying the layer walk in
+                    ;; every lowered function.
+                    (tc_core.tc-env-with-cache top-env)
+                    pruned-program
+                    (lower-decl-keep-plan-apply-paths keep-plan paths)
+                    (lower-global-shared-view entry-path)
+                    lower-names
+                    mode)
+                    [(Ok ir spans owner)
                       (begin
                         (cfg
                           compile-profile
-                          (compiler-lower-profile-finish
-                            lower-state
-                            "prune_apply"))
-                        (cfg
-                          compile-profile
-                          (compiler-lower-profile-program-counts
-                            "reachable"
-                            (lower-global-shared-view pruned-program)))
-                        (cfg
-                          compile-profile
-                          (compiler-lower-profile-start lower-state))
-                        (cfg
-                          compile-profile
-                          (compiler-lower-profile-string-concat-reset
+                          (compiler-lower-profile-string-concat-finish
                             lower-state))
-                        (match (lower-compiler-program-checked-with-names-mode
-                          lower-state
-                          ctx
-                          ;; Additive macro splices intentionally retain a
-                          ;; shallow forest of delta layers. Lowering performs
-                          ;; repeated whole-program lookups after the final
-                          ;; splice, so publish one flat front cache at this
-                          ;; phase boundary instead of paying the layer walk in
-                          ;; every lowered function.
-                          (tc_core.tc-env-with-cache top-env)
-                          pruned-program
-                          (lower-decl-keep-plan-apply-paths
-                            checked-keep-plan
-                            paths)
-                          (lower-global-shared-view entry-path)
-                          lower-names
-                          clone-roots
-                          mode)
-                          [(Ok ir spans owner)
-                            (begin
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-string-concat-finish
-                                  lower-state))
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-name-finish lower-state))
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-finish
-                                  lower-state
-                                  "decls"))
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-ir-shape
-                                  "after_decls"
-                                  (lower-global-shared-view ir)))
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-ir-arena
-                                  lower-state
-                                  "after_decls"))
-                              (Ok ir spans owner))]
-                          [(Err diag)
-                            (begin
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-string-concat-finish
-                                  lower-state))
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-name-finish lower-state))
-                              (cfg
-                                compile-profile
-                                (compiler-lower-profile-finish
-                                  lower-state
-                                  "decls"))
-                              (Err
-                                (box
-                                  (lower-diagnostic-with-fallback-path
-                                    (deref diag)
-                                    entry-path))))]))))]
-                [(Err message)
-                  (begin
-                    (cfg
-                      compile-profile
-                      (compiler-lower-profile-finish
-                        lower-state
-                        "clone_augment_names"))
-                    (Err (box (lower-diagnostic message))))])))]
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-name-finish lower-state))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-finish lower-state "decls"))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-ir-shape
+                            "after_decls"
+                            (lower-global-shared-view ir)))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-ir-arena
+                            lower-state
+                            "after_decls"))
+                        (Ok ir spans owner))]
+                    [(Err diag)
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-string-concat-finish
+                            lower-state))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-name-finish lower-state))
+                        (cfg
+                          compile-profile
+                          (compiler-lower-profile-finish lower-state "decls"))
+                        (Err
+                          (box
+                            (lower-diagnostic-with-fallback-path
+                              (deref diag)
+                              entry-path))))])))))]
         [(Partial diag _ _ _)
           (begin
-            (tc_core.tc-clone-root-collection-abort! job-state)
             (cfg
               (any
                 compiler-surface-producer
@@ -80300,7 +79429,6 @@
             (Err (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
         [(Err diag)
           (begin
-            (tc_core.tc-clone-root-collection-abort! job-state)
             (cfg
               (any
                 compiler-surface-producer
@@ -80507,17 +79635,16 @@
                   (owned_view.compiler-owned-shared-view names))]
               ;; Typecheck remains complete and whole-program while lower,
               ;; optimize, and codegen are gated on reachability. This up-front
-              ;; walk records the dense declaration selection consumed both by
-              ;; typecheck's clone-root observer and by the final linear prune.
-              (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
+              ;; walk records the dense declaration selection consumed by the
+              ;; final linear prune.
+              (match (lower-prune-unreachable-functions-with-plan
                 lower-state
                 pools
                 (lower-global-shared-view entry-path)
                 (lower-global-shared-view specialized)
                 (lower-global-shared-view specialized-paths)
-                prune-names
-                (Empty))
-                [(Program reach-program _reach-paths reach-keep-plan)
+                prune-names)
+                [(Program _reach-program _reach-paths reach-keep-plan)
                   (begin
                     (if (= prune-names-arena 0)
                       unit
@@ -80538,11 +79665,6 @@
                     (cfg
                       compile-profile
                       (compiler-lower-profile-start lower-state))
-                    ;; Capture stable retained declaration keys before optional
-                    ;; pool compaction releases the reach-program AST.
-                    (tc_core.tc-clone-root-collection-use!
-                      job-state
-                      reach-program)
                     (let
                       [detach-source? : bool
                         (compiler-lower-checked-dest-pools-active? lower-state)]

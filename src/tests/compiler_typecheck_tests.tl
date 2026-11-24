@@ -13,7 +13,6 @@
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
 (import compiler_diagnostic as cdiag)
-(import compiler_clone_tests as clone_tests)
 (import compiler_parse_core as parser)
 (import compiler_symbols as csym)
 (import stdlib.arena)
@@ -609,13 +608,13 @@
     [flows : (Array String 8)
       (array
         "(deref r)"
-        "(ann (deref r) : Value)"
-        "(begin 0 (deref r))"
-        "(if flag (deref r) (deref r))"
-        "(let [flag true] (deref r))"
-        "(match flag [true (deref r)] [false (deref r)])"
-        "(unsafe 0 (deref r))"
-        "(deref (if flag r r))")]
+        "(ann r : (& r Value))"
+        "(begin 0 r)"
+        "(if flag r r)"
+        "(let [flag true] r)"
+        "(match flag [true r] [false r])"
+        "(unsafe 0 r)"
+        "(& (deref r))")]
     [ok : bool true]
     (for [index (iterator.range 0 8)]
       (set!
@@ -625,7 +624,8 @@
           (compiler-typecheck-ok?
             (str_cat.str-cat
               (string.copy (& prefix))
-              "(define (copy [r : (& r Value)] [flag : bool]) : Value (clone "
+              "(define (read-val [v : (& v Value)]) : i64 0)
+(define (copy [r : (& r Value)] [flag : bool]) : i64 (read-val "
               (string.copy (& (array-ref flows index)))
               "))")))))
     (and
@@ -633,7 +633,8 @@
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [r : (&mut r Value)]) : Value (clone (deref r)))"))
+          "(define (read-val [v : (& v Value)]) : i64 0)
+(define (copy [r : (&mut r Value)]) : i64 (read-val (deref r)))"))
       (compiler-typecheck-error-code-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
@@ -643,89 +644,83 @@
       (compiler-typecheck-error-code-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [r : (& r Value)]) : Value
-  (clone (begin (take (deref r)) (deref r))))")
+          "(define (read-val [v : (& v Value)]) : i64 0)
+(define (copy [r : (& r Value)]) : i64
+  (read-val (begin (take (deref r)) r)))")
         "E0208"
         "typecheck")
       (compiler-typecheck-error-code-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [r : (& r Value)]) : Value
-  (clone (let [value (deref r)] value)))")
+          "(define (read-val [v : (& v Value)]) : i64 0)
+(define (copy [r : (& r Value)]) : i64
+  (let [value (deref r)] (read-val (& value))))")
         "E0208"
-        "typecheck")
-      (compiler-typecheck-error-code-ok?
-        (str_cat.str-cat
-          (string.copy (& prefix))
-          "(define (clone [value : Value]) : Value value)
-(define (copy [r : (& r Value)]) : Value (clone (deref r)))")
-        "E0208"
-        "typecheck")
-      (compiler-typecheck-error-ok?
-        (str_cat.str-cat
-          (string.copy (& prefix))
-          "(define (copy [r : (& r Value)]) : (& r Value) (clone r))")
-        "typecheck: clone unsupported type (& r Value)"))))
+        "typecheck"))))
 
-;; The ownership graph's clone read (SPEC 7.6): owned places in the read's
-;; result positions stay usable, a projection's receiver is read where it
-;; lies (retained by value when an index after it can write a root it may
-;; select), a value among the results is held in a temporary, and the rest of
-;; the operand keeps its ordinary moves.
+;; Shared-reference borrowing of a compound argument read through control-flow
+;; result positions and projections: borrowed places stay usable; an array
+;; projection's receiver is lent unless an index evaluated after it can write
+;; a root it may select, when it is retained by value (moved) instead; and
+;; ordinary moves in conditions still consume.
 (define (compiler-typecheck-clone-read-tests-ok?) : bool
   (let
     [prefix : String
-      "(defenum Value (Empty) (Text String))
-(defstruct Holder (cell Value))
-(define (take [value : Value]) : unit unit)
-(define (taken? [value : Value]) : bool true)
+      "(defstruct Holder (cell String))
+(define (observe [text : (& str)]) : i64 7)
+(define (consume [text : String]) : i64 7)
+(define (taken? [text : String]) : bool true)
 "]
     (and
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [a : Value] [b : Value] [flag : bool]) : Value
-  (let [copy (clone (match flag [true (if flag a b)] [false (begin 0 b)]))]
-    (take a)
-    (take b)
-    copy))"))
+          "(define (copy [a : String] [b : String] [flag : bool]) : i64
+  (let [n (observe (match flag [true (if flag a b)] [false (begin 0 b)]))]
+    (+ n (consume a) (consume b))))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [h : (& h Holder)] [a : (& a (Array Value 2))] [flag : bool]) : Value
-  (begin
-    (take (clone (if flag (deref h) (deref h)).cell))
-    (clone (array-ref (if flag (deref a) (deref a)) 0))))"))
+          "(define (copy [h : (& h Holder)] [a : (& a (Array String 2))] [flag : bool]) : i64
+  (+
+    (observe (if flag h h).cell)
+    (observe (array-ref (if flag (deref a) (deref a)) 0))))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [r : (& r Value)] [flag : bool]) : Value
-  (clone (if flag (deref r) (Value.Empty))))"))
+          "(define (copy [r : (& r String)] [flag : bool]) : i64
+  (observe (if flag (deref r) \"owned\")))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [a : (Array Value 1)] [b : (Array Value 1)] [flag : bool]) : Value
-  (let [copy (clone (array-ref (if flag a b) 0))]
-    (take (array-ref a 0))
-    (take (array-ref b 0))
-    copy))"))
+          "(define (copy [a : (Array String 1)] [b : (Array String 1)] [flag : bool]) : i64
+  (let [n (observe (array-ref (if flag a b) 0))]
+    (+ n (consume (array-ref a 0)) (consume (array-ref b 0)))))"))
       (compiler-typecheck-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [a : (Array Value 1)] [b : (Array Value 1)] [flag : bool]) : Value
-  (clone (array-ref (if flag a b) (begin (set! a (array (Value.Empty))) 0))))"))
+          "(define (copy [a : (Array String 1)] [b : (Array String 1)] [flag : bool]) : i64
+  (let [n (observe (array-ref (if flag a b) (begin (set! a (array \"99\")) 0)))]
+    (+ n (consume (array-ref a 0)))))"))
       (compiler-typecheck-error-ok?
         (str_cat.str-cat
           (string.copy (& prefix))
-          "(define (copy [a : Value] [b : Value]) : Value
-  (let [copy (clone (if (taken? a) b b))] (take a) copy))")
+          "(define (copy [a : (Array String 1)] [b : (Array String 1)] [flag : bool]) : i64
+  (let [n (observe (array-ref (if flag a b) (begin (set! a (array \"99\")) 0)))]
+    (+ n (consume (array-ref b 0)))))")
+        "typecheck: use of moved value `b`")
+      (compiler-typecheck-error-ok?
+        (str_cat.str-cat
+          (string.copy (& prefix))
+          "(define (copy [a : String] [b : String]) : i64
+  (let [n (observe (if (taken? a) b b))] (+ n (consume a))))")
         "typecheck: use of moved value `a`"))))
 
 ;; A value read through a reference where its region-tagged type `(in p T)` is
 ;; expected (a result, a binding, an annotation, an argument) is that value
 ;; read under `p`: a move-only one moved there is a move out of the reference
-;; (E0208); a Copy one, or one only lent (to a shared-reference formal, or to
-;; `clone`), is accepted.
+;; (E0208); a Copy one, or one only lent to a shared-reference formal, is
+;; accepted.
 (define (compiler-typecheck-region-read-tests-ok?) : bool
   (let
     [prefix : String
@@ -744,12 +739,12 @@
       (array
         "(define (via [p : (& p (Array String 2))]) : i64
   (observe (ann (array-ref p 0) : (in p String))))"
-        "(define (via [p : (& p (Array String 2))]) : String
-  (clone (ann (array-ref p 0) : (in p String))))"
+        "(define (via [p : (& p (Array String 2))]) : i64
+  (observe (array-ref p 0)))"
         "(define (via [p : (& p (Array String 2))] [flag : bool]) : i64
   (observe (if flag (array-ref p 0) (array-ref p 1))))"
         "(define (via [p : (& p (Array i64 2))]) : (in p i64) (array-ref p 0))"
-        "(define (via [p : (& p (Array String 2))]) : i64 (keep p (clone (array-ref p 0))))")]
+        "(define (via [p : (& p (Array String 2))]) : i64 (keep p \"owned\"))")]
     [ok : bool true]
     (for [index (iterator.range 0 5)]
       (set!
@@ -773,55 +768,13 @@
     (compiler-typecheck-clone-referent-tests-ok?)
     (compiler-typecheck-clone-read-tests-ok?)
     (compiler-typecheck-region-read-tests-ok?)
-    (clone_tests.clone-name-set-smoke-ok?)
-    (clone_tests.clone-root-entries-smoke-ok?)
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (clone))"
+      "typecheck: unbound name clone")
     (compiler-typecheck-ok?
-      "(defstruct Holder
-  (name String)
-  (fixed (Array String 2))
-  (items (__tl_dyn-array String))
-  (pair (Tuple String String)))
-(defenum StringTree
-  (SLeaf String)
-  (SBranch (Box StringTree) (Box StringTree)))
-(define (clone-tuple [items : (__tl_dyn-array String)]) : (Tuple String (__tl_dyn-array String))
-  (clone (tuple \"tuple\" items)))
-(define (clone-fixed) : (Array String 2)
-  (clone (array \"left\" \"right\")))
-(define (clone-dyn [items : (__tl_dyn-array String)]) : (__tl_dyn-array String)
-  (clone items))
-(define (clone-holder [items : (__tl_dyn-array String)]) : Holder
-  (clone (Holder \"holder\" (array \"x\" \"y\") items (tuple \"p\" \"q\"))))
-(define (clone-tree [tree : StringTree]) : StringTree
-  (clone tree))
-(define (main [items : (__tl_dyn-array String)] [tree : StringTree]) : i64 0)")
-    (compiler-typecheck-error-ok?
-      "(define (inc [x : i64]) : i64 (+ x 1))
-(define (main) : (-> i64 i64)
-  (clone inc))"
-      "typecheck: clone unsupported type (-> i64 i64)")
-    (compiler-typecheck-error-ok?
-      "(extern (raw-make) : (MutPtr i64))
-(define (main) : (MutPtr i64)
-  (unsafe (clone (raw-make))))"
-      "typecheck: clone unsupported type (MutPtr i64)")
-    (compiler-typecheck-error-ok?
-      "(define (main [r : (& n i64)]) : (& n i64)
-  (clone r))"
-      "typecheck: clone unsupported type (& n i64)")
-    (compiler-typecheck-error-count-ok?
-      "(module hashmap.clone.values)
-(defstruct RawValue (raw (Ptr i64)))
-(module stdlib.hashmap.generated.first)
-(import hashmap.clone.values as values)
-(define (copy-first [value : values.RawValue]) : values.RawValue (clone value))
-(define (copy-second [value : values.RawValue]) : values.RawValue (clone value))
-(module stdlib.hashmap.generated.second)
-(import hashmap.clone.values as values)
-(define (copy-first [value : values.RawValue]) : values.RawValue (clone value))
-(define (copy-second [value : values.RawValue]) : values.RawValue (clone value))"
-      "typecheck: clone unsupported type hashmap.clone.values/RawValue at hashmap.clone.values/RawValue.raw: (Ptr i64) has no clone capability"
-      2)))
+      "(define (clone) : i64 42)
+(define (main) : i64 (clone))")
+    (compiler-typecheck-ok? "(define (main [clone : i64]) : i64 (+ clone 1))")))
 
 (define (compiler-typecheck-foreach-control-flow-tests-ok?) : bool
   (and
@@ -11316,10 +11269,10 @@
   (packet OrdinaryPacket))
 (defenum MaybeCount (SomeCount i64) (NoCount))
 (define (inspect-packet [p : (& p OrdinaryPacket)]) : i64 p.count)
-(define (ordinary-sharing [p : OrdinaryPacket] [m : MaybeCount]) : i64
+(define (ordinary-sharing [p : OrdinaryPacket] [p2 : OrdinaryPacket] [m : MaybeCount]) : i64
   (begin
     (inspect-packet (& p))
-    (let [w : OrdinaryWrapper (OrdinaryWrapper (clone p))]
+    (let [w : OrdinaryWrapper (OrdinaryWrapper p2)]
       (begin
         (match m [(SomeCount v) v] [NoCount 0])
         (+ p.count w.packet.count)))))")

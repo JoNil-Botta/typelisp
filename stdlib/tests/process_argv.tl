@@ -76,7 +76,8 @@
         [command : process.ProcessCommand
           (process.command "tool" (process.args-single (string.copy (& raw))))]
         [actual : String
-          (process_runtime.windows-cmdline (process.runtime-command command))]
+          (process_runtime.windows-cmdline
+            (& (process.runtime-command (& command))))]
         [line : String (str_cat.str-cat "tool " (string.copy (& expected)))]
         (test.assert-string-eq (& actual) (& line) "Microsoft C argv encoding")
         (test.assert-i64-eq

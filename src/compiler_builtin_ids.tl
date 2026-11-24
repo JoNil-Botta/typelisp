@@ -201,8 +201,6 @@
   -1)
 (define compiler-builtin-id-xgetbv : i64
   -1)
-(define compiler-builtin-id-clone : i64
-  -1)
 (define compiler-builtin-id-arena-make : i64
   -1)
 (define compiler-builtin-id-arena-make-atomic : i64
@@ -286,8 +284,6 @@
 
 ;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
 (define compiler-builtin-id-fix-Choice : i64
-  -1)
-(define compiler-builtin-id-fix-clone : i64
   -1)
 
 ;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
@@ -796,18 +792,6 @@
 (define compiler-builtin-id-fix-handle : i64
   -1)
 
-;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
-(define compiler-builtin-id-fix-stdlib_dot_clone : i64
-  -1)
-
-;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
-(define compiler-builtin-id-fix-synthesize_helpers : i64
-  -1)
-
-;; lint-allow: global-name-case -- fixed-ID binding encodes source spelling
-(define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers : i64
-  -1)
-
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
   (metadata (__tl_dyn-array i64))
@@ -1032,7 +1016,6 @@
           (id compiler-builtin-id-private-array-length 64 "__tl_array-length")
           (id compiler-builtin-id-cpuid 52 "cpuid")
           (id compiler-builtin-id-xgetbv 53 "xgetbv")
-          (id compiler-builtin-id-clone 54 "clone")
           (id compiler-builtin-id-arena-make 55 "arena-make")
           (id compiler-builtin-id-arena-make-atomic 56 "arena-make-atomic")
           (id compiler-builtin-id-arena-current 57 "arena-current")
@@ -1076,7 +1059,6 @@
           (id compiler-builtin-id-fix-c 84 "c")
           (id compiler-builtin-id-fix-callback_target 85 "callback-target")
           (id compiler-builtin-id-fix-Choice 86 "Choice")
-          (id compiler-builtin-id-fix-clone 87 "clone")
           (id compiler-builtin-id-fix-CloneShortList 88 "CloneShortList")
           (id compiler-builtin-id-fix-comptime 89 "comptime")
           (id
@@ -1410,15 +1392,6 @@
           (id compiler-builtin-id-fix-pattern 265 "pattern")
           (id compiler-builtin-id-fix-ty 266 "ty")
           (id compiler-builtin-id-fix-handle 267 "handle")
-          (id compiler-builtin-id-fix-stdlib_dot_clone 270 "stdlib.clone")
-          (id
-            compiler-builtin-id-fix-synthesize_helpers
-            271
-            "synthesize-helpers")
-          (id
-            compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_helpers
-            272
-            "stdlib.clone.synthesize-helpers")
           (id compiler-builtin-id-arena-module 299 "stdlib.arena")
           (id compiler-builtin-id-arena-type 300 "stdlib.arena/Arena")
           (id compiler-builtin-id-arena-mark-type 301 "stdlib.arena/ArenaMark")
@@ -2966,10 +2939,6 @@
   (compiler-builtin-refresh!)
   (= name-id compiler-builtin-id-xgetbv))
 
-(define (compiler-builtin-lower-clone-id? [name-id : i64]) : bool
-  (compiler-builtin-refresh!)
-  (= name-id compiler-builtin-id-clone))
-
 (define (compiler-builtin-lower-float-sqrt-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)
   (= name-id compiler-builtin-id-tl-private-float-sqrt))
@@ -3033,9 +3002,6 @@
 (define (compiler-builtin-typecheck-public-char-at-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)
   (= name-id compiler-builtin-id-char-at))
-
-(define (compiler-builtin-typecheck-clone-id? [name-id : i64]) : bool
-  (compiler-builtin-lower-clone-id? name-id))
 
 (define (compiler-builtin-typecheck-float-sqrt-id? [name-id : i64]) : bool
   (compiler-builtin-lower-float-sqrt-id? name-id))

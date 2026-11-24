@@ -243,42 +243,33 @@
     (when
       (and (> count 0) (= missing 0) (or join-err decode-err))
       (let
-        [first : exec.VariantResult
-          (resvec.get
-            results
-            start
-            (exec.VariantResult start 0 0 0 0 0 0 "" ""))]
         [reason : String
           (if join-err
             "worker thread join failed"
             "truncated or malformed worker payload")]
-        (resvec.set-ref!
-          results
-          start
-          (exec.VariantResult
-            first.index
-            (+ first.failures 1)
-            first.rows
-            first.skipped
-            first.simd-native
-            first.simd-emulated
-            first.simd-skipped
-            first.stdout-log
-            (str_cat.str-cat
-              first.stderr-log
-              "FAIL: codegen-cases wave error ("
-              reason
-              ")\n")))))))
+        (set!
+          (array-ref results.slots start).failures
+          (+ (array-ref results.slots start).failures 1))
+        (set!
+          (array-ref results.slots start).stderr-log
+          (str_cat.str-cat
+            (string.copy (& (array-ref results.slots start).stderr-log))
+            "FAIL: codegen-cases wave error ("
+            reason
+            ")\n"))))))
 
 ;; Run one variant job inside a fresh scratch arena, cloning only its small encoded
 ;; VariantResult out to the caller's arena so 800+ variants never bloat RSS!
 (define (run-job-in-scratch [jidx : i64]) : String
   (with-scratch
     (let
-      [job : VariantJob
-        (jobvec.get (& wave-jobs) jidx (VariantJob 0 "" "" "" "" false))]
-      [cdef : parser.CaseDef
-        (parser.parsed-cases-get (& wave-file) job.case-idx)]
+      [case-idx : i64 (array-ref wave-jobs.slots jidx).case-idx]
+      [target : String
+        (string.copy (& (array-ref wave-jobs.slots jidx).target))]
+      [opt : String (string.copy (& (array-ref wave-jobs.slots jidx).opt))]
+      [mode : String (string.copy (& (array-ref wave-jobs.slots jidx).mode))]
+      [each : String (string.copy (& (array-ref wave-jobs.slots jidx).each))]
+      [cdef : parser.CaseDef (parser.parsed-cases-get (& wave-file) case-idx)]
       [r : exec.VariantResult
         (exec.run-single-variant
           (& wave-cfg)
@@ -286,10 +277,10 @@
           (& wave-work-dir)
           (& wave-native-work-dir)
           (& cdef)
-          (& job.target)
-          (& job.opt)
-          (& job.mode)
-          (& job.each)
+          (& target)
+          (& opt)
+          (& mode)
+          (& each)
           jidx)]
       [buf : bbc.ByteBufBuilder (bbc.byte-buf-builder-new)]
       (encode-variant-result! (&mut buf) (& r))
@@ -1043,10 +1034,7 @@
                   fails
                   (assert-eq-i64
                     "wave missing job 0 failed"
-                    (resvec.get
-                      (& res1)
-                      0
-                      (exec.VariantResult 0 0 0 0 0 0 0 "" "")).failures
+                    (array-ref res1.slots 0).failures
                     1)))
               (set!
                 fails
@@ -1054,10 +1042,7 @@
                   fails
                   (assert-eq-i64
                     "wave missing job 1 failed"
-                    (resvec.get
-                      (& res1)
-                      1
-                      (exec.VariantResult 0 0 0 0 0 0 0 "" "")).failures
+                    (array-ref res1.slots 1).failures
                     1)))))
           (let
             [res2 : resvec.Vec (resvec.with-capacity 1)]
@@ -1105,10 +1090,7 @@
                   fails
                   (assert-eq-i64
                     "wave join error fails wave"
-                    (resvec.get
-                      (& res3)
-                      0
-                      (exec.VariantResult 0 0 0 0 0 0 0 "" "")).failures
+                    (array-ref res3.slots 0).failures
                     1)))))
           (util.rm-rf! (& tmp-dir))
           fails)])))
@@ -2252,12 +2234,9 @@
                                         [wi : i64 0]
                                         (while (< wi njobs)
                                           (let
-                                            [cur-job : VariantJob
-                                              (jobvec.get
-                                                (& wave-jobs)
-                                                wi
-                                                (VariantJob 0 "" "" "" "" false))]
-                                            (if cur-job.needs-barrier
+                                            [needs-barrier : bool
+                                              (array-ref wave-jobs.slots wi).needs-barrier]
+                                            (if needs-barrier
                                               (begin
                                                 (run-wave!
                                                   wi
@@ -2270,16 +2249,9 @@
                                                 (while (and
                                                   (< wj njobs)
                                                   (not
-                                                    (jobvec.get
-                                                      (& wave-jobs)
-                                                      wj
-                                                      (VariantJob
-                                                        0
-                                                        ""
-                                                        ""
-                                                        ""
-                                                        ""
-                                                        false)).needs-barrier))
+                                                    (array-ref
+                                                      wave-jobs.slots
+                                                      wj).needs-barrier))
                                                   (set! wj (+ wj 1)))
                                                 (run-wave!
                                                   wi
@@ -2290,22 +2262,14 @@
                                       ;; Flush outputs in deterministic job order and aggregate counters
                                       (let
                                         [ji : i64 0]
+                                        [res-view : (&
+                                          results
+                                          (Slice exec.VariantResult))
+                                          (resvec.view (& results))]
                                         (while (< ji njobs)
                                           (let
-                                            [r : exec.VariantResult
-                                              (resvec.get
-                                                (& results)
-                                                ji
-                                                (exec.VariantResult
-                                                  0
-                                                  0
-                                                  0
-                                                  0
-                                                  0
-                                                  0
-                                                  0
-                                                  ""
-                                                  ""))]
+                                            [r : (& results exec.VariantResult)
+                                              (& (array-ref res-view ji))]
                                             (when
                                               (>
                                                 (string.string-length

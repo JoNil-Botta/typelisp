@@ -24,18 +24,23 @@ not-match \(%rbp\)
 
 # Windows Internal has the same six homes; eight live values retain spill
 # pressure while pinning RBP's SEH description and frame-pointer omission.
+# The push prologue's unwind is the shared `.xdata` record its `.pdata` row
+# names: a described prologue, no frame register, the RBP push and the frame.
 case win64-rbp-eighth-csr
 source tests/integration/win64_rbp_eighth_csr.tl
 target windows-x86_64
 in fn _tl_win64_rbp_eighth_csr_churn8
 contains pushq %rbp
-contains .seh_pushreg %rbp
-match \.seh_stackalloc[ ]
-contains .seh_endprologue
+capture unwind ^[[:space:]]+\.rva _tl_win64_rbp_eighth_csr_churn8, \.L_tl_seh_end_[0-9]+, (\.L_tl_xdata_[0-9]+)$
 contains popq %rbp
 not-contains .seh_setframe
 not-contains movq %rsp, %rbp
 not-match \(%rbp\)
+in asm
+narrow ranges:^{{unwind}}:$~^[[:space:]]+\.popsection$
+match ^[[:space:]]+\.byte 1, [1-9][0-9]*, [1-9][0-9]*, 0$
+contains # UWOP_PUSH_NONVOL %rbp
+match # UWOP_ALLOC_(SMALL|LARGE) [0-9]+$
 
 # #7564: a Windows rbp frame that saves callee registers names no frame
 # register, and each GP save is described before the prologue ends. An XMM save
@@ -52,9 +57,13 @@ count = 2 ^[[:space:]]+\.seh_savereg %r[a-z0-9]+, [0-9]+$
 after ^[[:space:]]+\.seh_endprologue$
 next-line ^[[:space:]]+movq %rcx, %r[a-z0-9]+$
 in fn tl_seh_victim_fpo$typelisp
-match ^[[:space:]]+\.seh_pushreg %r
+capture fpo_unwind ^[[:space:]]+\.rva tl_seh_victim_fpo[$]typelisp, \.L_tl_seh_end_[0-9]+, (\.L_tl_xdata_[0-9]+)$
 not-contains .seh_savereg
 not-contains movq %rsp, %rbp
+in asm
+narrow ranges:^{{fpo_unwind}}:$~^[[:space:]]+\.popsection$
+match # UWOP_PUSH_NONVOL %r
+not-contains UWOP_SAVE
 
 # #7564: Windows has no red zone, so a function that saves callee registers
 # keeps an allocation covering them instead of storing them below %rsp, and

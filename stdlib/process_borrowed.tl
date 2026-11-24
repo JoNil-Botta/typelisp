@@ -67,82 +67,30 @@
   (env (ProcessBorrowedEnvList env))
   (stdin (ProcessBorrowedMaybeString stdin)))
 
-;: Internal wrapper around a borrowed process argument list.
-(defstruct ProcessBorrowedStringListRef
-  (:lifetimes text value)
-  (value (& value (ProcessBorrowedStringList text))))
-
-;: Internal wrapper around a borrowed process environment list.
-(defstruct ProcessBorrowedEnvListRef
-  (:lifetimes text value)
-  (value (& value (ProcessBorrowedEnvList text))))
-
-;: Internal wrapper around a borrowed optional process string.
-(defstruct ProcessBorrowedMaybeStringRef
-  (:lifetimes text value)
-  (value (& value (ProcessBorrowedMaybeString text))))
-
-;: Re-expose a borrowed argument list through the compatibility surface.
-(define (borrowed-string-list-shared-view
-  [value : (& value (ProcessBorrowedStringList text))]) : (ProcessBorrowedStringList
+;: Clone a borrowed argument list spine while preserving its borrowed string
+;: references without copying bytes.
+(define (args-clone [args : (& args (ProcessBorrowedStringList text))]) : (ProcessBorrowedStringList
     text)
-  (let
-    [cell : (ProcessBorrowedStringListRef text value)
-      (ProcessBorrowedStringListRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr (ProcessBorrowedStringList text)))))))
+  (match args
+    [(ProcessBorrowedStringNil anchor) (ProcessBorrowedStringNil anchor)]
+    [(ProcessBorrowedStringCons value rest)
+      (ProcessBorrowedStringCons value (box (args-clone rest)))]))
 
-;: Re-expose a borrowed environment list through the compatibility surface.
-(define (borrowed-env-list-shared-view
-  [value : (& value (ProcessBorrowedEnvList text))]) : (ProcessBorrowedEnvList
+;: Clone a borrowed environment list spine while preserving its borrowed string
+;: references without copying bytes.
+(define (env-clone [env : (& env (ProcessBorrowedEnvList text))]) : (ProcessBorrowedEnvList
     text)
-  (let
-    [cell : (ProcessBorrowedEnvListRef text value)
-      (ProcessBorrowedEnvListRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr (ProcessBorrowedEnvList text)))))))
+  (match env
+    [(ProcessBorrowedEnvNil anchor) (ProcessBorrowedEnvNil anchor)]
+    [(ProcessBorrowedEnvCons name value rest)
+      (ProcessBorrowedEnvCons name value (box (env-clone rest)))]))
 
-;: Read a typed borrowed-argv tail without moving its owning box.
-(define (borrowed-string-list-box-shared-view
-  [value : (Box (ProcessBorrowedStringList text))]) : (ProcessBorrowedStringList
+;: Clone a borrowed optional string without copying bytes.
+(define (maybe-clone [value : (& value (ProcessBorrowedMaybeString text))]) : (ProcessBorrowedMaybeString
     text)
-  (let
-    [address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
-    (unsafe
-      (ptr-read
-        (int->ptr (cast address : u64) : (Ptr (ProcessBorrowedStringList text)))))))
-
-;: Read a typed borrowed-environment tail without moving its owning box.
-(define (borrowed-env-list-box-shared-view
-  [value : (Box (ProcessBorrowedEnvList text))]) : (ProcessBorrowedEnvList text)
-  (let
-    [address : i64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of value) : (Ptr i64))))]
-    (unsafe
-      (ptr-read
-        (int->ptr (cast address : u64) : (Ptr (ProcessBorrowedEnvList text)))))))
-
-;: Re-expose a borrowed optional string through the compatibility surface.
-(define (borrowed-maybe-string-shared-view
-  [value : (& value (ProcessBorrowedMaybeString text))]) : (ProcessBorrowedMaybeString
-    text)
-  (let
-    [cell : (ProcessBorrowedMaybeStringRef text value)
-      (ProcessBorrowedMaybeStringRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr (ProcessBorrowedMaybeString text)))))))
+  (match value
+    [(ProcessBorrowedNoString) ProcessBorrowedNoString]
+    [(ProcessBorrowedSomeString item) (ProcessBorrowedSomeString item)]))
 
 ;: Return an empty borrowed argument list tied to `text` without storing it.
 (define (args-empty-like [_text : (& text str)]) : (ProcessBorrowedStringList
@@ -313,25 +261,25 @@
 (define (command-argv
   [command : (& command (ProcessBorrowedCommand executable argv cwd env stdin))]) : (ProcessBorrowedStringList
     argv)
-  (borrowed-string-list-shared-view command.argv))
+  (args-clone (& command.argv)))
 
 ;: Return the borrowed cwd setting from `command`.
 (define (command-cwd
   [command : (& command (ProcessBorrowedCommand executable argv cwd env stdin))]) : (ProcessBorrowedMaybeString
     cwd)
-  (borrowed-maybe-string-shared-view command.cwd))
+  (maybe-clone (& command.cwd)))
 
 ;: Return the borrowed env override list from `command`.
 (define (command-env
   [command : (& command (ProcessBorrowedCommand executable argv cwd env stdin))]) : (ProcessBorrowedEnvList
     env)
-  (borrowed-env-list-shared-view command.env))
+  (env-clone (& command.env)))
 
 ;: Return the borrowed stdin setting from `command`.
 (define (command-stdin
   [command : (& command (ProcessBorrowedCommand executable argv cwd env stdin))]) : (ProcessBorrowedMaybeString
     stdin)
-  (borrowed-maybe-string-shared-view command.stdin))
+  (maybe-clone (& command.stdin)))
 
 (import stdlib.process)
 (import stdlib.string)
@@ -530,17 +478,12 @@
 ;: Copy borrowed command storage to the owned runtime command representation.
 (define (command-owned
   [command : (& command (ProcessBorrowedCommand executable argv cwd env stdin))]) : process.ProcessCommand
-  (let
-    [argv-view : (ProcessBorrowedStringList argv) (command-argv command)]
-    [cwd-view : (ProcessBorrowedMaybeString cwd) (command-cwd command)]
-    [env-view : (ProcessBorrowedEnvList env) (command-env command)]
-    [stdin-view : (ProcessBorrowedMaybeString stdin) (command-stdin command)]
-    (process.command-full
-      (string-owned (command-executable command))
-      (args-owned argv-view)
-      (maybe-owned cwd-view)
-      (env-owned env-view)
-      (maybe-owned stdin-view))))
+  (process.command-full
+    (string-owned command.executable)
+    (args-owned (& command.argv))
+    (maybe-owned (command-cwd command))
+    (env-owned (& command.env))
+    (maybe-owned (command-stdin command))))
 
 ;: Return the first borrowed argv validation error, or `ProcessNoString`.
 (define (args-validation-error-from
@@ -599,36 +542,33 @@
 ;: Return the first borrowed command validation error, or `ProcessNoString`.
 (define (command-validation-error
   [command : (& command (ProcessBorrowedCommand executable argv cwd env stdin))]) : process.ProcessMaybeString
-  (let
-    [argv-view : (ProcessBorrowedStringList argv) (command-argv command)]
-    [env-view : (ProcessBorrowedEnvList env) (command-env command)]
-    (cond
-      [(= (string-length (command-executable command)) 0)
-        (process.stdin-string "process: executable path is empty")]
-      [(>
-          (string-length (command-executable command))
-          process-borrowed-storage-max-string-bytes)
-        (process.stdin-string "process: executable path exceeds storage limit")]
-      [(process.string-contains-char? (command-executable command) '\0')
-        (process.stdin-string "process: executable path contains NUL")]
-      [else
-        (match (args-validation-error argv-view)
-          [(ProcessSomeString message) (process.stdin-string message)]
-          [(ProcessNoString)
-            (match (maybe-normalize (command-cwd command))
-              [(ProcessBorrowedSomeString cwd)
-                (cond
-                  [(= (string-length cwd) 0)
-                    (process.stdin-string "process: cwd path is empty")]
-                  [(>
-                      (string-length cwd)
-                      process-borrowed-storage-max-string-bytes)
-                    (process.stdin-string
-                      "process: cwd path exceeds storage limit")]
-                  [(process.string-contains-char? cwd '\0')
-                    (process.stdin-string "process: cwd path contains NUL")]
-                  [else (env-validation-error env-view)])]
-              [(ProcessBorrowedNoString) (env-validation-error env-view)])])])))
+  (cond
+    [(= (string-length command.executable) 0)
+      (process.stdin-string "process: executable path is empty")]
+    [(>
+        (string-length command.executable)
+        process-borrowed-storage-max-string-bytes)
+      (process.stdin-string "process: executable path exceeds storage limit")]
+    [(process.string-contains-char? command.executable '\0')
+      (process.stdin-string "process: executable path contains NUL")]
+    [else
+      (match (args-validation-error (& command.argv))
+        [(ProcessSomeString message) (process.stdin-string message)]
+        [(ProcessNoString)
+          (match (& command.cwd)
+            [(ProcessBorrowedSomeString cwd)
+              (cond
+                [(= (string-length cwd) 0)
+                  (process.stdin-string "process: cwd path is empty")]
+                [(>
+                    (string-length cwd)
+                    process-borrowed-storage-max-string-bytes)
+                  (process.stdin-string
+                    "process: cwd path exceeds storage limit")]
+                [(process.string-contains-char? cwd '\0')
+                  (process.stdin-string "process: cwd path contains NUL")]
+                [else (env-validation-error (& command.env))])]
+            [(ProcessBorrowedNoString) (env-validation-error (& command.env))])])]))
 
 ;: Return true when a borrowed command passes stdlib validation.
 (define (command-valid?

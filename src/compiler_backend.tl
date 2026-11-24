@@ -3097,16 +3097,15 @@
 ;; substitutes vars directly into Pack/Word operands); so does AddrOf's storage
 ;; var.
 (define (compiler-backend-count-instr-uses
-  [counts : (__tl_dyn-array i64)]
+  [counts : (&mut counts (__tl_dyn-array i64))]
   [instr : compiler_ir_types.CompilerIrInstr]) : unit
   (match (& instr)
-    [(AddrOf _ src _storage-words)
-      (compiler-backend-use-count-inc (&mut counts) src)]
+    [(AddrOf _ src _storage-words) (compiler-backend-use-count-inc counts src)]
     [_
       (compiler_ir_types.compiler-ir-instr-visit-uses
         instr
         compiler-backend-count-use
-        (&mut counts))]))
+        counts)]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (__tl_dyn-array i64)]
@@ -3116,7 +3115,7 @@
     [count : i64 instrs.len]
     (for [index (iterator.range 0 count)]
       (compiler-backend-count-instr-uses
-        (be_state.compiler-backend-global-shared-view counts)
+        (&mut counts)
         (be_state.compiler-backend-global-array-element-shared-view slots index)))
     unit))
 
@@ -3138,6 +3137,36 @@
             (be_state.compiler-backend-global-shared-view counts)
             instrs)]))
     unit))
+
+;; Pre-regalloc SIMD select-add/sub factoring
+;; (be_simd.compiler-backend-simd-select-add-factor-blocks), fed this
+;; function's use counts from the shared operand walk.
+(define (compiler-backend-select-add-factor-blocks
+  [vars : i64]
+  [blocks : compiler_ir_types.CompilerIrBlockList]) : be_simd.CompilerBackendSelectFactorResult
+  (if (or
+    (<= vars 0)
+    (not
+      (be_simd.compiler-backend-simd-select-factor-has-candidate? (& blocks))))
+    (SelectFactorResult vars blocks)
+    (let
+      [uses : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+      (match (& blocks)
+        [(Array seq)
+          (for [b
+            (iterator.range
+              0
+              (compiler_ir_types.compiler-ir-block-seq-count seq))]
+            (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+              [(Block _ instrs)
+                (for [i (iterator.range 0 instrs.len)]
+                  (compiler-backend-count-instr-uses
+                    (&mut uses)
+                    (compiler_ir_types.compiler-ir-instr-seq-ref instrs i)))]))])
+      (be_simd.compiler-backend-simd-select-add-factor-blocks
+        vars
+        blocks
+        (& uses)))))
 
 (define (compiler-backend-function-use-counts
   [vars : i64]
@@ -3219,7 +3248,7 @@
             (array-ref counts pending)
             0)]
         (compiler-backend-count-instr-uses
-          (be_state.compiler-backend-global-shared-view counts)
+          (&mut counts)
           (be_state.compiler-backend-global-shared-view instr))
         (if (and (>= pending 0) (> (array-ref counts pending) before))
           (set! (array-ref adjacent pending) true)
@@ -3422,7 +3451,7 @@
     [n : i64 instrs.len]
     (for [j (iterator.range 0 n)]
       (compiler-backend-count-instr-uses
-        (be_state.compiler-backend-global-shared-view counts)
+        (&mut counts)
         (be_state.compiler-backend-global-array-element-shared-view slots j))
       (let
         [v : i64
@@ -3536,9 +3565,7 @@
             [before : i64 (array-ref probe pending)]
             (unless
               (or (= kind 1) (= kind 3))
-              (compiler-backend-count-instr-uses
-                (be_state.compiler-backend-i64-array-shared-view probe)
-                instr))
+              (compiler-backend-count-instr-uses probe instr))
             (if (not (= (array-ref probe pending) before))
               (set! (array-ref items pending) pending-root)
               (set! unproven true))))
@@ -10917,6 +10944,294 @@
             out)]))
     (compiler-backend-emit-instrs-normal ctx fallthrough instr instrs index out)))
 
+(define (compiler-backend-vector-sign-bit-mode-at
+  [backend-state : be_state.CompilerBackendState]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [cmp-index : i64]) : i64
+  (if (< cmp-index instrs.len)
+    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cmp-index)
+      [(VectorCompare cp)
+        (be_simd.compiler-backend-avx2-sign-bit-mask-mode-for-var
+          backend-state
+          cp.dst)]
+      [_ 0])
+    0))
+
+;; The sign-bit mask emission for an AVX2 (bit_and, compare) pair whose
+;; compare at `cursor` the sign-bit plan rewrote, resuming after the compare.
+(define (compiler-backend-emit-vector-sign-bit-mask-rest
+  [ctx : be_state.CompilerBackendEmissionContext]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [cmp-dst : i64]
+  [src-val : compiler_ir_types.CompilerIrValue]
+  [bit-index : i64]
+  [and-lanes : i64]
+  [and-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [cursor : i64]
+  [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
+  (let
+    [fused : be_state.ResultCompilerBackend
+      (be_simd.compiler-backend-emit-avx2-sign-bit-mask
+        ctx.type-segment-bases
+        ctx.assignments
+        cmp-dst
+        src-val
+        bit-index
+        and-lanes
+        and-ty
+        (be_state.compiler-backend-instr-diagnostic-ref
+          (& ctx.spans)
+          ctx.source-function
+          (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cursor))
+        ctx.backend-state)]
+    (compiler-backend-emit-fused-result-rest
+      ctx
+      fallthrough
+      fused
+      instrs
+      (+ cursor 1)
+      out)))
+
+;; An AVX2 (bit_and, compare) pair whose compare at `cursor` has sign-bit mode
+;; `sign-mode`: a bit-63 test feeding one 4-lane 64-bit Select as its only use
+;; blends on the source directly; any other plans a shifted sign-bit mask.
+(define (compiler-backend-emit-vector-sign-bit-step
+  [ctx : be_state.CompilerBackendEmissionContext]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [sign-mode : i64]
+  [and-lhs : compiler_ir_types.CompilerIrValue]
+  [and-rhs : compiler_ir_types.CompilerIrValue]
+  [and-lanes : i64]
+  [and-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [cursor : i64]
+  [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
+  (let
+    [cmp-dst : i64
+      (compiler_ir_types.compiler-ir-instr-dst
+        (compiler_ir_types.compiler-ir-instr-seq-borrow instrs cursor))]
+    [src-val : compiler_ir_types.CompilerIrValue
+      (if (= (% (/ sign-mode 64) 2) 1)
+        and-rhs
+        and-lhs)]
+    [bit-index : i64 (% sign-mode 64)]
+    [after-cmp : i64 (+ cursor 1)]
+    [direct? : bool
+      (and
+        (= bit-index 63)
+        (< after-cmp instrs.len)
+        (be_simd.compiler-backend-var-single-use? ctx.use-counts cmp-dst)
+        (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs after-cmp)
+          [(Select sp)
+            (and
+              (= sp.lanes 4)
+              (be_operand.compiler-backend-branch-uses-var? (& sp.mask) cmp-dst)
+              (be_simd.compiler-backend-avx2-sign-bit-select-ty? (& sp.ty)))]
+          [_ false]))]
+    (if direct?
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs after-cmp)
+        [(Select
+            (box
+              (fields
+                [sel-dst dst]
+                [sel-true on-true]
+                [sel-false on-false]
+                [sel-lanes lanes]
+                [sel-ty ty])))
+          (let
+            [fused : be_state.ResultCompilerBackend
+              (be_simd.compiler-backend-emit-avx2-blend
+                ctx.type-segment-bases
+                ctx.assignments
+                sel-dst
+                true
+                (/ sign-mode 256)
+                src-val
+                sel-true
+                sel-false
+                sel-lanes
+                sel-ty
+                (be_state.compiler-backend-instr-diagnostic-ref
+                  (& ctx.spans)
+                  ctx.source-function
+                  (compiler_ir_types.compiler-ir-instr-seq-borrow
+                    instrs
+                    after-cmp))
+                ctx.backend-state)]
+            (compiler-backend-emit-fused-result-rest
+              ctx
+              fallthrough
+              fused
+              instrs
+              (+ after-cmp 1)
+              out))]
+        [_
+          (compiler-backend-emit-vector-sign-bit-mask-rest
+            ctx
+            fallthrough
+            cmp-dst
+            src-val
+            bit-index
+            and-lanes
+            and-ty
+            instrs
+            cursor
+            out)])
+      (compiler-backend-emit-vector-sign-bit-mask-rest
+        ctx
+        fallthrough
+        cmp-dst
+        src-val
+        bit-index
+        and-lanes
+        and-ty
+        instrs
+        cursor
+        out))))
+
+(define (compiler-backend-emit-vector-binop-step
+  [ctx : be_state.CompilerBackendEmissionContext]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]
+  [instr : compiler_ir_types.CompilerIrInstr]
+  [and-lhs : compiler_ir_types.CompilerIrValue]
+  [and-rhs : compiler_ir_types.CompilerIrValue]
+  [and-lanes : i64]
+  [and-ty : compiler_ast_types.AstType]
+  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [cursor : i64]
+  [out : (&mut out be_state.CompilerBackendAsmBuf)]) : be_state.ResultCompilerBackend
+  (let
+    [sign-mode : i64
+      (if (be_state.compiler-backend-current-mode-avx2? ctx.function-state)
+        (compiler-backend-vector-sign-bit-mode-at
+          ctx.backend-state
+          (& instrs)
+          cursor)
+        0)]
+    (if (> sign-mode 0)
+      (compiler-backend-emit-vector-sign-bit-step
+        ctx
+        fallthrough
+        sign-mode
+        and-lhs
+        and-rhs
+        and-lanes
+        and-ty
+        instrs
+        cursor
+        out)
+      (compiler-backend-emit-instrs-normal
+        ctx
+        fallthrough
+        instr
+        instrs
+        cursor
+        out))))
+
+;; The register operand of a dual-load memory fold: the single-use loads
+;; LOAD-DST (the current instruction) and LOAD2-DST (at CURSOR) feed one
+;; associative, commutative integer op at CURSOR + 1, whose single-use result
+;; feeds the same op at CURSOR + 2 with that operand. No when the shape fails,
+;; or when the outer op is a `bit_and` whose compare at CURSOR + 3 the AVX2
+;; sign-bit plan rewrote: that compare is emitted by the `bit_and` step.
+(define (compiler-backend-vector-dual-load-fold-value
+  [backend-state : be_state.CompilerBackendState]
+  [type-segment-bases : i64]
+  [use-counts : (& use-counts (__tl_dyn-array i64))]
+  [load-dst : i64]
+  [load2-dst : i64]
+  [lanes : i64]
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [cursor : i64]) : be_state.CompilerBackendVectorMemFold
+  (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs (+ cursor 1))
+    [(VectorBinOp
+        (box
+          (fields
+            [t1-dst dst]
+            [op1 op]
+            [t1-lhs lhs]
+            [t1-rhs rhs]
+            [t1-lanes lanes]
+            [t1-ty ty])))
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs (+ cursor 2))
+        [(VectorBinOp
+            (box
+              (fields
+                [op2 op]
+                [t2-lhs lhs]
+                [t2-rhs rhs]
+                [t2-lanes lanes]
+                [t2-ty ty])))
+          (let
+            [t2-other : be_state.CompilerBackendVectorMemFold
+              (if (be_operand.compiler-backend-branch-uses-var? t2-lhs t1-dst)
+                (Some t2-rhs)
+                (if (be_operand.compiler-backend-branch-uses-var? t2-rhs t1-dst)
+                  (Some t2-lhs)
+                  (No)))]
+            (if (and
+              (or
+                (and
+                  (be_operand.compiler-backend-branch-uses-var? t1-lhs load-dst)
+                  (be_operand.compiler-backend-branch-uses-var?
+                    t1-rhs
+                    load2-dst))
+                (and
+                  (be_operand.compiler-backend-branch-uses-var?
+                    t1-lhs
+                    load2-dst)
+                  (be_operand.compiler-backend-branch-uses-var? t1-rhs load-dst)))
+              (= t1-lanes lanes)
+              (= t2-lanes lanes)
+              (be_simd.compiler-backend-var-single-use? use-counts t1-dst)
+              (be_simd.compiler-backend-vector-binop-assoc-comm-int?
+                (& op1)
+                (& t1-ty))
+              (be_simd.compiler-backend-vector-binop-op-eq? (& op1) (& op2))
+              (compiler_optimize.opt-type-eq
+                type-segment-bases
+                elem-ty
+                (& t1-ty))
+              (compiler_optimize.opt-type-eq
+                type-segment-bases
+                elem-ty
+                (& t2-ty))
+              (be_simd.compiler-backend-vector-binop-memory-source-supported?
+                (& op1)
+                t2-lanes
+                (be_simd.compiler-backend-copy-int-ast-type (& t2-ty)))
+              (not
+                (and
+                  (match (& op2)
+                    [(BitAnd) true]
+                    [_ false])
+                  (>
+                    (compiler-backend-vector-sign-bit-mode-at
+                      backend-state
+                      instrs
+                      (+ cursor 3))
+                    0))))
+              (match t2-other
+                [(Some reg-value)
+                  (if (or
+                    (be_operand.compiler-backend-branch-uses-var?
+                      reg-value
+                      load-dst)
+                    (be_operand.compiler-backend-branch-uses-var?
+                      reg-value
+                      load2-dst)
+                    (be_operand.compiler-backend-branch-uses-var?
+                      reg-value
+                      t1-dst))
+                    (No)
+                    (Some reg-value))]
+                [(No) (No)])
+              (No)))]
+        [_ (No)])]
+    [_ (No)]))
+
 (define (compiler-backend-emit-vector-load-step
   [ctx : be_state.CompilerBackendEmissionContext]
   [fallthrough : be_state.CompilerBackendMaybeLabel]
@@ -10933,7 +11248,84 @@
     (let
       [next (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)]
       [after-binop : i64 (+ cursor 1)]
-      (match (be_state.compiler-backend-global-shared-view next)
+      (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs cursor)
+        [(VectorLoad load2-dst base2 index2 lanes2 elem-ty2)
+          (match (if (and
+            (< (+ cursor 2) instrs.len)
+            (= lanes lanes2)
+            (be_simd.compiler-backend-var-single-use? ctx.use-counts load-dst)
+            (be_simd.compiler-backend-var-single-use? ctx.use-counts load2-dst)
+            (compiler_optimize.opt-type-eq
+              ctx.type-segment-bases
+              elem-ty
+              (& elem-ty2)))
+            (compiler-backend-vector-dual-load-fold-value
+              ctx.backend-state
+              ctx.type-segment-bases
+              ctx.use-counts
+              load-dst
+              load2-dst
+              lanes
+              (& elem-ty)
+              (& instrs)
+              cursor)
+            (be_state.CompilerBackendVectorMemFold.No))
+            [(Some reg-value)
+              (let
+                [op2-instr
+                  (compiler_ir_types.compiler-ir-instr-seq-ref
+                    instrs
+                    (+ cursor 2))]
+                (match (compiler_ir_types.compiler-ir-instr-seq-ref
+                  instrs
+                  (+ cursor 2))
+                  [(VectorBinOp
+                      (box (fields [t2-dst dst] op [t2-lanes lanes] ty)))
+                    (let
+                      [fused : be_state.ResultCompilerBackend
+                        (be_simd.compiler-backend-emit-vector-binop-dual-memory-source
+                          (be_operand.compiler-backend-vector-mode
+                            (& ty)
+                            t2-lanes)
+                          ctx.type-segment-bases
+                          ctx.assignments
+                          t2-dst
+                          op
+                          reg-value
+                          base
+                          index
+                          base2
+                          index2
+                          t2-lanes
+                          ty
+                          (be_state.compiler-backend-instr-diagnostic-ref
+                            (& ctx.spans)
+                            ctx.source-function
+                            (& op2-instr))
+                          ctx.backend-state)]
+                      (compiler-backend-emit-fused-result-rest
+                        ctx
+                        fallthrough
+                        fused
+                        instrs
+                        (+ cursor 3)
+                        out))]
+                  [_
+                    (compiler-backend-emit-instrs-normal
+                      ctx
+                      fallthrough
+                      instr
+                      instrs
+                      cursor
+                      out)]))]
+            [(No)
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                instrs
+                cursor
+                out)])]
         [(VectorBinOp
             (box
               (fields
@@ -10943,63 +11335,69 @@
                 rhs
                 [bin-lanes lanes]
                 [bin-elem-ty ty])))
-          (if (be_simd.compiler-backend-vector-load-binop-foldable?
-            ctx.type-segment-bases
-            ctx.use-counts
-            load-dst
-            lanes
-            elem-ty
-            op
-            (be_state.compiler-backend-global-shared-view lhs)
-            (be_state.compiler-backend-global-shared-view rhs)
-            bin-lanes
-            (be_state.compiler-backend-global-shared-view bin-elem-ty))
-            (match (be_simd.compiler-backend-vector-load-binop-fold-value
+          (match (if (and
+            (not
+              (and
+                (match (& op)
+                  [(BitAnd) true]
+                  [_ false])
+                (>
+                  (compiler-backend-vector-sign-bit-mode-at
+                    ctx.backend-state
+                    (& instrs)
+                    after-binop)
+                  0)))
+            (be_simd.compiler-backend-vector-load-binop-foldable?
+              ctx.type-segment-bases
+              ctx.use-counts
+              load-dst
+              lanes
+              elem-ty
+              op
+              (be_state.compiler-backend-global-shared-view lhs)
+              (be_state.compiler-backend-global-shared-view rhs)
+              bin-lanes
+              (be_state.compiler-backend-global-shared-view bin-elem-ty)))
+            (be_simd.compiler-backend-vector-load-binop-fold-value
               load-dst
               op
               lhs
               rhs)
-              [(Some reg-value)
-                (compiler-backend-emit-fused-result-rest
-                  (be_state.compiler-backend-global-shared-view ctx)
-                  fallthrough
-                  (be_simd.compiler-backend-emit-vector-binop-memory-source
-                    (be_operand.compiler-backend-vector-mode
-                      bin-elem-ty
-                      bin-lanes)
-                    ctx.type-segment-bases
-                    ctx.assignments
-                    bin-dst
-                    op
-                    reg-value
-                    base
-                    index
-                    bin-lanes
+            (be_state.CompilerBackendVectorMemFold.No))
+            [(Some reg-value)
+              (compiler-backend-emit-fused-result-rest
+                (be_state.compiler-backend-global-shared-view ctx)
+                fallthrough
+                (be_simd.compiler-backend-emit-vector-binop-memory-source
+                  (be_operand.compiler-backend-vector-mode
                     bin-elem-ty
-                    (be_state.compiler-backend-instr-diagnostic
-                      ctx.spans
-                      ctx.source-function
-                      next
-                      ctx.func-diag)
-                    ctx.backend-state)
-                  instrs
-                  after-binop
-                  out)]
-              [(No)
-                (compiler-backend-emit-instrs-normal
-                  ctx
-                  fallthrough
-                  instr
-                  instrs
-                  cursor
-                  out)])
-            (compiler-backend-emit-instrs-normal
-              ctx
-              fallthrough
-              instr
-              instrs
-              cursor
-              out))]
+                    bin-lanes)
+                  ctx.type-segment-bases
+                  ctx.assignments
+                  bin-dst
+                  op
+                  reg-value
+                  base
+                  index
+                  bin-lanes
+                  bin-elem-ty
+                  (be_state.compiler-backend-instr-diagnostic
+                    ctx.spans
+                    ctx.source-function
+                    next
+                    ctx.func-diag)
+                  ctx.backend-state)
+                instrs
+                after-binop
+                out)]
+            [(No)
+              (compiler-backend-emit-instrs-normal
+                ctx
+                fallthrough
+                instr
+                instrs
+                cursor
+                out)])]
         [_
           (compiler-backend-emit-instrs-normal
             ctx
@@ -12617,6 +13015,28 @@
                       [_ (- 0 1)])]
                   [_ (- 0 1)])]
               [_ (- 0 1)])]
+          [prev-dst : i64
+            (if (>= index 2)
+              (compiler_ir_types.compiler-ir-instr-dst
+                (compiler_ir_types.compiler-ir-instr-seq-borrow
+                  instrs
+                  (- index 2)))
+              -1)]
+          [next-binop-reads-u? : bool
+            (if (< (+ index 1) instrs.len)
+              (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+                instrs
+                (+ index 1))
+                [(BinOp _ _ nl nr _)
+                  (or
+                    (match (& nl)
+                      [(Var v) (= v u)]
+                      [_ false])
+                    (match (& nr)
+                      [(Var v) (= v u)]
+                      [_ false]))]
+                [_ false])
+              false)]
           (when
             (or
               (not (compiler-backend-gep-fold-64bit-int? (& ty2)))
@@ -12641,23 +13061,55 @@
                 (string.eq base "")
                 (string.eq base "%rbp"))
                 (No)
-                (Some
-                  (str_cat.str-cat
-                    "    leaq "
-                    (if (= first-disp 0)
-                      ""
-                      (string.int->string first-disp))
-                    "("
-                    base
-                    (if scaled?
-                      (string.substring
-                        first-sib
-                        1
-                        (- (string.string-length first-sib) 1))
-                      (str_cat.str-cat "," source ")"))
-                    ", "
-                    target
-                    "\n"))))
+                (let
+                  ;; Avoid slow 3-component `leaq disp(dep, inv), dep` (3c
+                  ;; latency on `dep`) when `dep` (`base == target`) was just
+                  ;; produced by the preceding instruction and `inv` (`source`)
+                  ;; is independent: splitting to `leaq disp(inv), tmp; addq
+                  ;; tmp, dep` runs `leaq disp(inv)` in parallel with `dep`'s
+                  ;; producer and leaves only a 1c `addq` on `dep`.
+                  [split-3op? : bool
+                    (and
+                      (not scaled?)
+                      (!= first-disp 0)
+                      (string.eq base target)
+                      (not (string.eq source target))
+                      (= prev-dst addend)
+                      next-binop-reads-u?)]
+                  [dst-home-reg : String
+                    (if split-3op?
+                      (be_scalar.compiler-backend-var-register-home
+                        ctx.backend-state
+                        ctx.assignments
+                        dst)
+                      "")]
+                  (match (if split-3op?
+                    (be_scalar.compiler-backend-split-3op-lea-asm
+                      ctx.backend-state
+                      first-disp
+                      (& source)
+                      (& base)
+                      (& dst-home-reg))
+                    (be_state.CompilerBackendMaybeAsm.No))
+                    [(Some split-asm) (Some split-asm)]
+                    [(No)
+                      (Some
+                        (str_cat.str-cat
+                          "    leaq "
+                          (if (= first-disp 0)
+                            ""
+                            (string.int->string first-disp))
+                          "("
+                          base
+                          (if scaled?
+                            (string.substring
+                              first-sib
+                              1
+                              (- (string.string-length first-sib) 1))
+                            (str_cat.str-cat "," source ")"))
+                          ", "
+                          target
+                          "\n"))]))))
             ;; `u = t + k'`: only after a product; two immediate adds are the
             ;; folder's job.
             (match (compiler-backend-gep-fold-offset-operands op2 a b)
@@ -13698,6 +14150,28 @@
             instrs
             rest
             out)]
+        [(VectorBinOp (box (fields op lhs rhs lanes ty)))
+          (if (match (& op)
+            [(BitAnd) true]
+            [_ false])
+            (compiler-backend-emit-vector-binop-step
+              ctx
+              fallthrough
+              instr
+              lhs
+              rhs
+              lanes
+              ty
+              instrs
+              rest
+              out)
+            (compiler-backend-emit-instrs-normal
+              ctx
+              fallthrough
+              instr
+              instrs
+              rest
+              out))]
         [(Load load-dst ptr load-ty)
           (compiler-backend-emit-load-step
             ctx
@@ -14328,6 +14802,13 @@
           program-index.backend-state)
         be_state.compiler-backend-function-i64-array-edge-index
         (__tl_make-array i64 0))]
+    [_avx2-sign-bit-plan : unit
+      (be_simd.compiler-backend-avx2-sign-bit-mask-plan!
+        (be_state.compiler-backend-state-function-state
+          program-index.backend-state)
+        vars
+        (& all-blocks)
+        (& use-counts))]
     ;; The frame-escape answer is per function too; see
     ;; compiler-backend-blocks-expose-frame-at?.
     [_frame-may-escape-clear : unit
@@ -16733,7 +17214,7 @@
     (compiler-backend-use-count-inc
       (&mut mask-counts)
       (compiler_ir_types.compiler-ir-instr-dst instr))
-    (compiler-backend-count-instr-uses mask-counts instr)
+    (compiler-backend-count-instr-uses (&mut mask-counts) instr)
     (be_state.compiler-backend-function-state-set-bool!
       function-state
       be_state.compiler-backend-function-bool-use-home-mask-active
@@ -21957,6 +22438,19 @@
             type-segment-bases
             vars
             raw-blocks)]
+        ;; Pre-regalloc SIMD algebraic select-add/sub factoring: hoist shared
+        ;; `x` out of `select(m, x +- a, x +- b)` so regalloc allocates the
+        ;; factored loop (and hoisted negated splats) cleanly.
+        [select-factored : be_simd.CompilerBackendSelectFactorResult
+          (if (be_state.compiler-backend-mode-scalar? mode)
+            (SelectFactorResult vars folded-blocks)
+            (compiler-backend-select-add-factor-blocks vars folded-blocks))]
+        [factored-vars : i64
+          (match (& select-factored)
+            [(SelectFactorResult out-vars _) out-vars])]
+        [factored-blocks : compiler_ir_types.CompilerIrBlockList
+          (match select-factored
+            [(SelectFactorResult _ out-blocks) out-blocks])]
         ;; Cycle 26: split a property-proven frame-free entry region before
         ;; regalloc. Incoming parameters stay in ABI locations until the saving
         ;; edge, whose returned labels drive prologue placement and bare returns.
@@ -21967,8 +22461,8 @@
                 name
                 (be_state.compiler-backend-global-shared-view params)
                 (be_state.compiler-backend-global-shared-view ret-ty)
-                vars
-                folded-blocks
+                factored-vars
+                factored-blocks
                 (be_state.compiler-backend-global-shared-view function-abi))]
             (if (and
               shrinkwrap-enabled
@@ -23217,8 +23711,9 @@
                       (be_state.compiler-backend-function-state-set-bool!
                         function-state
                         be_state.compiler-backend-function-bool-call-align-needed
-                        (be_peephole.compiler-backend-text-has-returning-call?
-                          post-prologue))]
+                        (be_peephole.compiler-backend-text-has-call-needing-align?
+                          post-prologue
+                          (not target-policy.linux-syscall)))]
                     ;; M-G3 stage 2: attempt frame-pointer omission on both
                     ;; text backends. Win64's FPO prologue emits explicit
                     ;; push/stack/XMM SEH unwind codes and the audit rejects
@@ -25599,6 +26094,9 @@ tl_shared_object_init:
           (be_peephole.compiler-backend-peephole-compact-records!
             backend-state
             (&mut records)))]
+      [scratch-arena : arena.Arena (arena.current)]
+      [merge? : bool
+        (be_state.compiler-backend-state-tail-merging-enabled? backend-state)]
       [finished : be_state.CompilerBackendPeepholeSweepChunkState
         (unsafe
           ;; unsafe: a bare handle to the same home arena keeps an `in-arena`
@@ -25611,13 +26109,24 @@ tl_shared_object_init:
                 (be_peephole.compiler-backend-expand-stack-probes!
                   backend-state
                   (&mut records))]
+              ;; Win64 renders into scratch: the unwind lowering writes the
+              ;; group's only home copy.
               [kept : String
-                (be_peephole.compiler-backend-peephole-records-render
-                  records
-                  (be_state.compiler-backend-state-tail-merging-enabled?
-                    backend-state)
-                  (be_state.compiler-backend-state-tail-merging-enabled?
-                    backend-state))]
+                (if (be_state.compiler-backend-state-emission-target-policy
+                  backend-state).seh-unwind
+                  (in-arena
+                    (arena.Arena (arena.raw-handle scratch-arena))
+                    (be_peephole.compiler-backend-win64-lower-unwind
+                      stream
+                      (be_peephole.compiler-backend-peephole-records-render
+                        records
+                        merge?
+                        merge?)
+                      (arena.Arena (arena.raw-handle home-arena))))
+                  (be_peephole.compiler-backend-peephole-records-render
+                    records
+                    merge?
+                    merge?))]
               (be_state.CompilerBackendPeepholeSweepChunkState
                 (text_buf.append state.out kept)
                 (text_buf.empty)
@@ -25652,6 +26161,13 @@ tl_shared_object_init:
       (set!
         (deref data).assembly-out
         (in-arena (arena.Arena (arena.raw-handle home-arena)) (text_buf.empty)))
+      (set!
+        (deref data).win64-xdata-ids
+        (in-arena
+          (arena.Arena (arena.raw-handle home-arena))
+          (backend_string_i64_map.with-capacity 16)))
+      (set! (deref data).win64-xdata-count 0)
+      (set! (deref data).win64-unwind-end-count 0)
       (set! (deref data).assembly-home-arena home-arena)
       (set! (deref data).assembly-sweep-cursor 0)
       (set! (deref data).assembly-batch batch)

@@ -8,7 +8,6 @@
 (import compiler_backend_operands as be_operand)
 (import compiler_backend_state as be_state)
 (import compiler_cfg_core as cfg_core)
-(import compiler_clone as clone_support)
 (import compiler_diagnostic as diag)
 (import compiler_embedded_stdlib as embedded)
 (cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci as tlci))
@@ -179,11 +178,13 @@
     out))
 
 (define (collect-instr-refs
+  [pools : ast.AstNodePoolContext]
   [refs : i64_map.Map]
-  [instr : (& ir.CompilerIrInstr)]) : i64_map.Map
+  [slots : (& (__tl_dyn-array ir.CompilerIrInstr))]
+  [index : i64]) : i64_map.Map
   (let
     [out : i64_map.Map refs]
-    (match instr
+    (match (& (array-ref (deref slots) index))
       [(or (ir.CompilerIrInstr.Call _ name _ _)
            (ir.CompilerIrInstr.TailCall name _ _))
         (note-ref! (&mut out) name)]
@@ -195,7 +196,10 @@
           [(fields callee) (note-ref! (&mut out) callee)])]
       [(ir.CompilerIrInstr.Store name _ _) (note-ref! (&mut out) name)]
       [_ unit])
-    (ir.compiler-ir-instr-fold-uses (clone (deref instr)) out fold-value-ref)))
+    (ir.compiler-ir-instr-fold-uses
+      (ir.compiler-ir-clone-instr-at pools slots index)
+      out
+      fold-value-ref)))
 
 (defstruct ModuleRefs
   (refs i64_map.Map))
@@ -221,7 +225,9 @@
                         [_ unit]))])))
             found)])]))
 
-(define (function-collect-refs [func : (& ir.CompilerIrFunction)]) : i64_map.Map
+(define (function-collect-refs
+  [pools : ast.AstNodePoolContext]
+  [func : (& ir.CompilerIrFunction)]) : i64_map.Map
   (let
     [refs : i64_map.Map (i64_map.with-capacity 32)]
     (match func
@@ -234,10 +240,11 @@
                   (for [ii (iterator.range 0 instrs.len)]
                     (set!
                       refs
-                      (collect-instr-refs refs (& (array-ref instrs.slots ii)))))]))])])
+                      (collect-instr-refs pools refs (& instrs.slots) ii)))]))])])
     refs))
 
 (define (compute-windows-syscall-skip-mask
+  [pools : ast.AstNodePoolContext]
   [functions : (& ir.CompilerIrFunctionSeq)]) : (__tl_dyn-array bool)
   (let
     [fn-count : i64 functions.len]
@@ -252,7 +259,7 @@
           (set! (array-ref fn-ids i) (ir.compiler-ir-symbol-id fn-name))])
       (set!
         (array-ref fn-refs i)
-        (function-collect-refs (& (array-ref functions.slots i))))
+        (function-collect-refs pools (& (array-ref functions.slots i))))
       (when
         (function-has-syscall? (& (array-ref functions.slots i)))
         (set! (array-ref skip i) true)
@@ -277,6 +284,7 @@
     skip))
 
 (define (collect-module-refs
+  [pools : ast.AstNodePoolContext]
   [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : (& ir.CompilerIrFunctionSeq)]) : ModuleRefs
   (let
@@ -296,9 +304,7 @@
                     (for [ii (iterator.range 0 instrs.len)]
                       (set!
                         refs
-                        (collect-instr-refs
-                          refs
-                          (& (array-ref instrs.slots ii)))))]))])]))
+                        (collect-instr-refs pools refs (& instrs.slots) ii)))]))])]))
     (ModuleRefs refs)))
 
 (define (typecheck-for-tli-and-lower [request : api.TypecheckRequest]) : tc.ResultCompilerTypecheckChecked
@@ -365,12 +371,6 @@
                         (tc.ResultCompilerTypecheckChecked.Err
                           (diag.compiler-diagnostic-list-box-single diag-box))]
                       [(Ok expanded expanded-paths)
-                        (tc.tc-clone-root-collection-use!
-                          job-state
-                          (match (& expanded)
-                            [(ast.AstProgram.Program decls-box)
-                              (ast.AstProgram.Program
-                                (box (clone (deref decls-box))))]))
                         (tc.tc-typecheck-specialized-program-with-selected-lowering
                           load-state
                           prefix-cache
@@ -557,106 +557,52 @@
             (let
               [pools : ast.AstNodePoolContext (tc.tc-context-pools ctx)]
               [checked-program : ast.AstProgram (tc.tc-context-program ctx)]
-              [source-decl-count : i64
-                (match (& checked-program)
-                  [(ast.AstProgram.Program decls-box)
-                    (ast.ast-decl-list-len (& (deref decls-box)))])]
               [lower-state : lower.CompilerLowerState
                 (lower.compiler-lower-state-new)]
-              [clone-roots : clone_support.CloneRootEntries
-                (tc.tc-clone-root-collection-finish! ctx)]
-              [clone-able : clone_support.CloneNameSet
-                (tc.tc-clone-able-set ctx)]
               (lower.compiler-lower-state-enable-module-ownership!
                 lower-state
                 true)
               (ast.ast-node-pool-context-install! pools)
               (let
-                [clone-aug : lower.ResultLowerCloneAugment
-                  (lower.lower-clone-handoff-augment
-                    lower-state
-                    ctx
-                    env
-                    ""
-                    (tc.tc-context-program ctx)
-                    clone-able
-                    clone-roots
-                    pools)]
-                [augmented-program : ast.AstProgram
-                  (match (& clone-aug)
-                    [(Ok augmented _ _)
-                      (match augmented
-                        [(ast.AstProgram.Program decls-box)
-                          (ast.AstProgram.Program
-                            (box (clone (deref decls-box))))])]
-                    [(Err message) (io.panic message)])]
-                [all-clone-roots : clone_support.CloneRootEntries
-                  (match clone-aug
-                    [(Ok _ _ handoff-roots) handoff-roots]
-                    [(Err message) (io.panic message)])]
-                (ast.ast-node-pool-context-install! pools)
-                (match (lower.lower-extend-checked-context-with-clone-decls
-                  ctx
-                  env
-                  source-decl-count
-                  (match (& augmented-program)
+                [lower-names : lower.LowerNameEnv
+                  (match (& checked-program)
                     [(ast.AstProgram.Program decls-box)
-                      (ast.AstProgram.Program (box (clone (deref decls-box))))]))
-                  [(Err message) (io.panic message)]
-                  [(Ok lower-ctx lower-env)
-                    (let
-                      [lower-names : lower.LowerNameEnv
-                        (match (& augmented-program)
-                          [(ast.AstProgram.Program decls-box)
-                            (let
-                              [decls-copy : ast.AstDeclList
-                                (clone (deref decls-box))]
-                              [base-names : lower.LowerNameEnv
-                                (lower.lower-name-env-from-decls-with-state
-                                  lower-state
-                                  (& decls-copy)
-                                  (& checked-paths)
-                                  ""
-                                  lower.LowerNameEnv.Nil)]
-                              (lower.lower-name-env-add-clone-decls
-                                lower-state
-                                decls-copy
-                                (& checked-paths)
-                                ""
-                                base-names
-                                all-clone-roots
-                                false))])]
-                      (match (lower.lower-compiler-program-checked-with-names-mode
+                      (lower.lower-name-env-from-decls-with-state
                         lower-state
-                        lower-ctx
-                        (tc.tc-env-with-cache lower-env)
-                        augmented-program
-                        checked-paths
+                        (& (deref decls-box))
+                        (& checked-paths)
                         ""
-                        lower-names
-                        all-clone-roots
-                        lower-mode)
-                        [(Err diag-box)
-                          (tc.tc-checked-let-binding-facts-finish! let-facts)
-                          (io.panic
-                            (diag.compiler-diagnostic-render
-                              (& (__tl-box-place diag-box))))]
-                        [(Ok whole-program whole-spans lower-owner)
-                          (tc.tc-checked-let-binding-facts-finish! let-facts)
-                          (emit-partitioned-sysroot!
-                            (& bundle)
-                            whole-program
-                            whole-spans
-                            lower-owner
-                            pools
-                            job
-                            asm-dir
-                            manifest-out
-                            backend-target
-                            windows?
-                            opt-level)
-                          (lower.compiler-lower-arena-state-release!
-                            (lower.compiler-lower-state-arenas lower-owner))]))]))))
+                        lower.LowerNameEnv.Nil)])]
+                (match (lower.lower-compiler-program-checked-with-names-mode
+                  lower-state
+                  ctx
+                  (tc.tc-env-with-cache env)
+                  checked-program
+                  checked-paths
+                  ""
+                  lower-names
+                  lower-mode)
+                  [(Err diag-box)
+                    (tc.tc-checked-let-binding-facts-finish! let-facts)
+                    (io.panic
+                      (diag.compiler-diagnostic-render
+                        (& (__tl-box-place diag-box))))]
+                  [(Ok whole-program whole-spans lower-owner)
+                    (tc.tc-checked-let-binding-facts-finish! let-facts)
+                    (emit-partitioned-sysroot!
+                      (& bundle)
+                      whole-program
+                      whole-spans
+                      lower-owner
+                      pools
+                      job
+                      asm-dir
+                      manifest-out
+                      backend-target
+                      windows?
+                      opt-level)
+                    (lower.compiler-lower-arena-state-release!
+                      (lower.compiler-lower-state-arenas lower-owner))]))))
           (cfg
             embedded-stdlib-tlci
             (tlci.compiler-embedded-stdlib-tlci-session-close!))]))))
@@ -719,7 +665,7 @@
           [fn-owners : (__tl_dyn-array i64) (__tl_make-array i64 fn-count)]
           [fn-skip : (__tl_dyn-array bool)
             (if windows?
-              (compute-windows-syscall-skip-mask (& whole-functions))
+              (compute-windows-syscall-skip-mask pools (& whole-functions))
               (__tl_make-array bool fn-count))]
           [gl-owners : (__tl_dyn-array i64) (__tl_make-array i64 gl-count)]
           [gl-private : (__tl_dyn-array bool) (__tl_make-array bool gl-count)]
@@ -952,7 +898,10 @@
                     [mod-functions : ir.CompilerIrFunctionSeq
                       (ir.compiler-ir-function-builder-snapshot (& f-builder))]
                     [refs : ModuleRefs
-                      (collect-module-refs (& init-globals) (& mod-functions))]
+                      (collect-module-refs
+                        pools
+                        (& init-globals)
+                        (& mod-functions))]
                     [e-builder : ir.CompilerIrExternBuilder
                       (ir.compiler-ir-extern-builder-with-capacity 64)]
                     [added-externs : i64_map.Map (i64_map.with-capacity 128)]
@@ -1106,11 +1055,15 @@
                             1
                             0)
                           (& mod-program)
-                          (clone base-reps))]
+                          (ir.compiler-ir-clone-representation-index
+                            pools
+                            (& base-reps)))]
                       (be_state.compiler-backend-state-set-representations-for-pools!
                         be-state-mod
                         (& pools)
-                        (clone mod-reps))
+                        (ir.compiler-ir-clone-representation-index
+                          pools
+                          (& mod-reps)))
                       (match (opt.optimize-program
                         mod-program
                         (ir.compiler-source-spans-empty)

@@ -329,7 +329,9 @@ grep -F "(& lifetime (Slice i64))" "$SLICE_IR_FIRST_NORMALIZED" >/dev/null
 
 # Macro hygiene gives generated local bindings structural identities rather
 # than pool ids. Lifetime rendering must decode that documented identity: both
-# call-site borrows below come from the declaration-emitting text-buffer macro.
+# call-site borrows below come from the declaration-emitting text-buffer macro:
+# `write-chunks` borrows dense slots from its `chunks` parameter and flushes its
+# local `batch`.
 MACRO_LIFETIME_SOURCE="$ROOT/tests/golden/macro_hygiene_lifetime_ir.tl"
 MACRO_LIFETIME_IR="$WORKDIR/macro_hygiene_lifetime.ir"
 
@@ -346,7 +348,7 @@ if grep -F "<id:" "$MACRO_LIFETIME_IR" >/dev/null; then
     echo "macro-hygiene lifetime dump retained an undecoded structural id" >&2
     exit 1
 fi
-grep -F "str-as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& chunk bytes)" >/dev/null
+grep -F "str-as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& chunks bytes)" >/dev/null
 grep -F "as-bytes" "$MACRO_LIFETIME_IR" | grep -F "(& batch bytes)" >/dev/null
 
 # A scaled dump must render with memory proportional to the output, not by

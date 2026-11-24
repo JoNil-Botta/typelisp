@@ -451,7 +451,6 @@
   (let
     [program : ast.AstProgram
       (ast.ast-program (owned_view.compiler-owned-shared-view decls))]
-    (tc_core.tc-clone-able-cache-reset-for-job! (tc_core.tc-serial-job-state))
     (tc_core.macro-alias-cache-reset!)
     (let
       [symbols : csym.CompilerSymbols

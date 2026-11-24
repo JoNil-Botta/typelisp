@@ -574,7 +574,14 @@
   ;; is the shared empty array the cleared fields point at.
   (sweep-addr-arena i64)
   (sweep-addr-mark i64)
-  (sweep-scratch-empty (__tl_dyn-array i64)))
+  (sweep-scratch-empty (__tl_dyn-array i64))
+  ;; Win64 unwind lowering (3 fields): the emission's interned UNWIND_INFO
+  ;; records (`.byte` operand text -> `.L_tl_xdata_<id>`), their count, and
+  ;; the count of `.L_tl_seh_end_<n>` function end labels. The table lives in
+  ;; the emission's home arena and is recreated by `assembly-stream-start!`.
+  (win64-xdata-ids backend_string_i64_map.Map)
+  (win64-xdata-count i64)
+  (win64-unwind-end-count i64))
 
 (defstruct CompilerBackendStreamState
   (address i64))
@@ -1713,7 +1720,10 @@
         (__tl_make-array i64 0)
         0
         0
-        (__tl_make-array i64 0)))
+        (__tl_make-array i64 0)
+        (backend_string_i64_map.with-capacity 1)
+        0
+        0))
     (CompilerBackendStreamState
       (cast
         (unsafe
@@ -2897,8 +2907,13 @@
 ;; group-slot lookup is one array read.
 (define compiler-backend-function-i64-array-group-ranks : i64
   10)
-(define compiler-backend-function-i64-array-count : i64
+
+;; AVX2 single-bit test masks consumed solely by 64-bit 4-lane Select:
+;; per var, 0 for a normal full mask, else polarity*256 + lhs_is_splat*64 + k.
+(define compiler-backend-function-i64-array-avx2-sign-bit-masks : i64
   11)
+(define compiler-backend-function-i64-array-count : i64
+  12)
 (define compiler-backend-function-live-set-group-vars : i64
   0)
 (define compiler-backend-function-live-set-addressable-group-vars : i64
@@ -3415,6 +3430,11 @@
     (set!
       (array-ref
         i64-arrays
+        compiler-backend-function-i64-array-avx2-sign-bit-masks)
+      (__tl_make-array i64 0))
+    (set!
+      (array-ref
+        i64-arrays
         compiler-backend-function-i64-array-shift-count-bounds)
       (compiler-backend-global-shared-view empty-i64-array))
     (set!
@@ -3860,6 +3880,11 @@
       (array-ref
         data.i64-arrays
         compiler-backend-function-i64-array-group-ranks)
+      (__tl_make-array i64 0))
+    (set!
+      (array-ref
+        data.i64-arrays
+        compiler-backend-function-i64-array-avx2-sign-bit-masks)
       (__tl_make-array i64 0))
     (set!
       (array-ref data.assignment-indexes 0)
@@ -4833,6 +4858,18 @@
   [index : (& index CompilerBackendSourceSpanIndex)]
   [function : compiler_ir_types.CompilerIrSymbolId]) : compiler_diagnostic.CompilerDiagnostic
   (match (compiler-backend-source-span-index-lookup index function)
+    [(Some span)
+      (compiler_diagnostic.compiler-diagnostic-from-ast-span "" span "")]
+    [(No) (compiler_diagnostic.compiler-diagnostic-at-start "" "")]))
+
+(define (compiler-backend-instr-diagnostic-ref
+  [spans : (& spans compiler_ir_types.CompilerSourceSpans)]
+  [function : i64]
+  [instr : (& instr compiler_ir_types.CompilerIrInstr)]) : compiler_diagnostic.CompilerDiagnostic
+  (match (compiler_ir_types.compiler-source-spans-lookup-instr
+    spans
+    (compiler_ir_types.compiler-ir-symbol-typed-id function)
+    instr)
     [(Some span)
       (compiler_diagnostic.compiler-diagnostic-from-ast-span "" span "")]
     [(No) (compiler_diagnostic.compiler-diagnostic-at-start "" "")]))

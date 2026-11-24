@@ -46,7 +46,8 @@ c_provenance_init() {
 
 # Capture argv as JSON arrays before shell globals used by measurement change.
 c_provenance_build() {
-    jq -n --args '$ARGS.positional' -- "$@" > "$WORKDIR/c-build-argv.json"
+    _cpb_out=${C_PROVENANCE_BUILD_ARGV:-$WORKDIR/c-build-argv.json}
+    jq -n --args '$ARGS.positional' -- "$@" > "$_cpb_out"
 }
 
 c_provenance_row() {
@@ -66,12 +67,13 @@ c_provenance_row() {
     done
     _cpr_libc=$(ldd "$_cpr_bin" 2>/dev/null | awk '$1 == "libc.so.6" && $2 == "=>" {print $3; exit}')
     [ -n "$_cpr_libc" ] || _cpr_libc=unknown
+    _cpr_build_argv=${C_PROVENANCE_BUILD_ARGV:-$WORKDIR/c-build-argv.json}
     jq -n --slurpfile record "$C_PROVENANCE" --arg metric "$_cpr_metric/$_cpr_name" \
         --arg source "$(c_provenance_hash "$_cpr_source")" \
         --arg metadata "$(if [ -f "$_cpr_metadata" ]; then c_provenance_hash "$_cpr_metadata"; else echo absent; fi)" \
         --arg binary "$(c_provenance_hash "$_cpr_bin")" \
         --arg libc_path "$_cpr_libc" --arg libc_sha256 "$(c_provenance_hash "$_cpr_libc")" \
-        --argjson ir "$first" --slurpfile build "$WORKDIR/c-build-argv.json" \
+        --argjson ir "$first" --slurpfile build "$_cpr_build_argv" \
         --argjson inputs "$_cpr_inputs" \
         --args '$record[0] | .rows[$metric] = {ir_count:$ir,source_sha256:$source,
           metadata_sha256:$metadata,binary_sha256:$binary,
@@ -85,6 +87,48 @@ c_provenance_complete() {
     jq '.complete = true' "$C_PROVENANCE" > "$C_PROVENANCE.tmp"
     mv "$C_PROVENANCE.tmp" "$C_PROVENANCE"
     c_provenance_validate "$C_PROVENANCE" measured
+}
+
+# c_provenance_merge_rows TARGET_PROV PART_JSON...
+#   Merge .rows objects from per-case provenance fragments into TARGET_PROV.
+c_provenance_merge_rows() {
+    _cpmr_target=$1
+    shift
+    [ "$#" -gt 0 ] || return 0
+    jq -s '. as $all | $all[0] | .rows = (reduce $all[1:][] as $part (.rows; . + $part.rows))' \
+        "$_cpmr_target" "$@" > "$_cpmr_target.tmp"
+    mv "$_cpmr_target.tmp" "$_cpmr_target"
+}
+
+# c_provenance_validate_case FILE CASE [ROLE]
+#   Validate a per-case provenance file and require every recorded row (when
+#   status == "measured") to belong to CASE.
+c_provenance_validate_case() {
+    _cpvc_file=$1
+    _cpvc_case=$2
+    _cpvc_role=${3:-baseline}
+    c_provenance_validate "$_cpvc_file" "$_cpvc_role" || return 1
+    jq -e --arg c "$_cpvc_case" '
+      if .status == "unknown" then true
+      else (.rows | keys | length > 0 and all(.[]; . == ("benchmark/c/" + $c) or . == ("benchmark/c-scalar/" + $c)))
+      end' "$_cpvc_file" >/dev/null 2>&1 || {
+        echo "[c-provenance] per-case record $_cpvc_file contains rows outside case $_cpvc_case" >&2
+        return 1
+    }
+}
+
+# c_provenance_extract_case MEASURED_PROV CASE OUT_FILE
+#   Extract a single-case schema-1 provenance record for CASE from MEASURED_PROV.
+c_provenance_extract_case() {
+    _cpec_src=$1
+    _cpec_case=$2
+    _cpec_out=$3
+    c_provenance_validate "$_cpec_src" measured || return 1
+    jq --arg c "$_cpec_case" '
+      .rows = (.rows | with_entries(select(.key == ("benchmark/c/" + $c) or .key == ("benchmark/c-scalar/" + $c))))
+    ' "$_cpec_src" > "$_cpec_out.tmp"
+    mv "$_cpec_out.tmp" "$_cpec_out"
+    c_provenance_validate_case "$_cpec_out" "$_cpec_case" measured
 }
 
 # Unknown historical producer identity is explicit, never filled from this host.
@@ -171,6 +215,36 @@ c_provenance_diagnose() {
       end,
       "[c-provenance] exact gate still FAILS; reproduce the recorded tools before considering a reviewed C change"
     '
+}
+
+# c_provenance_diagnose_dir BENCH_DIR CURRENT_PROV COUNTS_TSV DIFF_TXT
+#   Diagnose each affected C row in DIFF_TXT against its per-case provenance
+#   file BENCH_DIR/<case>.provenance.json.
+c_provenance_diagnose_dir() {
+    _cpdd_dir=$1
+    _cpdd_current=$2
+    _cpdd_counts=$3
+    _cpdd_diff=$4
+    _cpdd_cases=$(awk -F ' \\| ' '
+        $1 ~ /^benchmark\/c(-scalar)?\// && $6 != "ok" {
+            c = $1
+            sub(/^benchmark\/c(-scalar)?\//, "", c)
+            if (!seen[c]++) print c
+        }
+    ' "$_cpdd_diff")
+    [ -n "$_cpdd_cases" ] || return 0
+    _cpdd_tmp="$_cpdd_diff.case.tmp"
+    for _cpdd_case in $_cpdd_cases; do
+        awk -F ' \\| ' -v c="$_cpdd_case" '
+            $1 == ("benchmark/c/" c) || $1 == ("benchmark/c-scalar/" c) { print }
+        ' "$_cpdd_diff" > "$_cpdd_tmp"
+        c_provenance_diagnose "$_cpdd_dir/$_cpdd_case.provenance.json" \
+            "$_cpdd_current" "$_cpdd_counts" "$_cpdd_tmp" || {
+            rm -f "$_cpdd_tmp"
+            return 1
+        }
+    done
+    rm -f "$_cpdd_tmp"
 }
 
 # Host-independent mutations exercise the production validator/diagnostic.
@@ -272,5 +346,23 @@ c_provenance_self_test() (
     _cpst_out=$(c_provenance_diagnose "$_cpst_dir/producer.json" "$_cpst_dir/producer.json" \
         "$_cpst_dir/c-counts.tsv" "$_cpst_dir/tl-diff.txt") || return 1
     [ -z "$_cpst_out" ] || { echo 'provenance self-test explained away a TypeLisp change' >&2; return 1; }
+    # Per-case provenance extraction, validation, and directory diagnosis.
+    mkdir -p "$_cpst_dir/per-case"
+    c_provenance_extract_case "$_cpst_dir/producer.json" a "$_cpst_dir/per-case/a.provenance.json" || return 1
+    c_provenance_validate_case "$_cpst_dir/per-case/a.provenance.json" a || return 1
+    if c_provenance_validate_case "$_cpst_dir/per-case/a.provenance.json" b 2>/dev/null; then
+        echo 'provenance self-test accepted wrong-case per-case record' >&2; return 1
+    fi
+    _cpst_out=$(c_provenance_diagnose_dir "$_cpst_dir/per-case" "$_cpst_dir/producer.json" \
+        "$_cpst_dir/c-counts.tsv" "$_cpst_dir/c-diff.txt") || return 1
+    case "$_cpst_out" in *'same recorded C comparison identity'*) ;; *) echo 'provenance self-test per-case diagnose failed' >&2; return 1 ;; esac
+    # Parallel row merging into a base provenance record.
+    jq '.rows = {} | .complete = false' "$_cpst_dir/producer.json" > "$_cpst_dir/merge-base.json"
+    jq '{rows: {"benchmark/c/a": .rows["benchmark/c/a"]}}' "$_cpst_dir/producer.json" > "$_cpst_dir/merge-p1.json"
+    jq '{rows: {"benchmark/c-scalar/a": .rows["benchmark/c-scalar/a"]}}' "$_cpst_dir/producer.json" > "$_cpst_dir/merge-p2.json"
+    c_provenance_merge_rows "$_cpst_dir/merge-base.json" "$_cpst_dir/merge-p1.json" "$_cpst_dir/merge-p2.json" || return 1
+    jq -e '(.rows | keys | sort) == ["benchmark/c-scalar/a", "benchmark/c/a"]' "$_cpst_dir/merge-base.json" >/dev/null || {
+        echo 'provenance self-test merge_rows failed' >&2; return 1
+    }
     echo 'C comparison provenance self-test passed'
 )

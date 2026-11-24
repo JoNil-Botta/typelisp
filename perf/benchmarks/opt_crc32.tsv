@@ -1,0 +1,2 @@
+suites	benchmark,optimization-opt2,instruction-main,realistic-kernel
+benchmark/c-scalar/opt_crc32	400704115

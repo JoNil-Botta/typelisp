@@ -30,7 +30,7 @@ that contains both `bench.tl` and `baseline.c`. Directories with only a
 `baseline.c` (`c_abi_*`, `c_function_pointer_flow`) are not benchmarks: they
 are the C companions that `tests/integration/native.manifest` links into native
 integration cases. Linux CI passes explicit suite
-membership from `perf/benchmark-ci-cases.tsv`; instruction suites check exact
+membership from `perf/benchmarks/*.tsv`; instruction suites check exact
 output parity and cachegrind counts in one run. Local `--cases` and `--filter`
 selections remain independent of CI suite membership.
 

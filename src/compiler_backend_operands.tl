@@ -1897,6 +1897,7 @@
     (> (string.string-length name) 16)
     (not (string.eq name "main"))
     (not (compiler-backend-string-prefix-at? name "__global_init_" 0))
+    (not (compiler-backend-string-prefix-at? name "__tl_mod_init_" 0))
     (not (compiler-backend-string-prefix-at? name "__tl_spmd_pkg_" 0))
     (not
       (compiler-backend-string-prefix-at?
@@ -1964,7 +1965,11 @@
                 (be_state.compiler-backend-global-array-element-shared-view
                   tables.function-names
                   slot)]
-              (if (compiler-backend-compact-function-symbol? indexed-name)
+              (if (and
+                (not
+                  (be_state.compiler-backend-state-library-object?
+                    index.backend-state))
+                (compiler-backend-compact-function-symbol? indexed-name))
                 (str_cat.str-cat "_tl_f" (string.int->string slot) "")
                 (be_state.compiler-backend-state-user-symbol-id
                   index.backend-state

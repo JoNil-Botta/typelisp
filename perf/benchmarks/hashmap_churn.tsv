@@ -1,0 +1,2 @@
+suites	benchmark,instruction-main
+benchmark/c-scalar/hashmap_churn	4304705

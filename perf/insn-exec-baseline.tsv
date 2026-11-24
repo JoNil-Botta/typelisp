@@ -13,7 +13,7 @@ benchmark/typelisp/hashmap_grow	1319102
 benchmark/c-scalar/hashmap_grow	1967429
 benchmark/typelisp/hashmap_insert	23034455
 benchmark/c-scalar/hashmap_insert	65951098
-benchmark/typelisp/opt_bytecode_vm	748000795
+benchmark/typelisp/opt_bytecode_vm	748000792
 benchmark/c-scalar/opt_bytecode_vm	716006201
 benchmark/typelisp/opt_crc32	323240343
 benchmark/c-scalar/opt_crc32	400704115
@@ -31,7 +31,7 @@ benchmark/typelisp/lex_source	455891021
 benchmark/c-scalar/lex_source	549230984
 benchmark/typelisp/liveness_scan	392059041
 benchmark/c-scalar/liveness_scan	433426168
-benchmark/typelisp/peephole_lines	420295552
+benchmark/typelisp/peephole_lines	419923712
 benchmark/c-scalar/peephole_lines	442194743
 benchmark/typelisp/read_sexpr	731082414
 benchmark/c-scalar/read_sexpr	598159390
@@ -41,7 +41,7 @@ benchmark/typelisp/ssa_construct	629929881
 benchmark/c-scalar/ssa_construct	448154598
 benchmark/typelisp/sccp_lattice	550646150
 benchmark/c-scalar/sccp_lattice	400603743
-benchmark/typelisp/regalloc_greedy	563332778
+benchmark/typelisp/regalloc_greedy	563286382
 benchmark/c-scalar/regalloc_greedy	404020976
 benchmark/typelisp/asm_render	659488414
 benchmark/c-scalar/asm_render	644231941

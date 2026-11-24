@@ -11785,26 +11785,32 @@
        return -1"))
 
 (define (opt-range-merge-run [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
-  (match (opt.opt-bounds-dom-blocks-with-context-result
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
-    (& (opt-range-merge-params))
-    16
-    (& (opt_i64_i64_map.with-capacity 1))
-    (& (opt.opt-len-eq-use-empty))
-    (& blocks))
-    [(Result result _) result]))
+  (let
+    [empty-cells (opt.opt-global-cell-summary-empty)]
+    [empty-use (opt.opt-len-eq-use-empty (& empty-cells))]
+    (match (opt.opt-bounds-dom-blocks-with-context-result
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
+      (& (opt-range-merge-params))
+      16
+      (& (opt_i64_i64_map.with-capacity 1))
+      (&mut empty-use)
+      (& blocks))
+      [(Result result _) result])))
 
 (define (opt-range-merge-run-frame [blocks : ir.CompilerIrBlockList]) : i64
-  (match (opt.opt-bounds-dom-blocks-with-context-result
-    (ast.ast-node-pool-reader-type-segment-bases)
-    (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
-    (& (opt-range-merge-params))
-    16
-    (& (opt_i64_i64_map.with-capacity 1))
-    (& (opt.opt-len-eq-use-empty))
-    (& blocks))
-    [(Result _ frame) frame]))
+  (let
+    [empty-cells (opt.opt-global-cell-summary-empty)]
+    [empty-use (opt.opt-len-eq-use-empty (& empty-cells))]
+    (match (opt.opt-bounds-dom-blocks-with-context-result
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
+      (& (opt-range-merge-params))
+      16
+      (& (opt_i64_i64_map.with-capacity 1))
+      (&mut empty-use)
+      (& blocks))
+      [(Result _ frame) frame])))
 
 (define (opt-range-merge-count-instrs
   [instrs : ir.CompilerIrInstrSeq]
@@ -66687,21 +66693,22 @@ done:
   (let
     [cells : opt.OptGlobalCellSummary
       (owned_view.compiler-owned-reference-shared-view cells)]
+    [use
+      (opt.opt-len-eq-use-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& cells)
+        name
+        64
+        (& blocks)
+        true
+        (& (opt-le-params 1)))]
     (match (opt.opt-bounds-dom-blocks-with-context-result
       (ast.ast-node-pool-reader-type-segment-bases)
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
       (& (opt-le-params 1))
       64
       (& (opt_i64_i64_map.with-capacity 1))
-      (&
-        (opt.opt-len-eq-use-build
-          (ast.ast-node-pool-reader-type-segment-bases)
-          (& cells)
-          name
-          64
-          (& blocks)
-          true
-          (& (opt-le-params 1))))
+      (&mut use)
       (& blocks))
       [(Result out _) out])))
 
@@ -89374,3 +89381,583 @@ inl.entry.0.cont:
                return 0")))
       1
       "mid-function mutation between load s.len and load s.slots must NOT eliminate bounds check")))
+
+;; The post-loop lower bound of a counting/doubling loop variable at `use-blk`.
+(define (opt-len-inv-test-var-min [text : String] [var : i64] [use-blk : i64]) : i64
+  (let
+    [blocks (irt.blocks text)]
+    [tables
+      (opt.opt-len-eq-defs-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        16
+        (& blocks)
+        false)]
+    (opt.opt-len-inv-var-min
+      (& tables)
+      (& blocks)
+      (& (opt_i64_i64_map.with-capacity 1))
+      (& (ir.CompilerIrValue.Var var))
+      use-blk
+      4)))
+
+(test
+  len-inv-loop-exit-min-negative
+  ;; Positive controls: `v = 1; while v < n { v = v * 2 }` leaves `v >= 1`
+  ;; after the loop, in both the SSA and the pre-SSA spelling.
+  (test.assert-i64-eq
+    (opt-len-inv-test-var-min
+      "entry:
+         jump hdr
+       hdr:
+         %1 = phi [1, entry], [%3, body] : i64
+         %2 = lt %1, %0 : i64
+         branch %2, body, exit
+       body:
+         %3 = mul %1, 2 : i64
+         jump hdr
+       exit:
+         return %1"
+      1
+      3)
+    1
+    "SSA doubling loop leaves v >= 1 at the exit")
+  (test.assert-i64-eq
+    (opt-len-inv-test-var-min
+      "entry:
+         %1 = mov 1 : i64
+         jump hdr
+       hdr:
+         %2 = lt %1, %0 : i64
+         branch %2, body, exit
+       body:
+         %1 = mul %1, 2 : i64
+         jump hdr
+       exit:
+         return %1"
+      1
+      3)
+    1
+    "pre-SSA doubling loop leaves v >= 1 at the exit")
+  ;; (a) An arbitrary back-edge step is not a monotonic one.
+  (test.assert-i64-eq
+    (opt-len-inv-test-var-min
+      "entry:
+         jump hdr
+       hdr:
+         %1 = phi [1, entry], [%3, body] : i64
+         %2 = lt %1, %0 : i64
+         branch %2, body, exit
+       body:
+         %3 = sub %1, 5 : i64
+         jump hdr
+       exit:
+         return %1"
+      1
+      3)
+    (- 0 1)
+    "a sub step on the back edge proves no lower bound")
+  ;; (b) The second definition sits after the exit, not in the loop body.
+  (test.assert-i64-eq
+    (opt-len-inv-test-var-min
+      "entry:
+         %1 = mov 1 : i64
+         jump hdr
+       hdr:
+         %2 = lt %1, %0 : i64
+         branch %2, body, exit
+       body:
+         jump hdr
+       exit:
+         %1 = sub %1, 9 : i64
+         return %1"
+      1
+      3)
+    (- 0 1)
+    "a second def of v outside the loop body proves no lower bound")
+  ;; (c) The use is not dominated by the loop exit.
+  (test.assert-i64-eq
+    (opt-len-inv-test-var-min
+      "entry:
+         jump hdr
+       hdr:
+         %1 = phi [1, entry], [%3, body] : i64
+         %2 = lt %1, %0 : i64
+         branch %2, body, exit
+       body:
+         %3 = mul %1, 2 : i64
+         jump hdr
+       exit:
+         return %1"
+      1
+      2)
+    (- 0 1)
+    "a use inside the loop body (wrapped v) gets no lower bound"))
+
+(test
+  len-inv-masked-phi-loop-varying-len-negative
+  ;; Positive control: the probe cursor `p = phi [h & k, entry], [(p + 1) & m,
+  ;; body]` against a length fixed before the loop, `0 <= k, m < len` checked
+  ;; each iteration.
+  (test.assert-i64-eq
+    (opt-le-check-count
+      (opt-range-merge-run
+        (irt.blocks
+          "entry:
+             %20 = bit_and %0, 3 : i64
+             %1 = bit_and %0, %20 : i64
+             %3 = bit_and %0, 15 : i64
+             %5 = bit_and %0, 7 : i64
+             jump loop
+           loop:
+             %2 = phi [%1, entry], [%9, body] : i64
+             %4 = lt %5, %3 : i64
+             branch %4, g1, done
+           g1:
+             %6 = lt %5, 0 : i64
+             branch %6, done, g2
+           g2:
+             %13 = lt %20, %3 : i64
+             branch %13, g3, done
+           g3:
+             %14 = lt %20, 0 : i64
+             branch %14, done, body
+           body:
+             bounds_check %2, %3 message \"probe\"
+             %8 = add %2, 1 : i64
+             %9 = bit_and %8, %5 : i64
+             jump loop
+           done:
+             return 0")))
+    0
+    "masked probe cursor against a loop-invariant length is in range")
+  ;; Negative: the length and the mask are loop-carried phis. The latch masks
+  ;; with this iteration's `m < len`, but the next check is against the NEXT
+  ;; iteration's (shorter) `len`.
+  (test.assert-i64-eq
+    (opt-le-check-count
+      (opt-range-merge-run
+        (irt.blocks
+          "entry:
+             %20 = bit_and %0, 3 : i64
+             %1 = bit_and %0, %20 : i64
+             jump loop
+           loop:
+             %2 = phi [%1, entry], [%9, body] : i64
+             %3 = phi [8, entry], [%11, body] : i64
+             %5 = phi [7, entry], [%12, body] : i64
+             %4 = lt %5, %3 : i64
+             branch %4, g1, done
+           g1:
+             %6 = lt %5, 0 : i64
+             branch %6, done, g2
+           g2:
+             %13 = lt %20, %3 : i64
+             branch %13, g3, done
+           g3:
+             %14 = lt %20, 0 : i64
+             branch %14, done, body
+           body:
+             bounds_check %2, %3 message \"probe\"
+             %8 = add %2, 1 : i64
+             %9 = bit_and %8, %5 : i64
+             %11 = sub %3, 4 : i64
+             %12 = sub %5, 4 : i64
+             jump loop
+           done:
+             return 0")))
+    1
+    "masked probe cursor against a loop-varying length keeps its check"))
+
+;; A program over two `ty` globals (@sv, @sv2) built by verified constructors
+;; (len 0 of 8 slots), plus `extra` functions and a `main` running `calls`.
+(define (opt-sl-test-init [ty : String] [name : String]) : String
+  (str_cat.str-cat
+    "function @"
+    (str_cat.str-cat
+      name
+      (str_cat.str-cat
+        "() -> "
+        (str_cat.str-cat
+          (string.copy (& ty))
+          (str_cat.str-cat
+            " vars 8 {
+             entry:
+               %0 = call tl_alloc(64) : u64
+               %1 = call tl_alloc(16) : (__tl_dyn-array i64)
+               %2 = gep %1, 0 : u8
+               store_ptr %2, %0 : u64
+               %3 = gep %1, 8 : u8
+               store_ptr %3, 8 : i64
+               %4 = alloc "
+            (str_cat.str-cat
+              (string.copy (& ty))
+              "
+               %5 = gep %4, 0 : u8
+               store_ptr %5, %1 : (__tl_dyn-array i64)
+               %6 = gep %4, 8 : u8
+               store_ptr %6, 0 : i64
+               return %4
+             }
+             ")))))))
+
+(define (opt-sl-test-cells [ty : String] [extra : String] [calls : String]) : opt.OptGlobalCellSummary
+  (opt-len-inv-test-cells
+    (str_cat.str-cat
+      "global @sv : "
+      (str_cat.str-cat
+        (string.copy (& ty))
+        (str_cat.str-cat
+          " = runtime-init@init-sv
+           global @sv2 : "
+          (str_cat.str-cat
+            (string.copy (& ty))
+            (str_cat.str-cat
+              " = runtime-init@init-sv2
+               "
+              (str_cat.str-cat
+                (opt-sl-test-init (string.copy (& ty)) "init-sv")
+                (str_cat.str-cat
+                  (opt-sl-test-init (string.copy (& ty)) "init-sv2")
+                  (str_cat.str-cat
+                    extra
+                    (str_cat.str-cat
+                      "
+                       function @sv-noop() -> unit vars 1 {
+                       entry:
+                         return
+                       }
+                       function @sv-get(i=%0:i64) -> i64 vars 1 {
+                       entry:
+                         return %0
+                       }
+                       function @main() -> i64 vars 16 {
+                       entry:
+                         "
+                      (str_cat.str-cat
+                        calls
+                        "
+                         %15 = call sv-get(0) : i64
+                         return %15
+                       }"))))))))))))
+
+;; How many of `sv-get`'s `0 <= i < @sv.len` guarded `@sv.slots` checks survive.
+(define (opt-sl-test-checks [cells : opt.OptGlobalCellSummary]) : i64
+  (opt-le-check-count
+    (opt-le-bounds-dom
+      (& cells)
+      (opt-test-symbol "sv-get")
+      (irt.blocks
+        "entry:
+           %1 = ge %0, 0 : i64
+           branch %1, nonneg, done
+         nonneg:
+           %2 = gep @sv, 8 : u8
+           %3 = load %2 : i64
+           %4 = lt %0, %3 : i64
+           branch %4, ok, done
+         ok:
+           %5 = gep @sv, 0 : u8
+           %6 = load %5 : (__tl_dyn-array i64)
+           %7 = gep %6, 1 : i64
+           %8 = load %7 : i64
+           bounds_check %0, %8 message \"sv\"
+           return %0
+         done:
+           return 0"))))
+
+;; `push`: checked `len < slots.len`, then `len = len + 1`; `between` runs
+;; after the check and before the length write.
+(define (opt-sl-test-push [between : String]) : String
+  (str_cat.str-cat
+    "function @sv-push(x=%0:i64) -> unit vars 12 {
+     entry:
+       %1 = gep @sv, 0 : u8
+       %2 = load %1 : (__tl_dyn-array i64)
+       %3 = gep %2, 1 : i64
+       %4 = load %3 : i64
+       %5 = gep @sv, 8 : u8
+       %6 = load %5 : i64
+       bounds_check %6, %4 message \"push\"
+       "
+    (str_cat.str-cat
+      between
+      "
+       %8 = add %6, 1 : i64
+       store_ptr %5, %8 : i64
+       return
+     }")))
+
+;; `pop`: `len = len - 1` under `len >= 1` (`guarded?`); `between` runs on
+;; the taken arm before the length write.
+(define (opt-sl-test-pop [guarded? : bool] [between : String]) : String
+  (str_cat.str-cat
+    "function @sv-pop() -> unit vars 8 {
+     entry:
+       %1 = gep @sv, 8 : u8
+       %2 = load %1 : i64
+       "
+    (str_cat.str-cat
+      (if guarded?
+        "%3 = lt %2, 1 : i64
+         branch %3, done, pop
+       pop:
+         "
+        "jump pop
+       pop:
+         ")
+      (str_cat.str-cat
+        between
+        "
+         %4 = sub %2, 1 : i64
+         store_ptr %1, %4 : i64
+         return
+       done:
+         return
+     }"))))
+
+;; `grow`: `slots = make(old-cap < 1 ? 1 : old-cap * 2)`, or with the arms
+;; swapped (`old-cap < 1 ? old-cap * 2 : 1`, a shrink) when `swapped?`.
+(define (opt-sl-test-grow [swapped? : bool]) : String
+  (str_cat.str-cat
+    "function @sv-grow() -> unit vars 16 {
+     entry:
+       %1 = gep @sv, 0 : u8
+       %2 = load %1 : (__tl_dyn-array i64)
+       %3 = gep %2, 1 : i64
+       %4 = load %3 : i64
+       %5 = lt %4, 1 : i64
+       "
+    (str_cat.str-cat
+      (if swapped?
+        "branch %5, big, small"
+        "branch %5, small, big")
+      "
+     small:
+       jump join
+     big:
+       %7 = mul %4, 2 : i64
+       jump join
+     join:
+       %8 = phi [1, small], [%7, big] : i64
+       %9 = mul %8, 8 : i64
+       %10 = call tl_alloc(%9) : u64
+       %11 = call tl_alloc(16) : (__tl_dyn-array i64)
+       %12 = gep %11, 0 : u8
+       store_ptr %12, %10 : u64
+       %13 = gep %11, 8 : u8
+       store_ptr %13, %8 : i64
+       store_ptr %1, %11 : (__tl_dyn-array i64)
+       return
+     }")))
+
+(test
+  len-inv-struct-len-write-negative
+  ;; Positive controls: a checked push, a guarded pop, and a grow whose
+  ;; small arm (`old-cap < 1`) takes the literal all keep the invariant.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlPushOk"
+        (opt-sl-test-push "")
+        "%1 = call sv-push(7) : unit"))
+    0
+    "checked push keeps len <= slots.len")
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlPopOk"
+        (opt-sl-test-pop true "")
+        "%1 = call sv-pop() : unit"))
+    0
+    "pop under a dominating len >= 1 keeps 0 <= len")
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlGrowOk"
+        (opt-sl-test-grow false)
+        "%1 = call sv-grow() : unit"))
+    0
+    "grow to old-cap < 1 ? 1 : old-cap * 2 never shrinks slots")
+  ;; (a) A negative literal length.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlNegLit"
+        "function @sv-neg() -> unit vars 2 {
+         entry:
+           %1 = gep @sv, 8 : u8
+           store_ptr %1, -9223372036854775808 : i64
+           return
+         }"
+        "%1 = call sv-neg() : unit"))
+    1
+    "an I64_MIN length literal disqualifies the struct")
+  ;; (b) `len - 1` without a dominating `len >= 1`.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlPopBare"
+        (opt-sl-test-pop false "")
+        "%1 = call sv-pop() : unit"))
+    1
+    "an unguarded pop disqualifies the struct")
+  ;; (c) The guarded pop's length went stale: a whole-struct copy replaced
+  ;; `@sv` between the `len` load and the write.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlPopStale"
+        (opt-sl-test-pop true "copy_bytes @sv, @sv2, 16")
+        "%1 = call sv-pop() : unit"))
+    1
+    "a struct copy between the pop's len load and write disqualifies the struct")
+  ;; (d) A call between the push's bounds check and its length write.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlPushCall"
+        (opt-sl-test-push "%7 = call sv-noop() : unit")
+        "%1 = call sv-push(7) : unit"))
+    1
+    "a call between the push's check and len write disqualifies the struct")
+  ;; (e) The grow's arms swapped: `old-cap >= 1` takes the literal 1.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlGrowSwap"
+        (opt-sl-test-grow true)
+        "%1 = call sv-grow() : unit"))
+    1
+    "a grow with the old-cap < 1 polarity reversed disqualifies the struct"))
+
+(test
+  len-inv-struct-escape-negative
+  ;; (a) The struct reaches an unknown callee through a mov and a phi.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlEscPhi"
+        "function @sv-esc() -> unit vars 4 {
+         entry:
+           %0 = mov @sv : (&mut e SlEscPhi)
+           %1 = mov %0 : (&mut e SlEscPhi)
+           jump next
+         next:
+           %2 = phi [%1, entry] : (&mut e SlEscPhi)
+           %3 = call unknown_ext(%2) : unit
+           return
+         }"
+        "%1 = call sv-esc() : unit"))
+    1
+    "a struct passed to an unknown callee through mov and phi is disqualified")
+  ;; (b) The struct's address is stored to memory.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlEscStore"
+        "function @sv-esc() -> unit vars 2 {
+         entry:
+           %0 = call tl_alloc(8) : u64
+           store_ptr %0, @sv : u64
+           return
+         }"
+        "%1 = call sv-esc() : unit"))
+    1
+    "a struct address stored to memory is disqualified")
+  ;; (c) The struct's address is returned as a plain word.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlEscRet"
+        "function @sv-esc() -> u64 vars 1 {
+         entry:
+           return @sv
+         }"
+        "%1 = call sv-esc() : u64"))
+    1
+    "a struct address returned untyped is disqualified")
+  ;; (d) A pointer to the length field reaches an unknown callee.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlEscField"
+        "function @sv-esc() -> unit vars 4 {
+         entry:
+           %1 = gep @sv, 8 : u8
+           %2 = call unknown_ext(%1) : unit
+           return
+         }"
+        "%1 = call sv-esc() : unit"))
+    1
+    "a struct field pointer passed to an unknown callee is disqualified"))
+
+;; `set-len(n)`: `len = n`, then `i = 0; while i < n { check i < slots.len;
+;; i = i + 1 }`; `body` runs in the loop before the check, `index` is the
+;; checked value.
+(define (opt-sl-test-fill [pre : String] [body : String] [index : String]) : String
+  (str_cat.str-cat
+    "function @sv-set-len(n=%0:i64) -> unit vars 16 {
+     entry:
+       %1 = gep @sv, 8 : u8
+       store_ptr %1, %0 : i64
+       %2 = mov 0 : i64
+       "
+    (str_cat.str-cat
+      pre
+      (str_cat.str-cat
+        "
+       jump hdr
+     hdr:
+       %3 = lt %2, %0 : i64
+       branch %3, body, done
+     body:
+       %4 = gep @sv, 0 : u8
+       %5 = load %4 : (__tl_dyn-array i64)
+       %6 = gep %5, 1 : i64
+       %7 = load %6 : i64
+       "
+        (str_cat.str-cat
+          body
+          (str_cat.str-cat
+            "
+       bounds_check "
+            (str_cat.str-cat
+              index
+              ", %7 message \"fill\"
+       %8 = add %2, 1 : i64
+       %2 = mov %8 : i64
+       jump hdr
+     done:
+       return
+     }")))))))
+
+(test
+  len-inv-inline-checked-loop-negative
+  ;; Positive control: the length write is covered by the checked loop that
+  ;; follows it (every `i < n` is checked against `slots.len`).
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlFillOk"
+        (opt-sl-test-fill "" "" "%2")
+        "%1 = call sv-set-len(3) : unit"))
+    0
+    "len = n followed by a checked 0..n loop keeps len <= slots.len")
+  ;; (a) A call inside the loop body may change `@sv` between iterations.
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlFillCall"
+        (opt-sl-test-fill "" "%9 = call sv-noop() : unit" "%2")
+        "%1 = call sv-set-len(3) : unit"))
+    1
+    "a call in the checked loop body disqualifies the struct")
+  ;; (b) The loop checks a copy of `i` taken before the loop (always 0).
+  (test.assert-i64-eq
+    (opt-sl-test-checks
+      (opt-sl-test-cells
+        "SlFillStale"
+        (opt-sl-test-fill "%10 = mov %2 : i64" "" "%10")
+        "%1 = call sv-set-len(3) : unit"))
+    1
+    "a loop checking a stale copy of i disqualifies the struct"))

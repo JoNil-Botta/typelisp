@@ -55632,7 +55632,7 @@
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& OptDomCmpFacts)]
   [facts : (& facts OptBoundsFacts)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [block-id : i64]
   [raw-idx : (& ir.CompilerIrValue)]
   [idx : (& ir.CompilerIrValue)]
@@ -55756,26 +55756,117 @@
           block-id
           bound))]))
 
+;; Defining block id of an SSA var, -1 if it is a function parameter (dominates
+;; every block strictly), or -2 if not single-def / unknown.
+(define (opt-bounds-dom-var-def-block-id
+  [env : (& env OptBoundsDomEnv)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
+  [raw-var : i64]) : i64
+  (let
+    [var : i64 (opt-bounds-dom-resolve-var env.copies raw-var)]
+    (if (not (opt-gvn-stable-var? (& env.sources) var))
+      (- 0 2)
+      (begin
+        (when
+          (and (>= var 0) (< var (array-length len-eq.def-block)))
+          (let
+            [db : i64 (array-ref len-eq.def-block var)]
+            (when (>= db 0) (return db))))
+        (match (opt-bool-branch-def env.defs var)
+          [(Some _ lbl)
+            (match (opt-cfg-index-id (& env.index) lbl)
+              [(Some id) (return id)]
+              [(None) (return (- 0 2))])]
+          [(No) unit])
+        (match (opt-bool-branch-def env.phi-defs var)
+          [(Some _ lbl)
+            (match (opt-cfg-index-id (& env.index) lbl)
+              [(Some id) (return id)]
+              [(None) (return (- 0 2))])]
+          [(No) unit])
+        (match (opt-len-eq-use-def len-eq var)
+          [(Some _ lbl)
+            (match (opt-cfg-index-id (& env.index) lbl)
+              [(Some id) (return id)]
+              [(None) unit])]
+          [(No) unit])
+        (let
+          [bcount : i64 (opt-cfg-index-block-count (& env.index))]
+          (for [bid (iterator.range 0 bcount)]
+            (match (opt-cfg-index-block (& env.index) bid)
+              [(Some (Block _ instrs))
+                (for [pos
+                  (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                  (match (opt-instr-def-var
+                    (ir.compiler-ir-instr-seq-borrow instrs pos))
+                    [(Some dst) (when (= dst var) (return bid))]
+                    [(None) unit]))]
+              [(No) unit]))
+          (- 0 1))))))
+
+;; True when `val` is loop-invariant relative to every enclosing phi block in
+;; `phi-blks[0..phi-len)` (strictly dominates every such block).
+(define (opt-bounds-dom-val-strictly-dom-blks?
+  [env : (& env OptBoundsDomEnv)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
+  [val : (& ir.CompilerIrValue)]
+  [phi-blks : (& (__tl_dyn-array i64))]
+  [phi-len : i64]) : bool
+  (if (<= phi-len 0)
+    true
+    (match val
+      [(or (I64 _) (Global _)) true]
+      [(Var v)
+        (let
+          [db : i64 (opt-bounds-dom-var-def-block-id env len-eq v)]
+          (cond
+            [(= db (- 0 2)) false]
+            [(= db (- 0 1)) true]
+            [else
+              (for [k (iterator.range 0 phi-len)]
+                (let
+                  [pb : i64 (array-ref phi-blks k)]
+                  (when
+                    (or
+                      (= db pb)
+                      (not (opt-dom-info-dominates-id? (& env.doms) db pb)))
+                    (return false))))
+              true]))]
+      [_ false])))
+
 (define (opt-bounds-dom-mask-below-len?
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& OptDomCmpFacts)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [block-id : i64]
   [len-positive? : bool]
   [len : (& len ir.CompilerIrValue)]
-  [m : (& ir.CompilerIrValue)]) : bool
+  [m : (& ir.CompilerIrValue)]
+  [phi-blks : (& (__tl_dyn-array i64))]
+  [phi-len : i64]) : bool
   (or
     (and
       ;; the syntactic form needs it: at len = 0 the mask is -1 and bounds
-      ;; nothing. The fact-based form below does not -- `0 <= m < len` already
-      ;; says `len >= 1`.
+      ;; nothing. For a loop-carried phi, `len` must strictly dominate the
+      ;; phi block so a loop-varying length reloaded on the back-edge is rejected.
       len-positive?
-      (opt-bounds-dom-len-minus-one? env len m))
+      (opt-bounds-dom-len-minus-one? env len m)
+      (opt-bounds-dom-val-strictly-dom-blks? env len-eq len phi-blks phi-len))
     ;; P-B: whole-program verified global bitmask `0 <= @mask < len`,
     ;; `@cap - 1` with `@cap <= len` and `@cap >= 1`, or `s.len - 1` with
-    ;; `s.len <= s.slots.len` and `s.len >= 1`.
-    (opt-len-eq-mask-below-len? env cmp-facts len-eq block-id len m)
+    ;; `s.len <= s.slots.len` and `s.len >= 1` (with strict phi domination).
+    (opt-len-eq-mask-below-len?
+      env
+      cmp-facts
+      len-eq
+      block-id
+      len
+      m
+      phi-blks
+      phi-len)
     (and
+      (opt-bounds-dom-val-strictly-dom-blks? env len-eq len phi-blks phi-len)
+      (opt-bounds-dom-val-strictly-dom-blks? env len-eq m phi-blks phi-len)
       ;; m >= 0
       (or
         (match m
@@ -55806,11 +55897,13 @@
 (define (opt-bounds-dom-masked-value?
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& OptDomCmpFacts)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [block-id : i64]
   [len-positive? : bool]
   [len : (& len ir.CompilerIrValue)]
-  [idx : (& idx ir.CompilerIrValue)]) : bool
+  [idx : (& idx ir.CompilerIrValue)]
+  [phi-blks : (& (__tl_dyn-array i64))]
+  [phi-len : i64]) : bool
   (match idx
     [(Var var)
       (match (opt-bool-branch-def env.defs var)
@@ -55829,7 +55922,9 @@
                     block-id
                     len-positive?
                     len
-                    (& (opt-bounds-dom-resolve env.copies rhs)))
+                    (& (opt-bounds-dom-resolve env.copies rhs))
+                    phi-blks
+                    phi-len)
                   (opt-bounds-dom-mask-below-len?
                     env
                     cmp-facts
@@ -55837,20 +55932,12 @@
                     block-id
                     len-positive?
                     len
-                    (& (opt-bounds-dom-resolve env.copies lhs)))))]
+                    (& (opt-bounds-dom-resolve env.copies lhs))
+                    phi-blks
+                    phi-len)))]
             [_ false])])]
     [_ false]))
 
-;; Every input of the phi masked against this same length. A loop-carried probe
-;; cursor is exactly this shape: the preheader seeds `hash & mask` and the latch
-;; feeds `(cursor + 1) & mask`, so the phi is bounded even though neither the
-;; seed nor the step is loop-invariant. Phi inputs are only ever tested as plain
-;; masked values, so a phi of a phi answers false rather than recursing.
-;; Masked directly, or a phi every input of which is masked against this same
-;; length. `depth` bounds the phi recursion: a loop-carried cursor is commonly a
-;; phi whose input is another phi (one per exit path of the match), and phis can
-;; reference each other cyclically, so the depth counter is what guarantees
-;; termination rather than any structural property of the graph.
 (define (opt-bounds-dom-seen-has?
   [seen : (& (__tl_dyn-array i64))]
   [seen-len : i64]
@@ -55862,13 +55949,14 @@
 (define (opt-bounds-dom-masked-or-phi?
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& OptDomCmpFacts)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [block-id : i64]
   [len-positive? : bool]
   [len : (& len ir.CompilerIrValue)]
   [value : (& ir.CompilerIrValue)]
   [depth : i64]
   [seen : (&mut (__tl_dyn-array i64))]
+  [phi-blks : (&mut (__tl_dyn-array i64))]
   [seen-len : i64]
   [leaf-count : (&mut (__tl_dyn-array i64))]) : bool
   (if (opt-bounds-dom-masked-value?
@@ -55878,7 +55966,9 @@
     block-id
     len-positive?
     len
-    value)
+    value
+    (& phi-blks)
+    seen-len)
     (begin
       (set! (array-ref leaf-count 0) (+ (array-ref leaf-count 0) 1))
       true)
@@ -55892,38 +55982,43 @@
             false
             (match (opt-bool-branch-def env.phi-defs var)
               [(No) false]
-              [(Some instr _)
+              [(Some instr phi-label)
                 (match instr
                   [(Phi _ inputs ty)
                     (if (not (opt-integer-type? ty))
                       false
-                      (begin
-                        (set! (array-ref seen seen-len) var)
-                        (opt-bounds-dom-phi-inputs-masked?
-                          env
-                          cmp-facts
-                          len-eq
-                          block-id
-                          len-positive?
-                          len
-                          inputs
-                          (- depth 1)
-                          seen
-                          (+ seen-len 1)
-                          leaf-count)))]
+                      (match (opt-cfg-index-id (& env.index) phi-label)
+                        [(None) false]
+                        [(Some pb)
+                          (set! (array-ref seen seen-len) var)
+                          (set! (array-ref phi-blks seen-len) pb)
+                          (opt-bounds-dom-phi-inputs-masked?
+                            env
+                            cmp-facts
+                            len-eq
+                            block-id
+                            len-positive?
+                            len
+                            inputs
+                            (- depth 1)
+                            seen
+                            phi-blks
+                            (+ seen-len 1)
+                            leaf-count)]))]
                   [_ false])])))]
       [_ false])))
 
 (define (opt-bounds-dom-phi-inputs-masked?
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& OptDomCmpFacts)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [block-id : i64]
   [len-positive? : bool]
   [len : (& len ir.CompilerIrValue)]
   [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [depth : i64]
   [seen : (&mut (__tl_dyn-array i64))]
+  [phi-blks : (&mut (__tl_dyn-array i64))]
   [seen-len : i64]
   [leaf-count : (&mut (__tl_dyn-array i64))]) : bool
   (if (<= inputs.len 0)
@@ -55946,6 +56041,7 @@
                   (ir.compiler-ir-clone-value (& input.value))))
               depth
               seen
+              phi-blks
               seen-len
               leaf-count)
             (return false))))
@@ -55954,7 +56050,7 @@
 (define (opt-bounds-dom-mask-in-range?
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& cmp-facts OptDomCmpFacts)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [block-id : i64]
   [raw-idx : (& ir.CompilerIrValue)]
   [raw-len : (& raw-len ir.CompilerIrValue)]) : bool
@@ -55974,6 +56070,7 @@
     [len-positive? : bool
       (opt-bounds-dom-len-positive? env.type-segment-bases cmp-facts len)]
     [seen : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+    [phi-blks : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [leaf-count : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (and
       (opt-bounds-dom-masked-or-phi?
@@ -55986,6 +56083,7 @@
         (& idx)
         6
         (&mut seen)
+        (&mut phi-blks)
         0
         (&mut leaf-count))
       (> (array-ref leaf-count 0) 0))))
@@ -56779,26 +56877,14 @@
     [_ (- 0 1)]))
 
 (defstruct OptLenEqUse
-  (table opt_i64_i64_map.Map)
+  (:lifetimes cells)
+  (table (& cells opt_i64_i64_map.Map))
   (defs (__tl_dyn-array OptBoolBranchDef))
   (on? bool)
   (loops (__tl_dyn-array bool))
-  ;; The LATE slot (opt-len-eq-late-sweep) runs after bce_version has had its
-  ;; chance at every loop, so nothing is left to lose there: the loop set is not
-  ;; computed and in-loop checks are covered like any others. What survives at
-  ;; that point is either a loop the versioner refused outright (calls in the
-  ;; body, over the block/instruction caps, an inner loop already cloned) or a
-  ;; check its clone kept -- both of which P-B can still retire.
   (late? bool)
-  ;; GAP-1's per-var slot table for THIS function: `1 + global symbol id` at
-  ;; the var of every parameter the whole program proved is that global's
-  ;; address in every activation, 0 elsewhere (opt-arg-global-slots). It rides
-  ;; here because bounds_dom already threads this value down to every check it
-  ;; reads. Only the below-the-fixpoint slot
-  ;; (opt-arg-global-final-sweep) is handed a non-empty table; every
-  ;; in-pipeline build passes an empty one.
   (args (__tl_dyn-array i64))
-  (inv OptLenInvariants)
+  (inv (& cells OptLenInvariants))
   (func-id i64)
   (scalar-on? bool)
   (struct-on? bool)
@@ -56808,15 +56894,16 @@
   (first-write-pos (__tl_dyn-array i64))
   (last-write-pos (__tl_dyn-array i64)))
 
-(define (opt-len-eq-use-empty) : OptLenEqUse
+(define (opt-len-eq-use-empty [cells : (& cells OptGlobalCellSummary)]) : (OptLenEqUse
+    cells)
   (OptLenEqUse
-    (opt_i64_i64_map.with-capacity 1)
+    (& cells.len-eq)
     (__tl_make-array OptBoolBranchDef 1)
     false
     (__tl_make-array bool 1)
     false
     (opt-arg-global-slots-empty)
-    (opt-len-invariants-empty)
+    (& cells.len-inv)
     (- 0 1)
     false
     false
@@ -56826,13 +56913,14 @@
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)))
 
-(define (opt-len-eq-use-def [use : (& use OptLenEqUse)] [var : i64]) : OptBoolBranchDef
+(define (opt-len-eq-use-def [use : (& use (OptLenEqUse cells))] [var : i64]) : OptBoolBranchDef
   (if (and (>= var 0) (< var (array-length use.defs)))
     (owned_view.compiler-owned-element-view (& use.defs) var)
     (No)))
 
 (define (opt-len-eq-mem-defs-fill-instrs!
   [defs : (&mut defs (__tl_dyn-array OptBoolBranchDef))]
+  [label : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]) : unit
   (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (let
@@ -56840,7 +56928,7 @@
       (match (& instr)
         [(or (Load dst _ _) (Gep dst _ _ _) (Mov dst (Global _) _))
           (if (and (>= dst 0) (< dst (array-length defs)))
-            (set! (array-ref defs dst) (OptBoolBranchDef.Some instr 0))
+            (set! (array-ref defs dst) (OptBoolBranchDef.Some instr label))
             unit)]
         [_ unit])
       unit)))
@@ -56852,8 +56940,108 @@
     [(slice) unit]
     [(slice block & rest)
       (match block
-        [(Block _ instrs) (opt-len-eq-mem-defs-fill-instrs! defs (& instrs))])
+        [(Block label instrs)
+          (opt-len-eq-mem-defs-fill-instrs! defs label (& instrs))])
       (opt-len-eq-mem-defs-fill-blocks! defs rest)]))
+
+(define (opt-blocks-has-bounds-check? [blocks : (& ir.CompilerIrBlockList)]) : bool
+  (match blocks
+    [(Array seq)
+      (for [b (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-borrow seq b)
+          [(Block _ instrs)
+            (for [p (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+              (match (ir.compiler-ir-instr-seq-borrow instrs p)
+                [(BoundsCheck _ _ _) (return true)]
+                [_ unit]))]))
+      false]))
+
+;; Quick gate: does this function mention any struct admitted in `inv.struct-fits`?
+(define (opt-len-eq-func-mentions-struct?
+  [type-segment-bases : i64]
+  [cells : (& OptGlobalCellSummary)]
+  [name : i64]
+  [use-arg-global? : bool]
+  [params : (& ir.CompilerIrParamSeq)]
+  [blocks : (& ir.CompilerIrBlockList)]) : bool
+  (let
+    [has-gtypes?
+      (> (opt_i64_i64_map.len (& cells.len-inv.global-struct-types)) 0)]
+    (for [i (iterator.range 0 (ir.compiler-ir-param-seq-count params))]
+      (match (ir.compiler-ir-param-seq-borrow params i)
+        [(Param _ ty _)
+          (let
+            [sid : i64 (opt-struct-type-id type-segment-bases ty)]
+            (when
+              (and
+                (>= sid 0)
+                (opt_i64_i64_map.contains? (& cells.len-inv.struct-fits) sid))
+              (return true)))])
+      (when
+        (and use-arg-global? has-gtypes?)
+        (let
+          [g : i64
+            (-
+              (opt_i64_i64_map.get-value-or
+                (& cells.arg-global)
+                (opt-arg-global-key name i)
+                0)
+              1)]
+          (when
+            (and
+              (>= g 0)
+              (opt_i64_i64_map.contains?
+                (& cells.len-inv.global-struct-types)
+                g))
+            (return true)))))
+    (match blocks
+      [(Array seq)
+        (for [b (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq b)
+            [(Block _ instrs)
+              (for [p
+                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                (match (ir.compiler-ir-instr-seq-borrow instrs p)
+                  [(or (Alloc _ ty) (Call _ _ _ ty) (Phi _ _ ty))
+                    (let
+                      [sid : i64 (opt-struct-type-id type-segment-bases ty)]
+                      (when
+                        (and
+                          (>= sid 0)
+                          (opt_i64_i64_map.contains?
+                            (& cells.len-inv.struct-fits)
+                            sid))
+                        (return true)))]
+                  [(Mov _ src ty)
+                    (let
+                      [sid : i64 (opt-struct-type-id type-segment-bases ty)]
+                      (when
+                        (and
+                          (>= sid 0)
+                          (opt_i64_i64_map.contains?
+                            (& cells.len-inv.struct-fits)
+                            sid))
+                        (return true)))
+                    (when
+                      has-gtypes?
+                      (match src
+                        [(Global g)
+                          (when
+                            (opt_i64_i64_map.contains?
+                              (& cells.len-inv.global-struct-types)
+                              (ir.compiler-ir-symbol-id g))
+                            (return true))]
+                        [_ unit]))]
+                  [(Gep _ (Global g) _ _)
+                    (when
+                      (and
+                        has-gtypes?
+                        (opt_i64_i64_map.contains?
+                          (& cells.len-inv.global-struct-types)
+                          (ir.compiler-ir-symbol-id g)))
+                      (return true))]
+                  [_ unit]))]))])
+    false))
 
 (define (opt-len-eq-struct-types-fill!
   [type-segment-bases : i64]
@@ -56869,7 +57057,7 @@
       (match (ir.compiler-ir-param-seq-borrow params i)
         [(Param _ ty var)
           (let
-            [sid : i64 (opt-struct-type-id type-segment-bases (& ty))]
+            [sid : i64 (opt-struct-type-id type-segment-bases ty)]
             (when
               (and
                 (>= var 0)
@@ -56877,74 +57065,92 @@
                 (>= sid 0)
                 (opt_i64_i64_map.contains? (& inv.struct-fits) sid))
               (set! (array-ref out var) sid)))]))
-    (for [_pass (iterator.range 0 2)]
-      (match blocks
-        [(Array seq)
-          (for [b (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-            (match (ir.compiler-ir-block-seq-borrow seq b)
-              [(Block _ instrs)
-                (for [p
-                  (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-                  (match (ir.compiler-ir-instr-seq-borrow instrs p)
-                    [(or (Alloc dst ty) (Call dst _ _ ty) (Phi dst _ ty))
-                      (let
-                        [sid : i64
-                          (opt-struct-type-id type-segment-bases (& ty))]
+    (let
+      [changed? : bool true]
+      [round : i64 0]
+      (while (and changed? (< round 8))
+        (set! changed? false)
+        (+= round 1)
+        (match blocks
+          [(Array seq)
+            (for [b (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+              (match (ir.compiler-ir-block-seq-borrow seq b)
+                [(Block _ instrs)
+                  (for [p
+                    (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                    (match (ir.compiler-ir-instr-seq-borrow instrs p)
+                      [(or (Alloc dst ty) (Call dst _ _ ty) (Phi dst _ ty))
+                        (let
+                          [sid : i64 (opt-struct-type-id type-segment-bases ty)]
+                          (when
+                            (and
+                              (>= dst 0)
+                              (< dst n)
+                              (>= sid 0)
+                              (< (array-ref out dst) 0)
+                              (opt_i64_i64_map.contains?
+                                (& inv.struct-fits)
+                                sid))
+                            (set! (array-ref out dst) sid)
+                            (set! changed? true)))]
+                      [(Mov dst src ty)
+                        (when
+                          (and (>= dst 0) (< dst n) (< (array-ref out dst) 0))
+                          (let
+                            [sid : i64
+                              (opt-struct-type-id type-segment-bases ty)]
+                            (if (and
+                              (>= sid 0)
+                              (opt_i64_i64_map.contains?
+                                (& inv.struct-fits)
+                                sid))
+                              (begin
+                                (set! (array-ref out dst) sid)
+                                (set! changed? true))
+                              (match src
+                                [(Global g)
+                                  (let
+                                    [gsid : i64
+                                      (opt_i64_i64_map.get-value-or
+                                        (& inv.global-struct-types)
+                                        (ir.compiler-ir-symbol-id g)
+                                        (- 0 1))]
+                                    (when
+                                      (>= gsid 0)
+                                      (set! (array-ref out dst) gsid)
+                                      (set! changed? true)))]
+                                [(Var sv)
+                                  (when
+                                    (and
+                                      (>= sv 0)
+                                      (< sv n)
+                                      (>= (array-ref out sv) 0))
+                                    (set!
+                                      (array-ref out dst)
+                                      (array-ref out sv))
+                                    (set! changed? true))]
+                                [_ unit]))))]
+                      [(AddrOf dst src _)
                         (when
                           (and
                             (>= dst 0)
                             (< dst n)
-                            (>= sid 0)
-                            (opt_i64_i64_map.contains? (& inv.struct-fits) sid))
-                          (set! (array-ref out dst) sid)))]
-                    [(Mov dst src ty)
-                      (when
-                        (and (>= dst 0) (< dst n))
-                        (let
-                          [sid : i64
-                            (opt-struct-type-id type-segment-bases (& ty))]
-                          (if (and
-                            (>= sid 0)
-                            (opt_i64_i64_map.contains? (& inv.struct-fits) sid))
-                            (set! (array-ref out dst) sid)
-                            (match (& src)
-                              [(Global g)
-                                (let
-                                  [gsid : i64
-                                    (opt_i64_i64_map.get-value-or
-                                      (& inv.global-struct-types)
-                                      (ir.compiler-ir-symbol-id g)
-                                      (- 0 1))]
-                                  (when
-                                    (>= gsid 0)
-                                    (set! (array-ref out dst) gsid)))]
-                              [(Var sv)
-                                (when
-                                  (and
-                                    (>= sv 0)
-                                    (< sv n)
-                                    (>= (array-ref out sv) 0))
-                                  (set! (array-ref out dst) (array-ref out sv)))]
-                              [_ unit]))))]
-                    [(AddrOf dst src _)
-                      (when
-                        (and
-                          (>= dst 0)
-                          (< dst n)
-                          (>= src 0)
-                          (< src n)
-                          (>= (array-ref out src) 0))
-                        (set! (array-ref out dst) (array-ref out src)))]
-                    [_ unit]))]))]))))
+                            (< (array-ref out dst) 0)
+                            (>= src 0)
+                            (< src n)
+                            (>= (array-ref out src) 0))
+                          (set! (array-ref out dst) (array-ref out src))
+                          (set! changed? true))]
+                      [_ unit]))]))])))))
 
 (define (opt-len-eq-use-build
   [type-segment-bases : i64]
-  [cells : (& OptGlobalCellSummary)]
+  [cells : (& cells OptGlobalCellSummary)]
   [name : i64]
   [frame : i64]
   [blocks : (& ir.CompilerIrBlockList)]
   [use-arg-global? : bool]
-  [params : (& ir.CompilerIrParamSeq)]) : OptLenEqUse
+  [params : (& ir.CompilerIrParamSeq)]) : (OptLenEqUse cells)
   (opt-len-eq-use-build-slot
     type-segment-bases
     cells
@@ -56958,12 +57164,12 @@
 ;; The late twin: the loop set is withdrawn (see OptLenEqUse's `late?`).
 (define (opt-len-eq-use-build-late
   [type-segment-bases : i64]
-  [cells : (& OptGlobalCellSummary)]
+  [cells : (& cells OptGlobalCellSummary)]
   [name : i64]
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [use-arg-global? : bool]
-  [params : (& ir.CompilerIrParamSeq)]) : OptLenEqUse
+  [params : (& ir.CompilerIrParamSeq)]) : (OptLenEqUse cells)
   (opt-len-eq-use-build-slot
     type-segment-bases
     cells
@@ -56976,13 +57182,13 @@
 
 (define (opt-len-eq-use-build-slot
   [type-segment-bases : i64]
-  [cells : (& OptGlobalCellSummary)]
+  [cells : (& cells OptGlobalCellSummary)]
   [name : i64]
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [late? : bool]
   [use-arg-global? : bool]
-  [params : (& ir.CompilerIrParamSeq)]) : OptLenEqUse
+  [params : (& ir.CompilerIrParamSeq)]) : (OptLenEqUse cells)
   (let
     [global-on? : bool
       (and
@@ -56996,9 +57202,16 @@
     [struct-on? : bool
       (and
         (> (opt_i64_i64_map.len (& cells.len-inv.struct-fits)) 0)
-        (not (opt_i64_i64_map.contains? (& cells.len-inv.struct-excluded) name)))]
+        (not (opt_i64_i64_map.contains? (& cells.len-inv.struct-excluded) name))
+        (opt-len-eq-func-mentions-struct?
+          type-segment-bases
+          cells
+          name
+          use-arg-global?
+          params
+          blocks))]
     (if (and (not global-on?) (not struct-on?))
-      (opt-len-eq-use-empty)
+      (opt-len-eq-use-empty cells)
       (let
         [size : i64
           (if (> frame 0)
@@ -57022,7 +57235,7 @@
             blocks
             (&mut struct-types)))
         (OptLenEqUse
-          (opt-i64-map-copy-out (& cells.len-eq))
+          (& cells.len-eq)
           defs
           global-on?
           (__tl_make-array bool 1)
@@ -57030,12 +57243,7 @@
           (if use-arg-global?
             (opt-arg-global-slots (& cells.arg-global) name params frame)
             (opt-arg-global-slots-empty))
-          (OptLenInvariants
-            (opt-i64-map-copy-out (& cells.len-inv.scalar-map))
-            (opt-i64-map-copy-out (& cells.len-inv.scalar-excluded))
-            (opt-i64-map-copy-out (& cells.len-inv.struct-fits))
-            (opt-i64-map-copy-out (& cells.len-inv.struct-excluded))
-            (opt-i64-map-copy-out (& cells.len-inv.global-struct-types)))
+          (& cells.len-inv)
           name
           scalar-on?
           struct-on?
@@ -57123,7 +57331,7 @@
 ;; Element-buffer writes (`store_ptr (gep (load (gep dyn-arr, 0)), idx), _`)
 ;; leave every struct header word intact.
 (define (opt-len-eq-ptr-is-element-buf?
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [addr : (& ir.CompilerIrValue)]
   [depth : i64]) : bool
   (if (<= depth 0)
@@ -57175,7 +57383,7 @@
       [_ false])))
 
 (define (opt-len-eq-instr-may-write-struct?
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(Store name _ _)
@@ -57189,12 +57397,13 @@
         [(or (Pure) (MemoryRead)) false]
         [_ true])]
     [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
-         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCallIndirect _ _ _))
+         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCallIndirect _ _ _)
+         (VectorStore _) (PredicatedStore _) (Syscall _ _))
       true]
     [_ false]))
 
 (define (opt-len-eq-struct-path-clean?
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [doms : (& doms OptDomInfo)]
   [index : (& index OptCfgIndex)]
   [var-a : i64]
@@ -57212,7 +57421,7 @@
       [pa : i64 (array-ref use.def-pos var-a)]
       [pb : i64 (array-ref use.def-pos var-b)]
       [bcount : i64 (array-length use.first-write-pos)]
-      (if (or (< ba 0) (< bb 0) (>= ba bcount) (>= bb bcount))
+      (if (or (< ba 0) (< bb 0) (< pa 0) (< pb 0) (>= ba bcount) (>= bb bcount))
         false
         (if (= ba bb)
           (let
@@ -57303,94 +57512,65 @@
                                 (+= top 1)))))))
                     clean?))))))))))
 
-(define (opt-len-eq-use-with-loops
-  [use : OptLenEqUse]
+(define (opt-len-eq-use-with-loops!
+  [use : (&mut use (OptLenEqUse cells))]
   [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]) : OptLenEqUse
-  (if (and (not use.on?) (not use.struct-on?))
-    use
+  [doms : (& doms OptDomInfo)]) : unit
+  (when
+    (or use.on? use.struct-on?)
     (let
       [frame : i64 (array-length use.defs)]
       [bcount : i64 (opt-cfg-index-block-count index)]
-      [def-block : (__tl_dyn-array i64)
-        (if use.struct-on?
-          (__tl_make-array i64 frame)
-          (__tl_make-array i64 0))]
-      [def-pos : (__tl_dyn-array i64)
-        (if use.struct-on?
-          (__tl_make-array i64 frame)
-          (__tl_make-array i64 0))]
-      [first-write : (__tl_dyn-array i64)
-        (if use.struct-on?
-          (__tl_make-array
-            i64
-            (if (> bcount 0)
-              bcount
-              1))
-          (__tl_make-array i64 0))]
-      [last-write : (__tl_dyn-array i64)
-        (if use.struct-on?
-          (__tl_make-array
-            i64
-            (if (> bcount 0)
-              bcount
-              1))
-          (__tl_make-array i64 0))]
       (when
         use.struct-on?
-        (for [i (iterator.range 0 frame)]
-          (set! (array-ref def-block i) (- 0 1))
-          (set! (array-ref def-pos i) (- 0 1)))
-        (for [bid (iterator.range 0 (array-length first-write))]
-          (set! (array-ref first-write bid) (- 0 1))
-          (set! (array-ref last-write bid) (- 0 1)))
-        (for [bid (iterator.range 0 bcount)]
-          (match (opt-cfg-index-block index bid)
-            [(No) unit]
-            [(Some block)
-              (match block
-                [(Block _ instrs)
-                  (for [pos
-                    (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-                    (let
-                      [instr (ir.compiler-ir-instr-seq-borrow instrs pos)]
-                      (when
-                        (opt-len-eq-instr-may-write-struct? (& use) instr)
+        (let
+          [def-block : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [def-pos : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+          [wsize : i64
+            (if (> bcount 0)
+              bcount
+              1)]
+          [first-write : (__tl_dyn-array i64) (__tl_make-array i64 wsize)]
+          [last-write : (__tl_dyn-array i64) (__tl_make-array i64 wsize)]
+          (for [i (iterator.range 0 frame)]
+            (set! (array-ref def-block i) (- 0 1))
+            (set! (array-ref def-pos i) (- 0 1)))
+          (for [bid (iterator.range 0 wsize)]
+            (set! (array-ref first-write bid) (- 0 1))
+            (set! (array-ref last-write bid) (- 0 1)))
+          (for [bid (iterator.range 0 bcount)]
+            (match (opt-cfg-index-block index bid)
+              [(No) unit]
+              [(Some blk)
+                (match blk
+                  [(Block _ instrs)
+                    (for [pos
+                      (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                      (let
+                        [instr (ir.compiler-ir-instr-seq-borrow instrs pos)]
                         (when
-                          (< (array-ref first-write bid) 0)
-                          (set! (array-ref first-write bid) pos))
-                        (set! (array-ref last-write bid) pos))
-                      (match (opt-instr-def-var instr)
-                        [(Some dst)
+                          (opt-len-eq-instr-may-write-struct? (& use) instr)
                           (when
-                            (and (>= dst 0) (< dst frame))
-                            (set! (array-ref def-block dst) bid)
-                            (set! (array-ref def-pos dst) pos))]
-                        [(None) unit])))])])))
-      (let
-        [loops : (__tl_dyn-array bool)
-          (if use.late?
-            use.loops
-            (opt-len-eq-loop-blocks index doms))]
-        (OptLenEqUse
-          use.table
-          use.defs
-          use.on?
-          loops
-          use.late?
-          use.args
-          use.inv
-          use.func-id
-          use.scalar-on?
-          use.struct-on?
-          use.struct-types
-          def-block
-          def-pos
-          first-write
-          last-write)))))
+                            (< (array-ref first-write bid) 0)
+                            (set! (array-ref first-write bid) pos))
+                          (set! (array-ref last-write bid) pos))
+                        (match (opt-instr-def-var instr)
+                          [(Some dst)
+                            (when
+                              (and (>= dst 0) (< dst frame))
+                              (set! (array-ref def-block dst) bid)
+                              (set! (array-ref def-pos dst) pos))]
+                          [(None) unit])))])]))
+          (set! use.def-block def-block)
+          (set! use.def-pos def-pos)
+          (set! use.first-write-pos first-write)
+          (set! use.last-write-pos last-write)))
+      (unless use.late? (set! use.loops (opt-len-eq-loop-blocks index doms))))))
 
 ;; May the LE relation be read for a check in this block?
-(define (opt-len-eq-usable-at? [use : (& use OptLenEqUse)] [block-id : i64]) : bool
+(define (opt-len-eq-usable-at?
+  [use : (& use (OptLenEqUse cells))]
+  [block-id : i64]) : bool
   (and
     use.on?
     (or
@@ -57403,7 +57583,7 @@
 ;; `bce_version` still gets first crack at versionable loops, and fire freely
 ;; everywhere in `late?`.
 (define (opt-len-eq-struct-usable-at?
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [block-id : i64]) : bool
   (and
     use.struct-on?
@@ -57420,7 +57600,7 @@
 ;; The object a `load (gep base, word)` reads out of, or No.
 (define (opt-len-eq-loaded-word
   [type-segment-bases : i64]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [value : (& ir.CompilerIrValue)]
   [word : i64]) : OptLenEqBase
@@ -57460,7 +57640,7 @@
 
 ;; Resolve the raw descriptor itself or a typed move of its handle.
 (define (opt-len-eq-raw-base
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [value : (& ir.CompilerIrValue)]) : i64
   (let
@@ -57484,7 +57664,7 @@
 ;; The global whose descriptor this length value measures, or -1.
 (define (opt-len-eq-slots-global
   [type-segment-bases : i64]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [value : (& ir.CompilerIrValue)]) : i64
   (if (not use.on?)
@@ -57516,7 +57696,7 @@
 ;; opt-len-eq-slots-global.
 (define (opt-len-eq-field-global
   [type-segment-bases : i64]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [value : (& ir.CompilerIrValue)]) : i64
   (if (not use.on?)
@@ -57533,7 +57713,7 @@
 ;; guard conjunct.
 (define (opt-len-eq-facts-cover?
   [type-segment-bases : i64]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [facts : (& facts OptBoundsFacts)]
   [block-id : i64]
@@ -57561,7 +57741,7 @@
 
 (define (opt-len-eq-facts-scan?
   [type-segment-bases : i64]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [facts : (& facts OptBoundsFacts)]
   [index : (& ir.CompilerIrValue)]
@@ -57592,7 +57772,7 @@
 
 ;; Resolve a scalar value to a global symbol id (direct Global or Mov of Global).
 (define (opt-len-eq-scalar-global
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [value : (& ir.CompilerIrValue)]) : i64
   (match value
@@ -57611,7 +57791,7 @@
 ;; The struct type symbol id of a base value (var or global) if admitted in
 ;; `struct-fits`, else -1.
 (define (opt-len-eq-base-struct-id
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [base : (& ir.CompilerIrValue)]) : i64
   (match base
@@ -57642,7 +57822,7 @@
 
 ;; Canonical equality of two struct base values (resolving Movs and arg-global).
 (define (opt-len-eq-same-struct-base?
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [a : (& ir.CompilerIrValue)]
   [b : (& ir.CompilerIrValue)]) : bool
@@ -57688,7 +57868,7 @@
   [type-segment-bases : i64]
   [doms : (& doms OptDomInfo)]
   [index : (& index OptCfgIndex)]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [block-id : i64]
   [bound : (& ir.CompilerIrValue)]
@@ -57754,7 +57934,7 @@
 ;; from global scalar-to-length invariants `len-inv.scalar-map`.
 (define (opt-len-eq-scalar-relates?
   [type-segment-bases : i64]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [block-id : i64]
   [bound : (& ir.CompilerIrValue)]
@@ -57764,7 +57944,7 @@
     false
     (let
       [global : i64 (opt-len-eq-slots-global type-segment-bases use copies len)]
-      [family : i64 (opt-len-eq-family-of (& use.table) global)]
+      [family : i64 (opt-len-eq-family-of use.table global)]
       (if (<= family 0)
         false
         (let
@@ -57782,13 +57962,18 @@
 ;;   (1) `m` is a verified global bitmask (`0 <= @mask < len`)
 ;;   (2) `m = bound - 1` where `bound <= len` (via `@cap <= @arr.len` or
 ;;       `s.len <= s.slots.len`) and `bound >= 1` is proven in scope.
+;; For loop-carried phis (`phi-len > 0`), struct-based bounds require both
+;; `len` (`s.slots.len`) and `base-val` (`s.len`) to strictly dominate every
+;; enclosing phi block so back-edge writes/reloads cannot invalidate the mask.
 (define (opt-len-eq-mask-base-ok?
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& OptDomCmpFacts)]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [block-id : i64]
   [len : (& ir.CompilerIrValue)]
-  [base-val : (& ir.CompilerIrValue)]) : bool
+  [base-val : (& ir.CompilerIrValue)]
+  [phi-blks : (& (__tl_dyn-array i64))]
+  [phi-len : i64]) : bool
   (and
     (or
       (opt-len-eq-scalar-relates?
@@ -57799,24 +57984,34 @@
         base-val
         len
         false)
-      (opt-len-eq-struct-bound-le-len?
-        env.type-segment-bases
-        (& env.doms)
-        (& env.index)
-        use
-        env.copies
-        block-id
-        base-val
-        len))
+      (and
+        (opt-bounds-dom-val-strictly-dom-blks? env use len phi-blks phi-len)
+        (opt-bounds-dom-val-strictly-dom-blks?
+          env
+          use
+          base-val
+          phi-blks
+          phi-len)
+        (opt-len-eq-struct-bound-le-len?
+          env.type-segment-bases
+          (& env.doms)
+          (& env.index)
+          use
+          env.copies
+          block-id
+          base-val
+          len)))
     (opt-bounds-dom-len-positive-with-nonneg? env cmp-facts block-id base-val)))
 
 (define (opt-len-eq-mask-below-len?
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& OptDomCmpFacts)]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [block-id : i64]
   [len : (& ir.CompilerIrValue)]
-  [m : (& ir.CompilerIrValue)]) : bool
+  [m : (& ir.CompilerIrValue)]
+  [phi-blks : (& (__tl_dyn-array i64))]
+  [phi-len : i64]) : bool
   (or
     (opt-len-eq-scalar-relates?
       env.type-segment-bases
@@ -57847,7 +58042,9 @@
                         use
                         block-id
                         len
-                        lhs)]
+                        lhs
+                        phi-blks
+                        phi-len)]
                     [(and
                         (opt-binop-eq op (& (Add)))
                         (match rhs
@@ -57859,7 +58056,9 @@
                         use
                         block-id
                         len
-                        lhs)]
+                        lhs
+                        phi-blks
+                        phi-len)]
                     [(and
                         (opt-binop-eq op (& (Add)))
                         (match lhs
@@ -57871,7 +58070,9 @@
                         use
                         block-id
                         len
-                        rhs)]
+                        rhs
+                        phi-blks
+                        phi-len)]
                     [else false]))]
               [_ false])])]
       [_ false])))
@@ -57881,7 +58082,7 @@
 ;; `le s.len, s.slots.len` (and their reversed `ge`/`gt` forms) to `true`.
 (define (opt-len-eq-compare-le-ok?
   [env : (& env OptBoundsDomEnv)]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [block-id : i64]
   [lo : (& ir.CompilerIrValue)]
   [hi : (& ir.CompilerIrValue)]) : bool
@@ -57906,7 +58107,7 @@
 
 (define (opt-len-eq-compare-verdict
   [env : (& env OptBoundsDomEnv)]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [block-id : i64]
   [op : (& ir.CompilerIrBinOp)]
   [lhs : (& ir.CompilerIrValue)]
@@ -57957,7 +58158,7 @@
   [type-segment-bases : i64]
   [doms : (& doms OptDomInfo)]
   [index : (& index OptCfgIndex)]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [cmp-facts : (& OptDomCmpFacts)]
   [block-id : i64]
@@ -57990,7 +58191,7 @@
   [type-segment-bases : i64]
   [doms : (& doms OptDomInfo)]
   [index : (& index OptCfgIndex)]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [all : (& OptDomCmpFacts)]
   [facts : (& OptDomCmpFacts)]
@@ -58038,7 +58239,7 @@
   [type-segment-bases : i64]
   [doms : (& doms OptDomInfo)]
   [index : (& index OptCfgIndex)]
-  [use : (& use OptLenEqUse)]
+  [use : (& use (OptLenEqUse cells))]
   [copies : (& copies opt_i64_i64_map.Map)]
   [all : (& OptDomCmpFacts)]
   [block-id : i64]
@@ -58188,7 +58389,7 @@
   [cmp-facts : OptDomCmpFacts]
   [facts : OptBoundsFacts]
   [slice-lengths : (& slice-lengths opt_i64_i64_map.Map)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]) : OptBoundsDomWalk
   ;; Retain-only walk (drops bounds checks a dominating check/comparison already
@@ -59271,7 +59472,7 @@
 ;; same treatment on the condition operand itself (see above).
 (define (opt-bounds-dom-fold-compare
   [env : (& env OptBoundsDomEnv)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [block-id : i64]
   [cmp-facts : (& OptDomCmpFacts)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
@@ -59979,7 +60180,7 @@
   [env : (& env OptBoundsDomEnv)]
   [children : (& children OptCfgCsr)]
   [slice-lengths : (& slice-lengths opt_i64_i64_map.Map)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [range : (& range OptRangeMergeState)]
   [cmp-facts : (& OptDomCmpFacts)]
   [facts : (& OptBoundsFacts)]
@@ -60091,7 +60292,7 @@
   [env : (& env OptBoundsDomEnv)]
   [children : (& children OptCfgCsr)]
   [slice-lengths : (& slice-lengths opt_i64_i64_map.Map)]
-  [len-eq : (& len-eq OptLenEqUse)]
+  [len-eq : (& len-eq (OptLenEqUse cells))]
   [range : (& range OptRangeMergeState)]
   [cmp-facts : (& OptDomCmpFacts)]
   [facts : (& OptBoundsFacts)]
@@ -60137,15 +60338,19 @@
   [params : (& ir.CompilerIrParamSeq)]
   [frame : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
-  (match (opt-bounds-dom-blocks-with-context-result
-    type-segment-bases
-    (owned_view.compiler-owned-reference-shared-view context)
-    params
-    frame
-    (& (opt_i64_i64_map.with-capacity 1))
-    (& (opt-len-eq-use-empty))
-    blocks)
-    [(Result result _) result]))
+  (let
+    [empty-cells : OptGlobalCellSummary (opt-global-cell-summary-empty)]
+    [empty-use : (OptLenEqUse empty-cells)
+      (opt-len-eq-use-empty (& empty-cells))]
+    (match (opt-bounds-dom-blocks-with-context-result
+      type-segment-bases
+      (owned_view.compiler-owned-reference-shared-view context)
+      params
+      frame
+      (& (opt_i64_i64_map.with-capacity 1))
+      (&mut empty-use)
+      blocks)
+      [(Result result _) result])))
 
 ;; --- flag values a dominating branch decided ---------------------------------
 ;;
@@ -60544,7 +60749,7 @@
   [params : (& ir.CompilerIrParamSeq)]
   [frame : i64]
   [nonneg : (& opt_i64_i64_map.Map)]
-  [len-eq : (& OptLenEqUse)]
+  [len-eq : (&mut use (OptLenEqUse cells))]
   [blocks : (& ir.CompilerIrBlockList)]) : OptBoundsDomResult
   (let
     [flagged : ir.CompilerIrBlockList
@@ -60579,7 +60784,7 @@
   [params : (& ir.CompilerIrParamSeq)]
   [frame : i64]
   [nonneg : opt_i64_i64_map.Map]
-  [len-eq : (& OptLenEqUse)]
+  [len-eq : (&mut use (OptLenEqUse cells))]
   [blocks : (& ir.CompilerIrBlockList)]) : OptBoundsDomResult
   (let
     [_addr-taken : unit (opt-addr-taken-refresh! frame blocks)]
@@ -60661,11 +60866,7 @@
         (compiler-opt-global-shared-view next-var))]
     ;; The loop set is a property of THIS function's CFG, so it is computed
     ;; where the topology context is, not where the table was built.
-    [len-eq-blocks : OptLenEqUse
-      (opt-len-eq-use-with-loops
-        (owned_view.compiler-owned-reference-shared-view len-eq)
-        index
-        doms)]
+    (opt-len-eq-use-with-loops! len-eq (& index) (& doms))
     (opt-cfg-index-refresh-blocks! (& index) blocks)
     ;; Decide every derived value at its own definition site first; the walk
     ;; below reads the answers wherever it needs them.
@@ -60677,7 +60878,7 @@
             env
             children
             slice-lengths
-            len-eq-blocks
+            (& len-eq)
             range
             (& (Nil))
             (& (Nil))
@@ -60710,43 +60911,45 @@
 ;; function that may itself reset one, `on?` is false and nothing happens.
 (define (opt-len-eq-late-sweep
   [type-segment-bases : i64]
-  [cells : (& OptGlobalCellSummary)]
+  [cells : (& cells OptGlobalCellSummary)]
   [use-arg-global? : bool]
   [context : (& OptCfgContext)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
     [(Function name params ret-ty frame blocks function-abi)
-      (let
-        [use : OptLenEqUse
-          (opt-len-eq-use-build-late
-            type-segment-bases
-            cells
-            (ir.compiler-ir-symbol-id name)
-            frame
-            blocks
-            use-arg-global?
-            (& params))]
-        (if (or
-          (and (not use.on?) (not use.struct-on?))
-          (not
-            (opt-verify-ok?
-              (&
-                (opt-verify-at
-                  "entry.len_eq"
-                  (opt-verify-post
+      (if (not (opt-blocks-has-bounds-check? (& blocks)))
+        func
+        (let
+          [use : (OptLenEqUse cells)
+            (opt-len-eq-use-build-late
+              type-segment-bases
+              cells
+              (ir.compiler-ir-symbol-id name)
+              frame
+              (& blocks)
+              use-arg-global?
+              (& params))]
+          (if (or
+            (and (not use.on?) (not use.struct-on?))
+            (not
+              (opt-verify-ok?
+                (&
+                  (opt-verify-at
                     "entry.len_eq"
-                    (opt-verify-function-with-context func context)))))))
-          func
-          (match (opt-bounds-dom-blocks-with-context-result
-            type-segment-bases
-            (owned_view.compiler-owned-reference-shared-view context)
-            (& params)
-            frame
-            (& cells.nonneg)
-            (& use)
-            (& blocks))
-            [(Result out out-frame)
-              (Function name params ret-ty out-frame out function-abi)])))]))
+                    (opt-verify-post
+                      "entry.len_eq"
+                      (opt-verify-function-with-context func context)))))))
+            func
+            (match (opt-bounds-dom-blocks-with-context-result
+              type-segment-bases
+              (owned_view.compiler-owned-reference-shared-view context)
+              (& params)
+              frame
+              (& cells.nonneg)
+              (&mut use)
+              (& blocks))
+              [(Result out out-frame)
+                (Function name params ret-ty out-frame out function-abi)]))))]))
 
 ;; --- proven-safe div/rem guard elision --------------------------------------
 ;;
@@ -105262,13 +105465,8 @@
               (opt-verify-post
                 "entry.bounds_dom"
                 (opt-verify-function-with-context ssa s.ctx)))))
-          (match (opt-bounds-dom-blocks-with-context-result
-            type-segment-bases
-            (opt-pass-ctx s)
-            (& (opt-pass-params s))
-            gvn-frame
-            (& summaries.global-cell.nonneg)
-            (&
+          (let
+            [len-eq-use
               (opt-len-eq-use-build
                 type-segment-bases
                 (& summaries.global-cell)
@@ -105281,10 +105479,17 @@
                 ;; GAP-1's facts are NOT read here; see opt-arg-global-final-sweep
                 ;; for why they belong below the fixpoint.
                 false
-                (& (opt-pass-params s))))
-            (& (opt-pass-blocks s)))
-            [(Result blocks frame)
-              (opt-pass-with-frame-blocks frame (& blocks) s)])
+                (& (opt-pass-params s)))]
+            (match (opt-bounds-dom-blocks-with-context-result
+              type-segment-bases
+              (opt-pass-ctx s)
+              (& (opt-pass-params s))
+              gvn-frame
+              (& summaries.global-cell.nonneg)
+              (&mut len-eq-use)
+              (& (opt-pass-blocks s)))
+              [(Result blocks frame)
+                (opt-pass-with-frame-blocks frame (& blocks) s)]))
           s))]
     [s
       (opt-stage
@@ -124827,13 +125032,15 @@
             facts.disq
             capacity
             (& summaries.call-memory))]
-        [cell : OptGlobalCellSummary
-          (opt-global-cell-summary-build-with-call-memory
+        [cell-built : OptGlobalCellBuildResult
+          (opt-global-cell-summary-build-inner
             type-segment-bases
             globals
             reachable-functions
             facts
-            (compiler-opt-global-shared-view summaries.call-memory))]
+            (compiler-opt-global-shared-view summaries.call-memory)
+            false)]
+        [cell : OptGlobalCellSummary cell-built.cell]
         ;; IAG-2's storage table and GAP-1's call-site facts both start from
         ;; the functions no IR call site accounts for; the walk that finds
         ;; them runs only when one of the two tables is built.
@@ -124870,20 +125077,21 @@
             roots
             cell.len-eq
             capacity))
-        (when
-          (> (opt_i64_i64_map.len (& cell.arg-global)) 0)
-          (set!
-            cell.len-inv
-            (opt-len-invariants-build
-              type-segment-bases
-              globals
-              reachable-functions
-              (& facts.index)
-              (& cell.addr-taken)
-              (& summaries.call-memory)
-              (& cell.arg-global)
-              (& cell.len-eq)
-              capacity)))
+        ;; Build whole-program length invariants ONCE (after `arg-global`),
+        ;; reusing the `ctors` table already built during `opt-len-eq-build`.
+        (set!
+          cell.len-inv
+          (opt-len-invariants-build
+            type-segment-bases
+            globals
+            reachable-functions
+            (& facts.index)
+            (& cell.addr-taken)
+            (& summaries.call-memory)
+            (& cell.arg-global)
+            (& cell.len-eq)
+            (& cell-built.ctors)
+            capacity))
         (set! summaries.global-cell cell))
       summaries)))
 
@@ -128787,6 +128995,10 @@
             (opt-len-eq-writes-fit? writes member)))))
     out))
 
+(defstruct OptLenEqBuildResult
+  (table opt_i64_i64_map.Map)
+  (ctors opt_i64_i64_map.Map))
+
 (define (opt-len-eq-build-core
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
@@ -128794,7 +129006,7 @@
   [program : (& program OptProgramIndex)]
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
   [call-memory : opt_i64_i64_map.Map]
-  [capacity : i64]) : opt_i64_i64_map.Map
+  [capacity : i64]) : OptLenEqBuildResult
   (let
     [cand : OptGlobalFrozenCandidates
       (opt-global-frozen-candidates-fill
@@ -128806,21 +129018,25 @@
           (opt_i64_i64_map.with-capacity capacity))
         0)]
     (if (= (opt_i64_i64_map.len (& cand.map)) 0)
-      (opt_i64_i64_map.with-capacity 1)
+      (OptLenEqBuildResult
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1))
       (let
         [clean : opt_i64_i64_map.Map
           (opt-len-eq-clean-map program cand.map true capacity)]
         [raw : opt_i64_i64_map.Map
           (opt-len-eq-raw-candidates globals (& cand.map) capacity)]
+        [ctors : opt_i64_i64_map.Map
+          (opt-len-eq-ctors-build
+            type-segment-bases
+            functions
+            (opt_i64_i64_map.with-capacity capacity))]
         [ctx : OptLenEqCtx
           (OptLenEqCtx
             type-segment-bases
             cand.map
             raw
-            (opt-len-eq-ctors-build
-              type-segment-bases
-              functions
-              (opt_i64_i64_map.with-capacity capacity))
+            ctors
             call-memory
             (opt-program-function-set program)
             clean
@@ -128838,26 +129054,32 @@
           (&mut bad)
           functions)
         (if (= (array-ref ctx.writes.count 1) 1)
-          (opt_i64_i64_map.with-capacity 1)
-          (opt-len-eq-assign (& ctx.raw) ctx.writes bad cand.names capacity))))))
+          (OptLenEqBuildResult
+            (opt_i64_i64_map.with-capacity 1)
+            (opt_i64_i64_map.with-capacity 1))
+          (OptLenEqBuildResult
+            (opt-len-eq-assign (& ctx.raw) ctx.writes bad cand.names capacity)
+            ctx.ctors))))))
 
-;; Build the length-equality table in a scratch arena, or decline above
-;; `opt-program-summary-function-limit`.
-(define (opt-len-eq-build
+;; Build the length-equality table (and reuse its `ctors` map) in a scratch arena,
+;; or decline above `opt-program-summary-function-limit`.
+(define (opt-len-eq-build-with-ctors
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : (& functions ir.CompilerIrFunctionSeq)]
   [program : (& program OptProgramIndex)]
   [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
   [call-memory : opt_i64_i64_map.Map]
-  [capacity : i64]) : opt_i64_i64_map.Map
+  [capacity : i64]) : OptLenEqBuildResult
   (if (>
     (opt-function-seq-count functions)
     (opt-program-summary-function-limit))
-    (opt_i64_i64_map.with-capacity 1)
+    (OptLenEqBuildResult
+      (opt_i64_i64_map.with-capacity 1)
+      (opt_i64_i64_map.with-capacity 1))
     (let
       [scratch : i64 (arena.tl_arena_make)]
-      [built : opt_i64_i64_map.Map
+      [built : OptLenEqBuildResult
         (in-arena
           (unsafe
             (arena.Arena scratch))
@@ -128869,10 +129091,34 @@
             addr-taken
             call-memory
             capacity))]
-      [out : opt_i64_i64_map.Map (opt-i64-map-copy-out (& built))]
+      [table : opt_i64_i64_map.Map (opt-i64-map-copy-out (& built.table))]
+      [ctors : opt_i64_i64_map.Map
+        (if (> (opt_i64_i64_map.len (& table)) 0)
+          (opt-i64-map-copy-out (& built.ctors))
+          (opt_i64_i64_map.with-capacity 1))]
       (unsafe
         (arena.tl_arena_destroy scratch))
-      out)))
+      (OptLenEqBuildResult table ctors))))
+
+(define (opt-len-eq-build
+  [type-segment-bases : i64]
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [program : (& program OptProgramIndex)]
+  [addr-taken : (& addr-taken opt_i64_i64_map.Map)]
+  [call-memory : opt_i64_i64_map.Map]
+  [capacity : i64]) : opt_i64_i64_map.Map
+  (let
+    [built : OptLenEqBuildResult
+      (opt-len-eq-build-with-ctors
+        type-segment-bases
+        globals
+        functions
+        program
+        addr-taken
+        call-memory
+        capacity)]
+    built.table))
 
 ;; Functions in which the LE relation may be read: no execution of them writes a
 ;; member's cell, so every length a member's array reports inside one of them
@@ -128886,18 +129132,6 @@
     (opt-len-eq-clean-map program table false capacity)))
 
 ;; --- P-B extensions: global scalar-to-length & struct-field length invariants ---
-;;
-;; Shared helpers for pre-SSA whole-program verification:
-;;   1. GEP root + accumulated byte offset resolution (follows `gep (gep p, 8), 0`).
-;;   2. Single-def `Mov` resolution and literal/value comparison.
-;;   3. Sound loop-exit lower bound (`size = K; while (< size limit) ...` => `size >= K`)
-;;      and single-return helper min-bound summaries.
-;;   4. Checked-loop helper summaries (both tail-recursive and while-loop helpers
-;;      that run `bounds_check i, arr.len` for every `i in [0, N)` with no early exit).
-;;   5. Whole-program struct-field length invariant `S.word1 <= S.word0.len`
-;;      with containment/escape closure and realloc shrink guard.
-;;   6. Whole-program global scalar-to-length invariant `@s <= @a.len` and
-;;      bitmask `0 <= @mask < @a.len` with non-circularity exclusions.
 (defstruct OptLenInvGep
   (ok? bool)
   (is-global? bool)
@@ -129006,11 +129240,7 @@
             [(No) (OptLenInvGep true false v 0)])]
         [_ (opt-len-inv-gep-none)]))))
 
-;; Identify the array/struct base whose length `len-val` loads:
-;;   - `(true, true, global_id)`  if `len-val` loads `@g.slots.len` or raw `@g.len`
-;;   - `(true, false, var_id)`    if `len-val` loads `%v.slots.len` or raw `%v.len`
-;;   `from-word0?` tells whether `slots` was loaded from word 0 of the base (struct)
-;;   versus directly being a raw `(__tl_dyn-array T)`.
+;; Identify the array/struct base whose length `len-val` loads.
 (defstruct OptLenInvTarget
   (ok? bool)
   (is-global? bool)
@@ -129026,42 +129256,32 @@
   (match (opt-len-inv-resolve-val tables len-val 4)
     [(Var v)
       (match (opt-len-eq-def tables v)
-        [(Some instr _)
-          (match (& instr)
-            [(Load _ src _)
-              (let
-                [g1 : OptLenInvGep (opt-len-inv-gep-root tables (& src) 4)]
-                (if (or (not g1.ok?) (not (= g1.offset 8)))
-                  (opt-len-inv-target-none)
-                  (if g1.is-global?
-                    (OptLenInvTarget true true g1.root false)
-                    (match (opt-len-eq-def tables g1.root)
-                      [(Some dinstr _)
-                        (match (& dinstr)
-                          [(Load _ dsrc _)
-                            (let
-                              [g0 : OptLenInvGep
-                                (opt-len-inv-gep-root tables (& dsrc) 4)]
-                              (if (and g0.ok? (= g0.offset 0))
-                                (OptLenInvTarget
-                                  true
-                                  g0.is-global?
-                                  g0.root
-                                  true)
-                                (OptLenInvTarget true false g1.root false)))]
-                          [(Mov _ (Global g) _)
-                            (OptLenInvTarget
-                              true
-                              true
-                              (ir.compiler-ir-symbol-id g)
-                              false)]
-                          [_ (OptLenInvTarget true false g1.root false)])]
-                      [(No) (OptLenInvTarget true false g1.root false)]))))]
-            [_ (opt-len-inv-target-none)])]
-        [(No) (opt-len-inv-target-none)])]
+        [(Some (Load _ src _) _)
+          (let
+            [g1 : OptLenInvGep (opt-len-inv-gep-root tables (& src) 4)]
+            (if (or (not g1.ok?) (not (= g1.offset 8)))
+              (opt-len-inv-target-none)
+              (if g1.is-global?
+                (OptLenInvTarget true true g1.root false)
+                (match (opt-len-eq-def tables g1.root)
+                  [(Some (Load _ dsrc _) _)
+                    (let
+                      [g0 : OptLenInvGep
+                        (opt-len-inv-gep-root tables (& dsrc) 4)]
+                      (if (and g0.ok? (= g0.offset 0))
+                        (OptLenInvTarget true g0.is-global? g0.root true)
+                        (OptLenInvTarget true false g1.root false)))]
+                  [(Some (Mov _ (Global g) _) _)
+                    (OptLenInvTarget
+                      true
+                      true
+                      (ir.compiler-ir-symbol-id g)
+                      false)]
+                  [_ (OptLenInvTarget true false g1.root false)]))))]
+        [_ (opt-len-inv-target-none)])]
     [_ (opt-len-inv-target-none)]))
 
-;; Sound lower bound on a fresh `(__tl_dyn-array T)` var's length, or -1.
+;; Sound lower bound on a fresh `(__tl_dyn-array T)` var's length, or (Unit).
 (define (opt-len-inv-fresh-desc-len
   [tables : (& OptLenEqDefs)]
   [desc : (& ir.CompilerIrValue)]) : ir.CompilerIrValue
@@ -129073,25 +129293,156 @@
         (= (array-ref tables.n1 dv) 1)
         (= (array-ref tables.arg? dv) 0))
         (match (opt-len-eq-def tables dv)
-          [(Some instr _)
-            (match (& instr)
-              [(Call _ name (One (I64 16)) (DynArray _))
-                (if (or
-                  (ir.compiler-ir-symbol-eq?
-                    name
-                    cbi.compiler-builtin-id-tl-alloc)
-                  (ir.compiler-ir-symbol-eq?
-                    name
-                    cbi.compiler-builtin-id-tl-alloc-global))
-                  (opt-len-inv-resolve-val
-                    tables
-                    (& (array-ref tables.w1 dv))
-                    4)
-                  (Unit))]
-              [_ (Unit)])]
-          [(No) (Unit)])
+          [(Some (Call _ name (One (I64 16)) (DynArray _)) _)
+            (if (or
+              (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
+              (ir.compiler-ir-symbol-eq?
+                name
+                cbi.compiler-builtin-id-tl-alloc-global))
+              (opt-len-inv-resolve-val tables (& (array-ref tables.w1 dv)) 4)
+              (Unit))]
+          [_ (Unit)])
         (Unit))]
     [_ (Unit)]))
+
+(define (opt-len-inv-find-block
+  [seq : (& ir.CompilerIrBlockSeq)]
+  [target-lbl : i64]) : i64
+  (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+    (match (ir.compiler-ir-block-seq-borrow seq bi)
+      [(Block lbl _) (when (= lbl target-lbl) (return bi))]))
+  (- 0 1))
+
+(define (opt-len-inv-block-returns?
+  [seq : (& ir.CompilerIrBlockSeq)]
+  [bi : i64]) : bool
+  (if (or (< bi 0) (>= bi (ir.compiler-ir-block-seq-count seq)))
+    false
+    (match (ir.compiler-ir-block-seq-borrow seq bi)
+      [(Block _ instrs)
+        (let
+          [n : i64 (ir.compiler-ir-instr-seq-count instrs)]
+          (and
+            (> n 0)
+            (match (ir.compiler-ir-instr-seq-borrow instrs (- n 1))
+              [(Return _) true]
+              [_ false])))])))
+
+;; True iff `blk` has exactly one reachable CFG predecessor, equal to `want`.
+(define (opt-len-inv-sole-pred?
+  [index : (& OptCfgIndex)]
+  [blk : i64]
+  [want : i64]) : bool
+  (let
+    [bcount : i64 (opt-cfg-index-block-count index)]
+    (if (or (< blk 0) (>= blk bcount))
+      false
+      (let
+        [found : i64 0]
+        (for [e
+          (iterator.range
+            (array-ref index.preds.offsets blk)
+            (array-ref index.preds.offsets (+ blk 1)))]
+          (let
+            [p : i64 (array-ref index.preds.edges e)]
+            (when
+              (and (>= p 0) (< p bcount) (array-ref index.reachable p))
+              (if (= p want)
+                (+= found 1)
+                (return false)))))
+        (= found 1)))))
+
+;; Match `val == (var op lit)` or `(lit op var)` for i64 `Mul` (`want-mul?=true`)
+;; or `Add` (`want-mul?=false`). Returns `(Some lit)` or `(No)`.
+(define (opt-len-inv-val-is-var?
+  [tables : (& OptLenEqDefs)]
+  [val : (& ir.CompilerIrValue)]
+  [var : i64]) : bool
+  (or
+    (match val
+      [(Var v) (= v var)]
+      [_ false])
+    (match (opt-len-inv-resolve-val tables val 4)
+      [(Var v) (= v var)]
+      [_ false])))
+
+;; Is `idx` this iteration's `iv`? A single-def `iv` may be reached through
+;; copies; a multi-def one only directly or through `iv-copy`, a single-def copy
+;; made in the scanned block before the use (an older copy holds an old `iv`).
+(define (opt-len-inv-iv-at?
+  [tables : (& OptLenEqDefs)]
+  [idx : (& ir.CompilerIrValue)]
+  [iv : i64]
+  [iv-copy : i64]) : bool
+  (match idx
+    [(Var b)
+      (or
+        (= b iv)
+        (= b iv-copy)
+        (and
+          (= (opt-len-eq-def-count tables iv) 1)
+          (opt-len-inv-val-is-var? tables idx iv)))]
+    [_ false]))
+
+;; The single-def copy of `iv` an instruction makes, or `prev`.
+(define (opt-len-inv-iv-copy
+  [tables : (& OptLenEqDefs)]
+  [instr : (& ir.CompilerIrInstr)]
+  [iv : i64]
+  [prev : i64]) : i64
+  (match instr
+    [(Mov md (Var ms) _)
+      (if (and (= ms iv) (= (opt-len-eq-def-count tables md) 1))
+        md
+        prev)]
+    [_ prev]))
+
+(define (opt-len-inv-match-var-op-lit
+  [tables : (& OptLenEqDefs)]
+  [val : (& ir.CompilerIrValue)]
+  [var : i64]
+  [want-mul? : bool]) : OptLenInvLit
+  (match (opt-len-inv-resolve-val tables val 4)
+    [(Var v)
+      (match (opt-len-eq-def tables v)
+        [(Some (BinOp _ op lhs rhs (I64)) _)
+          (let
+            [op-ok? : bool
+              (if want-mul?
+                (opt-binop-eq (& op) (& (Mul)))
+                (opt-binop-eq (& op) (& (Add))))]
+            (cond
+              [(not op-ok?) (No)]
+              [(opt-len-inv-val-is-var? tables (& lhs) var)
+                (opt-len-inv-lit tables (& rhs))]
+              [(opt-len-inv-val-is-var? tables (& rhs) var)
+                (opt-len-inv-lit tables (& lhs))]
+              [else (No)]))]
+        [_ (No)])]
+    [_ (No)]))
+
+(define (opt-len-inv-add1-of?
+  [tables : (& OptLenEqDefs)]
+  [val : (& ir.CompilerIrValue)]
+  [var : i64]) : bool
+  (match (opt-len-inv-match-var-op-lit tables val var false)
+    [(Some 1) true]
+    [_ false]))
+
+(define (opt-len-inv-is-pow2-pos? [k : i64]) : bool
+  (and (>= k 1) (<= k 4611686018427387904) (= (bit-and k (- k 1)) 0)))
+
+(define (opt-len-inv-is-mono-step?
+  [tables : (& OptLenEqDefs)]
+  [val : (& ir.CompilerIrValue)]
+  [v : i64]) : bool
+  (or
+    (match (opt-len-inv-match-var-op-lit tables val v true)
+      [(Some 2) true]
+      [_ false])
+    (match (opt-len-inv-match-var-op-lit tables val v false)
+      [(Some 1) true]
+      [_ false])))
 
 ;; Check whether a block contains an exact `Mov target, lit` (resolving single-def Movs)
 ;; and return `Some k` if its LAST definition of `target` in `blk` is literal `k`.
@@ -129111,94 +129462,345 @@
             [(None) unit])]))
     found))
 
-;; Loop-exit lower bound: for a pre-SSA loop variable `v` (`count[v] == 2`),
-;; if `v` is initialized to literal `K >= 1` in `pre_b` jumping to `hdr_b`,
-;; `hdr_b` branches on `lt v, limit` (with single-def/param/literal `limit`)
-;; to `(body_b, exit_b)`, and the second def of `v` is not in `pre_b` or `exit_b`,
-;; then `v >= K` at `exit_b` and everywhere after.
+;; Defining block index of a single-def var in `seq`, or -1 if param/missing.
+(define (opt-len-inv-def-block [seq : (& ir.CompilerIrBlockSeq)] [var : i64]) : i64
+  (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+    (match (ir.compiler-ir-block-seq-borrow seq bi)
+      [(Block _ instrs)
+        (for [pi (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+          (match (opt-instr-def-var (ir.compiler-ir-instr-seq-borrow instrs pi))
+            [(Some d) (when (= d var) (return bi))]
+            [(None) unit]))]))
+  (- 0 1))
+
+;; True when `val` is a pure, loop-invariant expression with respect to
+;; the 2-block loop `{hdr, body}` (literal, param, single-def outside the loop,
+;; or pure BinOp/Mov/Cast in `hdr` over loop-invariant operands).
+(define (opt-len-inv-pure-loop-inv?
+  [tables : (& OptLenEqDefs)]
+  [seq : (& ir.CompilerIrBlockSeq)]
+  [hdr : i64]
+  [body : i64]
+  [val : (& ir.CompilerIrValue)]
+  [depth : i64]) : bool
+  (if (<= depth 0)
+    false
+    (match val
+      [(I64 _) true]
+      [(Var rv)
+        (let
+          [dc : i64 (opt-len-eq-def-count tables rv)]
+          (cond
+            [(= dc 0) true]
+            [(not (= dc 1)) false]
+            [else
+              (let
+                [db : i64 (opt-len-inv-def-block seq rv)]
+                (cond
+                  [(= db body) false]
+                  [(not (= db hdr)) true]
+                  [else
+                    (match (opt-len-eq-def tables rv)
+                      [(Some (Mov _ s _) _)
+                        (opt-len-inv-pure-loop-inv?
+                          tables
+                          seq
+                          hdr
+                          body
+                          (& s)
+                          (- depth 1))]
+                      [(Some (Cast _ s (I64) (I64)) _)
+                        (opt-len-inv-pure-loop-inv?
+                          tables
+                          seq
+                          hdr
+                          body
+                          (& s)
+                          (- depth 1))]
+                      [(Some (BinOp _ _ l r (I64)) _)
+                        (and
+                          (opt-len-inv-pure-loop-inv?
+                            tables
+                            seq
+                            hdr
+                            body
+                            (& l)
+                            (- depth 1))
+                          (opt-len-inv-pure-loop-inv?
+                            tables
+                            seq
+                            hdr
+                            body
+                            (& r)
+                            (- depth 1)))]
+                      [_ false])]))]))]
+      [_ false])))
+
+;; Sound loop-exit lower bound for both pre-SSA (`dc == 2`) and SSA (`Phi`)
+;; doubling/counting loops:
+;;   v = K (power of 2 in [1, 2^62]);
+;;   while (v < limit) { v = v * 2 (or v + 1); }  // limit pure loop-invariant
+;; Because `exit` has `hdr` as sole predecessor and dominates `use-blk`, and
+;; `body` has sole predecessor `hdr` and jumps unconditionally back to `hdr`:
+;; - If `limit <= K`, loop exits immediately with `v = K >= 1`.
+;; - If `limit > K >= 1` (`limit >= 2 > 0`), `v` cannot exit after wrapping to
+;;   `-2^63` or `0` because both are `< limit` forever!
+;; Check one loop header `hdr` for a sound post-loop lower bound on `v` at `use-blk`.
+;; Requires:
+;;  - `hdr` ends in `Branch (Var cvar) body-lbl exit-lbl` with `cvar = Lt (Var v) limit`
+;;  - `exit-idx` has sole reachable pred `hdr` and dominates `use-blk`
+;;  - `limit` is a pure expression over values dominating `hdr`
+;;  - `body-idx` has sole reachable pred `hdr` and jumps back to `hdr-lbl`
+;;  - `v` starts at positive pow2 `K >= 1` and updates ONLY by monotonic `v * 2` or `v + 1`.
+(define (opt-len-inv-loop-hdr-min
+  [tables : (& OptLenEqDefs)]
+  [doms : (& OptDomInfo)]
+  [seq : (& ir.CompilerIrBlockSeq)]
+  [bcount : i64]
+  [hdr : i64]
+  [v : i64]
+  [use-blk : i64]
+  [is-phi? : bool]) : i64
+  (match (ir.compiler-ir-block-seq-borrow seq hdr)
+    [(Block hdr-lbl hdr-instrs)
+      (let
+        [hlen : i64 (ir.compiler-ir-instr-seq-count hdr-instrs)]
+        (when (< hlen 2) (return (- 0 1)))
+        (match (ir.compiler-ir-instr-seq-borrow hdr-instrs (- hlen 1))
+          [(Branch (Var cvar) body-lbl exit-lbl)
+            (match (ir.compiler-ir-instr-seq-borrow hdr-instrs (- hlen 2))
+              [(BinOp bdst (Lt) (Var lhs) limit (I64))
+                (unless (and (= bdst cvar) (= lhs v)) (return (- 0 1)))
+                (let
+                  [body-idx : i64 (opt-len-inv-find-block seq body-lbl)]
+                  [exit-idx : i64 (opt-len-inv-find-block seq exit-lbl)]
+                  (unless
+                    (and
+                      (>= body-idx 0)
+                      (>= exit-idx 0)
+                      (not (= body-idx hdr))
+                      (not (= exit-idx hdr))
+                      (not (= body-idx exit-idx))
+                      (opt-len-inv-sole-pred? (& doms.index) body-idx hdr)
+                      (opt-len-inv-sole-pred? (& doms.index) exit-idx hdr)
+                      (opt-dom-info-dominates-id? doms exit-idx use-blk)
+                      (opt-len-inv-pure-loop-inv?
+                        tables
+                        seq
+                        hdr
+                        body-idx
+                        limit
+                        4))
+                    (return (- 0 1)))
+                  (match (ir.compiler-ir-block-seq-borrow seq body-idx)
+                    [(Block _ binstrs)
+                      (let
+                        [blen : i64 (ir.compiler-ir-instr-seq-count binstrs)]
+                        (unless
+                          (and
+                            (> blen 0)
+                            (match (ir.compiler-ir-instr-seq-borrow
+                              binstrs
+                              (- blen 1))
+                              [(Jump tgt) (= tgt hdr-lbl)]
+                              [_ false]))
+                          (return (- 0 1))))])
+                  (if is-phi?
+                    (let
+                      [init-k : i64 (- 0 1)]
+                      [has-back? : bool false]
+                      [phi-ok? : bool false]
+                      (for [pi (iterator.range 0 hlen)]
+                        (match (ir.compiler-ir-instr-seq-borrow hdr-instrs pi)
+                          [(Phi pdst inputs (I64))
+                            (when
+                              (and (= pdst v) (> inputs.len 0))
+                              (set! phi-ok? true)
+                              (for [ki (iterator.range 0 inputs.len)]
+                                (match (ir.compiler-ir-phi-input-seq-borrow
+                                  inputs
+                                  ki)
+                                  [(ir.CompilerIrPhiInput pv plbl)
+                                    (if (= plbl body-lbl)
+                                      (if (opt-len-inv-is-mono-step?
+                                        tables
+                                        (& pv)
+                                        v)
+                                        (set! has-back? true)
+                                        (set! phi-ok? false))
+                                      (match (opt-len-inv-lit tables (& pv))
+                                        [(Some k)
+                                          (if (opt-len-inv-is-pow2-pos? k)
+                                            (when
+                                              (or (< init-k 0) (< k init-k))
+                                              (set! init-k k))
+                                            (set! phi-ok? false))]
+                                        [(No) (set! phi-ok? false)]))])))]
+                          [_ unit]))
+                      (if (and phi-ok? has-back? (>= init-k 1))
+                        init-k
+                        (- 0 1)))
+                    (let
+                      [pre-idx : i64 (- 0 1)]
+                      [preds-ok? : bool true]
+                      (for [e
+                        (iterator.range
+                          (array-ref doms.index.preds.offsets hdr)
+                          (array-ref doms.index.preds.offsets (+ hdr 1)))]
+                        (let
+                          [p : i64 (array-ref doms.index.preds.edges e)]
+                          (when
+                            (and
+                              (>= p 0)
+                              (< p bcount)
+                              (array-ref doms.index.reachable p))
+                            (unless
+                              (= p body-idx)
+                              (if (and (< pre-idx 0) (not (= p hdr)))
+                                (set! pre-idx p)
+                                (set! preds-ok? false))))))
+                      (unless (and preds-ok? (>= pre-idx 0)) (return (- 0 1)))
+                      (let
+                        [body-step? : bool false]
+                        [init-k : i64 (- 0 1)]
+                        [total-defs : i64 0]
+                        (for [bi (iterator.range 0 bcount)]
+                          (match (ir.compiler-ir-block-seq-borrow seq bi)
+                            [(Block _ iseq)
+                              (for [pi
+                                (iterator.range
+                                  0
+                                  (ir.compiler-ir-instr-seq-count iseq))]
+                                (match (opt-instr-def-var
+                                  (ir.compiler-ir-instr-seq-borrow iseq pi))
+                                  [(Some d)
+                                    (when
+                                      (= d v)
+                                      (+= total-defs 1)
+                                      (cond
+                                        [(= bi body-idx)
+                                          (match (ir.compiler-ir-instr-seq-borrow
+                                            iseq
+                                            pi)
+                                            [(Mov _ ms _)
+                                              (when
+                                                (opt-len-inv-is-mono-step?
+                                                  tables
+                                                  ms
+                                                  v)
+                                                (set! body-step? true))]
+                                            [(BinOp _ (Mul) l r (I64))
+                                              (when
+                                                (or
+                                                  (and
+                                                    (opt-len-inv-val-is-var?
+                                                      tables
+                                                      l
+                                                      v)
+                                                    (match (opt-len-inv-lit
+                                                      tables
+                                                      r)
+                                                      [(Some 2) true]
+                                                      [_ false]))
+                                                  (and
+                                                    (opt-len-inv-val-is-var?
+                                                      tables
+                                                      r
+                                                      v)
+                                                    (match (opt-len-inv-lit
+                                                      tables
+                                                      l)
+                                                      [(Some 2) true]
+                                                      [_ false])))
+                                                (set! body-step? true))]
+                                            [(BinOp _ (Add) l r (I64))
+                                              (when
+                                                (or
+                                                  (and
+                                                    (opt-len-inv-val-is-var?
+                                                      tables
+                                                      l
+                                                      v)
+                                                    (match (opt-len-inv-lit
+                                                      tables
+                                                      r)
+                                                      [(Some 1) true]
+                                                      [_ false]))
+                                                  (and
+                                                    (opt-len-inv-val-is-var?
+                                                      tables
+                                                      r
+                                                      v)
+                                                    (match (opt-len-inv-lit
+                                                      tables
+                                                      l)
+                                                      [(Some 1) true]
+                                                      [_ false])))
+                                                (set! body-step? true))]
+                                            [_ unit])]
+                                        [(and
+                                            (not (= bi hdr))
+                                            (opt-dom-info-dominates-id?
+                                              doms
+                                              bi
+                                              pre-idx))
+                                          (match (ir.compiler-ir-instr-seq-borrow
+                                            iseq
+                                            pi)
+                                            [(Mov _ ms _)
+                                              (match (opt-len-inv-lit tables ms)
+                                                [(Some k)
+                                                  (when
+                                                    (opt-len-inv-is-pow2-pos? k)
+                                                    (set! init-k k))]
+                                                [(No) unit])]
+                                            [_ unit])]
+                                        [else unit]))]
+                                  [(None) unit]))]))
+                        (if (and (= total-defs 2) body-step? (>= init-k 1))
+                          init-k
+                          (- 0 1))))))]
+              [_ (- 0 1)])]
+          [_ (- 0 1)]))]))
+
 (define (opt-len-inv-loop-exit-min
   [tables : (& OptLenEqDefs)]
   [blocks : (& ir.CompilerIrBlockList)]
-  [v : i64]) : i64
+  [v : i64]
+  [use-blk : i64]
+  [is-phi? : bool]) : i64
   (match blocks
     [(Array seq)
       (let
         [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
-        [best : i64 (- 0 1)]
-        (for [hdr (iterator.range 0 bcount)]
-          (match (ir.compiler-ir-block-seq-borrow seq hdr)
-            [(Block hdr-label hdr-instrs)
-              (let
-                [hlen : i64 (ir.compiler-ir-instr-seq-count hdr-instrs)]
-                (when
-                  (>= hlen 2)
-                  (match (ir.compiler-ir-instr-seq-borrow hdr-instrs (- hlen 1))
-                    [(Branch (Var cvar) _ _)
-                      (match (ir.compiler-ir-instr-seq-borrow
-                        hdr-instrs
-                        (- hlen 2))
-                        [(BinOp bdst (Lt) (Var lhs) rhs (I64))
-                          (when
-                            (and
-                              (= bdst cvar)
-                              (= lhs v)
-                              (match (& rhs)
-                                [(I64 _) true]
-                                [(Var rv)
-                                  (<= (opt-len-eq-def-count tables rv) 1)]
-                                [_ false]))
-                            ;; Find every predecessor jumping to `hdr-label` that
-                            ;; initializes `v` to a literal; every non-latch pred
-                            ;; must agree on >= 1.
-                            (let
-                              [init-k : i64 (- 0 1)]
-                              [ok? : bool true]
-                              (for [pb (iterator.range 0 bcount)]
-                                (unless
-                                  (= pb hdr)
-                                  (match (ir.compiler-ir-block-seq-borrow
-                                    seq
-                                    pb)
-                                    [(Block _ pinstrs)
-                                      (let
-                                        [plen : i64
-                                          (ir.compiler-ir-instr-seq-count
-                                            pinstrs)]
-                                        (when
-                                          (> plen 0)
-                                          (match (ir.compiler-ir-instr-seq-borrow
-                                            pinstrs
-                                            (- plen 1))
-                                            [(Jump target)
-                                              (when
-                                                (= target hdr-label)
-                                                (match (opt-len-inv-block-assign-lit
-                                                  tables
-                                                  (& pinstrs)
-                                                  v)
-                                                  [(Some k)
-                                                    (if (>= k 1)
-                                                      (set!
-                                                        init-k
-                                                        (if (or
-                                                          (< init-k 0)
-                                                          (< k init-k))
-                                                          k
-                                                          init-k))
-                                                      (set! ok? false))]
-                                                  [(No) unit]))]
-                                            [_ unit])))])))
-                              (when (and ok? (>= init-k 1)) (set! best init-k))))]
-                        [_ unit])]
-                    [_ unit])))]))
-        best)]))
+        (when (or (< use-blk 0) (>= use-blk bcount)) (return (- 0 1)))
+        (let
+          [doms : OptDomInfo
+            (opt-cfg-dominators-with
+              (opt-cfg-index-build blocks)
+              (opt-cfg-entry-label blocks))]
+          (for [hdr (iterator.range 0 bcount)]
+            (let
+              [m : i64
+                (opt-len-inv-loop-hdr-min
+                  tables
+                  (& doms)
+                  seq
+                  bcount
+                  hdr
+                  v
+                  use-blk
+                  is-phi?)]
+              (when (>= m 1) (return m))))
+          (- 0 1)))]))
 
-;; Sound lower bound on `val` inside a function, or -1 if unknown.
+;; Sound lower bound on `val` at `use-blk` inside a function, or -1 if unknown.
 (define (opt-len-inv-var-min
   [tables : (& OptLenEqDefs)]
   [blocks : (& ir.CompilerIrBlockList)]
   [ret-min : (& opt_i64_i64_map.Map)]
   [val : (& ir.CompilerIrValue)]
+  [use-blk : i64]
   [depth : i64]) : i64
   (if (<= depth 0)
     (- 0 1)
@@ -129215,157 +129817,43 @@
               (match (opt-len-eq-def tables v)
                 [(Some instr _)
                   (match (& instr)
+                    ;; The copy holds `src` as it was at the copy, so the
+                    ;; source's bound is asked at the copy's block.
                     [(Mov _ src _)
-                      (opt-len-inv-var-min
-                        tables
-                        blocks
-                        ret-min
-                        (& src)
-                        (- depth 1))]
+                      (match blocks
+                        [(Array seq)
+                          (opt-len-inv-var-min
+                            tables
+                            blocks
+                            ret-min
+                            (& src)
+                            (opt-len-inv-def-block seq v)
+                            (- depth 1))])]
                     [(BinOp _ (Add) lhs rhs (I64))
-                      (let
-                        [ml : i64
-                          (opt-len-inv-var-min
-                            tables
-                            blocks
-                            ret-min
-                            (& lhs)
-                            (- depth 1))]
-                        [mr : i64
-                          (opt-len-inv-var-min
-                            tables
-                            blocks
-                            ret-min
-                            (& rhs)
-                            (- depth 1))]
-                        (if (and (>= ml 0) (>= mr 0) (<= (+ ml mr) 1000000))
-                          (+ ml mr)
-                          (- 0 1)))]
+                      ;; Only exact literals (never add unbounded lower bounds under wrap!).
+                      (match (opt-len-inv-lit tables (& lhs))
+                        [(Some kl)
+                          (match (opt-len-inv-lit tables (& rhs))
+                            [(Some kr)
+                              (if (and
+                                (>= kl 0)
+                                (>= kr 0)
+                                (<= kl 1000000)
+                                (<= kr 1000000))
+                                (+ kl kr)
+                                (- 0 1))]
+                            [(No) (- 0 1)])]
+                        [(No) (- 0 1)])]
                     [(Call _ cname _ _)
                       (opt_i64_i64_map.get-value-or
                         ret-min
                         (ir.compiler-ir-symbol-id cname)
                         (- 0 1))]
-                    [(Phi _ inputs (I64))
-                      ;; SSA doubling loop phi `v = phi [K, pre], [v * 2, latch]`
-                      ;; where K > 0 is a power of 2 (every 64-bit multiple of K
-                      ;; by 2 stays >= K until wrap to -2^63 then 0, which never
-                      ;; exits a `lt v, limit` loop when limit > K).
-                      (let
-                        [init-k : i64 (- 0 1)]
-                        [ok? : bool (> inputs.len 0)]
-                        (for [ki (iterator.range 0 inputs.len)]
-                          (when
-                            ok?
-                            (match (ir.compiler-ir-phi-input-seq-borrow
-                              inputs
-                              ki)
-                              [(ir.CompilerIrPhiInput pv _)
-                                (match (opt-len-inv-lit tables (& pv))
-                                  [(Some k)
-                                    (if (and (> k 0) (= (bit-and k (- k 1)) 0))
-                                      (set!
-                                        init-k
-                                        (if (or (< init-k 0) (< k init-k))
-                                          k
-                                          init-k))
-                                      (set! ok? false))]
-                                  [(No)
-                                    (let
-                                      [rv : ir.CompilerIrValue
-                                        (opt-len-inv-resolve-val
-                                          tables
-                                          (& pv)
-                                          4)]
-                                      (match (& rv)
-                                        [(Var rvv)
-                                          (match (opt-len-eq-def tables rvv)
-                                            [(Some minstr _)
-                                              (match (& minstr)
-                                                [(BinOp _ (Mul) ml mr (I64))
-                                                  (let
-                                                    [is-double? : bool
-                                                      (or
-                                                        (and
-                                                          (match (opt-len-inv-resolve-val
-                                                            tables
-                                                            (& ml)
-                                                            4)
-                                                            [(Var lv2)
-                                                              (= lv2 v)]
-                                                            [_ false])
-                                                          (match (opt-len-inv-lit
-                                                            tables
-                                                            (& mr))
-                                                            [(Some 2) true]
-                                                            [_ false]))
-                                                        (and
-                                                          (match (opt-len-inv-resolve-val
-                                                            tables
-                                                            (& mr)
-                                                            4)
-                                                            [(Var rv2)
-                                                              (= rv2 v)]
-                                                            [_ false])
-                                                          (match (opt-len-inv-lit
-                                                            tables
-                                                            (& ml))
-                                                            [(Some 2) true]
-                                                            [_ false])))]
-                                                    (unless
-                                                      is-double?
-                                                      (set! ok? false)))]
-                                                [_ (set! ok? false)])]
-                                            [(No) (set! ok? false)])]
-                                        [_ (set! ok? false)]))])])))
-                        ;; Also require a loop-exit `lt v, limit` branch on `v` so
-                        ;; wrapping through -2^63 -> 0 cannot exit!
-                        (if (and ok? (>= init-k 1))
-                          (let
-                            [has-lt? : bool false]
-                            (match blocks
-                              [(Array seq)
-                                (for [bi
-                                  (iterator.range
-                                    0
-                                    (ir.compiler-ir-block-seq-count seq))]
-                                  (match (ir.compiler-ir-block-seq-borrow
-                                    seq
-                                    bi)
-                                    [(Block _ binstrs)
-                                      (let
-                                        [blen : i64
-                                          (ir.compiler-ir-instr-seq-count
-                                            binstrs)]
-                                        (when
-                                          (>= blen 2)
-                                          (match (ir.compiler-ir-instr-seq-borrow
-                                            binstrs
-                                            (- blen 1))
-                                            [(Branch (Var cvar) _ _)
-                                              (match (ir.compiler-ir-instr-seq-borrow
-                                                binstrs
-                                                (- blen 2))
-                                                [(BinOp
-                                                    bdst
-                                                    (Lt)
-                                                    (Var lhs)
-                                                    _
-                                                    (I64))
-                                                  (when
-                                                    (and
-                                                      (= bdst cvar)
-                                                      (= lhs v))
-                                                    (set! has-lt? true))]
-                                                [_ unit])]
-                                            [_ unit])))]))])
-                            (if has-lt?
-                              init-k
-                              (- 0 1)))
-                          (- 0 1)))]
+                    [(Phi _ _ (I64))
+                      (opt-len-inv-loop-exit-min tables blocks v use-blk true)]
                     [_ (- 0 1)])]
                 [(No) (- 0 1)])]
-            [(= dc 2) (opt-len-inv-loop-exit-min tables blocks v)]
+            [(= dc 2) (opt-len-inv-loop-exit-min tables blocks v use-blk false)]
             [else (- 0 1)]))]
       [_ (- 0 1)])))
 
@@ -129386,8 +129874,16 @@
               [ret : i64
                 (opt-len-eq-ctor-return-var
                   (ir.compiler-ir-block-list-view (& blocks)))]
+              [ret-blk : i64 (- 0 1)]
+              (match (& blocks)
+                [(Array seq)
+                  (for [bi
+                    (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+                    (when
+                      (opt-len-inv-block-returns? (& seq) bi)
+                      (set! ret-blk bi)))])
               (when
-                (>= ret 0)
+                (and (>= ret 0) (>= ret-blk 0))
                 (let
                   [tables : OptLenEqDefs
                     (opt-len-eq-defs-build
@@ -129401,6 +129897,7 @@
                       (& blocks)
                       (& empty)
                       (& (Var ret))
+                      ret-blk
                       4)]
                   (when
                     (>= m 1)
@@ -129411,39 +129908,23 @@
         [_ unit]))
     out))
 
-;; --- Checked-loop helper summaries -------------------------------------------
-;;
-;; Recognizes both:
-;;   (A) Tail-recursive counting loops:
-;;         if (i >= n) return;
-;;         bounds_check i, arr.len;
-;;         ... (no writes to arr header / globals, no calls);
-;;         tailcall self(..., n, i + 1);
-;;   (B) Single-loop while helpers:
-;;         i = 0;
-;;         while (i < n) {
-;;           bounds_check i, arr.len;
-;;           ... (no writes to arr header / globals, no calls);
-;;           i = i + 1;
-;;         }
-;;         return;
+;; --- Checked-loop helper summaries (unified recognizers) ---------------------
 (defstruct OptCheckedLoopHelper
   (target-is-global? bool)
-  ;; global symbol id if target-is-global?, else parameter index
   (target-id i64)
   (from-word0? bool)
   (bound-param i64)
-  ;; parameter index for start index (must be passed 0 at call site), or -1 if local 0
   (start-param i64)
-  ;; true if the helper reads any scalar global or word 1 of its target object
   (reads-word1? bool)
   (reads-any-global? bool))
 
 (defstruct OptCheckedLoopHelpers
-  ;; fn symbol id -> 1 + index in `rows`
   (map opt_i64_i64_map.Map)
   (rows (__tl_dyn-array OptCheckedLoopHelper))
   (count (__tl_dyn-array i64)))
+
+(define (opt-checked-loop-helper-none) : OptCheckedLoopHelper
+  (OptCheckedLoopHelper false (- 0 1) false (- 0 1) (- 0 1) true true))
 
 (define (opt-len-inv-param-index
   [params : (& ir.CompilerIrParamSeq)]
@@ -129452,43 +129933,6 @@
     (match (ir.compiler-ir-param-seq-borrow params i)
       [(Param _ _ pv) (when (= pv var) (return i))]))
   (- 0 1))
-
-(define (opt-len-inv-add1-of?
-  [tables : (& OptLenEqDefs)]
-  [val : (& ir.CompilerIrValue)]
-  [var : i64]) : bool
-  (match (opt-len-inv-resolve-val tables val 4)
-    [(Var v)
-      (match (opt-len-eq-def tables v)
-        [(Some instr _)
-          (match (& instr)
-            [(BinOp _ (Add) lhs rhs (I64))
-              (or
-                (and
-                  (or
-                    (match (& lhs)
-                      [(Var lv) (= lv var)]
-                      [_ false])
-                    (match (opt-len-inv-resolve-val tables (& lhs) 4)
-                      [(Var lv) (= lv var)]
-                      [_ false]))
-                  (match (opt-len-inv-lit tables (& rhs))
-                    [(Some 1) true]
-                    [_ false]))
-                (and
-                  (or
-                    (match (& rhs)
-                      [(Var rv) (= rv var)]
-                      [_ false])
-                    (match (opt-len-inv-resolve-val tables (& rhs) 4)
-                      [(Var rv) (= rv var)]
-                      [_ false]))
-                  (match (opt-len-inv-lit tables (& lhs))
-                    [(Some 1) true]
-                    [_ false])))]
-            [_ false])]
-        [(No) false])]
-    [_ false]))
 
 (define (opt-len-inv-instr-reads-scalar-global?
   [target-global : i64]
@@ -129514,8 +129958,7 @@
           found?)])))
 
 ;; True when `addr` is derived from a `DynArray` data-pointer load
-;; (`gep* (load (gep desc, 0 : i64) : u64), idx`), so storing through `addr`
-;; only writes element storage and never mutates any struct or descriptor header.
+;; (`gep* (load (gep desc, 0 : i64) : u64), idx`).
 (define (opt-len-inv-ptr-is-data-buf?
   [tables : (& OptLenEqDefs)]
   [addr : (& ir.CompilerIrValue)]
@@ -129525,46 +129968,41 @@
     (match addr
       [(Var v)
         (match (opt-len-eq-def tables v)
-          [(Some instr _)
-            (match (& instr)
-              [(Mov _ src _)
-                (opt-len-inv-ptr-is-data-buf? tables (& src) (- depth 1))]
-              [(Gep _ base _ _)
-                (opt-len-inv-ptr-is-data-buf? tables (& base) (- depth 1))]
-              [(Load _ psrc (U64))
-                (let
-                  [g : OptLenInvGep (opt-len-inv-gep-root tables (& psrc) 3)]
-                  (and
-                    g.ok?
-                    (= g.offset 0)
-                    (not g.is-global?)
-                    (match (opt-len-eq-def tables g.root)
-                      [(Some dinstr _)
-                        (match (& dinstr)
-                          [(or (Load _ _ (DynArray _)) (Mov _ _ (DynArray _)))
-                            true]
-                          [_ false])]
-                      [(No) false])))]
-              [_ false])]
-          [(No) false])]
+          [(Some (Mov _ src _) _)
+            (opt-len-inv-ptr-is-data-buf? tables (& src) (- depth 1))]
+          [(Some (Gep _ base _ _) _)
+            (opt-len-inv-ptr-is-data-buf? tables (& base) (- depth 1))]
+          [(Some (Load _ psrc (U64)) _)
+            (let
+              [g : OptLenInvGep (opt-len-inv-gep-root tables (& psrc) 3)]
+              (and
+                g.ok?
+                (= g.offset 0)
+                (not g.is-global?)
+                (match (opt-len-eq-def tables g.root)
+                  [(Some (or (Load _ _ (DynArray _)) (Mov _ _ (DynArray _))) _)
+                    true]
+                  [_ false])))]
+          [_ false])]
       [_ false])))
 
-;; Check if `instr` writes a struct header or any global cell (element writes ok).
+;; Safe instruction inside a checked-loop helper or inline while body/header:
+;; no calls (except tail-recursion to `self-id` when `self-id >= 0`), no global
+;; stores, and only data-buf element stores.
 (define (opt-len-inv-helper-instr-safe?
   [tables : (& OptLenEqDefs)]
   [self-id : i64]
-  [_target : (& OptLenInvTarget)]
   [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(Store _ _ _) false]
     [(or (StorePtr addr _ _) (StoreOwned addr _ _) (CopyBytes addr _ _))
-      ;; Only allow writes into element storage (gep* of a loaded data ptr),
-      ;; never into any struct or descriptor header.
       (opt-len-inv-ptr-is-data-buf? tables (& addr) 4)]
     [(Call _ _ _ _) false]
-    [(TailCall cname _ _) (= (ir.compiler-ir-symbol-id cname) self-id)]
+    [(TailCall cname _ _)
+      (and (>= self-id 0) (= (ir.compiler-ir-symbol-id cname) self-id))]
     [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
-         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCallIndirect _ _ _))
+         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCallIndirect _ _ _)
+         (VectorStore _) (PredicatedStore _) (Syscall _ _))
       false]
     [_ true]))
 
@@ -129583,954 +130021,491 @@
           (= g.root target.id)))]
     [_ false]))
 
-(define (opt-len-inv-try-tailrec-helper
+;; Parsed loop-exit branch `lt/ge lhs, rhs -> (body-lbl, exit-lbl)`.
+(defstruct OptLenInvLoopCond
+  (ok? bool)
+  (lhs ir.CompilerIrValue)
+  (rhs ir.CompilerIrValue)
+  (body-lbl i64)
+  (exit-lbl i64))
+
+(define (opt-len-inv-parse-loop-cond
+  [tables : (& OptLenEqDefs)]
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [use-def-table? : bool]) : OptLenInvLoopCond
+  (let
+    [none : OptLenInvLoopCond
+      (OptLenInvLoopCond false (Unit) (Unit) (- 0 1) (- 0 1))]
+    [n : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (when (< n 2) (return none))
+    (match (ir.compiler-ir-instr-seq-borrow instrs (- n 1))
+      [(Branch (Var cvar) t-lbl f-lbl)
+        (let
+          [cmp : OptBoolBranchDef
+            (if use-def-table?
+              (opt-len-eq-def tables cvar)
+              (match (ir.compiler-ir-instr-seq-borrow instrs (- n 2))
+                [(BinOp bdst _ _ _ _)
+                  (if (= bdst cvar)
+                    (OptBoolBranchDef.Some
+                      (ir.compiler-ir-instr-seq-ref instrs (- n 2))
+                      0)
+                    (No))]
+                [_ (No)]))]
+          (match cmp
+            [(Some (BinOp _ (Lt) lhs rhs (I64)) _)
+              (OptLenInvLoopCond true lhs rhs t-lbl f-lbl)]
+            [(Some (BinOp _ (Ge) lhs rhs (I64)) _)
+              (OptLenInvLoopCond true lhs rhs f-lbl t-lbl)]
+            [_ none]))]
+      [_ none])))
+
+;; Shared body verifier for all 3 checked-loop helper shapes (tailrec, rotated
+;; SSA, and pre-SSA while). Scans `body-idx` (and optional `pre-idx >= 0`) for
+;; a `BoundsCheck iv, target.len`, full safety, and word1/global reads.
+(define (opt-len-inv-finalize-helper
   [func-id : i64]
   [params : (& ir.CompilerIrParamSeq)]
   [tables : (& OptLenEqDefs)]
-  [blocks : (& ir.CompilerIrBlockList)]) : OptCheckedLoopHelper
+  [seq : (& ir.CompilerIrBlockSeq)]
+  [body-idx : i64]
+  [pre-idx : i64]
+  [iv : i64]
+  [bp : i64]
+  [sp : i64]) : OptCheckedLoopHelper
   (let
-    [none : OptCheckedLoopHelper
-      (OptCheckedLoopHelper false (- 0 1) false (- 0 1) (- 0 1) true true)]
-    (match blocks
-      [(Array seq)
-        (if (not (= (ir.compiler-ir-block-seq-count seq) 3))
-          none
-          (match (ir.compiler-ir-block-seq-borrow seq 0)
-            [(Block _ entry-instrs)
-              (let
-                [elen : i64 (ir.compiler-ir-instr-seq-count entry-instrs)]
-                (if (< elen 2)
-                  none
-                  (match (ir.compiler-ir-instr-seq-borrow
-                    entry-instrs
-                    (- elen 1))
-                    [(Branch (Var cvar) t-lbl f-lbl)
-                      (match (opt-len-eq-def tables cvar)
-                        [(Some cinstr _)
-                          (let
-                            [idx-var : i64 (- 0 1)]
-                            [bound-var : i64 (- 0 1)]
-                            [exit-lbl : i64 (- 0 1)]
-                            [body-lbl : i64 (- 0 1)]
-                            (match (& cinstr)
-                              [(BinOp _ (Ge) lhs rhs (I64))
-                                (match (opt-len-inv-resolve-val
-                                  tables
-                                  (& lhs)
-                                  4)
-                                  [(Var iv)
-                                    (match (opt-len-inv-resolve-val
-                                      tables
-                                      (& rhs)
-                                      4)
-                                      [(Var bv)
-                                        (set! idx-var iv)
-                                        (set! bound-var bv)
-                                        (set! exit-lbl t-lbl)
-                                        (set! body-lbl f-lbl)]
-                                      [_ unit])]
-                                  [_ unit])]
-                              [(BinOp _ (Lt) lhs rhs (I64))
-                                (match (opt-len-inv-resolve-val
-                                  tables
-                                  (& lhs)
-                                  4)
-                                  [(Var iv)
-                                    (match (opt-len-inv-resolve-val
-                                      tables
-                                      (& rhs)
-                                      4)
-                                      [(Var bv)
-                                        (set! idx-var iv)
-                                        (set! bound-var bv)
-                                        (set! exit-lbl f-lbl)
-                                        (set! body-lbl t-lbl)]
-                                      [_ unit])]
-                                  [_ unit])]
-                              [_ unit])
-                            (let
-                              [sp : i64
-                                (opt-len-inv-param-index params idx-var)]
-                              [bp : i64
-                                (opt-len-inv-param-index params bound-var)]
-                              (if (or (< sp 0) (< bp 0) (= sp bp))
-                                none
-                                (let
-                                  [exit-ok? : bool false]
-                                  [body-idx : i64 (- 0 1)]
-                                  (for [bi (iterator.range 1 3)]
-                                    (match (ir.compiler-ir-block-seq-borrow
-                                      seq
-                                      bi)
-                                      [(Block lbl binstrs)
-                                        (when
-                                          (= lbl exit-lbl)
-                                          (let
-                                            [blen : i64
-                                              (ir.compiler-ir-instr-seq-count
-                                                binstrs)]
-                                            (when
-                                              (and
-                                                (> blen 0)
-                                                (match (ir.compiler-ir-instr-seq-borrow
-                                                  binstrs
-                                                  (- blen 1))
-                                                  [(Return _) true]
-                                                  [_ false]))
-                                              (set! exit-ok? true))))
-                                        (when
-                                          (= lbl body-lbl)
-                                          (set! body-idx bi))]))
-                                  (if (or (not exit-ok?) (< body-idx 0))
-                                    none
-                                    (match (ir.compiler-ir-block-seq-borrow
-                                      seq
-                                      body-idx)
-                                      [(Block _ binstrs)
-                                        (let
-                                          [blen : i64
-                                            (ir.compiler-ir-instr-seq-count
-                                              binstrs)]
-                                          (if (< blen 2)
-                                            none
-                                            (match (ir.compiler-ir-instr-seq-borrow
-                                              binstrs
-                                              (- blen 1))
-                                              [(TailCall cname args _)
-                                                (if (not
-                                                  (=
-                                                    (ir.compiler-ir-symbol-id
-                                                      cname)
-                                                    func-id))
-                                                  none
-                                                  (let
-                                                    [pcount : i64
-                                                      (ir.compiler-ir-param-seq-count
-                                                        params)]
-                                                    [args-ok? : bool
-                                                      (=
-                                                        (opt-len-eq-args-count
-                                                          (& args))
-                                                        pcount)]
-                                                    (for [ai
-                                                      (iterator.range 0 pcount)]
-                                                      (when
-                                                        args-ok?
-                                                        (match (opt-call-memory-arg-at
-                                                          (& args)
-                                                          ai)
-                                                          [(Some av)
-                                                            (if (= ai sp)
-                                                              (unless
-                                                                (opt-len-inv-add1-of?
-                                                                  tables
-                                                                  (& av)
-                                                                  idx-var)
-                                                                (set!
-                                                                  args-ok?
-                                                                  false))
-                                                              (match (ir.compiler-ir-param-seq-borrow
-                                                                params
-                                                                ai)
-                                                                [(Param _ _ pv)
-                                                                  (unless
-                                                                    (match (opt-len-inv-resolve-val
-                                                                      tables
-                                                                      (& av)
-                                                                      4)
-                                                                      [(Var rv)
-                                                                        (=
-                                                                          rv
-                                                                          pv)]
-                                                                      [_ false])
-                                                                    (set!
-                                                                      args-ok?
-                                                                      false))]))]
-                                                          [(No)
-                                                            (set!
-                                                              args-ok?
-                                                              false)])))
-                                                    (if (not args-ok?)
-                                                      none
-                                                      (let
-                                                        [found : OptLenInvTarget
-                                                          (opt-len-inv-target-none)]
-                                                        (for [pi
-                                                          (iterator.range
-                                                            0
-                                                            blen)]
-                                                          (match (ir.compiler-ir-instr-seq-borrow
-                                                            binstrs
-                                                            pi)
-                                                            [(BoundsCheck
-                                                                bidx
-                                                                blen-v
-                                                                _)
-                                                              (when
-                                                                (and
-                                                                  (not
-                                                                    found.ok?)
-                                                                  (match (opt-len-inv-resolve-val
-                                                                    tables
-                                                                    (& bidx)
-                                                                    4)
-                                                                    [(Var bv)
-                                                                      (=
-                                                                        bv
-                                                                        idx-var)]
-                                                                    [_ false]))
-                                                                (let
-                                                                  [t : OptLenInvTarget
-                                                                    (opt-len-inv-len-target
-                                                                      tables
-                                                                      (& blen-v))]
-                                                                  (when
-                                                                    t.ok?
-                                                                    (set!
-                                                                      found
-                                                                      t))))]
-                                                            [_ unit]))
-                                                        (if (not found.ok?)
-                                                          none
-                                                          (let
-                                                            [tid : i64
-                                                              (if found.is-global?
-                                                                found.id
-                                                                (opt-len-inv-param-index
-                                                                  params
-                                                                  found.id))]
-                                                            [safe? : bool
-                                                              (>= tid 0)]
-                                                            [reads-w1? : bool
-                                                              false]
-                                                            [reads-g? : bool
-                                                              false]
-                                                            (for [pi
-                                                              (iterator.range
-                                                                0
-                                                                blen)]
-                                                              (unless
-                                                                (opt-len-inv-helper-instr-safe?
-                                                                  tables
-                                                                  func-id
-                                                                  (& found)
-                                                                  (ir.compiler-ir-instr-seq-borrow
-                                                                    binstrs
-                                                                    pi))
-                                                                (set!
-                                                                  safe?
-                                                                  false))
-                                                              (when
-                                                                (opt-len-inv-instr-reads-target-word1?
-                                                                  tables
-                                                                  (& found)
-                                                                  (ir.compiler-ir-instr-seq-borrow
-                                                                    binstrs
-                                                                    pi))
-                                                                (set!
-                                                                  reads-w1?
-                                                                  true))
-                                                              (when
-                                                                (opt-len-inv-instr-reads-scalar-global?
-                                                                  (if found.is-global?
-                                                                    found.id
-                                                                    (- 0 1))
-                                                                  (ir.compiler-ir-instr-seq-ref
-                                                                    binstrs
-                                                                    pi))
-                                                                (set!
-                                                                  reads-g?
-                                                                  true)))
-                                                            (if (not safe?)
-                                                              none
-                                                              (OptCheckedLoopHelper
-                                                                found.is-global?
-                                                                tid
-                                                                found.from-word0?
-                                                                bp
-                                                                sp
-                                                                reads-w1?
-                                                                reads-g?))))))))]
-                                              [_ none])))]))))))]
-                        [(No) none])]
-                    [_ none])))]))])))
+    [none : OptCheckedLoopHelper (opt-checked-loop-helper-none)]
+    [found : OptLenInvTarget (opt-len-inv-target-none)]
+    [iv-copy : i64 iv]
+    (match (ir.compiler-ir-block-seq-borrow seq body-idx)
+      [(Block _ binstrs)
+        (for [pi (iterator.range 0 (ir.compiler-ir-instr-seq-count binstrs))]
+          (set!
+            iv-copy
+            (opt-len-inv-iv-copy
+              tables
+              (ir.compiler-ir-instr-seq-borrow binstrs pi)
+              iv
+              iv-copy))
+          (match (ir.compiler-ir-instr-seq-borrow binstrs pi)
+            [(BoundsCheck bidx blen-v _)
+              (when
+                (and
+                  (not found.ok?)
+                  (opt-len-inv-iv-at? tables bidx iv iv-copy))
+                (let
+                  [t : OptLenInvTarget (opt-len-inv-len-target tables blen-v)]
+                  (when t.ok? (set! found t))))]
+            [_ unit]))])
+    (when (not found.ok?) (return none))
+    (let
+      [tid : i64
+        (if found.is-global?
+          found.id
+          (opt-len-inv-param-index params found.id))]
+      (when (< tid 0) (return none))
+      (let
+        [reads-w1? : bool false]
+        [reads-g? : bool false]
+        [tgt-g : i64
+          (if found.is-global?
+            found.id
+            (- 0 1))]
+        (for [pass (iterator.range 0 2)]
+          (let
+            [bi : i64
+              (if (= pass 0)
+                body-idx
+                pre-idx)]
+            (when
+              (>= bi 0)
+              (match (ir.compiler-ir-block-seq-borrow seq bi)
+                [(Block _ iseq)
+                  (for [pi
+                    (iterator.range 0 (ir.compiler-ir-instr-seq-count iseq))]
+                    (unless
+                      (opt-len-inv-helper-instr-safe?
+                        tables
+                        func-id
+                        (ir.compiler-ir-instr-seq-borrow iseq pi))
+                      (return none))
+                    (when
+                      (opt-len-inv-instr-reads-target-word1?
+                        tables
+                        (& found)
+                        (ir.compiler-ir-instr-seq-borrow iseq pi))
+                      (set! reads-w1? true))
+                    (when
+                      (opt-len-inv-instr-reads-scalar-global?
+                        tgt-g
+                        (ir.compiler-ir-instr-seq-ref iseq pi))
+                      (set! reads-g? true)))]))))
+        (OptCheckedLoopHelper
+          found.is-global?
+          tid
+          found.from-word0?
+          bp
+          sp
+          reads-w1?
+          reads-g?)))))
 
-;; Match a rotated-SSA 4-block counting loop helper:
-;;   entry:  cond(start, n) -> branch(exit, preheader)
-;;   exit:   return
-;;   prehdr: ...; jump body
-;;   body:   iv = phi [next_iv, body], [start, prehdr]
-;;           bounds_check iv, target.len
-;;           next_iv = add iv, 1
-;;           cond(next_iv, n) -> branch(exit, body)
-(define (opt-len-inv-try-rotated-ssa-helper
+(define (opt-len-inv-try-tailrec-helper
   [func-id : i64]
   [params : (& ir.CompilerIrParamSeq)]
   [tables : (& OptLenEqDefs)]
   [seq : (& ir.CompilerIrBlockSeq)]) : OptCheckedLoopHelper
   (let
-    [none : OptCheckedLoopHelper
-      (OptCheckedLoopHelper false (- 0 1) false (- 0 1) (- 0 1) true true)]
-    (match (ir.compiler-ir-block-seq-borrow seq 0)
-      [(Block _ entry-instrs)
-        (let
-          [elen : i64 (ir.compiler-ir-instr-seq-count entry-instrs)]
-          (if (< elen 2)
-            none
-            (match (ir.compiler-ir-instr-seq-borrow entry-instrs (- elen 1))
-              [(Branch (Var cvar) t-lbl f-lbl)
+    [none : OptCheckedLoopHelper (opt-checked-loop-helper-none)]
+    [cond-info : OptLenInvLoopCond
+      (match (ir.compiler-ir-block-seq-borrow seq 0)
+        [(Block _ einstrs)
+          (opt-len-inv-parse-loop-cond tables (& einstrs) true)])]
+    (when (not cond-info.ok?) (return none))
+    (let
+      [idx-var : i64
+        (match (opt-len-inv-resolve-val tables (& cond-info.lhs) 4)
+          [(Var v) v]
+          [_ (- 0 1)])]
+      [bound-var : i64
+        (match (opt-len-inv-resolve-val tables (& cond-info.rhs) 4)
+          [(Var v) v]
+          [_ (- 0 1)])]
+      [sp : i64 (opt-len-inv-param-index params idx-var)]
+      [bp : i64 (opt-len-inv-param-index params bound-var)]
+      [body-idx : i64 (opt-len-inv-find-block seq cond-info.body-lbl)]
+      [exit-idx : i64 (opt-len-inv-find-block seq cond-info.exit-lbl)]
+      (when
+        (or
+          (< sp 0)
+          (< bp 0)
+          (= sp bp)
+          (<= body-idx 0)
+          (<= exit-idx 0)
+          (not (opt-len-inv-block-returns? seq exit-idx)))
+        (return none))
+      (match (ir.compiler-ir-block-seq-borrow seq body-idx)
+        [(Block _ binstrs)
+          (let
+            [blen : i64 (ir.compiler-ir-instr-seq-count binstrs)]
+            (when (< blen 2) (return none))
+            (match (ir.compiler-ir-instr-seq-borrow binstrs (- blen 1))
+              [(TailCall cname args _)
+                (when
+                  (not (= (ir.compiler-ir-symbol-id cname) func-id))
+                  (return none))
                 (let
-                  [sp : i64 (- 0 2)]
-                  [bp : i64 (- 0 1)]
-                  [pre-lbl : i64 (- 0 1)]
-                  [exit-lbl : i64 (- 0 1)]
-                  [start-var : i64 (- 0 1)]
-                  (match (ir.compiler-ir-instr-seq-borrow
-                    entry-instrs
-                    (- elen 2))
-                    [(BinOp bdst op lhs rhs (I64))
-                      (when
-                        (and
-                          (= bdst cvar)
-                          (match op
-                            [(Lt) true]
-                            [(Ge) true]
-                            [_ false]))
-                        (set!
-                          bp
-                          (match (opt-len-inv-resolve-val tables rhs 4)
-                            [(Var bv) (opt-len-inv-param-index params bv)]
-                            [_ (- 0 1)]))
-                        (match (opt-len-inv-resolve-val tables lhs 4)
-                          [(I64 0) (set! sp (- 0 1))]
-                          [(Var sv)
-                            (let
-                              [spi : i64 (opt-len-inv-param-index params sv)]
-                              (when
-                                (>= spi 0)
-                                (set! sp spi)
-                                (set! start-var sv)))]
-                          [_ unit])
-                        (match op
-                          [(Lt)
-                            (set! pre-lbl t-lbl)
-                            (set! exit-lbl f-lbl)]
-                          [_
-                            (set! exit-lbl t-lbl)
-                            (set! pre-lbl f-lbl)]))]
-                    [_ unit])
-                  (if (or (< sp (- 0 1)) (< bp 0) (= sp bp))
-                    none
-                    (let
-                      [pre-idx : i64 (- 0 1)]
-                      [exit-idx : i64 (- 0 1)]
-                      [body-idx : i64 (- 0 1)]
-                      (for [bi (iterator.range 1 4)]
-                        (match (ir.compiler-ir-block-seq-borrow seq bi)
-                          [(Block lbl _)
-                            (cond
-                              [(= lbl pre-lbl) (set! pre-idx bi)]
-                              [(= lbl exit-lbl) (set! exit-idx bi)]
-                              [else (set! body-idx bi)])]))
-                      (if (or (< pre-idx 0) (< exit-idx 0) (< body-idx 0))
-                        none
-                        (let
-                          [exit-ok? : bool
-                            (match (ir.compiler-ir-block-seq-borrow
-                              seq
-                              exit-idx)
-                              [(Block _ xis)
-                                (let
-                                  [xl : i64
-                                    (ir.compiler-ir-instr-seq-count xis)]
-                                  (and
-                                    (>= xl 1)
-                                    (match (ir.compiler-ir-instr-seq-borrow
-                                      xis
-                                      (- xl 1))
-                                      [(Return _) true]
-                                      [_ false])))])]
-                          [body-lbl : i64
-                            (match (ir.compiler-ir-block-seq-borrow
-                              seq
-                              body-idx)
-                              [(Block lbl _) lbl])]
-                          [pre-ok? : bool
-                            (match (ir.compiler-ir-block-seq-borrow seq pre-idx)
-                              [(Block _ pis)
-                                (let
-                                  [pl : i64
-                                    (ir.compiler-ir-instr-seq-count pis)]
-                                  (and
-                                    (>= pl 1)
-                                    (match (ir.compiler-ir-instr-seq-borrow
-                                      pis
-                                      (- pl 1))
-                                      [(Jump tgt) (= tgt body-lbl)]
-                                      [_ false])))])]
-                          (if (or (not exit-ok?) (not pre-ok?))
-                            none
-                            (match (ir.compiler-ir-block-seq-borrow
-                              seq
-                              body-idx)
-                              [(Block _ body-instrs)
-                                (let
-                                  [blen : i64
-                                    (ir.compiler-ir-instr-seq-count body-instrs)]
-                                  (if (< blen 4)
-                                    none
-                                    ;; Check latch branch: `lt next_iv, n -> (body, exit)` or `ge next_iv, n -> (exit, body)`.
-                                    (let
-                                      [next-iv : i64 (- 0 1)]
-                                      (match (ir.compiler-ir-instr-seq-borrow
-                                        body-instrs
-                                        (- blen 1))
-                                        [(Branch (Var lcvar) lt-lbl lf-lbl)
-                                          (match (ir.compiler-ir-instr-seq-borrow
-                                            body-instrs
-                                            (- blen 2))
-                                            [(BinOp
-                                                lbdst
-                                                lop
-                                                (Var lv)
-                                                lrhs
-                                                (I64))
-                                              (when
-                                                (and
-                                                  (= lbdst lcvar)
-                                                  (match (opt-len-inv-resolve-val
-                                                    tables
-                                                    lrhs
-                                                    4)
-                                                    [(Var rbv)
-                                                      (=
-                                                        (opt-len-inv-param-index
-                                                          params
-                                                          rbv)
-                                                        bp)]
-                                                    [_ false])
-                                                  (match lop
-                                                    [(Lt)
-                                                      (and
-                                                        (= lt-lbl body-lbl)
-                                                        (= lf-lbl exit-lbl))]
-                                                    [(Ge)
-                                                      (and
-                                                        (= lt-lbl exit-lbl)
-                                                        (= lf-lbl body-lbl))]
-                                                    [_ false]))
-                                                (set! next-iv lv))]
-                                            [_ unit])]
-                                        [_ unit])
-                                      (if (< next-iv 0)
-                                        none
-                                        ;; Find `iv = phi [next_iv, body_lbl], [0/start_var, pre_lbl]` and verify `next_iv = add iv, 1`.
-                                        (let
-                                          [iv : i64 (- 0 1)]
-                                          (for [pi (iterator.range 0 blen)]
-                                            (match (ir.compiler-ir-instr-seq-borrow
-                                              body-instrs
-                                              pi)
-                                              [(Phi pdst inputs (I64))
-                                                (when
-                                                  (and
-                                                    (< iv 0)
-                                                    (=
-                                                      (ir.compiler-ir-phi-input-seq-count
-                                                        inputs)
-                                                      2))
-                                                  (let
-                                                    [has-init? : bool false]
-                                                    [has-latch? : bool false]
-                                                    (for [ii
-                                                      (iterator.range 0 2)]
-                                                      (match (ir.compiler-ir-phi-input-seq-borrow
-                                                        inputs
-                                                        ii)
-                                                        [(CompilerIrPhiInput
-                                                            pval
-                                                            plbl)
-                                                          (cond
-                                                            [(= plbl pre-lbl)
-                                                              (if (< sp 0)
-                                                                (when
-                                                                  (match (opt-len-inv-lit
-                                                                    tables
-                                                                    pval)
-                                                                    [(Some 0)
-                                                                      true]
-                                                                    [_ false])
-                                                                  (set!
-                                                                    has-init?
-                                                                    true))
-                                                                (when
-                                                                  (match (opt-len-inv-resolve-val
-                                                                    tables
-                                                                    pval
-                                                                    4)
-                                                                    [(Var pv)
-                                                                      (=
-                                                                        pv
-                                                                        start-var)]
-                                                                    [_ false])
-                                                                  (set!
-                                                                    has-init?
-                                                                    true)))]
-                                                            [(= plbl body-lbl)
-                                                              (when
-                                                                (match pval
-                                                                  [(Var pv)
-                                                                    (=
-                                                                      pv
-                                                                      next-iv)]
-                                                                  [_ false])
-                                                                (set!
-                                                                  has-latch?
-                                                                  true))]
-                                                            [else unit])]))
-                                                    (when
-                                                      (and
-                                                        has-init?
-                                                        has-latch?
-                                                        (opt-len-inv-add1-of?
-                                                          tables
-                                                          (& (Var next-iv))
-                                                          pdst))
-                                                      (set! iv pdst))))]
-                                              [_ unit]))
-                                          (if (< iv 0)
-                                            none
-                                            (let
-                                              [found : OptLenInvTarget
-                                                (opt-len-inv-target-none)]
-                                              (for [pi (iterator.range 0 blen)]
-                                                (match (ir.compiler-ir-instr-seq-borrow
-                                                  body-instrs
-                                                  pi)
-                                                  [(BoundsCheck bidx blen-v _)
-                                                    (when
-                                                      (and
-                                                        (not found.ok?)
-                                                        (match bidx
-                                                          [(Var bv) (= bv iv)]
-                                                          [_ false]))
-                                                      (let
-                                                        [t : OptLenInvTarget
-                                                          (opt-len-inv-len-target
-                                                            tables
-                                                            blen-v)]
-                                                        (when
-                                                          t.ok?
-                                                          (set! found t))))]
-                                                  [_ unit]))
-                                              (if (not found.ok?)
-                                                none
-                                                (let
-                                                  [tid : i64
-                                                    (if found.is-global?
-                                                      found.id
-                                                      (opt-len-inv-param-index
-                                                        params
-                                                        found.id))]
-                                                  [safe? : bool (>= tid 0)]
-                                                  [reads-w1? : bool false]
-                                                  [reads-g? : bool false]
-                                                  (for [pi
-                                                    (iterator.range 0 blen)]
-                                                    (unless
-                                                      (opt-len-inv-helper-instr-safe?
-                                                        tables
-                                                        func-id
-                                                        (& found)
-                                                        (ir.compiler-ir-instr-seq-borrow
-                                                          body-instrs
-                                                          pi))
-                                                      (set! safe? false))
-                                                    (when
-                                                      (opt-len-inv-instr-reads-target-word1?
-                                                        tables
-                                                        (& found)
-                                                        (ir.compiler-ir-instr-seq-borrow
-                                                          body-instrs
-                                                          pi))
-                                                      (set! reads-w1? true))
-                                                    (when
-                                                      (opt-len-inv-instr-reads-scalar-global?
-                                                        (if found.is-global?
-                                                          found.id
-                                                          (- 0 1))
-                                                        (ir.compiler-ir-instr-seq-ref
-                                                          body-instrs
-                                                          pi))
-                                                      (set! reads-g? true)))
-                                                  (match (ir.compiler-ir-block-seq-borrow
-                                                    seq
-                                                    pre-idx)
-                                                    [(Block _ pis)
-                                                      (for [pi
-                                                        (iterator.range
-                                                          0
-                                                          (ir.compiler-ir-instr-seq-count
-                                                            pis))]
-                                                        (unless
-                                                          (opt-len-inv-helper-instr-safe?
-                                                            tables
-                                                            func-id
-                                                            (& found)
-                                                            (ir.compiler-ir-instr-seq-borrow
-                                                              pis
-                                                              pi))
-                                                          (set! safe? false))
-                                                        (when
-                                                          (opt-len-inv-instr-reads-target-word1?
-                                                            tables
-                                                            (& found)
-                                                            (ir.compiler-ir-instr-seq-borrow
-                                                              pis
-                                                              pi))
-                                                          (set! reads-w1? true))
-                                                        (when
-                                                          (opt-len-inv-instr-reads-scalar-global?
-                                                            (if found.is-global?
-                                                              found.id
-                                                              (- 0 1))
-                                                            (ir.compiler-ir-instr-seq-ref
-                                                              pis
-                                                              pi))
-                                                          (set! reads-g? true)))])
-                                                  (if (not safe?)
-                                                    none
-                                                    (OptCheckedLoopHelper
-                                                      found.is-global?
-                                                      tid
-                                                      found.from-word0?
-                                                      bp
-                                                      sp
-                                                      reads-w1?
-                                                      reads-g?)))))))))))])))))))]
-              [_ none])))])))
-
-(define (opt-len-inv-try-while-helper
-  [func-id : i64]
-  [params : (& ir.CompilerIrParamSeq)]
-  [tables : (& OptLenEqDefs)]
-  [blocks : (& ir.CompilerIrBlockList)]) : OptCheckedLoopHelper
-  (let
-    [none : OptCheckedLoopHelper
-      (OptCheckedLoopHelper false (- 0 1) false (- 0 1) (- 0 1) true true)]
-    (match blocks
-      [(Array seq)
-        (if (not (= (ir.compiler-ir-block-seq-count seq) 4))
-          none
-          (match (ir.compiler-ir-block-seq-borrow seq 0)
-            [(Block _ entry-instrs)
-              (let
-                [elen : i64 (ir.compiler-ir-instr-seq-count entry-instrs)]
-                [hdr-lbl : i64
-                  (if (< elen 1)
-                    (- 0 1)
-                    (match (ir.compiler-ir-instr-seq-borrow
-                      entry-instrs
-                      (- elen 1))
-                      [(Jump tgt) tgt]
-                      [_ (- 0 1)]))]
-                [hdr-idx : i64 (- 0 1)]
-                (for [bi (iterator.range 1 4)]
-                  (match (ir.compiler-ir-block-seq-borrow seq bi)
-                    [(Block lbl _) (when (= lbl hdr-lbl) (set! hdr-idx bi))]))
-                (if (< hdr-idx 0)
-                  (opt-len-inv-try-rotated-ssa-helper
+                  [pcount : i64 (ir.compiler-ir-param-seq-count params)]
+                  (when
+                    (not (= (opt-len-eq-args-count (& args)) pcount))
+                    (return none))
+                  (for [ai (iterator.range 0 pcount)]
+                    (match (opt-call-memory-arg-at (& args) ai)
+                      [(Some av)
+                        (if (= ai sp)
+                          (unless
+                            (opt-len-inv-add1-of? tables (& av) idx-var)
+                            (return none))
+                          (match (ir.compiler-ir-param-seq-borrow params ai)
+                            [(Param _ _ pv)
+                              (unless
+                                (opt-len-inv-val-is-var? tables (& av) pv)
+                                (return none))]))]
+                      [(No) (return none)]))
+                  (opt-len-inv-finalize-helper
                     func-id
                     params
                     tables
-                    (& seq))
-                  (match (ir.compiler-ir-block-seq-borrow seq hdr-idx)
-                    [(Block _ hdr-instrs)
+                    seq
+                    body-idx
+                    (- 0 1)
+                    idx-var
+                    bp
+                    sp))]
+              [_ none]))]))))
+
+(define (opt-len-inv-try-4block-helper
+  [func-id : i64]
+  [params : (& ir.CompilerIrParamSeq)]
+  [tables : (& OptLenEqDefs)]
+  [seq : (& ir.CompilerIrBlockSeq)]) : OptCheckedLoopHelper
+  (let
+    [none : OptCheckedLoopHelper (opt-checked-loop-helper-none)]
+    (match (ir.compiler-ir-block-seq-borrow seq 0)
+      [(Block _ einstrs)
+        (let
+          [elen : i64 (ir.compiler-ir-instr-seq-count einstrs)]
+          (when (< elen 1) (return none))
+          (match (ir.compiler-ir-instr-seq-borrow einstrs (- elen 1))
+            ;; Pre-SSA while: entry -> Jump hdr; hdr -> Branch(body, exit); body -> Jump hdr.
+            [(Jump hdr-lbl)
+              (let
+                [hdr-idx : i64 (opt-len-inv-find-block seq hdr-lbl)]
+                (when (<= hdr-idx 0) (return none))
+                (let
+                  [c : OptLenInvLoopCond
+                    (match (ir.compiler-ir-block-seq-borrow seq hdr-idx)
+                      [(Block _ his)
+                        (opt-len-inv-parse-loop-cond tables (& his) false)])]
+                  (when (not c.ok?) (return none))
+                  (let
+                    [iv : i64
+                      (match (& c.lhs)
+                        [(Var v) v]
+                        [_ (- 0 1)])]
+                    [bp : i64
+                      (match (opt-len-inv-resolve-val tables (& c.rhs) 4)
+                        [(Var bv) (opt-len-inv-param-index params bv)]
+                        [_ (- 0 1)])]
+                    [body-idx : i64 (opt-len-inv-find-block seq c.body-lbl)]
+                    [exit-idx : i64 (opt-len-inv-find-block seq c.exit-lbl)]
+                    (when
+                      (or
+                        (< iv 0)
+                        (< bp 0)
+                        (<= body-idx 0)
+                        (<= exit-idx 0)
+                        (not (opt-len-inv-block-returns? seq exit-idx)))
+                      (return none))
+                    ;; Determine start param `sp` (-1 = lit 0, >= 0 = param index).
+                    (let
+                      [sp : i64 (- 0 2)]
+                      (match (opt-len-inv-block-assign-lit
+                        tables
+                        (& einstrs)
+                        iv)
+                        [(Some 0) (set! sp (- 0 1))]
+                        [_
+                          (let
+                            [redef? : bool false]
+                            [eparam : i64 (- 0 1)]
+                            (for [ep (iterator.range 0 elen)]
+                              (match (ir.compiler-ir-instr-seq-borrow
+                                einstrs
+                                ep)
+                                [(Mov md ms _)
+                                  (when
+                                    (= md iv)
+                                    (set! redef? true)
+                                    (set!
+                                      eparam
+                                      (match (opt-len-inv-resolve-val
+                                        tables
+                                        ms
+                                        4)
+                                        [(Var mv)
+                                          (opt-len-inv-param-index params mv)]
+                                        [_ (- 0 1)])))]
+                                [_
+                                  (match (opt-instr-def-var
+                                    (ir.compiler-ir-instr-seq-borrow einstrs ep))
+                                    [(Some d)
+                                      (when
+                                        (= d iv)
+                                        (set! redef? true)
+                                        (set! eparam (- 0 1)))]
+                                    [(None) unit])]))
+                            (if redef?
+                              (when (>= eparam 0) (set! sp eparam))
+                              (let
+                                [dp : i64 (opt-len-inv-param-index params iv)]
+                                (when (>= dp 0) (set! sp dp)))))])
+                      (when (or (< sp (- 0 1)) (= sp bp)) (return none))
+                      (match (ir.compiler-ir-block-seq-borrow seq body-idx)
+                        [(Block _ binstrs)
+                          (let
+                            [blen : i64
+                              (ir.compiler-ir-instr-seq-count binstrs)]
+                            (when
+                              (or
+                                (< blen 3)
+                                (not
+                                  (match (ir.compiler-ir-instr-seq-borrow
+                                    binstrs
+                                    (- blen 1))
+                                    [(Jump tgt) (= tgt hdr-lbl)]
+                                    [_ false])))
+                              (return none))
+                            (let
+                              [iv-defs : i64 0]
+                              [step-ok? : bool false]
+                              (for [pi (iterator.range 0 blen)]
+                                (match (opt-instr-def-var
+                                  (ir.compiler-ir-instr-seq-borrow binstrs pi))
+                                  [(Some d)
+                                    (when
+                                      (= d iv)
+                                      (+= iv-defs 1)
+                                      (match (ir.compiler-ir-instr-seq-borrow
+                                        binstrs
+                                        pi)
+                                        [(Mov _ ms _)
+                                          (when
+                                            (opt-len-inv-add1-of? tables ms iv)
+                                            (set! step-ok? true))]
+                                        [_ unit]))]
+                                  [(None) unit]))
+                              (when
+                                (or (not step-ok?) (not (= iv-defs 1)))
+                                (return none))
+                              (opt-len-inv-finalize-helper
+                                func-id
+                                params
+                                tables
+                                seq
+                                body-idx
+                                (- 0 1)
+                                iv
+                                bp
+                                sp)))])))))]
+            ;; Rotated SSA: entry -> Branch(pre, exit); pre -> Jump body; body -> Branch(body, exit).
+            [(Branch _ _ _)
+              (let
+                [ec : OptLenInvLoopCond
+                  (opt-len-inv-parse-loop-cond tables (& einstrs) false)]
+                (when (not ec.ok?) (return none))
+                (let
+                  [bp : i64
+                    (match (opt-len-inv-resolve-val tables (& ec.rhs) 4)
+                      [(Var bv) (opt-len-inv-param-index params bv)]
+                      [_ (- 0 1)])]
+                  [sp : i64 (- 0 2)]
+                  [start-var : i64 (- 0 1)]
+                  (match (opt-len-inv-resolve-val tables (& ec.lhs) 4)
+                    [(I64 0) (set! sp (- 0 1))]
+                    [(Var sv)
                       (let
-                        [hlen : i64 (ir.compiler-ir-instr-seq-count hdr-instrs)]
-                        (if (< hlen 2)
-                          none
-                          (match (ir.compiler-ir-instr-seq-borrow
-                            hdr-instrs
-                            (- hlen 1))
-                            [(Branch (Var cvar) t-lbl f-lbl)
+                        [spi : i64 (opt-len-inv-param-index params sv)]
+                        (when (>= spi 0) (set! sp spi) (set! start-var sv)))]
+                    [_ unit])
+                  (when (or (< sp (- 0 1)) (< bp 0) (= sp bp)) (return none))
+                  (let
+                    [pre-idx : i64 (opt-len-inv-find-block seq ec.body-lbl)]
+                    [exit-idx : i64 (opt-len-inv-find-block seq ec.exit-lbl)]
+                    [body-idx : i64 (- 0 1)]
+                    (for [bi (iterator.range 1 4)]
+                      (when
+                        (and (not (= bi pre-idx)) (not (= bi exit-idx)))
+                        (set! body-idx bi)))
+                    (when
+                      (or
+                        (<= pre-idx 0)
+                        (<= exit-idx 0)
+                        (<= body-idx 0)
+                        (not (opt-len-inv-block-returns? seq exit-idx)))
+                      (return none))
+                    (let
+                      [body-lbl : i64
+                        (match (ir.compiler-ir-block-seq-borrow seq body-idx)
+                          [(Block lbl _) lbl])]
+                      [pre-ok? : bool
+                        (match (ir.compiler-ir-block-seq-borrow seq pre-idx)
+                          [(Block _ pis)
+                            (let
+                              [pl : i64 (ir.compiler-ir-instr-seq-count pis)]
+                              (and
+                                (>= pl 1)
+                                (match (ir.compiler-ir-instr-seq-borrow
+                                  pis
+                                  (- pl 1))
+                                  [(Jump tgt) (= tgt body-lbl)]
+                                  [_ false])))])]
+                      (when (not pre-ok?) (return none))
+                      (match (ir.compiler-ir-block-seq-borrow seq body-idx)
+                        [(Block _ binstrs)
+                          (let
+                            [lc : OptLenInvLoopCond
+                              (opt-len-inv-parse-loop-cond
+                                tables
+                                (& binstrs)
+                                false)]
+                            (when
+                              (or
+                                (not lc.ok?)
+                                (not (= lc.body-lbl body-lbl))
+                                (not (= lc.exit-lbl ec.exit-lbl)))
+                              (return none))
+                            (let
+                              [next-iv : i64
+                                (match (& lc.lhs)
+                                  [(Var v) v]
+                                  [_ (- 0 1)])]
+                              [rb-ok? : bool
+                                (match (opt-len-inv-resolve-val
+                                  tables
+                                  (& lc.rhs)
+                                  4)
+                                  [(Var rbv)
+                                    (= (opt-len-inv-param-index params rbv) bp)]
+                                  [_ false])]
+                              (when
+                                (or (< next-iv 0) (not rb-ok?))
+                                (return none))
                               (let
                                 [iv : i64 (- 0 1)]
-                                [bp : i64 (- 0 1)]
-                                [body-lbl : i64 (- 0 1)]
-                                [exit-lbl : i64 (- 0 1)]
-                                (match (ir.compiler-ir-instr-seq-borrow
-                                  hdr-instrs
-                                  (- hlen 2))
-                                  [(BinOp bdst (Lt) (Var lv) rhs (I64))
-                                    (when
-                                      (= bdst cvar)
-                                      (set! iv lv)
-                                      (set!
-                                        bp
-                                        (match (opt-len-inv-resolve-val
-                                          tables
-                                          (& rhs)
-                                          4)
-                                          [(Var bv)
-                                            (opt-len-inv-param-index params bv)]
-                                          [_ (- 0 1)]))
-                                      (set! body-lbl t-lbl)
-                                      (set! exit-lbl f-lbl))]
-                                  [(BinOp bdst (Ge) (Var lv) rhs (I64))
-                                    (when
-                                      (= bdst cvar)
-                                      (set! iv lv)
-                                      (set!
-                                        bp
-                                        (match (opt-len-inv-resolve-val
-                                          tables
-                                          (& rhs)
-                                          4)
-                                          [(Var bv)
-                                            (opt-len-inv-param-index params bv)]
-                                          [_ (- 0 1)]))
-                                      (set! exit-lbl t-lbl)
-                                      (set! body-lbl f-lbl))]
-                                  [_ unit])
-                                (if (or (< iv 0) (< bp 0))
-                                  none
-                                  (let
-                                    [body-idx : i64 (- 0 1)]
-                                    [exit-idx : i64 (- 0 1)]
-                                    (for [bi (iterator.range 1 4)]
+                                (for [pi
+                                  (iterator.range
+                                    0
+                                    (ir.compiler-ir-instr-seq-count binstrs))]
+                                  (match (ir.compiler-ir-instr-seq-borrow
+                                    binstrs
+                                    pi)
+                                    [(Phi pdst inputs (I64))
                                       (when
-                                        (not (= bi hdr-idx))
-                                        (match (ir.compiler-ir-block-seq-borrow
-                                          seq
-                                          bi)
-                                          [(Block lbl _)
-                                            (when
-                                              (= lbl body-lbl)
-                                              (set! body-idx bi))
-                                            (when
-                                              (= lbl exit-lbl)
-                                              (set! exit-idx bi))])))
-                                    (if (or (< body-idx 0) (< exit-idx 0))
-                                      none
-                                      (let
-                                        [exit-ok? : bool
-                                          (match (ir.compiler-ir-block-seq-borrow
-                                            seq
-                                            exit-idx)
-                                            [(Block _ exit-instrs)
-                                              (let
-                                                [xlen : i64
-                                                  (ir.compiler-ir-instr-seq-count
-                                                    exit-instrs)]
-                                                (and
-                                                  (>= xlen 1)
-                                                  (match (ir.compiler-ir-instr-seq-borrow
-                                                    exit-instrs
-                                                    (- xlen 1))
-                                                    [(Return _) true]
-                                                    [_ false])))])]
-                                        ;; Check `iv` initialization in `entry`:
-                                        ;; either literal 0 (`sp = -1`), or parameter `sp` (directly or via `Mov iv, param`).
-                                        [sp : i64 (- 0 2)]
-                                        (match (opt-len-inv-block-assign-lit
-                                          tables
-                                          (& entry-instrs)
-                                          iv)
-                                          [(Some 0) (set! sp (- 0 1))]
-                                          [_
-                                            (let
-                                              [entry-redef? : bool false]
-                                              [entry-src-param : i64 (- 0 1)]
-                                              (for [ep (iterator.range 0 elen)]
-                                                (match (ir.compiler-ir-instr-seq-borrow
-                                                  entry-instrs
-                                                  ep)
-                                                  [(Mov mdst msrc _)
-                                                    (when
-                                                      (= mdst iv)
-                                                      (set! entry-redef? true)
-                                                      (set!
-                                                        entry-src-param
-                                                        (match (opt-len-inv-resolve-val
+                                        (and (< iv 0) (= inputs.len 2))
+                                        (let
+                                          [has-init? : bool false]
+                                          [has-latch? : bool false]
+                                          (for [ii (iterator.range 0 2)]
+                                            (match (ir.compiler-ir-phi-input-seq-borrow
+                                              inputs
+                                              ii)
+                                              [(CompilerIrPhiInput pval plbl)
+                                                (cond
+                                                  [(= plbl ec.body-lbl)
+                                                    (if (< sp 0)
+                                                      (when
+                                                        (match (opt-len-inv-lit
                                                           tables
-                                                          (& msrc)
-                                                          4)
-                                                          [(Var mv)
-                                                            (opt-len-inv-param-index
-                                                              params
-                                                              mv)]
-                                                          [_ (- 0 1)])))]
-                                                  [_
-                                                    (match (opt-instr-def-var
-                                                      (ir.compiler-ir-instr-seq-borrow
-                                                        entry-instrs
-                                                        ep))
-                                                      [(Some d)
-                                                        (when
-                                                          (= d iv)
-                                                          (set!
-                                                            entry-redef?
-                                                            true)
-                                                          (set!
-                                                            entry-src-param
-                                                            (- 0 1)))]
-                                                      [(None) unit])]))
-                                              (if entry-redef?
-                                                (when
-                                                  (>= entry-src-param 0)
-                                                  (set! sp entry-src-param))
-                                                (let
-                                                  [direct-sp : i64
-                                                    (opt-len-inv-param-index
-                                                      params
-                                                      iv)]
-                                                  (when
-                                                    (>= direct-sp 0)
-                                                    (set! sp direct-sp)))))])
-                                        (if (or
-                                          (not exit-ok?)
-                                          (< sp (- 0 1))
-                                          (= sp bp))
-                                          none
-                                          (match (ir.compiler-ir-block-seq-borrow
-                                            seq
-                                            body-idx)
-                                            [(Block _ body-instrs)
-                                              (let
-                                                [blen : i64
-                                                  (ir.compiler-ir-instr-seq-count
-                                                    body-instrs)]
-                                                [latch-ok? : bool
-                                                  (and
-                                                    (>= blen 3)
-                                                    (match (ir.compiler-ir-instr-seq-borrow
-                                                      body-instrs
-                                                      (- blen 1))
-                                                      [(Jump tgt)
-                                                        (= tgt hdr-lbl)]
-                                                      [_ false]))]
-                                                (if (not latch-ok?)
-                                                  none
-                                                  (let
-                                                    [found : OptLenInvTarget
-                                                      (opt-len-inv-target-none)]
-                                                    [iv-defs : i64 0]
-                                                    [step-ok? : bool false]
-                                                    (for [pi
-                                                      (iterator.range 0 blen)]
-                                                      (match (opt-instr-def-var
-                                                        (ir.compiler-ir-instr-seq-borrow
-                                                          body-instrs
-                                                          pi))
-                                                        [(Some d)
-                                                          (when
-                                                            (= d iv)
-                                                            (+= iv-defs 1)
-                                                            (match (ir.compiler-ir-instr-seq-borrow
-                                                              body-instrs
-                                                              pi)
-                                                              [(Mov _ msrc _)
-                                                                (when
-                                                                  (opt-len-inv-add1-of?
-                                                                    tables
-                                                                    (& msrc)
-                                                                    iv)
-                                                                  (set!
-                                                                    step-ok?
-                                                                    true))]
-                                                              [_ unit]))]
-                                                        [(None) unit])
-                                                      (match (ir.compiler-ir-instr-seq-borrow
-                                                        body-instrs
-                                                        pi)
-                                                        [(BoundsCheck
-                                                            bidx
-                                                            blen-v
-                                                            _)
-                                                          (when
-                                                            (and
-                                                              (not found.ok?)
-                                                              (or
-                                                                (match bidx
-                                                                  [(Var bv)
-                                                                    (= bv iv)]
-                                                                  [_ false])
-                                                                (match (opt-len-inv-resolve-val
-                                                                  tables
-                                                                  bidx
-                                                                  4)
-                                                                  [(Var bv)
-                                                                    (= bv iv)]
-                                                                  [_ false])))
-                                                            (let
-                                                              [t : OptLenInvTarget
-                                                                (opt-len-inv-len-target
-                                                                  tables
-                                                                  blen-v)]
-                                                              (when
-                                                                t.ok?
-                                                                (set! found t))))]
-                                                        [_ unit]))
-                                                    (if (or
-                                                      (not found.ok?)
-                                                      (not step-ok?)
-                                                      (not (= iv-defs 1)))
-                                                      none
-                                                      (let
-                                                        [tid : i64
-                                                          (if found.is-global?
-                                                            found.id
-                                                            (opt-len-inv-param-index
-                                                              params
-                                                              found.id))]
-                                                        [safe? : bool
-                                                          (>= tid 0)]
-                                                        [reads-w1? : bool false]
-                                                        [reads-g? : bool false]
-                                                        (for [pi
-                                                          (iterator.range
-                                                            0
-                                                            blen)]
-                                                          (unless
-                                                            (opt-len-inv-helper-instr-safe?
-                                                              tables
-                                                              func-id
-                                                              (& found)
-                                                              (ir.compiler-ir-instr-seq-borrow
-                                                                body-instrs
-                                                                pi))
-                                                            (set! safe? false))
-                                                          (when
-                                                            (opt-len-inv-instr-reads-target-word1?
-                                                              tables
-                                                              (& found)
-                                                              (ir.compiler-ir-instr-seq-borrow
-                                                                body-instrs
-                                                                pi))
-                                                            (set!
-                                                              reads-w1?
-                                                              true))
-                                                          (when
-                                                            (opt-len-inv-instr-reads-scalar-global?
-                                                              (if found.is-global?
-                                                                found.id
-                                                                (- 0 1))
-                                                              (ir.compiler-ir-instr-seq-ref
-                                                                body-instrs
-                                                                pi))
-                                                            (set! reads-g? true)))
-                                                        (if (not safe?)
-                                                          none
-                                                          (OptCheckedLoopHelper
-                                                            found.is-global?
-                                                            tid
-                                                            found.from-word0?
-                                                            bp
-                                                            sp
-                                                            reads-w1?
-                                                            reads-g?)))))))])))))))]
-                            [_ none])))])))]))])))
+                                                          pval)
+                                                          [(Some 0) true]
+                                                          [_ false])
+                                                        (set! has-init? true))
+                                                      (when
+                                                        (opt-len-inv-val-is-var?
+                                                          tables
+                                                          pval
+                                                          start-var)
+                                                        (set! has-init? true)))]
+                                                  [(= plbl body-lbl)
+                                                    (when
+                                                      (match pval
+                                                        [(Var pv)
+                                                          (= pv next-iv)]
+                                                        [_ false])
+                                                      (set! has-latch? true))]
+                                                  [else unit])]))
+                                          (when
+                                            (and
+                                              has-init?
+                                              has-latch?
+                                              (opt-len-inv-add1-of?
+                                                tables
+                                                (& (Var next-iv))
+                                                pdst))
+                                            (set! iv pdst))))]
+                                    [_ unit]))
+                                (when (< iv 0) (return none))
+                                (opt-len-inv-finalize-helper
+                                  func-id
+                                  params
+                                  tables
+                                  seq
+                                  body-idx
+                                  pre-idx
+                                  iv
+                                  bp
+                                  sp))))])))))]
+            [_ none]))])))
 
 (define (opt-len-inv-loop-helpers-build
   [type-segment-bases : i64]
@@ -130547,205 +130522,118 @@
         (< (array-ref count 0) cap)
         (match (ir.compiler-ir-function-seq-borrow functions i)
           [(Function name params (Unit) frame blocks _)
-            (let
-              [bcount : i64
-                (match (& blocks)
-                  [(Array seq) (ir.compiler-ir-block-seq-count seq)])]
-              (when
-                (or (= bcount 3) (= bcount 4))
+            (match (& blocks)
+              [(Array seq)
                 (let
-                  [fid : i64 (ir.compiler-ir-symbol-id name)]
-                  [tables : OptLenEqDefs
-                    (opt-len-eq-defs-build
-                      type-segment-bases
-                      frame
-                      (& blocks)
-                      false)]
-                  [h : OptCheckedLoopHelper
-                    (if (= bcount 3)
-                      (opt-len-inv-try-tailrec-helper
-                        fid
-                        (& params)
-                        (& tables)
-                        (& blocks))
-                      (opt-len-inv-try-while-helper
-                        fid
-                        (& params)
-                        (& tables)
-                        (& blocks)))]
+                  [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
                   (when
-                    (>= h.bound-param 0)
+                    (or (= bcount 3) (= bcount 4))
                     (let
-                      [idx : i64 (array-ref count 0)]
-                      (set! (array-ref rows idx) h)
-                      (set! (array-ref count 0) (+ idx 1))
-                      (opt_i64_i64_map.insert-ref! (&mut map) fid (+ idx 1)))))))]
+                      [fid : i64 (ir.compiler-ir-symbol-id name)]
+                      [tables : OptLenEqDefs
+                        (opt-len-eq-defs-build
+                          type-segment-bases
+                          frame
+                          (& blocks)
+                          false)]
+                      [h : OptCheckedLoopHelper
+                        (if (= bcount 3)
+                          (opt-len-inv-try-tailrec-helper
+                            fid
+                            params
+                            (& tables)
+                            seq)
+                          (opt-len-inv-try-4block-helper
+                            fid
+                            params
+                            (& tables)
+                            seq))]
+                      (when
+                        (>= h.bound-param 0)
+                        (let
+                          [idx : i64 (array-ref count 0)]
+                          (set! (array-ref rows idx) h)
+                          (set! (array-ref count 0) (+ idx 1))
+                          (opt_i64_i64_map.insert-ref! (&mut map) fid (+ idx 1)))))))]
+              [_ unit])]
           [_ unit])))
     (OptCheckedLoopHelpers map rows count)))
 
-;; --- Helper: check whether `N` covers `val` (val <= N, or val == N - 1) ------
+;; --- Helper: check whether `bound` covers `val` without signed wrap ----------
 ;; Returns:
 ;;   0  not covered
-;;   1  val <= N (LeLen)
-;;   2  val == N - 1 (for MaskLtLen when N >= 1)
+;;   1  val <= bound (LeLen)
+;;   2  val == bound - 1 with bound >= 1 proven (for MaskLtLen and non-wrapping LeLen)
 (define (opt-len-inv-bound-covers
   [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [ret-min : (& opt_i64_i64_map.Map)]
+  [use-blk : i64]
+  [bound-min-hint : i64]
   [val : (& ir.CompilerIrValue)]
   [bound : (& ir.CompilerIrValue)]
   [scalar-global : i64]) : i64
   (let
     [rv : ir.CompilerIrValue (opt-len-inv-resolve-val tables val 4)]
     [rb : ir.CompilerIrValue (opt-len-inv-resolve-val tables bound 4)]
-    (cond
-      [(opt-value-eq (& rv) (& rb)) 1]
-      ;; `bound` is `(Global scalar-global)` itself (e.g. `while (< i @gvn-fact-cap)`
-      ;; right after `store @gvn-fact-cap, val`).
-      [(and
-          (>= scalar-global 0)
-          (match (& rb)
-            [(Global g) (= (ir.compiler-ir-symbol-id g) scalar-global)]
-            [_ false]))
-        1]
-      ;; `val == bound - 1`
-      [(match (& rv)
-          [(Var vv)
-            (match (opt-len-eq-def tables vv)
-              [(Some instr _)
-                (match (& instr)
-                  [(BinOp _ (Sub) lhs rhs (I64))
-                    (and
-                      (opt-value-eq
-                        (& (opt-len-inv-resolve-val tables (& lhs) 4))
-                        (& rb))
-                      (match (opt-len-inv-lit tables (& rhs))
-                        [(Some 1) true]
-                        [_ false]))]
-                  [_ false])]
-              [(No) false])]
-          [_ false])
-        2]
-      ;; `bound == val + K` with K >= 1 (e.g. `cg-census-depth-clear!(count + 1)`)
-      [(match (& rb)
-          [(Var bv)
-            (match (opt-len-eq-def tables bv)
-              [(Some instr _)
-                (match (& instr)
-                  [(BinOp _ (Add) lhs rhs (I64))
-                    (or
-                      (and
-                        (opt-value-eq
-                          (& (opt-len-inv-resolve-val tables (& lhs) 4))
-                          (& rv))
-                        (match (opt-len-inv-lit tables (& rhs))
-                          [(Some k) (and (>= k 1) (<= k 64))]
-                          [_ false]))
-                      (and
-                        (opt-value-eq
-                          (& (opt-len-inv-resolve-val tables (& rhs) 4))
-                          (& rv))
-                        (match (opt-len-inv-lit tables (& lhs))
-                          [(Some k) (and (>= k 1) (<= k 64))]
-                          [_ false])))]
-                  [_ false])]
-              [(No) false])]
-          [_ false])
-        1]
-      [else 0])))
+    (when (opt-value-eq (& rv) (& rb)) (return 1))
+    (when
+      (and
+        (>= scalar-global 0)
+        (match (& rb)
+          [(Global g) (= (ir.compiler-ir-symbol-id g) scalar-global)]
+          [_ false]))
+      (return 1))
+    ;; `val == bound - 1`: guard against `bound == I64_MIN` wrap by requiring `bound >= 1`.
+    (when
+      (match (& rv)
+        [(Var vv)
+          (match (opt-len-eq-def tables vv)
+            [(Some (BinOp _ (Sub) lhs rhs (I64)) _)
+              (and
+                (opt-value-eq
+                  (& (opt-len-inv-resolve-val tables (& lhs) 4))
+                  (& rb))
+                (match (opt-len-inv-lit tables (& rhs))
+                  [(Some 1) true]
+                  [_ false]))]
+            [_ false])]
+        [_ false])
+      (when
+        (or
+          (>= bound-min-hint 1)
+          (>= (opt-len-inv-var-min tables blocks ret-min (& rb) use-blk 4) 1))
+        (return 2)))
+    ;; `bound == val + K` (1 <= K <= 64): guard against `val + K` signed overflow
+    ;; by requiring `bound >= 1` (since overflow on nonneg `val` produces negative `bound`)
+    ;; or a small literal `val <= 2^62`.
+    (when
+      (match (& rv)
+        [(Var vv)
+          (match (opt-len-inv-match-var-op-lit tables (& rb) vv false)
+            [(Some k) (and (>= k 1) (<= k 64))]
+            [(No) false])]
+        [(I64 lv)
+          (match (opt-len-inv-lit tables (& rb))
+            [(Some lb)
+              (and (<= lv 4611686018427387904) (> lb lv) (<= (- lb lv) 64))]
+            [(No) false])]
+        [_ false])
+      (when
+        (or
+          (>= bound-min-hint 1)
+          (match (& rv)
+            [(I64 lv) (<= lv 4611686018427387904)]
+            [_ false])
+          (>= (opt-len-inv-var-min tables blocks ret-min (& rb) use-blk 4) 1))
+        (return 1)))
+    0))
 
-;; Check whether a direct call instruction `Call _ cname args _` invokes a
-;; summarized checked-loop helper targeting `(target-is-global?, target-id)`
-;; with `start == 0` and `bound` covering `val`.
-;; Returns 0 if no match, 1 for LeLen, 2 for val == bound - 1.
 (define (opt-checked-loop-helper-get
   [helpers : (& OptCheckedLoopHelpers)]
   [idx : i64]) : OptCheckedLoopHelper
   (match (& (array-ref helpers.rows idx))
     [(OptCheckedLoopHelper a b c d e f g) (OptCheckedLoopHelper a b c d e f g)]))
-
-(define (opt-len-inv-call-matches-helper
-  [tables : (& OptLenEqDefs)]
-  [helpers : (& OptCheckedLoopHelpers)]
-  [arg-global : (& opt_i64_i64_map.Map)]
-  [func-id : i64]
-  [params : (& ir.CompilerIrParamSeq)]
-  [target-is-global? : bool]
-  [target-id : i64]
-  [val : (& ir.CompilerIrValue)]
-  [scalar-global : i64]
-  [forbid-word1? : bool]
-  [forbid-global? : bool]
-  [instr : (& ir.CompilerIrInstr)]) : i64
-  (match instr
-    [(Call _ cname args _)
-      (let
-        [encoded : i64
-          (opt_i64_i64_map.get-value-or
-            (& helpers.map)
-            (ir.compiler-ir-symbol-id cname)
-            0)]
-        (if (<= encoded 0)
-          0
-          (let
-            [h : OptCheckedLoopHelper
-              (opt-checked-loop-helper-get helpers (- encoded 1))]
-            (if (or
-              (and forbid-word1? h.reads-word1?)
-              (and forbid-global? h.reads-any-global?))
-              0
-              (let
-                [target-ok? : bool
-                  (if h.target-is-global?
-                    (and target-is-global? (= h.target-id target-id))
-                    (match (opt-call-memory-arg-at (& args) h.target-id)
-                      [(Some av)
-                        (let
-                          [rv : ir.CompilerIrValue
-                            (opt-len-inv-resolve-val tables (& av) 4)]
-                          (if target-is-global?
-                            (match (& rv)
-                              [(Global g)
-                                (= (ir.compiler-ir-symbol-id g) target-id)]
-                              [(Var vv)
-                                (let
-                                  [pi : i64 (opt-len-inv-param-index params vv)]
-                                  (and
-                                    (>= pi 0)
-                                    (=
-                                      (opt_i64_i64_map.get-value-or
-                                        arg-global
-                                        (opt-arg-global-key func-id pi)
-                                        0)
-                                      (+ target-id 1))))]
-                              [_ false])
-                            (match (& rv)
-                              [(Var vv) (= vv target-id)]
-                              [_ false])))]
-                      [(No) false]))]
-                [start-ok? : bool
-                  (if (< h.start-param 0)
-                    true
-                    (match (opt-call-memory-arg-at (& args) h.start-param)
-                      [(Some sv)
-                        (match (opt-len-inv-lit tables (& sv))
-                          [(Some 0) true]
-                          [_ false])]
-                      [(No) false]))]
-                (if (or (not target-ok?) (not start-ok?))
-                  0
-                  (match (opt-call-memory-arg-at (& args) h.bound-param)
-                    [(Some bv)
-                      (opt-len-inv-bound-covers tables val (& bv) scalar-global)]
-                    [(No) 0])))))))]
-    [_ 0]))
-
-;; Check if a `while` loop starting at `hdr-idx` in `seq` (entered from `pre-idx`)
-;; is a single-exit counting loop `for i = 0; i < N; i += 1` checking
-;; `bounds_check i, target.len` without reading `scalar-global` in its body
-;; (reading it as the header's own bound `lt i, @s` is allowed!) and without
-;; mutating `target`. Returns `(kind, bound_val)` via `OptLenInvLoopCheck`.
-(defstruct OptLenInvLoopCheck
-  (kind i64)
-  (bound ir.CompilerIrValue))
 
 (define (opt-len-inv-target-matches?
   [arg-global : (& opt_i64_i64_map.Map)]
@@ -130771,8 +130659,95 @@
               (+ want-id 1)))))
       (and (not got.is-global?) (= got.id want-id)))))
 
+(define (opt-len-inv-call-matches-helper
+  [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [ret-min : (& opt_i64_i64_map.Map)]
+  [use-blk : i64]
+  [helpers : (& OptCheckedLoopHelpers)]
+  [arg-global : (& opt_i64_i64_map.Map)]
+  [func-id : i64]
+  [params : (& ir.CompilerIrParamSeq)]
+  [target-is-global? : bool]
+  [target-id : i64]
+  [val : (& ir.CompilerIrValue)]
+  [scalar-global : i64]
+  [forbid-word1? : bool]
+  [forbid-global? : bool]
+  [instr : (& ir.CompilerIrInstr)]) : i64
+  (match instr
+    [(Call _ cname args _)
+      (let
+        [encoded : i64
+          (opt_i64_i64_map.get-value-or
+            (& helpers.map)
+            (ir.compiler-ir-symbol-id cname)
+            0)]
+        (when (<= encoded 0) (return 0))
+        (let
+          [h : OptCheckedLoopHelper
+            (opt-checked-loop-helper-get helpers (- encoded 1))]
+          (when
+            (or
+              (and forbid-word1? h.reads-word1?)
+              (and forbid-global? h.reads-any-global?))
+            (return 0))
+          (let
+            [target-ok? : bool
+              (if h.target-is-global?
+                (and target-is-global? (= h.target-id target-id))
+                (match (opt-call-memory-arg-at (& args) h.target-id)
+                  [(Some av)
+                    (let
+                      [rv : ir.CompilerIrValue
+                        (opt-len-inv-resolve-val tables (& av) 4)]
+                      (match (& rv)
+                        [(Global g)
+                          (and
+                            target-is-global?
+                            (= (ir.compiler-ir-symbol-id g) target-id))]
+                        [(Var vv)
+                          (opt-len-inv-target-matches?
+                            arg-global
+                            func-id
+                            params
+                            target-is-global?
+                            target-id
+                            (& (OptLenInvTarget true false vv false)))]
+                        [_ false]))]
+                  [(No) false]))]
+            [start-ok? : bool
+              (if (< h.start-param 0)
+                true
+                (match (opt-call-memory-arg-at (& args) h.start-param)
+                  [(Some sv)
+                    (match (opt-len-inv-lit tables (& sv))
+                      [(Some 0) true]
+                      [_ false])]
+                  [(No) false]))]
+            (when (or (not target-ok?) (not start-ok?)) (return 0))
+            (match (opt-call-memory-arg-at (& args) h.bound-param)
+              [(Some bv)
+                (opt-len-inv-bound-covers
+                  tables
+                  blocks
+                  ret-min
+                  use-blk
+                  0
+                  val
+                  (& bv)
+                  scalar-global)]
+              [(No) 0]))))]
+    [_ 0]))
+
+(defstruct OptLenInvLoopCheck
+  (kind i64)
+  (bound ir.CompilerIrValue))
+
 (define (opt-len-inv-check-inline-while
   [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [ret-min : (& opt_i64_i64_map.Map)]
   [arg-global : (& opt_i64_i64_map.Map)]
   [func-id : i64]
   [params : (& ir.CompilerIrParamSeq)]
@@ -130787,178 +130762,145 @@
   (let
     [none : OptLenInvLoopCheck (OptLenInvLoopCheck 0 (Unit))]
     [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
-    (if (or (< pre-idx 0) (< hdr-idx 0) (>= hdr-idx bcount))
-      none
-      (match (ir.compiler-ir-block-seq-borrow seq pre-idx)
-        [(Block _ pre-instrs)
-          (match (ir.compiler-ir-block-seq-borrow seq hdr-idx)
-            [(Block hdr-lbl hdr-instrs)
-              (let
-                [hlen : i64 (ir.compiler-ir-instr-seq-count hdr-instrs)]
-                (if (< hlen 2)
-                  none
-                  (match (ir.compiler-ir-instr-seq-borrow hdr-instrs (- hlen 1))
-                    [(Branch (Var cvar) body-lbl _)
-                      (match (ir.compiler-ir-instr-seq-borrow
-                        hdr-instrs
-                        (- hlen 2))
-                        [(BinOp bdst (Lt) (Var iv) bound-v (I64))
-                          (let
-                            [kind : i64
-                              (if (= bdst cvar)
-                                (opt-len-inv-bound-covers
-                                  tables
-                                  val
-                                  (& bound-v)
-                                  scalar-global)
-                                0)]
-                            [init-zero? : bool
-                              (match (opt-len-inv-block-assign-lit
-                                tables
-                                (& pre-instrs)
-                                iv)
-                                [(Some 0) true]
-                                [_ false])]
-                            (if (or (= kind 0) (not init-zero?))
-                              none
-                              ;; Locate `body-lbl` and verify single-block body jumping back to `hdr-lbl`.
+    (when (or (< pre-idx 0) (< hdr-idx 0) (>= hdr-idx bcount)) (return none))
+    (match (ir.compiler-ir-block-seq-borrow seq hdr-idx)
+      [(Block hdr-lbl hdr-instrs)
+        (let
+          [hc : OptLenInvLoopCond
+            (opt-len-inv-parse-loop-cond tables (& hdr-instrs) false)]
+          (when (not hc.ok?) (return none))
+          ;; Header instructions must also be side-effect-free (no Call/Store/bad StorePtr).
+          (for [hp
+            (iterator.range 0 (ir.compiler-ir-instr-seq-count hdr-instrs))]
+            (unless
+              (opt-len-inv-helper-instr-safe?
+                tables
+                (- 0 1)
+                (ir.compiler-ir-instr-seq-borrow hdr-instrs hp))
+              (return none)))
+          (let
+            [iv : i64
+              (match (& hc.lhs)
+                [(Var v) v]
+                [_ (- 0 1)])]
+            (when (< iv 0) (return none))
+            ;; The header must not move `iv` between the latch and the test.
+            (for [hp
+              (iterator.range 0 (ir.compiler-ir-instr-seq-count hdr-instrs))]
+              (match (opt-instr-def-var
+                (ir.compiler-ir-instr-seq-borrow hdr-instrs hp))
+                [(Some d) (when (= d iv) (return none))]
+                [(None) unit]))
+            (let
+              [kind : i64
+                (opt-len-inv-bound-covers
+                  tables
+                  blocks
+                  ret-min
+                  hdr-idx
+                  0
+                  val
+                  (& hc.rhs)
+                  scalar-global)]
+              [init-zero? : bool
+                (match (ir.compiler-ir-block-seq-borrow seq pre-idx)
+                  [(Block _ pre-instrs)
+                    (match (opt-len-inv-block-assign-lit
+                      tables
+                      (& pre-instrs)
+                      iv)
+                      [(Some 0) true]
+                      [_ false])])]
+              [body-idx : i64 (opt-len-inv-find-block seq hc.body-lbl)]
+              (when
+                (or (= kind 0) (not init-zero?) (< body-idx 0))
+                (return none))
+              (match (ir.compiler-ir-block-seq-borrow seq body-idx)
+                [(Block _ binstrs)
+                  (let
+                    [blen : i64 (ir.compiler-ir-instr-seq-count binstrs)]
+                    (when (< blen 3) (return none))
+                    (let
+                      [latch-ok? : bool
+                        (match (ir.compiler-ir-instr-seq-borrow
+                          binstrs
+                          (- blen 1))
+                          [(Jump tgt) (= tgt hdr-lbl)]
+                          [_ false])]
+                      [step-ok? : bool
+                        (match (ir.compiler-ir-instr-seq-borrow
+                          binstrs
+                          (- blen 2))
+                          [(Mov md ms _)
+                            (and (= md iv) (opt-len-inv-add1-of? tables ms iv))]
+                          [_ false])]
+                      [has-check? : bool false]
+                      [iv-defs : i64 0]
+                      ;; A copy of `iv` made in this body before the step holds
+                      ;; this iteration's `iv`; an older copy does not.
+                      [iv-copy : i64 iv]
+                      (when (or (not latch-ok?) (not step-ok?)) (return none))
+                      (for [pi (iterator.range 0 blen)]
+                        ;; Forbid ALL Calls, global Stores, and non-data-buf StorePtr/CopyBytes!
+                        (unless
+                          (opt-len-inv-helper-instr-safe?
+                            tables
+                            (- 0 1)
+                            (ir.compiler-ir-instr-seq-borrow binstrs pi))
+                          (return none))
+                        (match (opt-instr-def-var
+                          (ir.compiler-ir-instr-seq-borrow binstrs pi))
+                          [(Some d) (when (= d iv) (+= iv-defs 1))]
+                          [(None) unit])
+                        (set!
+                          iv-copy
+                          (opt-len-inv-iv-copy
+                            tables
+                            (ir.compiler-ir-instr-seq-borrow binstrs pi)
+                            iv
+                            iv-copy))
+                        (match (ir.compiler-ir-instr-seq-borrow binstrs pi)
+                          [(BoundsCheck bidx blen-v _)
+                            (when
+                              (opt-len-inv-iv-at? tables bidx iv iv-copy)
                               (let
-                                [body-idx : i64 (- 0 1)]
-                                (for [bi (iterator.range 0 bcount)]
-                                  (match (ir.compiler-ir-block-seq-borrow
-                                    seq
-                                    bi)
-                                    [(Block lbl _)
-                                      (when (= lbl body-lbl) (set! body-idx bi))]))
-                                (if (< body-idx 0)
-                                  none
-                                  (match (ir.compiler-ir-block-seq-borrow
-                                    seq
-                                    body-idx)
-                                    [(Block _ binstrs)
-                                      (let
-                                        [blen : i64
-                                          (ir.compiler-ir-instr-seq-count
-                                            binstrs)]
-                                        (if (< blen 3)
-                                          none
-                                          (let
-                                            [latch-ok? : bool
-                                              (match (ir.compiler-ir-instr-seq-borrow
-                                                binstrs
-                                                (- blen 1))
-                                                [(Jump tgt) (= tgt hdr-lbl)]
-                                                [_ false])]
-                                            [step-ok? : bool
-                                              (match (ir.compiler-ir-instr-seq-borrow
-                                                binstrs
-                                                (- blen 2))
-                                                [(Mov mdst msrc _)
-                                                  (and
-                                                    (= mdst iv)
-                                                    (opt-len-inv-add1-of?
-                                                      tables
-                                                      (& msrc)
-                                                      iv))]
-                                                [_ false])]
-                                            [has-check? : bool false]
-                                            [body-ok? : bool
-                                              (and latch-ok? step-ok?)]
-                                            [iv-defs : i64 0]
-                                            (for [pi (iterator.range 0 blen)]
-                                              (match (opt-instr-def-var
-                                                (ir.compiler-ir-instr-seq-borrow
-                                                  binstrs
-                                                  pi))
-                                                [(Some d)
-                                                  (when (= d iv) (+= iv-defs 1))]
-                                                [(None) unit])
-                                              (match (ir.compiler-ir-instr-seq-borrow
-                                                binstrs
-                                                pi)
-                                                [(BoundsCheck bidx blen-v _)
-                                                  (when
-                                                    (match (opt-len-inv-resolve-val
-                                                      tables
-                                                      bidx
-                                                      4)
-                                                      [(Var bv) (= bv iv)]
-                                                      [_ false])
-                                                    (let
-                                                      [t : OptLenInvTarget
-                                                        (opt-len-inv-len-target
-                                                          tables
-                                                          blen-v)]
-                                                      (when
-                                                        (opt-len-inv-target-matches?
-                                                          arg-global
-                                                          func-id
-                                                          params
-                                                          want-global?
-                                                          want-id
-                                                          (& t))
-                                                        (set! has-check? true))))]
-                                                [(or (Store sname _ _)
-                                                     (CopyBytes
-                                                       (Global sname)
-                                                       _
-                                                       _))
-                                                  (let
-                                                    [sid : i64
-                                                      (ir.compiler-ir-symbol-id
-                                                        sname)]
-                                                    (when
-                                                      (or
-                                                        (= sid scalar-global)
-                                                        (and
-                                                          want-global?
-                                                          (= sid want-id)))
-                                                      (set! body-ok? false)))]
-                                                [(or (CallIndirect _ _ _ _)
-                                                     (CallIndirectC _ _ _ _)
-                                                     (CallCAbiStoreResult _)
-                                                     (CallIndirectCAbiStoreResult
-                                                       _) (SpmdCall _)
-                                                     (TailCallIndirect _ _ _))
-                                                  (set! body-ok? false)]
-                                                [_ unit])
-                                              (when
-                                                (and
-                                                  forbid-scalar-read?
-                                                  (>= scalar-global 0)
-                                                  (not
-                                                    (=
-                                                      (bit-and
-                                                        (opt-len-inv-instr-use-mask
-                                                          1
-                                                          scalar-global
-                                                          arg-global
-                                                          (ir.compiler-ir-instr-seq-ref
-                                                            binstrs
-                                                            pi))
-                                                        1)
-                                                      0)))
-                                                (set! body-ok? false)))
-                                            (if (and
-                                              body-ok?
-                                              has-check?
-                                              (= iv-defs 1))
-                                              (OptLenInvLoopCheck
-                                                kind
-                                                (opt-len-inv-resolve-val
-                                                  tables
-                                                  (& bound-v)
-                                                  4))
-                                              none))))])))))]
-                        [_ none])]
-                    [_ none])))])]))))
+                                [t : OptLenInvTarget
+                                  (opt-len-inv-len-target tables blen-v)]
+                                (when
+                                  (opt-len-inv-target-matches?
+                                    arg-global
+                                    func-id
+                                    params
+                                    want-global?
+                                    want-id
+                                    (& t))
+                                  (set! has-check? true))))]
+                          [_ unit])
+                        (when
+                          (and
+                            forbid-scalar-read?
+                            (>= scalar-global 0)
+                            (not
+                              (=
+                                (bit-and
+                                  (opt-len-inv-instr-use-mask
+                                    1
+                                    scalar-global
+                                    arg-global
+                                    (ir.compiler-ir-instr-seq-ref binstrs pi))
+                                  1)
+                                0)))
+                          (return none)))
+                      (if (and has-check? (= iv-defs 1))
+                        (OptLenInvLoopCheck
+                          kind
+                          (opt-len-inv-resolve-val tables (& hc.rhs) 4))
+                        none)))]))))])))
 
-;; Check if a post-dominating checked loop (either an inline `while` immediately
-;; following block `sb` or a direct call to a checked-loop helper in `sb` after
-;; `sp`) verifies `val <= target.len` (or `val == bound - 1` for MaskLtLen).
-;; Also records the callee helper id (if any) into `helper-out[0]`.
 (define (opt-len-inv-post-checked-loop
   [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [ret-min : (& opt_i64_i64_map.Map)]
   [helpers : (& OptCheckedLoopHelpers)]
   [arg-global : (& opt_i64_i64_map.Map)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -130991,59 +130933,56 @@
               (for [pos (iterator.range start-pos ilen)]
                 (when
                   clean?
-                  (begin
-                    ;; Check if this instruction is a call to a checked-loop helper!
-                    (let
-                      [hk : i64
-                        (opt-len-inv-call-matches-helper
-                          tables
-                          helpers
-                          arg-global
-                          func-id
-                          params
-                          want-global?
-                          want-id
-                          val
-                          scalar-global
-                          forbid-word1?
-                          (>= scalar-global 0)
-                          (ir.compiler-ir-instr-seq-borrow instrs pos))]
-                      (when
-                        (> hk 0)
-                        (match (ir.compiler-ir-instr-seq-borrow instrs pos)
-                          [(Call _ cname args _)
-                            (set!
-                              (array-ref helper-out 0)
-                              (ir.compiler-ir-symbol-id cname))
-                            (let
-                              [enc : i64
-                                (opt_i64_i64_map.get-value-or
-                                  (& helpers.map)
-                                  (ir.compiler-ir-symbol-id cname)
-                                  0)]
-                              [h : OptCheckedLoopHelper
-                                (opt-checked-loop-helper-get helpers (- enc 1))]
-                              (match (opt-call-memory-arg-at
-                                (& args)
-                                h.bound-param)
-                                [(Some bv) (return (OptLenInvLoopCheck hk bv))]
-                                [(No) (return (OptLenInvLoopCheck hk (Unit)))]))]
-                          [_ unit])))
-                    ;; Otherwise check that this instruction neither observes `scalar-global`/word1
-                    ;; nor writes `target` nor is an opaque call.
+                  (let
+                    [hk : i64
+                      (opt-len-inv-call-matches-helper
+                        tables
+                        blocks
+                        ret-min
+                        cur-blk
+                        helpers
+                        arg-global
+                        func-id
+                        params
+                        want-global?
+                        want-id
+                        val
+                        scalar-global
+                        forbid-word1?
+                        (>= scalar-global 0)
+                        (ir.compiler-ir-instr-seq-borrow instrs pos))]
+                    (when
+                      (> hk 0)
+                      (match (ir.compiler-ir-instr-seq-borrow instrs pos)
+                        [(Call _ cname args _)
+                          (set!
+                            (array-ref helper-out 0)
+                            (ir.compiler-ir-symbol-id cname))
+                          (let
+                            [enc : i64
+                              (opt_i64_i64_map.get-value-or
+                                (& helpers.map)
+                                (ir.compiler-ir-symbol-id cname)
+                                0)]
+                            [h : OptCheckedLoopHelper
+                              (opt-checked-loop-helper-get helpers (- enc 1))]
+                            (match (opt-call-memory-arg-at
+                              (& args)
+                              h.bound-param)
+                              [(Some bv) (return (OptLenInvLoopCheck hk bv))]
+                              [(No) (return (OptLenInvLoopCheck hk (Unit)))]))]
+                        [_ unit]))
                     (match (ir.compiler-ir-instr-seq-borrow instrs pos)
                       [(Jump tgt)
                         (let
-                          [hdr-idx : i64 (- 0 1)]
-                          (for [bi (iterator.range 0 bcount)]
-                            (match (ir.compiler-ir-block-seq-borrow seq bi)
-                              [(Block lbl _)
-                                (when (= lbl tgt) (set! hdr-idx bi))]))
+                          [hdr-idx : i64 (opt-len-inv-find-block seq tgt)]
                           (if (>= hdr-idx 0)
                             (let
                               [chk : OptLenInvLoopCheck
                                 (opt-len-inv-check-inline-while
                                   tables
+                                  blocks
+                                  ret-min
                                   arg-global
                                   func-id
                                   params
@@ -131067,6 +131006,11 @@
                               (= sid scalar-global)
                               (and want-global? (= sid want-id)))
                             (set! clean? false)))]
+                      [(or (StorePtr addr _ _) (StoreOwned addr _ _)
+                           (CopyBytes addr _ _))
+                        (unless
+                          (opt-len-inv-ptr-is-data-buf? tables addr 4)
+                          (set! clean? false))]
                       [(Call _ cname _ _)
                         (let
                           [cid : i64 (ir.compiler-ir-symbol-id cname)]
@@ -131084,7 +131028,8 @@
                            (CallCAbiStoreResult _)
                            (CallIndirectCAbiStoreResult _) (SpmdCall _)
                            (TailCall _ _ _) (TailCallIndirect _ _ _) (Return _)
-                           (Branch _ _ _) (Switch _ _ _ _))
+                           (Branch _ _ _) (Switch _ _ _ _) (VectorStore _)
+                           (PredicatedStore _) (Syscall _ _))
                         (set! clean? false)]
                       [_ unit])
                     (when
@@ -131119,7 +131064,21 @@
           (set! clean? false))))
     none))
 
-;; --- Part 3: Whole-program struct-field length invariant (S.len <= S.slots.len) ---
+;; --- Part 3: Whole-program struct-field length invariant (0 <= S.len <= S.slots.len) ---
+(define (opt-struct-len-disqualify-type-list!
+  [type-segment-bases : i64]
+  [bad : (&mut opt_i64_i64_map.Map)]
+  [items : (& ast.AstTypeList)]) : unit
+  (for [i (iterator.range 0 items.len)]
+    (opt-struct-len-disqualify-nested!
+      type-segment-bases
+      bad
+      (&
+        (ast.ast-type-segment-bases-get
+          type-segment-bases
+          (array-ref items.slots i)))
+      true)))
+
 (define (opt-struct-len-disqualify-nested!
   [type-segment-bases : i64]
   [bad : (&mut opt_i64_i64_map.Map)]
@@ -131130,14 +131089,29 @@
       (when
         nested?
         (opt_i64_i64_map.insert-ref! bad (ir.compiler-ir-symbol-id name) 1))]
-    [(or (Ptr inner) (MutPtr inner) (DynArray inner) (Array inner _)
-         (Box inner))
+    [(or (Ptr inner) (MutPtr inner) (DynArray inner) (Array inner _) (Box inner)
+         (Slice inner))
       (opt-struct-len-disqualify-nested!
         type-segment-bases
         bad
         (& (ast.ast-type-segment-bases-get type-segment-bases inner))
         true)]
-    [(or (Ref _ inner) (MutRef _ inner) (Region _ inner))
+    [(Tuple items)
+      (opt-struct-len-disqualify-type-list!
+        type-segment-bases
+        bad
+        (& (deref items)))]
+    [(Func params ret)
+      (opt-struct-len-disqualify-type-list!
+        type-segment-bases
+        bad
+        (& (deref params)))
+      (opt-struct-len-disqualify-nested!
+        type-segment-bases
+        bad
+        (& (ast.ast-type-segment-bases-get type-segment-bases ret))
+        true)]
+    [(or (Ref _ inner) (MutRef _ inner) (Region _ inner) (Invalidate _ inner))
       (opt-struct-len-disqualify-nested!
         type-segment-bases
         bad
@@ -131145,7 +131119,6 @@
         nested?)]
     [_ unit]))
 
-;; Check if a `Gep` destination var only flows into safe load/store/gep/non-writing-call uses.
 (define (opt-struct-len-seed-candidates
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
@@ -131193,155 +131166,550 @@
                 false)
               (let
                 [psid : i64 (opt-struct-type-id type-segment-bases (& pty))]
-                (when (>= psid 0) (opt_i64_i64_map.insert-ref! seen psid 1)))]))])))
+                (when
+                  (>= psid 0)
+                  (opt_i64_i64_map.insert-ref! seen psid 1)
+                  (when (>= pi 64) (opt_i64_i64_map.insert-ref! bad psid 1))))]))])))
 
 (define (opt-struct-len-is-sret-param? [param : (& ir.CompilerIrParam)]) : bool
   (match param
     [(Param name _ _) (string.eq name (ir.compiler-ir-hidden-sret-param-name))]))
 
 ;; Verify a `grow`-style non-shrinking length `new-len` against `old-cap`
-;; (handling `old-cap`, `old-cap * 2`, `old-cap + C`, and `if (< old-cap 1) 1 (* old-cap 2)`).
+;; (`old-cap`, `old-cap * 2`, or `old-cap + C` with `0 <= C <= 2^30`).
 (define (opt-struct-len-non-shrinking-expr?
   [tables : (& OptLenEqDefs)]
   [val : (& ir.CompilerIrValue)]
   [old-cap : i64]) : bool
-  (match (opt-len-inv-resolve-val tables val 4)
-    [(Var v)
-      (if (= v old-cap)
-        true
-        (match (opt-len-eq-def tables v)
-          [(Some instr _)
-            (match (& instr)
-              [(BinOp _ (Mul) lhs rhs (I64))
-                (or
+  (or
+    (opt-len-inv-val-is-var? tables val old-cap)
+    (match (opt-len-inv-match-var-op-lit tables val old-cap true)
+      [(Some 2) true]
+      [_ false])
+    (match (opt-len-inv-match-var-op-lit tables val old-cap false)
+      [(Some k) (and (>= k 0) (<= k 1073741824))]
+      [_ false])))
+
+;; True if no mutating instruction (`Call`, `Store`, non-data-buf `StorePtr`/
+;; `StoreOwned`/`CopyBytes`) can execute on any path from `(src-blk, src-pos)`
+;; to `(dst-blk, dst-pos)` where `src-blk` dominates `dst-blk`.
+(define (opt-struct-len-path-clean?
+  [tables : (& OptLenEqDefs)]
+  [doms : (& OptDomInfo)]
+  [seq : (& ir.CompilerIrBlockSeq)]
+  [src-blk : i64]
+  [src-pos : i64]
+  [dst-blk : i64]
+  [dst-pos : i64]) : bool
+  (when
+    (or
+      (< src-blk 0)
+      (< dst-blk 0)
+      (not (opt-dom-info-dominates-id? doms src-blk dst-blk)))
+    (return false))
+  (if (= src-blk dst-blk)
+    (if (> src-pos dst-pos)
+      false
+      (match (ir.compiler-ir-block-seq-borrow seq src-blk)
+        [(Block _ instrs)
+          (for [p (iterator.range (+ src-pos 1) dst-pos)]
+            (unless
+              (opt-len-inv-helper-instr-safe?
+                tables
+                (- 0 1)
+                (ir.compiler-ir-instr-seq-borrow instrs p))
+              (return false)))
+          true]))
+    (begin
+      (match (ir.compiler-ir-block-seq-borrow seq src-blk)
+        [(Block _ sinstrs)
+          (for [p
+            (iterator.range
+              (+ src-pos 1)
+              (ir.compiler-ir-instr-seq-count sinstrs))]
+            (unless
+              (opt-len-inv-helper-instr-safe?
+                tables
+                (- 0 1)
+                (ir.compiler-ir-instr-seq-borrow sinstrs p))
+              (return false)))])
+      (match (ir.compiler-ir-block-seq-borrow seq dst-blk)
+        [(Block _ dinstrs)
+          (for [p (iterator.range 0 dst-pos)]
+            (unless
+              (opt-len-inv-helper-instr-safe?
+                tables
+                (- 0 1)
+                (ir.compiler-ir-instr-seq-borrow dinstrs p))
+              (return false)))])
+      (let
+        [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
+        [seen : (__tl_dyn-array bool) (__tl_make-array bool bcount)]
+        [stack : (__tl_dyn-array i64) (__tl_make-array i64 bcount)]
+        [top : i64 0]
+        (for [e
+          (iterator.range
+            (array-ref doms.index.preds.offsets dst-blk)
+            (array-ref doms.index.preds.offsets (+ dst-blk 1)))]
+          (let
+            [p : i64 (array-ref doms.index.preds.edges e)]
+            (when
+              (and
+                (>= p 0)
+                (< p bcount)
+                (not (= p src-blk))
+                (not (array-ref seen p))
+                (< top bcount))
+              (set! (array-ref seen p) true)
+              (set! (array-ref stack top) p)
+              (+= top 1))))
+        (while (> top 0)
+          (-= top 1)
+          (let
+            [cur : i64 (array-ref stack top)]
+            (match (ir.compiler-ir-block-seq-borrow seq cur)
+              [(Block _ cinstrs)
+                (for [p
+                  (iterator.range 0 (ir.compiler-ir-instr-seq-count cinstrs))]
+                  (unless
+                    (opt-len-inv-helper-instr-safe?
+                      tables
+                      (- 0 1)
+                      (ir.compiler-ir-instr-seq-borrow cinstrs p))
+                    (return false)))])
+            (for [e
+              (iterator.range
+                (array-ref doms.index.preds.offsets cur)
+                (array-ref doms.index.preds.offsets (+ cur 1)))]
+              (let
+                [p : i64 (array-ref doms.index.preds.edges e)]
+                (when
                   (and
-                    (match (opt-len-inv-resolve-val tables (& lhs) 4)
-                      [(Var lv) (= lv old-cap)]
-                      [_ false])
-                    (match (opt-len-inv-lit tables (& rhs))
-                      [(Some 2) true]
-                      [_ false]))
-                  (and
-                    (match (opt-len-inv-resolve-val tables (& rhs) 4)
-                      [(Var rv) (= rv old-cap)]
-                      [_ false])
-                    (match (opt-len-inv-lit tables (& lhs))
-                      [(Some 2) true]
-                      [_ false])))]
-              [(BinOp _ (Add) lhs rhs (I64))
-                (or
-                  (and
-                    (match (opt-len-inv-resolve-val tables (& lhs) 4)
-                      [(Var lv) (= lv old-cap)]
-                      [_ false])
-                    (match (opt-len-inv-lit tables (& rhs))
-                      [(Some k) (and (>= k 0) (<= k 1073741824))]
-                      [_ false]))
-                  (and
-                    (match (opt-len-inv-resolve-val tables (& rhs) 4)
-                      [(Var rv) (= rv old-cap)]
-                      [_ false])
-                    (match (opt-len-inv-lit tables (& lhs))
-                      [(Some k) (and (>= k 0) (<= k 1073741824))]
-                      [_ false])))]
-              [_ false])]
-          [(No) false]))]
-    [_ false]))
+                    (>= p 0)
+                    (< p bcount)
+                    (not (= p src-blk))
+                    (not (array-ref seen p))
+                    (< top bcount))
+                  (set! (array-ref seen p) true)
+                  (set! (array-ref stack top) p)
+                  (+= top 1))))))
+        true))))
+
+;; Match a branch `Branch (Var cvar) t-lbl f-lbl` comparing `var` against 0/1
+;; and return `(small-lbl, big-lbl)` where `small-lbl` has `var <= 0` and
+;; `big-lbl` has `var >= 1` (or `(-1, -1)` if no match).
+(defstruct OptLenInvPosBranch
+  (ok? bool)
+  (small-lbl i64)
+  (big-lbl i64))
+
+(define (opt-struct-len-pos-branch
+  [tables : (& OptLenEqDefs)]
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [var : i64]) : OptLenInvPosBranch
+  (let
+    [none : OptLenInvPosBranch (OptLenInvPosBranch false (- 0 1) (- 0 1))]
+    [n : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (when (< n 1) (return none))
+    (match (ir.compiler-ir-instr-seq-borrow instrs (- n 1))
+      [(Branch (Var cvar) t-lbl f-lbl)
+        (match (opt-len-eq-def tables cvar)
+          [(Some (BinOp _ op lhs rhs (I64)) _)
+            (cond
+              [(opt-len-inv-val-is-var? tables (& lhs) var)
+                (match (opt-len-inv-lit tables (& rhs))
+                  [(Some 1)
+                    (cond
+                      [(opt-binop-eq (& op) (& (Lt)))
+                        (OptLenInvPosBranch true t-lbl f-lbl)]
+                      [(opt-binop-eq (& op) (& (Ge)))
+                        (OptLenInvPosBranch true f-lbl t-lbl)]
+                      [else none])]
+                  [(Some 0)
+                    (cond
+                      [(opt-binop-eq (& op) (& (Le)))
+                        (OptLenInvPosBranch true t-lbl f-lbl)]
+                      [(opt-binop-eq (& op) (& (Gt)))
+                        (OptLenInvPosBranch true f-lbl t-lbl)]
+                      [else none])]
+                  [_ none])]
+              [(opt-len-inv-val-is-var? tables (& rhs) var)
+                (match (opt-len-inv-lit tables (& lhs))
+                  [(Some 1)
+                    (cond
+                      [(opt-binop-eq (& op) (& (Gt)))
+                        (OptLenInvPosBranch true t-lbl f-lbl)]
+                      [(opt-binop-eq (& op) (& (Le)))
+                        (OptLenInvPosBranch true f-lbl t-lbl)]
+                      [else none])]
+                  [(Some 0)
+                    (cond
+                      [(opt-binop-eq (& op) (& (Ge)))
+                        (OptLenInvPosBranch true t-lbl f-lbl)]
+                      [(opt-binop-eq (& op) (& (Lt)))
+                        (OptLenInvPosBranch true f-lbl t-lbl)]
+                      [else none])]
+                  [_ none])]
+              [else none])]
+          [_ none])]
+      [_ none])))
 
 (define (opt-struct-len-grow-ok?
   [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
   [seq : (& ir.CompilerIrBlockSeq)]
+  [store-blk : i64]
+  [store-pos : i64]
   [root-is-global? : bool]
   [root-id : i64]
   [new-slots : (& ir.CompilerIrValue)]) : bool
   (let
     [new-len : ir.CompilerIrValue (opt-len-inv-fresh-desc-len tables new-slots)]
     (match (& new-len)
-      [(Unit) false]
       [(Var nl)
-        ;; Find `old-cap = load (gep (load (gep root, 0)), 1)` in this function.
         (let
-          [old-cap : i64 (- 0 1)]
+          [doms : OptDomInfo
+            (opt-cfg-dominators-with
+              (opt-cfg-index-build blocks)
+              (opt-cfg-entry-label blocks))]
           [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
+          [old-cap : i64 (- 0 1)]
           (for [bi (iterator.range 0 bcount)]
-            (match (ir.compiler-ir-block-seq-borrow seq bi)
-              [(Block _ instrs)
-                (for [pi
-                  (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-                  (match (ir.compiler-ir-instr-seq-borrow instrs pi)
-                    [(Load dst _ (I64))
-                      (let
-                        [t : OptLenInvTarget
-                          (opt-len-inv-len-target tables (& (Var dst)))]
-                        (when
-                          (and
-                            t.ok?
-                            t.from-word0?
-                            (= t.is-global? root-is-global?)
-                            (= t.id root-id))
-                          (set! old-cap dst)))]
-                    [_ unit]))]))
-          (cond
-            [(< old-cap 0) false]
-            [(opt-struct-len-non-shrinking-expr? tables (& new-len) old-cap)
-              true]
-            ;; Pre-SSA `if (< old-cap 1) 1 (* old-cap 2)` assigns `nl` in two arms:
-            ;; one literal >= 1 (on the `old-cap < 1` arm) and one `old-cap * 2` / `+ C`.
-            [(= (opt-len-eq-def-count tables nl) 2)
-              (let
-                [defs-ok? : bool true]
-                [lit-arm-ok? : bool false]
-                [grow-arm-ok? : bool false]
-                [has-lt1-branch? : bool false]
-                (for [bi (iterator.range 0 bcount)]
-                  (match (ir.compiler-ir-block-seq-borrow seq bi)
-                    [(Block _ instrs)
-                      (for [pi
-                        (iterator.range
-                          0
-                          (ir.compiler-ir-instr-seq-count instrs))]
-                        (match (ir.compiler-ir-instr-seq-borrow instrs pi)
-                          [(BinOp _ (Lt) lhs rhs (I64))
+            (when
+              (opt-dom-info-dominates-id? (& doms) bi store-blk)
+              (match (ir.compiler-ir-block-seq-borrow seq bi)
+                [(Block _ instrs)
+                  (let
+                    [limit : i64
+                      (if (= bi store-blk)
+                        store-pos
+                        (ir.compiler-ir-instr-seq-count instrs))]
+                    (for [pi (iterator.range 0 limit)]
+                      (match (ir.compiler-ir-instr-seq-borrow instrs pi)
+                        [(Load dst _ (I64))
+                          (let
+                            [t : OptLenInvTarget
+                              (opt-len-inv-len-target tables (& (Var dst)))]
                             (when
                               (and
-                                (match (opt-len-inv-resolve-val tables lhs 4)
-                                  [(Var lv) (= lv old-cap)]
-                                  [_ false])
-                                (match (opt-len-inv-lit tables rhs)
-                                  [(Some 1) true]
-                                  [_ false]))
-                              (set! has-lt1-branch? true))]
-                          [(Mov dst src _)
-                            (when
-                              (= dst nl)
-                              (match (opt-len-inv-lit tables src)
-                                [(Some k)
-                                  (if (>= k 1)
-                                    (set! lit-arm-ok? true)
-                                    (set! defs-ok? false))]
-                                [(No)
-                                  (if (opt-struct-len-non-shrinking-expr?
-                                    tables
-                                    src
-                                    old-cap)
-                                    (set! grow-arm-ok? true)
-                                    (set! defs-ok? false))]))]
-                          [_
-                            (match (opt-instr-def-var
-                              (ir.compiler-ir-instr-seq-borrow instrs pi))
-                              [(Some d) (when (= d nl) (set! defs-ok? false))]
-                              [(None) unit])]))]))
-                (and defs-ok? lit-arm-ok? grow-arm-ok? has-lt1-branch?))]
-            [else false]))]
+                                t.ok?
+                                t.from-word0?
+                                (= t.is-global? root-is-global?)
+                                (= t.id root-id))
+                              (set! old-cap dst)))]
+                        [_ unit])))])))
+          (when (< old-cap 0) (return false))
+          (when
+            (opt-struct-len-non-shrinking-expr? tables (& new-len) old-cap)
+            (return true))
+          ;; Guarded `if (< old-cap 1) K (* old-cap 2)` (pre-SSA `dc == 2` or SSA `Phi`):
+          ;; require dominating branch polarity (`small-blk` = `old-cap <= 0`, `big-blk` = `old-cap >= 1`),
+          ;; with literal `K >= 1` ONLY on `small-blk` and non-shrinking expr ONLY on `big-blk`.
+          (for [br-bi (iterator.range 0 bcount)]
+            (when
+              (opt-dom-info-dominates-id? (& doms) br-bi store-blk)
+              (let
+                [pb : OptLenInvPosBranch
+                  (match (ir.compiler-ir-block-seq-borrow seq br-bi)
+                    [(Block _ br-instrs)
+                      (opt-struct-len-pos-branch tables (& br-instrs) old-cap)])]
+                (when
+                  pb.ok?
+                  (let
+                    [small-bi : i64 (opt-len-inv-find-block seq pb.small-lbl)]
+                    [big-bi : i64 (opt-len-inv-find-block seq pb.big-lbl)]
+                    (when
+                      (and
+                        (>= small-bi 0)
+                        (>= big-bi 0)
+                        (not (= small-bi big-bi))
+                        (opt-len-inv-sole-pred? (& doms.index) small-bi br-bi)
+                        (opt-len-inv-sole-pred? (& doms.index) big-bi br-bi))
+                      (when
+                        (= (opt-len-eq-def-count tables nl) 1)
+                        (match (opt-len-eq-def tables nl)
+                          [(Some (Phi _ inputs (I64)) _)
+                            (let
+                              [ok? : bool (> inputs.len 0)]
+                              [saw-small? : bool false]
+                              [saw-big? : bool false]
+                              (for [ki (iterator.range 0 inputs.len)]
+                                (match (ir.compiler-ir-phi-input-seq-borrow
+                                  inputs
+                                  ki)
+                                  [(ir.CompilerIrPhiInput pv plbl)
+                                    (let
+                                      [pbi : i64
+                                        (opt-len-inv-find-block seq plbl)]
+                                      (cond
+                                        [(and
+                                            (>= pbi 0)
+                                            (opt-dom-info-dominates-id?
+                                              (& doms)
+                                              small-bi
+                                              pbi))
+                                          (match (opt-len-inv-lit tables (& pv))
+                                            [(Some k)
+                                              (if (>= k 1)
+                                                (set! saw-small? true)
+                                                (set! ok? false))]
+                                            [(No) (set! ok? false)])]
+                                        [(and
+                                            (>= pbi 0)
+                                            (opt-dom-info-dominates-id?
+                                              (& doms)
+                                              big-bi
+                                              pbi))
+                                          (if (opt-struct-len-non-shrinking-expr?
+                                            tables
+                                            (& pv)
+                                            old-cap)
+                                            (set! saw-big? true)
+                                            (set! ok? false))]
+                                        [else (set! ok? false)]))]))
+                              (when (and ok? saw-small? saw-big?) (return true)))]
+                          [_ unit]))
+                      (when
+                        (= (opt-len-eq-def-count tables nl) 2)
+                        (let
+                          [defs-ok? : bool true]
+                          [small-ok? : bool false]
+                          [big-ok? : bool false]
+                          [def-cnt : i64 0]
+                          (for [bi (iterator.range 0 bcount)]
+                            (match (ir.compiler-ir-block-seq-borrow seq bi)
+                              [(Block _ instrs)
+                                (for [pi
+                                  (iterator.range
+                                    0
+                                    (ir.compiler-ir-instr-seq-count instrs))]
+                                  (match (opt-instr-def-var
+                                    (ir.compiler-ir-instr-seq-borrow instrs pi))
+                                    [(Some d)
+                                      (when
+                                        (= d nl)
+                                        (+= def-cnt 1)
+                                        (match (ir.compiler-ir-instr-seq-borrow
+                                          instrs
+                                          pi)
+                                          [(Mov _ src _)
+                                            (cond
+                                              [(opt-dom-info-dominates-id?
+                                                  (& doms)
+                                                  small-bi
+                                                  bi)
+                                                (match (opt-len-inv-lit
+                                                  tables
+                                                  src)
+                                                  [(Some k)
+                                                    (if (>= k 1)
+                                                      (set! small-ok? true)
+                                                      (set! defs-ok? false))]
+                                                  [(No) (set! defs-ok? false)])]
+                                              [(opt-dom-info-dominates-id?
+                                                  (& doms)
+                                                  big-bi
+                                                  bi)
+                                                (if (opt-struct-len-non-shrinking-expr?
+                                                  tables
+                                                  src
+                                                  old-cap)
+                                                  (set! big-ok? true)
+                                                  (set! defs-ok? false))]
+                                              [else (set! defs-ok? false)])]
+                                          [_ (set! defs-ok? false)]))]
+                                    [(None) unit]))]))
+                          (when
+                            (and defs-ok? (= def-cnt 2) small-ok? big-ok?)
+                            (return true))))))))))
+          false)]
       [_ false])))
 
 ;; Verify an in-place word-1 (`len`/`cap`) write `store_ptr (gep root, 8), new-len`.
+;; Enforces `0 <= new-len <= root.slots.len`!
+;; Returns: 0 = invalid, 1 = valid directly, 2 = valid via post-dominating checked loop.
+;; Check Case (b2): pop-style decrement `new-len == old_len - 1` requiring
+;; dominating strict `old_len > 0` on the taken arm and a clean path to `ov`.
+(define (opt-struct-len-pop-guard-ok?
+  [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [seq : (& ir.CompilerIrBlockSeq)]
+  [sb : i64]
+  [sp : i64]
+  [root-is-global? : bool]
+  [root-id : i64]
+  [new-len : (& ir.CompilerIrValue)]) : bool
+  (let
+    [ov : i64
+      (match (opt-len-inv-resolve-val tables new-len 4)
+        [(Var nv)
+          (match (opt-len-eq-def tables nv)
+            [(Some (BinOp _ (Sub) lhs rhs (I64)) _)
+              (if (match (opt-len-inv-lit tables (& rhs))
+                [(Some 1) true]
+                [_ false])
+                (match (opt-len-inv-resolve-val tables (& lhs) 4)
+                  [(Var v) v]
+                  [_ (- 0 1)])
+                (- 0 1))]
+            [_ (- 0 1)])]
+        [_ (- 0 1)])]
+    (when (< ov 0) (return false))
+    (match (opt-len-eq-def tables ov)
+      [(Some (Load _ osrc (I64)) _)
+        (let
+          [og : OptLenInvGep (opt-len-inv-gep-root tables (& osrc) 4)]
+          (unless
+            (and
+              og.ok?
+              (= og.offset 8)
+              (= og.is-global? root-is-global?)
+              (= og.root root-id))
+            (return false)))]
+      [_ (return false)])
+    (let
+      [doms : OptDomInfo
+        (opt-cfg-dominators-with
+          (opt-cfg-index-build blocks)
+          (opt-cfg-entry-label blocks))]
+      [bcount : i64 (ir.compiler-ir-block-seq-count seq)]
+      [ov-blk : i64 (- 0 1)]
+      [ov-pos : i64 (- 0 1)]
+      (for [bi (iterator.range 0 bcount)]
+        (match (ir.compiler-ir-block-seq-borrow seq bi)
+          [(Block _ bis)
+            (for [pi (iterator.range 0 (ir.compiler-ir-instr-seq-count bis))]
+              (match (opt-instr-def-var
+                (ir.compiler-ir-instr-seq-borrow bis pi))
+                [(Some d) (when (= d ov) (set! ov-blk bi) (set! ov-pos pi))]
+                [(None) unit]))]))
+      ;; `old_len` must still be the struct's length at the store: nothing on
+      ;; the way may rewrite the struct (a whole-struct copy, a call).
+      (unless
+        (opt-struct-len-path-clean? tables (& doms) seq ov-blk ov-pos sb sp)
+        (return false))
+      (for [bi (iterator.range 0 bcount)]
+        (when
+          (and (not (= bi sb)) (opt-dom-info-dominates-id? (& doms) bi sb))
+          (match (ir.compiler-ir-block-seq-borrow seq bi)
+            [(Block _ binstrs)
+              (let
+                [pb : OptLenInvPosBranch
+                  (opt-struct-len-pos-branch tables binstrs ov)]
+                (when
+                  pb.ok?
+                  (let
+                    [big-bi : i64 (opt-len-inv-find-block seq pb.big-lbl)]
+                    (when
+                      (and
+                        (>= big-bi 0)
+                        (opt-len-inv-sole-pred? (& doms.index) big-bi bi)
+                        (opt-dom-info-dominates-id? (& doms) big-bi sb))
+                      (return true))))
+                ;; Also allow a separate dominating `load s.len` `gv` guarded by `gv > 0`
+                ;; with a clean path from `gv` to `ov`.
+                (let
+                  [blen : i64 (ir.compiler-ir-instr-seq-count binstrs)]
+                  (when
+                    (>= blen 1)
+                    (match (ir.compiler-ir-instr-seq-borrow binstrs (- blen 1))
+                      [(Branch (Var cv) _ _)
+                        (match (opt-len-eq-def tables cv)
+                          [(Some (BinOp _ _ cl cr (I64)) _)
+                            (for [side (iterator.range 0 2)]
+                              (match (if (= side 0)
+                                (opt-len-inv-resolve-val tables (& cl) 4)
+                                (opt-len-inv-resolve-val tables (& cr) 4))
+                                [(Var gv)
+                                  (let
+                                    [gpb : OptLenInvPosBranch
+                                      (opt-struct-len-pos-branch
+                                        tables
+                                        binstrs
+                                        gv)]
+                                    (when
+                                      gpb.ok?
+                                      (let
+                                        [big-bi : i64
+                                          (opt-len-inv-find-block
+                                            seq
+                                            gpb.big-lbl)]
+                                        (when
+                                          (and
+                                            (>= big-bi 0)
+                                            (opt-len-inv-sole-pred?
+                                              (& doms.index)
+                                              big-bi
+                                              bi)
+                                            (opt-dom-info-dominates-id?
+                                              (& doms)
+                                              big-bi
+                                              sb))
+                                          (match (opt-len-eq-def tables gv)
+                                            [(Some (Load _ gsrc (I64)) _)
+                                              (let
+                                                [gg : OptLenInvGep
+                                                  (opt-len-inv-gep-root
+                                                    tables
+                                                    (& gsrc)
+                                                    4)]
+                                                (when
+                                                  (and
+                                                    gg.ok?
+                                                    (= gg.offset 8)
+                                                    (=
+                                                      gg.is-global?
+                                                      root-is-global?)
+                                                    (= gg.root root-id))
+                                                  (let
+                                                    [gblk : i64 (- 0 1)]
+                                                    [gpos : i64 (- 0 1)]
+                                                    (for [gb
+                                                      (iterator.range 0 bcount)]
+                                                      (match (ir.compiler-ir-block-seq-borrow
+                                                        seq
+                                                        gb)
+                                                        [(Block _ gis)
+                                                          (for [gp
+                                                            (iterator.range
+                                                              0
+                                                              (ir.compiler-ir-instr-seq-count
+                                                                gis))]
+                                                            (match (opt-instr-def-var
+                                                              (ir.compiler-ir-instr-seq-borrow
+                                                                gis
+                                                                gp))
+                                                              [(Some gd)
+                                                                (when
+                                                                  (= gd gv)
+                                                                  (set! gblk gb)
+                                                                  (set! gpos gp))]
+                                                              [(None) unit]))]))
+                                                    (when
+                                                      (opt-struct-len-path-clean?
+                                                        tables
+                                                        (& doms)
+                                                        seq
+                                                        gblk
+                                                        gpos
+                                                        ov-blk
+                                                        ov-pos)
+                                                      (return true)))))]
+                                            [_ unit])))))]
+                                [_ unit]))]
+                          [_ unit])]
+                      [_ unit]))))])))
+      false)))
+
+;; Verify a write `store_ptr (gep s, 8), new-len` to word 1 (len/cap) of struct `s`.
 ;; Returns:
 ;;   0  invalid (disqualify struct)
-;;   1  valid via dominating check / constant / decrement (no circularity)
+;;   1  valid unconditionally (0 literal, dominating BoundsCheck, or guarded pop `old_len - 1`)
 ;;   2  valid via post-dominating checked loop (caller must exclude func & helper)
 (define (opt-struct-len-word1-write-ok
   [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [ret-min : (& opt_i64_i64_map.Map)]
   [helpers : (& OptCheckedLoopHelpers)]
   [arg-global : (& opt_i64_i64_map.Map)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -131355,138 +131723,119 @@
   [new-len : (& ir.CompilerIrValue)]
   [helper-out : (&mut (__tl_dyn-array i64))]) : i64
   (set! (array-ref helper-out 0) (- 0 1))
-  ;; (a) Constant literal <= 0 (e.g. `clear!` setting len = 0).
+  ;; (a) Literal 0 ONLY (never negative literals!).
   (match (opt-len-inv-lit tables new-len)
-    [(Some k) (when (<= k 0) (return 1))]
-    [(No) unit])
-  ;; (b) Same-block checks before `sp`:
-  ;;   - `bounds_check idx, root.slots.len` with `new-len == idx + 1` or `idx` (`Vec.push-ref!`)
-  ;;   - `new-len == old_len - 1` where `old_len` was loaded from `root.len` and guarded `> 0` (`Vec.pop-ref!`)
-  ;;   - dominating call to checked-loop helper on `root` with `new-len <= N`
+    [(Some 0) (return 1)]
+    [_ unit])
+  ;; (b1) Same-block preceding `BoundsCheck bidx, blen` where `blen` loads `(gep s, 0).len`,
+  ;; `new-len` is `bidx` or `bidx + 1`, stopping on ANY Call/Store/CopyBytes/non-data-buf StorePtr,
+  ;; AND verifying a clean path from `slots` load to `BoundsCheck`.
   (match (ir.compiler-ir-block-seq-borrow seq sb)
     [(Block _ instrs)
       (let
-        [saw-slots-write? : bool false]
+        [stop? : bool false]
         [i : i64 (- sp 1)]
-        (while (and (not saw-slots-write?) (>= i 0))
-          (begin
-            (match (ir.compiler-ir-instr-seq-borrow instrs i)
-              [(BoundsCheck bidx blen _)
-                (let
-                  [t : OptLenInvTarget (opt-len-inv-len-target tables blen)]
-                  (when
-                    (and
-                      t.ok?
-                      t.from-word0?
-                      (= t.is-global? root-is-global?)
-                      (= t.id root-id))
-                    (let
-                      [rb : ir.CompilerIrValue
-                        (opt-len-inv-resolve-val tables bidx 4)]
-                      (when
-                        (or
-                          (opt-value-eq
-                            (& (opt-len-inv-resolve-val tables new-len 4))
-                            (& rb))
-                          (match (& rb)
-                            [(Var iv) (opt-len-inv-add1-of? tables new-len iv)]
-                            [_ false]))
-                        (return 1)))))]
-              [(or (StorePtr addr _ _) (StoreOwned addr _ _))
-                (let
-                  [g : OptLenInvGep (opt-len-inv-gep-root tables addr 4)]
-                  (when
-                    (and
-                      g.ok?
-                      (= g.offset 0)
-                      (= g.is-global? root-is-global?)
-                      (= g.root root-id))
-                    (set! saw-slots-write? true)))]
-              [_ unit])
-            (-= i 1)))
-        ;; Check pop-style decrement `new-len == old_len - 1` under dominating `old_len > 0` / `old_len != 0`.
-        (match (opt-len-inv-resolve-val tables new-len 4)
-          [(Var nv)
-            (match (opt-len-eq-def tables nv)
-              [(Some dinstr _)
-                (match (& dinstr)
-                  [(BinOp _ (Sub) lhs rhs (I64))
+        (while (and (not stop?) (>= i 0))
+          (match (ir.compiler-ir-instr-seq-borrow instrs i)
+            [(BoundsCheck bidx blen _)
+              (let
+                [t : OptLenInvTarget (opt-len-inv-len-target tables blen)]
+                (when
+                  (and
+                    t.ok?
+                    t.from-word0?
+                    (= t.is-global? root-is-global?)
+                    (= t.id root-id))
+                  (let
+                    [rb : ir.CompilerIrValue
+                      (opt-len-inv-resolve-val tables bidx 4)]
                     (when
-                      (match (opt-len-inv-lit tables (& rhs))
-                        [(Some 1) true]
-                        [_ false])
-                      (match (opt-len-inv-resolve-val tables (& lhs) 4)
-                        [(Var ov)
-                          (match (opt-len-eq-def tables ov)
-                            [(Some oinstr _)
-                              (match (& oinstr)
-                                [(Load _ osrc (I64))
-                                  (let
-                                    [og : OptLenInvGep
-                                      (opt-len-inv-gep-root tables (& osrc) 4)]
+                      (or
+                        (opt-value-eq
+                          (& (opt-len-inv-resolve-val tables new-len 4))
+                          (& rb))
+                        (match (& rb)
+                          [(Var iv) (opt-len-inv-add1-of? tables new-len iv)]
+                          [_ false]))
+                      (let
+                        [doms : OptDomInfo
+                          (opt-cfg-dominators-with
+                            (opt-cfg-index-build blocks)
+                            (opt-cfg-entry-label blocks))]
+                        [blen-var : i64
+                          (match (opt-len-inv-resolve-val tables blen 4)
+                            [(Var lv) lv]
+                            [_ (- 0 1)])]
+                        [slots-var : i64
+                          (match (opt-len-eq-def tables blen-var)
+                            [(Some (Load _ lsrc _) _)
+                              (let
+                                [g1 : OptLenInvGep
+                                  (opt-len-inv-gep-root tables (& lsrc) 4)]
+                                (if (and
+                                  g1.ok?
+                                  (not g1.is-global?)
+                                  (= g1.offset 8))
+                                  g1.root
+                                  (- 0 1)))]
+                            [_ (- 0 1)])]
+                        [src-blk : i64 (- 0 1)]
+                        [src-pos : i64 (- 0 1)]
+                        (for [bi
+                          (iterator.range
+                            0
+                            (ir.compiler-ir-block-seq-count seq))]
+                          (match (ir.compiler-ir-block-seq-borrow seq bi)
+                            [(Block _ bis)
+                              (for [pi
+                                (iterator.range
+                                  0
+                                  (ir.compiler-ir-instr-seq-count bis))]
+                                (match (opt-instr-def-var
+                                  (ir.compiler-ir-instr-seq-borrow bis pi))
+                                  [(Some d)
                                     (when
-                                      (and
-                                        og.ok?
-                                        (= og.offset 8)
-                                        (= og.is-global? root-is-global?)
-                                        (= og.root root-id))
-                                      ;; Verify a `gt`/`ge`/`ne 0` / `lt 0` guard on `ov` exists in function
-                                      (let
-                                        [bcount : i64
-                                          (ir.compiler-ir-block-seq-count seq)]
-                                        (for [bi (iterator.range 0 bcount)]
-                                          (match (ir.compiler-ir-block-seq-borrow
-                                            seq
-                                            bi)
-                                            [(Block _ binstrs)
-                                              (for [pi
-                                                (iterator.range
-                                                  0
-                                                  (ir.compiler-ir-instr-seq-count
-                                                    binstrs))]
-                                                (match (ir.compiler-ir-instr-seq-borrow
-                                                  binstrs
-                                                  pi)
-                                                  [(BinOp _ op bl br (I64))
-                                                    (when
-                                                      (and
-                                                        (or
-                                                          (opt-binop-eq
-                                                            op
-                                                            (& (Gt)))
-                                                          (opt-binop-eq
-                                                            op
-                                                            (& (Eq)))
-                                                          (opt-binop-eq
-                                                            op
-                                                            (& (Ne)))
-                                                          (opt-binop-eq
-                                                            op
-                                                            (& (Le))))
-                                                        (match (opt-len-inv-resolve-val
-                                                          tables
-                                                          bl
-                                                          4)
-                                                          [(Var lv) (= lv ov)]
-                                                          [_ false])
-                                                        (match (opt-len-inv-lit
-                                                          tables
-                                                          br)
-                                                          [(Some 0) true]
-                                                          [_ false]))
-                                                      (return 1))]
-                                                  [_ unit]))])))))]
-                                [_ unit])]
-                            [(No) unit])]
-                        [_ unit]))]
-                  [_ unit])]
-              [(No) unit])]
-          [_ unit]))])
-  ;; (c) Post-dominating checked loop (inline while or checked-loop helper like `sccp-env-fill-unknown!`).
+                                      (= d slots-var)
+                                      (set! src-blk bi)
+                                      (set! src-pos pi))]
+                                  [(None) unit]))]))
+                        (when
+                          (opt-struct-len-path-clean?
+                            tables
+                            (& doms)
+                            seq
+                            src-blk
+                            src-pos
+                            sb
+                            i)
+                          (return 1)))))))]
+            [_
+              (unless
+                (opt-len-inv-helper-instr-safe?
+                  tables
+                  (- 0 1)
+                  (ir.compiler-ir-instr-seq-borrow instrs i))
+                (set! stop? true))])
+          (-= i 1)))])
+  ;; (b2) Pop-style decrement `old_len - 1` with dominating strict `old_len > 0`.
+  (when
+    (opt-struct-len-pop-guard-ok?
+      tables
+      blocks
+      seq
+      sb
+      sp
+      root-is-global?
+      root-id
+      new-len)
+    (return 1))
+  ;; (c) Post-dominating checked loop over `s.slots` with bound covering `new-len`.
   (let
     [chk : OptLenInvLoopCheck
       (opt-len-inv-post-checked-loop
         tables
+        blocks
+        ret-min
         helpers
         arg-global
         call-memory
@@ -131505,30 +131854,54 @@
       2
       0)))
 
-;; Verify fresh struct construction at `(root-is-global? == false, root-id)`:
-;; both word 0 (`slots`) and word 1 (`len`) written once, and `len <= slots.len`.
 (define (opt-struct-len-fresh-ctor-ok?
   [tables : (& OptLenEqDefs)]
+  [seq : (& ir.CompilerIrBlockSeq)]
   [root-id : i64]) : bool
-  (if (or
-    (< root-id 0)
-    (>= root-id (array-length tables.n0))
-    (not (= (array-ref tables.n0 root-id) 1))
-    (not (= (array-ref tables.n1 root-id) 1)))
-    false
-    (begin
-      ;; (1) len <= 0 (e.g. Vec.with-capacity initializes len = 0)
-      (match (opt-len-inv-lit tables (& (array-ref tables.w1 root-id)))
-        [(Some k) (when (<= k 0) (return true))]
-        [(No) unit])
-      ;; (2) slots is a fresh DynArray with length `slen`, and `len == slen` or literal `len <= slen`
-      (let
-        [slen : ir.CompilerIrValue
-          (opt-len-inv-fresh-desc-len tables (& (array-ref tables.w0 root-id)))]
-        (match (& slen)
-          [(Unit) false]
-          [_
-            (or
+  (when
+    (or
+      (< root-id 0)
+      (>= root-id (array-length tables.n0))
+      (not (= (array-ref tables.n0 root-id) 1))
+      (not (= (array-ref tables.n1 root-id) 1)))
+    (return false))
+  (let
+    [b0 : i64 (- 0 1)]
+    [b1 : i64 (- 0 1)]
+    (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+      (match (ir.compiler-ir-block-seq-borrow seq bi)
+        [(Block _ instrs)
+          (for [pi (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+            (match (ir.compiler-ir-instr-seq-borrow instrs pi)
+              [(or (StorePtr addr _ _) (StoreOwned addr _ _))
+                (let
+                  [g : OptLenInvGep (opt-len-inv-gep-root tables addr 8)]
+                  (when
+                    (and g.ok? (not g.is-global?) (= g.root root-id))
+                    (when (= g.offset 0) (set! b0 bi))
+                    (when (= g.offset 8) (set! b1 bi))))]
+              [_ unit]))]))
+    (when (or (< b0 0) (not (= b0 b1))) (return false)))
+  ;; (1) len == 0 (reject negative literals like I64_MIN!)
+  (match (opt-len-inv-lit tables (& (array-ref tables.w1 root-id)))
+    [(Some k) (when (= k 0) (return true))]
+    [(No) unit])
+  ;; (2) slots is a fresh DynArray with length `slen`, and `0 <= len <= slen`.
+  (let
+    [slen : ir.CompilerIrValue
+      (opt-len-inv-fresh-desc-len tables (& (array-ref tables.w0 root-id)))]
+    (match (& slen)
+      [(Unit) false]
+      [_
+        (match (opt-len-inv-lit tables (& (array-ref tables.w1 root-id)))
+          [(Some lk)
+            (and
+              (>= lk 0)
+              (match (opt-len-inv-lit tables (& slen))
+                [(Some sk) (<= lk sk)]
+                [(No) false]))]
+          [(No)
+            (and
               (opt-value-eq
                 (&
                   (opt-len-inv-resolve-val
@@ -131536,21 +131909,974 @@
                     (& (array-ref tables.w1 root-id))
                     4))
                 (& slen))
-              (match (opt-len-inv-lit tables (& (array-ref tables.w1 root-id)))
-                [(Some lk)
-                  (match (opt-len-inv-lit tables (& slen))
-                    [(Some sk) (<= lk sk)]
-                    [(No) false])]
-                [(No) false]))])))))
+              (match (opt-len-inv-lit tables (& slen))
+                [(Some sk) (>= sk 0)]
+                [(No) true]))])])))
+
+(defstruct OptStructLenFnTrack
+  (vstruct (__tl_dyn-array i64))
+  (vfptr (__tl_dyn-array i64))
+  (vdesc (__tl_dyn-array i64))
+  (vfresh (__tl_dyn-array bool))
+  (vroot-fresh (__tl_dyn-array bool))
+  (vparent (__tl_dyn-array i64))
+  (vinit-ok (__tl_dyn-array bool)))
 
 (define (opt-struct-len-mark-bad!
   [bad : (&mut opt_i64_i64_map.Map)]
-  [sid : i64]
-  [_fid : i64]
-  [_why : String]) : unit
-  (opt_i64_i64_map.insert-ref! bad sid 1))
+  [sid : i64]) : unit
+  (when (>= sid 0) (opt_i64_i64_map.insert-ref! bad sid 1)))
 
-;; Whole-program builder for `struct-fits` and `struct-excluded`.
+(define (opt-struct-len-val-struct
+  [global-struct : (& opt_i64_i64_map.Map)]
+  [vstruct : (& (__tl_dyn-array i64))]
+  [val : (& ir.CompilerIrValue)]) : i64
+  (match val
+    [(Global g)
+      (opt_i64_i64_map.get-value-or
+        global-struct
+        (ir.compiler-ir-symbol-id g)
+        (- 0 1))]
+    [(Var v)
+      (if (and (>= v 0) (< v (array-length vstruct)))
+        (array-ref vstruct v)
+        (- 0 1))]
+    [_ (- 0 1)]))
+
+(define (opt-struct-len-var-slot
+  [arr : (& (__tl_dyn-array i64))]
+  [val : (& ir.CompilerIrValue)]) : i64
+  (match val
+    [(Var v)
+      (if (and (>= v 0) (< v (array-length arr)))
+        (array-ref arr v)
+        (- 0 1))]
+    [_ (- 0 1)]))
+
+(define (opt-struct-len-taint-set!
+  [bad : (&mut opt_i64_i64_map.Map)]
+  [arr : (&mut (__tl_dyn-array i64))]
+  [dst : i64]
+  [sid : i64]) : bool
+  (if (or (< sid 0) (< dst 0) (>= dst (array-length arr)))
+    false
+    (let
+      [cur : i64 (array-ref arr dst)]
+      (cond
+        [(< cur 0)
+          (set! (array-ref arr dst) sid)
+          true]
+        [(= cur sid) false]
+        [else
+          (opt_i64_i64_map.insert-ref! bad cur 1)
+          (opt_i64_i64_map.insert-ref! bad sid 1)
+          false]))))
+
+(define (opt-struct-len-mark-val-bad!
+  [bad : (&mut opt_i64_i64_map.Map)]
+  [global-struct : (& opt_i64_i64_map.Map)]
+  [tr : (& OptStructLenFnTrack)]
+  [val : (& ir.CompilerIrValue)]) : unit
+  (opt-struct-len-mark-bad!
+    bad
+    (opt-struct-len-val-struct global-struct (& tr.vstruct) val))
+  (opt-struct-len-mark-bad! bad (opt-struct-len-var-slot (& tr.vfptr) val))
+  (opt-struct-len-mark-bad! bad (opt-struct-len-var-slot (& tr.vdesc) val)))
+
+(define (opt-struct-len-mark-args-bad!
+  [bad : (&mut opt_i64_i64_map.Map)]
+  [global-struct : (& opt_i64_i64_map.Map)]
+  [tr : (& OptStructLenFnTrack)]
+  [args : (& ir.CompilerIrCallArgs)]) : unit
+  (for [ai (iterator.range 0 (opt-len-eq-args-count args))]
+    (match (opt-call-memory-arg-at args ai)
+      [(Some av) (opt-struct-len-mark-val-bad! bad global-struct tr (& av))]
+      [(No) unit])))
+
+(define (opt-struct-len-mark-init-ok!
+  [vinit-ok : (&mut (__tl_dyn-array bool))]
+  [vparent : (& (__tl_dyn-array i64))]
+  [v : i64]) : unit
+  (let
+    [cur : i64 v]
+    [steps : i64 0]
+    (while (and (>= cur 0) (< cur (array-length vinit-ok)) (< steps 64))
+      (set! (array-ref vinit-ok cur) true)
+      (set! cur (array-ref vparent cur))
+      (+= steps 1))))
+
+(define (opt-struct-len-sid-live? [bad : (& opt_i64_i64_map.Map)] [sid : i64]) : bool
+  (and (>= sid 0) (not (opt_i64_i64_map.contains? bad sid))))
+
+(define (opt-struct-len-func-relevant?
+  [type-segment-bases : i64]
+  [bad : (& opt_i64_i64_map.Map)]
+  [global-struct : (& opt_i64_i64_map.Map)]
+  [rsid : i64]
+  [params : (& ir.CompilerIrParamSeq)]
+  [blocks : (& ir.CompilerIrBlockList)]) : bool
+  (when (opt-struct-len-sid-live? bad rsid) (return true))
+  (for [pi (iterator.range 0 (ir.compiler-ir-param-seq-count params))]
+    (match (ir.compiler-ir-param-seq-borrow params pi)
+      [(Param _ pty _)
+        (when
+          (opt-struct-len-sid-live?
+            bad
+            (opt-struct-type-id type-segment-bases pty))
+          (return true))]))
+  (let
+    [has-gs? : bool (> (opt_i64_i64_map.len global-struct) 0)]
+    (match blocks
+      [(Array seq)
+        (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq bi)
+            [(Block _ instrs)
+              (for [pi
+                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                (match (ir.compiler-ir-instr-seq-borrow instrs pi)
+                  [(or (Alloc _ ty) (Mov _ _ ty) (Load _ _ ty) (Gep _ _ _ ty)
+                       (Phi _ _ ty) (StorePtr _ _ ty) (StoreOwned _ _ ty)
+                       (Call _ _ _ ty) (TailCall _ _ ty) (CallIndirect _ _ _ ty)
+                       (CallIndirectC _ _ _ ty) (TailCallIndirect _ _ ty)
+                       (Pack _ _ ty) (Word _ _ _ ty))
+                    (when
+                      (opt-struct-len-sid-live?
+                        bad
+                        (opt-struct-type-id type-segment-bases ty))
+                      (return true))]
+                  [(or (Cast _ _ fty tty) (Bitcast _ _ fty tty))
+                    (when
+                      (or
+                        (opt-struct-len-sid-live?
+                          bad
+                          (opt-struct-type-id type-segment-bases fty))
+                        (opt-struct-len-sid-live?
+                          bad
+                          (opt-struct-type-id type-segment-bases tty)))
+                      (return true))]
+                  [(or (CopyBytes (Global g) _ _) (CopyBytes _ (Global g) _)
+                       (Store g _ _) (Load _ (Global g) _))
+                    (when
+                      (opt-struct-len-sid-live?
+                        bad
+                        (opt_i64_i64_map.get-value-or
+                          global-struct
+                          (ir.compiler-ir-symbol-id g)
+                          (- 0 1)))
+                      (return true))]
+                  [_ unit])
+                (when
+                  (and
+                    has-gs?
+                    (opt-len-eq-instr-mentions-cand?
+                      global-struct
+                      (ir.compiler-ir-instr-seq-ref instrs pi)))
+                  (return true)))]))]))
+  false)
+
+(define (opt-struct-len-propagate-fn!
+  [type-segment-bases : i64]
+  [program : (& OptProgramIndex)]
+  [fn-ret-struct : (& opt_i64_i64_map.Map)]
+  [global-struct : (& opt_i64_i64_map.Map)]
+  [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [fsize : i64]
+  [bad : (&mut opt_i64_i64_map.Map)]
+  [tr : (&mut OptStructLenFnTrack)]) : unit
+  (let
+    [changed? : bool true]
+    [iters : i64 0]
+    [max-iters : i64 (+ fsize 4)]
+    (while (and changed? (< iters max-iters))
+      (set! changed? false)
+      (+= iters 1)
+      (match blocks
+        [(Array seq)
+          (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+            (match (ir.compiler-ir-block-seq-borrow seq bi)
+              [(Block _ instrs)
+                (for [pi
+                  (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                  (match (ir.compiler-ir-instr-seq-borrow instrs pi)
+                    [(Alloc dst ty)
+                      (when
+                        (= iters 1)
+                        (opt-struct-len-disqualify-nested!
+                          type-segment-bases
+                          bad
+                          ty
+                          false))
+                      (let
+                        [tsid : i64 (opt-struct-type-id type-segment-bases ty)]
+                        (when
+                          (and (>= tsid 0) (>= dst 0) (< dst fsize))
+                          (when
+                            (opt-struct-len-taint-set!
+                              bad
+                              (&mut tr.vstruct)
+                              dst
+                              tsid)
+                            (set! changed? true))
+                          (set! (array-ref tr.vfresh dst) true)
+                          (set! (array-ref tr.vroot-fresh dst) true)))]
+                    [(AddrOf dst src _)
+                      (when
+                        (and (>= dst 0) (< dst fsize) (>= src 0) (< src fsize))
+                        (when
+                          (opt-struct-len-taint-set!
+                            bad
+                            (&mut tr.vstruct)
+                            dst
+                            (array-ref tr.vstruct src))
+                          (set! changed? true))
+                        (when
+                          (opt-struct-len-taint-set!
+                            bad
+                            (&mut tr.vfptr)
+                            dst
+                            (array-ref tr.vfptr src))
+                          (set! changed? true))
+                        (when
+                          (opt-struct-len-taint-set!
+                            bad
+                            (&mut tr.vdesc)
+                            dst
+                            (array-ref tr.vdesc src))
+                          (set! changed? true))
+                        (when
+                          (and
+                            (array-ref tr.vfresh src)
+                            (not (array-ref tr.vfresh dst)))
+                          (set! (array-ref tr.vfresh dst) true)
+                          (set! (array-ref tr.vparent dst) src)
+                          (set! changed? true)))]
+                    [(Mov dst src ty)
+                      (when
+                        (= iters 1)
+                        (opt-struct-len-disqualify-nested!
+                          type-segment-bases
+                          bad
+                          ty
+                          false))
+                      (when
+                        (and (>= dst 0) (< dst fsize))
+                        (let
+                          [ssid : i64
+                            (opt-struct-len-val-struct
+                              global-struct
+                              (& tr.vstruct)
+                              src)]
+                          [sfp : i64 (opt-struct-len-var-slot (& tr.vfptr) src)]
+                          [sdesc : i64
+                            (opt-struct-len-var-slot (& tr.vdesc) src)]
+                          [tsid : i64
+                            (opt-struct-type-id type-segment-bases ty)]
+                          [eff : i64
+                            (if (>= ssid 0)
+                              ssid
+                              tsid)]
+                          (when
+                            (opt-struct-len-taint-set!
+                              bad
+                              (&mut tr.vstruct)
+                              dst
+                              eff)
+                            (set! changed? true))
+                          (when
+                            (and (>= ssid 0) (>= tsid 0) (not (= ssid tsid)))
+                            (opt-struct-len-mark-bad! bad ssid)
+                            (opt-struct-len-mark-bad! bad tsid))
+                          (when
+                            (opt-struct-len-taint-set!
+                              bad
+                              (&mut tr.vfptr)
+                              dst
+                              sfp)
+                            (set! changed? true))
+                          (when
+                            (opt-struct-len-taint-set!
+                              bad
+                              (&mut tr.vdesc)
+                              dst
+                              sdesc)
+                            (set! changed? true))
+                          (match src
+                            [(Var sv)
+                              (when
+                                (and
+                                  (>= sv 0)
+                                  (< sv fsize)
+                                  (array-ref tr.vfresh sv)
+                                  (not (array-ref tr.vfresh dst)))
+                                (set! (array-ref tr.vfresh dst) true)
+                                (set! (array-ref tr.vparent dst) sv)
+                                (set! changed? true))]
+                            [_ unit])))]
+                    [(Call dst cname _ ty)
+                      (when
+                        (= iters 1)
+                        (opt-struct-len-disqualify-nested!
+                          type-segment-bases
+                          bad
+                          ty
+                          false))
+                      (let
+                        [tsid : i64 (opt-struct-type-id type-segment-bases ty)]
+                        (when
+                          (and (>= tsid 0) (>= dst 0) (< dst fsize))
+                          (let
+                            [cid : i64 (ir.compiler-ir-symbol-id cname)]
+                            (if (or
+                              (and
+                                (opt-program-function? program cname)
+                                (=
+                                  (opt_i64_i64_map.get-value-or
+                                    fn-ret-struct
+                                    cid
+                                    (- 0 1))
+                                  tsid))
+                              (and
+                                (or
+                                  (ir.compiler-ir-symbol-eq?
+                                    cname
+                                    cbi.compiler-builtin-id-tl-alloc)
+                                  (ir.compiler-ir-symbol-eq?
+                                    cname
+                                    cbi.compiler-builtin-id-tl-alloc-global))
+                                (< dst (array-length tables.ncopy))
+                                (= (array-ref tables.ncopy dst) 1)
+                                (= (array-ref tables.n0 dst) 0)
+                                (= (array-ref tables.n1 dst) 0)))
+                              (when
+                                (opt-struct-len-taint-set!
+                                  bad
+                                  (&mut tr.vstruct)
+                                  dst
+                                  tsid)
+                                (set! changed? true))
+                              (opt-struct-len-mark-bad! bad tsid)))))]
+                    [(Phi dst inputs ty)
+                      (when
+                        (= iters 1)
+                        (opt-struct-len-disqualify-nested!
+                          type-segment-bases
+                          bad
+                          ty
+                          false))
+                      (when
+                        (and (>= dst 0) (< dst fsize))
+                        (let
+                          [tsid : i64
+                            (opt-struct-type-id type-segment-bases ty)]
+                          (when
+                            (opt-struct-len-taint-set!
+                              bad
+                              (&mut tr.vstruct)
+                              dst
+                              tsid)
+                            (set! changed? true))
+                          (for [ki (iterator.range 0 inputs.len)]
+                            (match (ir.compiler-ir-phi-input-seq-borrow
+                              inputs
+                              ki)
+                              [(ir.CompilerIrPhiInput pv _)
+                                (when
+                                  (opt-struct-len-taint-set!
+                                    bad
+                                    (&mut tr.vstruct)
+                                    dst
+                                    (opt-struct-len-val-struct
+                                      global-struct
+                                      (& tr.vstruct)
+                                      (& pv)))
+                                  (set! changed? true))
+                                (when
+                                  (opt-struct-len-taint-set!
+                                    bad
+                                    (&mut tr.vfptr)
+                                    dst
+                                    (opt-struct-len-var-slot
+                                      (& tr.vfptr)
+                                      (& pv)))
+                                  (set! changed? true))
+                                (when
+                                  (opt-struct-len-taint-set!
+                                    bad
+                                    (&mut tr.vdesc)
+                                    dst
+                                    (opt-struct-len-var-slot
+                                      (& tr.vdesc)
+                                      (& pv)))
+                                  (set! changed? true))]))))]
+                    [(Gep dst base _ ty)
+                      (opt-struct-len-mark-bad!
+                        bad
+                        (opt-struct-type-id type-segment-bases ty))
+                      (when
+                        (and (>= dst 0) (< dst fsize))
+                        (let
+                          [bs : i64
+                            (opt-struct-len-val-struct
+                              global-struct
+                              (& tr.vstruct)
+                              base)]
+                          [bfp : i64
+                            (opt-struct-len-var-slot (& tr.vfptr) base)]
+                          [bdesc : i64
+                            (opt-struct-len-var-slot (& tr.vdesc) base)]
+                          [fp-sid : i64
+                            (if (>= bs 0)
+                              bs
+                              bfp)]
+                          (when
+                            (opt-struct-len-taint-set!
+                              bad
+                              (&mut tr.vfptr)
+                              dst
+                              fp-sid)
+                            (set! changed? true))
+                          (when
+                            (opt-struct-len-taint-set!
+                              bad
+                              (&mut tr.vdesc)
+                              dst
+                              bdesc)
+                            (set! changed? true))))]
+                    [(Load dst src ty)
+                      (opt-struct-len-mark-bad!
+                        bad
+                        (opt-struct-type-id type-segment-bases ty))
+                      (let
+                        [g : OptLenInvGep (opt-len-inv-gep-root tables src 8)]
+                        (when
+                          g.ok?
+                          (let
+                            [rs : i64
+                              (if g.is-global?
+                                (opt_i64_i64_map.get-value-or
+                                  global-struct
+                                  g.root
+                                  (- 0 1))
+                                (if (and (>= g.root 0) (< g.root fsize))
+                                  (array-ref tr.vstruct g.root)
+                                  (- 0 1)))]
+                            (when
+                              (and
+                                (>= rs 0)
+                                (= g.offset 0)
+                                (>= dst 0)
+                                (< dst fsize))
+                              (match ty
+                                [(DynArray _)
+                                  (when
+                                    (opt-struct-len-taint-set!
+                                      bad
+                                      (&mut tr.vdesc)
+                                      dst
+                                      rs)
+                                    (set! changed? true))]
+                                [_ unit])))))]
+                    [_ unit]))]))]))))
+
+(define (opt-struct-len-check-store!
+  [type-segment-bases : i64]
+  [ret-min : (& opt_i64_i64_map.Map)]
+  [helpers : (& OptCheckedLoopHelpers)]
+  [arg-global : (& opt_i64_i64_map.Map)]
+  [call-memory : (& opt_i64_i64_map.Map)]
+  [global-struct : (& opt_i64_i64_map.Map)]
+  [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [seq : (& ir.CompilerIrBlockSeq)]
+  [fid : i64]
+  [params : (& ir.CompilerIrParamSeq)]
+  [fsize : i64]
+  [bi : i64]
+  [pi : i64]
+  [addr : (& ir.CompilerIrValue)]
+  [val : (& ir.CompilerIrValue)]
+  [sty : (& ast.AstType)]
+  [bad : (&mut opt_i64_i64_map.Map)]
+  [has-w0 : (&mut opt_i64_i64_map.Map)]
+  [has-w1 : (&mut opt_i64_i64_map.Map)]
+  [tr : (&mut OptStructLenFnTrack)]
+  [excl-struct-fn : (&mut (__tl_dyn-array i64))]
+  [excl-struct-sid : (&mut (__tl_dyn-array i64))]
+  [excl-count-cell : (&mut (__tl_dyn-array i64))]
+  [helper-cell : (&mut (__tl_dyn-array i64))]) : unit
+  (opt-struct-len-mark-val-bad! bad global-struct (& tr) val)
+  (opt-struct-len-mark-bad! bad (opt-struct-type-id type-segment-bases sty))
+  (opt-struct-len-mark-bad! bad (opt-struct-len-var-slot (& tr.vdesc) addr))
+  (let
+    [addr-s : i64 (opt-struct-len-val-struct global-struct (& tr.vstruct) addr)]
+    [addr-fp : i64 (opt-struct-len-var-slot (& tr.vfptr) addr)]
+    [addr-rs : i64
+      (if (>= addr-s 0)
+        addr-s
+        addr-fp)]
+    [g : OptLenInvGep (opt-len-inv-gep-root tables addr 8)]
+    [rs : i64
+      (if g.ok?
+        (if g.is-global?
+          (opt_i64_i64_map.get-value-or global-struct g.root (- 0 1))
+          (if (and (>= g.root 0) (< g.root fsize))
+            (array-ref tr.vstruct g.root)
+            (- 0 1)))
+        (- 0 1))]
+    (when
+      (and (>= addr-rs 0) (or (not g.ok?) (not (= rs addr-rs))))
+      (opt-struct-len-mark-bad! bad addr-rs))
+    (unless (and g.ok? (opt-struct-len-sid-live? (& bad) rs)) (return unit))
+    (let
+      [is-fresh? : bool
+        (and
+          (not g.is-global?)
+          (>= g.root 0)
+          (< g.root fsize)
+          (array-ref tr.vfresh g.root))]
+      (cond
+        [(= g.offset 0)
+          (match sty
+            [(DynArray _)
+              (opt_i64_i64_map.insert-ref! has-w0 rs 1)
+              (if is-fresh?
+                (if (opt-struct-len-fresh-ctor-ok? tables seq g.root)
+                  (opt-struct-len-mark-init-ok!
+                    (&mut tr.vinit-ok)
+                    (& tr.vparent)
+                    g.root)
+                  (opt-struct-len-mark-bad! bad rs))
+                (unless
+                  (opt-struct-len-grow-ok?
+                    tables
+                    blocks
+                    seq
+                    bi
+                    pi
+                    g.is-global?
+                    g.root
+                    val)
+                  (opt-struct-len-mark-bad! bad rs)))]
+            [_ (opt-struct-len-mark-bad! bad rs)])]
+        [(= g.offset 8)
+          (match sty
+            [(I64)
+              (opt_i64_i64_map.insert-ref! has-w1 rs 1)
+              (if is-fresh?
+                (if (opt-struct-len-fresh-ctor-ok? tables seq g.root)
+                  (opt-struct-len-mark-init-ok!
+                    (&mut tr.vinit-ok)
+                    (& tr.vparent)
+                    g.root)
+                  (opt-struct-len-mark-bad! bad rs))
+                (let
+                  [wk : i64
+                    (opt-struct-len-word1-write-ok
+                      tables
+                      blocks
+                      ret-min
+                      helpers
+                      arg-global
+                      call-memory
+                      fid
+                      params
+                      seq
+                      bi
+                      pi
+                      g.is-global?
+                      g.root
+                      val
+                      helper-cell)]
+                  (cond
+                    [(= wk 0) (opt-struct-len-mark-bad! bad rs)]
+                    [(= wk 2)
+                      (let
+                        [ec : i64 (array-ref excl-count-cell 0)]
+                        (if (>= ec 254)
+                          (opt-struct-len-mark-bad! bad rs)
+                          (begin
+                            (set! (array-ref excl-struct-fn ec) fid)
+                            (set! (array-ref excl-struct-sid ec) rs)
+                            (+= ec 1)
+                            (let
+                              [hid : i64 (array-ref helper-cell 0)]
+                              (when
+                                (>= hid 0)
+                                (set! (array-ref excl-struct-fn ec) hid)
+                                (set! (array-ref excl-struct-sid ec) rs)
+                                (+= ec 1)))
+                            (set! (array-ref excl-count-cell 0) ec))))]
+                    [else unit])))]
+            [_ (opt-struct-len-mark-bad! bad rs)])]
+        [(or (< g.offset 0) (and (> g.offset 0) (< g.offset 16)))
+          (opt-struct-len-mark-bad! bad rs)]
+        [else unit]))))
+
+(define (opt-struct-len-verify-fn!
+  [type-segment-bases : i64]
+  [program : (& OptProgramIndex)]
+  [call-memory : (& opt_i64_i64_map.Map)]
+  [arg-global : (& opt_i64_i64_map.Map)]
+  [helpers : (& OptCheckedLoopHelpers)]
+  [ret-min : (& opt_i64_i64_map.Map)]
+  [global-struct : (& opt_i64_i64_map.Map)]
+  [fn-param-struct : (& opt_i64_i64_map.Map)]
+  [fn-sret-param : (& opt_i64_i64_map.Map)]
+  [tables : (& OptLenEqDefs)]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [fid : i64]
+  [rsid : i64]
+  [has-sret? : bool]
+  [params : (& ir.CompilerIrParamSeq)]
+  [fsize : i64]
+  [bad : (&mut opt_i64_i64_map.Map)]
+  [has-w0 : (&mut opt_i64_i64_map.Map)]
+  [has-w1 : (&mut opt_i64_i64_map.Map)]
+  [tr : (&mut OptStructLenFnTrack)]
+  [excl-struct-fn : (&mut (__tl_dyn-array i64))]
+  [excl-struct-sid : (&mut (__tl_dyn-array i64))]
+  [excl-count-cell : (&mut (__tl_dyn-array i64))]
+  [helper-cell : (&mut (__tl_dyn-array i64))]) : unit
+  (match blocks
+    [(Array seq)
+      (for [bi (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-borrow seq bi)
+          [(Block _ instrs)
+            (for [pi (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+              (match (ir.compiler-ir-instr-seq-borrow instrs pi)
+                [(or (Alloc _ _) (AddrOf _ _ _) (Mov _ _ _) (Gep _ _ _ _)
+                     (Phi _ _ _) (Jump _))
+                  unit]
+                [(Load _ src _)
+                  (let
+                    [g : OptLenInvGep (opt-len-inv-gep-root tables src 8)]
+                    (when
+                      (and g.ok? (= g.offset 0))
+                      (let
+                        [rs : i64
+                          (if g.is-global?
+                            (opt_i64_i64_map.get-value-or
+                              global-struct
+                              g.root
+                              (- 0 1))
+                            (if (and (>= g.root 0) (< g.root fsize))
+                              (array-ref tr.vstruct g.root)
+                              (- 0 1)))]
+                        (when
+                          (>= rs 0)
+                          (opt_i64_i64_map.insert-ref! has-w0 rs 1)))))]
+                [(Store g val _)
+                  (opt-struct-len-mark-bad!
+                    bad
+                    (opt_i64_i64_map.get-value-or
+                      global-struct
+                      (ir.compiler-ir-symbol-id g)
+                      (- 0 1)))
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) val)]
+                [(CopyBytes dst src size)
+                  (let
+                    [dsid : i64
+                      (opt-struct-len-val-struct
+                        global-struct
+                        (& tr.vstruct)
+                        dst)]
+                    [ssid : i64
+                      (opt-struct-len-val-struct
+                        global-struct
+                        (& tr.vstruct)
+                        src)]
+                    (opt-struct-len-mark-bad!
+                      bad
+                      (opt-struct-len-var-slot (& tr.vdesc) dst))
+                    (opt-struct-len-mark-bad!
+                      bad
+                      (opt-struct-len-var-slot (& tr.vfptr) dst))
+                    (opt-struct-len-mark-bad!
+                      bad
+                      (opt-struct-len-var-slot (& tr.vdesc) src))
+                    (opt-struct-len-mark-bad!
+                      bad
+                      (opt-struct-len-var-slot (& tr.vfptr) src))
+                    (when
+                      (and (>= dsid 0) (or (not (= dsid ssid)) (< size 16)))
+                      (opt-struct-len-mark-bad! bad dsid))
+                    (when
+                      (and (>= ssid 0) (or (not (= dsid ssid)) (< size 16)))
+                      (opt-struct-len-mark-bad! bad ssid))
+                    (when
+                      (and (>= dsid 0) (= dsid ssid) (>= size 16))
+                      (match dst
+                        [(Var dv)
+                          (opt-struct-len-mark-init-ok!
+                            (&mut tr.vinit-ok)
+                            (& tr.vparent)
+                            dv)]
+                        [_ unit])))]
+                [(or (StorePtr addr val sty) (StoreOwned addr val sty))
+                  (opt-struct-len-check-store!
+                    type-segment-bases
+                    ret-min
+                    helpers
+                    arg-global
+                    call-memory
+                    global-struct
+                    tables
+                    blocks
+                    seq
+                    fid
+                    params
+                    fsize
+                    bi
+                    pi
+                    addr
+                    val
+                    sty
+                    bad
+                    has-w0
+                    has-w1
+                    tr
+                    excl-struct-fn
+                    excl-struct-sid
+                    excl-count-cell
+                    helper-cell)]
+                [(or (Call _ cname args _) (TailCall cname args _))
+                  (let
+                    [cid : i64 (ir.compiler-ir-symbol-id cname)]
+                    [internal? : bool (opt-program-function? program cname)]
+                    [sret-enc : i64
+                      (opt_i64_i64_map.get-value-or fn-sret-param cid 0)]
+                    (for [ai (iterator.range 0 (opt-len-eq-args-count args))]
+                      (match (opt-call-memory-arg-at args ai)
+                        [(Some av)
+                          (let
+                            [asid : i64
+                              (opt-struct-len-val-struct
+                                global-struct
+                                (& tr.vstruct)
+                                (& av))]
+                            [afp : i64
+                              (opt-struct-len-var-slot (& tr.vfptr) (& av))]
+                            [adesc : i64
+                              (opt-struct-len-var-slot (& tr.vdesc) (& av))]
+                            [psid : i64
+                              (if (and internal? (< ai 64))
+                                (opt_i64_i64_map.get-value-or
+                                  fn-param-struct
+                                  (+ (* cid 64) ai)
+                                  (- 0 1))
+                                (- 0 1))]
+                            (when
+                              (and (>= asid 0) (not (= psid asid)))
+                              (opt-struct-len-mark-bad! bad asid))
+                            (when
+                              (and (>= psid 0) (not (= asid psid)))
+                              (opt-struct-len-mark-bad! bad psid))
+                            (when
+                              (and
+                                internal?
+                                (= sret-enc (+ ai 1))
+                                (>= psid 0)
+                                (= asid psid))
+                              (match (& av)
+                                [(Var vv)
+                                  (opt-struct-len-mark-init-ok!
+                                    (&mut tr.vinit-ok)
+                                    (& tr.vparent)
+                                    vv)]
+                                [_ unit]))
+                            (when
+                              (or (>= afp 0) (>= adesc 0))
+                              (let
+                                [param-ro? : bool
+                                  (and
+                                    internal?
+                                    (match (opt_i64_i64_map.get call-memory cid)
+                                      [(LookupFound summary)
+                                        (and
+                                          (not
+                                            (opt-call-memory-summary-unknown?
+                                              summary))
+                                          (not
+                                            (opt-call-memory-summary-param-write?
+                                              summary
+                                              ai)))]
+                                      [(LookupMissing) false]))]
+                                (unless
+                                  param-ro?
+                                  (opt-struct-len-mark-bad! bad afp)
+                                  (opt-struct-len-mark-bad! bad adesc)))))]
+                        [(No) unit])))]
+                [(Return (Some rv))
+                  (let
+                    [vs : i64
+                      (opt-struct-len-val-struct
+                        global-struct
+                        (& tr.vstruct)
+                        rv)]
+                    (when
+                      (and (>= vs 0) (not (= vs rsid)))
+                      (opt-struct-len-mark-bad! bad vs))
+                    (when
+                      (and (>= rsid 0) (not (= vs rsid)))
+                      (opt-struct-len-mark-bad! bad rsid))
+                    (opt-struct-len-mark-bad!
+                      bad
+                      (opt-struct-len-var-slot (& tr.vfptr) rv))
+                    (opt-struct-len-mark-bad!
+                      bad
+                      (opt-struct-len-var-slot (& tr.vdesc) rv)))]
+                [(Return (No))
+                  (when
+                    (and (>= rsid 0) (not has-sret?))
+                    (opt-struct-len-mark-bad! bad rsid))]
+                [(or (Cast _ src fty tty) (Bitcast _ src fty tty))
+                  (opt-struct-len-mark-bad!
+                    bad
+                    (opt-struct-type-id type-segment-bases fty))
+                  (opt-struct-len-mark-bad!
+                    bad
+                    (opt-struct-type-id type-segment-bases tty))
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) src)]
+                [(or (CallIndirect _ callee args ty)
+                     (CallIndirectC _ callee args ty)
+                     (TailCallIndirect callee args ty))
+                  (opt-struct-len-mark-bad!
+                    bad
+                    (opt-struct-type-id type-segment-bases ty))
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) callee)
+                  (opt-struct-len-mark-args-bad! bad global-struct (& tr) args)]
+                [(CallCAbiStoreResult pbox)
+                  (opt-struct-len-mark-val-bad!
+                    bad
+                    global-struct
+                    (& tr)
+                    (& (deref pbox).base))
+                  (opt-struct-len-mark-args-bad!
+                    bad
+                    global-struct
+                    (& tr)
+                    (& (deref pbox).args))]
+                [(CallIndirectCAbiStoreResult pbox)
+                  (opt-struct-len-mark-val-bad!
+                    bad
+                    global-struct
+                    (& tr)
+                    (& (deref pbox).base))
+                  (opt-struct-len-mark-val-bad!
+                    bad
+                    global-struct
+                    (& tr)
+                    (& (deref pbox).callee))
+                  (opt-struct-len-mark-args-bad!
+                    bad
+                    global-struct
+                    (& tr)
+                    (& (deref pbox).args))]
+                [(SpmdCall pbox)
+                  (opt-struct-len-mark-val-bad!
+                    bad
+                    global-struct
+                    (& tr)
+                    (& (deref pbox).active-mask))
+                  (for [ai (iterator.range 0 (deref pbox).args.len)]
+                    (match (& (array-ref (deref pbox).args.slots ai))
+                      [(Arg _ av aty)
+                        (opt-struct-len-mark-bad!
+                          bad
+                          (opt-struct-type-id type-segment-bases aty))
+                        (opt-struct-len-mark-val-bad!
+                          bad
+                          global-struct
+                          (& tr)
+                          av)]))
+                  (match (& (deref pbox).result)
+                    [(Value _ _ rty)
+                      (opt-struct-len-mark-bad!
+                        bad
+                        (opt-struct-type-id type-segment-bases rty))]
+                    [(Unit) unit])]
+                [(Pack _ vals ty)
+                  (opt-struct-len-mark-bad!
+                    bad
+                    (opt-struct-type-id type-segment-bases ty))
+                  (for [vi (iterator.range 0 vals.len)]
+                    (opt-struct-len-mark-val-bad!
+                      bad
+                      global-struct
+                      (& tr)
+                      (& (array-ref vals.slots vi))))]
+                [(Word _ src _ ty)
+                  (opt-struct-len-mark-bad!
+                    bad
+                    (opt-struct-type-id type-segment-bases ty))
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) src)]
+                [(Syscall _ args)
+                  (opt-struct-len-mark-args-bad! bad global-struct (& tr) args)]
+                [(BinOp _ _ l r _)
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) l)
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) r)]
+                [(UnOp _ _ s _)
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) s)]
+                [(Select pbox)
+                  (opt-struct-len-mark-bad!
+                    bad
+                    (opt-struct-type-id type-segment-bases (& (deref pbox).ty)))
+                  (opt-struct-len-mark-val-bad!
+                    bad
+                    global-struct
+                    (& tr)
+                    (& (deref pbox).mask))
+                  (opt-struct-len-mark-val-bad!
+                    bad
+                    global-struct
+                    (& tr)
+                    (& (deref pbox).on-true))
+                  (opt-struct-len-mark-val-bad!
+                    bad
+                    global-struct
+                    (& tr)
+                    (& (deref pbox).on-false))]
+                [(BoundsCheck bi bl _)
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) bi)
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) bl)]
+                [(or (Branch c _ _) (TotalEnumBranch c _ _) (Switch c _ _ _)
+                     (TotalEnumSwitch c _ _ _ _))
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) c)]
+                [(Splat _ sv _ _)
+                  (opt-struct-len-mark-val-bad! bad global-struct (& tr) sv)]
+                [_
+                  ;; Any other write (a vector or predicated store) may land in
+                  ;; a tracked struct through an address this walk does not
+                  ;; follow; a candidate global named here escapes the same way.
+                  (when
+                    (or
+                      (match (ir.compiler-ir-instr-seq-borrow instrs pi)
+                        [(or (VectorStore _) (PredicatedStore _)) true]
+                        [_ false])
+                      (and
+                        (> (opt_i64_i64_map.len global-struct) 0)
+                        (opt-len-eq-instr-mentions-cand?
+                          global-struct
+                          (ir.compiler-ir-instr-seq-ref instrs pi))))
+                    (for [vi (iterator.range 0 fsize)]
+                      (opt-struct-len-mark-bad! bad (array-ref tr.vstruct vi))
+                      (opt-struct-len-mark-bad! bad (array-ref tr.vfptr vi))
+                      (opt-struct-len-mark-bad! bad (array-ref tr.vdesc vi))))]))]))])
+  ;; Every USED local `Alloc` / `__sret` root MUST have been initialized by a verified
+  ;; constructor, whole-struct CopyBytes, or internal sret call. Dead unused `Alloc`
+  ;; slots emitted before DCE are never read or address-taken.
+  (let
+    [used : (__tl_dyn-array i64) (opt-collect-blocks-uses-array fsize blocks)]
+    (for [vi (iterator.range 0 fsize)]
+      (when
+        (and
+          (array-ref tr.vroot-fresh vi)
+          (>= (array-ref tr.vstruct vi) 0)
+          (not (array-ref tr.vinit-ok vi))
+          (opt-used-array-contains (& used) vi))
+        (opt-struct-len-mark-bad! bad (array-ref tr.vstruct vi))))))
+
 (define (opt-struct-len-build-in
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
@@ -131560,24 +132886,26 @@
   [call-memory : (& opt_i64_i64_map.Map)]
   [arg-global : (& opt_i64_i64_map.Map)]
   [helpers : (& OptCheckedLoopHelpers)]
+  [ret-min : (& opt_i64_i64_map.Map)]
   [capacity : i64]
-  [struct-fits : (&mut opt_i64_i64_map.Map)]
-  [struct-excluded : (&mut opt_i64_i64_map.Map)]
-  [global-struct-out : (&mut opt_i64_i64_map.Map)]) : unit
+  [fits-out : (&mut opt_i64_i64_map.Map)]
+  [excl-out : (&mut opt_i64_i64_map.Map)]
+  [gtypes-out : (&mut opt_i64_i64_map.Map)]) : unit
   (let
-    [seen : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
-    [bad : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
-    [global-struct : opt_i64_i64_map.Map
-      (opt_i64_i64_map.with-capacity capacity)]
-    [has-w0 : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
-    [has-w1 : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
+    [seen : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 32)]
+    [bad : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 32)]
+    [has-w0 : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 32)]
+    [has-w1 : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 32)]
+    [global-struct : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 32)]
     [fn-ret-struct : opt_i64_i64_map.Map
       (opt_i64_i64_map.with-capacity capacity)]
-    ;; Map (func_id * 64 + param_idx) -> struct_sym_id for internal call checks.
     [fn-param-struct : opt_i64_i64_map.Map
       (opt_i64_i64_map.with-capacity capacity)]
-    [fn-sret-param : opt_i64_i64_map.Map
-      (opt_i64_i64_map.with-capacity capacity)]
+    [fn-sret-param : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 64)]
+    [excl-struct-fn : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [excl-struct-sid : (__tl_dyn-array i64) (__tl_make-array i64 256)]
+    [excl-count-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [helper-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (opt-struct-len-seed-candidates
       type-segment-bases
       globals
@@ -131587,7 +132915,7 @@
       (&mut bad)
       (&mut global-struct))
     (when (= (opt_i64_i64_map.len (& seen)) 0) (return unit))
-    ;; Record internal function param/ret struct signatures.
+    ;; Precompute fn return/param/sret struct types.
     (for [fi (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions fi)
         [(Function name params ret-ty _ _ _)
@@ -131599,1053 +132927,160 @@
               (opt_i64_i64_map.insert-ref! (&mut fn-ret-struct) fid rsid))
             (for [pi
               (iterator.range 0 (ir.compiler-ir-param-seq-count (& params)))]
-              (if (and
-                (>= rsid 0)
-                (opt-struct-len-is-sret-param?
-                  (ir.compiler-ir-param-seq-borrow (& params) pi)))
-                (begin
-                  (opt_i64_i64_map.insert-ref!
-                    (&mut fn-sret-param)
-                    fid
-                    (+ pi 1))
-                  (when
-                    (< pi 64)
-                    (opt_i64_i64_map.insert-ref!
-                      (&mut fn-param-struct)
-                      (+ (* fid 64) pi)
-                      rsid)))
+              (when
+                (< pi 64)
                 (match (ir.compiler-ir-param-seq-borrow (& params) pi)
                   [(Param _ pty _)
                     (let
-                      [psid : i64
-                        (opt-struct-type-id type-segment-bases (& pty))]
+                      [psid : i64 (opt-struct-type-id type-segment-bases pty)]
                       (when
-                        (and (>= psid 0) (< pi 64))
+                        (>= psid 0)
                         (opt_i64_i64_map.insert-ref!
                           (&mut fn-param-struct)
                           (+ (* fid 64) pi)
-                          psid)))]))))]))
-    ;; Scan every function for Phase 1 (escape/containment/type closure) and Phase 2 (field writes).
-    (let
-      [helper-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      [excl-struct-fn : (__tl_dyn-array i64) (__tl_make-array i64 256)]
-      [excl-struct-sid : (__tl_dyn-array i64) (__tl_make-array i64 256)]
-      [excl-count : i64 0]
-      (for [fi (iterator.range 0 functions.len)]
-        (match (ir.compiler-ir-function-seq-borrow functions fi)
-          [(Function name params ret-ty frame blocks _)
-            (let
-              [fid : i64 (ir.compiler-ir-symbol-id name)]
-              [rsid : i64 (opt-struct-type-id type-segment-bases (& ret-ty))]
-              ;; Quick check: does this function mention any non-bad candidate struct?
-              [relevant? : bool
-                (and (>= rsid 0) (not (opt_i64_i64_map.contains? (& bad) rsid)))]
-              (unless
-                relevant?
+                          psid))
+                      (when
+                        (and
+                          (>= rsid 0)
+                          (opt-struct-len-is-sret-param?
+                            (ir.compiler-ir-param-seq-borrow (& params) pi)))
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut fn-param-struct)
+                          (+ (* fid 64) pi)
+                          rsid)
+                        (opt_i64_i64_map.insert-ref!
+                          (&mut fn-sret-param)
+                          fid
+                          (+ pi 1))))]))))]))
+    ;; Verify every relevant function.
+    (for [fi (iterator.range 0 functions.len)]
+      (match (ir.compiler-ir-function-seq-borrow functions fi)
+        [(Function name params ret-ty frame blocks _)
+          (let
+            [fid : i64 (ir.compiler-ir-symbol-id name)]
+            [rsid : i64 (opt-struct-type-id type-segment-bases (& ret-ty))]
+            [has-sret? : bool (opt_i64_i64_map.contains? (& fn-sret-param) fid)]
+            (when
+              (opt-struct-len-func-relevant?
+                type-segment-bases
+                (& bad)
+                (& global-struct)
+                rsid
+                (& params)
+                (& blocks))
+              (let
+                [fsize : i64
+                  (if (> frame 0)
+                    frame
+                    1)]
+                [tables : OptLenEqDefs
+                  (opt-len-eq-defs-build
+                    type-segment-bases
+                    frame
+                    (& blocks)
+                    false)]
+                [tr : OptStructLenFnTrack
+                  (OptStructLenFnTrack
+                    (__tl_make-array i64 fsize)
+                    (__tl_make-array i64 fsize)
+                    (__tl_make-array i64 fsize)
+                    (__tl_make-array bool fsize)
+                    (__tl_make-array bool fsize)
+                    (__tl_make-array i64 fsize)
+                    (__tl_make-array bool fsize))]
+                (for [vi (iterator.range 0 fsize)]
+                  (set! (array-ref tr.vstruct vi) (- 0 1))
+                  (set! (array-ref tr.vfptr vi) (- 0 1))
+                  (set! (array-ref tr.vdesc vi) (- 0 1))
+                  (set! (array-ref tr.vparent vi) (- 0 1)))
                 (for [pi
                   (iterator.range 0 (ir.compiler-ir-param-seq-count (& params)))]
                   (match (ir.compiler-ir-param-seq-borrow (& params) pi)
-                    [(Param _ pty _)
-                      (let
-                        [psid : i64
-                          (opt-struct-type-id type-segment-bases (& pty))]
-                        (when
-                          (and
-                            (>= psid 0)
-                            (not (opt_i64_i64_map.contains? (& bad) psid)))
-                          (set! relevant? true)))])))
-              (unless
-                relevant?
-                (match (& blocks)
-                  [(Array seq)
-                    (for [bi
-                      (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-                      (unless
-                        relevant?
-                        (match (ir.compiler-ir-block-seq-borrow seq bi)
-                          [(Block _ instrs)
-                            (for [pi
-                              (iterator.range
-                                0
-                                (ir.compiler-ir-instr-seq-count instrs))]
-                              (unless
-                                relevant?
-                                (begin
-                                  (match (ir.compiler-ir-instr-seq-borrow
-                                    instrs
-                                    pi)
-                                    [(or (Alloc _ ty) (Mov _ _ ty) (Load _ _ ty)
-                                         (Call _ _ _ ty) (Phi _ _ ty))
-                                      (let
-                                        [tsid : i64
-                                          (opt-struct-type-id
-                                            type-segment-bases
-                                            ty)]
-                                        (when
-                                          (and
-                                            (>= tsid 0)
-                                            (not
-                                              (opt_i64_i64_map.contains?
-                                                (& bad)
-                                                tsid)))
-                                          (set! relevant? true)))]
-                                    [(or (Store g _ _)
-                                         (CopyBytes (Global g) _ _))
-                                      (let
-                                        [gsid : i64
-                                          (opt_i64_i64_map.get-value-or
-                                            (& global-struct)
-                                            (ir.compiler-ir-symbol-id g)
-                                            (- 0 1))]
-                                        (when
-                                          (and
-                                            (>= gsid 0)
-                                            (not
-                                              (opt_i64_i64_map.contains?
-                                                (& bad)
-                                                gsid)))
-                                          (set! relevant? true)))]
-                                    [_ unit])
-                                  (when
-                                    (and
-                                      (not relevant?)
-                                      (>
-                                        (opt_i64_i64_map.len (& global-struct))
-                                        0)
-                                      (opt-len-eq-instr-mentions-cand?
-                                        (& global-struct)
-                                        (ir.compiler-ir-instr-seq-ref instrs pi)))
-                                    (set! relevant? true)))))])))]))
-              (when
-                relevant?
-                (let
-                  [fsize : i64
-                    (if (> frame 0)
-                      frame
-                      1)]
-                  [tables : OptLenEqDefs
-                    (opt-len-eq-defs-build
-                      type-segment-bases
-                      frame
-                      (& blocks)
-                      false)]
-                  ;; var -> struct sym id (-1 = none, -2 = conflict)
-                  [vstruct : (__tl_dyn-array i64) (__tl_make-array i64 fsize)]
-                  ;; var -> 1 if fresh local Alloc / AddrOf(Alloc) / sret param
-                  [vfresh : (__tl_dyn-array bool) (__tl_make-array bool fsize)]
-                  ;; var -> struct sym id of loaded word-0 DynArray descriptor (-1 = none)
-                  [vdesc : (__tl_dyn-array i64) (__tl_make-array i64 fsize)]
-                  ;; var -> 1 if var is a field pointer (gep of a tracked struct)
-                  [vfptr : (__tl_dyn-array i64) (__tl_make-array i64 fsize)]
-                  (for [vi (iterator.range 0 fsize)]
-                    (set! (array-ref vstruct vi) (- 0 1))
-                    (set! (array-ref vdesc vi) (- 0 1))
-                    (set! (array-ref vfptr vi) (- 0 1)))
-                  ;; Seed params (and __sret param).
-                  (for [pi
-                    (iterator.range
-                      0
-                      (ir.compiler-ir-param-seq-count (& params)))]
-                    (match (ir.compiler-ir-param-seq-borrow (& params) pi)
-                      [(Param _ pty pv)
-                        (when
-                          (and (>= pv 0) (< pv fsize))
+                    [(Param _ pty pv)
+                      (when
+                        (and (>= pv 0) (< pv fsize))
+                        (let
+                          [psid : i64
+                            (opt-struct-type-id type-segment-bases pty)]
                           (if (and
                             (>= rsid 0)
                             (opt-struct-len-is-sret-param?
                               (ir.compiler-ir-param-seq-borrow (& params) pi)))
                             (begin
-                              (set! (array-ref vstruct pv) rsid)
-                              (set! (array-ref vfresh pv) true))
-                            (let
-                              [psid : i64
-                                (opt-struct-type-id type-segment-bases (& pty))]
-                              (when
-                                (>= psid 0)
-                                (set! (array-ref vstruct pv) psid)))))]))
-                  ;; Propagate struct/field-ptr/desc ownership (2 passes).
-                  (for [_pass (iterator.range 0 2)]
-                    (match (& blocks)
-                      [(Array seq)
-                        (for [bi
-                          (iterator.range
-                            0
-                            (ir.compiler-ir-block-seq-count seq))]
-                          (match (ir.compiler-ir-block-seq-borrow seq bi)
-                            [(Block _ instrs)
-                              (for [pi
-                                (iterator.range
-                                  0
-                                  (ir.compiler-ir-instr-seq-count instrs))]
-                                (match (ir.compiler-ir-instr-seq-borrow
-                                  instrs
-                                  pi)
-                                  [(Alloc dst ty)
-                                    (opt-struct-len-disqualify-nested!
-                                      type-segment-bases
-                                      (&mut bad)
-                                      ty
-                                      false)
-                                    (let
-                                      [tsid : i64
-                                        (opt-struct-type-id
-                                          type-segment-bases
-                                          ty)]
-                                      (when
-                                        (and
-                                          (>= tsid 0)
-                                          (>= dst 0)
-                                          (< dst fsize))
-                                        (set! (array-ref vstruct dst) tsid)
-                                        (set! (array-ref vfresh dst) true)))]
-                                  [(AddrOf dst src _)
-                                    (when
-                                      (and
-                                        (>= dst 0)
-                                        (< dst fsize)
-                                        (>= src 0)
-                                        (< src fsize)
-                                        (>= (array-ref vstruct src) 0))
-                                      (set!
-                                        (array-ref vstruct dst)
-                                        (array-ref vstruct src))
-                                      (when
-                                        (array-ref vfresh src)
-                                        (set! (array-ref vfresh dst) true)))]
-                                  [(Mov dst src ty)
-                                    (opt-struct-len-disqualify-nested!
-                                      type-segment-bases
-                                      (&mut bad)
-                                      ty
-                                      false)
-                                    (let
-                                      [tsid : i64
-                                        (opt-struct-type-id
-                                          type-segment-bases
-                                          ty)]
-                                      [ssid : i64
-                                        (match src
-                                          [(Global g)
-                                            (opt_i64_i64_map.get-value-or
-                                              (& global-struct)
-                                              (ir.compiler-ir-symbol-id g)
-                                              (- 0 1))]
-                                          [(Var sv)
-                                            (if (and (>= sv 0) (< sv fsize))
-                                              (array-ref vstruct sv)
-                                              (- 0 1))]
-                                          [_ (- 0 1)])]
-                                      (when
-                                        (and (>= tsid 0) (not (= tsid ssid)))
-                                        ;; Producing a struct type from an untracked source!
-                                        (opt_i64_i64_map.insert-ref!
-                                          (&mut bad)
-                                          tsid
-                                          1))
-                                      (when
-                                        (and
-                                          (>= ssid 0)
-                                          (>= dst 0)
-                                          (< dst fsize))
-                                        (if (and (>= tsid 0) (= tsid ssid))
-                                          (set! (array-ref vstruct dst) ssid)
-                                          (match ty
-                                            [(U64)
-                                              (set!
-                                                (array-ref vstruct dst)
-                                                ssid)]
-                                            [_
-                                              (opt_i64_i64_map.insert-ref!
-                                                (&mut bad)
-                                                ssid
-                                                1)])))
-                                      ;; Propagate descriptor taint through Mov.
-                                      (match src
-                                        [(Var sv)
-                                          (when
-                                            (and
-                                              (>= sv 0)
-                                              (< sv fsize)
-                                              (>= dst 0)
-                                              (< dst fsize))
-                                            (when
-                                              (>= (array-ref vdesc sv) 0)
-                                              (set!
-                                                (array-ref vdesc dst)
-                                                (array-ref vdesc sv)))
-                                            (when
-                                              (>= (array-ref vfptr sv) 0)
-                                              (set!
-                                                (array-ref vfptr dst)
-                                                (array-ref vfptr sv))))]
-                                        [_ unit]))]
-                                  [(Call dst cname _ ty)
-                                    (opt-struct-len-disqualify-nested!
-                                      type-segment-bases
-                                      (&mut bad)
-                                      ty
-                                      false)
-                                    (let
-                                      [tsid : i64
-                                        (opt-struct-type-id
-                                          type-segment-bases
-                                          ty)]
-                                      (when
-                                        (>= tsid 0)
-                                        (let
-                                          [cid : i64
-                                            (ir.compiler-ir-symbol-id cname)]
-                                          (if (or
-                                            (and
-                                              (opt-program-function?
-                                                program
-                                                cname)
-                                              (=
-                                                (opt_i64_i64_map.get-value-or
-                                                  (& fn-ret-struct)
-                                                  cid
-                                                  (- 0 1))
-                                                tsid))
-                                            (and
-                                              (or
-                                                (ir.compiler-ir-symbol-eq?
-                                                  cname
-                                                  cbi.compiler-builtin-id-tl-alloc)
-                                                (ir.compiler-ir-symbol-eq?
-                                                  cname
-                                                  cbi.compiler-builtin-id-tl-alloc-global))
-                                              (>= dst 0)
-                                              (<
-                                                dst
-                                                (array-length tables.ncopy))
-                                              (= (array-ref tables.ncopy dst) 1)
-                                              (= (array-ref tables.n0 dst) 0)
-                                              (= (array-ref tables.n1 dst) 0)))
-                                            (when
-                                              (and (>= dst 0) (< dst fsize))
-                                              (set!
-                                                (array-ref vstruct dst)
-                                                tsid))
-                                            (opt_i64_i64_map.insert-ref!
-                                              (&mut bad)
-                                              tsid
-                                              1)))))]
-                                  [(Phi dst inputs ty)
-                                    (let
-                                      [tsid : i64
-                                        (opt-struct-type-id
-                                          type-segment-bases
-                                          ty)]
-                                      (when
-                                        (>= tsid 0)
-                                        (let
-                                          [all-ok? : bool true]
-                                          (for [k (iterator.range 0 inputs.len)]
-                                            (match (ir.compiler-ir-phi-input-seq-borrow
-                                              inputs
-                                              k)
-                                              [(ir.CompilerIrPhiInput pv _)
-                                                (let
-                                                  [isid : i64
-                                                    (match (& pv)
-                                                      [(Global g)
-                                                        (opt_i64_i64_map.get-value-or
-                                                          (& global-struct)
-                                                          (ir.compiler-ir-symbol-id
-                                                            g)
-                                                          (- 0 1))]
-                                                      [(Var iv)
-                                                        (if (and
-                                                          (>= iv 0)
-                                                          (< iv fsize))
-                                                          (array-ref vstruct iv)
-                                                          (- 0 1))]
-                                                      [_ (- 0 1)])]
-                                                  (unless
-                                                    (= isid tsid)
-                                                    (set! all-ok? false)))]))
-                                          (if all-ok?
-                                            (when
-                                              (and (>= dst 0) (< dst fsize))
-                                              (set!
-                                                (array-ref vstruct dst)
-                                                tsid))
-                                            (opt_i64_i64_map.insert-ref!
-                                              (&mut bad)
-                                              tsid
-                                              1)))))]
-                                  [(Gep dst base _ _)
-                                    (when
-                                      (and (>= dst 0) (< dst fsize))
-                                      (let
-                                        [bsid : i64
-                                          (match base
-                                            [(Global g)
-                                              (opt_i64_i64_map.get-value-or
-                                                (& global-struct)
-                                                (ir.compiler-ir-symbol-id g)
-                                                (- 0 1))]
-                                            [(Var bv)
-                                              (if (and (>= bv 0) (< bv fsize))
-                                                (if (>=
-                                                  (array-ref vstruct bv)
-                                                  0)
-                                                  (array-ref vstruct bv)
-                                                  (array-ref vfptr bv))
-                                                (- 0 1))]
-                                            [_ (- 0 1)])]
-                                        (when
-                                          (>= bsid 0)
-                                          (set! (array-ref vfptr dst) bsid))
-                                        (match base
-                                          [(Var bv)
-                                            (when
-                                              (and
-                                                (>= bv 0)
-                                                (< bv fsize)
-                                                (>= (array-ref vdesc bv) 0))
-                                              (set!
-                                                (array-ref vdesc dst)
-                                                (array-ref vdesc bv)))]
-                                          [_ unit])))]
-                                  [(Load dst src ty)
-                                    (let
-                                      [tsid : i64
-                                        (opt-struct-type-id
-                                          type-segment-bases
-                                          ty)]
-                                      (when
-                                        (>= tsid 0)
-                                        ;; Direct load of a whole struct value is untracked.
-                                        (opt_i64_i64_map.insert-ref!
-                                          (&mut bad)
-                                          tsid
-                                          1)))
-                                    (let
-                                      [g : OptLenInvGep
-                                        (opt-len-inv-gep-root (& tables) src 4)]
-                                      (when
-                                        g.ok?
-                                        (let
-                                          [rs : i64
-                                            (if g.is-global?
-                                              (opt_i64_i64_map.get-value-or
-                                                (& global-struct)
-                                                g.root
-                                                (- 0 1))
-                                              (if (and
-                                                (>= g.root 0)
-                                                (< g.root fsize))
-                                                (array-ref vstruct g.root)
-                                                (- 0 1)))]
-                                          (when
-                                            (>= rs 0)
-                                            (cond
-                                              [(= g.offset 0)
-                                                (match ty
-                                                  [(DynArray _)
-                                                    (opt_i64_i64_map.insert-ref!
-                                                      (&mut has-w0)
-                                                      rs
-                                                      1)
-                                                    (when
-                                                      (and
-                                                        (>= dst 0)
-                                                        (< dst fsize))
-                                                      (set!
-                                                        (array-ref vdesc dst)
-                                                        rs))]
-                                                  [_
-                                                    (opt_i64_i64_map.insert-ref!
-                                                      (&mut bad)
-                                                      rs
-                                                      1)])]
-                                              [(= g.offset 8)
-                                                (match ty
-                                                  [(I64)
-                                                    (opt_i64_i64_map.insert-ref!
-                                                      (&mut has-w1)
-                                                      rs
-                                                      1)]
-                                                  [_
-                                                    (opt_i64_i64_map.insert-ref!
-                                                      (&mut bad)
-                                                      rs
-                                                      1)])]
-                                              [(and
-                                                  (> g.offset 0)
-                                                  (< g.offset 16))
-                                                (opt_i64_i64_map.insert-ref!
-                                                  (&mut bad)
-                                                  rs
-                                                  1)]
-                                              [else unit])))))]
-                                  [_ unit]))]))]))
-                  ;; Phase 1b + Phase 2: validate EVERY use and EVERY store touching a tracked struct!
-                  (match (& blocks)
-                    [(Array seq)
-                      (for [bi
-                        (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
-                        (match (ir.compiler-ir-block-seq-borrow seq bi)
-                          [(Block _ instrs)
-                            (for [pi
-                              (iterator.range
-                                0
-                                (ir.compiler-ir-instr-seq-count instrs))]
-                              (match (ir.compiler-ir-instr-seq-borrow instrs pi)
-                                [(or (Cast dst src fty tty)
-                                     (Bitcast dst src fty tty))
-                                  (let
-                                    [s1 : i64
-                                      (opt-struct-type-id
-                                        type-segment-bases
-                                        fty)]
-                                    [s2 : i64
-                                      (opt-struct-type-id
-                                        type-segment-bases
-                                        tty)]
-                                    (when
-                                      (>= s1 0)
-                                      (opt_i64_i64_map.insert-ref!
-                                        (&mut bad)
-                                        s1
-                                        1))
-                                    (when
-                                      (>= s2 0)
-                                      (opt_i64_i64_map.insert-ref!
-                                        (&mut bad)
-                                        s2
-                                        1))
-                                    (match src
-                                      [(Var sv)
-                                        (when
-                                          (and (>= sv 0) (< sv fsize))
-                                          (when
-                                            (>= (array-ref vstruct sv) 0)
-                                            (opt_i64_i64_map.insert-ref!
-                                              (&mut bad)
-                                              (array-ref vstruct sv)
-                                              1))
-                                          (when
-                                            (>= (array-ref vfptr sv) 0)
-                                            (opt_i64_i64_map.insert-ref!
-                                              (&mut bad)
-                                              (array-ref vfptr sv)
-                                              1))
-                                          (when
-                                            (>= (array-ref vdesc sv) 0)
-                                            (opt_i64_i64_map.insert-ref!
-                                              (&mut bad)
-                                              (array-ref vdesc sv)
-                                              1)))]
-                                      [_ unit])
-                                    (when (and (>= dst 0) (< dst fsize)) unit))]
-                                [(Store gname val _)
-                                  (let
-                                    [gsid : i64
-                                      (opt_i64_i64_map.get-value-or
-                                        (& global-struct)
-                                        (ir.compiler-ir-symbol-id gname)
-                                        (- 0 1))]
-                                    [vsid : i64
-                                      (match val
-                                        [(Var vv)
-                                          (if (and (>= vv 0) (< vv fsize))
-                                            (array-ref vstruct vv)
-                                            (- 0 1))]
-                                        [(Global g2)
-                                          (opt_i64_i64_map.get-value-or
-                                            (& global-struct)
-                                            (ir.compiler-ir-symbol-id g2)
-                                            (- 0 1))]
-                                        [_ (- 0 1)])]
-                                    (when
-                                      (and (>= gsid 0) (not (= gsid vsid)))
-                                      (opt_i64_i64_map.insert-ref!
-                                        (&mut bad)
-                                        gsid
-                                        1))
-                                    (when
-                                      (and (>= vsid 0) (not (= gsid vsid)))
-                                      (opt_i64_i64_map.insert-ref!
-                                        (&mut bad)
-                                        vsid
-                                        1)))]
-                                [(CopyBytes dst src size)
-                                  (let
-                                    [dsid : i64
-                                      (match dst
-                                        [(Global g)
-                                          (opt_i64_i64_map.get-value-or
-                                            (& global-struct)
-                                            (ir.compiler-ir-symbol-id g)
-                                            (- 0 1))]
-                                        [(Var dv)
-                                          (if (and (>= dv 0) (< dv fsize))
-                                            (array-ref vstruct dv)
-                                            (- 0 1))]
-                                        [_ (- 0 1)])]
-                                    [ssid : i64
-                                      (match src
-                                        [(Global g)
-                                          (opt_i64_i64_map.get-value-or
-                                            (& global-struct)
-                                            (ir.compiler-ir-symbol-id g)
-                                            (- 0 1))]
-                                        [(Var sv)
-                                          (if (and (>= sv 0) (< sv fsize))
-                                            (array-ref vstruct sv)
-                                            (- 0 1))]
-                                        [_ (- 0 1)])]
-                                    [dfp : i64
-                                      (match dst
-                                        [(Var dv)
-                                          (if (and (>= dv 0) (< dv fsize))
-                                            (array-ref vfptr dv)
-                                            (- 0 1))]
-                                        [_ (- 0 1)])]
-                                    [ddesc : i64
-                                      (match dst
-                                        [(Var dv)
-                                          (if (and (>= dv 0) (< dv fsize))
-                                            (array-ref vdesc dv)
-                                            (- 0 1))]
-                                        [_ (- 0 1)])]
-                                    ;; Disqualify copy into field pointer or descriptor header.
-                                    (when
-                                      (>= dfp 0)
-                                      (opt_i64_i64_map.insert-ref!
-                                        (&mut bad)
-                                        dfp
-                                        1))
-                                    (when
-                                      (>= ddesc 0)
-                                      (opt_i64_i64_map.insert-ref!
-                                        (&mut bad)
-                                        ddesc
-                                        1))
-                                    ;; Whole-struct copy must match S -> S with size >= 16!
-                                    (when
-                                      (and
-                                        (>= dsid 0)
-                                        (or (not (= dsid ssid)) (< size 16)))
-                                      (opt_i64_i64_map.insert-ref!
-                                        (&mut bad)
-                                        dsid
-                                        1))
-                                    (when
-                                      (and
-                                        (>= ssid 0)
-                                        (or (not (= dsid ssid)) (< size 16)))
-                                      (opt_i64_i64_map.insert-ref!
-                                        (&mut bad)
-                                        ssid
-                                        1)))]
-                                [(or (StorePtr addr val sty)
-                                     (StoreOwned addr val sty))
-                                  ;; Refuse storing a tracked struct value or field ptr into untracked memory.
-                                  (match val
-                                    [(Var vv)
-                                      (when
-                                        (and (>= vv 0) (< vv fsize))
-                                        (when
-                                          (>= (array-ref vstruct vv) 0)
-                                          (opt_i64_i64_map.insert-ref!
-                                            (&mut bad)
-                                            (array-ref vstruct vv)
-                                            1))
-                                        (when
-                                          (>= (array-ref vfptr vv) 0)
-                                          (opt_i64_i64_map.insert-ref!
-                                            (&mut bad)
-                                            (array-ref vfptr vv)
-                                            1)))]
-                                    [_ unit])
-                                  ;; Refuse mutating a loaded slots descriptor header.
-                                  (match addr
-                                    [(Var av)
-                                      (when
-                                        (and
-                                          (>= av 0)
-                                          (< av fsize)
-                                          (>= (array-ref vdesc av) 0))
-                                        (opt_i64_i64_map.insert-ref!
-                                          (&mut bad)
-                                          (array-ref vdesc av)
-                                          1))]
-                                    [_ unit])
-                                  ;; Check if this writes into a tracked struct!
-                                  (let
-                                    [g : OptLenInvGep
-                                      (opt-len-inv-gep-root (& tables) addr 4)]
-                                    (when
-                                      g.ok?
-                                      (let
-                                        [rs : i64
-                                          (if g.is-global?
-                                            (opt_i64_i64_map.get-value-or
-                                              (& global-struct)
-                                              g.root
-                                              (- 0 1))
-                                            (if (and
-                                              (>= g.root 0)
-                                              (< g.root fsize))
-                                              (array-ref vstruct g.root)
-                                              (- 0 1)))]
-                                        (when
-                                          (and
-                                            (>= rs 0)
-                                            (not
-                                              (opt_i64_i64_map.contains?
-                                                (& bad)
-                                                rs)))
-                                          (let
-                                            [is-fresh? : bool
-                                              (and
-                                                (not g.is-global?)
-                                                (>= g.root 0)
-                                                (< g.root fsize)
-                                                (array-ref vfresh g.root))]
-                                            (cond
-                                              [(= g.offset 0)
-                                                (match sty
-                                                  [(DynArray _)
-                                                    (opt_i64_i64_map.insert-ref!
-                                                      (&mut has-w0)
-                                                      rs
-                                                      1)
-                                                    (if is-fresh?
-                                                      (unless
-                                                        (opt-struct-len-fresh-ctor-ok?
-                                                          (& tables)
-                                                          g.root)
-                                                        (opt-struct-len-mark-bad!
-                                                          (&mut bad)
-                                                          rs
-                                                          fid
-                                                          "w0-ctor"))
-                                                      (unless
-                                                        (opt-struct-len-grow-ok?
-                                                          (& tables)
-                                                          seq
-                                                          g.is-global?
-                                                          g.root
-                                                          val)
-                                                        (opt-struct-len-mark-bad!
-                                                          (&mut bad)
-                                                          rs
-                                                          fid
-                                                          "w0-grow")))]
-                                                  [_
-                                                    (opt-struct-len-mark-bad!
-                                                      (&mut bad)
-                                                      rs
-                                                      fid
-                                                      "w0-type")])]
-                                              [(= g.offset 8)
-                                                (match sty
-                                                  [(I64)
-                                                    (opt_i64_i64_map.insert-ref!
-                                                      (&mut has-w1)
-                                                      rs
-                                                      1)
-                                                    (if is-fresh?
-                                                      (unless
-                                                        (opt-struct-len-fresh-ctor-ok?
-                                                          (& tables)
-                                                          g.root)
-                                                        (opt-struct-len-mark-bad!
-                                                          (&mut bad)
-                                                          rs
-                                                          fid
-                                                          "w1-ctor"))
-                                                      (let
-                                                        [verdict : i64
-                                                          (opt-struct-len-word1-write-ok
-                                                            (& tables)
-                                                            helpers
-                                                            arg-global
-                                                            call-memory
-                                                            fid
-                                                            (& params)
-                                                            seq
-                                                            bi
-                                                            pi
-                                                            g.is-global?
-                                                            g.root
-                                                            val
-                                                            (&mut helper-cell))]
-                                                        (cond
-                                                          [(= verdict 0)
-                                                            (opt-struct-len-mark-bad!
-                                                              (&mut bad)
-                                                              rs
-                                                              fid
-                                                              "w1-write")]
-                                                          [(= verdict 2)
-                                                            (when
-                                                              (< excl-count 254)
-                                                              (set!
-                                                                (array-ref
-                                                                  excl-struct-fn
-                                                                  excl-count)
-                                                                fid)
-                                                              (set!
-                                                                (array-ref
-                                                                  excl-struct-sid
-                                                                  excl-count)
-                                                                rs)
-                                                              (+= excl-count 1)
-                                                              (let
-                                                                [hid : i64
-                                                                  (array-ref
-                                                                    helper-cell
-                                                                    0)]
-                                                                (when
-                                                                  (>= hid 0)
-                                                                  (set!
-                                                                    (array-ref
-                                                                      excl-struct-fn
-                                                                      excl-count)
-                                                                    hid)
-                                                                  (set!
-                                                                    (array-ref
-                                                                      excl-struct-sid
-                                                                      excl-count)
-                                                                    rs)
-                                                                  (+=
-                                                                    excl-count
-                                                                    1))))]
-                                                          [else unit])))]
-                                                  [_
-                                                    (opt_i64_i64_map.insert-ref!
-                                                      (&mut bad)
-                                                      rs
-                                                      1)])]
-                                              [(and
-                                                  (> g.offset 0)
-                                                  (< g.offset 16))
-                                                (opt_i64_i64_map.insert-ref!
-                                                  (&mut bad)
-                                                  rs
-                                                  1)]
-                                              [else unit]))))))]
-                                [(or (Call _ cname args _)
-                                     (TailCall cname args _))
-                                  (let
-                                    [cid : i64 (ir.compiler-ir-symbol-id cname)]
-                                    [internal? : bool
-                                      (opt-program-function? program cname)]
-                                    [acount : i64 (opt-len-eq-args-count args)]
-                                    (for [ai (iterator.range 0 acount)]
-                                      (match (opt-call-memory-arg-at args ai)
-                                        [(Some av)
-                                          (let
-                                            [asid : i64
-                                              (match (& av)
-                                                [(Global g)
-                                                  (opt_i64_i64_map.get-value-or
-                                                    (& global-struct)
-                                                    (ir.compiler-ir-symbol-id g)
-                                                    (- 0 1))]
-                                                [(Var vv)
-                                                  (if (and
-                                                    (>= vv 0)
-                                                    (< vv fsize))
-                                                    (array-ref vstruct vv)
-                                                    (- 0 1))]
-                                                [_ (- 0 1)])]
-                                            [afp : i64
-                                              (match (& av)
-                                                [(Var vv)
-                                                  (if (and
-                                                    (>= vv 0)
-                                                    (< vv fsize))
-                                                    (array-ref vfptr vv)
-                                                    (- 0 1))]
-                                                [_ (- 0 1)])]
-                                            [adesc : i64
-                                              (match (& av)
-                                                [(Var vv)
-                                                  (if (and
-                                                    (>= vv 0)
-                                                    (< vv fsize))
-                                                    (array-ref vdesc vv)
-                                                    (- 0 1))]
-                                                [_ (- 0 1)])]
-                                            ;; Passing a tracked struct: callee must be internal with matching param type!
-                                            (when
-                                              (>= asid 0)
-                                              (unless
-                                                (and
-                                                  internal?
-                                                  (< ai 64)
-                                                  (=
-                                                    (opt_i64_i64_map.get-value-or
-                                                      (& fn-param-struct)
-                                                      (+ (* cid 64) ai)
-                                                      (- 0 1))
-                                                    asid))
-                                                (opt_i64_i64_map.insert-ref!
-                                                  (&mut bad)
-                                                  asid
-                                                  1)))
-                                            ;; Passing a field pointer or descriptor: callee must not write through that param!
-                                            (when
-                                              (>= afp 0)
-                                              (unless
-                                                (and
-                                                  internal?
-                                                  (match (opt_i64_i64_map.get
-                                                    call-memory
-                                                    cid)
-                                                    [(LookupFound summary)
-                                                      (and
-                                                        (not
-                                                          (opt-call-memory-summary-unknown?
-                                                            summary))
-                                                        (not
-                                                          (opt-call-memory-summary-param-write?
-                                                            summary
-                                                            ai)))]
-                                                    [(LookupMissing) false]))
-                                                (opt_i64_i64_map.insert-ref!
-                                                  (&mut bad)
-                                                  afp
-                                                  1)))
-                                            (when
-                                              (>= adesc 0)
-                                              (unless
-                                                (and
-                                                  internal?
-                                                  (match (opt_i64_i64_map.get
-                                                    call-memory
-                                                    cid)
-                                                    [(LookupFound summary)
-                                                      (and
-                                                        (not
-                                                          (opt-call-memory-summary-unknown?
-                                                            summary))
-                                                        (not
-                                                          (opt-call-memory-summary-param-write?
-                                                            summary
-                                                            ai)))]
-                                                    [(LookupMissing) false]))
-                                                (opt_i64_i64_map.insert-ref!
-                                                  (&mut bad)
-                                                  adesc
-                                                  1))))]
-                                        [(No) unit])))]
-                                [(or (CallIndirect _ _ args _)
-                                     (CallIndirectC _ _ args _)
-                                     (TailCallIndirect _ args _))
-                                  (let
-                                    [acount : i64 (opt-len-eq-args-count args)]
-                                    (for [ai (iterator.range 0 acount)]
-                                      (match (opt-call-memory-arg-at args ai)
-                                        [(Some av)
-                                          (match (& av)
-                                            [(Global g)
-                                              (let
-                                                [gs : i64
-                                                  (opt_i64_i64_map.get-value-or
-                                                    (& global-struct)
-                                                    (ir.compiler-ir-symbol-id g)
-                                                    (- 0 1))]
-                                                (when
-                                                  (>= gs 0)
-                                                  (opt_i64_i64_map.insert-ref!
-                                                    (&mut bad)
-                                                    gs
-                                                    1)))]
-                                            [(Var vv)
-                                              (when
-                                                (and (>= vv 0) (< vv fsize))
-                                                (when
-                                                  (>= (array-ref vstruct vv) 0)
-                                                  (opt_i64_i64_map.insert-ref!
-                                                    (&mut bad)
-                                                    (array-ref vstruct vv)
-                                                    1))
-                                                (when
-                                                  (>= (array-ref vfptr vv) 0)
-                                                  (opt_i64_i64_map.insert-ref!
-                                                    (&mut bad)
-                                                    (array-ref vfptr vv)
-                                                    1))
-                                                (when
-                                                  (>= (array-ref vdesc vv) 0)
-                                                  (opt_i64_i64_map.insert-ref!
-                                                    (&mut bad)
-                                                    (array-ref vdesc vv)
-                                                    1)))]
-                                            [_ unit])]
-                                        [(No) unit])))]
-                                [(Return (Some rv))
-                                  (match rv
-                                    [(Var vv)
-                                      (when
-                                        (and (>= vv 0) (< vv fsize))
-                                        (let
-                                          [vs : i64 (array-ref vstruct vv)]
-                                          (when
-                                            (and (>= vs 0) (not (= vs rsid)))
-                                            (opt_i64_i64_map.insert-ref!
-                                              (&mut bad)
-                                              vs
-                                              1)))
-                                        (when
-                                          (>= (array-ref vfptr vv) 0)
-                                          (opt_i64_i64_map.insert-ref!
-                                            (&mut bad)
-                                            (array-ref vfptr vv)
-                                            1)))]
-                                    [_ unit])]
-                                [_ unit]))]))]))))]))
-      ;; Emit admitted structs (must have seen both w0=DynArray and w1=I64, and not bad).
-      (let
-        [cap : i64 (opt_i64_i64_map.capacity (& seen))]
-        [slot : i64 (opt_i64_i64_map.next-occupied (& seen) 0)]
-        (while (< slot cap)
-          (match (opt_i64_i64_map.entry-at (& seen) slot)
-            [(EntrySome sid _)
-              (when
-                (and
-                  (not (opt_i64_i64_map.contains? (& bad) sid))
-                  (opt_i64_i64_map.contains? (& has-w0) sid)
-                  (opt_i64_i64_map.contains? (& has-w1) sid))
-                (opt_i64_i64_map.insert-ref! struct-fits sid 1))]
-            [(EntryNone) unit])
-          (set! slot (opt_i64_i64_map.next-occupied (& seen) (+ slot 1)))))
-      ;; Emit non-circularity exclusions for admitted structs only.
-      (for [ei (iterator.range 0 excl-count)]
-        (when
-          (opt_i64_i64_map.contains?
-            (& struct-fits)
-            (array-ref excl-struct-sid ei))
-          (opt_i64_i64_map.insert-ref!
-            struct-excluded
-            (array-ref excl-struct-fn ei)
-            1)))
-      ;; Emit global -> struct type map for globals of admitted structs.
-      (let
-        [cap : i64 (opt_i64_i64_map.capacity (& global-struct))]
-        [slot : i64 (opt_i64_i64_map.next-occupied (& global-struct) 0)]
-        (while (< slot cap)
-          (match (opt_i64_i64_map.entry-at (& global-struct) slot)
-            [(EntrySome gid sid)
-              (when
-                (opt_i64_i64_map.contains? (& struct-fits) sid)
-                (opt_i64_i64_map.insert-ref! global-struct-out gid sid))]
-            [(EntryNone) unit])
-          (set!
-            slot
-            (opt_i64_i64_map.next-occupied (& global-struct) (+ slot 1))))))))
+                              (set! (array-ref tr.vstruct pv) rsid)
+                              (set! (array-ref tr.vfresh pv) true)
+                              (set! (array-ref tr.vroot-fresh pv) true))
+                            (when
+                              (>= psid 0)
+                              (set! (array-ref tr.vstruct pv) psid)))))]))
+                (opt-struct-len-propagate-fn!
+                  type-segment-bases
+                  program
+                  (& fn-ret-struct)
+                  (& global-struct)
+                  (& tables)
+                  (& blocks)
+                  fsize
+                  (&mut bad)
+                  (&mut tr))
+                (opt-struct-len-verify-fn!
+                  type-segment-bases
+                  program
+                  call-memory
+                  arg-global
+                  helpers
+                  ret-min
+                  (& global-struct)
+                  (& fn-param-struct)
+                  (& fn-sret-param)
+                  (& tables)
+                  (& blocks)
+                  fid
+                  rsid
+                  has-sret?
+                  (& params)
+                  fsize
+                  (&mut bad)
+                  (&mut has-w0)
+                  (&mut has-w1)
+                  (&mut tr)
+                  (&mut excl-struct-fn)
+                  (&mut excl-struct-sid)
+                  (&mut excl-count-cell)
+                  (&mut helper-cell)))))]))
+    ;; Emit admitted structs, exclusions, and global struct types.
+    (let
+      [cap : i64 (opt_i64_i64_map.capacity (& seen))]
+      [slot : i64 (opt_i64_i64_map.next-occupied (& seen) 0)]
+      (while (< slot cap)
+        (match (opt_i64_i64_map.entry-at (& seen) slot)
+          [(EntrySome sid _)
+            (when
+              (and
+                (not (opt_i64_i64_map.contains? (& bad) sid))
+                (opt_i64_i64_map.contains? (& has-w0) sid)
+                (opt_i64_i64_map.contains? (& has-w1) sid))
+              (opt_i64_i64_map.insert-ref! fits-out sid 1))]
+          [(EntryNone) unit])
+        (set! slot (opt_i64_i64_map.next-occupied (& seen) (+ slot 1)))))
+    (for [ei (iterator.range 0 (array-ref excl-count-cell 0))]
+      (when
+        (opt_i64_i64_map.contains? (& fits-out) (array-ref excl-struct-sid ei))
+        (opt_i64_i64_map.insert-ref! excl-out (array-ref excl-struct-fn ei) 1)))
+    (let
+      [gcap : i64 (opt_i64_i64_map.capacity (& global-struct))]
+      [gslot : i64 (opt_i64_i64_map.next-occupied (& global-struct) 0)]
+      (while (< gslot gcap)
+        (match (opt_i64_i64_map.entry-at (& global-struct) gslot)
+          [(EntrySome gid sid)
+            (when
+              (opt_i64_i64_map.contains? (& fits-out) sid)
+              (opt_i64_i64_map.insert-ref! gtypes-out gid sid))]
+          [(EntryNone) unit])
+        (set!
+          gslot
+          (opt_i64_i64_map.next-occupied (& global-struct) (+ gslot 1)))))))
 
-;; --- Part 2: Whole-program global scalar-to-length invariants ----------------
-;;
-;; Proves `@s <= @a.len` (`LeLen`) and `0 <= @mask < @a.len` (`MaskLtLen`) for
-;; non-addr-taken i64 globals `@s` paired with admitted P-B array globals `@a`.
 (defstruct OptLenScalarArrInfo
   ;; array global symbol id -> 1 + row index
   (map opt_i64_i64_map.Map)
@@ -132661,7 +133096,6 @@
   (reset-min-len (__tl_dyn-array i64))
   (one-shot-ok? (__tl_dyn-array bool)))
 
-;; Find the function symbol id of `main` (leaf name "main"), or -1.
 (define (opt-len-scalar-main-id [functions : (& ir.CompilerIrFunctionSeq)]) : i64
   (for [i (iterator.range 0 functions.len)]
     (match (ir.compiler-ir-function-seq-borrow functions i)
@@ -132674,9 +133108,6 @@
             (return (ir.compiler-ir-symbol-id name))))]))
   (- 0 1))
 
-;; Check if function `target-fn` is called at most once in the entire program,
-;; from `main-id`, outside any loop (straight-line block of `main`), and is
-;; never address-taken (`Function` operand).
 (define (opt-len-scalar-sole-main-callee?
   [functions : (& ir.CompilerIrFunctionSeq)]
   [main-id : i64]
@@ -132872,68 +133303,66 @@
           (when
             (and ok? (>= stop-blk 0) (< stop-blk bcount))
             (set! (array-ref seen stop-blk) true)
-            (let
-              [offsets (& index.preds.offsets)]
-              [edges (& index.preds.edges)]
-              (for [e
-                (iterator.range
-                  (array-ref offsets stop-blk)
-                  (array-ref offsets (+ stop-blk 1)))]
-                (let
-                  [p : i64 (array-ref edges e)]
-                  (when
-                    (and
-                      (>= p 0)
-                      (< p bcount)
-                      (not (array-ref seen p))
-                      (< top bcount))
-                    (set! (array-ref seen p) true)
-                    (set! (array-ref stack top) p)
-                    (+= top 1))))
-              (while (and ok? (> top 0))
-                (-= top 1)
-                (let
-                  [cur : i64 (array-ref stack top)]
-                  (match (opt-cfg-index-block (& index) cur)
-                    [(No) unit]
-                    [(Some blk)
-                      (match blk
-                        [(Block _ binstrs)
-                          (for [p
-                            (iterator.range
-                              0
-                              (ir.compiler-ir-instr-seq-count binstrs))]
-                            (unless
-                              (opt-len-scalar-instr-clean?
-                                watch
-                                reads?
-                                clean
-                                (& known)
-                                (ir.compiler-ir-instr-seq-ref binstrs p))
-                              (set! ok? false)))])])
-                  (for [e
-                    (iterator.range
-                      (array-ref offsets cur)
-                      (array-ref offsets (+ cur 1)))]
-                    (let
-                      [p : i64 (array-ref edges e)]
-                      (when
-                        (and
-                          (>= p 0)
-                          (< p bcount)
-                          (not (array-ref seen p))
-                          (< top bcount))
-                        (set! (array-ref seen p) true)
-                        (set! (array-ref stack top) p)
-                        (+= top 1)))))))))])
+            (for [e
+              (iterator.range
+                (array-ref index.preds.offsets stop-blk)
+                (array-ref index.preds.offsets (+ stop-blk 1)))]
+              (let
+                [p : i64 (array-ref index.preds.edges e)]
+                (when
+                  (and
+                    (>= p 0)
+                    (< p bcount)
+                    (not (array-ref seen p))
+                    (< top bcount))
+                  (set! (array-ref seen p) true)
+                  (set! (array-ref stack top) p)
+                  (+= top 1))))
+            (while (and ok? (> top 0))
+              (-= top 1)
+              (let
+                [cur : i64 (array-ref stack top)]
+                (match (opt-cfg-index-block (& index) cur)
+                  [(No) unit]
+                  [(Some blk)
+                    (match blk
+                      [(Block _ binstrs)
+                        (for [p
+                          (iterator.range
+                            0
+                            (ir.compiler-ir-instr-seq-count binstrs))]
+                          (unless
+                            (opt-len-scalar-instr-clean?
+                              watch
+                              reads?
+                              clean
+                              (& known)
+                              (ir.compiler-ir-instr-seq-ref binstrs p))
+                            (set! ok? false)))])])
+                (for [e
+                  (iterator.range
+                    (array-ref index.preds.offsets cur)
+                    (array-ref index.preds.offsets (+ cur 1)))]
+                  (let
+                    [p : i64 (array-ref index.preds.edges e)]
+                    (when
+                      (and
+                        (>= p 0)
+                        (< p bcount)
+                        (not (array-ref seen p))
+                        (< top bcount))
+                      (set! (array-ref seen p) true)
+                      (set! (array-ref stack top) p)
+                      (+= top 1))))))))])
     ok?))
 
-;; Collect array reset info for every admitted `len-eq` global.
+;; Collect array reset info for every admitted `len-eq` global, reusing `ctors`.
 (define (opt-len-scalar-collect-arrays
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : (& ir.CompilerIrFunctionSeq)]
   [len-eq : (& opt_i64_i64_map.Map)]
+  [ctors : (& opt_i64_i64_map.Map)]
   [ret-min : (& opt_i64_i64_map.Map)]
   [main-id : i64]
   [capacity : i64]) : OptLenScalarArrInfo
@@ -132951,14 +133380,8 @@
       (__tl_make-array ir.CompilerIrValue cap)]
     [rmin : (__tl_dyn-array i64) (__tl_make-array i64 cap)]
     [one-shot : (__tl_dyn-array bool) (__tl_make-array bool cap)]
-    [ctors : opt_i64_i64_map.Map
-      (opt-len-eq-ctors-build
-        type-segment-bases
-        functions
-        (opt_i64_i64_map.with-capacity capacity))]
     [init-fn-owner : opt_i64_i64_map.Map
       (opt_i64_i64_map.with-capacity capacity)]
-    ;; Seed admitted globals from `len-eq`.
     (for [gi (iterator.range 0 globals.len)]
       (match (ir.compiler-ir-global-seq-borrow globals gi)
         [(Global name _ init)
@@ -132985,7 +133408,6 @@
                     (ir.compiler-ir-symbol-id init-sym)
                     (+ idx 1))]
                 [_ unit])))]))
-    ;; Scan init functions and post-init writes.
     (for [fi (iterator.range 0 functions.len)]
       (match (ir.compiler-ir-function-seq-borrow functions fi)
         [(Function name _ _ frame blocks _)
@@ -133007,14 +133429,13 @@
                     raw?)]
                 (match (opt-len-eq-length-of
                   (& tables)
-                  (& ctors)
+                  ctors
                   (opt-len-eq-ctor-return-var
                     (ir.compiler-ir-block-list-view (& blocks)))
                   2
                   raw?)
                   [(Some (I64 k) _) (set! (array-ref init-len row) k)]
                   [_ unit])))
-            ;; Check post-init writes to any admitted array global.
             (when
               (opt-blocks-any? blocks opt-len-eq-instr-mentions-cand? (& map))
               (let
@@ -133062,7 +133483,7 @@
                                             [(Var vv)
                                               (match (opt-len-eq-length-of
                                                 (& tables)
-                                                (& ctors)
+                                                ctors
                                                 vv
                                                 2
                                                 raw?)
@@ -133080,6 +133501,7 @@
                                                         (& blocks)
                                                         ret-min
                                                         (& lv)
+                                                        bi
                                                         4)]
                                                     (when
                                                       (> m 0)
@@ -133090,7 +133512,6 @@
                                             [_ unit]))
                                         (set! (array-ref wkind row) 2)))))]
                               [_ unit]))]))]))))]))
-    ;; Mark which single-write arrays are valid one-shot setup resets (called once from main, outside any loop).
     (let
       [sole-cache : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 16)]
       (for [row (iterator.range 0 (array-ref count 0))]
@@ -133113,7 +133534,6 @@
                     code)])]
             (when
               (= sole 1)
-              ;; Also ensure the reset block is not in a loop!
               (for [fi (iterator.range 0 functions.len)]
                 (match (ir.compiler-ir-function-seq-borrow functions fi)
                   [(Function name _ _ _ blocks _)
@@ -133147,6 +133567,7 @@
   [call-memory : (& opt_i64_i64_map.Map)]
   [arg-global : (& opt_i64_i64_map.Map)]
   [len-eq : (& opt_i64_i64_map.Map)]
+  [ctors : (& opt_i64_i64_map.Map)]
   [helpers : (& OptCheckedLoopHelpers)]
   [ret-min : (& opt_i64_i64_map.Map)]
   [capacity : i64]
@@ -133161,11 +133582,11 @@
         globals
         functions
         len-eq
+        ctors
         ret-min
         main-id
         capacity)]
     (when (= (array-ref arr-info.count 0) 0) (return unit))
-    ;; Candidate non-addr-taken i64 globals with constant I64 initializers.
     (let
       [sc-init : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
       [sc-cap : i64 256]
@@ -133185,8 +133606,6 @@
                 (+= sc-count 1)))]
           [_ unit]))
       (when (= sc-count 0) (return unit))
-      ;; Collect evidence pairs (scalar_id, arr_row) from functions that store
-      ;; both or store a scalar with a checked loop on an admitted array.
       (let
         [pair-cap : i64 64]
         [pair-sc : (__tl_dyn-array i64) (__tl_make-array i64 pair-cap)]
@@ -133203,8 +133622,6 @@
                     blocks
                     opt-len-eq-instr-mentions-cand?
                     (& sc-init))
-                  ;; Find stored scalars in this function and pair with any
-                  ;; array reset in this function OR checked in this function.
                   (match (& blocks)
                     [(Array seq)
                       (let
@@ -133241,8 +133658,6 @@
                                   [_ unit]))]))
                         (when
                           (> local-sc-n 0)
-                          ;; Pair each stored scalar with arrays mentioned in this fn,
-                          ;; passed via arg-global into this fn, or targeted by a helper called in this fn.
                           (for [row
                             (iterator.range 0 (array-ref arr-info.count 0))]
                             (let
@@ -133263,7 +133678,6 @@
                                       blocks
                                       opt-len-eq-instr-mentions-cand?
                                       (& single))))]
-                              ;; Also check arg-global params of `fid` and helper calls.
                               (unless
                                 touched?
                                 (for [pi (iterator.range 0 8)]
@@ -133334,7 +133748,6 @@
                                       (set! (array-ref pair-sc pair-count) sid)
                                       (set! (array-ref pair-row pair-count) row)
                                       (+= pair-count 1)))))))))])))]))
-        ;; Verify each evidence pair `(sid, row)` whole-program!
         (for [pi (iterator.range 0 pair-count)]
           (let
             [sid : i64 (array-ref pair-sc pi)]
@@ -133343,6 +133756,7 @@
               (opt_i64_i64_map.contains? (& scalar-map) sid)
               (opt-len-scalar-verify-pair!
                 type-segment-bases
+                globals
                 functions
                 program
                 call-memory
@@ -133359,10 +133773,350 @@
                 scalar-map
                 scalar-excluded))))))))
 
+;; Unified helper for Case A & Case B: locate the sole call to `rfn` in `main`
+;; and verify the prefix in `rfn` and `main` is clean.
+;; When `require-dom-all?` is true (Case A!), ALSO verify:
+;;   1. Every `RuntimeGlobal` initializer (except `agid`'s own, which must not
+;;      read `sid`) is in `clean`.
+;;   2. In `rfn`, `rblk` is reachable, dominates every Return/TailCall (if
+;;      `rfn != main-id`), and dominates every non-clean instruction outside `rblk`.
+;;   3. In `main` (if `rfn != main-id`), `call-blk` is reachable and dominates
+;;      every non-clean instruction in `main` (except `(call-blk, call-pos)` itself).
+(define (opt-len-scalar-reset-order-ok?
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [functions : (& ir.CompilerIrFunctionSeq)]
+  [program : (& OptProgramIndex)]
+  [watch : (& opt_i64_i64_map.Map)]
+  [clean : (& opt_i64_i64_map.Map)]
+  [sc-read-clean : (& opt_i64_i64_map.Map)]
+  [reads? : bool]
+  [require-dom-all? : bool]
+  [agid : i64]
+  [rfn : i64]
+  [main-id : i64]
+  [rfn-idx : i64]
+  [main-idx : i64]
+  [rblk : i64]
+  [rpos : i64]) : bool
+  (let
+    [known : opt_i64_i64_map.Map (opt-program-function-set program)]
+    (when
+      require-dom-all?
+      (for [gi (iterator.range 0 globals.len)]
+        (match (ir.compiler-ir-global-seq-borrow globals gi)
+          [(Global gname _ (RuntimeGlobal init-sym))
+            (let
+              [gid : i64 (ir.compiler-ir-symbol-id gname)]
+              [iid : i64 (ir.compiler-ir-symbol-id init-sym)]
+              (if (= gid agid)
+                (unless
+                  (opt_i64_i64_map.contains? sc-read-clean iid)
+                  (return false))
+                (unless (opt_i64_i64_map.contains? clean iid) (return false))))]
+          [_ unit])))
+    (match (ir.compiler-ir-function-seq-borrow functions rfn-idx)
+      [(Function _ _ _ _ rblocks _)
+        (unless
+          (opt-len-scalar-prefix-clean?
+            program
+            watch
+            clean
+            reads?
+            (& rblocks)
+            rblk
+            rpos)
+          (return false))
+        (when
+          require-dom-all?
+          (let
+            [rdoms : OptDomInfo
+              (opt-cfg-dominators-with
+                (opt-cfg-index-build (& rblocks))
+                (opt-cfg-entry-label (& rblocks)))]
+            (when
+              (or
+                (< rblk 0)
+                (>= rblk (array-length rdoms.index.reachable))
+                (not (array-ref rdoms.index.reachable rblk)))
+              (return false))
+            (match (& rblocks)
+              [(Array rseq)
+                (for [bi
+                  (iterator.range 0 (ir.compiler-ir-block-seq-count rseq))]
+                  (when
+                    (and
+                      (< bi (array-length rdoms.index.reachable))
+                      (array-ref rdoms.index.reachable bi))
+                    (match (ir.compiler-ir-block-seq-borrow rseq bi)
+                      [(Block _ ris)
+                        (let
+                          [rn : i64 (ir.compiler-ir-instr-seq-count ris)]
+                          (when
+                            (and (not (= rfn main-id)) (> rn 0))
+                            (match (ir.compiler-ir-instr-seq-borrow
+                              ris
+                              (- rn 1))
+                              [(or (Return _) (TailCall _ _ _)
+                                   (TailCallIndirect _ _ _))
+                                (unless
+                                  (opt-dom-info-dominates-id? (& rdoms) rblk bi)
+                                  (return false))]
+                              [_ unit]))
+                          (unless
+                            (= bi rblk)
+                            (for [p (iterator.range 0 rn)]
+                              (unless
+                                (opt-len-scalar-instr-clean?
+                                  watch
+                                  reads?
+                                  clean
+                                  (& known)
+                                  (ir.compiler-ir-instr-seq-ref ris p))
+                                (unless
+                                  (opt-dom-info-dominates-id? (& rdoms) rblk bi)
+                                  (return false))))))])))])))
+        (when (= rfn main-id) (return true))
+        (match (ir.compiler-ir-function-seq-borrow functions main-idx)
+          [(Function _ _ _ _ mblocks _)
+            (let
+              [call-blk : i64 (- 0 1)]
+              [call-pos : i64 (- 0 1)]
+              (match (& mblocks)
+                [(Array mseq)
+                  (for [mb
+                    (iterator.range 0 (ir.compiler-ir-block-seq-count mseq))]
+                    (match (ir.compiler-ir-block-seq-borrow mseq mb)
+                      [(Block _ minstrs)
+                        (for [p
+                          (iterator.range
+                            0
+                            (ir.compiler-ir-instr-seq-count minstrs))]
+                          (match (ir.compiler-ir-instr-seq-borrow minstrs p)
+                            [(or (Call _ cname _ _) (TailCall cname _ _))
+                              (when
+                                (= (ir.compiler-ir-symbol-id cname) rfn)
+                                (when (>= call-pos 0) (return false))
+                                (set! call-blk mb)
+                                (set! call-pos p))]
+                            [_ unit]))]))])
+              (when (or (< call-blk 0) (< call-pos 0)) (return false))
+              (unless
+                (opt-len-scalar-prefix-clean?
+                  program
+                  watch
+                  clean
+                  reads?
+                  (& mblocks)
+                  call-blk
+                  call-pos)
+                (return false))
+              (when
+                require-dom-all?
+                (let
+                  [mdoms : OptDomInfo
+                    (opt-cfg-dominators-with
+                      (opt-cfg-index-build (& mblocks))
+                      (opt-cfg-entry-label (& mblocks)))]
+                  (when
+                    (or
+                      (>= call-blk (array-length mdoms.index.reachable))
+                      (not (array-ref mdoms.index.reachable call-blk)))
+                    (return false))
+                  (match (& mblocks)
+                    [(Array mseq)
+                      (for [mb
+                        (iterator.range 0 (ir.compiler-ir-block-seq-count mseq))]
+                        (when
+                          (and
+                            (< mb (array-length mdoms.index.reachable))
+                            (array-ref mdoms.index.reachable mb))
+                          (match (ir.compiler-ir-block-seq-borrow mseq mb)
+                            [(Block _ mis)
+                              (for [p
+                                (iterator.range
+                                  0
+                                  (ir.compiler-ir-instr-seq-count mis))]
+                                (unless
+                                  (and (= mb call-blk) (= p call-pos))
+                                  (unless
+                                    (opt-len-scalar-instr-clean?
+                                      watch
+                                      reads?
+                                      clean
+                                      (& known)
+                                      (ir.compiler-ir-instr-seq-ref mis p))
+                                    (if (= mb call-blk)
+                                      (when (< p call-pos) (return false))
+                                      (unless
+                                        (opt-dom-info-dominates-id?
+                                          (& mdoms)
+                                          call-blk
+                                          mb)
+                                        (return false))))))])))])))
+              true)])])))
+
 ;; Verify one candidate pair `(sid, row)` whole-program for `MaskLtLen` (strict)
 ;; or `LeLen` (non-strict), and insert into `scalar-map` + `scalar-excluded` on success.
+;; Verify one `Store @sid, sv` against `@agid` in `fid` at `(bi, pi)`.
+;; Returns bitmask: bit 0 = le-ok, bit 1 = mask-ok (0 = reject).
+(define (opt-len-scalar-verify-store!
+  [ftables : (& OptLenEqDefs)]
+  [fblocks : (& ir.CompilerIrBlockList)]
+  [fseq : (& ir.CompilerIrBlockSeq)]
+  [finstrs : (& ir.CompilerIrInstrSeq)]
+  [ret-min : (& opt_i64_i64_map.Map)]
+  [helpers : (& OptCheckedLoopHelpers)]
+  [arg-global : (& opt_i64_i64_map.Map)]
+  [call-memory : (& opt_i64_i64_map.Map)]
+  [fid : i64]
+  [fparams : (& ir.CompilerIrParamSeq)]
+  [bi : i64]
+  [pi : i64]
+  [sid : i64]
+  [agid : i64]
+  [min-arr-len : i64]
+  [sv : (& ir.CompilerIrValue)]
+  [excl-fns : (&mut (__tl_dyn-array i64))]
+  [excl-n-cell : (&mut (__tl_dyn-array i64))]
+  [helper-cell : (&mut (__tl_dyn-array i64))]) : i64
+  (let
+    [this-le? : bool false]
+    [this-mask? : bool false]
+    (match (opt-len-inv-lit ftables sv)
+      [(Some k)
+        (when (or (<= k 0) (<= k min-arr-len)) (set! this-le? true))
+        (when (and (>= k 0) (< k min-arr-len)) (set! this-mask? true))]
+      [(No) unit])
+    (unless
+      (and this-le? this-mask?)
+      ;; Preceding helper call in the same block.
+      (let
+        [p : i64 (- pi 1)]
+        (while (and (not this-le?) (>= p 0))
+          (when
+            (>
+              (opt-len-inv-call-matches-helper
+                ftables
+                fblocks
+                ret-min
+                bi
+                helpers
+                arg-global
+                fid
+                fparams
+                true
+                agid
+                sv
+                (- 0 1)
+                false
+                false
+                (ir.compiler-ir-instr-seq-borrow finstrs p))
+              0)
+            (set! this-le? true))
+          (-= p 1)))
+      ;; Dominating helper call in a strictly dominating block.
+      (unless
+        this-le?
+        (let
+          [doms : OptDomInfo
+            (opt-cfg-dominators-with
+              (opt-cfg-index-build fblocks)
+              (opt-cfg-entry-label fblocks))]
+          (for [db (iterator.range 0 (ir.compiler-ir-block-seq-count fseq))]
+            (when
+              (and
+                (not this-le?)
+                (not (= db bi))
+                (opt-dom-info-dominates-id? (& doms) db bi))
+              (match (ir.compiler-ir-block-seq-borrow fseq db)
+                [(Block _ dinstrs)
+                  (for [dp
+                    (iterator.range 0 (ir.compiler-ir-instr-seq-count dinstrs))]
+                    (when
+                      (and
+                        (not this-le?)
+                        (>
+                          (opt-len-inv-call-matches-helper
+                            ftables
+                            fblocks
+                            ret-min
+                            db
+                            helpers
+                            arg-global
+                            fid
+                            fparams
+                            true
+                            agid
+                            sv
+                            (- 0 1)
+                            false
+                            false
+                            (ir.compiler-ir-instr-seq-borrow dinstrs dp))
+                          0))
+                      (set! this-le? true)))])))))
+      ;; Post-dominating checked loop (helper call or inline while).
+      (unless
+        (and this-le? this-mask?)
+        (let
+          [chk : OptLenInvLoopCheck
+            (opt-len-inv-post-checked-loop
+              ftables
+              fblocks
+              ret-min
+              helpers
+              arg-global
+              call-memory
+              fid
+              fparams
+              fseq
+              bi
+              pi
+              true
+              agid
+              sv
+              sid
+              false
+              helper-cell)]
+          (when
+            (> chk.kind 0)
+            (set! this-le? true)
+            (when
+              (and
+                (= chk.kind 2)
+                (>=
+                  (opt-len-inv-var-min
+                    ftables
+                    fblocks
+                    ret-min
+                    (& chk.bound)
+                    bi
+                    4)
+                  1))
+              (set! this-mask? true))
+            (let
+              [hid : i64 (array-ref helper-cell 0)]
+              (when
+                (>= hid 0)
+                (let
+                  [en : i64 (array-ref excl-n-cell 0)]
+                  (if (>= en 64)
+                    (begin
+                      (set! this-le? false)
+                      (set! this-mask? false))
+                    (begin
+                      (set! (array-ref excl-fns en) hid)
+                      (set! (array-ref excl-n-cell 0) (+ en 1)))))))))))
+    (+
+      (if this-le?
+        1
+        0)
+      (if this-mask?
+        2
+        0))))
+
 (define (opt-len-scalar-verify-pair!
   [type-segment-bases : i64]
+  [globals : (& ir.CompilerIrGlobalSeq)]
   [functions : (& ir.CompilerIrFunctionSeq)]
   [program : (& OptProgramIndex)]
   [call-memory : (& opt_i64_i64_map.Map)]
@@ -133385,12 +134139,9 @@
     [init-l : i64 (array-ref arr-info.init-len row)]
     [wkind : i64 (array-ref arr-info.write-kind row)]
     [one-shot? : bool (array-ref arr-info.one-shot-ok? row)]
-    ;; Only handle constant arrays (wkind == 0) or one-shot setup arrays (wkind == 1 && one-shot?).
     (when
       (or (<= family 0) (< init-l 0) (and (not (= wkind 0)) (not one-shot?)))
       (return unit))
-    ;; Determine whether startup state is valid or overridden by a paired one-shot reset
-    ;; before any reader of `sid`/`agid` can run.
     (let
       [le-ok? : bool true]
       [mask-ok? : bool true]
@@ -133407,26 +134158,24 @@
         (begin
           (unless (<= init-s init-l) (set! le-ok? false))
           (unless (and (>= init-s 0) (< init-s init-l)) (set! mask-ok? false)))
-        ;; wkind == 1 && one-shot?:
         (let
           [rfn : i64 (array-ref arr-info.reset-fn row)]
           [rblk : i64 (array-ref arr-info.reset-blk row)]
           [rpos : i64 (array-ref arr-info.reset-pos row)]
           [rmin : i64 (array-ref arr-info.reset-min-len row)]
-          ;; Check if `rfn` writes `sid` right after `(rblk, rpos)` in the same block!
           [paired-val : ir.CompilerIrValue (Unit)]
           [paired-pos : i64 (- 0 1)]
-          [rfn-blocks-idx : i64 (- 0 1)]
-          [main-blocks-idx : i64 (- 0 1)]
+          [rfn-idx : i64 (- 0 1)]
+          [main-idx : i64 (- 0 1)]
           (for [fi (iterator.range 0 functions.len)]
             (match (ir.compiler-ir-function-seq-borrow functions fi)
               [(Function fname _ _ _ _ _)
                 (let
                   [fid : i64 (ir.compiler-ir-symbol-id fname)]
-                  (when (= fid rfn) (set! rfn-blocks-idx fi))
-                  (when (= fid main-id) (set! main-blocks-idx fi)))]))
-          (when (or (< rfn-blocks-idx 0) (< main-blocks-idx 0)) (return unit))
-          (match (ir.compiler-ir-function-seq-borrow functions rfn-blocks-idx)
+                  (when (= fid rfn) (set! rfn-idx fi))
+                  (when (= fid main-id) (set! main-idx fi)))]))
+          (when (or (< rfn-idx 0) (< main-idx 0)) (return unit))
+          (match (ir.compiler-ir-function-seq-borrow functions rfn-idx)
             [(Function _ _ _ rframe rblocks _)
               (let
                 [rtables : OptLenEqDefs
@@ -133448,10 +134197,11 @@
                     (match (ir.compiler-ir-block-seq-borrow rseq rblk)
                       [(Block _ rinstrs)
                         (let
-                          [rlen-i : i64
-                            (ir.compiler-ir-instr-seq-count rinstrs)]
                           [scan-ok? : bool true]
-                          (for [p (iterator.range (+ rpos 1) rlen-i)]
+                          (for [p
+                            (iterator.range
+                              (+ rpos 1)
+                              (ir.compiler-ir-instr-seq-count rinstrs))]
                             (when
                               (and scan-ok? (< paired-pos 0))
                               (match (ir.compiler-ir-instr-seq-borrow rinstrs p)
@@ -133485,67 +134235,30 @@
                                       (ir.compiler-ir-instr-seq-ref rinstrs p))
                                     (set! scan-ok? false))]))))])])
                 (if (>= paired-pos 0)
-                  ;; Case A: Paired one-shot reset! Verify no reader of `sid`/`agid`
-                  ;; runs before `(rblk, rpos)` in `rfn` (or in `main` before calling `rfn`).
                   (let
-                    [rfn-prefix-ok? : bool
-                      (opt-len-scalar-prefix-clean?
+                    [sc-read-clean : opt_i64_i64_map.Map
+                      (opt-len-scalar-clean-map
+                        program
+                        (& sc-watch)
+                        true
+                        capacity)]
+                    (if (not
+                      (opt-len-scalar-reset-order-ok?
+                        globals
+                        functions
                         program
                         (& both-watch)
                         (& both-read-clean)
+                        (& sc-read-clean)
                         true
-                        (& rblocks)
+                        true
+                        agid
+                        rfn
+                        main-id
+                        rfn-idx
+                        main-idx
                         rblk
-                        rpos)]
-                    [main-prefix-ok? : bool
-                      (if (= rfn main-id)
-                        true
-                        (match (ir.compiler-ir-function-seq-borrow
-                          functions
-                          main-blocks-idx)
-                          [(Function _ _ _ _ mblocks _)
-                            (let
-                              [call-blk : i64 (- 0 1)]
-                              [call-pos : i64 (- 0 1)]
-                              (match (& mblocks)
-                                [(Array mseq)
-                                  (for [mb
-                                    (iterator.range
-                                      0
-                                      (ir.compiler-ir-block-seq-count mseq))]
-                                    (match (ir.compiler-ir-block-seq-borrow
-                                      mseq
-                                      mb)
-                                      [(Block _ minstrs)
-                                        (for [p
-                                          (iterator.range
-                                            0
-                                            (ir.compiler-ir-instr-seq-count
-                                              minstrs))]
-                                          (match (ir.compiler-ir-instr-seq-borrow
-                                            minstrs
-                                            p)
-                                            [(or (Call _ cname _ _)
-                                                 (TailCall cname _ _))
-                                              (when
-                                                (=
-                                                  (ir.compiler-ir-symbol-id
-                                                    cname)
-                                                  rfn)
-                                                (set! call-blk mb)
-                                                (set! call-pos p))]
-                                            [_ unit]))]))])
-                              (if (or (< call-blk 0) (< call-pos 0))
-                                false
-                                (opt-len-scalar-prefix-clean?
-                                  program
-                                  (& both-watch)
-                                  (& both-read-clean)
-                                  true
-                                  (& mblocks)
-                                  call-blk
-                                  call-pos)))]))]
-                    (if (not (and rfn-prefix-ok? main-prefix-ok?))
+                        rpos))
                       (begin
                         (set! le-ok? false)
                         (set! mask-ok? false))
@@ -133553,13 +134266,16 @@
                         [cov : i64
                           (opt-len-inv-bound-covers
                             (& rtables)
+                            (& rblocks)
+                            ret-min
+                            rblk
+                            rmin
                             (& paired-val)
                             (& (array-ref arr-info.reset-len-val row))
                             (- 0 1))]
                         (set! paired-reset-fn rfn)
                         (set! paired-reset-blk rblk)
                         (set! paired-reset-pos paired-pos)
-                        ;; After this one-shot reset, `@a.len` is forever `>= rmin`!
                         (set! min-arr-len rmin)
                         (cond
                           [(= cov 1) (set! mask-ok? false)]
@@ -133574,8 +134290,6 @@
                               [(No)
                                 (set! le-ok? false)
                                 (set! mask-ok? false)])]))))
-                  ;; Case B: Unpaired one-shot reset of `@a`. Valid if startup holds AND
-                  ;; no writer of `sid` runs before `(rblk, rpos)` AND `init-s` fits `rmin`.
                   (let
                     [sc-write-clean : opt_i64_i64_map.Map
                       (opt-len-scalar-clean-map
@@ -133583,64 +134297,23 @@
                         (& sc-watch)
                         false
                         capacity)]
-                    [rfn-prefix-ok? : bool
-                      (opt-len-scalar-prefix-clean?
+                    (if (not
+                      (opt-len-scalar-reset-order-ok?
+                        globals
+                        functions
                         program
                         (& sc-watch)
                         (& sc-write-clean)
+                        (& sc-write-clean)
                         false
-                        (& rblocks)
+                        false
+                        agid
+                        rfn
+                        main-id
+                        rfn-idx
+                        main-idx
                         rblk
-                        rpos)]
-                    [main-prefix-ok? : bool
-                      (if (= rfn main-id)
-                        true
-                        (match (ir.compiler-ir-function-seq-borrow
-                          functions
-                          main-blocks-idx)
-                          [(Function _ _ _ _ mblocks _)
-                            (let
-                              [call-blk : i64 (- 0 1)]
-                              [call-pos : i64 (- 0 1)]
-                              (match (& mblocks)
-                                [(Array mseq)
-                                  (for [mb
-                                    (iterator.range
-                                      0
-                                      (ir.compiler-ir-block-seq-count mseq))]
-                                    (match (ir.compiler-ir-block-seq-borrow
-                                      mseq
-                                      mb)
-                                      [(Block _ minstrs)
-                                        (for [p
-                                          (iterator.range
-                                            0
-                                            (ir.compiler-ir-instr-seq-count
-                                              minstrs))]
-                                          (match (ir.compiler-ir-instr-seq-borrow
-                                            minstrs
-                                            p)
-                                            [(or (Call _ cname _ _)
-                                                 (TailCall cname _ _))
-                                              (when
-                                                (=
-                                                  (ir.compiler-ir-symbol-id
-                                                    cname)
-                                                  rfn)
-                                                (set! call-blk mb)
-                                                (set! call-pos p))]
-                                            [_ unit]))]))])
-                              (if (or (< call-blk 0) (< call-pos 0))
-                                false
-                                (opt-len-scalar-prefix-clean?
-                                  program
-                                  (& sc-watch)
-                                  (& sc-write-clean)
-                                  false
-                                  (& mblocks)
-                                  call-blk
-                                  call-pos)))]))]
-                    (if (not (and rfn-prefix-ok? main-prefix-ok?))
+                        rpos))
                       (begin
                         (set! le-ok? false)
                         (set! mask-ok? false))
@@ -133657,10 +134330,10 @@
                           (and (>= init-s 0) (< init-s init-l) (< init-s rmin))
                           (set! mask-ok? false)))))))])))
       (when (and (not le-ok?) (not mask-ok?)) (return unit))
-      ;; Check 3: Verify EVERY `Store @sid, val` across the whole program!
+      ;; Check 3: Verify EVERY write to `@sid` (`Store` AND `CopyBytes`/`StorePtr`/`StoreOwned`)!
       (let
         [excl-fns : (__tl_dyn-array i64) (__tl_make-array i64 64)]
-        [excl-n : i64 0]
+        [excl-n-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [helper-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [sid-watch : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
         (opt_i64_i64_map.insert-ref! (&mut sid-watch) sid 1)
@@ -133698,173 +134371,62 @@
                                   (match (ir.compiler-ir-instr-seq-borrow
                                     finstrs
                                     pi)
+                                    [(or (CopyBytes (Global sname) _ _)
+                                         (StorePtr (Global sname) _ _)
+                                         (StoreOwned (Global sname) _ _))
+                                      (when
+                                        (= (ir.compiler-ir-symbol-id sname) sid)
+                                        (set! le-ok? false)
+                                        (set! mask-ok? false))]
                                     [(Store sname sv _)
                                       (when
                                         (= (ir.compiler-ir-symbol-id sname) sid)
+                                        (let
+                                          [en : i64 (array-ref excl-n-cell 0)]
+                                          (if (>= en 62)
+                                            (begin
+                                              (set! le-ok? false)
+                                              (set! mask-ok? false))
+                                            (begin
+                                              (set! (array-ref excl-fns en) fid)
+                                              (set!
+                                                (array-ref excl-n-cell 0)
+                                                (+ en 1)))))
                                         (when
-                                          (< excl-n 62)
-                                          (set! (array-ref excl-fns excl-n) fid)
-                                          (+= excl-n 1))
-                                        (unless
                                           (and
-                                            (= fid paired-reset-fn)
-                                            (= bi paired-reset-blk)
-                                            (= pi paired-reset-pos))
-                                          ;; (3a) Constant literal store
+                                            (or le-ok? mask-ok?)
+                                            (not
+                                              (and
+                                                (= fid paired-reset-fn)
+                                                (= bi paired-reset-blk)
+                                                (= pi paired-reset-pos))))
                                           (let
-                                            [this-le? : bool false]
-                                            [this-mask? : bool false]
-                                            (match (opt-len-inv-lit
-                                              (& ftables)
-                                              sv)
-                                              [(Some k)
-                                                (when
-                                                  (or
-                                                    (<= k 0)
-                                                    (<= k min-arr-len))
-                                                  (set! this-le? true))
-                                                (when
-                                                  (and
-                                                    (>= k 0)
-                                                    (< k min-arr-len))
-                                                  (set! this-mask? true))]
-                                              [(No) unit])
-                                            ;; (3b) Dominating checked-loop helper call in same block or entry->bi
-                                            (unless
-                                              (and this-le? this-mask?)
-                                              (let
-                                                [p : i64 (- pi 1)]
-                                                (while (>= p 0)
-                                                  (let
-                                                    [dk : i64
-                                                      (opt-len-inv-call-matches-helper
-                                                        (& ftables)
-                                                        helpers
-                                                        arg-global
-                                                        fid
-                                                        (& fparams)
-                                                        true
-                                                        agid
-                                                        sv
-                                                        (- 0 1)
-                                                        false
-                                                        false
-                                                        (ir.compiler-ir-instr-seq-borrow
-                                                          finstrs
-                                                          p))]
-                                                    (when
-                                                      (> dk 0)
-                                                      (set! this-le? true)
-                                                      (set! p 0)))
-                                                  (-= p 1)))
-                                              ;; Also check earlier blocks if `sv` is checked by a dominating helper call!
-                                              (unless
-                                                this-le?
-                                                (let
-                                                  [doms : OptDomInfo
-                                                    (opt-cfg-dominators-with
-                                                      (opt-cfg-index-build
-                                                        (& fblocks))
-                                                      (opt-cfg-entry-label
-                                                        (& fblocks)))]
-                                                  (for [db
-                                                    (iterator.range
-                                                      0
-                                                      (ir.compiler-ir-block-seq-count
-                                                        fseq))]
-                                                    (when
-                                                      (and
-                                                        (not this-le?)
-                                                        (not (= db bi))
-                                                        (opt-dom-info-dominates-id?
-                                                          (& doms)
-                                                          db
-                                                          bi))
-                                                      (match (ir.compiler-ir-block-seq-borrow
-                                                        fseq
-                                                        db)
-                                                        [(Block _ dinstrs)
-                                                          (for [dp
-                                                            (iterator.range
-                                                              0
-                                                              (ir.compiler-ir-instr-seq-count
-                                                                dinstrs))]
-                                                            (let
-                                                              [dk : i64
-                                                                (opt-len-inv-call-matches-helper
-                                                                  (& ftables)
-                                                                  helpers
-                                                                  arg-global
-                                                                  fid
-                                                                  (& fparams)
-                                                                  true
-                                                                  agid
-                                                                  sv
-                                                                  (- 0 1)
-                                                                  false
-                                                                  false
-                                                                  (ir.compiler-ir-instr-seq-borrow
-                                                                    dinstrs
-                                                                    dp))]
-                                                              (when
-                                                                (> dk 0)
-                                                                (set!
-                                                                  this-le?
-                                                                  true))))]))))))
-                                            ;; (3c) Post-dominating checked loop (inline while or helper call)
-                                            (unless
-                                              (and this-le? this-mask?)
-                                              (let
-                                                [chk : OptLenInvLoopCheck
-                                                  (opt-len-inv-post-checked-loop
-                                                    (& ftables)
-                                                    helpers
-                                                    arg-global
-                                                    call-memory
-                                                    fid
-                                                    (& fparams)
-                                                    fseq
-                                                    bi
-                                                    pi
-                                                    true
-                                                    agid
-                                                    sv
-                                                    sid
-                                                    false
-                                                    (&mut helper-cell))]
-                                                (when
-                                                  (> chk.kind 0)
-                                                  (set! this-le? true)
-                                                  (when
-                                                    (and
-                                                      (= chk.kind 2)
-                                                      (>=
-                                                        (opt-len-inv-var-min
-                                                          (& ftables)
-                                                          (& fblocks)
-                                                          ret-min
-                                                          (& chk.bound)
-                                                          4)
-                                                        1))
-                                                    (set! this-mask? true))
-                                                  (let
-                                                    [hid : i64
-                                                      (array-ref helper-cell 0)]
-                                                    (when
-                                                      (and
-                                                        (>= hid 0)
-                                                        (< excl-n 64))
-                                                      (set!
-                                                        (array-ref
-                                                          excl-fns
-                                                          excl-n)
-                                                        hid)
-                                                      (+= excl-n 1))))))
-                                            (unless
-                                              this-le?
+                                            [bits : i64
+                                              (opt-len-scalar-verify-store!
+                                                (& ftables)
+                                                (& fblocks)
+                                                fseq
+                                                finstrs
+                                                ret-min
+                                                helpers
+                                                arg-global
+                                                call-memory
+                                                fid
+                                                (& fparams)
+                                                bi
+                                                pi
+                                                sid
+                                                agid
+                                                min-arr-len
+                                                sv
+                                                (&mut excl-fns)
+                                                (&mut excl-n-cell)
+                                                (&mut helper-cell))]
+                                            (when
+                                              (= (bit-and bits 1) 0)
                                               (set! le-ok? false))
-                                            (unless
-                                              this-mask?
+                                            (when
+                                              (= (bit-and bits 2) 0)
                                               (set! mask-ok? false)))))]
                                     [_ unit]))]))]))))])))
         (when
@@ -133873,7 +134435,7 @@
             scalar-map
             sid
             (opt-len-scalar-encode family mask-ok?))
-          (for [ei (iterator.range 0 excl-n)]
+          (for [ei (iterator.range 0 (array-ref excl-n-cell 0))]
             (opt_i64_i64_map.insert-ref!
               scalar-excluded
               (array-ref excl-fns ei)
@@ -133890,6 +134452,7 @@
   [call-memory : (& opt_i64_i64_map.Map)]
   [arg-global : (& opt_i64_i64_map.Map)]
   [len-eq : (& opt_i64_i64_map.Map)]
+  [ctors : (& opt_i64_i64_map.Map)]
   [capacity : i64]) : OptLenInvariants
   (if (>
     (opt-function-seq-count functions)
@@ -133928,6 +134491,7 @@
               call-memory
               arg-global
               (& helpers)
+              (& ret-min)
               capacity
               (&mut struct-fits)
               (&mut struct-excl)
@@ -133941,6 +134505,7 @@
               call-memory
               arg-global
               len-eq
+              ctors
               (& helpers)
               (& ret-min)
               capacity
@@ -135838,6 +136403,10 @@
       (arena.tl_arena_destroy scratch))
     out))
 
+(defstruct OptGlobalCellBuildResult
+  (cell OptGlobalCellSummary)
+  (ctors opt_i64_i64_map.Map))
+
 (define (opt-global-cell-summary-build-with-call-memory
   [type-segment-bases : i64]
   [globals : (& ir.CompilerIrGlobalSeq)]
@@ -135845,9 +136414,29 @@
   [facts : (& facts OptProgramFacts)]
   [call-memory : opt_i64_i64_map.Map]) : OptGlobalCellSummary
   (let
+    [built : OptGlobalCellBuildResult
+      (opt-global-cell-summary-build-inner
+        type-segment-bases
+        globals
+        functions
+        facts
+        call-memory
+        true)]
+    built.cell))
+
+(define (opt-global-cell-summary-build-inner
+  [type-segment-bases : i64]
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [facts : (& facts OptProgramFacts)]
+  [call-memory : opt_i64_i64_map.Map]
+  [build-len-inv? : bool]) : OptGlobalCellBuildResult
+  (let
     [count : i64 (ir.compiler-ir-global-seq-count globals)]
     (if (= count 0)
-      (opt-global-cell-summary-empty)
+      (OptGlobalCellBuildResult
+        (opt-global-cell-summary-empty)
+        (opt_i64_i64_map.with-capacity 1))
       (let
         [capacity : i64 (opt-function-index-capacity count)]
         [types : (__tl_dyn-array ast.AstType)
@@ -135893,8 +136482,8 @@
             globals
             functions
             (& seed))]
-        [len-eq : opt_i64_i64_map.Map
-          (opt-len-eq-build
+        [len-eq-built : OptLenEqBuildResult
+          (opt-len-eq-build-with-ctors
             type-segment-bases
             globals
             functions
@@ -135902,45 +136491,52 @@
             addr-taken
             (compiler-opt-global-shared-view call-memory)
             capacity)]
+        [len-eq : opt_i64_i64_map.Map len-eq-built.table]
         [len-eq-clean : opt_i64_i64_map.Map
           (opt-len-eq-clean-build facts.index len-eq capacity)]
-        [empty-arg-global : opt_i64_i64_map.Map
-          (opt_i64_i64_map.with-capacity 1)]
         [len-inv : OptLenInvariants
-          (opt-len-invariants-build
-            type-segment-bases
-            globals
-            functions
-            (& facts.index)
-            (& addr-taken)
-            (& call-memory)
-            (& empty-arg-global)
-            (& len-eq)
-            capacity)]
-        (OptGlobalCellSummary
-          (compiler-opt-global-shared-view addr-taken)
-          type-index
-          types
-          (opt-global-cell-word-count globals addr-taken 0)
-          (opt-global-mod-ref-build
-            globals
-            functions
-            facts.index
-            facts.cells.stores
-            addr-taken
-            capacity)
-          nonneg
-          len-eq
-          len-eq-clean
-          ;; GAP-1's facts and IAG-2's storage-write table are attached by
-          ;; opt-build-program-summaries: the root set they must exclude is
-          ;; spelled by the program SHELL (the entry, the externs this program
-          ;; provides, every global's hidden initializer), which this entry
-          ;; point does not receive.
-          (opt_i64_i64_map.with-capacity 1)
-          (opt-global-mod-ref-none)
-          call-memory
-          len-inv)))))
+          (if build-len-inv?
+            (let
+              [empty-arg-global : opt_i64_i64_map.Map
+                (opt_i64_i64_map.with-capacity 1)]
+              (opt-len-invariants-build
+                type-segment-bases
+                globals
+                functions
+                (& facts.index)
+                (& addr-taken)
+                (& call-memory)
+                (& empty-arg-global)
+                (& len-eq)
+                (& len-eq-built.ctors)
+                capacity))
+            (opt-len-invariants-empty))]
+        (OptGlobalCellBuildResult
+          (OptGlobalCellSummary
+            (compiler-opt-global-shared-view addr-taken)
+            type-index
+            types
+            (opt-global-cell-word-count globals addr-taken 0)
+            (opt-global-mod-ref-build
+              globals
+              functions
+              facts.index
+              facts.cells.stores
+              addr-taken
+              capacity)
+            nonneg
+            len-eq
+            len-eq-clean
+            ;; GAP-1's facts and IAG-2's storage-write table are attached by
+            ;; opt-build-program-summaries: the root set they must exclude is
+            ;; spelled by the program SHELL (the entry, the externs this program
+            ;; provides, every global's hidden initializer), which this entry
+            ;; point does not receive.
+            (opt_i64_i64_map.with-capacity 1)
+            (opt-global-mod-ref-none)
+            call-memory
+            len-inv)
+          len-eq-built.ctors)))))
 
 ;; --- condition (a): stores a later read can OBSERVE ---------------------------
 ;;

@@ -104,12 +104,13 @@
       ;; lint-allow: raw-arena-op -- exercise retirement of a different owner.
       (arena.destroy (arena.Arena scratch)))
     ;; Typed writes after scratch retirement still reach the owner cells.
-    (tc.tc-macro-result-identity-state-data-set!
-      a
-      (tc.TcMacroResultIdentityStateData 11 12 13 14 15))
-    (tc.tc-macro-result-identity-state-data-set!
-      b
-      (tc.TcMacroResultIdentityStateData 21 22 23 24 25))
+    (unsafe
+      (ptr-write!
+        (tc.tc-macro-result-identity-state-ptr a)
+        (tc.TcMacroResultIdentityStateData 11 12 13 14 15))
+      (ptr-write!
+        (tc.tc-macro-result-identity-state-ptr b)
+        (tc.TcMacroResultIdentityStateData 21 22 23 24 25)))
     (tc.macro-alias-derived-cache-reset-for-state! a)
     (unsafe
       ;; lint-allow: raw-arena-op -- no A handles are used after this point.

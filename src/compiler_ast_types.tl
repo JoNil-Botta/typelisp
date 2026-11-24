@@ -7977,9 +7977,89 @@
 (defmacro (ast-fold-or [acc : Expr] [value : Expr]) : Expr
   `(or ,acc ,value))
 
+(defmacro (ast-fold-and [acc : Expr] [value : Expr]) : Expr
+  `(and ,acc ,value))
+
+(defmacro (ast-fold-try [acc : Expr] [value : Expr]) : Expr
+  `(begin
+    ,acc
+    (try ,value)
+    unit))
+
 ;; Hooks for child kinds a walker does not visit.
 (defmacro (ast-child-unit [_ignored : Expr ...]) : Expr
   `unit)
+
+(defmacro (ast-child-false [_ignored : Expr ...]) : Expr
+  `false)
+
+(defmacro (ast-child-true [_ignored : Expr ...]) : Expr
+  `true)
+
+(defmacro (ast-child-keep-state [state : Expr] [_ignored : Expr ...]) : Expr
+  state)
+
+(defmacro (ast-fold-state-expr-hook
+  [state : Expr]
+  [on-expr : Expr]
+  [_on-type-id : Expr]
+  [_on-type : Expr]
+  [_on-pattern : Expr]
+  [args : Expr ...]) : Expr
+  `(set! ,state (,on-expr ,state ,@args)))
+
+(defmacro (ast-fold-state-type-id-hook
+  [state : Expr]
+  [_on-expr : Expr]
+  [on-type-id : Expr]
+  [_on-type : Expr]
+  [_on-pattern : Expr]
+  [args : Expr ...]) : Expr
+  `(set! ,state (,on-type-id ,state ,@args)))
+
+(defmacro (ast-fold-state-type-hook
+  [state : Expr]
+  [_on-expr : Expr]
+  [_on-type-id : Expr]
+  [on-type : Expr]
+  [_on-pattern : Expr]
+  [args : Expr ...]) : Expr
+  `(set! ,state (,on-type ,state ,@args)))
+
+(defmacro (ast-fold-state-pattern-hook
+  [state : Expr]
+  [_on-expr : Expr]
+  [_on-type-id : Expr]
+  [_on-type : Expr]
+  [on-pattern : Expr]
+  [args : Expr ...]) : Expr
+  `(set! ,state (,on-pattern ,state ,@args)))
+
+;; Threads `seed` through every child of `expr` in payload order. Each hook
+;; receives `(state contexts... child)` and returns the next state.
+(defmacro (ast-expr-fold-state-children
+  [expr : Expr]
+  [seed : Expr]
+  [on-expr : Expr]
+  [on-type-id : Expr]
+  [on-type : Expr]
+  [on-pattern : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [ast-fold-state-acc ,seed]
+    (ast-expr-for-each-child
+      ,expr
+      ast-fold-state-expr-hook
+      ast-fold-state-type-id-hook
+      ast-fold-state-type-hook
+      ast-fold-state-pattern-hook
+      ast-fold-state-acc
+      ,on-expr
+      ,on-type-id
+      ,on-type
+      ,on-pattern
+      ,@contexts)
+    ast-fold-state-acc))
 
 (defmacro (ast-fold-1
   [combine : Expr]
@@ -8765,8 +8845,8 @@
     (set! ,next (+ ,next 1))
     (ast-expr-list-get ,ids (- ,next 1) -1)))
 
-(defmacro (ast-child-keep [_ids : Expr] [_next : Expr] [value : Expr]) : Expr
-  value)
+(defmacro (ast-child-keep [args : Expr ...]) : Expr
+  (expr-list-nth args (- (expr-list-length args) 1)))
 
 (define (ast-expr-with-child-ids [expr : AstExpr] [ids : (& ids AstExprList)]) : AstExpr
   (let
@@ -8781,6 +8861,1217 @@
       ast-child-keep
       ids
       next)))
+
+;; Zero-allocation physical-identity mappers.
+;;
+;; Hooks for `ast-expr-map-children-if-changed` and
+;; `ast-expr-map-children-try-if-changed`:
+;;   on-expr    (contexts... i64) -> i64 (or Result<i64> in `-try-`)
+;;   on-type-id (contexts... i64) -> i64
+;;   on-type    (contexts... (& AstType)) -> AstMaybeType (`No` = unchanged)
+;;   on-pattern (contexts... (& AstPattern)) -> AstMaybePattern (`No` = unchanged)
+;;   on-literal (contexts... (& AstLiteral)) -> AstMaybeLiteral (`No` = unchanged)
+;;   on-bytes   (contexts... (& str)) -> AstMaybeString (`No` = unchanged)
+;; Use `ast-child-keep` for skipped id hooks and `ast-child-no-{type,pattern,
+;; literal,bytes}` for skipped borrowed payload hooks. When no child changes,
+;; no list buffer and no `(box ...)` wrapper is allocated, `changed-out` stays
+;; unchanged, and the original node is returned.
+(defenum AstMaybePattern
+  (No)
+  (Some AstPattern))
+
+(defenum AstMaybeLiteral
+  (No)
+  (Some AstLiteral))
+
+(defenum AstMaybeString
+  (No)
+  (Some String))
+
+(defenum AstMaybeExpr
+  (No)
+  (Some AstExpr))
+
+(defmacro (ast-child-no-type [_ignored : Expr ...]) : Expr
+  `AstMaybeType.No)
+
+(defmacro (ast-child-no-pattern [_ignored : Expr ...]) : Expr
+  `AstMaybePattern.No)
+
+(defmacro (ast-child-no-literal [_ignored : Expr ...]) : Expr
+  `AstMaybeLiteral.No)
+
+(defmacro (ast-child-no-bytes [_ignored : Expr ...]) : Expr
+  `AstMaybeString.No)
+
+(define (ast-maybe-type-some? [value : (& AstMaybeType)]) : bool
+  (match value
+    [(AstMaybeType.Some _) true]
+    [(AstMaybeType.No) false]))
+
+(define (ast-maybe-pattern-some? [value : (& AstMaybePattern)]) : bool
+  (match value
+    [(AstMaybePattern.Some _) true]
+    [(AstMaybePattern.No) false]))
+
+(define (ast-expr-list-empty-shared) : AstExprList
+  (AstExprList
+    (unsafe
+      (ptr-read (ptr-addr-of ast-expr-child-ids-empty-storage)))
+    0))
+
+(define (ast-expr-list-fork-prefix
+  [src : (& AstExprList)]
+  [prefix-len : i64]
+  [first-mapped : i64]) : AstExprList
+  (let
+    [out : AstExprList (ast-expr-list-with-capacity (ast-expr-list-len src))]
+    [i : i64 0]
+    (while (< i prefix-len)
+      (ast-expr-list-push (&mut out) (ast-expr-list-get src i 0))
+      (set! i (+ i 1)))
+    (ast-expr-list-push (&mut out) first-mapped)
+    out))
+
+(define ast-let-binding-list-empty-storage : (__tl_dyn-array AstLetBinding)
+  (__tl_make-array AstLetBinding 0))
+
+(define (ast-let-binding-list-empty-shared) : AstLetBindingList
+  (AstLetBindingList
+    (unsafe
+      (ptr-read (ptr-addr-of ast-let-binding-list-empty-storage)))
+    0))
+
+(define (ast-let-binding-list-fork-prefix
+  [src : (& AstLetBindingList)]
+  [prefix-len : i64]
+  [first-mapped : AstLetBinding]) : AstLetBindingList
+  (let
+    [out : AstLetBindingList
+      (ast-let-binding-list-with-capacity (ast-let-binding-list-len src))]
+    [i : i64 0]
+    (while (< i prefix-len)
+      (ast-let-binding-list-push
+        (&mut out)
+        (ast-let-binding-list-get src i (ast-let-binding-fallback)))
+      (set! i (+ i 1)))
+    (ast-let-binding-list-push (&mut out) first-mapped)
+    out))
+
+(define ast-param-list-empty-storage : (__tl_dyn-array AstParam)
+  (__tl_make-array AstParam 0))
+
+(define (ast-param-list-empty-shared) : AstParamList
+  (AstParamList
+    (unsafe
+      (ptr-read (ptr-addr-of ast-param-list-empty-storage)))
+    0))
+
+(define (ast-param-list-fork-prefix
+  [src : (& AstParamList)]
+  [prefix-len : i64]
+  [first-mapped : AstParam]) : AstParamList
+  (let
+    [out : AstParamList (ast-param-list-with-capacity (ast-param-list-len src))]
+    [i : i64 0]
+    (while (< i prefix-len)
+      (ast-param-list-push
+        (&mut out)
+        (ast-param-list-get src i (ast-param-fallback)))
+      (set! i (+ i 1)))
+    (ast-param-list-push (&mut out) first-mapped)
+    out))
+
+(define ast-match-arm-list-empty-storage : (__tl_dyn-array AstMatchArm)
+  (__tl_make-array AstMatchArm 0))
+
+(define (ast-match-arm-list-empty-shared) : AstMatchArmList
+  (AstMatchArmList
+    (unsafe
+      (ptr-read (ptr-addr-of ast-match-arm-list-empty-storage)))
+    0))
+
+(define (ast-match-arm-list-fork-prefix
+  [src : (& AstMatchArmList)]
+  [prefix-len : i64]
+  [first-mapped : AstMatchArm]) : AstMatchArmList
+  (let
+    [out : AstMatchArmList
+      (ast-match-arm-list-with-capacity (ast-match-arm-list-len src))]
+    [i : i64 0]
+    (while (< i prefix-len)
+      (ast-match-arm-list-push
+        (&mut out)
+        (ast-match-arm-list-get src i (ast-match-arm-fallback)))
+      (set! i (+ i 1)))
+    (ast-match-arm-list-push (&mut out) first-mapped)
+    out))
+
+(define ast-resource-binding-list-empty-storage : (__tl_dyn-array
+    AstResourceBinding)
+  (__tl_make-array AstResourceBinding 0))
+
+(define (ast-resource-binding-list-empty-shared) : AstResourceBindingList
+  (AstResourceBindingList
+    (unsafe
+      (ptr-read (ptr-addr-of ast-resource-binding-list-empty-storage)))
+    0))
+
+(define (ast-resource-binding-list-fork-prefix
+  [src : (& AstResourceBindingList)]
+  [prefix-len : i64]
+  [first-mapped : AstResourceBinding]) : AstResourceBindingList
+  (let
+    [out : AstResourceBindingList
+      (ast-resource-binding-list-with-capacity
+        (ast-resource-binding-list-len src))]
+    [i : i64 0]
+    (while (< i prefix-len)
+      (ast-resource-binding-list-push
+        (&mut out)
+        (ast-resource-binding-list-get src i (ast-resource-binding-fallback)))
+      (set! i (+ i 1)))
+    (ast-resource-binding-list-push (&mut out) first-mapped)
+    out))
+
+(define (clone-ast-resource-binding-list [items : (& AstResourceBindingList)]) : AstResourceBindingList
+  (let
+    [len : i64 (ast-resource-binding-list-len items)]
+    [out : AstResourceBindingList (ast-resource-binding-list-with-capacity len)]
+    (ast-resource-binding-list-append-from (&mut out) items 0)
+    out))
+
+(defmacro (ast-map-try-hook [hook : Expr] [args : Expr ...]) : Expr
+  `(try (,hook ,@args)))
+
+(defmacro (ast-maybe-type-map-if-changed-ref
+  [maybe-ty-ref : Expr]
+  [changed-out : Expr]
+  [on-type : Expr]
+  [contexts : Expr ...]) : Expr
+  `(match ,maybe-ty-ref
+    [(AstMaybeType.No) AstMaybeType.No]
+    [(AstMaybeType.Some ty)
+      (let
+        [mapped (,on-type ,@contexts ty)]
+        (when (ast-maybe-type-some? (& mapped)) (set! ,changed-out true))
+        mapped)]))
+
+(defmacro (ast-expr-list-map-if-changed-ref
+  [items-ref : Expr]
+  [changed-out : Expr]
+  [on-expr : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [list-ref ,items-ref]
+    [len : i64 (ast-expr-list-len list-ref)]
+    [index : i64 0]
+    [out (ast-expr-list-empty-shared)]
+    [list-changed? : bool false]
+    (while (< index len)
+      (let
+        [orig : i64 (ast-expr-list-get list-ref index 0)]
+        [mapped : i64 (,on-expr ,@contexts orig)]
+        (if list-changed?
+          (ast-expr-list-push (&mut out) mapped)
+          (when
+            (!= mapped orig)
+            (set! out (ast-expr-list-fork-prefix list-ref index mapped))
+            (set! list-changed? true))))
+      (set! index (+ index 1)))
+    (when list-changed? (set! ,changed-out true))
+    out))
+
+(defmacro (ast-expr-list-map-if-changed
+  [items : Expr]
+  [changed-out : Expr]
+  [on-expr : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [list ,items]
+    [list-changed? : bool false]
+    [out
+      (ast-expr-list-map-if-changed-ref
+        (& list)
+        list-changed?
+        ,on-expr
+        ,@contexts)]
+    (if list-changed?
+      (begin
+        (set! ,changed-out true)
+        out)
+      list)))
+
+(defmacro (ast-expr-list-map-try-if-changed
+  [items : Expr]
+  [changed-out : Expr]
+  [on-expr : Expr]
+  [contexts : Expr ...]) : Expr
+  `(ast-expr-list-map-if-changed
+    ,items
+    ,changed-out
+    ast-map-try-hook
+    ,on-expr
+    ,@contexts))
+
+(defmacro (ast-for-owned-slots-map-if-changed
+  [items : Expr]
+  [changed-out : Expr]
+  [on-expr : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [list ,items]
+    [len : i64 (ast-expr-list-len (& list))]
+    [index : i64 0]
+    [out (ast-expr-list-empty-shared)]
+    [list-changed? : bool false]
+    (while (< index len)
+      (let
+        [orig : i64 (ast-expr-list-get (& list) index 0)]
+        [mapped : i64
+          (if (< orig 0)
+            orig
+            (,on-expr ,@contexts orig))]
+        (if list-changed?
+          (ast-expr-list-push (&mut out) mapped)
+          (when
+            (!= mapped orig)
+            (set! out (ast-expr-list-fork-prefix (& list) index mapped))
+            (set! list-changed? true))))
+      (set! index (+ index 1)))
+    (if list-changed?
+      (begin
+        (set! ,changed-out true)
+        out)
+      list)))
+
+(defmacro (ast-let-binding-list-map-if-changed-ref
+  [bindings-ref : Expr]
+  [changed-out : Expr]
+  [on-expr : Expr]
+  [on-type : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [list-ref ,bindings-ref]
+    [len : i64 (ast-let-binding-list-len list-ref)]
+    [index : i64 0]
+    [out (ast-let-binding-list-empty-shared)]
+    [list-changed? : bool false]
+    (while (< index len)
+      (match (ast-let-binding-list-get
+        list-ref
+        index
+        (ast-let-binding-fallback))
+        [(AstLetBinding.Binding name maybe-ty init)
+          (let
+            [ty-changed? : bool false]
+            [mapped-ty
+              (ast-maybe-type-map-if-changed-ref
+                (& maybe-ty)
+                ty-changed?
+                ,on-type
+                ,@contexts)]
+            [mapped-init : i64 (,on-expr ,@contexts init)]
+            (if list-changed?
+              (ast-let-binding-list-push
+                (&mut out)
+                (AstLetBinding.Binding
+                  name
+                  (if ty-changed?
+                    mapped-ty
+                    maybe-ty)
+                  mapped-init))
+              (when
+                (or ty-changed? (!= mapped-init init))
+                (set!
+                  out
+                  (ast-let-binding-list-fork-prefix
+                    list-ref
+                    index
+                    (AstLetBinding.Binding
+                      name
+                      (if ty-changed?
+                        mapped-ty
+                        maybe-ty)
+                      mapped-init)))
+                (set! list-changed? true))))])
+      (set! index (+ index 1)))
+    (when list-changed? (set! ,changed-out true))
+    out))
+
+(defmacro (ast-param-list-map-if-changed-ref
+  [params-ref : Expr]
+  [changed-out : Expr]
+  [on-type : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [list-ref ,params-ref]
+    [len : i64 (ast-param-list-len list-ref)]
+    [index : i64 0]
+    [out (ast-param-list-empty-shared)]
+    [list-changed? : bool false]
+    (while (< index len)
+      (match (ast-param-list-get list-ref index (ast-param-fallback))
+        [(AstParam.Param name ty is-comptime)
+          (let
+            [mapped-ty (,on-type ,@contexts (& ty))]
+            [ty-changed? : bool (ast-maybe-type-some? (& mapped-ty))]
+            (if list-changed?
+              (ast-param-list-push
+                (&mut out)
+                (AstParam.Param
+                  name
+                  (match mapped-ty
+                    [(AstMaybeType.Some next-ty) next-ty]
+                    [(AstMaybeType.No) ty])
+                  is-comptime))
+              (when
+                ty-changed?
+                (set!
+                  out
+                  (ast-param-list-fork-prefix
+                    list-ref
+                    index
+                    (AstParam.Param
+                      name
+                      (match mapped-ty
+                        [(AstMaybeType.Some next-ty) next-ty]
+                        [(AstMaybeType.No) ty])
+                      is-comptime)))
+                (set! list-changed? true))))])
+      (set! index (+ index 1)))
+    (when list-changed? (set! ,changed-out true))
+    out))
+
+(defmacro (ast-match-arm-list-map-if-changed-ref
+  [arms-ref : Expr]
+  [changed-out : Expr]
+  [on-expr : Expr]
+  [on-pattern : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [list-ref ,arms-ref]
+    [len : i64 (ast-match-arm-list-len list-ref)]
+    [index : i64 0]
+    [out (ast-match-arm-list-empty-shared)]
+    [list-changed? : bool false]
+    (while (< index len)
+      (match (ast-match-arm-list-get list-ref index (ast-match-arm-fallback))
+        [(AstMatchArm.Arm pattern body)
+          (let
+            [mapped-pat (,on-pattern ,@contexts (& pattern))]
+            [pat-changed? : bool (ast-maybe-pattern-some? (& mapped-pat))]
+            [mapped-body : i64 (,on-expr ,@contexts body)]
+            (if list-changed?
+              (ast-match-arm-list-push
+                (&mut out)
+                (AstMatchArm.Arm
+                  (match mapped-pat
+                    [(AstMaybePattern.Some next-pat) next-pat]
+                    [(AstMaybePattern.No) pattern])
+                  mapped-body))
+              (when
+                (or pat-changed? (!= mapped-body body))
+                (set!
+                  out
+                  (ast-match-arm-list-fork-prefix
+                    list-ref
+                    index
+                    (AstMatchArm.Arm
+                      (match mapped-pat
+                        [(AstMaybePattern.Some next-pat) next-pat]
+                        [(AstMaybePattern.No) pattern])
+                      mapped-body)))
+                (set! list-changed? true))))])
+      (set! index (+ index 1)))
+    (when list-changed? (set! ,changed-out true))
+    out))
+
+(defmacro (ast-resource-binding-list-map-if-changed-ref
+  [bindings-ref : Expr]
+  [changed-out : Expr]
+  [on-expr : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [list-ref ,bindings-ref]
+    [len : i64 (ast-resource-binding-list-len list-ref)]
+    [index : i64 0]
+    [out (ast-resource-binding-list-empty-shared)]
+    [list-changed? : bool false]
+    (while (< index len)
+      (match (ast-resource-binding-list-get
+        list-ref
+        index
+        (ast-resource-binding-fallback))
+        [(AstResourceBinding.Binding name init cleanup move-aware?)
+          (let
+            [mapped-init : i64 (,on-expr ,@contexts init)]
+            [mapped-cleanup : i64 (,on-expr ,@contexts cleanup)]
+            (if list-changed?
+              (ast-resource-binding-list-push
+                (&mut out)
+                (AstResourceBinding.Binding
+                  name
+                  mapped-init
+                  mapped-cleanup
+                  move-aware?))
+              (when
+                (or (!= mapped-init init) (!= mapped-cleanup cleanup))
+                (set!
+                  out
+                  (ast-resource-binding-list-fork-prefix
+                    list-ref
+                    index
+                    (AstResourceBinding.Binding
+                      name
+                      mapped-init
+                      mapped-cleanup
+                      move-aware?)))
+                (set! list-changed? true))))])
+      (set! index (+ index 1)))
+    (when list-changed? (set! ,changed-out true))
+    out))
+
+(defmacro (ast-map-1-id
+  [changed-out : Expr]
+  [hook : Expr]
+  [orig : Expr]
+  [contexts : Expr ...]) : Expr
+  `(let
+    [mapped : i64 (,hook ,@contexts ,orig)]
+    (when (!= mapped ,orig) (set! ,changed-out true))
+    mapped))
+
+(defmacro (ast-expr-map-children-if-changed
+  [expr : Expr]
+  [changed-out : Expr]
+  [on-expr : Expr]
+  [on-type-id : Expr]
+  [on-type : Expr]
+  [on-pattern : Expr]
+  [on-literal : Expr]
+  [on-bytes : Expr]
+  [contexts : Expr ...]) : AstExpr
+  (let
+    [ch : Expr changed-out]
+    [e : Expr on-expr]
+    [ti : Expr on-type-id]
+    [ty : Expr on-type]
+    [p : Expr on-pattern]
+    [x : ExprList contexts]
+    `(match ,expr
+      [(AstExpr.Spanned a span)
+        (AstExpr.Spanned (ast-map-1-id ,ch ,e a ,@x) span)]
+      [(AstExpr.Literal lit)
+        (let
+          [mapped (,on-literal ,@x (& lit))]
+          (match mapped
+            [(AstMaybeLiteral.Some next)
+              (set! ,ch true)
+              (AstExpr.Literal next)]
+            [(AstMaybeLiteral.No) (AstExpr.Literal lit)]))]
+      [(AstExpr.Var name) (AstExpr.Var name)]
+      [(AstExpr.Binary op a b)
+        (AstExpr.Binary
+          op
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.Unary op a) (AstExpr.Unary op (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.Call a items)
+        (AstExpr.Call
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.If a b d)
+        (AstExpr.If
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x)
+          (ast-map-1-id ,ch ,e d ,@x))]
+      [(AstExpr.Let payload)
+        (let
+          [rebuilt
+            (match (& (__tl-box-place payload))
+              [(AstLet.Let bindings body)
+                (let
+                  [bindings-changed? : bool false]
+                  [mapped-bindings
+                    (ast-let-binding-list-map-if-changed-ref
+                      bindings
+                      bindings-changed?
+                      ,e
+                      ,ty
+                      ,@x)]
+                  [mapped-body : i64 (,e ,@x body)]
+                  (if (or bindings-changed? (!= mapped-body body))
+                    (AstMaybeExpr.Some
+                      (AstExpr.Let
+                        (box
+                          (AstLet.Let
+                            (if bindings-changed?
+                              mapped-bindings
+                              (clone-ast-let-binding-list bindings))
+                            mapped-body))))
+                    AstMaybeExpr.No))])]
+          (match rebuilt
+            [(AstMaybeExpr.Some next)
+              (set! ,ch true)
+              next]
+            [(AstMaybeExpr.No) (AstExpr.Let payload)]))]
+      [(AstExpr.Lambda payload)
+        (let
+          [rebuilt
+            (match (& (__tl-box-place payload))
+              [(AstLambda.Lambda params maybe-ret body)
+                (let
+                  [params-changed? : bool false]
+                  [ret-changed? : bool false]
+                  [mapped-params
+                    (ast-param-list-map-if-changed-ref
+                      params
+                      params-changed?
+                      ,ty
+                      ,@x)]
+                  [mapped-ret
+                    (ast-maybe-type-map-if-changed-ref
+                      maybe-ret
+                      ret-changed?
+                      ,ty
+                      ,@x)]
+                  [mapped-body : i64 (,e ,@x body)]
+                  (if (or params-changed? ret-changed? (!= mapped-body body))
+                    (AstMaybeExpr.Some
+                      (AstExpr.Lambda
+                        (box
+                          (AstLambda.Lambda
+                            (if params-changed?
+                              mapped-params
+                              (clone-ast-param-list params))
+                            (if ret-changed?
+                              mapped-ret
+                              (clone-ast-maybe-type maybe-ret))
+                            mapped-body))))
+                    AstMaybeExpr.No))])]
+          (match rebuilt
+            [(AstMaybeExpr.Some next)
+              (set! ,ch true)
+              next]
+            [(AstMaybeExpr.No) (AstExpr.Lambda payload)]))]
+      [(AstExpr.Tuple items)
+        (AstExpr.Tuple (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.TupleRef a index)
+        (AstExpr.TupleRef (ast-map-1-id ,ch ,e a ,@x) index)]
+      [(AstExpr.Array items)
+        (AstExpr.Array (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.DynArray items)
+        (AstExpr.DynArray (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.FixedMakeArray t a)
+        (AstExpr.FixedMakeArray
+          (ast-map-1-id ,ch ,ti t ,@x)
+          (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.MakeArray t a)
+        (AstExpr.MakeArray
+          (ast-map-1-id ,ch ,ti t ,@x)
+          (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.ArrayRef a b)
+        (AstExpr.ArrayRef
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.ArraySet a b d)
+        (AstExpr.ArraySet
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x)
+          (ast-map-1-id ,ch ,e d ,@x))]
+      [(AstExpr.ArrayTake a b d)
+        (AstExpr.ArrayTake
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x)
+          (ast-map-1-id ,ch ,e d ,@x))]
+      [(AstExpr.ArrayPush a b)
+        (AstExpr.ArrayPush
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.StringRef a b)
+        (AstExpr.StringRef
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.While a items)
+        (AstExpr.While
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.Begin items)
+        (AstExpr.Begin (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.Unsafe items)
+        (AstExpr.Unsafe (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.Set name a) (AstExpr.Set name (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.Replace a b)
+        (AstExpr.Replace
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.Ann a t)
+        (AstExpr.Ann (ast-map-1-id ,ch ,e a ,@x) (ast-map-1-id ,ch ,ti t ,@x))]
+      [(AstExpr.Cast a t)
+        (AstExpr.Cast (ast-map-1-id ,ch ,e a ,@x) (ast-map-1-id ,ch ,ti t ,@x))]
+      [(AstExpr.Borrow mutable lifetime a)
+        (AstExpr.Borrow mutable lifetime (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.Match payload)
+        (let
+          [rebuilt
+            (match (& (__tl-box-place payload))
+              [(AstMatch.Match a arms)
+                (let
+                  [arms-changed? : bool false]
+                  [mapped-a : i64 (,e ,@x a)]
+                  [mapped-arms
+                    (ast-match-arm-list-map-if-changed-ref
+                      arms
+                      arms-changed?
+                      ,e
+                      ,p
+                      ,@x)]
+                  (if (or (!= mapped-a a) arms-changed?)
+                    (AstMaybeExpr.Some
+                      (AstExpr.Match
+                        (box
+                          (AstMatch.Match
+                            mapped-a
+                            (if arms-changed?
+                              mapped-arms
+                              (clone-ast-match-arm-list arms))))))
+                    AstMaybeExpr.No))])]
+          (match rebuilt
+            [(AstMaybeExpr.Some next)
+              (set! ,ch true)
+              next]
+            [(AstMaybeExpr.No) (AstExpr.Match payload)]))]
+      [(AstExpr.Foreach payload)
+        (let
+          [rebuilt
+            (match (& (__tl-box-place payload))
+              [(AstForeach.Foreach name t a b d)
+                (let
+                  [mapped-t (,ty ,@x t)]
+                  [mapped-a : i64 (,e ,@x a)]
+                  [mapped-b : i64 (,e ,@x b)]
+                  [mapped-d : i64 (,e ,@x d)]
+                  (if (or
+                    (ast-maybe-type-some? (& mapped-t))
+                    (!= mapped-a a)
+                    (!= mapped-b b)
+                    (!= mapped-d d))
+                    (AstMaybeExpr.Some
+                      (AstExpr.Foreach
+                        (box
+                          (AstForeach.Foreach
+                            name
+                            (match mapped-t
+                              [(AstMaybeType.Some next-t) next-t]
+                              [(AstMaybeType.No) (clone-ast-type t)])
+                            mapped-a
+                            mapped-b
+                            mapped-d))))
+                    AstMaybeExpr.No))]
+              [(AstForeach.Foreach2 outer t0 a0 b0 inner t1 a1 b1 d)
+                (let
+                  [mapped-t0 (,ty ,@x t0)]
+                  [mapped-a0 : i64 (,e ,@x a0)]
+                  [mapped-b0 : i64 (,e ,@x b0)]
+                  [mapped-t1 (,ty ,@x t1)]
+                  [mapped-a1 : i64 (,e ,@x a1)]
+                  [mapped-b1 : i64 (,e ,@x b1)]
+                  [mapped-d : i64 (,e ,@x d)]
+                  (if (or
+                    (ast-maybe-type-some? (& mapped-t0))
+                    (!= mapped-a0 a0)
+                    (!= mapped-b0 b0)
+                    (ast-maybe-type-some? (& mapped-t1))
+                    (!= mapped-a1 a1)
+                    (!= mapped-b1 b1)
+                    (!= mapped-d d))
+                    (AstMaybeExpr.Some
+                      (AstExpr.Foreach
+                        (box
+                          (AstForeach.Foreach2
+                            outer
+                            (match mapped-t0
+                              [(AstMaybeType.Some next-t0) next-t0]
+                              [(AstMaybeType.No) (clone-ast-type t0)])
+                            mapped-a0
+                            mapped-b0
+                            inner
+                            (match mapped-t1
+                              [(AstMaybeType.Some next-t1) next-t1]
+                              [(AstMaybeType.No) (clone-ast-type t1)])
+                            mapped-a1
+                            mapped-b1
+                            mapped-d))))
+                    AstMaybeExpr.No))])]
+          (match rebuilt
+            [(AstMaybeExpr.Some next)
+              (set! ,ch true)
+              next]
+            [(AstMaybeExpr.No) (AstExpr.Foreach payload)]))]
+      [(AstExpr.SpmdReduce payload)
+        (let
+          [rebuilt
+            (match (& (__tl-box-place payload))
+              [(AstSpmdReduce.Reduce op index t a b d f)
+                (let
+                  [mapped-t (,ty ,@x t)]
+                  [mapped-a : i64 (,e ,@x a)]
+                  [mapped-b : i64 (,e ,@x b)]
+                  [mapped-d : i64 (,e ,@x d)]
+                  [mapped-f : i64 (,e ,@x f)]
+                  (if (or
+                    (ast-maybe-type-some? (& mapped-t))
+                    (!= mapped-a a)
+                    (!= mapped-b b)
+                    (!= mapped-d d)
+                    (!= mapped-f f))
+                    (AstMaybeExpr.Some
+                      (AstExpr.SpmdReduce
+                        (box
+                          (AstSpmdReduce.Reduce
+                            op
+                            index
+                            (match mapped-t
+                              [(AstMaybeType.Some next-t) next-t]
+                              [(AstMaybeType.No) (clone-ast-type t)])
+                            mapped-a
+                            mapped-b
+                            mapped-d
+                            mapped-f))))
+                    AstMaybeExpr.No))])]
+          (match rebuilt
+            [(AstMaybeExpr.Some next)
+              (set! ,ch true)
+              next]
+            [(AstMaybeExpr.No) (AstExpr.SpmdReduce payload)]))]
+      [(AstExpr.SpmdScan payload)
+        (let
+          [rebuilt
+            (match (& (__tl-box-place payload))
+              [(AstSpmdScan.Scan op index t a b prefix u d f g)
+                (let
+                  [mapped-t (,ty ,@x t)]
+                  [mapped-a : i64 (,e ,@x a)]
+                  [mapped-b : i64 (,e ,@x b)]
+                  [mapped-u (,ty ,@x u)]
+                  [mapped-d : i64 (,e ,@x d)]
+                  [mapped-f : i64 (,e ,@x f)]
+                  [mapped-g : i64 (,e ,@x g)]
+                  (if (or
+                    (ast-maybe-type-some? (& mapped-t))
+                    (!= mapped-a a)
+                    (!= mapped-b b)
+                    (ast-maybe-type-some? (& mapped-u))
+                    (!= mapped-d d)
+                    (!= mapped-f f)
+                    (!= mapped-g g))
+                    (AstMaybeExpr.Some
+                      (AstExpr.SpmdScan
+                        (box
+                          (AstSpmdScan.Scan
+                            op
+                            index
+                            (match mapped-t
+                              [(AstMaybeType.Some next-t) next-t]
+                              [(AstMaybeType.No) (clone-ast-type t)])
+                            mapped-a
+                            mapped-b
+                            prefix
+                            (match mapped-u
+                              [(AstMaybeType.Some next-u) next-u]
+                              [(AstMaybeType.No) (clone-ast-type u)])
+                            mapped-d
+                            mapped-f
+                            mapped-g))))
+                    AstMaybeExpr.No))])]
+          (match rebuilt
+            [(AstMaybeExpr.Some next)
+              (set! ,ch true)
+              next]
+            [(AstMaybeExpr.No) (AstExpr.SpmdScan payload)]))]
+      [(AstExpr.SpmdCompact payload)
+        (let
+          [rebuilt
+            (match (& (__tl-box-place payload))
+              [(AstSpmdCompact.Compact index t a b slot u d f g)
+                (let
+                  [mapped-t (,ty ,@x t)]
+                  [mapped-a : i64 (,e ,@x a)]
+                  [mapped-b : i64 (,e ,@x b)]
+                  [mapped-u (,ty ,@x u)]
+                  [mapped-d : i64 (,e ,@x d)]
+                  [mapped-f : i64 (,e ,@x f)]
+                  [mapped-g : i64 (,e ,@x g)]
+                  (if (or
+                    (ast-maybe-type-some? (& mapped-t))
+                    (!= mapped-a a)
+                    (!= mapped-b b)
+                    (ast-maybe-type-some? (& mapped-u))
+                    (!= mapped-d d)
+                    (!= mapped-f f)
+                    (!= mapped-g g))
+                    (AstMaybeExpr.Some
+                      (AstExpr.SpmdCompact
+                        (box
+                          (AstSpmdCompact.Compact
+                            index
+                            (match mapped-t
+                              [(AstMaybeType.Some next-t) next-t]
+                              [(AstMaybeType.No) (clone-ast-type t)])
+                            mapped-a
+                            mapped-b
+                            slot
+                            (match mapped-u
+                              [(AstMaybeType.Some next-u) next-u]
+                              [(AstMaybeType.No) (clone-ast-type u)])
+                            mapped-d
+                            mapped-f
+                            mapped-g))))
+                    AstMaybeExpr.No))])]
+          (match rebuilt
+            [(AstMaybeExpr.Some next)
+              (set! ,ch true)
+              next]
+            [(AstMaybeExpr.No) (AstExpr.SpmdCompact payload)]))]
+      [(AstExpr.SpmdBroadcast a b)
+        (AstExpr.SpmdBroadcast
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.SpmdShuffle a b)
+        (AstExpr.SpmdShuffle
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.SpmdProgramIndex) AstExpr.SpmdProgramIndex]
+      [(AstExpr.SpmdProgramCount) AstExpr.SpmdProgramCount]
+      [(AstExpr.StructGet a field)
+        (AstExpr.StructGet (ast-map-1-id ,ch ,e a ,@x) field)]
+      [(AstExpr.StructSet a field b)
+        (AstExpr.StructSet
+          (ast-map-1-id ,ch ,e a ,@x)
+          field
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.WithRegion region items)
+        (AstExpr.WithRegion
+          region
+          (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.WithEscape a items)
+        (AstExpr.WithEscape
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.WithScratch items)
+        (AstExpr.WithScratch (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.InArena a items)
+        (AstExpr.InArena
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.WithResource payload)
+        (let
+          [rebuilt
+            (match (& (__tl-box-place payload))
+              [(AstWithResource.WithResource bindings items)
+                (let
+                  [bindings-changed? : bool false]
+                  [items-changed? : bool false]
+                  [mapped-bindings
+                    (ast-resource-binding-list-map-if-changed-ref
+                      bindings
+                      bindings-changed?
+                      ,e
+                      ,@x)]
+                  [mapped-items
+                    (ast-expr-list-map-if-changed-ref
+                      items
+                      items-changed?
+                      ,e
+                      ,@x)]
+                  (if (or bindings-changed? items-changed?)
+                    (AstMaybeExpr.Some
+                      (AstExpr.WithResource
+                        (box
+                          (AstWithResource.WithResource
+                            (if bindings-changed?
+                              mapped-bindings
+                              (clone-ast-resource-binding-list bindings))
+                            (if items-changed?
+                              mapped-items
+                              (clone-ast-expr-list items))))))
+                    AstMaybeExpr.No))])]
+          (match rebuilt
+            [(AstMaybeExpr.Some next)
+              (set! ,ch true)
+              next]
+            [(AstMaybeExpr.No) (AstExpr.WithResource payload)]))]
+      [(AstExpr.Box a) (AstExpr.Box (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.BoxGet a) (AstExpr.BoxGet (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.BoxTake a) (AstExpr.BoxTake (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.BoxSet a b)
+        (AstExpr.BoxSet (ast-map-1-id ,ch ,e a ,@x) (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.TypeLiteral t)
+        (AstExpr.TypeLiteral (ast-map-1-id ,ch ,ti t ,@x))]
+      [(AstExpr.Comptime a) (AstExpr.Comptime (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.Quote a) (AstExpr.Quote (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.Quasiquote a) (AstExpr.Quasiquote (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.Unquote a) (AstExpr.Unquote (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.UnquoteSplicing a)
+        (AstExpr.UnquoteSplicing (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.BracketClause items)
+        (AstExpr.BracketClause (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.Try a) (AstExpr.Try (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.Return a) (AstExpr.Return (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.Break) AstExpr.Break]
+      [(AstExpr.Continue) AstExpr.Continue]
+      [(AstExpr.PtrNull t) (AstExpr.PtrNull (ast-map-1-id ,ch ,ti t ,@x))]
+      [(AstExpr.PtrNullCheck a)
+        (AstExpr.PtrNullCheck (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.PtrAddrOf a) (AstExpr.PtrAddrOf (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.PtrRead a) (AstExpr.PtrRead (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.PtrWrite a b)
+        (AstExpr.PtrWrite
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.PtrOffset a b)
+        (AstExpr.PtrOffset
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.PtrCast a t)
+        (AstExpr.PtrCast
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,ti t ,@x))]
+      [(AstExpr.PtrToInt a) (AstExpr.PtrToInt (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.IntToPtr a t)
+        (AstExpr.IntToPtr
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,ti t ,@x))]
+      [(AstExpr.StringData a) (AstExpr.StringData (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.StringFromBytes a b)
+        (AstExpr.StringFromBytes
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.ArrayData a) (AstExpr.ArrayData (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.BinaryData bytes)
+        (let
+          [mapped (,on-bytes ,@x (& bytes))]
+          (match mapped
+            [(AstMaybeString.Some next)
+              (set! ,ch true)
+              (AstExpr.BinaryData next)]
+            [(AstMaybeString.No) (AstExpr.BinaryData bytes)]))]
+      [(AstExpr.ProgramArgc) AstExpr.ProgramArgc]
+      [(AstExpr.ProgramArgv) AstExpr.ProgramArgv]
+      [(AstExpr.ProgramEnvp) AstExpr.ProgramEnvp]
+      [(AstExpr.CpuIdEax a b)
+        (AstExpr.CpuIdEax
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.CpuIdEbx a b)
+        (AstExpr.CpuIdEbx
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.CpuIdEcx a b)
+        (AstExpr.CpuIdEcx
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.CpuIdEdx a b)
+        (AstExpr.CpuIdEdx
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))]
+      [(AstExpr.Xgetbv a) (AstExpr.Xgetbv (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.Syscall items)
+        (AstExpr.Syscall (ast-expr-list-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.ForOwnedState items)
+        (AstExpr.ForOwnedState
+          (ast-for-owned-slots-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.ForOwnedStep items)
+        (AstExpr.ForOwnedStep
+          (ast-for-owned-slots-map-if-changed items ,ch ,e ,@x))]
+      [(AstExpr.MacroExpansion a provenance name)
+        (AstExpr.MacroExpansion (ast-map-1-id ,ch ,e a ,@x) provenance name)]
+      [(AstExpr.ForeachActive lane a)
+        (AstExpr.ForeachActive lane (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.LaneValue a) (AstExpr.LaneValue (ast-map-1-id ,ch ,e a ,@x))]
+      [(AstExpr.CloneOut a b)
+        (AstExpr.CloneOut
+          (ast-map-1-id ,ch ,e a ,@x)
+          (ast-map-1-id ,ch ,e b ,@x))])))
+
+(defmacro (ast-map-try-expr-hook
+  [on-expr : Expr]
+  [_on-type-id : Expr]
+  [_on-type : Expr]
+  [_on-pattern : Expr]
+  [_on-literal : Expr]
+  [_on-bytes : Expr]
+  [args : Expr ...]) : Expr
+  `(try (,on-expr ,@args)))
+
+(defmacro (ast-map-pass-type-id-hook
+  [_on-expr : Expr]
+  [on-type-id : Expr]
+  [_on-type : Expr]
+  [_on-pattern : Expr]
+  [_on-literal : Expr]
+  [_on-bytes : Expr]
+  [args : Expr ...]) : Expr
+  `(,on-type-id ,@args))
+
+(defmacro (ast-map-pass-type-hook
+  [_on-expr : Expr]
+  [_on-type-id : Expr]
+  [on-type : Expr]
+  [_on-pattern : Expr]
+  [_on-literal : Expr]
+  [_on-bytes : Expr]
+  [args : Expr ...]) : Expr
+  `(,on-type ,@args))
+
+(defmacro (ast-map-pass-pattern-hook
+  [_on-expr : Expr]
+  [_on-type-id : Expr]
+  [_on-type : Expr]
+  [on-pattern : Expr]
+  [_on-literal : Expr]
+  [_on-bytes : Expr]
+  [args : Expr ...]) : Expr
+  `(,on-pattern ,@args))
+
+(defmacro (ast-map-pass-literal-hook
+  [_on-expr : Expr]
+  [_on-type-id : Expr]
+  [_on-type : Expr]
+  [_on-pattern : Expr]
+  [on-literal : Expr]
+  [_on-bytes : Expr]
+  [args : Expr ...]) : Expr
+  `(,on-literal ,@args))
+
+(defmacro (ast-map-pass-bytes-hook
+  [_on-expr : Expr]
+  [_on-type-id : Expr]
+  [_on-type : Expr]
+  [_on-pattern : Expr]
+  [_on-literal : Expr]
+  [on-bytes : Expr]
+  [args : Expr ...]) : Expr
+  `(,on-bytes ,@args))
+
+(defmacro (ast-expr-map-children-try-if-changed
+  [expr : Expr]
+  [changed-out : Expr]
+  [on-expr : Expr]
+  [on-type-id : Expr]
+  [on-type : Expr]
+  [on-pattern : Expr]
+  [on-literal : Expr]
+  [on-bytes : Expr]
+  [contexts : Expr ...]) : AstExpr
+  `(ast-expr-map-children-if-changed
+    ,expr
+    ,changed-out
+    ast-map-try-expr-hook
+    ast-map-pass-type-id-hook
+    ast-map-pass-type-hook
+    ast-map-pass-pattern-hook
+    ast-map-pass-literal-hook
+    ast-map-pass-bytes-hook
+    ,on-expr
+    ,on-type-id
+    ,on-type
+    ,on-pattern
+    ,on-literal
+    ,on-bytes
+    ,@contexts))
+
+;; Canonical variant tag name for every `AstExpr` variant (all 87 variants).
+(define (ast-expr-kind-name [expr : AstExpr]) : String
+  (match expr
+    [(AstExpr.Spanned _ _) "spanned"]
+    [(AstExpr.Literal _) "literal"]
+    [(AstExpr.Var _) "var"]
+    [(AstExpr.Binary _ _ _) "binary"]
+    [(AstExpr.Unary _ _) "unary"]
+    [(AstExpr.Call _ _) "call"]
+    [(AstExpr.If _ _ _) "if"]
+    [(AstExpr.Let _) "let"]
+    [(AstExpr.Lambda _) "lambda"]
+    [(AstExpr.Tuple _) "tuple"]
+    [(AstExpr.TupleRef _ _) "tuple-ref"]
+    [(AstExpr.Array _) "array"]
+    [(AstExpr.DynArray _) "dyn-array"]
+    [(AstExpr.FixedMakeArray _ _) "fixed-make-array"]
+    [(AstExpr.MakeArray _ _) "make-array"]
+    [(AstExpr.ArrayRef _ _) "array-ref"]
+    [(AstExpr.ArraySet _ _ _) "array-set"]
+    [(AstExpr.ArrayTake _ _ _) "array-take"]
+    [(AstExpr.ArrayPush _ _) "array-push"]
+    [(AstExpr.StringRef _ _) "string-ref"]
+    [(AstExpr.While _ _) "while"]
+    [(AstExpr.Begin _) "begin"]
+    [(AstExpr.Unsafe _) "unsafe"]
+    [(AstExpr.Set _ _) "set"]
+    [(AstExpr.Replace _ _) "replace"]
+    [(AstExpr.Ann _ _) "ann"]
+    [(AstExpr.Cast _ _) "cast"]
+    [(AstExpr.Borrow _ _ _) "borrow"]
+    [(AstExpr.Match _) "match"]
+    [(AstExpr.Foreach _) "foreach"]
+    [(AstExpr.SpmdReduce _) "spmd-reduce"]
+    [(AstExpr.SpmdScan _) "spmd-scan"]
+    [(AstExpr.SpmdCompact _) "spmd-compact"]
+    [(AstExpr.SpmdBroadcast _ _) "spmd-broadcast"]
+    [(AstExpr.SpmdShuffle _ _) "spmd-shuffle"]
+    [(AstExpr.SpmdProgramIndex) "spmd-program-index"]
+    [(AstExpr.SpmdProgramCount) "spmd-program-count"]
+    [(AstExpr.StructGet _ _) "struct-get"]
+    [(AstExpr.StructSet _ _ _) "struct-set"]
+    [(AstExpr.WithRegion _ _) "with-region"]
+    [(AstExpr.WithEscape _ _) "with-escape"]
+    [(AstExpr.WithScratch _) "with-scratch"]
+    [(AstExpr.InArena _ _) "in-arena"]
+    [(AstExpr.WithResource _) "with-resource"]
+    [(AstExpr.Box _) "box"]
+    [(AstExpr.BoxGet _) "box-get"]
+    [(AstExpr.BoxTake _) "box-take"]
+    [(AstExpr.BoxSet _ _) "box-set"]
+    [(AstExpr.TypeLiteral _) "type-literal"]
+    [(AstExpr.Comptime _) "comptime"]
+    [(AstExpr.Quote _) "quote"]
+    [(AstExpr.Quasiquote _) "quasiquote"]
+    [(AstExpr.Unquote _) "unquote"]
+    [(AstExpr.UnquoteSplicing _) "unquote-splicing"]
+    [(AstExpr.BracketClause _) "bracket-clause"]
+    [(AstExpr.Try _) "try"]
+    [(AstExpr.Return _) "return"]
+    [(AstExpr.Break) "break"]
+    [(AstExpr.Continue) "continue"]
+    [(AstExpr.PtrNull _) "ptr-null"]
+    [(AstExpr.PtrNullCheck _) "ptr-null-check"]
+    [(AstExpr.PtrAddrOf _) "ptr-addr-of"]
+    [(AstExpr.PtrRead _) "ptr-read"]
+    [(AstExpr.PtrWrite _ _) "ptr-write"]
+    [(AstExpr.PtrOffset _ _) "ptr-offset"]
+    [(AstExpr.PtrCast _ _) "ptr-cast"]
+    [(AstExpr.PtrToInt _) "ptr-to-int"]
+    [(AstExpr.IntToPtr _ _) "int-to-ptr"]
+    [(AstExpr.StringData _) "string-data"]
+    [(AstExpr.StringFromBytes _ _) "string-from-bytes"]
+    [(AstExpr.ArrayData _) "array-data"]
+    [(AstExpr.BinaryData _) "binary-data"]
+    [(AstExpr.ProgramArgc) "program-argc"]
+    [(AstExpr.ProgramArgv) "program-argv"]
+    [(AstExpr.ProgramEnvp) "program-envp"]
+    [(AstExpr.CpuIdEax _ _) "cpuid-eax"]
+    [(AstExpr.CpuIdEbx _ _) "cpuid-ebx"]
+    [(AstExpr.CpuIdEcx _ _) "cpuid-ecx"]
+    [(AstExpr.CpuIdEdx _ _) "cpuid-edx"]
+    [(AstExpr.Xgetbv _) "xgetbv"]
+    [(AstExpr.Syscall _) "syscall"]
+    [(AstExpr.ForOwnedState _) "for-owned-state"]
+    [(AstExpr.ForOwnedStep _) "for-owned-step"]
+    [(AstExpr.MacroExpansion _ _ _) "macro-expansion"]
+    [(AstExpr.ForeachActive _ _) "foreach-active"]
+    [(AstExpr.LaneValue _) "lane-value"]
+    [(AstExpr.CloneOut _ _) "clone-out"]))
 
 ;; `ast-expr-children` lists every child, typed by kind, in payload order: the
 ;; expression ids of `ast-expr-child-ids` interleaved with the type-id, inline

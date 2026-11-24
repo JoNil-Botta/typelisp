@@ -902,6 +902,8 @@
                 (svec.push-ref! (&mut ld-argv) "-static")
                 (when
                   (> (string.string-length (& archive)) 0)
+                  (svec.push-ref! (&mut ld-argv) "-z")
+                  (svec.push-ref! (&mut ld-argv) "noexecstack")
                   (svec.push-ref! (&mut ld-argv) "--gc-sections")
                   (svec.push-ref! (&mut ld-argv) "--start-group")
                   (svec.push-ref! (&mut ld-argv) archive)
@@ -2069,6 +2071,8 @@
                           (svec.push-ref! (&mut ld-a) "-static")
                           (when
                             (> (string.string-length (& archive)) 0)
+                            (svec.push-ref! (&mut ld-a) "-z")
+                            (svec.push-ref! (&mut ld-a) "noexecstack")
                             (svec.push-ref! (&mut ld-a) "--gc-sections")
                             (svec.push-ref! (&mut ld-a) "--start-group")
                             (svec.push-ref! (&mut ld-a) archive)

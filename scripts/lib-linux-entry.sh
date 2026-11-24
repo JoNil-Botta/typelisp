@@ -23,6 +23,12 @@ linux_entry_symbol_for_asm() {
 # exists beside `$2` (compiler binary, defaulting to $COMPILER). Returns empty
 # without running grep when no archive is present, preserving entry-caller
 # test traces.
+#
+# Callers that link the archive also pass `-z noexecstack`: the archive's
+# members carry .note.GNU-stack, while `compile` assembly put through a bare
+# `as` does not, and GNU ld (as on the Ubuntu CI runners) warns about the
+# note-less object when the inputs disagree. `typelisp build` appends that
+# note to Linux assembly.
 stdlib_archive_for_asm_triple() {
     _ls_asm=$1
     _ls_triple=$2

@@ -335,7 +335,7 @@ link_native_object() {
         # Runtime syscalls and libc-ABI shims are emitted in the object; this
         # link requires neither a C library nor a dynamic loader.
         if [ -n "$_stdlib_archive" ]; then
-            ld -static -e "$_entry" --gc-sections "$obj" --start-group "$_stdlib_archive" --end-group -o "$bin"
+            ld -static -e "$_entry" -z noexecstack --gc-sections "$obj" --start-group "$_stdlib_archive" --end-group -o "$bin"
         else
             ld -static -e "$_entry" "$obj" -o "$bin"
         fi

@@ -1007,7 +1007,7 @@ run_exec_chunk_job() {
             stdlib_archive=$(linux_stdlib_archive_for_asm "$asm" "${COMPILER:-}")
             stdlib_link_args=""
             if [ -n "$stdlib_archive" ]; then
-                stdlib_link_args="--gc-sections --start-group $stdlib_archive --end-group"
+                stdlib_link_args="-z noexecstack --gc-sections --start-group $stdlib_archive --end-group"
             fi
             # shellcheck disable=SC2086
             if ! ld "$obj" -o "$program" -static $stdlib_link_args -e "$entry" \

@@ -3738,7 +3738,7 @@ integration_stage_helper_build() {
         _helper_stdlib=$(linux_stdlib_archive_for_asm "$_helper_asm" "${COMPILER:-}")
         as "$_helper_asm" -o "$_helper_dir/stage.o" &&
             if [ -n "$_helper_stdlib" ]; then
-                ld "$_helper_dir/stage.o" --gc-sections --start-group "$_helper_stdlib" --end-group -o "$STAGE_HELPER" -e _tl_start
+                ld "$_helper_dir/stage.o" -z noexecstack --gc-sections --start-group "$_helper_stdlib" --end-group -o "$STAGE_HELPER" -e _tl_start
             else
                 ld "$_helper_dir/stage.o" -o "$STAGE_HELPER" -e _tl_start
             fi || {
@@ -4445,7 +4445,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         fi
         stdlib_archive=$(linux_stdlib_archive_for_asm "$asm" "${COMPILER:-}")
         if [ -n "$stdlib_archive" ]; then
-            link_extra="$link_extra --gc-sections --start-group $stdlib_archive --end-group"
+            link_extra="$link_extra -z noexecstack --gc-sections --start-group $stdlib_archive --end-group"
         fi
         # shellcheck disable=SC2086
         if ! ci_timing_run "$name" link \

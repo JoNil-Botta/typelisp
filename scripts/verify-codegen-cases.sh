@@ -655,7 +655,7 @@ cc_linux_link_asm() {
     _cc_stdlib_archive=$(linux_stdlib_archive_for_asm "$CV_ASM" "${COMPILER:-}")
     if [ -n "$_cc_stdlib_archive" ]; then
         cc_run_step link ld "$CV_DIR/out.o" -o "$CV_DIR/program" -static \
-            --gc-sections --start-group "$_cc_stdlib_archive" --end-group \
+            -z noexecstack --gc-sections --start-group "$_cc_stdlib_archive" --end-group \
             -e "$CV_ENTRY"
     else
         cc_run_step link ld "$CV_DIR/out.o" -o "$CV_DIR/program" -static \

@@ -1445,17 +1445,19 @@
     [(pem.PemOk blocks)
       (let
         [index : i64 0]
+        [block-view : (& blocks (Slice pem.Block)) (pem_blocks.view (& blocks))]
         [out : certificates.Vec (certificates.with-capacity 0)]
         (while (< index (pem_blocks.len (& blocks)))
           (let
-            [block : pem.Block
-              (pem_blocks.get
-                (& blocks)
-                index
-                (pem.Block (byte_buf.new) (der.Range 0 0)))]
+            [block : (& blocks pem.Block) (& (array-ref block-view index))]
             (match (parse-der (byte_buf.as-bytes (& block.der)) limits)
               [(CertificateErr error)
-                (return (CertificatesErr (LoadError error index block.source)))]
+                (return
+                  (CertificatesErr
+                    (LoadError
+                      error
+                      index
+                      (der.Range block.source.start block.source.length))))]
               [(CertificateOk certificate) (certificates.push! out certificate)]))
           (set! index (+ index 1)))
         (CertificatesOk out))]))

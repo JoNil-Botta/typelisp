@@ -70,14 +70,18 @@
     (and
       (= (doc_line_vec.len (& lines)) 5)
       (= (doc_line_vec.capacity (& lines)) 8)
-      (=
-        (doc_test.doc-test-line-number
-          (doc_line_vec.get (& lines) 0 (doc_test.DocTestLine.Line 0 "")))
-        1)
-      (=
-        (doc_test.doc-test-line-number
-          (doc_line_vec.get (& lines) 4 (doc_test.DocTestLine.Line 0 "")))
-        5))))
+      (let
+        [view : (& lines (Slice doc_test.DocTestLine))
+          (doc_line_vec.view (& lines))]
+        (and
+          (=
+            (doc_test.doc-test-line-number
+              (doc_test.doc-test-line-copy (& (array-ref view 0))))
+            1)
+          (=
+            (doc_test.doc-test-line-number
+              (doc_test.doc-test-line-copy (& (array-ref view 4))))
+            5))))))
 
 ;; Both doc-test collections contain move-only strings. Exercise canonical core
 ;; growth across the initial capacity without requiring clone/pop support, and

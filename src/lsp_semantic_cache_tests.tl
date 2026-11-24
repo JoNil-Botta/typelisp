@@ -103,15 +103,10 @@
     [state : (& state lvf.LspServerState)]) : i64
     (let
       [count : i64 0]
-      (for [index (iterator.range 0 (lsp_document_vec.len (& state.documents)))]
-        (if (__tl-project-field
-          (__tl-project-field
-            (lsp_document_vec.get
-              (& state.documents)
-              index
-              (lsp.lsp-document-fallback))
-            semantic)
-          present)
+      [doc-view : (& state (Slice lvf.LspDocument))
+        (lsp_document_vec.view (& state.documents))]
+      (for [index (iterator.range 0 (array-length doc-view))]
+        (if (array-ref doc-view index).semantic.present
           (+= count 1)
           unit))
       (for [index (iterator.range 0 state.semantic-cache.len)]
@@ -126,18 +121,15 @@
     [state : (& state lvf.LspServerState)]) : i64
     (let
       [count : i64 0]
-      (for [index (iterator.range 0 (lsp_document_vec.len (& state.documents)))]
+      [doc-view : (& state (Slice lvf.LspDocument))
+        (lsp_document_vec.view (& state.documents))]
+      (for [index (iterator.range 0 (array-length doc-view))]
         (let
-          [doc : lvf.LspDocument
-            (lsp_document_vec.get
-              (& state.documents)
-              index
-              (lsp.lsp-document-fallback))]
-          [snapshot : lvf.LspSemanticSnapshot doc.semantic]
-          (if snapshot.present
+          [doc : (& state lvf.LspDocument) (& (array-ref doc-view index))]
+          (if doc.semantic.present
             (+=
               count
-              (sem.compiler-semantic-source-index-len (& snapshot.index)))
+              (sem.compiler-semantic-source-index-len (& doc.semantic.index)))
             unit)))
       (for [index (iterator.range 0 state.semantic-cache.len)]
         (let
@@ -252,11 +244,10 @@
           (lsp.lsp-global-shared-view roots))]
       [shared-doc-index : i64
         (lsp.lsp-documents-find-index (& cold-state.documents) (& shared-uri))]
-      [shared-doc : lvf.LspDocument
-        (lsp_document_vec.get
-          (& cold-state.documents)
-          shared-doc-index
-          (lsp.lsp-document-fallback))]
+      [shared-doc-view : (& cold-state (Slice lvf.LspDocument))
+        (lsp_document_vec.view (& cold-state.documents))]
+      [shared-doc : (& cold-state lvf.LspDocument)
+        (& (array-ref shared-doc-view shared-doc-index))]
       [definition-index : i64
         (sem_tests.compiler-semantic-source-index-find-definition
           (& shared-doc.semantic.index)
@@ -481,11 +472,9 @@
         (lsp.lsp-server-state-refresh-semantic-cache
           workspace-state
           (lsp.lsp-global-shared-view roots))]
-      [doc : lvf.LspDocument
-        (lsp_document_vec.get
-          (& cold-state.documents)
-          0
-          (lsp.lsp-document-fallback))]
+      [doc-view : (& cold-state (Slice lvf.LspDocument))
+        (lsp_document_vec.view (& cold-state.documents))]
+      [doc : (& cold-state lvf.LspDocument) (& (array-ref doc-view 0))]
       [definition-index : i64
         (sem_tests.compiler-semantic-source-index-find-definition
           (& doc.semantic.index)

@@ -3072,30 +3072,30 @@
               (__tl_make-array LinkerDwarfReference scan.references.len)]
             [ledger : (__tl_dyn-array LinkerDwarfLedgerEntry)
               (__tl_make-array LinkerDwarfLedgerEntry scan.ledger.len)]
-            (dwarf_unit_vec.copy-range!
-              (&mut units)
-              (unsafe
-                (__tl_array-data scan.units.slots))
-              0
-              scan.units.len)
-            (dwarf_table_vec.copy-range!
-              (&mut tables)
-              (unsafe
-                (__tl_array-data scan.tables.slots))
-              0
-              scan.tables.len)
-            (dwarf_reference_vec.copy-range!
-              (&mut references)
-              (unsafe
-                (__tl_array-data scan.references.slots))
-              0
-              scan.references.len)
-            (dwarf_ledger_vec.copy-range!
-              (&mut ledger)
-              (unsafe
-                (__tl_array-data scan.ledger.slots))
-              0
-              scan.ledger.len)
+            (unsafe
+              (dwarf_unit_vec.copy-range!
+                (&mut units)
+                (__tl_array-data scan.units.slots)
+                0
+                scan.units.len))
+            (unsafe
+              (dwarf_table_vec.copy-range!
+                (&mut tables)
+                (__tl_array-data scan.tables.slots)
+                0
+                scan.tables.len))
+            (unsafe
+              (dwarf_reference_vec.copy-range!
+                (&mut references)
+                (__tl_array-data scan.references.slots)
+                0
+                scan.references.len))
+            (unsafe
+              (dwarf_ledger_vec.copy-range!
+                (&mut ledger)
+                (__tl_array-data scan.ledger.slots)
+                0
+                scan.ledger.len))
             (Ok
               (LinkerDwarfInventory
                 units

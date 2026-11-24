@@ -7037,8 +7037,11 @@
   (let
     [chunks : text_buf.TextBufChunkList group.chunks]
     [count : i64 (text_buf.chunk-count (& chunks) 0)]
-    [items : (__tl_dyn-array String) (__tl_make-array String count)]
-    (text_buf.chunks-fill-array-rev chunks (&mut items) (- count 1))
+    [items : (__tl_dyn-array String)
+      (match chunks
+        [(text_buf.TextBufChunkNil) (__tl_make-array String 0)]
+        [(text_buf.TextBufChunkInline chunk) (__tl_make-array chunk)]
+        [(text_buf.TextBufChunkDense store _) (deref store).slots])]
     (compiler-backend-peephole-chunks-normalize items count group.len)))
 
 ;; One String holding one chunk's worth of assembly, wrapped as a chunk array
@@ -7136,12 +7139,13 @@
             (begin
               (when
                 run-active
-                (text_buf_borrowed.copy-byte-range-into
-                  run-data
-                  run-start
-                  (- run-end run-start)
-                  dst
-                  out-pos)
+                (unsafe
+                  (text_buf_borrowed.copy-byte-range-into
+                    run-data
+                    run-start
+                    (- run-end run-start)
+                    dst
+                    out-pos))
                 (+= out-pos (- run-end run-start)))
               (set! run-active true)
               (set! run-data data)
@@ -7150,12 +7154,13 @@
               (set! run-end hi)))
           (when
             (and newline? owned?)
-            (text_buf_borrowed.copy-byte-range-into
-              run-data
-              run-start
-              (- run-end run-start)
-              dst
-              out-pos)
+            (unsafe
+              (text_buf_borrowed.copy-byte-range-into
+                run-data
+                run-start
+                (- run-end run-start)
+                dst
+                out-pos))
             (+= out-pos (- run-end run-start))
             (unsafe
               (ptr-write! (ptr-offset dst out-pos) (cast 10 : u8)))
@@ -7163,12 +7168,13 @@
             (set! run-active false)))))
     (when
       run-active
-      (text_buf_borrowed.copy-byte-range-into
-        run-data
-        run-start
-        (- run-end run-start)
-        dst
-        out-pos)
+      (unsafe
+        (text_buf_borrowed.copy-byte-range-into
+          run-data
+          run-start
+          (- run-end run-start)
+          dst
+          out-pos))
       (+= out-pos (- run-end run-start)))
     out-pos))
 
@@ -8503,13 +8509,8 @@
   [text : String]) : i64
   (let
     [n : i64 (string.string-length text)]
-    (text_buf_borrowed.copy-byte-range-into
-      (unsafe
-        (string-data text))
-      0
-      n
-      dst
-      pos)
+    (unsafe
+      (text_buf_borrowed.copy-byte-range-into (string-data text) 0 n dst pos))
     (unsafe
       (ptr-write! (ptr-offset dst (+ pos n)) (cast 10 : u8)))
     (+ pos (+ n 1))))
@@ -18353,14 +18354,17 @@
   (let
     [chunks : text_buf.TextBufChunkList final.chunks]
     [chunk-count : i64 (text_buf.chunk-count (& chunks) 0)]
-    [items : (__tl_dyn-array String) (__tl_make-array String chunk-count)]
+    [items : (__tl_dyn-array String)
+      (match chunks
+        [(text_buf.TextBufChunkNil) (__tl_make-array String 0)]
+        [(text_buf.TextBufChunkInline chunk) (__tl_make-array chunk)]
+        [(text_buf.TextBufChunkDense store _) (deref store).slots])]
     [event-ends : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
     [function-count : i64 metadata.function-count]
     [best : (__tl_dyn-array i64) (__tl_make-array i64 function-count)]
     [counts : (__tl_dyn-array u16) (__tl_make-array u16 (* function-count 30))]
     [defined : (__tl_dyn-array bool) (__tl_make-array bool function-count)]
     [events : arg_entry_events.Vec (arg_entry_events.new)]
-    (text_buf.chunks-fill-array-rev chunks (&mut items) (- chunk-count 1))
     ;; The stream flushes whole function groups into individual chunks.
     (for [i (iterator.range 0 chunk-count)]
       (compiler-backend-arg-entry-scan-chunk!

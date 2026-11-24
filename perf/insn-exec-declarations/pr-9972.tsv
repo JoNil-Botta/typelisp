@@ -1,0 +1,1 @@
+benchmark/typelisp/asm_render	+62750	text_buf render (fill-rev-into) now borrows each dense-store chunk with a bounds-checked array-ref instead of the removed unchecked shared-view text-buf-store-entry-at raw read (#9257); slots are borrowed once per loop, the remaining cost is the per-chunk bounds check

@@ -9,6 +9,7 @@
 (import lsp_frame_core as lsp)
 (import lsp_frame_core_tests as lsp_tests)
 (import format_tests)
+(import lsp_vector_families as lvf)
 (import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 
 ;; --------------------------------------------------------------------------
@@ -115,9 +116,9 @@
     (if (and (= foo-idx 0) (= baz-idx 2))
       (let
         [foo-entry : LspDeclEntry
-          (lsp_decl_vec.get (& decls) foo-idx (lsp.lsp-decl-entry-fallback))]
+          (lvf.lsp-decl-vec-get (& decls) foo-idx (lsp.lsp-decl-entry-fallback))]
         [baz-entry : LspDeclEntry
-          (lsp_decl_vec.get (& decls) baz-idx (lsp.lsp-decl-entry-fallback))]
+          (lvf.lsp-decl-vec-get (& decls) baz-idx (lsp.lsp-decl-entry-fallback))]
         [moved : String
           (format_tests.format-rules-render-source-width
             (lsp.lsp-move-form-after text foo-entry baz-entry)

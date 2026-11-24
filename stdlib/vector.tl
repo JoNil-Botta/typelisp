@@ -83,6 +83,7 @@
 ;#       (svec.push! words "x")
 ;#       (+ (ivec.len (& v)) (svec.len (& words))))))
 ;# ```
+(import stdlib.comptime)
 (import stdlib.eq)
 
 ;; lint-allow: unused-import
@@ -162,601 +163,761 @@
         (type-cleanup-function T)
         "")]
     [cleanup-function-expr : Expr (expr-var cleanup-function)]
-    [cleanup-extra-decls : ExprList
+    ;; Classify whether `T` is shallowly Copy so `get` can use a zero-overhead
+    ;; safe read for Copy types and explicit deep cloning (or omission in core
+    ;; mode when uncloneable) for move-only types, preventing `&Vec -> T`
+    ;; aliasing.
+    [copyable? : bool (not cleanup-owning)]
+    [copy-types : comptime.ExprList
+      (comptime.expr-list-cons
+        (comptime.type-expr T)
+        (comptime.expr-list-empty))]
+    [copy-seen : comptime.ExprList (comptime.expr-list-empty)]
+    [copy-type-count : i64 1]
+    [copy-visited : i64 0]
+    [clone-get? : bool
       (if core-only
-        (expr-list-empty)
-        (match `(begin
-          (defstruct Iter
-            (:lifetimes source)
-            (slots (& source (__tl_dyn-array ,T)))
-            (len i64)
-            (index i64))
-          (defenum IterNext
-            (:lifetimes source)
-            (Done)
-            (Item (& source ,T)))
-          (defstruct IterMut
-            (:lifetimes source)
-            (slots (&mut source (__tl_dyn-array ,T)))
-            (len i64)
-            (index i64))
-          (defenum IterMutNext
-            (:lifetimes item)
-            (Done)
-            (Item (&mut item ,T)))
-          ;; Consuming cleanup storage is intentionally reachable only through
-          ;; a raw state pointer. All declared fields are source-visible, so a
-          ;; typed Vec/dynamic-array field here would let safe callers project a
-          ;; slot whose liveness bit `into-next` has cleared. The state cell is
-          ;; arena-backed; its cleanup field makes every wrapper alias converge
-          ;; on the same idempotent liveness map.
-          (defstruct IntoIterState
-            (slots (__tl_dyn-array ,T))
-            (live (__tl_dyn-array bool))
-            (len i64)
-            (index i64))
-          (define (into-iter-state-null? [state-ptr : (MutPtr IntoIterState)]) : bool
-            (=
-              (unsafe
-                (ptr->int state-ptr))
-              (cast 0 : u64)))
-          (define (cleanup-into-iter-state [state-ptr : (MutPtr IntoIterState)]) : unit
-            (if (into-iter-state-null? state-ptr)
-              unit
+        false
+        true)]
+    (if copyable?
+      (while (< copy-visited copy-type-count)
+        (let
+          [index : i64 (- (- copy-type-count 1) copy-visited)]
+          [ty : comptime.Expr (comptime.expr-list-type-nth copy-types index)]
+          [kind : String (type-kind ty)]
+          [inspect? : bool true]
+          (if (if (string-eq kind "struct")
+            true
+            (string-eq kind "enum"))
+            (let
+              [key : String (type-key ty)]
+              [seen-count : i64 (comptime.expr-list-length copy-seen)]
+              [previous : i64 0]
+              (while (< previous seen-count)
+                (if (string-eq
+                  key
+                  (comptime.expr-string-value
+                    (comptime.expr-list-nth copy-seen previous)))
+                  (set! inspect? false)
+                  unit)
+                (set! previous (+ previous 1)))
+              (if inspect?
+                (set!
+                  copy-seen
+                  (comptime.expr-list-cons (comptime.expr-string key) copy-seen))
+                unit))
+            unit)
+          (if inspect?
+            (if (type-cleanup-owning? ty)
+              (set! copyable? false)
+              (if (if (string-eq kind "struct")
+                (if (string-eq (type-nominal-module ty) "stdlib.arena")
+                  (string-eq (type-nominal-name ty) "Arena")
+                  false)
+                false)
+                (set! copyable? false)
+                (match kind
+                  ["unit" unit]
+                  ["never" unit]
+                  ["bool" unit]
+                  ["char" unit]
+                  ["i64" unit]
+                  ["i32" unit]
+                  ["i16" unit]
+                  ["i8" unit]
+                  ["u64" unit]
+                  ["u32" unit]
+                  ["u16" unit]
+                  ["u8" unit]
+                  ["f64" unit]
+                  ["f32" unit]
+                  ["ptr" unit]
+                  ["mut-ptr" unit]
+                  ["ref" unit]
+                  ["function" unit]
+                  ["array"
+                    (if (array-dynamic? ty)
+                      (set! copyable? false)
+                      (let
+                        [element : comptime.Expr (array-element-type ty)]
+                        (set!
+                          copy-types
+                          (comptime.expr-list-cons
+                            (comptime.type-expr element)
+                            copy-types))
+                        (set! copy-type-count (+ copy-type-count 1))))]
+                  ["tuple"
+                    (let
+                      [count : i64 (tuple-element-count ty)]
+                      [field : i64 0]
+                      (while (< field count)
+                        (set!
+                          copy-types
+                          (comptime.expr-list-cons
+                            (comptime.type-expr (tuple-element-type ty field))
+                            copy-types))
+                        (set! copy-type-count (+ copy-type-count 1))
+                        (set! field (+ field 1)))
+                      unit)]
+                  ["struct"
+                    (let
+                      [count : i64 (struct-field-count ty)]
+                      [field : i64 0]
+                      (while (< field count)
+                        (set!
+                          copy-types
+                          (comptime.expr-list-cons
+                            (comptime.type-expr (struct-field-type ty field))
+                            copy-types))
+                        (set! copy-type-count (+ copy-type-count 1))
+                        (set! field (+ field 1)))
+                      unit)]
+                  ["enum"
+                    (let
+                      [count : i64 (enum-variant-count ty)]
+                      [variant : i64 0]
+                      (while (< variant count)
+                        (let
+                          [payload-count : i64
+                            (enum-variant-payload-count ty variant)]
+                          [payload : i64 0]
+                          (while (< payload payload-count)
+                            (set!
+                              copy-types
+                              (comptime.expr-list-cons
+                                (comptime.type-expr
+                                  (enum-variant-payload-type ty variant payload))
+                                copy-types))
+                            (set! copy-type-count (+ copy-type-count 1))
+                            (set! payload (+ payload 1))))
+                        (set! variant (+ variant 1)))
+                      unit)]
+                  [_ (set! copyable? false)])))
+            unit)
+          (if copyable?
+            (set! copy-visited (+ copy-visited 1))
+            (set! copy-visited copy-type-count))))
+      unit)
+    (if copyable?
+      (set! clone-get? false)
+      unit)
+    (let
+      ;; `get` uses a zero-overhead safe read for Copy types and
+      ;; `stdlib.clone.deep` for full-mode non-Copy types; core mode omits it
+      ;; for move-only types (which remain usable via `view`/`view-mut`).
+      [copy-get-decls : ExprList
+        (if copyable?
+          (match `(begin
+            (define (get [v : (& v Vec)] [index : i64] [fallback : ,T]) : ,T
+              (if (if (>= index 0)
+                (< index (len v))
+                false)
+                (array-ref v.slots index)
+                fallback)))
+            [(Expr.Begin decls) decls]
+            [_ (expr-list-empty)])
+          (expr-list-empty))]
+      [clone-get-decls : ExprList
+        (if clone-get?
+          (match `(begin
+            (define (get [v : (& v Vec)] [index : i64] [fallback : ,T]) : ,T
+              (if (if (>= index 0)
+                (< index (len v))
+                false)
+                ;; The vector keeps its element; the caller gets a deep copy.
+                (stdlib.clone.deep (array-ref v.slots index))
+                fallback)))
+            [(Expr.Begin decls) decls]
+            [_ (expr-list-empty)])
+          (expr-list-empty))]
+      [cleanup-extra-decls : ExprList
+        (if core-only
+          (expr-list-empty)
+          (match `(begin
+            (defstruct Iter
+              (:lifetimes source)
+              (slots (& source (__tl_dyn-array ,T)))
+              (len i64)
+              (index i64))
+            (defenum IterNext
+              (:lifetimes source)
+              (Done)
+              (Item (& source ,T)))
+            (defstruct IterMut
+              (:lifetimes source)
+              (slots (&mut source (__tl_dyn-array ,T)))
+              (len i64)
+              (index i64))
+            (defenum IterMutNext
+              (:lifetimes item)
+              (Done)
+              (Item (&mut item ,T)))
+            ;; Consuming cleanup storage is intentionally reachable only through
+            ;; a raw state pointer. All declared fields are source-visible, so a
+            ;; typed Vec/dynamic-array field here would let safe callers project a
+            ;; slot whose liveness bit `into-next` has cleared. The state cell is
+            ;; arena-backed; its cleanup field makes every wrapper alias converge
+            ;; on the same idempotent liveness map.
+            (defstruct IntoIterState
+              (slots (__tl_dyn-array ,T))
+              (live (__tl_dyn-array bool))
+              (len i64)
+              (index i64))
+            (define (into-iter-state-null? [state-ptr : (MutPtr IntoIterState)]) : bool
+              (=
+                (unsafe
+                  (ptr->int state-ptr))
+                (cast 0 : u64)))
+            (define (cleanup-into-iter-state
+              [state-ptr : (MutPtr IntoIterState)]) : unit
+              (if (into-iter-state-null? state-ptr)
+                unit
+                (let
+                  [state : IntoIterState
+                    (unsafe
+                      (ptr-read state-ptr))]
+                  [len : i64 state.len]
+                  (begin
+                    (cleanup-slot-state (SlotState state.slots state.live))
+                    ;; The storage moved into the cleanup: write back a drained
+                    ;; state rather than the partially moved one.
+                    (unsafe
+                      (ptr-write!
+                        state-ptr
+                        (IntoIterState
+                          (__tl_make-array ,T 0)
+                          (__tl_make-array bool 0)
+                          len
+                          len)))))))
+            (defstruct IntoIter
+              (:cleanup cleanup-into-iter)
+              (state (MutPtr IntoIterState) (:cleanup cleanup-into-iter-state)))
+            (defenum IntoNext
+              (:cleanup cleanup-into-next)
+              (Done)
+              (Item ,T (:owned)))
+            (define (is-empty? [v : (& v Vec)]) : bool
+              (<= (len v) 0))
+            (define (iterator [v : (& source Vec)]) : (Iter source)
+              (Iter (& v.state.slots) v.len 0))
+            (define (next [iter : (&mut state (Iter source))]) : (IterNext
+                source)
               (let
-                [state : IntoIterState
+                [index : i64 iter.index]
+                (if (>= index iter.len)
+                  (IterNext.Done)
+                  (begin
+                    (set! iter.index (+ index 1))
+                    (IterNext.Item (& (array-ref iter.slots index)))))))
+            (define (iterator-mut [v : (&mut source Vec)]) : (IterMut source)
+              (IterMut (&mut v.state.slots) v.len 0))
+            (define (next-mut [iter : ,next-mut-state]) : (IterMutNext item)
+              (let
+                [index : i64 iter.index]
+                (if (>= index iter.len)
+                  (IterMutNext.Done)
+                  (begin
+                    (set! iter.index (+ index 1))
+                    (IterMutNext.Item (&mut (array-ref iter.slots index)))))))
+            (define (into-iterator [v : Vec]) : IntoIter
+              (let
+                [state-cell : (__tl_dyn-array IntoIterState)
+                  (__tl_make-array IntoIterState 1)]
+                [state-ptr : (MutPtr IntoIterState)
                   (unsafe
-                    (ptr-read state-ptr))]
-                [len : i64 state.len]
+                    (__tl_array-data state-cell))]
                 (begin
-                  (cleanup-slot-state (SlotState state.slots state.live))
-                  ;; The storage moved into the cleanup: write back a drained
-                  ;; state rather than the partially moved one.
                   (unsafe
                     (ptr-write!
                       state-ptr
-                      (IntoIterState
-                        (__tl_make-array ,T 0)
-                        (__tl_make-array bool 0)
-                        len
-                        len)))))))
-          (defstruct IntoIter
-            (:cleanup cleanup-into-iter)
-            (state (MutPtr IntoIterState) (:cleanup cleanup-into-iter-state)))
-          (defenum IntoNext
-            (:cleanup cleanup-into-next)
-            (Done)
-            (Item ,T (:owned)))
-          (define (is-empty? [v : (& v Vec)]) : bool
-            (<= (len v) 0))
-          (define (iterator [v : (& source Vec)]) : (Iter source)
-            (Iter (& v.state.slots) v.len 0))
-          (define (next [iter : (&mut state (Iter source))]) : (IterNext source)
+                      (IntoIterState v.state.slots v.state.live v.len 0)))
+                  ;; The raw state cell now owns the live elements. Empty the
+                  ;; moved Vec's cleanup map before consuming its shell so it
+                  ;; cannot drain the transferred storage.
+                  (set! v.state.slots (__tl_make-array ,T 0))
+                  (set! v.state.live (__tl_make-array bool 0))
+                  (cleanup-vec v)
+                  (IntoIter state-ptr))))
+            ;; Logical state for future generated observers such as Debug. The
+            ;; count exposes no T storage; an observer that is generated inside
+            ;; this module must still read the opaque state and check `live`
+            ;; before touching a remaining slot.
+            (define (into-remaining-len [iter : (& iter IntoIter)]) : i64
+              (if (into-iter-state-null? iter.state)
+                0
+                (let
+                  [state : IntoIterState
+                    (unsafe
+                      (ptr-read iter.state))]
+                  (- state.len state.index))))
+            (define (into-next [iter : (&mut state IntoIter)]) : IntoNext
+              (if (into-iter-state-null? iter.state)
+                (IntoNext.Done)
+                (let
+                  [owned-state : IntoIterState
+                    (unsafe
+                      (ptr-read iter.state))]
+                  [index : i64 owned-state.index]
+                  (if (>= index owned-state.len)
+                    (IntoNext.Done)
+                    (let
+                      [taken : (Tuple bool ,T)
+                        (__tl_array-take!
+                          owned-state.slots
+                          owned-state.live
+                          index)]
+                      (begin
+                        (set! owned-state.index (+ index 1))
+                        (unsafe
+                          (ptr-write! iter.state owned-state))
+                        (if (tuple-ref taken 0)
+                          (IntoNext.Item (tuple-ref taken 1))
+                          (IntoNext.Done)))))))))
+            [(Expr.Begin decls) decls]
+            [_ (expr-list-empty)]))]
+      [cleanup-module-decls : Expr
+        `(begin
+          (module ,module-name)
+          ;; Only constructed elements enter storage. The liveness bitmap is the
+          ;; single source of truth for cleanup after consuming extraction.
+          (defstruct SlotState
+            (slots (__tl_dyn-array ,T))
+            (live (__tl_dyn-array bool)))
+          (define (cleanup-slot-state [state : SlotState]) : unit
             (let
-              [index : i64 iter.index]
-              (if (>= index iter.len)
-                (IterNext.Done)
-                (begin
-                  (set! iter.index (+ index 1))
-                  (IterNext.Item (& (array-ref iter.slots index)))))))
-          (define (iterator-mut [v : (&mut source Vec)]) : (IterMut source)
-            (IterMut (&mut v.state.slots) v.len 0))
-          (define (next-mut [iter : ,next-mut-state]) : (IterMutNext item)
-            (let
-              [index : i64 iter.index]
-              (if (>= index iter.len)
-                (IterMutNext.Done)
-                (begin
-                  (set! iter.index (+ index 1))
-                  (IterMutNext.Item (&mut (array-ref iter.slots index)))))))
-          (define (into-iterator [v : Vec]) : IntoIter
-            (let
-              [state-cell : (__tl_dyn-array IntoIterState)
-                (__tl_make-array IntoIterState 1)]
-              [state-ptr : (MutPtr IntoIterState)
-                (unsafe
-                  (__tl_array-data state-cell))]
+              [index : i64 0]
+              [count : i64 (array-length state.live)]
               (begin
-                (unsafe
-                  (ptr-write!
-                    state-ptr
-                    (IntoIterState v.state.slots v.state.live v.len 0)))
-                ;; The raw state cell now owns the live elements. Empty the
-                ;; moved Vec's cleanup map before consuming its shell so it
-                ;; cannot drain the transferred storage.
-                (set! v.state.slots (__tl_make-array ,T 0))
-                (set! v.state.live (__tl_make-array bool 0))
-                (cleanup-vec v)
-                (IntoIter state-ptr))))
-          ;; Logical state for future generated observers such as Debug. The
-          ;; count exposes no T storage; an observer that is generated inside
-          ;; this module must still read the opaque state and check `live`
-          ;; before touching a remaining slot.
-          (define (into-remaining-len [iter : (& iter IntoIter)]) : i64
-            (if (into-iter-state-null? iter.state)
-              0
-              (let
-                [state : IntoIterState
-                  (unsafe
-                    (ptr-read iter.state))]
-                (- state.len state.index))))
-          (define (into-next [iter : (&mut state IntoIter)]) : IntoNext
-            (if (into-iter-state-null? iter.state)
-              (IntoNext.Done)
-              (let
-                [owned-state : IntoIterState
-                  (unsafe
-                    (ptr-read iter.state))]
-                [index : i64 owned-state.index]
-                (if (>= index owned-state.len)
-                  (IntoNext.Done)
+                (while (< index count)
                   (let
                     [taken : (Tuple bool ,T)
-                      (__tl_array-take!
-                        owned-state.slots
-                        owned-state.live
-                        index)]
+                      (__tl_array-take! state.slots state.live index)]
                     (begin
-                      (set! owned-state.index (+ index 1))
-                      (unsafe
-                        (ptr-write! iter.state owned-state))
                       (if (tuple-ref taken 0)
-                        (IntoNext.Item (tuple-ref taken 1))
-                        (IntoNext.Done)))))))))
-          [(Expr.Begin decls) decls]
-          [_ (expr-list-empty)]))]
-    [cleanup-module-decls : Expr
-      `(begin
-        (module ,module-name)
-        ;; Only constructed elements enter storage. The liveness bitmap is the
-        ;; single source of truth for cleanup after consuming extraction.
-        (defstruct SlotState
-          (slots (__tl_dyn-array ,T))
-          (live (__tl_dyn-array bool)))
-        (define (cleanup-slot-state [state : SlotState]) : unit
-          (let
-            [index : i64 0]
-            [count : i64 (array-length state.live)]
-            (begin
-              (while (< index count)
-                (let
-                  [taken : (Tuple bool ,T)
-                    (__tl_array-take! state.slots state.live index)]
-                  (begin
-                    (if (tuple-ref taken 0)
-                      (,cleanup-function-expr (tuple-ref taken 1))
-                      unit)
-                    (set! index (+ index 1)))))
-              unit)))
-        (defstruct Vec
-          (:cleanup cleanup-vec)
-          (state SlotState (:cleanup cleanup-slot-state))
-          (len i64)
-          (capacity i64))
-        (define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array ,T))
-          (& v.state.slots))
-        (define (len [v : (& v Vec)]) : i64
-          v.len)
-        (define (capacity [v : (& v Vec)]) : i64
-          v.capacity)
-        ;; Expose only the live prefix. The returned Slice retains the Vec
-        ;; owner's lifetime, so growth and backing replacement remain blocked
-        ;; while the view is live.
-        (define (view [v : (& source Vec)]) : (& source (Slice ,T))
-          (slice-view (slots v) 0 (len v)))
-        (define (view-mut [v : (&mut source Vec)]) : (&mut source (Slice ,T))
-          (slice-mut-view (&mut v.state.slots) 0 v.len))
-        (define (with-capacity [capacity : i64]) : Vec
-          (let
-            [cap : i64
-              (if (< capacity 1)
-                1
-                capacity)]
-            (Vec
-              (SlotState (__tl_make-array ,T 0) (__tl_make-array bool 0))
-              0
-              cap)))
-        (define (new) : Vec
-          (with-capacity 4))
-        (define (set-ref! [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
-          ;; The non-aborting take cannot prove a raw replacement is in bounds.
-          ;; Validate public lengths before cleanup or writing changes ownership.
-          (when
-            (or
-              (< v.len 0)
-              (> v.len (array-length v.state.slots))
-              (> v.len (array-length v.state.live)))
-            (tl_oob_abort))
-          (if (if (>= index 0)
-            (< index v.len)
-            false)
+                        (,cleanup-function-expr (tuple-ref taken 1))
+                        unit)
+                      (set! index (+ index 1)))))
+                unit)))
+          (defstruct Vec
+            (:cleanup cleanup-vec)
+            (state SlotState (:cleanup cleanup-slot-state))
+            (len i64)
+            (capacity i64))
+          (define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array ,T))
+            (& v.state.slots))
+          (define (len [v : (& v Vec)]) : i64
+            v.len)
+          (define (capacity [v : (& v Vec)]) : i64
+            v.capacity)
+          ;; Expose only the live prefix. The returned Slice retains the Vec
+          ;; owner's lifetime, so growth and backing replacement remain blocked
+          ;; while the view is live.
+          (define (view [v : (& source Vec)]) : (& source (Slice ,T))
+            (slice-view (slots v) 0 (len v)))
+          (define (view-mut [v : (&mut source Vec)]) : (&mut source (Slice ,T))
+            (slice-mut-view (&mut v.state.slots) 0 v.len))
+          (define (with-capacity [capacity : i64]) : Vec
             (let
-              [taken : (Tuple bool ,T)
-                (__tl_array-take! v.state.slots v.state.live index)]
-              (if (tuple-ref taken 0)
-                (,cleanup-function-expr (tuple-ref taken 1))
-                unit)
-              (unsafe
-                (ptr-write!
-                  (ptr-offset (__tl_array-data v.state.slots) index)
-                  value))
-              (set! (array-ref v.state.live index) true))
-            (,cleanup-function-expr value)))
-        (define (push-ref! [v : (&mut v Vec)] [value : ,T]) : unit
-          (let
-            [index : i64 v.len]
-            (begin
-              (if (>= index v.capacity)
-                (set!
-                  v.capacity
-                  (if (< v.capacity 1)
-                    1
-                    (* v.capacity 2)))
-                unit)
-              (__tl_array-push! v.state.slots value)
-              (__tl_array-push! v.state.live true)
-              (set! v.len (+ index 1)))))
-        (define (push-owned [v : Vec] [value : ,T]) : Vec
-          (begin
-            (push-ref! (&mut v) value)
-            v))
-        ,@cleanup-extra-decls)]
-    ;; Construct the append/read/mutate core once, then splice that exact
-    ;; declaration list into the generated module.
-    [core-decls : Expr
-      `(begin
-        (defstruct Vec
-          (slots (__tl_dyn-array ,T))
-          (len i64))
-        (define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array ,T))
-          (& v.slots))
-        (define (len [v : (& v Vec)]) : i64
-          v.len)
-        (define (capacity [v : (& v Vec)]) : i64
-          (array-length (slots v)))
-        ;; The backing array is capacity-sized. Build the native Slice from
-        ;; the live prefix so callers can never observe spare slots.
-        (define (view [v : (& source Vec)]) : (& source (Slice ,T))
-          (slice-view (slots v) 0 (len v)))
-        (define (view-mut [v : (&mut source Vec)]) : (&mut source (Slice ,T))
-          (slice-mut-view (&mut v.slots) 0 v.len))
-        (define (with-capacity [capacity : i64]) : Vec
-          (let
-            [cap : i64
-              (if (< capacity 1)
-                1
-                capacity)]
-            (Vec (__tl_make-array ,T cap) 0)))
-        (define (new) : Vec
-          (with-capacity 4))
-        (define (get [v : (& v Vec)] [index : i64] [fallback : ,T]) : ,T
-          (if (if (>= index 0)
-            (< index (len v))
-            false)
-            ;; A representation copy read in place (bounds checked above):
-            ;; the vector keeps owning the element.
-            (unsafe
-              (ptr-read (ptr-offset (__tl_array-data v.slots) index)))
-            fallback))
-        (define (set-ref! [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
-          (if (if (>= index 0)
-            (< index v.len)
-            false)
-            (set! (array-ref v.slots index) value)
-            unit))
-        ;; Moves `count` live elements from the old backing at `src` into
-        ;; `dst`: each is read bitwise exactly once, and the caller replaces
-        ;; the old backing without reading it again.
-        (define (copy-range!
-          [dst : (&mut dst (__tl_dyn-array ,T))]
-          [src : (MutPtr ,T)]
-          [index : i64]
-          [count : i64]) : unit
-          (if (>= index count)
-            unit
-            (begin
-              (set!
-                (array-ref dst index)
-                (unsafe
-                  (ptr-read (ptr-offset src index))))
-              (copy-range! dst src (+ index 1) count))))
-        (define (grow [v : (&mut v Vec)]) : unit
-          (let
-            [n : i64 v.len]
-            [old-cap : i64 (array-length v.slots)]
-            [new-cap : i64
-              (if (< old-cap 1)
-                1
-                (* old-cap 2))]
-            [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
-            (begin
-              (copy-range!
-                (&mut bigger)
-                (unsafe
-                  (__tl_array-data v.slots))
+              [cap : i64
+                (if (< capacity 1)
+                  1
+                  capacity)]
+              (Vec
+                (SlotState (__tl_make-array ,T 0) (__tl_make-array bool 0))
                 0
-                n)
-              (set! v.slots bigger))))
-        (define (push-ref! [v : (&mut v Vec)] [value : ,T]) : unit
-          (begin
-            (if (< v.len (array-length v.slots))
-              unit
-              (grow v))
+                cap)))
+          (define (new) : Vec
+            (with-capacity 4))
+          (define (set-ref! [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
+            ;; The non-aborting take cannot prove a raw replacement is in bounds.
+            ;; Validate public lengths before cleanup or writing changes ownership.
+            (when
+              (or
+                (< v.len 0)
+                (> v.len (array-length v.state.slots))
+                (> v.len (array-length v.state.live)))
+              (tl_oob_abort))
+            (if (if (>= index 0)
+              (< index v.len)
+              false)
+              (let
+                [taken : (Tuple bool ,T)
+                  (__tl_array-take! v.state.slots v.state.live index)]
+                (if (tuple-ref taken 0)
+                  (,cleanup-function-expr (tuple-ref taken 1))
+                  unit)
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset (__tl_array-data v.state.slots) index)
+                    value))
+                (set! (array-ref v.state.live index) true))
+              (,cleanup-function-expr value)))
+          (define (push-ref! [v : (&mut v Vec)] [value : ,T]) : unit
             (let
               [index : i64 v.len]
               (begin
-                (set! (array-ref v.slots index) value)
-                (set! v.len (+ index 1)))))))]
-    (match (if cleanup-owning
-      cleanup-module-decls
-      (match core-decls
-        [(Expr.Begin core)
-          (if core-only
-            `(begin
-              (module ,module-name)
-              ,@core)
+                (if (>= index v.capacity)
+                  (set!
+                    v.capacity
+                    (if (< v.capacity 1)
+                      1
+                      (* v.capacity 2)))
+                  unit)
+                (__tl_array-push! v.state.slots value)
+                (__tl_array-push! v.state.live true)
+                (set! v.len (+ index 1)))))
+          (define (push-owned [v : Vec] [value : ,T]) : Vec
+            (begin
+              (push-ref! (&mut v) value)
+              v))
+          ,@cleanup-extra-decls)]
+      ;; Construct the append/read/mutate core once, then splice that exact
+      ;; declaration list into the generated module.
+      [core-decls : Expr
+        `(begin
+          (defstruct Vec
+            (slots (__tl_dyn-array ,T))
+            (len i64))
+          (define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array ,T))
+            (& v.slots))
+          (define (len [v : (& v Vec)]) : i64
+            v.len)
+          (define (capacity [v : (& v Vec)]) : i64
+            (array-length (slots v)))
+          ;; The backing array is capacity-sized. Build the native Slice from
+          ;; the live prefix so callers can never observe spare slots.
+          (define (view [v : (& source Vec)]) : (& source (Slice ,T))
+            (slice-view (slots v) 0 (len v)))
+          (define (view-mut [v : (&mut source Vec)]) : (&mut source (Slice ,T))
+            (slice-mut-view (&mut v.slots) 0 v.len))
+          (define (with-capacity [capacity : i64]) : Vec
             (let
-              [vec-name : Expr (expr-var "Vec")]
-              [pop-name : Expr (expr-var "Pop")]
-              [pop-empty-name : Expr (expr-var "Pop.Empty")]
-              [pop-ok-name : Expr (expr-var "Pop.Ok")]
-              [iter-name : Expr (expr-var "Iter")]
-              [iter-next-name : Expr (expr-var "IterNext")]
-              [iter-done-name : Expr (expr-var "IterNext.Done")]
-              [iter-item-name : Expr (expr-var "IterNext.Item")]
-              [iter-mut-name : Expr (expr-var "IterMut")]
-              [iter-mut-next-name : Expr (expr-var "IterMutNext")]
-              [iter-mut-done-name : Expr (expr-var "IterMutNext.Done")]
-              [iter-mut-item-name : Expr (expr-var "IterMutNext.Item")]
-              [into-iter-name : Expr (expr-var "IntoIter")]
-              [into-next-name : Expr (expr-var "IntoNext")]
-              [into-done-name : Expr (expr-var "IntoNext.Done")]
-              [into-item-name : Expr (expr-var "IntoNext.Item")]
-              [kind : String (type-kind T)]
-              ;; Borrowed String storage has the public immutable `str` view
-              ;; type. Other shared items retain their concrete element type,
-              ;; including move-only aggregates.
-              [iter-item-type : Expr
-                (match kind
-                  ["string" (expr-var "str")]
-                  [_ `,T])]
-              ;; String elements are immutable by language policy, so their iterator
-              ;; item is the ordinary borrowed `str` view. Other element kinds yield
-              ;; an exclusive reference to their concrete element type.
-              [iter-mut-borrow-name : Expr
-                (match kind
-                  ["string" (expr-var "&")]
-                  [_ (expr-var "&mut")])]
-              [iter-mut-item-type : Expr
-                (match kind
-                  ["string" (expr-var "str")]
-                  [_ `,T])]
+              [cap : i64
+                (if (< capacity 1)
+                  1
+                  capacity)]
+              (Vec (__tl_make-array ,T cap) 0)))
+          (define (new) : Vec
+            (with-capacity 4))
+          ,@copy-get-decls
+          ,@clone-get-decls
+          (define (set-ref! [v : (&mut v Vec)] [index : i64] [value : ,T]) : unit
+            (if (if (>= index 0)
+              (< index v.len)
+              false)
+              (set! (array-ref v.slots index) value)
+              unit))
+          ;; Moves `count` live elements from the old backing at `src` into
+          ;; `dst`: each is read bitwise exactly once, and the caller replaces
+          ;; the old backing without reading it again.
+          (unsafe
+            (define (copy-range!
+              [dst : (&mut dst (__tl_dyn-array ,T))]
+              [src : (MutPtr ,T)]
+              [index : i64]
+              [count : i64]) : unit
+              (if (>= index count)
+                unit
+                (begin
+                  (set!
+                    (array-ref dst index)
+                    (unsafe
+                      (ptr-read (ptr-offset src index))))
+                  (unsafe
+                    (copy-range! dst src (+ index 1) count))))))
+          (define (grow [v : (&mut v Vec)]) : unit
+            (let
+              [n : i64 v.len]
+              [old-cap : i64 (array-length v.slots)]
+              [new-cap : i64
+                (if (< old-cap 1)
+                  1
+                  (* old-cap 2))]
+              [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
+              (begin
+                (unsafe
+                  (copy-range! (&mut bigger) (__tl_array-data v.slots) 0 n))
+                (set! v.slots bigger))))
+          (define (push-ref! [v : (&mut v Vec)] [value : ,T]) : unit
+            (begin
+              (if (< v.len (array-length v.slots))
+                unit
+                (grow v))
+              (let
+                [index : i64 v.len]
+                (begin
+                  (set! (array-ref v.slots index) value)
+                  (set! v.len (+ index 1)))))))]
+      (match (if cleanup-owning
+        cleanup-module-decls
+        (match core-decls
+          [(Expr.Begin core)
+            (if core-only
               `(begin
                 (module ,module-name)
-                (import (eq.eq ,T) as value_eq)
-                ,@core
-                (define (copy-from-slice!
-                  [out : (&mut out ,vec-name)]
-                  [source : (& source (Slice ,T))]) : unit
-                  (let
-                    [count : i64 (array-length source)]
-                    [index : i64 0]
-                    (while (< index count)
-                      (push-ref!
-                        out
-                        (stdlib.clone.deep (array-ref source index)))
-                      (set! index (+ index 1)))))
-                (define (from-slice [source : (& source (Slice ,T))]) : ,vec-name
-                  (let
-                    [out : ,vec-name (with-capacity (array-length source))]
-                    (copy-from-slice! (&mut out) source)
-                    out))
-                (define (clone-vec [source : (& source ,vec-name)]) : ,vec-name
-                  (let
-                    [out : ,vec-name (with-capacity (capacity source))]
-                    (copy-from-slice! (&mut out) (view source))
-                    out))
-                (defenum ,pop-name
-                  (Empty)
-                  (Ok ,T))
-                ;; Shared iteration retains the vector's source borrow. `next`
-                ;; reborrows an element through the stored array reference, so an
-                ;; Item keeps the source lifetime rather than the short borrow of
-                ;; iterator state.
-                (defstruct ,iter-name
-                  (:lifetimes source)
-                  (slots (& source (__tl_dyn-array ,T)))
-                  (len i64)
-                  (index i64))
-                (defenum ,iter-next-name
-                  (:lifetimes source)
-                  (Done)
-                  (Item (& source ,iter-item-type)))
-                ;; This state owns the vector's exclusive source borrow. `next-mut`
-                ;; reborrows one element through the state, so the item keeps the
-                ;; state's borrow: an exclusive reference reached through another
-                ;; lives no longer than the outer one.
-                (defstruct ,iter-mut-name
-                  (:lifetimes source)
-                  (slots (&mut source (__tl_dyn-array ,T)))
-                  (len i64)
-                  (index i64))
-                ;; Mutable iteration is lending: an Item keeps the state's borrow
-                ;; live, so callers must finish with it before asking for the next
-                ;; item.
-                (defenum ,iter-mut-next-name
-                  (:lifetimes item)
-                  (Done)
-                  (Item (,iter-mut-borrow-name item ,iter-mut-item-type)))
-                ;; Consuming iteration owns the moved backing storage. The bitmap
-                ;; records which live-prefix slots still own values, so each Item
-                ;; can move exactly once through private `__tl_array-take!`.
-                (defstruct ,into-iter-name
-                  (slots (__tl_dyn-array ,T))
-                  (live (__tl_dyn-array bool))
-                  (len i64)
-                  (index i64))
-                (defenum ,into-next-name
-                  (Done)
-                  (Item ,T))
-                (define (slots-mut [v : (&mut v ,vec-name)]) : (&mut
-                    v
-                    (__tl_dyn-array ,T))
-                  (&mut v.slots))
-                (define (len-mut [v : (&mut v ,vec-name)]) : i64
-                  v.len)
-                (define (is-empty? [v : (& v ,vec-name)]) : bool
-                  (<= (len v) 0))
-                (define (iterator [v : (& source ,vec-name)]) : (,iter-name
-                    source)
-                  (,iter-name (& v.slots) v.len 0))
-                (define (next [iter : (&mut state (,iter-name source))]) : (,iter-next-name
-                    source)
-                  (let
-                    [index : i64 iter.index]
-                    (if (>= index iter.len)
-                      (,iter-done-name)
-                      (begin
-                        (set! iter.index (+ index 1))
-                        (,iter-item-name (& (array-ref iter.slots index)))))))
-                (define (iterator-mut [v : (&mut source ,vec-name)]) : (,iter-mut-name
-                    source)
-                  (,iter-mut-name (&mut v.slots) v.len 0))
-                (define (next-mut [iter : ,next-mut-state]) : (,iter-mut-next-name
-                    item)
-                  (let
-                    [index : i64 iter.index]
-                    (if (>= index iter.len)
-                      (,iter-mut-done-name)
-                      (begin
-                        (set! iter.index (+ index 1))
-                        (,iter-mut-item-name
-                          (,iter-mut-borrow-name (array-ref iter.slots index)))))))
-                (define (into-live-slots [len : i64]) : (__tl_dyn-array bool)
-                  (let
-                    [live : (__tl_dyn-array bool) (__tl_make-array bool len)]
-                    [index : i64 0]
-                    (begin
-                      (while (< index len)
-                        (begin
-                          (set! (array-ref live index) true)
-                          (set! index (+ index 1))))
-                      live)))
-                (define (into-iterator [v : ,vec-name]) : ,into-iter-name
-                  (let
-                    [len : i64 v.len]
-                    [live : (__tl_dyn-array bool) (into-live-slots len)]
-                    [slots : (__tl_dyn-array ,T) v.slots]
-                    (,into-iter-name slots live len 0)))
-                (define (into-next [iter : (&mut state ,into-iter-name)]) : ,into-next-name
-                  (let
-                    [index : i64 iter.index]
-                    (if (>= index iter.len)
-                      (,into-done-name)
-                      (let
-                        [taken : (Tuple bool ,T)
-                          (__tl_array-take! iter.slots iter.live index)]
+                ,@core)
+              (let
+                [vec-name : Expr (expr-var "Vec")]
+                [pop-name : Expr (expr-var "Pop")]
+                [pop-empty-name : Expr (expr-var "Pop.Empty")]
+                [pop-ok-name : Expr (expr-var "Pop.Ok")]
+                [iter-name : Expr (expr-var "Iter")]
+                [iter-next-name : Expr (expr-var "IterNext")]
+                [iter-done-name : Expr (expr-var "IterNext.Done")]
+                [iter-item-name : Expr (expr-var "IterNext.Item")]
+                [iter-mut-name : Expr (expr-var "IterMut")]
+                [iter-mut-next-name : Expr (expr-var "IterMutNext")]
+                [iter-mut-done-name : Expr (expr-var "IterMutNext.Done")]
+                [iter-mut-item-name : Expr (expr-var "IterMutNext.Item")]
+                [into-iter-name : Expr (expr-var "IntoIter")]
+                [into-next-name : Expr (expr-var "IntoNext")]
+                [into-done-name : Expr (expr-var "IntoNext.Done")]
+                [into-item-name : Expr (expr-var "IntoNext.Item")]
+                [kind : String (type-kind T)]
+                ;; Borrowed String storage has the public immutable `str` view
+                ;; type. Other shared items retain their concrete element type,
+                ;; including move-only aggregates.
+                [iter-item-type : Expr
+                  (match kind
+                    ["string" (expr-var "str")]
+                    [_ `,T])]
+                ;; String elements are immutable by language policy, so their iterator
+                ;; item is the ordinary borrowed `str` view. Other element kinds yield
+                ;; an exclusive reference to their concrete element type.
+                [iter-mut-borrow-name : Expr
+                  (match kind
+                    ["string" (expr-var "&")]
+                    [_ (expr-var "&mut")])]
+                [iter-mut-item-type : Expr
+                  (match kind
+                    ["string" (expr-var "str")]
+                    [_ `,T])]
+                `(begin
+                  (module ,module-name)
+                  (import (eq.eq ,T) as value_eq)
+                  ,@core
+                  (define (copy-from-slice!
+                    [out : (&mut out ,vec-name)]
+                    [source : (& source (Slice ,T))]) : unit
+                    (let
+                      [count : i64 (array-length source)]
+                      [index : i64 0]
+                      (while (< index count)
+                        (push-ref!
+                          out
+                          (stdlib.clone.deep (array-ref source index)))
+                        (set! index (+ index 1)))))
+                  (define (from-slice [source : (& source (Slice ,T))]) : ,vec-name
+                    (let
+                      [out : ,vec-name (with-capacity (array-length source))]
+                      (copy-from-slice! (&mut out) source)
+                      out))
+                  (define (clone-vec [source : (& source ,vec-name)]) : ,vec-name
+                    (let
+                      [out : ,vec-name (with-capacity (capacity source))]
+                      (copy-from-slice! (&mut out) (view source))
+                      out))
+                  (defenum ,pop-name
+                    (Empty)
+                    (Ok ,T))
+                  ;; Shared iteration retains the vector's source borrow. `next`
+                  ;; reborrows an element through the stored array reference, so an
+                  ;; Item keeps the source lifetime rather than the short borrow of
+                  ;; iterator state.
+                  (defstruct ,iter-name
+                    (:lifetimes source)
+                    (slots (& source (__tl_dyn-array ,T)))
+                    (len i64)
+                    (index i64))
+                  (defenum ,iter-next-name
+                    (:lifetimes source)
+                    (Done)
+                    (Item (& source ,iter-item-type)))
+                  ;; This state owns the vector's exclusive source borrow. `next-mut`
+                  ;; reborrows one element through the state, so the item keeps the
+                  ;; state's borrow: an exclusive reference reached through another
+                  ;; lives no longer than the outer one.
+                  (defstruct ,iter-mut-name
+                    (:lifetimes source)
+                    (slots (&mut source (__tl_dyn-array ,T)))
+                    (len i64)
+                    (index i64))
+                  ;; Mutable iteration is lending: an Item keeps the state's borrow
+                  ;; live, so callers must finish with it before asking for the next
+                  ;; item.
+                  (defenum ,iter-mut-next-name
+                    (:lifetimes item)
+                    (Done)
+                    (Item (,iter-mut-borrow-name item ,iter-mut-item-type)))
+                  ;; Consuming iteration owns the moved backing storage. The bitmap
+                  ;; records which live-prefix slots still own values, so each Item
+                  ;; can move exactly once through private `__tl_array-take!`.
+                  (defstruct ,into-iter-name
+                    (slots (__tl_dyn-array ,T))
+                    (live (__tl_dyn-array bool))
+                    (len i64)
+                    (index i64))
+                  (defenum ,into-next-name
+                    (Done)
+                    (Item ,T))
+                  (define (slots-mut [v : (&mut v ,vec-name)]) : (&mut
+                      v
+                      (__tl_dyn-array ,T))
+                    (&mut v.slots))
+                  (define (len-mut [v : (&mut v ,vec-name)]) : i64
+                    v.len)
+                  (define (is-empty? [v : (& v ,vec-name)]) : bool
+                    (<= (len v) 0))
+                  (define (iterator [v : (& source ,vec-name)]) : (,iter-name
+                      source)
+                    (,iter-name (& v.slots) v.len 0))
+                  (define (next [iter : (&mut state (,iter-name source))]) : (,iter-next-name
+                      source)
+                    (let
+                      [index : i64 iter.index]
+                      (if (>= index iter.len)
+                        (,iter-done-name)
                         (begin
                           (set! iter.index (+ index 1))
-                          (if (tuple-ref taken 0)
-                            (,into-item-name (tuple-ref taken 1))
-                            (,into-done-name)))))))
-                (define (last [v : (& v ,vec-name)] [fallback : ,T]) : ,T
-                  (get v (- (len v) 1) fallback))
-                (define (pop-ref! [v : (&mut v ,vec-name)]) : ,pop-name
-                  (if (<= v.len 0)
-                    (,pop-empty-name)
+                          (,iter-item-name (& (array-ref iter.slots index)))))))
+                  (define (iterator-mut [v : (&mut source ,vec-name)]) : (,iter-mut-name
+                      source)
+                    (,iter-mut-name (&mut v.slots) v.len 0))
+                  (define (next-mut [iter : ,next-mut-state]) : (,iter-mut-next-name
+                      item)
+                    (let
+                      [index : i64 iter.index]
+                      (if (>= index iter.len)
+                        (,iter-mut-done-name)
+                        (begin
+                          (set! iter.index (+ index 1))
+                          (,iter-mut-item-name
+                            (,iter-mut-borrow-name (array-ref iter.slots index)))))))
+                  (define (into-live-slots [len : i64]) : (__tl_dyn-array bool)
+                    (let
+                      [live : (__tl_dyn-array bool) (__tl_make-array bool len)]
+                      [index : i64 0]
+                      (begin
+                        (while (< index len)
+                          (begin
+                            (set! (array-ref live index) true)
+                            (set! index (+ index 1))))
+                        live)))
+                  (define (into-iterator [v : ,vec-name]) : ,into-iter-name
+                    (let
+                      [len : i64 v.len]
+                      [live : (__tl_dyn-array bool) (into-live-slots len)]
+                      [slots : (__tl_dyn-array ,T) v.slots]
+                      (,into-iter-name slots live len 0)))
+                  (define (into-next [iter : (&mut state ,into-iter-name)]) : ,into-next-name
+                    (let
+                      [index : i64 iter.index]
+                      (if (>= index iter.len)
+                        (,into-done-name)
+                        (let
+                          [taken : (Tuple bool ,T)
+                            (__tl_array-take! iter.slots iter.live index)]
+                          (begin
+                            (set! iter.index (+ index 1))
+                            (if (tuple-ref taken 0)
+                              (,into-item-name (tuple-ref taken 1))
+                              (,into-done-name)))))))
+                  (define (last [v : (& v ,vec-name)] [fallback : ,T]) : ,T
+                    (get v (- (len v) 1) fallback))
+                  (define (pop-ref! [v : (&mut v ,vec-name)]) : ,pop-name
+                    (if (<= v.len 0)
+                      (,pop-empty-name)
+                      (let
+                        [last-index : i64 (- v.len 1)]
+                        [value : ,T
+                          (stdlib.clone.deep (array-ref v.slots last-index))]
+                        (begin
+                          (set! v.len last-index)
+                          (,pop-ok-name value)))))
+                  (define (reverse-range!
+                    [items : (&mut items (__tl_dyn-array ,T))]
+                    [lo : i64]
+                    [hi : i64]) : unit
+                    (if (>= lo hi)
+                      unit
+                      (let
+                        [tmp : ,T (stdlib.clone.deep (array-ref items lo))]
+                        (begin
+                          (set!
+                            (array-ref items lo)
+                            (stdlib.clone.deep (array-ref items hi)))
+                          (set! (array-ref items hi) tmp)
+                          (reverse-range! items (+ lo 1) (- hi 1))))))
+                  (define (reverse-ref! [v : (&mut v ,vec-name)]) : unit
                     (let
                       [last-index : i64 (- v.len 1)]
-                      [value : ,T
-                        (stdlib.clone.deep (array-ref v.slots last-index))]
+                      (reverse-range! (&mut v.slots) 0 last-index)))
+                  (defmacro (pop! [place : Expr]) : ,pop-name
+                    (expr-mut-call0 (expr-var ,pop-helper-name) place))
+                  (defmacro (reverse! [place : Expr]) : unit
+                    (expr-mut-call0 (expr-var ,reverse-helper-name) place))
+                  (define (fold-from
+                    [v : (& v ,vec-name)]
+                    [index : i64]
+                    [acc : ,T]
+                    [step : (-> ,T ,T ,T)]) : ,T
+                    (if (>= index (len v))
+                      acc
+                      (fold-from
+                        v
+                        (+ index 1)
+                        (step acc (stdlib.clone.deep (array-ref v.slots index)))
+                        step)))
+                  (define (fold
+                    [v : (& v ,vec-name)]
+                    [acc : ,T]
+                    [step : (-> ,T ,T ,T)]) : ,T
+                    (fold-from v 0 acc step))
+                  (define (map-build-from
+                    [v : (& v ,vec-name)]
+                    [index : i64]
+                    [out : (&mut out ,vec-name)]
+                    [mapper : (-> ,T ,T)]) : unit
+                    (if (>= index (len v))
+                      unit
                       (begin
-                        (set! v.len last-index)
-                        (,pop-ok-name value)))))
-                (define (reverse-range!
-                  [items : (&mut items (__tl_dyn-array ,T))]
-                  [lo : i64]
-                  [hi : i64]) : unit
-                  (if (>= lo hi)
-                    unit
+                        (push-ref!
+                          out
+                          (mapper (stdlib.clone.deep (array-ref v.slots index))))
+                        (map-build-from v (+ index 1) out mapper))))
+                  (define (map-from
+                    [v : (& v ,vec-name)]
+                    [index : i64]
+                    [mapper : (-> ,T ,T)]) : ,vec-name
                     (let
-                      [tmp : ,T (stdlib.clone.deep (array-ref items lo))]
+                      [out : ,vec-name (new)]
                       (begin
-                        (set!
-                          (array-ref items lo)
-                          (stdlib.clone.deep (array-ref items hi)))
-                        (set! (array-ref items hi) tmp)
-                        (reverse-range! items (+ lo 1) (- hi 1))))))
-                (define (reverse-ref! [v : (&mut v ,vec-name)]) : unit
-                  (let
-                    [last-index : i64 (- v.len 1)]
-                    (reverse-range! (&mut v.slots) 0 last-index)))
-                (defmacro (pop! [place : Expr]) : ,pop-name
-                  (expr-mut-call0 (expr-var ,pop-helper-name) place))
-                (defmacro (reverse! [place : Expr]) : unit
-                  (expr-mut-call0 (expr-var ,reverse-helper-name) place))
-                (define (fold-from
-                  [v : (& v ,vec-name)]
-                  [index : i64]
-                  [acc : ,T]
-                  [step : (-> ,T ,T ,T)]) : ,T
-                  (if (>= index (len v))
-                    acc
-                    (fold-from
-                      v
-                      (+ index 1)
-                      (step acc (stdlib.clone.deep (array-ref v.slots index)))
-                      step)))
-                (define (fold
-                  [v : (& v ,vec-name)]
-                  [acc : ,T]
-                  [step : (-> ,T ,T ,T)]) : ,T
-                  (fold-from v 0 acc step))
-                (define (map-build-from
-                  [v : (& v ,vec-name)]
-                  [index : i64]
-                  [out : (&mut out ,vec-name)]
-                  [mapper : (-> ,T ,T)]) : unit
-                  (if (>= index (len v))
-                    unit
-                    (begin
-                      (push-ref!
-                        out
-                        (mapper (stdlib.clone.deep (array-ref v.slots index))))
-                      (map-build-from v (+ index 1) out mapper))))
-                (define (map-from
-                  [v : (& v ,vec-name)]
-                  [index : i64]
-                  [mapper : (-> ,T ,T)]) : ,vec-name
-                  (let
-                    [out : ,vec-name (new)]
-                    (begin
-                      (map-build-from v index (&mut out) mapper)
-                      out)))
-                (define (map [v : (& v ,vec-name)] [mapper : (-> ,T ,T)]) : ,vec-name
-                  (map-from v 0 mapper))
-                (define (contains-from?
-                  [v : (& v ,vec-name)]
-                  [x : ,T]
-                  [index : i64]) : bool
-                  (if (>= index (len v))
-                    false
-                    (if (value_eq.eq
-                      (stdlib.clone.deep (array-ref v.slots index))
-                      (stdlib.clone.deep x))
-                      true
-                      (contains-from? v x (+ index 1)))))
-                (define (contains? [v : (& v ,vec-name)] [x : ,T]) : bool
-                  (contains-from? v x 0)))))]
-        [_ (comptime-error "vector: internal core declaration shape")]))
-      [(Expr.Begin selected-decls)
-        `(begin
-          ,@selected-decls
-          (defmacro (,(comptime.expr-var "set!")
-            [place : Expr]
-            [index : Expr]
-            [value : Expr]) : unit
-            (expr-mut-call2 (expr-var ,set-helper-name) place index value))
-          (defmacro (push! [place : Expr] [value : Expr]) : unit
-            (expr-mut-call1 (expr-var ,push-helper-name) place value)))]
-      [_ (comptime-error "vector: internal selected declaration shape")])))
+                        (map-build-from v index (&mut out) mapper)
+                        out)))
+                  (define (map [v : (& v ,vec-name)] [mapper : (-> ,T ,T)]) : ,vec-name
+                    (map-from v 0 mapper))
+                  (define (contains-from?
+                    [v : (& v ,vec-name)]
+                    [x : ,T]
+                    [index : i64]) : bool
+                    (if (>= index (len v))
+                      false
+                      (if (value_eq.eq
+                        (stdlib.clone.deep (array-ref v.slots index))
+                        (stdlib.clone.deep x))
+                        true
+                        (contains-from? v x (+ index 1)))))
+                  (define (contains? [v : (& v ,vec-name)] [x : ,T]) : bool
+                    (contains-from? v x 0)))))]
+          [_ (comptime-error "vector: internal core declaration shape")]))
+        [(Expr.Begin selected-decls)
+          `(begin
+            ,@selected-decls
+            (defmacro (,(comptime.expr-var "set!")
+              [place : Expr]
+              [index : Expr]
+              [value : Expr]) : unit
+              (expr-mut-call2 (expr-var ,set-helper-name) place index value))
+            (defmacro (push! [place : Expr] [value : Expr]) : unit
+              (expr-mut-call1 (expr-var ,push-helper-name) place value)))]
+        [_ (comptime-error "vector: internal selected declaration shape")]))))

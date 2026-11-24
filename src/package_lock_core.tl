@@ -148,17 +148,33 @@
 (define (package-lock-entry-list-fallback) : PackageLockEntry
   (PackageLockEntry "" "" (Rev) "" ""))
 
+(define (package-lock-pin-kind-copy
+  [kind : (& kind package_cache_core.PackageCachePinKind)]) : package_cache_core.PackageCachePinKind
+  (match kind
+    [(package_cache_core.Rev) (package_cache_core.Rev)]
+    [(package_cache_core.Tag) (package_cache_core.Tag)]
+    [(package_cache_core.Branch) (package_cache_core.Branch)]))
+
+(define (package-lock-entry-copy [entry : (& entry PackageLockEntry)]) : PackageLockEntry
+  (PackageLockEntry
+    (string.copy (& entry.alias))
+    (string.copy (& entry.url))
+    (package-lock-pin-kind-copy (& entry.pin-kind))
+    (string.copy (& entry.pin-value))
+    (string.copy (& entry.commit))))
+
 (define (package-lock-entry-list-lookup-from
   [entries : (& entries package_lock_entry_vec.Vec)]
   [alias : (& alias str)]) : PackageLockMaybeEntry
-  (for [index (iterator.range 0 (package_lock_entry_vec.len entries))]
-    (let
-      [entry : PackageLockEntry
-        (package_lock_entry_vec.get
-          entries
-          index
-          (package-lock-entry-list-fallback))]
-      (when (string.eq entry.alias alias) (return (Some entry)))))
+  (let
+    [view : (& entries (Slice PackageLockEntry))
+      (package_lock_entry_vec.view entries)]
+    (for [index (iterator.range 0 (array-length view))]
+      (let
+        [entry : (& entries PackageLockEntry) (& (array-ref view index))]
+        (when
+          (string.eq (& entry.alias) alias)
+          (return (Some (package-lock-entry-copy entry)))))))
   (No))
 
 (define (package-lock-entry-list-lookup
@@ -173,14 +189,12 @@
   (if (>= index (package_lock_entry_vec.len entries))
     index
     (let
-      [head : PackageLockEntry
-        (package_lock_entry_vec.get
-          entries
-          index
-          (package-lock-entry-list-fallback))]
-      (if (string.eq head.alias alias)
+      [view : (& entries (Slice PackageLockEntry))
+        (package_lock_entry_vec.view entries)]
+      [head : (& entries PackageLockEntry) (& (array-ref view index))]
+      (if (string.eq (& head.alias) alias)
         -1
-        (if (package-lock-string-less? alias head.alias)
+        (if (package-lock-string-less? alias (& head.alias))
           index
           (package-lock-entry-list-insert-position entries alias (+ index 1)))))))
 
@@ -194,16 +208,13 @@
     (while (> write index)
       (let
         [previous : PackageLockEntry
-          (package_lock_entry_vec.get
-            entries
-            (- write 1)
-            (package-lock-entry-list-fallback))]
+          (package-lock-entry-copy (& (array-ref entries.slots (- write 1))))]
         (package_lock_entry_vec.set-ref! entries write previous)
         (-= write 1)))
     (package_lock_entry_vec.set-ref!
       entries
       index
-      (owned_view.compiler-owned-reference-shared-view entry))))
+      (package-lock-entry-copy entry))))
 
 (define (package-lock-entry-list-insert
   [entries : package_lock_entry_vec.Vec]
@@ -603,10 +614,11 @@
     (package-lock-quote-string value)
     "))\n"))
 
-(define (package-lock-emit-entry [entry : PackageLockEntry]) : String
+(define (package-lock-emit-entry [entry : (& entry PackageLockEntry)]) : String
   (let
     [kind-name : String
-      (package_cache_core.package-cache-pin-kind-name entry.pin-kind)]
+      (package_cache_core.package-cache-pin-kind-name
+        (package-lock-pin-kind-copy (& entry.pin-kind)))]
     (str_cat.str-cat
       "    (dependency\n"
       (package-lock-emit-string-field "alias" (& entry.alias))
@@ -619,13 +631,12 @@
   [index : i64]) : String
   (if (>= index (package_lock_entry_vec.len entries))
     ""
-    (str_cat.str-cat
-      (package-lock-emit-entry
-        (package_lock_entry_vec.get
-          entries
-          index
-          (package-lock-entry-list-fallback)))
-      (package-lock-emit-entries-from entries (+ index 1)))))
+    (let
+      [view : (& entries (Slice PackageLockEntry))
+        (package_lock_entry_vec.view entries)]
+      (str_cat.str-cat
+        (package-lock-emit-entry (& (array-ref view index)))
+        (package-lock-emit-entries-from entries (+ index 1))))))
 
 (define (package-lock-emit-entries [entries : (& package_lock_entry_vec.Vec)]) : String
   (package-lock-emit-entries-from entries 0))

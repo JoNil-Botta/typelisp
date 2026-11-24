@@ -423,16 +423,13 @@
                     (stdlib.text_buf.copy-chunk-into (& chunk) dst start))))]
             [(TextBufChunkDense store visible-count)
               (let
+                [slots (& ,(comptime.expr-struct-get `(box-get store) "slots"))]
                 [cursor : i64 (- visible-count 1)]
                 [out-pos : i64 pos]
                 [byte-index : i64 0]
                 (while (>= cursor 0)
                   (let
-                    [chunk
-                      (&
-                        (array-ref
-                          ,(comptime.expr-struct-get `(box-get store) "slots")
-                          cursor))]
+                    [chunk (& (array-ref slots cursor))]
                     [clen : i64 (string-length chunk)]
                     [start : i64 (- out-pos clen)]
                     (if (<= clen small-limit)

@@ -1127,11 +1127,15 @@
       (set! i (+ i 1)))
     (bbc.byte-buf-builder-finish-string (& out))))
 
+;; Through the function's `.seh_endproc`, or the end label that replaces it
+;; when the backend lowers the function's unwind to a shared `.xdata` record.
 (define (window-seh-endproc [lines : (& lines svec.Vec)]) : String
   (let
     [n : i64 (svec.len lines)]
     [re-end : regex.RegexProg
-      (regex.regex-compile "^[[:space:]]*\\.seh_endproc$" false)]
+      (regex.regex-compile
+        "^([[:space:]]*\\.seh_endproc|\\.L_tl_seh_end_[0-9]+:)$"
+        false)]
     [out : bbc.ByteBufBuilder (bbc.byte-buf-builder-new)]
     [done : bool false]
     [i : i64 0]

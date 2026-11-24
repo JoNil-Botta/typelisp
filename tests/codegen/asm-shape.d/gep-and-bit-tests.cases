@@ -62,12 +62,13 @@ match ^[[:space:]]+andl [$]3, %(e[a-z]+|r[0-9]+d)$
 match ^[[:space:]]+cmpq [$]3, %r
 not-match ^[[:space:]]+test[bwlq] [$]3, %[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_mismatched_const
-match ^[[:space:]]+andl [$]4, %(e[a-z]+|r[0-9]+d)$
-match ^[[:space:]]+cmpq [$]1, %r
+match ^[[:space:]]+xorl %eax, %eax$
 not-match ^[[:space:]]+test[bwlq] [$]4, %[a-z0-9]+$
+not-match ^[[:space:]]+and[bwlq] [$]4, %[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_mask_le
-match ^[[:space:]]+andl [$]1, %(e[a-z]+|r[0-9]+d)$
-match ^[[:space:]]+cmpq [$]1, %r
+match ^[[:space:]]+movl [$]1, %eax$
+not-match ^[[:space:]]+test[bwlq] [$]1, %[a-z0-9]+$
+not-match ^[[:space:]]+and[bwlq] [$]1, %[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_dynamic_mask
 match ^[[:space:]]+andq %r[a-z0-9]+, %r[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_bit63_set

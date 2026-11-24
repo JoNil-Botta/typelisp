@@ -6068,6 +6068,35 @@
   _
   _)
 
+;; Open-addressed label -> block id table (slots hold `id + 1`, zero is
+;; empty; the id identifies its key through `labels`). Fold multiplied high
+;; bits into the slot before masking: pruned labels need not retain the dense
+;; numbering of the original body.
+(define (compiler-ir-label-id-slot [label : i64] [mask : i64]) : i64
+  (let
+    [mixed : i64 (* label -7046029254386353131)]
+    (bit-and (bit-xor mixed (cast (shr (cast mixed : u64) 29) : i64)) mask)))
+
+;; The block id `label` maps to in `slots`, or -1 when it has none.
+(define (compiler-ir-label-id-find
+  [slots : (& slots (__tl_dyn-array i64))]
+  [labels : (& labels (__tl_dyn-array i64))]
+  [label : i64]) : i64
+  (let
+    [mask : i64 (- (array-length slots) 1)]
+    [slot : i64 (compiler-ir-label-id-slot label mask)]
+    (while true
+      (let
+        [entry : i64 (array-ref slots slot)]
+        (if (= entry 0)
+          (return -1)
+          (let
+            [id : i64 (- entry 1)]
+            (if (= (array-ref labels id) label)
+              (return id)
+              (set! slot (bit-and (+ slot 1) mask)))))))
+    -1))
+
 (define (compiler-ir-block-builder-new) : CompilerIrBlockBuilder
   ;; Seed for the common small function: most lowered functions have four
   ;; or fewer blocks, so 4 covers them without a grow and keeps the transient

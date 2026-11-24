@@ -12617,6 +12617,28 @@
                       [_ (- 0 1)])]
                   [_ (- 0 1)])]
               [_ (- 0 1)])]
+          [prev-dst : i64
+            (if (>= index 2)
+              (compiler_ir_types.compiler-ir-instr-dst
+                (compiler_ir_types.compiler-ir-instr-seq-borrow
+                  instrs
+                  (- index 2)))
+              -1)]
+          [next-binop-reads-u? : bool
+            (if (< (+ index 1) instrs.len)
+              (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+                instrs
+                (+ index 1))
+                [(BinOp _ _ nl nr _)
+                  (or
+                    (match (& nl)
+                      [(Var v) (= v u)]
+                      [_ false])
+                    (match (& nr)
+                      [(Var v) (= v u)]
+                      [_ false]))]
+                [_ false])
+              false)]
           (when
             (or
               (not (compiler-backend-gep-fold-64bit-int? (& ty2)))
@@ -12641,23 +12663,55 @@
                 (string.eq base "")
                 (string.eq base "%rbp"))
                 (No)
-                (Some
-                  (str_cat.str-cat
-                    "    leaq "
-                    (if (= first-disp 0)
-                      ""
-                      (string.int->string first-disp))
-                    "("
-                    base
-                    (if scaled?
-                      (string.substring
-                        first-sib
-                        1
-                        (- (string.string-length first-sib) 1))
-                      (str_cat.str-cat "," source ")"))
-                    ", "
-                    target
-                    "\n"))))
+                (let
+                  ;; Avoid slow 3-component `leaq disp(dep, inv), dep` (3c
+                  ;; latency on `dep`) when `dep` (`base == target`) was just
+                  ;; produced by the preceding instruction and `inv` (`source`)
+                  ;; is independent: splitting to `leaq disp(inv), tmp; addq
+                  ;; tmp, dep` runs `leaq disp(inv)` in parallel with `dep`'s
+                  ;; producer and leaves only a 1c `addq` on `dep`.
+                  [split-3op? : bool
+                    (and
+                      (not scaled?)
+                      (!= first-disp 0)
+                      (string.eq base target)
+                      (not (string.eq source target))
+                      (= prev-dst addend)
+                      next-binop-reads-u?)]
+                  [dst-home-reg : String
+                    (if split-3op?
+                      (be_scalar.compiler-backend-var-register-home
+                        ctx.backend-state
+                        ctx.assignments
+                        dst)
+                      "")]
+                  (match (if split-3op?
+                    (be_scalar.compiler-backend-split-3op-lea-asm
+                      ctx.backend-state
+                      first-disp
+                      (& source)
+                      (& base)
+                      (& dst-home-reg))
+                    (be_state.CompilerBackendMaybeAsm.No))
+                    [(Some split-asm) (Some split-asm)]
+                    [(No)
+                      (Some
+                        (str_cat.str-cat
+                          "    leaq "
+                          (if (= first-disp 0)
+                            ""
+                            (string.int->string first-disp))
+                          "("
+                          base
+                          (if scaled?
+                            (string.substring
+                              first-sib
+                              1
+                              (- (string.string-length first-sib) 1))
+                            (str_cat.str-cat "," source ")"))
+                          ", "
+                          target
+                          "\n"))]))))
             ;; `u = t + k'`: only after a product; two immediate adds are the
             ;; folder's job.
             (match (compiler-backend-gep-fold-offset-operands op2 a b)
@@ -25599,6 +25653,9 @@ tl_shared_object_init:
           (be_peephole.compiler-backend-peephole-compact-records!
             backend-state
             (&mut records)))]
+      [scratch-arena : arena.Arena (arena.current)]
+      [merge? : bool
+        (be_state.compiler-backend-state-tail-merging-enabled? backend-state)]
       [finished : be_state.CompilerBackendPeepholeSweepChunkState
         (unsafe
           ;; unsafe: a bare handle to the same home arena keeps an `in-arena`
@@ -25611,13 +25668,24 @@ tl_shared_object_init:
                 (be_peephole.compiler-backend-expand-stack-probes!
                   backend-state
                   (&mut records))]
+              ;; Win64 renders into scratch: the unwind lowering writes the
+              ;; group's only home copy.
               [kept : String
-                (be_peephole.compiler-backend-peephole-records-render
-                  records
-                  (be_state.compiler-backend-state-tail-merging-enabled?
-                    backend-state)
-                  (be_state.compiler-backend-state-tail-merging-enabled?
-                    backend-state))]
+                (if (be_state.compiler-backend-state-emission-target-policy
+                  backend-state).seh-unwind
+                  (in-arena
+                    (arena.Arena (arena.raw-handle scratch-arena))
+                    (be_peephole.compiler-backend-win64-lower-unwind
+                      stream
+                      (be_peephole.compiler-backend-peephole-records-render
+                        records
+                        merge?
+                        merge?)
+                      (arena.Arena (arena.raw-handle home-arena))))
+                  (be_peephole.compiler-backend-peephole-records-render
+                    records
+                    merge?
+                    merge?))]
               (be_state.CompilerBackendPeepholeSweepChunkState
                 (text_buf.append state.out kept)
                 (text_buf.empty)
@@ -25652,6 +25720,13 @@ tl_shared_object_init:
       (set!
         (deref data).assembly-out
         (in-arena (arena.Arena (arena.raw-handle home-arena)) (text_buf.empty)))
+      (set!
+        (deref data).win64-xdata-ids
+        (in-arena
+          (arena.Arena (arena.raw-handle home-arena))
+          (backend_string_i64_map.with-capacity 16)))
+      (set! (deref data).win64-xdata-count 0)
+      (set! (deref data).win64-unwind-end-count 0)
       (set! (deref data).assembly-home-arena home-arena)
       (set! (deref data).assembly-sweep-cursor 0)
       (set! (deref data).assembly-batch batch)

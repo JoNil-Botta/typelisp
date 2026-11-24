@@ -12,9 +12,9 @@ in fn _tl_divmagic_hoist_modsum
 not-contains movabsq $1000000007
 count >= 1 ^[[:space:]]+imulq \$1000000007, %r[a-z0-9]+, %r[a-z0-9]+$
 in fn _tl_divmagic_hoist_digitsum
-count-fixed = 1 movabsq $7378697629483820647
+count-fixed = 1 movabsq $-3689348814741910323
 not-contains movabsq $10
-count >= 1 ^[[:space:]]+imulq \$10, %r[a-z0-9]+, %r[a-z0-9]+$
+count >= 1 ^[[:space:]]+imulq \$-10, %r[a-z0-9]+, %r[a-z0-9]+$
 in fn _tl_divmagic_hoist_dividend_copy_pair
 metric copy-chains-to-rax = 1
 

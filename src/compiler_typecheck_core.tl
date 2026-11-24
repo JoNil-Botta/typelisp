@@ -124020,7 +124020,12 @@
             [_ (Ok fast-out)])]
         [(Err _) (Ok fast-out)])]
     (if retry-needs-outer-expected?
-      (tc-macro-scratch-without-expected-bump! macro-state)
+      (begin
+        (tc-macro-scratch-without-expected-bump! macro-state)
+        (match (& repaired)
+          [(Err _)
+            (tc-macro-scratch-error-without-expected-set! macro-state true)]
+          [(Ok _) unit]))
       (tc-macro-scratch-without-expected-restore! macro-state scratch-mark))
     repaired))
 
@@ -124165,11 +124170,7 @@
               expr-bases
               (& args)
               first-fire-index)
-            (and
-              (tc-macro-scratch-error-retrying? macro-state)
-              (match (& call-expected)
-                [(Some _) true]
-                [(No) false])))]
+            (tc-macro-scratch-error-retrying? macro-state))]
         (if (not skip-fast-path?)
           (let
             [fast-out : ast.AstExprList

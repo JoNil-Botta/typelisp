@@ -3611,6 +3611,24 @@
     (+
       (take-outer (BoxInner (if true (with-scratch (Wrap 1)) (d.Inner.Wrap 0))))
       (take-outer out))))")
+    (compiler-typecheck-ok?
+      "(module dep)
+(defenum Inner (Wrap i64))
+(defenum Outer (BoxInner Inner))
+(module main)
+(import dep as d)
+(defenum LocalInner (Wrap i64) (Fn (-> i64 i64)))
+(defenum OtherInner (Wrap i64))
+(defenum LocalOuter (BoxInner LocalInner))
+(define (take-outer [x : d.Outer]) : i64
+  (match x [(d.Outer.BoxInner (d.Inner.Wrap n)) n]))
+(define (main) : i64
+  (let
+    [out : d.Outer (d.Outer.BoxInner (d.Inner.Wrap 0))]
+    (set! out (BoxInner (if true (with-scratch (Wrap 1)) (d.Inner.Wrap 0))))
+    (+
+      (take-outer (BoxInner (if true (with-scratch (Wrap 1)) (d.Inner.Wrap 0))))
+      (take-outer out))))")
     (compiler-typecheck-with-escape-shadowed-ok-reapply-ok?)
     (compiler-typecheck-error-ok?
       "(module dep)
@@ -3629,6 +3647,24 @@
     (Step (box (Step (box (Step (box (Step (box (Step (box
       (Leaf (if true (with-scratch (Wrap 1)) (LocalBad.Wrap 0)))
     ))))))))))))))))))))))))))))))))))))))))))))))))))))"
+      "typecheck: with-scratch clone-out of main/LocalBad: result cannot contain a function, arena handle, or reference")
+    (compiler-typecheck-error-ok?
+      "(module dep)
+(defenum Outer (Step (Box Outer)) (Leaf i64))
+(module main)
+(import dep as d)
+(defenum LocalBad (Wrap i64) (Fn (-> i64 i64)))
+(defenum LocalOuter (Step (Box LocalOuter)) (Leaf LocalBad))
+(define (take-local [x : LocalOuter]) : i64 0)
+(define (main) : i64
+  (take-local
+    (Step 0 (Step 0 (Step 0 (Step 0 (Step 0
+    (Step 0 (Step 0 (Step 0 (Step 0 (Step 0
+    (Step 0 (Step 0 (Step 0 (Step 0 (Step 0
+    (Step 0 (Step 0 (Step 0 (Step 0 (Step 0
+    (Step 0 (Step 0 (Step 0 (Step 0 (Step 0
+      (Leaf (if true (with-scratch (Wrap 1)) (LocalBad.Wrap 0)))
+    )))))))))))))))))))))))))))"
       "typecheck: with-scratch clone-out of main/LocalBad: result cannot contain a function, arena handle, or reference")
     (compiler-typecheck-error-ok?
       "(module dep)

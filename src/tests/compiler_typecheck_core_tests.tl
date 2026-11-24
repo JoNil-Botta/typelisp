@@ -61,30 +61,47 @@
     [(Ok (Program decls)) (deref decls)]
     [_ (io.panic "module carry fixture did not parse")]))
 
+(define (tc-test-copy-decl-list [items : (& items ast.AstDeclList)]) : ast.AstDeclList
+  (let
+    [out : ast.AstDeclList
+      (ast.ast-decl-list-with-capacity (ast.ast-decl-list-len items))]
+    (ast.ast-decl-list-append-from (&mut out) items 0)
+    out))
+
+(define (tc-module-carry-test-rebuild-part
+  [ctx : tc_core.TcContext]
+  [env : tc_core.TcTypeEnv]
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [decls : (& decls ast.AstDeclList)]) : tc_core.TcTypeEnv
+  (let
+    [out : tc_core.TcTypeEnv env]
+    (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+      (set!
+        out
+        (match (tc_core.tc-module-local-env-add-decl
+          ctx
+          out
+          seen
+          (ast.ast-decl-list-ref decls index))
+          [(Ok value) value]
+          [_ (io.panic "canonical module-view rebuild failed")])))
+    out))
+
 ;; The oracle always walks every source row, starting from a fresh name
 ;; map; it never reads or carries a cached module view.
 (define (tc-module-carry-test-rebuild
   [ctx : tc_core.TcContext]
   [base : tc_core.TcTypeEnv]
-  [old : ast.AstDeclList]
-  [delta : ast.AstDeclList]) : tc_core.TcTypeEnv
+  [old : (& old ast.AstDeclList)]
+  [delta : (& delta ast.AstDeclList)]) : tc_core.TcTypeEnv
   (let
     [seen : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 4)]
-    [env : tc_core.TcTypeEnv base]
-    [lists : (Array ast.AstDeclList 2) (array old delta)]
-    (for [part (iterator.range 0 2)]
-      (let
-        [decls : ast.AstDeclList (clone (array-ref lists part))]
-        (for [index (iterator.range 0 (ast.ast-decl-list-len (& decls)))]
-          (set!
-            env
-            (match (tc_core.tc-module-local-env-add-decl
-              ctx
-              env
-              (&mut seen)
-              (ast.ast-decl-list-ref decls index))
-              [(Ok value) value]
-              [_ (io.panic "canonical module-view rebuild failed")])))))
+    [env : tc_core.TcTypeEnv
+      (tc-module-carry-test-rebuild-part
+        ctx
+        (tc-module-carry-test-rebuild-part ctx base (&mut seen) old)
+        (&mut seen)
+        delta)]
     (tc_core.tc-env-with-cache-layer-over-explicit env)))
 
 (define (tc-module-carry-test-lookup-equal?
@@ -179,7 +196,7 @@
             (match (tc_core.tc-extend-top-env-for-splice
               ctx
               base
-              (clone delta)
+              (& delta)
               "carry-owner"
               module-id)
               [(Ok env) env]
@@ -195,7 +212,7 @@
             ctx
             base
             (&mut seen)
-            (clone old))
+            (& old))
             [(Ok env) env]
             [_ (io.panic "initial module view failed")])]
         (when
@@ -248,7 +265,7 @@
           ctx
           base
           top
-          (clone delta)
+          (& delta)
           "carry-owner"
           (if (string.eq mode "root")
             cbi.compiler-builtin-id-fix-empty
@@ -272,7 +289,7 @@
             (let
               [actual : tc_core.TcTypeEnv (array-ref data.macro-cache-values 0)]
               [expected : tc_core.TcTypeEnv
-                (tc-module-carry-test-rebuild ctx top (clone old) (clone delta))]
+                (tc-module-carry-test-rebuild ctx top (& old) (& delta))]
               [names
                 (array
                   (ci.intern "kept")
@@ -325,7 +342,7 @@
                       (match (tc_core.tc-extend-top-env-for-splice
                         ctx
                         top
-                        (clone next-rows)
+                        (& next-rows)
                         "carry-owner"
                         module-id)
                         [(Ok value) value]
@@ -334,7 +351,7 @@
                       ctx
                       top
                       next-top
-                      (clone next-rows)
+                      (& next-rows)
                       "carry-owner"
                       module-id)
                     (let
@@ -344,8 +361,8 @@
                         (tc-module-carry-test-rebuild
                           ctx
                           next-top
-                          (clone all-rows)
-                          (clone next-rows))]
+                          (& all-rows)
+                          (& next-rows))]
                       [keys
                         (array
                           (ci.intern "kept")
@@ -391,7 +408,7 @@
                         (match (tc_core.tc-extend-top-env-for-splice
                           ctx
                           top
-                          (clone next-rows)
+                          (& next-rows)
                           "carry-owner"
                           module-id)
                           [(Ok value) value]
@@ -423,7 +440,7 @@
                         ctx
                         top
                         next-top
-                        (clone next-rows)
+                        (& next-rows)
                         "carry-owner"
                         module-id)
                       (test.assert-true
@@ -955,12 +972,13 @@
         (tc_core.tc-job-state-checked-let-binding-facts job)]
       [module-a : i64 (ci.intern "checked-let-module-a")]
       [module-b : i64 (ci.intern "checked-let-module-b")]
+      [decl-body-id : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 0)))]
       [decl : ast.AstDecl
         (ast.ast-decl-def-fn-id
           (ci.intern "checked-let-function")
           (ast.ast-param-list-new)
           (I64)
-          (ast.ast-node-push (Literal (ast.ast-lit-int 0))))]
+          decl-body-id)]
       [transition : tc_core.TcCheckedLetBindingTransition
         (tc_core.TcCheckedLetBindingTransition 0 -1)]
       (tc_core.tc-checked-let-binding-facts-begin! facts false)
@@ -1024,7 +1042,14 @@
             [_ false]))
         "shared body nodes retain each declaration's checked type")
       (let
-        [wrapped : ast.AstDecl (Unsafe (box (clone decl)))]
+        [wrapped : ast.AstDecl
+          (Unsafe
+            (box
+              (ast.ast-decl-def-fn-id
+                (ci.intern "checked-let-function")
+                (ast.ast-param-list-new)
+                (I64)
+                decl-body-id)))]
         (test.assert-true
           (=
             (tc_core.tc-checked-let-binding-facts-declaration-ordinal
@@ -1405,7 +1430,7 @@
         13
         17
         (if (= (% index 2) 0)
-          (clone func-ty)
+          (ast.clone-ast-type (& func-ty))
           (I64))
         transition))
     (let
@@ -1430,7 +1455,7 @@
               (ast.ast-type-eq?
                 ty
                 (if (= (% index 2) 0)
-                  (clone func-ty)
+                  (ast.clone-ast-type (& func-ty))
                   (I64)))]
             [_ false])
           "every compacted fact keeps its checked type")))
@@ -10107,7 +10132,7 @@
         (array-ref segmented index)
         (match (tc_core.macro-import-alias-target-cached-id
           macro-state
-          (clone flat-decls)
+          (tc-test-copy-decl-list (& flat-decls))
           (array-ref pairs index)
           (array-ref pairs (+ index 1)))
           [(Some target) target]
@@ -10122,7 +10147,7 @@
         (array-ref segmented index)
         (match (tc_core.macro-import-alias-target-cached-id
           macro-state
-          (clone flat-decls)
+          (tc-test-copy-decl-list (& flat-decls))
           (array-ref pairs index)
           (array-ref pairs (+ index 1)))
           [(Some target) target]
@@ -10378,7 +10403,8 @@
       [decls : ast.AstDeclList (tc-module-carry-test-decls pools (& source))]
       [paths : ast.AstDeclPathList
         (tc_core.macro-paths-for-decls state (& decls) "alias-retain")]
-      [program : ast.AstProgram (ast.ast-program (clone decls))]
+      [program : ast.AstProgram
+        (ast.ast-program (tc-test-copy-decl-list (& decls)))]
       [symbols : csym.CompilerSymbols
         (match (tc_core.macro-live-symbols-build-or-reuse!
           state
@@ -10420,7 +10446,7 @@
         job
         (ast.ast-decl-list-new)
         (ast.ast-decl-path-list-new)
-        (clone decls)
+        (tc-test-copy-decl-list (& decls))
         paths)
       (macro-segmented-events-emit! job 3)
       (for [index (iterator.range 0 32)]
@@ -10492,28 +10518,28 @@
                 "shadows, dotted names, imports and markers rebuild")))
           (tc_core.macro-segmented-program-splice-current!
             job
-            (clone delta)
-            (clone delta-paths))
+            (tc-test-copy-decl-list (& delta))
+            (ast.clone-ast-decl-path-list (& delta-paths)))
           (test.assert-true
             (tc_core.macro-live-symbols-insert-decls!
               state
-              (clone delta)
+              (tc-test-copy-decl-list (& delta))
               module-id)
             "fresh symbols committed")
           (test.assert-true
             (tc_core.macro-live-registries-append-decls!
               state
-              (clone delta)
-              (clone delta-paths)
+              (tc-test-copy-decl-list (& delta))
+              (ast.clone-ast-decl-path-list (& delta-paths))
               module-id)
             "fresh registries committed")
           (match (tc_core.macro-expand-rebuild-context-for-splice
             ctx
-            (clone delta)
+            (tc-test-copy-decl-list (& delta))
             delta-paths
             "alias-retain"
             module-id
-            (Extend base (clone delta))
+            (Extend base (tc-test-copy-decl-list (& delta)))
             inert?)
             [(Ok next-ctx next-top)
               (test.assert-true
@@ -10545,7 +10571,7 @@
       (test.assert-true
         (match (tc_core.macro-import-alias-target-cached-id-in-context
           ctx
-          (clone decls)
+          (tc-test-copy-decl-list (& decls))
           module-id
           missing)
           [(Some target) (= target (ci.intern "lazy-target"))]
@@ -10558,7 +10584,7 @@
       (test.assert-true
         (match (tc_core.macro-import-alias-target-cached-id-in-context
           ctx
-          (clone decls)
+          (tc-test-copy-decl-list (& decls))
           module-id
           missing)
           [(No) true]
@@ -10567,7 +10593,7 @@
       (tc_core.macro-segmented-program-end! job)
       (match (tc_core.macro-import-alias-target-cached-id-in-context
         ctx
-        (clone decls)
+        (tc-test-copy-decl-list (& decls))
         module-id
         missing)
         [_ unit])
@@ -11432,9 +11458,11 @@
           (for [index (iterator.range 0 count)]
             (ast.ast-type-list-push (&mut source) (array-ref ids (% index 3))))
           ;; Prime name/predicate caches so this measures list construction.
-          (tc_core.tc-resolve-type-list ctx (clone source))
+          (tc_core.tc-resolve-type-list
+            ctx
+            (ast.clone-ast-type-list (& source)))
           (let
-            [input : ast.AstTypeList (clone source)]
+            [input : ast.AstTypeList (ast.clone-ast-type-list (& source))]
             [before : i64 (profile.alloc-total)]
             [resolved : ast.AstTypeList
               (tc_core.tc-resolve-type-list ctx input)]
@@ -11485,12 +11513,12 @@
             (let
               [nested : ast.AstType
                 (ast.ast-ty-func
-                  (clone source)
-                  (& (ast.ast-ty-tuple (clone source))))]
+                  (ast.clone-ast-type-list (& source))
+                  (& (ast.ast-ty-tuple (ast.clone-ast-type-list (& source)))))]
               [actual : ast.AstType (tc_core.tc-resolve-type ctx nested)]
               [expected : ast.AstType
                 (ast.ast-ty-func
-                  (clone resolved)
+                  (ast.clone-ast-type-list (& resolved))
                   (& (ast.ast-ty-tuple resolved)))]
               (test.assert-true
                 (ast.ast-type-eq? actual expected)
@@ -13775,7 +13803,7 @@
         (match (parser.parse-ast-expr-with-pools
           (parser.compiler-parse-dispatch-env)
           (tc_core.tc-context-pools ctx)
-          (macro-output-source-sexpr (clone form)))
+          (macro-output-source-sexpr (string.copy (& form))))
           [(Ok value) value]
           [_ (io.panic "query staging fixture must parse")])]
       [source : ownership.OwnershipSource
@@ -13816,7 +13844,9 @@
             (tc_core.TcSelectedSink.Query))
           (let
             [_allocated : i64 (- (profile.alloc-total) before)]
-            (test.assert-true (tc_core.tc-type-eq ty want) (clone form))
+            (test.assert-true
+              (tc_core.tc-type-eq ty want)
+              (string.copy (& form)))
             (cfg
               compile-profile
               (test.assert-true
@@ -18049,14 +18079,16 @@
             (check.compiler-check-language-cfgs))]
         [decls : ast.AstDeclList
           (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
-            (clone path)
+            (string.copy (& path))
             "(define (immediate) : i64
                ((lambda ([lambda-arg : i64]) : i64 (+ lambda-arg 1)) 41))"
             cfgs)
             [(Parsed (Program decls) _) (deref decls)]
             [_ (io.panic "immediate lambda fixture must parse")])]
         [recorder : facts.CompilerSemanticFactRecorder
-          (facts.compiler-semantic-fact-recorder-new (clone path) false)]
+          (facts.compiler-semantic-fact-recorder-new
+            (string.copy (& path))
+            false)]
         (tc_core.tc-job-state-set-parser-control!
           job
           (parser.compiler-parse-state-control-addr (& parse-state)))
@@ -18066,7 +18098,7 @@
         (let
           [result : check.ResultCompilerCheck
             (check.compiler-check-program
-              (clone path)
+              (string.copy (& path))
               decls
               (ast.ast-decl-root-path-cons path (ast.ast-decl-path-list-new))
               (svec.new)
@@ -18155,7 +18187,8 @@
               (match (parser.parse-ast-expr-with-pools
                 (parser.compiler-parse-dispatch-env)
                 pools
-                (macro-output-source-sexpr (clone (array-ref cases i))))
+                (macro-output-source-sexpr
+                  (string.copy (& (array-ref cases i)))))
                 [(Ok value) value]
                 [_ (io.panic "selected scope fixture must parse")])]
             [bindings : tc_core.TcSelectedBindings
@@ -18264,7 +18297,9 @@
         [operand : ast.AstExpr
           (Begin (ast.ast-expr-cons variable (& (ast.ast-expr-list-new))))]
         [operand-id : i64
-          (ast.ast-node-pool-context-expr-push pools (clone operand))]
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (Begin (ast.ast-expr-cons variable (& (ast.ast-expr-list-new)))))]
         [expression : i64
           (ast.ast-node-pool-context-expr-push
             pools
@@ -18445,9 +18480,12 @@
             0
             0
             (ownership.ownership-expansion-none))]
-        [func-expr : ast.AstExpr (ast.AstExpr.Var (ci.intern "length"))]
+        [func-name : i64 (ci.intern "length")]
+        [func-expr : ast.AstExpr (ast.AstExpr.Var func-name)]
         [func-id : i64
-          (ast.ast-node-pool-context-expr-push pools (clone func-expr))]
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Var func-name))]
         [arg-var : i64
           (ast.ast-node-pool-context-expr-push
             pools
@@ -18464,7 +18502,7 @@
           (tc_core.tc-bind-id
             (tc_core.tc-empty-env)
             (ci.intern "s")
-            (clone tagged))]
+            (ast.clone-ast-type (& tagged)))]
         [str-fn : ast.AstType
           (ast.ast-ty-func-with-pools
             pools
@@ -18473,7 +18511,7 @@
         (match (tc_core.tc-infer-selected-call-signature
           ctx
           region-env
-          (clone func-expr)
+          (ast.AstExpr.Var func-name)
           func-id
           -1
           str-fn
@@ -18650,7 +18688,7 @@
             [(tc_core.TcSelectedResult.Err message _)
               (let
                 [diag : cdiag.CompilerDiagnostic
-                  (tc_core.tc-diag-at-start (clone message))]
+                  (tc_core.tc-diag-at-start (string.copy (& message)))]
                 (if (string.eq
                   (cdiag.compiler-diagnostic-code-or-empty (& diag))
                   "E0210")
@@ -18680,9 +18718,12 @@
         [bindings : tc_core.TcSelectedBindings
           (tc_core.tc-selected-bindings-new (& lease))]
         [store : typed.TypedStore (tc-selected-test-store (& lease))]
-        [func-expr : ast.AstExpr (ast.AstExpr.Var (ci.intern "arena.make"))]
+        [func-name : i64 (ci.intern "arena.make")]
+        [func-expr : ast.AstExpr (ast.AstExpr.Var func-name)]
         [func-id : i64
-          (ast.ast-node-pool-context-expr-push pools (clone func-expr))]
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Var func-name))]
         [args : ast.AstExprList (ast.ast-expr-list-new)]
         [i64-ty : ast.AstType ast.AstType.I64]
         [fn-ty : ast.AstType

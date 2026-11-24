@@ -1243,6 +1243,15 @@
   (generation i64)
   (canon (__tl_dyn-array i64))
   (canon-len i64)
+  ;; Structural selected-type hash cache (0 = uncached, 1 = poison, else hash)
+  ;; and lazy (min, max) pair memo for deep DAG comparisons (vals: 0 empty,
+  ;; 1 false, 2 true). Cleared on pool revision/generation changes and freed
+  ;; with `owner` on `tc-type-walk-table-release!`.
+  (selected-hash (__tl_dyn-array i64))
+  (selected-hash-len i64)
+  (selected-pair-keys (__tl_dyn-array i64))
+  (selected-pair-vals (__tl_dyn-array i64))
+  (selected-pair-count i64)
   ;; Walk-scoped traversal results (#9581 A''): an entry is serial * 2 while
   ;; in progress and serial * 2 + 1 once completed. Serials never repeat above
   ;; `floor`; a pool change raises `floor` to the last issued serial.
@@ -1435,6 +1444,11 @@
             (__tl_make-array i64 0)
             0
             (__tl_make-array i64 0)
+            0
+            (__tl_make-array i64 0)
+            (__tl_make-array i64 0)
+            0
+            (__tl_make-array i64 0)
             (__tl_make-array i64 0)
             0
             0
@@ -1511,6 +1525,17 @@
             (for [at (iterator.range 0 (deref table).canon-len)]
               (set! (array-ref (deref table).canon at) 0))
             (set! (deref table).canon-len 0)
+            (for [at (iterator.range 0 (deref table).selected-hash-len)]
+              (set! (array-ref (deref table).selected-hash at) 0))
+            (set! (deref table).selected-hash-len 0)
+            (when
+              (> (deref table).selected-pair-count 0)
+              (for [at
+                (iterator.range
+                  0
+                  (array-length (deref table).selected-pair-vals))]
+                (set! (array-ref (deref table).selected-pair-vals at) 0))
+              (set! (deref table).selected-pair-count 0))
             (set! (deref table).cell ast.ty-node-pool-revision-cell)
             (set!
               (deref table).revision
@@ -132392,15 +132417,16 @@
   ;; The representative of each record type already classified
   ;; (`tc-selected-classify!`).
   (raw TcSelectedShallowIndex)
-  ;; The representatives of each bucket (`tc-selected-representative-bucket`)
-  ;; in order: its first and last (index + 1, 0 none) and, per
-  ;; representative, the next one in its bucket (index + 1, 0 none).
+  ;; The representatives hashed by structural selected-type hash
+  ;; (`tc-selected-hash-type`) in order: each power-of-2 bucket's first and
+  ;; last representative (index + 1, 0 none), each representative's next in its
+  ;; bucket (index + 1, 0 none), and its cached structural hash.
   (bucket-heads (__tl_dyn-array i64))
   (bucket-tails (__tl_dyn-array i64))
   (representative-next (__tl_dyn-array i64))
-  ;; Whether a representative is the poison type under at most one wrapper,
-  ;; which matches every variant there: scans then visit every
-  ;; representative.
+  (representative-hashes (__tl_dyn-array i64))
+  ;; Whether any representative contains the poison type, which matches every
+  ;; plain variant: scans then visit every representative.
   (poisoned? bool))
 
 ;; Types by shallow value (variant, payloads and child node ids; nodes never
@@ -132440,8 +132466,9 @@
       (ownership_normalize.ownership-normalize-variances-empty)
       memo
       raw
-      (__tl_make-array i64 tc-selected-bucket-count)
-      (__tl_make-array i64 tc-selected-bucket-count)
+      (tc-selected-no-i64s)
+      (tc-selected-no-i64s)
+      (tc-selected-no-i64s)
       (tc-selected-no-i64s)
       false)))
 
@@ -132954,204 +132981,508 @@
 
 ;; Type identity for the ownership graph. `tc-type-eq` ignores region tags,
 ;; but a region-tagged view and an owned value are different occurrences;
-;; lifetime names do not matter, since loans travel as origins, so references
-;; and views compare by mutability and referent alone.
-;; Not a reference or a region-tagged view: `tc-type-eq` would equate a view
-;; with the value it reads, which the graph keeps apart.
-(define (tc-selected-plain-type? [ty : ast.AstType]) : bool
-  (match ty
-    [(ast.AstType.Ref _ _) false]
-    [(ast.AstType.MutRef _ _) false]
-    [(ast.AstType.Region _ _) false]
-    [_ true]))
+;; lifetime names do not matter, since loans travel as origins, so references,
+;; views and lifetime-parameterized nominals compare by shape and canonical
+;; nominal identity alone.
+;;
+;; Structural hash sentinel in `TcTypeWalkTable.selected-hash`: 0 = uncached,
+;; 1 = contains the poison type anywhere, any other i64 = non-poison hash.
+(define tc-selected-hash-poison : i64
+  1)
 
-(define (tc-selected-same-type? [left : ast.AstType] [right : ast.AstType]) : bool
-  (match (tc-global-shared-view left)
+(define (tc-selected-hash-finalize [raw : i64]) : i64
+  (if (or (= raw 0) (= raw tc-selected-hash-poison))
+    2
+    raw))
+
+(define (tc-selected-hash-slot [hash : i64] [mask : i64]) : i64
+  (bit-and (* (bit-xor hash (shr hash 32)) 2654435761) mask))
+
+(define (tc-selected-hash-store! [address : i64] [id : i64] [value : i64]) : unit
+  (let
+    [table : (MutPtr TcTypeWalkTable)
+      (tc-state-cell-ptr address TcTypeWalkTable)]
+    (unsafe
+      (when
+        (>= id (array-length (deref table).selected-hash))
+        (set!
+          (deref table).selected-hash
+          (tc-type-walk-grown
+            (deref table).owner
+            (deref table).selected-hash
+            (deref table).selected-hash-len
+            (+ id 1))))
+      (when
+        (>= id (deref table).selected-hash-len)
+        (for [at (iterator.range (deref table).selected-hash-len (+ id 1))]
+          (set! (array-ref (deref table).selected-hash at) 0))
+        (set! (deref table).selected-hash-len (+ id 1)))
+      (set! (array-ref (deref table).selected-hash id) value))))
+
+(define (tc-selected-hash-id [address : i64] [id : i64]) : i64
+  (if (and (> address 0) (>= id 0))
+    (let
+      [table : (Ptr TcTypeWalkTable)
+        (tc-state-cell-view address TcTypeWalkTable)]
+      [known : i64
+        (unsafe
+          (if (< id (deref table).selected-hash-len)
+            (array-ref (deref table).selected-hash id)
+            0))]
+      (if (!= known 0)
+        known
+        (let
+          [node : ast.AstType (ast.ty-node-get id)]
+          [computed : i64 (tc-selected-hash-type address (& node))]
+          (tc-selected-hash-store! address id computed)
+          computed)))
+    (let
+      [node : ast.AstType (ast.ty-node-get id)]
+      (tc-selected-hash-type 0 (& node)))))
+
+(define (tc-selected-hash-wrapped [address : i64] [seed : i64] [inner : i64]) : i64
+  (let
+    [inner-hash : i64 (tc-selected-hash-id address inner)]
+    (if (= inner-hash tc-selected-hash-poison)
+      tc-selected-hash-poison
+      (tc-selected-hash-finalize (hash.combine seed inner-hash)))))
+
+(define (tc-selected-hash-list
+  [address : i64]
+  [types : (& types ast.AstTypeList)]
+  [seed : i64]) : i64
+  (let
+    [len : i64 (ast.ast-type-list-len types)]
+    [acc : i64 (hash.combine seed len)]
+    [index : i64 0]
+    [poison? : bool false]
+    (while (and (not poison?) (< index len))
+      (let
+        [part : i64
+          (tc-selected-hash-id
+            address
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+        (if (= part tc-selected-hash-poison)
+          (set! poison? true)
+          (set! acc (hash.combine acc part))))
+      (set! index (+ index 1)))
+    (if poison?
+      tc-selected-hash-poison
+      (tc-selected-hash-finalize acc))))
+
+;; Structural hash invariant under `tc-selected-same-type?` for all non-poison
+;; types; returns `tc-selected-hash-poison` whenever the type contains poison.
+(define (tc-selected-hash-type [address : i64] [ty : (& ty ast.AstType)]) : i64
+  (match ty
+    [(ast.AstType.Ref _ inner) (tc-selected-hash-wrapped address 25 inner)]
+    [(ast.AstType.MutRef _ inner) (tc-selected-hash-wrapped address 26 inner)]
+    [(ast.AstType.Region _ inner) (tc-selected-hash-wrapped address 24 inner)]
+    [(ast.AstType.Enum name)
+      (tc-selected-hash-finalize
+        (hash.combine 27 (csym.compiler-symbol-name-id-key name)))]
+    [(ast.AstType.EnumArgs name _)
+      (tc-selected-hash-finalize
+        (hash.combine 28 (csym.compiler-symbol-name-id-key name)))]
+    [(ast.AstType.Struct name)
+      (tc-selected-hash-finalize
+        (hash.combine 29 (csym.compiler-symbol-name-id-key name)))]
+    [(ast.AstType.StructArgs name _)
+      (tc-selected-hash-finalize
+        (hash.combine 30 (csym.compiler-symbol-name-id-key name)))]
+    [(ast.AstType.Var name)
+      (if (= name tc-poison-type-name-id)
+        tc-selected-hash-poison
+        (tc-selected-hash-finalize
+          (hash.combine 31 (csym.compiler-symbol-name-id-key name))))]
+    [(ast.AstType.VarArgs name _)
+      (tc-selected-hash-finalize
+        (hash.combine 32 (csym.compiler-symbol-name-id-key name)))]
+    [(ast.AstType.Tuple elems)
+      (tc-selected-hash-list address (& (deref elems)) 20)]
+    [(ast.AstType.Array elem count)
+      (let
+        [elem-hash : i64 (tc-selected-hash-id address elem)]
+        (if (= elem-hash tc-selected-hash-poison)
+          tc-selected-hash-poison
+          (tc-selected-hash-finalize
+            (hash.combine (hash.combine 21 elem-hash) count))))]
+    [(ast.AstType.DynArray elem) (tc-selected-hash-wrapped address 22 elem)]
+    [(ast.AstType.Box elem) (tc-selected-hash-wrapped address 23 elem)]
+    [(ast.AstType.Slice elem) (tc-selected-hash-wrapped address 37 elem)]
+    [(ast.AstType.Ptr elem) (tc-selected-hash-wrapped address 33 elem)]
+    [(ast.AstType.MutPtr elem) (tc-selected-hash-wrapped address 34 elem)]
+    [(ast.AstType.Func params ret)
+      (let
+        [params-hash : i64
+          (tc-selected-hash-list address (& (deref params)) 19)]
+        (if (= params-hash tc-selected-hash-poison)
+          tc-selected-hash-poison
+          (let
+            [ret-hash : i64 (tc-selected-hash-id address ret)]
+            (if (= ret-hash tc-selected-hash-poison)
+              tc-selected-hash-poison
+              (tc-selected-hash-finalize (hash.combine params-hash ret-hash))))))]
+    [(ast.AstType.CFunc _ mode)
+      (tc-selected-hash-finalize
+        (hash.combine 38 (ast.ast-c-function-mode-key mode)))]
+    [(ast.AstType.Invalidate lifetime _)
+      (tc-selected-hash-finalize (hash.combine 39 lifetime))]
+    [_ (+ (ast.ast-type-tag ty) 100)]))
+
+(define (tc-selected-pair-slot [lo : i64] [hi : i64] [mask : i64]) : i64
+  (tc-selected-hash-slot (hash.combine lo hi) mask))
+
+(define (tc-selected-pair-probe [address : i64] [lo : i64] [hi : i64]) : i64
+  (let
+    [table : (Ptr TcTypeWalkTable) (tc-state-cell-view address TcTypeWalkTable)]
+    (unsafe
+      (let
+        [cap : i64 (array-length (deref table).selected-pair-vals)]
+        (if (= cap 0)
+          0
+          (let
+            [mask : i64 (- cap 1)]
+            [slot : i64 (tc-selected-pair-slot lo hi mask)]
+            [result : i64 -1]
+            (while (< result 0)
+              (let
+                [val : i64 (array-ref (deref table).selected-pair-vals slot)]
+                (cond
+                  [(= val 0) (set! result 0)]
+                  [(and
+                      (=
+                        (array-ref (deref table).selected-pair-keys (* slot 2))
+                        lo)
+                      (=
+                        (array-ref
+                          (deref table).selected-pair-keys
+                          (+ (* slot 2) 1))
+                        hi))
+                    (set! result val)]
+                  [else (set! slot (bit-and (+ slot 1) mask))])))
+            result))))))
+
+(define (tc-selected-pair-store!
+  [address : i64]
+  [lo : i64]
+  [hi : i64]
+  [same? : bool]) : unit
+  (let
+    [table : (MutPtr TcTypeWalkTable)
+      (tc-state-cell-ptr address TcTypeWalkTable)]
+    [encoded : i64
+      (if same?
+        2
+        1)]
+    (unsafe
+      (let
+        [cap : i64 (array-length (deref table).selected-pair-vals)]
+        (when
+          (>= (* (+ (deref table).selected-pair-count 1) 2) cap)
+          (let
+            [new-cap : i64
+              (if (= cap 0)
+                256
+                (* cap 2))]
+            [new-mask : i64 (- new-cap 1)]
+            [new-keys : (__tl_dyn-array i64)
+              (in-arena
+                (arena.Arena (deref table).owner)
+                (__tl_make-array i64 (* new-cap 2)))]
+            [new-vals : (__tl_dyn-array i64)
+              (in-arena
+                (arena.Arena (deref table).owner)
+                (__tl_make-array i64 new-cap))]
+            (for [at (iterator.range 0 cap)]
+              (let
+                [val : i64 (array-ref (deref table).selected-pair-vals at)]
+                (when
+                  (!= val 0)
+                  (let
+                    [klo : i64
+                      (array-ref (deref table).selected-pair-keys (* at 2))]
+                    [khi : i64
+                      (array-ref
+                        (deref table).selected-pair-keys
+                        (+ (* at 2) 1))]
+                    [dst : i64 (tc-selected-pair-slot klo khi new-mask)]
+                    (while (!= (array-ref new-vals dst) 0)
+                      (set! dst (bit-and (+ dst 1) new-mask)))
+                    (set! (array-ref new-keys (* dst 2)) klo)
+                    (set! (array-ref new-keys (+ (* dst 2) 1)) khi)
+                    (set! (array-ref new-vals dst) val)))))
+            (set! (deref table).selected-pair-keys new-keys)
+            (set! (deref table).selected-pair-vals new-vals)
+            (set! cap new-cap)))
+        (let
+          [mask : i64 (- cap 1)]
+          [slot : i64 (tc-selected-pair-slot lo hi mask)]
+          [done : bool false]
+          (while (not done)
+            (let
+              [val : i64 (array-ref (deref table).selected-pair-vals slot)]
+              (cond
+                [(= val 0)
+                  (set!
+                    (array-ref (deref table).selected-pair-keys (* slot 2))
+                    lo)
+                  (set!
+                    (array-ref
+                      (deref table).selected-pair-keys
+                      (+ (* slot 2) 1))
+                    hi)
+                  (set!
+                    (array-ref (deref table).selected-pair-vals slot)
+                    encoded)
+                  (set!
+                    (deref table).selected-pair-count
+                    (+ (deref table).selected-pair-count 1))
+                  (set! done true)]
+                [(and
+                  (= (array-ref (deref table).selected-pair-keys (* slot 2)) lo)
+                  (=
+                    (array-ref
+                      (deref table).selected-pair-keys
+                      (+ (* slot 2) 1))
+                    hi))
+                  (set!
+                    (array-ref (deref table).selected-pair-vals slot)
+                    encoded)
+                  (set! done true)]
+                [else (set! slot (bit-and (+ slot 1) mask))]))))))))
+
+(define (tc-poison-type-ref? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Var name) (= name tc-poison-type-name-id)]
+    [_ false]))
+
+(define (tc-selected-same-lifetime-list?
+  [left : (& left ast.AstLifetimeList)]
+  [right : (& right ast.AstLifetimeList)]) : bool
+  (let
+    [len : i64 (ast.ast-lifetime-list-len left)]
+    [same? : bool (= len (ast.ast-lifetime-list-len right))]
+    [index : i64 0]
+    (while (and same? (< index len))
+      (set!
+        same?
+        (=
+          (ast.ast-lifetime-list-get left index (ast.ast-lifetime-fallback))
+          (ast.ast-lifetime-list-get right index (ast.ast-lifetime-fallback))))
+      (set! index (+ index 1)))
+    same?))
+
+(define (tc-selected-same-type-list?
+  [address : i64]
+  [visits : (&mut visits i64)]
+  [left : (& left ast.AstTypeList)]
+  [right : (& right ast.AstTypeList)]) : bool
+  (let
+    [len : i64 (ast.ast-type-list-len left)]
+    [same? : bool (= len (ast.ast-type-list-len right))]
+    [index : i64 0]
+    (while (and same? (< index len))
+      (set!
+        same?
+        (tc-selected-same-type-id?
+          address
+          visits
+          (ast.ast-type-list-get left index (ast.ast-type-id-fallback))
+          (ast.ast-type-list-get right index (ast.ast-type-id-fallback))))
+      (set! index (+ index 1)))
+    same?))
+
+(define (tc-selected-same-type-id?
+  [address : i64]
+  [visits : (&mut visits i64)]
+  [left-id : i64]
+  [right-id : i64]) : bool
+  (if (= left-id right-id)
+    true
+    (begin
+      (set! (deref visits) (+ (deref visits) 1))
+      (if (and (> address 0) (>= left-id 0) (>= right-id 0))
+        (let
+          [left-hash : i64 (tc-selected-hash-id address left-id)]
+          [right-hash : i64 (tc-selected-hash-id address right-id)]
+          (cond
+            [(and
+                (!= left-hash tc-selected-hash-poison)
+                (!= right-hash tc-selected-hash-poison)
+                (!= left-hash right-hash))
+              false]
+            [(>= (deref visits) 64)
+              (let
+                [lo : i64
+                  (if (< left-id right-id)
+                    left-id
+                    right-id)]
+                [hi : i64
+                  (if (< left-id right-id)
+                    right-id
+                    left-id)]
+                [cached : i64 (tc-selected-pair-probe address lo hi)]
+                (if (!= cached 0)
+                  (= cached 2)
+                  (let
+                    [left : ast.AstType (ast.ty-node-get left-id)]
+                    [right : ast.AstType (ast.ty-node-get right-id)]
+                    [same? : bool
+                      (tc-selected-same-type-ref?
+                        address
+                        visits
+                        (& left)
+                        (& right))]
+                    (tc-selected-pair-store! address lo hi same?)
+                    same?)))]
+            [else
+              (let
+                [left : ast.AstType (ast.ty-node-get left-id)]
+                [right : ast.AstType (ast.ty-node-get right-id)]
+                (tc-selected-same-type-ref? address visits (& left) (& right)))]))
+        (let
+          [left : ast.AstType (ast.ty-node-get left-id)]
+          [right : ast.AstType (ast.ty-node-get right-id)]
+          (tc-selected-same-type-ref? address visits (& left) (& right)))))))
+
+(define (tc-selected-same-type-ref?
+  [address : i64]
+  [visits : (&mut visits i64)]
+  [left : (& left ast.AstType)]
+  [right : (& right ast.AstType)]) : bool
+  (match left
     [(ast.AstType.Ref _ inner)
-      (match (tc-global-shared-view right)
+      (match right
         [(ast.AstType.Ref _ other)
-          (tc-selected-same-type?
-            (ast.ty-node-get inner)
-            (ast.ty-node-get other))]
+          (tc-selected-same-type-id? address visits inner other)]
         [_ false])]
     [(ast.AstType.MutRef _ inner)
-      (match (tc-global-shared-view right)
+      (match right
         [(ast.AstType.MutRef _ other)
-          (tc-selected-same-type?
-            (ast.ty-node-get inner)
-            (ast.ty-node-get other))]
+          (tc-selected-same-type-id? address visits inner other)]
         [_ false])]
     [(ast.AstType.Region _ inner)
-      (match (tc-global-shared-view right)
+      (match right
         [(ast.AstType.Region _ other)
-          (tc-selected-same-type?
-            (ast.ty-node-get inner)
-            (ast.ty-node-get other))]
+          (tc-selected-same-type-id? address visits inner other)]
         [_ false])]
-    ;; Lifetime arguments and lifetimes inside elements do not change the
-    ;; graph's view of a value (loans flow by origins, not lifetime names):
-    ;; a lifetime-shortened value is the same value (legacy typing checks the
-    ;; variance). A shape mismatch is `false`: `tc-type-eq` (pure) already
-    ;; answered it.
-    [(ast.AstType.StructArgs name _)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.StructArgs other _) (= name other)]
-            [_ false])))]
-    [(ast.AstType.EnumArgs name _)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.EnumArgs other _) (= name other)]
-            [_ false])))]
-    [(ast.AstType.Tuple elems)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.Tuple others)
-              (let
-                [list : ast.AstTypeList
-                  (ast.ast-type-list-box-shared-view elems)]
-                [other-list : ast.AstTypeList
-                  (ast.ast-type-list-box-shared-view others)]
-                [index : i64 0]
-                [same? : bool
-                  (=
-                    (ast.ast-type-list-len (& list))
-                    (ast.ast-type-list-len (& other-list)))]
-                (while (and same? (< index (ast.ast-type-list-len (& list))))
-                  (set!
-                    same?
-                    (tc-selected-same-type?
-                      (ast.ty-node-get
-                        (ast.ast-type-list-get
-                          (& list)
-                          index
-                          (ast.ast-type-id-fallback)))
-                      (ast.ty-node-get
-                        (ast.ast-type-list-get
-                          (& other-list)
-                          index
-                          (ast.ast-type-id-fallback)))))
-                  (set! index (+ index 1)))
-                same?)]
-            [_ false])))]
-    [(ast.AstType.Array elem count)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.Array other other-count)
-              (and
-                (= count other-count)
-                (tc-selected-same-type?
-                  (ast.ty-node-get elem)
-                  (ast.ty-node-get other)))]
-            [_ false])))]
-    [(ast.AstType.DynArray elem)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.DynArray other)
-              (tc-selected-same-type?
-                (ast.ty-node-get elem)
-                (ast.ty-node-get other))]
-            [_ false])))]
-    [(ast.AstType.Box elem)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.Box other)
-              (tc-selected-same-type?
-                (ast.ty-node-get elem)
-                (ast.ty-node-get other))]
-            [_ false])))]
-    [(ast.AstType.Slice elem)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.Slice other)
-              (tc-selected-same-type?
-                (ast.ty-node-get elem)
-                (ast.ty-node-get other))]
-            [_ false])))]
-    [(ast.AstType.Ptr elem)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.Ptr other)
-              (tc-selected-same-type?
-                (ast.ty-node-get elem)
-                (ast.ty-node-get other))]
-            [_ false])))]
-    [(ast.AstType.MutPtr elem)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.MutPtr other)
-              (tc-selected-same-type?
-                (ast.ty-node-get elem)
-                (ast.ty-node-get other))]
-            [_ false])))]
-    [(ast.AstType.Func params ret)
-      (and
-        (tc-selected-plain-type? (tc-global-shared-view right))
-        (or
-          (tc-type-eq
-            (tc-global-shared-view left)
-            (tc-global-shared-view right))
-          (match (tc-global-shared-view right)
-            [(ast.AstType.Func other-params other-ret)
-              (and
-                (tc-selected-same-type?
-                  (ast.ty-node-get ret)
-                  (ast.ty-node-get other-ret))
-                (tc-selected-same-type?
-                  (ast.AstType.Tuple params)
-                  (ast.AstType.Tuple other-params)))]
-            [_ false])))]
     [_
-      (match (& right)
-        [(ast.AstType.Ref _ _) false]
-        [(ast.AstType.MutRef _ _) false]
-        [(ast.AstType.Region _ _) false]
-        [_ (tc-type-eq left right)])]))
+      (match right
+        [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _)
+             (ast.AstType.Region _ _))
+          false]
+        [_
+          (if (or (tc-poison-type-ref? left) (tc-poison-type-ref? right))
+            true
+            (match left
+              [(ast.AstType.StructArgs name _)
+                (match right
+                  [(ast.AstType.StructArgs other _)
+                    (tc-nominal-name-id-eq? name other)]
+                  [_ false])]
+              [(ast.AstType.EnumArgs name _)
+                (match right
+                  [(ast.AstType.EnumArgs other _)
+                    (tc-nominal-name-id-eq? name other)]
+                  [_ false])]
+              [(ast.AstType.Tuple elems)
+                (match right
+                  [(ast.AstType.Tuple others)
+                    (tc-selected-same-type-list?
+                      address
+                      visits
+                      (& (deref elems))
+                      (& (deref others)))]
+                  [_ false])]
+              [(ast.AstType.Array elem count)
+                (match right
+                  [(ast.AstType.Array other other-count)
+                    (and
+                      (= count other-count)
+                      (tc-selected-same-type-id? address visits elem other))]
+                  [_ false])]
+              [(ast.AstType.DynArray elem)
+                (match right
+                  [(ast.AstType.DynArray other)
+                    (tc-selected-same-type-id? address visits elem other)]
+                  [_ false])]
+              [(ast.AstType.Box elem)
+                (match right
+                  [(ast.AstType.Box other)
+                    (tc-selected-same-type-id? address visits elem other)]
+                  [_ false])]
+              [(ast.AstType.Slice elem)
+                (match right
+                  [(ast.AstType.Slice other)
+                    (tc-selected-same-type-id? address visits elem other)]
+                  [_ false])]
+              [(ast.AstType.Ptr elem)
+                (match right
+                  [(ast.AstType.Ptr other)
+                    (tc-selected-same-type-id? address visits elem other)]
+                  [_ false])]
+              [(ast.AstType.MutPtr elem)
+                (match right
+                  [(ast.AstType.MutPtr other)
+                    (tc-selected-same-type-id? address visits elem other)]
+                  [_ false])]
+              [(ast.AstType.Func params ret)
+                (match right
+                  [(ast.AstType.Func other-params other-ret)
+                    (and
+                      (tc-selected-same-type-id? address visits ret other-ret)
+                      (tc-selected-same-type-list?
+                        address
+                        visits
+                        (& (deref params))
+                        (& (deref other-params))))]
+                  [_ false])]
+              [(ast.AstType.Enum name)
+                (match right
+                  [(ast.AstType.Enum other) (tc-nominal-name-id-eq? name other)]
+                  [_ false])]
+              [(ast.AstType.Struct name)
+                (match right
+                  [(ast.AstType.Struct other)
+                    (tc-nominal-name-id-eq? name other)]
+                  [_ false])]
+              [(ast.AstType.Var name)
+                (match right
+                  [(ast.AstType.Var other) (tc-nominal-name-id-eq? name other)]
+                  [_ false])]
+              [(ast.AstType.VarArgs name lifetimes)
+                (match right
+                  [(ast.AstType.VarArgs other other-lifetimes)
+                    (and
+                      (tc-nominal-name-id-eq? name other)
+                      (tc-selected-same-lifetime-list?
+                        (& (deref lifetimes))
+                        (& (deref other-lifetimes))))]
+                  [_ false])]
+              [(ast.AstType.CFunc signature mode)
+                (match right
+                  [(ast.AstType.CFunc other-signature other-mode)
+                    (and
+                      (ast.ast-c-function-mode-eq? mode other-mode)
+                      (tc-type-eq-id signature other-signature))]
+                  [_ false])]
+              [(ast.AstType.Invalidate lifetime inner)
+                (match right
+                  [(ast.AstType.Invalidate other-lifetime other-inner)
+                    (and
+                      (= lifetime other-lifetime)
+                      (tc-type-eq-id inner other-inner))]
+                  [_ false])]
+              [_ (= (ast.ast-type-tag left) (ast.ast-type-tag right))]))])]))
+
+(define (tc-selected-same-type? [left : ast.AstType] [right : ast.AstType]) : bool
+  (let
+    [visits : i64 0]
+    (tc-selected-same-type-ref?
+      (tc-type-walk-table)
+      (&mut visits)
+      (& left)
+      (& right))))
 
 ;; The first representative `tc-selected-same-type?` matches with `resolved`,
 ;; or -1. Representatives are only ever appended, and the scan's answer is a
@@ -133180,10 +133511,7 @@
         (array-ref table.memo.values (- entry 1)))]
     (if (< start 0)
       (- -1 start)
-      (tc-selected-representative-scan
-        table
-        (tc-global-shared-view resolved)
-        start))))
+      (tc-selected-representative-scan table (& resolved) start))))
 
 ;; `tc-selected-representative`, noting where its scan ended for `resolved`:
 ;; at the match, or where `resolved` becomes the next representative.
@@ -133200,11 +133528,7 @@
         0
         (array-ref table.memo.values (- entry 1)))]
     [_matched : unit (when (< start 0) (return (- -1 start)))]
-    [found : i64
-      (tc-selected-representative-scan
-        table
-        (tc-global-shared-view resolved)
-        start)]
+    [found : i64 (tc-selected-representative-scan table (& resolved) start)]
     [end : i64
       (if (>= found 0)
         (- -1 found)
@@ -133220,103 +133544,114 @@
 
 (define (tc-selected-representative-scan
   [table : (& table TcSelectedTypeTable)]
-  [resolved : ast.AstType]
+  [resolved : (& resolved ast.AstType)]
   [start : i64]) : i64
   (let
-    [bucket : i64
-      (if table.poisoned?
-        -1
-        (tc-selected-representative-bucket (tc-global-shared-view resolved)))]
+    [address : i64 (tc-type-walk-table)]
+    [hash : i64 (tc-selected-hash-type address resolved)]
+    [bucket-cap : i64 (array-length table.bucket-heads)]
+    [use-bucket? : bool
+      (and
+        (not table.poisoned?)
+        (!= hash tc-selected-hash-poison)
+        (> bucket-cap 0))]
     [found : i64 -1]
-    ;; Both walks ascend: a bucketed one follows its chain from the bucket's
-    ;; first representative and skips the ones before `start`, whose
-    ;; comparisons rule them out; a poisoned store scans every representative
-    ;; from `start`.
+    ;; Both walks ascend: a bucketed one follows its hash chain from the
+    ;; bucket's first representative and skips entries before `start` or with
+    ;; a different 64-bit structural hash; a poisoned store or poison query
+    ;; scans every representative from `start`.
     [rep : i64
-      (if (< bucket 0)
+      (if (not use-bucket?)
         (if (< start table.representative-count)
           start
           -1)
-        (- (array-ref table.bucket-heads bucket) 1))]
+        (-
+          (array-ref
+            table.bucket-heads
+            (tc-selected-hash-slot hash (- bucket-cap 1)))
+          1))]
     (while (and (< found 0) (>= rep 0))
       (when
         (and
           (>= rep start)
-          (tc-selected-same-type?
-            (tc-global-array-element-shared-view table.representatives rep)
-            (tc-global-shared-view resolved)))
-        (set! found rep))
+          (or
+            (not use-bucket?)
+            (= (array-ref table.representative-hashes rep) hash)))
+        (let
+          [visits : i64 0]
+          (when
+            (tc-selected-same-type-ref?
+              address
+              (&mut visits)
+              (& (array-ref table.representatives rep))
+              resolved)
+            (set! found rep))))
       (set!
         rep
-        (if (< bucket 0)
+        (if (not use-bucket?)
           (if (< (+ rep 1) table.representative-count)
             (+ rep 1)
             -1)
           (- (array-ref table.representative-next rep) 1))))
     found))
 
-;; The buckets: no wrapper, each single reference or region wrapper, and two
-;; or more wrappers, times the variant (`ast.ast-type-tag`, below 40) under a
-;; wrapper or none (two or more wrappers share one bucket).
-(define tc-selected-bucket-count : i64
-  200)
-
-;; The bucket of a representative or of a type looked up among them, or -1
-;; for the poison type under at most one wrapper. `tc-selected-same-type?`
-;; matches a reference or region wrapper only with the same wrapper, and a
-;; type under none only with one of the same variant (`tc-type-eq-core`)
-;; unless one is the poison type, which `tc-type-eq` matches with any: a
-;; type's matches share its bucket. A comparison it rules out ends at the
-;; variants, so skipping it changes no state.
-(define (tc-selected-representative-bucket [ty : ast.AstType]) : i64
+;; Grows the structural-hash bucket array and re-files representatives
+;; `0..count-1` in ascending order so bucket chains stay ordered.
+(define (tc-selected-representative-buckets-grow!
+  [table : (&mut table TcSelectedTypeTable)]
+  [count : i64]) : unit
   (let
-    [wrapper : i64
-      (match ty
-        [(ast.AstType.Region _ _) 1]
-        [(ast.AstType.Ref _ _) 2]
-        [(ast.AstType.MutRef _ _) 3]
-        [_ 0])]
-    (if (= wrapper 0)
+    [old-cap : i64 (array-length table.bucket-heads)]
+    [capacity : i64
+      (if (= old-cap 0)
+        64
+        (* old-cap 2))]
+    [mask : i64 (- capacity 1)]
+    [heads : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [tails : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+    [index : i64 0]
+    (while (< index count)
+      (set! (array-ref table.representative-next index) 0)
       (let
-        [tag : i64 (ast.ast-type-tag (& ty))]
-        (if (tc-poison-type? ty)
-          -1
-          tag))
-      (let
-        [inner : ast.AstType
-          (match ty
-            [(ast.AstType.Region _ inner) (ast.ty-node-get inner)]
-            [(ast.AstType.Ref _ inner) (ast.ty-node-get inner)]
-            [(ast.AstType.MutRef _ inner) (ast.ty-node-get inner)]
-            [_ ast.AstType.Never])]
-        (match (& inner)
-          [(or (ast.AstType.Region _ _) (ast.AstType.Ref _ _)
-               (ast.AstType.MutRef _ _))
-            160]
-          [_
-            (let
-              [inner-tag : i64 (ast.ast-type-tag (& inner))]
-              (if (tc-poison-type? inner)
-                -1
-                (+ (* wrapper 40) inner-tag)))])))))
+        [slot : i64
+          (tc-selected-hash-slot
+            (array-ref table.representative-hashes index)
+            mask)]
+        [tail : i64 (array-ref tails slot)]
+        (if (= tail 0)
+          (set! (array-ref heads slot) (+ index 1))
+          (set! (array-ref table.representative-next (- tail 1)) (+ index 1)))
+        (set! (array-ref tails slot) (+ index 1)))
+      (set! index (+ index 1)))
+    (set! table.bucket-heads heads)
+    (set! table.bucket-tails tails)))
 
-;; Files the new representative `rep` in its bucket, last.
+;; Files the new representative `rep` in its structural-hash bucket, last.
 (define (tc-selected-representative-file!
   [table : (&mut table TcSelectedTypeTable)]
   [rep : i64]) : unit
   (let
-    [bucket : i64
-      (tc-selected-representative-bucket
-        (tc-global-array-element-shared-view table.representatives rep))]
+    [hash : i64
+      (tc-selected-hash-type
+        (tc-type-walk-table)
+        (& (array-ref table.representatives rep)))]
+    (set! (array-ref table.representative-hashes rep) hash)
     (set! (array-ref table.representative-next rep) 0)
-    (if (< bucket 0)
+    (if (= hash tc-selected-hash-poison)
       (set! table.poisoned? true)
-      (let
-        [tail : i64 (array-ref table.bucket-tails bucket)]
-        (if (= tail 0)
-          (set! (array-ref table.bucket-heads bucket) (+ rep 1))
-          (set! (array-ref table.representative-next (- tail 1)) (+ rep 1)))
-        (set! (array-ref table.bucket-tails bucket) (+ rep 1))))))
+      (unless
+        table.poisoned?
+        (when
+          (>= (+ rep 1) (array-length table.bucket-heads))
+          (tc-selected-representative-buckets-grow! table rep))
+        (let
+          [slot : i64
+            (tc-selected-hash-slot hash (- (array-length table.bucket-heads) 1))]
+          [tail : i64 (array-ref table.bucket-tails slot)]
+          (if (= tail 0)
+            (set! (array-ref table.bucket-heads slot) (+ rep 1))
+            (set! (array-ref table.representative-next (- tail 1)) (+ rep 1)))
+          (set! (array-ref table.bucket-tails slot) (+ rep 1)))))))
 
 (define (tc-selected-representative-hash-slot
   [ty : (& ast.AstType)]
@@ -133421,6 +133756,7 @@
             capacity)]
         [indices : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
         [next : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+        [hashes : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
         [index : i64 0]
         (while (< index count)
           (set!
@@ -133429,6 +133765,9 @@
           (set!
             (array-ref next index)
             (array-ref table.representative-next index))
+          (set!
+            (array-ref hashes index)
+            (array-ref table.representative-hashes index))
           (set!
             (array-ref classes index)
             (ownership_normalize.OwnershipNormalizeTypeClass
@@ -133444,7 +133783,8 @@
         (set! table.representatives types)
         (set! table.representative-classes classes)
         (set! table.representative-indices indices)
-        (set! table.representative-next next)))))
+        (set! table.representative-next next)
+        (set! table.representative-hashes hashes)))))
 
 ;; The typed index of a type equal to `ty`; the store gains a record (to be
 ;; classified) only when the body has none. -1 when the store refuses it.

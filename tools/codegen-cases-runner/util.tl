@@ -478,6 +478,98 @@
     [mixed : String (to-native-path path root native-root)]
     (slashes-to-back (& mixed))))
 
+;; Pure-string conversion from Windows drive path (`D:/a/...` or `D:\a\...`) to
+;; MSYS2 POSIX path (`/d/a/...`). Leaves already-POSIX and relative paths intact.
+(define (to-msys-posix-path [path : (& path str)]) : String
+  (let
+    [plen : i64 (string.string-length path)]
+    (if (and
+      (>= plen 2)
+      (is-alpha-byte? (byte-at path 0))
+      (= (byte-at path 1) 58)
+      (or (= plen 2) (= (byte-at path 2) 47) (= (byte-at path 2) 92)))
+      (let
+        [out : bbc.ByteBufBuilder
+          (bbc.byte-buf-builder-with-capacity (+ plen 1))]
+        [drive : i64 (ascii-lower-byte (byte-at path 0))]
+        [i : i64 2]
+        (bbc.byte-buf-builder-push (&mut out) (cast 47 : u8))
+        (bbc.byte-buf-builder-push (&mut out) (cast drive : u8))
+        (while (< i plen)
+          (let
+            [b : i64 (byte-at path i)]
+            (bbc.byte-buf-builder-push
+              (&mut out)
+              (cast
+                (if (= b 92)
+                  47
+                  b)
+                : u8)))
+          (set! i (+ i 1)))
+        (bbc.byte-buf-builder-finish-string (& out)))
+      (slashes-to-forward path))))
+
+;; Normalize a POSIX-style PATH override (e.g. `D:/a/bin:$PATH` or `/d/a/bin:$PATH`)
+;; into a valid Windows `;`-separated PATH, preserving Windows drive colons (`C:\`, `D:/`).
+(define (normalize-windows-path-env [raw : (& raw str)]) : String
+  (let
+    [n : i64 (string.string-length raw)]
+    [out : bbc.ByteBufBuilder (bbc.byte-buf-builder-with-capacity (+ n 4))]
+    [seg-start : bool true]
+    [i : i64 0]
+    (while (< i n)
+      (let
+        [b : i64 (byte-at raw i)]
+        (cond
+          [(and
+            seg-start
+            (< (+ i 1) n)
+            (= b 47)
+            (is-alpha-byte? (byte-at raw (+ i 1)))
+            (or (= (+ i 2) n) (= (byte-at raw (+ i 2)) 47)))
+            ;; MSYS2 `/d/...` at segment start -> `D:/...`
+            (bbc.byte-buf-builder-push
+              (&mut out)
+              (cast (ascii-upper-byte (byte-at raw (+ i 1))) : u8))
+            (bbc.byte-buf-builder-push (&mut out) (cast 58 : u8))
+            (when
+              (= (+ i 2) n)
+              (bbc.byte-buf-builder-push (&mut out) (cast 47 : u8)))
+            (set! seg-start false)
+            (set! i (+ i 2))]
+          [(and
+            seg-start
+            (< (+ i 2) n)
+            (is-alpha-byte? b)
+            (= (byte-at raw (+ i 1)) 58)
+            (or (= (byte-at raw (+ i 2)) 47) (= (byte-at raw (+ i 2)) 92)))
+            ;; Windows drive prefix `C:\` or `D:/` at segment start: keep colon.
+            (bbc.byte-buf-builder-push (&mut out) (cast b : u8))
+            (bbc.byte-buf-builder-push (&mut out) (cast 58 : u8))
+            (bbc.byte-buf-builder-push
+              (&mut out)
+              (cast (byte-at raw (+ i 2)) : u8))
+            (set! seg-start false)
+            (set! i (+ i 3))]
+          [(= b 59)
+            ;; Existing `;` separator.
+            (bbc.byte-buf-builder-push (&mut out) (cast 59 : u8))
+            (set! seg-start true)
+            (set! i (+ i 1))]
+          [(= b 58)
+            ;; Non-drive `:` is a POSIX PATH separator -> `;`.
+            (bbc.byte-buf-builder-push (&mut out) (cast 59 : u8))
+            (set! seg-start true)
+            (set! i (+ i 1))]
+          [else
+            (bbc.byte-buf-builder-push (&mut out) (cast b : u8))
+            (set! seg-start false)
+            (set! i (+ i 1))])))
+    (bbc.byte-buf-builder-finish-string (& out))))
+
+(define (win-fs-path [path : (& path str)]) : String
+  (cfg windows (to-native-path path "" "") (string.copy path)))
+
 (define (is-absolute-path? [path : (& path str)]) : bool
   (let
     [n : i64 (string.string-length path)]
@@ -536,71 +628,91 @@
 ;; Filesystem helpers (zero external process forks).
 (define (mkdir-all! [dir : (& dir str)]) : bool
   (let
-    [n : i64 (string.string-length dir)]
+    [ndir : String (win-fs-path dir)]
+    [n : i64 (string.string-length (& ndir))]
     (if (= n 0)
       true
-      (match (fs.try-file-kind dir)
+      (match (fs.try-file-kind (& ndir))
         [(fs.OkFsFileKind kind) (fs.file-kind-directory? kind)]
         [(fs.ErrFsFileKind _)
           (let
-            [parent : String (path-dirname dir)]
+            [parent : String (path-dirname (& ndir))]
             (if (or
-              (string.eq (& parent) dir)
+              (string.eq (& parent) (& ndir))
               (string.eq (& parent) ".")
               (string.eq (& parent) "/"))
-              (match (fs.try-mkdir-if-missing dir)
+              (match (fs.try-mkdir-if-missing (& ndir))
                 [(io.OkIoUnit) true]
                 [(io.ErrIoUnit _) false])
               (if (mkdir-all! (& parent))
-                (match (fs.try-mkdir-if-missing dir)
+                (match (fs.try-mkdir-if-missing (& ndir))
                   [(io.OkIoUnit) true]
                   [(io.ErrIoUnit _) false])
                 false)))]))))
 
 (define (rm-rf! [path : (& path str)]) : unit
-  (match (fs.try-file-kind-no-follow path)
-    [(fs.ErrFsFileKind _) unit]
-    [(fs.OkFsFileKind kind)
-      (if (fs.file-kind-directory? kind)
-        (begin
-          (match (fs.try-read-dir path)
-            [(fs.OkIoStringVector entries)
-              (let
-                [i : i64 0]
-                [count : i64 (svec.len (& entries.items))]
-                (while (< i count)
-                  (let
-                    [name : String (svec.get (& entries.items) i "")]
-                    [child : String
-                      (str_cat.str-cat (string.copy path) "/" name)]
-                    (rm-rf! (& child)))
-                  (set! i (+ i 1))))]
-            [(fs.ErrIoStringVector _) unit])
-          (fs.try-remove-dir-if-exists path)
-          unit)
-        (begin
-          (fs.try-remove-file-if-exists path)
-          unit))]))
+  (let
+    [npath : String (win-fs-path path)]
+    (match (fs.try-file-kind-no-follow (& npath))
+      [(fs.ErrFsFileKind _) unit]
+      [(fs.OkFsFileKind kind)
+        (if (fs.file-kind-directory? kind)
+          (begin
+            (match (fs.try-read-dir (& npath))
+              [(fs.OkIoStringVector entries)
+                (let
+                  [i : i64 0]
+                  [count : i64 (svec.len (& entries.items))]
+                  (while (< i count)
+                    (let
+                      [name : String (svec.get (& entries.items) i "")]
+                      [child : String
+                        (str_cat.str-cat (string.copy (& npath)) "/" name)]
+                      (rm-rf! (& child)))
+                    (set! i (+ i 1))))]
+              [(fs.ErrIoStringVector _) unit])
+            (fs.try-remove-dir-if-exists (& npath))
+            unit)
+          (begin
+            ;; On Windows, NTFS directory junctions report as FsFileOther and
+            ;; require RemoveDirectoryA rather than DeleteFileA.
+            (match (fs.try-remove-file-if-exists (& npath))
+              [(io.OkIoUnit) unit]
+              [(io.ErrIoUnit _)
+                (when
+                  (host-is-windows?)
+                  (match (fs.try-remove-dir-if-exists (& npath))
+                    [(io.OkIoUnit) unit]
+                    [(io.ErrIoUnit _) unit]))])
+            unit))])))
 
 (define (file-exists? [path : (& path str)]) : bool
-  (match (fs.try-file-kind path)
-    [(fs.OkFsFileKind _) true]
-    [(fs.ErrFsFileKind _) false]))
+  (let
+    [npath : String (win-fs-path path)]
+    (match (fs.try-file-kind (& npath))
+      [(fs.OkFsFileKind _) true]
+      [(fs.ErrFsFileKind _) false])))
 
 (define (is-regular-file? [path : (& path str)]) : bool
-  (match (fs.try-file-kind path)
-    [(fs.OkFsFileKind kind) (fs.file-kind-regular? kind)]
-    [(fs.ErrFsFileKind _) false]))
+  (let
+    [npath : String (win-fs-path path)]
+    (match (fs.try-file-kind (& npath))
+      [(fs.OkFsFileKind kind) (fs.file-kind-regular? kind)]
+      [(fs.ErrFsFileKind _) false])))
 
 (define (is-dir? [path : (& path str)]) : bool
-  (match (fs.try-file-kind path)
-    [(fs.OkFsFileKind kind) (fs.file-kind-directory? kind)]
-    [(fs.ErrFsFileKind _) false]))
+  (let
+    [npath : String (win-fs-path path)]
+    (match (fs.try-file-kind (& npath))
+      [(fs.OkFsFileKind kind) (fs.file-kind-directory? kind)]
+      [(fs.ErrFsFileKind _) false])))
 
 (define (file-nonempty? [path : (& path str)]) : bool
-  (if (is-regular-file? path)
-    (> (fs.file-size path) 0)
-    false))
+  (let
+    [npath : String (win-fs-path path)]
+    (if (is-regular-file? (& npath))
+      (> (fs.file-size (& npath)) 0)
+      false)))
 
 (define (is-executable? [path : (& path str)]) : bool
   (cfg
@@ -623,19 +735,22 @@
         (= res 0)))))
 
 (define (read-file-result [path : (& path str)]) : ReadFileResult
-  (match (io.try-read-file path)
-    [(io.OkIoBytes buf) (ReadFileResult true (byte_buf.to-string buf))]
-    [(io.ErrIoBytes _) (ReadFileResult false "")]))
+  (let
+    [npath : String (win-fs-path path)]
+    (match (io.try-read-file (& npath))
+      [(io.OkIoBytes buf) (ReadFileResult true (byte_buf.to-string buf))]
+      [(io.ErrIoBytes _) (ReadFileResult false "")])))
 
 (define (write-file-ok? [path : (& path str)] [content : (& content str)]) : bool
   (let
-    [parent : String (path-dirname path)]
+    [npath : String (win-fs-path path)]
+    [parent : String (path-dirname (& npath))]
     (when
       (not (string.eq (& parent) "."))
       (let
         [_ok : bool (mkdir-all! (& parent))]
         unit))
-    (match (io.try-write-file path (byte_buf.str-as-bytes content))
+    (match (io.try-write-file (& npath) (byte_buf.str-as-bytes content))
       [(io.OkIoUnit) true]
       [(io.ErrIoUnit _) false])))
 
@@ -650,19 +765,26 @@
     unit))
 
 (define (rename-ignore! [src : (& src str)] [dst : (& dst str)]) : unit
-  (match (fs.try-rename src dst)
-    [(io.OkIoUnit) unit]
-    [(io.ErrIoUnit _) unit]))
+  (let
+    [nsrc : String (win-fs-path src)]
+    [ndst : String (win-fs-path dst)]
+    (match (fs.try-rename (& nsrc) (& ndst))
+      [(io.OkIoUnit) unit]
+      [(io.ErrIoUnit _) unit])))
 
 (define (remove-file-ignore! [path : (& path str)]) : unit
-  (match (fs.try-remove-file-if-exists path)
-    [(io.OkIoUnit) unit]
-    [(io.ErrIoUnit _) unit]))
+  (let
+    [npath : String (win-fs-path path)]
+    (match (fs.try-remove-file-if-exists (& npath))
+      [(io.OkIoUnit) unit]
+      [(io.ErrIoUnit _) unit])))
 
 (define (append-file-ignore! [path : (& path str)] [content : (& content str)]) : unit
-  (match (io.try-append-file path (byte_buf.str-as-bytes content))
-    [(io.OkIoUnit) unit]
-    [(io.ErrIoUnit _) unit]))
+  (let
+    [npath : String (win-fs-path path)]
+    (match (io.try-append-file (& npath) (byte_buf.str-as-bytes content))
+      [(io.OkIoUnit) unit]
+      [(io.ErrIoUnit _) unit])))
 
 (define (copy-file-ok? [src : (& src str)] [dst : (& dst str)]) : bool
   (let
@@ -672,34 +794,38 @@
       false)))
 
 (define (copy-recursive-ok? [src : (& src str)] [dst : (& dst str)]) : bool
-  (match (fs.try-file-kind src)
-    [(fs.ErrFsFileKind _) false]
-    [(fs.OkFsFileKind kind)
-      (if (fs.file-kind-directory? kind)
-        (if (not (mkdir-all! dst))
-          false
-          (match (fs.try-read-dir src)
-            [(fs.ErrIoStringVector _) false]
-            [(fs.OkIoStringVector entries)
-              (let
-                [i : i64 0]
-                [count : i64 (svec.len (& entries.items))]
-                [ok : bool true]
-                (while (and ok (< i count))
-                  (let
-                    [name : String (svec.get (& entries.items) i "")]
-                    [csrc : String
-                      (str_cat.str-cat
-                        (string.copy src)
-                        "/"
-                        (string.copy (& name)))]
-                    [cdst : String (str_cat.str-cat (string.copy dst) "/" name)]
-                    (when
-                      (not (copy-recursive-ok? (& csrc) (& cdst)))
-                      (set! ok false)))
-                  (set! i (+ i 1)))
-                ok)]))
-        (copy-file-ok? src dst))]))
+  (let
+    [nsrc : String (win-fs-path src)]
+    [ndst : String (win-fs-path dst)]
+    (match (fs.try-file-kind (& nsrc))
+      [(fs.ErrFsFileKind _) false]
+      [(fs.OkFsFileKind kind)
+        (if (fs.file-kind-directory? kind)
+          (if (not (mkdir-all! (& ndst)))
+            false
+            (match (fs.try-read-dir (& nsrc))
+              [(fs.ErrIoStringVector _) false]
+              [(fs.OkIoStringVector entries)
+                (let
+                  [i : i64 0]
+                  [count : i64 (svec.len (& entries.items))]
+                  [ok : bool true]
+                  (while (and ok (< i count))
+                    (let
+                      [name : String (svec.get (& entries.items) i "")]
+                      [csrc : String
+                        (str_cat.str-cat
+                          (string.copy (& nsrc))
+                          "/"
+                          (string.copy (& name)))]
+                      [cdst : String
+                        (str_cat.str-cat (string.copy (& ndst)) "/" name)]
+                      (when
+                        (not (copy-recursive-ok? (& csrc) (& cdst)))
+                        (set! ok false)))
+                    (set! i (+ i 1)))
+                  ok)]))
+          (copy-file-ok? (& nsrc) (& ndst)))])))
 
 (define (files-equal? [a : (& a str)] [b : (& b str)]) : bool
   (let
@@ -710,15 +836,17 @@
 ;; Resolve an executable name along PATH (or return as-is if it contains a path separator).
 (define (probe-executable-candidate [candidate : (& candidate str)]) : String
   (if (host-is-windows?)
-    (cond
-      [(is-regular-file? candidate) (string.copy candidate)]
-      [(is-regular-file? (str_cat.str-cat (string.copy candidate) ".exe"))
-        (str_cat.str-cat (string.copy candidate) ".exe")]
-      [(is-regular-file? (str_cat.str-cat (string.copy candidate) ".cmd"))
-        (str_cat.str-cat (string.copy candidate) ".cmd")]
-      [(is-regular-file? (str_cat.str-cat (string.copy candidate) ".bat"))
-        (str_cat.str-cat (string.copy candidate) ".bat")]
-      [else ""])
+    (let
+      [nc : String (win-fs-path candidate)]
+      (cond
+        [(is-regular-file? (str_cat.str-cat (string.copy (& nc)) ".exe"))
+          (str_cat.str-cat nc ".exe")]
+        [(is-regular-file? (& nc)) nc]
+        [(is-regular-file? (str_cat.str-cat (string.copy (& nc)) ".cmd"))
+          (str_cat.str-cat nc ".cmd")]
+        [(is-regular-file? (str_cat.str-cat (string.copy (& nc)) ".bat"))
+          (str_cat.str-cat nc ".bat")]
+        [else ""]))
     (if (and (is-regular-file? candidate) (is-executable? candidate))
       (string.copy candidate)
       "")))

@@ -555,6 +555,39 @@
           "slashes-to-back"
           (util.slashes-to-back "D:/a/typelisp/out.obj")
           "D:\\a\\typelisp\\out.obj")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "to-msys-posix-path"
+          (util.to-msys-posix-path "D:\\a\\typelisp\\bin")
+          "/d/a/typelisp/bin")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "to-msys-posix-path-fwd"
+          (util.to-msys-posix-path "C:/Program Files/Git")
+          "/c/Program Files/Git")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "normalize-win-path-env-drive"
+          (util.normalize-windows-path-env
+            "D:/a/typelisp/bin:C:\\Program Files\\LLVM\\bin;C:\\Windows")
+          "D:/a/typelisp/bin;C:\\Program Files\\LLVM\\bin;C:\\Windows")))
+    (set!
+      fails
+      (+
+        fails
+        (assert-eq-str
+          "normalize-win-path-env-msys"
+          (util.normalize-windows-path-env "/d/a/typelisp/bin:/c/Windows")
+          "D:/a/typelisp/bin;C:/Windows")))
     (if (= fails 0)
       (begin
         (io.stdout-write

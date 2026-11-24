@@ -869,53 +869,11 @@
                     (execute-program! cfg st (& bin))
                     true)))))]
         [else
-          ;; Windows: assemble + link already-emitted out.s directly with clang + lld-link
-          ;; (eliminates double compilation via `typelisp run`).
-          (let
-            [obj : String (str_cat.str-cat (string.copy (& st.dir)) "/out.obj")]
-            [bin : String
-              (str_cat.str-cat (string.copy (& st.dir)) "/program.exe")]
-            [as-argv : svec.Vec (svec.new)]
-            (svec.push-ref! (&mut as-argv) "--target=x86_64-pc-windows-msvc")
-            (svec.push-ref! (&mut as-argv) "-c")
-            (svec.push-ref! (&mut as-argv) (string.copy (& st.asm-path)))
-            (svec.push-ref! (&mut as-argv) "-o")
-            (svec.push-ref! (&mut as-argv) (string.copy (& obj)))
-            (run-action-cmd! st "assemble" "clang" (& as-argv))
-            (if (not (require-step! st "clang (Windows assembly)"))
-              false
-              (let
-                [entry : String (linux-entry-symbol (& st.asm-text))]
-                [win-obj : String
-                  (util.to-win-backslash-path
-                    (& obj)
-                    (& cfg.root)
-                    (& cfg.native-root))]
-                [win-bin : String
-                  (util.to-win-backslash-path
-                    (& bin)
-                    (& cfg.root)
-                    (& cfg.native-root))]
-                [ld-argv : svec.Vec (svec.new)]
-                (svec.push-ref! (&mut ld-argv) "-NOLOGO")
-                (svec.push-ref! (&mut ld-argv) win-obj)
-                (svec.push-ref!
-                  (&mut ld-argv)
-                  (str_cat.str-cat "-OUT:" win-bin))
-                (svec.push-ref! (&mut ld-argv) "-SUBSYSTEM:CONSOLE")
-                (svec.push-ref! (&mut ld-argv) "-STACK:268435456")
-                (svec.push-ref!
-                  (&mut ld-argv)
-                  (str_cat.str-cat "-ENTRY:" entry))
-                (svec.push-ref! (&mut ld-argv) "-NODEFAULTLIB")
-                (svec.push-ref! (&mut ld-argv) "kernel32.lib")
-                (svec.push-ref! (&mut ld-argv) "ntdll.lib")
-                (run-action-cmd! st "link" "lld-link" (& ld-argv))
-                (if (not (require-step! st "lld-link"))
-                  false
-                  (begin
-                    (execute-program! cfg st (& bin))
-                    true)))))])]
+          ;; Windows: `typelisp compile` with `target -` emits Linux ELF assembly
+          ;; for asm-shape checks, while Windows execution uses `typelisp run`
+          ;; (or `typelisp build` + SDE) so MSVC/Windows SDK discovery and
+          ;; host-target codegen match the compiler contract.
+          (do-compiler-run! cfg st)])]
     [else
       (record-fail!
         st
@@ -1158,26 +1116,46 @@
 
 (define (build-shell-env
   [cfg : (& cfg RunnerConfig)]
-  [st : (& st VariantState)]) : EnvPairs
+  [st : (& st VariantState)]
+  [posix-paths : bool]) : EnvPairs
   (let
+    [use-posix : bool (and posix-paths (util.host-is-windows?))]
     [names : svec.Vec (svec.new)]
     [values : svec.Vec (svec.new)]
     [nv : i64 (svec.len (& st.vars.keys))]
     [i : i64 0]
     (while (< i nv)
-      (svec.push-ref!
-        (&mut names)
-        (str_cat.str-cat "CCV_" (svec.get (& st.vars.keys) i "")))
-      (svec.push-ref! (&mut values) (svec.get (& st.vars.values) i ""))
+      (let
+        [k : String (svec.get (& st.vars.keys) i "")]
+        [v : String (svec.get (& st.vars.values) i "")]
+        [out-v : String
+          (if (and
+            use-posix
+            (or
+              (string.eq (& k) "root")
+              (string.eq (& k) "work")
+              (string.eq (& k) "dir")))
+            (util.to-msys-posix-path (& v))
+            v)]
+        (svec.push-ref! (&mut names) (str_cat.str-cat "CCV_" k))
+        (svec.push-ref! (&mut values) out-v))
       (set! i (+ i 1)))
     (svec.push-ref! (&mut names) "ROOT")
-    (svec.push-ref! (&mut values) (string.copy (& cfg.root)))
+    (svec.push-ref!
+      (&mut values)
+      (if use-posix
+        (util.to-msys-posix-path (& cfg.root))
+        (string.copy (& cfg.root))))
     (svec.push-ref! (&mut names) "COMPILER")
     (svec.push-ref! (&mut values) (string.copy (& cfg.compiler)))
     (svec.push-ref! (&mut names) "CC_HOST")
     (svec.push-ref! (&mut values) (string.copy (& cfg.host)))
     (svec.push-ref! (&mut names) "CC_WORK")
-    (svec.push-ref! (&mut values) (string.copy (& st.work-dir)))
+    (svec.push-ref!
+      (&mut values)
+      (if use-posix
+        (util.to-msys-posix-path (& st.work-dir))
+        (string.copy (& st.work-dir))))
     (svec.push-ref! (&mut names) "CV_DIR")
     (svec.push-ref! (&mut values) (string.copy (& st.dir)))
     (svec.push-ref! (&mut names) "CV_ASM")
@@ -1192,6 +1170,8 @@
     (svec.push-ref! (&mut values) (string.copy (& cfg.sde-bin)))
     (svec.push-ref! (&mut names) "SIMDEX_POLICY")
     (svec.push-ref! (&mut values) (string.copy (& cfg.sde-policy)))
+    (svec.push-ref! (&mut names) "SIMDEX_AVX512_MODE")
+    (svec.push-ref! (&mut values) (simd-execution-mode cfg "avx512"))
     (EnvPairs names values)))
 
 (define (shell-helper-prelude) : String
@@ -1204,7 +1184,7 @@
     "linux_entry_symbol_for_asm() { for _s in _tl_start _start; do if grep -q \"^${_s}:$\" \"$1\"; then printf '%s\\n' \"$_s\"; return 0; else _st=$?; [ \"$_st\" -eq 1 ] || return \"$_st\"; fi; done; printf '%s\\n' _tl_start; }\n"
     "fail() { printf '%s\\n' \"$*\" >&2; exit 1; }\n"
     "cc_wait() { _cw_pid=$1; if [ -f \"$CV_DIR/.bg_pid_$_cw_pid\" ]; then _cw_rc_file=$(cat \"$CV_DIR/.bg_pid_$_cw_pid\"); while [ ! -f \"$_cw_rc_file\" ]; do if ! kill -0 \"$_cw_pid\" 2>/dev/null && [ ! -f \"$_cw_rc_file\" ]; then return 127; fi; sleep 0.05; done; _cw_rc=$(cat \"$_cw_rc_file\"); return \"$_cw_rc\"; fi; wait \"$_cw_pid\"; }\n"
-    "simd_execute() { _m=$1; shift; if [ \"$_m\" = avx512 ] && [ -n \"$SIMDEX_SDE_BIN\" ] && [ \"$SIMDEX_POLICY\" = sde ]; then \"$SIMDEX_SDE_BIN\" -spr -- \"$@\"; else \"$@\"; fi; }\n"))
+    "simd_execute() { _m=$1; shift; if [ \"$_m\" = avx512 ] && [ -n \"$SIMDEX_SDE_BIN\" ] && [ \"$SIMDEX_AVX512_MODE\" = sde ]; then \"$SIMDEX_SDE_BIN\" -spr -- \"$@\"; else \"$@\"; fi; }\n"))
 
 ;; Find all CCV_<name>= identifiers referenced in a shell snippet so we sync them back.
 (define (find-assigned-ccv-vars [text : (& text str)]) : svec.Vec
@@ -1313,7 +1293,7 @@
   [cwd : (& cwd str)]
   [sync-vars : bool]) : ProcResult
   (let
-    [ep : EnvPairs (build-shell-env cfg st)]
+    [ep : EnvPairs (build-shell-env cfg st (not sync-vars))]
     [rewritten : String
       (if sync-vars
         (rewrite-bg-and-wait script-body)
@@ -1361,9 +1341,19 @@
           (set! k (+ k 1)))))
     (bbc.byte-buf-builder-append-string (&mut full) "exit $_cc_rc\n")
     (let
+      [script-text : String (bbc.byte-buf-builder-finish-string (& full))]
+      [script-file : String
+        (str_cat.str-cat (string.copy (& st.dir)) "/.sh_cmd")]
       [argv : svec.Vec (svec.new)]
-      (svec.push-ref! (&mut argv) "-c")
-      (svec.push-ref! (&mut argv) (bbc.byte-buf-builder-finish-string (& full)))
+      ;; On Windows, pass the script via a file instead of `-c` to avoid
+      ;; CreateProcessA command-line quoting/newline/length edge cases.
+      (if (util.host-is-windows?)
+        (begin
+          (util.write-file! (& script-file) (& script-text))
+          (svec.push-ref! (&mut argv) (string.copy (& script-file))))
+        (begin
+          (svec.push-ref! (&mut argv) "-c")
+          (svec.push-ref! (&mut argv) script-text)))
       (let
         [res : ProcResult
           (run-process-direct
@@ -1374,6 +1364,9 @@
             (& ep.values)
             false
             "")]
+        (when
+          (util.host-is-windows?)
+          (util.remove-file-ignore! (& script-file)))
         (when
           (and (> nvar 0) (util.is-regular-file? (& var-file)))
           (let
@@ -1390,7 +1383,8 @@
                       (set! pos tlen)
                       (let
                         [hdr : String
-                          (string.substring (& rf.text) pos (- nl pos))]
+                          (util.strip-cr
+                            (string.substring (& rf.text) pos (- nl pos)))]
                         [tab : i64 (util.index-of-byte-from (& hdr) 0 9)]
                         (if (< tab 0)
                           (set! pos (+ nl 1))
@@ -1489,16 +1483,21 @@
                       (if (and
                         (> eq-pos 0)
                         (not (util.starts-with? (& tok) "-")))
-                        (begin
-                          (svec.push-ref!
-                            (&mut env-names)
-                            (string.substring (& tok) 0 eq-pos))
-                          (svec.push-ref!
-                            (&mut env-values)
+                        (let
+                          [ename : String (string.substring (& tok) 0 eq-pos)]
+                          [raw-eval : String
                             (string.substring
                               (& tok)
                               (+ eq-pos 1)
-                              (- (string.string-length (& tok)) (+ eq-pos 1))))
+                              (- (string.string-length (& tok)) (+ eq-pos 1)))]
+                          [eff-eval : String
+                            (if (and
+                              (util.host-is-windows?)
+                              (string.eq (& ename) "PATH"))
+                              (util.normalize-windows-path-env (& raw-eval))
+                              raw-eval)]
+                          (svec.push-ref! (&mut env-names) ename)
+                          (svec.push-ref! (&mut env-values) eff-eval)
                           (set! idx (+ idx 1)))
                         (set! more false))))))
               (when
@@ -1514,16 +1513,21 @@
                         (> eq-pos 0)
                         (util.valid-var-name?
                           (string.substring (& tok) 0 eq-pos)))
-                        (begin
-                          (svec.push-ref!
-                            (&mut env-names)
-                            (string.substring (& tok) 0 eq-pos))
-                          (svec.push-ref!
-                            (&mut env-values)
+                        (let
+                          [ename : String (string.substring (& tok) 0 eq-pos)]
+                          [raw-eval : String
                             (string.substring
                               (& tok)
                               (+ eq-pos 1)
-                              (- (string.string-length (& tok)) (+ eq-pos 1))))
+                              (- (string.string-length (& tok)) (+ eq-pos 1)))]
+                          [eff-eval : String
+                            (if (and
+                              (util.host-is-windows?)
+                              (string.eq (& ename) "PATH"))
+                              (util.normalize-windows-path-env (& raw-eval))
+                              raw-eval)]
+                          (svec.push-ref! (&mut env-names) ename)
+                          (svec.push-ref! (&mut env-values) eff-eval)
                           (set! idx (+ idx 1)))
                         (set! more false))))))
               (if (>= idx nt)
@@ -1580,8 +1584,11 @@
                               (& env-values)
                               sp.has-stdin
                               (& stdin-text))))))
-                    (if (and handled-env (util.starts-with? (& cmd-exe) "-"))
-                      ;; `env -u ...` or `env -i ...` -> fall back to sh
+                    (if (or
+                      (and handled-env (util.starts-with? (& cmd-exe) "-"))
+                      (and (util.host-is-windows?) (string.eq (& cmd-exe) "sh")))
+                      ;; `env -u ...` / `env -i ...` or Windows `exec sh ...` ->
+                      ;; route via sh fallback so cfg.sh-bin and MSYS2 POSIX paths apply.
                       (set! use-native false)
                       (let
                         [real-args : svec.Vec (svec.new)]
@@ -1752,10 +1759,12 @@
                           (if rec
                             (util.rm-rf! (& arg))
                             (if (util.file-exists? (& arg))
-                              (match (fs.try-remove-file-if-exists (& arg))
-                                [(io.OkIoUnit) unit]
-                                [(io.ErrIoUnit _)
-                                  (when (not force) (set! ok false))])
+                              (let
+                                [narg : String (util.win-fs-path (& arg))]
+                                (match (fs.try-remove-file-if-exists (& narg))
+                                  [(io.OkIoUnit) unit]
+                                  [(io.ErrIoUnit _)
+                                    (when (not force) (set! ok false))]))
                               (when (not force) (set! ok false))))]))
                     (set! i (+ i 1)))
                   (if ok
@@ -1813,8 +1822,10 @@
                 (if (!= nt 3)
                   -1
                   (let
-                    [src : String (svec.get (& sp.tokens) 1 "")]
-                    [dst : String (svec.get (& sp.tokens) 2 "")]
+                    [src : String
+                      (util.win-fs-path (svec.get (& sp.tokens) 1 ""))]
+                    [dst : String
+                      (util.win-fs-path (svec.get (& sp.tokens) 2 ""))]
                     (match (fs.try-rename (& src) (& dst))
                       [(io.OkIoUnit) 0]
                       [(io.ErrIoUnit _) 1])))]

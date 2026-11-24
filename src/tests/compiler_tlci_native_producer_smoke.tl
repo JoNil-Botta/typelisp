@@ -2047,7 +2047,7 @@
                       (= name (producer-test-name-id "value"))
                       (compiler_ctfe.ctfe-type-eq
                         (& actual)
-                        (& (clone expected))))]
+                        (& (ast.clone-ast-type (& expected)))))]
                   [_ false])
                 (match maybe-ret
                   [(Some actual)

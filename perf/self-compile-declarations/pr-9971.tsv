@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+4064.152	Inherent macro unsafe-hygiene cost (#9259): caller-spliced operands are destructured and rewrapped so unsafe context is checked at the splice site; after cutting the walk from +5408 ppm this remains. CI own cost +427,469,010 Ir (M(T) 105,607,840,542 vs M(B) 105,180,371,532 from reference run 45448502528 attempt 1); no work skipped.

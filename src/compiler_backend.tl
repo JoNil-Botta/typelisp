@@ -26691,12 +26691,19 @@ tl_shared_object_init:
 ;; The closed program is the whole text, so only now are helper fragments
 ;; known dead and every surviving return tail known. Interning runs after the
 ;; prune: a shared tail must not live in a fragment the prune removes.
+;; A program linked against a prebuilt stdlib archive is not the whole text:
+;; archive members call runtime entry points (`tl_alloc16`, `tl_array_zero`,
+;; ...) this text never names, so every helper stays and the linker's section
+;; GC drops what no object references.
 (define (compiler-backend-closed-executable-finish
   [backend-state : be_state.CompilerBackendState]
   [target : be_state.CompilerBackendTarget]
   [asm : String]) : String
   (let
-    [kept : String (runtime_prune.prune asm)]
+    [kept : String
+      (if (be_state.compiler-backend-state-archive-runtime? backend-state)
+        asm
+        (runtime_prune.prune asm))]
     (if (and
       (be_state.compiler-backend-state-optimize-for-size? backend-state)
       (not (be_state.compiler-backend-target-coff? target))

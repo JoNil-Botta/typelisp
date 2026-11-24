@@ -37,6 +37,14 @@ step source-run
 run run "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --no-prebuilt-stdlib
 exit 42
 stdout contains hello prebuilt
+# -Os closes the executable, but archive members still call runtime entry
+# points (`tl_alloc16`, `tl_array_zero`, ...) the program text never names,
+# so the closed-executable runtime prune must keep them.
+step prebuilt-run-size
+run run "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" -Os
+exit 42
+stderr empty
+stdout contains hello prebuilt
 
 case prebuilt-stdlib-comptime-purity
 step prebuilt-unsafe-wrapper

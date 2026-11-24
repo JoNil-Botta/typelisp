@@ -97,7 +97,12 @@
     (let
       [op : i64 (gen-range! g 0 10)]
       [lhs : String
-        (gen-arith-expr g (- depth 1) (clone v1) (clone v2) (clone v3))]
+        (gen-arith-expr
+          g
+          (- depth 1)
+          (string.copy v1)
+          (string.copy v2)
+          (string.copy v3))]
       [rhs : String (gen-arith-expr g (- depth 1) v2 v3 v1)]
       (cond
         [(= op 0) (str_cat.str-cat "(bit-and (+ " lhs " " rhs ") 1048575)")]
@@ -126,9 +131,9 @@
         [else
           (str_cat.str-cat
             "(if (< "
-            (clone lhs)
+            (string.copy lhs)
             " "
-            (clone rhs)
+            (string.copy rhs)
             ") (bit-and (+ "
             lhs
             " 3) 1048575) (bit-and (- "
@@ -664,7 +669,7 @@
     (emit-ln!
       g
       (str_cat.str-cat
-        "        [rec : ArenaRecord (ArenaRecord (clone kept-str) "
+        "        [rec : ArenaRecord (ArenaRecord (string.copy kept-str) "
         (string.int->string base-b)
         " (box (+ "
         (string.int->string base-a)
@@ -1007,7 +1012,7 @@
         [src : String (generate-program seed profile)]
         [path : String
           (str_cat.str-cat
-            (clone out-dir)
+            (string.copy out-dir)
             "/seed_"
             (string.int->string seed)
             ".tl")]

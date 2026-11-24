@@ -1416,7 +1416,10 @@
         (string.eq
           (compiler_ir_types.compiler-ir-type-name
             0
-            (& (ast.ast-ty-var-args name (clone lifetimes))))
+            (&
+              (ast.ast-ty-var-args
+                name
+                (ast.clone-ast-lifetime-list (& lifetimes)))))
           "(TypeParameter scope)"))]
     [_install-decoy : unit (ci.intern-compat-state-install! (& decoy))]
     [explicit-ok : bool
@@ -1437,7 +1440,10 @@
           (compiler_ir_types.compiler-ir-type-render
             session
             0
-            (& (ast.ast-ty-var-args name (clone lifetimes))))
+            (&
+              (ast.ast-ty-var-args
+                name
+                (ast.clone-ast-lifetime-list (& lifetimes)))))
           "(TypeParameter scope)")
         (string.eq
           (compiler_ir_types.compiler-ir-type-render
@@ -1447,7 +1453,7 @@
           fallback)
         (string.eq
           (compiler_ir_types.compiler-ir-type-name 0 (& (ast.AstType.Var name)))
-          (str_cat.str-cat "'" (clone fallback) "'"))
+          (str_cat.str-cat "'" (string.copy fallback) "'"))
         (string.eq
           (compiler_ir_types.compiler-ir-type-render
             session
@@ -1458,13 +1464,13 @@
           (compiler_ir_types.compiler-ir-type-name
             0
             (& (ast.AstType.Var unknown)))
-          (str_cat.str-cat "'" (clone unknown-text) "'"))
+          (str_cat.str-cat "'" (string.copy unknown-text) "'"))
         (string.eq
           (compiler_ir_types.compiler-ir-type-render
             session
             0
             (& (ast.ast-ty-var-args unknown lifetimes)))
-          (str_cat.str-cat "(" (clone unknown-text) " scope)"))
+          (str_cat.str-cat "(" (string.copy unknown-text) " scope)"))
         (string.eq
           (compiler_ir_types.compiler-ir-type-name
             0
@@ -1789,9 +1795,11 @@
       (= facts.frames.len 1)
       (let
         [item : compiler_ir_types.CompilerSpmdDecision
-          (clone (array-ref facts.decisions.slots 0))]
+          (compiler_ir_types.clone-compiler-spmd-decision
+            (& (array-ref facts.decisions.slots 0)))]
         [frame : compiler_ir_types.CompilerSpmdMacroFrame
-          (clone (array-ref facts.frames.slots 0))]
+          (compiler_ir_types.clone-compiler-spmd-macro-frame
+            (& (array-ref facts.frames.slots 0)))]
         (and
           (= item.site.ordinal 2)
           (= item.parent-ordinal -1)
@@ -2248,7 +2256,7 @@
         ret
         abi)]
     (and
-      (pabi-contains? (clone message) "private SPMD ABI of @")
+      (pabi-contains? (string.copy message) "private SPMD ABI of @")
       (pabi-contains? message fragment))))
 
 ;; Call arguments for the base fixture; `variant` 1 drops the index base, 2
@@ -2330,7 +2338,7 @@
     [message : String
       (compiler_ir_types.compiler-ir-spmd-private-call-error payload abi)]
     (and
-      (pabi-contains? (clone message) "private SPMD call to @")
+      (pabi-contains? (string.copy message) "private SPMD call to @")
       (pabi-contains? message fragment))))
 
 (define (pabi-helper-function
@@ -2429,7 +2437,7 @@
             (compiler_ir_types.compiler-ir-spmd-private-abi-signature-error
               (pabi-sym "helper")
               (pabi-signature-params 0)
-              (clone i64-ty)
+              (ast.clone-ast-type (& i64-ty))
               (pabi-base))
             ""))
         2]
@@ -2579,7 +2587,7 @@
           (pabi-signature-rejects?
             "other"
             0
-            (clone i64-ty)
+            (ast.clone-ast-type (& i64-ty))
             (pabi-base)
             "descriptor names callee @helper"))
         27]
@@ -2587,7 +2595,7 @@
           (pabi-signature-rejects?
             "helper"
             1
-            (clone i64-ty)
+            (ast.clone-ast-type (& i64-ty))
             (pabi-base)
             "descriptor has 4 physical parameters, the signature has 3"))
         28]
@@ -2595,7 +2603,7 @@
           (pabi-signature-rejects?
             "helper"
             2
-            (clone i64-ty)
+            (ast.clone-ast-type (& i64-ty))
             (pabi-base)
             "physical parameter 2 type differs from the signature"))
         29]
@@ -2611,7 +2619,7 @@
           (pabi-signature-rejects?
             "helper"
             0
-            (clone i64-ty)
+            (ast.clone-ast-type (& i64-ty))
             (pabi "helper" (Avx512) 8 0 (Appended 3) (Unit))
             "unit result but the signature returns a value"))
         31]
@@ -3397,7 +3405,8 @@
 
 (define (compiler-ir-function-abi [func : compiler_ir_types.CompilerIrFunction]) : compiler_ir_types.CompilerIrFunctionAbi
   (match func
-    [(Function _ _ _ _ _ function-abi) (clone function-abi)]))
+    [(Function _ _ _ _ _ function-abi)
+      (compiler_ir_types.clone-compiler-ir-function-abi (& function-abi))]))
 
 (defenum CompilerIrMaybeDescriptorPairKind
   (No)
@@ -3434,11 +3443,14 @@
     [count : i64 instrs.len]
     (for [read (iterator.range 0 count)]
       (when
-        (keep? (clone (array-ref instrs.slots read)))
+        (keep?
+          (compiler_ir_types.clone-compiler-ir-instr
+            (& (array-ref instrs.slots read))))
         (if (not (= write read))
           (set!
             (array-ref instrs.slots write)
-            (clone (array-ref instrs.slots read)))
+            (compiler_ir_types.clone-compiler-ir-instr
+              (& (array-ref instrs.slots read))))
           unit)
         (+= write 1)))
     (set! instrs.len write)))
@@ -3631,8 +3643,8 @@
         (compiler_ir_types.CompilerIrBinOp.BitAnd)
         (compiler_ir_types.CompilerIrBinOp.BitOr)
         (compiler_ir_types.CompilerIrBinOp.BitXor)
-        (compiler_ir_types.CompilerIrBinOp.Shl (clone i64-ty))
-        (compiler_ir_types.CompilerIrBinOp.Shr (clone i64-ty)))]
+        (compiler_ir_types.CompilerIrBinOp.Shl (ast.clone-ast-type (& i64-ty)))
+        (compiler_ir_types.CompilerIrBinOp.Shr (ast.clone-ast-type (& i64-ty))))]
     [out : String ""]
     (for [index (iterator.range 0 22)]
       (set!
@@ -3641,7 +3653,7 @@
           out
           (compiler-ir-smoke-fault-letter
             (compiler_ir_types.compiler-ir-binop-fault
-              (& (clone (array-ref ops index))))))))
+              (& (array-ref ops index)))))))
     out))
 
 (define (compiler-ir-fault-rows-ok?) : bool
@@ -4818,7 +4830,8 @@
       (array-ref slots 2)
       (compiler_ir_types.CompilerIrBlock.Block
         clean
-        (compiler_ir_types.compiler-ir-instr-seq1 (clone done))))
+        (compiler_ir_types.compiler-ir-instr-seq1
+          (compiler_ir_types.clone-compiler-ir-instr (& done)))))
     (set!
       (array-ref slots 3)
       (compiler_ir_types.CompilerIrBlock.Block
@@ -4831,11 +4844,37 @@
       (compiler_ir_types.CompilerIrBlockSeq slots 4))))
 
 (define (compiler-ir-smoke-frame-site-exposed?
-  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
   [name : (& name str)]) : bool
   (compiler_ir_types.compiler-ir-blocks-expose-frame-at?
-    (& blocks)
+    blocks
     (compiler_ir_types.compiler-ir-label name)))
+
+(define (compiler-ir-smoke-clone-block-slots
+  [slots : (& (__tl_dyn-array compiler_ir_types.CompilerIrBlock))]) : (__tl_dyn-array
+    compiler_ir_types.CompilerIrBlock)
+  (let
+    [len : i64 (array-length slots)]
+    [out : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
+      (__tl_make-array compiler_ir_types.CompilerIrBlock len)]
+    (for [index (iterator.range 0 len)]
+      (set!
+        (array-ref out index)
+        (compiler_ir_types.clone-compiler-ir-block (& (array-ref slots index)))))
+    out))
+
+(define (compiler-ir-smoke-clone-instr-slots
+  [slots : (& (__tl_dyn-array compiler_ir_types.CompilerIrInstr))]) : (__tl_dyn-array
+    compiler_ir_types.CompilerIrInstr)
+  (let
+    [len : i64 (array-length slots)]
+    [out : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
+      (__tl_make-array compiler_ir_types.CompilerIrInstr len)]
+    (for [index (iterator.range 0 len)]
+      (set!
+        (array-ref out index)
+        (compiler_ir_types.clone-compiler-ir-instr (& (array-ref slots index)))))
+    out))
 
 (define (compiler-ir-smoke-frame-site-failure) : i64
   (let
@@ -4846,39 +4885,35 @@
     [contained : compiler_ir_types.CompilerIrBlockList
       (compiler-ir-smoke-frame-site-blocks true false)]
     (when
-      (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.entry")
+      (compiler-ir-smoke-frame-site-exposed? (& acyclic) "frame.site.entry")
       (return 1))
     (when
-      (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.clean")
+      (compiler-ir-smoke-frame-site-exposed? (& acyclic) "frame.site.clean")
       (return 2))
     (unless
-      (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.alloc")
+      (compiler-ir-smoke-frame-site-exposed? (& acyclic) "frame.site.alloc")
       (return 3))
     (unless
-      (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.after")
+      (compiler-ir-smoke-frame-site-exposed? (& acyclic) "frame.site.after")
       (return 4))
     ;; A label that names no block of the body is not a proof.
     (unless
-      (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.none")
+      (compiler-ir-smoke-frame-site-exposed? (& acyclic) "frame.site.none")
       (return 5))
     ;; The back edge lets the producer's address reach every block.
     (unless
-      (compiler-ir-smoke-frame-site-exposed? (clone cyclic) "frame.site.entry")
+      (compiler-ir-smoke-frame-site-exposed? (& cyclic) "frame.site.entry")
       (return 6))
     (unless
-      (compiler-ir-smoke-frame-site-exposed? (clone cyclic) "frame.site.clean")
+      (compiler-ir-smoke-frame-site-exposed? (& cyclic) "frame.site.clean")
       (return 7))
     ;; A slot whose address never leaves the activation cannot outlive a
     ;; frame-reusing jump, wherever the jump is.
     (when
-      (compiler-ir-smoke-frame-site-exposed?
-        (clone contained)
-        "frame.site.after")
+      (compiler-ir-smoke-frame-site-exposed? (& contained) "frame.site.after")
       (return 8))
     (when
-      (compiler-ir-smoke-frame-site-exposed?
-        (clone contained)
-        "frame.site.alloc")
+      (compiler-ir-smoke-frame-site-exposed? (& contained) "frame.site.alloc")
       (return 9))
     0))
 
@@ -4906,11 +4941,17 @@
       (compiler_ir_types.compiler-ir-instr-seq1
         (compiler_ir_types.CompilerIrInstr.Alloc 0 (ast.AstType.I64)))]
     [plain-block : compiler_ir_types.CompilerIrBlock
-      (compiler_ir_types.CompilerIrBlock.Block 0 (clone plain))]
+      (compiler_ir_types.CompilerIrBlock.Block
+        0
+        (compiler_ir_types.clone-compiler-ir-instr-seq (& plain)))]
     [address-block : compiler_ir_types.CompilerIrBlock
-      (compiler_ir_types.CompilerIrBlock.Block 1 (clone address))]
+      (compiler_ir_types.CompilerIrBlock.Block
+        1
+        (compiler_ir_types.clone-compiler-ir-instr-seq (& address)))]
     [allocation-block : compiler_ir_types.CompilerIrBlock
-      (compiler_ir_types.CompilerIrBlock.Block 2 (clone allocation))]
+      (compiler_ir_types.CompilerIrBlock.Block
+        2
+        (compiler_ir_types.clone-compiler-ir-instr-seq (& allocation)))]
     [slots : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
       (__tl_make-array compiler_ir_types.CompilerIrBlock 3)]
     (when
@@ -4923,7 +4964,7 @@
           [cons-builder (compiler_ir_types.compiler-ir-block-builder-new)]
           (compiler_ir_types.compiler-ir-block-builder-push!
             (&mut cons-builder)
-            (clone plain-block))
+            (compiler_ir_types.clone-compiler-ir-block (& plain-block)))
           (compiler_ir_types.compiler-ir-block-builder-append-list!
             (&mut cons-builder)
             (compiler_ir_types.compiler-ir-block-list-empty))
@@ -4935,14 +4976,14 @@
           [cons-builder (compiler_ir_types.compiler-ir-block-builder-new)]
           (compiler_ir_types.compiler-ir-block-builder-push!
             (&mut cons-builder)
-            (clone plain-block))
+            (compiler_ir_types.clone-compiler-ir-block (& plain-block)))
           (compiler_ir_types.compiler-ir-block-builder-append-list!
             (&mut cons-builder)
             (let
               [cons-builder (compiler_ir_types.compiler-ir-block-builder-new)]
               (compiler_ir_types.compiler-ir-block-builder-push!
                 (&mut cons-builder)
-                (clone address-block))
+                (compiler_ir_types.clone-compiler-ir-block (& address-block)))
               (compiler_ir_types.compiler-ir-block-builder-append-list!
                 (&mut cons-builder)
                 (compiler_ir_types.compiler-ir-block-list-empty))
@@ -4955,26 +4996,36 @@
           [cons-builder (compiler_ir_types.compiler-ir-block-builder-new)]
           (compiler_ir_types.compiler-ir-block-builder-push!
             (&mut cons-builder)
-            (clone allocation-block))
+            (compiler_ir_types.clone-compiler-ir-block (& allocation-block)))
           (compiler_ir_types.compiler-ir-block-builder-append-list!
             (&mut cons-builder)
             (compiler_ir_types.compiler-ir-block-list-empty))
           (compiler_ir_types.compiler-ir-block-builder-to-list cons-builder)))
       (return 4))
-    (set! (array-ref slots 0) (clone plain-block))
-    (set! (array-ref slots 1) (clone address-block))
-    (set! (array-ref slots 2) (clone allocation-block))
+    (set!
+      (array-ref slots 0)
+      (compiler_ir_types.clone-compiler-ir-block (& plain-block)))
+    (set!
+      (array-ref slots 1)
+      (compiler_ir_types.clone-compiler-ir-block (& address-block)))
+    (set!
+      (array-ref slots 2)
+      (compiler_ir_types.clone-compiler-ir-block (& allocation-block)))
     ;; Capacity beyond len is not part of the body, even when it contains a
     ;; frame producer. Both dense and instruction scans honor logical len.
     (when
       (compiler-ir-smoke-blocks-expose-frame?
         (compiler_ir_types.CompilerIrBlockList.Array
-          (compiler_ir_types.CompilerIrBlockSeq (clone slots) 1)))
+          (compiler_ir_types.CompilerIrBlockSeq
+            (compiler-ir-smoke-clone-block-slots (& slots))
+            1)))
       (return 5))
     (unless
       (compiler-ir-smoke-blocks-expose-frame?
         (compiler_ir_types.CompilerIrBlockList.Array
-          (compiler_ir_types.CompilerIrBlockSeq (clone slots) 2)))
+          (compiler_ir_types.CompilerIrBlockSeq
+            (compiler-ir-smoke-clone-block-slots (& slots))
+            2)))
       (return 6))
     (unless
       (compiler-ir-smoke-blocks-expose-frame?
@@ -4982,43 +5033,59 @@
           [cons-builder (compiler_ir_types.compiler-ir-block-builder-new)]
           (compiler_ir_types.compiler-ir-block-builder-push!
             (&mut cons-builder)
-            (clone plain-block))
+            (compiler_ir_types.clone-compiler-ir-block (& plain-block)))
           (compiler_ir_types.compiler-ir-block-builder-append-list!
             (&mut cons-builder)
             (compiler_ir_types.CompilerIrBlockList.Array
-              (compiler_ir_types.CompilerIrBlockSeq (clone slots) 2)))
+              (compiler_ir_types.CompilerIrBlockSeq
+                (compiler-ir-smoke-clone-block-slots (& slots))
+                2)))
           (compiler_ir_types.compiler-ir-block-builder-to-list cons-builder)))
       (return 7))
     (when
       (compiler-ir-smoke-instrs-expose-frame?
-        (compiler_ir_types.CompilerIrInstrSeq (clone address.slots) 1))
+        (compiler_ir_types.CompilerIrInstrSeq
+          (compiler-ir-smoke-clone-instr-slots (& address.slots))
+          1))
       (return 8))
     (when
       (compiler-ir-smoke-instrs-expose-frame?
-        (compiler_ir_types.CompilerIrInstrSeq (clone address.slots) 0))
+        (compiler_ir_types.CompilerIrInstrSeq
+          (compiler-ir-smoke-clone-instr-slots (& address.slots))
+          0))
       (return 9))
     (unless
       (compiler-ir-smoke-instrs-expose-frame?
-        (compiler_ir_types.CompilerIrInstrSeq (clone address.slots) -1))
+        (compiler_ir_types.CompilerIrInstrSeq
+          (compiler-ir-smoke-clone-instr-slots (& address.slots))
+          -1))
       (return 10))
     (unless
       (compiler-ir-smoke-instrs-expose-frame?
-        (compiler_ir_types.CompilerIrInstrSeq (clone address.slots) 3))
+        (compiler_ir_types.CompilerIrInstrSeq
+          (compiler-ir-smoke-clone-instr-slots (& address.slots))
+          3))
       (return 11))
     (unless
       (compiler-ir-smoke-blocks-expose-frame?
         (compiler_ir_types.CompilerIrBlockList.Array
-          (compiler_ir_types.CompilerIrBlockSeq (clone slots) -1)))
+          (compiler_ir_types.CompilerIrBlockSeq
+            (compiler-ir-smoke-clone-block-slots (& slots))
+            -1)))
       (return 12))
     (unless
       (compiler-ir-smoke-blocks-expose-frame?
         (compiler_ir_types.CompilerIrBlockList.Array
-          (compiler_ir_types.CompilerIrBlockSeq (clone slots) 4)))
+          (compiler_ir_types.CompilerIrBlockSeq
+            (compiler-ir-smoke-clone-block-slots (& slots))
+            4)))
       (return 13))
     (when
       (compiler-ir-smoke-blocks-expose-frame?
         (compiler_ir_types.CompilerIrBlockList.Array
-          (compiler_ir_types.CompilerIrBlockSeq (clone slots) 0)))
+          (compiler_ir_types.CompilerIrBlockSeq
+            (compiler-ir-smoke-clone-block-slots (& slots))
+            0)))
       (return 14))
     ;; Returning false does not classify calls as pure. It only says a call
     ;; cannot receive this frame's address if the function never made one.

@@ -413,10 +413,10 @@
                         (compiler-spmd-numeric-binop-at op-index)]
                       [decision : CompilerSpmdNumericDecision
                         (compiler-spmd-numeric-binary-decision
-                          (clone source)
+                          (ast.clone-ast-type (& source))
                           (if (compiler-spmd-numeric-comparison-op? op)
                             (Bool)
-                            (clone source))
+                            (ast.clone-ast-type (& source)))
                           context
                           backend
                           op)]
@@ -428,7 +428,7 @@
                     (let
                       [decision : CompilerSpmdNumericDecision
                         (compiler-spmd-numeric-conversion-decision
-                          (clone source)
+                          (ast.clone-ast-type (& source))
                           (compiler-spmd-numeric-lane-at destination-index)
                           context
                           backend)]

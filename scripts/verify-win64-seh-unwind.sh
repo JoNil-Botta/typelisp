@@ -97,9 +97,10 @@ printf 'seh-victim-framed:\n%s\nseh-victim-fpo:\n%s\n' "$framed" "$fpo"
     && [ "$(count_rows "$fpo" 'SET_FPREG')" -eq 0 ] \
     || fail "seh-victim-fpo is not a push prologue"
 
-# Small Platform leaf entries share the driver's RSI/RDI preservation frame.
+# Small Platform leaf entries share the driver's RSI/RDI preservation frame
+# (8-byte alignment frame; the Internal body reserves no shadow space, #8438).
 bridge=$(function_rows "$WORK/fixture.rows" '__tl$c_entry')
-[ "$(count_rows "$bridge" 'ALLOC_SMALL size=40$')" -eq 1 ] \
+[ "$(count_rows "$bridge" 'ALLOC_SMALL size=8$')" -eq 1 ] \
     && [ "$(count_rows "$bridge" 'PUSH_NONVOL reg=RSI$')" -eq 1 ] \
     && [ "$(count_rows "$bridge" 'PUSH_NONVOL reg=RDI$')" -eq 1 ] \
     || fail "shared Platform frame does not describe RSI/RDI saves"

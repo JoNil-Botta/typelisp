@@ -16,8 +16,9 @@
       1
       "generated json aggregate vector length")
     (let
-      [member : json.JsonMember
-        (mvec.get (& members) 0 (json.JsonMember "" JsonNull))]
+      [members-view : (& members (Slice json.JsonMember))
+        (mvec.view (& members))]
+      [member : (& members json.JsonMember) (& (array-ref members-view 0))]
       (match member.value
         [(JsonBool value)
           (test.assert-true value "generated json aggregate payload")]

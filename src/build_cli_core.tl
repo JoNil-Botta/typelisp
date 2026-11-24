@@ -1800,14 +1800,14 @@
 
 (define (build-package-lock-list-has-exact-entry?
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [entry : package_lock_core.PackageLockEntry]) : bool
+  [entry : (& entry package_lock_core.PackageLockEntry)]) : bool
   (package_lock_core.package-lock-list-has-entry?
     entries
-    entry.alias
-    entry.url
-    entry.pin-kind
-    entry.pin-value
-    entry.commit))
+    (string.copy (& entry.alias))
+    (string.copy (& entry.url))
+    (package_lock_core.package-lock-pin-kind-copy (& entry.pin-kind))
+    (string.copy (& entry.pin-value))
+    (string.copy (& entry.commit))))
 
 (define (build-package-lock-list-contains-all?
   [haystack : package_lock_entry_vec.Vec]
@@ -1817,16 +1817,16 @@
 (define (build-package-lock-list-contains-all-from
   [haystack : (& haystack package_lock_entry_vec.Vec)]
   [needles : (& needles package_lock_entry_vec.Vec)]) : bool
-  (for [index (iterator.range 0 (package_lock_entry_vec.len needles))]
-    (unless
-      (build-package-lock-list-has-exact-entry?
-        haystack
-        (package_lock_entry_vec.get
-          needles
-          index
-          (package_lock_core.package-lock-entry-list-fallback)))
-      (return false))
-    unit)
+  (let
+    [view : (& needles (Slice package_lock_core.PackageLockEntry))
+      (package_lock_entry_vec.view needles)]
+    (for [index (iterator.range 0 (array-length view))]
+      (unless
+        (build-package-lock-list-has-exact-entry?
+          haystack
+          (& (array-ref view index)))
+        (return false))
+      unit))
   true)
 
 (define (build-package-lock-list-eq?

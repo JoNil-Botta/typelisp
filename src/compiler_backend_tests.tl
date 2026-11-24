@@ -3493,11 +3493,11 @@
             sections
             (&
               (object_target.compiler-backend-object-bytes-from-hex
-                "4889442420")))
+                "4889442400")))
           (cobj.compiler-object-section-contains-bytes?
             sections
             (&
-              (object_target.compiler-backend-object-bytes-from-hex "488b4530")))
+              (object_target.compiler-backend-object-bytes-from-hex "488b4510")))
           true
           true))]
     [(Err _) false]))
@@ -16151,7 +16151,7 @@ f:
       (ci.intern-compat-state-capture-active)))
     [(Ok asm)
       (let
-        [first : String "    movsd %xmm0, 48(%rbp)\n"]
+        [first : String "    movsd %xmm0, 16(%rbp)\n"]
         (and
           (>= (string.string-length asm) (string.string-length first))
           (string.eq
@@ -16248,6 +16248,11 @@ f:
         (be_state.CompilerBackendTarget.Windows)
         (Platform))
       32)
+    (=
+      (be_facts.compiler-backend-outgoing-shadow-space
+        (be_state.CompilerBackendTarget.Windows)
+        (Internal))
+      0)
     (let
       [text
         (compiler-backend-target-entry-text
@@ -32621,8 +32626,8 @@ entry:
         (asm-lacks? asm "    divsd %xmm1, %xmm0\n"))]
     [(Err _) false]))
 
-;; Windows Internal f64 calls use six positional registers, retain the
-;; shadow area before the seventh argument, and return f64 in XMM0.
+;; Windows Internal f64 calls use six positional registers, reserve no shadow
+;; space before the seventh argument, and return f64 in XMM0.
 (define (compiler-backend-win64-f64-abi-source) : String
   "(define (sum7
   [a : f64]
@@ -32658,20 +32663,20 @@ entry:
             (asm-has? callee "    movsd %xmm5, 32(%rsp)\n")
             (asm-has? callee "    subq $88, %rsp\n")
             ;; Entry copies preserve XMM0-5 and the nonvolatile XMM6 family.
-            (asm-has? callee "    movq 128(%rsp), %rax\n"))
+            (asm-has? callee "    movq 96(%rsp), %rax\n"))
           (asm-has?
             caller
-            "    movsd 80(%rsp), %xmm4\n"
-            "    movsd 72(%rsp), %xmm5\n"
-            "    movq 64(%rsp), %r10\n    movq %r10, 32(%rsp)\n"
+            "    movsd 48(%rsp), %xmm4\n"
+            "    movsd 40(%rsp), %xmm5\n"
+            "    movq 32(%rsp), %r10\n    movq %r10, 0(%rsp)\n"
             "    call _tl_sum7\n"
-            "    movsd %xmm0, 56(%rsp)\n")
+            "    movsd %xmm0, 24(%rsp)\n")
           (asm-lacks?
             asm
             "too many call args"
             "    syscall"
-            "    movsd 48(%rbp), %xmm0\n"
-            "    movq %r11, 32(%rsp)\n")
+            "    movsd 16(%rbp), %xmm0\n"
+            "    movq %r11, 0(%rsp)\n")
           (not
             (let
               [needle (compiler-backend-todo-marker)]
@@ -32851,8 +32856,8 @@ entry:
         (compiler-backend-stack-mix-call-ok? asm))]
     [(Err _) false]))
 
-;; Windows Internal calls reserve 32-byte shadow space, pass six words in
-;; registers, and place the seventh/eighth words after the shadow space.
+;; Windows Internal calls reserve no shadow space, pass six words in
+;; registers, and place the seventh/eighth words at 0/8(%rsp).
 (define (compiler-backend-stack-windows-args-ok?) : bool
   (asm-ok?
     (backend.compiler-backend-emit-source-for-target
@@ -32861,12 +32866,12 @@ entry:
     (lacks "too many call args")
     (has
       "    call _tl_add8\n"
-      "    movq %r10, 32(%rsp)\n"
-      "    movq %r10, 40(%rsp)\n"
-      "    movq 80(%rsp), %rsi\n"
-      "    movq 72(%rsp), %rdi\n"
-      "    movq 128(%rsp), %r8\n")
-    (lacks "    movq 128(%rsp), %rax\n")))
+      "    movq %r10, 0(%rsp)\n"
+      "    movq %r10, 8(%rsp)\n"
+      "    movq 48(%rsp), %rsi\n"
+      "    movq 40(%rsp), %rdi\n"
+      "    movq 96(%rsp), %r8\n")
+    (lacks "    movq 96(%rsp), %rax\n")))
 
 (define (compiler-backend-i64-type-list8) : ast.AstTypeList
   (let
@@ -33722,8 +33727,8 @@ entry:
 (define (compiler-backend-direct-tail-call-stack-slot
   [target : be_state.CompilerBackendTarget]) : String
   (if (be_facts.compiler-backend-target-windows? target)
-    ;; Win64 FPO rebases the outgoing tail stack-arg store.
-    "    movq %r10, 168(%rsp)\n"
+    ;; Win64 FPO rebases the outgoing tail stack-arg store (no Internal shadow).
+    "    movq %r10, 96(%rsp)\n"
     ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
     "    movq %r10, 96(%rsp)\n"))
 
@@ -33756,7 +33761,7 @@ entry:
     [(Ok asm)
       (if (be_facts.compiler-backend-target-windows? target)
         (and
-          (asm-has? asm "    movq $5, 48(%rbp)\n" "    movq $8, 72(%rbp)\n")
+          (asm-has? asm "    movq $5, 16(%rbp)\n" "    movq $8, 40(%rbp)\n")
           (asm-lacks? asm "    pushq %r11\n"))
         (and
           (asm-has? asm "    movq $7, 16(%rbp)\n" "    movq $8, 24(%rbp)\n")
@@ -33766,8 +33771,8 @@ entry:
 (define (compiler-backend-direct-tail-call-mixed-slot
   [target : be_state.CompilerBackendTarget]) : String
   (if (be_facts.compiler-backend-target-windows? target)
-    ;; Win64 FPO rebases the outgoing mixed tail stack-arg store.
-    "    movq %r10, 360(%rsp)\n"
+    ;; Win64 FPO rebases the outgoing mixed tail stack-arg store (no shadow).
+    "    movq %r10, 296(%rsp)\n"
     ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
     "    movq %r10, 160(%rsp)\n"))
 
@@ -34032,8 +34037,8 @@ entry:
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-reordered-source)
         (be_state.CompilerBackendTarget.Windows)
-        "40(%rsp)"
-        "32(%rsp)")
+        "8(%rsp)"
+        "0(%rsp)")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-duplicated-source)
         (be_state.CompilerBackendTarget.Linux)
@@ -34042,7 +34047,7 @@ entry:
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-duplicated-source)
         (be_state.CompilerBackendTarget.Windows)
-        "40(%rsp)"
+        "8(%rsp)"
         "")
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-nontrivial-source)
@@ -34052,16 +34057,16 @@ entry:
       (compiler-backend-direct-tail-call-i64-keeps-spills?
         (compiler-backend-direct-tail-call-nontrivial-source)
         (be_state.CompilerBackendTarget.Windows)
-        "56(%rsp)"
-        "48(%rsp)")
+        "24(%rsp)"
+        "16(%rsp)")
       (compiler-backend-direct-tail-call-f64-keeps-spills?
         (be_state.CompilerBackendTarget.Linux)
         "-8(%rsp)"
         "-16(%rsp)")
       (compiler-backend-direct-tail-call-f64-keeps-spills?
         (be_state.CompilerBackendTarget.Windows)
-        "40(%rsp)"
-        "32(%rsp)"))))
+        "8(%rsp)"
+        "0(%rsp)"))))
 
 (define (compiler-backend-indirect-tail-call-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
@@ -34323,11 +34328,19 @@ entry:
   [target : be_state.CompilerBackendTarget]) : bool
   (match (compiler-backend-non-direct-tail-call-i64-emit target)
     [(Ok asm)
-      (be_state.backend-and4
-        (asm-has? asm "    leave\n    jmp tl_tail_target\n")
-        (asm-lacks? asm "    call tl_tail_target\n")
-        (asm-lacks? asm "    ret\n")
-        true)]
+      (if (be_facts.compiler-backend-target-windows? target)
+        ;; On Windows an Internal caller has no shadow space, so a Platform C
+        ;; extern tail call falls back to call+ret instead of tail-jumping.
+        (be_state.backend-and4
+          (asm-has? asm "    call tl_tail_target\n")
+          (asm-lacks? asm "    leave\n    jmp tl_tail_target\n")
+          (asm-has? asm "    ret\n")
+          true)
+        (be_state.backend-and4
+          (asm-has? asm "    leave\n    jmp tl_tail_target\n")
+          (asm-lacks? asm "    call tl_tail_target\n")
+          (asm-lacks? asm "    ret\n")
+          true))]
     [(Err _) false]))
 
 (define (compiler-backend-non-direct-tail-call-unit-target-ok?
@@ -34363,11 +34376,17 @@ entry:
   [target : be_state.CompilerBackendTarget]) : bool
   (match (compiler-backend-non-direct-tail-call-varargs-emit target)
     [(Ok asm)
-      (be_state.backend-and4
-        (compiler-backend-non-direct-tail-call-varargs-pre-call? target asm)
-        (asm-has? asm "    leave\n    jmp tl_tail_varargs_target\n")
-        (asm-lacks? asm "    call tl_tail_varargs_target\n")
-        (asm-lacks? asm "    ret\n"))]
+      (if (be_facts.compiler-backend-target-windows? target)
+        (be_state.backend-and4
+          (compiler-backend-non-direct-tail-call-varargs-pre-call? target asm)
+          (asm-has? asm "    call tl_tail_varargs_target\n")
+          (asm-lacks? asm "    leave\n    jmp tl_tail_varargs_target\n")
+          (asm-has? asm "    ret\n"))
+        (be_state.backend-and4
+          (compiler-backend-non-direct-tail-call-varargs-pre-call? target asm)
+          (asm-has? asm "    leave\n    jmp tl_tail_varargs_target\n")
+          (asm-lacks? asm "    call tl_tail_varargs_target\n")
+          (asm-lacks? asm "    ret\n")))]
     [(Err _) false]))
 
 (define (compiler-backend-indirect-tail-call-ok?) : bool
@@ -36841,6 +36860,23 @@ entry:
         (Platform)
         0)
       32)
+    (=
+      (be_facts.compiler-backend-outgoing-stack-arg-offset
+        (be_state.CompilerBackendTarget.Windows)
+        (Internal)
+        0)
+      0)
+    (=
+      (be_facts.compiler-backend-outgoing-stack-arg-offset
+        (be_state.CompilerBackendTarget.Windows)
+        (Internal)
+        1)
+      8)
+    (=
+      (be_facts.compiler-backend-incoming-stack-arg-offset
+        (be_state.CompilerBackendTarget.Windows)
+        0)
+      16)
     ;; A store-marked owner key compares equal to the plain one it was made
     ;; from -- every rule inside a call-free run reads it as the same mirror --
     ;; and only the call boundary tells them apart.
@@ -38952,8 +38988,8 @@ entry:
         index
         7
         backend-state)
-      (has "    movzbl 48(%rbp), ")
-      (lacks "    movzbq 48(%rbp), %r9\n" "    movzbl 48(%rbp), %r9d\n"))))
+      (has "    movzbl 16(%rbp), ")
+      (lacks "    movzbq 16(%rbp), %r9\n" "    movzbl 16(%rbp), %r9d\n"))))
 
 ;; #8894: the stale body cursor the float parameter copies used to consult.
 ;; Its occupancy reports every register free, although the pinned parameters
@@ -39039,7 +39075,7 @@ entry:
         10
         backend-state)
       (has
-        "    movq 56(%rbp), %rax\n    movq %rax, -8(%rbp)\n    movq 72(%rbp), %rax\n    movq %rax, -16(%rbp)\n    movsd 48(%rbp), %xmm6\n    movsd 64(%rbp), %xmm7\n")
+        "    movq 24(%rbp), %rax\n    movq %rax, -8(%rbp)\n    movq 40(%rbp), %rax\n    movq %rax, -16(%rbp)\n    movsd 16(%rbp), %xmm6\n    movsd 32(%rbp), %xmm7\n")
       (lacks
         ", %xmm0\n"
         ", %xmm1\n"
@@ -39200,12 +39236,12 @@ entry:
       (and
         (string.is-string-prefix-at
           text
-          "    movq 48(%rbp), %rax\n    movq %rax, -256(%rbp)\n    movl 56(%rbp), %eax\n    movl %eax, -264(%rbp)\n"
+          "    movq 16(%rbp), %rax\n    movq %rax, -256(%rbp)\n    movl 24(%rbp), %eax\n    movl %eax, -264(%rbp)\n"
           0)
         (asm-has?
           text
           "    vmovdqu 32(%r10), %ymm2\n"
-          "    movsd 64(%rbp), %xmm7\n")
+          "    movsd 32(%rbp), %xmm7\n")
         (asm-lacks? text ", %xmm2\n"))]
     [(Err _) false]))
 
@@ -39318,11 +39354,11 @@ entry:
           "%r9"
           "%xmm4"
           "%xmm5"
-          "48(%rbp)"
-          "56(%rbp)"
-          "64(%rbp)"
-          "72(%rbp)"
-          "80(%rbp)")
+          "16(%rbp)"
+          "24(%rbp)"
+          "32(%rbp)"
+          "40(%rbp)"
+          "48(%rbp)")
         (__tl_make-array
           "%xmm0"
           "%xmm1"
@@ -42743,12 +42779,13 @@ b_keep:
                 (when
                   active
                   (begin
-                    (text_buf_borrowed.copy-byte-range-into
-                      data
-                      run-start
-                      (- run-end run-start)
-                      dst
-                      pos)
+                    (unsafe
+                      (text_buf_borrowed.copy-byte-range-into
+                        data
+                        run-start
+                        (- run-end run-start)
+                        dst
+                        pos))
                     (+= pos (- run-end run-start))))
                 (set! active true)
                 (set! run-start s)
@@ -42756,12 +42793,13 @@ b_keep:
         (when
           active
           (begin
-            (text_buf_borrowed.copy-byte-range-into
-              data
-              run-start
-              (- run-end run-start)
-              dst
-              pos)
+            (unsafe
+              (text_buf_borrowed.copy-byte-range-into
+                data
+                run-start
+                (- run-end run-start)
+                dst
+                pos))
             (+= pos (- run-end run-start))))
         (unsafe
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
@@ -45994,7 +46032,11 @@ user_fn:
               (Windows)
               convention)
             preserved)
-          (= (cabi.compiler-abi-outgoing-shadow-space (Windows) convention) 32)
+          (=
+            (cabi.compiler-abi-outgoing-shadow-space (Windows) convention)
+            (if internal?
+              0
+              32))
           (not (cabi.compiler-abi-arg-banks-independent? (Windows) convention))
           (not
             (cabi.compiler-abi-aggregate-eightbyte-classes?
@@ -46711,7 +46753,7 @@ user_fn:
               (test.assert-owned-string-eq
                 (string.substring bytes offset 16)
                 (object_target.compiler-backend-object-bytes-from-hex
-                  "56574883ec2841ffd34883c4285f5ec3")
+                  "56574883ec0841ffd34883c4085f5ec3")
                 "shared C bridge preserves SI/DI, calls through R11, and restores its frame")
               (test.assert-true
                 (and
@@ -46757,8 +46799,8 @@ user_fn:
           (string.copy (& (array-ref expected i))))
         "C entry unwind agrees with assembler saves/allocation")))
   (let
-    [counts : (Array i64 8) (array 0 4 5 6 7 8 513 514)]
-    [frames : (Array i64 8) (array 40 40 40 40 40 56 4088 4104)]
+    [counts : (Array i64 8) (array 0 4 5 6 7 8 517 518)]
+    [frames : (Array i64 8) (array 8 8 8 8 8 24 4088 4104)]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -46857,10 +46899,10 @@ user_fn:
                     "bridge_c$unwind"))]
               [prefix : String
                 (object_target.compiler-backend-object-bytes-from-hex
-                  "56574883ec38488b4424704889c6488b4424784889c7488b8424800000004889442420488b8424880000004889442428")]
+                  "56574883ec18488b4424504889c6488b4424584889c7488b4424604889442400488b4424684889442408")]
               [xdata : String
                 (object_target.compiler-backend-object-bytes-from-hex
-                  "010603000662027001600000")]
+                  "010603000622027001600000")]
               (test.assert-owned-string-eq
                 (string.substring bytes entry (string.string-length prefix))
                 prefix
@@ -46904,15 +46946,15 @@ user_fn:
             (compiler-backend-convention-site-body (& asm) "bridge_c")]
           (test.assert-true
             (and
-              (asm-has? body "pushq %rsi\n" "pushq %rdi\n" "subq $56, %rsp\n")
+              (asm-has? body "pushq %rsi\n" "pushq %rdi\n" "subq $24, %rsp\n")
               (asm-has?
                 body
-                "movq 112(%rsp), %rax\n    movq %rax, %rsi\n"
-                "movq 120(%rsp), %rax\n    movq %rax, %rdi\n")
+                "movq 80(%rsp), %rax\n    movq %rax, %rsi\n"
+                "movq 88(%rsp), %rax\n    movq %rax, %rdi\n")
               (asm-has?
                 body
-                "movq 128(%rsp), %rax\n    movq %rax, 32(%rsp)\n"
-                "movq 136(%rsp), %rax\n    movq %rax, 40(%rsp)\n")
+                "movq 96(%rsp), %rax\n    movq %rax, 0(%rsp)\n"
+                "movq 104(%rsp), %rax\n    movq %rax, 8(%rsp)\n")
               (asm-has?
                 body
                 "call bridge_c$typelisp\n"
@@ -46921,7 +46963,7 @@ user_fn:
               (compiler-backend-win64-row-describes?
                 (& asm)
                 "bridge_c"
-                "    .byte 1, 6, 3, 0\n    .byte 6, 98    # UWOP_ALLOC_SMALL 56\n    .byte 2, 112    # UWOP_PUSH_NONVOL %rdi\n    .byte 1, 96    # UWOP_PUSH_NONVOL %rsi\n    .byte 0, 0\n"))
+                "    .byte 1, 6, 3, 0\n    .byte 6, 34    # UWOP_ALLOC_SMALL 24\n    .byte 2, 112    # UWOP_PUSH_NONVOL %rdi\n    .byte 1, 96    # UWOP_PUSH_NONVOL %rsi\n    .byte 0, 0\n"))
             "C entry must preserve registers, forward stack words and describe its own frame"))])))
 
 ;; One `int->string` per byte: the text the `.byte` emitter must produce.
@@ -47778,7 +47820,7 @@ user_fn:
         "a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:f64")]
     [win-homes : regalloc.CompilerRegAssignmentTable
       (reg-homes
-        "%0=%rcx %1=%rdx %2=%r8 %3=%r9 %4=%rsi %5=%rdi %6=spill:48 %7=spill:56")]
+        "%0=%rcx %1=%rdx %2=%r8 %3=%r9 %4=%rsi %5=%rdi %6=spill:16 %7=spill:24")]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -47814,7 +47856,7 @@ user_fn:
           index
           8
           index.backend-state)
-        (lacks "48(%rbp)" "56(%rbp)"))
+        (lacks "16(%rbp)" "24(%rbp)"))
       "Windows direct-home scalar and f64 incoming stack params emit no prologue copy")
     (test.assert-true
       (=
@@ -47824,7 +47866,7 @@ user_fn:
           0
           0)
         -8)
-      "bare FPO leaf rebases incoming stack params by -8 (16->8 SysV, 48->40 Win64)"))
+      "bare FPO leaf rebases incoming stack params by -8 (16->8 on SysV and Win64 Internal)"))
   ;; End-to-end Linux SysV opt2 checks.
   (let
     [linux-target : be_state.CompilerBackendTarget
@@ -47899,22 +47941,22 @@ user_fn:
       (compiler-backend-asm-function-body win-asm "_tl_dsp_narrow")]
     (test.assert-true
       (and
-        (asm-has? win-bare "40(%rsp)" "48(%rsp)")
+        (asm-has? win-bare "8(%rsp)" "16(%rsp)")
         (asm-lacks? win-bare "subq $" "pushq "))
-      "Windows bare FPO leaf reads incoming stack params at 40/48(%rsp) with no frame")
+      "Windows bare FPO leaf reads incoming stack params at 8/16(%rsp) with no frame")
     (test.assert-true
       (and
         (asm-has? win-reader ".seh_stackalloc " ".seh_endprologue")
         (asm-has?
           win-reader
-          "    movq 208(%rsp), %r8\n    addq 216(%rsp), %r8\n")
-        (asm-lacks? win-reader "movq 208(%rsp), %r8\n    movq %r8, "))
+          "    movq 176(%rsp), %r8\n    addq 184(%rsp), %r8\n")
+        (asm-lacks? win-reader "movq 176(%rsp), %r8\n    movq %r8, "))
       "Windows direct stack reader reads incoming caller slots directly with valid SEH")
     (test.assert-true
       (and
         (asm-has? win-narrow ".seh_stackalloc " ".seh_endprologue")
-        (asm-has? win-narrow "    movslq 208(%rsp), %r8\n")
-        (asm-has? win-narrow "    movzbl 216(%rsp), %r8d\n"))
+        (asm-has? win-narrow "    movslq 176(%rsp), %r8\n")
+        (asm-has? win-narrow "    movzbl 184(%rsp), %r8d\n"))
       "Windows excludes narrow <8-byte incoming stack params with valid SEH")))
 
 (test
@@ -48254,3 +48296,133 @@ user_fn:
         skip-dir-out
         "    call tl_oob_abort\n    .byte 0xcc\n    call tl_oob_abort\n")
       "fallthrough abort dedup never steps across skip directives like .byte")))
+
+(test
+  backend-windows-internal-no-shadow-space-boundary
+  ;; #8438: Windows Internal calls reserve no 32-byte shadow space while
+  ;; Platform C/extern calls, CFunc indirect calls, and Internal->Platform
+  ;; tail calls retain the 32-byte home area.
+  (let
+    [src : String
+      "(extern (ext_c6 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : i64)
+(extern (ext_c2 [a : i64] [b : i64]) : i64)
+(define (int_leaf8 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (+ g h))
+(define (int_rec8 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64] [h : i64]) : i64
+  (if (<= a 0)
+    (+ g h)
+    (+ 1 (int_rec8 (- a 1) b c d e f g h))))
+(define (call_int8 [x : i64]) : i64
+  (int_rec8 x 2 3 4 5 6 7 8))
+(define (call_ext6 [x : i64]) : i64
+  (ext_c6 x 2 3 4 5 6))
+(define (tail_to_int [x : i64]) : i64
+  (int_rec8 x 2 3 4 5 6 7 8))
+(define (tail_to_ext [x : i64]) : i64
+  (ext_c2 x 9))
+(define (call_cfunc [fp : (CFunc non-null (-> i64 i64 i64 i64 i64 i64))] [x : i64]) : i64
+  (fp x 2 3 4 5))
+(define keep_int8 : (-> i64 i64 i64 i64 i64 i64 i64 i64 i64) int_leaf8)
+(define keep_ci8 : (-> i64 i64) call_int8)
+(define keep_c6 : (-> i64 i64) call_ext6)
+(define keep_te : (-> i64 i64) tail_to_ext)
+(define keep_cf : (-> (CFunc non-null (-> i64 i64 i64 i64 i64 i64)) i64 i64) call_cfunc)
+(define (main) : i64
+  (+ (call_int8 1) (+ (call_ext6 1) (+ (tail_to_int 1) (tail_to_ext 1)))))"]
+    (match (compiler-backend-emit-source-opt2-for-target
+      src
+      (be_state.CompilerBackendTarget.Windows))
+      [(Err _)
+        (test.assert-true false "Windows #8438 boundary source must emit")]
+      [(Ok asm)
+        (let
+          [leaf8 : String
+            (compiler-backend-asm-function-body asm "_tl_int_leaf8")]
+          [c-int8 : String
+            (compiler-backend-asm-function-body asm "_tl_call_int8")]
+          [c-ext6 : String
+            (compiler-backend-asm-function-body asm "_tl_call_ext6")]
+          [t-ext : String
+            (compiler-backend-asm-function-body asm "_tl_tail_to_ext")]
+          [cfunc : String
+            (compiler-backend-asm-function-body asm "_tl_call_cfunc")]
+          (test.assert-true
+            (and
+              (asm-has? leaf8 "subq $72, %rsp" "96(%rsp)" "104(%rsp)")
+              (asm-lacks? leaf8 "128(%rsp)" "136(%rsp)"))
+            "Windows Internal 7th/8th incoming stack params skip no 32-byte shadow space")
+          (test.assert-true
+            (and
+              (asm-has? c-int8 "0(%rsp)" "8(%rsp)")
+              (asm-lacks? c-int8 "32(%rsp)" "40(%rsp)"))
+            "Windows Internal 8-arg call writes 7th/8th stack args at 0/8(%rsp)")
+          (test.assert-true
+            (and
+              (asm-has? c-ext6 "32(%rsp)" "40(%rsp)" "call ext_c6")
+              (asm-has? c-ext6 ".seh_stackalloc "))
+            "Windows Platform C extern call keeps 32-byte shadow space and 5th/6th stack args at 32/40(%rsp)")
+          (test.assert-true
+            (and
+              (asm-has? t-ext "call ext_c2" ".seh_stackalloc ")
+              (asm-lacks? t-ext "jmp ext_c2"))
+            "Windows Internal->Platform TailCall must not tail-jump without caller shadow space")
+          (test.assert-true
+            (and
+              (asm-has? cfunc "32(%rsp)" ".seh_stackalloc ")
+              (asm-has? cfunc "call *"))
+            "Windows CFunc indirect call keeps 32-byte shadow space and 5th arg at 32(%rsp)"))]))
+  ;; Direct-object COFF: Internal->Platform TailCall must emit call+ret (not jmp)
+  ;; and reserve 32-byte shadow space; Internal 8-arg call places 7th/8th at 0/8(%rsp).
+  (let
+    [c-ext : ir.CompilerIrExtern
+      (Extern
+        (compiler-backend-test-symbol "ext_tail_c")
+        (compiler-backend-test-symbol "ext_tail_c")
+        "ext_tail_c"
+        (ast.ast-ty-func (compiler-backend-type-list-of "ii") (& (I64)))
+        (C)
+        (compiler-backend-test-symbol "ext_tail_c")
+        (ast.ast-extern-link-input-list-new)
+        false
+        (ir.CompilerIrReturnStorage.None))]
+    [prog : ir.CompilerIrProgram
+      (Program
+        (ir.compiler-ir-global-seq-empty)
+        (ir.compiler-ir-function-seq-prepend
+          (&
+            (irt.func
+              "function @main(a=%0:i64, b=%1:i64) -> i64 vars 2 {
+        entry:
+          tailcall ext_tail_c(%0, %1) : i64
+        }"))
+          (& (ir.compiler-ir-function-seq-empty)))
+        (ir.compiler-ir-extern-seq1 c-ext)
+        (ir.CompilerIrReturnStorageAuthority.None))]
+    (match (be_object.compiler-backend-emit-program-object-image-target-with-mode-and-crt
+      prog
+      (be_state.CompilerBackendTarget.Windows)
+      (Scalar)
+      (ir.compiler-source-spans-empty)
+      false
+      false)
+      [(Err _)
+        (test.assert-true false "COFF Internal->Platform TailCall must emit")]
+      [(Ok image)
+        (test.assert-true
+          (and
+            (cobj.compiler-object-relocation-list-contains?
+              image.relocations
+              (Call)
+              "ext_tail_c")
+            (not
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (TailCall)
+                "ext_tail_c")))
+          "COFF Internal->Platform TailCall must emit a shadowed Call relocation, not a TailCall jmp")]))
+  ;; Verify shared __tl$c_entry unwind info for 8-byte frame (UWOP_ALLOC_SMALL(8)).
+  (test.assert-owned-string-eq
+    (object_windows.compiler-backend-object-entry-range-unwind-bytes 8 6 true)
+    (object_target.compiler-backend-object-bytes-from-hex
+      "010603000602027001600000")
+    "__tl$c_entry 8-byte alignment frame produces valid Win64 SEH unwind bytes"))

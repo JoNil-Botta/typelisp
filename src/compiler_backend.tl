@@ -23271,8 +23271,9 @@
                       (be_state.compiler-backend-function-state-set-bool!
                         function-state
                         be_state.compiler-backend-function-bool-call-align-needed
-                        (be_peephole.compiler-backend-text-has-returning-call?
-                          post-prologue))]
+                        (be_peephole.compiler-backend-text-has-call-needing-align?
+                          post-prologue
+                          (not target-policy.linux-syscall)))]
                     ;; M-G3 stage 2: attempt frame-pointer omission on both
                     ;; text backends. Win64's FPO prologue emits explicit
                     ;; push/stack/XMM SEH unwind codes and the audit rejects

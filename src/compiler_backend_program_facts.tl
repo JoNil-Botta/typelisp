@@ -145,7 +145,7 @@
       (-
         (be_operand.compiler-backend-round-up-16
           (+
-            40
+            8
             (*
               8
               (if (> len 6)
@@ -1898,8 +1898,9 @@
 
 ;; Byte offset from %rsp where the `stack-idx`-th stack-passed OUTGOING argument
 ;; is stored. Stack args are numbered sequentially in argument order (0,
-;; 1, ...) independent of which register bank overflowed. System V packs them at
-;; 0,8,16,...; Windows packs them after the 32-byte shadow space.
+;; 1, ...) independent of which register bank overflowed. System V and Windows
+;; Internal calls pack them at 0,8,16,...; Windows Platform calls pack them
+;; after the 32-byte shadow space.
 (define (compiler-backend-outgoing-stack-arg-offset
   [target : be_state.CompilerBackendTarget]
   [convention : compiler_abi.CompilerCallConvention]
@@ -1907,8 +1908,8 @@
   (+ (compiler-backend-outgoing-shadow-space target convention) (* stack-idx 8)))
 
 ;; Byte offset from %rbp where the `stack-idx`-th INCOMING stack argument lives.
-;; System V's first stack arg sits at 16(%rbp) (saved %rbp + return
-;; address); Windows adds its 32-byte shadow space (48(%rbp)).
+;; Internal functions reserve no shadow space on either target, so the first
+;; stack arg sits at 16(%rbp) (saved %rbp + return address).
 (define (compiler-backend-incoming-stack-arg-offset
   [target : be_state.CompilerBackendTarget]
   [stack-idx : i64]) : i64
@@ -3255,14 +3256,77 @@
     convention
     (compiler-backend-call-bank-index target convention float-idx position)))
 
-;; Caller-reserved outgoing shadow space in bytes: none on System V, 32 on
-;; Windows x64.
+;; Caller-reserved outgoing shadow space in bytes: none on System V or Windows
+;; Internal calls, 32 on Windows Platform calls.
 (define (compiler-backend-outgoing-shadow-space
   [target : be_state.CompilerBackendTarget]
   [convention : compiler_abi.CompilerCallConvention]) : i64
   (compiler_abi.compiler-abi-outgoing-shadow-space
     (be_state.compiler-backend-target-abi target)
     convention))
+
+;; True when a direct call targets a compiler/runtime-owned helper that takes
+;; at most four register arguments, never touches the caller's Win64 home area,
+;; and allocates its own frame before any OS/Win32 call. These helpers keep the
+;; Platform register convention (preserving RSI/RDI) without forcing every
+;; caller to reserve 32 bytes of shadow space.
+(define (compiler-backend-direct-call-shadow-free-runtime?
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [name : i64]) : bool
+  (let
+    [link-id : i64
+      (be_operand.compiler-backend-index-extern-link-symbol-id
+        program-index
+        name)]
+    (or
+      (cbi.compiler-builtin-backend-runtime-platform-id? name)
+      (cbi.compiler-builtin-backend-runtime-platform-id? link-id)
+      (let
+        [sym : String
+          (be_state.compiler-backend-symbol-text-index program-index link-id)]
+        (or
+          (string.eq sym "tl_memchr")
+          (string.eq sym "tl_array_fill8")
+          (string.eq sym "tl_oob_abort")
+          (string.eq sym "tl_div_abort")
+          (string.eq sym "tl_shift_abort")
+          (string.eq sym "tl_abort_string")
+          (string.eq sym "tl_oob_abort_at")
+          (string.eq sym "tl_div_abort_at")
+          (string.eq sym "tl_shift_abort_at")
+          (string.eq sym "tl_panic_at"))))))
+
+(define (compiler-backend-direct-call-outgoing-shadow-space
+  [target : be_state.CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [name : i64]) : i64
+  (let
+    [shadow : i64 (compiler-backend-outgoing-shadow-space target convention)]
+    (if (and
+      (> shadow 0)
+      (not
+        (compiler-backend-direct-call-shadow-free-runtime? program-index name)))
+      shadow
+      0)))
+
+(define (compiler-backend-call-instr-outgoing-shadow-space
+  [target : be_state.CompilerBackendTarget]
+  [instr : (& instr compiler_ir_types.CompilerIrInstr)]
+  [program-index : be_state.CompilerBackendProgramIndex]) : i64
+  (if (= (compiler-backend-outgoing-shadow-space target (Platform)) 0)
+    0
+    (match instr
+      [(or (Call _ name _ _) (TailCall name _ _))
+        (compiler-backend-direct-call-outgoing-shadow-space
+          target
+          (compiler_regalloc.compiler-reg-direct-call-convention name)
+          program-index
+          name)]
+      [(or (CallIndirect _ _ _ _) (TailCallIndirect _ _ _) (SpmdCall _)
+           (BoundsCheck _ _ _))
+        0]
+      [_ (compiler-backend-outgoing-shadow-space target (Platform))])))
 
 (define (compiler-backend-target-linux?
   [target : be_state.CompilerBackendTarget]) : bool

@@ -1363,9 +1363,11 @@
       (if done
         (set! i (lsp_document_vec.len docs))
         (let
-          [doc : lsp_vector_families.LspDocument
-            (lsp_document_vec.get docs i (lsp-document-fallback))]
-          (if (string.eq doc.uri uri)
+          [view : (& docs (Slice lsp_vector_families.LspDocument))
+            (lsp_document_vec.view docs)]
+          [doc : (& docs lsp_vector_families.LspDocument)
+            (& (array-ref view i))]
+          (if (string.eq (& doc.uri) uri)
             (begin
               (set! found i)
               (set! done true)
@@ -1392,38 +1394,20 @@
       (lsp-cache-diagnostic-uris-copy diagnostic-uris)]
     (if (>= index 0)
       (let
-        [old-doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-        [old-text : String old-doc.text]
-        [old-decls : lsp_decl_vec.Vec old-doc.decls]
-        [old-decls-valid : bool old-doc.decls-valid]
-        [old-check-cache : lsp_vector_families.LspCheckCache
-          old-doc.check-cache]
-        [new-decls : lsp_decl_vec.Vec
-          (if (string.eq old-text text)
-            old-decls
-            (lsp_decl_vec.new))]
-        [new-decls-valid : bool
-          (if (string.eq old-text text)
-            old-decls-valid
-            false)]
-        [new-check-cache : lsp_vector_families.LspCheckCache
-          (if (string.eq old-text text)
-            old-check-cache
-            LspCheckCacheInvalid)]
-        (lsp_document_vec.set-ref!
-          (&mut docs)
-          index
-          (lsp_vector_families.LspDocument
-            uri
-            path
-            text
-            version
-            cached-diagnostic-uris
-            new-decls
-            new-decls-valid
-            new-check-cache
-            old-doc.semantic))
+        [same-text : bool
+          (string.eq (& (array-ref docs.slots index).text) (& text))]
+        (set! (array-ref docs.slots index).uri uri)
+        (set! (array-ref docs.slots index).path path)
+        (set! (array-ref docs.slots index).text text)
+        (set! (array-ref docs.slots index).version version)
+        (set!
+          (array-ref docs.slots index).diagnostic-uris
+          cached-diagnostic-uris)
+        (unless
+          same-text
+          (set! (array-ref docs.slots index).decls (lsp_decl_vec.new))
+          (set! (array-ref docs.slots index).decls-valid false)
+          (set! (array-ref docs.slots index).check-cache LspCheckCacheInvalid))
         docs)
       (let
         [doc : lsp_vector_families.LspDocument
@@ -1458,29 +1442,11 @@
     [index : i64 0]
     [found : i64 -1]
     (while (and (< index (lsp_document_vec.len (& docs))) (< found 0))
-      (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-        (if (string.eq doc.uri uri)
-          (set! found index)
-          (+= index 1))))
+      (if (string.eq (& (array-ref docs.slots index).uri) uri)
+        (set! found index)
+        (+= index 1)))
     (if (>= found 0)
-      (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) found (lsp-document-fallback))]
-        (lsp_document_vec.set-ref!
-          (&mut docs)
-          found
-          (lsp_vector_families.LspDocument
-            doc.uri
-            doc.path
-            doc.text
-            doc.version
-            doc.diagnostic-uris
-            doc.decls
-            doc.decls-valid
-            check-cache
-            doc.semantic)))
+      (set! (array-ref docs.slots found).check-cache check-cache)
       unit)))
 
 (define (lsp-documents-set-check-cache
@@ -1504,8 +1470,6 @@
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
         [snapshot : lsp_vector_families.LspSemanticSnapshot
           (in-arena
             (unsafe
@@ -1513,12 +1477,12 @@
             (lsp_vector_families.LspSemanticSnapshot
               semantic-index
               version
-              (string.copy (& doc.path))
-              (string.copy (& doc.text))
+              (string.copy (& (array-ref docs.slots index).path))
+              (string.copy (& (array-ref docs.slots index).text))
               true))]
-        (lsp-semantic-snapshot-release! (&mut doc.semantic))
-        (set! doc.semantic snapshot)
-        (lsp_document_vec.set-ref! (&mut docs) index doc)
+        (lsp-semantic-snapshot-release!
+          (&mut (array-ref docs.slots index).semantic))
+        (set! (array-ref docs.slots index).semantic snapshot)
         docs)
       (begin
         (compiler_semantic_index.compiler-semantic-source-index-release!
@@ -1529,11 +1493,8 @@
   [docs : (&mut docs lsp_document_vec.Vec)]
   [index : i64]) : unit
   (if (and (>= index 0) (< index (lsp_document_vec.len (& docs))))
-    (let
-      [doc : lsp_vector_families.LspDocument
-        (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-      (lsp-semantic-snapshot-release! (&mut doc.semantic))
-      (lsp_document_vec.set-ref! (&mut docs) index doc))
+    (lsp-semantic-snapshot-release!
+      (&mut (array-ref docs.slots index).semantic))
     unit))
 
 (define (lsp-documents-release-all! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
@@ -1549,10 +1510,11 @@
   (let
     [last : i64 (- (lsp_document_vec.len (& docs)) 1)]
     (for [i (iterator.range index last)]
-      (let
-        [next : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) (+ i 1) (lsp-document-fallback))]
-        (lsp_document_vec.set-ref! (&mut docs) i next)))))
+      ;; Slot `i` was released; move slot `i + 1` down once before dropping tail.
+      (set!
+        (array-ref docs.slots i)
+        (unsafe
+          (ptr-read (ptr-offset (__tl_array-data docs.slots) (+ i 1))))))))
 
 (define (lsp-documents-remove-index [docs : lsp_document_vec.Vec] [index : i64]) : lsp_document_vec.Vec
   (let
@@ -1579,48 +1541,47 @@
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-        (Found doc.path doc.text doc.diagnostic-uris))
+        [view : (& docs (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view docs)]
+        [doc : (& docs lsp_vector_families.LspDocument)
+          (& (array-ref view index))]
+        (Found
+          (string.copy (& doc.path))
+          (string.copy (& doc.text))
+          (lsp-cache-diagnostic-uris-copy (& doc.diagnostic-uris))))
       Missing)))
 
 (define (lsp-document-refresh-from-disk
   [docs : lsp_document_vec.Vec]
   [index : i64]) : lsp_vector_families.LspDocument
   (let
-    [doc : lsp_vector_families.LspDocument
-      (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
-    [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
-      (owned_view.compiler-owned-shared-view docs.slots)]
-    [path : String (owned_view.compiler-owned-shared-view doc.path)]
+    [path : String (string.copy (& (array-ref docs.slots index).path))]
     ;; Versioned documents are client-owned open buffers. Only unversioned
     ;; entries loaded by tooling may be refreshed from disk.
-    (if (or (string.eq path "") (>= doc.version 0))
-      doc
+    (if (or (string.eq (& path) "") (>= (array-ref docs.slots index).version 0))
+      (lsp-document-copy (& (array-ref docs.slots index)))
       (match (io.try-read-file (& path))
         [(OkIoBytes disk-contents)
           (let
             [disk-text : String (byte_buf.to-string disk-contents)]
-            (if (string.eq disk-text doc.text)
-              doc
-              (let
-                [updated : lsp_vector_families.LspDocument
-                  (lsp_vector_families.LspDocument
-                    doc.uri
-                    path
-                    disk-text
-                    -1
-                    doc.diagnostic-uris
-                    (lsp_decl_vec.new)
-                    false
-                    LspCheckCacheInvalid
-                    (lsp-semantic-snapshot-empty))]
-                (lsp-semantic-snapshot-release! (&mut doc.semantic))
+            (if (string.eq (& disk-text) (& (array-ref docs.slots index).text))
+              (lsp-document-copy (& (array-ref docs.slots index)))
+              (begin
+                (lsp-semantic-snapshot-release!
+                  (&mut (array-ref docs.slots index).semantic))
+                (set! (array-ref docs.slots index).path path)
+                (set! (array-ref docs.slots index).text disk-text)
+                (set! (array-ref docs.slots index).version -1)
+                (set! (array-ref docs.slots index).decls (lsp_decl_vec.new))
+                (set! (array-ref docs.slots index).decls-valid false)
                 (set!
-                  (array-ref slots index)
-                  (owned_view.compiler-owned-shared-view updated))
-                updated)))]
-        [(ErrIoBytes _) doc]))))
+                  (array-ref docs.slots index).check-cache
+                  LspCheckCacheInvalid)
+                (set!
+                  (array-ref docs.slots index).semantic
+                  (lsp-semantic-snapshot-empty))
+                (lsp-document-copy (& (array-ref docs.slots index))))))]
+        [(ErrIoBytes _) (lsp-document-copy (& (array-ref docs.slots index)))]))))
 
 (define (lsp-documents-lookup-resynced
   [docs : lsp_document_vec.Vec]
@@ -1818,10 +1779,12 @@
     [found : i64 -1]
     (while (and (< index (lsp_document_vec.len docs)) (< found 0))
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get docs index (lsp-document-fallback))]
+        [view : (& docs (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view docs)]
+        [doc : (& docs lsp_vector_families.LspDocument)
+          (& (array-ref view index))]
         (if (string.eq
-          (compiler_load.compiler-load-normalize-path doc.path)
+          (compiler_load.compiler-load-normalize-path (& doc.path))
           normalized)
           (set! found index)
           (+= index 1))))
@@ -2853,17 +2816,17 @@
                     (if (< idx 0)
                       (Continue docs)
                       (let
-                        [doc : lsp_vector_families.LspDocument
-                          (lsp_document_vec.get
-                            (& docs)
-                            idx
-                            (lsp-document-fallback))]
+                        [doc-path : String
+                          (string.copy (& (array-ref docs.slots idx).path))]
+                        [doc-text : String
+                          (string.copy (& (array-ref docs.slots idx).text))]
+                        [doc-version : i64 (array-ref docs.slots idx).version]
                         [analysis : LspAnalyzeResult
                           (lsp-analyze-document
                             (owned_view.compiler-owned-shared-view uri)
-                            doc.path
-                            doc.text
-                            doc.version
+                            doc-path
+                            doc-text
+                            doc-version
                             stdlib-roots)]
                         [updated-docs : lsp_document_vec.Vec
                           (lsp-documents-set-check-cache
@@ -2875,7 +2838,7 @@
                             (lsp-documents-set-semantic-index
                               updated-docs
                               uri
-                              doc.version
+                              doc-version
                               analysis.semantic-index)
                             updated-docs)]
                         (Continue semantic-docs))))]))]
@@ -3149,12 +3112,19 @@
     [done : bool false]
     (while (and (not done) (< index (lsp_document_vec.len (& docs))))
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+        [view : (& docs (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view (& docs))]
+        [doc : (& docs lsp_vector_families.LspDocument)
+          (& (array-ref view index))]
         [candidate : String (fs.path-normalize (& doc.path))]
         (if (string.eq candidate wanted)
           (begin
-            (set! result (Found doc.uri doc.text doc.version))
+            (set!
+              result
+              (Found
+                (string.copy (& doc.uri))
+                (string.copy (& doc.text))
+                doc.version))
             (set! done true))
           (+= index 1))))
     result))
@@ -3268,15 +3238,17 @@
   (if (>= index (lsp_document_vec.len (& docs)))
     acc
     (let
-      [doc : lsp_vector_families.LspDocument
-        (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
+      [view : (& docs (Slice lsp_vector_families.LspDocument))
+        (lsp_document_vec.view (& docs))]
+      [doc : (& docs lsp_vector_families.LspDocument)
+        (& (array-ref view index))]
       [path : String (fs.path-normalize (& doc.path))]
       [document-edits : json.JsonSeq
         (lsp-code-action-edits-for-path
           edits
           (owned_view.compiler-owned-shared-view fallback-path)
           path
-          doc.text
+          (string.copy (& doc.text))
           0
           (json.list-empty))]
       [next : json.JsonSeq
@@ -3285,7 +3257,10 @@
             (owned_view.compiler-owned-shared-view document-edits))
           0)
           (lsp-json-list-cons
-            (lsp-code-action-document-edit doc.uri doc.version document-edits)
+            (lsp-code-action-document-edit
+              (string.copy (& doc.uri))
+              doc.version
+              document-edits)
             acc)
           acc)]
       (lsp-code-action-document-changes-from
@@ -3633,11 +3608,14 @@
                           (lsp-json-array (json.list-empty)))]
                       [(Found request-range)
                         (let
-                          [doc : lsp_vector_families.LspDocument
-                            (lsp_document_vec.get
-                              (& docs)
-                              document-index
-                              (lsp-document-fallback))]
+                          [view : (&
+                            docs
+                            (Slice lsp_vector_families.LspDocument))
+                            (lsp_document_vec.view (& docs))]
+                          [doc : (& docs lsp_vector_families.LspDocument)
+                            (& (array-ref view document-index))]
+                          [doc-path : String (string.copy (& doc.path))]
+                          [doc-text : String (string.copy (& doc.text))]
                           [version : i64 doc.version]
                           (if (or
                             (< version 0)
@@ -3679,10 +3657,8 @@
                                   (lsp-code-action-compiler
                                     docs
                                     (owned_view.compiler-owned-shared-view uri)
-                                    (owned_view.compiler-owned-shared-view
-                                      doc.path)
-                                    (owned_view.compiler-owned-shared-view
-                                      doc.text)
+                                    (string.copy (& doc-path))
+                                    (string.copy (& doc-text))
                                     version
                                     (owned_view.compiler-owned-shared-view
                                       request-range)
@@ -3695,10 +3671,8 @@
                               [findings : lint.LintFindings
                                 (if has-lint
                                   (lint_driver_core.selfhost-lint-source-with-roots-and-cfg
-                                    (owned_view.compiler-owned-shared-view
-                                      doc.path)
-                                    (owned_view.compiler-owned-shared-view
-                                      doc.text)
+                                    (string.copy (& doc-path))
+                                    (string.copy (& doc-text))
                                     stdlib-roots
                                     (lsp-language-cfgs))
                                   (lint.lint-findings-empty))]
@@ -3706,8 +3680,8 @@
                                 (lsp-code-action-lint-from
                                   docs
                                   uri
-                                  doc.path
-                                  doc.text
+                                  doc-path
+                                  doc-text
                                   version
                                   findings
                                   request-range
@@ -4777,10 +4751,12 @@
     (if (< doc-index 0)
       (lsp-write-response id JsonNull)
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        [path : String (owned_view.compiler-owned-shared-view doc.path)]
-        [text : String (owned_view.compiler-owned-shared-view doc.text)]
+        [view : (& docs (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view (& docs))]
+        [doc : (& docs lsp_vector_families.LspDocument)
+          (& (array-ref view doc-index))]
+        [path : String (string.copy (& doc.path))]
+        [text : String (string.copy (& doc.text))]
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
         [off : i64 (lsp-offset-at-position text line0 char0)]
@@ -5090,21 +5066,16 @@
             (json.member-list-empty)))))))
 
 (define (lsp-signature-help-at
-  [doc : lsp_vector_families.LspDocument]
+  [doc : (& doc lsp_vector_families.LspDocument)]
   [line0 : i64]
   [char0 : i64]) : json.Json
-  (match (lsp-offset-at-position-checked
-    (lsp-global-shared-view doc.text)
-    line0
-    char0)
+  (match (lsp-offset-at-position-checked (string.copy (& doc.text)) line0 char0)
     [(Missing) JsonNull]
     [(Found offset)
-      (match (lsp-call-context-at-offset
-        (lsp-global-shared-view doc.text)
-        offset)
+      (match (lsp-call-context-at-offset (string.copy (& doc.text)) offset)
         [(Missing) JsonNull]
         [(Found context)
-          (match (lsp-document-semantic-symbol-query (& doc) context.head-start)
+          (match (lsp-document-semantic-symbol-query doc context.head-start)
             [(Missing) JsonNull]
             [(Found cursor definition)
               (let
@@ -5121,7 +5092,7 @@
                   (> (lsp_svec.len (& components)) 0))
                   (lsp-signature-help-result
                     (& doc.semantic.index)
-                    doc.text
+                    (string.copy (& doc.text))
                     context
                     definition
                     (& components))
@@ -5140,8 +5111,10 @@
         [(JsonMissing) JsonNull]
         [(JsonFound position)
           (let
-            [doc : lsp_vector_families.LspDocument
-              (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+            [view : (& docs (Slice lsp_vector_families.LspDocument))
+              (lsp_document_vec.view docs)]
+            [doc : (& docs lsp_vector_families.LspDocument)
+              (& (array-ref view doc-index))]
             [line0 : i64 (lsp-json-int-field-default position "line" -1)]
             [char0 : i64 (lsp-json-int-field-default position "character" -1)]
             (lsp-signature-help-at doc line0 char0))]))))
@@ -5689,7 +5662,7 @@
               (lsp-completion-add-workspace-decl!
                 results
                 (& source)
-                (lsp_decl_vec.get
+                (lsp_vector_families.lsp-decl-vec-get
                   (& decls)
                   decl-index
                   (lsp-decl-entry-fallback))
@@ -6014,7 +5987,7 @@
             (for [decl-index (iterator.range 0 (lsp_decl_vec.len (& decls)))]
               (let
                 [decl : lsp_vector_families.LspDeclEntry
-                  (lsp_decl_vec.get
+                  (lsp_vector_families.lsp-decl-vec-get
                     (& decls)
                     decl-index
                     (lsp-decl-entry-fallback))]
@@ -7269,13 +7242,15 @@
     (if (< doc-index 0)
       (lsp-write-response id JsonNull)
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        [text : String (owned_view.compiler-owned-shared-view doc.text)]
+        [view : (& docs (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view (& docs))]
+        [doc : (& docs lsp_vector_families.LspDocument)
+          (& (array-ref view doc-index))]
+        [text : String (string.copy (& doc.text))]
         [line0 : i64 (lsp-json-int-field-default position "line" 0)]
         [char0 : i64 (lsp-json-int-field-default position "character" 0)]
         [off : i64 (lsp-offset-at-position text line0 char0)]
-        (match (lsp-document-semantic-symbol-query (& doc) off)
+        (match (lsp-document-semantic-symbol-query doc off)
           [(Found cursor definition)
             (let
               [cursor-span : compiler_semantic_index.CompilerSemanticSpan
@@ -7603,46 +7578,59 @@
   (set! entry.name (string.copy (& entry.name)))
   entry)
 
-(define (lsp-decls-copy [decls : lsp_decl_vec.Vec]) : lsp_decl_vec.Vec
+(define (lsp-decls-copy [decls : (& decls lsp_decl_vec.Vec)]) : lsp_decl_vec.Vec
   (let
-    [count : i64 (lsp_decl_vec.len (& decls))]
+    [count : i64 (lsp_decl_vec.len decls)]
     [copy : lsp_decl_vec.Vec (lsp_decl_vec.with-capacity count)]
     (for [index (iterator.range 0 count)]
       (lsp_decl_vec.push-ref!
         (&mut copy)
-        (lsp-decl-entry-copy
-          (lsp_decl_vec.get (& decls) index (lsp-decl-entry-fallback)))))
+        (lsp_vector_families.lsp-decl-vec-get
+          decls
+          index
+          (lsp-decl-entry-fallback))))
     copy))
 
-(define (lsp-check-cache-copy [cache : lsp_vector_families.LspCheckCache]) : lsp_vector_families.LspCheckCache
+(define (lsp-check-cache-copy
+  [cache : (& cache lsp_vector_families.LspCheckCache)]) : lsp_vector_families.LspCheckCache
   (match cache
     [(LspCheckCacheInvalid) LspCheckCacheInvalid]
     [(LspCheckCacheOk) LspCheckCacheOk]
-    [(LspCheckCacheErr message) (LspCheckCacheErr (string.copy (& message)))]))
+    [(LspCheckCacheErr message) (LspCheckCacheErr (string.copy message))]))
 
-(define (lsp-document-copy [doc : lsp_vector_families.LspDocument]) : lsp_vector_families.LspDocument
-  (lsp_vector_families.LspDocument
-    (string.copy (& doc.uri))
-    (string.copy (& doc.path))
-    (string.copy (& doc.text))
-    doc.version
-    (lsp-diagnostic-uris-copy doc.diagnostic-uris)
-    (lsp-decls-copy doc.decls)
-    doc.decls-valid
-    (lsp-check-cache-copy doc.check-cache)
-    ;; The semantic snapshot owns its index and source identity in the index
-    ;; arena, so server-state arena swaps transfer this value without copying.
-    doc.semantic))
+(define (lsp-document-copy [doc : (& doc lsp_vector_families.LspDocument)]) : lsp_vector_families.LspDocument
+  (let
+    [sem-ref : (& doc lsp_vector_families.LspSemanticSnapshot) (& doc.semantic)]
+    [sem-cell : (Array (& doc lsp_vector_families.LspSemanticSnapshot) 1)
+      (array sem-ref)]
+    (lsp_vector_families.LspDocument
+      (string.copy (& doc.uri))
+      (string.copy (& doc.path))
+      (string.copy (& doc.text))
+      doc.version
+      (lsp-diagnostic-uris-copy (& doc.diagnostic-uris))
+      (lsp-decls-copy (& doc.decls))
+      doc.decls-valid
+      (lsp-check-cache-copy (& doc.check-cache))
+      ;; The semantic snapshot owns its index and source identity in the index
+      ;; arena, so server-state arena swaps transfer this value without copying.
+      (unsafe
+        (ptr-read
+          (ptr-read
+            (ptr-cast
+              (__tl_array-data sem-cell)
+              : (Ptr (Ptr lsp_vector_families.LspSemanticSnapshot)))))))))
 
 (define (lsp-documents-copy [docs : (& docs lsp_document_vec.Vec)]) : lsp_document_vec.Vec
   (let
-    [count : i64 (lsp_document_vec.len (& docs))]
+    [view : (& docs (Slice lsp_vector_families.LspDocument))
+      (lsp_document_vec.view docs)]
+    [count : i64 (array-length view)]
     [copy : lsp_document_vec.Vec (lsp_document_vec.with-capacity count)]
     (for [index (iterator.range 0 count)]
       (lsp_document_vec.push-ref!
         (&mut copy)
-        (lsp-document-copy
-          (lsp_document_vec.get (& docs) index (lsp-document-fallback)))))
+        (lsp-document-copy (& (array-ref view index)))))
     copy))
 
 (define (lsp-workspace-root-copy [root : lsp_vector_families.LspWorkspaceRoot]) : lsp_vector_families.LspWorkspaceRoot
@@ -7911,9 +7899,16 @@
     [doc-index : i64 (lsp-documents-find-path-index (& docs) path)]
     (if (>= doc-index 0)
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        (lsp-workspace-index-add-text-source! index root path doc.text true))
+        [view : (& docs (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view (& docs))]
+        [doc : (& docs lsp_vector_families.LspDocument)
+          (& (array-ref view doc-index))]
+        (lsp-workspace-index-add-text-source!
+          index
+          root
+          path
+          (string.copy (& doc.text))
+          true))
       (match (io.try-read-file (& path))
         [(OkIoBytes contents)
           (let
@@ -7940,9 +7935,11 @@
   [docs : (& docs lsp_document_vec.Vec)]) : unit
   (for [doc-index (iterator.range 0 (lsp_document_vec.len (& docs)))]
     (let
-      [doc : lsp_vector_families.LspDocument
-        (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-      [path : String (owned_view.compiler-owned-shared-view doc.path)]
+      [view : (& docs (Slice lsp_vector_families.LspDocument))
+        (lsp_document_vec.view (& docs))]
+      [doc : (& docs lsp_vector_families.LspDocument)
+        (& (array-ref view doc-index))]
+      [path : String (string.copy (& doc.path))]
       [uri : String
         (if (> (string.string-length path) 0)
           (lsp-resolved-path-to-file-uri path)
@@ -7950,7 +7947,12 @@
       (if (and
         (> (string.string-length path) 0)
         (< (lsp-workspace-sources-find-uri (& index.sources) uri) 0))
-        (lsp-workspace-index-add-text-source! index Missing path doc.text true)
+        (lsp-workspace-index-add-text-source!
+          index
+          Missing
+          path
+          (string.copy (& doc.text))
+          true)
         unit))))
 
 (define (lsp-workspace-index-build-sources!
@@ -8121,13 +8123,15 @@
     [mismatch : bool false]
     (while (and (< doc-index (lsp_document_vec.len (& docs))) (not mismatch))
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+        [view : (& docs (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view (& docs))]
+        [doc : (& docs lsp_vector_families.LspDocument)
+          (& (array-ref view doc-index))]
         (if (and
           (>= doc.version 0)
           (compiler_semantic_index.compiler-semantic-source-index-contains-path?
             index
-            (owned_view.compiler-owned-shared-view doc.path)))
+            (string.copy (& doc.path))))
           (match (io.try-read-file (& doc.path))
             [(OkIoBytes contents)
               (let
@@ -8498,9 +8502,10 @@
           [open : bool (>= doc-index 0)]
           [version : i64
             (if open
-              (__tl-project-field
-                (lsp_document_vec.get docs doc-index (lsp-document-fallback))
-                version)
+              (let
+                [view : (& docs (Slice lsp_vector_families.LspDocument))
+                  (lsp_document_vec.view docs)]
+                (array-ref view doc-index).version)
               -1)]
           [candidate : lsp_vector_families.LspWorkspaceSemanticFact
             (lsp_vector_families.LspWorkspaceSemanticFact
@@ -8583,12 +8588,11 @@
     ;; dependency records from unopened entry closures collapse onto them.
     (while (< doc-index (lsp_document_vec.len (& state.documents)))
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get
-            (& state.documents)
-            doc-index
-            (lsp-document-fallback))]
-        (match (lsp-document-semantic-snapshot-status (& doc))
+        [view : (& state (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view (& state.documents))]
+        [doc : (& state lsp_vector_families.LspDocument)
+          (& (array-ref view doc-index))]
+        (match (lsp-document-semantic-snapshot-status doc)
           [(Current _ complete)
             (lsp-workspace-semantic-facts-add-index!
               (&mut facts)
@@ -8848,11 +8852,10 @@
       (lsp-documents-find-path-index (& state.documents) fact.span.path)]
     (if (>= doc-index 0)
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get
-            (& state.documents)
-            doc-index
-            (lsp-document-fallback))]
+        [view : (& state (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view (& state.documents))]
+        [doc : (& state lsp_vector_families.LspDocument)
+          (& (array-ref view doc-index))]
         (Found (string.copy (& doc.text))))
       (match (io.try-read-file (& fact.span.path))
         [(OkIoBytes contents) (Found (byte_buf.to-string contents))]
@@ -9080,11 +9083,10 @@
   [new-name : (& new-name str)]) : bool
   (for [doc-index (iterator.range 0 (lsp_document_vec.len (& state.documents)))]
     (let
-      [doc : lsp_vector_families.LspDocument
-        (lsp_document_vec.get
-          (& state.documents)
-          doc-index
-          (lsp-document-fallback))]
+      [view : (& state (Slice lsp_vector_families.LspDocument))
+        (lsp_document_vec.view (& state.documents))]
+      [doc : (& state lsp_vector_families.LspDocument)
+        (& (array-ref view doc-index))]
       (when
         (lsp-rename-fact-collision-in-index?
           (& doc.semantic.index)
@@ -9471,7 +9473,10 @@
         (for [decl-index (iterator.range 0 (lsp_decl_vec.len (& decls)))]
           (let
             [decl : lsp_vector_families.LspDeclEntry
-              (lsp_decl_vec.get (& decls) decl-index (lsp-decl-entry-fallback))]
+              (lsp_vector_families.lsp-decl-vec-get
+                (& decls)
+                decl-index
+                (lsp-decl-entry-fallback))]
             [rank : i64 (lsp-workspace-symbol-match-rank decl.name query)]
             (if (>= rank 0)
               (lsp-workspace-symbol-results-insert!
@@ -9503,15 +9508,17 @@
     [doc-index : i64 (lsp-documents-find-path-index (& docs) normalized)]
     (if (>= doc-index 0)
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
+        [view : (& docs (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view (& docs))]
+        [doc : (& docs lsp_vector_families.LspDocument)
+          (& (array-ref view doc-index))]
         [root : lsp_vector_families.LspWorkspaceRootLookup
           (lsp-workspace-root-for-path (& index.roots) normalized false)]
         (lsp-workspace-index-set-text-source!
           index
           root
           normalized
-          doc.text
+          (string.copy (& doc.text))
           true))
       (if deleted
         (if (>= existing 0)
@@ -9549,10 +9556,16 @@
     [doc-index : i64 0]
     (while (< doc-index (lsp_document_vec.len (& docs)))
       (let
-        [doc : lsp_vector_families.LspDocument
-          (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-        (if (> (string.string-length doc.path) 0)
-          (lsp-workspace-index-refresh-path! index docs doc.path false)
+        [view : (& docs (Slice lsp_vector_families.LspDocument))
+          (lsp_document_vec.view (& docs))]
+        [doc : (& docs lsp_vector_families.LspDocument)
+          (& (array-ref view doc-index))]
+        (if (> (string.string-length (& doc.path)) 0)
+          (lsp-workspace-index-refresh-path!
+            index
+            docs
+            (string.copy (& doc.path))
+            false)
           unit)
         (+= doc-index 1)))))
 
@@ -10427,20 +10440,14 @@
     [slots : (__tl_dyn-array lsp_vector_families.LspDocument)
       (owned_view.compiler-owned-shared-view docs.slots)]
     [idx : i64 (lsp-documents-find-index docs uri)]
+    ;; `doc` may be a request-arena copy; only the decls scanned on the cache
+    ;; arena may be stored back into the persistent slot.
     (when
       (>= idx 0)
       (set!
-        (array-ref slots idx)
-        (lsp_vector_families.LspDocument
-          uri
-          doc.path
-          text
-          doc.version
-          doc.diagnostic-uris
-          (owned_view.compiler-owned-shared-view scanned)
-          true
-          doc.check-cache
-          doc.semantic))
+        (array-ref slots idx).decls
+        (owned_view.compiler-owned-shared-view scanned))
+      (set! (array-ref slots idx).decls-valid true)
       unit)
     scanned))
 
@@ -10465,7 +10472,10 @@
     (json.list-empty)
     (let
       [entry : lsp_vector_families.LspDeclEntry
-        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_vector_families.lsp-decl-vec-get
+          (& decls)
+          idx
+          (lsp-decl-entry-fallback))]
       [name : String entry.name]
       (lsp-json-list-cons
         (JsonString name)
@@ -10568,7 +10578,10 @@
     (json.list-empty)
     (let
       [entry : lsp_vector_families.LspDeclEntry
-        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_vector_families.lsp-decl-vec-get
+          (& decls)
+          idx
+          (lsp-decl-entry-fallback))]
       (lsp-json-list-cons
         (lsp-decl-document-symbol-json entry)
         (lsp-decls-to-document-symbol-list decls (+ idx 1))))))
@@ -10592,7 +10605,10 @@
     (json.member-list-empty)
     (let
       [entry : lsp_vector_families.LspDeclEntry
-        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_vector_families.lsp-decl-vec-get
+          (& decls)
+          idx
+          (lsp-decl-entry-fallback))]
       (lsp-json-member
         entry.name
         (lsp-position entry.name-line entry.name-col)
@@ -10672,7 +10688,10 @@
             (while (and (< i n) (not found))
               (let
                 [entry : lsp_vector_families.LspDeclEntry
-                  (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
+                  (lsp_vector_families.lsp-decl-vec-get
+                    (& decls)
+                    i
+                    (lsp-decl-entry-fallback))]
                 (if (and
                   (string.eq entry.name name)
                   (or
@@ -10784,7 +10803,10 @@
           (while (and (< i n) (= found -1))
             (let
               [entry : lsp_vector_families.LspDeclEntry
-                (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
+                (lsp_vector_families.lsp-decl-vec-get
+                  (& decls)
+                  i
+                  (lsp-decl-entry-fallback))]
               (if (lsp-decl-entry-contains-offset? text entry offset)
                 (set! found i)
                 (+= i 1))))
@@ -10806,7 +10828,10 @@
           (if (= idx -1)
             ""
             (__tl-project-field
-              (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))
+              (lsp_vector_families.lsp-decl-vec-get
+                (& decls)
+                idx
+                (lsp-decl-entry-fallback))
               name)))]
       [(JsonMissing) ""])))
 
@@ -10841,7 +10866,10 @@
     (while (and (< i n) (= found -1))
       (let
         [entry : lsp_vector_families.LspDeclEntry
-          (lsp_decl_vec.get decls i (lsp-decl-entry-fallback))]
+          (lsp_vector_families.lsp-decl-vec-get
+            decls
+            i
+            (lsp-decl-entry-fallback))]
         (if (string.eq entry.name name)
           (set! found i)
           (+= i 1))))
@@ -10888,7 +10916,10 @@
     (for [i (iterator.range 0 n)]
       (let
         [entry : lsp_vector_families.LspDeclEntry
-          (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
+          (lsp_vector_families.lsp-decl-vec-get
+            (& decls)
+            i
+            (lsp-decl-entry-fallback))]
         [start : i64 (lsp-offset-from-entry-start text entry)]
         [end : i64 (lsp-offset-from-entry-end text entry)]
         [distance : i64 (lsp-decl-range-distance offset start end)]
@@ -10923,7 +10954,10 @@
     (if (>= nearest-index 0)
       (let
         [entry : lsp_vector_families.LspDeclEntry
-          (lsp_decl_vec.get (& decls) nearest-index (lsp-decl-entry-fallback))]
+          (lsp_vector_families.lsp-decl-vec-get
+            (& decls)
+            nearest-index
+            (lsp-decl-entry-fallback))]
         (set! nearest-line (- entry.form-start-line 1))
         (set! nearest-col (- entry.form-start-col 1))
         (set! nearest-name (owned_view.compiler-owned-shared-view entry.name))
@@ -10992,7 +11026,10 @@
     (json.list-empty)
     (let
       [entry : lsp_vector_families.LspDeclEntry
-        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_vector_families.lsp-decl-vec-get
+          (& decls)
+          idx
+          (lsp-decl-entry-fallback))]
       [name : String entry.name]
       (lsp-json-list-cons
         (JsonString name)
@@ -11030,7 +11067,10 @@
     (json.list-empty)
     (let
       [entry : lsp_vector_families.LspDeclEntry
-        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_vector_families.lsp-decl-vec-get
+          (& decls)
+          idx
+          (lsp-decl-entry-fallback))]
       [name : String entry.name]
       [rest : json.JsonSeq
         (lsp-decls-to-similar-name-list
@@ -11118,21 +11158,18 @@
     (string.copy (& text))))
 
 (define (lsp-diagnostic-uris-copy
-  [uris : lsp_vector_families.LspDiagnosticUris]) : lsp_vector_families.LspDiagnosticUris
+  [uris : (& uris lsp_vector_families.LspDiagnosticUris)]) : lsp_vector_families.LspDiagnosticUris
   (let
-    [n : i64 (lsp-diagnostic-uris-len uris)]
+    [n : i64 uris.len]
     [slots : (__tl_dyn-array String) (__tl_make-array String n)]
     (for [index (iterator.range 0 n)]
-      (let
-        [uri : String
-          (lsp-diagnostic-uris-get
-            (owned_view.compiler-owned-shared-view uris)
-            index)]
-        (set! (array-ref slots index) (string.copy (& uri)))))
+      (set!
+        (array-ref slots index)
+        (string.copy (& (array-ref uris.slots index)))))
     (lsp_vector_families.LspDiagnosticUris slots n)))
 
 (define (lsp-cache-diagnostic-uris-copy
-  [uris : lsp_vector_families.LspDiagnosticUris]) : lsp_vector_families.LspDiagnosticUris
+  [uris : (& uris lsp_vector_families.LspDiagnosticUris)]) : lsp_vector_families.LspDiagnosticUris
   (if (> lsp-document-cache-arena 0)
     (in-arena
       (unsafe
@@ -11677,9 +11714,13 @@
         [doc-index : i64 (lsp-documents-find-index docs uri)]
         (if (>= doc-index 0)
           (let
-            [doc : lsp_vector_families.LspDocument
-              (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
-            [check-cache : lsp_vector_families.LspCheckCache doc.check-cache]
+            [check-cache : lsp_vector_families.LspCheckCache
+              (lsp-check-cache-copy
+                (& (array-ref docs.slots doc-index).check-cache))]
+            [doc-path : String
+              (string.copy (& (array-ref docs.slots doc-index).path))]
+            [doc-text : String
+              (string.copy (& (array-ref docs.slots doc-index).text))]
             (if (lsp-check-cache-valid?
               (owned_view.compiler-owned-shared-view check-cache))
               (begin
@@ -11688,8 +11729,8 @@
               (lsp-run-check-and-respond
                 id
                 uri
-                doc.path
-                doc.text
+                doc-path
+                doc-text
                 docs
                 stdlib-roots)))
           (match (lsp-file-uri-to-path uri)
@@ -12534,7 +12575,7 @@
                 (set! result (lsp-str3 text "\n\n" new-text))
                 (let
                   [last-entry : lsp_vector_families.LspDeclEntry
-                    (lsp_decl_vec.get
+                    (lsp_vector_families.lsp-decl-vec-get
                       (& decls)
                       (- n 1)
                       (lsp-decl-entry-fallback))]
@@ -13099,7 +13140,7 @@
   [params : json.Json]
   [state : lsp_vector_families.LspServerState]
   [stdlib-roots : lsp_svec.Vec]
-  [doc : (& doc lsp_vector_families.LspDocument)]) : lsp_vector_families.LspServerState
+  [doc-index : i64]) : lsp_vector_families.LspServerState
   (if (not
     (and
       (lsp-json-int-field-usable? (& position) "line")
@@ -13110,17 +13151,18 @@
     (let
       [line : i64 (lsp-json-int-field-default position "line" -1)]
       [character : i64 (lsp-json-int-field-default position "character" -1)]
-      (match (lsp-offset-at-position-checked
-        (string.copy (& doc.text))
-        line
-        character)
+      [doc-text : String
+        (string.copy (& (array-ref state.documents.slots doc-index).text))]
+      (match (lsp-offset-at-position-checked doc-text line character)
         [(Missing)
           (lsp-write-response id (lsp-json-array (json.list-empty)))
           state]
         [(Found offset)
           (let
             [canonical-key : String
-              (lsp-document-semantic-canonical-key-at doc offset)]
+              (lsp-document-semantic-canonical-key-at
+                (& (array-ref state.documents.slots doc-index))
+                offset)]
             (if (= (string.string-length canonical-key) 0)
               (begin
                 (lsp-write-response id (lsp-json-array (json.list-empty)))
@@ -13150,11 +13192,6 @@
             state)
           (let
             [position-key : String "position"]
-            [doc : lsp_vector_families.LspDocument
-              (lsp_document_vec.get
-                (& state.documents)
-                doc-index
-                (lsp-document-fallback))]
             (match (json.object-get
               (lsp-global-shared-view params)
               (& position-key))
@@ -13168,7 +13205,7 @@
                   params
                   state
                   stdlib-roots
-                  (& doc))]))))]))
+                  doc-index)]))))]))
 
 ;; References may refresh the persistent unopened-source cache. Request-local
 ;; keys, facts, and JSON live in a scratch arena and are released after the
@@ -13261,7 +13298,7 @@
   [params : json.Json]
   [state : lsp_vector_families.LspServerState]
   [stdlib-roots : lsp_svec.Vec]
-  [doc : (& doc lsp_vector_families.LspDocument)]) : lsp_vector_families.LspServerState
+  [doc-index : i64]) : lsp_vector_families.LspServerState
   (if (not
     (and
       (lsp-json-int-field-usable? (& position) "line")
@@ -13269,7 +13306,8 @@
     (begin
       (lsp-write-error id -32602 "Rename requires a valid position")
       state)
-    (match (lsp-document-semantic-snapshot-status doc)
+    (match (lsp-document-semantic-snapshot-status
+      (& (array-ref state.documents.slots doc-index)))
       [(Current _ complete)
         (if (not complete)
           (begin
@@ -13282,15 +13320,16 @@
             [line : i64 (lsp-json-int-field-default position "line" -1)]
             [character : i64
               (lsp-json-int-field-default position "character" -1)]
-            (match (lsp-offset-at-position-checked
-              (string.copy (& doc.text))
-              line
-              character)
+            [doc-text : String
+              (string.copy (& (array-ref state.documents.slots doc-index).text))]
+            (match (lsp-offset-at-position-checked doc-text line character)
               [(Missing)
                 (lsp-write-response id JsonNull)
                 state]
               [(Found offset)
-                (match (lsp-rename-target-at doc offset)
+                (match (lsp-rename-target-at
+                  (& (array-ref state.documents.slots doc-index))
+                  offset)
                   [(Missing)
                     (lsp-write-response id JsonNull)
                     state]
@@ -13355,11 +13394,6 @@
             state)
           (let
             [position-key : String "position"]
-            [doc : lsp_vector_families.LspDocument
-              (lsp_document_vec.get
-                (& state.documents)
-                doc-index
-                (lsp-document-fallback))]
             (match (json.object-get
               (lsp-global-shared-view params)
               (& position-key))
@@ -13374,7 +13408,7 @@
                   params
                   state
                   stdlib-roots
-                  (& doc))]))))]))
+                  doc-index)]))))]))
 
 (define (lsp-handle-rename-message
   [method : String]
@@ -14365,7 +14399,10 @@
     (while (and (< i n) (not found))
       (let
         [entry : lsp_vector_families.LspDeclEntry
-          (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
+          (lsp_vector_families.lsp-decl-vec-get
+            (& decls)
+            i
+            (lsp-decl-entry-fallback))]
         (if (string.eq entry.name name)
           (begin
             (set! found true)
@@ -14453,7 +14490,10 @@
       (while (and (< i n) (not found))
         (let
           [entry : lsp_vector_families.LspDeclEntry
-            (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
+            (lsp_vector_families.lsp-decl-vec-get
+              (& decls)
+              i
+              (lsp-decl-entry-fallback))]
           (if (string.eq entry.name name)
             (begin
               (set! found true)
@@ -14557,7 +14597,10 @@
       (while (and (< i n) (not found))
         (let
           [entry : lsp_vector_families.LspDeclEntry
-            (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
+            (lsp_vector_families.lsp-decl-vec-get
+              (& decls)
+              i
+              (lsp-decl-entry-fallback))]
           (if (string.eq entry.name name)
             (begin
               (set!
@@ -14712,7 +14755,10 @@
       (Err "No form found at position")
       (let
         [entry : lsp_vector_families.LspDeclEntry
-          (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
+          (lsp_vector_families.lsp-decl-vec-get
+            (& decls)
+            idx
+            (lsp-decl-entry-fallback))]
         [start : i64 (lsp-offset-from-entry-start text entry)]
         [end : i64 (lsp-offset-from-entry-end text entry)]
         (if (or (< start 0) (<= end start) (> end (string.string-length text)))
@@ -14890,7 +14936,10 @@
       (Err "Declaration not found")
       (lsp-form-text-by-entry
         text
-        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))))))
+        (lsp_vector_families.lsp-decl-vec-get
+          (& decls)
+          idx
+          (lsp-decl-entry-fallback))))))
 
 (define (lsp-json-has-field? [value : (& value json.Json)] [key : String]) : bool
   (match (lsp-json-field-ref value (& key))
@@ -15048,7 +15097,10 @@
               (Err "Declaration not found")
               (let
                 [entry : lsp_vector_families.LspDeclEntry
-                  (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
+                  (lsp_vector_families.lsp-decl-vec-get
+                    (& decls)
+                    idx
+                    (lsp-decl-entry-fallback))]
                 [start : i64 (lsp-offset-from-entry-start text entry)]
                 [end : i64 (lsp-offset-from-entry-end text entry)]
                 (if (or
@@ -15132,7 +15184,10 @@
       (Err "No form found at position")
       (let
         [entry : lsp_vector_families.LspDeclEntry
-          (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
+          (lsp_vector_families.lsp-decl-vec-get
+            (& decls)
+            idx
+            (lsp-decl-entry-fallback))]
         [start : i64 (lsp-offset-from-entry-start text entry)]
         [end : i64 (lsp-offset-from-entry-end text entry)]
         (if (or (< start 0) (<= end start) (> end (string.string-length text)))
@@ -15163,7 +15218,10 @@
       (Err "Declaration not found")
       (let
         [entry : lsp_vector_families.LspDeclEntry
-          (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
+          (lsp_vector_families.lsp-decl-vec-get
+            (& decls)
+            idx
+            (lsp-decl-entry-fallback))]
         [start : i64 (lsp-offset-from-entry-start text entry)]
         [end : i64 (lsp-offset-from-entry-end text entry)]
         (if (or (< start 0) (<= end start) (> end (string.string-length text)))
@@ -15199,7 +15257,10 @@
       (Err "No form found at position")
       (lsp-insert-after-entry
         text
-        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))
+        (lsp_vector_families.lsp-decl-vec-get
+          (& decls)
+          idx
+          (lsp-decl-entry-fallback))
         new-text))))
 
 (define (lsp-insert-after-position-from-params-with-decls
@@ -15242,7 +15303,10 @@
               (Err "Declaration not found")
               (lsp-insert-after-entry
                 text
-                (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))
+                (lsp_vector_families.lsp-decl-vec-get
+                  (& decls)
+                  idx
+                  (lsp-decl-entry-fallback))
                 new-text))))]
       [(Missing)
         (lsp-insert-after-position-from-params-with-decls
@@ -15440,9 +15504,15 @@
       [else
         (let
           [found-entry : lsp_vector_families.LspDeclEntry
-            (lsp_decl_vec.get (& decls) found-idx (lsp-decl-entry-fallback))]
+            (lsp_vector_families.lsp-decl-vec-get
+              (& decls)
+              found-idx
+              (lsp-decl-entry-fallback))]
           [dest-entry : lsp_vector_families.LspDeclEntry
-            (lsp_decl_vec.get (& decls) dest-idx (lsp-decl-entry-fallback))]
+            (lsp_vector_families.lsp-decl-vec-get
+              (& decls)
+              dest-idx
+              (lsp-decl-entry-fallback))]
           (Ok (lsp-move-form-after text found-entry dest-entry)))])))
 
 (define (lsp-structural-move-direction-text
@@ -15466,9 +15536,15 @@
       [else
         (let
           [found-entry : lsp_vector_families.LspDeclEntry
-            (lsp_decl_vec.get (& decls) found-idx (lsp-decl-entry-fallback))]
+            (lsp_vector_families.lsp-decl-vec-get
+              (& decls)
+              found-idx
+              (lsp-decl-entry-fallback))]
           [target-entry : lsp_vector_families.LspDeclEntry
-            (lsp_decl_vec.get (& decls) target-idx (lsp-decl-entry-fallback))]
+            (lsp_vector_families.lsp-decl-vec-get
+              (& decls)
+              target-idx
+              (lsp-decl-entry-fallback))]
           [found-first : bool (< found-idx target-idx)]
           [first-entry : lsp_vector_families.LspDeclEntry
             (if found-first

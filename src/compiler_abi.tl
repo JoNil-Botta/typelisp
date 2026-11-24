@@ -402,10 +402,13 @@
 
 (define (compiler-abi-outgoing-shadow-space
   [abi : CompilerRegTargetAbi]
-  [_convention : CompilerCallConvention]) : i64
+  [convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 0]
-    [(Windows) 32]))
+    [(Windows)
+      (if (compiler-abi-internal? convention)
+        0
+        32)]))
 
 ;; System V classifies a by-value aggregate into eightbytes: it travels in
 ;; registers when its classes fit and is copied onto the stack otherwise. Win64

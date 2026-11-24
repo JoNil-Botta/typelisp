@@ -28358,9 +28358,6 @@
                   (ast.AstType.Unit))
                 origin)])])]))
 
-(define lower-arg-writeback-fallback : LowerArgWriteback
-  (Writeback 0 (I64 0) (I64) (Literal (ast.ast-lit-int 0))))
-
 (define (lower-apply-arg-writebacks
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -28372,15 +28369,14 @@
         [count : i64 (lower_arg_writeback_vec.len (& items))]
         [out : LowerState state]
         (for [index (iterator.range 0 count)]
+          ;; `items` is consumed here; each live writeback moves out once.
           (set!
             out
             (lower-apply-arg-writeback
               ctx
               out
-              (lower_arg_writeback_vec.get
-                (& items)
-                index
-                (lower-global-shared-view lower-arg-writeback-fallback)))))
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data items.slots) index))))))
         out)]))
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool

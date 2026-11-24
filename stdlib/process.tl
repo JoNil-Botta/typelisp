@@ -34,13 +34,6 @@
 (import stdlib.process_runtime)
 (import (vector.vector String) as svec)
 
-;; Process values are persistent arena-backed records. These shallow reads make
-;; an explicit shared view when a builder or accessor retains owner storage.
-;: Return a representation-level shared view of a process value place.
-(defmacro (process-place-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
 ;: Immutable sequence of process argument strings in argv order. Every backing
 ;: array entry is live. Sequences are shared persistently, so helpers that
 ;: extend one copy into a right-sized array instead of mutating storage another
@@ -188,64 +181,6 @@
   (OkProcessChild ProcessChild (:owned))
   (ErrProcessChild ProcessError))
 
-;: Internal lifetime-carrying wrapper around a borrowed argument list.
-(defstruct ProcessStringListRef
-  (:lifetimes value)
-  (value (& value ProcessStringList)))
-
-;: Internal lifetime-carrying wrapper around a borrowed environment list.
-(defstruct ProcessEnvListRef
-  (:lifetimes value)
-  (value (& value ProcessEnvList)))
-
-;: Internal lifetime-carrying wrapper around a borrowed optional string.
-(defstruct ProcessMaybeStringRef
-  (:lifetimes value)
-  (value (& value ProcessMaybeString)))
-
-;: Re-expose a borrowed process string through the public String surface.
-(define (process-string-shared-view [value : (& value str)]) : String
-  (unsafe
-    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
-
-;: Return a checked representation-level shared view of a process string-array
-;: element.
-(define (process-array-shared-view
-  [items : (& items (__tl_dyn-array String))]
-  [index : i64]) : String
-  (process-string-shared-view (& (array-ref items index))))
-
-;: Re-expose a borrowed argument list through the owning compatibility surface.
-(define (process-string-list-shared-view [value : (& value ProcessStringList)]) : ProcessStringList
-  (let
-    [cell : (ProcessStringListRef value) (ProcessStringListRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr ProcessStringList))))))
-
-;: Re-expose a borrowed environment through the owning compatibility surface.
-(define (process-env-list-shared-view [value : (& value ProcessEnvList)]) : ProcessEnvList
-  (let
-    [cell : (ProcessEnvListRef value) (ProcessEnvListRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr ProcessEnvList))))))
-
-;: Re-expose a borrowed optional string through the owning compatibility surface.
-(define (process-maybe-string-shared-view
-  [value : (& value ProcessMaybeString)]) : ProcessMaybeString
-  (let
-    [cell : (ProcessMaybeStringRef value) (ProcessMaybeStringRef value)]
-    [address : u64
-      (unsafe
-        (ptr-read (ptr-cast (ptr-addr-of cell) : (Ptr u64))))]
-    (unsafe
-      (ptr-read (int->ptr address : (Ptr ProcessMaybeString))))))
-
 ;: Return a destructured step from an argv list. The tail is copied into a
 ;: right-sized array so the stepped-over sequence keeps its own storage.
 (define (string-step [args : ProcessStringList]) : ProcessStringStep
@@ -259,11 +194,11 @@
         (while (< i n)
           (set!
             (array-ref slots i)
-            (process-array-shared-view args.slots (+ i 1)))
+            (string.copy (& (array-ref args.slots (+ i 1)))))
           (set! i (+ i 1)))
         (ProcessStringStep
           true
-          (process-array-shared-view args.slots 0)
+          (string.copy (& (array-ref args.slots 0)))
           (ProcessStringList slots))))))
 
 ;: Return whether a destructured argv step contains an item.
@@ -272,22 +207,22 @@
 
 ;: Return the argv value from a destructured step, or the empty string.
 (define (string-step-value [step : (& step ProcessStringStep)]) : String
-  (process-string-shared-view step.value))
+  (string.copy (& step.value)))
 
 ;: Return the argv tail from a destructured step.
 (define (string-step-rest [step : (& step ProcessStringStep)]) : ProcessStringList
-  (process-string-list-shared-view step.rest))
+  (clone-process-string-list (& step.rest)))
 
 ;: Return the environment name at `index`, or the empty string out of range.
 (define (env-name-ref [env : (& env ProcessEnvList)] [index : i64]) : String
   (if (and (>= index 0) (< index (env-count env)))
-    (process-array-shared-view env.names index)
+    (string.copy (& (array-ref env.names index)))
     ""))
 
 ;: Return the environment value at `index`, or the empty string out of range.
 (define (env-value-ref [env : (& env ProcessEnvList)] [index : i64]) : String
   (if (and (>= index 0) (< index (env-count env)))
-    (process-array-shared-view env.values index)
+    (string.copy (& (array-ref env.values index)))
     ""))
 
 ;: Copy a live environment range into parallel destination buffers, preserving
@@ -335,15 +270,15 @@
 
 ;: Return the env name from a destructured step, or the empty string.
 (define (env-step-name [step : (& step ProcessEnvStep)]) : String
-  (process-string-shared-view step.name))
+  (string.copy (& step.name)))
 
 ;: Return the env value from a destructured step, or the empty string.
 (define (env-step-value [step : (& step ProcessEnvStep)]) : String
-  (process-string-shared-view step.value))
+  (string.copy (& step.value)))
 
 ;: Return the env tail from a destructured step.
 (define (env-step-rest [step : (& step ProcessEnvStep)]) : ProcessEnvList
-  (process-env-list-shared-view step.rest))
+  (clone-process-env-list (& step.rest)))
 
 ;: Return a destructured optional string.
 (define (maybe-string-info [value : ProcessMaybeString]) : ProcessMaybeStringInfo
@@ -357,7 +292,7 @@
 
 ;: Return the string from a destructured optional string, or the empty string.
 (define (maybe-string-info-value [info : (& info ProcessMaybeStringInfo)]) : String
-  (process-string-shared-view info.value))
+  (string.copy (& info.value)))
 
 ;: Return an empty argument list.
 (define (args-empty) : ProcessStringList
@@ -370,7 +305,7 @@
 ;: Return the argv entry at `index`, or the empty string when out of range.
 (define (args-ref [args : (& args ProcessStringList)] [index : i64]) : String
   (if (and (>= index 0) (< index (array-length args.slots)))
-    (process-array-shared-view args.slots index)
+    (string.copy (& (array-ref args.slots index)))
     ""))
 
 ;: Copy every backing-array entry of `args` into `dst` starting at `offset`.
@@ -384,7 +319,7 @@
     (while (< i n)
       (set!
         (array-ref dst (+ offset i))
-        (process-array-shared-view args.slots i))
+        (string.copy (& (array-ref args.slots i))))
       (set! i (+ i 1)))))
 
 ;: Prepend an owned argument string to an argv list.
@@ -632,24 +567,24 @@
 ;: Return a copy of `command` with `arg` appended after existing argv entries.
 (define (command-with-arg [command : ProcessCommand] [arg : String]) : ProcessCommand
   (ProcessCommand
-    (command-executable command)
-    (args-append (command-argv command) (args-single arg))
-    (command-cwd command)
-    (command-env command)
-    (command-env-policy command)
-    (command-stdin command)))
+    command.executable
+    (args-append command.argv (args-single arg))
+    command.cwd
+    command.env
+    command.env-policy
+    command.stdin))
 
 ;: Return a copy of `command` with `args` appended after existing argv entries.
 (define (command-with-args
   [command : ProcessCommand]
   [args : ProcessStringList]) : ProcessCommand
   (ProcessCommand
-    (command-executable command)
-    (args-append (command-argv command) args)
-    (command-cwd command)
-    (command-env command)
-    (command-env-policy command)
-    (command-stdin command)))
+    command.executable
+    (args-append command.argv args)
+    command.cwd
+    command.env
+    command.env-policy
+    command.stdin))
 
 ;: Return a copy of `command` with the full argv list replaced by a
 ;: vector-backed argv buffer converted once at the compatibility boundary.
@@ -657,12 +592,12 @@
   [command : ProcessCommand]
   [argv : (& argv svec.Vec)]) : ProcessCommand
   (ProcessCommand
-    (command-executable command)
+    command.executable
     (args-from-string-vec argv)
-    (command-cwd command)
-    (command-env command)
-    (command-env-policy command)
-    (command-stdin command)))
+    command.cwd
+    command.env
+    command.env-policy
+    command.stdin))
 
 ;: Return a copy of `command` with vector-backed args appended after existing
 ;: argv entries through one dense conversion and one append.
@@ -684,12 +619,12 @@
 ;: Return a copy of `command` with cwd set to `cwd`.
 (define (command-with-cwd [command : ProcessCommand] [cwd : String]) : ProcessCommand
   (ProcessCommand
-    (command-executable command)
-    (command-argv command)
+    command.executable
+    command.argv
     (ProcessSomeString cwd)
-    (command-env command)
-    (command-env-policy command)
-    (command-stdin command)))
+    command.env
+    command.env-policy
+    command.stdin))
 
 ;: Return a copy of `command` with an additional env override, inheriting the
 ;: rest of the parent environment.
@@ -698,12 +633,12 @@
   [name : String]
   [value : String]) : ProcessCommand
   (ProcessCommand
-    (command-executable command)
-    (command-argv command)
-    (command-cwd command)
-    (env-cons name value (command-env command))
+    command.executable
+    command.argv
+    command.cwd
+    (env-cons name value command.env)
     (ProcessEnvInherit)
-    (command-stdin command)))
+    command.stdin))
 
 ;: Return a copy of `command` with the full env override list replaced,
 ;: inheriting the rest of the parent environment.
@@ -711,12 +646,12 @@
   [command : ProcessCommand]
   [env : ProcessEnvList]) : ProcessCommand
   (ProcessCommand
-    (command-executable command)
-    (command-argv command)
-    (command-cwd command)
+    command.executable
+    command.argv
+    command.cwd
     env
     (ProcessEnvInherit)
-    (command-stdin command)))
+    command.stdin))
 
 ;: Return a copy of `command` whose child environment is exactly `env`; the
 ;: parent environment is not inherited.
@@ -724,12 +659,12 @@
   [command : ProcessCommand]
   [env : ProcessEnvList]) : ProcessCommand
   (ProcessCommand
-    (command-executable command)
-    (command-argv command)
-    (command-cwd command)
+    command.executable
+    command.argv
+    command.cwd
     env
     (ProcessEnvExact)
-    (command-stdin command)))
+    command.stdin))
 
 ;: Return a copy of `command` with one more exact-environment row in front of
 ;: its existing rows; the parent environment is not inherited.
@@ -737,9 +672,13 @@
   [command : ProcessCommand]
   [name : String]
   [value : String]) : ProcessCommand
-  (let
-    [rows : ProcessEnvList (env-cons name value (command-env command))]
-    (command-with-exact-env-list command rows)))
+  (ProcessCommand
+    command.executable
+    command.argv
+    command.cwd
+    (env-cons name value command.env)
+    (ProcessEnvExact)
+    command.stdin))
 
 ;: Return a copy of `command` whose child environment is exactly the
 ;: vector-backed rows, converted to dense public storage.
@@ -758,28 +697,28 @@
 ;: Return a copy of `command` with stdin set to `stdin`.
 (define (command-with-stdin [command : ProcessCommand] [stdin : String]) : ProcessCommand
   (ProcessCommand
-    (command-executable command)
-    (command-argv command)
-    (command-cwd command)
-    (command-env command)
-    (command-env-policy command)
+    command.executable
+    command.argv
+    command.cwd
+    command.env
+    command.env-policy
     (ProcessSomeString stdin)))
 
 ;: Return the executable path from `command`.
 (define (command-executable [command : (& command ProcessCommand)]) : String
-  (process-string-shared-view command.executable))
+  (string.copy (& command.executable)))
 
 ;: Return the argv list from `command`.
 (define (command-argv [command : (& command ProcessCommand)]) : ProcessStringList
-  (process-string-list-shared-view command.argv))
+  (clone-process-string-list (& command.argv)))
 
 ;: Return the cwd setting from `command`.
 (define (command-cwd [command : (& command ProcessCommand)]) : ProcessMaybeString
-  (process-maybe-string-shared-view command.cwd))
+  (clone-process-maybe-string (& command.cwd)))
 
 ;: Return the env override list from `command`.
 (define (command-env [command : (& command ProcessCommand)]) : ProcessEnvList
-  (process-env-list-shared-view command.env))
+  (clone-process-env-list (& command.env)))
 
 ;: Return the environment policy of `command`.
 (define (command-env-policy [command : (& command ProcessCommand)]) : ProcessEnvPolicy
@@ -795,7 +734,7 @@
 
 ;: Return the stdin setting from `command`.
 (define (command-stdin [command : (& command ProcessCommand)]) : ProcessMaybeString
-  (process-maybe-string-shared-view command.stdin))
+  (clone-process-maybe-string (& command.stdin)))
 
 ;: Return the process exit status.
 ;:
@@ -809,11 +748,11 @@
 
 ;: Return captured stdout from `output`.
 (define (output-stdout [output : (& output ProcessOutput)]) : String
-  (process-string-shared-view output.stdout))
+  (string.copy (& output.stdout)))
 
 ;: Return captured stderr from `output`.
 (define (output-stderr [output : (& output ProcessOutput)]) : String
-  (process-string-shared-view output.stderr))
+  (string.copy (& output.stderr)))
 
 ;: Return true when the process exit status is zero.
 (define (success? [output : (& output ProcessOutput)]) : bool
@@ -1037,40 +976,37 @@
 
 ;: Return the first validation error of a command's env rows under its policy.
 (define (env-policy-validation-error [command : (& command ProcessCommand)]) : ProcessMaybeString
-  (let
-    [env : ProcessEnvList (command-env command)]
-    (match (env-validation-error env)
-      [(ProcessSomeString message) (ProcessSomeString message)]
-      [(ProcessNoString)
-        (if (command-env-exact? command)
-          (env-exact-validation-error-from env 0 0)
-          (ProcessNoString))])))
+  (match (env-validation-error (& command.env))
+    [(ProcessSomeString message) (ProcessSomeString message)]
+    [(ProcessNoString)
+      (if (command-env-exact? command)
+        (env-exact-validation-error-from (& command.env) 0 0)
+        (ProcessNoString))]))
 
 ;: Return the first command validation error, or `ProcessNoString`.
 (define (command-validation-error [command : (& command ProcessCommand)]) : ProcessMaybeString
   (let
-    [executable : String (command-executable command)]
-    [argv : ProcessStringList (command-argv command)]
+    [executable : (& command str) (& command.executable)]
     (cond
       [(string.eq executable "")
         (ProcessSomeString "process: executable path is empty")]
-      [(> (string-length (& executable)) process-storage-max-string-bytes)
+      [(> (string-length executable) process-storage-max-string-bytes)
         (ProcessSomeString "process: executable path exceeds storage limit")]
-      [(string-contains-char? (& executable) '\0')
+      [(string-contains-char? executable '\0')
         (ProcessSomeString "process: executable path contains NUL")]
       [else
-        (match (args-validation-error argv)
+        (match (args-validation-error (& command.argv))
           [(ProcessSomeString message) (ProcessSomeString message)]
           [(ProcessNoString)
-            (match (command-cwd command)
+            (match (& command.cwd)
               [(ProcessSomeString cwd)
                 (cond
                   [(string.eq cwd "")
                     (ProcessSomeString "process: cwd path is empty")]
-                  [(> (string-length (& cwd)) process-storage-max-string-bytes)
+                  [(> (string-length cwd) process-storage-max-string-bytes)
                     (ProcessSomeString
                       "process: cwd path exceeds storage limit")]
-                  [(string-contains-char? (& cwd) '\0')
+                  [(string-contains-char? cwd '\0')
                     (ProcessSomeString "process: cwd path contains NUL")]
                   [else (env-policy-validation-error command)])]
               [(ProcessNoString) (env-policy-validation-error command)])])])))
@@ -1142,27 +1078,22 @@
   (runtime-env-from env (- (env-count env) 1) (process_runtime.env-empty)))
 
 ;: Convert a public optional string to the runtime module's no-cycle representation.
-(define (runtime-maybe-string [value : ProcessMaybeString]) : process_runtime.ProcessRuntimeMaybeString
-  (let
-    [info : ProcessMaybeStringInfo (maybe-string-info value)]
-    (if (maybe-string-info-present? info)
-      (process_runtime.some-string (maybe-string-info-value info))
-      (process_runtime.no-string))))
+(define (runtime-maybe-string [value : (& value ProcessMaybeString)]) : process_runtime.ProcessRuntimeMaybeString
+  (match value
+    [(ProcessNoString) (process_runtime.no-string)]
+    [(ProcessSomeString text) (process_runtime.some-string (string.copy text))]))
 
 ;: Convert a public command to the runtime module's no-cycle representation.
 (define (runtime-command [command : (& command ProcessCommand)]) : process_runtime.ProcessRuntimeCommand
-  (let
-    [argv : ProcessStringList (command-argv command)]
-    [env : ProcessEnvList (command-env command)]
-    (process_runtime.command-full-with-env-policy
-      (command-executable command)
-      (runtime-args argv)
-      (runtime-maybe-string (command-cwd command))
-      (runtime-env env)
-      (if (command-env-exact? command)
-        process_runtime.process-runtime-env-exact
-        process_runtime.process-runtime-env-inherit)
-      (runtime-maybe-string (command-stdin command)))))
+  (process_runtime.command-full-with-env-policy
+    (string.copy (& command.executable))
+    (runtime-args (& command.argv))
+    (runtime-maybe-string (& command.cwd))
+    (runtime-env (& command.env))
+    (if (command-env-exact? command)
+      process_runtime.process-runtime-env-exact
+      process_runtime.process-runtime-env-inherit)
+    (runtime-maybe-string (& command.stdin))))
 
 ;: Convert a runtime captured-output result to the public result enum.
 (define (output-from-runtime
@@ -1289,16 +1220,16 @@
   (let
     [empty : ProcessEnvList (env-empty)]
     [parent : ProcessEnvList
-      (env-cons "PARENT" "one" (process-place-shared-view empty))]
+      (env-cons "PARENT" "one" (clone-process-env-list (& empty)))]
     [child : ProcessEnvList
-      (env-cons "CHILD" "two" (process-place-shared-view parent))]
+      (env-cons "CHILD" "two" (clone-process-env-list (& parent)))]
     [duplicate : ProcessEnvList
       (env-cons
         "DUP"
         "second"
-        (env-cons "DUP" "first" (process-place-shared-view empty)))]
-    [empty-step : ProcessEnvStep (env-step (process-place-shared-view empty))]
-    [child-step : ProcessEnvStep (env-step (process-place-shared-view child))]
+        (env-cons "DUP" "first" (clone-process-env-list (& empty))))]
+    [empty-step : ProcessEnvStep (env-step (clone-process-env-list (& empty)))]
+    [child-step : ProcessEnvStep (env-step (clone-process-env-list (& child)))]
     [tail-step : ProcessEnvStep (env-step (env-step-rest child-step))]
     (test-assert-i64-eq (env-count empty) 0)
     (test-assert (not (env-step-present? empty-step)))

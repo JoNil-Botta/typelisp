@@ -1,6 +1,4 @@
 # identity	declared-params	shape	result	fixture	native-status	fuel	comparison
-stdlib.serialize/serialize-shared-view	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
-stdlib.serialize/serialize-array-element-shared-view	2	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/array-fixed-length	1	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/encode-tuple-elements	6	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.serialize/decode-tuple-items	7	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

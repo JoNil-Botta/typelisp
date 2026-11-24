@@ -101,9 +101,9 @@
     (if (< idx 0)
       false
       (let
-        [doc : lvf.LspDocument
-          (lsp_document_vec.get (& docs) idx (lsp.lsp-document-fallback))]
-        (match doc.check-cache
+        [view : (& docs (Slice lvf.LspDocument))
+          (lsp_document_vec.view (& docs))]
+        (match (& (array-ref view idx).check-cache)
           [(LspCheckCacheOk) true]
           [_ false])))))
 
@@ -115,9 +115,9 @@
     (if (< idx 0)
       false
       (let
-        [doc : lvf.LspDocument
-          (lsp_document_vec.get (& docs) idx (lsp.lsp-document-fallback))]
-        (match doc.check-cache
+        [view : (& docs (Slice lvf.LspDocument))
+          (lsp_document_vec.view (& docs))]
+        (match (& (array-ref view idx).check-cache)
           [(LspCheckCacheInvalid) true]
           [_ false])))))
 
@@ -194,15 +194,15 @@
       (let
         [trimmed : lsp_document_vec.Vec
           (lsp.lsp-documents-remove docs "file:///doc08.tl")]
-        [shifted : lvf.LspDocument
-          (lsp_document_vec.get (& trimmed) 8 (lsp.lsp-document-fallback))]
-        [last : lvf.LspDocument
-          (lsp_document_vec.get (& trimmed) 15 (lsp.lsp-document-fallback))]
+        [view : (& trimmed (Slice lvf.LspDocument))
+          (lsp_document_vec.view (& trimmed))]
+        [shifted-uri : String (string.copy (& (array-ref view 8).uri))]
+        [last-uri : String (string.copy (& (array-ref view 15).uri))]
         (and
           (= (lsp_document_vec.len (& trimmed)) 16)
           (lsp-documents-smoke-missing? trimmed "file:///doc08.tl")
-          (string.eq shifted.uri "file:///doc09.tl")
-          (string.eq last.uri "file:///doc16.tl"))))))
+          (string.eq shifted-uri "file:///doc09.tl")
+          (string.eq last-uri "file:///doc16.tl"))))))
 
 (cfg
   test
@@ -247,19 +247,19 @@
       (if (< doc-index 0)
         false
         (let
-          [doc : lvf.LspDocument
-            (lsp_document_vec.get docs doc-index (lsp.lsp-document-fallback))]
-          [index : sem.CompilerSemanticSourceIndex
-            (owned_view.compiler-owned-shared-view doc.semantic.index)]
+          [view : (& docs (Slice lvf.LspDocument)) (lsp_document_vec.view docs)]
+          [doc : (& docs lvf.LspDocument) (& (array-ref view doc-index))]
           [use-index : i64
             (sem_tests.compiler-semantic-source-index-find-record
-              (& index)
+              (& doc.semantic.index)
               path
               "imported-value"
               Use
               -1)]
           [use-record : sem.CompilerSemanticRecord
-            (sem.compiler-semantic-source-index-get (& index) use-index)]
+            (sem.compiler-semantic-source-index-get
+              (& doc.semantic.index)
+              use-index)]
           [use-byte : i64 use-record.span.start-byte]
           [query-ok : bool true]
           [iteration : i64 0]
@@ -267,7 +267,7 @@
           ;; the shared query catches accidental rechecks, file reads, or
           ;; per-request semantic-index ownership changes.
           (while (and query-ok (< iteration 1000))
-            (match (lsp.lsp-document-semantic-symbol-query (& doc) use-byte)
+            (match (lsp.lsp-document-semantic-symbol-query doc use-byte)
               [(Found cursor definition)
                 (unless
                   (and
@@ -281,20 +281,21 @@
               [(Missing) (set! query-ok false)])
             (let
               [highlights : lsp.LspDocumentHighlightResults
-                (lsp.lsp-document-highlights-at (& doc) use-byte)]
+                (lsp.lsp-document-highlights-at doc use-byte)]
               (unless
                 (and
                   (= highlights.len 1)
                   (=
                     highlights.record-visits
-                    (sem.compiler-semantic-source-index-len (& index)))
+                    (sem.compiler-semantic-source-index-len
+                      (& doc.semantic.index)))
                   (= (array-ref highlights.slots 0).kind 2))
                 (set! query-ok false)))
             (+= iteration 1))
           (and
             (if complete
-              (lsp-semantic-smoke-current? (& doc) version)
-              (lsp-semantic-smoke-current-partial? (& doc) version))
+              (lsp-semantic-smoke-current? doc version)
+              (lsp-semantic-smoke-current-partial? doc version))
             (>= use-index 0)
             query-ok
             (= iteration 1000)))))))
@@ -442,22 +443,22 @@
                 (lsp.lsp-diagnostic-uris-empty)))
             (let
               [stale-doc-index : i64 (lsp.lsp-documents-find-index docs uri)]
-              [stale-doc : lvf.LspDocument
-                (lsp_document_vec.get
-                  (& docs)
-                  stale-doc-index
-                  (lsp.lsp-document-fallback))]
-              [stale-highlights : lsp.LspDocumentHighlightResults
-                (lsp.lsp-document-highlights-at (& stale-doc) 1)]
               [stale-ok : bool
-                (and
-                  (lsp-semantic-smoke-stale? (& stale-doc) 1)
-                  (= (lsp.lsp-document-semantic-record-at (& stale-doc) 0) -1)
-                  (= stale-highlights.len 0)
-                  (= stale-highlights.record-visits 0)
-                  (=
-                    (sem_tests.compiler-semantic-source-index-live-owner-count)
-                    (+ baseline 1)))]
+                (let
+                  [stale-view : (& docs (Slice lvf.LspDocument))
+                    (lsp_document_vec.view (& docs))]
+                  [stale-doc : (& docs lvf.LspDocument)
+                    (& (array-ref stale-view stale-doc-index))]
+                  [stale-highlights : lsp.LspDocumentHighlightResults
+                    (lsp.lsp-document-highlights-at stale-doc 1)]
+                  (and
+                    (lsp-semantic-smoke-stale? stale-doc 1)
+                    (= (lsp.lsp-document-semantic-record-at stale-doc 0) -1)
+                    (= stale-highlights.len 0)
+                    (= stale-highlights.record-visits 0)
+                    (=
+                      (sem_tests.compiler-semantic-source-index-live-owner-count)
+                      (+ baseline 1))))]
               [invalid-ok : bool
                 (match (sem.compiler-check-source-index-with-roots-and-cfg
                   (owned_view.compiler-owned-shared-view path)
@@ -486,15 +487,15 @@
                       (let
                         [partial-doc-index : i64
                           (lsp.lsp-documents-find-index docs uri)]
-                        [partial-doc : lvf.LspDocument
-                          (lsp_document_vec.get
-                            (& docs)
-                            partial-doc-index
-                            (lsp.lsp-document-fallback))]
+                        [partial-current-ok : bool
+                          (let
+                            [partial-view : (& docs (Slice lvf.LspDocument))
+                              (lsp_document_vec.view (& docs))]
+                            (lsp-semantic-smoke-current-partial?
+                              (& (array-ref partial-view partial-doc-index))
+                              2))]
                         (and
-                          (lsp-semantic-smoke-current-partial?
-                            (& partial-doc)
-                            2)
+                          partial-current-ok
                           (lsp-semantic-smoke-query-ok?
                             docs
                             uri
@@ -1759,7 +1760,7 @@
                     source.module
                     source.explicit-module
                     source.overlay
-                    (lsp_decl_vec.get
+                    (lvf.lsp-decl-vec-get
                       (& decls)
                       offset
                       (lsp.lsp-decl-entry-fallback)))))

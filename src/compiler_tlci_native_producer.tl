@@ -488,79 +488,14 @@
 ;; The source-level spelling of an expression node, for the reason string.
 (define (embedded-native-expr-kind-name [e : compiler_ast_types.AstExpr]) : String
   (match e
-    [(Ann _ _) "ann"]
-    [(Cast _ _) "cast"]
-    [(Try _) "try"]
-    [(Tuple _) "tuple"]
-    [(TupleRef _ _) "tuple-ref"]
-    [(Lambda _) "lambda"]
-    [(DynArray _) "dyn-array"]
-    [(Array _) "array"]
-    [(ArrayTake _ _ _) "array-take"]
-    [(Replace _ _) "replace"]
-    [(BoxTake _) "box-take"]
-    [(BoxSet _ _) "box-set"]
-    [(IntToPtr _ _) "int->ptr"]
-    [(PtrAddrOf _) "ptr-addr-of"]
-    [(PtrNull _) "ptr-null"]
-    [(PtrNullCheck _) "ptr-null?"]
-    [(PtrCast _ _) "ptr-cast"]
-    [(StringRef _ _) "string-ref"]
-    [(StringFromBytes _ _) "string-from-bytes"]
-    [(Comptime _) "comptime"]
-    [(Quote _) "quote"]
-    [(Quasiquote _) "quasiquote"]
-    [(UnquoteSplicing _) "unquote-splicing"]
-    [(Unquote _) "unquote"]
-    [(Break) "break"]
-    [(Continue) "continue"]
-    [(Return _) "return"]
-    [(WithRegion _ _) "with-arena"]
-    [(WithResource _) "with"]
-    [(WithScratch _) "with-scratch"]
-    [(WithEscape _ _) "with-escape"]
-    [(InArena _ _) "in-arena"]
-    [(Foreach _) "foreach"]
-    [(SpmdReduce _) "spmd-reduce"]
-    [(SpmdScan _) "spmd-scan"]
-    [(SpmdCompact _) "spmd-compact"]
-    [(ForeachActive _ _) "foreach-active"]
-    [(LaneValue _) "lane-value"]
-    [(CloneOut _ _) "clone-out"]
-    [(Unsafe _) "unsafe"]
     [(Literal (Float _)) "float-literal"]
-    [(Literal _) "literal"]
-    ;; Kinds the walkers do support are named too: reaching a give-up point on
-    ;; one of these means the construct is supported in some positions and not
-    ;; in the one that failed, which is the more useful thing to report.
-    [(If _ _ _) "if"]
-    [(Match _) "match"]
-    [(Let _) "let"]
-    [(Begin _) "begin"]
-    [(Call _ _) "call"]
-    [(Var _) "var"]
-    [(Set _ _) "set!"]
-    [(While _ _) "while"]
-    [(Binary _ _ _) "binary"]
-    [(Unary _ _) "unary"]
-    [(Borrow _ _ _) "borrow"]
-    [(StructGet _ _) "struct-get"]
-    [(StructSet _ _ _) "struct-set!"]
-    [(BracketClause _) "bracket-clause"]
-    [(ArrayRef _ _) "array-ref"]
-    [(ArraySet _ _ _) "array-set!"]
-    [(ArrayPush _ _) "__tl_array-push!"]
-    [(ArrayData _) "__tl_array-data"]
-    [(StringData _) "string-data"]
-    [(Box _) "box"]
-    [(BoxGet _) "box-get"]
-    [(PtrRead _) "ptr-read"]
-    [(PtrWrite _ _) "ptr-write!"]
-    [(PtrOffset _ _) "ptr-offset"]
-    [(PtrToInt _) "ptr->int"]
-    [(FixedMakeArray _ _) "make-array"]
-    [(MakeArray _ _) "__tl_make-array"]
-    [_ "unclassified"]))
+    [(or (Spanned _ _) (MacroExpansion _ _ _) (TypeLiteral _) (ForOwnedState _)
+         (ForOwnedStep _) (SpmdBroadcast _ _) (SpmdShuffle _ _)
+         (SpmdProgramIndex) (SpmdProgramCount) (BinaryData _) (ProgramArgc)
+         (ProgramArgv) (ProgramEnvp) (CpuIdEax _ _) (CpuIdEbx _ _)
+         (CpuIdEcx _ _) (CpuIdEdx _ _) (Xgetbv _) (Syscall _))
+      "unclassified"]
+    [_ (compiler_ast_types.ast-expr-kind-name (& e))]))
 
 ;: Entries that compiled natively but still contain at least one interpreted
 ;: arm site.

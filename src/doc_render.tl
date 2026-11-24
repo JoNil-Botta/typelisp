@@ -22,10 +22,30 @@
 (define (doc-module-list-count [modules : doc_module_vec.Vec]) : i64
   (doc_module_vec.len (& modules)))
 
+(define (doc-module-copy [module : (& module DocModule)]) : DocModule
+  (match module
+    [(Module path docs)
+      (match docs
+        [(doc_extract.Extraction module-doc items)
+          (let
+            [count : i64 (doc_item_vec.len items)]
+            [copied : doc_item_vec.Vec (doc_item_vec.with-capacity count)]
+            (for [i (iterator.range 0 count)]
+              (doc_item_vec.push-ref!
+                (&mut copied)
+                (doc_extract.doc-item-list-ref items i)))
+            (Module
+              (string.copy path)
+              (doc_extract.Extraction (string.copy module-doc) copied)))])]))
+
 (define (doc-module-list-ref
   [modules : (& modules doc_module_vec.Vec)]
   [index : i64]) : DocModule
-  (doc_module_vec.get modules index (doc-module-fallback)))
+  (if (and (>= index 0) (< index (doc_module_vec.len modules)))
+    (let
+      [view : (& modules (Slice DocModule)) (doc_module_vec.view modules)]
+      (doc-module-copy (& (array-ref view index))))
+    (doc-module-fallback)))
 
 (define (doc-module-list-append-from
   [out : (&mut out doc_module_vec.Vec)]

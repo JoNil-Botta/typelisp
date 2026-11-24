@@ -105,7 +105,7 @@ verify_shape() {
     active {
         if ($0 ~ /^[[:space:]]*\./ && $0 !~ /^[^[:space:]]+:$/) next
         if ($0 ~ /^[[:space:]]*(#|;|$)/) next
-        if ($0 ~ /^[[:space:]]*(call|jmp)[[:space:]]+"__tl_arg_entry:[0-9]+"$/) {
+        if ($0 ~ /^[[:space:]]*(callq?|jmpq?)[[:space:]]+"__tl_arg_entry:[0-9]+"$/) {
             entry_needed[substr($2, 2, length($2) - 2)] = 1
         }
         print > file
@@ -127,23 +127,23 @@ verify_shape() {
             print "\"" key "\"", entry_callee[key] > (output "/arg-entries")
         }
     }
-    ' "$v_assembly"
+    ' "$v_assembly" || return 1
 
     [ -s "$v_work/symbols" ] || { echo 'missing crypto audit roots' >&2; return 1; }
-    LC_ALL=C sort "$v_work/symbols" > "$v_work/sorted-symbols"
+    LC_ALL=C sort "$v_work/symbols" > "$v_work/sorted-symbols" || return 1
 
     # Resolve private __tl_arg_entry calls in every audited body.
     while IFS= read -r v_symbol; do
         awk '
             { sub(/\r$/, "") }
             FILENAME == ARGV[1] { callee[$1] = $2; next }
-            ($1 == "call" || $1 == "jmp") && ($2 in callee) {
+            ($1 ~ /^(callq?|jmpq?)$/) && ($2 in callee) {
                 $2 = callee[$2]
                 print "    " $1 " " $2
                 next
             }
             { print }
-        ' "$v_work/arg-entries" "$v_work/$v_symbol.body" > "$v_work/$v_symbol.resolved"
+        ' "$v_work/arg-entries" "$v_work/$v_symbol.body" > "$v_work/$v_symbol.resolved" || return 1
     done < "$v_work/sorted-symbols"
 
     # Enforce exact structural constant-time, completeness, wipe, and call-order contracts.
@@ -173,23 +173,59 @@ verify_shape() {
         if (callee == ".L_tl_abort_tl_shift_abort_at" || callee == "tl_shift_abort" || callee == "tl_shift_abort_at") return "@abort:shift"
         return callee
     }
-    function rip_allowed(sym, rule, op, ops) {
+    function split_operands(ops, out,   i, n, len, depth, in_q, ch, cur) {
+        delete out
+        len = length(ops)
+        if (len == 0) return 0
+        n = 0
+        depth = 0
+        in_q = 0
+        cur = ""
+        for (i = 1; i <= len; i++) {
+            ch = substr(ops, i, 1)
+            if (ch == "\"") {
+                in_q = !in_q
+                cur = cur ch
+            } else if (!in_q && ch == "(") {
+                depth++
+                cur = cur ch
+            } else if (!in_q && ch == ")") {
+                if (depth > 0) depth--
+                cur = cur ch
+            } else if (!in_q && depth == 0 && ch == ",") {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", cur)
+                out[++n] = cur
+                cur = ""
+            } else {
+                cur = cur ch
+            }
+        }
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", cur)
+        out[++n] = cur
+        return n
+    }
+    function rip_allowed(sym, rule, op, operand,   open_idx, prefix) {
         if (rule == "none") return 0
         if (rule == "gen") {
-            return ops ~ /_tl_stdlib_crypto_secret_stdlib_crypto_secret_secret_generation\(%rip\)/
+            return operand ~ /^_tl_stdlib_crypto_secret_stdlib_crypto_secret_secret_generation\([[:space:]]*%rip[[:space:]]*\)$/
         }
         if (rule == "str") {
-            return op ~ /^lea[lq]?$/ && ops ~ /\.L_tl_str_[A-Za-z0-9_]+\(%rip\)/
+            if (op ~ /^lea[lq]?$/ && operand ~ /^\.L_tl_str_[A-Za-z0-9_]+\([[:space:]]*%rip[[:space:]]*\)$/) return 1
+            return op ~ /^mov(l|q|absq)?$/ && operand ~ /^\$\.L_tl_str_[A-Za-z0-9_]+$/
         }
         if (rule == "win_main") {
-            return ops ~ /\.L_tl_(argc|argv)\(%rip\)/
+            return operand ~ /^\.L_tl_(argc|argv)\([[:space:]]*%rip[[:space:]]*\)$/
         }
         if (rule == "win_main_str") {
-            if (ops ~ /\.L_tl_(argc|argv)\(%rip\)/) return 1
-            return op ~ /^lea[lq]?$/ && ops ~ /\.L_tl_str_[A-Za-z0-9_]+\(%rip\)/
+            if (operand ~ /^\.L_tl_(argc|argv)\([[:space:]]*%rip[[:space:]]*\)$/) return 1
+            if (op ~ /^lea[lq]?$/ && operand ~ /^\.L_tl_str_[A-Za-z0-9_]+\([[:space:]]*%rip[[:space:]]*\)$/) return 1
+            return op ~ /^mov(l|q|absq)?$/ && operand ~ /^\$\.L_tl_str_[A-Za-z0-9_]+$/
         }
         if (rule == "c_entry") {
-            return op ~ /^lea[lq]?$/ && index(ops, sym "$typelisp(%rip)") > 0
+            if (op !~ /^lea[lq]?$/ || operand !~ /\([[:space:]]*%rip[[:space:]]*\)$/) return 0
+            open_idx = index(operand, "(")
+            prefix = substr(operand, 1, open_idx - 1)
+            return prefix == (sym "$typelisp")
         }
         return 0
     }
@@ -257,7 +293,7 @@ verify_shape() {
         add_spec(K "wipe_chunks_bang", 1, 1, -1, 0, 0, 0, 0, "none", 0, 1, "", "")
 
         if (family == "aes") {
-            add_spec(K "setup_bang", 0, 0, 0, 0, 0, 0, 0, "none", 0, 0, K "wipe_chunks_bang", "")
+            add_spec(K "setup_bang", 0, 0, 0, 0, 0, 0, 0, "none", 0, 0, K "wipe_chunks_bang", is_win ? "__chkstk" : "")
             if (is_opt1) {
                 add_spec(A "close_256", 0, 0, 0, 0, 0, 0, 0, "none", 0, 0, S "close_bytes", "")
                 add_spec(A "construct_256", 1, 0, -1, 0, 0, 0, 0, "none", 0, 0, A "construct_schedule", "")
@@ -297,7 +333,7 @@ verify_shape() {
             }
         } else {
             # --- GCM + GHASH + Secret primitives ---
-            add_spec(K "tree_bang", 0, 0, 0, 0, 0, 0, 0, "none", 0, 0, K "wipe_chunks_bang", "")
+            add_spec(K "tree_bang", 0, 0, 0, 0, 0, 0, 0, "none", 0, 0, K "wipe_chunks_bang", is_win ? "__chkstk" : "")
             add_spec(G "construct_key", 0, 0, 0, 0, 0, 0, 0, "none", 0, 0, G "construct_key_operation," K "tree_bang", "")
             add_spec(G "seal", 0, 0, 0, 0, 0, 0, 0, "none", 0, 0, G "seal_operation," K "tree_bang", "")
             if (is_opt1) {
@@ -379,32 +415,40 @@ verify_shape() {
             }
         }
     }
-    function check_order(sym, seq, seq_len, targets_csv,   want, nwant, wi, si, pos) {
+    function check_order(sym, seq, seq_len, targets_csv,   want, nwant, wi, si, found, prev_max, cur_min, cur_max) {
         nwant = split(targets_csv, want, ",")
-        pos = 0
+        prev_max = 0
         for (wi = 1; wi <= nwant; wi++) {
             found = 0
-            for (si = pos + 1; si <= seq_len; si++) {
+            cur_min = 0
+            cur_max = 0
+            for (si = 1; si <= seq_len; si++) {
                 if (seq[si] == want[wi]) {
-                    pos = si
+                    if (!found) cur_min = si
+                    cur_max = si
                     found = 1
-                    break
                 }
             }
             if (!found) {
                 fail(sym ": required call order violated at " want[wi] " (expected sequence " targets_csv ")")
                 return 0
             }
+            if (wi > 1 && cur_min <= prev_max) {
+                fail(sym ": required call order violated at " want[wi] " (expected all " want[wi - 1] " before all " want[wi] " in " targets_csv ")")
+                return 0
+            }
+            prev_max = cur_max
         }
         return 1
     }
-    function audit_function(sym,   path, line, op, ops, rest, target_lbl, norm_t,
+    function audit_function(sym,   path, line, lbl, op, ops, rest, target_lbl, norm_t,
+                            op_arr, op_n, oi, operand, is_direct_ctrl,
                             jcc, jmp_local, back_br, loops, setcc, cmov, divs, vshift, ind_ctrl, bcmp,
                             rip_bad, idx_mem, idx_lea, idx_scale0_mem, bad_mul_idx,
                             has_vol_store, has_imm_63, has_imm_64,
-                            in_open_tag_win, open_tag_cmp16, open_tag_back,
+                            in_open_tag_win, open_tag_cmp16, open_tag_back, open_tag_early_jcc,
                             seen_lbl, open_tag_lbl, calls_seen, call_seq, call_n,
-                            allowed, req_arr, opt_arr, n, i, status, A, G, H, S, K, B,
+                            allowed, req_arr, opt_arr, n, i, c, status, A, G, H, S, K, B,
                             is_open_opt2) {
         A = "_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_"
         G = "_tl_stdlib_crypto_aes128_gcm_stdlib_crypto_aes128_gcm_"
@@ -420,7 +464,7 @@ verify_shape() {
         divs = 0; vshift = 0; ind_ctrl = 0; bcmp = 0
         rip_bad = 0; idx_mem = 0; idx_lea = 0; idx_scale0_mem = 0; bad_mul_idx = 0
         has_vol_store = 0; has_imm_63 = 0; has_imm_64 = 0
-        in_open_tag_win = 0; open_tag_cmp16 = 0; open_tag_back = 0
+        in_open_tag_win = 0; open_tag_cmp16 = 0; open_tag_back = 0; open_tag_early_jcc = 0
         call_n = 0
         delete seen_lbl
         delete open_tag_lbl
@@ -443,11 +487,12 @@ verify_shape() {
             ops = rest
             if (index(ops, " ") > 0 || index(ops, "\t") > 0) {
                 sub(/^[^[:space:]]+[[:space:]]+/, "", ops)
+                sub(/[[:space:]]+$/, "", ops)
             } else {
                 ops = ""
             }
 
-            if (op == "jmp") {
+            if (op ~ /^jmpq?$/) {
                 if (ops ~ /^\*/) {
                     ind_ctrl++
                     fail(sym ": disallowed indirect jmp: " line)
@@ -461,12 +506,22 @@ verify_shape() {
                     norm_t = norm_call(ops)
                     calls_seen[norm_t] = 1
                     call_seq[++call_n] = norm_t
+                    if (is_open_opt2) {
+                        if (norm_t == H "authenticate_bang") in_open_tag_win = 1
+                        else if (norm_t == G "gctr_bang") in_open_tag_win = 0
+                    }
                 }
             } else if (op ~ /^j[a-z]+$/) {
                 jcc++
                 if (ops in seen_lbl) {
                     back_br++
-                    if (in_open_tag_win && (ops in open_tag_lbl)) open_tag_back++
+                    if (in_open_tag_win && (ops in open_tag_lbl)) {
+                        open_tag_back++
+                    } else if (in_open_tag_win && open_tag_back == 0) {
+                        open_tag_early_jcc++
+                    }
+                } else if (in_open_tag_win && open_tag_back == 0) {
+                    open_tag_early_jcc++
                 }
             } else if (op ~ /^loop[a-z]*$/) {
                 loops++
@@ -476,9 +531,10 @@ verify_shape() {
                 cmov++
             } else if (op ~ /^i?div[bwlq]?$/) {
                 divs++
-            } else if (op ~ /^(sh[lr]|sa[lr]|ro[lr]|sh[lr]d)[bwlq]?$/ && ops ~ /^%cl([[:space:]]*,|$)/) {
+            } else if ((op ~ /^(sh[lr]|sa[lr]|ro[lr]|sh[lr]d)[bwlq]?$/ && ops ~ /^%cl([[:space:]]*,|$)/) \
+                    || op ~ /^(sh[lr]x|sarx)[lq]?$/) {
                 vshift++
-            } else if (op == "call") {
+            } else if (op ~ /^callq?$/) {
                 if (ops ~ /^\*/) {
                     ind_ctrl++
                 } else {
@@ -494,38 +550,67 @@ verify_shape() {
 
             if (op == "cmpb" || op == "testb") bcmp++
 
-            if (ops ~ /\(%rip\)/) {
-                if (!rip_allowed(sym, s_rip_rule[sym], op, ops)) {
-                    rip_bad++
-                    fail(sym ": disallowed RIP-relative operand: " line)
+            is_direct_ctrl = (op ~ /^(callq?|jmpq?|j[a-z]+|loop[a-z]*)$/ && ops !~ /^\*/)
+            if (!is_direct_ctrl && ops != "") {
+                op_n = split_operands(ops, op_arr)
+                for (oi = 1; oi <= op_n; oi++) {
+                    operand = op_arr[oi]
+                    if (op ~ /^(callq?|jmpq?)$/ && operand ~ /^\*/) {
+                        sub(/^\*[[:space:]]*/, "", operand)
+                    }
+                    if (operand ~ /\([[:space:]]*%rip[[:space:]]*\)/) {
+                        if (!rip_allowed(sym, s_rip_rule[sym], op, operand)) {
+                            rip_bad++
+                            fail(sym ": disallowed RIP-relative operand: " line)
+                        }
+                    } else if (operand ~ /^\$/) {
+                        if (operand !~ /^\$[-+]?(0[xXbB][0-9A-Fa-f]+|[0-9]+)$/) {
+                            if (!rip_allowed(sym, s_rip_rule[sym], op, operand)) {
+                                rip_bad++
+                                fail(sym ": disallowed static symbol immediate: " line)
+                            }
+                        }
+                    } else if (operand ~ /\(/) {
+                        if (operand !~ /^(%[a-z0-9]+:)?[-+]?(0[xXbB][0-9A-Fa-f]+|[0-9]+)?\(/) {
+                            if (!rip_allowed(sym, s_rip_rule[sym], op, operand)) {
+                                rip_bad++
+                                fail(sym ": disallowed symbol-prefixed memory operand: " line)
+                            }
+                        }
+                    } else if (operand !~ /^%/ && operand !~ /^[-+]?(0[xXbB][0-9A-Fa-f]+|[0-9]+)$/ && op !~ /^(rep|repe|repz|repne|repnz|lock)$/) {
+                        if (!rip_allowed(sym, s_rip_rule[sym], op, operand)) {
+                            rip_bad++
+                            fail(sym ": disallowed static symbol operand: " line)
+                        }
+                    }
+
+                    if (operand ~ /\([[:space:]]*,[[:space:]]*%/) {
+                        if (op ~ /^lea[lq]?$/) {
+                            idx_lea++
+                        } else {
+                            idx_scale0_mem++
+                            idx_mem++
+                            fail(sym ": disallowed scaled-index table operand: " line)
+                        }
+                    } else if (operand ~ /\([[:space:]]*%[a-z0-9]+[[:space:]]*,[[:space:]]*%/) {
+                        if (op ~ /^lea[lq]?$/) {
+                            idx_lea++
+                        } else {
+                            idx_mem++
+                        }
+                        if (sym == H "multiply_bang" && operand !~ /\([[:space:]]*%[a-z0-9]+[[:space:]]*,[[:space:]]*%[a-z0-9]+[[:space:]]*,[[:space:]]*8[[:space:]]*\)/) {
+                            bad_mul_idx++
+                        }
+                    }
                 }
             }
 
-            if (ops ~ /\(,%/) {
-                if (op ~ /^lea[lq]?$/) {
-                    idx_lea++
-                } else {
-                    idx_scale0_mem++
-                    idx_mem++
-                    fail(sym ": disallowed scaled-index table operand: " line)
-                }
-            } else if (ops ~ /\(%[a-z0-9]+,%/) {
-                if (op ~ /^lea[lq]?$/) {
-                    idx_lea++
-                } else {
-                    idx_mem++
-                }
-                if (sym == H "multiply_bang" && ops !~ /\(%[a-z0-9]+,%[a-z0-9]+,8\)/) {
-                    bad_mul_idx++
-                }
-            }
-
-            if (op == "movq" && ops ~ /^%[a-z0-9]+,[[:space:]]*\(%[a-z0-9]+(,%[a-z0-9]+,8)?\)$/ && ops !~ /\(%rsp|\(%rbp/) {
+            if (op == "movq" && ops ~ /^%[a-z0-9]+,[[:space:]]*\([[:space:]]*%[a-z0-9]+([[:space:]]*,[[:space:]]*%[a-z0-9]+[[:space:]]*,[[:space:]]*8)?[[:space:]]*\)$/ && ops !~ /\([[:space:]]*%rsp|\([[:space:]]*%rbp/) {
                 has_vol_store = 1
             }
             if (ops ~ /\$63([[:space:],]|$)/) has_imm_63 = 1
             if (ops ~ /\$64([[:space:],]|$)/) has_imm_64 = 1
-            if (in_open_tag_win && op ~ /^cmp[lq]?$/ && ops ~ /\$16([[:space:],]|$)/) {
+            if (in_open_tag_win && open_tag_back == 0 && op ~ /^cmp[lq]?$/ && ops ~ /\$16([[:space:],]|$)/) {
                 open_tag_cmp16 = 1
             }
         }
@@ -543,7 +628,7 @@ verify_shape() {
         if (s_max_jmp_local[sym] >= 0 && jmp_local > s_max_jmp_local[sym]) fail(sym ": internal jumps " jmp_local " exceed straight-line bound " s_max_jmp_local[sym])
         if (setcc > s_max_setcc[sym]) fail(sym ": setcc count " setcc " exceeds contract bound " s_max_setcc[sym])
         if (divs > s_max_divs[sym]) fail(sym ": div/idiv count " divs " exceeds contract bound " s_max_divs[sym])
-        if (vshift > s_max_vshift[sym]) fail(sym ": variable %cl shift count " vshift " exceeds contract bound " s_max_vshift[sym])
+        if (vshift > s_max_vshift[sym]) fail(sym ": variable shift count " vshift " exceeds contract bound " s_max_vshift[sym])
         if (ind_ctrl > s_max_ind[sym]) fail(sym ": indirect call/jmp count " ind_ctrl " exceeds contract bound " s_max_ind[sym])
         if (idx_mem > s_max_idx_mem[sym]) fail(sym ": indexed memory operands " idx_mem " exceed contract bound " s_max_idx_mem[sym])
         if (idx_lea > s_max_idx_lea[sym]) fail(sym ": indexed lea operands " idx_lea " exceed contract bound " s_max_idx_lea[sym])
@@ -607,6 +692,9 @@ verify_shape() {
             check_order(sym, call_seq, call_n, B "with_capacity," G "prepare_bang," H "authenticate_bang," G "gctr_bang," S "storage_close," K "tree_bang")
             if (!open_tag_cmp16 || open_tag_back < 1) {
                 fail(sym ": missing inlined 16-byte constant-time tag comparison loop between authenticate_bang and gctr_bang")
+            }
+            if (open_tag_early_jcc > 0) {
+                fail(sym ": disallowed conditional branch inside opt2 tag-compare loop before backward edge count=" open_tag_early_jcc)
             }
         }
     }
@@ -1033,9 +1121,9 @@ run_self_test() {
     awk '{ printf "%s\r\n", $0 }' "$work/aes.s" > "$work/aes-crlf.s"
     verify_shape "$work/aes-crlf.s" "$work/pos-aes-crlf" linux-x86_64 2 aes || fail_st "CRLF positive AES control rejected"
 
-    # Benign backend mutations (#9935 spill offset, #9926 tail-merge jmp, #9903 reg rename, #9877 abort stub, arg_entry ordinal)
+    # Benign backend mutations (#9935 spill offset, #9926 tail-merge jmp, #9903 reg rename, #9877 abort stub, arg_entry ordinal + callq)
     awk '
-        { gsub(/16\(%rsp\)/, "248(%rsp)"); gsub(/%r9/, "%r11"); gsub(/__tl_arg_entry:36/, "__tl_arg_entry:999"); gsub(/\.L_tl_abort_tl_div_abort_at/, "tl_div_abort_at") }
+        { gsub(/16\(%rsp\)/, "248(%rsp)"); gsub(/%r9/, "%r11"); gsub(/call "__tl_arg_entry:36"/, "callq \"__tl_arg_entry:999\""); gsub(/__tl_arg_entry:36/, "__tl_arg_entry:999"); gsub(/\.L_tl_abort_tl_div_abort_at/, "tl_div_abort_at") }
         /^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_construct_schedule:$/ { print; print "    jmp .L_tail_merge_benign"; print ".L_tail_merge_benign:"; next }
         { print }
     ' "$work/aes.s" > "$work/benign-aes.s"
@@ -1045,18 +1133,22 @@ run_self_test() {
         name=$1
         fam=$2
         asm=$3
+        expected_err=$4
         if ( verify_shape "$asm" "$work/neg-$name" linux-x86_64 2 "$fam" ) > "$work/neg-$name.out" 2> "$work/neg-$name.err"; then
             fail_st "planted violation accepted: $name"
+        fi
+        if ! grep -Fq -- "$expected_err" "$work/neg-$name.err"; then
+            fail_st "planted violation $name rejected with unexpected stderr (expected '$expected_err'): $(cat "$work/neg-$name.err")"
         fi
     }
 
     # 1. Missing required crypto symbol
     awk '
-        /\.globl _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang$/ { skip=1; next }
-        skip && /\.size _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang,/ { skip=0; next }
+        /\.globl _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_mix_columns_bang$/ { skip=1; next }
+        skip && /\.size _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_mix_columns_bang,/ { skip=0; next }
         !skip { print }
     ' "$work/aes.s" > "$work/m-missing-sym.s"
-    expect_reject missing-required-symbol aes "$work/m-missing-sym.s"
+    expect_reject missing-required-symbol aes "$work/m-missing-sym.s" "missing audited symbol: _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_mix_columns_bang"
 
     # 2. Missing production root
     awk '
@@ -1064,7 +1156,7 @@ run_self_test() {
         skip && /\.size aes_audit_production_128,/ { skip=0; next }
         !skip { print }
     ' "$work/aes.s" > "$work/m-missing-root.s"
-    expect_reject missing-production-root aes "$work/m-missing-root.s"
+    expect_reject missing-production-root aes "$work/m-missing-root.s" "missing audited symbol: aes_audit_production_128"
 
     # 3. Unexpected extra crypto symbol
     cat "$work/aes.s" > "$work/m-extra-sym.s"
@@ -1074,63 +1166,65 @@ _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_rogue_helper:
     ret
     .size _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_rogue_helper, . - _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_rogue_helper
 EOF
-    expect_reject unexpected-extra-symbol aes "$work/m-extra-sym.s"
+    expect_reject unexpected-extra-symbol aes "$work/m-extra-sym.s" "unexpected audited symbol: _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_rogue_helper"
 
     # 4. Planted conditional branch in straight-line primitive
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    je .L_rogue"; print ".L_rogue:"; next } { print }' "$work/aes.s" > "$work/m-branch.s"
-    expect_reject planted-branch-straight-line aes "$work/m-branch.s"
+    expect_reject planted-branch-straight-line aes "$work/m-branch.s" "sub_bytes_bang: conditional branches 1 exceed contract bound 0"
 
     # 5. Planted unconditional local jmp in straight-line primitive
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_mix_columns_bang:$/ { print; print "    jmp .L_rogue_jmp"; print ".L_rogue_jmp:"; next } { print }' "$work/aes.s" > "$work/m-jmp.s"
-    expect_reject planted-jmp-straight-line aes "$work/m-jmp.s"
+    expect_reject planted-jmp-straight-line aes "$work/m-jmp.s" "mix_columns_bang: internal jumps 1 exceed straight-line bound 0"
 
     # 6. Planted cmov*
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    cmoveq %rax, %rbx"; next } { print }' "$work/aes.s" > "$work/m-cmov.s"
-    expect_reject planted-cmov aes "$work/m-cmov.s"
+    expect_reject planted-cmov aes "$work/m-cmov.s" "sub_bytes_bang: disallowed cmov instruction count=1"
 
     # 7. Planted set* in straight-line primitive
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_squeeze_bang:$/ { print; print "    sete %al"; next } { print }' "$work/aes.s" > "$work/m-setcc.s"
-    expect_reject planted-setcc aes "$work/m-setcc.s"
+    expect_reject planted-setcc aes "$work/m-setcc.s" "squeeze_bang: setcc count 1 exceeds contract bound 0"
 
     # 8. Planted div/idiv in cipher
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { print; print "    idivq %rcx"; next } { print }' "$work/aes.s" > "$work/m-div.s"
-    expect_reject planted-div aes "$work/m-div.s"
+    expect_reject planted-div aes "$work/m-div.s" "cipher_bang: div/idiv count 1 exceeds contract bound 0"
 
     # 9. Planted variable %cl shift in straight-line primitive
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    shrq %cl, %rax"; next } { print }' "$work/aes.s" > "$work/m-vshift.s"
-    expect_reject planted-variable-shift aes "$work/m-vshift.s"
+    expect_reject planted-variable-shift aes "$work/m-vshift.s" "sub_bytes_bang: variable shift count 1 exceeds contract bound 0"
 
     # 10. Planted indirect call
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { print; print "    call *%rax"; next } { print }' "$work/aes.s" > "$work/m-ind-call.s"
-    expect_reject planted-indirect-call aes "$work/m-ind-call.s"
+    expect_reject planted-indirect-call aes "$work/m-ind-call.s" "cipher_bang: indirect call/jmp count 1 exceeds contract bound 0"
 
     # 11. Planted RIP-relative table load
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    movzbl sbox_table(%rip), %eax"; next } { print }' "$work/aes.s" > "$work/m-rip.s"
-    expect_reject planted-rip-table aes "$work/m-rip.s"
+    expect_reject planted-rip-table aes "$work/m-rip.s" "sub_bytes_bang: disallowed RIP-relative operand:"
 
     # 12. Planted indexed lookup in straight-line primitive
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    movzbl (%rdi,%rax,1), %eax"; next } { print }' "$work/aes.s" > "$work/m-idx.s"
-    expect_reject planted-indexed-load aes "$work/m-idx.s"
+    expect_reject planted-indexed-load aes "$work/m-idx.s" "sub_bytes_bang: indexed memory operands 1 exceed contract bound 0"
 
     # 13. Planted cmpb in GHASH multiply
     awk '/^_tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_multiply_bang:$/ { print; print "    cmpb %al, %bl"; next } { print }' "$work/gcm.s" > "$work/m-cmpb.s"
-    expect_reject planted-cmpb-ghash gcm "$work/m-cmpb.s"
+    expect_reject planted-cmpb-ghash gcm "$work/m-cmpb.s" "multiply_bang: disallowed cmpb/testb instruction count=1"
 
     # 14. Removed wipe_words_bang in cipher_bang
     awk '/_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { in_fn=1 } /\.size _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang,/ { in_fn=0 } in_fn && /wipe_words_bang/ { next } { print }' "$work/aes.s" > "$work/m-no-cipher-wipe.s"
-    expect_reject removed-cipher-wipe aes "$work/m-no-cipher-wipe.s"
+    expect_reject removed-cipher-wipe aes "$work/m-no-cipher-wipe.s" "cipher_bang: missing required call target _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang"
 
     # 15. Removed wipe_words_bang in ghash multiply_bang
     awk '/_tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_multiply_bang:$/ { in_fn=1 } /\.size _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_multiply_bang,/ { in_fn=0 } in_fn && /wipe_words_bang/ { next } { print }' "$work/gcm.s" > "$work/m-no-ghash-wipe.s"
-    expect_reject removed-ghash-wipe gcm "$work/m-no-ghash-wipe.s"
+    expect_reject removed-ghash-wipe gcm "$work/m-no-ghash-wipe.s" "multiply_bang: missing required call target _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang"
 
-    # 16. Swapped squeeze / wipe order in cipher_bang
+    # 16. Swapped squeeze / wipe order in cipher_bang (scoped to cipher_bang)
     awk '
-        /call _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_squeeze_bang/ { print "    call _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang"; next }
-        /call _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang/ { print "    call _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_squeeze_bang"; next }
+        /^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { in_fn=1 }
+        /\.size _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang,/ { in_fn=0 }
+        in_fn && /call _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_squeeze_bang/ { print "    call _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang"; next }
+        in_fn && /call _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang/ { print "    call _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_squeeze_bang"; next }
         { print }
     ' "$work/aes.s" > "$work/m-cipher-order.s"
-    expect_reject swapped-cipher-wipe-order aes "$work/m-cipher-order.s"
+    expect_reject swapped-cipher-wipe-order aes "$work/m-cipher-order.s" "cipher_bang: required call order violated at _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang"
 
     # 17. Swapped verify-before-decrypt order in GCM open
     awk '
@@ -1140,30 +1234,123 @@ EOF
         in_fn && /call _tl_stdlib_crypto_aes128_gcm_stdlib_crypto_aes128_gcm_gctr_bang/ { print "    call _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_authenticate_bang"; next }
         { print }
     ' "$work/gcm.s" > "$work/m-open-order.s"
-    expect_reject swapped-gcm-open-order gcm "$work/m-open-order.s"
+    expect_reject swapped-gcm-open-order gcm "$work/m-open-order.s" "gcm_audit_open: required call order violated at _tl_stdlib_crypto_aes128_gcm_stdlib_crypto_aes128_gcm_gctr_bang"
 
     # 18. Unauthorized external call target
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { print; print "    call memcpy"; next } { print }' "$work/aes.s" > "$work/m-ext-call.s"
-    expect_reject unauthorized-external-call aes "$work/m-ext-call.s"
+    expect_reject unauthorized-external-call aes "$work/m-ext-call.s" "cipher_bang: unauthorized call target memcpy"
 
     # 19. Conditional branch bound exceeded
     awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { print; print "    je .L_b1"; print "    je .L_b2"; print "    je .L_b3"; print ".L_b1:"; print ".L_b2:"; print ".L_b3:"; next } { print }' "$work/aes.s" > "$work/m-jcc-overflow.s"
-    expect_reject branch-bound-exceeded aes "$work/m-jcc-overflow.s"
+    expect_reject branch-bound-exceeded aes "$work/m-jcc-overflow.s" "cipher_bang: conditional branches 5 exceed contract bound 4"
 
     # 20. Tampered __tl_arg_entry stub
     awk '/^"__tl_arg_entry:36":$/ { print; print "    je .L_bad_stub"; next } { print }' "$work/aes.s" > "$work/m-bad-stub.s"
-    expect_reject tampered-arg-entry-stub aes "$work/m-bad-stub.s"
+    expect_reject tampered-arg-entry-stub aes "$work/m-bad-stub.s" "disallowed instruction in arg entry stub __tl_arg_entry:36"
 
     # 21. Removed volatile zero store in wipe_words_bang
     awk '/^_tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang:$/ { in_fn=1 } /\.size _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang,/ { in_fn=0 } in_fn && /movq %rsi, \(%rdi\)/ { next } { print }' "$work/gcm.s" > "$work/m-no-vol-store.s"
-    expect_reject removed-volatile-wipe-store gcm "$work/m-no-vol-store.s"
+    expect_reject removed-volatile-wipe-store gcm "$work/m-no-vol-store.s" "wipe_words_bang: missing volatile indirect word store"
 
     # 22. Removed inlined 16-byte tag compare loop in opt2 gcm_audit_open
     awk '/^gcm_audit_open:$/ { in_fn=1 } /\.size gcm_audit_open,/ { in_fn=0 } in_fn && /cmpq \$16, %rax/ { next } { print }' "$work/gcm.s" > "$work/m-no-open-tag-loop.s"
-    expect_reject removed-open-tag-loop gcm "$work/m-no-open-tag-loop.s"
+    expect_reject removed-open-tag-loop gcm "$work/m-no-open-tag-loop.s" "gcm_audit_open: missing inlined 16-byte constant-time tag comparison loop"
+
+    # 23. Non-RIP closed-ELF literal load ($sym immediate, even in str-permitted function)
+    awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_expand_bang:$/ { print; print "    movl $.L_tl_bytes_sbox, %eax"; next } { print }' "$work/aes.s" > "$work/m-imm-sym.s"
+    expect_reject planted-imm-symbol-load aes "$work/m-imm-sym.s" "expand_bang: disallowed static symbol immediate:"
+
+    # 24. Symbol-prefixed memory load (non-RIP table base)
+    awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    movzbl sbox_table(%rax), %eax"; next } { print }' "$work/aes.s" > "$work/m-sym-mem.s"
+    expect_reject planted-symbol-prefixed-load aes "$work/m-sym-mem.s" "sub_bytes_bang: disallowed symbol-prefixed memory operand:"
+
+    # 25. Symbol-prefixed indexed lea even where max_idx_lea > 0
+    awk '
+        /^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_add_round_key_bang:$/ { in_fn=1 }
+        /\.size _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_add_round_key_bang,/ { in_fn=0 }
+        in_fn && /leaq \(%rsi,%rax,1\), %rax/ { print "    leaq sbox_table(,%rax,1), %rax"; next }
+        { print }
+    ' "$work/aes.s" > "$work/m-sym-lea.s"
+    expect_reject planted-symbol-prefixed-lea aes "$work/m-sym-lea.s" "add_round_key_bang: disallowed symbol-prefixed memory operand:"
+
+    # 26. Spaced indexed operand
+    awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    movzbl (%rdi, %rax, 1), %eax"; next } { print }' "$work/aes.s" > "$work/m-spaced-idx.s"
+    expect_reject planted-spaced-indexed-load aes "$work/m-spaced-idx.s" "sub_bytes_bang: indexed memory operands 1 exceed contract bound 0"
+
+    # 27. Spaced scaled-index table operand
+    awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    movzbl (, %rax, 1), %eax"; next } { print }' "$work/aes.s" > "$work/m-spaced-scale0.s"
+    expect_reject planted-spaced-scaled-index aes "$work/m-spaced-scale0.s" "sub_bytes_bang: disallowed scaled-index table operand:"
+
+    # 28. Indirect callq
+    awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { print; print "    callq *%rax"; next } { print }' "$work/aes.s" > "$work/m-callq-ind.s"
+    expect_reject planted-indirect-callq aes "$work/m-callq-ind.s" "cipher_bang: indirect call/jmp count 1 exceeds contract bound 0"
+
+    # 29. Unauthorized external callq
+    awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { print; print "    callq memcpy"; next } { print }' "$work/aes.s" > "$work/m-callq-ext.s"
+    expect_reject unauthorized-external-callq aes "$work/m-callq-ext.s" "cipher_bang: unauthorized call target memcpy"
+
+    # 30. Indirect jmpq (must be caught as indirect jmp, not jcc)
+    awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { print; print "    jmpq *%rax"; next } { print }' "$work/aes.s" > "$work/m-jmpq-ind.s"
+    expect_reject planted-indirect-jmpq aes "$work/m-jmpq-ind.s" "cipher_bang: disallowed indirect jmp:"
+
+    # 31. Unauthorized tail-call jmpq (must be caught as unauthorized call target, not jcc)
+    awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { print; print "    jmpq memcpy"; next } { print }' "$work/aes.s" > "$work/m-jmpq-ext.s"
+    expect_reject unauthorized-external-jmpq aes "$work/m-jmpq-ext.s" "cipher_bang: unauthorized call target memcpy"
+
+    # 32. Extra gctr_bang before authenticate_bang while keeping the later gctr_bang
+    awk '
+        /^gcm_audit_open:$/ { in_fn=1 }
+        /\.size gcm_audit_open,/ { in_fn=0 }
+        in_fn && /call _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_authenticate_bang/ {
+            print "    call _tl_stdlib_crypto_aes128_gcm_stdlib_crypto_aes128_gcm_gctr_bang"
+        }
+        { print }
+    ' "$work/gcm.s" > "$work/m-early-gctr.s"
+    expect_reject early-gctr-before-authenticate gcm "$work/m-early-gctr.s" "gcm_audit_open: required call order violated at _tl_stdlib_crypto_aes128_gcm_stdlib_crypto_aes128_gcm_gctr_bang"
+
+    # 33. Extra sub_bytes_bang after wipe_words_bang in cipher_bang
+    awk '
+        /^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang:$/ { in_fn=1 }
+        /\.size _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_cipher_bang,/ { in_fn=0 }
+        in_fn && /call _tl_stdlib_crypto_secret_stdlib_crypto_secret_wipe_words_bang/ {
+            print
+            print "    call _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang"
+            next
+        }
+        { print }
+    ' "$work/aes.s" > "$work/m-late-sub-bytes.s"
+    expect_reject late-sub-bytes-after-wipe aes "$work/m-late-sub-bytes.s" "cipher_bang: required call order violated at _tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_squeeze_bang"
+
+    # 34. Tail-jmp gctr_bang closes opt2 tag-compare window (loop moved after jmp gctr_bang)
+    awk '
+        /^gcm_audit_open:$/ { in_fn=1 }
+        /\.size gcm_audit_open,/ { in_fn=0 }
+        in_fn && /call _tl_stdlib_crypto_ghash_core_stdlib_crypto_ghash_core_authenticate_bang/ {
+            print
+            print "    jmp _tl_stdlib_crypto_aes128_gcm_stdlib_crypto_aes128_gcm_gctr_bang"
+            next
+        }
+        in_fn && /call _tl_stdlib_crypto_aes128_gcm_stdlib_crypto_aes128_gcm_gctr_bang/ { next }
+        { print }
+    ' "$work/gcm.s" > "$work/m-jmp-gctr-window.s"
+    expect_reject jmp-gctr-closes-tag-window gcm "$work/m-jmp-gctr-window.s" "gcm_audit_open: missing inlined 16-byte constant-time tag comparison loop"
+
+    # 35. Early-exit conditional branch inside opt2 tag-compare loop
+    awk '
+        /^gcm_audit_open:$/ { in_fn=1 }
+        /\.size gcm_audit_open,/ { in_fn=0 }
+        in_fn && /xorb %r9b, %dil/ { print "    cmpl %r9d, %edi"; print "    jne .L_open_done"; next }
+        in_fn && /orq %rdi, %rsi/ { next }
+        { print }
+    ' "$work/gcm.s" > "$work/m-open-tag-early-exit.s"
+    expect_reject early-exit-open-tag-loop gcm "$work/m-open-tag-early-exit.s" "gcm_audit_open: disallowed conditional branch inside opt2 tag-compare loop before backward edge count=1"
+
+    # 36. Planted BMI2 variable shift in straight-line primitive
+    awk '/^_tl_stdlib_crypto_aes_core_stdlib_crypto_aes_core_sub_bytes_bang:$/ { print; print "    shrxq %rcx, %rax, %rdx"; next } { print }' "$work/aes.s" > "$work/m-bmi2-shift.s"
+    expect_reject planted-bmi2-variable-shift aes "$work/m-bmi2-shift.s" "sub_bytes_bang: variable shift count 1 exceeds contract bound 0"
 
     rm -rf -- "${work:?}"
-    echo 'crypto-shape self-test passed (4 positive/benign controls + 22 fail-closed mutations)'
+    echo 'crypto-shape self-test passed (4 positive/benign controls + 36 fail-closed mutations)'
 }
 
 if [ "$#" -eq 1 ] && [ "$1" = --self-test ]; then

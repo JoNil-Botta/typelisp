@@ -1,0 +1,120 @@
+# Safety corpus cases: globals, statics, and foreign module/global boundaries.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+global_borrow_exclusivity_ok|check-ok|tests/safety/global_borrow_exclusivity_ok.tl|-|-
+global_mutable_reference_alias_reject|check-fail|tests/safety/global_mutable_reference_alias_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
+global_shared_mutable_borrow_reject|check-fail|tests/safety/global_shared_mutable_borrow_reject.tl|-|cannot mutably borrow borrowed place `global-cell`
+global_shared_borrow_mutation_reject|check-fail|tests/safety/global_shared_borrow_mutation_reject.tl|-|cannot assign to borrowed place `global-cell.value`
+global_call_address_effect_reject|check-fail|tests/safety/global_call_address_effect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_auto_reject|check-fail|tests/safety/global_call_auto_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_buffer_write_reject|check-fail|tests/safety/global_call_buffer_write_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> write!)
+global_call_byvalue_ok|run-exit|tests/safety/global_call_byvalue_ok.tl|1|-
+global_call_cleanup_reject|check-fail|tests/safety/global_call_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> cleanup -> rebind!)
+global_call_cleanup_in_match_reject|check-fail|tests/safety/global_call_cleanup_in_match_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_cleanup_in_match_dead_ok|run-exit|tests/safety/global_call_cleanup_in_match_dead_ok.tl|4|-
+global_call_closure_reject|check-fail|tests/safety/global_call_closure_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> apply! -> <indirect call/lambda> -> rebind!)
+global_call_different_ok|run-exit|tests/safety/global_call_different_ok.tl|10|-
+global_call_ended_ok|run-exit|tests/safety/global_call_ended_ok.tl|1|-
+global_call_explicit_mut_ok|run-exit|tests/safety/global_call_explicit_mut_ok.tl|42|-
+global_call_imported_reject|check-fail|tests/safety/global_call_imported_reject.tl|-|while global `dep.g` is borrowed: it may assign `dep.g` (via read-after -> rebind!)
+global_call_indirect_reject|check-fail|tests/safety/global_call_indirect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> apply! -> <indirect call/lambda> -> rebind!)
+global_call_inplace_reject|check-fail|tests/safety/global_call_inplace_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> write!)
+global_call_later_arg_reject|check-fail|tests/safety/global_call_later_arg_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_macro_reject|check-fail|tests/safety/global_call_macro_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_match_reject|check-fail|tests/safety/global_call_match_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_match_shadow_reject|check-fail|tests/safety/global_call_match_shadow_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_match_loop_shadow_reject|check-fail|tests/safety/global_call_match_loop_shadow_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_match_local_shadow_ok|run-exit|tests/safety/global_call_match_local_shadow_ok.tl|42|-
+global_call_argument_let_shadow_reject|check-fail|tests/safety/global_call_argument_let_shadow_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_argument_for_shadow_reject|check-fail|tests/safety/global_call_argument_for_shadow_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind!)
+global_call_argument_local_mutation_ok|run-exit|tests/safety/global_call_argument_local_mutation_ok.tl|42|-
+global_call_mut_effect_reject|check-fail|tests/safety/global_call_mut_effect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> borrow-write!)
+global_call_mutable_loan_reject|check-fail|tests/safety/global_call_mutable_loan_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_nominal_cleanup_reject|check-fail|tests/safety/global_call_nominal_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-handle -> drop-word)
+global_call_nominal_owned_reject|check-fail|tests/safety/global_call_nominal_owned_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-holder -> close-handle -> drop-word)
+global_call_pure_constructor_ok|run-exit|tests/safety/global_call_pure_constructor_ok.tl|1|-
+global_call_enum_pattern_global_write_reject|check-fail|tests/safety/global_call_enum_pattern_global_write_reject.tl|-|may assign `g`
+global_call_enum_parameter_global_write_reject|check-fail|tests/safety/global_call_enum_parameter_global_write_reject.tl|-|may assign `g`
+global_call_reassign_copy_ok|run-exit|tests/safety/global_call_reassign_copy_ok.tl|1|-
+global_call_rebind_reject|check-fail|tests/safety/global_call_rebind_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> rebind!)
+global_call_recursion_reject|check-fail|tests/safety/global_call_recursion_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> b! -> a! -> rebind!)
+global_call_three_deep_reject|check-fail|tests/safety/global_call_three_deep_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> first! -> second! -> third! -> rebind!)
+global_call_local_shadow_ok|run-exit|tests/safety/global_call_local_shadow_ok.tl|1|-
+global_call_cleanup_ended_ok|run-exit|tests/safety/global_call_cleanup_ended_ok.tl|1|-
+global_call_generated_global_reject|check-fail|tests/safety/global_call_generated_global_reject.tl|-|while global `generated.g` is borrowed: it may assign `generated.g` (via observe -> reset!)
+global_call_nominal_enum_reject|check-fail|tests/safety/global_call_nominal_enum_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> close-handle -> drop-word)
+global_call_for_owned_shadow_ok|run-exit|tests/safety/global_call_for_owned_shadow_ok.tl|1|-
+global_call_foreach_shadow_ok|run-exit|tests/safety/global_call_foreach_shadow_ok.tl|1|-
+global_call_c_extern_ok|check-ok|tests/safety/global_call_c_extern_ok.tl|-|-
+global_call_temporary_cleanup_later_arg_reject|check-fail|tests/safety/global_call_temporary_cleanup_later_arg_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_temporary_cleanup_forward_reject|check-fail|tests/safety/global_call_temporary_cleanup_forward_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> drop-temporary -> close-handle -> drop-word)
+global_call_temporary_cleanup_returned_reject|check-fail|tests/safety/global_call_temporary_cleanup_returned_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_temporary_cleanup_indirect_reject|check-fail|tests/safety/global_call_temporary_cleanup_indirect_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read-after -> <indirect call/lambda> -> close-handle -> drop-word)
+global_call_qualified_callee_reject|check-fail|tests/safety/global_call_qualified_callee_reject.tl|-|while global `g` is borrowed: it may assign `g` (via read -> reset!)
+global_call_qualified_global_reject|check-fail|tests/safety/global_call_qualified_global_reject.tl|-|while global `effects.deep.g` is borrowed: it may assign `effects.deep.g` (via read -> reset!)
+global_call_qualified_pure_helper_ok|run-exit|tests/safety/global_call_qualified_pure_helper_ok.tl|132|-
+global_call_temporary_cleanup_ended_ok|run-exit|tests/safety/global_call_temporary_cleanup_ended_ok.tl|1|-
+global_call_temporary_cleanup_same_call_ok|run-exit|tests/safety/global_call_temporary_cleanup_same_call_ok.tl|1|-
+global_mut_borrow_field_overlap_reject|check-fail|tests/safety/global_mut_borrow_field_overlap_reject.tl|-|cannot mutably borrow borrowed place `state.x`
+global_shared_borrow_field_write_reject|check-fail|tests/safety/global_shared_borrow_field_write_reject.tl|-|cannot assign to borrowed place `state.x`
+foreign_abi_metadata_reject|check-fail|tests/safety/foreign_abi_metadata_reject.tl|-|unknown extern ABI stdcall
+global_noncopy_access_ok|check-ok|tests/safety/global_noncopy_access_ok.tl|-|-
+global_move_let_reject|check-fail|tests/safety/global_move_let_reject.tl|-|cannot move out of global `global-text`
+global_move_initializer_reject|check-fail|tests/safety/global_move_initializer_reject.tl|-|cannot move out of global `global-source`
+global_move_argument_reject|check-fail|tests/safety/global_move_argument_reject.tl|-|cannot move out of global `global-box`
+global_move_dynarray_alias_reject|check-fail|tests/safety/global_move_dynarray_alias_reject.tl|-|cannot move out of global `global-items`
+global_move_return_reject|check-fail|tests/safety/global_move_return_reject.tl|-|cannot move out of global `global-values`
+global_move_lambda_reject|check-fail|tests/safety/global_move_lambda_reject.tl|-|cannot move out of global `global-owner`
+global_move_projection_reject|check-fail|tests/safety/global_move_projection_reject.tl|-|cannot move out of global `global-owner`
+global_move_match_reject|check-fail|tests/safety/global_move_match_reject.tl|-|cannot move out of global `global-choice`
+global_move_qualified_reject|check-fail|tests/safety/global_move_qualified_reject.tl|tests/safety/global_move_qualified_reject.tl:6:22|cannot move out of global `helper.global-text`
+global_move_generated_reject|check-fail|tests/safety/global_move_generated_reject.tl|-|cannot move out of global `generated.global-text`
+global_move_task_reject|check-fail|tests/safety/global_move_task_reject.tl|-|cannot move out of global `global-text`
+global_move_spmd_reject|check-fail|tests/safety/global_move_spmd_reject.tl|-|cannot move out of global `global-text`
+global_move_begin_result_reject|check-fail|tests/safety/global_move_begin_result_reject.tl|-|cannot move out of global `global-text`
+global_move_unsafe_result_reject|check-fail|tests/safety/global_move_unsafe_result_reject.tl|-|cannot move out of global `global-text`
+global_move_let_result_reject|check-fail|tests/safety/global_move_let_result_reject.tl|-|cannot move out of global `global-text`
+global_move_match_result_reject|check-fail|tests/safety/global_move_match_result_reject.tl|-|cannot move out of global `global-text`
+global_move_try_result_reject|check-fail|tests/safety/global_move_try_result_reject.tl|-|cannot move out of global `global-result`
+global_move_scoped_result_reject|check-fail|tests/safety/global_move_scoped_result_reject.tl|-|cannot move out of global `global-text`
+global_move_result_shadowing_ok|check-ok|tests/safety/global_move_result_shadowing_ok.tl|-|-
+global_initializer_noncopy_reject|check-fail|tests/safety/global_initializer_noncopy_reject.tl|-|cannot move out of global `greeting`; borrow the global instead
+foreign_global_selected_set_reject|check-fail|tests/safety/foreign_global_selected_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+foreign_global_selected_as_set_reject|check-fail|tests/safety/foreign_global_selected_as_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+foreign_global_wildcard_set_reject|check-fail|tests/safety/foreign_global_wildcard_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+foreign_global_alias_set_reject|check-fail|tests/safety/foreign_global_alias_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+foreign_global_canonical_set_reject|check-fail|tests/safety/foreign_global_canonical_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+foreign_global_field_set_reject|check-fail|tests/safety/foreign_global_field_set_reject.tl|tests/safety/foreign_global_field_set_reject.tl:7:11|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
+foreign_global_alias_field_set_reject|check-fail|tests/safety/foreign_global_alias_field_set_reject.tl|-|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
+foreign_global_tuple_set_reject|check-fail|tests/safety/foreign_global_tuple_set_reject.tl|-|typecheck: cannot assign to part of global `tup` owned by module `foreign_global_dep`
+foreign_global_element_set_reject|check-fail|tests/safety/foreign_global_element_set_reject.tl|-|typecheck: cannot assign to an element of global `slots` owned by module `foreign_global_dep`
+foreign_global_deref_set_reject|check-fail|tests/safety/foreign_global_deref_set_reject.tl|-|typecheck: cannot assign through global `boxed` owned by module `foreign_global_dep`
+foreign_global_replace_reject|check-fail|tests/safety/foreign_global_replace_reject.tl|-|typecheck: cannot replace a place in global `counter` owned by module `foreign_global_dep`
+foreign_global_replace_element_reject|check-fail|tests/safety/foreign_global_replace_element_reject.tl|-|typecheck: cannot replace a place in global `slots` owned by module `foreign_global_dep`
+foreign_global_mut_borrow_reject|check-fail|tests/safety/foreign_global_mut_borrow_reject.tl|-|typecheck: cannot mutably borrow global `counter` owned by module `foreign_global_dep`
+foreign_global_mut_borrow_field_reject|check-fail|tests/safety/foreign_global_mut_borrow_field_reject.tl|-|typecheck: cannot mutably borrow global `pair` owned by module `foreign_global_dep`
+foreign_global_mut_borrow_element_reject|check-fail|tests/safety/foreign_global_mut_borrow_element_reject.tl|-|typecheck: cannot mutably borrow global `slots` owned by module `foreign_global_dep`
+foreign_global_slice_mut_view_reject|check-fail|tests/safety/foreign_global_slice_mut_view_reject.tl|-|typecheck: cannot mutably borrow global `slots` owned by module `foreign_global_dep`
+foreign_global_unsafe_set_reject|check-fail|tests/safety/foreign_global_unsafe_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+foreign_global_lambda_set_reject|check-fail|tests/safety/foreign_global_lambda_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+foreign_global_initializer_set_reject|check-fail|tests/safety/foreign_global_initializer_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+foreign_global_macro_write_reject|check-fail|tests/safety/foreign_global_macro_write_reject.tl|tests/safety/foreign_global_dep.tl:24:10|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+foreign_global_macro_caller_place_reject|check-fail|tests/safety/foreign_global_macro_caller_place_reject.tl|tests/safety/foreign_global_dep.tl:32:4|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
+foreign_global_access_defined|run-exit|tests/safety/foreign_global_access_defined.tl|42|-
+foreign_global_shadow_defined|run-exit|tests/safety/foreign_global_shadow_defined.tl|42|-
+global_call_mixed_copy_ok|run-exit|tests/safety/global_call_mixed_copy_ok.tl|17|-
+global_call_mixed_auto_reject|check-fail|tests/safety/global_call_mixed_auto_reject.tl|-|while global `g` is borrowed
+global_call_explicit_cleanup_reject|check-fail|tests/safety/global_call_explicit_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via close-handle -> drop-word)
+global_call_dispatch_reject|check-fail|tests/safety/global_call_dispatch_reject.tl|-|while global `g` is borrowed: it may assign `g` (via rebind -> rebind-scalar)
+global_call_with_local_cleanup_reject|check-fail|tests/safety/global_call_with_local_cleanup_reject.tl|-|while global `g` is borrowed: it may assign `g` (via <indirect call/lambda> -> rebind!)
+global_call_macro_callee_reject|check-fail|tests/safety/global_call_macro_callee_reject.tl|-|cannot call `second!` while global `g` is borrowed
+global_call_with_cleanup_argument_reject|check-fail|tests/safety/global_call_with_cleanup_argument_reject.tl|-|cannot call `reset-then-read` while global `g` is borrowed
+global_call_spawn_reject|check-fail|tests/safety/global_call_spawn_reject.tl|-|cannot call `spawn` while global `g` is borrowed
+global_call_spawn_ok|run-exit|tests/safety/global_call_spawn_ok.tl|8|-
+global_call_returned_referent_ok|run-exit|tests/safety/global_call_returned_referent_ok.tl|6|-
+global_call_before_other_error_reject|check-fail|tests/safety/global_call_before_other_error_reject.tl|-|cannot call `rebind!` while global `g` is borrowed
+global_call_macro_late_twice_reject|check-fail|tests/safety/global_call_macro_late_twice_reject.tl|-|cannot call `read-after` while global `g` is borrowed
+global_mut_borrow_noncall_location_reject|check-fail|tests/safety/global_mut_borrow_noncall_location_reject.tl|tests/safety/global_mut_borrow_noncall_location_reject.tl:10:23|mutable borrow of by-value place is only supported as an immediate call argument
+global_mut_borrow_deref_location_reject|check-fail|tests/safety/global_mut_borrow_deref_location_reject.tl|tests/safety/global_mut_borrow_deref_location_reject.tl:9:10|mutable borrow of by-value place is only supported as an immediate call argument
+global_mut_borrow_store_location_reject|check-fail|tests/safety/global_mut_borrow_store_location_reject.tl|tests/safety/global_mut_borrow_store_location_reject.tl:9:16|mutable borrow of by-value place is only supported as an immediate call argument
+global_mut_borrow_initializer_location_reject|check-fail|tests/safety/global_mut_borrow_initializer_location_reject.tl|tests/safety/global_mut_borrow_initializer_location_reject.tl:8:10|mutable borrow of by-value place is only supported as an immediate call argument

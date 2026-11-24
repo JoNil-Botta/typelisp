@@ -1,0 +1,79 @@
+# Safety corpus cases: formatting, strings, substrings, UTF-8, and byte buffer views.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+string_bounds_trap|run-trap|tests/safety/string_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|134|tl: array index out of bounds
+bytes_view_element_reject|check-fail|tests/safety/bytes_view_element_reject.tl|-|a bytes view source must be a u8 array
+bytes_mut_view_shared_source_reject|check-fail|tests/safety/bytes_mut_view_shared_source_reject.tl|-|__tl_bytes-mut-view requires a mutable borrowed source
+bytes_mut_view_parent_child_reject|check-fail|tests/safety/bytes_mut_view_parent_child_reject.tl|-|cannot mutably borrow borrowed place `parent`
+bytes_view_escape_reject|check-fail|tests/safety/bytes_view_escape_reject.tl|-|returned reference lifetime must be tied to a parameter
+str_cat_long_operand_move_reject|check-fail|tests/safety/str_cat_long_operand_move_reject.tl|-|use of moved value `name`
+substring_view_move_live_reject|check-fail|tests/safety/substring_view_move_live_reject.tl|-|cannot move borrowed place `text`
+utf8_iterator_owner_move_reject|check-fail|tests/safety/utf8_iterator_owner_move_reject.tl|-|cannot move borrowed place `text`
+utf8_slice_owner_move_reject|check-fail|tests/safety/utf8_slice_owner_move_reject.tl|-|cannot move borrowed place `text`
+substring_view_arena_escape_reject|check-fail|tests/safety/substring_view_arena_escape_reject.tl|-|cannot escape with-arena
+byte_buf_view_move_live_reject|check-fail|tests/safety/byte_buf_view_move_live_reject.tl|-|cannot move borrowed place `buf`
+byte_buf_view_mut_after_immut_reject|check-fail|tests/safety/byte_buf_view_mut_after_immut_reject.tl|-|cannot mutably borrow borrowed place `buf`
+byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut_reject.tl|-|cannot mutably borrow borrowed place `buf`
+byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
+format_byte_buf_raw_safe_reject|check-fail|tests/safety/format_byte_buf_raw_safe_reject.tl|-|byte_buf/format-write-raw requires unsafe context
+format_text_buf_raw_safe_reject|check-fail|tests/safety/format_text_buf_raw_safe_reject.tl|-|text_buf/format-write-raw requires unsafe context
+format_arguments_raw_safe_reject|check-fail|tests/safety/format_arguments_raw_safe_reject.tl|-|format/arguments-string-write-raw requires unsafe context
+format_formatter_write_at_safe_reject|check-fail|tests/safety/format_formatter_write_at_safe_reject.tl|-|format/formatter-write-string-at! requires unsafe context
+format_formatter_result_at_safe_reject|check-fail|tests/safety/format_formatter_result_at_safe_reject.tl|-|format/formatter-result-at requires unsafe context
+format_formatter_status_at_safe_reject|check-fail|tests/safety/format_formatter_status_at_safe_reject.tl|-|format/formatter-status-at requires unsafe context
+format_raw_helper_callable_launder_reject|check-fail|tests/safety/format_raw_helper_callable_launder_reject.tl|-|byte_buf/format-write-raw is an unsafe callable and cannot be used as a plain function value
+format_raw_helper_unsafe_call_ok|check-ok|tests/safety/format_raw_helper_unsafe_call_ok.tl|-|-
+format_debug_source_byte_safe_reject|check-fail|tests/safety/format_debug_source_byte_safe_reject.tl|-|format/format-debug-source-byte requires unsafe context
+format_debug_rendered_length_safe_reject|check-fail|tests/safety/format_debug_rendered_length_safe_reject.tl|-|format/format-debug-rendered-length requires unsafe context
+format_debug_write_code_safe_reject|check-fail|tests/safety/format_debug_write_code_safe_reject.tl|-|format/format-debug-write-code! requires unsafe context
+format_debug_write_byte_safe_reject|check-fail|tests/safety/format_debug_write_byte_safe_reject.tl|-|format/format-debug-write-byte! requires unsafe context
+format_debug_bytes_core_safe_reject|check-fail|tests/safety/format_debug_bytes_core_safe_reject.tl|-|format/format-debug-bytes-core requires unsafe context
+format_write_fill_safe_reject|check-fail|tests/safety/format_write_fill_safe_reject.tl|-|format/format-write-fill! requires unsafe context
+format_copy_rendered_range_safe_reject|check-fail|tests/safety/format_copy_rendered_range_safe_reject.tl|-|format/format-copy-rendered-range! requires unsafe context
+format_renderer_call_at_safe_reject|check-fail|tests/safety/format_renderer_call_at_safe_reject.tl|-|format/arguments-renderer-call-at requires unsafe context
+format_raw_range_alias_safe_reject|check-fail|tests/safety/format_raw_range_alias_safe_reject.tl|-|fmt/format-write-fill! requires unsafe context
+format_raw_range_callable_launder_reject|check-fail|tests/safety/format_raw_range_callable_launder_reject.tl|-|format/format-write-fill! is an unsafe callable and cannot be used as a plain function value
+format_capability_callback_value_ok|check-ok|tests/safety/format_capability_callback_value_ok.tl|-|-
+format_writer_missing_capability_reject|check-fail|tests/safety/format_writer_missing_capability_reject.tl|-|format: writer capability adapter is missing from canonical module
+format_registry_state_safe_reject|check-fail|tests/safety/format_registry_state_safe_reject.tl|-|ptr-write! requires unsafe context
+format_registry_register_safe_reject|check-fail|tests/safety/format_registry_register_safe_reject.tl|-|format_writer_core/format-writer-register requires unsafe context
+format_pointer_safe_reject|check-fail|tests/safety/format_pointer_safe_reject.tl|stdlib/format.tl|ptr->int requires unsafe context
+format_pointer_box_reject|check-fail|tests/safety/format_pointer_box_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
+format_pointer_checked_ref_reject|check-fail|tests/safety/format_pointer_checked_ref_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
+format_pointer_function_reject|check-fail|tests/safety/format_pointer_function_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
+format_pointer_integer_reject|check-fail|tests/safety/format_pointer_integer_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
+format_pointer_missing_selector_reject|check-fail|tests/safety/format_pointer_missing_selector_reject.tl|-|format: unsupported argument type ptr_i64
+format_pointer_mut_ref_reject|check-fail|tests/safety/format_pointer_mut_ref_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
+format_pointer_nominal_reject|check-fail|tests/safety/format_pointer_nominal_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
+format_pointer_slice_reject|check-fail|tests/safety/format_pointer_slice_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
+format_pointer_string_reject|check-fail|tests/safety/format_pointer_string_reject.tl|-|format: 'p' selector requires (Ptr T), (MutPtr T), or a shared borrow of a raw-pointer value
+format_arguments_lifetime_escape_reject|check-fail|tests/safety/format_arguments_lifetime_escape_reject.tl|-|reference value would escape lexical scope
+format_direct_hook_wrong_signature_reject|check-fail|tests/safety/format_direct_hook_wrong_signature_reject.tl|stdlib/format.tl|call `format-write` argument 1
+string_raw_copy_reject|check-fail|stdlib/tests/string_raw_copy_reject.tl|stdlib/tests/string_raw_copy_reject.tl:5:3|typecheck: string/str-copy-bytes-into requires unsafe context
+string_raw_owned_copy_reject|check-fail|stdlib/tests/string_raw_owned_copy_reject.tl|stdlib/tests/string_raw_owned_copy_reject.tl:5:3|typecheck: string/str-copy-owned-bytes-into requires unsafe context
+string_raw_borrowed_copy_reject|check-fail|stdlib/tests/string_raw_borrowed_copy_reject.tl|stdlib/tests/string_raw_borrowed_copy_reject.tl:5:3|typecheck: text/str-copy-borrowed-bytes-into requires unsafe context
+string_raw_substring_reject|check-fail|stdlib/tests/string_raw_substring_reject.tl|stdlib/tests/string_raw_substring_reject.tl:5:3|typecheck: string/substring-copy-checked requires unsafe context
+string_raw_integer_byte_reject|check-fail|stdlib/tests/string_raw_integer_byte_reject.tl|stdlib/tests/string_raw_integer_byte_reject.tl:5:3|typecheck: string/int->string-write-byte! requires unsafe context
+string_raw_integer_digits_reject|check-fail|stdlib/tests/string_raw_integer_digits_reject.tl|stdlib/tests/string_raw_integer_digits_reject.tl:5:3|typecheck: string/int->string-write-negative-digits! requires unsafe context
+string_raw_byte_alias_reject|check-fail|tests/safety/string_raw_byte_alias_reject.tl|tests/safety/string_raw_byte_alias_reject.tl:5:3|error[E0209]: typecheck: s/int->string-write-byte! requires unsafe context
+string_raw_byte_direct_reject|check-fail|tests/safety/string_raw_byte_direct_reject.tl|tests/safety/string_raw_byte_direct_reject.tl:5:3|error[E0209]: typecheck: int->string-write-byte! requires unsafe context
+string_raw_byte_unsafe_value_reject|check-fail|tests/safety/string_raw_byte_unsafe_value_reject.tl|tests/safety/string_raw_byte_unsafe_value_reject.tl:5:3|error[E0219]: typecheck: s/int->string-write-byte! is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe
+string_raw_byte_value_reject|check-fail|tests/safety/string_raw_byte_value_reject.tl|tests/safety/string_raw_byte_value_reject.tl:5:3|error[E0209]: typecheck: s/int->string-write-byte! requires unsafe context
+string_raw_digits_alias_reject|check-fail|tests/safety/string_raw_digits_alias_reject.tl|tests/safety/string_raw_digits_alias_reject.tl:5:3|error[E0209]: typecheck: s/int->string-write-negative-digits! requires unsafe context
+string_raw_digits_direct_reject|check-fail|tests/safety/string_raw_digits_direct_reject.tl|tests/safety/string_raw_digits_direct_reject.tl:5:3|error[E0209]: typecheck: int->string-write-negative-digits! requires unsafe context
+string_raw_digits_unsafe_value_reject|check-fail|tests/safety/string_raw_digits_unsafe_value_reject.tl|tests/safety/string_raw_digits_unsafe_value_reject.tl:5:3|error[E0219]: typecheck: s/int->string-write-negative-digits! is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe
+string_raw_digits_value_reject|check-fail|tests/safety/string_raw_digits_value_reject.tl|tests/safety/string_raw_digits_value_reject.tl:5:3|error[E0209]: typecheck: s/int->string-write-negative-digits! requires unsafe context
+string_raw_integer_writers_ok|run-exit|tests/safety/string_raw_integer_writers_ok.tl|42|-
+string_raw_substring_alias_reject|check-fail|tests/safety/string_raw_substring_alias_reject.tl|tests/safety/string_raw_substring_alias_reject.tl:5:3|error[E0209]: typecheck: s/substring-copy-checked requires unsafe context
+string_raw_substring_direct_reject|check-fail|tests/safety/string_raw_substring_direct_reject.tl|tests/safety/string_raw_substring_direct_reject.tl:5:3|error[E0209]: typecheck: substring-copy-checked requires unsafe context
+string_raw_substring_unsafe_value_reject|check-fail|tests/safety/string_raw_substring_unsafe_value_reject.tl|tests/safety/string_raw_substring_unsafe_value_reject.tl:5:3|error[E0219]: typecheck: s/substring-copy-checked is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe
+string_raw_substring_value_reject|check-fail|tests/safety/string_raw_substring_value_reject.tl|tests/safety/string_raw_substring_value_reject.tl:5:3|error[E0209]: typecheck: s/substring-copy-checked requires unsafe context
+string_raw_copy_function_value_reject|check-fail|stdlib/tests/string_raw_copy_function_value_reject.tl|stdlib/tests/string_raw_copy_function_value_reject.tl:5:3|typecheck: string/str-copy-bytes-into is an unsafe callable and cannot be used as a plain function value
+format_raw_copy_reject|check-fail|stdlib/tests/format_raw_copy_reject.tl|stdlib/tests/format_raw_copy_reject.tl:5:3|typecheck: format/format-copy-rendered-range! requires unsafe context
+format_raw_fill_reject|check-fail|stdlib/tests/format_raw_fill_reject.tl|stdlib/tests/format_raw_fill_reject.tl:5:3|typecheck: format/format-write-fill! requires unsafe context
+format_raw_debug_read_reject|check-fail|stdlib/tests/format_raw_debug_read_reject.tl|stdlib/tests/format_raw_debug_read_reject.tl:5:3|typecheck: format/format-debug-source-byte requires unsafe context
+format_raw_debug_length_reject|check-fail|stdlib/tests/format_raw_debug_length_reject.tl|stdlib/tests/format_raw_debug_length_reject.tl:5:3|typecheck: format/format-debug-rendered-length requires unsafe context
+format_raw_debug_write_reject|check-fail|stdlib/tests/format_raw_debug_write_reject.tl|stdlib/tests/format_raw_debug_write_reject.tl:5:3|typecheck: format/format-debug-write-code! requires unsafe context
+format_raw_debug_byte_reject|check-fail|stdlib/tests/format_raw_debug_byte_reject.tl|stdlib/tests/format_raw_debug_byte_reject.tl:5:3|typecheck: format/format-debug-write-byte! requires unsafe context
+format_raw_debug_render_reject|check-fail|stdlib/tests/format_raw_debug_render_reject.tl|stdlib/tests/format_raw_debug_render_reject.tl:5:3|typecheck: format/format-debug-bytes-core requires unsafe context

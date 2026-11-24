@@ -1,0 +1,101 @@
+# Safety corpus cases: regions, lifetimes, and variance checking.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+lifetime_tagged_iterator_mut_next_ok|run-exit|tests/safety/lifetime_tagged_iterator_mut_next_ok.tl|42|-
+region_escape_reject|check-fail|tests/safety/region_escape_reject.tl|-|cannot escape with-arena
+region_read_inferred_region_ok|run-exit|tests/safety/region_read_inferred_region_ok.tl|42|-
+region_arena_store_param_array_reject|check-fail|tests/safety/region_arena_store_param_array_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_shadow_store_mut_param_reject|check-fail|tests/safety/region_arena_shadow_store_mut_param_reject.tl|-|with-arena 'a' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_shadow_assign_reject|check-fail|tests/safety/region_arena_shadow_assign_reject.tl|-|with-arena 'outer' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_caller_lifetime_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_caller_lifetime_alias_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_alias_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_in_arena_caller_lifetime_store_reject|check-fail|tests/safety/region_arena_in_arena_caller_lifetime_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_caller_lifetime_foreach_store_reject|check-fail|tests/safety/region_arena_caller_lifetime_foreach_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_local_shadow_store_reject|check-fail|tests/safety/region_arena_local_shadow_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_local_shadow_initializer_store_reject|check-fail|tests/safety/region_arena_local_shadow_initializer_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_match_sibling_store_reject|check-fail|tests/safety/region_arena_match_sibling_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_lambda_shadow_store_reject|check-fail|tests/safety/region_arena_lambda_shadow_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_local_shadow_local_borrow_store_reject|check-fail|tests/safety/region_arena_local_shadow_local_borrow_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_for_owned_store_reject|check-fail|tests/safety/region_arena_for_owned_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_foreach_active_store_reject|check-fail|tests/safety/region_arena_foreach_active_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_self_carrier_direct_store_reject|check-fail|tests/safety/region_arena_self_carrier_direct_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_distinct_carrier_store_reject|check-fail|tests/safety/region_arena_distinct_carrier_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_arena_owner_local_store_reject|check-fail|tests/safety/region_arena_arena_owner_local_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_typed_for_carrier_store_reject|check-fail|tests/safety/region_arena_typed_for_carrier_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_mixed_lambda_params_store_reject|check-fail|tests/safety/region_arena_mixed_lambda_params_store_reject.tl|-|with-arena 'r' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_collision_owner_reject|check-fail|tests/safety/region_arena_collision_owner_reject.tl|-|with-arena 'owner' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_collision_nested_reject|check-fail|tests/safety/region_arena_collision_nested_reject.tl|-|with-arena 'outer' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_collision_in_arena_owner_reject|check-fail|tests/safety/region_arena_collision_in_arena_owner_reject.tl|-|with-arena 'brand' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_collision_spmd_index_reject|check-fail|tests/safety/region_arena_collision_spmd_index_reject.tl|tests/safety/region_arena_collision_spmd_index_reject.tl:7:5|with-arena 'i' reuses the name of a visible lifetime or owner; rename the arena
+region_arena_spmd_sibling_scope_ok|check-ok|tests/safety/region_arena_spmd_sibling_scope_ok.tl|-|-
+region_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
+region_arena_elided_mut_store_reject|check-fail|tests/safety/region_arena_elided_mut_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
+region_arena_elided_mut_local_store_reject|check-fail|tests/safety/region_arena_elided_mut_local_store_reject.tl|-|struct field assignment type mismatch
+region_arena_in_arena_distinct_name_store_reject|check-fail|tests/safety/region_arena_in_arena_distinct_name_store_reject.tl|-|struct field assignment type mismatch: expected (& r i64), found (& q i64)
+region_arena_caller_lifetime_store_ok|check-ok|tests/safety/region_arena_caller_lifetime_store_ok.tl|-|-
+region_arena_caller_lifetime_shadow_ok|run-exit|tests/safety/region_arena_caller_lifetime_shadow_ok.tl|42|-
+region_arena_caller_lifetime_foreach_ok|run-exit|tests/safety/region_arena_caller_lifetime_foreach_ok.tl|42|-
+region_arena_local_shadow_explicit_borrow_ok|run-exit|tests/safety/region_arena_local_shadow_explicit_borrow_ok.tl|42|-
+region_arena_local_shadow_annotated_borrow_ok|check-ok|tests/safety/region_arena_local_shadow_annotated_borrow_ok.tl|-|-
+region_arena_local_shadow_distinct_arena_ok|check-ok|tests/safety/region_arena_local_shadow_distinct_arena_ok.tl|-|-
+region_arena_local_shadow_inferred_borrow_ok|check-ok|tests/safety/region_arena_local_shadow_inferred_borrow_ok.tl|-|-
+region_arena_local_shadow_outer_initializer_ok|run-exit|tests/safety/region_arena_local_shadow_outer_initializer_ok.tl|42|-
+region_arena_lambda_param_shadow_ok|run-exit|tests/safety/region_arena_lambda_param_shadow_ok.tl|42|-
+region_arena_match_arm_shadow_ok|run-exit|tests/safety/region_arena_match_arm_shadow_ok.tl|42|-
+region_arena_for_owned_shadow_ok|run-exit|tests/safety/region_arena_for_owned_shadow_ok.tl|42|-
+region_arena_foreach_active_shadow_ok|run-exit|tests/safety/region_arena_foreach_active_shadow_ok.tl|42|-
+region_arena_resource_shadow_ok|run-exit|tests/safety/region_arena_resource_shadow_ok.tl|42|-
+region_arena_spmd_index_shadow_ok|check-ok|tests/safety/region_arena_spmd_index_shadow_ok.tl|-|-
+region_arena_self_carrier_store_ok|check-ok|tests/safety/region_arena_self_carrier_store_ok.tl|-|-
+region_arena_self_carrier_shadow_ok|run-exit|tests/safety/region_arena_self_carrier_shadow_ok.tl|42|-
+region_arena_self_carrier_controls_ok|check-ok|tests/safety/region_arena_self_carrier_controls_ok.tl|-|-
+region_arena_arena_owner_local_ok|run-exit|tests/safety/region_arena_arena_owner_local_ok.tl|42|-
+region_arena_typed_for_carrier_ok|run-exit|tests/safety/region_arena_typed_for_carrier_ok.tl|42|-
+region_arena_mixed_lambda_params_ok|run-exit|tests/safety/region_arena_mixed_lambda_params_ok.tl|42|-
+region_arena_round6_renamed_ok|run-exit|tests/safety/region_arena_round6_renamed_ok.tl|42|-
+lifetime_tagged_iterator_escape_reject|check-fail|tests/safety/lifetime_tagged_iterator_escape_reject.tl|-|reference value would escape lexical scope
+lifetime_tagged_iterator_live_mut_reject|check-fail|tests/safety/lifetime_tagged_iterator_live_mut_reject.tl|-|cannot assign to borrowed place `iter.index`
+lifetime_shortening_reverse_reject|check-fail|tests/safety/lifetime_shortening_reverse_reject.tl|-|source lifetime `inner` does not outlive required lifetime `outer`
+lifetime_shortening_mut_ref_referent_invariant_reject|check-fail|tests/safety/lifetime_shortening_mut_ref_referent_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because mutable reference referent type is invariant
+lifetime_shortening_mut_ptr_invariant_reject|check-fail|tests/safety/lifetime_shortening_mut_ptr_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because mutable raw pointer referent type is invariant
+lifetime_shortening_function_variance_reject|check-fail|tests/safety/lifetime_shortening_function_variance_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because function parameter/result variance failed
+lifetime_shortening_nominal_invariant_reject|check-fail|tests/safety/lifetime_shortening_nominal_invariant_reject.tl|-|source lifetime `outer` cannot satisfy required lifetime `inner` because lifetime parameter 1 of `InvariantView` is invariant
+region_read_expectation_ok|run-exit|tests/safety/region_read_expectation_ok.tl|42|-
+region_read_result_move_reject|check-fail|tests/safety/region_read_result_move_reject.tl|tests/safety/region_read_result_move_reject.tl:5:3|cannot move a `String` out of a shared reference
+region_read_binding_move_reject|check-fail|tests/safety/region_read_binding_move_reject.tl|tests/safety/region_read_binding_move_reject.tl:5:28|cannot move a `String` out of a shared reference
+region_read_argument_move_reject|check-fail|tests/safety/region_read_argument_move_reject.tl|tests/safety/region_read_argument_move_reject.tl:7:11|cannot move a `String` out of a shared reference
+region_view_field_shared_write_reject|check-fail|tests/safety/region_view_field_shared_write_reject.tl|tests/safety/region_view_field_shared_write_reject.tl:16:20|cannot mutably borrow `view` behind a shared reference
+region_view_field_call_result_write_reject|check-fail|tests/safety/region_view_field_call_result_write_reject.tl|tests/safety/region_view_field_call_result_write_reject.tl:19:13|cannot mutably borrow `view.n` behind a shared reference
+variance_recursive_swapped_invariant_reject|check-fail|tests/safety/variance_recursive_swapped_invariant_reject.tl|-|lifetime parameter 1 of `L` is invariant
+variance_recursive_through_holder_invariant_reject|check-fail|tests/safety/variance_recursive_through_holder_invariant_reject.tl|-|lifetime parameter 1 of `Outer` is invariant
+variance_cfunc_parameter_reject|check-fail|tests/safety/variance_cfunc_parameter_reject.tl|-|contravariant lifetime parameter 1 of `S`
+region_signature_store_then_write_reject|check-fail|tests/safety/region_signature_store_then_write_reject.tl|tests/safety/region_signature_store_then_write_reject.tl:21:18|cannot assign to borrowed place `d`
+region_view_call_argument_ok|run-exit|tests/safety/region_view_call_argument_ok.tl|42|-
+region_by_value_holder_store_reborrow_ok|run-exit|tests/safety/region_by_value_holder_store_reborrow_ok.tl|42|-
+region_type_depth_bound_reject|check-fail|tests/safety/region_type_depth_bound_reject.tl|-|the ownership checker does not support
+region_type_depth_32_loan_reject|check-fail|tests/safety/region_type_depth_32_loan_reject.tl|-|cannot assign to borrowed place `x`
+region_type_depth_255_loan_reject|check-fail|tests/safety/region_type_depth_255_loan_reject.tl|-|cannot assign to borrowed place `x`
+region_covariant_holder_overwrite_ok|run-exit|tests/safety/region_covariant_holder_overwrite_ok.tl|42|-
+region_borrow_after_overwrite_ok|run-exit|tests/safety/region_borrow_after_overwrite_ok.tl|42|-
+variance_layers_d32_ok|check-ok|tests/safety/variance_layers_d32_ok.tl|-|-
+variance_layers_d40_ok|check-ok|tests/safety/variance_layers_d40_ok.tl|-|-
+variance_dag_call_d12_ok|check-ok|tests/safety/variance_dag_call_d12_ok.tl|-|-
+variance_dag_nested_d12_ok|check-ok|tests/safety/variance_dag_nested_d12_ok.tl|-|-
+variance_dag_shorten_d8_ok|check-ok|tests/safety/variance_dag_shorten_d8_ok.tl|-|-
+lifetime_shape_linear_40_check|check-ok|tests/safety/lifetime_shape_linear_40_check.tl|-|-
+lifetime_shape_linear_scalar_40_check|check-ok|tests/safety/lifetime_shape_linear_scalar_40_check.tl|-|-
+lifetime_shape_depth_256_check|check-ok|tests/safety/lifetime_shape_depth_256_check.tl|-|-
+lifetime_shape_depth_257_reject|check-fail|tests/safety/lifetime_shape_depth_257_reject.tl|-|the body exceeds the ownership graph's size limits
+lifetime_shape_func_reset_255_check|check-ok|tests/safety/lifetime_shape_func_reset_255_check.tl|-|-
+lifetime_shape_func_reset_256_reject|check-fail|tests/safety/lifetime_shape_func_reset_256_reject.tl|-|the body exceeds the ownership graph's size limits
+lifetime_shape_escape_linear_40_reject|check-fail|tests/safety/lifetime_shape_escape_linear_40_reject.tl|-|reference value would escape lexical scope
+region_read_operand_use_after_move_reject|check-fail|tests/safety/region_read_operand_use_after_move_reject.tl|tests/safety/region_read_operand_use_after_move_reject.tl:13:37|error[E0208]: typecheck: use of moved value `s`
+region_read_operand_mut_conflict_reject|check-fail|tests/safety/region_read_operand_mut_conflict_reject.tl|tests/safety/region_read_operand_mut_conflict_reject.tl:13:41|error[E0207]: typecheck: cannot mutably borrow borrowed place `z`
+region_read_operand_other_region_reject|check-fail|tests/safety/region_read_operand_other_region_reject.tl|tests/safety/region_read_operand_other_region_reject.tl:7:3|error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+region_read_operand_type_mismatch_reject|check-fail|tests/safety/region_read_operand_type_mismatch_reject.tl|tests/safety/region_read_operand_type_mismatch_reject.tl:8:26|error[E0206]: typecheck: integer operator expects matching integer operands: expected i64, found f64
+region_tagged_name_move_only_reject|check-fail|tests/safety/region_tagged_name_move_only_reject.tl|tests/safety/region_tagged_name_move_only_reject.tl:5:3|error[E0211]: typecheck: the ownership checker does not support a construct in this function body
+region_tagged_name_aggregate_reject|check-fail|tests/safety/region_tagged_name_aggregate_reject.tl|tests/safety/region_tagged_name_aggregate_reject.tl:9:3|error[E0211]: typecheck: the ownership checker does not support a construct in this function body
+region_helper_store_reject|check-fail|tests/safety/region_helper_store_reject.tl|tests/safety/region_helper_store_reject.tl:10:27|error[E0205]: typecheck: cannot store region-tagged value into assignment; region value would escape
+region_helper_store_reject_windows|check-fail-windows|tests/safety/region_helper_store_reject.tl|-|error[E0205]: typecheck: cannot store region-tagged value into assignment; region value would escape
+region_right_operand_plain_left_ok|check-ok|tests/safety/region_right_operand_plain_left_ok.tl|-|-
+region_aggregate_in_active_region_ok|check-ok|tests/safety/region_aggregate_in_active_region_ok.tl|-|-

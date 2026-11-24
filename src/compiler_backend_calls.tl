@@ -77,9 +77,6 @@
 (define (compiler-backend-fast-alloc-supported-size? [size : i64]) : bool
   (and (> size 0) (<= size 64) (= (% size 8) 0)))
 
-(define (compiler-backend-fast-alloc-label [size : i64]) : String
-  (str_cat.str-cat ".L_tl_alloc" (string.int->string size) "" ""))
-
 (define (compiler-backend-inline-fast-alloc?
   [size : i64]
   [function-state : be_state.CompilerBackendFunctionState]
@@ -257,7 +254,9 @@
             "    call tl_alloc_global\n")
           (str_cat.str-cat
             "    call "
-            (compiler-backend-fast-alloc-label size)
+            (runtime_common.compiler-backend-runtime-fast-alloc-label
+              size
+              false)
             "\n"))
         done-label
         ":\n"))))
@@ -9112,6 +9111,10 @@
         (be_state.compiler-backend-global-shared-view args))]
     [call-symbol : String
       (be_operand.compiler-backend-call-symbol-index name plan program-index)]
+    [library-object? : bool
+      (be_state.compiler-backend-state-library-object? backend-state)]
+    [size-optimized? : bool
+      (be_state.compiler-backend-state-optimize-for-size? backend-state)]
     [inline-memory-name : String
       (if (and
         (be_state.compiler-backend-state-emission-target-policy backend-state).windows
@@ -9125,6 +9128,7 @@
     (cond
       [(and
           (> fast-alloc-size 0)
+          (or (not library-object?) size-optimized? (= fast-alloc-size 16))
           ;; An extern alias with a pointer result uses the same register ABI.
           ;; Its resolved symbol and the runtime plan below must still prove
           ;; that this is our allocator, including its shared-arena slow path.
@@ -9141,21 +9145,20 @@
             (and
               (= name cbi.compiler-builtin-id-tl-alloc-global)
               (string.eq call-symbol "tl_alloc_global")
-              (not
-                (be_state.compiler-backend-state-optimize-for-size?
-                  backend-state)))))
+              (not (or library-object? size-optimized?)))))
         (Ok
           (str_cat.str-cat
-            (if (or
-              (= name cbi.compiler-builtin-id-tl-alloc-global)
-              (and
-                (not
-                  (be_state.compiler-backend-state-optimize-for-size?
-                    backend-state))
-                (compiler-backend-inline-fast-alloc?
-                  fast-alloc-size
-                  (be_state.compiler-backend-state-function-state backend-state)
-                  current-label)))
+            (if (and
+              (not library-object?)
+              (or
+                (= name cbi.compiler-builtin-id-tl-alloc-global)
+                (and
+                  (not size-optimized?)
+                  (compiler-backend-inline-fast-alloc?
+                    fast-alloc-size
+                    (be_state.compiler-backend-state-function-state
+                      backend-state)
+                    current-label))))
               (compiler-backend-emit-inline-fast-alloc
                 target
                 function
@@ -9170,10 +9173,10 @@
                 backend-state)
               (str_cat.str-cat
                 "    call "
-                (compiler-backend-fast-alloc-label fast-alloc-size)
-                "\n"
-                ""
-                ""))
+                (runtime_common.compiler-backend-runtime-fast-alloc-label
+                  fast-alloc-size
+                  library-object?)
+                "\n"))
             (be_operand.compiler-backend-emit-store-typed-var
               assignments
               dst

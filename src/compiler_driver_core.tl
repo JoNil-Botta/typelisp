@@ -2587,6 +2587,10 @@
                   (be_state.compiler-backend-state-new-with-metrics
                     (ci.intern-compat-state-capture-active)
                     (profile_state.compiler-profile-state-metrics profile-state))]
+                (be_state.compiler-backend-state-set-archive-runtime!
+                  side-backend-state
+                  (be_state.compiler-backend-state-archive-runtime?
+                    backend-state))
                 (be_state.compiler-backend-state-set-advisory-sink!
                   side-backend-state
                   (compiler_typecheck_core.tc-job-state-advisory-sink
@@ -2934,6 +2938,13 @@
 ;; retire the lowered source arena around the route's emit body, then drop
 ;; the lower arenas. Only Assembly and Buffer record the retain phases, and
 ;; Buffer leaves its lower arenas to the caller.
+(define (compiler-driver-lowered-result-enable-archive-runtime!
+  [lowered : (& ResultCompilerDriverLowered)]) : unit
+  (match lowered
+    [(Ok _ _ _ _ backend-state _ _)
+      (be_state.compiler-backend-state-set-archive-runtime! backend-state true)]
+    [_ unit]))
+
 (define (compiler-driver-emit-lowered-result
   [route : CompilerDriverOutputRoute]
   [input-path : String]

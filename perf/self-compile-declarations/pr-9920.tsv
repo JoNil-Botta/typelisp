@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+5573.801	Package builds import linker_archive_core, linker_ar_dialect_reader and linker_elf_object_reader to inspect archive members for runtime references, plus per-symbol ELF archive section emission. CI own cost +588,161,537 Ir (M(T) 106,110,685,261 vs M(B) 105,522,523,724 from reference run 45269805977 attempt 1).

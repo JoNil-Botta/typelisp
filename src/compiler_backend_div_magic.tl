@@ -119,3 +119,18 @@
           unit
           (set! done true))))
     (CompilerBackendSignedDivMagic (+ q2 (cast 1 : u64)) (- p 64))))
+
+;; True when a positive signed i64 divisor lowers more cheaply as unsigned u64
+;; than signed i64: powers of two (single shift/mask) and divisors whose
+;; unsigned magic takes the RoundUp form (`mulq; shrq` with no `addq; adcq`
+;; overflow correction and no signed `sarq $63; addq` truncation fixup).
+(define (compiler-backend-unsigned-divmod-profitable? [divisor : i64]) : bool
+  (if (<= divisor 0)
+    false
+    (let
+      [d : u64 (cast divisor : u64)]
+      (if (= (bit-and d (- d (cast 1 : u64))) (cast 0 : u64))
+        true
+        (match (compiler-backend-unsigned-divisor-magic d)
+          [(RoundUp _ _) true]
+          [_ false])))))

@@ -26,7 +26,8 @@
     [command : process.ProcessCommand
       (process.command "tool é_日本_😀" (process.args-single (payload)))]
     [encoded : String
-      (process_runtime.windows-cmdline (process.runtime-command command))]
+      (process_runtime.windows-cmdline
+        (& (process.runtime-command (& command))))]
     (test.assert-string-eq
       (& encoded)
       "\"tool é_日本_😀\" \"é_日本_😀 é with spaces \\\\\\\" end\""

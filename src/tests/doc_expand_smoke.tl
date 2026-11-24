@@ -122,24 +122,24 @@
         (string.eq
           (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 5))
           "5")
-        (string.eq (doc_import_form_vec.get (& forms) 0 "") "0")
-        (string.eq (doc_import_form_vec.get (& forms) 5 "") "5")
-        (string.eq
-          (__tl-project-field
-            (doc_macro_import_example_vec.get
-              (& macro-examples)
-              5
-              (doc_expand.doc-macro-import-example-fallback))
-            alias)
-          "5")
-        (string.eq
-          (__tl-project-field
-            (doc_generated_target_example_vec.get
-              (& targets)
-              5
-              (doc_expand.doc-generated-target-example-fallback))
-            target)
-          "5")
+        (let
+          [form-view : (& forms (Slice String))
+            (doc_import_form_vec.view (& forms))]
+          (and
+            (string.eq (& (array-ref form-view 0)) "0")
+            (string.eq (& (array-ref form-view 5)) "5")))
+        (let
+          [macro-view : (&
+            macro-examples
+            (Slice doc_expand.DocMacroImportExample))
+            (doc_macro_import_example_vec.view (& macro-examples))]
+          (string.eq (& (array-ref macro-view 5).alias) "5"))
+        (let
+          [target-view : (&
+            targets
+            (Slice doc_expand.DocGeneratedTargetExample))
+            (doc_generated_target_example_vec.view (& targets))]
+          (string.eq (& (array-ref target-view 5).target) "5"))
         (string.eq
           (doc_render.doc-module-path
             (doc_render.doc-module-list-ref (& modules) 0))

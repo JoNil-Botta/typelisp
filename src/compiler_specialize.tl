@@ -309,8 +309,12 @@
 
 ;; The specialization cache maps a canonical structural-key handle directly to
 ;; its session-owned generated-symbol handle.
-(defenum SpecState
-  (State ast.AstDeclList spec_id_i64_map.Map ctfe.CtfeEnv SpecOwnerContext))
+(defstruct SpecState
+  (generated ast.AstDeclList)
+  (cache spec_id_i64_map.Map)
+  (ctfe-env ctfe.CtfeEnv)
+  (pools SpecOwnerContext)
+  (scratch-ids ast.AstExprList))
 
 ;; Specialization identity is a one-word handle into the compile session's
 ;; canonical structural table. The handle is intentionally distinct from an
@@ -425,6 +429,10 @@
 (defenum SpecHeldFailure
   (None)
   (Held (Box cdiag.CompilerDiagnostic)))
+
+(defstruct SpecSubstWalk
+  (held SpecHeldFailure)
+  (scratch ast.AstExprChildList))
 
 (define (spec-value-subst-from-slots
   [slots : (& (__tl_dyn-array SpecValueBinding))]
@@ -569,51 +577,19 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultSpecDecls
-  (Ok ast.AstDeclList SpecState)
+  (Ok ast.AstDeclList)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultSpecDeclsWithPaths
-  (Ok ast.AstDeclList ast.AstDeclPathList SpecState)
+  (Ok ast.AstDeclList ast.AstDeclPathList)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultSpecDecl
-  (Ok SpecMaybeDecl SpecState)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecExpr
-  (Ok i64 SpecState)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecExprList
-  (Ok ast.AstExprList SpecState)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecExprListBuild
-  (Ok SpecState)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecLetBindingList
-  (Ok ast.AstLetBindingList SpecState)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecLetBindingListBuild
-  (Ok SpecState)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecMatchArmList
-  (Ok ast.AstMatchArmList SpecState)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecMatchArmListBuild
-  (Ok SpecState)
+  (Ok SpecMaybeDecl)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultSpecArgs
-  (Ok SpecValueList ast.AstExprList SpecState)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecEnsure
-  (Ok i64 SpecState)
+  (Ok SpecValueList ast.AstExprList)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum ResultSpecBuild
@@ -624,28 +600,12 @@
   (Ok i64)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(defenum ResultSpecSubExprList
-  (Ok ast.AstExprList)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecSubExprListBuild
-  (Ok)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
 (defenum ResultSpecSubLetBindingList
   (Ok ast.AstLetBindingList)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(defenum ResultSpecSubLetBindingListBuild
-  (Ok)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
 (defenum ResultSpecSubMatchArmList
   (Ok ast.AstMatchArmList)
-  (Err (Box cdiag.CompilerDiagnostic)))
-
-(defenum ResultSpecSubMatchArmListBuild
-  (Ok)
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (defenum GenMaybeEntry
@@ -760,13 +720,12 @@
 
 (define (spec-state-ctfe-env [state : (& state SpecState)]) : ctfe.CtfeEnv
   (match state
-    [(SpecState.State _ _ env _) env]))
+    [(SpecState _ _ env _ _) env]))
 
 (define (spec-state-owner [state : (& state SpecState)]) : (&
     state
     SpecOwnerContext)
-  (match state
-    [(State _ _ _ owner) owner]))
+  (& state.pools))
 
 (define (spec-state-pools [state : (& state SpecState)]) : ast.AstNodePoolContext
   (spec-owner-pools (spec-state-owner state)))
@@ -4287,201 +4246,247 @@
       patterns
       (+ index 1))))
 
+(define (spec-substitute-type-id-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [ty-id : i64]
+  [subs : (& subs SpecTypeSubst)]) : i64
+  (if (= subs.len 0)
+    ty-id
+    (match (spec-substitute-type-if-changed-with-owner
+      owner
+      (& (spec-owner-type-get owner ty-id))
+      subs)
+      [(No) ty-id]
+      [(Some mapped) (spec-owner-type-push owner (& mapped))])))
+
+(defmacro (spec-copy-push!
+  [k : Expr]
+  [ch : Expr]
+  [out : Expr]
+  [src : Expr]
+  [idx : Expr]
+  [ich : Expr]
+  [item : Expr]) : Expr
+  (let
+    [tag : String
+      (match k
+        [(Expr.Var v) v]
+        [_ ""])]
+    [cap : Expr
+      (match tag
+        ["type" `ast.ast-type-list-with-capacity]
+        ["param" `ast.ast-param-list-with-capacity]
+        ["let" `ast.ast-let-binding-list-with-capacity]
+        ["arm" `ast.ast-match-arm-list-with-capacity]
+        ["res" `ast.ast-resource-binding-list-with-capacity]
+        [_ `ast.ast-expr-list-with-capacity])]
+    [push : Expr
+      (match tag
+        ["type" `ast.ast-type-list-push]
+        ["param" `ast.ast-param-list-push]
+        ["let" `ast.ast-let-binding-list-push]
+        ["arm" `ast.ast-match-arm-list-push]
+        ["res" `ast.ast-resource-binding-list-push]
+        [_ `ast.ast-expr-list-push])]
+    [get : Expr
+      (match tag
+        ["type" `ast.ast-type-list-get]
+        ["param" `ast.ast-param-list-get]
+        ["let" `ast.ast-let-binding-list-get]
+        ["arm" `ast.ast-match-arm-list-get]
+        ["res" `ast.ast-resource-binding-list-get]
+        [_ `ast.ast-expr-list-get])]
+    [fb : Expr
+      (match tag
+        ["type" `(ast.ast-type-id-fallback)]
+        ["param" `(ast.ast-param-fallback)]
+        ["let" `(ast.ast-let-binding-fallback)]
+        ["arm" `(ast.ast-match-arm-fallback)]
+        ["res" `(ast.ast-resource-binding-fallback)]
+        [_ `0])]
+    `(if ,ch
+      (,push (&mut ,out) ,item)
+      (when
+        ,ich
+        (set! ,out (,cap (__tl-project-field-name ,src "len")))
+        (let
+          [spec-p : i64 0]
+          (while (< spec-p ,idx)
+            (,push (&mut ,out) (,get ,src spec-p ,fb))
+            (set! spec-p (+ spec-p 1))))
+        (,push (&mut ,out) ,item)
+        (set! ,ch true)))))
+
+(define (spec-substitute-type-list-if-changed-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [types : (& ast.AstTypeList)]
+  [subs : (& subs SpecTypeSubst)]
+  [changed? : (&mut ch bool)]) : ast.AstTypeList
+  (let
+    [out : ast.AstTypeList (ast.ast-type-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i types.len)
+      (let
+        [orig : i64 (ast.ast-type-list-get types i (ast.ast-type-id-fallback))]
+        [m : i64 (spec-substitute-type-id-with-owner owner orig subs)]
+        (spec-copy-push! type ch out types i (!= m orig) m))
+      (set! i (+ i 1)))
+    (when ch (set! (deref changed?) true))
+    out))
+
+(define (spec-substitute-param-list-if-changed-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [params : (& ast.AstParamList)]
+  [subs : (& subs SpecTypeSubst)]
+  [changed? : (&mut ch bool)]) : ast.AstParamList
+  (let
+    [out : ast.AstParamList (ast.ast-param-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i params.len)
+      (match (ast.ast-param-list-get params i (ast.ast-param-fallback))
+        [(Param name ty is-comptime)
+          (let
+            [ich : bool false]
+            [mt : ast.AstMaybeType
+              (spec-substitute-type-step owner subs (& ty) (&mut ich))]
+            (spec-copy-push!
+              param
+              ch
+              out
+              params
+              i
+              ich
+              (ast.ast-param-id
+                name
+                (match mt
+                  [(Some nt) nt]
+                  [(No) ty])
+                is-comptime)))])
+      (set! i (+ i 1)))
+    (when ch (set! (deref changed?) true))
+    out))
+
+(defmacro (spec-subst-ty-1
+  [owner : Expr]
+  [subs : Expr]
+  [id : Expr]
+  [ctor : Expr]) : Expr
+  `(let
+    [m : i64 (spec-substitute-type-id-with-owner ,owner ,id ,subs)]
+    (if (= m ,id)
+      No
+      (Some (,ctor m)))))
+
+(defmacro (spec-subst-ty-1-post
+  [owner : Expr]
+  [subs : Expr]
+  [id : Expr]
+  [ctor : Expr]
+  [extra : Expr]) : Expr
+  `(let
+    [m : i64 (spec-substitute-type-id-with-owner ,owner ,id ,subs)]
+    (if (= m ,id)
+      No
+      (Some (,ctor m ,extra)))))
+
+(defmacro (spec-subst-ty-1-pre
+  [owner : Expr]
+  [subs : Expr]
+  [id : Expr]
+  [ctor : Expr]
+  [extra : Expr]) : Expr
+  `(let
+    [m : i64 (spec-substitute-type-id-with-owner ,owner ,id ,subs)]
+    (if (= m ,id)
+      No
+      (Some (,ctor ,extra m)))))
+
+(define (spec-substitute-type-if-changed-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [ty : (& ast.AstType)]
+  [subs : (& subs SpecTypeSubst)]) : ast.AstMaybeType
+  (if (= subs.len 0)
+    No
+    (match ty
+      [(Func args ret)
+        (let
+          [ch : bool false]
+          [m-args : ast.AstTypeList
+            (spec-substitute-type-list-if-changed-with-owner
+              owner
+              args
+              subs
+              (&mut ch))]
+          [m-ret : i64 (spec-substitute-type-id-with-owner owner ret subs)]
+          (if (or ch (!= m-ret ret))
+            (Some
+              (Func
+                (box
+                  (if ch
+                    m-args
+                    (ast.clone-ast-type-list args)))
+                m-ret))
+            No))]
+      [(Tuple elems)
+        (let
+          [ch : bool false]
+          [m-elems : ast.AstTypeList
+            (spec-substitute-type-list-if-changed-with-owner
+              owner
+              elems
+              subs
+              (&mut ch))]
+          (if ch
+            (Some (Tuple (box m-elems)))
+            No))]
+      [(Array elem count)
+        (spec-subst-ty-1-post owner subs elem ast.AstType.Array count)]
+      [(DynArray elem) (spec-subst-ty-1 owner subs elem ast.AstType.DynArray)]
+      [(Slice elem) (spec-subst-ty-1 owner subs elem ast.AstType.Slice)]
+      [(Box elem) (spec-subst-ty-1 owner subs elem ast.AstType.Box)]
+      [(CFunc sig mode)
+        (spec-subst-ty-1-post owner subs sig ast.AstType.CFunc mode)]
+      [(Ptr elem) (spec-subst-ty-1 owner subs elem ast.AstType.Ptr)]
+      [(MutPtr elem) (spec-subst-ty-1 owner subs elem ast.AstType.MutPtr)]
+      [(Ref region inner)
+        (spec-subst-ty-1-pre owner subs inner ast.AstType.Ref region)]
+      [(MutRef region inner)
+        (spec-subst-ty-1-pre owner subs inner ast.AstType.MutRef region)]
+      [(Region region inner)
+        (spec-subst-ty-1-pre owner subs inner ast.AstType.Region region)]
+      [(Invalidate life inner)
+        (spec-subst-ty-1-pre owner subs inner ast.AstType.Invalidate life)]
+      [(or (VarArgs name _) (Var name))
+        (match (spec-type-subst-lookup subs name)
+          [(Some _) (Some (spec-type-subst-type subs name))]
+          [(None) No])]
+      [_ No])))
+
 (define (spec-substitute-type-with-owner
   [owner : (& owner SpecOwnerContext)]
   [ty : ast.AstType]
   [subs : (& subs SpecTypeSubst)]) : ast.AstType
-  (match (ast.ast-place-shared-view ty)
-    [(Func args ret)
-      (ast.ast-ty-func-with-pools
-        (spec-owner-pools owner)
-        (spec-substitute-type-list-with-owner owner (& (deref args)) subs)
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner ret)
-            subs)))]
-    [(Tuple elems)
-      (Tuple
-        (box
-          (spec-substitute-type-list-with-owner owner (& (deref elems)) subs)))]
-    [(Array elem count)
-      (ast.ast-ty-array-with-pools
-        (spec-owner-pools owner)
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner elem)
-            subs))
-        count)]
-    [(DynArray elem)
-      (ast.ast-ty-dyn-array-with-pools
-        (spec-owner-pools owner)
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner elem)
-            subs)))]
-    [(Slice elem)
-      (ast.ast-ty-slice-with-pools
-        (spec-owner-pools owner)
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner elem)
-            subs)))]
-    [(Box elem)
-      (ast.ast-ty-box-with-pools
-        (spec-owner-pools owner)
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner elem)
-            subs)))]
-    [(CFunc signature mode)
-      (CFunc
-        (ast.ast-node-pool-context-type-push
-          (spec-owner-pools owner)
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner signature)
-            subs))
-        mode)]
-    [(Ptr elem)
-      (ast.ast-ty-ptr-with-pools
-        (spec-owner-pools owner)
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner elem)
-            subs)))]
-    [(MutPtr elem)
-      (ast.ast-ty-mut-ptr-with-pools
-        (spec-owner-pools owner)
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner elem)
-            subs)))]
-    [(Ref region inner)
-      (ast.ast-ty-ref-with-pools
-        (spec-owner-pools owner)
-        region
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner inner)
-            subs)))]
-    [(MutRef region inner)
-      (ast.ast-ty-mut-ref-with-pools
-        (spec-owner-pools owner)
-        region
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner inner)
-            subs)))]
-    [(Region region inner)
-      (ast.ast-ty-region-with-pools
-        (spec-owner-pools owner)
-        region
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner inner)
-            subs)))]
-    [(Invalidate lifetime inner)
-      (ast.ast-ty-invalidate-with-pools
-        (spec-owner-pools owner)
-        lifetime
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner inner)
-            subs)))]
-    [(EnumArgs name lifetimes) (EnumArgs name lifetimes)]
-    [(StructArgs name lifetimes) (StructArgs name lifetimes)]
-    [(VarArgs name lifetimes)
-      (match (spec-type-subst-lookup subs name)
-        [(Some _) (spec-type-subst-type subs name)]
-        [(None) (VarArgs name lifetimes)])]
-    [(Var name)
-      (match (spec-type-subst-lookup subs name)
-        [(Some _) (spec-type-subst-type subs name)]
-        [(None) ty])]
-    [_ ty]))
-
-(define (spec-substitute-type-list-into-with-owner
-  [owner : (& owner SpecOwnerContext)]
-  [types : (& types ast.AstTypeList)]
-  [subs : (& subs SpecTypeSubst)]
-  [out : (&mut out ast.AstTypeList)]
-  [index : i64]) : unit
-  (unless
-    (>= index (ast.ast-type-list-len types))
-    (ast.ast-type-list-push
-      out
-      (spec-owner-type-push
-        owner
-        (&
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get
-              owner
-              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-            subs))))
-    (spec-substitute-type-list-into-with-owner owner types subs out (+ index 1))))
-
-(define (spec-substitute-type-list-with-owner
-  [owner : (& owner SpecOwnerContext)]
-  [types : (& ast.AstTypeList)]
-  [subs : (& subs SpecTypeSubst)]) : ast.AstTypeList
-  (let
-    [out : ast.AstTypeList
-      (ast.ast-type-list-with-capacity (ast.ast-type-list-len types))]
-    (spec-substitute-type-list-into-with-owner owner types subs (&mut out) 0)
-    out))
-
-(define (spec-substitute-maybe-type-with-owner
-  [owner : (& owner SpecOwnerContext)]
-  [ty : (& ast.AstMaybeType)]
-  [subs : (& subs SpecTypeSubst)]) : ast.AstMaybeType
-  (match (owned_view.compiler-owned-reference-shared-view ty)
-    [(No) No]
-    [(Some inner) (Some (spec-substitute-type-with-owner owner inner subs))]))
+  (match (spec-substitute-type-if-changed-with-owner owner (& ty) subs)
+    [(No) ty]
+    [(Some mapped) mapped]))
 
 (define (spec-substitute-param-types-with-owner
   [owner : (& owner SpecOwnerContext)]
   [params : (& ast.AstParamList)]
   [subs : (& subs SpecTypeSubst)]) : ast.AstParamList
   (let
+    [ch : bool false]
     [out : ast.AstParamList
-      (ast.ast-param-list-with-capacity (ast.ast-param-list-len params))]
-    (spec-substitute-param-types-into-with-owner owner params subs 0 (&mut out))
-    out))
-
-(define (spec-substitute-param-types-into-with-owner
-  [owner : (& owner SpecOwnerContext)]
-  [params : (& params ast.AstParamList)]
-  [subs : (& subs SpecTypeSubst)]
-  [index : i64]
-  [out : (&mut out ast.AstParamList)]) : unit
-  (unless
-    (>= index (ast.ast-param-list-len params))
-    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-      [(Param name ty _)
-        (ast.ast-param-list-push
-          out
-          (ast.AstParam.Param
-            name
-            (spec-substitute-type-with-owner owner ty subs)
-            false))])
-    (spec-substitute-param-types-into-with-owner
-      owner
-      params
-      subs
-      (+ index 1)
-      out)))
+      (spec-substitute-param-list-if-changed-with-owner
+        owner
+        params
+        subs
+        (&mut ch))]
+    (if ch
+      out
+      (ast.clone-ast-param-list params))))
 
 (define (spec-ctfe-value-to-expr-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -4661,136 +4666,80 @@
       [(Var name) (Some name)]
       [_ (None)])))
 
-(define (spec-rewrite-expr-list
-  [exprs : (& ast.AstExprList)]
-  [templates : (& templates SpecTemplateEnv)]
-  [state : (& SpecState)]) : ResultSpecExprList
-  (let
-    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
-    [next-state
-      (try
-        (spec-rewrite-expr-list-at
-          exprs
-          0
-          templates
-          (owned_view.compiler-owned-reference-shared-view state)
-          (&mut out)))]
-    (Ok out next-state)))
-
-(define (spec-rewrite-expr-list-at
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
-  [templates : (& templates SpecTemplateEnv)]
-  [state : SpecState]
-  [out : (&mut out ast.AstExprList)]) : ResultSpecExprListBuild
-  (if (>= index exprs.len)
-    (Ok state)
-    (let
-      [head : ast.AstExpr
-        (spec-state-expr-get state (ast.ast-expr-list-get exprs index 0))]
-      (match (spec-rewrite-expr (& head) templates state)
-        [(Ok rewritten-head head-state)
-          (ast.ast-expr-list-push out rewritten-head)
-          (spec-rewrite-expr-list-at exprs (+ index 1) templates head-state out)]
-        [(Err diag) (Err diag)]))))
-
 (define (spec-rewrite-let-bindings
-  [bindings : (& ast.AstLetBindingList)]
+  [bs : ast.AstLetBindingList]
   [templates : (& templates SpecTemplateEnv)]
-  [state : (& SpecState)]) : ResultSpecLetBindingList
+  [state : (&mut state SpecState)]
+  [changed? : (&mut ch bool)]) : ResultSpecSubLetBindingList
   (let
-    [out : ast.AstLetBindingList
-      (ast.ast-let-binding-list-with-capacity
-        (ast.ast-let-binding-list-len bindings))]
-    [next-state
-      (try
-        (spec-rewrite-let-bindings-at
-          bindings
-          0
-          templates
-          (owned_view.compiler-owned-reference-shared-view state)
-          (&mut out)))]
-    (Ok out next-state)))
-
-(define (spec-rewrite-let-bindings-at
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]
-  [templates : (& templates SpecTemplateEnv)]
-  [state : SpecState]
-  [out : (&mut out ast.AstLetBindingList)]) : ResultSpecLetBindingListBuild
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    (Ok state)
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(Binding name ty value-box)
-        (let
-          [value : ast.AstExpr (spec-state-expr-get state value-box)]
-          [next-templates : SpecTemplateEnv
-            (spec-template-env-shadow-name templates name)]
-          (match (spec-rewrite-expr (& value) templates state)
-            [(Ok rewritten-value value-state)
-              (ast.ast-let-binding-list-push
-                out
-                (ast.ast-let-binding-id name ty rewritten-value))
-              (spec-rewrite-let-bindings-at
-                bindings
-                (+ index 1)
-                next-templates
-                value-state
-                out)]
-            [(Err diag) (Err diag)]))])))
+    [scope : SpecTemplateEnv (deref templates)]
+    [out : ast.AstLetBindingList (ast.ast-let-binding-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i bs.len)
+      (match (ast.ast-let-binding-list-get
+        (& bs)
+        i
+        (ast.ast-let-binding-fallback))
+        [(Binding name ty v)
+          (let
+            [r : i64 (try (spec-rewrite-expr (& scope) state v))]
+            (set! scope (spec-template-env-shadow-name (& scope) name))
+            (spec-copy-push!
+              let
+              ch
+              out
+              (& bs)
+              i
+              (!= r v)
+              (ast.ast-let-binding-id name ty r)))])
+      (set! i (+ i 1)))
+    (if ch
+      (begin
+        (set! (deref changed?) true)
+        (Ok out))
+      (Ok bs))))
 
 (define (spec-rewrite-match-arms
-  [arms : (& ast.AstMatchArmList)]
+  [arms : ast.AstMatchArmList]
   [templates : (& templates SpecTemplateEnv)]
-  [state : (& SpecState)]) : ResultSpecMatchArmList
+  [state : (&mut state SpecState)]
+  [changed? : (&mut ch bool)]) : ResultSpecSubMatchArmList
   (let
-    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
-    [next-state
-      (try
-        (spec-rewrite-match-arms-at
-          arms
-          0
-          templates
-          (owned_view.compiler-owned-reference-shared-view state)
-          (&mut out)))]
-    (Ok out next-state)))
-
-(define (spec-rewrite-match-arms-at
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]
-  [templates : (& templates SpecTemplateEnv)]
-  [state : SpecState]
-  [out : (&mut out ast.AstMatchArmList)]) : ResultSpecMatchArmListBuild
-  (if (>= index arms.len)
-    (Ok state)
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(Arm pattern body-box)
-        (let
-          [body : ast.AstExpr (spec-state-expr-get state body-box)]
-          [body-templates : SpecTemplateEnv
-            (spec-template-env-shadow-pattern templates (& pattern))]
-          (match (spec-rewrite-expr (& body) body-templates state)
-            [(Ok rewritten-body body-state)
-              (ast.ast-match-arm-list-push
-                out
-                (ast.ast-match-arm pattern rewritten-body))
-              (spec-rewrite-match-arms-at
-                arms
-                (+ index 1)
-                templates
-                body-state
-                out)]
-            [(Err diag) (Err diag)]))])))
+    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i arms.len)
+      (match (ast.ast-match-arm-list-get
+        (& arms)
+        i
+        (ast.ast-match-arm-fallback))
+        [(Arm pat b)
+          (let
+            [bt : SpecTemplateEnv
+              (spec-template-env-shadow-pattern templates (& pat))]
+            [r : i64 (try (spec-rewrite-expr (& bt) state b))]
+            (spec-copy-push!
+              arm
+              ch
+              out
+              (& arms)
+              i
+              (!= r b)
+              (ast.ast-match-arm pat r)))])
+      (set! i (+ i 1)))
+    (if ch
+      (begin
+        (set! (deref changed?) true)
+        (Ok out))
+      (Ok arms))))
 
 (define (spec-rewrite-specialized-call
   [template : (& SpecTemplate)]
   [args : (& ast.AstExprList)]
   [templates : (& templates SpecTemplateEnv)]
-  [state : (& SpecState)]
-  [origin : (& ast.AstExpr)]) : ResultSpecExpr
+  [state : (&mut state SpecState)]
+  [origin : (& ast.AstExpr)]) : ResultSpecSubExpr
   (match template
     [(Item _ _ name-id params _ _)
       (let
@@ -4802,50 +4751,44 @@
           templates
           state
           name)
-          [(Ok values runtime-args args-state)
-            (match (spec-ensure-specialization
-              template
-              (& values)
-              templates
-              args-state
-              origin)
-              [(Ok specialized-name-id ensure-state)
-                (Ok
-                  (ast.ast-expr-call-with-pools
-                    (spec-state-pools state)
-                    (spec-owner-expr-push
-                      (spec-state-owner state)
-                      (& (Var specialized-name-id)))
-                    runtime-args)
-                  ensure-state)]
-              [(Err diag) (Err diag)])]
+          [(Ok values runtime-args)
+            (let
+              [specialized-name-id : i64
+                (try
+                  (spec-ensure-specialization
+                    template
+                    (& values)
+                    templates
+                    state
+                    origin))]
+              (Ok
+                (ast.ast-expr-call-with-pools
+                  (spec-state-pools state)
+                  (spec-owner-expr-push
+                    (& state.pools)
+                    (& (Var specialized-name-id)))
+                  runtime-args)))]
           [(Err diag) (Err diag)]))]))
 
 (define (spec-rewrite-specialized-args
   [params : (& ast.AstParamList)]
   [args : (& ast.AstExprList)]
   [templates : (& templates SpecTemplateEnv)]
-  [state : (& SpecState)]
+  [state : (&mut state SpecState)]
   [fn-name : String]) : ResultSpecArgs
-  (spec-rewrite-specialized-args-at
-    params
-    args
-    0
-    templates
-    (owned_view.compiler-owned-reference-shared-view state)
-    fn-name))
+  (spec-rewrite-specialized-args-at params args 0 templates state fn-name))
 
 (define (spec-rewrite-specialized-args-at
   [params : (& params ast.AstParamList)]
   [args : (& args ast.AstExprList)]
   [index : i64]
   [templates : (& templates SpecTemplateEnv)]
-  [state : SpecState]
+  [state : (&mut state SpecState)]
   [fn-name : String]) : ResultSpecArgs
   (cond
     [(>= index (ast.ast-param-list-len params))
       (if (>= index args.len)
-        (Ok (spec-value-list-new) (ast.ast-expr-list-new) state)
+        (Ok (spec-value-list-new) (ast.ast-expr-list-new))
         (Err
           (box
             (cdiag.compiler-diagnostic-at-start "" "specialize: arity mismatch"))))]
@@ -4855,8 +4798,8 @@
           (cdiag.compiler-diagnostic-at-start "" "specialize: arity mismatch")))]
     [else
       (let
-        [arg : ast.AstExpr
-          (spec-state-expr-get state (ast.ast-expr-list-get args index 0))]
+        [arg-id : i64 (ast.ast-expr-list-get args index 0)]
+        [arg : ast.AstExpr (spec-state-expr-get state arg-id)]
         (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
           [(Param param-name param-ty is-comptime)
             (if is-comptime
@@ -4872,11 +4815,10 @@
                           templates
                           state
                           fn-name)
-                          [(Ok rest-values rest-runtime rest-state)
+                          [(Ok rest-values rest-runtime)
                             (Ok
                               (spec-value-cons value rest-values)
-                              rest-runtime
-                              rest-state)]
+                              rest-runtime)]
                           [(Err diag) (Err diag)])]
                       [_
                         (Err
@@ -4892,7 +4834,7 @@
                                 fn-name
                                 "' must be a type value such as `(type i64)`"))))])
                     (if (spec-value-runtime-type-matches?
-                      (& state)
+                      state
                       (& value)
                       (& param-ty))
                       (match (spec-rewrite-specialized-args-at
@@ -4902,11 +4844,8 @@
                         templates
                         state
                         fn-name)
-                        [(Ok rest-values rest-runtime rest-state)
-                          (Ok
-                            (spec-value-cons value rest-values)
-                            rest-runtime
-                            rest-state)]
+                        [(Ok rest-values rest-runtime)
+                          (Ok (spec-value-cons value rest-values) rest-runtime)]
                         [(Err diag) (Err diag)])
                       (Err
                         (box
@@ -4923,25 +4862,24 @@
                               (spec-value-type-label (& value))
                               ", expected "
                               (spec-type-key-with-owner
-                                (spec-state-owner state)
+                                (& state.pools)
                                 (& param-ty))))))))]
                 [(Err diag) (Err diag)])
-              (match (spec-rewrite-expr (& arg) templates state)
-                [(Ok rewritten-arg arg-state)
-                  (match (spec-rewrite-specialized-args-at
-                    params
-                    args
-                    (+ index 1)
-                    templates
-                    arg-state
-                    fn-name)
-                    [(Ok values rest-runtime rest-state)
-                      (Ok
-                        values
-                        (ast.ast-expr-cons rewritten-arg (& rest-runtime))
-                        rest-state)]
-                    [(Err diag) (Err diag)])]
-                [(Err diag) (Err diag)]))]))]))
+              (let
+                [rewritten-arg : i64
+                  (try (spec-rewrite-expr templates state arg-id))]
+                (match (spec-rewrite-specialized-args-at
+                  params
+                  args
+                  (+ index 1)
+                  templates
+                  state
+                  fn-name)
+                  [(Ok values rest-runtime)
+                    (Ok
+                      values
+                      (ast.ast-expr-cons rewritten-arg (& rest-runtime)))]
+                  [(Err diag) (Err diag)])))]))]))
 
 (define (spec-build-specialization
   [params : (& ast.AstParamList)]
@@ -5007,570 +4945,339 @@
   [template : (& SpecTemplate)]
   [values : (& SpecValueList)]
   [templates : (& templates SpecTemplateEnv)]
-  [state : SpecState]
-  [_origin : (& ast.AstExpr)]) : ResultSpecEnsure
+  [state : (&mut state SpecState)]
+  [_origin : (& ast.AstExpr)]) : ResultSpecSubExpr
   (match (owned_view.compiler-owned-reference-shared-view template)
     [(Item order module name-id params ret body)
-      (match state
-        [(State generated cache ctfe-env pools)
-          (let
-            [name : String
-              (spec_ci.intern-compat-state-str
-                (spec-owner-intern-state (& pools))
-                name-id)]
-            [structural-key : SpecStructuralKey
-              (spec-specialization-structural-key-with-owner
-                (& pools)
-                module
-                (& name)
-                values)]
-            [cache-key-id : i64 (spec-structural-key-raw structural-key)]
-            (match (spec_id_i64_map.get (& cache) cache-key-id)
-              [(LookupFound cached-name-id)
-                (Ok cached-name-id (State generated cache ctfe-env pools))]
-              [(LookupMissing)
-                (let
-                  [generated-name-id : i64
-                    (spec-reserve-specialized-symbol-with-owner
-                      (&mut pools)
-                      structural-key
-                      name
-                      (owned_view.compiler-owned-reference-shared-view values)
-                      order)]
-                  (match (spec-build-specialization (& params) values)
-                    [(Ok runtime-params value-subs type-subs)
-                      (let
-                        [subs : SpecSubst
-                          (SpecSubst
-                            (spec-type-subst-shared-view (& type-subs))
-                            value-subs)]
-                        [valued-body
-                          (try
-                            (spec-substitute-expr-with-owner
-                              (& pools)
-                              (& body)
-                              (& subs)))]
-                        [next-cache : spec_id_i64_map.Map cache]
-                        (spec_id_i64_map.insert-ref!
-                          (&mut next-cache)
-                          cache-key-id
-                          generated-name-id)
-                        (let
-                          [valued-body-expr : ast.AstExpr
-                            (spec-owner-expr-get (& pools) valued-body)]
-                          [cached-state : SpecState
-                            (State generated next-cache ctfe-env pools)]
-                          ;; The body resolves names in its own module, and no
-                          ;; binder of the call site shadows a template there.
-                          [body-templates : SpecTemplateEnv
-                            (spec-template-env-shadow-params
-                              (&
-                                (spec-template-env-template-scope
-                                  templates
-                                  module))
-                              runtime-params)]
-                          (match (spec-rewrite-expr
-                            (& valued-body-expr)
-                            body-templates
-                            cached-state)
-                            [(Ok rewritten-body rewritten-state)
-                              (match rewritten-state
-                                [(State
-                                    rewritten-generated
-                                    rewritten-cache
-                                    rewritten-ctfe-env
-                                    rewritten-pools)
-                                  (Ok
-                                    generated-name-id
-                                    (State
-                                      (spec-decl-list-append-one
-                                        (& rewritten-generated)
-                                        (&
-                                          (ast.ast-decl-def-fn-id
-                                            generated-name-id
-                                            (spec-substitute-param-types-with-owner
-                                              (& rewritten-pools)
-                                              (& runtime-params)
-                                              type-subs)
-                                            (spec-substitute-type-with-owner
-                                              (& rewritten-pools)
-                                              ret
-                                              type-subs)
-                                            rewritten-body)))
-                                      rewritten-cache
-                                      rewritten-ctfe-env
-                                      rewritten-pools))])]
-                            [(Err diag) (Err diag)])))]
-                    [(Err diag) (Err diag)]))]))])]))
-
-(define (spec-for-owned-state-exprs
-  [source-name : i64]
-  [index-name : i64]
-  [source : i64]
-  [body : i64]) : ast.AstExprList
-  (let
-    [out : ast.AstExprList (ast.ast-expr-list-with-capacity 4)]
-    (ast.ast-expr-list-push (&mut out) source-name)
-    (ast.ast-expr-list-push (&mut out) index-name)
-    (ast.ast-expr-list-push (&mut out) source)
-    (ast.ast-expr-list-push (&mut out) body)
-    out))
-
-(define (spec-for-owned-step-exprs
-  [source-name : i64]
-  [index-name : i64]
-  [binding-name : i64]
-  [expected-type : i64]
-  [done-name : i64]
-  [body : i64]) : ast.AstExprList
-  (let
-    [out : ast.AstExprList (ast.ast-expr-list-with-capacity 6)]
-    (ast.ast-expr-list-push (&mut out) source-name)
-    (ast.ast-expr-list-push (&mut out) index-name)
-    (ast.ast-expr-list-push (&mut out) binding-name)
-    (if (>= expected-type 0)
-      (ast.ast-expr-list-push (&mut out) expected-type)
-      unit)
-    (ast.ast-expr-list-push (&mut out) done-name)
-    (ast.ast-expr-list-push (&mut out) body)
-    out))
-
-(define (spec-rewrite-expr
-  [expr : (& ast.AstExpr)]
-  [templates : (& templates SpecTemplateEnv)]
-  [state : SpecState]) : ResultSpecExpr
-  (match (owned_view.compiler-owned-reference-shared-view expr)
-    [(Call func-box args)
       (let
-        [func : ast.AstExpr (spec-state-expr-get state func-box)]
-        (match (spec-expr-var-name-id-with-owner
-          (spec-state-owner state)
-          (& func))
-          [(Some name-id)
-            (match (spec-template-lookup templates name-id)
-              [(Some template)
-                (spec-rewrite-specialized-call
-                  (& template)
-                  (& args)
-                  templates
-                  (& state)
-                  expr)]
-              [(None)
-                (match (spec-rewrite-expr (& func) templates state)
-                  [(Ok rewritten-func func-state)
-                    (match (spec-rewrite-expr-list
-                      (& args)
-                      templates
-                      (& func-state))
-                      [(Ok rewritten-args args-state)
-                        (Ok
-                          (ast.ast-expr-call-with-pools
-                            (spec-state-pools args-state)
-                            rewritten-func
-                            rewritten-args)
-                          args-state)]
-                      [(Err diag) (Err diag)])]
-                  [(Err diag) (Err diag)])])]
-          [(None)
-            (match (spec-rewrite-expr (& func) templates state)
-              [(Ok rewritten-func func-state)
-                (match (spec-rewrite-expr-list
-                  (& args)
-                  templates
-                  (& func-state))
-                  [(Ok rewritten-args args-state)
-                    (Ok
-                      (ast.ast-expr-call-with-pools
-                        (spec-state-pools args-state)
-                        rewritten-func
-                        rewritten-args)
-                      args-state)]
-                  [(Err diag) (Err diag)])]
-              [(Err diag) (Err diag)])]))]
-    [(Let let-box)
-      (match (__tl-box-place let-box)
-        [(Let bindings body-box)
-          (let
-            [body : ast.AstExpr (spec-state-expr-get state body-box)]
-            [body-templates : SpecTemplateEnv
-              (spec-template-env-shadow-let-binding-names templates bindings)]
-            (match (spec-rewrite-let-bindings (& bindings) templates (& state))
-              [(Ok rewritten-bindings binding-state)
-                (match (spec-rewrite-expr (& body) body-templates binding-state)
-                  [(Ok rewritten-body body-state)
-                    (Ok
-                      (ast.ast-expr-let-with-pools
-                        (spec-state-pools state)
-                        rewritten-bindings
-                        rewritten-body)
-                      body-state)]
-                  [(Err diag) (Err diag)])]
-              [(Err diag) (Err diag)]))])]
-    [(Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(Lambda params ret body-box)
-          (let
-            [body : ast.AstExpr (spec-state-expr-get state body-box)]
-            [body-templates : SpecTemplateEnv
-              (spec-template-env-shadow-params templates params)]
-            (match (spec-rewrite-expr (& body) body-templates state)
-              [(Ok rewritten-body body-state)
-                (Ok
-                  (ast.ast-expr-lambda-with-pools
-                    (spec-state-pools body-state)
-                    params
-                    ret
-                    rewritten-body)
-                  body-state)]
-              [(Err diag) (Err diag)]))])]
-    [(ForOwnedState payload)
-      (match (spec-rewrite-expr-list
-        (&
-          (spec-for-owned-state-exprs
-            (ast.ast-for-owned-state-source-name (& payload))
-            (ast.ast-for-owned-state-index-name (& payload))
-            (ast.ast-for-owned-state-source (& payload))
-            (ast.ast-for-owned-state-body (& payload))))
-        templates
-        (& state))
-        [(Ok rewritten rewritten-state)
-          (Ok
-            (ast.ast-expr-for-owned-state-with-pools
-              (spec-state-pools state)
-              (ast.ast-expr-list-get (& rewritten) 0 0)
-              (ast.ast-expr-list-get (& rewritten) 1 0)
-              (ast.ast-expr-list-get (& rewritten) 2 0)
-              (ast.ast-expr-list-get (& rewritten) 3 0))
-            rewritten-state)]
-        [(Err diag) (Err diag)])]
-    [(ForOwnedStep payload)
-      (let
-        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
-        (match (spec-rewrite-expr-list
-          (&
-            (spec-for-owned-step-exprs
-              (ast.ast-for-owned-step-source-name (& payload))
-              (ast.ast-for-owned-step-index-name (& payload))
-              (ast.ast-for-owned-step-binding-name (& payload))
-              expected-type
-              (ast.ast-for-owned-step-done-name (& payload))
-              (ast.ast-for-owned-step-body (& payload))))
-          templates
-          (& state))
-          [(Ok rewritten rewritten-state)
+        [name : String
+          (spec_ci.intern-compat-state-str
+            (spec-owner-intern-state (& state.pools))
+            name-id)]
+        [structural-key : SpecStructuralKey
+          (spec-specialization-structural-key-with-owner
+            (& state.pools)
+            module
+            (& name)
+            values)]
+        [cache-key-id : i64 (spec-structural-key-raw structural-key)]
+        (match (spec_id_i64_map.get (& state.cache) cache-key-id)
+          [(LookupFound cached-name-id) (Ok cached-name-id)]
+          [(LookupMissing)
             (let
-              [typed? : bool (>= expected-type 0)]
-              [done-index : i64
-                (if typed?
-                  4
-                  3)]
-              [body-index : i64
-                (if typed?
-                  5
-                  4)]
-              (Ok
-                (ast.ast-expr-for-owned-step-with-pools
-                  (spec-state-pools state)
-                  (ast.ast-expr-list-get (& rewritten) 0 0)
-                  (ast.ast-expr-list-get (& rewritten) 1 0)
-                  (ast.ast-expr-list-get (& rewritten) 2 0)
-                  (if typed?
-                    (ast.ast-expr-list-get (& rewritten) 3 0)
-                    -1)
-                  (ast.ast-expr-list-get (& rewritten) done-index 0)
-                  (ast.ast-expr-list-get (& rewritten) body-index 0))
-                rewritten-state))]
-          [(Err diag) (Err diag)]))]
-    [(Match match-box)
-      (match (__tl-box-place match-box)
-        [(Match scrutinee-box arms)
-          (let
-            [scrutinee : ast.AstExpr (spec-state-expr-get state scrutinee-box)]
-            (match (spec-rewrite-expr (& scrutinee) templates state)
-              [(Ok rewritten-scrutinee scrutinee-state)
-                (match (spec-rewrite-match-arms
-                  (& arms)
-                  templates
-                  (& scrutinee-state))
-                  [(Ok rewritten-arms arms-state)
-                    (Ok
-                      (ast.ast-expr-match-with-pools
-                        (spec-state-pools arms-state)
-                        rewritten-scrutinee
-                        rewritten-arms)
-                      arms-state)]
-                  [(Err diag) (Err diag)])]
-              [(Err diag) (Err diag)]))])]
-    [(Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(Foreach index index-ty start-box end-box body-box)
-          (let
-            [start : ast.AstExpr (spec-state-expr-get state start-box)]
-            [end : ast.AstExpr (spec-state-expr-get state end-box)]
-            [body : ast.AstExpr (spec-state-expr-get state body-box)]
-            [body-templates : SpecTemplateEnv
-              (spec-template-env-shadow-name templates index)]
-            (match (spec-rewrite-expr (& start) templates state)
-              [(Ok rewritten-start start-state)
-                (match (spec-rewrite-expr (& end) templates start-state)
-                  [(Ok rewritten-end end-state)
-                    (match (spec-rewrite-expr (& body) body-templates end-state)
-                      [(Ok rewritten-body body-state)
-                        (Ok
-                          (ast.ast-expr-foreach-id-with-pools
-                            (spec-state-pools body-state)
-                            index
-                            index-ty
-                            rewritten-start
-                            rewritten-end
-                            rewritten-body)
-                          body-state)]
-                      [(Err diag) (Err diag)])]
-                  [(Err diag) (Err diag)])]
-              [(Err diag) (Err diag)]))]
-        [(Foreach2
-            outer
-            outer-ty
-            outer-start-box
-            outer-end-box
-            inner
-            inner-ty
-            inner-start-box
-            inner-end-box
-            body-box)
-          (let
-            [outer-start : ast.AstExpr
-              (spec-state-expr-get state outer-start-box)]
-            [outer-end : ast.AstExpr (spec-state-expr-get state outer-end-box)]
-            [inner-start : ast.AstExpr
-              (spec-state-expr-get state inner-start-box)]
-            [inner-end : ast.AstExpr (spec-state-expr-get state inner-end-box)]
-            [body : ast.AstExpr (spec-state-expr-get state body-box)]
-            [outer-templates : SpecTemplateEnv
-              (spec-template-env-shadow-name templates outer)]
-            [body-templates : SpecTemplateEnv
-              (spec-template-env-shadow-name outer-templates inner)]
-            (match (spec-rewrite-expr (& outer-start) templates state)
-              [(Ok rewritten-outer-start state0)
-                (match (spec-rewrite-expr (& outer-end) templates state0)
-                  [(Ok rewritten-outer-end state1)
-                    (match (spec-rewrite-expr (& inner-start) templates state1)
-                      [(Ok rewritten-inner-start state2)
-                        (match (spec-rewrite-expr
-                          (& inner-end)
-                          templates
-                          state2)
-                          [(Ok rewritten-inner-end state3)
-                            (match (spec-rewrite-expr
-                              (& body)
-                              body-templates
-                              state3)
-                              [(Ok rewritten-body body-state)
-                                (Ok
-                                  (ast.ast-expr-foreach2-id-with-pools
-                                    (spec-state-pools body-state)
-                                    outer
-                                    outer-ty
-                                    rewritten-outer-start
-                                    rewritten-outer-end
-                                    inner
-                                    inner-ty
-                                    rewritten-inner-start
-                                    rewritten-inner-end
-                                    rewritten-body)
-                                  body-state)]
-                              [(Err diag) (Err diag)])]
-                          [(Err diag) (Err diag)])]
-                      [(Err diag) (Err diag)])]
-                  [(Err diag) (Err diag)])]
-              [(Err diag) (Err diag)]))])]
-    [(ForeachActive lane body-box)
+              [generated-name-id : i64
+                (spec-reserve-specialized-symbol-with-owner
+                  (&mut state.pools)
+                  structural-key
+                  name
+                  (owned_view.compiler-owned-reference-shared-view values)
+                  order)]
+              (match (spec-build-specialization (& params) values)
+                [(Ok runtime-params value-subs type-subs)
+                  (let
+                    [subs : SpecSubst
+                      (SpecSubst
+                        (spec-type-subst-shared-view (& type-subs))
+                        value-subs)]
+                    [valued-body : i64
+                      (try
+                        (spec-substitute-expr-with-owner
+                          (& state.pools)
+                          (& body)
+                          (& subs)))]
+                    (spec_id_i64_map.insert-ref!
+                      (&mut state.cache)
+                      cache-key-id
+                      generated-name-id)
+                    ;; The body resolves names in its own module, and no
+                    ;; binder of the call site shadows a template there.
+                    (let
+                      [body-templates : SpecTemplateEnv
+                        (spec-template-env-shadow-params
+                          (&
+                            (spec-template-env-template-scope templates module))
+                          runtime-params)]
+                      [rewritten-body : i64
+                        (try
+                          (spec-rewrite-expr
+                            (& body-templates)
+                            state
+                            valued-body))]
+                      (set!
+                        state.generated
+                        (spec-decl-list-append-one
+                          (& state.generated)
+                          (&
+                            (ast.ast-decl-def-fn-id
+                              generated-name-id
+                              (spec-substitute-param-types-with-owner
+                                (& state.pools)
+                                (& runtime-params)
+                                type-subs)
+                              (spec-substitute-type-with-owner
+                                (& state.pools)
+                                ret
+                                type-subs)
+                              rewritten-body))))
+                      (Ok generated-name-id)))]
+                [(Err diag) (Err diag)]))]))]))
+
+(defmacro (spec-rw-step
+  [ch : Expr]
+  [templates : Expr]
+  [state : Expr]
+  [id : Expr]) : Expr
+  `(let
+    [next : i64 (try (spec-rewrite-expr ,templates ,state ,id))]
+    (when (!= next ,id) (set! ,ch true))
+    next))
+
+(defmacro (spec-sub-step
+  [ch : Expr]
+  [owner : Expr]
+  [subs : Expr]
+  [walk : Expr]
+  [id : Expr]) : Expr
+  `(let
+    [next : i64 (try (spec-substitute-walk-with-owner ,owner ,subs ,walk ,id))]
+    (when (!= next ,id) (set! ,ch true))
+    next))
+
+;; Rewrites template calls inside `expr-id`, preserving physical identity
+;; (zero node-pool pushes and zero list/box allocations) on unchanged subtrees.
+(define (spec-rewrite-expr
+  [templates : (& templates SpecTemplateEnv)]
+  [state : (&mut state SpecState)]
+  [expr-id : i64]) : ResultSpecSubExpr
+  (let
+    [expr : ast.AstExpr (spec-state-expr-get state expr-id)]
+    [p : ast.AstNodePoolContext (spec-state-pools state)]
+    (match (ast.ast-place-shared-view expr)
+      [(Call func-box args)
+        (let
+          [maybe-template : SpecMaybeTemplate
+            (match (spec-expr-var-name-id-with-owner
+              (& state.pools)
+              (& (spec-owner-expr-get (& state.pools) func-box)))
+              [(Some name-id) (spec-template-lookup templates name-id)]
+              [(None) (None)])]
+          (match maybe-template
+            [(Some template)
+              (spec-rewrite-specialized-call
+                (& template)
+                (& args)
+                templates
+                state
+                (& expr))]
+            [(None) (spec-rewrite-expr-default templates state expr-id expr)]))]
+      [(Let let-box)
+        (match (__tl-box-place let-box)
+          [(Let bindings body-box)
+            (let
+              [ch : bool false]
+              [body-t : SpecTemplateEnv
+                (spec-template-env-shadow-let-binding-names templates bindings)]
+              [rb : ast.AstLetBindingList
+                (try
+                  (spec-rewrite-let-bindings bindings templates state (&mut ch)))]
+              [rbody : i64 (spec-rw-step ch (& body-t) state body-box)]
+              (if ch
+                (Ok (ast.ast-expr-let-with-pools p rb rbody))
+                (Ok expr-id)))])]
+      [(Lambda lambda-box)
+        (match (__tl-box-place lambda-box)
+          [(Lambda params ret body-box)
+            (let
+              [ch : bool false]
+              [body-t : SpecTemplateEnv
+                (spec-template-env-shadow-params templates params)]
+              [rbody : i64 (spec-rw-step ch (& body-t) state body-box)]
+              (if ch
+                (Ok (ast.ast-expr-lambda-with-pools p params ret rbody))
+                (Ok expr-id)))])]
+      [(Match match-box)
+        (match (__tl-box-place match-box)
+          [(Match scrutinee-box arms)
+            (let
+              [ch : bool false]
+              [rs : i64 (spec-rw-step ch templates state scrutinee-box)]
+              [ra : ast.AstMatchArmList
+                (try (spec-rewrite-match-arms arms templates state (&mut ch)))]
+              (if ch
+                (Ok (ast.ast-expr-match-with-pools p rs ra))
+                (Ok expr-id)))])]
+      [(Foreach fe-box)
+        (match (__tl-box-place fe-box)
+          [(Foreach index index-ty s e b)
+            (let
+              [ch : bool false]
+              [bt : SpecTemplateEnv
+                (spec-template-env-shadow-name templates index)]
+              [rs : i64 (spec-rw-step ch templates state s)]
+              [re : i64 (spec-rw-step ch templates state e)]
+              [rb : i64 (spec-rw-step ch (& bt) state b)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-foreach-id-with-pools p index index-ty rs re rb))
+                (Ok expr-id)))]
+          [(Foreach2 outer o-ty os oe inner i-ty is ie b)
+            (let
+              [ch : bool false]
+              [ot : SpecTemplateEnv
+                (spec-template-env-shadow-name templates outer)]
+              [bt : SpecTemplateEnv
+                (spec-template-env-shadow-name (& ot) inner)]
+              [ros : i64 (spec-rw-step ch templates state os)]
+              [roe : i64 (spec-rw-step ch templates state oe)]
+              [ris : i64 (spec-rw-step ch templates state is)]
+              [rie : i64 (spec-rw-step ch templates state ie)]
+              [rb : i64 (spec-rw-step ch (& bt) state b)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-foreach2-id-with-pools
+                    p
+                    outer
+                    o-ty
+                    ros
+                    roe
+                    inner
+                    i-ty
+                    ris
+                    rie
+                    rb))
+                (Ok expr-id)))])]
+      [(ForeachActive lane body-box)
+        (let
+          [ch : bool false]
+          [bt : SpecTemplateEnv (spec-template-env-shadow-name templates lane)]
+          [rb : i64 (spec-rw-step ch (& bt) state body-box)]
+          (if ch
+            (Ok (ast.ast-expr-foreach-active-with-pools p lane rb))
+            (Ok expr-id)))]
+      [(SpmdReduce reduce-box)
+        (match (__tl-box-place reduce-box)
+          [(Reduce op index ty s e init val)
+            (let
+              [ch : bool false]
+              [vt : SpecTemplateEnv
+                (spec-template-env-shadow-name templates index)]
+              [rs : i64 (spec-rw-step ch templates state s)]
+              [re : i64 (spec-rw-step ch templates state e)]
+              [ri : i64 (spec-rw-step ch templates state init)]
+              [rv : i64 (spec-rw-step ch (& vt) state val)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-spmd-reduce-id-with-pools
+                    p
+                    op
+                    index
+                    ty
+                    rs
+                    re
+                    ri
+                    rv))
+                (Ok expr-id)))])]
+      [(SpmdScan scan-box)
+        (match (__tl-box-place scan-box)
+          [(Scan op index ty s e prefix p-ty init val body)
+            (let
+              [ch : bool false]
+              [vt : SpecTemplateEnv
+                (spec-template-env-shadow-name templates index)]
+              [bt : SpecTemplateEnv
+                (spec-template-env-shadow-name (& vt) prefix)]
+              [rs : i64 (spec-rw-step ch templates state s)]
+              [re : i64 (spec-rw-step ch templates state e)]
+              [ri : i64 (spec-rw-step ch templates state init)]
+              [rv : i64 (spec-rw-step ch (& vt) state val)]
+              [rb : i64 (spec-rw-step ch (& bt) state body)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-spmd-scan-id-with-pools
+                    p
+                    op
+                    index
+                    ty
+                    rs
+                    re
+                    prefix
+                    p-ty
+                    ri
+                    rv
+                    rb))
+                (Ok expr-id)))])]
+      [(SpmdCompact compact-box)
+        (match (__tl-box-place compact-box)
+          [(Compact index ty s e slot s-ty init keep body)
+            (let
+              [ch : bool false]
+              [kt : SpecTemplateEnv
+                (spec-template-env-shadow-name templates index)]
+              [bt : SpecTemplateEnv (spec-template-env-shadow-name (& kt) slot)]
+              [rs : i64 (spec-rw-step ch templates state s)]
+              [re : i64 (spec-rw-step ch templates state e)]
+              [ri : i64 (spec-rw-step ch templates state init)]
+              [rk : i64 (spec-rw-step ch (& kt) state keep)]
+              [rb : i64 (spec-rw-step ch (& bt) state body)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-spmd-compact-id-with-pools
+                    p
+                    index
+                    ty
+                    rs
+                    re
+                    slot
+                    s-ty
+                    ri
+                    rk
+                    rb))
+                (Ok expr-id)))])]
+      [(WithResource wr-box)
+        (match (__tl-box-place wr-box)
+          [(WithResource bindings body)
+            (spec-rewrite-resource expr-id bindings body templates state)])]
+      [(or (Borrow _ _ _) (Literal _) (Var _)) (Ok expr-id)]
+      [_ (spec-rewrite-expr-default templates state expr-id expr)])))
+
+(define (spec-rewrite-expr-default
+  [templates : (& templates SpecTemplateEnv)]
+  [state : (&mut state SpecState)]
+  [expr-id : i64]
+  [expr : ast.AstExpr]) : ResultSpecSubExpr
+  (let
+    [start : i64 state.scratch-ids.len]
+    (ast.ast-expr-child-ids-into! expr (&mut state.scratch-ids))
+    (let
+      [end : i64 state.scratch-ids.len]
+      [ch : bool false]
+      [i : i64 start]
+      (while (< i end)
+        (let
+          [cid : i64 (ast.ast-expr-list-get (& state.scratch-ids) i -1)]
+          (match (spec-rewrite-expr templates state cid)
+            [(Ok next)
+              (when
+                (!= next cid)
+                (ast.ast-expr-list-set! (&mut state.scratch-ids) i next)
+                (set! ch true))]
+            [(Err diag)
+              (ast.ast-expr-list-truncate! (&mut state.scratch-ids) start)
+              (return (Err diag))]))
+        (set! i (+ i 1)))
       (let
-        [body : ast.AstExpr (spec-state-expr-get state body-box)]
-        [body-templates : SpecTemplateEnv
-          (spec-template-env-shadow-name templates lane)]
-        (match (spec-rewrite-expr (& body) body-templates state)
-          [(Ok rewritten-body body-state)
-            (Ok
-              (ast.ast-expr-foreach-active-with-pools
-                (spec-state-pools body-state)
-                lane
-                rewritten-body)
-              body-state)]
-          [(Err diag) (Err diag)]))]
-    [(SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(Reduce op index index-ty start-box end-box init-box value-box)
-          (let
-            [start : ast.AstExpr (spec-state-expr-get state start-box)]
-            [end : ast.AstExpr (spec-state-expr-get state end-box)]
-            [init : ast.AstExpr (spec-state-expr-get state init-box)]
-            [value : ast.AstExpr (spec-state-expr-get state value-box)]
-            [value-templates : SpecTemplateEnv
-              (spec-template-env-shadow-name templates index)]
-            (match (spec-rewrite-expr (& start) templates state)
-              [(Ok rewritten-start start-state)
-                (match (spec-rewrite-expr (& end) templates start-state)
-                  [(Ok rewritten-end end-state)
-                    (match (spec-rewrite-expr (& init) templates end-state)
-                      [(Ok rewritten-init init-state)
-                        (match (spec-rewrite-expr
-                          (& value)
-                          value-templates
-                          init-state)
-                          [(Ok rewritten-value value-state)
-                            (Ok
-                              (ast.ast-expr-spmd-reduce-id-with-pools
-                                (spec-state-pools value-state)
-                                op
-                                index
-                                index-ty
-                                rewritten-start
-                                rewritten-end
-                                rewritten-init
-                                rewritten-value)
-                              value-state)]
-                          [(Err diag) (Err diag)])]
-                      [(Err diag) (Err diag)])]
-                  [(Err diag) (Err diag)])]
-              [(Err diag) (Err diag)]))])]
-    [(SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(Scan
-            op
-            index
-            index-ty
-            start-box
-            end-box
-            prefix
-            prefix-ty
-            init-box
-            value-box
-            body-box)
-          (let
-            [start : ast.AstExpr (spec-state-expr-get state start-box)]
-            [end : ast.AstExpr (spec-state-expr-get state end-box)]
-            [init : ast.AstExpr (spec-state-expr-get state init-box)]
-            [value : ast.AstExpr (spec-state-expr-get state value-box)]
-            [body : ast.AstExpr (spec-state-expr-get state body-box)]
-            [value-templates : SpecTemplateEnv
-              (spec-template-env-shadow-name templates index)]
-            [body-templates : SpecTemplateEnv
-              (spec-template-env-shadow-name value-templates prefix)]
-            (match (spec-rewrite-expr (& start) templates state)
-              [(Ok rewritten-start start-state)
-                (match (spec-rewrite-expr (& end) templates start-state)
-                  [(Ok rewritten-end end-state)
-                    (match (spec-rewrite-expr (& init) templates end-state)
-                      [(Ok rewritten-init init-state)
-                        (match (spec-rewrite-expr
-                          (& value)
-                          value-templates
-                          init-state)
-                          [(Ok rewritten-value value-state)
-                            (match (spec-rewrite-expr
-                              (& body)
-                              body-templates
-                              value-state)
-                              [(Ok rewritten-body body-state)
-                                (Ok
-                                  (ast.ast-expr-spmd-scan-id-with-pools
-                                    (spec-state-pools body-state)
-                                    op
-                                    index
-                                    index-ty
-                                    rewritten-start
-                                    rewritten-end
-                                    prefix
-                                    prefix-ty
-                                    rewritten-init
-                                    rewritten-value
-                                    rewritten-body)
-                                  body-state)]
-                              [(Err diag) (Err diag)])]
-                          [(Err diag) (Err diag)])]
-                      [(Err diag) (Err diag)])]
-                  [(Err diag) (Err diag)])]
-              [(Err diag) (Err diag)]))])]
-    [(SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(Compact
-            index
-            index-ty
-            start-box
-            end-box
-            slot
-            slot-ty
-            init-box
-            keep-box
-            body-box)
-          (let
-            [start : ast.AstExpr (spec-state-expr-get state start-box)]
-            [end : ast.AstExpr (spec-state-expr-get state end-box)]
-            [init : ast.AstExpr (spec-state-expr-get state init-box)]
-            [keep : ast.AstExpr (spec-state-expr-get state keep-box)]
-            [body : ast.AstExpr (spec-state-expr-get state body-box)]
-            [keep-templates : SpecTemplateEnv
-              (spec-template-env-shadow-name templates index)]
-            [body-templates : SpecTemplateEnv
-              (spec-template-env-shadow-name keep-templates slot)]
-            (match (spec-rewrite-expr (& start) templates state)
-              [(Ok rewritten-start start-state)
-                (match (spec-rewrite-expr (& end) templates start-state)
-                  [(Ok rewritten-end end-state)
-                    (match (spec-rewrite-expr (& init) templates end-state)
-                      [(Ok rewritten-init init-state)
-                        (match (spec-rewrite-expr
-                          (& keep)
-                          keep-templates
-                          init-state)
-                          [(Ok rewritten-keep keep-state)
-                            (match (spec-rewrite-expr
-                              (& body)
-                              body-templates
-                              keep-state)
-                              [(Ok rewritten-body body-state)
-                                (Ok
-                                  (ast.ast-expr-spmd-compact-id-with-pools
-                                    (spec-state-pools body-state)
-                                    index
-                                    index-ty
-                                    rewritten-start
-                                    rewritten-end
-                                    slot
-                                    slot-ty
-                                    rewritten-init
-                                    rewritten-keep
-                                    rewritten-body)
-                                  body-state)]
-                              [(Err diag) (Err diag)])]
-                          [(Err diag) (Err diag)])]
-                      [(Err diag) (Err diag)])]
-                  [(Err diag) (Err diag)])]
-              [(Err diag) (Err diag)]))])]
-    [(WithResource wr-box)
-      (match (__tl-box-place wr-box)
-        [(WithResource bindings body)
-          (spec-rewrite-resource (& bindings) (& body) templates state)])]
-    [(Borrow _ _ _)
-      (Ok (spec-owner-expr-push (spec-state-owner state) expr) state)]
-    [_
-      (match (spec-rewrite-expr-list
-        (&
-          (ast.ast-expr-child-ids
-            (owned_view.compiler-owned-reference-shared-view expr)))
-        templates
-        (& state))
-        [(Ok ids next-state)
-          (Ok
+        [out : i64
+          (if ch
             (spec-owner-expr-push
-              (spec-state-owner state)
+              (& state.pools)
               (&
-                (ast.ast-expr-with-child-ids
-                  (owned_view.compiler-owned-reference-shared-view expr)
-                  (& ids))))
-            next-state)]
-        [(Err diag) (Err diag)])]))
+                (ast.ast-expr-with-child-ids-from
+                  (spec-state-expr-get state expr-id)
+                  (& state.scratch-ids)
+                  start)))
+            expr-id)]
+        (ast.ast-expr-list-truncate! (&mut state.scratch-ids) start)
+        (Ok out)))))
 
 (define (spec-ptr-addr-of-place-value-conflict-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -5590,52 +5297,61 @@
 ;; Resource scopes are sequential: the current name is absent from its own
 ;; initializer and cleanup, and shadows templates only in later bindings/body.
 (define (spec-rewrite-resource
-  [bindings : (& ast.AstResourceBindingList)]
-  [body : (& ast.AstExprList)]
+  [expr-id : i64]
+  [bindings : ast.AstResourceBindingList]
+  [body : ast.AstExprList]
   [templates : (& templates SpecTemplateEnv)]
-  [state : SpecState]) : ResultSpecExpr
+  [state : (&mut state SpecState)]) : ResultSpecSubExpr
   (let
-    [out : ast.AstResourceBindingList
-      (ast.ast-resource-binding-list-with-capacity bindings.len)]
     [scope : SpecTemplateEnv (deref templates)]
-    (for [index (iterator.range 0 bindings.len)]
+    [out : ast.AstResourceBindingList
+      (ast.ast-resource-binding-list-with-capacity 0)]
+    [bch : bool false]
+    [i : i64 0]
+    (while (< i bindings.len)
       (match (ast.ast-resource-binding-list-get
-        bindings
-        index
+        (& bindings)
+        i
         (ast.ast-resource-binding-fallback))
-        [(Binding name init cleanup move-aware?)
-          (match (spec-rewrite-expr
-            (& (spec-state-expr-get (& state) init))
-            (& scope)
-            (spec-place-shared-view state))
-            [(Err diag) (return (Err diag))]
-            [(Ok next-init init-state)
-              (match (spec-rewrite-expr
-                (& (spec-state-expr-get (& init-state) cleanup))
-                (& scope)
-                init-state)
-                [(Err diag) (return (Err diag))]
-                [(Ok next-cleanup cleanup-state)
-                  (ast.ast-resource-binding-list-push
-                    (&mut out)
-                    (ast.AstResourceBinding.Binding
-                      name
-                      next-init
-                      next-cleanup
-                      move-aware?))
-                  (set! state cleanup-state)
-                  (set! scope (spec-template-env-shadow-name scope name))
-                  unit])])]))
-    (match (spec-rewrite-expr-list body (& scope) (& state))
-      [(Err diag) (Err diag)]
-      [(Ok next-body body-state)
+        [(Binding name init cleanup mv)
+          (let
+            [ni : i64 (try (spec-rewrite-expr (& scope) state init))]
+            [nc : i64 (try (spec-rewrite-expr (& scope) state cleanup))]
+            (set! scope (spec-template-env-shadow-name (& scope) name))
+            (spec-copy-push!
+              res
+              bch
+              out
+              (& bindings)
+              i
+              (or (!= ni init) (!= nc cleanup))
+              (ast.AstResourceBinding.Binding name ni nc mv)))])
+      (set! i (+ i 1)))
+    (let
+      [bout : ast.AstExprList (ast.ast-expr-list-empty-shared)]
+      [ich : bool false]
+      [j : i64 0]
+      (while (< j body.len)
+        (let
+          [orig : i64 (ast.ast-expr-list-get (& body) j 0)]
+          [next : i64 (try (spec-rewrite-expr (& scope) state orig))]
+          (spec-copy-push! expr ich bout (& body) j (!= next orig) next))
+        (set! j (+ j 1)))
+      (if (or bch ich)
         (Ok
           (spec-owner-expr-push
-            (spec-state-owner (& body-state))
+            (& state.pools)
             (&
               (WithResource
-                (box (ast.AstWithResource.WithResource out next-body)))))
-          body-state)])))
+                (box
+                  (ast.AstWithResource.WithResource
+                    (if bch
+                      out
+                      bindings)
+                    (if ich
+                      bout
+                      body)))))))
+        (Ok expr-id)))))
 
 (define (spec-subst-holding? [held : (& held SpecHeldFailure)]) : bool
   (match held
@@ -5648,6 +5364,22 @@
   [diag : (Box cdiag.CompilerDiagnostic)]) : unit
   (unless (spec-subst-holding? held) (set! (deref held) (Held diag))))
 
+(define (spec-substitute-keep-or-push
+  [owner : (& owner SpecOwnerContext)]
+  [expr-id : i64]
+  [expr : (& ast.AstExpr)]) : i64
+  (if (>= expr-id 0)
+    expr-id
+    (spec-owner-expr-push owner expr)))
+
+(define (spec-substitute-expr-load
+  [owner : (& owner SpecOwnerContext)]
+  [expr-id : i64]
+  [expr : (& ast.AstExpr)]) : ast.AstExpr
+  (if (>= expr-id 0)
+    (spec-owner-expr-get owner expr-id)
+    (owned_view.compiler-owned-reference-shared-view expr)))
+
 ;: Applies a specialization's type and value bindings to `expr` in one walk
 ;: that rebuilds each node once. A type failure ends the walk. A value failure
 ;: is held while the walk goes on checking types, because a type failure
@@ -5658,550 +5390,515 @@
   [expr : (& ast.AstExpr)]
   [subs : (& subs SpecSubst)]) : ResultSpecSubExpr
   (let
-    [held : SpecHeldFailure (None)]
+    [walk : SpecSubstWalk
+      (SpecSubstWalk (None) (ast.ast-expr-child-list-with-capacity 16))]
     [rewritten : i64
-      (try (spec-substitute-walk-with-owner owner expr subs (&mut held)))]
-    (match held
+      (try
+        (spec-substitute-walk-node-with-owner owner subs (&mut walk) -1 expr))]
+    (match walk.held
       [(None) (Ok rewritten)]
       [(Held diag) (Err diag)])))
 
 (define (spec-substitute-walk-resource-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [bindings : (& ast.AstResourceBindingList)]
-  [body : (& ast.AstExprList)]
+  [expr-id : i64]
+  [expr : (& expr ast.AstExpr)]
+  [bindings : (& bindings ast.AstResourceBindingList)]
+  [body : (& body ast.AstExprList)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]) : ResultSpecSubExpr
+  [walk : (&mut walk SpecSubstWalk)]) : ResultSpecSubExpr
   (let
-    [out : ast.AstResourceBindingList
-      (ast.ast-resource-binding-list-with-capacity bindings.len)]
     [scope : SpecSubst (deref subs)]
-    (for [index (iterator.range 0 bindings.len)]
+    [out : ast.AstResourceBindingList
+      (ast.ast-resource-binding-list-with-capacity 0)]
+    [bch : bool false]
+    [i : i64 0]
+    (while (< i bindings.len)
       (match (ast.ast-resource-binding-list-get
         bindings
-        index
+        i
         (ast.ast-resource-binding-fallback))
-        [(Binding name init cleanup move-aware?)
+        [(Binding name init cleanup mv)
           (let
-            [next-init
+            [ni : i64
+              (try (spec-substitute-walk-with-owner owner (& scope) walk init))]
+            [nc : i64
               (try
-                (spec-substitute-walk-with-owner
-                  owner
-                  (& (spec-owner-expr-get owner init))
-                  (& scope)
-                  held))]
-            [next-cleanup
-              (try
-                (spec-substitute-walk-with-owner
-                  owner
-                  (& (spec-owner-expr-get owner cleanup))
-                  (& scope)
-                  held))]
-            (ast.ast-resource-binding-list-push
-              (&mut out)
-              (ast.AstResourceBinding.Binding
-                name
-                next-init
-                next-cleanup
-                move-aware?))
-            (set! scope (spec-subst-remove-name (& scope) name)))]))
+                (spec-substitute-walk-with-owner owner (& scope) walk cleanup))]
+            (set! scope (spec-subst-remove-name (& scope) name))
+            (spec-copy-push!
+              res
+              bch
+              out
+              bindings
+              i
+              (or (!= ni init) (!= nc cleanup))
+              (ast.AstResourceBinding.Binding name ni nc mv)))])
+      (set! i (+ i 1)))
     (let
-      [next-body : ast.AstExprList
-        (try (spec-substitute-walk-list-with-owner owner body (& scope) held))]
-      (Ok
-        (spec-owner-expr-push
-          owner
-          (&
-            (WithResource
-              (box (ast.AstWithResource.WithResource out next-body)))))))))
+      [bout : ast.AstExprList (ast.ast-expr-list-empty-shared)]
+      [ich : bool false]
+      [j : i64 0]
+      (while (< j body.len)
+        (let
+          [orig : i64 (ast.ast-expr-list-get body j 0)]
+          [next : i64
+            (try (spec-substitute-walk-with-owner owner (& scope) walk orig))]
+          (spec-copy-push! expr ich bout body j (!= next orig) next))
+        (set! j (+ j 1)))
+      (if (or bch ich)
+        (Ok
+          (spec-owner-expr-push
+            owner
+            (&
+              (WithResource
+                (box
+                  (ast.AstWithResource.WithResource
+                    (if bch
+                      out
+                      (let
+                        [c : ast.AstResourceBindingList
+                          (ast.ast-resource-binding-list-with-capacity
+                            bindings.len)]
+                        (ast.ast-resource-binding-list-append-from
+                          (&mut c)
+                          bindings
+                          0)
+                        c))
+                    (if ich
+                      bout
+                      (ast.clone-ast-expr-list body))))))))
+        (Ok (spec-substitute-keep-or-push owner expr-id expr))))))
+
+(define (spec-substitute-type-step
+  [owner : (& owner SpecOwnerContext)]
+  [subs : (& subs SpecTypeSubst)]
+  [ty : (& ast.AstType)]
+  [changed? : (&mut ch bool)]) : ast.AstMaybeType
+  (match (spec-substitute-type-if-changed-with-owner owner ty subs)
+    [(Some next)
+      (set! (deref changed?) true)
+      (Some next)]
+    [(No) No]))
+
+(define (spec-substitute-maybe-type-step
+  [owner : (& owner SpecOwnerContext)]
+  [subs : (& subs SpecTypeSubst)]
+  [maybe-ty : (& ast.AstMaybeType)]
+  [changed? : (&mut ch bool)]) : ast.AstMaybeType
+  (match maybe-ty
+    [(No) No]
+    [(Some ty) (spec-substitute-type-step owner subs ty changed?)]))
+
+(define (spec-substitute-type-or-clone
+  [mapped : ast.AstMaybeType]
+  [orig : (& ast.AstType)]) : ast.AstType
+  (match mapped
+    [(Some next) next]
+    [(No) (ast.clone-ast-type orig)]))
+
+(define (spec-substitute-walk-default-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [subs : (& subs SpecSubst)]
+  [walk : (&mut walk SpecSubstWalk)]
+  [expr-id : i64]
+  [expr : (& ast.AstExpr)]
+  [expr-view : ast.AstExpr]) : ResultSpecSubExpr
+  (let
+    [start : i64 walk.scratch.len]
+    (ast.ast-expr-children-into! expr-view (&mut walk.scratch))
+    (let
+      [end : i64 walk.scratch.len]
+      [ch : bool false]
+      [i : i64 start]
+      (while (< i end)
+        (match (ast.ast-expr-child-list-get
+          (& walk.scratch)
+          i
+          (ast.ast-expr-child-fallback))
+          [(ast.AstExprChild.Expr cid)
+            (match (spec-substitute-walk-with-owner owner subs walk cid)
+              [(Ok next)
+                (when
+                  (!= next cid)
+                  (ast.ast-expr-child-list-set!
+                    (&mut walk.scratch)
+                    i
+                    (ast.AstExprChild.Expr next))
+                  (set! ch true))]
+              [(Err diag)
+                (ast.ast-expr-child-list-truncate! (&mut walk.scratch) start)
+                (return (Err diag))])]
+          [(ast.AstExprChild.TypeId tid)
+            (let
+              [nt : i64
+                (spec-substitute-type-id-with-owner owner tid (& subs.types))]
+              (when
+                (!= nt tid)
+                (ast.ast-expr-child-list-set!
+                  (&mut walk.scratch)
+                  i
+                  (ast.AstExprChild.TypeId nt))
+                (set! ch true)))]
+          [(ast.AstExprChild.Type ty)
+            (match (spec-substitute-type-if-changed-with-owner
+              owner
+              (& ty)
+              (& subs.types))
+              [(Some nt)
+                (ast.ast-expr-child-list-set!
+                  (&mut walk.scratch)
+                  i
+                  (ast.AstExprChild.Type nt))
+                (set! ch true)]
+              [(No) unit])]
+          [(ast.AstExprChild.Pattern _) unit])
+        (set! i (+ i 1)))
+      (let
+        [out : i64
+          (if ch
+            (spec-owner-expr-push
+              owner
+              (&
+                (ast.ast-expr-with-children-from!
+                  (spec-substitute-expr-load owner expr-id expr)
+                  (&mut walk.scratch)
+                  start)))
+            (spec-substitute-keep-or-push owner expr-id expr))]
+        (ast.ast-expr-child-list-truncate! (&mut walk.scratch) start)
+        (Ok out)))))
 
 (define (spec-substitute-walk-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [expr : (& ast.AstExpr)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]) : ResultSpecSubExpr
-  (match (owned_view.compiler-owned-reference-shared-view expr)
-    [(Var name)
-      (match (spec-type-subst-lookup (& subs.types) name)
-        [(Some _)
-          (Err
-            (box
-              (spec-diagnostic-at-expr
-                expr
-                (str_cat.str-cat
-                  "type-valued comptime parameter '"
-                  (spec_ci.intern-compat-state-str
-                    (spec-owner-intern-state owner)
-                    name)
-                  "' cannot be used as a runtime value"))))]
-        [(None)
-          (match (spec-value-subst-lookup (& subs.values) name)
-            [(Some _)
-              (match (spec-ctfe-value-to-expr-with-owner
-                owner
-                (& (spec-value-subst-value (& subs.values) name))
-                expr)
-                [(Ok literal) (Ok literal)]
-                [(Err diag)
-                  (spec-subst-hold-value-failure! held diag)
-                  (Ok (spec-owner-expr-push owner expr))])]
-            [(None) (Ok (spec-owner-expr-push owner expr))])])]
-    [(TypeLiteral ty-id)
-      (Ok
-        (ast.ast-expr-type-literal-with-pools
-          (spec-owner-pools owner)
-          (&
-            (spec-substitute-type-with-owner
+  [walk : (&mut walk SpecSubstWalk)]
+  [expr-id : i64]) : ResultSpecSubExpr
+  (let
+    [expr : ast.AstExpr (spec-owner-expr-get owner expr-id)]
+    (spec-substitute-walk-node-with-owner owner subs walk expr-id (& expr))))
+
+(define (spec-substitute-walk-node-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [subs : (& subs SpecSubst)]
+  [walk : (&mut walk SpecSubstWalk)]
+  [expr-id : i64]
+  [expr : (& ast.AstExpr)]) : ResultSpecSubExpr
+  (let
+    [expr-view : ast.AstExpr (spec-substitute-expr-load owner expr-id expr)]
+    [p : ast.AstNodePoolContext (spec-owner-pools owner)]
+    (match expr-view
+      [(Var name)
+        (match (spec-type-subst-lookup (& subs.types) name)
+          [(Some _)
+            (Err
+              (box
+                (spec-diagnostic-at-expr
+                  expr
+                  (str_cat.str-cat
+                    "type-valued comptime parameter '"
+                    (spec_ci.intern-compat-state-str
+                      (spec-owner-intern-state owner)
+                      name)
+                    "' cannot be used as a runtime value"))))]
+          [(None)
+            (match (spec-value-subst-lookup (& subs.values) name)
+              [(Some _)
+                (match (spec-ctfe-value-to-expr-with-owner
+                  owner
+                  (& (spec-value-subst-value (& subs.values) name))
+                  expr)
+                  [(Ok literal) (Ok literal)]
+                  [(Err diag)
+                    (spec-subst-hold-value-failure! (&mut walk.held) diag)
+                    (Ok (spec-substitute-keep-or-push owner expr-id expr))])]
+              [(None) (Ok (spec-substitute-keep-or-push owner expr-id expr))])])]
+      [(Lambda lambda-box)
+        (match (& (__tl-box-place lambda-box))
+          [(Lambda params ret body-box)
+            (let
+              [p-ch : bool false]
+              [r-ch : bool false]
+              [b-ch : bool false]
+              [mp : ast.AstParamList
+                (spec-substitute-param-list-if-changed-with-owner
+                  owner
+                  params
+                  (& subs.types)
+                  (&mut p-ch))]
+              [mr : ast.AstMaybeType
+                (spec-substitute-maybe-type-step
+                  owner
+                  (& subs.types)
+                  ret
+                  (&mut r-ch))]
+              [bs : SpecSubst (spec-subst-remove-params subs params)]
+              [mb : i64 (spec-sub-step b-ch owner (& bs) walk body-box)]
+              (if (or p-ch r-ch b-ch)
+                (Ok
+                  (ast.ast-expr-lambda-with-pools
+                    p
+                    (if p-ch
+                      mp
+                      (ast.clone-ast-param-list params))
+                    (if r-ch
+                      mr
+                      (ast.clone-ast-maybe-type ret))
+                    mb))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
+      [(Foreach fe-box)
+        (match (& (__tl-box-place fe-box))
+          [(Foreach index index-ty s e b)
+            (let
+              [ch : bool false]
+              [mt : ast.AstMaybeType
+                (spec-substitute-type-step
+                  owner
+                  (& subs.types)
+                  index-ty
+                  (&mut ch))]
+              [bs : SpecSubst (spec-subst-remove-name subs index)]
+              [ms : i64 (spec-sub-step ch owner subs walk s)]
+              [me : i64 (spec-sub-step ch owner subs walk e)]
+              [mb : i64 (spec-sub-step ch owner (& bs) walk b)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-foreach-id-with-pools
+                    p
+                    index
+                    (spec-substitute-type-or-clone mt index-ty)
+                    ms
+                    me
+                    mb))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
+          [(Foreach2 outer o-ty os oe inner i-ty is ie b)
+            (let
+              [ch : bool false]
+              [mt0 : ast.AstMaybeType
+                (spec-substitute-type-step owner (& subs.types) o-ty (&mut ch))]
+              [mt1 : ast.AstMaybeType
+                (spec-substitute-type-step owner (& subs.types) i-ty (&mut ch))]
+              [osubs : SpecSubst (spec-subst-remove-name subs outer)]
+              [bsubs : SpecSubst (spec-subst-remove-name (& osubs) inner)]
+              [ms0 : i64 (spec-sub-step ch owner subs walk os)]
+              [me0 : i64 (spec-sub-step ch owner subs walk oe)]
+              [ms1 : i64 (spec-sub-step ch owner subs walk is)]
+              [me1 : i64 (spec-sub-step ch owner subs walk ie)]
+              [mb : i64 (spec-sub-step ch owner (& bsubs) walk b)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-foreach2-id-with-pools
+                    p
+                    outer
+                    (spec-substitute-type-or-clone mt0 o-ty)
+                    ms0
+                    me0
+                    inner
+                    (spec-substitute-type-or-clone mt1 i-ty)
+                    ms1
+                    me1
+                    mb))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
+      ;; A lane name shadows the parameter of that name in the body, a type
+      ;; parameter as much as a value parameter, like every other binder (#8704).
+      [(ForeachActive lane body-box)
+        (let
+          [ch : bool false]
+          [bs : SpecSubst (spec-subst-remove-name subs lane)]
+          [mb : i64 (spec-sub-step ch owner (& bs) walk body-box)]
+          (if ch
+            (Ok (ast.ast-expr-foreach-active-with-pools p lane mb))
+            (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
+      [(SpmdReduce reduce-box)
+        (match (& (__tl-box-place reduce-box))
+          [(Reduce op index ty s e init val)
+            (let
+              [ch : bool false]
+              [mt : ast.AstMaybeType
+                (spec-substitute-type-step owner (& subs.types) ty (&mut ch))]
+              [vs : SpecSubst (spec-subst-remove-name subs index)]
+              [ms : i64 (spec-sub-step ch owner subs walk s)]
+              [me : i64 (spec-sub-step ch owner subs walk e)]
+              [mi : i64 (spec-sub-step ch owner subs walk init)]
+              [mv : i64 (spec-sub-step ch owner (& vs) walk val)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-spmd-reduce-id-with-pools
+                    p
+                    op
+                    index
+                    (spec-substitute-type-or-clone mt ty)
+                    ms
+                    me
+                    mi
+                    mv))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
+      [(SpmdScan scan-box)
+        (match (& (__tl-box-place scan-box))
+          [(Scan op index ty s e prefix p-ty init val body)
+            (let
+              [ch : bool false]
+              [mt0 : ast.AstMaybeType
+                (spec-substitute-type-step owner (& subs.types) ty (&mut ch))]
+              [mt1 : ast.AstMaybeType
+                (spec-substitute-type-step owner (& subs.types) p-ty (&mut ch))]
+              [vs : SpecSubst (spec-subst-remove-name subs index)]
+              [bs : SpecSubst (spec-subst-remove-name (& vs) prefix)]
+              [ms : i64 (spec-sub-step ch owner subs walk s)]
+              [me : i64 (spec-sub-step ch owner subs walk e)]
+              [mi : i64 (spec-sub-step ch owner subs walk init)]
+              [mv : i64 (spec-sub-step ch owner (& vs) walk val)]
+              [mb : i64 (spec-sub-step ch owner (& bs) walk body)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-spmd-scan-id-with-pools
+                    p
+                    op
+                    index
+                    (spec-substitute-type-or-clone mt0 ty)
+                    ms
+                    me
+                    prefix
+                    (spec-substitute-type-or-clone mt1 p-ty)
+                    mi
+                    mv
+                    mb))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
+      [(SpmdCompact compact-box)
+        (match (& (__tl-box-place compact-box))
+          [(Compact index ty s e slot s-ty init keep body)
+            (let
+              [ch : bool false]
+              [mt0 : ast.AstMaybeType
+                (spec-substitute-type-step owner (& subs.types) ty (&mut ch))]
+              [mt1 : ast.AstMaybeType
+                (spec-substitute-type-step owner (& subs.types) s-ty (&mut ch))]
+              [ks : SpecSubst (spec-subst-remove-name subs index)]
+              [bs : SpecSubst (spec-subst-remove-name (& ks) slot)]
+              [ms : i64 (spec-sub-step ch owner subs walk s)]
+              [me : i64 (spec-sub-step ch owner subs walk e)]
+              [mi : i64 (spec-sub-step ch owner subs walk init)]
+              [mk : i64 (spec-sub-step ch owner (& ks) walk keep)]
+              [mb : i64 (spec-sub-step ch owner (& bs) walk body)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-spmd-compact-id-with-pools
+                    p
+                    index
+                    (spec-substitute-type-or-clone mt0 ty)
+                    ms
+                    me
+                    slot
+                    (spec-substitute-type-or-clone mt1 s-ty)
+                    mi
+                    mk
+                    mb))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
+      [(Let let-box)
+        (match (& (__tl-box-place let-box))
+          [(Let bindings body-box)
+            (let
+              [b-ch : bool false]
+              [bs : SpecSubst
+                (spec-subst-remove-let-binding-names subs bindings)]
+              [rb : ast.AstLetBindingList
+                (try
+                  (spec-substitute-walk-let-bindings-with-owner
+                    owner
+                    bindings
+                    subs
+                    walk
+                    (&mut b-ch)))]
+              [ch : bool b-ch]
+              [rbody : i64 (spec-sub-step ch owner (& bs) walk body-box)]
+              (if ch
+                (Ok
+                  (ast.ast-expr-let-with-pools
+                    p
+                    (if b-ch
+                      rb
+                      (ast.clone-ast-let-binding-list bindings))
+                    rbody))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
+      ;; The loop's source and index names bind in its body; only the source
+      ;; expression is evaluated outside them. The name slots are binders, never
+      ;; substituted, so a binder named like a parameter shadows it (#8704).
+      [(ForOwnedState payload)
+        (let
+          [ch : bool false]
+          [sn : i64 (ast.ast-for-owned-state-source-name (& payload))]
+          [in : i64 (ast.ast-for-owned-state-index-name (& payload))]
+          [ws : SpecSubst (spec-subst-remove-binder-expr owner subs sn)]
+          [is : SpecSubst (spec-subst-remove-binder-expr owner (& ws) in)]
+          [msn : i64 (spec-sub-step ch owner (& is) walk sn)]
+          [min : i64 (spec-sub-step ch owner (& is) walk in)]
+          [msrc : i64
+            (spec-sub-step
+              ch
               owner
-              (spec-owner-type-get owner ty-id)
-              (& subs.types)))))]
-    [(FixedMakeArray elem-ty-id len-box)
-      (let
-        [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
-        [rewritten-len : i64
-          (try (spec-substitute-walk-with-owner owner (& len) subs held))]
-        (Ok
-          (ast.ast-expr-fixed-make-array-with-pools
-            (spec-owner-pools owner)
-            (&
-              (spec-substitute-type-with-owner
-                owner
-                (spec-owner-type-get owner elem-ty-id)
-                (& subs.types)))
-            rewritten-len)))]
-    [(MakeArray elem-ty-id len-box)
-      (let
-        [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
-        [rewritten-len : i64
-          (try (spec-substitute-walk-with-owner owner (& len) subs held))]
-        (Ok
-          (ast.ast-expr-make-array-with-pools
-            (spec-owner-pools owner)
-            (&
-              (spec-substitute-type-with-owner
-                owner
-                (spec-owner-type-get owner elem-ty-id)
-                (& subs.types)))
-            rewritten-len)))]
-    [(Ann inner-box ty-id)
-      (let
-        [inner : ast.AstExpr (spec-owner-expr-get owner inner-box)]
-        [rewritten : i64
-          (try (spec-substitute-walk-with-owner owner (& inner) subs held))]
-        (Ok
-          (ast.ast-expr-ann-with-pools
-            (spec-owner-pools owner)
-            rewritten
-            (&
-              (spec-substitute-type-with-owner
-                owner
-                (spec-owner-type-get owner ty-id)
-                (& subs.types))))))]
-    [(Cast inner-box ty-id)
-      (let
-        [inner : ast.AstExpr (spec-owner-expr-get owner inner-box)]
-        [rewritten : i64
-          (try (spec-substitute-walk-with-owner owner (& inner) subs held))]
-        (Ok
-          (ast.ast-expr-cast-with-pools
-            (spec-owner-pools owner)
-            rewritten
-            (&
-              (spec-substitute-type-with-owner
-                owner
-                (spec-owner-type-get owner ty-id)
-                (& subs.types))))))]
-    [(Lambda lambda-box)
-      (match (__tl-box-place lambda-box)
-        [(Lambda params ret body-box)
-          (let
-            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
-            [body-subs : SpecSubst (spec-subst-remove-params subs params)]
-            [rewritten-body : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& body) body-subs held))]
-            (Ok
-              (ast.ast-expr-lambda-with-pools
-                (spec-owner-pools owner)
-                (spec-substitute-param-types-with-owner
-                  owner
-                  (& params)
-                  (& subs.types))
-                (spec-substitute-maybe-type-with-owner
-                  owner
-                  (& ret)
-                  (& subs.types))
-                rewritten-body)))])]
-    [(Foreach fe-box)
-      (match (__tl-box-place fe-box)
-        [(Foreach index index-ty start-box end-box body-box)
-          (let
-            [start : ast.AstExpr (spec-owner-expr-get owner start-box)]
-            [end : ast.AstExpr (spec-owner-expr-get owner end-box)]
-            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
-            [body-subs : SpecSubst (spec-subst-remove-name subs index)]
-            [rewritten-start : i64
-              (try (spec-substitute-walk-with-owner owner (& start) subs held))]
-            [rewritten-end : i64
-              (try (spec-substitute-walk-with-owner owner (& end) subs held))]
-            [rewritten-body : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& body) body-subs held))]
-            (Ok
-              (ast.ast-expr-foreach-id-with-pools
-                (spec-owner-pools owner)
-                index
-                (spec-substitute-type-with-owner owner index-ty (& subs.types))
-                rewritten-start
-                rewritten-end
-                rewritten-body)))]
-        [(Foreach2
-            outer
-            outer-ty
-            outer-start-box
-            outer-end-box
-            inner
-            inner-ty
-            inner-start-box
-            inner-end-box
-            body-box)
-          (let
-            [outer-start : ast.AstExpr
-              (spec-owner-expr-get owner outer-start-box)]
-            [outer-end : ast.AstExpr (spec-owner-expr-get owner outer-end-box)]
-            [inner-start : ast.AstExpr
-              (spec-owner-expr-get owner inner-start-box)]
-            [inner-end : ast.AstExpr (spec-owner-expr-get owner inner-end-box)]
-            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
-            [outer-subs : SpecSubst (spec-subst-remove-name subs outer)]
-            [body-subs : SpecSubst (spec-subst-remove-name outer-subs inner)]
-            [rewritten-outer-start : i64
-              (try
-                (spec-substitute-walk-with-owner
-                  owner
-                  (& outer-start)
-                  subs
-                  held))]
-            [rewritten-outer-end : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& outer-end) subs held))]
-            [rewritten-inner-start : i64
-              (try
-                (spec-substitute-walk-with-owner
-                  owner
-                  (& inner-start)
-                  subs
-                  held))]
-            [rewritten-inner-end : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& inner-end) subs held))]
-            [rewritten-body : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& body) body-subs held))]
-            (Ok
-              (ast.ast-expr-foreach2-id-with-pools
-                (spec-owner-pools owner)
-                outer
-                (spec-substitute-type-with-owner owner outer-ty (& subs.types))
-                rewritten-outer-start
-                rewritten-outer-end
-                inner
-                (spec-substitute-type-with-owner owner inner-ty (& subs.types))
-                rewritten-inner-start
-                rewritten-inner-end
-                rewritten-body)))])]
-    ;; A lane name shadows the parameter of that name in the body, a type
-    ;; parameter as much as a value parameter, like every other binder (#8704).
-    [(ForeachActive lane body-box)
-      (let
-        [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
-        [body-subs : SpecSubst (spec-subst-remove-name subs lane)]
-        [rewritten-body : i64
-          (try (spec-substitute-walk-with-owner owner (& body) body-subs held))]
-        (Ok
-          (ast.ast-expr-foreach-active-with-pools
-            (spec-owner-pools owner)
-            lane
-            rewritten-body)))]
-    [(SpmdReduce reduce-box)
-      (match (__tl-box-place reduce-box)
-        [(Reduce op index index-ty start-box end-box init-box value-box)
-          (let
-            [start : ast.AstExpr (spec-owner-expr-get owner start-box)]
-            [end : ast.AstExpr (spec-owner-expr-get owner end-box)]
-            [init : ast.AstExpr (spec-owner-expr-get owner init-box)]
-            [value : ast.AstExpr (spec-owner-expr-get owner value-box)]
-            [value-subs : SpecSubst (spec-subst-remove-name subs index)]
-            [rewritten-start : i64
-              (try (spec-substitute-walk-with-owner owner (& start) subs held))]
-            [rewritten-end : i64
-              (try (spec-substitute-walk-with-owner owner (& end) subs held))]
-            [rewritten-init : i64
-              (try (spec-substitute-walk-with-owner owner (& init) subs held))]
-            [rewritten-value : i64
-              (try
-                (spec-substitute-walk-with-owner
-                  owner
-                  (& value)
-                  value-subs
-                  held))]
-            (Ok
-              (ast.ast-expr-spmd-reduce-id-with-pools
-                (spec-owner-pools owner)
-                op
-                index
-                (spec-substitute-type-with-owner owner index-ty (& subs.types))
-                rewritten-start
-                rewritten-end
-                rewritten-init
-                rewritten-value)))])]
-    [(SpmdScan scan-box)
-      (match (__tl-box-place scan-box)
-        [(Scan
-            op
-            index
-            index-ty
-            start-box
-            end-box
-            prefix
-            prefix-ty
-            init-box
-            value-box
-            body-box)
-          (let
-            [start : ast.AstExpr (spec-owner-expr-get owner start-box)]
-            [end : ast.AstExpr (spec-owner-expr-get owner end-box)]
-            [init : ast.AstExpr (spec-owner-expr-get owner init-box)]
-            [value : ast.AstExpr (spec-owner-expr-get owner value-box)]
-            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
-            [value-subs : SpecSubst (spec-subst-remove-name subs index)]
-            [body-subs : SpecSubst (spec-subst-remove-name value-subs prefix)]
-            [rewritten-start : i64
-              (try (spec-substitute-walk-with-owner owner (& start) subs held))]
-            [rewritten-end : i64
-              (try (spec-substitute-walk-with-owner owner (& end) subs held))]
-            [rewritten-init : i64
-              (try (spec-substitute-walk-with-owner owner (& init) subs held))]
-            [rewritten-value : i64
-              (try
-                (spec-substitute-walk-with-owner
-                  owner
-                  (& value)
-                  value-subs
-                  held))]
-            [rewritten-body : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& body) body-subs held))]
-            (Ok
-              (ast.ast-expr-spmd-scan-id-with-pools
-                (spec-owner-pools owner)
-                op
-                index
-                (spec-substitute-type-with-owner owner index-ty (& subs.types))
-                rewritten-start
-                rewritten-end
-                prefix
-                (spec-substitute-type-with-owner owner prefix-ty (& subs.types))
-                rewritten-init
-                rewritten-value
-                rewritten-body)))])]
-    [(SpmdCompact compact-box)
-      (match (__tl-box-place compact-box)
-        [(Compact
-            index
-            index-ty
-            start-box
-            end-box
-            slot
-            slot-ty
-            init-box
-            keep-box
-            body-box)
-          (let
-            [start : ast.AstExpr (spec-owner-expr-get owner start-box)]
-            [end : ast.AstExpr (spec-owner-expr-get owner end-box)]
-            [init : ast.AstExpr (spec-owner-expr-get owner init-box)]
-            [keep : ast.AstExpr (spec-owner-expr-get owner keep-box)]
-            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
-            [keep-subs : SpecSubst (spec-subst-remove-name subs index)]
-            [body-subs : SpecSubst (spec-subst-remove-name keep-subs slot)]
-            [rewritten-start : i64
-              (try (spec-substitute-walk-with-owner owner (& start) subs held))]
-            [rewritten-end : i64
-              (try (spec-substitute-walk-with-owner owner (& end) subs held))]
-            [rewritten-init : i64
-              (try (spec-substitute-walk-with-owner owner (& init) subs held))]
-            [rewritten-keep : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& keep) keep-subs held))]
-            [rewritten-body : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& body) body-subs held))]
-            (Ok
-              (ast.ast-expr-spmd-compact-id-with-pools
-                (spec-owner-pools owner)
-                index
-                (spec-substitute-type-with-owner owner index-ty (& subs.types))
-                rewritten-start
-                rewritten-end
-                slot
-                (spec-substitute-type-with-owner owner slot-ty (& subs.types))
-                rewritten-init
-                rewritten-keep
-                rewritten-body)))])]
-    [(Let let-box)
-      (match (__tl-box-place let-box)
-        [(Let bindings body-box)
-          (let
-            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
-            [body-subs : SpecSubst
-              (spec-subst-remove-let-binding-names subs (& bindings))]
-            [rewritten-bindings : ast.AstLetBindingList
-              (try
-                (spec-substitute-walk-let-bindings-with-owner
-                  owner
-                  (& bindings)
-                  subs
-                  held))]
-            [rewritten-body : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& body) body-subs held))]
-            (Ok
-              (ast.ast-expr-let-with-pools
-                (spec-owner-pools owner)
-                rewritten-bindings
-                rewritten-body)))])]
-    ;; The loop's source and index names bind in its body; only the source
-    ;; expression is evaluated outside them. The name slots are binders, never
-    ;; substituted, so a binder named like a parameter shadows it (#8704).
-    [(ForOwnedState payload)
-      (let
-        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
-        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
-        [inner-subs : SpecSubst
-          (let
-            [without-source : SpecSubst
-              (spec-subst-remove-binder-expr owner subs source-name)]
-            (spec-subst-remove-binder-expr owner (& without-source) index-name))]
-        [rewritten-source-name : i64
-          (try
-            (spec-substitute-walk-with-owner
-              owner
-              (& (spec-owner-expr-get owner source-name))
-              (& inner-subs)
-              held))]
-        [rewritten-index-name : i64
-          (try
-            (spec-substitute-walk-with-owner
-              owner
-              (& (spec-owner-expr-get owner index-name))
-              (& inner-subs)
-              held))]
-        [rewritten-source : i64
-          (try
-            (spec-substitute-walk-with-owner
-              owner
-              (&
-                (spec-owner-expr-get
-                  owner
-                  (ast.ast-for-owned-state-source (& payload))))
               subs
-              held))]
-        [rewritten-body : i64
-          (try
-            (spec-substitute-walk-with-owner
+              walk
+              (ast.ast-for-owned-state-source (& payload)))]
+          [mbody : i64
+            (spec-sub-step
+              ch
               owner
-              (&
-                (spec-owner-expr-get
-                  owner
-                  (ast.ast-for-owned-state-body (& payload))))
-              (& inner-subs)
-              held))]
-        (Ok
-          (ast.ast-expr-for-owned-state-with-pools
-            (spec-owner-pools owner)
-            rewritten-source-name
-            rewritten-index-name
-            rewritten-source
-            rewritten-body)))]
-    ;; A step binds its item and done names in its body. Its source and index
-    ;; names are uses of the enclosing state's binders, and its expected type
-    ;; is read outside the binding, so those keep the outer substitution
-    ;; (#8704). The slots are walked in their original order.
-    [(ForOwnedStep payload)
-      (let
-        [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
-        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
-        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
-        [inner-subs : SpecSubst
-          (let
-            [without-binding : SpecSubst
-              (spec-subst-remove-binder-expr owner subs binding-name)]
-            (spec-subst-remove-binder-expr owner (& without-binding) done-name))]
-        [rewritten-source-name : i64
-          (try
-            (spec-substitute-walk-with-owner
+              (& is)
+              walk
+              (ast.ast-for-owned-state-body (& payload)))]
+          (if ch
+            (Ok (ast.ast-expr-for-owned-state-with-pools p msn min msrc mbody))
+            (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
+      ;; A step binds its item and done names in its body. Its source and index
+      ;; names are uses of the enclosing state's binders, and its expected type
+      ;; is read outside the binding, so those keep the outer substitution
+      ;; (#8704). The slots are walked in their original order.
+      [(ForOwnedStep payload)
+        (let
+          [ch : bool false]
+          [bn : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+          [et : i64 (ast.ast-for-owned-step-expected-type (& payload))]
+          [dn : i64 (ast.ast-for-owned-step-done-name (& payload))]
+          [wb : SpecSubst (spec-subst-remove-binder-expr owner subs bn)]
+          [is : SpecSubst (spec-subst-remove-binder-expr owner (& wb) dn)]
+          [msn : i64
+            (spec-sub-step
+              ch
               owner
-              (&
-                (spec-owner-expr-get
-                  owner
-                  (ast.ast-for-owned-step-source-name (& payload))))
               subs
-              held))]
-        [rewritten-index-name : i64
-          (try
-            (spec-substitute-walk-with-owner
+              walk
+              (ast.ast-for-owned-step-source-name (& payload)))]
+          [min : i64
+            (spec-sub-step
+              ch
               owner
-              (&
-                (spec-owner-expr-get
-                  owner
-                  (ast.ast-for-owned-step-index-name (& payload))))
               subs
-              held))]
-        [rewritten-binding-name : i64
-          (try
-            (spec-substitute-walk-with-owner
+              walk
+              (ast.ast-for-owned-step-index-name (& payload)))]
+          [mbn : i64 (spec-sub-step ch owner (& is) walk bn)]
+          [met : i64
+            (if (>= et 0)
+              (spec-sub-step ch owner subs walk et)
+              -1)]
+          [mdn : i64 (spec-sub-step ch owner (& is) walk dn)]
+          [mbody : i64
+            (spec-sub-step
+              ch
               owner
-              (& (spec-owner-expr-get owner binding-name))
-              (& inner-subs)
-              held))]
-        [rewritten-expected-type : i64
-          (if (>= expected-type 0)
-            (try
-              (spec-substitute-walk-with-owner
-                owner
-                (& (spec-owner-expr-get owner expected-type))
-                subs
-                held))
-            -1)]
-        [rewritten-done-name : i64
-          (try
-            (spec-substitute-walk-with-owner
-              owner
-              (& (spec-owner-expr-get owner done-name))
-              (& inner-subs)
-              held))]
-        [rewritten-body : i64
-          (try
-            (spec-substitute-walk-with-owner
-              owner
-              (&
-                (spec-owner-expr-get
-                  owner
-                  (ast.ast-for-owned-step-body (& payload))))
-              (& inner-subs)
-              held))]
-        (Ok
-          (ast.ast-expr-for-owned-step-with-pools
-            (spec-owner-pools owner)
-            rewritten-source-name
-            rewritten-index-name
-            rewritten-binding-name
-            rewritten-expected-type
-            rewritten-done-name
-            rewritten-body)))]
-    [(Set name value-box)
-      (let
-        [value : ast.AstExpr (spec-owner-expr-get owner value-box)]
+              (& is)
+              walk
+              (ast.ast-for-owned-step-body (& payload)))]
+          (if ch
+            (Ok
+              (ast.ast-expr-for-owned-step-with-pools
+                p
+                msn
+                min
+                mbn
+                met
+                mdn
+                mbody))
+            (Ok (spec-substitute-keep-or-push owner expr-id expr))))]
+      [(Set name value-box)
         (match (spec-type-subst-lookup (& subs.types) name)
           [(Some _)
             (Err
@@ -6218,7 +5915,7 @@
             (match (spec-value-subst-lookup (& subs.values) name)
               [(Some _)
                 (spec-subst-hold-value-failure!
-                  held
+                  (&mut walk.held)
                   (box
                     (spec-diagnostic-at-expr
                       expr
@@ -6232,322 +5929,204 @@
             (let
               [rewritten : i64
                 (try
-                  (spec-substitute-walk-with-owner owner (& value) subs held))]
-              (Ok
-                (ast.ast-expr-set-id-with-pools
-                  (spec-owner-pools owner)
-                  name
-                  rewritten)))]))]
-    [(Match match-box)
-      (match (__tl-box-place match-box)
-        [(Match scrutinee-box arms)
-          (let
-            [scrutinee : ast.AstExpr (spec-owner-expr-get owner scrutinee-box)]
-            [rewritten-scrutinee : i64
-              (try
-                (spec-substitute-walk-with-owner owner (& scrutinee) subs held))]
-            [rewritten-arms : ast.AstMatchArmList
-              (try
-                (spec-substitute-walk-match-arms-with-owner
-                  owner
-                  (& arms)
-                  subs
-                  held))]
-            (Ok
-              (ast.ast-expr-match-with-pools
-                (spec-owner-pools owner)
-                rewritten-scrutinee
-                rewritten-arms)))])]
-    [(WithResource wr-box)
-      (match (__tl-box-place wr-box)
-        [(WithResource bindings body)
-          (spec-substitute-walk-resource-with-owner
-            owner
-            (& bindings)
-            (& body)
-            subs
-            held)])]
-    [(PtrNull ty-id)
-      (Ok
-        (spec-owner-expr-push
-          owner
-          (&
-            (PtrNull
-              (spec-owner-type-push
-                owner
-                (&
-                  (spec-substitute-type-with-owner
+                  (spec-substitute-walk-with-owner owner subs walk value-box))]
+              (if (!= rewritten value-box)
+                (Ok (ast.ast-expr-set-id-with-pools p name rewritten))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
+      [(Match match-box)
+        (match (& (__tl-box-place match-box))
+          [(Match scrutinee-box arms)
+            (let
+              [arms-changed? : bool false]
+              [rewritten-scrutinee : i64
+                (try
+                  (spec-substitute-walk-with-owner
                     owner
-                    (spec-owner-type-get owner ty-id)
-                    (& subs.types))))))))]
-    [(PtrCast ptr-box ty-id)
-      (let
-        [ptr : ast.AstExpr (spec-owner-expr-get owner ptr-box)]
-        [rewritten : i64
-          (try (spec-substitute-walk-with-owner owner (& ptr) subs held))]
-        (Ok
-          (ast.ast-expr-ptr-cast-with-pools
-            (spec-owner-pools owner)
-            rewritten
-            (&
-              (spec-substitute-type-with-owner
-                owner
-                (spec-owner-type-get owner ty-id)
-                (& subs.types))))))]
-    [(IntToPtr value-box ty-id)
-      (let
-        [value : ast.AstExpr (spec-owner-expr-get owner value-box)]
-        [rewritten : i64
-          (try (spec-substitute-walk-with-owner owner (& value) subs held))]
-        (Ok
-          (ast.ast-expr-int-to-ptr-with-pools
-            (spec-owner-pools owner)
-            rewritten
-            (&
-              (spec-substitute-type-with-owner
-                owner
-                (spec-owner-type-get owner ty-id)
-                (& subs.types))))))]
-    [(PtrAddrOf place-box)
-      (let
-        [place : ast.AstExpr (spec-owner-expr-get owner place-box)]
-        (match (spec-ptr-addr-of-place-value-conflict-with-owner
-          owner
-          (& place)
-          (& subs.values))
-          [(Some name-id)
-            (spec-subst-hold-value-failure!
-              held
-              (box
-                (spec-diagnostic-at-expr
-                  expr
-                  (str_cat.str-cat
-                    "cannot take address of comptime value parameter '"
-                    (spec_ci.intern-compat-state-str
-                      (spec-owner-intern-state owner)
-                      name-id)
-                    "'"))))]
-          [(None) unit])
-        (let
-          [rewritten : i64
-            (try (spec-substitute-walk-with-owner owner (& place) subs held))]
-          (Ok
-            (ast.ast-expr-ptr-addr-of-id-with-pools
-              (spec-owner-pools owner)
-              rewritten))))]
-    [(Borrow _ _ _) (Ok (spec-owner-expr-push owner expr))]
-    [_
-      (let
-        [ids
-          (try
-            (spec-substitute-walk-list-with-owner
+                    subs
+                    walk
+                    scrutinee-box))]
+              [rewritten-arms : ast.AstMatchArmList
+                (try
+                  (spec-substitute-walk-match-arms-with-owner
+                    owner
+                    arms
+                    subs
+                    walk
+                    (&mut arms-changed?)))]
+              (if (or (!= rewritten-scrutinee scrutinee-box) arms-changed?)
+                (Ok
+                  (ast.ast-expr-match-with-pools
+                    p
+                    rewritten-scrutinee
+                    (if arms-changed?
+                      rewritten-arms
+                      (ast.clone-ast-match-arm-list arms))))
+                (Ok (spec-substitute-keep-or-push owner expr-id expr))))])]
+      [(WithResource wr-box)
+        (match (& (__tl-box-place wr-box))
+          [(WithResource bindings body)
+            (spec-substitute-walk-resource-with-owner
               owner
-              (&
-                (ast.ast-expr-child-ids
-                  (owned_view.compiler-owned-reference-shared-view expr)))
+              expr-id
+              expr
+              bindings
+              body
               subs
-              held))]
-        (Ok
-          (spec-owner-expr-push
+              walk)])]
+      [(PtrAddrOf place-box)
+        (let
+          [place : ast.AstExpr (spec-owner-expr-get owner place-box)]
+          (match (spec-ptr-addr-of-place-value-conflict-with-owner
             owner
-            (&
-              (ast.ast-expr-with-child-ids
-                (owned_view.compiler-owned-reference-shared-view expr)
-                (& ids))))))]))
-
-(define (spec-substitute-walk-list-with-owner
-  [owner : (& owner SpecOwnerContext)]
-  [exprs : (& ast.AstExprList)]
-  [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]) : ResultSpecSubExprList
-  (let
-    [out : ast.AstExprList (ast.ast-expr-list-with-capacity exprs.len)]
-    [_
-      (try
-        (spec-substitute-walk-list-at-with-owner
+            (& place)
+            (& subs.values))
+            [(Some name-id)
+              (spec-subst-hold-value-failure!
+                (&mut walk.held)
+                (box
+                  (spec-diagnostic-at-expr
+                    expr
+                    (str_cat.str-cat
+                      "cannot take address of comptime value parameter '"
+                      (spec_ci.intern-compat-state-str
+                        (spec-owner-intern-state owner)
+                        name-id)
+                      "'"))))]
+            [(None) unit])
+          (let
+            [rewritten : i64
+              (try (spec-substitute-walk-with-owner owner subs walk place-box))]
+            (if (!= rewritten place-box)
+              (Ok (ast.ast-expr-ptr-addr-of-id-with-pools p rewritten))
+              (Ok (spec-substitute-keep-or-push owner expr-id expr)))))]
+      [(or (Borrow _ _ _) (Literal _))
+        (Ok (spec-substitute-keep-or-push owner expr-id expr))]
+      [_
+        (spec-substitute-walk-default-with-owner
           owner
-          exprs
           subs
-          held
-          (&mut out)))]
-    (Ok out)))
-
-(define (spec-substitute-walk-list-at-with-owner
-  [owner : (& owner SpecOwnerContext)]
-  [exprs : (& exprs ast.AstExprList)]
-  [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]
-  [out : (&mut out ast.AstExprList)]) : ResultSpecSubExprListBuild
-  (for [index (iterator.range 0 exprs.len)]
-    (let
-      [head : ast.AstExpr
-        (spec-owner-expr-get owner (ast.ast-expr-list-get exprs index 0))]
-      [rewritten-head
-        (try (spec-substitute-walk-with-owner owner (& head) subs held))]
-      (ast.ast-expr-list-push out rewritten-head)
-      unit))
-  (Ok))
+          walk
+          expr-id
+          expr
+          expr-view)])))
 
 (define (spec-substitute-walk-let-bindings-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [bindings : (& ast.AstLetBindingList)]
+  [bs : (& ast.AstLetBindingList)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]) : ResultSpecSubLetBindingList
+  [walk : (&mut walk SpecSubstWalk)]
+  [changed? : (&mut ch bool)]) : ResultSpecSubLetBindingList
   (let
-    [out : ast.AstLetBindingList
-      (ast.ast-let-binding-list-with-capacity
-        (ast.ast-let-binding-list-len bindings))]
-    [_
-      (try
-        (spec-substitute-walk-let-bindings-at-with-owner
-          owner
-          bindings
-          0
-          subs
-          held
-          (&mut out)))]
-    (Ok out)))
-
-(define (spec-substitute-walk-let-bindings-at-with-owner
-  [owner : (& owner SpecOwnerContext)]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [index : i64]
-  [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]
-  [out : (&mut out ast.AstLetBindingList)]) : ResultSpecSubLetBindingListBuild
-  (if (>= index (ast.ast-let-binding-list-len bindings))
-    (Ok)
-    (match (ast.ast-let-binding-list-get
-      bindings
-      index
-      (ast.ast-let-binding-fallback))
-      [(Binding name ty value-box)
-        (let
-          [value : ast.AstExpr (spec-owner-expr-get owner value-box)]
-          [next-subs : SpecSubst (spec-subst-remove-name subs name)]
-          [rewritten-value
-            (try (spec-substitute-walk-with-owner owner (& value) subs held))]
-          (ast.ast-let-binding-list-push
-            out
-            (ast.ast-let-binding-id
-              name
-              (spec-substitute-maybe-type-with-owner
+    [scope : SpecSubst (deref subs)]
+    [out : ast.AstLetBindingList (ast.ast-let-binding-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i bs.len)
+      (match (ast.ast-let-binding-list-get bs i (ast.ast-let-binding-fallback))
+        [(Binding name ty v)
+          (let
+            [tch : bool false]
+            [mty : ast.AstMaybeType
+              (spec-substitute-maybe-type-step
                 owner
+                (& scope.types)
                 (& ty)
-                (& subs.types))
-              rewritten-value))
-          (spec-substitute-walk-let-bindings-at-with-owner
-            owner
-            bindings
-            (+ index 1)
-            next-subs
-            held
-            out))])))
+                (&mut tch))]
+            [r : i64
+              (try (spec-substitute-walk-with-owner owner (& scope) walk v))]
+            [item : ast.AstLetBinding
+              (ast.ast-let-binding-id
+                name
+                (if tch
+                  mty
+                  ty)
+                r)]
+            (set! scope (spec-subst-remove-name (& scope) name))
+            (spec-copy-push! let ch out bs i (or tch (!= r v)) item))])
+      (set! i (+ i 1)))
+    (when ch (set! (deref changed?) true))
+    (Ok out)))
 
 (define (spec-substitute-walk-match-arms-with-owner
   [owner : (& owner SpecOwnerContext)]
   [arms : (& ast.AstMatchArmList)]
   [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]) : ResultSpecSubMatchArmList
+  [walk : (&mut walk SpecSubstWalk)]
+  [changed? : (&mut ch bool)]) : ResultSpecSubMatchArmList
   (let
-    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
-    [_
-      (try
-        (spec-substitute-walk-match-arms-at-with-owner
-          owner
-          arms
-          subs
-          held
-          (&mut out)))]
+    [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity 0)]
+    [ch : bool false]
+    [i : i64 0]
+    (while (< i arms.len)
+      (match (ast.ast-match-arm-list-get arms i (ast.ast-match-arm-fallback))
+        [(Arm pat b)
+          (let
+            [bsubs : SpecSubst (spec-subst-remove-pattern subs (& pat))]
+            [r : i64
+              (try (spec-substitute-walk-with-owner owner (& bsubs) walk b))]
+            (spec-copy-push!
+              arm
+              ch
+              out
+              arms
+              i
+              (!= r b)
+              (ast.ast-match-arm pat r)))])
+      (set! i (+ i 1)))
+    (when ch (set! (deref changed?) true))
     (Ok out)))
-
-(define (spec-substitute-walk-match-arms-at-with-owner
-  [owner : (& owner SpecOwnerContext)]
-  [arms : (& arms ast.AstMatchArmList)]
-  [subs : (& subs SpecSubst)]
-  [held : (&mut held SpecHeldFailure)]
-  [out : (&mut out ast.AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
-  (for [index (iterator.range 0 arms.len)]
-    (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(Arm pattern body-box)
-        (let
-          [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
-          [body-subs : SpecSubst (spec-subst-remove-pattern subs (& pattern))]
-          [rewritten-body
-            (try
-              (spec-substitute-walk-with-owner owner (& body) body-subs held))]
-          (ast.ast-match-arm-list-push
-            out
-            (ast.ast-match-arm pattern rewritten-body))
-          unit)]))
-  (Ok))
 
 (define (spec-rewrite-decl-with-owner
   [owner : (& owner SpecOwnerContext)]
   [decl : ast.AstDecl]
   [templates : (& templates SpecTemplateEnv)]
-  [state : SpecState]) : ResultSpecDecl
+  [state : (&mut state SpecState)]) : ResultSpecDecl
   (match (ast.ast-place-shared-view decl)
     [(Def decl-meta name ty value-box)
       (let
-        [value : ast.AstExpr (spec-state-expr-get state value-box)]
-        (match (spec-rewrite-expr (& value) templates state)
-          [(Ok rewritten state2)
-            (Ok (Some (ast.ast-decl-def-id name ty rewritten)) state2)]
-          [(Err diag) (Err diag)]))]
+        [rewritten : i64 (try (spec-rewrite-expr templates state value-box))]
+        (Ok (Some (ast.ast-decl-def-id name ty rewritten))))]
     [(DefFn decl-meta name params ret body-box metadata)
-      (let
-        [body : ast.AstExpr (spec-state-expr-get state body-box)]
-        [body-templates : SpecTemplateEnv
-          (spec-template-env-shadow-params templates params)]
-        (if (spec-param-list-has-comptime? params)
-          (Ok (None) state)
-          (match (spec-rewrite-expr (& body) body-templates state)
-            [(Ok rewritten state2)
-              (Ok
-                (Some
-                  (ast.ast-decl-def-fn-metadata-id
-                    name
-                    params
-                    ret
-                    rewritten
-                    (& metadata)))
-                state2)]
-            [(Err diag) (Err diag)])))]
+      (if (spec-param-list-has-comptime? params)
+        (Ok (None))
+        (let
+          [body-templates : SpecTemplateEnv
+            (spec-template-env-shadow-params templates params)]
+          [rewritten : i64
+            (try (spec-rewrite-expr (& body-templates) state body-box))]
+          (Ok
+            (Some
+              (ast.ast-decl-def-fn-metadata-id
+                name
+                params
+                ret
+                rewritten
+                (& metadata))))))]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]
-        (match (spec-rewrite-decl-with-owner owner inner templates state)
-          [(Ok maybe state2)
-            (match maybe
-              [(Some rewritten)
-                (Ok (Some (ast.ast-decl-unsafe rewritten)) state2)]
-              [(None) (Ok None state2)])]
-          [(Err diag) (Err diag)]))]
+        (match (try (spec-rewrite-decl-with-owner owner inner templates state))
+          [(Some rewritten) (Ok (Some (ast.ast-decl-unsafe rewritten)))]
+          [(None) (Ok None)]))]
     [(DefMacro decl-meta name params ret body-box)
       (let
-        [body : ast.AstExpr (spec-state-expr-get state body-box)]
-        (match (spec-rewrite-expr (& body) templates state)
-          [(Ok rewritten state2)
-            (Ok
-              (Some (ast.ast-decl-def-macro-id name params ret rewritten))
-              state2)]
-          [(Err diag) (Err diag)]))]
-    [_ (Ok (Some decl) state)]))
+        [rewritten : i64 (try (spec-rewrite-expr templates state body-box))]
+        (Ok (Some (ast.ast-decl-def-macro-id name params ret rewritten))))]
+    [_ (Ok (Some decl))]))
 
 (define (spec-rewrite-decls-with-owner
   [owner : (& owner SpecOwnerContext)]
   [decls : (& ast.AstDeclList)]
   [templates : (& templates SpecTemplateEnv)]
-  [state : (& SpecState)]) : ResultSpecDecls
+  [state : (&mut state SpecState)]) : ResultSpecDecls
   (match (spec-rewrite-decls-with-paths-with-owner
     owner
     (owned_view.compiler-owned-reference-shared-view decls)
     (& (ast.ast-decl-path-list-new))
     ""
     templates
-    (owned_view.compiler-owned-reference-shared-view state))
-    [(Ok rewritten _ rewritten-state) (Ok rewritten rewritten-state)]
+    state)
+    [(Ok rewritten _) (Ok rewritten)]
     [(Err diag) (Err diag)]))
 
 ;; Rewrites every declaration in its module, drops the templates, and splices
@@ -6558,7 +6137,7 @@
   [paths : (& ast.AstDeclPathList)]
   [fallback-path : String]
   [templates : (& templates SpecTemplateEnv)]
-  [state : SpecState]) : ResultSpecDeclsWithPaths
+  [state : (&mut state SpecState)]) : ResultSpecDeclsWithPaths
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-cursor : ast.AstDeclList decls]
@@ -6578,7 +6157,6 @@
     [drops : i64 0]
     [input-index : i64 0]
     [module : i64 cbi.compiler-builtin-id-fix-empty]
-    [cur-state : SpecState state]
     [result : ResultSpecDeclsWithPaths
       (Err
         (box
@@ -6591,33 +6169,30 @@
     (while (not done)
       (match (ast.ast-decl-list-step decl-cursor)
         [(Nil)
-          (match (& cur-state)
-            [(State generated _ _ _)
-              (let
-                [placement : SpecInstancePlacement
-                  (spec-instance-placement
-                    owner
-                    (ast.ast-decl-list-len (& out))
-                    (& drop-positions)
-                    drops
-                    (& generated))]
-                (set!
-                  result
-                  (Ok
-                    (spec-splice-instances
-                      (& out)
-                      (& sources)
-                      (& source-keys)
-                      (& source-slots)
-                      (& generated)
-                      (& placement))
-                    (spec-splice-instance-paths
-                      (& out-paths)
-                      paths
-                      (& fallback-path)
-                      (& drop-sources)
-                      (& placement))
-                    (spec-place-shared-view cur-state))))])
+          (let
+            [placement : SpecInstancePlacement
+              (spec-instance-placement
+                owner
+                (ast.ast-decl-list-len (& out))
+                (& drop-positions)
+                drops
+                (& state.generated))]
+            (set!
+              result
+              (Ok
+                (spec-splice-instances
+                  (& out)
+                  (& sources)
+                  (& source-keys)
+                  (& source-slots)
+                  (& state.generated)
+                  (& placement))
+                (spec-splice-instance-paths
+                  (& out-paths)
+                  paths
+                  (& fallback-path)
+                  (& drop-sources)
+                  (& placement)))))
           (set! done true)]
         [(Cons decl rest)
           (let
@@ -6642,9 +6217,8 @@
               owner
               (ast.ast-place-shared-view decl)
               (& (spec-template-env-in-module templates module))
-              (spec-place-shared-view cur-state))
-              [(Ok maybe-decl decl-state)
-                (set! cur-state decl-state)
+              state)
+              [(Ok maybe-decl)
                 (match maybe-decl
                   ;; Only a template is dropped.
                   [(None)
@@ -6871,22 +6445,25 @@
           ;; through lowering.
           (if (= templates.len 0)
             (Ok normalized)
-            (match (spec-rewrite-decls-with-owner
-              owner
-              (& decls)
-              template-env
-              (&
-                (State
+            (let
+              [state : SpecState
+                (SpecState
                   (ast.ast-decl-list-new)
                   (spec_id_i64_map.with-capacity 64)
                   (spec-owner-ctfe-env
                     owner
                     (& (ctfe.ctfe-reflections-from-program (& normalized))))
-                  (spec-place-shared-view owner))))
-              [(Ok rewritten _)
-                (spec-materialize-owner-generated-symbols! (&mut owner))
-                (Ok (ast.ast-program rewritten))]
-              [(Err diag) (Err diag)])))])))
+                  (spec-place-shared-view owner)
+                  (ast.ast-expr-list-with-capacity 16))]
+              (match (spec-rewrite-decls-with-owner
+                owner
+                (& decls)
+                template-env
+                (&mut state))
+                [(Ok rewritten)
+                  (spec-materialize-owner-generated-symbols! (&mut owner))
+                  (Ok (ast.ast-program rewritten))]
+                [(Err diag) (Err diag)]))))])))
 
 (define (compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
   [program : (& ast.AstProgram)]
@@ -6921,23 +6498,27 @@
               ;; there are templates to rewrite.
               (if (= templates.len 0)
                 (Ok normalized normalized-paths)
-                (match (spec-rewrite-decls-with-paths-with-owner
-                  owner
-                  decls
-                  (& normalized-paths)
-                  fallback-path
-                  template-env
-                  (State
-                    (ast.ast-decl-list-new)
-                    (spec_id_i64_map.with-capacity 64)
-                    (spec-owner-ctfe-env
-                      owner
-                      (& (ctfe.ctfe-reflections-from-program (& normalized))))
-                    (spec-place-shared-view owner)))
-                  [(Ok rewritten rewritten-paths _)
-                    (spec-materialize-owner-generated-symbols! (&mut owner))
-                    (Ok (ast.ast-program rewritten) rewritten-paths)]
-                  [(Err diag) (Err diag)])))])]
+                (let
+                  [state : SpecState
+                    (SpecState
+                      (ast.ast-decl-list-new)
+                      (spec_id_i64_map.with-capacity 64)
+                      (spec-owner-ctfe-env
+                        owner
+                        (& (ctfe.ctfe-reflections-from-program (& normalized))))
+                      (spec-place-shared-view owner)
+                      (ast.ast-expr-list-with-capacity 16))]
+                  (match (spec-rewrite-decls-with-paths-with-owner
+                    owner
+                    decls
+                    (& normalized-paths)
+                    fallback-path
+                    template-env
+                    (&mut state))
+                    [(Ok rewritten rewritten-paths)
+                      (spec-materialize-owner-generated-symbols! (&mut owner))
+                      (Ok (ast.ast-program rewritten) rewritten-paths)]
+                    [(Err diag) (Err diag)]))))])]
       [(Err diag) (Err diag)])))
 
 (define (compiler-specialize-program-with-paths-and-pools-and-intern-state

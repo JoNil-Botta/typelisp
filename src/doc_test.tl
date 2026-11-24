@@ -154,10 +154,33 @@
   [examples : (& examples doc_example_vec.Vec)]) : i64
   (doc_example_vec.len examples))
 
+(define (doc-test-line-copy [line : (& line DocTestLine)]) : DocTestLine
+  (match line
+    [(Line line-number text) (Line line-number (string.copy text))]))
+
+(define (doc-test-expectation-copy
+  [expectation : (& expectation DocTestExpectation)]) : DocTestExpectation
+  (match expectation
+    [(Pass) (Pass)]
+    [(Error) (Error)]
+    [(Run status stdout stderr)
+      (Run status (string.copy stdout) (string.copy stderr))]))
+
 (define (doc-test-example-list-ref
   [examples : (& examples doc_example_vec.Vec)]
   [index : i64]) : DocTestExample
-  (doc_example_vec.get examples index (Example 0 0 (Pass) "")))
+  (if (and (>= index 0) (< index (doc_example_vec.len examples)))
+    (let
+      [view : (& examples (Slice DocTestExample))
+        (doc_example_vec.view examples)]
+      (match (& (array-ref view index))
+        [(Example ordinal line expectation code)
+          (Example
+            ordinal
+            line
+            (doc-test-expectation-copy expectation)
+            (string.copy code))]))
+    (Example 0 0 (Pass) "")))
 
 (define (doc-test-example-list-append
   [examples : doc_example_vec.Vec]
@@ -176,7 +199,12 @@
 (define (doc-test-error-list-ref
   [errors : (& errors doc_error_vec.Vec)]
   [index : i64]) : DocTestError
-  (doc_error_vec.get (& errors) index (DocTestError.Error 0 "")))
+  (if (and (>= index 0) (< index (doc_error_vec.len errors)))
+    (let
+      [view : (& errors (Slice DocTestError)) (doc_error_vec.view errors)]
+      (match (& (array-ref view index))
+        [(Error line message) (DocTestError.Error line (string.copy message))]))
+    (DocTestError.Error 0 "")))
 
 (define (doc-test-error-list-append
   [errors : doc_error_vec.Vec]
@@ -526,7 +554,8 @@
   (if (>= index (doc_line_vec.len (& lines)))
     (doc_line_vec.len (& lines))
     (let
-      [line : DocTestLine (doc_line_vec.get (& lines) index (Line 0 ""))]
+      [view : (& lines (Slice DocTestLine)) (doc_line_vec.view lines)]
+      [line : DocTestLine (doc-test-line-copy (& (array-ref view index)))]
       (if (source_text.starts-with?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
@@ -541,17 +570,15 @@
   (if (>= index (doc_line_vec.len (& lines)))
     (Collect (doc_line_vec.len (& lines)) code collected false)
     (let
-      [line : DocTestLine (doc_line_vec.get (& lines) index (Line 0 ""))]
+      [view : (& lines (Slice DocTestLine)) (doc_line_vec.view lines)]
+      [line : DocTestLine (doc-test-line-copy (& (array-ref view index)))]
       (if (source_text.starts-with?
-        (doc-test-trim-left
-          (doc-test-line-text (owned_view.compiler-owned-shared-view line)))
+        (doc-test-trim-left (doc-test-line-text (doc-test-line-copy (& line))))
         "```")
         (Collect (+ index 1) code collected true)
         (let
           [out : doc_line_vec.Vec collected]
-          (doc_line_vec.push-ref!
-            (&mut out)
-            (owned_view.compiler-owned-shared-view line))
+          (doc_line_vec.push-ref! (&mut out) (doc-test-line-copy (& line)))
           (doc-test-collect-code-inner
             lines
             (+ index 1)
@@ -744,12 +771,14 @@
   [index : i64]) : DocTestRunMetadata
   (if (>= index (doc_line_vec.len (& lines)))
     metadata
-    (doc-test-run-metadata-parse-lines-from
-      lines
-      (doc-test-run-metadata-parse-line
-        metadata
-        (doc_line_vec.get (& lines) index (Line 0 "")))
-      (+ index 1))))
+    (let
+      [view : (& lines (Slice DocTestLine)) (doc_line_vec.view lines)]
+      (doc-test-run-metadata-parse-lines-from
+        lines
+        (doc-test-run-metadata-parse-line
+          metadata
+          (doc-test-line-copy (& (array-ref view index))))
+        (+ index 1)))))
 
 (define (doc-test-run-metadata-parse-lines
   [lines : doc_line_vec.Vec]
@@ -845,10 +874,10 @@
   (if (>= index (doc_line_vec.len (& lines)))
     state
     (let
-      [line : DocTestLine (doc_line_vec.get (& lines) index (Line 0 ""))]
+      [view : (& lines (Slice DocTestLine)) (doc_line_vec.view lines)]
+      [line : DocTestLine (doc-test-line-copy (& (array-ref view index)))]
       [trimmed : String
-        (doc-test-trim-left
-          (doc-test-line-text (owned_view.compiler-owned-shared-view line)))]
+        (doc-test-trim-left (doc-test-line-text (doc-test-line-copy (& line))))]
       (if (source_text.starts-with? trimmed "```")
         (let
           [info : String
@@ -993,7 +1022,14 @@
 (define (doc-test-run-failure-list-ref
   [failures : (& failures doc_run_failure_vec.Vec)]
   [index : i64]) : DocTestRunFailure
-  (doc_run_failure_vec.get (& failures) index (Failure "" 0 0 "")))
+  (if (and (>= index 0) (< index (doc_run_failure_vec.len failures)))
+    (let
+      [view : (& failures (Slice DocTestRunFailure))
+        (doc_run_failure_vec.view failures)]
+      (match (& (array-ref view index))
+        [(Failure path line ordinal message)
+          (Failure (string.copy path) line ordinal (string.copy message))]))
+    (Failure "" 0 0 "")))
 
 (define (doc-test-run-report-ok? [report : DocTestRunReport]) : bool
   (=

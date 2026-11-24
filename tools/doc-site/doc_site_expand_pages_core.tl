@@ -381,12 +381,12 @@
       "define-function"
       "copy-range!"
       (str_cat.str-cat
-        "(define (copy-range! [dst : (&mut dst (__tl_dyn-array "
+        "(unsafe (define (copy-range! [dst : (&mut dst (__tl_dyn-array "
         type-name
-        "))] [src : (& src (__tl_dyn-array "
+        "))] [src : (MutPtr "
         type-name
-        "))] [index : i64] [count : i64]) : unit ...)")
-      "Generated implementation helper.")
+        ")] [index : i64] [count : i64]) : unit ...))")
+      "Unsafe generated implementation helper.")
     (doc-site-expand-item
       "define-function"
       "grow"

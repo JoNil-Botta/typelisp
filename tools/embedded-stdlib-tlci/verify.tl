@@ -258,7 +258,7 @@
         (str_cat.str-cat "embedded stdlib tlci validation failed: " message))
       1]
     [(Ok count)
-      (if (= count 172)
+      (if (= count 161)
         (if (and
           (embedded-verify-payload-exact-and-bounded?)
           (embedded-verify-indexed-lifetime-ok?)
@@ -279,6 +279,6 @@
         (begin
           (io.print-error
             (str_cat.str-cat
-              "embedded stdlib tlci macro count mismatch: expected 172, got "
+              "embedded stdlib tlci macro count mismatch: expected 161, got "
               (string.int->string count)))
           2))]))

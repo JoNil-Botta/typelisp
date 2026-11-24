@@ -283,10 +283,7 @@
       [(JsonMissing) true]
       [(JsonFound value)
         (match value
-          [(JsonArray labels)
-            (pr-label-list-valid?
-              (unsafe
-                (json.json-box-shared-view labels)))]
+          [(JsonArray labels) (pr-label-list-valid? (deref labels))]
           [_ false])])))
 
 (define (pr-labels-error [prs : json.JsonSeq]) : String
@@ -397,10 +394,7 @@
     (match (json.object-get item (& key))
       [(JsonFound found)
         (match found
-          [(JsonArray entries)
-            (pr-check-list-complete?
-              (unsafe
-                (json.json-box-shared-view entries)))]
+          [(JsonArray entries) (pr-check-list-complete? (deref entries))]
           [_ true])]
       [(JsonMissing) true])))
 

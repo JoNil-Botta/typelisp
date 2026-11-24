@@ -88,11 +88,6 @@
   (ArgsNoOptionSpec)
   (ArgsSomeOptionSpec ArgsOptionSpec))
 
-;: Re-expose a borrowed string field through the public String surface.
-(define (args-string-shared-view [value : (& value str)]) : String
-  (unsafe
-    (ptr-read (ptr-cast (__tl_array-data (array value)) : (Ptr String)))))
-
 ;: Return an empty option spec list.
 (define (option-spec-empty) : ArgsOptionSpecList
   (ArgsOptionSpecList (__tl_make-array ArgsOptionSpec 0) 0))
@@ -124,15 +119,15 @@
 
 ;: Return the canonical name for a spec.
 (define (option-spec-name [spec : (& spec ArgsOptionSpec)]) : String
-  (args-string-shared-view spec.name))
+  (string.copy (& spec.name)))
 
 ;: Return the long spelling for a spec, without leading dashes.
 (define (option-spec-long [spec : (& spec ArgsOptionSpec)]) : String
-  (args-string-shared-view spec.long))
+  (string.copy (& spec.long)))
 
 ;: Return the short spelling for a spec, without the leading dash.
 (define (option-spec-short [spec : (& spec ArgsOptionSpec)]) : String
-  (args-string-shared-view spec.short))
+  (string.copy (& spec.short)))
 
 ;: Return the arity for a spec.
 (define (option-spec-arity [spec : (& spec ArgsOptionSpec)]) : ArgsOptionArity
@@ -158,39 +153,36 @@
 (define (option-spec-matches-long?
   [spec : (& spec ArgsOptionSpec)]
   [name : (& name str)]) : bool
-  (let
-    [long : String (option-spec-long spec)]
-    (if (not (string.eq long ""))
-      (string.eq long name)
-      false)))
+  (if (not (string.eq (& spec.long) ""))
+    (string.eq (& spec.long) name)
+    false))
 
 ;: Return true when `spec` has the short spelling `name`.
 (define (option-spec-matches-short?
   [spec : (& spec ArgsOptionSpec)]
   [name : (& name str)]) : bool
-  (let
-    [short : String (option-spec-short spec)]
-    (if (not (string.eq short ""))
-      (string.eq short name)
-      false)))
+  (if (not (string.eq (& spec.short) ""))
+    (string.eq (& spec.short) name)
+    false))
 
 ;: Move `count` occurrences from the old backing at `src` into `dst` starting
 ;: at `offset`: each is read bitwise exactly once, and the caller replaces the
 ;: old backing without reading it again.
-(define (option-list-copy!
-  [dst : (&mut dst (__tl_dyn-array ArgsOption))]
-  [src : (MutPtr ArgsOption)]
-  [offset : i64]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (set!
-          (array-ref dst (+ index offset))
-          (unsafe
-            (ptr-read (ptr-offset src index))))
-        (set! index (+ index 1))))))
+(unsafe
+  (define (option-list-copy!
+    [dst : (&mut dst (__tl_dyn-array ArgsOption))]
+    [src : (MutPtr ArgsOption)]
+    [offset : i64]
+    [count : i64]) : unit
+    (let
+      [index : i64 0]
+      (while (< index count)
+        (begin
+          (set!
+            (array-ref dst (+ index offset))
+            (unsafe
+              (ptr-read (ptr-offset src index))))
+          (set! index (+ index 1)))))))
 
 ;: Return an empty parsed option list.
 (define (option-list-empty) : ArgsOptionList
@@ -212,23 +204,19 @@
             (if (< capacity 1)
               4
               (* capacity 2)))]
-        (option-list-copy!
-          (&mut bigger)
-          (unsafe
-            (__tl_array-data slots))
-          0
-          len)
+        (unsafe
+          (option-list-copy! (&mut bigger) (__tl_array-data slots) 0 len))
         (set! slots bigger)))
     (set! (array-ref slots len) option)
     (ArgsOptionList slots (+ len 1))))
 
 ;: Return a parsed option occurrence's canonical name.
 (define (option-name [option : (& option ArgsOption)]) : String
-  (args-string-shared-view option.name))
+  (string.copy (& option.name)))
 
 ;: Return a parsed option occurrence's value, or the empty string for flags.
 (define (option-value [option : (& option ArgsOption)]) : String
-  (args-string-shared-view option.value))
+  (string.copy (& option.value)))
 
 ;: Return true when a parsed option occurrence carries a value.
 (define (option-has-value? [option : (& option ArgsOption)]) : bool
@@ -242,7 +230,7 @@
     [index : i64 0]
     [count : i64 0]
     (while (< index items.len)
-      (if (string.eq (option-name (& (array-ref items.slots index))) name)
+      (if (string.eq (& (array-ref items.slots index).name) name)
         (set! count (+ count 1))
         unit)
       (set! index (+ index 1)))
@@ -266,7 +254,7 @@
     (while (< index items.len)
       (let
         [head : (& items ArgsOption) (& (array-ref items.slots index))]
-        (if (if (string.eq (option-name head) name)
+        (if (if (string.eq (& head.name) name)
           (option-has-value? head)
           false)
           (set! result (option-value head))
@@ -324,8 +312,8 @@
 ;: Return the original option token carried by an error.
 (define (error-option [error : (& error ArgsError)]) : String
   (match error
-    [(ArgsUnknownOption option) (args-string-shared-view option)]
-    [(ArgsMissingValue option) (args-string-shared-view option)]))
+    [(ArgsUnknownOption option) (string.copy option)]
+    [(ArgsMissingValue option) (string.copy option)]))
 
 ;: Return true when `token` is exactly `--`.
 (define (end-of-options-token? [token : (& token str)]) : bool

@@ -1,9 +1,5 @@
 (import stdlib.string)
 
-(defmacro (toy-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
 (defenum Value
   (Bool bool)
   (Int i64)
@@ -172,9 +168,7 @@
 (defmacro (field-value [object : Expr] [name : Expr] [err-ctor : Expr]) : Expr
   `(match ,object
     [(serialize_toy_format.Object fields)
-      (match (serialize_toy_format.field-list-get
-        (& (__tl-box-place fields))
-        ,name)
+      (match (serialize_toy_format.field-list-get fields ,name)
         [(serialize_toy_format.Found found) found]
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing field"))])]
@@ -192,7 +186,7 @@
 (defmacro (sequence-length [value : Expr] [err-ctor : Expr]) : i64
   `(match ,value
     [(serialize_toy_format.Sequence items)
-      (serialize_toy_format.value-list-count (& (__tl-box-place items)))]
+      (serialize_toy_format.value-list-count items)]
     [_ (return (,err-ctor "toy format: expected sequence"))]))
 
 (defmacro (sequence-element-value
@@ -201,9 +195,7 @@
   [err-ctor : Expr]) : Expr
   `(match ,value
     [(serialize_toy_format.Sequence items)
-      (match (serialize_toy_format.value-list-get
-        (& (__tl-box-place items))
-        ,index)
+      (match (serialize_toy_format.value-list-get items ,index)
         [(serialize_toy_format.Found found) found]
         [(serialize_toy_format.Missing)
           (return (,err-ctor "toy format: missing sequence element"))])]

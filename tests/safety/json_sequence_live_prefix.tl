@@ -19,17 +19,17 @@
 
 (define (expect-object [value : json.Value]) : ProbeResult
   (begin
-    (json.expect-object value "probe" ProbeError)
+    (json.expect-object (& value) "probe" ProbeError)
     ProbeOk))
 
 (define (read-element [value : json.Value]) : ProbeResult
   (begin
-    (json.sequence-element-value value 0 ProbeError)
+    (json.sequence-element-value (& value) 0 ProbeError)
     ProbeOk))
 
 (define (read-field [value : json.Value]) : ProbeResult
   (begin
-    (json.field-value value "x" ProbeError)
+    (json.field-value (& value) "x" ProbeError)
     ProbeOk))
 
 (define (bad-length [shape : i64]) : i64

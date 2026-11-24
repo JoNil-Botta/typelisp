@@ -78,12 +78,20 @@
 
 (define (index-of [values : (& values strings.Vec)] [value : (& value str)]) : i64
   (let
+    [view : (& values (Slice String)) (strings.view values)]
     [index : i64 0]
     (while (< index (strings.len values))
-      (if (string.eq (strings.get values index "") value)
+      (if (string.eq (& (array-ref view index)) value)
         (return index)
         (set! index (+ index 1))))
     -1))
+
+(define (string-at [values : (& values strings.Vec)] [index : i64]) : (&
+    values
+    str)
+  (let
+    [view : (& values (Slice String)) (strings.view values)]
+    (& (array-ref view index))))
 
 (define (json-array [value : json.Json]) : json.JsonSeq
   (match value
@@ -185,7 +193,7 @@
           (& normalized))
         (fail "classify the new dependency and its architectural role"))
       unit)
-    (if (string.eq (strings.get (& policy.roles) index "") "forbidden")
+    (if (string.eq (string-at (& policy.roles) index) "forbidden")
       (begin
         (io.eprintln
           "dependency boundary: forbidden resolved source {}"
@@ -290,6 +298,7 @@
         (if (= target 0)
           "linux-x86_64"
           "windows-x86_64"))]
+    [view : (& names (Slice String)) (strings.view names)]
     [bits : i64 mask]
     [index : i64 0]
     (while (< index (strings.len names))
@@ -297,7 +306,9 @@
         (= (% bits 2) 1)
         (set!
           command
-          (process.command-with-arg command (strings.get names index ""))))
+          (process.command-with-arg
+            command
+            (string.copy (& (array-ref view index))))))
       (set! bits (/ bits 2))
       (set! index (+ index 1)))
     command))
@@ -383,10 +394,11 @@
 
 (define (copy-string-vec [source : (& source strings.Vec)]) : strings.Vec
   (let
+    [view : (& source (Slice String)) (strings.view source)]
     [out : strings.Vec (strings.new)]
     [i : i64 0]
     (while (< i (strings.len source))
-      (strings.push-ref! (&mut out) (strings.get source i ""))
+      (strings.push-ref! (&mut out) (string.copy (& (array-ref view i))))
       (set! i (+ i 1)))
     out))
 
@@ -492,10 +504,10 @@
       (unless
         (or
           (array-ref policy.seen index)
-          (string.eq (strings.get (& policy.roles) index "") "forbidden"))
+          (string.eq (string-at (& policy.roles) index) "forbidden"))
         (io.eprintln
           "dependency boundary: stale unreachable policy source {}"
-          (strings.get (& policy.paths) index ""))
+          (string-at (& policy.paths) index))
         (fail "remove the stale support classification"))
       (set! index (+ index 1)))
     (io.println

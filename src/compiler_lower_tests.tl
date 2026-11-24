@@ -8267,10 +8267,12 @@
         [(One b) (!= a b)]
         [_ false])]
     [_ false]))
-(define (main) : i64
-  (if (same (One true) (One true))
-    (if (differ (Far (cast 1 : u32) (cast 2 : u16) (cast 3 : u8) true) (One false)) 1 2)
-    3))")
+(define (main [x : i64] [y : i64]) : i64
+  (let [a : bool (!= x 0)]
+       [b : bool (!= y 0)]
+    (if (same (One a) (One b))
+      (if (differ (Far (cast 1 : u32) (cast 2 : u16) (cast 3 : u8) a) (One b)) 1 2)
+      3)))")
 
 ;; False only for a definition that types its var as something other than Bool.
 (define (lower-test-instr-defines-bool? [instr : (& instr ir.CompilerIrInstr)]) : bool

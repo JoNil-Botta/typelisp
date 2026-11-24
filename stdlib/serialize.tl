@@ -33,15 +33,15 @@
 ;#   `object-empty() -> FieldList`,
 ;#   `object-field(name: Expr, value: Expr, rest: Expr) -> FieldList`,
 ;#   `object-finish(fields: Expr) -> Value`,
-;#   `expect-object(value: Expr, type-name: Expr, err-ctor: Expr) -> unit`, and
-;#   `field-value(object: Expr, name: Expr, err-ctor: Expr) -> Expr`.
+;#   `expect-object(value: (& Value) Expr, type-name: Expr, err-ctor: Expr) -> unit`, and
+;#   `field-value(object: (& Value) Expr, name: Expr, err-ctor: Expr) -> Expr`.
 ;# - Sequence hooks when any serialized value is a fixed array, dynamic array,
 ;#   tuple, or enum payload list:
 ;#   `sequence-empty() -> ValueList`,
 ;#   `sequence-element(index: Expr, value: Expr, rest: Expr) -> ValueList`,
 ;#   `sequence-finish(items: Expr) -> Value`,
-;#   `sequence-length(value: Expr, err-ctor: Expr) -> i64`, and
-;#   `sequence-element-value(value: Expr, index: Expr, err-ctor: Expr) -> Expr`.
+;#   `sequence-length(value: (& Value) Expr, err-ctor: Expr) -> i64`, and
+;#   `sequence-element-value(value: (& Value) Expr, index: Expr, err-ctor: Expr) -> Expr`.
 ;# - `extra-decls(T: type) -> Decls`, which may emit format-specific helper
 ;#   aliases such as `to-json` / `from-json`, or `(begin)` when the generic
 ;#   `encode` / `decode` API is enough.
@@ -61,20 +61,9 @@
 (import stdlib.comptime)
 (import stdlib.string)
 
-;; Raw representation copies for generated traversal, which reads a container
-;; it owns more than once. Each expands to raw pointer operations and adds no
-;; `unsafe` of its own, so it compiles only inside the caller's `unsafe`.
-;; Templates here take that `unsafe` only around locals they bound themselves or
-;; the generated function's own parameter, never around a caller expression:
-;; helper macros receive such view expressions and splice them unchanged.
-;: Return a representation copy of an input place; requires `unsafe`.
-(defmacro (serialize-shared-view [place : Expr]) : Expr
-  `(ptr-read (ptr-addr-of ,place)))
-
-;: Return a representation copy of `items[index]`; requires `unsafe`.
-;: The caller proves `0 <= index < array-length items`.
-(defmacro (serialize-array-element-shared-view [items : Expr] [index : Expr]) : Expr
-  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))
+;: Copy a borrowed string for strategy hooks that take owned `String` values.
+(define (copy-string [text : (& text str)]) : String
+  (string.copy text))
 
 ;: Emit the fixed length suffix from array type keys such as `array_i64_3`.
 (defmacro (array-fixed-length [T : type]) : i64
@@ -154,9 +143,13 @@
             (comptime.module-hook format "sequence-element")]
           [format-expr : comptime.Expr
             (comptime.expr-var (comptime.module-name format))]
-          ;; A literal-index element path: the finished expression moves each
-          ;; element out of the tuple `value` owns exactly once, in index order.
-          [element-value : comptime.Expr (comptime.expr-tuple-ref value index)]
+          [value-is-ref : bool
+            (string.eq (type-kind (comptime.expr-type value)) "ref")]
+          [element-value : comptime.Expr
+            (if value-is-ref
+              (comptime.expr-borrow
+                (comptime.expr-tuple-ref `(deref ,value) index))
+              (comptime.expr-tuple-ref value index))]
           [prev-index : comptime.Expr (comptime.expr-int (- index 1))]
           `(stdlib.serialize.encode-tuple-elements
             ,format-expr
@@ -530,57 +523,65 @@
         [_ (comptime.comptime-error "serialize: nested alias must be a name")])]
     [value-key : String (type-key value-type)]
     [value-kind : String (type-kind value-type)]
+    [value-expr-type : comptime.Expr (comptime.expr-type value)]
+    [is-ref : bool (string.eq (type-kind value-expr-type) "ref")]
+    [scalar-value : comptime.Expr
+      (if is-ref
+        `(deref ,value)
+        value)]
     [format-expr : comptime.Expr
       (comptime.expr-var (comptime.module-name format))]
     (match value-key
       ["bool"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-bool")]
-          `(,hook ,value))]
+          `(,hook ,scalar-value))]
       ["String"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-string")]
-          `(,hook ,value))]
+          (if is-ref
+            `(,hook (stdlib.serialize.copy-string ,value))
+            `(,hook ,value)))]
       ["i64"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-int")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       ["i32"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-int")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       ["i16"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-int")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       ["i8"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-int")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       ["u64"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-int")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       ["u32"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-int")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       ["u16"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-int")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       ["u8"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-int")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       ["f64"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-float")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       ["f32"
         (let
           [hook : comptime.Expr (comptime.module-hook format "encode-float")]
-          `(,hook ,value-type ,value))]
+          `(,hook ,value-type ,scalar-value))]
       [_
         (match value-kind
           ["box"
@@ -588,18 +589,31 @@
               [element-type : comptime.Expr (box-element-type value-type)]
               [element-alias : String
                 (comptime.string-append nested-alias-text "_box")]
+              [inner-expr : comptime.Expr
+                (if is-ref
+                  (if (string.eq
+                    (type-kind
+                      (comptime.reference-element-type value-expr-type))
+                    "box")
+                    `(& (deref (deref __serialize_value)))
+                    `__serialize_value)
+                  `(& (deref __serialize_value)))]
               `(let
                 [__serialize_value ,value]
                 (stdlib.serialize.encode-value
                   ,format-expr
                   ,element-type
                   ,(comptime.expr-var element-alias)
-                  (deref __serialize_value))))]
+                  ,inner-expr)))]
           ["struct"
             (let
               [nested-encode : comptime.Expr
                 (comptime.expr-var
-                  (comptime.string-append nested-alias-text ".encode"))]
+                  (comptime.string-append
+                    nested-alias-text
+                    (if is-ref
+                      ".encode-ref"
+                      ".encode")))]
               `(,nested-encode ,value))]
           ["array"
             (let
@@ -614,6 +628,10 @@
                 (comptime.module-hook format "sequence-finish")]
               [length-expr : comptime.Expr
                 `(stdlib.serialize.array-fixed-length ,value-type)]
+              [element-ref : comptime.Expr
+                (if is-ref
+                  `(& (array-ref (deref __serialize_value) __serialize_i))
+                  `(& (array-ref __serialize_value __serialize_i)))]
               `(let
                 [__serialize_value ,value]
                 [__serialize_items (,empty-hook)]
@@ -627,13 +645,7 @@
                         ,format-expr
                         ,element-type
                         ,(comptime.expr-var element-alias)
-                        ;; `__serialize_value` owns the consumed input and
-                        ;; the loop visits each index below its length
-                        ;; once, so each element is copied out once.
-                        (unsafe
-                          (stdlib.serialize.serialize-array-element-shared-view
-                            __serialize_value
-                            __serialize_i)))
+                        ,element-ref)
                       __serialize_items))
                   (set! __serialize_i (- __serialize_i 1)))
                 (,finish-hook __serialize_items)))]
@@ -651,8 +663,7 @@
               `(let
                 [__serialize_value ,value]
                 [__serialize_items (,empty-hook)]
-                [__serialize_i : i64
-                  (- (__tl_array-length __serialize_value) 1)]
+                [__serialize_i : i64 (- (array-length __serialize_value) 1)]
                 (while (>= __serialize_i 0)
                   (set!
                     __serialize_items
@@ -662,13 +673,7 @@
                         ,format-expr
                         ,element-type
                         ,(comptime.expr-var element-alias)
-                        ;; `__serialize_value` owns the consumed input and
-                        ;; the loop visits each index below its length
-                        ;; once, so each element is copied out once.
-                        (unsafe
-                          (stdlib.serialize.serialize-array-element-shared-view
-                            __serialize_value
-                            __serialize_i)))
+                        (& (array-ref __serialize_value __serialize_i)))
                       __serialize_items))
                   (set! __serialize_i (- __serialize_i 1)))
                 (,finish-hook __serialize_items)))]
@@ -680,6 +685,10 @@
                 (comptime.module-hook format "sequence-finish")]
               [last-index : comptime.Expr
                 (comptime.expr-int (- (tuple-element-count value-type) 1))]
+              [tuple-target : comptime.Expr
+                (if is-ref
+                  `__serialize_value
+                  `(& __serialize_value))]
               `(let
                 [__serialize_value ,value]
                 (,finish-hook
@@ -687,7 +696,7 @@
                     ,format-expr
                     ,value-type
                     ,nested-alias
-                    __serialize_value
+                    ,tuple-target
                     ,last-index
                     (,empty-hook)))))]
           ["enum"
@@ -807,10 +816,7 @@
               `(let
                 [__serialize_value ,value]
                 [__serialize_count : i64
-                  (,length-hook
-                    (unsafe
-                      (stdlib.serialize.serialize-shared-view __serialize_value))
-                    ,err-ctor)]
+                  (,length-hook (& __serialize_value) ,err-ctor)]
                 (if (!= __serialize_count ,length-expr)
                   (return (,err-ctor "serialize: sequence length mismatch"))
                   unit)
@@ -826,9 +832,7 @@
                           ,element-type
                           ,(comptime.expr-var element-alias)
                           (,element-hook
-                            (unsafe
-                              (stdlib.serialize.serialize-shared-view
-                                __serialize_value))
+                            (& __serialize_value)
                             __serialize_i
                             ,err-ctor)
                           ,err-ctor)]
@@ -850,10 +854,7 @@
               `(let
                 [__serialize_value ,value]
                 [__serialize_count : i64
-                  (,length-hook
-                    (unsafe
-                      (stdlib.serialize.serialize-shared-view __serialize_value))
-                    ,err-ctor)]
+                  (,length-hook (& __serialize_value) ,err-ctor)]
                 [__serialize_out : ,value-type
                   (__tl_make-array ,element-type __serialize_count)]
                 [__serialize_i : i64 0]
@@ -865,9 +866,7 @@
                         ,element-type
                         ,(comptime.expr-var element-alias)
                         (,element-hook
-                          (unsafe
-                            (stdlib.serialize.serialize-shared-view
-                              __serialize_value))
+                          (& __serialize_value)
                           __serialize_i
                           ,err-ctor)
                         ,err-ctor)]
@@ -886,10 +885,7 @@
               `(let
                 [__serialize_value ,value]
                 [__serialize_count : i64
-                  (,length-hook
-                    (unsafe
-                      (stdlib.serialize.serialize-shared-view __serialize_value))
-                    ,err-ctor)]
+                  (,length-hook (& __serialize_value) ,err-ctor)]
                 (if (!= __serialize_count ,length-expr)
                   (return (,err-ctor "serialize: sequence length mismatch"))
                   unit)
@@ -897,8 +893,7 @@
                   ,format-expr
                   ,value-type
                   ,nested-alias
-                  (unsafe
-                    (stdlib.serialize.serialize-shared-view __serialize_value))
+                  (& __serialize_value)
                   ,err-ctor
                   0)))]
           ["enum"
@@ -915,23 +910,18 @@
               `(let
                 [__serialize_value ,value]
                 (,expect-object-hook
-                  (unsafe
-                    (stdlib.serialize.serialize-shared-view __serialize_value))
+                  (& __serialize_value)
                   ,(comptime.expr-string type-name)
                   ,err-ctor)
                 (let
                   [__serialize_tag_value
                     (,field-value-hook
-                      (unsafe
-                        (stdlib.serialize.serialize-shared-view
-                          __serialize_value))
+                      (& __serialize_value)
                       ,(comptime.expr-string "tag")
                       ,err-ctor)]
                   [__serialize_payload_value
                     (,field-value-hook
-                      (unsafe
-                        (stdlib.serialize.serialize-shared-view
-                          __serialize_value))
+                      (& __serialize_value)
                       ,(comptime.expr-string "payload")
                       ,err-ctor)]
                   [__serialize_tag : String
@@ -940,9 +930,7 @@
                     ,format-expr
                     ,value-type
                     ,nested-alias
-                    (unsafe
-                      (stdlib.serialize.serialize-shared-view
-                        __serialize_payload_value))
+                    (& __serialize_payload_value)
                     ,err-ctor
                     __serialize_tag
                     0))))]
@@ -962,7 +950,7 @@
         [field-name : String (struct-field-name T index)]
         [field-type : comptime.Expr (struct-field-type T index)]
         [field-access : comptime.Expr
-          (comptime.expr-struct-get value field-name)]
+          (comptime.expr-borrow (comptime.expr-struct-get value field-name))]
         [nested-alias-text : String
           (comptime.string-append
             "__serialize_nested_f"
@@ -1429,21 +1417,21 @@
                   (match result
                     [(Ok _) fallback]
                     [(Err message) message]))
-                (define (encode [value : ,T]) : ,value-type
+                (define (encode-ref [value : (& value ,T)]) : ,value-type
                   (,object-finish-hook
                     (stdlib.serialize.encode-fields
                       ,format-module-expr
                       ,T
                       0
                       value)))
-                ;; `decode` owns `value`; every view below reads only that
-                ;; parameter, and no view outlives the call. Fields are decoded
-                ;; into fresh locals and passed straight to the constructor, so
-                ;; no placeholder value is ever invented.
+                (define (encode [value : ,T]) : ,value-type
+                  (encode-ref (& value)))
+                ;; `decode` owns `value`; every hook below borrows `(& value)`.
+                ;; Fields are decoded into fresh locals and passed straight to
+                ;; the constructor, so no placeholder value is ever invented.
                 (define (decode [value : ,value-type]) : Result
                   (,expect-object-hook
-                    (unsafe
-                      (stdlib.serialize.serialize-shared-view value))
+                    (& value)
                     ,(comptime.expr-string type-name)
                     ,err-ctor)
                   (,ok-ctor
@@ -1451,8 +1439,7 @@
                       ,format-module-expr
                       ,T
                       0
-                      (unsafe
-                        (stdlib.serialize.serialize-shared-view value))
+                      (& value)
                       ,err-ctor)))
                 (,extra-decls-hook ,T)))]
           [_
@@ -1484,12 +1471,14 @@
                   (match result
                     [(Ok _) fallback]
                     [(Err message) message]))
-                (define (encode [value : ,T]) : ,value-type
+                (define (encode-ref [value : (& value ,T)]) : ,value-type
                   (stdlib.serialize.encode-value
                     ,format-module-expr
                     ,T
                     ,root-alias
                     value))
+                (define (encode [value : ,T]) : ,value-type
+                  (encode-ref (& value)))
                 (define (decode [value : ,value-type]) : Result
                   (let
                     [__serialize_decoded

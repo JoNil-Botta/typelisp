@@ -207,8 +207,28 @@
     (when (= (% count 2) 1) (byte_le.push-u16! (&mut out) 0))
     (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
+;; The label of an earlier `.xdata` record holding exactly `bytes`, or "".
+(define (compiler-backend-object-unwind-record-label
+  [xdata : (& xdata cobj.CompilerObjectDataRecordBuilder)]
+  [bytes : (& bytes str)]) : String
+  (let
+    [found : String ""]
+    [k : i64 (- xdata.count 1)]
+    (while (and (> k 0) (= (string.string-length (& found)) 0))
+      (match (& (array-ref xdata.slots k))
+        [(Bytes record)
+          (when
+            (string.eq record bytes)
+            (match (& (array-ref xdata.slots (- k 1)))
+              [(Label label) (set! found (string.copy label))]
+              [_ unit]))]
+        [_ unit])
+      (-= k 1))
+    found))
+
 ;; Every range supplies its own unwind bytes; related RVAs are emitted together
 ;; so no generated entry can accidentally inherit another entry's frame plan.
+;; Ranges with identical bytes share the first range's `.xdata` record.
 (define (compiler-backend-object-add-unwind
   [parts : object_target.CompilerBackendObjectTargetParts]
   [entry : String]
@@ -245,19 +265,27 @@
           (string.copy (& end))
           (Text)
           (Function)))]
-    [unwind : String (str_cat.str-cat (string.copy (& entry)) "$unwind")]
+    [shared : String
+      (compiler-backend-object-unwind-record-label (& with-end.xdata) (& bytes))]
+    [new? : bool (= (string.string-length (& shared)) 0)]
+    [unwind : String
+      (if new?
+        (str_cat.str-cat (string.copy (& entry)) "$unwind")
+        shared)]
     [out : object_target.CompilerBackendObjectTargetParts
-      (object_target.compiler-backend-object-add-xdata
+      (if new?
         (object_target.compiler-backend-object-add-xdata
           (object_target.compiler-backend-object-add-xdata
-            (object_target.compiler-backend-object-symbol-local-section
-              with-end
-              (string.copy (& unwind))
-              (Xdata)
-              (Data))
-            (Align 4))
-          (Label (string.copy (& unwind))))
-        (Bytes bytes))]
+            (object_target.compiler-backend-object-add-xdata
+              (object_target.compiler-backend-object-symbol-local-section
+                with-end
+                (string.copy (& unwind))
+                (Xdata)
+                (Data))
+              (Align 4))
+            (Label (string.copy (& unwind))))
+          (Bytes bytes))
+        with-end)]
     [targets : (Array String 3) (array (string.copy (& entry)) end unwind)]
     (for [i (iterator.range 0 3)]
       (let

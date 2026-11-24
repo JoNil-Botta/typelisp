@@ -91,14 +91,10 @@
     [entries : (& entries package_lock_entry_vec.Vec)]
     [index : i64]
     [alias : String]) : bool
-    (string.eq
-      (__tl-project-field
-        (package_lock_entry_vec.get
-          entries
-          index
-          (package_lock_core.package-lock-entry-list-fallback))
-        alias)
-      alias)))
+    (let
+      [view : (& entries (Slice package_lock_core.PackageLockEntry))
+        (package_lock_entry_vec.view entries)]
+      (string.eq (& (array-ref view index).alias) alias))))
 
 (cfg
   test

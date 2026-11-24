@@ -32186,7 +32186,7 @@
       (opt.opt-cfg-index-fill-id-map! (&mut slots) (& labels) count)
       (for [id (iterator.range 0 count)]
         (let
-          [slot : i64 (opt.opt-cfg-index-id-slot (array-ref labels id) mask)]
+          [slot : i64 (ir.compiler-ir-label-id-slot (array-ref labels id) mask)]
           [found : bool false]
           (while (not found)
             (+= probes 1)
@@ -58589,7 +58589,7 @@ done:
 ;; The cycle under a chain of `depth` callers, each handing its descriptor to
 ;; the one below and the last to the cycle's first member. Every row on the
 ;; chain is the cycle's element summary however deep it is: the fixpoint solves
-;; one call-graph component at a time and has no round budget to run out of.
+;; one call-graph component at a time, so the chain's depth costs no rounds.
 (define (opt-call-memory-chain-symbol [depth : i64]) : i64
   (opt-test-symbol
     (str_cat.str-cat "call_memory_chain" (string.int->string depth))))
@@ -58640,6 +58640,167 @@ done:
   (match (opt_i64_i64_map.get (& summaries) (ir.compiler-ir-symbol-id name))
     [(LookupFound summary) (not (= (bit-and summary flag) 0))]
     [(LookupMissing) false]))
+
+;; A LADDER of `rungs` mutually recursive members: each hands its descriptor to
+;; the rung below and the rung above (the ends call themselves), and only
+;; `writer` stores through the element buffer. The least fixed point is the
+;; element bit on every rung, but a sweep carries it one rung against the sweep
+;; order, so with the writer at one end or the other some 200-rung ladder needs
+;; more sweeps than opt-call-memory-scc-round-limit and is committed `unknown`.
+(define (opt-call-memory-ladder-symbol [rung : i64]) : i64
+  (opt-test-symbol
+    (str_cat.str-cat "call_memory_ladder" (string.int->string rung))))
+
+(define (opt-call-memory-ladder-calls [rung : i64] [rungs : i64]) : ir.CompilerIrInstrSeq
+  (opt-test-instrs
+    (ir.CompilerIrInstr.Call
+      5
+      (opt-call-memory-ladder-symbol
+        (if (> rung 0)
+          (- rung 1)
+          rung))
+      (One (Var 0))
+      (Unit))
+    (ir.CompilerIrInstr.Call
+      6
+      (opt-call-memory-ladder-symbol
+        (if (< (+ rung 1) rungs)
+          (+ rung 1)
+          rung))
+      (One (Var 0))
+      (Unit))))
+
+(define (opt-call-memory-ladder-functions
+  [rung : i64]
+  [rungs : i64]
+  [writer : i64]) : ir.CompilerIrFunctionSeq
+  (if (= rung rungs)
+    (ir.compiler-ir-function-seq-empty)
+    (ir.compiler-ir-function-seq-prepend
+      (&
+        (opt-call-memory-test-function
+          (opt-call-memory-ladder-symbol rung)
+          (opt-load-cse-descriptor-params)
+          (if (= rung writer)
+            (opt-test-instrs-with-tail
+              (opt-call-memory-ladder-calls rung rungs)
+              (ir.CompilerIrInstr.Load 2 (Var 0) (U64))
+              (irt.instr "%3 = gep %2, 4 : u64")
+              (irt.instr "store_ptr %3, 7 : u64"))
+            (opt-call-memory-ladder-calls rung rungs))))
+      (& (opt-call-memory-ladder-functions (+ rung 1) rungs writer)))))
+
+;; 0: the exact element summary on every rung; 1: every rung `unknown` (the
+;; round cap fired); 2: anything else, which is unsound or a partial fallback.
+(define (opt-call-memory-ladder-verdict [rungs : i64] [writer : i64]) : i64
+  (let
+    [rows : opt_i64_i64_map.Map
+      (opt.opt-call-memory-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& (opt-call-memory-ladder-functions 0 rungs writer))
+        (* rungs 2))]
+    [unknown : i64 0]
+    [element : i64 0]
+    (for [rung (iterator.range 0 rungs)]
+      (let
+        [name : i64 (opt-call-memory-ladder-symbol rung)]
+        (when
+          (opt-call-memory-summary-has?
+            rows
+            name
+            (opt.opt-call-memory-unknown-bit))
+          (+= unknown 1))
+        (when
+          (opt-call-memory-summary-has?
+            rows
+            name
+            (opt.opt-call-memory-element-bit))
+          (+= element 1))))
+    (cond
+      [(= unknown rungs) 1]
+      [(and (= unknown 0) (= element rungs)) 0]
+      [else 2])))
+
+;; The program index, call-memory and direct-call-clean reach a program past
+;; opt-summary-function-limit; the global-cell mod-ref row stays capped there.
+(define (opt-program-summary-cap-test-text [padding : i64]) : String
+  (let
+    [buf : byte_buf.ByteBuf
+      (byte_buf.append-string
+        (byte_buf.new)
+        "global @cell : i64 = 0
+         function @main() -> i64 vars 0 {
+         entry:
+           return 0
+         }
+         function @writer() -> i64 vars 0 {
+         entry:
+           store @cell, 7 : i64
+           return 0
+         }")]
+    (for [at (iterator.range 0 padding)]
+      (set!
+        buf
+        (byte_buf.append-string
+          buf
+          (str_cat.str-cat
+            "
+             function @summary_pad"
+            (string.int->string at)
+            "() -> i64 vars 0 {
+             entry:
+               return 0
+             }"))))
+    (byte_buf.to-string buf)))
+
+;; 1: call-memory and direct-call-clean carry `summary_pad0`; 2: the cell table
+;; is built.
+(define (opt-program-summary-cap-test-bits [padding : i64]) : i64
+  (match (irt.program (opt-program-summary-cap-test-text padding))
+    [(Program globals functions _ _authority)
+      (let
+        [summaries : opt.OptProgramSummaries
+          (opt.opt-build-program-summaries
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& globals)
+            (& (ir.compiler-ir-extern-seq-empty))
+            (& functions)
+            2)]
+        [pad : i64 (ir.compiler-ir-symbol-id (opt-test-symbol "summary_pad0"))]
+        (bit-or
+          (if (and
+            (opt_i64_i64_map.contains? (& summaries.call-memory) pad)
+            (opt_i64_i64_map.contains? (& summaries.direct-call-clean) pad))
+            1
+            0)
+          (if summaries.global-cell.mod-ref.built?
+            2
+            0)))]))
+
+(define (compiler-optimize-program-summary-cap-self-test) : i64
+  (let
+    [low : i64 (opt-call-memory-ladder-verdict 200 0)]
+    [high : i64 (opt-call-memory-ladder-verdict 200 199)]
+    (cond
+      ;; A small component settles exactly in either orientation.
+      [(not (= (opt-call-memory-ladder-verdict 8 0) 0)) 1]
+      [(not (= (opt-call-memory-ladder-verdict 8 7) 0)) 2]
+      [(or (= low 2) (= high 2)) 3]
+      [(= (+ low high) 0) 4]
+      [(not (= (opt-program-summary-cap-test-bits 2) 3)) 5]
+      [(not
+          (=
+            (opt-program-summary-cap-test-bits (opt.opt-summary-function-limit))
+            1))
+        6]
+      [else 42])))
+
+(test
+  program-summary-cap
+  (test.assert-i64-eq
+    (compiler-optimize-program-summary-cap-self-test)
+    42
+    "call-memory caps a huge component to unknown; P-B summaries pass the 1024-function limit, mod-ref does not"))
 
 ;; SUM-3 fixtures: one function that writes an element of a global array
 ;; through the global's own data slot, and the global table that types the
@@ -88747,3 +88908,321 @@ inl.entry.0.cont:
                     (test.assert-true
                       (not (string.contains (& reader-text) "@lib_const_cell"))
                       "executable with main still folds constant global"))))])]))))
+
+(define (opt-cvp-range-test-render [src : String]) : String
+  (let
+    [prog : ir.CompilerIrProgram (irt.program src)]
+    (match (opt.optimize-program-with-spans-and-level
+      (& prog)
+      (ir.compiler-source-spans-empty)
+      2)
+      [(opt.CompilerOptimizedProgram.Program opt-prog _)
+        (match (& opt-prog)
+          [(Program _ fns _ _)
+            (if (> (ir.compiler-ir-function-seq-count (& fns)) 0)
+              (ir.compiler-ir-function-render
+                (cis.InternStructuralSessionHandle 0)
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (& (array-ref fns.slots 0)))
+              "")])])))
+
+(test
+  cvp-range-wrapping-safe-and-rewrites
+  ;; 1. Wrapping safety: unbounded `x >= 0` + 1 may wrap to INT64_MIN, so
+  ;;    `add x, 1 >= 0` must NOT fold to true and must NOT retype `% 1000000007` to u64.
+  (let
+    [wrap-ir : String
+      (opt-cvp-range-test-render
+        "function @wrap_add(x=%0:i64) -> i64 vars 6 {
+         entry:
+           %1 = ge %0, 0 : i64
+           branch %1, pos, done
+         pos:
+           %2 = add %0, 1 : i64
+           %3 = safe_mod %2, 1000000007 : i64
+           return %3
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (string.contains (& wrap-ir) "safe_mod ")
+      "wrapping add keeps mod")
+    (test.assert-true
+      (not (string.contains (& wrap-ir) "1000000007 : u64"))
+      "wrapping add must not assume nsw or retype mod to u64"))
+  ;; 2. KnownBits + Interval bounds-check discharge: `(x & 0xFFFFFFFF) >> 27 < 32`.
+  (let
+    [kb-ir : String
+      (opt-cvp-range-test-render
+        "function @kb_bce(x=%0:i64) -> i64 vars 5 {
+         entry:
+           %1 = bit_and %0, 4294967295 : i64
+           %2 = shr %1, 27 : i64
+           bounds_check %2, 32 message \"kb\"
+           return %2
+         }")]
+    (test.assert-true
+      (not (string.contains (& kb-ir) "bounds_check"))
+      "cvp_range discharges (x & 0xFFFFFFFF) >> 27 < 32 bounds check"))
+  ;; 3. Mask by `len - 1` with dominating `len > 0` discharges BoundsCheck.
+  (let
+    [mask-ir : String
+      (opt-cvp-range-test-render
+        "function @mask_bce(x=%0:i64, len=%1:i64) -> i64 vars 6 {
+         entry:
+           %2 = gt %1, 0 : i64
+           branch %2, ok, done
+         ok:
+           %3 = sub %1, 1 : i64
+           %4 = bit_and %0, %3 : i64
+           bounds_check %4, %1 message \"mask\"
+           return %4
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (not (string.contains (& mask-ir) "bounds_check"))
+      "cvp_range discharges x & (len - 1) bounds check when len > 0"))
+  ;; 4. Retype RoundUp signed div/mod to u64 when dividend >= 0, keep RoundDown (7) signed.
+  (let
+    [div-ir : String
+      (opt-cvp-range-test-render
+        "function @div_retype(x=%0:i64) -> i64 vars 7 {
+         entry:
+           %1 = bit_and %0, 65535 : i64
+           %2 = safe_mod %1, 1000000007 : i64
+           %3 = safe_div %1, 3 : i64
+           %4 = safe_div %1, 7 : i64
+           %5 = add %2, %3 : i64
+           %6 = add %5, %4 : i64
+           return %6
+         }")]
+    (test.assert-true
+      (string.contains (& div-ir) "1000000007 : u64")
+      "cvp_range retypes non-negative RoundUp mod 1000000007 to u64")
+    (test.assert-true
+      (string.contains (& div-ir) "3 : u64")
+      "cvp_range retypes non-negative RoundUp div 3 to u64")
+    (test.assert-true
+      (string.contains (& div-ir) "7 : i64")
+      "cvp_range keeps RoundDown div 7 signed"))
+  ;; 5. spmd_foreach_2d shape: `0 < w` + trap on `8 > INT64_MAX / w` proves `y * w >= 0`
+  ;;    and `w <= INT64_MAX - 4`.
+  (let
+    [spmd-ir : String
+      (opt-cvp-range-test-render
+        "function @spmd_guard(w=%0:i64, y=%1:i64) -> i64 vars 12 {
+         entry:
+           %2 = lt 0, %0 : i64
+           branch %2, chk_y, exit
+         chk_y:
+           %3 = ge %1, 0 : i64
+           branch %3, chk_y2, exit
+         chk_y2:
+           %4 = lt %1, 8 : i64
+           branch %4, chk_ovf, exit
+         chk_ovf:
+           %5 = div 9223372036854775807, %0 : i64
+           %6 = gt 8, %5 : i64
+           branch %6, trap, ok
+         trap:
+           bounds_check 0, 0 message \"ovf\"
+           jump ok
+         ok:
+           %7 = mul %1, %0 : i64
+           %8 = ge %7, 0 : i64
+           branch %8, good, exit
+         good:
+           %9 = lt %0, 9223372036854775803 : i64
+           branch %9, ret_prod, exit
+         ret_prod:
+           return %7
+         exit:
+           return 0
+         }")]
+    (test.assert-true
+      (not (string.contains (& spmd-ir) "ge %7, 0"))
+      "cvp_range folds y * w >= 0 after INT64_MAX / w overflow trap")
+    (test.assert-true
+      (not (string.contains (& spmd-ir) "9223372036854775803"))
+      "cvp_range folds w < INT64_MAX - 4 after INT64_MAX / w overflow trap"))
+  ;; 6. Unroll no-wrap precondition: bounded linear recurrence with `% 1000000007`
+  ;;    emits upper-bound guard in __unroll_guard and retypes __unroll_body mod to u64.
+  (let
+    [unroll-ir : String
+      (opt-cvp-range-test-render
+        "function @mod_loop(n=%0:i64) -> i64 vars 12 {
+         entry:
+           %1 = lt 0, %0 : i64
+           branch %1, loop, exit
+         loop:
+           %2 = phi [0, entry], [%8, loop] : i64
+           %3 = phi [1, entry], [%7, loop] : i64
+           %4 = mul %3, 31 : i64
+           %5 = mul %2, 17 : i64
+           %6 = add %5, 7 : i64
+           %9 = add %4, %6 : i64
+           %7 = mod %9, 1000000007 : i64
+           %8 = add %2, 1 : i64
+           %10 = lt %8, %0 : i64
+           branch %10, loop, exit
+         exit:
+           %11 = phi [1, entry], [%7, loop] : i64
+           return %11
+         }")]
+    (test.assert-true
+      (string.contains (& unroll-ir) "542551294462045608")
+      "opt-unroll emits loop-invariant no-wrap upper-bound check in __unroll_guard")
+    (test.assert-true
+      (string.contains (& unroll-ir) "1000000007 : u64")
+      "cvp_range retypes __unroll_body mod 1000000007 to u64")
+    (test.assert-true
+      (string.contains (& unroll-ir) "1000000007 : i64")
+      "scalar tail keeps exact signed i64 wrapping mod 1000000007"))
+  ;; 7. Width preservation: widening `bit_and %bool, 255 : u64` must NOT fold
+  ;;    to `mov %bool : u64` (which would narrow a subsequent 64-bit bit_or).
+  (let
+    [widen-ir : String
+      (opt-cvp-range-test-render
+        "function @widen_bool(a=%0:bool, b=%1:bool) -> u64 vars 6 {
+         entry:
+           %2 = bit_and %0, 255 : u64
+           %3 = bit_and %1, 255 : u64
+           %4 = shl %3, 8 : i64
+           %5 = bit_or %2, %4 : u64
+           return %5
+         }")]
+    (test.assert-true
+      (string.contains (& widen-ir) "bit_and %0, 255 : u64")
+      "cvp_range preserves widening bit_and %bool, 255 : u64"))
+  ;; 8. Switch default-arm soundness: when a case label equals default-label,
+  ;;    `cvp_range` must NOT refine the discriminant to that single case value.
+  (let
+    [sw-ir : String
+      (opt-cvp-range-test-render
+        "function @switch_shared_def(tag=%0:i64) -> i64 vars 6 {
+         entry:
+           switch %0 base 0 [0:c0, 1:c1, 2:def] default def
+         c0:
+           return 10
+         c1:
+           return 20
+         def:
+           %1 = eq %0, 2 : i64
+           branch %1, is2, other
+         is2:
+           return 30
+         other:
+           return 40
+         }")]
+    (test.assert-true
+      (string.contains (& sw-ir) "return 40")
+      "switch default sharing a case label keeps non-case default path alive")))
+
+(test
+  cvp-range-casts-keep-target-signedness
+  ;; 1. u8 -> i8 reinterprets 128..255 as negative: `lt y, 0` must stay live.
+  (let
+    [u8-i8-ir : String
+      (opt-cvp-range-test-render
+        "function @u8_to_i8(x=%0:i64) -> i64 vars 6 {
+         entry:
+           %1 = bit_and %0, 255 : i64
+           %2 = cast %1 : i64 to u8
+           %3 = cast %2 : u8 to i8
+           %4 = lt %3, 0 : i8
+           branch %4, neg, done
+         neg:
+           return 1
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (string.contains (& u8-i8-ir) "return 1")
+      "u8 -> i8 cast must not keep the unsigned range"))
+  ;; 2. i8 -> u8 / u32 sign-extends -128..-1 to large unsigned values: the
+  ;;    all-ones compares must stay live.
+  (let
+    [i8-u-ir : String
+      (opt-cvp-range-test-render
+        "function @i8_to_unsigned(x=%0:i64) -> i64 vars 10 {
+         entry:
+           %1 = bit_and %0, 127 : i64
+           %2 = sub %1, 128 : i64
+           %3 = cast %2 : i64 to i8
+           %4 = cast %3 : i8 to u8
+           %5 = eq %4, 255 : u8
+           branch %5, max8, next
+         max8:
+           return 1
+         next:
+           %6 = cast %3 : i8 to u32
+           %7 = eq %6, 4294967295 : u32
+           branch %7, max32, done
+         max32:
+           return 2
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (string.contains (& i8-u-ir) "return 1")
+      "i8 -> u8 cast must not keep the negative signed range")
+    (test.assert-true
+      (string.contains (& i8-u-ir) "return 2")
+      "i8 -> u32 cast must not keep the negative signed range"))
+  ;; 3. Narrowing to Bool tests `!= 0`, not bit 0: `x & -2` has bit 0 known
+  ;;    zero yet may be true, so the check against 1 must stay.
+  (let
+    [bool-ir : String
+      (opt-cvp-range-test-render
+        "function @to_bool(x=%0:i64) -> i64 vars 5 {
+         entry:
+           %1 = bit_and %0, -2 : i64
+           %2 = cast %1 : i64 to Bool
+           %3 = cast %2 : Bool to i64
+           bounds_check %3, 1 message \"bool\"
+           return %3
+         }")]
+    (test.assert-true
+      (string.contains (& bool-ir) "bounds_check")
+      "narrowing to Bool must not fold from bit 0 alone")))
+
+(test
+  cvp-range-scalar-select
+  ;; 1. A scalar select joins its arms' ranges: both arms are in [0, 7], so the
+  ;;    bounds check on the result is discharged.
+  (let
+    [join-ir : String
+      (opt-cvp-range-test-render
+        "function @sel_join(x=%0:i64, y=%1:i64, c=%2:Bool) -> i64 vars 7 {
+         entry:
+           %3 = bit_and %0, 7 : i64
+           %4 = bit_and %1, 7 : i64
+           %5 = select %2, %3, %4 lanes 0 : i64
+           bounds_check %5, 8 message \"sel\"
+           return %5
+         }")]
+    (test.assert-true
+      (not (string.contains (& join-ir) "bounds_check"))
+      "cvp_range discharges a bounds check on a scalar select of in-range arms"))
+  ;; 2. A dominating `x > 10` makes the mask `x > 5` constant: the scalar select
+  ;;    folds to its true arm.
+  (let
+    [fold-ir : String
+      (opt-cvp-range-test-render
+        "function @sel_fold(x=%0:i64) -> i64 vars 6 {
+         entry:
+           %1 = gt %0, 10 : i64
+           branch %1, big, done
+         big:
+           %2 = gt %0, 5 : i64
+           %3 = select %2, 100, 200 lanes 0 : i64
+           return %3
+         done:
+           return 0
+         }")]
+    (test.assert-true
+      (and
+        (not (string.contains (& fold-ir) "select"))
+        (not (string.contains (& fold-ir) "200")))
+      "cvp_range folds a scalar select with a range-constant mask")))

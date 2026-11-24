@@ -56,7 +56,32 @@
 (define (md-table-row-list-ref
   [items : (& items md_table_rows.Vec)]
   [index : i64]) : MdTableRow
-  (md_table_rows.get items index (Row (svec.new))))
+  (if (and (>= index 0) (< index (md_table_rows.len items)))
+    (let
+      [view : (& items (Slice MdTableRow)) (md_table_rows.view items)]
+      (match (& (array-ref view index))
+        [(Row cells) (Row (svec.clone-vec cells))]))
+    (Row (svec.new))))
+
+(define (md-block-copy [block : (& block MdBlock)]) : MdBlock
+  (match block
+    [(Heading level text) (Heading level (string.copy text))]
+    [(Paragraph text) (Paragraph (string.copy text))]
+    [(Blockquote lines) (Blockquote (svec.clone-vec lines))]
+    [(BulletList items) (BulletList (svec.clone-vec items))]
+    [(NumberedList items) (NumberedList (svec.clone-vec items))]
+    [(CodeFence lang info body)
+      (CodeFence (string.copy lang) (string.copy info) (string.copy body))]
+    [(Table headers rows)
+      (let
+        [count : i64 (md_table_rows.len rows)]
+        [copied : md_table_rows.Vec (md_table_rows.with-capacity count)]
+        [i : i64 0]
+        (while (< i count)
+          (md_table_rows.push-ref! (&mut copied) (md-table-row-list-ref rows i))
+          (set! i (+ i 1)))
+        (Table (svec.clone-vec headers) copied))]
+    [(Blank) Blank]))
 
 (define (md-block-list-empty) : md_blocks.Vec
   (md_blocks.new))
@@ -110,7 +135,9 @@
   (if (if (>= index 0)
     (< index (md-block-list-count items))
     false)
-    (Some (md_blocks.get items index Blank))
+    (let
+      [view : (& items (Slice MdBlock)) (md_blocks.view items)]
+      (Some (md-block-copy (& (array-ref view index)))))
     No))
 
 (define (md-check-heading?
@@ -966,23 +993,25 @@
   (let
     [seen : svec.Vec (svec.new)]
     [out : String ""]
+    [view : (& blocks (Slice MdBlock)) (md_blocks.view (& blocks))]
+    [count : i64 (array-length view)]
     [i : i64 0]
-    (while (< i (md-block-list-count blocks))
-      (match (md_blocks.get (& blocks) i MdBlock.Blank)
+    (while (< i count)
+      (match (& (array-ref view i))
         [(Heading _ text)
           (svec.push-ref!
             (&mut seen)
-            (doc_bridge.bridge-doc-render-anchor text))]
+            (doc_bridge.bridge-doc-render-anchor (string.copy text)))]
         [_ unit])
       (set! i (+ i 1)))
     (set! i 0)
-    (while (< i (md-block-list-count blocks))
+    (while (< i count)
       (let
-        [block : MdBlock (md_blocks.get (& blocks) i MdBlock.Blank)]
-        (match block
+        [block : MdBlock (md-block-copy (& (array-ref view i)))]
+        (match (& block)
           [(Heading _ text)
             (let
-              [fragment : String (md-heading-fragment (& text))]
+              [fragment : String (md-heading-fragment text)]
               [alias : String (string.copy (& fragment))]
               [suffix : i64 0]
               (unless
@@ -1004,11 +1033,7 @@
                     (doc_bridge.bridge-doc-html-escape alias)
                     "\"></a>\n"))))]
           [_ unit])
-        (set!
-          out
-          (str_cat.str-cat
-            out
-            (md-render-block (md_blocks.get (& blocks) i MdBlock.Blank))))
+        (set! out (str_cat.str-cat out (md-render-block block)))
         (set! i (+ i 1))))
     out))
 

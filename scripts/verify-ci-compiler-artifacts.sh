@@ -23,11 +23,11 @@ fixture_env() {
 }
 fixture_cli() { fixture_env "$ROOT/scripts/ci-compiler-artifact.sh" "$@"; }
 source=$work/source
-mkdir -p "$source/src" "$source/stdlib" "$source/tests/integration" "$source/scripts"
+mkdir -p "$source/src" "$source/stdlib" "$source/tests/integration/manifest.d" "$source/scripts"
 printf '(define (main) : i64 42)\n' > "$source/src/main.tl"
 printf '; fixture stdlib\n' > "$source/stdlib/prelude.tl"
 printf 'fixture\n' > "$source/tests/data.txt"
-printf 'fixture|all|0,1,2|src/main.tl|42|-|-|-|-\n' > "$source/tests/integration/native.manifest"
+printf 'fixture|all|0,1,2|src/main.tl|42|-|-|-|-\n' > "$source/tests/integration/manifest.d/fixture.manifest"
 printf '*.tl text eol=lf\n*.sh text eol=lf\n' > "$source/.gitattributes"
 # A small gate table with the real role producers, and its lane assignment:
 # linux-1 isolates build-invariance with its consumer; both hosts duplicate

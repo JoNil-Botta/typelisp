@@ -1,0 +1,29 @@
+# Selfhost compile manifest: documentation generator and source formatter modules.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|selfhost_doc_extract|src/doc_extract.tl|assembly|none|direct
+end
+
+case|selfhost_doc_expand|src/doc_expand.tl|assembly|none|direct
+end
+
+case|selfhost_doc_html|src/doc_html.tl|assembly|none|direct
+end
+
+case|selfhost_doc_render|src/doc_render.tl|assembly|none|direct
+end
+
+case|selfhost_doc_test|src/doc_test.tl|assembly|none|direct
+end
+
+case|selfhost_format_cst|src/format_cst.tl|assembly|none|direct
+end
+
+case|selfhost_format_render_buf|src/format_render_buf.tl|assembly|none|direct
+end
+
+case|selfhost_format_rules|src/format_rules.tl|assembly|none|direct
+end
+
+case|selfhost_format_tokens|src/format_tokens.tl|assembly|none|direct
+end

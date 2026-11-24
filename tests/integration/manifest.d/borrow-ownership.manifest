@@ -1,0 +1,63 @@
+# Native integration cases: borrows, ownership, loans, moves, clones, replace, and aliases.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+ownership_split_many|all|0,1,2|tests/integration/ownership_split_many.tl|42|-|-|-|stage-stdlib
+mut_borrow_field_writeback|all|0,1,2|tests/integration/mut_borrow_field_writeback.tl|42|-|-|-|-
+nested_mut_borrow_pointer|all|0,1,2|tests/integration/nested_mut_borrow_pointer.tl|5|-|-|-|-
+nested_mut_borrow_receiver|all|0,1,2|tests/integration/nested_mut_borrow_receiver.tl|5|-|-|-|-
+nested_mut_borrow_storage|all|0,1,2|tests/integration/nested_mut_borrow_storage.tl|42|-|-|-|-
+borrowed_nested_variant|all|-,0,2|tests/integration/borrowed_nested_variant.tl|36|-|-|-|-
+replace_fixed_array_elements|all|-|tests/integration/replace_fixed_array_elements.tl|42|-|-|stdlib/string.tl stdlib/test.tl|-
+replace_places|all|-|tests/integration/replace_places.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/comptime.tl|-
+replace_large_values|all|-|tests/integration/replace_large_values.tl|42|-|-|stdlib/test.tl|-
+auto_borrow_call|all|-|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl|-
+mut_to_immut_reborrow_call|all|-|tests/integration/mut_to_immut_reborrow_call.tl|42|-|-|-|-
+borrow_reborrow_stored_reference|all|-|tests/integration/borrow_reborrow_stored_reference.tl|0|-|-|-|-
+borrow_reborrow_stored_reference_aggregate|all|-|tests/integration/borrow_reborrow_stored_reference_aggregate.tl|42|-|-|-|-
+two_phase_mutable_call_borrow|all|-|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-|-
+borrow_local_frame_storage|all|0,1,2|tests/integration/borrow_local_frame_storage.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl|-
+replace_handle_element|all|-,0,2|tests/integration/replace_handle_element.tl|42|-|-|stdlib/string.tl|-
+borrowed_handle_places_values|all|0,1,2|tests/integration/borrowed_handle_places.tl|42|-|values|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|stage-stdlib
+borrowed_handle_places_empty|all|0,1,2|tests/integration/borrowed_handle_places.tl|42|-|empty|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|stage-stdlib
+borrowed_handle_places_bounds|all|0,2|tests/integration/borrowed_handle_places.tl|134|-|bounds|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|stage-stdlib+expected-stderr:tl: $SRC:74:33: array index out of bounds: index=4 length=4\n
+copy_call_word|all|-|tests/integration/copy_call_word.tl|42|-|-|-|-
+copy_call_shifted_step_zero|all|0,1,2|tests/integration/copy_call_shifted_step.tl|42|-|0|-|-
+copy_call_shifted_step_one|all|0,1,2|tests/integration/copy_call_shifted_step.tl|42|-|1|-|-
+copy_call_shifted_step_four|all|0,1,2|tests/integration/copy_call_shifted_step.tl|42|-|4|-|-
+copy_call_shifted_step_nine|all|0,1,2|tests/integration/copy_call_shifted_step.tl|42|-|9|-|-
+copy_call_next_index|all|-,2|tests/integration/copy_call_next_index.tl|42|-|-|-|-
+clone_reference_referent|all|0,1,2|tests/integration/clone_reference_referent.tl|42|-|-|-|-
+clone_read_receiver_retained|all|0,1,2|tests/integration/clone_read_receiver_retained.tl|7|-|-|-|-
+clone_read_receiver_lent|all|0,1,2|tests/integration/clone_read_receiver_lent.tl|42|-|-|-|-
+clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+clone_deep_expression|all|-,0,1,2|tests/integration/clone_deep_expression.tl|42|-|-|clone_deep_expression_owner.tl stdlib/arena.tl stdlib/clone.tl stdlib/comptime.tl stdlib/hashmap.tl stdlib/string.tl stdlib/vector.tl|-
+clone_macro_handoff|all|-|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
+clone_dynarray_scalar_bulk|all|-|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+clone_generated_vector_element|all|-|tests/integration/clone_generated_vector_element.tl|42|-|-|stdlib/vector.tl stdlib/string.tl|-
+clone_imported_nominal_direct|all|-|tests/integration/clone_imported_nominal_direct.tl|41|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
+clone_imported_nominal_wrapper|all|-|tests/integration/clone_imported_nominal_wrapper.tl|42|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
+mutable_reference_array|all|-|tests/integration/mutable_reference_array.tl|42|-|-|-|-
+mutable_reference_by_value_writeback|all|-|tests/integration/mutable_reference_by_value_writeback.tl|42|-|-|-|-
+mutable_reference_by_value_writeback_growth|all|-|tests/integration/mutable_reference_by_value_writeback_growth.tl|42|-|-|-|-
+mut_borrow_narrow_writeback|all|0,1,2|tests/integration/mut_borrow_narrow_writeback.tl|42|-|-|-|-
+mutable_reference_disjoint_fields|all|-|tests/integration/mutable_reference_disjoint_fields.tl|42|-|-|-|-
+by_value_memory_aggregate_explicit_mut|all|-|tests/integration/by_value_memory_aggregate_explicit_mut.tl|42|-|-|-|-
+borrowed_pattern_descriptor|all|0,1,2|tests/integration/borrowed_pattern_descriptor.tl|42|-|-|-|-
+by_value_param_private_storage|all|-,0,1,2|tests/integration/by_value_param_private_storage.tl|42|-|-|-|-
+by_value_aggregate_abi|all|-|tests/integration/by_value_aggregate_abi.tl|42|-|-|stdlib/string.tl|-
+lifetime_nullary_variant|all|-|tests/integration/lifetime_nullary_variant.tl|42|-|-|-|-
+lifetime_enum_borrow_return|all|-|tests/integration/lifetime_enum_borrow_return.tl|42|-|-|stdlib/string.tl|-
+lifetime_shortening_variance|all|-|tests/integration/lifetime_shortening_variance.tl|42|-|-|-|-
+borrowed_enum_struct_pattern|all|0,1,2|tests/integration/borrowed_enum_struct_pattern.tl|42|-|-|struct_match_pattern_geom.tl stdlib/string.tl|-
+borrowed_struct_pattern_string|all|0,1,2|tests/integration/borrowed_struct_pattern_string.tl|42|-|-|stdlib/string.tl stdlib/io.tl|stage-stdlib
+borrowed_enum_inline_struct_payload|all|-|tests/integration/borrowed_enum_inline_struct_payload.tl|42|-|-|-|-
+alias_global_shift|all|-|tests/integration/alias_global_shift.tl|42|-2158726342577467478\n|5 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+alias_global_shift_abort|all|-|tests/integration/alias_global_shift.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:35:53: array index out of bounds: index=18 length=18\n
+alias_row_overflow|all|-|tests/integration/alias_row_overflow.tl|42|-6331339880869039956\n|40 0|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+alias_row_overflow_abort|all|-,2|tests/integration/alias_row_overflow.tl|134|-|40 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:38:35: array index out of bounds: index=40 length=40\n
+alias_typed_word|all|-|tests/integration/alias_typed_word.tl|42|8 301585711923\n|0 12,-34,56,7,-8,9,10,11|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
+alias_typed_word_abort|all|-,2|tests/integration/alias_typed_word.tl|134|-|1 12,-34,56,7,-8,9,10,11|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:72:55: array index out of bounds: index=8 length=8\n
+ownership_certified_scalar_control|all|0,1,2|tests/integration/ownership_certified_scalar_control.tl|42|-|-|-|-
+replace_place_paths|all|0,1,2|tests/integration/replace_place_paths.tl|42|-|-|-|-
+view_mut_write|all|0,1,2|tests/integration/view_mut_write.tl|42|-|-|-|-
+view_match_binder_write|all|0,1,2|tests/integration/view_match_binder_write.tl|42|-|-|-|-

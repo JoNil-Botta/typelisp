@@ -16178,8 +16178,33 @@
 ;; saves more inline bytes per call and is executed no more often, so the
 ;; chosen value is the smallest run whose byte saving still pays for those two
 ;; instructions across a whole program.
-(define compiler-backend-copy-thunk-min-bytes : i64
+;; Canonical per-size copy thunks. Each thunk copies `remaining` bytes (with
+;; `remaining % 4 == 0`) from 0(c_src) to 0(c_dst) using `movups` (16 B),
+;; `movsd` (8 B), and `movss` (4 B) through a single volatile XMM scratch, then
+;; returns. The thunk never writes `c_src`, `c_dst`, flags, stack, or any GP
+;; scratch register, so keys depend only on `(bytes, c_src, c_dst, c_xmm)`.
+;;
+;; Call sites materialize `(src + src-disp, dst + dst-disp)` into a free
+;; volatile pair before `rsp-rebase`, so `%rbp` value homes, frame slots,
+;; constant displacements, and SIB spellings all share the same canonical thunk.
+;;
+;; Thresholds:
+;; - `-O2` in loop blocks: `>= 64 B` (with `<= 104 B` 2-setup-move copies kept
+;;   inline to avoid per-iteration setup+call+ret overhead).
+;; - `-O2` outside loops: `>= 56 B` always, and `48..52 B` when setup-cost == 0.
+;; - `-Os` everywhere: `>= 32 B` (subject to per-site byte profitability and
+;;   program-wide multiplicity >= 3 so small binaries never inflate).
+(define compiler-backend-copy-thunk-loop-min-bytes : i64
   64)
+(define compiler-backend-copy-thunk-min-bytes : i64
+  48)
+(define compiler-backend-copy-thunk-size-opt-min-bytes : i64
+  32)
+
+;; Buckets `0..127` count `CopyBytes` sizes `4*i` (`0..508 B`); bucket `128`
+;; counts `>= 512 B`. Allocated inside `copy-thunk-arena` per program emission.
+(define compiler-backend-copy-thunk-size-bucket-max : i64
+  128)
 
 ;; Provisioned thunk table size. Past it, copies stay inline: the cap keeps
 ;; the per-emission table a fixed allocation and the decision local.
@@ -16223,27 +16248,179 @@
       (deref (be_state.compiler-backend-state-ptr state)).copy-thunk-count
       count)))
 
-(define (compiler-backend-copy-thunk-frame-base? [base : (& base str)]) : bool
-  (or
-    (be_operand.compiler-backend-string-contains? base "%rsp")
-    (be_operand.compiler-backend-string-contains? base "%rbp")))
+(define (compiler-backend-copy-thunk-size-bucket [bytes : i64]) : i64
+  (let
+    [idx : i64 (/ bytes 4)]
+    (if (> idx compiler-backend-copy-thunk-size-bucket-max)
+      compiler-backend-copy-thunk-size-bucket-max
+      idx)))
+
+(define (compiler-backend-copy-thunk-size-count
+  [state : be_state.CompilerBackendState]
+  [bytes : i64]) : i64
+  (let
+    [data : be_state.CompilerBackendStateData
+      (be_state.compiler-backend-state-data state)]
+    [counts : (__tl_dyn-array i64) data.copy-thunk-size-counts]
+    [len : i64 (array-length counts)]
+    (if (= len 0)
+      2
+      (let
+        [bucket : i64 (compiler-backend-copy-thunk-size-bucket bytes)]
+        (if (and (>= bucket 0) (< bucket len))
+          (array-ref counts bucket)
+          0)))))
+
+(define (compiler-backend-copy-thunk-registered?
+  [key : (& str)]
+  [backend-state : be_state.CompilerBackendState]) : bool
+  (let
+    [seen : backend_string_i64_map.Map
+      (compiler-backend-state-copy-thunks backend-state)]
+    (match (backend_string_i64_map.get-borrowed (& seen) key)
+      [(LookupFound _) true]
+      [(LookupMissing) false])))
+
+(define (compiler-backend-copy-thunk-min-threshold
+  [backend-state : be_state.CompilerBackendState]) : i64
+  (if (be_state.compiler-backend-state-optimize-for-size? backend-state)
+    compiler-backend-copy-thunk-size-opt-min-bytes
+    (let
+      [fn-state : be_state.CompilerBackendFunctionState
+        (be_state.compiler-backend-state-function-state backend-state)]
+      [cur-label : i64
+        (be_state.compiler-backend-function-state-i64
+          fn-state
+          be_state.compiler-backend-function-i64-current-block-label)]
+      (if (be_state.compiler-backend-function-loop-block? fn-state cur-label)
+        compiler-backend-copy-thunk-loop-min-bytes
+        compiler-backend-copy-thunk-min-bytes))))
 
 (define (compiler-backend-copy-thunk-applies?
-  [chunked : i64]
-  [src-reg : (& str)]
-  [dst-reg : (& str)]
+  [remaining : i64]
   [backend-state : be_state.CompilerBackendState]) : bool
-  (and
-    (>= chunked compiler-backend-copy-thunk-min-bytes)
-    (not (compiler_ir_types.compiler-debug-info-enabled?))
-    (be_state.compiler-backend-function-state-bool?
-      (be_state.compiler-backend-state-function-state backend-state)
-      be_state.compiler-backend-function-bool-has-returning-call)
-    (not (compiler-backend-copy-thunk-frame-base? src-reg))
-    (not (compiler-backend-copy-thunk-frame-base? dst-reg))
-    (<
-      (compiler-backend-state-copy-thunk-count backend-state)
-      compiler-backend-copy-thunk-capacity)))
+  (let
+    [fn-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state backend-state)]
+    [occupied-masks : (__tl_dyn-array i64)
+      (be_state.compiler-backend-function-scratch-i64-array
+        fn-state
+        be_state.compiler-backend-scratch-i64-array-scavenge-occupied-masks)]
+    [opt-size? : bool
+      (be_state.compiler-backend-state-optimize-for-size? backend-state)]
+    [min-sites : i64
+      (cond
+        [(>= remaining compiler-backend-copy-thunk-loop-min-bytes) 2]
+        [opt-size? 3]
+        [(>= remaining 56) 8]
+        [else 32])]
+    (and
+      (>= remaining (compiler-backend-copy-thunk-min-threshold backend-state))
+      (= (% remaining 4) 0)
+      (not (compiler_ir_types.compiler-debug-info-enabled?))
+      (be_state.compiler-backend-function-state-bool?
+        fn-state
+        be_state.compiler-backend-function-bool-has-returning-call)
+      (> (array-length occupied-masks) 0)
+      (>=
+        (compiler-backend-copy-thunk-size-count backend-state remaining)
+        min-sites)
+      (<
+        (compiler-backend-state-copy-thunk-count backend-state)
+        compiler-backend-copy-thunk-capacity))))
+
+;; Emit the body of a canonical thunk for `remaining` bytes (`remaining % 4 == 0`)
+;; copying `0(src-reg)` -> `dst-bias(dst-reg)` using only `xmm-scratch`
+;; (`movups`, `movsd`, `movss`). Neither `src-reg`, `dst-reg`, flags, nor any
+;; other GP register is written.
+(define (compiler-backend-emit-copy-bytes-chunks-canonical
+  [dst-reg : (& str)]
+  [src-reg : (& str)]
+  [xmm-scratch : (& str)]
+  [offset : i64]
+  [remaining : i64]
+  [dst-bias : i64]) : String
+  (if (<= remaining 0)
+    ""
+    (let
+      [src-disp : String
+        (if (= offset 0)
+          ""
+          (string.int->string offset))]
+      [dst-off : i64 (+ offset dst-bias)]
+      [dst-disp : String
+        (if (= dst-off 0)
+          ""
+          (string.int->string dst-off))]
+      (cond
+        [(>= remaining 16)
+          (str_cat.str-cat
+            (str_cat.str-cat
+              "    movups "
+              src-disp
+              "("
+              src-reg
+              "), "
+              xmm-scratch
+              "\n")
+            (str_cat.str-cat
+              "    movups "
+              xmm-scratch
+              ", "
+              dst-disp
+              "("
+              dst-reg
+              ")\n")
+            (compiler-backend-emit-copy-bytes-chunks-canonical
+              dst-reg
+              src-reg
+              xmm-scratch
+              (+ offset 16)
+              (- remaining 16)
+              dst-bias))]
+        [(>= remaining 8)
+          (str_cat.str-cat
+            (str_cat.str-cat
+              "    movsd "
+              src-disp
+              "("
+              src-reg
+              "), "
+              xmm-scratch
+              "\n")
+            (str_cat.str-cat
+              "    movsd "
+              xmm-scratch
+              ", "
+              dst-disp
+              "("
+              dst-reg
+              ")\n")
+            (compiler-backend-emit-copy-bytes-chunks-canonical
+              dst-reg
+              src-reg
+              xmm-scratch
+              (+ offset 8)
+              (- remaining 8)
+              dst-bias))]
+        [else
+          (str_cat.str-cat
+            (str_cat.str-cat
+              "    movss "
+              src-disp
+              "("
+              src-reg
+              "), "
+              xmm-scratch
+              "\n")
+            (str_cat.str-cat
+              "    movss "
+              xmm-scratch
+              ", "
+              dst-disp
+              "("
+              dst-reg
+              ")\n"))]))))
 
 ;; Register `key`'s thunk (its instruction text is `body`) and return the
 ;; symbol to call. The index is the registration order, so the symbols and the

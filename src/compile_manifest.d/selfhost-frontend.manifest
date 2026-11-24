@@ -1,0 +1,39 @@
+# Selfhost compile manifest: lexer, reader, parser, AST, symbols, typecheck, specialize, and CTFE.
+# Format: case|id|source|assembly|main-policy|direct|stage ... end
+
+case|selfhost_compiler_ast_types|src/compiler_ast_types.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_ctfe|src/compiler_ctfe.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_float|src/compiler_float.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_intern|src/compiler_intern.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|none|direct
+count-at-least|call _tl_parse_ast_program_dispatch|1
+end
+
+case|selfhost_compiler_specialize|src/compiler_specialize.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_symbols|src/compiler_symbols.tl|assembly|none|direct
+end
+
+case|selfhost_compiler_typecheck_core|src/compiler_typecheck_core.tl|assembly|none|direct
+end
+
+case|selfhost_lex|src/lex.tl|assembly|none|direct
+end
+
+case|selfhost_read|src/read.tl|assembly|none|direct
+end
+
+case|selfhost_sym_i64_env|src/sym_i64_env.tl|assembly|none|direct
+end
+
+case|selfhost_token|src/token.tl|assembly|none|direct
+end

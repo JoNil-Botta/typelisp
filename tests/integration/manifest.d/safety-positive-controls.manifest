@@ -1,0 +1,30 @@
+# Native integration cases: positive execution controls sourced from tests/safety/.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+set_inline_array_value_before_bounds_trap|all|0,1,2|tests/safety/set_inline_array_value_before_bounds_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:11:47: shift count out of range: count=-1 width=64\n
+set_inline_array_field_value_before_bounds_trap|all|0,1,2|tests/safety/set_inline_array_field_value_before_bounds_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:14:49: shift count out of range: count=-1 width=64\n
+set_inline_array_bounds_after_growth_trap|all|0,1,2|tests/safety/set_inline_array_bounds_after_growth_trap.tl|134|RHS grew\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:13:40: array index out of bounds: index=3 length=3\n
+set_inline_array_field_bounds_after_growth_trap|all|0,1,2|tests/safety/set_inline_array_field_bounds_after_growth_trap.tl|134|RHS grew\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:16:5: array index out of bounds: index=3 length=3\n
+div_zero_trap|all|-|tests/safety/division_by_zero_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:4:5: integer division or remainder error: dividend=1 divisor=0\n
+mutable_reference_disjoint_read|all|-|tests/safety/mutable_reference_read_disjoint_ok.tl|42|-|-|-|-
+call_lifetime_invariant_order|all|0,1,2|tests/safety/call_lifetime_invariant_order_ok.tl|42|-|-|-|-
+caller_lifetime_call_inference_order|all|0,1,2|tests/safety/caller_lifetime_call_inference_order_ok.tl|42|-|-|-|-
+shl_neg_count_trap|all|2,-|tests/safety/shift_count_trap.tl|129|-|-|-|expected-stderr:tl: $SRC:4:5: shift count out of range: count=-1 width=32\n
+borrow_temporary_call_arg|all|0,1,2|tests/safety/borrow_temporary_call_arg_ok.tl|42|-|-|stdlib/string.tl|-
+borrow_temporary_cleanup|all|0,1,2|tests/safety/borrow_temporary_cleanup_ok.tl|42|-|-|-|-
+borrowed_pattern_copy_binding|all|0,1,2|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-|-|stdlib/string.tl|-
+borrowed_pattern_copy_deferred|all|0,1,2|tests/safety/borrowed_pattern_copy_deferred_ok.tl|42|-|-|-|-
+match_copy_loan_ends|all|0,1,2|tests/safety/match_copy_loan_ends_ok.tl|42|-|-|-|-
+global_call_match_local_shadow|all|0,1,2|tests/safety/global_call_match_local_shadow_ok.tl|42|-|-|-|-
+global_call_argument_local_mutation|all|0,1,2|tests/safety/global_call_argument_local_mutation_ok.tl|42|-|-|-|-
+global_call_pure_constructor|all|0,1,2|tests/safety/global_call_pure_constructor_ok.tl|1|-|-|-|-
+box_deref_copy_projection_reuse|all|0,1,2|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-|-|-|-
+global_call_mixed_copy|all|0,1,2|tests/safety/global_call_mixed_copy_ok.tl|17|-|-|-|-
+composite_arg_loan_replace_old_value_ok|all|0,1,2|tests/safety/composite_arg_loan_replace_old_value_ok.tl|42|-|-|stdlib/byte_buf.tl stdlib/byte_buf_core.tl stdlib/format_writer_core.tl stdlib/string.tl|-
+mir_by_value_immediate_writeback_ok|all|0,1,2|tests/safety/mir_by_value_immediate_writeback_ok.tl|42|-|-|-|-
+mir_by_value_read_only_result_ok|all|0,1,2|tests/safety/mir_by_value_read_only_result_ok.tl|42|-|-|-|-
+mir_storage_backed_borrow_result_ok|all|0,1,2|tests/safety/mir_storage_backed_borrow_result_ok.tl|42|-|-|-|-
+mir_by_value_borrow_unretained_ok|all|0,1,2|tests/safety/mir_by_value_borrow_unretained_ok.tl|42|-|-|-|-
+mir_storage_backed_borrow_retained_ok|all|0,1,2|tests/safety/mir_storage_backed_borrow_retained_ok.tl|42|-|-|-|-
+mir_by_value_borrow_distinct_lifetime_ok|all|0,1,2|tests/safety/mir_by_value_borrow_distinct_lifetime_ok.tl|42|-|-|-|-
+string_raw_integer_writers_ok|all|0,1,2|tests/safety/string_raw_integer_writers_ok.tl|42|-|-|stdlib/string.tl|-

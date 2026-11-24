@@ -1,0 +1,51 @@
+# Native integration cases: match, loops, conditionals, early exits, and scoping.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
+loop_call_addr_taken|all|0,2|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|stage-stdlib
+for_macro|all|-|tests/integration/for_macro.tl|42|-|-|stdlib/iterator.tl stdlib/string.tl stdlib/vector.tl|-
+for_macro_sources|all|-,0,2|tests/integration/for_macro_sources.tl|42|-|-|for_range_provider.tl for_slots_protocol_provider.tl stdlib/iterator.tl stdlib/string.tl|-
+let_aggregate_home|all|0,1,2|tests/integration/let_aggregate_home.tl|42|524287\n|-|-|stage-stdlib
+set_place_eval_order|all|0,1,2|tests/integration/set_place_eval_order.tl|42|-|-|stdlib/test.tl stdlib/string.tl|-
+loop_invariant_array_sum|all|-|tests/integration/loop_invariant_array_sum.tl|42|-|-|stdlib/io.tl|-
+block_layout|all|-|tests/integration/block_layout.tl|42|-|-|-|-
+let_move_elision|all|-,0,2|tests/integration/let_move_elision.tl|42|-|-|-|-
+nested_array_element_push|all|-,0,2|tests/integration/nested_array_element_push.tl|42|-|-|-|-
+switch_dispatch_scavenge|all|-|tests/integration/switch_dispatch_scavenge.tl|42|-|-|stdlib/io.tl|-
+control_flow|all|-|tests/integration/control_flow.tl|15|-|-|-|-
+factorial|all|-|tests/integration/factorial.tl|120|-|-|-|-
+fibonacci|all|-|tests/integration/fibonacci.tl|13|-|-|-|-
+if_literal_branch_join|all|-,0,2|tests/integration/if_literal_branch_join.tl|42|-|-|-|-
+if_literal_tail_branch_join|all|-,0,2|tests/integration/if_literal_tail_branch_join.tl|42|-|-|-|-
+short_circuit|all|-|tests/integration/short_circuit.tl|42|-|-|-|-
+loop_rewrite_shift_flag_exit_trap|all|0,1,2|tests/integration/loop_rewrite_shift_trap.tl|129|-|0 10|-|stage-stdlib+expected-stderr:tl: $SRC:28:11: shift count out of range: count=70 width=64\n
+loop_rewrite_shift_flag_exit_ok|all|2|tests/integration/loop_rewrite_shift_trap.tl|42|-|0 9|-|stage-stdlib
+loop_rewrite_shift_fill_trap|all|0,1|tests/integration/loop_rewrite_shift_trap.tl|129|-|1 10|-|stage-stdlib+expected-stderr:tl: $SRC:39:11: shift count out of range: count=70 width=64\n
+loop_rewrite_shift_fill_trap_opt2|all|2|tests/integration/loop_rewrite_shift_trap.tl|129|-|1 10|-|stage-stdlib+expected-stderr:tl: shift count out of range\n
+loop_rewrite_shift_fill_ok|all|2|tests/integration/loop_rewrite_shift_trap.tl|42|-|1 9|-|stage-stdlib
+loop_rewrite_shift_copy_trap|all|0,1|tests/integration/loop_rewrite_shift_trap.tl|129|-|2 10|-|stage-stdlib+expected-stderr:tl: $SRC:53:11: shift count out of range: count=70 width=64\n
+loop_rewrite_shift_copy_trap_opt2|all|2|tests/integration/loop_rewrite_shift_trap.tl|129|-|2 10|-|stage-stdlib+expected-stderr:tl: shift count out of range\n
+loop_rewrite_shift_copy_ok|all|2|tests/integration/loop_rewrite_shift_trap.tl|42|-|2 9|-|stage-stdlib
+or_pattern_match|all|-,0,1,2|tests/integration/or_pattern_match.tl|42|-|-|stdlib/string.tl|-
+or_pattern_dispatch|all|-,0,1,2|tests/integration/or_pattern_dispatch.tl|42|-|-|-|-
+unit_functions|all|-|tests/integration/unit_functions.tl|7|-|-|-|-
+unit_main|all|-|tests/integration/unit_main.tl|0|-|-|-|-
+with_escape_clone_out|all|-,0,1,2|tests/integration/with_escape_clone_out.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+nested_repr_c_aggregate|all|-|tests/integration/nested_repr_c_aggregate.tl|42|-|-|-|-
+nested_tuple_array_projection|all|-|tests/integration/nested_tuple_array_projection.tl|0|7\n3\n|-|stdlib/io.tl|-
+try_propagation|all|-,0,1,2|tests/integration/try_propagation.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+try_err_payloads|all|-,0,1,2|tests/integration/try_err_payloads.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+try_sret_forward|all|-,0,1,2|tests/integration/try_sret_forward.tl|42|-|-|stdlib/io.tl|-
+loop_carried_memory_aggregate_move|all|-|tests/integration/loop_carried_memory_aggregate_move.tl|42|-|-|-|-
+loop_carried_enum_payload_snapshot|all|0,1,2|tests/integration/loop_carried_enum_payload_snapshot.tl|42|-|-|-|stage-stdlib
+loop_carried_raw_read_snapshot|all|0,1,2|tests/integration/loop_carried_raw_read_snapshot.tl|42|-|-|-|stage-stdlib
+short_trip_copy|all|-|tests/integration/short_trip_copy.tl|42|7757762194516093604 39\n|5 0|stdlib/io.tl stdlib/string.tl|-
+short_trip_copy_abort|all|-,2|tests/integration/short_trip_copy.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:115:50: array index out of bounds: index=39 length=39\n
+for_range_lean|all|0,1,2|tests/integration/for_range_lean.tl|42|-|-|stdlib/iterator.tl|-
+nested_flag_loops|all|-|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203\n-206\n0\n-201\n|-|stdlib/io.tl stdlib/string.tl|-
+nested_flag_loops|all|0,2|tests/integration/nested_flag_loops.tl|42|309\n-206\n-203\n-206\n0\n-201\n|-|stdlib/io.tl stdlib/string.tl|stage-stdlib
+loop_address_argument|all|0,1,2|tests/integration/loop_address_argument.tl|1|-|-|-|-
+loop_address_callee|all|0,1,2|tests/integration/loop_address_callee.tl|42|-|-|-|-
+loop_address_snapshots|all|0,1,2|tests/integration/loop_address_snapshots.tl|42|-|-|-|-
+match_ref_binder_write_controls|all|0,1,2|tests/integration/match_ref_binder_write_controls.tl|42|-|-|-|-
+continue_array_len|all|0,1,2|tests/integration/continue_array_len.tl|8|-|-|-|-

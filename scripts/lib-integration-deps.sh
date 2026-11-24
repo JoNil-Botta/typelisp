@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# lib-integration-deps.sh - stage tests/integration/native.manifest
+# lib-integration-deps.sh - stage tests/integration/manifest.d/*.manifest
 # dependencies the way scripts/verify-integration.sh stages its cases, for
 # every gate that compiles manifest programs from a staged case directory.
 #

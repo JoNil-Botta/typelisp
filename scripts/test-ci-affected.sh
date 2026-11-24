@@ -2,6 +2,7 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
+. "$ROOT/scripts/lib-manifest.sh"
 mkdir -p "$ROOT/target/exp/ci-affected-test"
 work=$(mktemp -d "$ROOT/target/exp/ci-affected-test/run.XXXXXX")
 selector="$ROOT/scripts/ci-affected.sh"
@@ -15,7 +16,7 @@ esac
 
 # Exercise Git's actual Windows checkout filter, including the provenance
 # table and byte-compared historical paths. Their LF attributes must win.
-for path in scripts/ci-affected-paths.tsv scripts/ci-affected-inputs.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv; do
+for path in scripts/ci-affected-paths.tsv scripts/ci-affected-inputs.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv tests/integration/manifest.d/*.manifest src/compile_manifest.d/*.manifest; do
     git cat-file blob ":$path" > "$work/checkout.expected"
     git -c core.autocrlf=true cat-file --filters --path="$path" ":$path" > "$work/checkout.actual"
     cmp "$work/checkout.actual" "$work/checkout.expected" || fail "Windows checkout changed line endings: $path"
@@ -129,7 +130,8 @@ grep -Fx "stage2-stdlib-modules-and-fixtures$TAB"'scripts/check-stdlib-concat-li
 for gate in stage2-stdlib-documentation stage2-stdlib-modules-and-fixtures stage2-repository-doctests; do
     grep -Fx "stdlib$TAB$gate" "$work/script-inputs.tsv" >/dev/null || fail "whole-directory input not discovered: $gate"
 done
-awk -F '|' '$1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$ROOT/src/compile_manifest.txt" >> "$work/script-inputs.tsv"
+manifest_concat_dir "$ROOT/src/compile_manifest.d" > "$work/compile-manifest.combined" || fail 'compile manifest load failed'
+awk -F '|' '$1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$work/compile-manifest.combined" >> "$work/script-inputs.tsv"
 
 # Primary declarations add exact fixture owners. Imported/staged dependency
 # lists and generic compiler-comparison suites remain advisory source classes.
@@ -229,15 +231,17 @@ inventory_inputs() {
             }
         ' "$work/inventory-owners.tsv" "$1/$affected_inventory" "$2/$affected_name/plan.sh" || return
     done < "$2/inventories"
+    manifest_concat_dir "$1/tests/integration/manifest.d" > "$2/integration-manifest.combined" || return
     awk -F '|' '{sub(/\r$/, "")} !/^#/ && NF >= 4 {
         print $4 "\tstage2-native-integration-corpus"
         for(i=10;i<=NF;i++) if($i ~ /^suite-members:/) {
             members=substr($i,15); n=split(members,names," ")
             for(j=1;j<=n;j++) if(names[j] != "") print "src/tests/" names[j] "\tstage2-native-integration-corpus"
         }
-    }' "$1/tests/integration/native.manifest" || return
+    }' "$2/integration-manifest.combined" || return
     awk -F '|' '{sub(/\r$/, "")} !/^#/ && NF >= 3 {print $3 "\tstage2-safety-corpus"}' "$1/tests/safety/manifest.txt" || return
-    awk -F '|' '{sub(/\r$/, "")} $1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$1/src/compile_manifest.txt" || return
+    manifest_concat_dir "$1/src/compile_manifest.d" > "$2/compile-manifest.combined" || return
+    awk -F '|' '{sub(/\r$/, "")} $1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$2/compile-manifest.combined" || return
 }
 inventory_inputs "$ROOT" "$work/inventory-plans" > "$work/primary.raw" || fail 'primary input extraction failed'
 sort -u "$work/primary.raw" > "$work/primary-inputs.tsv"
@@ -268,8 +272,10 @@ done
 IFS= read -r first_inventory < "$work/inventory-plans/inventories"
 second_inventory=$(sed -n '2p' "$work/inventory-plans/inventories")
 [ -n "$second_inventory" ] || fail 'failure regression needs two inventories'
-cat "$work/inventory-plans/inventories" > "$work/failure-inputs"
-printf '%s\n' tests/integration/native.manifest tests/safety/manifest.txt src/compile_manifest.txt >> "$work/failure-inputs"
+manifest_list_dir "$ROOT/tests/integration/manifest.d" | sed "s#^$ROOT/##" > "$work/manifest-fragment-files" || fail 'integration manifest list failed'
+manifest_list_dir "$ROOT/src/compile_manifest.d" | sed "s#^$ROOT/##" >> "$work/manifest-fragment-files" || fail 'compile manifest list failed'
+cat "$work/inventory-plans/inventories" "$work/manifest-fragment-files" > "$work/failure-inputs"
+printf '%s\n' tests/safety/manifest.txt >> "$work/failure-inputs"
 for failure_kind in missing partial; do
     omitted_inventory=$first_inventory
     [ "$failure_kind" != partial ] || omitted_inventory=$second_inventory
@@ -286,7 +292,7 @@ done
 [ -s "$work/partial.raw" ] || fail 'late extraction failure probe emitted no initial ownership'
 # Exercise the same inventory reader against Git actual Windows checkout bytes.
 mkdir -p "$work/crlf-inputs"
-{ cut -f 1 "$work/inventory-owners.tsv"; printf '%s\n' tests/integration/native.manifest tests/safety/manifest.txt src/compile_manifest.txt; } | sort -u > "$work/inventory-files"
+{ cut -f 1 "$work/inventory-owners.tsv"; cat "$work/manifest-fragment-files"; printf '%s\n' tests/safety/manifest.txt; } | sort -u > "$work/inventory-files"
 while IFS= read -r affected_inventory; do
     mkdir -p "$work/crlf-inputs/$(dirname "$affected_inventory")"
     git -c core.autocrlf=true cat-file --filters --path="$affected_inventory" ":$affected_inventory" > "$work/crlf-inputs/$affected_inventory"

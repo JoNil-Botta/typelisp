@@ -1,0 +1,28 @@
+# Native integration cases: lambdas, closures, and higher-order calls.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+capture_borrow_storage|all|0,1,2|tests/integration/capture_borrow_storage.tl|42|-|-|-|-
+function_pointer_values|all|-|tests/integration/function_pointer_values.tl|42|-|-|-|-
+lambda_aggregate_returns|all|-|tests/integration/lambda_aggregate_returns.tl|42|-|-|stdlib/string.tl|-
+lambda_capture_aggregate|all|-|tests/integration/lambda_capture_aggregate.tl|42|-|-|stdlib/string.tl|-
+lambda_capture_capabilities|all|-|tests/integration/lambda_capture_capabilities.tl|42|-|-|stdlib/string.tl|-
+lambda_capture_copy|all|-|tests/integration/lambda_capture_copy.tl|42|-|-|-|-
+lambda_capture_fixed_array|all|-|tests/integration/lambda_capture_fixed_array.tl|42|-|-|-|-
+lambda_capture_fixed_array_aggregate|all|-|tests/integration/lambda_capture_fixed_array_aggregate.tl|42|-|-|stdlib/string.tl|-
+lambda_capture_nested_aggregate|all|-|tests/integration/lambda_capture_nested_aggregate.tl|42|-|-|stdlib/string.tl|-
+lambda_capture_scalar|all|-|tests/integration/lambda_capture_scalar.tl|42|-|-|-|-
+lambda_capture_struct_enum|all|-|tests/integration/lambda_capture_struct_enum.tl|42|-|-|-|-
+lambda_capture_tuple|all|-|tests/integration/lambda_capture_tuple.tl|42|-|-|-|-
+lambda_lift|all|-|tests/integration/lambda_lift.tl|42|-|-|-|-
+lambda_capture_lifetime_aggregate|all|-|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|stdlib/string.tl|-
+function_lifetime_elision|all|-|tests/integration/function_lifetime_elision.tl|42|-|-|stdlib/io.tl|-
+indirect_callee_never|all|0,1,2|tests/integration/indirect_callee_never.tl|42|-|-|benchmarks/indirect_callee_never/baseline.c|stage-stdlib
+indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib
+lambda_identical_capture|all|0,1,2|tests/integration/lambda_identical_capture.tl|42|-|-|-|-
+lambda_identical_capture_ref|all|0,1,2|tests/integration/lambda_identical_capture_ref.tl|42|-|-|-|-
+lambda_identical_capture_nested|all|0,1,2|tests/integration/lambda_identical_capture_nested.tl|42|-|-|-|-
+lambda_identical_noncapturing|all|0,1,2|tests/integration/lambda_identical_noncapturing.tl|42|-|-|-|-
+lambda_capture_atomic_arena_alloc|all|0,1,2|tests/integration/lambda_capture_atomic_arena_alloc.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+lambda_capture_atomic_arena_destroy|all|0,1,2|tests/integration/lambda_capture_atomic_arena_destroy.tl|42|-|-|stdlib/arena.tl|-
+lambda_capture_lifetime_enum|all|0,1,2|tests/integration/lambda_capture_lifetime_enum.tl|42|-|-|-|-
+lambda_capture_lifetime_enum_variants|all|0,1,2|tests/integration/lambda_capture_lifetime_enum_variants.tl|42|-|-|stdlib/string.tl|-

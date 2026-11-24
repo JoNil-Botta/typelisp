@@ -4,8 +4,6 @@
 (import compiler_abort as abort)
 (cfg test (import compiler_embedded_stdlib_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_payload as payload))
-(import stdlib.arena)
-(cfg compile-profile (import compiler_allocation_profile as allocation_profile))
 (import stdlib.iterator)
 (import compiler_lzss as lzss)
 (import lex as lexer)
@@ -16,32 +14,9 @@
   (CompilerEmbeddedStdlibNoSource)
   (CompilerEmbeddedStdlibSomeSource String))
 
-(defstruct CompilerEmbeddedStdlibCachedChunk
-  (ready bool)
-  (data (Ptr u8))
-  (bytes (__tl_dyn-array u8)))
-
-;; Process-lifetime cache for decoded solid-container chunks, lazily allocated
-;; on first solid lookup and wired into the compile-profile lifetime ledger.
-(define compiler-embedded-stdlib-solid-arena-handle : i64
-  0)
-(define compiler-embedded-stdlib-solid-ready : bool
-  false)
-(define compiler-embedded-stdlib-solid-index : (__tl_dyn-array
-    lzss.CompilerLzssSolidIndex)
-  (__tl_make-array lzss.CompilerLzssSolidIndex 1))
-(define compiler-embedded-stdlib-solid-chunks : (__tl_dyn-array
-    CompilerEmbeddedStdlibCachedChunk)
-  (__tl_make-array CompilerEmbeddedStdlibCachedChunk 0))
-
-(cfg
-  compile-profile
-  (define (compiler-embedded-stdlib-cache-bytes) : i64
-    (allocation_profile.compiler-allocation-profile-arena-bump-bytes
-      compiler-embedded-stdlib-solid-arena-handle)))
-
-;; The 16 MiB ceiling is far above any individual or solid embedded source
-;; payload while rejecting corrupt length headers before allocating.
+;; The 16 MiB ceiling is far above any individual embedded source module while
+;; rejecting corrupt length headers before they can request an unbounded
+;; allocation.
 (define (compiler-embedded-stdlib-source-limit) : i64
   16777216)
 
@@ -55,115 +30,27 @@
       (unsafe
         (string-from-bytes (ptr-cast data : (Ptr u8)) (array-length bytes))))))
 
-(define (compiler-embedded-stdlib-ptr-slice->string
-  [data : (Ptr u8)]
-  [offset : i64]
-  [length : i64]) : String
-  (if (= length 0)
-    ""
-    (unsafe
-      (string-from-bytes (ptr-offset data offset) length))))
-
-(define (compiler-embedded-stdlib-solid-ensure-index!
-  [container : (& container (__tl_dyn-array u8))]) : unit
-  (unless
-    compiler-embedded-stdlib-solid-ready
-    (match (lzss.compiler-lzss-solid-parse
-      container
-      (compiler-embedded-stdlib-source-limit))
-      [(Ok index)
-        (let
-          [owner : i64 (arena.tl_arena_make_small)]
-          (in-arena
-            (unsafe
-              (arena.Arena owner))
-            (set!
-              compiler-embedded-stdlib-solid-chunks
-              (__tl_make-array
-                CompilerEmbeddedStdlibCachedChunk
-                index.chunk-count)))
-          (set! (array-ref compiler-embedded-stdlib-solid-index 0) index)
-          (set! compiler-embedded-stdlib-solid-arena-handle owner)
-          (set! compiler-embedded-stdlib-solid-ready true))]
-      [(Err _)
-        (abort.compiler-abort
-          "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid solid embedded stdlib payload\n")])))
-
-(define (compiler-embedded-stdlib-solid-lookup
-  [container : (& container (__tl_dyn-array u8))]
-  [entry-index : i64]) : CompilerEmbeddedStdlibSource
-  (compiler-embedded-stdlib-solid-ensure-index! container)
-  (let
-    [index : lzss.CompilerLzssSolidIndex
-      (array-ref compiler-embedded-stdlib-solid-index 0)]
-    (when
-      (or (< entry-index 0) (>= entry-index index.entry-count))
-      (abort.compiler-abort
-        "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: solid entry index out of range\n"))
-    (let
-      [chunk-idx : i64
-        (lzss.compiler-lzss-solid-entry-chunk container (& index) entry-index)]
-      [offset : i64
-        (lzss.compiler-lzss-solid-entry-offset container (& index) entry-index)]
-      [length : i64
-        (lzss.compiler-lzss-solid-entry-len container (& index) entry-index)]
-      (unless
-        (array-ref compiler-embedded-stdlib-solid-chunks chunk-idx).ready
-        (in-arena
-          (unsafe
-            (arena.Arena compiler-embedded-stdlib-solid-arena-handle))
-          (match (lzss.compiler-lzss-solid-decode-chunk
-            container
-            (& index)
-            chunk-idx)
-            [(Ok bytes)
-              (let
-                [data : (Ptr u8)
-                  (if (= (array-length bytes) 0)
-                    (unsafe
-                      (int->ptr (cast 0 : u64) : (Ptr u8)))
-                    (unsafe
-                      (ptr-cast (__tl_array-data bytes) : (Ptr u8))))]
-                (set!
-                  (array-ref compiler-embedded-stdlib-solid-chunks chunk-idx)
-                  (CompilerEmbeddedStdlibCachedChunk true data bytes)))]
-            [(Err _)
-              (abort.compiler-abort
-                "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid solid embedded stdlib chunk\n")])))
-      (CompilerEmbeddedStdlibSomeSource
-        (compiler-embedded-stdlib-ptr-slice->string
-          (array-ref compiler-embedded-stdlib-solid-chunks chunk-idx).data
-          offset
-          length)))))
-
 (define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource
   (match (payload.compiler-embedded-stdlib-payload-lookup suffix)
     [(CompilerEmbeddedStdlibPayloadNone) (CompilerEmbeddedStdlibNoSource)]
-    [(CompilerEmbeddedStdlibPayloadSome compressed index)
-      (let
-        [container : (__tl_dyn-array u8)
-          (payload.compiler-embedded-stdlib-payload-container)]
-        (if (lzss.compiler-lzss-prefix?
-          (& container)
-          (& (lzss.compiler-lzss-solid-prefix)))
-          (compiler-embedded-stdlib-solid-lookup (& container) index)
-          (match (lzss.compiler-lzss-decode
-            (& compressed)
-            (compiler-embedded-stdlib-source-limit))
-            [(Ok bytes)
-              (CompilerEmbeddedStdlibSomeSource
-                (compiler-embedded-stdlib-bytes->string bytes))]
-            [(Err _)
-              (abort.compiler-abort
-                "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid embedded stdlib payload\n")
-              (CompilerEmbeddedStdlibNoSource)])))]))
+    [(CompilerEmbeddedStdlibPayloadSome compressed)
+      (match (lzss.compiler-lzss-decode
+        (& compressed)
+        (compiler-embedded-stdlib-source-limit))
+        [(Ok bytes)
+          (CompilerEmbeddedStdlibSomeSource
+            (compiler-embedded-stdlib-bytes->string bytes))]
+        [(Err _)
+          (abort.compiler-abort
+            "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid embedded stdlib payload\n")
+          (CompilerEmbeddedStdlibNoSource)])]))
 
 ;; Whether `suffix` names an embedded module, from the payload table alone:
 ;; presence checks need no decoded source.
 (define (compiler-embedded-stdlib-contains? [suffix : String]) : bool
   (match (payload.compiler-embedded-stdlib-payload-lookup suffix)
     [(CompilerEmbeddedStdlibPayloadNone) false]
-    [(CompilerEmbeddedStdlibPayloadSome _ _) true]))
+    [(CompilerEmbeddedStdlibPayloadSome _) true]))
 
 ;; Whether `c` ends an atom: whitespace or one of `()[]";`. Most source bytes
 ;; are letters, past `;`, so they take the two-compare branch.
@@ -279,9 +166,9 @@
 
 ;; What the payload drops from a source, as byte ranges whose line breaks
 ;; alone are kept: each top-level inline test, every `(test ...)` form and
-;; every `(cfg test BODY)` form with exactly one body (#8713); and the tail of
-;; each prose comment outside those forms, after its first `;` and before its
-;; line break (#8659), which holds no line break.
+;; every `(cfg test BODY)` form with exactly one body (#8713); and each
+;; non-directive comment (prose or `;:`/`;#` doc) outside those forms along
+;; with its immediately preceding horizontal whitespace before its line break.
 (defenum CompilerEmbeddedStdlibTestRanges
   ;; The lexer's scanners reject a string or character literal, or the
   ;; brackets do not balance: nothing is blanked.

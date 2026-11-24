@@ -181,192 +181,183 @@
 
 (defenum CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone)
-  (CompilerEmbeddedStdlibPayloadSome (__tl_dyn-array u8) i64))
+  (CompilerEmbeddedStdlibPayloadSome (__tl_dyn-array u8)))
 
 ;; Embedded compressed buffers are immutable process-lifetime storage. Decoding
 ;; allocates the uncompressed source independently, so copying every compressed
 ;; byte here only adds transient work. Take an explicit shallow view of that
 ;; permanent storage instead.
-(defmacro (compiler-embedded-stdlib-payload-copy
-  [payload : Expr]
-  [index : Expr]) : CompilerEmbeddedStdlibPayload
+(defmacro (compiler-embedded-stdlib-payload-copy [payload : Expr]) : CompilerEmbeddedStdlibPayload
   `(CompilerEmbeddedStdlibPayloadSome
     (unsafe
-      (ptr-read (ptr-addr-of ,payload)))
-    ,index))
-
-(define (compiler-embedded-stdlib-payload-container) : (__tl_dyn-array u8)
-  (unsafe
-    (ptr-read (ptr-addr-of payload-arena))))
+      (ptr-read (ptr-addr-of ,payload)))))
 
 (define (compiler-embedded-stdlib-payload-lookup [suffix : String]) : CompilerEmbeddedStdlibPayload
   (cond
     [(string.eq suffix "arena.tl")
-      (compiler-embedded-stdlib-payload-copy payload-arena 0)]
+      (compiler-embedded-stdlib-payload-copy payload-arena)]
     [(string.eq suffix "atomic.tl")
-      (compiler-embedded-stdlib-payload-copy payload-atomic 1)]
+      (compiler-embedded-stdlib-payload-copy payload-atomic)]
     [(string.eq suffix "args.tl")
-      (compiler-embedded-stdlib-payload-copy payload-args 2)]
+      (compiler-embedded-stdlib-payload-copy payload-args)]
     [(string.eq suffix "base64.tl")
-      (compiler-embedded-stdlib-payload-copy payload-base64 3)]
+      (compiler-embedded-stdlib-payload-copy payload-base64)]
     [(string.eq suffix "byte_buf.tl")
-      (compiler-embedded-stdlib-payload-copy payload-byte-buf 4)]
+      (compiler-embedded-stdlib-payload-copy payload-byte-buf)]
     [(string.eq suffix "byte_buf_core.tl")
-      (compiler-embedded-stdlib-payload-copy payload-byte-buf-core 5)]
+      (compiler-embedded-stdlib-payload-copy payload-byte-buf-core)]
     [(string.eq suffix "byte_le.tl")
-      (compiler-embedded-stdlib-payload-copy payload-byte-le 6)]
+      (compiler-embedded-stdlib-payload-copy payload-byte-le)]
     [(string.eq suffix "byte_reader.tl")
-      (compiler-embedded-stdlib-payload-copy payload-byte-reader 7)]
+      (compiler-embedded-stdlib-payload-copy payload-byte-reader)]
     [(string.eq suffix "clone.tl")
-      (compiler-embedded-stdlib-payload-copy payload-clone 8)]
+      (compiler-embedded-stdlib-payload-copy payload-clone)]
     [(string.eq suffix "cpu.tl")
-      (compiler-embedded-stdlib-payload-copy payload-cpu 9)]
+      (compiler-embedded-stdlib-payload-copy payload-cpu)]
     [(string.eq suffix "checked_size.tl")
-      (compiler-embedded-stdlib-payload-copy payload-checked-size 10)]
+      (compiler-embedded-stdlib-payload-copy payload-checked-size)]
     [(string.eq suffix "comptime.tl")
-      (compiler-embedded-stdlib-payload-copy payload-comptime 11)]
+      (compiler-embedded-stdlib-payload-copy payload-comptime)]
     [(string.eq suffix "compress/adler32.tl")
-      (compiler-embedded-stdlib-payload-copy payload-compress-adler32 12)]
+      (compiler-embedded-stdlib-payload-copy payload-compress-adler32)]
     [(string.eq suffix "compress/deflate.tl")
-      (compiler-embedded-stdlib-payload-copy payload-compress-deflate 13)]
+      (compiler-embedded-stdlib-payload-copy payload-compress-deflate)]
     [(string.eq suffix "compress/zlib.tl")
-      (compiler-embedded-stdlib-payload-copy payload-compress-zlib 14)]
+      (compiler-embedded-stdlib-payload-copy payload-compress-zlib)]
     [(string.eq suffix "concurrency_registry.tl")
-      (compiler-embedded-stdlib-payload-copy payload-concurrency-registry 15)]
+      (compiler-embedded-stdlib-payload-copy payload-concurrency-registry)]
     [(string.eq suffix "core_macros.tl")
-      (compiler-embedded-stdlib-payload-copy payload-core-macros 16)]
+      (compiler-embedded-stdlib-payload-copy payload-core-macros)]
     [(string.eq suffix "crypto_aes_core.tl")
-      (compiler-embedded-stdlib-payload-copy payload-crypto-aes-core 17)]
+      (compiler-embedded-stdlib-payload-copy payload-crypto-aes-core)]
     [(string.eq suffix "crypto_hkdf_sha256.tl")
-      (compiler-embedded-stdlib-payload-copy payload-crypto-hkdf-sha256 18)]
+      (compiler-embedded-stdlib-payload-copy payload-crypto-hkdf-sha256)]
     [(string.eq suffix "crypto_hmac_sha256.tl")
-      (compiler-embedded-stdlib-payload-copy payload-crypto-hmac-sha256 19)]
+      (compiler-embedded-stdlib-payload-copy payload-crypto-hmac-sha256)]
     [(string.eq suffix "crypto_secret.tl")
-      (compiler-embedded-stdlib-payload-copy payload-crypto-secret 20)]
+      (compiler-embedded-stdlib-payload-copy payload-crypto-secret)]
     [(string.eq suffix "crypto_stack_scrub.tl")
-      (compiler-embedded-stdlib-payload-copy payload-crypto-stack-scrub 21)]
+      (compiler-embedded-stdlib-payload-copy payload-crypto-stack-scrub)]
     [(string.eq suffix "crypto_sha1_git.tl")
-      (compiler-embedded-stdlib-payload-copy payload-crypto-sha1-git 22)]
+      (compiler-embedded-stdlib-payload-copy payload-crypto-sha1-git)]
     [(string.eq suffix "crypto_sha256.tl")
-      (compiler-embedded-stdlib-payload-copy payload-crypto-sha256 23)]
+      (compiler-embedded-stdlib-payload-copy payload-crypto-sha256)]
     [(string.eq suffix "crypto_sha512.tl")
-      (compiler-embedded-stdlib-payload-copy payload-crypto-sha512 24)]
+      (compiler-embedded-stdlib-payload-copy payload-crypto-sha512)]
     [(string.eq suffix "dense_list.tl")
-      (compiler-embedded-stdlib-payload-copy payload-dense-list 25)]
+      (compiler-embedded-stdlib-payload-copy payload-dense-list)]
     [(string.eq suffix "env.tl")
-      (compiler-embedded-stdlib-payload-copy payload-env 26)]
+      (compiler-embedded-stdlib-payload-copy payload-env)]
     [(string.eq suffix "eq.tl")
-      (compiler-embedded-stdlib-payload-copy payload-eq 27)]
+      (compiler-embedded-stdlib-payload-copy payload-eq)]
     [(string.eq suffix "ffi.tl")
-      (compiler-embedded-stdlib-payload-copy payload-ffi 28)]
+      (compiler-embedded-stdlib-payload-copy payload-ffi)]
     [(string.eq suffix "fs.tl")
-      (compiler-embedded-stdlib-payload-copy payload-fs 29)]
+      (compiler-embedded-stdlib-payload-copy payload-fs)]
     [(string.eq suffix "format.tl")
-      (compiler-embedded-stdlib-payload-copy payload-format 30)]
+      (compiler-embedded-stdlib-payload-copy payload-format)]
     [(string.eq suffix "format_writer_core.tl")
-      (compiler-embedded-stdlib-payload-copy payload-format-writer-core 31)]
+      (compiler-embedded-stdlib-payload-copy payload-format-writer-core)]
     [(string.eq suffix "hash.tl")
-      (compiler-embedded-stdlib-payload-copy payload-hash 32)]
+      (compiler-embedded-stdlib-payload-copy payload-hash)]
     [(string.eq suffix "hashmap.tl")
-      (compiler-embedded-stdlib-payload-copy payload-hashmap 33)]
+      (compiler-embedded-stdlib-payload-copy payload-hashmap)]
     [(string.eq suffix "local_ipc.tl")
-      (compiler-embedded-stdlib-payload-copy payload-local-ipc 34)]
+      (compiler-embedded-stdlib-payload-copy payload-local-ipc)]
     [(string.eq suffix "net.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net 35)]
+      (compiler-embedded-stdlib-payload-copy payload-net)]
     [(string.eq suffix "net/dns/wire.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-dns-wire 36)]
+      (compiler-embedded-stdlib-payload-copy payload-net-dns-wire)]
     [(string.eq suffix "net/http_head_codec.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-http-head-codec 37)]
+      (compiler-embedded-stdlib-payload-copy payload-net-http-head-codec)]
     [(string.eq suffix "net/http_trailer.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-http-trailer 38)]
+      (compiler-embedded-stdlib-payload-copy payload-net-http-trailer)]
     [(string.eq suffix "net/http_trailer_policy.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-http-trailer-policy 39)]
+      (compiler-embedded-stdlib-payload-copy payload-net-http-trailer-policy)]
     [(string.eq suffix "net/http_types.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-http-types 40)]
+      (compiler-embedded-stdlib-payload-copy payload-net-http-types)]
     [(string.eq suffix "net/ip.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-ip 41)]
+      (compiler-embedded-stdlib-payload-copy payload-net-ip)]
     [(string.eq suffix "net/dns_name.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-dns-name 42)]
+      (compiler-embedded-stdlib-payload-copy payload-net-dns-name)]
     [(string.eq suffix "net/resolver_config.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-resolver-config 43)]
+      (compiler-embedded-stdlib-payload-copy payload-net-resolver-config)]
     [(string.eq suffix "net/resolver_config_linux.tl")
-      (compiler-embedded-stdlib-payload-copy
-        payload-net-resolver-config-linux
-        44)]
+      (compiler-embedded-stdlib-payload-copy payload-net-resolver-config-linux)]
     [(string.eq suffix "net/tls_wire.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-tls-wire 45)]
+      (compiler-embedded-stdlib-payload-copy payload-net-tls-wire)]
     [(string.eq suffix "net/tls_transcript.tl")
-      (compiler-embedded-stdlib-payload-copy payload-net-tls-transcript 46)]
+      (compiler-embedded-stdlib-payload-copy payload-net-tls-transcript)]
     [(string.eq suffix "io_core.tl")
-      (compiler-embedded-stdlib-payload-copy payload-io-core 47)]
+      (compiler-embedded-stdlib-payload-copy payload-io-core)]
     [(string.eq suffix "io.tl")
-      (compiler-embedded-stdlib-payload-copy payload-io 48)]
+      (compiler-embedded-stdlib-payload-copy payload-io)]
     [(string.eq suffix "iterator.tl")
-      (compiler-embedded-stdlib-payload-copy payload-iterator 49)]
+      (compiler-embedded-stdlib-payload-copy payload-iterator)]
     [(string.eq suffix "json.tl")
-      (compiler-embedded-stdlib-payload-copy payload-json 50)]
+      (compiler-embedded-stdlib-payload-copy payload-json)]
     [(string.eq suffix "math.tl")
-      (compiler-embedded-stdlib-payload-copy payload-math 51)]
+      (compiler-embedded-stdlib-payload-copy payload-math)]
     [(string.eq suffix "msvc.tl")
-      (compiler-embedded-stdlib-payload-copy payload-msvc 52)]
+      (compiler-embedded-stdlib-payload-copy payload-msvc)]
     [(string.eq suffix "process.tl")
-      (compiler-embedded-stdlib-payload-copy payload-process 53)]
+      (compiler-embedded-stdlib-payload-copy payload-process)]
     [(string.eq suffix "process_borrowed.tl")
-      (compiler-embedded-stdlib-payload-copy payload-process-borrowed 54)]
+      (compiler-embedded-stdlib-payload-copy payload-process-borrowed)]
     [(string.eq suffix "process_runtime.tl")
-      (compiler-embedded-stdlib-payload-copy payload-process-runtime 55)]
+      (compiler-embedded-stdlib-payload-copy payload-process-runtime)]
     [(string.eq suffix "profile.tl")
-      (compiler-embedded-stdlib-payload-copy payload-profile 56)]
+      (compiler-embedded-stdlib-payload-copy payload-profile)]
     [(string.eq suffix "queue.tl")
-      (compiler-embedded-stdlib-payload-copy payload-queue 57)]
+      (compiler-embedded-stdlib-payload-copy payload-queue)]
     [(string.eq suffix "random.tl")
-      (compiler-embedded-stdlib-payload-copy payload-random 58)]
+      (compiler-embedded-stdlib-payload-copy payload-random)]
     [(string.eq suffix "result.tl")
-      (compiler-embedded-stdlib-payload-copy payload-result 59)]
+      (compiler-embedded-stdlib-payload-copy payload-result)]
     [(string.eq suffix "runtime.tl")
-      (compiler-embedded-stdlib-payload-copy payload-runtime 60)]
+      (compiler-embedded-stdlib-payload-copy payload-runtime)]
     [(string.eq suffix "serialize.tl")
-      (compiler-embedded-stdlib-payload-copy payload-serialize 61)]
+      (compiler-embedded-stdlib-payload-copy payload-serialize)]
     [(string.eq suffix "sort.tl")
-      (compiler-embedded-stdlib-payload-copy payload-sort 62)]
+      (compiler-embedded-stdlib-payload-copy payload-sort)]
     [(string.eq suffix "sync.tl")
-      (compiler-embedded-stdlib-payload-copy payload-sync 63)]
+      (compiler-embedded-stdlib-payload-copy payload-sync)]
     [(string.eq suffix "string.tl")
-      (compiler-embedded-stdlib-payload-copy payload-string 64)]
+      (compiler-embedded-stdlib-payload-copy payload-string)]
     [(string.eq suffix "string_utf8.tl")
-      (compiler-embedded-stdlib-payload-copy payload-string-utf8 65)]
+      (compiler-embedded-stdlib-payload-copy payload-string-utf8)]
     [(string.eq suffix "str_cat.tl")
-      (compiler-embedded-stdlib-payload-copy payload-str-cat 66)]
+      (compiler-embedded-stdlib-payload-copy payload-str-cat)]
     [(string.eq suffix "str_cat_runtime.tl")
-      (compiler-embedded-stdlib-payload-copy payload-str-cat-runtime 67)]
+      (compiler-embedded-stdlib-payload-copy payload-str-cat-runtime)]
     [(string.eq suffix "test.tl")
-      (compiler-embedded-stdlib-payload-copy payload-test 68)]
+      (compiler-embedded-stdlib-payload-copy payload-test)]
     [(string.eq suffix "thread.tl")
-      (compiler-embedded-stdlib-payload-copy payload-thread 69)]
+      (compiler-embedded-stdlib-payload-copy payload-thread)]
     [(string.eq suffix "time.tl")
-      (compiler-embedded-stdlib-payload-copy payload-time 70)]
+      (compiler-embedded-stdlib-payload-copy payload-time)]
     [(string.eq suffix "text_buf.tl")
-      (compiler-embedded-stdlib-payload-copy payload-text-buf 71)]
+      (compiler-embedded-stdlib-payload-copy payload-text-buf)]
     [(string.eq suffix "text_buf_borrowed.tl")
-      (compiler-embedded-stdlib-payload-copy payload-text-buf-borrowed 72)]
+      (compiler-embedded-stdlib-payload-copy payload-text-buf-borrowed)]
     [(string.eq suffix "text_buf_family.tl")
-      (compiler-embedded-stdlib-payload-copy payload-text-buf-family 73)]
+      (compiler-embedded-stdlib-payload-copy payload-text-buf-family)]
     [(string.eq suffix "vector.tl")
-      (compiler-embedded-stdlib-payload-copy payload-vector 74)]
+      (compiler-embedded-stdlib-payload-copy payload-vector)]
     [(string.eq suffix "io_caller_result.tl")
-      (compiler-embedded-stdlib-payload-copy payload-io-caller-result 75)]
+      (compiler-embedded-stdlib-payload-copy payload-io-caller-result)]
     [(string.eq suffix "option.tl")
-      (compiler-embedded-stdlib-payload-copy payload-option 76)]
+      (compiler-embedded-stdlib-payload-copy payload-option)]
     [(string.eq suffix "set.tl")
-      (compiler-embedded-stdlib-payload-copy payload-set 77)]
+      (compiler-embedded-stdlib-payload-copy payload-set)]
     [(string.eq suffix "string_caller_result.tl")
-      (compiler-embedded-stdlib-payload-copy payload-string-caller-result 78)]
+      (compiler-embedded-stdlib-payload-copy payload-string-caller-result)]
     [(string.eq suffix "asn1_der.tl")
-      (compiler-embedded-stdlib-payload-copy payload-asn1-der 79)]
+      (compiler-embedded-stdlib-payload-copy payload-asn1-der)]
     [(string.eq suffix "pem.tl")
-      (compiler-embedded-stdlib-payload-copy payload-pem 80)]
+      (compiler-embedded-stdlib-payload-copy payload-pem)]
     [(string.eq suffix "x509_time.tl")
-      (compiler-embedded-stdlib-payload-copy payload-x509-time 81)]
+      (compiler-embedded-stdlib-payload-copy payload-x509-time)]
     [(string.eq suffix "x509.tl")
-      (compiler-embedded-stdlib-payload-copy payload-x509 82)]
+      (compiler-embedded-stdlib-payload-copy payload-x509)]
     [else (CompilerEmbeddedStdlibPayloadNone)]))

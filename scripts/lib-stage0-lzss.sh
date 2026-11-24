@@ -38,7 +38,7 @@ scan_stage0_payloads() {
     _scan_file=$1
     _scan_mode=${2:-both}
     case "$_scan_mode" in
-        lzss) _scan_pattern='__typelisp_embedded_stdlib_tlss_' ;;
+        lzss) _scan_pattern='__typelisp_embedded_stdlib_tlss_v3__' ;;
         tlch) _scan_pattern='__typelisp_embedded_stdlib_tlci_v3__' ;;
         both) _scan_pattern='__typelisp_embedded_stdlib_tl' ;;
         *)
@@ -183,19 +183,6 @@ BEGIN {
             dist_extra_tbl[i] = distance_extra(i)
             dist_base_tbl[i] = distance_base(i)
         }
-        split("95 95 116 121 112 101 108 105 115 112 95 101 109 98 101 100 100 101 100 95 115 116 100 108 105 98 95 116 108 115 115 95 115 51 95 95", s3_prefix)
-        s3_prefix_len = 36
-        for (i = 2; i <= s3_prefix_len; i++) {
-            j = s3_fallback[i - 1]
-            while (j > 0 && s3_prefix[i] != s3_prefix[j + 1]) j = s3_fallback[j]
-            if (s3_prefix[i] == s3_prefix[j + 1]) j++
-            s3_fallback[i] = j
-        }
-        s3_header_bytes = 92
-        s3_chunk_bytes = 32
-        s3_entry_bytes = 24
-        s3_mode = "scan"
-        s3_prefix_index = 0
     }
 
     if (do_tlch) {
@@ -387,92 +374,6 @@ function decode_available(    symbol_, kind, slot, extra, match_len, distance, d
         fail("nonzero padding bits")
     return 1
 }
-# --- solid LZSS (s3) container validator --------------------------------------
-function s3_fail(message) {
-    print "embedded stdlib LZSS s3 at byte " s3_start ": " message > "/dev/stderr"
-    bad = 1
-    exit 1
-}
-function s3_reset() {
-    s3_mode = "scan"
-    s3_prefix_index = 0
-}
-function s3_word(offset,    i, value) {
-    value = 0
-    for (i = 0; i < 8; i++) value += s3_index_bytes[offset + i] * (2 ^ (8 * i))
-    return value
-}
-function s3_check_index(    hash, i, off, s_off, s_len, r_off, r_len,
-                            stream_cursor, raw_cursor, prev_chunk, ec, eo, el) {
-    hash = 1
-    for (i = 0; i < s3_index_end; i++)
-        hash = (hash * 131 + ((i >= 68 && i < 76) ? 0 : s3_index_bytes[i])) % 2147483647
-    if (hash != s3_word(68)) s3_fail("index hash mismatch")
-    stream_cursor = 0
-    raw_cursor = 0
-    delete s3_chunk_slen
-    delete s3_chunk_rlen
-    delete s3_chunk_cursor
-    for (i = 0; i < s3_chunks; i++) {
-        off = s3_header_bytes + i * s3_chunk_bytes
-        s_off = s3_word(off); s_len = s3_word(off + 8)
-        r_off = s3_word(off + 16); r_len = s3_word(off + 24)
-        if (s_off != stream_cursor || s_len < 0 || s_off + s_len > s3_stream ||
-            r_off != raw_cursor || r_len < 0 || r_off + r_len > s3_raw ||
-            (r_len == 0 && s_len != 0) || (r_len > 0 && s_len < 1) ||
-            r_len > s_len * 2064)
-            s3_fail("invalid chunk table")
-        s3_chunk_slen[i] = s_len
-        s3_chunk_rlen[i] = r_len
-        s3_chunk_cursor[i] = 0
-        stream_cursor += s_len
-        raw_cursor += r_len
-    }
-    if (stream_cursor != s3_stream || raw_cursor != s3_raw)
-        s3_fail("chunk table does not cover stream")
-    raw_cursor = 0
-    prev_chunk = 0
-    for (i = 0; i < s3_entries; i++) {
-        off = s3_header_bytes + s3_chunks * s3_chunk_bytes + i * s3_entry_bytes
-        ec = s3_word(off); eo = s3_word(off + 8); el = s3_word(off + 16)
-        if (ec < prev_chunk || ec >= s3_chunks || eo < 0 || el < 0 ||
-            eo != s3_chunk_cursor[ec] || eo + el > s3_chunk_rlen[ec])
-            s3_fail("invalid entry table")
-        prev_chunk = ec
-        s3_chunk_cursor[ec] = eo + el
-        raw_cursor += el
-    }
-    for (i = 0; i < s3_chunks; i++)
-        if (s3_chunk_cursor[i] != s3_chunk_rlen[i])
-            s3_fail("entries do not cover chunk")
-    if (raw_cursor != s3_raw) s3_fail("entry lengths do not sum to raw total")
-}
-function s3_start_chunk(    ) {
-    while (s3_cur_chunk < s3_chunks && s3_chunk_rlen[s3_cur_chunk] == 0) {
-        s3_cur_chunk++
-    }
-    if (s3_cur_chunk >= s3_chunks) {
-        s3_finish()
-        return
-    }
-    frame_start = s3_start
-    raw_len = s3_chunk_rlen[s3_cur_chunk]
-    s3_chunk_target_bytes = s3_chunk_slen[s3_cur_chunk]
-    compressed_bytes = 0
-    position = 0
-    bit_pos = 0
-    delete out
-    delete body
-    rep[0] = 1; rep[1] = 1; rep[2] = 1; rep[3] = 1
-}
-function s3_finish() {
-    payload_count += s3_entries
-    versions[3] += s3_entries
-    compressed_total += s3_stream
-    static_total += s3_index_end + s3_stream
-    raw_total += s3_raw
-    s3_reset()
-}
 # --- TLCH index validator -----------------------------------------------------
 function tlch_reset() { tlch_mode = "scan"; tlch_matched = 0 }
 function tlch_word(offset,    i, value) {
@@ -548,11 +449,11 @@ function tlch_check_index(    tcount, groups, directory, i, record, name, name_l
 }
 {
     if (stop_after >= 0 && position_global > stop_after &&
-        (!do_lzss || (mode == "scan" && prefix_index == 0 && s3_mode == "scan" && s3_prefix_index == 0)) &&
+        (!do_lzss || (mode == "scan" && prefix_index == 0)) &&
         (!do_tlch || (tlch_mode == "scan" && tlch_matched == 0))) {
         exit 0
     }
-    if ((!do_lzss || (mode == "scan" && prefix_index == 0 && s3_mode == "scan" && s3_prefix_index == 0)) &&
+    if ((!do_lzss || (mode == "scan" && prefix_index == 0)) &&
         (!do_tlch || (tlch_mode == "scan" && tlch_matched == 0)) &&
         index($0, "95") == 0) {
         position_global += NF
@@ -563,99 +464,42 @@ function tlch_check_index(    tcount, groups, directory, i, record, name, name_l
         byte = $field + 0
         position_global++
         if (do_lzss) {
-            if (s3_mode == "scan") {
-                if (mode == "scan") {
-                    while (prefix_index > 0 && byte != prefix[prefix_index + 1])
-                        prefix_index = fallback[prefix_index]
-                    if (byte == prefix[prefix_index + 1]) prefix_index++
-                    if (prefix_index == prefix_len) {
-                        frame_start = position_global - prefix_len + 1
-                        mode = "header"
-                        raw_len = 0
-                        header_digits = 0
-                    }
-                } else if (mode == "header") {
-                    if (byte >= 48 && byte <= 57) {
-                        digit = byte - 48
-                        if (raw_len > int((binary_size * 2064 - digit) / 10))
-                            fail("impossible raw length")
-                        raw_len = raw_len * 10 + digit
-                        header_digits++
-                    } else if (byte == 0 && header_digits == 0) {
-                        # The runtime decoder also embeds NUL-terminated marker-only
-                        # strings. These are not frames; every decimal header is.
-                        reset_scan()
-                    } else if (byte == 10 && header_digits > 0) {
-                        compressed_bytes = 0
-                        position = 0
-                        bit_pos = 0
-                        delete out
-                        delete body
-                        rep[0] = 1; rep[1] = 1; rep[2] = 1; rep[3] = 1
-                        if (raw_len == 0) finish_payload()
-                        else mode = "v3"
-                    } else fail("malformed raw length")
-                } else if (mode == "v3") {
-                    body[compressed_bytes++] = byte
-                    if (compressed_bytes > binary_size - frame_start)
-                        fail("truncated token stream")
-                    if (decode_available()) finish_payload()
-                }
-            }
             if (mode == "scan") {
-                if (s3_mode == "scan") {
-                    while (s3_prefix_index > 0 && byte != s3_prefix[s3_prefix_index + 1])
-                        s3_prefix_index = s3_fallback[s3_prefix_index]
-                    if (byte == s3_prefix[s3_prefix_index + 1]) s3_prefix_index++
-                    if (s3_prefix_index == s3_prefix_len) {
-                        s3_start = position_global - s3_prefix_len + 1
-                        s3_relative = 36
-                        s3_mode = "header"
-                        for (i = 0; i < 36; i++) s3_index_bytes[i] = s3_prefix[i + 1]
-                        prefix_index = 0
-                    }
-                } else if (s3_mode == "header") {
-                    if (s3_relative == 36 && byte == 0) {
-                        # NUL-terminated marker-only string in binary data.
-                        s3_reset()
-                    } else {
-                        s3_index_bytes[s3_relative++] = byte
-                        if (s3_relative == s3_header_bytes) {
-                            s3_version = s3_word(36)
-                            s3_raw = s3_word(44); s3_index_end = s3_word(52)
-                            s3_entries = s3_word(60); s3_stream = s3_word(76)
-                            s3_chunks = s3_word(84)
-                            if (s3_version != 1 ||
-                                s3_raw < 0 || s3_raw > 268435456 ||
-                                s3_entries < 1 || s3_entries > 65536 ||
-                                s3_chunks < 1 || s3_chunks > s3_entries ||
-                                s3_stream < 0 ||
-                                s3_index_end != s3_header_bytes + s3_chunks * s3_chunk_bytes + s3_entries * s3_entry_bytes) {
-                                s3_fail("malformed s3 header")
-                            } else if (s3_index_end + s3_stream > binary_size - (s3_start - 1)) {
-                                s3_fail("truncated s3 frame")
-                            } else {
-                                s3_mode = "index"
-                            }
-                        }
-                    }
-                } else if (s3_mode == "index") {
-                    s3_index_bytes[s3_relative++] = byte
-                    if (s3_relative == s3_index_end) {
-                        s3_check_index()
-                        s3_cur_chunk = 0
-                        s3_mode = "stream"
-                        s3_start_chunk()
-                    }
-                } else if (s3_mode == "stream") {
-                    body[compressed_bytes++] = byte
-                    if (compressed_bytes == s3_chunk_target_bytes) {
-                        if (!decode_available())
-                            s3_fail("truncated chunk token stream")
-                        s3_cur_chunk++
-                        s3_start_chunk()
-                    }
+                while (prefix_index > 0 && byte != prefix[prefix_index + 1])
+                    prefix_index = fallback[prefix_index]
+                if (byte == prefix[prefix_index + 1]) prefix_index++
+                if (prefix_index == prefix_len) {
+                    frame_start = position_global - prefix_len + 1
+                    mode = "header"
+                    raw_len = 0
+                    header_digits = 0
                 }
+            } else if (mode == "header") {
+                if (byte >= 48 && byte <= 57) {
+                    digit = byte - 48
+                    if (raw_len > int((binary_size * 2064 - digit) / 10))
+                        fail("impossible raw length")
+                    raw_len = raw_len * 10 + digit
+                    header_digits++
+                } else if (byte == 0 && header_digits == 0) {
+                    # The runtime decoder also embeds NUL-terminated marker-only
+                    # strings. These are not frames; every decimal header is.
+                    reset_scan()
+                } else if (byte == 10 && header_digits > 0) {
+                    compressed_bytes = 0
+                    position = 0
+                    bit_pos = 0
+                    delete out
+                    delete body
+                    rep[0] = 1; rep[1] = 1; rep[2] = 1; rep[3] = 1
+                    if (raw_len == 0) finish_payload()
+                    else mode = "v3"
+                } else fail("malformed raw length")
+            } else if (mode == "v3") {
+                body[compressed_bytes++] = byte
+                if (compressed_bytes > binary_size - frame_start)
+                    fail("truncated token stream")
+                if (decode_available()) finish_payload()
             }
         }
         if (do_tlch) {
@@ -701,10 +545,6 @@ END {
             if (decode_available()) finish_payload()
         }
         if (mode != "scan") fail("truncated " mode " frame")
-        if (s3_mode == "header" && s3_relative == 37 && s3_index_bytes[36] == 0) {
-            s3_reset()
-        }
-        if (s3_mode != "scan") s3_fail("truncated " s3_mode " frame")
     }
     if (do_tlch) {
         if (tlch_mode != "scan") tlch_fail("truncated envelope")

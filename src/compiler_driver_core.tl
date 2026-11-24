@@ -29,7 +29,6 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_load)
-(cfg compile-profile (import compiler_embedded_stdlib as embedded_stdlib))
 (cfg embedded-stdlib-tlci (import compiler_build_identity as build_identity))
 (cfg
   embedded-stdlib-tlci
@@ -1700,12 +1699,10 @@
 (cfg
   compile-profile
   (define (compiler-driver-profile-embedded-cache-bytes) : i64
-    (+
-      (cfg
-        embedded-stdlib-tlci
-        (embedded_tlci.compiler-embedded-stdlib-tlci-cache-bytes)
-        0)
-      (embedded_stdlib.compiler-embedded-stdlib-cache-bytes))))
+    (cfg
+      embedded-stdlib-tlci
+      (embedded_tlci.compiler-embedded-stdlib-tlci-cache-bytes)
+      0)))
 
 (cfg
   compile-profile

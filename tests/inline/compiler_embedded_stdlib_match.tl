@@ -148,6 +148,17 @@
                     (text_buf.append!
                       out
                       (string.substring (& src) copied (- drop-start copied)))
+                    (let
+                      [j : i64 drop-start]
+                      (while (< j cut)
+                        (let
+                          [b : char (__tl_string_ref (& src) j)]
+                          (when
+                            (or (= b '\n') (= b '\r'))
+                            (text_buf.append!
+                              out
+                              (string.substring (& src) j 1))))
+                        (set! j (+ j 1))))
                     (set! copied cut))))
               (set! i end))]
           [(= c '"')
@@ -474,6 +485,9 @@
   (test.assert-true
     (match-agrees? ";; one\n(define a 1)\n" ";; one\n(define a 1)\n")
     "edge case 19")
+  (test.assert-true
+    (source-agrees? "\r;; bare cr\n  \r  ;; indented cr\n(define a 1)\n")
+    "edge case 20")
   ;; The dropped-span proof over the same shapes, CRLF and prose included.
   (test.assert-true
     (module-dropped-exact?

@@ -1,0 +1,15 @@
+# Safety corpus cases for #9257: removed stdlib `*-shared-view` helpers and sealed `vector.copy-range!`.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+shared_view_9257_process_env_reject|check-fail|tests/safety/shared_view_9257_process_env_reject.tl|-|typecheck: unbound name process.process-env-list-shared-view
+shared_view_9257_process_place_reject|check-fail|tests/safety/shared_view_9257_process_place_reject.tl|-|typecheck: unbound name process.process-place-shared-view
+shared_view_9257_process_runtime_reject|check-fail|tests/safety/shared_view_9257_process_runtime_reject.tl|-|typecheck: unbound name process_runtime.process-runtime-string-array-shared-view
+shared_view_9257_process_borrowed_reject|check-fail|tests/safety/shared_view_9257_process_borrowed_reject.tl|-|typecheck: unbound name process_borrowed.borrowed-string-list-shared-view
+shared_view_9257_args_string_reject|check-fail|tests/safety/shared_view_9257_args_string_reject.tl|-|typecheck: unbound name args.args-string-shared-view
+shared_view_9257_msvc_string_reject|check-fail|tests/safety/shared_view_9257_msvc_string_reject.tl|-|typecheck: unbound name msvc.msvc-string-shared-view
+shared_view_9257_text_buf_family_reject|check-fail|tests/safety/shared_view_9257_text_buf_family_reject.tl|-|typecheck: unbound name text_buf_family.text-buf-family-shared-view
+shared_view_9257_json_view_reject|check-fail|tests/safety/shared_view_9257_json_view_reject.tl|-|typecheck: unbound name json.json-shared-view
+shared_view_9257_serialize_view_reject|check-fail|tests/safety/shared_view_9257_serialize_view_reject.tl|-|typecheck: unbound name serialize.serialize-shared-view
+shared_view_9257_vector_copy_range_safe_reject|check-fail|tests/safety/shared_view_9257_vector_copy_range_safe_reject.tl|-|ivec/copy-range! requires unsafe context
+shared_view_9257_vector_copy_range_callable_reject|check-fail|tests/safety/shared_view_9257_vector_copy_range_callable_reject.tl|-|ivec/copy-range! is an unsafe callable and cannot be used as a plain function value
+shared_view_9257_no_alias_ok|run-exit|tests/safety/shared_view_9257_no_alias_ok.tl|42|-

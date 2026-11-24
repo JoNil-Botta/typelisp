@@ -28,13 +28,6 @@
 (define (text-buf-family-string-stride) : i64
   (comptime (size-of (type String))))
 
-;: Read an owner representation for generated borrowed-buffer code that must
-;: inspect the value and then keep using the original owner. This is a shallow
-;: representation view; it does not clone the referenced chunks.
-(defmacro (text-buf-family-shared-view [place : Expr]) : Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
 ;; The remaining `box-get` spellings in this file occur only inside checked-in
 ;; quasiquoted AST templates. The published seed must be able to parse those
 ;; templates during the one-epoch bootstrap; rebuilt public source uses `deref`.
@@ -141,33 +134,35 @@
               (ptr-cast (__tl_array-data store.slots) : (Ptr String))
               index)
             : (Ptr String)))))
+    ;: Clone an owned chunk list into the active arena, retaining dense store
+    ;: ownership metadata used by subsequent append and fork decisions.
+    (define (clone-chunks [chunks : (& TextBufChunkList)]) : TextBufChunkList
+      (match chunks
+        [(TextBufChunkNil) TextBufChunkNil]
+        [(TextBufChunkInline chunk) (TextBufChunkInline (string.copy chunk))]
+        [(TextBufChunkDense store visible-count)
+          (let
+            [slots : (__tl_dyn-array String)
+              (__tl_make-array String (array-length store.slots))]
+            [committed : i64 store.len]
+            [index : i64 0]
+            (while (< index committed)
+              (set!
+                (array-ref slots index)
+                (string.copy (& (array-ref store.slots index))))
+              (set! index (+ index 1)))
+            (TextBufChunkDense
+              (box
+                (TextBufStringStore
+                  slots
+                  committed
+                  store.owner-root
+                  store.owner-head))
+              visible-count))]))
     ;: Clone an owned snapshot into the active arena, retaining the store's
     ;: ownership metadata used by subsequent append and fork decisions.
     (define (clone-text-buf [buf : (& TextBuf)]) : TextBuf
-      (TextBuf
-        (match (& buf.chunks)
-          [(TextBufChunkNil) TextBufChunkNil]
-          [(TextBufChunkInline chunk) (TextBufChunkInline (string.copy chunk))]
-          [(TextBufChunkDense store visible-count)
-            (let
-              [slots : (__tl_dyn-array String)
-                (__tl_make-array String (array-length store.slots))]
-              [committed : i64 store.len]
-              [index : i64 0]
-              (while (< index committed)
-                (set!
-                  (array-ref slots index)
-                  (string.copy (& (array-ref store.slots index))))
-                (set! index (+ index 1)))
-              (TextBufChunkDense
-                (box
-                  (TextBufStringStore
-                    slots
-                    committed
-                    store.owner-root
-                    store.owner-head))
-                visible-count))])
-        buf.len))
+      (TextBuf (stdlib.text_buf.clone-chunks (& buf.chunks)) buf.len))
     ;: Allocation, growth, and prefix memcpy are cold.  The same-head commit
     ;: macro above keeps the common direct-write case inline; the generated
     ;: slow helper below reaches this routine only after that check fails.
@@ -744,15 +739,20 @@
                 true)
               (let
                 [next-prefix : text_buf.TextBufChunkList
-                  (match (text_buf_family.text-buf-family-shared-view prefix)
+                  (match prefix
                     [(text_buf.TextBufChunkDense store visible-count)
                       (text_buf.TextBufChunkDense
                         (text_buf_family.text-buf-owned-store-commit!
                           store
                           visible-count
-                          (text_buf_family.text-buf-family-shared-view old-tail))
+                          old-tail)
                         (+ visible-count 1))]
-                    [_ (text_buf.chunk-cons old-tail prefix)])]
+                    [(text_buf.TextBufChunkInline prefix-chunk)
+                      (text_buf.chunk-cons
+                        old-tail
+                        (text_buf.TextBufChunkInline prefix-chunk))]
+                    [(text_buf.TextBufChunkNil)
+                      (text_buf.chunk-cons old-tail (text_buf.TextBufChunkNil))])]
                 (TextBufBorrowedChunkDense
                   anchor
                   next-prefix
@@ -853,8 +853,7 @@
                       _old-tail-borrowed?)
                     (let
                       [next-prefix : text_buf.TextBufChunkList
-                        (match (text_buf_family.text-buf-family-shared-view
-                          prefix)
+                        (match prefix
                           [(text_buf.TextBufChunkDense store visible-count)
                             (text_buf.TextBufChunkDense
                               (text_buf_family.text-buf-owned-store-commit!
@@ -862,7 +861,14 @@
                                 visible-count
                                 old-tail)
                               (+ visible-count 1))]
-                          [_ (text_buf.chunk-cons old-tail prefix)])]
+                          [(text_buf.TextBufChunkInline prefix-chunk)
+                            (text_buf.chunk-cons
+                              old-tail
+                              (text_buf.TextBufChunkInline prefix-chunk))]
+                          [(text_buf.TextBufChunkNil)
+                            (text_buf.chunk-cons
+                              old-tail
+                              (text_buf.TextBufChunkNil))])]
                       (TextBufBorrowedChunkDense
                         anchor
                         next-prefix
@@ -1039,6 +1045,34 @@
       (text_buf.render-chunks
         (stdlib.text_buf_borrowed.text-buf-borrowed-render-chunks chunks)
         total))
+    ;: Clone a borrowed buffer snapshot into independent storage while keeping
+    ;: its source lifetime anchor.
+    (define (clone-text-buf-borrowed-chunks
+      [chunks : (& chunks (TextBufBorrowedChunkList text))]) : (TextBufBorrowedChunkList
+        text)
+      (match chunks
+        [(TextBufBorrowedChunkNil anchor) (TextBufBorrowedChunkNil anchor)]
+        [(TextBufBorrowedChunkInline anchor tail-text _tail-borrowed?)
+          (TextBufBorrowedChunkInline anchor (string.copy tail-text) false)]
+        [(TextBufBorrowedChunkDense
+            anchor
+            prefix
+            prefix-count
+            tail-text
+            _tail-borrowed?)
+          (TextBufBorrowedChunkDense
+            anchor
+            (text_buf.clone-chunks prefix)
+            prefix-count
+            (string.copy tail-text)
+            false)]))
+    (define (clone-text-buf-borrowed [buf : (& buf (TextBufBorrowed text))]) : (TextBufBorrowed
+        text)
+      (match buf
+        [(TextBufBorrowed chunks total-len)
+          (TextBufBorrowed
+            (stdlib.text_buf_borrowed.clone-text-buf-borrowed-chunks chunks)
+            total-len)]))
     (define (render [buf : (TextBufBorrowed text)]) : String
       (match buf
         [(TextBufBorrowed chunks total-len)

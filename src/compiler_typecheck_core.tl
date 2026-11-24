@@ -101479,7 +101479,12 @@
   (macro-hygiene-output-root i64)
   ;; Count of scratch forms expanded with no expected type, so lazy
   ;; expected-type providers retry if a macro synthesized a scratch form.
-  (scratch-without-expected-count i64))
+  (scratch-without-expected-count i64)
+  ;; Set when `macro-expand-clone-out` fails while expanding a scratch form
+  ;; with no expected type, so an enclosing lazy-expected or call-arg site can
+  ;; retry once with the resolved expected type while nested genuine errors
+  ;; stay linear.
+  (scratch-error-without-expected bool))
 
 ;; Cold compile-profile census of the five independently reclaimed macro owner
 ;; classes. Sample only at generation handoffs and the final detach boundary;
@@ -101609,7 +101614,8 @@
     (Nil)
     (MacroHygieneCallee.No)
     -1
-    0))
+    0
+    false))
 
 (define (tc-macro-walk-state-address-initialize [state : TcMacroState]) : i64
   (tc-macro-state-cell-initialize
@@ -122360,10 +122366,19 @@
     scratch-without-expected-count
     (+ (tc-macro-walk-field state scratch-without-expected-count) 1)))
 
+(define (tc-macro-scratch-error-without-expected? [state : TcMacroState]) : bool
+  (tc-macro-walk-field state scratch-error-without-expected))
+
+(define (tc-macro-scratch-error-without-expected-set!
+  [state : TcMacroState]
+  [flag : bool]) : unit
+  (tc-macro-walk-set! state scratch-error-without-expected flag))
+
 (define (tc-macro-scratch-without-expected-restore!
   [state : TcMacroState]
   [count : i64]) : unit
-  (tc-macro-walk-set! state scratch-without-expected-count count))
+  (tc-macro-walk-set! state scratch-without-expected-count count)
+  (tc-macro-walk-set! state scratch-error-without-expected false))
 
 (define (macro-expr-tail-contains-scratch-id?
   [expr-bases : i64]
@@ -123757,16 +123772,16 @@
                   depth
                   expr-id
                   (ast.AstMaybeType.No))]
-              (if (=
-                (tc-macro-scratch-without-expected-count macro-state)
-                scratch-mark)
-                fast-result
-                (begin
-                  (tc-macro-scratch-without-expected-restore!
-                    macro-state
+              (match fast-result
+                [(Ok fast-id)
+                  (if (=
+                    (tc-macro-scratch-without-expected-count macro-state)
                     scratch-mark)
-                  (match fast-result
-                    [(Ok fast-id)
+                    (Ok fast-id)
+                    (begin
+                      (tc-macro-scratch-without-expected-restore!
+                        macro-state
+                        scratch-mark)
                       (let
                         [resolved-expected : ast.AstMaybeType
                           (macro-resolve-lazy-expected ctx env lazy)]
@@ -123779,8 +123794,28 @@
                               decls
                               depth
                               fast-id
-                              resolved-expected)]))]
-                    [(Err diag) (Err diag)])))))]
+                              resolved-expected)]))))]
+                [(Err diag)
+                  (if (not
+                    (tc-macro-scratch-error-without-expected? macro-state))
+                    (Err diag)
+                    (begin
+                      (tc-macro-scratch-without-expected-restore!
+                        macro-state
+                        scratch-mark)
+                      (let
+                        [resolved-expected : ast.AstMaybeType
+                          (macro-resolve-lazy-expected ctx env lazy)]
+                        (match (& resolved-expected)
+                          [(No) (Err diag)]
+                          [(Some _)
+                            (macro-expand-node-fire-expected
+                              ctx
+                              env
+                              decls
+                              depth
+                              expr-id
+                              resolved-expected)]))))])))]
         (tc-macro-scratch-without-expected-restore! macro-state scratch-mark)
         result))))
 
@@ -123905,6 +123940,25 @@
       (tc-macro-scratch-without-expected-restore! macro-state scratch-mark))
     repaired))
 
+(define (macro-expand-call-args-fallback-or-err
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [decls : (& ast.AstDeclList)]
+  [depth : i64]
+  [first-fire-index : i64]
+  [args : (& args ast.AstExprList)]
+  [fast-err : ResultMacroCheck]) : ResultMacroExprList
+  (match fast-err
+    [(Err diag) (Err diag)]
+    [(Ok)
+      (macro-expand-call-args-fallback
+        ctx
+        env
+        decls
+        depth
+        first-fire-index
+        args)]))
+
 (define (macro-expand-call-args-with-target
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -123914,7 +123968,8 @@
   [args : (& args ast.AstExprList)]
   [call-expected : ast.AstMaybeType]
   [first-fire-index : i64]
-  [scratch-mark : i64]) : ResultMacroExprList
+  [scratch-mark : i64]
+  [fast-err : ResultMacroCheck]) : ResultMacroExprList
   (let
     [macro-state : TcMacroState (tc-context-macro-state ctx)]
     [call-expected-absent? : bool
@@ -123965,31 +124020,39 @@
                     first-fire-index
                     args)]
                 [_
-                  (macro-expand-call-args-fallback
+                  (macro-expand-call-args-fallback-or-err
                     ctx
                     env
                     decls
                     depth
                     first-fire-index
-                    args)])]
+                    args
+                    fast-err)])]
             [_
-              (macro-expand-call-args-fallback
+              (macro-expand-call-args-fallback-or-err
                 ctx
                 env
                 decls
                 depth
                 first-fire-index
-                args)])]
+                args
+                fast-err)])]
         [(Err _)
-          (macro-expand-call-args-fallback
+          (macro-expand-call-args-fallback-or-err
             ctx
             env
             decls
             depth
             first-fire-index
-            args)])]
-    (unless
-      retry-needs-outer-expected?
+            args
+            fast-err)])]
+    (if retry-needs-outer-expected?
+      (begin
+        (tc-macro-scratch-without-expected-bump! macro-state)
+        (match (& retry-result)
+          [(Err _)
+            (tc-macro-scratch-error-without-expected-set! macro-state true)]
+          [(Ok _) unit]))
       (tc-macro-scratch-without-expected-restore! macro-state scratch-mark))
     retry-result))
 
@@ -124033,10 +124096,25 @@
                 (&mut fast-out))]
             (match fast-check
               [(Err diag)
-                (tc-macro-scratch-without-expected-restore!
-                  macro-state
-                  scratch-mark)
-                (Err diag)]
+                (let
+                  [retry? : bool
+                    (tc-macro-scratch-error-without-expected? macro-state)]
+                  (tc-macro-scratch-without-expected-restore!
+                    macro-state
+                    scratch-mark)
+                  (if retry?
+                    (macro-expand-call-args-with-target
+                      ctx
+                      env
+                      decls
+                      depth
+                      nfunc
+                      (& args)
+                      call-expected
+                      first-fire-index
+                      scratch-mark
+                      (ResultMacroCheck.Err diag))
+                    (Err diag)))]
               [(Ok)
                 (if (= dirty-mask 0)
                   (Ok fast-out)
@@ -124063,7 +124141,8 @@
             (& args)
             call-expected
             first-fire-index
-            scratch-mark))))))
+            scratch-mark
+            (ResultMacroCheck.Ok)))))))
 
 ;; Expand a node after its might-fire result is already known. Match arms use
 ;; this entry so deciding whether an arm needs a type environment does not make
@@ -124222,6 +124301,20 @@
                     (box
                       (tc-expr-diag (tc-context-expr-bases ctx) body message)))]))))])))
 
+(define (macro-expand-scratch-clone-out-result
+  [ctx : TcContext]
+  [expected-absent? : bool]
+  [result : ResultMacroExpr]) : ResultMacroExpr
+  (when
+    expected-absent?
+    (match (& result)
+      [(Err _)
+        (tc-macro-scratch-error-without-expected-set!
+          (tc-context-macro-state ctx)
+          true)]
+      [(Ok _) unit]))
+  result)
+
 ;; Expand a scratch FORM and give it its clone-out step, which reports at SPAN
 ;; when given.
 (define (macro-expand-scratch-form
@@ -124232,51 +124325,60 @@
   [form : ast.AstExpr]
   [span : TcMaybeAstSourceSpan]
   [expected : ast.AstMaybeType]) : ResultMacroExpr
-  (match (& expected)
-    [(No)
-      (tc-macro-scratch-without-expected-bump! (tc-context-macro-state ctx))]
-    [(Some _) unit])
-  (match form
-    [(WithEscape scratch-box body)
-      (let
-        [nscratch (try (macro-expand-node ctx env decls depth scratch-box))]
-        [nbody
-          (try
-            (macro-expand-exprs-expected
+  (let
+    [expected-absent? : bool
+      (match (& expected)
+        [(No)
+          (tc-macro-scratch-without-expected-bump! (tc-context-macro-state ctx))
+          true]
+        [(Some _) false])]
+    (match form
+      [(WithEscape scratch-box body)
+        (let
+          [nscratch (try (macro-expand-node ctx env decls depth scratch-box))]
+          [nbody
+            (try
+              (macro-expand-exprs-expected
+                ctx
+                env
+                decls
+                depth
+                body
+                (macro-clone-maybe-type (& expected))))]
+          (macro-expand-scratch-clone-out-result
+            ctx
+            expected-absent?
+            (macro-expand-clone-out
               ctx
               env
               decls
               depth
-              body
-              (macro-clone-maybe-type (& expected))))]
-        (macro-expand-clone-out
-          ctx
-          env
-          decls
-          depth
-          (ast.ast-expr-with-escape nscratch nbody)
-          span
-          expected))]
-    [(WithScratch body)
-      (let
-        [nbody
-          (try
-            (macro-expand-exprs-expected
+              (ast.ast-expr-with-escape nscratch nbody)
+              span
+              expected)))]
+      [(WithScratch body)
+        (let
+          [nbody
+            (try
+              (macro-expand-exprs-expected
+                ctx
+                env
+                decls
+                depth
+                body
+                (macro-clone-maybe-type (& expected))))]
+          (macro-expand-scratch-clone-out-result
+            ctx
+            expected-absent?
+            (macro-expand-clone-out
               ctx
               env
               decls
               depth
-              body
-              (macro-clone-maybe-type (& expected))))]
-        (macro-expand-clone-out
-          ctx
-          env
-          decls
-          depth
-          (ast.ast-expr-with-scratch nbody)
-          span
-          expected))]
-    [_ (Ok (ast.ast-node-push form))]))
+              (ast.ast-expr-with-scratch nbody)
+              span
+              expected)))]
+      [_ (Ok (ast.ast-node-push form))])))
 
 ;; The scratch BODY's type for choosing its clone-out step, errors dropped.
 ;; Checked once against the form's actual enclosing EXPECTED type (if any).

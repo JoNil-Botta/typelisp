@@ -3301,25 +3301,32 @@
   [convention : compiler_abi.CompilerCallConvention]
   [program-index : be_state.CompilerBackendProgramIndex]
   [name : i64]) : i64
-  (if (compiler-backend-direct-call-shadow-free-runtime? program-index name)
-    0
-    (compiler-backend-outgoing-shadow-space target convention)))
+  (let
+    [shadow : i64 (compiler-backend-outgoing-shadow-space target convention)]
+    (if (and
+      (> shadow 0)
+      (not
+        (compiler-backend-direct-call-shadow-free-runtime? program-index name)))
+      shadow
+      0)))
 
 (define (compiler-backend-call-instr-outgoing-shadow-space
   [target : be_state.CompilerBackendTarget]
   [instr : (& instr compiler_ir_types.CompilerIrInstr)]
   [program-index : be_state.CompilerBackendProgramIndex]) : i64
-  (match instr
-    [(or (Call _ name _ _) (TailCall name _ _))
-      (compiler-backend-direct-call-outgoing-shadow-space
-        target
-        (compiler_regalloc.compiler-reg-direct-call-convention name)
-        program-index
-        name)]
-    [(or (CallIndirect _ _ _ _) (TailCallIndirect _ _ _) (SpmdCall _)
-         (BoundsCheck _ _ _))
-      0]
-    [_ (compiler-backend-outgoing-shadow-space target (Platform))]))
+  (if (= (compiler-backend-outgoing-shadow-space target (Platform)) 0)
+    0
+    (match instr
+      [(or (Call _ name _ _) (TailCall name _ _))
+        (compiler-backend-direct-call-outgoing-shadow-space
+          target
+          (compiler_regalloc.compiler-reg-direct-call-convention name)
+          program-index
+          name)]
+      [(or (CallIndirect _ _ _ _) (TailCallIndirect _ _ _) (SpmdCall _)
+           (BoundsCheck _ _ _))
+        0]
+      [_ (compiler-backend-outgoing-shadow-space target (Platform))])))
 
 (define (compiler-backend-target-linux?
   [target : be_state.CompilerBackendTarget]) : bool

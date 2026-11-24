@@ -1,23 +1,29 @@
 # AES generated-code regression boundary
 
 The initial pins were reviewed with the fetched stage0 identified in the owner
-evidence, for both x86-64 ABIs at opt1 and opt2. The required gate rebuilds them
-with the branch bootstrap compiler. A pin is a complete instruction/label-body
-hash, not a cryptographic timing proof. No source file, instruction count or
+evidence, for both x86-64 ABIs at opt1 and opt2. The required gate rebuilds both
+targets with the branch bootstrap compiler and checks exact structural
+constant-time, completeness, wipe, and call-order contracts in
+`scripts/check-crypto-aes-shape.sh` (not raw-assembly SHA-256 hashes, which
+collided on benign spill-offset, register-name, label-numbering, tail-merge, and
+abort-stub changes). A structural contract is a generated-code regression
+boundary, not a cryptographic timing proof. No source file, instruction count or
 unused helper alone can satisfy this boundary.
 
-The extractor selects every emitted `crypto_aes_core` function, the exported
-`aes_audit_production_128`/`256` roots, their Windows `$typelisp` bridge bodies,
-and the real ordinary-entry `main`. All four target/opt outputs must assemble.
-Windows entry setup adds only its public argc/argv stores; every AES helper
-and retained root is byte-identical to the reviewed library-context body.
-It preserves opcodes, operands, memory addresses, local
-labels, branch targets, constants and calls, omitting only assembler metadata
-and comments. It starts extraction only at an actual selected function label, not a forward
-`.globl` declaration, and rejects duplicate definitions and malformed pin rows.
-It resets its symbol inventory on each invocation and compares
-both the full inventory and hashes; missing, additional, changed or newly
-inlined work requires renewed review. The fixture compiles twice identically.
+The extractor selects every emitted `crypto_aes_core` and `crypto_stack_scrub`
+function, the exported `aes_audit_production_128`/`256` roots, their Windows
+`$typelisp` bridge bodies, and the real ordinary-entry `main`. All four
+target/opt outputs must assemble and compile twice identically. Private
+`"__tl_arg_entry:N"` stubs are validated to contain only register-to-register
+moves/nops and resolved to their real callees. The contract enforces a closed
+symbol inventory per target/opt (zero missing required symbols, zero unexpected
+symbols), zero `cmov*`/`loop*`/`cmpb`/`testb`, zero branches/`set*`/`div`/
+variable-`%cl`-shifts/indirect-control/`(%rip)`/indexed-memory on straight-line
+primitives, audited bounds on loops and preflight helpers, exact allowed and
+required call-target sets, mandatory `wipe_words_bang` and `stack_scrub` calls,
+and `sub_bytes!` -> `squeeze!` -> `wipe_words_bang` -> `scrub:block!` order.
+`scripts/check-crypto-aes-shape.sh --self-test` verifies that planted mutations
+for every violation class fail closed.
 
 ## Public control and address inventory
 
@@ -242,3 +248,15 @@ Linux opt1 `main`, the same bijection moves the two argument pointer slots from
 `136(%rsp)`/`128(%rsp)` to `72(%rsp)`/`64(%rsp)`, so four loads that previously
 used negative offsets off `%r8` (`-120(%r8)`/`-128(%r8)` from `leaq 256(%rsp), %r8`)
 now address `72(%rsp)`/`64(%rsp)` directly.
+
+## Structural constant-time shape contracts
+
+Raw-assembly SHA-256 pin files (`shape-{linux,windows}-x86_64-opt{1,2}.sha256`)
+were removed and replaced by exact per-target/opt structural contracts in
+`scripts/check-crypto-aes-shape.sh` with a self-contained `--self-test` mutation
+suite. Spill-slot layout, register assignment, `.L` label numbering, tail-merge
+unconditional jumps, compact literal encodings, abort-stub forms, and
+`__tl_arg_entry` ordinals no longer cause merge conflicts, while any symbol
+inventory drift, disallowed branch, `cmov`/`set`/`div`/variable-shift/indirect
+control transfer, table or indexed lookup, dropped wipe/scrub, unauthorized call
+target, or call-order violation fails closed.

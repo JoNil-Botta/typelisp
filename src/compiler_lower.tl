@@ -20,6 +20,7 @@
 (import compiler_diagnostic as cdiag)
 (import compiler_ir_types as ir)
 (import compiler_tli_types as tli)
+(import compiler_tli_hydrate as tli_hydrate)
 (import compiler_pointer_proof_input as pointer_proof)
 (import (vector.vector pointer_proof.PointerProofRef core) as proof_refs)
 (import compiler_ast_types as ast)
@@ -4416,11 +4417,16 @@
         [direct : bool (lower-logical-symbol-id-direct? logical-id source-id)]
         [link-id : i64
           (ci.intern-id-value (ast.ast-extern-metadata-symbol-id (& metadata)))]
-        (if (and
-          (ast.ast-extern-metadata-symbol-matches-source? (& metadata))
-          direct)
+        [c-abi? : bool
+          (match (& metadata)
+            [(Metadata abi _ _ _ _) (ast.ast-extern-abi-c? (& abi))])]
+        (if (not c-abi?)
           link-id
-          (lower-logical-symbol-id-select logical-name logical-id direct)))]))
+          (if (and
+            (ast.ast-extern-metadata-symbol-matches-source? (& metadata))
+            direct)
+            link-id
+            (lower-logical-symbol-id-select logical-name logical-id direct))))]))
 
 (define (lower-name-cache-owner-state [cache : (& cache LowerNameCache)]) : CompilerLowerState
   (compiler-lower-state-from-address cache.owner-address))
@@ -16553,7 +16559,9 @@
         [text : String (ir.compiler-ir-symbol-text name)]
         (or
           (string.eq text "stdlib/io.tl::stdlib.io/panic")
-          (string.eq text "stdlib\\io.tl::stdlib.io/panic")))]
+          (string.eq text "stdlib\\io.tl::stdlib.io/panic")
+          (string.eq text "stdlib.io/panic")
+          (string.eq text "_tl_stdlib_io_stdlib_io_panic")))]
     [_ false]))
 
 (define (lower-state-emit-at-expr
@@ -32544,6 +32552,47 @@
                                                     [(Eq) true]
                                                     [_ false]))
                                                 result-ty))))
+                                        (when
+                                          (and
+                                            (lower-binop-group-eq? op)
+                                            (lower-string-handle-type?
+                                              ctx
+                                              (clone left-ty)))
+                                          (return
+                                            (match (lower-string-payload-literal-eq
+                                              right-state
+                                              snapshot-value
+                                              right-value)
+                                              [(Ok (Expr eq-state eq-value _))
+                                                (match op
+                                                  [(Eq)
+                                                    (ResultLowerExpr.Ok
+                                                      (LowerExpr.Expr
+                                                        eq-state
+                                                        eq-value
+                                                        result-ty))]
+                                                  [_
+                                                    (match (lower-state-alloc-var
+                                                      eq-state)
+                                                      [(LowerAlloc.Alloc
+                                                          allocated
+                                                          var-id)
+                                                        (ResultLowerExpr.Ok
+                                                          (LowerExpr.Expr
+                                                            (lower-state-emit
+                                                              allocated
+                                                              (ir.CompilerIrInstr.BinOp
+                                                                var-id
+                                                                (ir.CompilerIrBinOp.Eq)
+                                                                eq-value
+                                                                (ir.CompilerIrValue.Bool
+                                                                  false)
+                                                                (ast.AstType.Bool)))
+                                                            (ir.CompilerIrValue.Var
+                                                              var-id)
+                                                            result-ty))])])]
+                                              [(Err message)
+                                                (ResultLowerExpr.Err message)])))
                                         (if (and
                                           (lower-binop-group-eq? op)
                                           (lower-type-register-group?
@@ -36958,6 +37007,78 @@
                           signature)))
                     (ir.CompilerIrReturnStorage.None)))]
               [_ (ir.CompilerIrReturnStorage.None)]))]
+        [_ (ir.CompilerIrReturnStorage.None)])]
+    [(ast.AstExternAbi.TypeLisp)
+      (match (& signature)
+        [(ast.AstType.Func source result-id)
+          (let
+            [resolved : ast.AstType
+              (tc_core.tc-type-without-regions
+                (tc_core.tc-resolve-type
+                  ctx
+                  (tc_core.tc-context-type-get ctx result-id)))]
+            [leading-sret? : bool
+              (match (lower-internal-return-class
+                ctx
+                mode
+                (tc_core.tc-context-type-get ctx result-id))
+                [(Sret _) true]
+                [_ false])]
+            [trailing-sret? : bool
+              (and
+                (not leading-sret?)
+                (lower-type-inline-struct-or-enum? ctx resolved)
+                (not (lower-type-register-resident? ctx resolved)))]
+            (if (or leading-sret? trailing-sret?)
+              (let
+                [physical : ast.AstTypeList (ast.ast-type-list-new)]
+                [pointer-id : i64
+                  (tc_core.tc-context-type-push-value ctx (ast.AstType.U64))]
+                [hidden-index : i64 0]
+                (when
+                  leading-sret?
+                  (ast.ast-type-list-push (&mut physical) pointer-id))
+                (for [index
+                  (iterator.range 0 (ast.ast-type-list-len (& (deref source))))]
+                  (ast.ast-type-list-push
+                    (&mut physical)
+                    (tc_core.tc-context-type-push-value
+                      ctx
+                      (lower-internal-param-physical-type
+                        ctx
+                        mode
+                        (tc_core.tc-context-type-get
+                          ctx
+                          (ast.ast-type-list-get
+                            (& (deref source))
+                            index
+                            (ast.ast-type-id-fallback)))))))
+                (when
+                  trailing-sret?
+                  (set! hidden-index (ast.ast-type-list-len (& physical)))
+                  (ast.ast-type-list-push (&mut physical) pointer-id))
+                (let
+                  [size : i64 (lower-type-size ctx resolved)]
+                  [align : i64 (lower-type-align ctx resolved)]
+                  [physical-result : ast.AstType
+                    (lower-internal-return-physical-type
+                      ctx
+                      mode
+                      (tc_core.tc-context-type-get ctx result-id))]
+                  (ir.CompilerIrReturnStorage.Some
+                    (box
+                      (ir.CompilerIrReturnStorageAbi
+                        (if leading-sret?
+                          (ir.CompilerIrReturnStorageConvention.InternalLeading)
+                          (ir.CompilerIrReturnStorageConvention.InternalTrailing))
+                        hidden-index
+                        size
+                        align
+                        resolved
+                        physical-result
+                        physical
+                        signature)))))
+              (ir.CompilerIrReturnStorage.None)))]
         [_ (ir.CompilerIrReturnStorage.None)])]
     [_ (ir.CompilerIrReturnStorage.None)]))
 
@@ -76963,6 +77084,47 @@
             mode))]
       [(Err message) (Err (box (lower-diagnostic message)))])))
 
+;; A hydrated stdlib struct or enum already has its synthesized cleanup wrapper
+;; compiled in `libstdlib.a`; declare it as a TypeLisp extern instead of
+;; emitting a duplicate definition in the caller's object file.
+(define (lower-hydrated-cleanup-extern!
+  [decl-ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [logical-name : i64]
+  [arg-ty : ast.AstType]
+  [cur-externs : (&mut ir.CompilerIrExternBuilder)]) : unit
+  (when
+    (>= logical-name 0)
+    (let
+      [params : ast.AstTypeList (ast.ast-type-list-new)]
+      [unit-ty : ast.AstType (ast.AstType.Unit)]
+      (ast.ast-type-list-push (&mut params) (ast.ty-node-push (& arg-ty)))
+      (let
+        [fn-ty : ast.AstType (ast.ast-ty-func params (& unit-ty))]
+        [resolved-ty : ast.AstType (tc_core.tc-resolve-type decl-ctx fn-ty)]
+        [storage : ir.CompilerIrReturnStorage
+          (lower-return-storage-extern
+            decl-ctx
+            mode
+            (tc_core.tc-type-without-regions (clone resolved-ty))
+            (ast.AstExternAbi.TypeLisp))]
+        [logical-text : String (ir.compiler-ir-symbol-text logical-name)]
+        [archive-sym : String
+          (tli_hydrate.tli-hydrate-archive-user-symbol (& logical-text))]
+        [archive-sym-id : i64 (ci.intern archive-sym)]
+        (ir.compiler-ir-extern-builder-push!
+          cur-externs
+          (ir.CompilerIrExtern.Extern
+            logical-name
+            logical-name
+            logical-text
+            (lower-internal-extern-type decl-ctx mode resolved-ty)
+            (ast.AstExternAbi.TypeLisp)
+            archive-sym-id
+            (ast.ast-extern-link-input-list-new)
+            false
+            storage))))))
+
 (define (lower-struct-cleanup-decl
   [ctx : tc_core.TcContext]
   [top-env : tc_core.TcTypeEnv]
@@ -79290,30 +79452,39 @@
                         (& cur-globals)
                         globals-before
                         logical-module-id)))
-                  (match (lower-enum-cleanup-decl
-                    decl-ctx
-                    cur-local-top-env
-                    (lower-global-shared-view cur-type-cache)
-                    logical-name
-                    cleanup
-                    (Enum enum-id)
-                    variants
-                    (lower-global-shared-view cur-spans)
-                    decl-name-cache
-                    mode)
-                    [(Ok cleanup-functions cleanup-spans)
-                      (lower-module-ownership-record-functions!
-                        lower-state
-                        (& cleanup-functions)
-                        logical-module-id)
-                      (ir.compiler-ir-function-builder-append-seq!
-                        (&mut cur-functions)
-                        (& cleanup-functions))
-                      (set! cur-spans cleanup-spans)
-                      (set! cur-decls rest)]
-                    [(Err message)
-                      (set! result (Err message))
-                      (set! done true)]))]
+                  (if (tc_core.tc-tli-hydrated-module? decl-ctx cur-module-id)
+                    (begin
+                      (lower-hydrated-cleanup-extern!
+                        decl-ctx
+                        mode
+                        logical-name
+                        (Enum enum-id)
+                        (&mut cur-externs))
+                      (set! cur-decls rest))
+                    (match (lower-enum-cleanup-decl
+                      decl-ctx
+                      cur-local-top-env
+                      (lower-global-shared-view cur-type-cache)
+                      logical-name
+                      cleanup
+                      (Enum enum-id)
+                      variants
+                      (lower-global-shared-view cur-spans)
+                      decl-name-cache
+                      mode)
+                      [(Ok cleanup-functions cleanup-spans)
+                        (lower-module-ownership-record-functions!
+                          lower-state
+                          (& cleanup-functions)
+                          logical-module-id)
+                        (ir.compiler-ir-function-builder-append-seq!
+                          (&mut cur-functions)
+                          (& cleanup-functions))
+                        (set! cur-spans cleanup-spans)
+                        (set! cur-decls rest)]
+                      [(Err message)
+                        (set! result (Err message))
+                        (set! done true)])))]
               [(DefEnumLifetimes decl-meta name lifetimes cleanup variants)
                 (let
                   [decl-ctx : tc_core.TcContext
@@ -79375,30 +79546,39 @@
                         (& cur-globals)
                         globals-before
                         logical-module-id)))
-                  (match (lower-enum-cleanup-decl
-                    decl-ctx
-                    cur-local-top-env
-                    (lower-global-shared-view cur-type-cache)
-                    logical-name
-                    cleanup
-                    (ast.ast-ty-enum-args enum-id lifetimes)
-                    variants
-                    (lower-global-shared-view cur-spans)
-                    decl-name-cache
-                    mode)
-                    [(Ok cleanup-functions cleanup-spans)
-                      (lower-module-ownership-record-functions!
-                        lower-state
-                        (& cleanup-functions)
-                        logical-module-id)
-                      (ir.compiler-ir-function-builder-append-seq!
-                        (&mut cur-functions)
-                        (& cleanup-functions))
-                      (set! cur-spans cleanup-spans)
-                      (set! cur-decls rest)]
-                    [(Err message)
-                      (set! result (Err message))
-                      (set! done true)]))]
+                  (if (tc_core.tc-tli-hydrated-module? decl-ctx cur-module-id)
+                    (begin
+                      (lower-hydrated-cleanup-extern!
+                        decl-ctx
+                        mode
+                        logical-name
+                        (ast.ast-ty-enum-args enum-id lifetimes)
+                        (&mut cur-externs))
+                      (set! cur-decls rest))
+                    (match (lower-enum-cleanup-decl
+                      decl-ctx
+                      cur-local-top-env
+                      (lower-global-shared-view cur-type-cache)
+                      logical-name
+                      cleanup
+                      (ast.ast-ty-enum-args enum-id lifetimes)
+                      variants
+                      (lower-global-shared-view cur-spans)
+                      decl-name-cache
+                      mode)
+                      [(Ok cleanup-functions cleanup-spans)
+                        (lower-module-ownership-record-functions!
+                          lower-state
+                          (& cleanup-functions)
+                          logical-module-id)
+                        (ir.compiler-ir-function-builder-append-seq!
+                          (&mut cur-functions)
+                          (& cleanup-functions))
+                        (set! cur-spans cleanup-spans)
+                        (set! cur-decls rest)]
+                      [(Err message)
+                        (set! result (Err message))
+                        (set! done true)])))]
               [(DefStruct decl-meta name _ cleanup fields)
                 (let
                   [decl-ctx : tc_core.TcContext
@@ -79434,30 +79614,39 @@
                       (csym.compiler-symbol-module-key-id-by-id
                         cur-module-id
                         name))]
-                  (match (lower-struct-cleanup-decl
-                    decl-ctx
-                    cur-local-top-env
-                    (lower-global-shared-view cur-type-cache)
-                    logical-name
-                    cleanup
-                    struct-ty
-                    fields
-                    (lower-global-shared-view cur-spans)
-                    decl-name-cache
-                    mode)
-                    [(Ok cleanup-functions cleanup-spans)
-                      (lower-module-ownership-record-functions!
-                        lower-state
-                        (& cleanup-functions)
-                        logical-module-id)
-                      (ir.compiler-ir-function-builder-append-seq!
-                        (&mut cur-functions)
-                        (& cleanup-functions))
-                      (set! cur-spans cleanup-spans)
-                      (set! cur-decls rest)]
-                    [(Err message)
-                      (set! result (Err message))
-                      (set! done true)]))]
+                  (if (tc_core.tc-tli-hydrated-module? decl-ctx cur-module-id)
+                    (begin
+                      (lower-hydrated-cleanup-extern!
+                        decl-ctx
+                        mode
+                        logical-name
+                        struct-ty
+                        (&mut cur-externs))
+                      (set! cur-decls rest))
+                    (match (lower-struct-cleanup-decl
+                      decl-ctx
+                      cur-local-top-env
+                      (lower-global-shared-view cur-type-cache)
+                      logical-name
+                      cleanup
+                      struct-ty
+                      fields
+                      (lower-global-shared-view cur-spans)
+                      decl-name-cache
+                      mode)
+                      [(Ok cleanup-functions cleanup-spans)
+                        (lower-module-ownership-record-functions!
+                          lower-state
+                          (& cleanup-functions)
+                          logical-module-id)
+                        (ir.compiler-ir-function-builder-append-seq!
+                          (&mut cur-functions)
+                          (& cleanup-functions))
+                        (set! cur-spans cleanup-spans)
+                        (set! cur-decls rest)]
+                      [(Err message)
+                        (set! result (Err message))
+                        (set! done true)])))]
               [(DefStructLifetimes decl-meta name lifetimes _ cleanup fields)
                 (let
                   [decl-ctx : tc_core.TcContext
@@ -79494,30 +79683,39 @@
                         cur-module-id
                         name)
                       lifetimes)]
-                  (match (lower-struct-cleanup-decl
-                    decl-ctx
-                    cur-local-top-env
-                    (lower-global-shared-view cur-type-cache)
-                    logical-name
-                    cleanup
-                    struct-ty
-                    fields
-                    (lower-global-shared-view cur-spans)
-                    decl-name-cache
-                    mode)
-                    [(Ok cleanup-functions cleanup-spans)
-                      (lower-module-ownership-record-functions!
-                        lower-state
-                        (& cleanup-functions)
-                        logical-module-id)
-                      (ir.compiler-ir-function-builder-append-seq!
-                        (&mut cur-functions)
-                        (& cleanup-functions))
-                      (set! cur-spans cleanup-spans)
-                      (set! cur-decls rest)]
-                    [(Err message)
-                      (set! result (Err message))
-                      (set! done true)]))]
+                  (if (tc_core.tc-tli-hydrated-module? decl-ctx cur-module-id)
+                    (begin
+                      (lower-hydrated-cleanup-extern!
+                        decl-ctx
+                        mode
+                        logical-name
+                        struct-ty
+                        (&mut cur-externs))
+                      (set! cur-decls rest))
+                    (match (lower-struct-cleanup-decl
+                      decl-ctx
+                      cur-local-top-env
+                      (lower-global-shared-view cur-type-cache)
+                      logical-name
+                      cleanup
+                      struct-ty
+                      fields
+                      (lower-global-shared-view cur-spans)
+                      decl-name-cache
+                      mode)
+                      [(Ok cleanup-functions cleanup-spans)
+                        (lower-module-ownership-record-functions!
+                          lower-state
+                          (& cleanup-functions)
+                          logical-module-id)
+                        (ir.compiler-ir-function-builder-append-seq!
+                          (&mut cur-functions)
+                          (& cleanup-functions))
+                        (set! cur-spans cleanup-spans)
+                        (set! cur-decls rest)]
+                      [(Err message)
+                        (set! result (Err message))
+                        (set! done true)])))]
               [(or (ModuleBody _ _) (DefMacro _ _ _ _ _) (Import _ _)
                    (IncludeStr _ _) (IncludeStrComptime _ _)
                    (IncludeStrLzss _ _) (IncludeBin _ _) (Test _ _ _ _)

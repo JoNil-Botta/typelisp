@@ -2,9 +2,11 @@
 (import compiler_target_cfg_core as target_cfg)
 (import cli_option_core as cli)
 (import compiler_build_identity as identity)
+(import compiler_embedded_stdlib as embedded)
 (import compiler_tli_codec as tli_codec)
 (import compiler_tli_hydrate as hydrate)
 (import compiler_tli_types as tli)
+(import sym_i64_env)
 (import stdlib.byte_buf)
 (import stdlib.byte_buf_core as buf)
 (import stdlib.crypto_sha256 as sha256)
@@ -14,6 +16,8 @@
 (import stdlib.fs)
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
+(import (vector.vector String) as svec)
 
 (define (tli-sysroot-cli-options) : String
   "--sysroot <dir> --no-prebuilt-stdlib")
@@ -134,6 +138,185 @@
 
 (define (tli-sysroot-bundle-path [dir : (& str)]) : String
   (fs.path-join dir "stdlib.tli"))
+
+(define (tli-sysroot-archive-path [dir : (& str)]) : String
+  (fs.path-join dir "libstdlib.a"))
+
+(define (tli-sysroot-archive-exists? [dir : (& str)]) : bool
+  (let
+    [path : String (tli-sysroot-archive-path dir)]
+    (match (fs.try-file-kind (& path))
+      [(OkFsFileKind kind) (fs.file-kind-regular? kind)]
+      [_ false])))
+
+(define (tli-sysroot-options-clone [options : (& TliSysrootOptions)]) : TliSysrootOptions
+  (TliSysrootOptions (string.copy (& options.explicit-root)) options.disabled))
+
+(define (tli-sysroot-options-explicit? [options : (& TliSysrootOptions)]) : bool
+  (> (string.string-length (& options.explicit-root)) 0))
+
+;; Check whether a single directory overrides any embedded stdlib source file
+;; with non-byte-identical contents.
+(define (tli-sysroot-dir-overrides-stdlib? [dir : (& str)]) : bool
+  (match (fs.try-read-dir dir)
+    [(ErrIoStringVector _) false]
+    [(OkIoStringVector entries)
+      (let
+        [count : i64 (fs.string-vector-len (& entries))]
+        (for [i (iterator.range 0 count)]
+          (let
+            [entry : String (fs.string-vector-get (& entries) i "")]
+            [n : i64 (string.string-length (& entry))]
+            (when
+              (and (> n 3) (string.is-string-prefix-at (& entry) ".tl" (- n 3)))
+              (match (embedded.compiler-embedded-stdlib-lookup
+                (string.copy (& entry)))
+                [(CompilerEmbeddedStdlibSomeSource expected)
+                  (let
+                    [full : String (fs.path-join dir (& entry))]
+                    (match (io.try-read-file (& full))
+                      [(OkIoBytes actual)
+                        (let
+                          [actual-text : String (byte_buf.to-string actual)]
+                          (unless
+                            (string.eq (& actual-text) (& expected))
+                            (return true)))]
+                      [(ErrIoBytes _) (return true)]))]
+                [(CompilerEmbeddedStdlibNoSource) unit]))))
+        false)]))
+
+;; Fast check: zero filesystem calls when no `--stdlib-root` or
+;; `TYPELISP_STDLIB_ROOT` is configured. When configured, disable prebuilt
+;; stdlib if any root overrides an embedded stdlib file with modified bytes.
+(define (tli-sysroot-stdlib-roots-override? [stdlib-roots : (& svec.Vec)]) : bool
+  (let
+    [count : i64 (svec.len stdlib-roots)]
+    (for [i (iterator.range 0 count)]
+      (let
+        [root : String (svec.get stdlib-roots i "")]
+        (when
+          (> (string.string-length (& root)) 0)
+          (when (tli-sysroot-dir-overrides-stdlib? (& root)) (return true))
+          (let
+            [sub : String (fs.path-join (& root) "stdlib")]
+            (when (tli-sysroot-dir-overrides-stdlib? (& sub)) (return true))))))
+    (match (env.get "TYPELISP_STDLIB_ROOT")
+      [(EnvNoString) false]
+      [(EnvSomeString root)
+        (if (= (string.string-length (& root)) 0)
+          false
+          (let
+            [sub : String (fs.path-join (& root) "stdlib")]
+            (or
+              (tli-sysroot-dir-overrides-stdlib? (& root))
+              (tli-sysroot-dir-overrides-stdlib? (& sub)))))])))
+
+(defenum TliSysrootOpenCatalog
+  (Active hydrate.TliCatalog String String)
+  (Inactive)
+  (Error String))
+
+;; Open a job-scoped TliCatalog in the caller's current arena when prebuilt
+;; stdlib is eligible for this invocation. Returns Active(catalog, sysroot-dir,
+;; archive-path), Inactive (clean source fallback), or Error (explicit bad
+;; sysroot).
+(define (tli-sysroot-open-catalog
+  [options : (& TliSysrootOptions)]
+  [target : target_cfg.CompilerTargetCfg]
+  [stdlib-roots : (& svec.Vec)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [opt-level : i64]
+  [require-archive : bool]) : TliSysrootOpenCatalog
+  (cfg (not embedded-stdlib-tlci) (return Inactive))
+  ;; Keep -O2 on source stdlib until HAS_COMPACT_IR is populated in Stage 3.
+  (when (= opt-level 2) (return Inactive))
+  (when (tli-sysroot-stdlib-roots-override? stdlib-roots) (return Inactive))
+  (match (tli-sysroot-discover options target)
+    [(Disabled) Inactive]
+    [(Missing) Inactive]
+    [(Found dir)
+      (let
+        [explicit? : bool (tli-sysroot-options-explicit? options)]
+        [bundle-path : String (tli-sysroot-bundle-path (& dir))]
+        [archive-path : String (tli-sysroot-archive-path (& dir))]
+        [triple : String (tli-sysroot-target-triple target)]
+        (when
+          (and require-archive (not (tli-sysroot-archive-exists? (& dir))))
+          (if explicit?
+            (return
+              (Error
+                (str_cat.str-cat
+                  "sysroot: missing prebuilt stdlib archive: "
+                  archive-path
+                  "\n")))
+            (return Inactive)))
+        (match (tli-inspect-read-file (& bundle-path))
+          [(Err error)
+            (if explicit?
+              (Error (str_cat.str-cat "sysroot: " bundle-path ": " error "\n"))
+              Inactive)]
+          [(Ok bytes)
+            (let
+              [build : String (identity.compiler-build-producer-identity)]
+              [cfg-digest : (Array u8 32) (hydrate.tli-hydrate-cfg-digest cfgs)]
+              (match (hydrate.tli-catalog-open-lazy
+                (& bytes)
+                (& build)
+                (& triple)
+                (& cfg-digest))
+                [(Err error)
+                  (if explicit?
+                    (Error
+                      (str_cat.str-cat
+                        "sysroot: "
+                        bundle-path
+                        ": "
+                        error.message
+                        " at byte "
+                        (string.int->string error.offset)
+                        "\n"))
+                    Inactive)]
+                [(Ok catalog)
+                  (cond
+                    [(=
+                        (bit-and
+                          catalog.directory.flags
+                          tli.tli-is-stdlib-bundle)
+                        0)
+                      (if explicit?
+                        (Error
+                          (str_cat.str-cat
+                            "sysroot: "
+                            bundle-path
+                            ": expected a stdlib TLI bundle\n"))
+                        Inactive)]
+                    [(=
+                        (bit-and
+                          catalog.directory.flags
+                          tli.tli-has-tlci-companion)
+                        0)
+                      Inactive]
+                    [else
+                      ;; Probe stdlib.core_macros to verify cfg fingerprint match
+                      ;; before committing to the prebuilt sysroot (every command
+                      ;; loads core_macros as part of its prelude).
+                      (match (hydrate.tli-catalog-hydrate!
+                        (&mut catalog)
+                        "stdlib.core_macros")
+                        [(Ok _) (Active catalog dir archive-path)]
+                        [(Err failure)
+                          (match failure.kind
+                            [(CfgFingerprintMismatch) Inactive]
+                            [_
+                              (if explicit?
+                                (Error
+                                  (str_cat.str-cat
+                                    "sysroot: "
+                                    bundle-path
+                                    ": "
+                                    failure.message
+                                    "\n"))
+                                Inactive)])])])]))]))]))
 
 (define (tli-sysroot-target-dir [root : (& str)] [target : (& str)]) : String
   (let

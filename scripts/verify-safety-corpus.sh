@@ -397,11 +397,22 @@ assemble_link_windows() {
         show_stream_if_nonempty stderr "$_err"
         fail "$_label assemble failed"
     fi
-    if ! lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" \
-        -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
-        < /dev/null >> "$_out" 2>> "$_err"; then
-        show_stream_if_nonempty stderr "$_err"
-        fail "$_label link failed"
+    _win_stdlib=$(windows_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
+    if [ -n "$_win_stdlib" ]; then
+        if ! lld-link -NOLOGO "$(cygpath -aw "$_obj")" "$(cygpath -aw "$_win_stdlib")" -OPT:REF \
+            "-OUT:$(cygpath -aw "$_bin")" \
+            -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
+            < /dev/null >> "$_out" 2>> "$_err"; then
+            show_stream_if_nonempty stderr "$_err"
+            fail "$_label link failed"
+        fi
+    else
+        if ! lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" \
+            -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
+            < /dev/null >> "$_out" 2>> "$_err"; then
+            show_stream_if_nonempty stderr "$_err"
+            fail "$_label link failed"
+        fi
     fi
 }
 
@@ -898,7 +909,13 @@ run_exec_chunk_job() {
                 fail "$case_id assemble failed"
             fi
             entry=$(linux_entry_symbol_for_asm "$asm") || return $?
-            if ! ld "$obj" -o "$program" -static -e "$entry" \
+            stdlib_archive=$(linux_stdlib_archive_for_asm "$asm" "${COMPILER:-}")
+            stdlib_link_args=""
+            if [ -n "$stdlib_archive" ]; then
+                stdlib_link_args="--gc-sections --start-group $stdlib_archive --end-group"
+            fi
+            # shellcheck disable=SC2086
+            if ! ld "$obj" -o "$program" -static $stdlib_link_args -e "$entry" \
                 < /dev/null >> "$build_out" 2>> "$build_err"; then
                 show_stream_if_nonempty stdout "$build_out"
                 show_stream_if_nonempty stderr "$build_err"

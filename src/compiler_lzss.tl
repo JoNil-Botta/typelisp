@@ -574,18 +574,32 @@
 (define compiler-lzss-fixed-model : CompilerLzssModel
   (compiler-lzss-model-from-spec (& compiler-lzss-fixed-spec)))
 
+;; Precomputed literal-class * 2 lookup table (0..14) for fast context dispatch.
+(define compiler-lzss-literal-class-twice : (Array u8 256)
+  (let
+    [table : (Array u8 256) (make-array u8 256)]
+    [i : i64 0]
+    (while (< i 256)
+      (set!
+        (array-ref table i)
+        (cast
+          (*
+            2
+            (-
+              (cast
+                (string.string-ref (& compiler-lzss-literal-classes) i)
+                : i64)
+              48))
+          : u8))
+      (+= i 1))
+    table))
+
 ;; The context of the model for output position `position` after `previous`.
 (define (compiler-lzss-context [previous : i64] [position : i64]) : i64
   (+
-    (*
-      2
-      (-
-        (cast
-          (string.string-ref
-            (& compiler-lzss-literal-classes)
-            (bit-and previous 255))
-          : i64)
-        48))
+    (cast
+      (array-ref compiler-lzss-literal-class-twice (bit-and previous 255))
+      : i64)
     (bit-and position 1)))
 
 (define (compiler-lzss-prefix?
@@ -711,49 +725,146 @@
   [payload : (& payload (__tl_dyn-array u8))]
   [reader : (&mut reader CompilerLzssReader)]
   [n : i64]) : i64
-  (compiler-lzss-refill! payload reader)
+  (when (= n 0) (return 0))
   (let
-    [value : i64 (compiler-lzss-peek reader n)]
-    (if (compiler-lzss-consume! reader n)
-      value
-      -1)))
+    [count : i64 reader.count]
+    [buf : i64 reader.buf]
+    (when
+      (and (< count n) (< reader.pos reader.len))
+      (let
+        [pos : i64 reader.pos]
+        [len : i64 reader.len]
+        [start : i64 reader.start]
+        (if (<= (+ start len) (array-length payload))
+          (let
+            [base : (Ptr u8)
+              (unsafe
+                (ptr-offset
+                  (ptr-cast (__tl_array-data (deref payload)) : (Ptr u8))
+                  start))]
+            (while (and (<= count 48) (< pos len))
+              (set!
+                buf
+                (bit-or
+                  (shl buf 8)
+                  (cast
+                    (unsafe
+                      (ptr-read (ptr-offset base pos)))
+                    : i64)))
+              (+= pos 1)
+              (+= count 8)))
+          (while (and (<= count 48) (< pos len))
+            (set!
+              buf
+              (bit-or
+                (shl buf 8)
+                (cast (array-ref payload (+ start pos)) : i64)))
+            (+= pos 1)
+            (+= count 8)))
+        (set! reader.pos pos)))
+    (if (> n count)
+      (begin
+        (set! reader.buf buf)
+        (set! reader.count count)
+        -1)
+      (let
+        [rem : i64 (- count n)]
+        [value : i64 (bit-and (shr buf rem) (- (shl 1 n) 1))]
+        (set! reader.count rem)
+        (set! reader.buf (bit-and buf (- (shl 1 rem) 1)))
+        (+= reader.consumed n)
+        value))))
 
 ;; The next symbol of `lookup`'s code, or -1 for a truncated or unassigned code.
 (define (compiler-lzss-read-symbol
   [payload : (& payload (__tl_dyn-array u8))]
   [reader : (&mut reader CompilerLzssReader)]
   [lookup : (& lookup CompilerLzssLookup)]) : i64
-  (compiler-lzss-refill! payload reader)
   (let
-    [entry : i64
-      (array-ref lookup.entries (compiler-lzss-peek reader lookup.bits))]
-    (if (> entry 0)
-      (if (compiler-lzss-consume! reader (bit-and entry 15))
-        (shr entry 4)
-        -1)
-      ;; A code longer than the table: finish it canonically.
+    [count : i64 reader.count]
+    [buf : i64 reader.buf]
+    (when
+      (and (< count 16) (< reader.pos reader.len))
       (let
-        [len : i64 (+ lookup.bits 1)]
-        [found : i64 -1]
-        (while (and (< found 0) (<= len (compiler-lzss-max-code-bits)))
+        [pos : i64 reader.pos]
+        [len : i64 reader.len]
+        [start : i64 reader.start]
+        (if (<= (+ start len) (array-length payload))
           (let
-            [index : i64
-              (-
-                (compiler-lzss-peek reader len)
-                (array-ref lookup.code.firsts len))]
-            (when
-              (and (>= index 0) (< index (array-ref lookup.code.counts len)))
+            [base : (Ptr u8)
+              (unsafe
+                (ptr-offset
+                  (ptr-cast (__tl_array-data (deref payload)) : (Ptr u8))
+                  start))]
+            (while (and (<= count 48) (< pos len))
               (set!
-                found
-                (if (compiler-lzss-consume! reader len)
-                  (array-ref
-                    lookup.code.symbols
-                    (+ (array-ref lookup.code.starts len) index))
-                  -2))))
-          (set! len (+ len 1)))
-        (if (< found 0)
-          -1
-          found)))))
+                buf
+                (bit-or
+                  (shl buf 8)
+                  (cast
+                    (unsafe
+                      (ptr-read (ptr-offset base pos)))
+                    : i64)))
+              (+= pos 1)
+              (+= count 8)))
+          (while (and (<= count 48) (< pos len))
+            (set!
+              buf
+              (bit-or
+                (shl buf 8)
+                (cast (array-ref payload (+ start pos)) : i64)))
+            (+= pos 1)
+            (+= count 8)))
+        (set! reader.pos pos)))
+    (let
+      [bits : i64 lookup.bits]
+      [peeked : i64
+        (if (>= count bits)
+          (bit-and (shr buf (- count bits)) (- (shl 1 bits) 1))
+          (bit-and (shl buf (- bits count)) (- (shl 1 bits) 1)))]
+      [entry : i64 (array-ref lookup.entries peeked)]
+      (if (> entry 0)
+        (let
+          [need : i64 (bit-and entry 15)]
+          (if (> need count)
+            (begin
+              (set! reader.buf buf)
+              (set! reader.count count)
+              -1)
+            (let
+              [rem : i64 (- count need)]
+              (set! reader.count rem)
+              (set! reader.buf (bit-and buf (- (shl 1 rem) 1)))
+              (+= reader.consumed need)
+              (shr entry 4))))
+        ;; A code longer than the table: finish it canonically.
+        (begin
+          (set! reader.buf buf)
+          (set! reader.count count)
+          (let
+            [len : i64 (+ bits 1)]
+            [found : i64 -1]
+            (while (and (< found 0) (<= len (compiler-lzss-max-code-bits)))
+              (let
+                [index : i64
+                  (-
+                    (compiler-lzss-peek reader len)
+                    (array-ref lookup.code.firsts len))]
+                (when
+                  (and
+                    (>= index 0)
+                    (< index (array-ref lookup.code.counts len)))
+                  (set!
+                    found
+                    (if (compiler-lzss-consume! reader len)
+                      (array-ref
+                        lookup.code.symbols
+                        (+ (array-ref lookup.code.starts len) index))
+                      -2))))
+              (set! len (+ len 1)))
+            (if (< found 0)
+              -1
+              found)))))))
 
 ;; The zero padding at the end of a stream, or false when bytes or bits are
 ;; left unaccounted for.
@@ -822,114 +933,165 @@
   [model : (& model CompilerLzssModel)]) : String
   (let
     [window : i64 (compiler-lzss-window)]
-    [reps : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [class-ptr : (Ptr u8)
+      (unsafe
+        (ptr-cast
+          (ptr-addr-of (array-ref compiler-lzss-literal-class-twice 0))
+          : (Ptr u8)))]
+    [data-ro : (Ptr u8)
+      (unsafe
+        (ptr-cast data : (Ptr u8)))]
+    [rep0 : i64 1]
+    [rep1 : i64 1]
+    [rep2 : i64 1]
+    [rep3 : i64 1]
     [out-index : i64 out-start]
     [end : i64 (+ out-start raw-len)]
     [hard-end : i64 (+ out-start raw-len slack)]
-    (set! (array-ref reps 0) 1)
-    (set! (array-ref reps 1) 1)
-    (set! (array-ref reps 2) 1)
-    (set! (array-ref reps 3) 1)
     (while (< out-index end)
       (let
         [previous : i64
           (if (> out-index 0)
-            (compiler-lzss-byte
+            (cast
               (unsafe
-                (ptr-cast data : (Ptr u8)))
-              (- out-index 1))
+                (ptr-read (ptr-offset data-ro (- out-index 1))))
+              : i64)
             0)]
-        [context : i64 (compiler-lzss-context previous out-index)]
+        [context : i64
+          (+
+            (cast
+              (unsafe
+                (ptr-read (ptr-offset class-ptr previous)))
+              : i64)
+            (bit-and out-index 1))]
         [symbol : i64
           (compiler-lzss-read-symbol
             payload
             reader
             (& (array-ref model.main-lookup context)))]
-        [kind : i64 0]
-        [slot : i64 0]
-        [extra : i64 0]
-        [length : i64 0]
-        [distance : i64 0]
-        [move : i64 1]
         (when (< symbol 0) (return "compiler lzss: truncated symbol"))
         (cond
           [(< symbol 256)
             (unsafe
               (ptr-write! (ptr-offset data out-index) (cast symbol : u8)))
-            (set! out-index (+ out-index 1))]
-          [(>= symbol (compiler-lzss-shortrep))
-            (set! distance (array-ref reps 0))
+            (+= out-index 1)]
+          [(>= symbol 261)
             (when
-              (or (<= distance 0) (> distance out-index) (> distance window))
+              (or (<= rep0 0) (> rep0 out-index) (> rep0 window))
               (return "compiler lzss: invalid repeat distance"))
-            (compiler-lzss-copy-match! data out-index distance 1)
-            (set! out-index (+ out-index 1))]
+            (unsafe
+              (ptr-write!
+                (ptr-offset data out-index)
+                (ptr-read (ptr-offset data-ro (- out-index rep0)))))
+            (+= out-index 1)]
           [else
-            (set! kind (- symbol (compiler-lzss-match-new)))
-            (set!
-              slot
-              (compiler-lzss-read-symbol payload reader (& model.length-lookup)))
-            (when (< slot 0) (return "compiler lzss: truncated length"))
-            (set!
-              extra
-              (compiler-lzss-read-bits
-                payload
-                reader
-                (compiler-lzss-length-extra slot)))
-            (when (< extra 0) (return "compiler lzss: truncated length"))
-            (set! length (+ (compiler-lzss-length-base slot) extra))
-            (when
-              (or
-                (< length (compiler-lzss-min-match))
-                (> length (compiler-lzss-max-match)))
-              (return "compiler lzss: invalid match length"))
-            (when
-              (> length (- hard-end out-index))
-              (return "compiler lzss: token exceeds raw length"))
-            (cond
-              [(= kind 0)
-                (set!
-                  slot
-                  (compiler-lzss-read-symbol
-                    payload
-                    reader
-                    (&
-                      (array-ref
-                        model.dist-lookup
-                        (compiler-lzss-length-bucket length)))))
-                (when (< slot 0) (return "compiler lzss: truncated distance"))
-                (set!
-                  extra
-                  (compiler-lzss-read-bits
-                    payload
-                    reader
-                    (compiler-lzss-distance-extra slot)))
-                (when (< extra 0) (return "compiler lzss: truncated distance"))
-                (set! distance (+ (compiler-lzss-distance-base slot) extra))
-                (when
-                  (<= distance 0)
-                  (return "compiler lzss: invalid match distance"))
-                (when
-                  (or (> distance out-index) (> distance window))
-                  (return "compiler lzss: backreference before output"))
-                (set! (array-ref reps 3) (array-ref reps 2))
-                (set! (array-ref reps 2) (array-ref reps 1))
-                (set! (array-ref reps 1) (array-ref reps 0))
-                (set! (array-ref reps 0) distance)]
-              [else
-                (set! distance (array-ref reps (- kind 1)))
-                (when
-                  (or (> distance out-index) (> distance window))
-                  (return "compiler lzss: backreference before output"))
-                ;; The used repeat moves to the front; the ones before it shift
-                ;; back, exactly as the tokenizer leaves them.
-                (set! move (- kind 1))
-                (while (> move 0)
-                  (set! (array-ref reps move) (array-ref reps (- move 1)))
-                  (set! move (- move 1)))
-                (set! (array-ref reps 0) distance)])
-            (compiler-lzss-copy-match! data out-index distance length)
-            (set! out-index (+ out-index length))])))
+            (let
+              [kind : i64 (- symbol 256)]
+              [slot : i64
+                (compiler-lzss-read-symbol
+                  payload
+                  reader
+                  (& model.length-lookup))]
+              [length : i64 0]
+              [distance : i64 0]
+              (when (< slot 0) (return "compiler lzss: truncated length"))
+              (if (< slot 8)
+                (set! length (+ slot 3))
+                (if (> slot 27)
+                  (set! length 258)
+                  (let
+                    [ebits : i64 (+ 1 (shr (- slot 8) 2))]
+                    [extra : i64 (compiler-lzss-read-bits payload reader ebits)]
+                    (when
+                      (< extra 0)
+                      (return "compiler lzss: truncated length"))
+                    (set!
+                      length
+                      (+
+                        (shl 1 (+ ebits 2))
+                        3
+                        (* (bit-and (- slot 8) 3) (shl 1 ebits))
+                        extra)))))
+              (when
+                (or (< length 3) (> length 258))
+                (return "compiler lzss: invalid match length"))
+              (when
+                (> length (- hard-end out-index))
+                (return "compiler lzss: token exceeds raw length"))
+              (cond
+                [(= kind 0)
+                  (let
+                    [bucket : i64
+                      (cond
+                        [(<= length 4) 0]
+                        [(<= length 8) 1]
+                        [(<= length 16) 2]
+                        [else 3])]
+                    [dslot : i64
+                      (compiler-lzss-read-symbol
+                        payload
+                        reader
+                        (& (array-ref model.dist-lookup bucket)))]
+                    (when
+                      (< dslot 0)
+                      (return "compiler lzss: truncated distance"))
+                    (if (< dslot 4)
+                      (set! distance (+ dslot 1))
+                      (let
+                        [dbits : i64 (+ 1 (shr (- dslot 4) 1))]
+                        [dextra : i64
+                          (compiler-lzss-read-bits payload reader dbits)]
+                        (when
+                          (< dextra 0)
+                          (return "compiler lzss: truncated distance"))
+                        (set!
+                          distance
+                          (+
+                            (shl 1 (+ dbits 1))
+                            1
+                            (* (bit-and (- dslot 4) 1) (shl 1 dbits))
+                            dextra)))))
+                  (when
+                    (<= distance 0)
+                    (return "compiler lzss: invalid match distance"))
+                  (when
+                    (or (> distance out-index) (> distance window))
+                    (return "compiler lzss: backreference before output"))
+                  (set! rep3 rep2)
+                  (set! rep2 rep1)
+                  (set! rep1 rep0)
+                  (set! rep0 distance)]
+                [(= kind 1)
+                  (set! distance rep0)
+                  (when
+                    (or (> distance out-index) (> distance window))
+                    (return "compiler lzss: backreference before output"))]
+                [(= kind 2)
+                  (set! distance rep1)
+                  (when
+                    (or (> distance out-index) (> distance window))
+                    (return "compiler lzss: backreference before output"))
+                  (set! rep1 rep0)
+                  (set! rep0 distance)]
+                [(= kind 3)
+                  (set! distance rep2)
+                  (when
+                    (or (> distance out-index) (> distance window))
+                    (return "compiler lzss: backreference before output"))
+                  (set! rep2 rep1)
+                  (set! rep1 rep0)
+                  (set! rep0 distance)]
+                [else
+                  (set! distance rep3)
+                  (when
+                    (or (> distance out-index) (> distance window))
+                    (return "compiler lzss: backreference before output"))
+                  (set! rep3 rep2)
+                  (set! rep2 rep1)
+                  (set! rep1 rep0)
+                  (set! rep0 distance)])
+              (compiler-lzss-copy-match! data out-index distance length)
+              (+= out-index length))])))
     ""))
 
 ;; --- bit writer --------------------------------------------------------------

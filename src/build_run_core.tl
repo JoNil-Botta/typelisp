@@ -384,6 +384,16 @@
     (source-tool-link-inputs-archives inputs)
     (source-tool-link-inputs-origins inputs)))
 
+(define (source-tool-link-inputs-add-archive
+  [inputs : SourceToolLinkInputs]
+  [archive : String]) : SourceToolLinkInputs
+  (SourceToolLinkInputs
+    (source-tool-link-inputs-libs inputs)
+    (source-tool-link-inputs-search-dirs inputs)
+    (source-tool-link-inputs-raw-args inputs)
+    (source-tool-args-append (source-tool-link-inputs-archives inputs) archive)
+    (source-tool-link-inputs-origins inputs)))
+
 (define (source-tool-string-list-contains?
   [items : (& items process.ProcessStringList)]
   [value : String]) : bool
@@ -1833,12 +1843,21 @@
                 request.write-context)
                 [(Err message) (Err message)]
                 [(Ok)
-                  (source-tool-assemble-and-link
-                    request.target
-                    request.files.asm
-                    request.files.obj
-                    request.files.bin
-                    request.link-inputs)])])])]
+                  (let
+                    [tli-archive : String
+                      (compiler_driver_core.compiler-driver-last-hydrated-archive-path)]
+                    [effective-link-inputs : SourceToolLinkInputs
+                      (if (> (string.string-length (& tli-archive)) 0)
+                        (source-tool-link-inputs-add-archive
+                          request.link-inputs
+                          tli-archive)
+                        request.link-inputs)]
+                    (source-tool-assemble-and-link
+                      request.target
+                      request.files.asm
+                      request.files.obj
+                      request.files.bin
+                      effective-link-inputs))])])])]
     ;; Both direct output and every assembly fallback/error have finished
     ;; reading lowered IR before its exact owner can be retired.
     (unless

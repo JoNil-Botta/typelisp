@@ -591,3 +591,58 @@
       (unsafe
         ;; The compiler interner and type pool choose their own arenas.
         (tli-test-stdlib-io-closure (& wire) (& cfg-digest))))))
+
+(define (tli-test-lazy-open-and-archive-startup
+  [wire : (& wire (__tl_dyn-array u8))]
+  [cfg-digest : (& (Array u8 32))]) : unit
+  (let
+    [catalog : hydrate.TliCatalog
+      (match (hydrate.tli-catalog-open-lazy wire "build" "target" cfg-digest)
+        [(Ok catalog) catalog]
+        [(Err failure) (io.panic failure.message)])]
+    (match (hydrate.tli-catalog-hydrate! (&mut catalog) "stdlib.io")
+      [(Ok _) unit]
+      [(Err failure) (io.panic failure.message)])
+    (let
+      [archive-inits : (__tl_dyn-array String)
+        (hydrate.tli-catalog-startup-archive-symbols (& catalog))]
+      (test.assert-i64-eq
+        (array-length archive-inits)
+        2
+        "two archive startup init symbols")
+      (test.assert-true
+        (string.eq
+          (& (array-ref archive-inits 0))
+          "_tl___tl_mod_init_stdlib_format_writer_core")
+        "archive startup init symbol 0")
+      (test.assert-true
+        (string.eq
+          (& (array-ref archive-inits 1))
+          "_tl___tl_mod_init_stdlib_format")
+        "archive startup init symbol 1"))))
+
+(test
+  tli-lazy-open-and-archive-startup-symbols
+  (let
+    [bundle : tli.TliBundle (tli-test-extract-io)]
+    [cfg-digest : (Array u8 32)
+      (array-ref bundle.modules 0).cfg-fingerprint-sha256]
+    [wire : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
+    (test.assert-owned-string-eq
+      (hydrate.tli-hydrate-archive-qualified-symbol
+        ""
+        "stdlib.format"
+        "stdlib.format/formatter-cell")
+      "_tl_stdlib_format_stdlib_format_formatter_cell"
+      "archive symbol matches libstdlib.a double-module mangling")
+    (test.assert-owned-string-eq
+      (hydrate.tli-hydrate-archive-qualified-symbol
+        "stdlib/random.tl"
+        "stdlib.vector.generated.i64"
+        "stdlib.vector.generated.i64/with-capacity")
+      "_tl_stdlib_random_stdlib_vector_generated_i64_with_capacity"
+      "archive symbol uses source-path prefix for generated stdlib modules")
+    (with-arena
+      tli-job
+      (unsafe
+        (tli-test-lazy-open-and-archive-startup (& wire) (& cfg-digest))))))

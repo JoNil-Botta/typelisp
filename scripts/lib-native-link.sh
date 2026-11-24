@@ -240,14 +240,60 @@ run_with_heartbeat_capture() {
     return "$heartbeat_status"
 }
 
+native_link_find_stdlib_archive() {
+    _nl_asm=$1
+    if [ "${TYPELISP_SYSROOT:-}" = "none" ]; then
+        return 0
+    fi
+    if [ -n "${TYPELISP_NATIVE_LINK_STDLIB_ARCHIVE:-}" ] && [ -f "$TYPELISP_NATIVE_LINK_STDLIB_ARCHIVE" ]; then
+        printf '%s\n' "$TYPELISP_NATIVE_LINK_STDLIB_ARCHIVE"
+        return 0
+    fi
+    if [ ! -f "$_nl_asm" ]; then
+        return 0
+    fi
+    if grep -q '^tl_oom_abort:$' "$_nl_asm" 2>/dev/null; then
+        return 0
+    fi
+    if ! grep -qE '(^|[[:space:]])(tl_oom_abort|tl_region_abort|tl_oob_abort|tl_oob_abort_at|tl_c_fn_null_abort|tl_panic_at|_tl_stdlib_|_tl___tl_mod_init_|tl_alloc$|tl_exit$)' "$_nl_asm" 2>/dev/null; then
+        return 0
+    fi
+    if [ "$NL_HOST_OS" = windows ]; then
+        _nl_triple="x86_64-pc-windows-msvc"
+    else
+        _nl_triple="x86_64-unknown-linux-gnu"
+    fi
+    _nl_rel="lib/$_nl_triple/libstdlib.a"
+    for _nl_root in \
+        "${TYPELISP_SYSROOT:-}" \
+        "${COMPILER:+$(dirname -- "$COMPILER")}" \
+        "${COMPILER:+$(dirname -- "$(dirname -- "$COMPILER")")}" \
+        "${STAGE3_BIN:+$(dirname -- "$STAGE3_BIN")}" \
+        "${STAGE2_BIN:+$(dirname -- "$STAGE2_BIN")}" \
+        "${BIN:+$(dirname -- "$BIN")}"; do
+        if [ -n "$_nl_root" ] && [ -f "$_nl_root/$_nl_rel" ]; then
+            printf '%s\n' "$_nl_root/$_nl_rel"
+            return 0
+        fi
+    done
+    return 0
+}
+
 link_native_object() {
     label=$1
     obj=$2
     bin=$3
     _entry=${4:-_tl_start}
+    _stdlib_archive=${5:-}
     if [ "$NL_HOST_OS" = windows ]; then
         obj_win=$(to_windows_path "$obj") || return $?
         bin_win=$(to_windows_path "$bin") || return $?
+        stdlib_archive_win=
+        opt_ref_arg=
+        if [ -n "$_stdlib_archive" ]; then
+            stdlib_archive_win=$(to_windows_path "$_stdlib_archive") || return $?
+            opt_ref_arg=/OPT:REF
+        fi
         repro_arg=
         if [ "${TYPELISP_WINDOWS_LINK_REPRO:-}" = 1 ]; then
             repro_arg=/Brepro
@@ -272,8 +318,10 @@ link_native_object() {
         MSYS2_ARG_CONV_EXCL='*' "$TYPELISP_WINDOWS_LINK_POSIX" \
             /NOLOGO \
             ${repro_arg:+"$repro_arg"} \
+            ${opt_ref_arg:+"$opt_ref_arg"} \
             ${stamp_arg:+"$stamp_arg"} \
             "$obj_win" \
+            ${stdlib_archive_win:+"$stdlib_archive_win"} \
             "/OUT:$bin_win" \
             /SUBSYSTEM:CONSOLE \
             /ENTRY:_tl_start \
@@ -286,7 +334,11 @@ link_native_object() {
         echo "[native-link] link $label with ld (freestanding: no libc, no loader)" || return $?
         # Runtime syscalls and libc-ABI shims are emitted in the object; this
         # link requires neither a C library nor a dynamic loader.
-        ld -static -e "$_entry" "$obj" -o "$bin"
+        if [ -n "$_stdlib_archive" ]; then
+            ld -static -e "$_entry" --gc-sections "$obj" --start-group "$_stdlib_archive" --end-group -o "$bin"
+        else
+            ld -static -e "$_entry" "$obj" -o "$bin"
+        fi
     fi
 }
 
@@ -295,13 +347,14 @@ assemble_and_link_windows() {
     asm=$2
     obj=$3
     bin=$4
+    _stdlib_archive=${5:-}
 
     # ci_timing_run disables errexit; each prerequisite must forward its own
     # failure before a stale object or a later successful step can hide it.
     echo "[native-link] assemble $label with clang" || return $?
     "$TYPELISP_WINDOWS_CLANG_POSIX" --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" || return $?
 
-    link_native_object "$label" "$obj" "$bin"
+    link_native_object "$label" "$obj" "$bin" "_tl_start" "$_stdlib_archive"
 }
 
 assemble_and_link() {
@@ -309,13 +362,14 @@ assemble_and_link() {
     asm=$2
     obj=$3
     bin=$4
+    _stdlib_archive=$(native_link_find_stdlib_archive "$asm")
 
     if [ "$NL_HOST_OS" = windows ]; then
-        assemble_and_link_windows "$label" "$asm" "$obj" "$bin"
+        assemble_and_link_windows "$label" "$asm" "$obj" "$bin" "$_stdlib_archive"
     else
         echo "[native-link] assemble $label with as" || return $?
         as "$asm" -o "$obj" || return $?
         _entry=$(linux_entry_symbol_for_asm "$asm") || return $?
-        link_native_object "$label" "$obj" "$bin" "$_entry"
+        link_native_object "$label" "$obj" "$bin" "$_entry" "$_stdlib_archive"
     fi
 }

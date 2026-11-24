@@ -1,6 +1,7 @@
 ;; Stage 1 producer. The checked context and its process-local IDs stay here.
 (import compiler_tli_types as tli)
 (import compiler_tli_codec as codec)
+(import compiler_tli_hydrate as hydrate)
 (import compiler_ast_types as ast)
 (import compiler_symbols as symbols)
 (import compiler_typecheck_api as api)
@@ -10,12 +11,10 @@
 (import compiler_diagnostic as diag)
 (import compiler_lower as lower)
 (import compiler_ir_types as ir)
-(import compiler_cfg_core as cfg_core)
 (import sym_i64_env)
 (import stdlib.math)
 (import stdlib.byte_buf)
 (import stdlib.byte_buf_core as buf)
-(import stdlib.byte_le as le)
 (import stdlib.crypto_sha256 as sha)
 (import stdlib.iterator)
 (import stdlib.io)
@@ -57,20 +56,7 @@
     [(Sha256FinalizeErr _) (io.panic "TLI source exceeds SHA-256 input limit")]))
 
 (define (tli-extract-cfg-digest [cfgs : sym_i64_env.SymI64Env]) : (Array u8 32)
-  (let
-    [snapshot : cfg_core.CompilerCfgSnapshot
-      (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
-    [out : buf.ByteBufBuilder (buf.byte-buf-builder-new)]
-    (for [index (iterator.range 0 snapshot.len)]
-      (let
-        [name (& (array-ref snapshot.slots index))]
-        (le.push-u64! (&mut out) (string.string-length name))
-        (buf.byte-buf-builder-append-string (&mut out) (string.copy name))
-        (le.push-u64! (&mut out) (array-ref snapshot.values index))))
-    (let
-      [owner : byte_buf.ByteBuf
-        (byte_buf.from-array (buf.byte-buf-builder-finish-array (& out)))]
-      (tli-extract-sha256 (byte_buf.as-bytes (& owner))))))
+  (hydrate.tli-hydrate-cfg-digest cfgs))
 
 (define (tli-extract-name [id : i64]) : String
   (string.copy (ast.ast-nominal-name-id-display id)))
@@ -673,7 +659,8 @@
             (for [kind (iterator.range 0 kinds.len)]
               (set!
                 (array-ref tags kind)
-                (cast (array-ref kinds.slots kind) : u8)))
+                (tli.tli-macro-type-kind-tag
+                  (& (intern.intern-str (array-ref kinds.slots kind))))))
             (set!
               (array-ref out index)
               (tli.TliMacroParam
@@ -706,7 +693,8 @@
   [module-name : String]
   [name : String]
   [params : (& ast.AstMacroParamList)]
-  [ret : ast.AstType]) : tli.TliMacroHandle
+  [ret : ast.AstType]
+  [body-box : i64]) : tli.TliMacroHandle
   (let
     [identity : String
       (tc.macro-tlci-catalog-identity
@@ -719,7 +707,15 @@
           [(tc.tc-macro-result-decls? (& ret)) 1]
           [else 0])
         : u8)]
-    [flags : i64 (+ 4 (tli-extract-flag (!= result-kind (cast 0 : u8)) 8))]
+    [uses-expr-type? : bool
+      (tc.macro-expr-uses-expr-type?
+        (tc.tc-context-expr-bases ctx)
+        (tc.tc-context-expr-get ctx body-box))]
+    [flags : i64
+      (+
+        4
+        (tli-extract-flag (!= result-kind (cast 0 : u8)) 8)
+        (tli-extract-flag uses-expr-type? tli.tli-macro-uses-expr-type))]
     [index : i64 -1]
     [digest : (Array u8 32) (make-array u8 32)]
     (cfg
@@ -1085,7 +1081,7 @@
           (& lives)
           cleanup
           (& variants))]
-      [(DefMacro _ name params ret _)
+      [(DefMacro _ name params ret body-box)
         (set! out.flags (bit-or out.flags 2))
         (macros.push-ref!
           (&mut out.macros)
@@ -1094,7 +1090,8 @@
             module-name
             (tli-extract-name name)
             (& params)
-            ret))]
+            ret
+            body-box))]
       [(DefDispatch _ name _)
         (let
           [spelling : String (tli-extract-name name)]

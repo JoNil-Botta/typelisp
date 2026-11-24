@@ -130842,7 +130842,9 @@
         [text : String (ir.compiler-ir-symbol-text name)]
         (or
           (string.eq text "stdlib/io.tl::stdlib.io/panic")
-          (string.eq text "stdlib\\io.tl::stdlib.io/panic")))]
+          (string.eq text "stdlib\\io.tl::stdlib.io/panic")
+          (string.eq text "stdlib.io/panic")
+          (string.eq text "_tl_stdlib_io_stdlib_io_panic")))]
     [_ false]))
 
 (define (opt-remap-spans-instr-key

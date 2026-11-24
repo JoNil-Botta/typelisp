@@ -560,7 +560,10 @@
         (when
           (> (string.string-length (& sysroot-error)) 0)
           (cli_option.cli-args-fail! (&mut args) sysroot-error))))
-    (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
+    (unless
+      args.failed
+      (ir.compiler-debug-info-set-enabled! options.debug)
+      (compiler_driver_core.compiler-driver-set-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
       [(and has-source has-manifest)
@@ -590,9 +593,11 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "build"
-        "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
-         --debug|-g|--backtrace --manifest-path <file> --backend-mode <mode>
-         --profile <dev|release> --release --locked --update-lock --resolved-dep"
+        (str_cat.str-cat
+          "--cfg <name> --stdlib-root <dir> --target <target> --opt-level <0|1|2|s> -Os
+           --debug|-g|--backtrace --manifest-path <file> --backend-mode <mode>
+           --profile <dev|release> --release --locked --update-lock --resolved-dep "
+          (tli_cli.tli-sysroot-cli-options))
         idx
         count)]
     [manifest-path : String ""]
@@ -600,12 +605,14 @@
     [profile : BuildProfile (build-default-profile)]
     [lock-policy : BuildPackageLockPolicy (Default)]
     [resolved-deps : load.CompilerPkgDepList (load.compiler-pkg-dep-list-empty)]
+    [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions
       (cli_option.cli-compile-options
         (target_cfg.compiler-target-cfg-host)
         (build-package-default-opt-level))]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--manifest-path")
           (set! manifest-path (cli_option.cli-args-value (& args)))
@@ -662,7 +669,10 @@
           (cli_option.cli-args-fail-arg!
             (&mut args)
             "build: unexpected package worker argument ")]))
-    (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
+    (unless
+      args.failed
+      (ir.compiler-debug-info-set-enabled! options.debug)
+      (compiler_driver_core.compiler-driver-set-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
       [has-manifest
@@ -2477,12 +2487,21 @@
     [(Unavailable _)
       (match kind
         [(CompilerPkgKindBin)
-          (build_run_core.source-tool-assemble-and-link
-            target
-            asm-path
-            obj-path
-            artifact-path
-            link-inputs)]
+          (let
+            [tli-archive : String
+              (compiler_driver_core.compiler-driver-last-hydrated-archive-path)]
+            [effective-link-inputs : build_run_core.SourceToolLinkInputs
+              (if (> (string.string-length (& tli-archive)) 0)
+                (build_run_core.source-tool-link-inputs-add-archive
+                  link-inputs
+                  tli-archive)
+                link-inputs)]
+            (build_run_core.source-tool-assemble-and-link
+              target
+              asm-path
+              obj-path
+              artifact-path
+              effective-link-inputs))]
         [(CompilerPkgKindLib)
           (build_run_core.source-tool-assemble-and-archive
             target
@@ -6033,8 +6052,21 @@
       (build-package-lock-policy-arg debug-args lock-policy)]
     [args8 : process.ProcessStringList
       (build-package-worker-append-resolved-deps args7 resolved-deps 0)]
+    [sysroot : tli_cli.TliSysrootOptions
+      (compiler_driver_core.compiler-driver-sysroot-options)]
+    [args9 : process.ProcessStringList
+      (if (> (string.string-length (& sysroot.explicit-root)) 0)
+        (build-package-worker-append-option
+          args8
+          "--sysroot"
+          sysroot.explicit-root)
+        args8)]
+    [args10 : process.ProcessStringList
+      (if sysroot.disabled
+        (build_run_core.source-tool-args-append args9 "--no-prebuilt-stdlib")
+        args9)]
     (build-package-worker-append-values
-      (build-package-worker-append-values args8 stdlib-roots "--stdlib-root")
+      (build-package-worker-append-values args10 stdlib-roots "--stdlib-root")
       cfg-names
       "--cfg")))
 
@@ -7165,7 +7197,10 @@
         (when
           (> (string.string-length (& sysroot-error)) 0)
           (cli_option.cli-args-fail! (&mut args) sysroot-error))))
-    (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
+    (unless
+      args.failed
+      (ir.compiler-debug-info-set-enabled! options.debug)
+      (compiler_driver_core.compiler-driver-set-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
       [has-source
@@ -7233,6 +7268,7 @@
   [start : i64]
   [count : i64]
   [producer-identity : String]) : i64
+  (compiler_driver_core.compiler-driver-reset-sysroot-options!)
   (ir.compiler-debug-info-set-enabled! false)
   (ir.compiler-debug-path-remap-clear!)
   (cond

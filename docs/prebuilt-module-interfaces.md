@@ -204,7 +204,7 @@ e) `values` (`TliValueDecl`): `s:name`, `s:module`, `s:link_symbol`,
    `Search`, and 2 `Arg`, as for functions.
 f) `macros` (`TliMacroHandle`): `s:name`, `s:module`, `s:macro_identity`,
    `u32 flags` (bit0 `HAS_NATIVE_TLCI`, bit1 `IS_SHELL_TLCI`, bit2
-   `COMPTIME_ONLY`, bit3 `EMITS_DECLS`), `u8 result_kind` (0 expression,
+   `COMPTIME_ONLY`, bit3 `EMITS_DECLS`, bit4 `USES_EXPR_TYPE`), `u8 result_kind` (0 expression,
    1 `Decls`, 2 `Module`), `list<macro_param> params`,
    `i64 tlci_entry_index` (`-1` when absent), `tlci_catalog_sha256[32]`.
    `macro_param` matches `AstMacroParam.Param` verbatim:

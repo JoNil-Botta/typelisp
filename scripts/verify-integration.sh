@@ -1480,6 +1480,10 @@ windows_queue_manifest_link() {
         set -- "$@" "$_link_native_obj"
     done
     IFS=$_link_saved_ifs
+    _link_stdlib_archive=$(windows_stdlib_archive_for_asm "$asm" "${COMPILER:-}")
+    if [ -n "$_link_stdlib_archive" ]; then
+        set -- "$@" -OPT:REF "$(cygpath -aw "$_link_stdlib_archive")"
+    fi
     set -- "$@" \
         "-OUT:$_link_bin_win" \
         -SUBSYSTEM:CONSOLE \
@@ -2746,11 +2750,21 @@ assemble_link_windows() {
         echo "FAIL: $_label assemble failed" >&2
         exit 1
     }
-    lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
-        -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib || {
-        echo "FAIL: $_label link failed" >&2
-        exit 1
-    }
+    _win_stdlib=$(windows_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
+    if [ -n "$_win_stdlib" ]; then
+        lld-link -NOLOGO "$(cygpath -aw "$_obj")" "$(cygpath -aw "$_win_stdlib")" -OPT:REF \
+            "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
+            -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib || {
+            echo "FAIL: $_label link failed" >&2
+            exit 1
+        }
+    else
+        lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" -SUBSYSTEM:CONSOLE \
+            -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib || {
+            echo "FAIL: $_label link failed" >&2
+            exit 1
+        }
+    fi
 }
 
 run_windows_program_fixture() {
@@ -3722,8 +3736,13 @@ integration_stage_helper_build() {
         assemble_link_windows "$_helper_asm" "$_helper_dir/stage.obj" \
             "$STAGE_HELPER" integration-staging
     else
+        _helper_stdlib=$(linux_stdlib_archive_for_asm "$_helper_asm" "${COMPILER:-}")
         as "$_helper_asm" -o "$_helper_dir/stage.o" &&
-            ld "$_helper_dir/stage.o" -o "$STAGE_HELPER" -e _tl_start || {
+            if [ -n "$_helper_stdlib" ]; then
+                ld "$_helper_dir/stage.o" --gc-sections --start-group "$_helper_stdlib" --end-group -o "$STAGE_HELPER" -e _tl_start
+            else
+                ld "$_helper_dir/stage.o" -o "$STAGE_HELPER" -e _tl_start
+            fi || {
             echo "FAIL: integration staging helper link failed" >&2
             return 1
         }
@@ -4424,6 +4443,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             link_extra="-dynamic-linker /lib64/ld-linux-x86-64.so.2 -lc"
         else
             link_extra="-static"
+        fi
+        stdlib_archive=$(linux_stdlib_archive_for_asm "$asm" "${COMPILER:-}")
+        if [ -n "$stdlib_archive" ]; then
+            link_extra="$link_extra --gc-sections --start-group $stdlib_archive --end-group"
         fi
         # shellcheck disable=SC2086
         if ! ci_timing_run "$name" link \

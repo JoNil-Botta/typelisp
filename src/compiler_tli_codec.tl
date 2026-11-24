@@ -1697,7 +1697,7 @@
     [name : String (tli-read-name! rd pool)]
     [module-name : String (tli-read-name! rd pool)]
     [identity : String (tli-read-name! rd pool)]
-    [flags : i64 (tli-read-flags! rd 15)]
+    [flags : i64 (tli-read-flags! rd 31)]
     [result-kind : i64 (tli-read-tag! rd 2)]
     [params : (__tl_dyn-array tli.TliMacroParam)
       (tli-read-macro-params! rd pool)]
@@ -1896,6 +1896,52 @@
     (and rd.cursor.ok? (not (cursor.at-end? (& rd.cursor))))
     (tli-fail! rd tli-error-trailing "TLI section has trailing bytes")))
 
+(define (tli-read-pool-lazy!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : (__tl_dyn-array
+    String)
+  (let
+    [count : i64 (tli-read-count! rd 4 (comptime (size-of (type String))))]
+    [pool : (__tl_dyn-array String) (__tl_make-array String count)]
+    [base : (Ptr u8)
+      (unsafe
+        (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8)))]
+    [index : i64 0]
+    (when
+      (= count 0)
+      (tli-fail!
+        rd
+        tli-error-tag
+        "TLI string pool must start with an empty string"))
+    (while (and rd.cursor.ok? (< index count))
+      (let
+        [length : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [start : i64 rd.cursor.offset]
+        (cond
+          [(not rd.cursor.ok?) unit]
+          [(> length tli-max-string-bytes)
+            (tli-fail! rd tli-error-limit "TLI string length limit exceeded")]
+          [(and (= index 0) (!= length 0))
+            (tli-fail!
+              rd
+              tli-error-tag
+              "TLI string pool must start with an empty string")]
+          [(not (cursor.range-present? rd.cursor.end start length))
+            (tli-fail!
+              rd
+              cursor.error-truncated
+              "TLI string lies outside its pool section")]
+          [else
+            (cursor.skip! (&mut rd.cursor) length)
+            (when
+              (> length 0)
+              (set!
+                (array-ref pool index)
+                (unsafe
+                  (string-from-bytes (ptr-offset base start) length))))]))
+      (+= index 1))
+    (tli-check-end! rd)
+    pool))
+
 (define (tli-read-pool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : (__tl_dyn-array
     String)
   (let
@@ -1980,9 +2026,11 @@
         "TLI file has bytes after its last module"))
     entries))
 
-;; Open only the envelope, verifying its content hash and all packed ranges.
-;; The snapshot cannot be changed through the original input array.
-(define (tli-decode-directory [bytes : (& bytes (__tl_dyn-array u8))]) : TliDirectoryResult
+;; Open only the envelope, verifying its content hash (when requested) and all
+;; packed ranges. The snapshot cannot be changed through the original input array.
+(define (tli-decode-directory-inner
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [verify-content-digest? : bool]) : TliDirectoryResult
   (let
     [length : i64 (array-length bytes)]
     (when
@@ -2075,19 +2123,25 @@
           (when
             (not rd.cursor.ok?)
             (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
-          (let
-            [computed : (Array u8 32) (tli-content-digest (& rd.cursor.bytes))]
-            (when
-              (not (tli-digest-eq? (& digest) (& computed)))
-              (tli-fail!
-                (&mut rd)
-                tli-error-digest
-                "TLI content SHA-256 mismatch")
-              (return (TliDirectoryResult.Err (tli-read-error (& rd) 0)))))
+          (when
+            verify-content-digest?
+            (let
+              [computed : (Array u8 32)
+                (tli-content-digest (& rd.cursor.bytes))]
+              (when
+                (not (tli-digest-eq? (& digest) (& computed)))
+                (tli-fail!
+                  (&mut rd)
+                  tli-error-digest
+                  "TLI content SHA-256 mismatch")
+                (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))))
           (set! rd.cursor.offset pool-start)
           (set! rd.cursor.end (+ pool-start pool-size))
           (let
-            [pool : (__tl_dyn-array String) (tli-read-pool! (&mut rd))]
+            [pool : (__tl_dyn-array String)
+              (if verify-content-digest?
+                (tli-read-pool! (&mut rd))
+                (tli-read-pool-lazy! (&mut rd)))]
             (when
               (not rd.cursor.ok?)
               (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
@@ -2116,11 +2170,15 @@
                       rd.owned-bytes))
                   (TliDirectoryResult.Err (tli-read-error (& rd) 0)))))))))))
 
-(define (tli-decode-directory-for
+(define (tli-decode-directory [bytes : (& bytes (__tl_dyn-array u8))]) : TliDirectoryResult
+  (tli-decode-directory-inner bytes true))
+
+(define (tli-decode-directory-for-inner
   [bytes : (& bytes (__tl_dyn-array u8))]
   [expected-build : (& expected-build str)]
-  [expected-target : (& expected-target str)]) : TliDirectoryResult
-  (match (tli-decode-directory bytes)
+  [expected-target : (& expected-target str)]
+  [verify-content-digest? : bool]) : TliDirectoryResult
+  (match (tli-decode-directory-inner bytes verify-content-digest?)
     [(TliDirectoryResult.Err error) (TliDirectoryResult.Err error)]
     [(TliDirectoryResult.Ok directory)
       (cond
@@ -2137,6 +2195,21 @@
               76
               "TLI target mismatch"))]
         [else (TliDirectoryResult.Ok directory)])]))
+
+(define (tli-decode-directory-for
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [expected-build : (& expected-build str)]
+  [expected-target : (& expected-target str)]) : TliDirectoryResult
+  (tli-decode-directory-for-inner bytes expected-build expected-target true))
+
+;; Lazy open for compiler-job hydration: skips hashing unhydrated module bytes
+;; up front; every hydrated module still verifies its exact per-module SHA-256
+;; and import interface SHA-256 on decode.
+(define (tli-decode-directory-for-lazy
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [expected-build : (& expected-build str)]
+  [expected-target : (& expected-target str)]) : TliDirectoryResult
+  (tli-decode-directory-for-inner bytes expected-build expected-target false))
 
 (define (tli-read-record!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]

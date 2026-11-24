@@ -291,9 +291,9 @@ run_bootstrap_compile() {
     shift
     if [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ]; then
         run_with_heartbeat \
-            "$_btc_label" env -C "$BOOTSTRAP_SOURCE_ROOT" "$@" || return $?
+            "$_btc_label" env -C "$BOOTSTRAP_SOURCE_ROOT" TYPELISP_SYSROOT=none "$@" || return $?
     else
-        run_with_heartbeat "$_btc_label" "$@" || return $?
+        run_with_heartbeat "$_btc_label" env TYPELISP_SYSROOT=none "$@" || return $?
     fi
     if [ -n "${TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR:-}" ]; then
         [ "$BOOTSTRAP_TLCI_MUTATION" -eq 0 ] || return 1
@@ -707,7 +707,7 @@ bootstrap_build_stage4() {
     bootstrap_mutation_step stage3 snapshot \
         bootstrap_tlci_mutation_snapshot stage3 "$STAGE3_BIN"
     echo "[bootstrap] stage3 -> stage4.s"
-    bootstrap_step stage3 compile run_bootstrap_compile "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+    bootstrap_step stage3 compile run_bootstrap_compile "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2 --no-prebuilt-stdlib
     bootstrap_step stage4 link assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
 }
 
@@ -732,7 +732,7 @@ bootstrap_compiler_phase() {
     bootstrap_mutation_step stage1 witness bootstrap_tlci_mutation_source_route
 
     echo "[bootstrap] stage1 -> stage2.s"
-    bootstrap_step stage1 compile run_bootstrap_compile "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+    bootstrap_step stage1 compile run_bootstrap_compile "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_STDLIB_ROOT" --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2 --no-prebuilt-stdlib
 
     bootstrap_step stage2 link assemble_and_link_stage2
     bootstrap_mutation_step stage2 witness bootstrap_tlci_mutation_native_route
@@ -749,7 +749,7 @@ bootstrap_compiler_phase() {
     # stage2+ compile with the embedded stdlib (no stdlib root): the byte-equal
     # fixpoint against stage2.s (built from the on-disk stdlib) is the parity
     # gate for the embedded source payload and the native macro route.
-    bootstrap_step stage2 compile run_bootstrap_compile "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+    bootstrap_step stage2 compile run_bootstrap_compile "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2 --no-prebuilt-stdlib
 
     bootstrap_step stage3 link assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
 
@@ -776,7 +776,7 @@ bootstrap_parity_phase() {
     # native macro route active, and require byte parity with stage3.s.
     echo "[bootstrap] stage2 embedded-provenance parity"
     EMBEDDED_PARITY_ASM="$WORKDIR/stage3-embedded.s"
-    bootstrap_step stage2 parity run_with_heartbeat "stage2 embedded parity" env -C "$WORKDIR" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC_ABS" -o "$EMBEDDED_PARITY_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2
+    bootstrap_step stage2 parity run_with_heartbeat "stage2 embedded parity" env -C "$WORKDIR" TYPELISP_SYSROOT=none "$STAGE2_BIN" compile "$BOOTSTRAP_SRC_ABS" -o "$EMBEDDED_PARITY_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$BOOTSTRAP_COMPILER_ROOT" --opt-level 2 --no-prebuilt-stdlib
     if ! cmp -s "$STAGE3_ASM" "$EMBEDDED_PARITY_ASM"; then
         echo "embedded-provenance stage2 output differs from stage3.s" >&2
         exit 1

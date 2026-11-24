@@ -6590,38 +6590,99 @@
   [name : String]
   [name-id : i64]
   [root-authority : bool]) : CtfeBuilt
-  (match (ctfe-module-value-type-id-for-state state module-id name-id)
-    [(Some ty)
-      (Ok
-        (cond
-          [(= query-kind 0) (Bool true)]
-          [(= query-kind 1) (Type ty)]
-          [else
-            (Expr
-              (ast.ast-node-pool-context-expr-push
-                pools
-                (Var
-                  (if (string.eq module "")
-                    (ctfe-root-reference-id state name-id root-authority)
-                    (cis.intern-macro-global-identity-raw
-                      (cis.intern-structural-session-macro-global-identity
-                        (compiler-ctfe-macro-state-structural-session state)
-                        cis.InternMacroGlobalRole.Context
-                        module-id
-                        name-id)))))
-              (ctfe-untyped-expr-type))]))]
-    [(None)
-      (if (= query-kind 0)
-        (Ok (Bool false))
-        (Err
-          (str_cat.str-cat
-            (if (= query-kind 1)
-              "module-value-type"
-              "module-value-expr")
-            ": module "
-            module
-            " does not define value "
-            name)))]))
+  (let
+    [resolved-module-id : i64 module-id]
+    [resolved-name-id : i64 name-id]
+    [found : CtfeMaybeModuleValueType
+      (ctfe-module-value-type-id-for-state state module-id name-id)]
+    (match (& found)
+      [(Some _) unit]
+      [(None)
+        ;; Native TLCI templates hydrated from `.tli` interfaces can introduce
+        ;; declaration names via `intern-source-slice` after the parse-time
+        ;; `source-count` boundary. A read-only lookup bridges a computed
+        ;; generated string (e.g. `"clone-" + "vec"`) to that exact slot.
+        (let
+          [alt-name-id : i64
+            (match (ci.intern-lookup-content (string.copy (& name)))
+              [(InternLookupFound id) id]
+              [(InternLookupMissing) name-id])]
+          (when
+            (!= alt-name-id name-id)
+            (match (ctfe-module-value-type-id-for-state
+              state
+              module-id
+              alt-name-id)
+              [(Some ty)
+                (set! resolved-name-id alt-name-id)
+                (set! found (Some ty))]
+              [(None) unit]))
+          (match (& found)
+            [(Some _) unit]
+            [(None)
+              (when
+                (not (string.eq (& module) ""))
+                (let
+                  [alt-module-id : i64
+                    (match (ci.intern-lookup-content (string.copy (& module)))
+                      [(InternLookupFound id) id]
+                      [(InternLookupMissing) module-id])]
+                  (when
+                    (!= alt-module-id module-id)
+                    (match (ctfe-module-value-type-id-for-state
+                      state
+                      alt-module-id
+                      alt-name-id)
+                      [(Some ty)
+                        (set! resolved-module-id alt-module-id)
+                        (set! resolved-name-id alt-name-id)
+                        (set! found (Some ty))]
+                      [(None)
+                        (when
+                          (!= alt-name-id name-id)
+                          (match (ctfe-module-value-type-id-for-state
+                            state
+                            alt-module-id
+                            name-id)
+                            [(Some ty)
+                              (set! resolved-module-id alt-module-id)
+                              (set! found (Some ty))]
+                            [(None) unit]))]))))]))])
+    (match found
+      [(Some ty)
+        (Ok
+          (cond
+            [(= query-kind 0) (Bool true)]
+            [(= query-kind 1) (Type ty)]
+            [else
+              (Expr
+                (ast.ast-node-pool-context-expr-push
+                  pools
+                  (Var
+                    (if (string.eq module "")
+                      (ctfe-root-reference-id
+                        state
+                        resolved-name-id
+                        root-authority)
+                      (cis.intern-macro-global-identity-raw
+                        (cis.intern-structural-session-macro-global-identity
+                          (compiler-ctfe-macro-state-structural-session state)
+                          cis.InternMacroGlobalRole.Context
+                          resolved-module-id
+                          resolved-name-id)))))
+                (ctfe-untyped-expr-type))]))]
+      [(None)
+        (if (= query-kind 0)
+          (Ok (Bool false))
+          (Err
+            (str_cat.str-cat
+              (if (= query-kind 1)
+                "module-value-type"
+                "module-value-expr")
+              ": module "
+              module
+              " does not define value "
+              name)))])))
 
 (define (ctfe-current-module
   [state : CompilerCtfeMacroState]

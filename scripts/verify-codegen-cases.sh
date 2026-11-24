@@ -346,8 +346,15 @@ simd_execution_init
 # Linux entry-selection contract hook exercised by scripts/verify-linux-entry-callers.sh.
 cc_linux_link_asm() {
     CV_ENTRY=$(linux_entry_symbol_for_asm "$CV_ASM") || exit $?
-    cc_run_step link ld "$CV_DIR/out.o" -o "$CV_DIR/program" -static \
-        -e "$CV_ENTRY"
+    _cc_stdlib_archive=$(linux_stdlib_archive_for_asm "$CV_ASM" "${COMPILER:-}")
+    if [ -n "$_cc_stdlib_archive" ]; then
+        cc_run_step link ld "$CV_DIR/out.o" -o "$CV_DIR/program" -static \
+            --gc-sections --start-group "$_cc_stdlib_archive" --end-group \
+            -e "$CV_ENTRY"
+    else
+        cc_run_step link ld "$CV_DIR/out.o" -o "$CV_DIR/program" -static \
+            -e "$CV_ENTRY"
+    fi
     cc_require_step "GNU ld" || return 1
 }
 

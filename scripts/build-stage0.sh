@@ -103,20 +103,23 @@ while [ "$i" -le "$STAGES" ]; do
         STAGE_BIN="$WORKDIR/stage$i$NL_BIN_EXT"
     fi
     EMBEDDED_STDLIB_TLCI_ARGS=
+    PREBUILT_STDLIB_ARGS=
     if [ "$i" -gt 1 ]; then
         scripts/build-embedded-stdlib-tlci.sh \
             "$PREV" target/embedded-stdlib-tlci/stdlib.tlci "$NL_HOST_OS"
         # Stage2 and later contain the trusted image; native stdlib macro
         # routing is the default policy of an embedded-stdlib-tlci build.
         EMBEDDED_STDLIB_TLCI_ARGS="--cfg embedded-stdlib-tlci"
+        PREBUILT_STDLIB_ARGS="--no-prebuilt-stdlib"
     fi
     echo "[build-stage0] stage$i: compile src/main.tl ($NL_BOOTSTRAP_TARGET)"
     if ! run_with_heartbeat_capture "compile stage$i" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
+        env TYPELISP_SYSROOT=none \
         "$PREV" compile src/main.tl -o "$STAGE_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib --stdlib-root src --opt-level 2 \
-        --cfg stage0-build-version $LINUX_EXECUTABLE_ARGS $EMBEDDED_STDLIB_TLCI_ARGS; then
+        --cfg stage0-build-version $LINUX_EXECUTABLE_ARGS $EMBEDDED_STDLIB_TLCI_ARGS $PREBUILT_STDLIB_ARGS; then
         echo "[build-stage0] stage$i compiler failed while compiling src/main.tl" >&2
         echo "[build-stage0] compiler stdout:" >&2
         sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true

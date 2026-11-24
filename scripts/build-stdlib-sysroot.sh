@@ -224,7 +224,7 @@ if [ ! -x "$BUILDER_BIN" ]; then
     if [ ! -x "$BUILDER_BIN" ]; then
         TOOL_TEMP=$(mktemp -d "$TOOL_CACHE/.build.XXXXXX")
         echo "[build-stdlib-sysroot] compiling builder tool ($NL_BOOTSTRAP_TARGET)"
-        "$COMPILER" compile "$TOOL_SOURCE" \
+        TYPELISP_SYSROOT=none "$COMPILER" compile "$TOOL_SOURCE" \
             -o "$TOOL_TEMP/builder.s" \
             --target "$NL_BOOTSTRAP_TARGET" \
             $(native_target_cfg_args) \

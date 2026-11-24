@@ -37,6 +37,8 @@
 (import (vector.vector String) as svec)
 (import token)
 (cfg compile-profile (import stdlib.profile))
+(import compiler_tli_hydrate as tli_hydrate)
+(cfg embedded-stdlib-tlci (import compiler_tli_codec as tli_codec))
 (cfg
   embedded-stdlib-tlci
   (import compiler_embedded_stdlib_tlci as embedded_tlci))
@@ -738,7 +740,9 @@
   (selected-certificate-store-address i64)
   (parser-control i64)
   ;; Lazy completed variance answers; cold state stays out of hot resolution views.
-  (variance-cache-address i64))
+  (variance-cache-address i64)
+  ;; Non-zero pointer to job-owned TliHydratedFacts when prebuilt stdlib.tli is active.
+  (tli-facts-ptr i64))
 
 (defstruct TcJobState
   ;; Small immutable capability; the pointed-to cell and its tables are
@@ -1031,6 +1035,7 @@
           (TcSemanticObserver 0)
           0
           0
+          0
           0))
       (TcJobState
         (cast
@@ -1096,6 +1101,19 @@
             : (Ptr u8))
           (comptime (offset-of (type TcJobStateData) ,field)))
         : (Ptr ,_T)))))
+
+(define (tc-job-state-tli-facts-ptr [state : TcJobState]) : i64
+  (tc-job-state-field state tli-facts-ptr i64))
+
+(define (tc-job-state-set-tli-facts-ptr! [state : TcJobState] [addr : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast state.address : u64) : (MutPtr u8))
+          (comptime (offset-of (type TcJobStateData) tli-facts-ptr)))
+        : (MutPtr i64))
+      addr)))
 
 (defmacro (tc-type-env-scoped-state-field
   [state : Expr]
@@ -19809,6 +19827,7 @@
             (or
               c-pointer?
               (match (& abi)
+                [(TcMaybeExternAbi.Some (ast.AstExternAbi.TypeLisp)) false]
                 [(TcMaybeExternAbi.Some _) true]
                 [_ false]))]
           [specialized? : bool false]
@@ -20887,13 +20906,24 @@
     -1
     (let
       [handle : i64 (tc-selected-value-symbol-handle ctx name)]
-      (if (and
-        (csym.compiler-symbols-handle-found? handle)
-        (=
-          (csym.compiler-symbol-handle-kind handle)
-          (csym.compiler-symbol-kind-value-define)))
-        (csym.compiler-symbol-handle-index handle)
-        -1))))
+      (if (not (csym.compiler-symbols-handle-found? handle))
+        -1
+        (let
+          [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+          [index : i64 (csym.compiler-symbol-handle-index handle)]
+          (cond
+            [(= kind (csym.compiler-symbol-kind-value-define)) index]
+            [(= kind (csym.compiler-symbol-kind-extern))
+              (let
+                [decls : (__tl_dyn-array ast.AstDecl)
+                  (csym.compiler-symbols-decls (tc-context-symbols ctx))]
+                (if (and (>= index 0) (< index (array-length decls)))
+                  (match (& (array-ref decls index))
+                    [(ast.AstDecl.Extern _ _ (ast.AstExternKind.Value) _ _)
+                      index]
+                    [_ -1])
+                  -1))]
+            [else -1]))))))
 
 ;; The place of module value `name` (`tc-selected-global-place`); a value
 ;; another module owns is noted so that a write to it is rejected
@@ -44065,20 +44095,40 @@
           false
           (let
             [decl : ast.AstDecl (ast.ast-array-shared-view decls index)]
-            (cond
-              [(string.eq base "string-length")
-                (tc-stdlib-string-length-wrapper-decl? ctx base decl)]
-              [(string.eq base "string-ref")
-                (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
-              [(string.eq base "char-at")
-                (tc-stdlib-string-ref-wrapper-decl? ctx base decl)]
-              [(string.eq base "eq")
-                (tc-stdlib-string-eq-wrapper-decl? ctx base decl)]
-              [(string.eq base "string-append")
-                (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
-              [(string.eq base "string-concat")
-                (tc-stdlib-string-copy-wrapper-decl? ctx base decl)]
-              [else false]))))
+            (match decl
+              [(ast.AstDecl.Extern
+                  _
+                  name
+                  (ast.AstExternKind.Function)
+                  ext-meta
+                  ty)
+                (and
+                  (match (& (deref ext-meta))
+                    [(Metadata (ast.AstExternAbi.TypeLisp) _ _ _ _) true]
+                    [_ false])
+                  (string.eq (tc-env-key-name-text name) base)
+                  (tc-stdlib-string-helper-wrapper-type?
+                    base
+                    (tc-resolve-type ctx ty)))]
+              [(ast.AstDecl.DefFn decl-meta name params ret body-id attrs)
+                (let
+                  [def-decl : ast.AstDecl
+                    (ast.AstDecl.DefFn decl-meta name params ret body-id attrs)]
+                  (cond
+                    [(string.eq base "string-length")
+                      (tc-stdlib-string-length-wrapper-decl? ctx base def-decl)]
+                    [(string.eq base "string-ref")
+                      (tc-stdlib-string-ref-wrapper-decl? ctx base def-decl)]
+                    [(string.eq base "char-at")
+                      (tc-stdlib-string-ref-wrapper-decl? ctx base def-decl)]
+                    [(string.eq base "eq")
+                      (tc-stdlib-string-eq-wrapper-decl? ctx base def-decl)]
+                    [(string.eq base "string-append")
+                      (tc-stdlib-string-copy-wrapper-decl? ctx base def-decl)]
+                    [(string.eq base "string-concat")
+                      (tc-stdlib-string-copy-wrapper-decl? ctx base def-decl)]
+                    [else false]))]
+              [_ false]))))
       false)))
 
 ;; The builtin string helpers a module-qualified `stdlib.string` call may
@@ -79815,6 +79865,65 @@
         next-align
         stack))))
 
+(defenum TcMaybeHydratedLayout
+  (None)
+  (Found TcInlineAggregateLayout))
+
+(define (tc-tli-hydrated-struct-layout
+  [ctx : TcContext]
+  [struct-name : String]
+  [name-id : i64]
+  [handle : i64]) : TcMaybeHydratedLayout
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (= facts-ptr 0)
+      TcMaybeHydratedLayout.None
+      (unsafe
+        (let
+          [facts : tli_hydrate.TliHydratedFacts
+            (ptr-read
+              (int->ptr
+                (cast facts-ptr : u64)
+                : (Ptr tli_hydrate.TliHydratedFacts)))]
+          [slot : i64
+            (tli_hydrate.tli-hydrated-facts-type-layout-slot (& facts) name-id)]
+          (if (< slot 0)
+            TcMaybeHydratedLayout.None
+            (let
+              [row : (& facts tli_hydrate.TliHydratedTypeLayout)
+                (& (array-ref facts.type-layouts.slots slot))]
+              (if (not row.is-struct)
+                TcMaybeHydratedLayout.None
+                (match (tc-struct-decl-at-handle ctx handle name-id struct-name)
+                  [(Ok (TcStructDecl _ _ fields))
+                    (let
+                      [count : i64 (array-length row.field-names)]
+                      (if (!= (ast.ast-field-def-list-len (& fields)) count)
+                        TcMaybeHydratedLayout.None
+                        (let
+                          [field-list : TcInlineFieldLayoutList
+                            (tc-inline-field-layout-list-with-count-for-state
+                              (tc-job-state-agg-layout-cache
+                                (tc-context-job-state ctx))
+                              count)]
+                          (for [i (iterator.range 0 count)]
+                            (let
+                              [fname : i64 (array-ref row.field-names i)]
+                              [foff : i64 (array-ref row.field-offsets i)]
+                              [fty : ast.AstType
+                                (match (ast.ast-field-def-list-get
+                                  (& fields)
+                                  i
+                                  (ast.ast-field-def-fallback))
+                                  [(Def _ field-ty _)
+                                    (tc-resolve-type ctx field-ty)])]
+                              (set!
+                                (array-ref field-list.slots i)
+                                (Field fname fty foff))))
+                          (TcMaybeHydratedLayout.Found
+                            (Struct row.size row.align field-list)))))]
+                  [_ TcMaybeHydratedLayout.None])))))))))
+
 (define (tc-inline-aggregate-struct-layout-with-stack
   [ctx : TcContext]
   [struct-name : String]
@@ -79825,26 +79934,34 @@
     (tc-global-shared-view stack)
     (tc-global-shared-view struct-name))
     (Err (tc-inline-aggregate-cycle-message struct-name stack))
-    (let
-      [decl : TcStructDecl
-        (try (tc-struct-decl-at-handle ctx handle struct-name-id struct-name))]
-      (match decl
-        [(TcStructDecl repr _ fields)
-          (let
-            ;; A struct's `(:align N)` seeds the aggregate alignment, so it
-            ;; raises the final alignment and rounds the size up to it.
-            [layout : TcInlineFieldsLayout
-              (try
-                (tc-inline-aggregate-field-defs-layout
-                  ctx
-                  (& repr)
-                  fields
-                  0
-                  (ast.ast-struct-repr-declared-align (& repr))
-                  (tc-string-list-cons stack struct-name)))]
-            (match layout
-              [(Fields size align fields-layout)
-                (Ok (Struct size align fields-layout))]))]))))
+    (match (tc-tli-hydrated-struct-layout
+      ctx
+      (string.copy (& struct-name))
+      struct-name-id
+      handle)
+      [(TcMaybeHydratedLayout.Found hydrated-layout) (Ok hydrated-layout)]
+      [(TcMaybeHydratedLayout.None)
+        (let
+          [decl : TcStructDecl
+            (try
+              (tc-struct-decl-at-handle ctx handle struct-name-id struct-name))]
+          (match decl
+            [(TcStructDecl repr _ fields)
+              (let
+                ;; A struct's `(:align N)` seeds the aggregate alignment, so it
+                ;; raises the final alignment and rounds the size up to it.
+                [layout : TcInlineFieldsLayout
+                  (try
+                    (tc-inline-aggregate-field-defs-layout
+                      ctx
+                      (& repr)
+                      fields
+                      0
+                      (ast.ast-struct-repr-declared-align (& repr))
+                      (tc-string-list-cons stack struct-name)))]
+                (match layout
+                  [(Fields size align fields-layout)
+                    (Ok (Struct size align fields-layout))]))]))])))
 
 (define (tc-inline-aggregate-variants-layout
   [ctx : TcContext]
@@ -92398,7 +92515,9 @@
           [(Value)
             (if (ast.ast-extern-abi-c-varargs? (& abi))
               (Err "typecheck: extern value cannot use c-varargs ABI")
-              (tc-check-extern-value-c-abi ctx resolved))]))]))
+              (if (ast.ast-extern-abi-c? (& abi))
+                (tc-check-extern-value-c-abi ctx resolved)
+                Ok))]))]))
 
 (define (tc-summary-add-decl
   [summary : CompilerTypecheckSummary]
@@ -93800,12 +93919,31 @@
         [kind : i64 (csym.compiler-symbol-handle-kind handle)]
         (cond
           [(= kind (csym.compiler-symbol-kind-extern))
-            (tc-comptime-purity-error
-              expr-bases
-              expr
-              chain
-              (tc-global-shared-view name)
-              (str_cat.str-cat "extern reference " name))]
+            (let
+              [decl-index : i64 (csym.compiler-symbol-handle-index handle)]
+              [owner-mod-id : i64
+                (csym.compiler-symbols-owner-module-id-at-index-or
+                  (tc-context-symbols ctx)
+                  decl-index
+                  cbi.compiler-builtin-id-fix-empty)]
+              [canonical-id : i64
+                (if (= owner-mod-id cbi.compiler-builtin-id-fix-empty)
+                  source-id
+                  (tc-module-name-id-by-id owner-mod-id source-id))]
+              [flags : i64 (tc-tli-hydrated-fn-summary-flags ctx canonical-id)]
+              (if (and
+                (>= flags 0)
+                (= (bit-and flags 1) 0)
+                (not
+                  (tc-comptime-purity-banned-module?
+                    (tc-env-key-name-text owner-mod-id))))
+                Ok
+                (tc-comptime-purity-error
+                  expr-bases
+                  expr
+                  chain
+                  (tc-global-shared-view name)
+                  (str_cat.str-cat "extern reference " name))))]
           [(= kind (csym.compiler-symbol-kind-defdispatch))
             (tc-comptime-purity-error
               expr-bases
@@ -93884,12 +94022,25 @@
           body))]
     [(DefMacro decl-meta _ _ _ _) Ok]
     [(Extern decl-meta name _ _ _)
-      (tc-comptime-purity-error
-        expr-bases
-        (Var name)
-        chain
-        (tc-env-key-name-text name)
-        (str_cat.str-cat "extern reference " (tc-env-key-name-text name)))]
+      (let
+        [mod-id : i64 (tc-context-module-id ctx)]
+        [canonical-id : i64
+          (if (= mod-id cbi.compiler-builtin-id-fix-empty)
+            name
+            (tc-module-name-id-by-id mod-id name))]
+        [flags : i64 (tc-tli-hydrated-fn-summary-flags ctx canonical-id)]
+        (if (and
+          (>= flags 0)
+          (= (bit-and flags 1) 0)
+          (not
+            (tc-comptime-purity-banned-module? (tc-env-key-name-text mod-id))))
+          Ok
+          (tc-comptime-purity-error
+            expr-bases
+            (Var name)
+            chain
+            (tc-env-key-name-text name)
+            (str_cat.str-cat "extern reference " (tc-env-key-name-text name)))))]
     [(DefDispatch decl-meta name _)
       (tc-comptime-purity-error
         expr-bases
@@ -96492,9 +96643,15 @@
     (when
       (and
         (csym.compiler-symbols-handle-found? handle)
-        (=
-          (csym.compiler-symbol-handle-kind handle)
-          (csym.compiler-symbol-kind-value-define)))
+        (or
+          (=
+            (csym.compiler-symbol-handle-kind handle)
+            (csym.compiler-symbol-kind-value-define))
+          (and
+            (!= (tc-job-state-tli-facts-ptr (tc-context-job-state ctx)) 0)
+            (=
+              (csym.compiler-symbol-handle-kind handle)
+              (csym.compiler-symbol-kind-extern)))))
       (let
         [global : i64 (csym.compiler-symbol-handle-index handle)]
         (tc-global-effect-record! collector node 1 global)
@@ -98303,6 +98460,195 @@
         node
         (csym.compiler-symbol-handle-index handle)))))
 
+(define (tc-tli-hydrated-module? [ctx : TcContext] [module-id : i64]) : bool
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (= facts-ptr 0)
+      false
+      (unsafe
+        (let
+          [facts : tli_hydrate.TliHydratedFacts
+            (ptr-read
+              (int->ptr
+                (cast facts-ptr : u64)
+                : (Ptr tli_hydrate.TliHydratedFacts)))]
+          (tli_hydrate.tli-hydrated-facts-module-hydrated? (& facts) module-id))))))
+
+(define (tc-tli-hydrated-fn-summary-flags [ctx : TcContext] [symbol-id : i64]) : i64
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (= facts-ptr 0)
+      -1
+      (unsafe
+        (let
+          [facts : tli_hydrate.TliHydratedFacts
+            (ptr-read
+              (int->ptr
+                (cast facts-ptr : u64)
+                : (Ptr tli_hydrate.TliHydratedFacts)))]
+          [slot : i64
+            (tli_hydrate.tli-hydrated-facts-fn-summary-slot (& facts) symbol-id)]
+          (if (< slot 0)
+            -1
+            (array-ref facts.fn-summaries.slots slot).effect-flags))))))
+
+(define (tc-tli-hydrated-fn-summary-arena-arg-store?
+  [ctx : TcContext]
+  [symbol-id : i64]
+  [param-index : i64]) : bool
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (= facts-ptr 0)
+      false
+      (unsafe
+        (let
+          [facts : tli_hydrate.TliHydratedFacts
+            (ptr-read
+              (int->ptr
+                (cast facts-ptr : u64)
+                : (Ptr tli_hydrate.TliHydratedFacts)))]
+          [slot : i64
+            (tli_hydrate.tli-hydrated-facts-fn-summary-slot (& facts) symbol-id)]
+          (if (< slot 0)
+            false
+            (tli_hydrate.tli-hydrated-fn-summary-arena-arg-store?
+              (tli_hydrate.tli-hydrated-facts-fn-summary-at (& facts) slot)
+              param-index)))))))
+
+(define (tc-tli-hydrated-macro-present? [ctx : TcContext] [identity-id : i64]) : bool
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (= facts-ptr 0)
+      false
+      (unsafe
+        (let
+          [facts : tli_hydrate.TliHydratedFacts
+            (ptr-read
+              (int->ptr
+                (cast facts-ptr : u64)
+                : (Ptr tli_hydrate.TliHydratedFacts)))]
+          (>=
+            (tli_hydrate.tli-hydrated-facts-macro-slot (& facts) identity-id)
+            0))))))
+
+(define (tc-tli-hydrated-macro-uses-expr-type?
+  [ctx : TcContext]
+  [identity-id : i64]) : bool
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (= facts-ptr 0)
+      false
+      (unsafe
+        (let
+          [facts : tli_hydrate.TliHydratedFacts
+            (ptr-read
+              (int->ptr
+                (cast facts-ptr : u64)
+                : (Ptr tli_hydrate.TliHydratedFacts)))]
+          (tli_hydrate.tli-hydrated-facts-macro-uses-expr-type?
+            (& facts)
+            identity-id))))))
+
+(define (tc-tli-hydrated-decl-canonical-id [ctx : TcContext] [node : i64]) : i64
+  (if (or
+    (< node 0)
+    (>= node (csym.compiler-symbols-decl-count (tc-context-symbols ctx))))
+    -1
+    (let
+      [mod-id : i64
+        (csym.compiler-symbols-owner-module-id-at-index-or
+          (tc-context-symbols ctx)
+          node
+          cbi.compiler-builtin-id-fix-empty)]
+      [name-id : i64
+        (csym.compiler-symbols-decl-name-id-at-index
+          (tc-context-symbols ctx)
+          node)]
+      (if (= mod-id cbi.compiler-builtin-id-fix-empty)
+        name-id
+        (tc-module-name-id-by-id mod-id name-id)))))
+
+(define (tc-tli-hydrated-seed-global-effects!
+  [owner : TcContext]
+  [collector : (&mut collector TcGlobalEffectCollector)]
+  [index : i64]
+  [module-id : i64]
+  [name : i64]) : unit
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state owner))]
+    (when
+      (!= facts-ptr 0)
+      (let
+        [canonical-id : i64
+          (if (= module-id cbi.compiler-builtin-id-fix-empty)
+            name
+            (tc-module-name-id-by-id module-id name))]
+        [facts : tli_hydrate.TliHydratedFacts
+          (unsafe
+            (ptr-read
+              (int->ptr
+                (cast facts-ptr : u64)
+                : (Ptr tli_hydrate.TliHydratedFacts))))]
+        [slot : i64
+          (tli_hydrate.tli-hydrated-facts-fn-summary-slot
+            (& facts)
+            canonical-id)]
+        (when
+          (>= slot 0)
+          (let
+            [row : (& facts tli_hydrate.TliHydratedFnSummaryRow)
+              (tli_hydrate.tli-hydrated-facts-fn-summary-at (& facts) slot)]
+            (when
+              (!= (bit-and row.effect-flags 32) 0)
+              (tc-global-effect-add-call!
+                collector
+                index
+                collector.graph.indirect))
+            (for [wi (iterator.range 0 (array-length row.global-writes))]
+              (let
+                [w : tli_hydrate.TliHydratedGlobalWrite
+                  (array-ref row.global-writes wi)]
+                [handle : i64 (tc-global-effect-handle owner Nil w.symbol-id)]
+                (when
+                  (csym.compiler-symbols-handle-found? handle)
+                  (let
+                    [kind : i64 (csym.compiler-symbol-handle-kind handle)]
+                    (when
+                      (or
+                        (= kind (csym.compiler-symbol-kind-value-define))
+                        (= kind (csym.compiler-symbol-kind-extern)))
+                      (let
+                        [global : i64
+                          (csym.compiler-symbol-handle-index handle)]
+                        (tc-global-effect-record! collector index 1 global)
+                        (unless
+                          collector.address-only
+                          (global_effects.add-write!
+                            (&mut collector.graph)
+                            index
+                            global))))))))
+            (when
+              collector.arena
+              (when
+                (!= (bit-and row.effect-flags 16) 0)
+                (global_effects.add-write!
+                  (&mut collector.graph)
+                  index
+                  (tc-arena-store-global-key collector.graph.indirect)))
+              (when
+                (!= (bit-and row.effect-flags 256) 0)
+                (global_effects.add-write!
+                  (&mut collector.graph)
+                  index
+                  (tc-arena-store-argument-key collector.graph.indirect)))
+              (for [p (iterator.range 0 63)]
+                (when
+                  (tli_hydrate.tli-hydrated-fn-summary-arena-arg-store? row p)
+                  (global_effects.add-write!
+                    (&mut collector.graph)
+                    index
+                    (tc-arena-store-parameter-key collector.graph.indirect p)))))))))))
+
 (define (tc-global-effect-scan-declaration!
   [ctx : TcContext]
   [collector : (&mut collector TcGlobalEffectCollector)]
@@ -98397,7 +98743,7 @@
                                   field
                                   (ast.ast-type-id-fallback))))]
                           [_ unit]))])))]
-            [(Extern _ _ _ metadata _)
+            [(Extern _ name _ metadata _)
               (let
                 [meta : ast.AstExternMetadata
                   (ast.ast-extern-metadata-box-shared-view metadata)]
@@ -98411,7 +98757,13 @@
                       collector
                       index
                       collector.graph.indirect)]
-                  [_ unit]))]
+                  [_
+                    (tc-tli-hydrated-seed-global-effects!
+                      owner
+                      collector
+                      index
+                      module-id
+                      name)]))]
             [(DefDispatch _ _ variants)
               (for [variant (iterator.range 0 variants.len)]
                 (match (ast.ast-dispatch-variant-list-get
@@ -99893,7 +100245,8 @@
       mask)))
 
 ;; Whether a kind-2 query's callee calls its parameter `index` inside an
-;; arena scope (`tc-arena-store-direct-mask`, by callee in `masks`).
+;; arena scope (`tc-arena-store-direct-mask`, by callee in `masks`, plus
+;; hydrated `.tli` summaries for indices >= 63 including >= 64).
 (define (tc-arena-store-invokes?
   [masks : (& masks tc_i64_i64_map.Map)]
   [kind : i64]
@@ -99903,6 +100256,23 @@
     (= kind 2)
     (< index 63)
     (!= (bit-and (tc_i64_i64_map.get-value-or masks callee 0) (shl 1 index)) 0)))
+
+(define (tc-arena-store-invokes-for-ctx?
+  [ctx : TcContext]
+  [masks : (& masks tc_i64_i64_map.Map)]
+  [kind : i64]
+  [callee : i64]
+  [index : i64]) : bool
+  (cond
+    [(not (= kind 2)) false]
+    [(tc-arena-store-invokes? masks kind callee index) true]
+    [(>= index 63)
+      (let
+        [canonical-id : i64 (tc-tli-hydrated-decl-canonical-id ctx callee)]
+        (if (< canonical-id 0)
+          false
+          (tc-tli-hydrated-fn-summary-arena-arg-store? ctx canonical-id index)))]
+    [else false]))
 
 (define (tc-arena-store-late-diagnostics [ctx : TcContext]) : cdiag.CompilerDiagnosticList
   (let
@@ -99933,7 +100303,8 @@
                 query.callee
                 (tc-arena-store-direct-mask ctx state query.callee)))
             (when
-              (tc-arena-store-invokes?
+              (tc-arena-store-invokes-for-ctx?
+                ctx
                 (& masks)
                 query.kind
                 query.callee
@@ -99957,7 +100328,8 @@
           (let
             [path : effect_words.Vec
               (if (= query.kind 2)
-                (if (tc-arena-store-invokes?
+                (if (tc-arena-store-invokes-for-ctx?
+                  ctx
                   (& masks)
                   query.kind
                   query.callee
@@ -117579,9 +117951,15 @@
                         (csym.compiler-symbols-missing-handle))]
                     (if (and
                       (csym.compiler-symbols-handle-found? handle)
-                      (=
-                        (csym.compiler-symbol-handle-kind handle)
-                        (csym.compiler-symbol-kind-function-define))
+                      (or
+                        (=
+                          (csym.compiler-symbol-handle-kind handle)
+                          (csym.compiler-symbol-kind-function-define))
+                        (and
+                          (=
+                            (csym.compiler-symbol-handle-kind handle)
+                            (csym.compiler-symbol-kind-extern))
+                          (tc-tli-hydrated-module? ctx module-id)))
                       (=
                         (csym.compiler-symbols-owner-module-id-at-index-or
                           (tc-context-symbols ctx)
@@ -117594,6 +117972,13 @@
                         [(Ok decl)
                           (match (ast.ast-decl-unwrapped (& decl))
                             [(DefFn _ decl-name _ _ _ _) (= decl-name base-id)]
+                            [(Extern _ decl-name (Function) extern-meta _)
+                              (and
+                                (= decl-name base-id)
+                                (tc-tli-hydrated-module? ctx module-id)
+                                (match (__tl-box-place extern-meta)
+                                  [(Metadata (TypeLisp) _ _ _ _) true]
+                                  [_ false]))]
                             [_ false])]
                         [(Err _) false])
                       ;; The checked call reads the head's type from this
@@ -118798,6 +119183,80 @@
 
 (cfg
   embedded-stdlib-tlci
+  (define tc-tli-native-catalog-digest-ready : (Array bool 512)
+    (make-array bool 512)))
+(cfg
+  embedded-stdlib-tlci
+  (define tc-tli-native-catalog-digest-vals : (Array (Array u8 32) 512)
+    (make-array (Array u8 32) 512)))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (tc-tli-native-catalog-digest [generation : i64]) : (Array u8 32)
+    (let
+      [frame : i64
+        (embedded_tlci.compiler-embedded-stdlib-tlci-session-index generation)]
+      (if (and
+        (>= frame 0)
+        (< frame 512)
+        (array-ref tc-tli-native-catalog-digest-ready frame))
+        (array-ref tc-tli-native-catalog-digest-vals frame)
+        (let
+          [digest : (Array u8 32)
+            (with-arena
+              digest-scratch
+              (let
+                [bytes : (__tl_dyn-array u8)
+                  (unsafe
+                    (embedded_tlci.compiler-embedded-stdlib-tlci-decode-frame
+                      frame
+                      true))]
+                (if (= (array-length (& bytes)) 0)
+                  (make-array u8 32)
+                  (tli_codec.tli-module-digest
+                    (& bytes)
+                    0
+                    (array-length (& bytes))))))]
+          (when
+            (and (>= frame 0) (< frame 512))
+            (set! (array-ref tc-tli-native-catalog-digest-vals frame) digest)
+            (set! (array-ref tc-tli-native-catalog-digest-ready frame) true))
+          digest)))))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (tc-tli-hydrated-macro-validate
+    [ctx : TcContext]
+    [identity-id : i64]
+    [actual-entry : i64]
+    [generation : i64]) : bool
+    (let
+      [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+      (if (= facts-ptr 0)
+        false
+        (unsafe
+          (let
+            [facts : tli_hydrate.TliHydratedFacts
+              (ptr-read
+                (int->ptr
+                  (cast facts-ptr : u64)
+                  : (Ptr tli_hydrate.TliHydratedFacts)))]
+            [slot : i64
+              (tli_hydrate.tli-hydrated-facts-macro-slot (& facts) identity-id)]
+            (if (< slot 0)
+              false
+              (let
+                [digest : (Array u8 32)
+                  (tc-tli-native-catalog-digest generation)]
+                (match (tli_hydrate.tli-hydrated-macro-validate
+                  (tli_hydrate.tli-hydrated-facts-macro-at (& facts) slot)
+                  actual-entry
+                  (& digest))
+                  [(Native _ _ _) true]
+                  [(Unavailable) false])))))))))
+
+(cfg
+  embedded-stdlib-tlci
   (define (macro-tlci-catalog-select
     [ctx : TcContext]
     [definition-module : String]
@@ -118808,23 +119267,41 @@
       (macro-dependency-tlci-catalog-slot-for-declaration ctx declaration-id)
       identity)
       [(NoCatalog)
-        (if (and
-          (tc-macro-walk-field
-            (tc-context-macro-state ctx)
-            macro-expand-stdlib-tlci-route-active)
-          (macro-expand-stdlib-tlci-module-id?
-            (tc-context-macro-state ctx)
-            definition-module))
-          (match (cfg
-            compile-profile
-            (macro-expand-stdlib-tlci-catalog-lookup-profiled
-              (tc-context-macro-state ctx)
-              identity)
-            (macro-expand-stdlib-tlci-catalog-lookup-cached identity))
-            [(Resolved resolved) (Resolved (Embedded resolved))]
-            [(Shell resolved) (Shell (Embedded resolved))]
-            [(Missing) Missing]
-            [(Unavailable _) Unavailable])
+        (if (tc-macro-walk-field
+          (tc-context-macro-state ctx)
+          macro-expand-stdlib-tlci-route-active)
+          (let
+            [identity-id : i64 (ci.intern (string.copy (& identity)))]
+            (if (tc-tli-hydrated-macro-present? ctx identity-id)
+              (match (cfg
+                compile-profile
+                (macro-expand-stdlib-tlci-catalog-lookup-profiled
+                  (tc-context-macro-state ctx)
+                  identity)
+                (macro-expand-stdlib-tlci-catalog-lookup-cached identity))
+                [(Resolved resolved)
+                  (if (tc-tli-hydrated-macro-validate
+                    ctx
+                    identity-id
+                    resolved.entry-index
+                    resolved.catalog-generation)
+                    (Resolved (Embedded resolved))
+                    Unavailable)]
+                [_ Unavailable])
+              (if (macro-expand-stdlib-tlci-module-id?
+                (tc-context-macro-state ctx)
+                definition-module)
+                (match (cfg
+                  compile-profile
+                  (macro-expand-stdlib-tlci-catalog-lookup-profiled
+                    (tc-context-macro-state ctx)
+                    identity)
+                  (macro-expand-stdlib-tlci-catalog-lookup-cached identity))
+                  [(Resolved resolved) (Resolved (Embedded resolved))]
+                  [(Shell resolved) (Shell (Embedded resolved))]
+                  [(Missing) Missing]
+                  [(Unavailable _) Unavailable])
+                None)))
           None)]
       [(Resolved capability)
         (tc-dependency-tlci-route-counter-add!
@@ -119871,10 +120348,14 @@
                   (tc-global-shared-view params)
                   (tc-global-shared-view expanded-args)
                   (tc-ctfe-env ctx)
-                  (macro-expand-expr-type-macro?
-                    (tc-context-macro-state ctx)
-                    fallback-module-id
-                    macro-name-id)
+                  (or
+                    (macro-expand-expr-type-macro?
+                      (tc-context-macro-state ctx)
+                      fallback-module-id
+                      macro-name-id)
+                    (tc-tli-hydrated-macro-uses-expr-type?
+                      ctx
+                      (ci.intern (string.copy (& identity)))))
                   (tc-global-shared-view call-expr))]
               (cfg
                 compile-profile
@@ -125968,6 +126449,76 @@
     [(Err _) unit])
   result)
 
+(define (macro-decl-list-has-visible-name-id?
+  [decls : (& ast.AstDeclList)]
+  [name-id : i64]) : bool
+  (let
+    [count : i64 (ast.ast-decl-list-len decls)]
+    (for [index (iterator.range 0 count)]
+      (match (spec.gen-decl-visible-name-id
+        (ast.ast-decl-list-ref-borrowed decls index))
+        [(Some existing-id) (when (= existing-id name-id) (return true))]
+        [(None) unit]))
+    false))
+
+(define (macro-decl-is-import-ref? [decl : (& ast.AstDecl)]) : bool
+  (match decl
+    [(Import _ _) true]
+    [(Unsafe inner-box) (macro-decl-is-import-ref? (& (deref inner-box)))]
+    [_ false]))
+
+(define (macro-module-hydrated-replay-marker-decls
+  [target-module : String]
+  [target-module-id : i64]
+  [owner-module-id : i64]
+  [alias : ast.AstMaybeImportAlias]
+  [span : ast.AstSourceSpan]
+  [generated-body : ast.AstDeclList]
+  [existing-body : (& ast.AstDeclList)]) : ast.AstDeclList
+  (let
+    [marker-decls : ast.AstDeclList
+      (macro-module-import-marker-decls
+        target-module
+        target-module-id
+        alias
+        span)]
+    [missing-imports : ast.AstDeclList (ast.ast-decl-list-new)]
+    [missing-visible : ast.AstDeclList (ast.ast-decl-list-new)]
+    [cursor : ast.AstDeclList generated-body]
+    [done : bool false]
+    (while (not done)
+      (match (ast.ast-decl-list-step cursor)
+        [(Nil) (set! done true)]
+        [(Cons decl rest)
+          (match (spec.gen-decl-visible-name-id (& decl))
+            [(Some name-id)
+              (unless
+                (macro-decl-list-has-visible-name-id? existing-body name-id)
+                (ast.ast-decl-list-push (&mut missing-visible) decl))]
+            [(None)
+              (when
+                (and
+                  (macro-decl-is-import-ref? (& decl))
+                  (not
+                    (macro-decl-list-contains-structural?
+                      existing-body
+                      (& decl))))
+                (ast.ast-decl-list-push (&mut missing-imports) decl))])
+          (set! cursor rest)]))
+    (if (= (ast.ast-decl-list-len (& missing-visible)) 0)
+      marker-decls
+      (let
+        [missing-body : ast.AstDeclList
+          (macro-decl-list-append (& missing-imports) missing-visible)]
+        (macro-decl-list-append
+          (&
+            (ast.ast-decl-list-prepend-builder
+              (ast.ast-decl-module-id target-module-id)
+              missing-body))
+          (ast.ast-decl-list-prepend-builder
+            (ast.ast-decl-module-id owner-module-id)
+            marker-decls))))))
+
 (define (macro-expand-module-materialized
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -126024,53 +126575,46 @@
         orig-decls
         target-module)
         [(Some existing-body)
-          (if (macro-decls-contain-generated-key? existing-body identity)
-            ;: The module for this identity is already materialized and recorded in
-            ;: the content-addressed memo. Compatible repeats are deduped without
-            ;: re-expansion via the memo shortcut (plan P1). A syntax-param macro
-            ;: (an `Expr`/clause parameter) can still reach here having produced a
-            ;: body that differs from the recorded one even though the canonical
-            ;: identity matches -- it switches on the argument's syntactic shape,
-            ;: not its value, so `(gen "i64")` and `(gen (type-key (type i64)))`
-            ;: collide on one identity with different payloads. Detect that
-            ;: same-identity collision instead of silently reusing the recorded
-            ;: body; a compatible re-materialization still binds via the replay
-            ;: marker/alias import.
-            (match (macro-generated-target-replay
-              existing-body
-              (macro-decls-filter-generated-key
-                (tc-global-shared-view generated-body)
-                (tc-global-shared-view identity)))
-              [(ReplayIncompatible)
-                (Err
-                  (box
-                    (macro-module-incompatible-output-diag call-expr identity)))]
-              [_
-                (let
-                  [expanded : ast.AstDeclList
-                    (macro-module-replay-marker-decls
-                      target-module
-                      target-module-id
-                      module-id
-                      alias
-                      span
-                      generated-body
-                      existing-body)]
-                  (Ok
-                    (tc-global-shared-view expanded)
-                    (macro-paths-for-decls
-                      (tc-context-macro-state ctx)
-                      expanded
-                      decl-path)))])
-            (let
-              [generated-key-body : ast.AstDeclList
-                (macro-decls-filter-generated-key
-                  (tc-global-shared-view generated-body)
-                  (tc-global-shared-view identity))]
+          (cond
+            [(tc-tli-hydrated-module? ctx target-module-id)
+              (let
+                [expanded : ast.AstDeclList
+                  (macro-module-hydrated-replay-marker-decls
+                    target-module
+                    target-module-id
+                    module-id
+                    alias
+                    span
+                    generated-body
+                    (& existing-body))]
+                [paths : ast.AstDeclPathList
+                  (macro-paths-for-decls
+                    (tc-context-macro-state ctx)
+                    (& expanded)
+                    decl-path)]
+                (Ok expanded paths))]
+            [(macro-decls-contain-generated-key? existing-body identity)
+              ;: The module for this identity is already materialized and recorded in
+              ;: the content-addressed memo. Compatible repeats are deduped without
+              ;: re-expansion via the memo shortcut (plan P1). A syntax-param macro
+              ;: (an `Expr`/clause parameter) can still reach here having produced a
+              ;: body that differs from the recorded one even though the canonical
+              ;: identity matches -- it switches on the argument's syntactic shape,
+              ;: not its value, so `(gen "i64")` and `(gen (type-key (type i64)))`
+              ;: collide on one identity with different payloads. Detect that
+              ;: same-identity collision instead of silently reusing the recorded
+              ;: body; a compatible re-materialization still binds via the replay
+              ;: marker/alias import.
               (match (macro-generated-target-replay
                 existing-body
-                generated-key-body)
-                [(or (ReplayCompatible) (ReplayAppendMissing))
+                (macro-decls-filter-generated-key
+                  (tc-global-shared-view generated-body)
+                  (tc-global-shared-view identity)))
+                [(ReplayIncompatible)
+                  (Err
+                    (box
+                      (macro-module-incompatible-output-diag call-expr identity)))]
+                [_
                   (let
                     [expanded : ast.AstDeclList
                       (macro-module-replay-marker-decls
@@ -126086,29 +126630,57 @@
                       (macro-paths-for-decls
                         (tc-context-macro-state ctx)
                         expanded
-                        decl-path)))]
-                [(ReplayIncompatible)
-                  (Err
-                    (box
-                      (macro-module-incompatible-output-diag call-expr identity)))]
-                [(NoReplay)
-                  (let
-                    [expanded : ast.AstDeclList
-                      (macro-decl-list-append
-                        materialized
-                        (ast.ast-decl-list-prepend-builder
-                          (ast.ast-decl-module-id module-id)
-                          (macro-module-import-marker-decls
-                            target-module
-                            target-module-id
-                            alias
-                            span)))]
-                    (Ok
-                      (tc-global-shared-view expanded)
-                      (macro-paths-for-decls
-                        (tc-context-macro-state ctx)
-                        expanded
-                        decl-path)))])))]
+                        decl-path)))])]
+            [else
+              (let
+                [generated-key-body : ast.AstDeclList
+                  (macro-decls-filter-generated-key
+                    (tc-global-shared-view generated-body)
+                    (tc-global-shared-view identity))]
+                (match (macro-generated-target-replay
+                  existing-body
+                  generated-key-body)
+                  [(or (ReplayCompatible) (ReplayAppendMissing))
+                    (let
+                      [expanded : ast.AstDeclList
+                        (macro-module-replay-marker-decls
+                          target-module
+                          target-module-id
+                          module-id
+                          alias
+                          span
+                          generated-body
+                          existing-body)]
+                      (Ok
+                        (tc-global-shared-view expanded)
+                        (macro-paths-for-decls
+                          (tc-context-macro-state ctx)
+                          expanded
+                          decl-path)))]
+                  [(ReplayIncompatible)
+                    (Err
+                      (box
+                        (macro-module-incompatible-output-diag
+                          call-expr
+                          identity)))]
+                  [(NoReplay)
+                    (let
+                      [expanded : ast.AstDeclList
+                        (macro-decl-list-append
+                          materialized
+                          (ast.ast-decl-list-prepend-builder
+                            (ast.ast-decl-module-id module-id)
+                            (macro-module-import-marker-decls
+                              target-module
+                              target-module-id
+                              alias
+                              span)))]
+                      (Ok
+                        (tc-global-shared-view expanded)
+                        (macro-paths-for-decls
+                          (tc-context-macro-state ctx)
+                          expanded
+                          decl-path)))]))])]
         [(No)
           (let
             [expanded : ast.AstDeclList
@@ -130385,7 +130957,9 @@
             ;; visited by the combined scan above. Surface-summary macro
             ;; bodies are outside this AST, so conservatively enable the
             ;; compact index only for that imported-summary case.
-            (if has-summary-macro-import
+            (if (or
+              has-summary-macro-import
+              (!= (tc-job-state-tli-facts-ptr job-state) 0))
               (ctfe_support.ctfe-module-value-reflection-enable-for-state!
                 (tc-macro-ctfe-state macro-state)
                 true)
@@ -130903,6 +131477,9 @@
       (tc-macro-state-bind-source-names!
         (tc-job-state-macro-state job-state)
         source-names)
+      (tc-job-state-set-tli-facts-ptr!
+        job-state
+        (cload.compiler-load-session-state-tli-facts-ptr (& load-state)))
       (tc-macro-walk-set!
         (tc-job-state-macro-state job-state)
         macro-dependency-catalog-handle
@@ -130946,7 +131523,8 @@
             (cload.compiler-load-session-state-embedded-stdlib-source-used?
               (& load-state))
             (cload.compiler-load-session-state-embedded-provenance-noted?
-              (& load-state)))
+              (& load-state))
+            (cload.compiler-load-session-state-tli-hydrated-any? (& load-state)))
           false))
       (cfg
         embedded-stdlib-tlci
@@ -136995,9 +137573,11 @@
           signature.ret
           body-box))]
     [(DefMacro decl-meta name params ret body-box)
-      (let
-        [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-        (tc-check-defmacro name ctx top-env params ret body))]
+      (if (tc-tli-hydrated-module? ctx (tc-context-module-id ctx))
+        Ok
+        (let
+          [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
+          (tc-check-defmacro name ctx top-env params ret body)))]
     [(Extern decl-meta _ kind metadata ty)
       (tc-check-extern-decl
         ctx
@@ -138520,6 +139100,10 @@
       (tc-macro-state-bind-source-names!
         (tc-job-state-macro-state job-state)
         source-names)]
+    [_bind-tli-facts : unit
+      (tc-job-state-set-tli-facts-ptr!
+        job-state
+        (cload.compiler-load-session-state-tli-facts-ptr (& load-state)))]
     [job-source-names : ci.InternSourceNameSessionHandle
       (tc-macro-state-source-names (tc-job-state-macro-state job-state))]
     [body-state : TcBodyState

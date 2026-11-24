@@ -1999,6 +1999,7 @@
         (string.eq name "tl_mem_copy_fwd")
         (string.eq name "tl_mem_copy8_fwd")
         (string.eq name "tl_abort_string")
+        (string.eq name "tl_c_fn_null_abort")
         (string.eq name "tl_arena_sanitize_enable")
         (string.eq name "tl_tlci_call_image_entry")
         (string.eq name "tl_tlci_call_macro_entry")))))

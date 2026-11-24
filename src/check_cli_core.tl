@@ -116,27 +116,6 @@
           (&mut sources)
           (cdiag.compiler-diagnostic-list-get diagnostics index))))))
 
-(define (selfhost-check-append-advisories
-  [advisories : (& advisories cdiag.CompilerAdvisoryList)]
-  [err-buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (let
-    [count : i64 (cdiag.compiler-advisory-list-count advisories)]
-    [sources : compiler_driver_core.CompilerDriverDiagnosticSources
-      (compiler_driver_core.compiler-driver-diagnostic-sources-new)]
-    [out : text_buf.TextBuf err-buf]
-    (for [index (iterator.range 0 count)]
-      (let
-        [advisory : cdiag.CompilerAdvisory
-          (cdiag.compiler-advisory-list-get advisories index)]
-        [diagnostic : cdiag.CompilerDiagnostic
-          (cdiag.compiler-advisory-diagnostic (& advisory))]
-        (text_buf.append!
-          out
-          (compiler_driver_core.compiler-driver-render-source-diagnostic-from
-            (&mut sources)
-            diagnostic))))
-    out))
-
 (define (selfhost-check-append-diagnostics
   [diagnostics : cdiag.CompilerDiagnosticList]
   [err-buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -159,6 +138,26 @@
     [(Linux) (Linux)]
     [(Windows) (Windows)]))
 
+(define (selfhost-check-outcome-from-doctest-report
+  [err-buf : text_buf.TextBuf]
+  [report : doc_test.DocTestRunReport]) : SelfhostCheckOutcome
+  (let
+    [advisories : String (doc_test.doc-test-run-report-advisories (& report))]
+    [err-buf : text_buf.TextBuf
+      (if (> (string.string-length (& advisories)) 0)
+        (text_buf.append err-buf advisories)
+        err-buf)]
+    [rendered : String (doc_test.doc-test-run-report-render report)]
+    (if (source_text.starts-with? (& rendered) "doc tests failed:")
+      (SelfhostCheckOutcome
+        1
+        ""
+        (text_buf.render (text_buf.append err-buf rendered)))
+      (SelfhostCheckOutcome
+        0
+        "Type checking passed!\n"
+        (text_buf.render err-buf)))))
+
 (define (selfhost-check-file-outcome
   [input-path : String]
   [options : (& options cli_option.CliCompileOptions)]) : SelfhostCheckOutcome
@@ -176,7 +175,9 @@
       [(Ok _ advisories)
         (let
           [err-buf : text_buf.TextBuf
-            (selfhost-check-append-advisories (& advisories) (text_buf.empty))]
+            (compiler_driver_core.compiler-driver-append-advisories
+              (& advisories)
+              (text_buf.empty))]
           (match (test_cli_core.tltest-inline-typecheck-file-with-cfg-result
             (string.copy (& input-path))
             (svec.clone-vec (& options.stdlib-roots))
@@ -190,30 +191,22 @@
                 ""
                 (text_buf.render (text_buf.append err-buf message)))]
             [(test_cli_core.ResultTlTestInlineCheck.Ok)
-              (let
-                [report : doc_test.DocTestRunReport
-                  (doc_test.doc-test-typecheck-file-with-roots-and-cfg
-                    input-path
-                    (svec.clone-vec (& options.stdlib-roots))
-                    (target_cfg.compiler-target-cfgs-with-names
-                      target
-                      (svec.clone-vec (& options.cfgs))))]
-                [rendered : String (doc_test.doc-test-run-report-render report)]
-                (if (source_text.starts-with? (& rendered) "doc tests failed:")
-                  (SelfhostCheckOutcome
-                    1
-                    ""
-                    (text_buf.render (text_buf.append err-buf rendered)))
-                  (SelfhostCheckOutcome
-                    0
-                    "Type checking passed!\n"
-                    (text_buf.render err-buf))))]))]
+              (selfhost-check-outcome-from-doctest-report
+                err-buf
+                (doc_test.doc-test-typecheck-file-with-roots-and-cfg
+                  input-path
+                  (svec.clone-vec (& options.stdlib-roots))
+                  (target_cfg.compiler-target-cfgs-with-names
+                    target
+                    (svec.clone-vec (& options.cfgs)))))]))]
       [(Err diag advisories)
         (let
           [err-buf : text_buf.TextBuf
             (selfhost-check-append-diagnostics
               (deref diag)
-              (selfhost-check-append-advisories (& advisories) (text_buf.empty)))]
+              (compiler_driver_core.compiler-driver-append-advisories
+                (& advisories)
+                (text_buf.empty)))]
           (SelfhostCheckOutcome 1 "" (text_buf.render err-buf)))])))
 
 (define (selfhost-check-file
@@ -243,38 +236,50 @@
           lines
           (+ lines 1))))))
 
-(define (selfhost-check-batch-emit-stream [text : (& text str)]) : unit
+(define (selfhost-check-batch-append-stream
+  [out : text_buf.TextBuf]
+  [text : (& text str)]) : text_buf.TextBuf
   (let
     [n : i64 (string.string-length text)]
-    (when
-      (> n 0)
-      (io.print-format "{}" (string.copy text))
-      (when
-        (not (= (string.string-ref text (- n 1)) '\n'))
-        (io.print-format "{}" "\n")))))
+    (if (= n 0)
+      out
+      (let
+        [out : text_buf.TextBuf (text_buf.append out (string.copy text))]
+        (if (= (string.string-ref text (- n 1)) '\n')
+          out
+          (text_buf.append out "\n"))))))
+
+(define (selfhost-check-batch-format-entry
+  [index : i64]
+  [input-path : (& input-path str)]
+  [outcome : SelfhostCheckOutcome]) : String
+  (let
+    [out-lines : i64 (selfhost-check-batch-line-count (& outcome.stdout))]
+    [err-lines : i64 (selfhost-check-batch-line-count (& outcome.stderr))]
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    (text_buf.append! buf "CHECK_BATCH_ENTRY|")
+    (text_buf.append-int! buf index)
+    (text_buf.append! buf "|")
+    (text_buf.append-int! buf outcome.status)
+    (text_buf.append! buf "|")
+    (text_buf.append-int! buf out-lines)
+    (text_buf.append! buf "|")
+    (text_buf.append-int! buf err-lines)
+    (text_buf.append! buf "|")
+    (text_buf.append! buf (string.copy input-path))
+    (text_buf.append! buf "\n")
+    (text_buf.render
+      (selfhost-check-batch-append-stream
+        (selfhost-check-batch-append-stream buf (& outcome.stdout))
+        (& outcome.stderr)))))
 
 (define (selfhost-check-batch-emit-entry
   [index : i64]
   [input-path : (& input-path str)]
   [outcome : SelfhostCheckOutcome]) : unit
-  (let
-    [out-lines : i64 (selfhost-check-batch-line-count (& outcome.stdout))]
-    [err-lines : i64 (selfhost-check-batch-line-count (& outcome.stderr))]
-    [header : text_buf.TextBuf (text_buf.empty)]
-    (text_buf.append! header "CHECK_BATCH_ENTRY|")
-    (text_buf.append-int! header index)
-    (text_buf.append! header "|")
-    (text_buf.append-int! header outcome.status)
-    (text_buf.append! header "|")
-    (text_buf.append-int! header out-lines)
-    (text_buf.append! header "|")
-    (text_buf.append-int! header err-lines)
-    (text_buf.append! header "|")
-    (text_buf.append! header (string.copy input-path))
-    (text_buf.append! header "\n")
-    (io.print-format "{}" (text_buf.render header))
-    (selfhost-check-batch-emit-stream (& outcome.stdout))
-    (selfhost-check-batch-emit-stream (& outcome.stderr))))
+  (io.print-format
+    "{}"
+    (selfhost-check-batch-format-entry index input-path outcome)))
 
 (define (selfhost-check-batch-paths-from-text [text : (& text str)]) : svec.Vec
   (let
@@ -304,8 +309,7 @@
       (let
         [outcome : SelfhostCheckOutcome
           (selfhost-check-file-outcome (string.copy input-path) options)]
-        (selfhost-check-batch-emit-entry index input-path outcome)
-        (tc.tc-entry-hidden-names-release!)))
+        (selfhost-check-batch-emit-entry index input-path outcome)))
     (test_cli_core.tltest-entry-finish entry 0)
     unit))
 

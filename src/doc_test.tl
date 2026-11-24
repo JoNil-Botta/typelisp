@@ -32,6 +32,7 @@
 (import compiler_load)
 (import build_run_core)
 (import stdlib.string)
+(import stdlib.text_buf)
 (import source_text_core as source_text)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.option)
@@ -941,9 +942,10 @@
 
 (import (vector.vector DocTestRunFailure core) as doc_run_failure_vec)
 
-;; Outcome of running a source: how many examples were checked and which failed.
+;; Outcome of running a source: how many examples were checked, which failed,
+;; and any rendered compiler advisories captured during checking/compilation.
 (defenum DocTestRunReport
-  (Report i64 doc_run_failure_vec.Vec))
+  (Report i64 doc_run_failure_vec.Vec String))
 
 (defenum DocTestMaybeFailure
   (No)
@@ -951,11 +953,41 @@
 
 (define (doc-test-run-report-count [report : DocTestRunReport]) : i64
   (match report
-    [(Report count _) count]))
+    [(Report count _ _) count]))
 
 (define (doc-test-run-report-failures [report : DocTestRunReport]) : doc_run_failure_vec.Vec
   (match report
-    [(Report _ failures) failures]))
+    [(Report _ failures _) failures]))
+
+(define (doc-test-run-report-advisories [report : (& report DocTestRunReport)]) : String
+  (match report
+    [(Report _ _ advisories) (string.copy advisories)]))
+
+(define (doc-test-run-report-with-advisories
+  [report : DocTestRunReport]
+  [advisories : String]) : DocTestRunReport
+  (match report
+    [(Report count failures _) (Report count failures advisories)]))
+
+(define (doc-test-append-advisories!
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]
+  [advisories : (& advisories cdiag.CompilerAdvisoryList)]) : unit
+  (let
+    [rendered : String (driver.compiler-driver-render-advisories advisories)]
+    (when
+      (> (string.string-length (& rendered)) 0)
+      (doc_svec.push-ref! advisories-out rendered))))
+
+(define (doc-test-join-advisories [chunks : (& chunks doc_svec.Vec)]) : String
+  (let
+    [count : i64 (doc_svec.len chunks)]
+    (if (= count 0)
+      ""
+      (let
+        [buf : text_buf.TextBuf (text_buf.empty)]
+        (for [index (iterator.range 0 count)]
+          (text_buf.append! buf (doc_svec.get chunks index "")))
+        (text_buf.render buf)))))
 
 (define (doc-test-run-failure-list-empty) : doc_run_failure_vec.Vec
   (doc_run_failure_vec.new))
@@ -979,11 +1011,9 @@
 (define (doc-test-run-report-add-prefix-count
   [prefix-count : i64]
   [report : DocTestRunReport]) : DocTestRunReport
-  (Report
-    (+
-      prefix-count
-      (doc-test-run-report-count (owned_view.compiler-owned-shared-view report)))
-    (doc-test-run-report-failures report)))
+  (match report
+    [(Report count failures advisories)
+      (Report (+ prefix-count count) failures advisories)]))
 
 (define (doc-test-run-failure-list-append
   [failures : doc_run_failure_vec.Vec]
@@ -1173,7 +1203,8 @@
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
-  [target : be_state.CompilerBackendTarget]) : build_run_core.ResultSourceToolString
+  [target : be_state.CompilerBackendTarget]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : build_run_core.ResultSourceToolString
   (driver.compiler-driver-reset-file-state!)
   (driver.compiler-driver-state-clear-pool-backed-caches!)
   (let
@@ -1221,13 +1252,13 @@
                   lower-state)
                 (match emitted
                   [(Ok asm advisories)
-                    (driver.compiler-driver-print-advisories (& advisories))
+                    (doc-test-append-advisories! advisories-out (& advisories))
                     (Ok
                       (build_run_core.source-tool-augment-assembly-for-target
                         asm
                         target))]
                   [(Err diag advisories)
-                    (driver.compiler-driver-print-advisories (& advisories))
+                    (doc-test-append-advisories! advisories-out (& advisories))
                     (Err (cdiag.compiler-diagnostic-render (deref diag)))]))]
             [(Err diag) (Err (cdiag.compiler-diagnostic-render (deref diag)))])]
         [(Err diag) (Err (cdiag.compiler-diagnostic-render (deref diag)))])]
@@ -1247,7 +1278,8 @@
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
   [target : be_state.CompilerBackendTarget]
-  [temp-dir : String]) : DocTestMaybeFailure
+  [temp-dir : String]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
   (let
     [index : i64
       (doc-test-example-index (owned_view.compiler-owned-shared-view example))]
@@ -1268,7 +1300,8 @@
         (owned_view.compiler-owned-shared-view path)
         example
         stdlib-roots
-        target)
+        target
+        advisories-out)
         [(Err message) (Some (doc-test-runnable-compile-message index message))]
         [(Ok asm)
           (match (build_run_core.source-tool-link-and-run
@@ -1311,7 +1344,8 @@
 (define (doc-test-run-runnable-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : doc_svec.Vec]) : DocTestMaybeFailure
+  [stdlib-roots : doc_svec.Vec]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
   (let
     [index : i64
       (doc-test-example-index (owned_view.compiler-owned-shared-view example))]
@@ -1328,7 +1362,8 @@
             example
             stdlib-roots
             target
-            temp-dir)]
+            temp-dir
+            advisories-out)]
         [(Err message)
           (Some
             (Failure
@@ -1352,11 +1387,43 @@
 (define (doc-test-example-virtual-path [path : String] [index : i64]) : String
   (str_cat.str-cat path ".doctest." (string.int->string index)))
 
+(define (doc-test-handle-check-result!
+  [path : String]
+  [source-line : i64]
+  [index : i64]
+  [expect-error : bool]
+  [checked : compiler_check_core.ResultCompilerCheck]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
+  (match checked
+    [(Ok _ advisories)
+      (doc-test-append-advisories! advisories-out (& advisories))
+      (if expect-error
+        (Some
+          (Failure
+            path
+            source-line
+            index
+            (doc-test-unexpected-pass-message index)))
+        (No))]
+    [(Err diag advisories)
+      (doc-test-append-advisories! advisories-out (& advisories))
+      (if expect-error
+        (No)
+        (Some
+          (Failure
+            path
+            source-line
+            index
+            (doc-test-unexpected-error-message
+              index
+              (cdiag.compiler-diagnostic-list-first (deref diag))))))]))
+
 (define (doc-test-typecheck-example-with-roots-and-cfg
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
-  [cfg-snapshot : cfg_core.CompilerCfgSnapshot]) : DocTestMaybeFailure
+  [cfg-snapshot : cfg_core.CompilerCfgSnapshot]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
   (let
     ;; Each check-only example is its own program. The check resets its pools
     ;; but not the interner, so reset that to the session floor first, as lint
@@ -1381,46 +1448,32 @@
         (owned_view.compiler-owned-shared-view example))]
     [expect-error : bool (doc-test-expectation-error? expectation)]
     [code : String (doc-test-example-code example)]
-    (match (compiler_check_core.compiler-check-source-with-roots-and-cfg
-      (doc-test-example-virtual-path
-        (owned_view.compiler-owned-shared-view path)
-        index)
-      code
-      stdlib-roots
-      cfgs)
-      [(Ok _ advisories)
-        (driver.compiler-driver-print-advisories (& advisories))
-        (if expect-error
-          (Some
-            (Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-pass-message index)))
-          (No))]
-      [(Err diag advisories)
-        (driver.compiler-driver-print-advisories (& advisories))
-        (if expect-error
-          (No)
-          (Some
-            (Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-error-message
-                index
-                (cdiag.compiler-diagnostic-list-first (deref diag))))))])))
+    (doc-test-handle-check-result!
+      path
+      source-line
+      index
+      expect-error
+      (compiler_check_core.compiler-check-source-with-roots-and-cfg
+        (doc-test-example-virtual-path
+          (owned_view.compiler-owned-shared-view path)
+          index)
+        code
+        stdlib-roots
+        cfgs)
+      advisories-out)))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : doc_svec.Vec]) : DocTestMaybeFailure
+  [stdlib-roots : doc_svec.Vec]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
   (doc-test-typecheck-example-with-roots-and-cfg
     path
     example
     stdlib-roots
     (cfg_core.compiler-cfg-snapshot-from-env
-      (compiler_check_core.compiler-check-language-cfgs))))
+      (compiler_check_core.compiler-check-language-cfgs))
+    advisories-out))
 
 (define (doc-test-typecheck-package-example-with-roots-and-cfg
   [path : String]
@@ -1428,7 +1481,8 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : DocTestMaybeFailure
+  [cfgs : sym_i64_env.SymI64Env]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
   (let
     [index : i64
       (doc-test-example-index (owned_view.compiler-owned-shared-view example))]
@@ -1440,173 +1494,90 @@
         (owned_view.compiler-owned-shared-view example))]
     [expect-error : bool (doc-test-expectation-error? expectation)]
     [code : String (doc-test-example-code example)]
-    (match (compiler_check_core.compiler-check-package-source-with-roots-and-cfg
-      (doc-test-example-virtual-path
-        (owned_view.compiler-owned-shared-view path)
-        index)
-      code
-      stdlib-roots
-      manifest-dir
-      deps
-      cfgs)
-      [(Ok _ advisories)
-        (driver.compiler-driver-print-advisories (& advisories))
-        (if expect-error
-          (Some
-            (Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-pass-message index)))
-          (No))]
-      [(Err diag advisories)
-        (driver.compiler-driver-print-advisories (& advisories))
-        (if expect-error
-          (No)
-          (Some
-            (Failure
-              path
-              source-line
-              index
-              (doc-test-unexpected-error-message
-                index
-                (cdiag.compiler-diagnostic-list-first (deref diag))))))])))
+    (doc-test-handle-check-result!
+      path
+      source-line
+      index
+      expect-error
+      (compiler_check_core.compiler-check-package-source-with-roots-and-cfg
+        (doc-test-example-virtual-path
+          (owned_view.compiler-owned-shared-view path)
+          index)
+        code
+        stdlib-roots
+        manifest-dir
+        deps
+        cfgs)
+      advisories-out)))
 
 (define (doc-test-check-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : doc_svec.Vec]) : DocTestMaybeFailure
+  [stdlib-roots : doc_svec.Vec]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestMaybeFailure
   (if (doc-test-expectation-run?
     (doc-test-example-expectation
       (owned_view.compiler-owned-shared-view example)))
-    (doc-test-run-runnable-example-with-roots path example stdlib-roots)
-    (doc-test-typecheck-example-with-roots path example stdlib-roots)))
-
-(define (doc-test-run-examples-with-roots-from
-  [path : String]
-  [examples : (& examples doc_example_vec.Vec)]
-  [index : i64]
-  [failures : doc_run_failure_vec.Vec]
-  [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
-  (if (>= index (doc-test-example-list-count examples))
-    failures
-    (let
-      [example : DocTestExample (doc-test-example-list-ref examples index)]
-      (match (doc-test-check-example-with-roots
-        (owned_view.compiler-owned-shared-view path)
-        example
-        (owned_view.compiler-owned-shared-view stdlib-roots))
-        [(No)
-          (doc-test-run-examples-with-roots-from
-            path
-            examples
-            (+ index 1)
-            failures
-            stdlib-roots)]
-        [(Some failure)
-          (doc-test-run-examples-with-roots-from
-            path
-            examples
-            (+ index 1)
-            (doc-test-run-failure-list-append failures failure)
-            stdlib-roots)]))))
+    (doc-test-run-runnable-example-with-roots
+      path
+      example
+      stdlib-roots
+      advisories-out)
+    (doc-test-typecheck-example-with-roots
+      path
+      example
+      stdlib-roots
+      advisories-out)))
 
 (define (doc-test-run-examples-with-roots
   [path : String]
   [examples : doc_example_vec.Vec]
   [failures : doc_run_failure_vec.Vec]
-  [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
-  (doc-test-run-examples-with-roots-from path examples 0 failures stdlib-roots))
-
-(define (doc-test-typecheck-examples-with-roots-from
-  [path : String]
-  [examples : (& examples doc_example_vec.Vec)]
-  [index : i64]
-  [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
-  [cfg-snapshot : cfg_core.CompilerCfgSnapshot]) : doc_run_failure_vec.Vec
-  (if (>= index (doc-test-example-list-count examples))
-    failures
-    (let
-      [example : DocTestExample (doc-test-example-list-ref examples index)]
-      (match (doc-test-typecheck-example-with-roots-and-cfg
-        (owned_view.compiler-owned-shared-view path)
-        example
-        (owned_view.compiler-owned-shared-view stdlib-roots)
-        (owned_view.compiler-owned-shared-view cfg-snapshot))
-        [(No)
-          (doc-test-typecheck-examples-with-roots-from
-            path
-            examples
-            (+ index 1)
-            failures
-            stdlib-roots
-            cfg-snapshot)]
-        [(Some failure)
-          (doc-test-typecheck-examples-with-roots-from
-            path
-            examples
-            (+ index 1)
-            (doc-test-run-failure-list-append failures failure)
-            stdlib-roots
-            cfg-snapshot)]))))
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : doc_run_failure_vec.Vec
+  (let
+    [count : i64 (doc-test-example-list-count (& examples))]
+    [out : doc_run_failure_vec.Vec failures]
+    (for [index (iterator.range 0 count)]
+      (let
+        [example : DocTestExample
+          (doc-test-example-list-ref (& examples) index)]
+        (match (doc-test-check-example-with-roots
+          (owned_view.compiler-owned-shared-view path)
+          example
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          advisories-out)
+          [(No) unit]
+          [(Some failure) (doc_run_failure_vec.push-ref! (&mut out) failure)])))
+    out))
 
 (define (doc-test-typecheck-examples-with-roots-and-cfg
   [path : String]
   [examples : doc_example_vec.Vec]
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
-  (doc-test-typecheck-examples-with-roots-from
-    path
-    examples
-    0
-    failures
-    stdlib-roots
+  [cfgs : sym_i64_env.SymI64Env]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : doc_run_failure_vec.Vec
+  (let
     ;; Taken before the first example's interner reset; see
     ;; doc-test-typecheck-example-with-roots-and-cfg.
-    (cfg_core.compiler-cfg-snapshot-from-env cfgs)))
-
-(define (doc-test-typecheck-package-examples-with-roots-from
-  [path : String]
-  [examples : (& examples doc_example_vec.Vec)]
-  [index : i64]
-  [failures : doc_run_failure_vec.Vec]
-  [stdlib-roots : doc_svec.Vec]
-  [manifest-dir : String]
-  [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
-  (if (>= index (doc-test-example-list-count examples))
-    failures
-    (let
-      [example : DocTestExample (doc-test-example-list-ref examples index)]
-      (match (doc-test-typecheck-package-example-with-roots-and-cfg
-        (owned_view.compiler-owned-shared-view path)
-        example
-        (owned_view.compiler-owned-shared-view stdlib-roots)
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view deps)
-        cfgs)
-        [(No)
-          (doc-test-typecheck-package-examples-with-roots-from
-            path
-            examples
-            (+ index 1)
-            failures
-            stdlib-roots
-            manifest-dir
-            deps
-            cfgs)]
-        [(Some failure)
-          (doc-test-typecheck-package-examples-with-roots-from
-            path
-            examples
-            (+ index 1)
-            (doc-test-run-failure-list-append failures failure)
-            stdlib-roots
-            manifest-dir
-            deps
-            cfgs)]))))
+    [cfg-snapshot : cfg_core.CompilerCfgSnapshot
+      (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
+    [count : i64 (doc-test-example-list-count (& examples))]
+    [out : doc_run_failure_vec.Vec failures]
+    (for [index (iterator.range 0 count)]
+      (let
+        [example : DocTestExample
+          (doc-test-example-list-ref (& examples) index)]
+        (match (doc-test-typecheck-example-with-roots-and-cfg
+          (owned_view.compiler-owned-shared-view path)
+          example
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view cfg-snapshot)
+          advisories-out)
+          [(No) unit]
+          [(Some failure) (doc_run_failure_vec.push-ref! (&mut out) failure)])))
+    out))
 
 (define (doc-test-typecheck-package-examples-with-roots-and-cfg
   [path : String]
@@ -1615,16 +1586,26 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
-  (doc-test-typecheck-package-examples-with-roots-from
-    path
-    examples
-    0
-    failures
-    stdlib-roots
-    manifest-dir
-    deps
-    cfgs))
+  [cfgs : sym_i64_env.SymI64Env]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : doc_run_failure_vec.Vec
+  (let
+    [count : i64 (doc-test-example-list-count (& examples))]
+    [out : doc_run_failure_vec.Vec failures]
+    (for [index (iterator.range 0 count)]
+      (let
+        [example : DocTestExample
+          (doc-test-example-list-ref (& examples) index)]
+        (match (doc-test-typecheck-package-example-with-roots-and-cfg
+          (owned_view.compiler-owned-shared-view path)
+          example
+          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view deps)
+          cfgs
+          advisories-out)
+          [(No) unit]
+          [(Some failure) (doc_run_failure_vec.push-ref! (&mut out) failure)])))
+    out))
 
 ;; A malformed/empty/unterminated fence is a runner failure too; it has no
 ;; example index, so it is recorded with index `-1`.
@@ -1661,16 +1642,20 @@
   [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(Extraction examples errors)
-      (Report
-        (doc-test-example-list-count examples)
-        (doc-test-run-examples-with-roots
-          (owned_view.compiler-owned-shared-view path)
-          examples
-          (doc-test-errors-to-failures
-            path
-            errors
-            (doc-test-run-failure-list-empty))
-          stdlib-roots))]))
+      (let
+        [count : i64 (doc-test-example-list-count (& examples))]
+        [advisories-out : doc_svec.Vec (doc_svec.new)]
+        [failures : doc_run_failure_vec.Vec
+          (doc-test-run-examples-with-roots
+            (owned_view.compiler-owned-shared-view path)
+            examples
+            (doc-test-errors-to-failures
+              path
+              errors
+              (doc-test-run-failure-list-empty))
+            stdlib-roots
+            (&mut advisories-out))]
+        (Report count failures (doc-test-join-advisories (& advisories-out))))]))
 
 (define (doc-test-run-file-with-roots
   [path : String]
@@ -1697,17 +1682,21 @@
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(Extraction examples errors)
-      (Report
-        (doc-test-example-list-count examples)
-        (doc-test-typecheck-examples-with-roots-and-cfg
-          (owned_view.compiler-owned-shared-view path)
-          examples
-          (doc-test-errors-to-failures
-            path
-            errors
-            (doc-test-run-failure-list-empty))
-          stdlib-roots
-          cfgs))]))
+      (let
+        [count : i64 (doc-test-example-list-count (& examples))]
+        [advisories-out : doc_svec.Vec (doc_svec.new)]
+        [failures : doc_run_failure_vec.Vec
+          (doc-test-typecheck-examples-with-roots-and-cfg
+            (owned_view.compiler-owned-shared-view path)
+            examples
+            (doc-test-errors-to-failures
+              path
+              errors
+              (doc-test-run-failure-list-empty))
+            stdlib-roots
+            cfgs
+            (&mut advisories-out))]
+        (Report count failures (doc-test-join-advisories (& advisories-out))))]))
 
 (define (doc-test-typecheck-package-extraction-with-roots-and-cfg
   [path : String]
@@ -1715,22 +1704,27 @@
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
+  [cfgs : sym_i64_env.SymI64Env]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
   (match extraction
     [(Extraction examples errors)
-      (Report
-        (doc-test-example-list-count examples)
-        (doc-test-typecheck-package-examples-with-roots-and-cfg
-          (owned_view.compiler-owned-shared-view path)
-          examples
-          (doc-test-errors-to-failures
-            path
-            errors
-            (doc-test-run-failure-list-empty))
-          stdlib-roots
-          manifest-dir
-          deps
-          cfgs))]))
+      (let
+        [count : i64 (doc-test-example-list-count (& examples))]
+        (Report
+          count
+          (doc-test-typecheck-package-examples-with-roots-and-cfg
+            (owned_view.compiler-owned-shared-view path)
+            examples
+            (doc-test-errors-to-failures
+              path
+              errors
+              (doc-test-run-failure-list-empty))
+            stdlib-roots
+            manifest-dir
+            deps
+            cfgs
+            advisories-out)
+          ""))]))
 
 (define (doc-test-typecheck-file-with-roots-and-cfg
   [path : String]
@@ -1738,7 +1732,7 @@
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
   ;; Preflight leaves unreadable-file diagnostics to the owning command.
   (match (io.try-read-file (& path))
-    [(ErrIoBytes _) (Report 0 (doc-test-run-failure-list-empty))]
+    [(ErrIoBytes _) (Report 0 (doc-test-run-failure-list-empty) "")]
     [(OkIoBytes contents)
       (doc-test-typecheck-source-with-roots-and-cfg
         path
@@ -1790,9 +1784,10 @@
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]
   [last-path : String]
-  [count : i64]) : DocTestRunReport
+  [count : i64]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
   (match (ast.ast-decl-path-list-step paths)
-    [(Nil) (Report count (doc-test-run-failure-list-empty))]
+    [(Nil) (Report count (doc-test-run-failure-list-empty) "")]
     [(Cons path rest)
       (let
         [rest : ast.AstDeclPathList rest]
@@ -1845,7 +1840,8 @@
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (owned_view.compiler-owned-shared-view deps)
-                cfgs)]
+                cfgs
+                advisories-out)]
             (if (doc-test-run-report-ok?
               (owned_view.compiler-owned-shared-view report))
               (doc-test-typecheck-package-path-list-with-roots-from
@@ -1855,7 +1851,8 @@
                 deps
                 cfgs
                 rooted
-                (+ count (doc-test-run-report-count report)))
+                (+ count (doc-test-run-report-count report))
+                advisories-out)
               (doc-test-run-report-add-prefix-count count report)))
           (doc-test-typecheck-package-path-list-with-roots-from
             rest
@@ -1864,21 +1861,24 @@
             deps
             cfgs
             last-path
-            count)))]))
+            count
+            advisories-out)))]))
 
 (define (doc-test-typecheck-package-file-text-with-roots
   [path : String]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
+  [cfgs : sym_i64_env.SymI64Env]
+  [advisories-out : (&mut advisories-out doc_svec.Vec)]) : DocTestRunReport
   (doc-test-typecheck-package-extraction-with-roots-and-cfg
     (owned_view.compiler-owned-shared-view path)
     (doc-test-extract-package-file-text path)
     stdlib-roots
     manifest-dir
     deps
-    cfgs))
+    cfgs
+    advisories-out))
 
 (define (doc-test-typecheck-package-paths-with-roots
   [paths : ast.AstDeclPathList]
@@ -1898,25 +1898,38 @@
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
-  (doc-test-typecheck-package-path-list-with-roots-from
-    paths
-    stdlib-roots
-    manifest-dir
-    deps
-    cfgs
-    ""
-    0))
+  (let
+    [advisories-out : doc_svec.Vec (doc_svec.new)]
+    [report : DocTestRunReport
+      (doc-test-typecheck-package-path-list-with-roots-from
+        paths
+        stdlib-roots
+        manifest-dir
+        deps
+        cfgs
+        ""
+        0
+        (&mut advisories-out))]
+    (doc-test-run-report-with-advisories
+      report
+      (doc-test-join-advisories (& advisories-out)))))
 
 ;; Exit status for a report: 0 when every example passed (or there were none),
 ;; 1 otherwise. Callers turn this directly into a process exit code.
 ;; The exit status of a doctest run that another command (check, compile, build,
-;; run) performs on its inputs: a failing report is printed to stderr.
+;; run) performs on its inputs: captured advisories and a failing report are
+;; printed to stderr.
 (define (doc-test-report-status [report : DocTestRunReport]) : i64
-  (if (doc-test-run-report-ok? (owned_view.compiler-owned-shared-view report))
-    0
-    (begin
-      (io.print-error (doc-test-run-report-render report))
-      1)))
+  (let
+    [advisories : String (doc-test-run-report-advisories (& report))]
+    (when
+      (> (string.string-length (& advisories)) 0)
+      (io.print-error advisories))
+    (if (doc-test-run-report-ok? (owned_view.compiler-owned-shared-view report))
+      0
+      (begin
+        (io.print-error (doc-test-run-report-render report))
+        1))))
 
 ;; Typecheck the doctests of the source file at `path` for another command; an
 ;; unreadable file has none (the command reports it).
@@ -1955,7 +1968,7 @@
 ;; rendered failure.
 (define (doc-test-run-report-render [report : DocTestRunReport]) : String
   (match report
-    [(Report count failures)
+    [(Report count failures _)
       (if (= (doc-test-run-failure-list-count failures) 0)
         (str_cat.str-cat
           "Doc tests passed: "

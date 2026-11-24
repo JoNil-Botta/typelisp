@@ -3247,6 +3247,9 @@
       ;; Reset walkers can inspect entry-owned values. Their replacement
       ;; empty carriers also belong here; no selector retains them below.
       (driver.compiler-driver-reset-file-state!)
+      ;; `compiler-driver-reset-file-state!` recreates `tc-entry-hidden-arena`;
+      ;; release it immediately so isolated batch entries retain no hidden arena.
+      (tc_core.tc-entry-hidden-names-release!)
       (compiler_load.compiler-load-session-state-dotted-path-cache-reset!
         (compiler_load.compiler-load-serial-test-session-state))
       (compiler_load.compiler-load-session-fresh-reset!)

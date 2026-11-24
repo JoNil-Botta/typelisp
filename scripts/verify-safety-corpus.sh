@@ -94,18 +94,6 @@ host_path() {
     fi
 }
 
-# A failing check must report a specific diagnostic code and a decoded message.
-assert_check_failure_decoded() {
-    _decoded_case=$1
-    _decoded_err=$2
-    if grep -Fq 'error[E0200]' "$_decoded_err"; then
-        fail "$_decoded_case regressed to generic E0200; assign a specific code or update the taxonomy"
-    fi
-    if grep -Fq '__tl_tc_' "$_decoded_err"; then
-        fail "$_decoded_case rendered an internal typecheck error transport instead of decoding it"
-    fi
-}
-
 assert_contains() {
     file=$1
     needle=$2
@@ -129,8 +117,6 @@ assert_empty() {
 # An expected rejection is a normal checker exit with a structured diagnostic
 # for the intended operation. In particular, a diagnostic followed by a signal
 # is a compiler failure, not evidence that the checker rejected safely.
-# The fourth manifest field may pin another source, or source:line:column;
-# '-' requires a primary location in the fixture itself.
 classify_check_status() {
     case "$1" in
         0|1) echo normal ;;
@@ -142,91 +128,6 @@ classify_check_status() {
                 echo infrastructure-resource-failure
             fi ;;
     esac
-}
-
-classify_check_rejection() {
-    rejection_code=$1
-    rejection_out=$2
-    rejection_err=$3
-    rejection_source=$4
-    rejection_needle=$5
-    rejection_status=$(classify_check_status "$rejection_code")
-    if [ "$rejection_status" != normal ]; then
-        echo "$rejection_status"
-        return
-    fi
-    if [ "$rejection_code" -eq 0 ]; then
-        echo accepted-invalid
-        return
-    fi
-    if [ -s "$rejection_out" ]; then
-        echo malformed-output
-        return
-    fi
-    # Match messages and diagnostic metadata, never the echoed source snippet.
-    # Keep the location and message in the same diagnostic, and require its
-    # primary span: a related label in the desired file is insufficient.
-    SAFETY_DIAGNOSTIC_SOURCE=$rejection_source SAFETY_DIAGNOSTIC_NEEDLE=$rejection_needle \
-    awk '
-        function finish() {
-            if (is_error && !primary) malformed = 1
-            if (is_error && intended && located) matched = 1
-        }
-        function same_path(actual, expected) {
-            return actual == expected ||
-                (length(actual) > length(expected) &&
-                 substr(actual, length(actual) - length(expected)) == "/" expected)
-        }
-        BEGIN {
-            source = ENVIRON["SAFETY_DIAGNOSTIC_SOURCE"]
-            needle = ENVIRON["SAFETY_DIAGNOSTIC_NEEDLE"]
-            gsub(/\\/, "/", source)
-        }
-        { sub(/\r$/, ""); if (/__tl_tc_/) wrong = 1 }
-        /^(error|warning|note)(\[[A-Z][0-9]+\])?: / {
-            finish()
-            header = 1
-            is_error = /^error(\[E[0-9][0-9][0-9][0-9]\])?: /
-            if (/^error/ && !is_error) malformed = 1
-            primary = located = 0
-            intended = index($0, needle) > 0
-            if (/^error\[E0200\]: /) wrong = 1
-            next
-        }
-        /^  --> / {
-            if (!header) malformed = 1
-            location = substr($0, 7)
-            gsub(/\\/, "/", location)
-            if (location !~ /:[1-9][0-9]*:[1-9][0-9]*$/) malformed = 1
-            # A needle that is a whole path:line:column may name a RELATED
-            # span of this diagnostic, such as a declared-here label; it
-            # never matches the primary span, which must still be located.
-            if (primary && needle ~ /:[1-9][0-9]*:[1-9][0-9]*$/ && same_path(location, needle))
-                intended = 1
-            if (!primary) {
-                primary = 1
-                path = location
-                if (source !~ /:[1-9][0-9]*:[1-9][0-9]*$/)
-                    sub(/:[0-9]+:[0-9]+$/, "", path)
-                located = same_path(path, source)
-            }
-            next
-        }
-        /^   = (help|note|label): / {
-            if (!header) malformed = 1
-            if (index($0, needle)) intended = 1
-            next
-        }
-        /^ *([0-9]+ )?\|/ { if (!header) malformed = 1; next }
-        /^$/ { next }
-        { malformed = 1 }
-        END {
-            finish()
-            if (malformed) print "malformed-output"
-            else if (wrong || !matched) print "wrong-diagnostic"
-            else print "rejected-invalid"
-        }
-    ' "$rejection_err"
 }
 
 # Single-pass CRLF-safe classifier for one `typelisp check --batch` stream.
@@ -268,6 +169,7 @@ classify_check_batch_stream() {
         -v rej_file="$_ccb_rej" \
         -v label="$_ccb_label" '
         function fail_entry(msg, out_n, err_n,    k) {
+            if (rej_file != "") close(rej_file)
             if (out_n > 0) {
                 print "stdout:" > "/dev/stderr"
                 for (k = 1; k <= out_n; k++) print "  " out_buf[k] > "/dev/stderr"
@@ -472,9 +374,7 @@ classify_check_batch_stream() {
 run_case() {
     out=$1
     err=$2
-    expected_terminal_code=$3
-    shift 3
-    : "$expected_terminal_code"   # accepted for call-site compatibility; unused
+    shift 2
     # Run the case once. A crash is a real bug, not a flake — do not retry it.
     set +e
     "$@" < /dev/null > "$out" 2> "$err"
@@ -505,20 +405,6 @@ assemble_link_windows() {
     fi
 }
 
-safe_name() {
-    safe_name_rest=$1
-    case_name=
-    while :; do
-        case "$safe_name_rest" in
-            *[/\\:]*)
-                case_name=$case_name${safe_name_rest%%[/\\:]*}_
-                safe_name_rest=${safe_name_rest#*[/\\:]}
-                ;;
-            *) case_name=$case_name$safe_name_rest; break ;;
-        esac
-    done
-}
-
 show_stream_if_nonempty() {
     label=$1
     file=$2
@@ -528,58 +414,57 @@ show_stream_if_nonempty() {
     fi
 }
 
-# Invoke the callback in this shell so its counters/state remain visible, but
-# replace stdin for the whole callback. This protects the manifest reader from
-# every compiler, build tool, and generated program launched by a case, even if
-# a future call site forgets the explicit run_case redirection.
-for_each_manifest_case() {
-    manifest=$1
-    callback=$2
-    while IFS='|' read -r field1 field2 field3 field4 field5 || [ -n "$field1" ]; do
-        "$callback" "$field1" "$field2" "$field3" "$field4" "$field5" \
-            < /dev/null
-    done < "$manifest"
-}
-
-# Focused runner regression: the callback deliberately drains stdin. Without
-# the callback redirection, it consumes the second manifest row and count is 1.
-manifest_runner_self_test() {
-    self_test_manifest="$WORKDIR/manifest-stdin-self-test.txt"
-    printf 'first||||\nsecond||||' > "$self_test_manifest"
-    self_test_count=0
-    manifest_runner_stdin_consumer() {
-        cat > /dev/null
-        self_test_count=$((self_test_count + 1))
-    }
-    for_each_manifest_case "$self_test_manifest" manifest_runner_stdin_consumer
-    [ "$self_test_count" -eq 2 ] || \
-        fail "manifest stdin isolation self-test processed $self_test_count of 2 cases"
-
-    # Output basenames preserve every byte except the three path separators.
-    safe_name 'plain-123_Å [*] "quote"'
-    [ "$case_name" = 'plain-123_Å [*] "quote"' ] || fail "ordinary safety case name changed"
-    safe_name '/a\b:c//\:'
-    [ "$case_name" = '_a_b_c____' ] || fail "safety case separators were not translated"
-    safe_name ''
-    [ -z "$case_name" ] || fail "empty safety case name changed"
-}
-
+# Drive every rejection oracle mutation directly through the production
+# `classify_check_batch_stream` classifier using single-entry framed probes.
 rejection_oracle_self_test() {
-    oracle_out="$WORKDIR/oracle.out"
-    oracle_err="$WORKDIR/oracle.err"
+    oracle_dir="$WORKDIR/oracle-self-test"
+    mkdir -p "$oracle_dir"
+    oracle_out="$oracle_dir/oracle.out"
+    oracle_err="$oracle_dir/oracle.err"
+    oracle_meta="$oracle_dir/oracle.meta"
+    oracle_stream="$oracle_dir/oracle.stream"
+    oracle_batch_err="$oracle_dir/oracle.batch.err"
+    oracle_rej="$oracle_dir/oracle.rej"
     : > "$oracle_out"
+    : > "$oracle_batch_err"
     oracle_count=0
-    oracle_expect() {
-        oracle_actual=$(classify_check_rejection "$2" "$oracle_out" "$oracle_err" \
-            "${4:-fixture.tl}" 'intended move')
-        [ "$oracle_actual" = "$3" ] || fail "oracle $1: expected $3, got $oracle_actual"
+    oracle_probe() {
+        _op_name=$1
+        _op_code=$2
+        _op_want=$3
+        _op_source=$4
+        _op_needle=$5
+        _op_out_n=$(wc -l < "$oracle_out" | tr -d ' ')
+        _op_err_n=$(wc -l < "$oracle_err" | tr -d ' ')
+        printf '1|%s|check-fail|fixture.tl|%s|%s\n' \
+            "$_op_name" "$_op_source" "$_op_needle" > "$oracle_meta"
+        {
+            printf 'CHECK_BATCH_ENTRY|0|%s|%s|%s|fixture.tl\n' \
+                "$_op_code" "$_op_out_n" "$_op_err_n"
+            cat "$oracle_out"
+            cat "$oracle_err"
+            printf 'CHECK_BATCH_END|1\n'
+        } > "$oracle_stream"
+        set +e
+        classify_check_batch_stream \
+            "$oracle_meta" "$oracle_stream" "$oracle_batch_err" 0 host \
+            "$oracle_rej" "oracle-$_op_name" 2>/dev/null
+        _op_rc=$?
+        set -e
+        _op_actual=$(awk -F '\t' 'NR == 1 { print $4 }' "$oracle_rej")
+        [ "$_op_actual" = "$_op_want" ] || fail "oracle $_op_name: expected $_op_want, got $_op_actual"
+        if [ "$_op_want" = rejected-invalid ]; then
+            [ "$_op_rc" -eq 0 ] || fail "oracle $_op_name: production batch classifier rejected valid probe (exit $_op_rc)"
+        else
+            [ "$_op_rc" -ne 0 ] || fail "oracle $_op_name: production batch classifier accepted $_op_want probe"
+        fi
         oracle_count=$((oracle_count + 1))
+    }
+    oracle_expect() {
+        oracle_probe "$1" "$2" "$3" "${4:-fixture.tl}" 'intended move'
     }
     oracle_expect_needle() {
-        oracle_actual=$(classify_check_rejection "$2" "$oracle_out" "$oracle_err" \
-            fixture.tl "$4")
-        [ "$oracle_actual" = "$3" ] || fail "oracle $1: expected $3, got $oracle_actual"
-        oracle_count=$((oracle_count + 1))
+        oracle_probe "$1" "$2" "$3" fixture.tl "$4"
     }
     oracle_diagnostic() {
         printf 'error[E0214]: intended move\n  --> %s\n   |\n 3 | (consume value)\n   | ^\n' "$1" > "$oracle_err"
@@ -637,7 +522,7 @@ rejection_oracle_self_test() {
     oracle_expect windows-path 1 rejected-invalid
     # Exercise the actual subprocess status/stream capture as well as planted
     # observations. Disable core dumps for the deliberately aborted child.
-    run_case "$oracle_out" "$oracle_err" - sh -c '
+    run_case "$oracle_out" "$oracle_err" sh -c '
         ulimit -c 0
         printf "error[E0214]: intended move\n  --> fixture.tl:3:1\n" >&2
         kill -ABRT $$
@@ -659,11 +544,9 @@ rejection_oracle_self_test() {
                 wrong-column) anchor_actual=$anchor_path:$anchor_line:$((anchor_column + 1)) ;;
             esac
             printf 'error[E0206]: %s\n  --> %s\n' "$anchor_needle" "$anchor_actual" > "$oracle_err"
-            anchor_observation=$(classify_check_rejection 1 "$oracle_out" "$oracle_err" "$anchor_expected" "$anchor_needle")
             anchor_want=wrong-diagnostic
             [ "$anchor_mutation" != correct ] || anchor_want=rejected-invalid
-            [ "$anchor_observation" = "$anchor_want" ] || fail "$anchor_id $anchor_mutation: $anchor_observation"
-            oracle_count=$((oracle_count + 1))
+            oracle_probe "${anchor_id}_${anchor_mutation}" 1 "$anchor_want" "$anchor_expected" "$anchor_needle"
         done
     done < "$NORMALIZED_MANIFEST"
     echo "safety rejection oracle passed $oracle_count mutation/control cases"
@@ -711,7 +594,19 @@ batch_framing_self_test() {
         fail "batch framing self-test accepted check-fail with stdout"
     fi
 
-    echo "safety batch framing self-test passed (CRLF + 4 mutations)"
+    # Mutation 5: a valid file with a framed doctest advisory keeps batch stderr
+    # empty and attributes the warning to that specific entry.
+    printf '1|ok_doctest|check-ok|ok_doctest.tl|ok_doctest.tl|-\n' > "$bf_dir/adv.meta"
+    printf 'CHECK_BATCH_ENTRY|0|0|1|2|ok_doctest.tl\nType checking passed!\nwarning: unnecessary unsafe block\n  --> ok_doctest.tl.doctest.0:1:22\nCHECK_BATCH_END|1\n' > "$bf_dir/adv.out"
+    if classify_check_batch_stream "$bf_dir/adv.meta" "$bf_dir/adv.out" "$bf_err" 0 host "$bf_rej" "self-test-doctest-advisory" 2> "$bf_dir/adv.diag"; then
+        fail "batch framing self-test accepted check-ok entry with framed advisory stderr"
+    fi
+    grep -Fq 'ok_doctest expected empty check stderr' "$bf_dir/adv.diag" ||
+        fail "batch framing self-test did not attribute framed doctest advisory to ok_doctest"
+    grep -Fq 'warning: unnecessary unsafe block' "$bf_dir/adv.diag" ||
+        fail "batch framing self-test did not preserve framed doctest advisory text"
+
+    echo "safety batch framing self-test passed (CRLF + 5 mutations)"
 }
 
 # Plan all manifest cases into parallel pool jobs:
@@ -1010,7 +905,7 @@ run_exec_chunk_job() {
                 fail "$case_id link failed"
             fi
         fi
-        run_case "$_out" "$_err" "$_expected_code" "$program"
+        run_case "$_out" "$_err" "$program"
         case "$_mode" in
             run-exit)
                 if [ "$code" -ne "$_expected_code" ]; then
@@ -1063,7 +958,6 @@ bounded_pool_run_job() {
     esac
 }
 
-manifest_runner_self_test
 source_location_self_test "$WORKDIR/source-location-self-test"
 rejection_oracle_self_test
 batch_framing_self_test

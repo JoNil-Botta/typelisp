@@ -5716,22 +5716,42 @@
       (& diag)
       (& (array-ref sources.sources slot)))))
 
+(define (compiler-driver-append-advisories
+  [advisories : (& advisories compiler_diagnostic.CompilerAdvisoryList)]
+  [out : text_buf.TextBuf]) : text_buf.TextBuf
+  (let
+    [count : i64 (compiler_diagnostic.compiler-advisory-list-count advisories)]
+    (if (= count 0)
+      out
+      (let
+        [sources : CompilerDriverDiagnosticSources
+          (compiler-driver-diagnostic-sources-new)]
+        [buf : text_buf.TextBuf out]
+        (for [index (iterator.range 0 count)]
+          (let
+            [advisory : compiler_diagnostic.CompilerAdvisory
+              (compiler_diagnostic.compiler-advisory-list-get advisories index)]
+            [diagnostic : compiler_diagnostic.CompilerDiagnostic
+              (compiler_diagnostic.compiler-advisory-diagnostic (& advisory))]
+            (text_buf.append!
+              buf
+              (compiler-driver-render-source-diagnostic-from
+                (&mut sources)
+                diagnostic))))
+        buf))))
+
+(define (compiler-driver-render-advisories
+  [advisories : (& advisories compiler_diagnostic.CompilerAdvisoryList)]) : String
+  (if (= (compiler_diagnostic.compiler-advisory-list-count advisories) 0)
+    ""
+    (text_buf.render
+      (compiler-driver-append-advisories advisories (text_buf.empty)))))
+
 (define (compiler-driver-print-advisories
   [advisories : (& advisories compiler_diagnostic.CompilerAdvisoryList)]) : unit
   (let
-    [count : i64 (compiler_diagnostic.compiler-advisory-list-count advisories)]
-    [sources : CompilerDriverDiagnosticSources
-      (compiler-driver-diagnostic-sources-new)]
-    (for [index (iterator.range 0 count)]
-      (let
-        [advisory : compiler_diagnostic.CompilerAdvisory
-          (compiler_diagnostic.compiler-advisory-list-get advisories index)]
-        [diagnostic : compiler_diagnostic.CompilerDiagnostic
-          (compiler_diagnostic.compiler-advisory-diagnostic (& advisory))]
-        (io.print-error
-          (compiler-driver-render-source-diagnostic-from
-            (&mut sources)
-            diagnostic))))))
+    [rendered : String (compiler-driver-render-advisories advisories)]
+    (when (> (string.string-length (& rendered)) 0) (io.print-error rendered))))
 
 (define (compiler-driver-write-result
   [_profile-state : profile_state.CompilerProfileState]

@@ -1,0 +1,1 @@
+self_compile/compile_cli_opt1	+7917	prebuilt stdlib.tli/libstdlib.a wiring adds TLI load/hydrate/extract, sysroot CLI and driver archive paths to the compiler source it compiles (~+4000 lines); local own cost +832,818,097 Ir (M(T) 106,032,671,298 vs M(B) 105,199,853,201 at 130da6360); no work skipped

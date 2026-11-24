@@ -1,0 +1,6 @@
+# Safety corpus cases: #9944 unshadowed syscall/program-argv unsafe and arity checks.
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+syscall_outside_unsafe_reject|check-fail|tests/safety/syscall_outside_unsafe_reject.tl|-|requires unsafe context
+program_argv_outside_unsafe_reject|check-fail|tests/safety/program_argv_outside_unsafe_reject.tl|-|requires unsafe context
+program_argc_arity_reject|check-fail|tests/safety/program_argc_arity_reject.tl|-|program-argc expects no arguments

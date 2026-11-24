@@ -67779,6 +67779,18 @@
   (arena-owner-kind i64)
   (slice-call-kind TcSliceViewCallKind))
 
+;; Resolve the spelling name id of a call head without running
+;; `cbi.compiler-builtin-refresh!`. Callers check spelling IDs first and only
+;; touch env / builtin-table probes when the spelling matches a builtin family.
+(define (tc-builtin-call-spelling-id
+  [session : cis.InternStructuralSessionHandle]
+  [raw-name-id : i64]
+  [hygiene-global : bool]) : i64
+  (cond
+    [(not hygiene-global) raw-name-id]
+    [(macro-hygiene-global-user-binding-id? session raw-name-id) -1]
+    [else (macro-hygiene-global-source-name-id-or session raw-name-id -1)]))
+
 ;; CPU query call kinds 0 through 3 are CPUID register indices. Kind 4 is XGETBV.
 (define (tc-cpu-query-spelling-kind [name-id : i64]) : i64
   (cond
@@ -67787,6 +67799,16 @@
     [(= name-id (cbi.compiler-builtin-ctfe "cpuid-ecx")) 2]
     [(= name-id (cbi.compiler-builtin-ctfe "cpuid-edx")) 3]
     [(= name-id cbi.compiler-builtin-id-xgetbv) 4]
+    [else -1]))
+
+;; Process-entry and raw syscall builtin call kinds:
+;; 0 = program-argc, 1 = program-argv, 2 = program-envp, 3 = syscall.
+(define (tc-process-syscall-spelling-kind [name-id : i64]) : i64
+  (cond
+    [(= name-id (cbi.compiler-builtin-ctfe "program-argc")) 0]
+    [(= name-id (cbi.compiler-builtin-ctfe "program-argv")) 1]
+    [(= name-id (cbi.compiler-builtin-ctfe "program-envp")) 2]
+    [(= name-id (cbi.compiler-builtin-ctfe "syscall")) 3]
     [else -1]))
 
 ;; Whether a prebound CPU query builtin (`cpuid` or `xgetbv`) is unshadowed in
@@ -67844,32 +67866,81 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [raw-name : i64]) : i64
+  (if (< raw-name 0)
+    -1
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (tc-context-structural-session ctx)]
+      [name-id : i64
+        (tc-builtin-call-spelling-id
+          session
+          raw-name
+          (tc-hygiene-global-name-id? session raw-name))]
+      (if (< (tc-cpu-query-spelling-kind name-id) 0)
+        -1
+        (begin
+          (cbi.compiler-builtin-refresh!)
+          (tc-cpu-query-kind ctx env raw-name name-id))))))
+
+(define (tc-process-syscall-kind
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [raw-name : i64]
+  [name-id : i64]) : i64
   (let
-    [session : cis.InternStructuralSessionHandle
-      (tc-context-structural-session ctx)]
-    (tc-cpu-query-kind
-      ctx
-      env
-      raw-name
-      (tc-builtin-call-name-id
-        session
-        raw-name
-        (tc-hygiene-global-name-id? session raw-name)))))
+    [kind : i64 (tc-process-syscall-spelling-kind name-id)]
+    (cond
+      [(< kind 0) -1]
+      [(tc-runtime-identity-head? (tc-context-structural-session ctx) raw-name)
+        kind]
+      [(and
+          (not
+            (csym.compiler-symbol-root-module-id? (tc-context-module-id ctx)))
+          (tc-source-name-bound-exact-id?
+            env
+            (tc-module-name-id-by-id (tc-context-module-id ctx) name-id)))
+        -1]
+      [(tc-source-value-bound-id? ctx env name-id) -1]
+      [else kind])))
+
+(define (tc-process-syscall-head-kind
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [raw-name : i64]) : i64
+  (if (< raw-name 0)
+    -1
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (tc-context-structural-session ctx)]
+      [name-id : i64
+        (tc-builtin-call-spelling-id
+          session
+          raw-name
+          (tc-hygiene-global-name-id? session raw-name))]
+      (if (< (tc-process-syscall-spelling-kind name-id) 0)
+        -1
+        (begin
+          (cbi.compiler-builtin-refresh!)
+          (tc-process-syscall-kind ctx env raw-name name-id))))))
 
 (define (tc-cpuid-head? [ctx : TcContext] [env : TcTypeEnv] [raw-name : i64]) : bool
-  (let
-    [session : cis.InternStructuralSessionHandle
-      (tc-context-structural-session ctx)]
-    [name-id : i64
-      (tc-builtin-call-name-id
-        session
-        raw-name
-        (tc-hygiene-global-name-id? session raw-name))]
-    (and
-      (cbi.compiler-builtin-lower-cpuid-id? name-id)
-      (or
-        (tc-runtime-identity-head? session raw-name)
-        (tc-default-cpu-query-unshadowed? ctx env name-id)))))
+  (if (< raw-name 0)
+    false
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (tc-context-structural-session ctx)]
+      [name-id : i64
+        (tc-builtin-call-spelling-id
+          session
+          raw-name
+          (tc-hygiene-global-name-id? session raw-name))]
+      (if (not (cbi.compiler-builtin-lower-cpuid-id? name-id))
+        false
+        (begin
+          (cbi.compiler-builtin-refresh!)
+          (or
+            (tc-runtime-identity-head? session raw-name)
+            (tc-default-cpu-query-unshadowed? ctx env name-id)))))))
 
 ;; The builtin call dispatch for a named callee, decided once from the name.
 ;; Call classification shares this one
@@ -67950,7 +68021,6 @@
             env
             name-id
             (tc-global-shared-view name))]
-        [cpu-kind : i64 (tc-cpu-query-kind ctx env raw-name name-id)]
         [arm : i64
           (cond
             [(and
@@ -68015,7 +68085,19 @@
                 (cbi.compiler-builtin-typecheck-clone-id? name-id)
                 (not (tc-source-value-bound-id? ctx env name-id)))
               23]
-            [(>= cpu-kind 0) (+ 24 cpu-kind)]
+            [(>= (tc-cpu-query-spelling-kind name-id) 0)
+              (let
+                [cpu-kind : i64 (tc-cpu-query-kind ctx env raw-name name-id)]
+                (if (>= cpu-kind 0)
+                  (+ 24 cpu-kind)
+                  0))]
+            [(>= (tc-process-syscall-spelling-kind name-id) 0)
+              (let
+                [ps-kind : i64
+                  (tc-process-syscall-kind ctx env raw-name name-id)]
+                (if (>= ps-kind 0)
+                  (+ 29 ps-kind)
+                  0))]
             [else 0])]
         ;; An unclassified name may denote a safe arena operation. An arena
         ;; constructor also needs its declaration for the published call.
@@ -68073,6 +68155,42 @@
         (if (= args.len 1)
           (Ok (I64))
           (Err "typecheck: xgetbv expects one argument"))]
+      [(= arm 29)
+        (if (= args.len 0)
+          (Ok (I64))
+          (Err
+            (tc-kind-message
+              (ArityMismatch)
+              "typecheck: program-argc expects no arguments")))]
+      [(= arm 30)
+        (if (= args.len 0)
+          (tc-program-entry-ptr-type ctx env "program-argv")
+          (Err
+            (tc-kind-message
+              (ArityMismatch)
+              "typecheck: program-argv expects no arguments")))]
+      [(= arm 31)
+        (if (= args.len 0)
+          (tc-program-entry-ptr-type ctx env "program-envp")
+          (Err
+            (tc-kind-message
+              (ArityMismatch)
+              "typecheck: program-envp expects no arguments")))]
+      [(= arm 32)
+        (let
+          [_ (try (tc-require-unsafe ctx env "syscall"))]
+          (cond
+            [(< args.len 1)
+              (Err
+                (tc-kind-message
+                  (ArityMismatch)
+                  "typecheck: syscall requires a syscall number"))]
+            [(> args.len 7)
+              (Err
+                (tc-kind-message
+                  (ArityMismatch)
+                  "typecheck: syscall takes at most 7 operands (number plus six arguments)"))]
+            [else (Ok (I64))]))]
       [(= arm 8)
         (let
           [_ (try (tc-require-unsafe ctx env (string.copy (& info.name))))]
@@ -68218,6 +68336,10 @@
       [(= arm 22) (tc-c-fn-check-call ctx actual)]
       [(and (>= arm 24) (<= arm 28))
         (tc-cpu-query-operand-type (= arm 28) index actual)]
+      [(= arm 32)
+        (if (tc-integer-type? actual)
+          (Ok (I64))
+          (Err "typecheck: syscall operands must be integer"))]
       [else
         (let
           [ref? : bool (or (= arm 6) (= arm 7))]
@@ -73783,7 +73905,20 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (tc-spmd-masked-if-call ctx expr-bases env spmd-env func args expr))]
+        [ps-kind : i64
+          (tc-process-syscall-head-kind
+            ctx
+            env
+            (tc-expr-var-name-id
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases func-box)))]
+        (cond
+          [(= ps-kind 3)
+            (tc-spmd-masked-if-unsupported
+              "varying calls inside masked branches")]
+          [(>= ps-kind 0) Ok]
+          [else
+            (tc-spmd-masked-if-call ctx expr-bases env spmd-env func args expr)]))]
     [(Syscall _)
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
     [(While cond-box body-box)
@@ -75491,23 +75626,34 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
+        [raw-name : i64
+          (tc-expr-var-name-id
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases func-box))]
+        [ps-kind : i64 (tc-process-syscall-head-kind ctx env raw-name)]
         (cond
           [(tc-spmd-array-length-call?
               expr-bases
               (tc-context-structural-session ctx)
               (tc-global-shared-view func))
             (tc-spmd-array-length-call ctx expr-bases env spmd-env expr-ty args)]
-          [(>=
-              (tc-cpu-query-head-kind
-                ctx
-                env
-                (tc-expr-var-name-id
-                  expr-bases
-                  (ast.ast-expr-segment-bases-get expr-bases func-box)))
-              0)
+          [(>= (tc-cpu-query-head-kind ctx env raw-name) 0)
             (match (try (tc-spmd-expr-list ctx expr-bases env spmd-env args))
               [(TcSpmdExprListInfo class next-env)
                 (tc-spmd-finish expr-ty class next-env)])]
+          [(= ps-kind 3)
+            (match (try (tc-spmd-expr-list ctx expr-bases env spmd-env args))
+              [(TcSpmdExprListInfo args-class args-env)
+                (let
+                  [_
+                    (try
+                      (tc-spmd-require-uniform
+                        args-class
+                        (tc-kind-message
+                          (Spmd)
+                          "typecheck: foreach calls with varying arguments are not supported")))]
+                  (tc-spmd-finish expr-ty Uniform args-env))])]
+          [(>= ps-kind 0) (tc-spmd-finish expr-ty Uniform spmd-env)]
           [else
             (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)]))]
     [(If cond-box then-branch-box else-branch-box)
@@ -92211,6 +92357,15 @@
         Ok]
       [(>= (tc-cpu-query-head-kind ctx env name-id) 0)
         (tc-comptime-purity-error expr-bases expr chain name "host CPU query")]
+      [(>= (tc-process-syscall-head-kind ctx env name-id) 0)
+        (tc-comptime-purity-error
+          expr-bases
+          expr
+          chain
+          name
+          (if (= (tc-process-syscall-head-kind ctx env name-id) 3)
+            "host syscall"
+            "runtime process state"))]
       [(tc-comptime-purity-banned-qualified? ctx name name-id)
         (tc-comptime-purity-error
           expr-bases
@@ -95685,6 +95840,7 @@
             (or
               (cbi.compiler-builtin-lower-cpuid-id? builtin)
               (>= (tc-cpu-query-spelling-kind builtin) 0)
+              (>= (tc-process-syscall-spelling-kind builtin) 0)
               (cbi.compiler-builtin-typecheck-length-call-id? builtin)
               (cbi.compiler-builtin-typecheck-string-ref-call-id? builtin)
               (cbi.compiler-builtin-typecheck-public-string-ref-id? builtin)
@@ -109985,6 +110141,7 @@
   (or
     (cbi.compiler-builtin-lower-cpuid-id? source-id)
     (>= (tc-cpu-query-spelling-kind source-id) 0)
+    (>= (tc-process-syscall-spelling-kind source-id) 0)
     (csym.compiler-symbols-handle-found?
       (csym.compiler-symbols-lookup-value-in-module-id-or
         (tc-context-symbols definition-ctx)

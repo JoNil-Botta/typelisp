@@ -1,0 +1,46 @@
+# Hot-loop alignment (gate stage2-regalloc-backend-asm-shape-gates): at -O2 a
+# loop top whose label run follows a `jmp`/`ret` gets `.p2align 4,,10`; a top
+# reached by fall-through, a `ret` exit block laid out above its loop, and every
+# label at -Os/-O0/-O1 get none. See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+# The unrolled body and the remainder loop both start after a `jmp`: the
+# first directive heads the unrolled body.
+case loop-align-rotated-top
+source tests/integration/range_loop_shapes.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_range_loop_shapes_fields_sum
+count-fixed = 2 .p2align 4,,10
+count = 2 ^[[:space:]]+jmp [.]L[^ ]*__unroll_guard2$
+after ^[[:space:]]+[.]p2align 4,,10$
+next-line ^[.]L[^ ]*__unroll_body:$
+
+# The preheader falls into the loop top: padding there would execute.
+case loop-align-fallthrough-top
+source tests/integration/bce_binary_interval.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_bce_binary_interval_search_div
+not-contains .p2align
+after ^[.]L[^ ]*_while_body[.]1__bce_fast__preheader:$
+next-line ^[[:space:]]+movq [$]-1, %r[a-z0-9]+$
+
+# A backward branch to a block that ends in `ret` is a loop exit, not a top.
+case loop-align-return-exit
+source tests/integration/lattice_join_split.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_lattice_join_split_lat_fold
+count-fixed = 1 .p2align 4,,10
+after ^[[:space:]]+jmp [.]L[^ ]*_if_else[.]1__bce_guard$
+next-line ^[.]L[^ ]*_if_then[.]0:$
+
+# Size and the lower levels emit no padding.
+case loop-align-off-below-o2
+source tests/integration/range_loop_shapes.tl
+target linux-x86_64 windows-x86_64
+opt s 0 1
+in fn _tl_range_loop_shapes_fields_sum
+not-contains .p2align

@@ -10444,6 +10444,310 @@
           (text_buf_borrowed.copy-byte-range-into data from (- n from) dst pos)
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
 
+;; HOT-LOOP ALIGNMENT. On a group's final text -- after the layout plan, the
+;; tail merge, the branch compaction and COLD-1 have fixed the order of every
+;; line -- a LOOP TOP is a local label some later `jmp`/`j<cc>` of the same
+;; text branches back to. The first label of a loop top's label run gets
+;; `.p2align 4,,10` in front of it (GNU `as` and LLVM alike, ELF and COFF: pad
+;; to 16 when that costs at most 10 bytes), so the loop's first fetch block
+;; starts on a 16-byte boundary.
+;;
+;; A branch back to a block that ends in `ret` is a loop exit laid out above
+;; the loop and is not a top.
+;;
+;; Only a top whose padding can never execute is aligned: the line before its
+;; label run (blank lines aside) must be a `jmp` or a `ret`. A rotated loop is
+;; entered by the preheader's forward jump and the block above its top ends in
+;; an unconditional transfer, so this is the common case; a top reached by
+;; fall-through keeps its place, which keeps the executed instruction count
+;; unchanged. Anything else in between -- a directive, a comment -- refuses.
+;; The result is allocated in `home`, like the Win64 unwind lowering's.
+(define (compiler-backend-align-prev-line [flags : (MutPtr i64)] [line : i64]) : i64
+  (let
+    [p : i64 (- line 1)]
+    (while (and
+      (>= p 0)
+      (not
+        (=
+          (bit-and
+            (unsafe
+              (ptr-read (ptr-offset flags p)))
+            compiler-backend-layout-flag-blank)
+          0)))
+      (-= p 1))
+    p))
+
+;; Whether line `line` is a `ret`. The layout classifier flags only `ret ` and
+;; `retq`, so the bare `ret` the backend emits is recognised here by its bytes.
+(define (compiler-backend-align-ret-line?
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [line : i64]) : bool
+  (let
+    [s : i64
+      (unsafe
+        (ptr-read (ptr-offset starts line)))]
+    [e : i64
+      (-
+        (unsafe
+          (ptr-read (ptr-offset starts (+ line 1))))
+        1)]
+    (or
+      (not
+        (=
+          (bit-and
+            (unsafe
+              (ptr-read (ptr-offset flags line)))
+            compiler-backend-layout-flag-ret)
+          0))
+      (and
+        (= (- e s) 7)
+        (be_operand.compiler-backend-peephole-range-eq? data s e "    ret")))))
+
+;; Whether the block that starts at label line `line` ends in `ret`: such a
+;; block has no successor, so a branch back to it is a loop EXIT laid out above
+;; the loop, not a back edge.
+(define (compiler-backend-align-block-returns?
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [line : i64]
+  [lines : i64]) : bool
+  (let
+    [branch-bits : i64
+      (bit-or compiler-backend-layout-flag-jmp compiler-backend-layout-flag-jcc)]
+    [q : i64 (+ line 1)]
+    [done : bool false]
+    [returns : bool false]
+    (while (and (not done) (< q lines))
+      (cond
+        [(compiler-backend-align-ret-line? data starts flags q)
+          (set! returns true)
+          (set! done true)]
+        [(not
+            (=
+              (bit-and
+                (unsafe
+                  (ptr-read (ptr-offset flags q)))
+                branch-bits)
+              0))
+          (set! done true)]
+        [else (+= q 1)]))
+    returns))
+
+(define (compiler-backend-align-flags-at [flags : (MutPtr i64)] [line : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset flags line))))
+
+(define (compiler-backend-loop-align-text [text : String] [home : arena.Arena]) : String
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& text)))]
+    [n : i64 (string.string-length (& text))]
+    [cap : i64 (compiler-backend-layout-line-capacity n)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ cap 1))]
+    [lines : i64
+      (if (and
+        (> n 0)
+        (= (be_state.compiler-backend-peephole-byte-at data (- n 1)) 10))
+        (compiler-backend-layout-split-lines
+          data
+          n
+          cap
+          (unsafe
+            (__tl_array-data starts)))
+        0)]
+    (while (< lines 0)
+      (set! cap (* 2 cap))
+      (set! starts (__tl_make-array i64 (+ cap 1)))
+      (set!
+        lines
+        (compiler-backend-layout-split-lines
+          data
+          n
+          cap
+          (unsafe
+            (__tl_array-data starts)))))
+    (let
+      [flags : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+      [labels : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+      [flow : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+      [counts : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+      [starts-raw : (MutPtr i64)
+        (unsafe
+          (__tl_array-data starts))]
+      [flags-raw : (MutPtr i64)
+        (unsafe
+          (__tl_array-data flags))]
+      [labels-raw : (MutPtr i64)
+        (unsafe
+          (__tl_array-data labels))]
+      [flow-raw : (MutPtr i64)
+        (unsafe
+          (__tl_array-data flow))]
+      [_classify : unit
+        (when
+          (> lines 0)
+          (compiler-backend-layout-classify-lines!
+            data
+            lines
+            starts-raw
+            flags-raw)
+          (compiler-backend-layout-list-lines!
+            lines
+            flags-raw
+            labels-raw
+            flow-raw
+            (&mut counts)))]
+      [label-count : i64 (array-ref counts 0)]
+      [flow-count : i64 (array-ref counts 1)]
+      [branch-bits : i64
+        (bit-or
+          compiler-backend-layout-flag-jmp
+          compiler-backend-layout-flag-jcc)]
+      ;; 1 on a label line some later branch targets.
+      [top : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+      ;; The first line of each label run that gets the directive, ascending.
+      [sites : (__tl_dyn-array i64) (__tl_make-array i64 label-count)]
+      [site-count : i64 0]
+      (when
+        (and (> label-count 0) (> flow-count 0))
+        (let
+          [table-cap : i64 (compiler-backend-layout-table-capacity label-count)]
+          [table : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 table-cap))]
+          [table-raw : (MutPtr i64)
+            (unsafe
+              (__tl_array-data table))]
+          [target : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+          [target-raw : (MutPtr i64)
+            (unsafe
+              (__tl_array-data target))]
+          (compiler-backend-layout-build-table!
+            data
+            starts-raw
+            labels-raw
+            label-count
+            table-raw
+            table-cap)
+          (compiler-backend-layout-resolve-targets!
+            data
+            starts-raw
+            flags-raw
+            flow-raw
+            flow-count
+            branch-bits
+            target-raw
+            table-raw
+            table-cap)
+          (for [k (iterator.range 0 flow-count)]
+            (let
+              [i : i64
+                (unsafe
+                  (ptr-read (ptr-offset flow-raw k)))]
+              (unless
+                (=
+                  (bit-and
+                    (compiler-backend-align-flags-at flags-raw i)
+                    branch-bits)
+                  0)
+                (let
+                  [t : i64
+                    (unsafe
+                      (ptr-read (ptr-offset target-raw i)))]
+                  (when (and (>= t 0) (< t i)) (set! (array-ref top t) 1))))))))
+      (for [k (iterator.range 0 label-count)]
+        (let
+          [l : i64
+            (unsafe
+              (ptr-read (ptr-offset labels-raw k)))]
+          (when
+            (and
+              (= (array-ref top l) 1)
+              (not
+                (compiler-backend-align-block-returns?
+                  data
+                  starts-raw
+                  flags-raw
+                  l
+                  lines)))
+            (let
+              [run : i64 l]
+              (while (and
+                (> run 0)
+                (not
+                  (=
+                    (bit-and
+                      (compiler-backend-align-flags-at flags-raw (- run 1))
+                      compiler-backend-layout-flag-label)
+                    0)))
+                (-= run 1))
+              (let
+                [p : i64 (compiler-backend-align-prev-line flags-raw run)]
+                (when
+                  (and
+                    (>= p 0)
+                    (or
+                      (not
+                        (=
+                          (bit-and
+                            (compiler-backend-align-flags-at flags-raw p)
+                            compiler-backend-layout-flag-jmp)
+                          0))
+                      (compiler-backend-align-ret-line?
+                        data
+                        starts-raw
+                        flags-raw
+                        p))
+                    (or
+                      (= site-count 0)
+                      (not (= (array-ref sites (- site-count 1)) run))))
+                  (set! (array-ref sites site-count) run)
+                  (+= site-count 1)))))))
+      (unsafe
+        (in-arena
+          (arena.Arena (arena.raw-handle home))
+          (let
+            [directive : String "    .p2align 4,,10\n"]
+            [width : i64 (string.string-length (& directive))]
+            [total : i64 (+ n (* site-count width))]
+            [out : (__tl_dyn-array u8)
+              (__tl_make-array
+                u8
+                (if (< total 1)
+                  1
+                  total))]
+            [dst : (MutPtr u8) (__tl_array-data out)]
+            [from : i64 0]
+            [pos : i64 0]
+            (for [k (iterator.range 0 site-count)]
+              (let
+                [at : i64
+                  (ptr-read (ptr-offset starts-raw (array-ref sites k)))]
+                (text_buf_borrowed.copy-byte-range-into
+                  data
+                  from
+                  (- at from)
+                  dst
+                  pos)
+                (+= pos (- at from))
+                (text_buf_borrowed.copy-byte-range-into
+                  (string-data (& directive))
+                  0
+                  width
+                  dst
+                  pos)
+                (+= pos width)
+                (set! from at)))
+            (text_buf_borrowed.copy-byte-range-into
+              data
+              from
+              (- n from)
+              dst
+              pos)
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
+
 ;; ---------------------------------------------------------------------------
 ;; RMW-2/RMW-3: fold an adjacent load / ALU / store of ONE memory location into
 ;; a memory-operand ALU instruction, with a reload when the result register

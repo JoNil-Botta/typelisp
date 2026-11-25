@@ -1164,6 +1164,9 @@
   ;; process-global opt-level switch.
   (scalar-registers-enabled bool)
   (tail-merging-enabled bool)
+  ;; Hot-loop alignment (`compiler-backend-loop-align-text`): set with the
+  ;; high-quality path and read together with `optimize-for-size`.
+  (loop-align-enabled bool)
   (optimize-for-size bool)
   (user-symbol-cache-keys (__tl_dyn-array i64))
   (user-symbol-cache-values (__tl_dyn-array String))
@@ -1285,6 +1288,7 @@
         (compiler-backend-global-shared-view intern-state)
         owner-arena
         0
+        false
         false
         false
         false
@@ -1867,7 +1871,20 @@
   (let
     [high-quality? : bool (opt_level.opt-level-full? opt-level)]
     (compiler-backend-state-set-scalar-registers-enabled! state high-quality?)
-    (compiler-backend-state-set-tail-merging-enabled! state high-quality?)))
+    (compiler-backend-state-set-tail-merging-enabled! state high-quality?)
+    (unsafe
+      (set!
+        (deref (compiler-backend-state-ptr state)).loop-align-enabled
+        high-quality?))))
+
+;; Loop tops are aligned on the full speed path only: `-Os` and opt-level < 2
+;; emit no padding at all.
+(define (compiler-backend-state-loop-align-enabled?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (and
+      (deref (compiler-backend-state-view state)).loop-align-enabled
+      (not (deref (compiler-backend-state-view state)).optimize-for-size))))
 
 (define (compiler-backend-state-optimize-for-size?
   [state : CompilerBackendState]) : bool

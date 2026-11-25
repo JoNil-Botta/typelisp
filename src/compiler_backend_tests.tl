@@ -38702,6 +38702,42 @@ entry:
             [(Err _) false]))]
       [(Err _) false])))
 
+;; #phi-staged-copy obligation (3) under edge-precise scavenge occupancy: a phi
+;; input is live only to the end of its predecessor, so the target-entry query
+;; no longer sees its register and the edge home mask has to. Every
+;; register-homed input on every edge is in the mask next to every
+;; register-homed destination; a spilled one and an immediate add nothing.
+(define (compiler-backend-phi-leading-mask-covers-inputs-ok?) : bool
+  (let
+    [program-index : be_state.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [backend-state : be_state.CompilerBackendState program-index.backend-state]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (reg-homes "%0=%r8 %1=%r9 %2=%rsi %3=spill:-16 %4=%rdi %5=spill:-24")]
+    [instrs : ir.CompilerIrInstrSeq
+      (irt.instrs
+        "%2 = phi [%0, entry], [%1, latch] : i64
+         %3 = phi [5, entry], [%4, latch] : i64
+         %6 = add %5, 1 : i64
+         jump body")]
+    [mask : i64
+      (be_calls.compiler-backend-phi-leading-dst-home-mask-seq
+        backend-state
+        assignments
+        instrs)]
+    (=
+      mask
+      (bit-or
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%r8")
+          (be_operand.compiler-backend-scavenge-reg-bit "%r9"))
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%rsi")
+          (be_operand.compiler-backend-scavenge-reg-bit "%rdi"))))))
+
 (define (compiler-backend-phi-rotated-back-edge-ok?) : bool
   (let
     [backend-state : be_state.CompilerBackendState
@@ -41704,6 +41740,7 @@ b_keep:
         (compiler-backend-scavenge-segment-pick-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)
         (compiler-backend-phi-rotated-back-edge-ok?)
+        (compiler-backend-phi-leading-mask-covers-inputs-ok?)
         (compiler-backend-divmod-live-dividend-src-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-param-entry-float-copy-linux-ok?)

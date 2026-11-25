@@ -1,0 +1,4 @@
+# Native integration cases for scavenge occupancy in hot loops.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+scavenge_phi_edge_liveness|all|0,1,2|tests/integration/scavenge_phi_edge_liveness.tl|42|220544\n|-|-|-

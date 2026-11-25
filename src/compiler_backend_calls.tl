@@ -5192,7 +5192,11 @@
 ;;       the edge and the use is ahead), so the query answers the same as the
 ;;       point-local one.
 ;;   (3) `reg` is not the home of ANY raw Phi destination on this edge, so no
-;;       drained copy or filtered same-home Phi has placed its final value there.
+;;       drained copy or filtered same-home Phi has placed its final value there,
+;;       nor of any Phi input variable of the target's phis. Scavenge occupancy
+;;       runs on edge-precise liveness, where a phi input is live only to the
+;;       end of its own predecessor; the target-entry query no longer sees it,
+;;       so the mask carries the inputs that query used to.
 ;; With all three the value in `reg` at this point is dead, so the bracket saves
 ;; and restores a dead value. Dropping it leaves `movq SRC,%rX` / `movq %rX,DST`:
 ;; two instructions and two memory ops in a load->store chain, strictly fewer
@@ -5646,7 +5650,8 @@
 
 ;; Compute the destination-home mask from every leading raw Phi, including
 ;; same-home phis that leading-phi-copies-seq-from filters out before
-;; marshalling. The instruction sequence is shared by list and dense blocks and
+;; marshalling, together with the home of every Phi input variable on any edge
+;; (obligation (3) of compiler-backend-phi-staged-copy-proven?). The instruction sequence is shared by list and dense blocks and
 ;; by ordinary and fused Mov+Jump edges.
 (define (compiler-backend-phi-leading-dst-home-mask-seq-from
   [backend-state : be_state.CompilerBackendState]
@@ -5659,7 +5664,7 @@
     [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
     (while (< i n)
       (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
-        [(Phi dst _ _)
+        [(Phi dst inputs _)
           (set!
             mask
             (bit-or
@@ -5668,6 +5673,18 @@
                 backend-state
                 assignments
                 dst)))
+          (for [k (iterator.range 0 inputs.len)]
+            (match (compiler_ir_types.compiler-ir-phi-input-seq-ref inputs k).value
+              [(Var source)
+                (set!
+                  mask
+                  (bit-or
+                    mask
+                    (compiler-backend-phi-dst-home-mask-for-var
+                      backend-state
+                      assignments
+                      source)))]
+              [_ unit]))
           (+= i 1)]
         [_ (set! i n)]))
     mask))

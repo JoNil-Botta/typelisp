@@ -45,7 +45,7 @@ esac
 WORKDIR="$ROOT/target/stdlib-concat-lint"
 FILES="$WORKDIR/files.txt"
 CHUNK_DIR="$WORKDIR/chunks"
-PROBE="stdlib/tests/.deprecated-string-concat-lint-probe.$$.tl"
+PROBE="$WORKDIR/deprecated-string-concat-lint-probe.tl"
 PROBE_STDOUT="$WORKDIR/probe.stdout"
 PROBE_STDERR="$WORKDIR/probe.stderr"
 
@@ -111,9 +111,9 @@ if [ "$batch_count" -eq 0 ]; then
     exit 1
 fi
 
-# Exercise the complete command, not only the lint-core unit test. The probe
-# lives under stdlib/ so a regression in rule selection, --check exit status,
-# dotted-call recognition, or stdlib-root handling fails this owning gate.
+# Exercise the complete command, not only the lint-core unit test. Keep the probe
+# under $WORKDIR rather than stdlib/ so parallel gates walking stdlib/ never
+# race with its creation or cleanup.
 cat > "$PROBE" <<'EOF'
 (define (main) : String
   (string.append "left" "right"))

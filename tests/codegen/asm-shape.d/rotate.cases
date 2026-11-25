@@ -1,0 +1,109 @@
+# Constant rotates: `bit_or` of single-use `shr x k` and `shl x (W - k)` over
+# one unsigned 32/64-bit source fuses into one `ror` (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+file rotate.tl
+(define (rotr32 [x : u32]) : u32
+  (bit-or (shr x (cast 7 : u64)) (shl x (cast 25 : u64))))
+
+(define (rotl32 [x : u32]) : u32
+  (bit-or (shl x (cast 5 : u64)) (shr x (cast 27 : u64))))
+
+(define (rotr64 [x : u64]) : u64
+  (bit-or (shr x (cast 13 : u64)) (shl x (cast 51 : u64))))
+
+(define (rotl64 [x : u64]) : u64
+  (bit-or (shl x (cast 1 : u64)) (shr x (cast 63 : u64))))
+
+;; Arithmetic `shr`: not a rotate.
+(define (signed32 [x : i32]) : i32
+  (bit-or (shr x (cast 7 : u64)) (shl x (cast 25 : u64))))
+
+;; Counts that do not sum to the width.
+(define (gap32 [x : u32]) : u32
+  (bit-or (shr x (cast 7 : u64)) (shl x (cast 24 : u64))))
+
+;; Two different sources.
+(define (pair32 [x : u32] [y : u32]) : u32
+  (bit-or (shr x (cast 7 : u64)) (shl y (cast 25 : u64))))
+
+;; A shift with a second use stays.
+(define (shared32 [x : u32]) : u32
+  (let
+    [low : u32 (shr x (cast 7 : u64))]
+    (bit-xor (bit-or low (shl x (cast 25 : u64))) low)))
+
+;; An intervening store through a pointer to `x` invalidates fusion.
+(define (addr-write32 [x : u32]) : u32
+  (let
+    [p : (MutPtr u32) (unsafe (ptr-addr-of x))]
+    [lo : u32 (shr x (cast 7 : u64))]
+    (unsafe (ptr-write! p (cast 0 : u32)))
+    (bit-or lo (shl x (cast 25 : u64)))))
+
+;; Function values keep every body emitted for the shape checks.
+(define keep-rotr32 : (-> u32 u32) rotr32)
+(define keep-rotl32 : (-> u32 u32) rotl32)
+(define keep-rotr64 : (-> u64 u64) rotr64)
+(define keep-rotl64 : (-> u64 u64) rotl64)
+(define keep-signed32 : (-> i32 i32) signed32)
+(define keep-gap32 : (-> u32 u32) gap32)
+(define keep-pair32 : (-> u32 u32 u32) pair32)
+(define keep-shared32 : (-> u32 u32) shared32)
+(define keep-addr-write32 : (-> u32 u32) addr-write32)
+
+(define seed : u64 0x0123456789abcdef)
+
+(define (main) : i64
+  (let
+    [wide : u64 seed]
+    [narrow : u32 (cast (bit-and wide (cast 0xffffffff : u64)) : u32)]
+    (if (and
+      (= (rotr32 narrow) (cast 0xdf13579b : u32))
+      (= (rotl32 narrow) (cast 0x3579bdf1 : u32))
+      (= (rotr64 wide) (cast 0x6f78091a2b3c4d5e : u64))
+      (= (rotl64 wide) (cast 0x02468acf13579bde : u64))
+      (= (gap32 narrow) (cast 0xef13579b : u32))
+      (= (pair32 narrow (cast 1 : u32)) (cast 0x0313579b : u32))
+      (= (shared32 narrow) (cast 0xde000000 : u32))
+      (= (addr-write32 narrow) (cast 0x0113579b : u32))
+      (=
+        (signed32 (cast (cast 0x89abcdef : u32) : i32))
+        (cast (cast 0xff13579b : u32) : i32)))
+      42
+      1)))
+end-file
+
+case rotate-fusion
+source {{work}}/rotate.tl
+opt 1 2
+in fn _tl_rotate_rotr32
+count = 1 ^[[:space:]]+rorl [$]7, %[a-z0-9]+$
+not-match ^[[:space:]]+sh[lr][lq][ ]
+in fn _tl_rotate_rotl32
+count = 1 ^[[:space:]]+rorl [$]27, %[a-z0-9]+$
+not-match ^[[:space:]]+sh[lr][lq][ ]
+in fn _tl_rotate_rotr64
+count = 1 ^[[:space:]]+rorq [$]13, %[a-z0-9]+$
+not-match ^[[:space:]]+sh[lr][lq][ ]
+in fn _tl_rotate_rotl64
+count = 1 ^[[:space:]]+rorq [$]63, %[a-z0-9]+$
+not-match ^[[:space:]]+sh[lr][lq][ ]
+in fn _tl_rotate_signed32
+not-match ^[[:space:]]+ror
+in fn _tl_rotate_gap32
+not-match ^[[:space:]]+ror
+in fn _tl_rotate_pair32
+not-match ^[[:space:]]+ror
+in fn _tl_rotate_shared32
+not-match ^[[:space:]]+ror
+in fn _tl_rotate_addr_write32
+not-match ^[[:space:]]+ror
+
+case rotate-values
+source {{work}}/rotate.tl
+opt 0 1 2
+do tl-run
+exit 42

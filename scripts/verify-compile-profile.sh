@@ -158,7 +158,7 @@ run_logged() {
     _rl_err=$2
     _rl_msg=$3
     shift 3
-    if ! "$@" > "$_rl_out" 2> "$_rl_err"; then
+    if ! run_tracked "$@" > "$_rl_out" 2> "$_rl_err"; then
         show_failure_logs "$_rl_out" "$_rl_err"
         fail "$_rl_msg"
     fi
@@ -177,8 +177,9 @@ run_logged() {
 #                                  of TERMs: counter names (their first row's
 #                                  value) or integers; a missing counter fails
 profile_rows() {
-    cat > "$WORKDIR/profile-rows.txt"
-    if ! awk -F'|' -v rows="$WORKDIR/profile-rows.txt" '
+    _pr_file=${PROFILE_ROWS_FILE:-$WORKDIR/profile-rows.txt}
+    cat > "$_pr_file"
+    if ! awk -F'|' -v rows="$_pr_file" '
         BEGIN {
             while ((getline line < rows) > 0) {
                 if (line ~ /^[[:space:]]*(#|$)/) continue
@@ -638,115 +639,102 @@ printf '%s\n' "$COMPILER_COMMIT" | grep -Eq '^[0-9a-f]{40}$' ||
 printf '%s' "$COMPILER_COMMIT" > target/build-stage0/git-hash.txt
 printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/tree-hash.txt
 
-echo "[compile-profile] compile profile-enabled CLI"
-run_logged "$BUILD_STDOUT" "$BUILD_STDERR" "profile-enabled CLI compile failed" \
-    "$COMPILER" compile src/main.tl -o "$PROFILE_ASM" --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
-    --cfg compiler-build-identity --cfg compile-profile --cfg embedded-stdlib-tlci \
-    --cfg tlci-native-route-stress --cfg dependency-tlci-verification
+ACTIVE_BG_PIDS=
+WORKER_CHILD_PID=
+cleanup_bg_pids() {
+    for _bg_pid in $ACTIVE_BG_PIDS; do
+        kill "$_bg_pid" 2>/dev/null || true
+    done
+    if [ -n "$WORKER_CHILD_PID" ]; then
+        kill "$WORKER_CHILD_PID" 2>/dev/null || true
+    fi
+    for _bg_pid in $ACTIVE_BG_PIDS; do
+        wait "$_bg_pid" 2>/dev/null || true
+    done
+    if [ -n "$WORKER_CHILD_PID" ]; then
+        wait "$WORKER_CHILD_PID" 2>/dev/null || true
+    fi
+    ACTIVE_BG_PIDS=
+    WORKER_CHILD_PID=
+}
+trap 'cleanup_bg_pids' EXIT
+trap 'trap "" HUP INT TERM; cleanup_bg_pids; exit 1' HUP INT TERM
 
-echo "[compile-profile] link profile-enabled CLI"
-if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFILE_BIN" \
-    >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
-    show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
-    fail "profile-enabled CLI link failed"
-fi
+cleanup_worker_child() {
+    if [ -n "$WORKER_CHILD_PID" ]; then
+        kill "$WORKER_CHILD_PID" 2>/dev/null || true
+        wait "$WORKER_CHILD_PID" 2>/dev/null || true
+        WORKER_CHILD_PID=
+    fi
+}
+init_worker_traps() {
+    ACTIVE_BG_PIDS=
+    WORKER_CHILD_PID=
+    trap 'cleanup_worker_child' EXIT
+    trap 'trap "" HUP INT TERM; cleanup_worker_child; exit 1' HUP INT TERM
+}
+run_tracked() {
+    _rt_rc=0
+    "$@" &
+    WORKER_CHILD_PID=$!
+    wait "$WORKER_CHILD_PID" || _rt_rc=$?
+    WORKER_CHILD_PID=
+    return "$_rt_rc"
+}
+run_tracked_in() {
+    _rti_dir=$1
+    shift
+    _rt_rc=0
+    (
+        cd "$_rti_dir" &&
+        exec "$@"
+    ) &
+    WORKER_CHILD_PID=$!
+    wait "$WORKER_CHILD_PID" || _rt_rc=$?
+    WORKER_CHILD_PID=
+    return "$_rt_rc"
+}
 
-# ci-verify reuses this one profile compiler for the sustained production-route
-# gate instead of paying for a second full self-compile. The handoff is written
-# only after a successful link and consumed only after this verifier passes.
-if [ -n "${TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE:-}" ]; then
-    mkdir -p "$(dirname -- "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE")"
-    printf '%s\n' "$PROFILE_BIN" > "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE"
-fi
+stage_readonly_tree() {
+    _srt_src=$1
+    _srt_dst=$2
+    rm -rf "$_srt_dst"
+    if ! cp -Rl "$_srt_src" "$_srt_dst" 2>/dev/null; then
+        rm -rf "$_srt_dst"
+        cp -R "$_srt_src" "$_srt_dst"
+    fi
+}
 
-echo "[compile-profile] verify exhaustive stdlib tlci identity differential"
-sh scripts/verify-stdlib-tlci-identity-differential.sh "$PROFILE_BIN"
-
-# This also compiles the extracted poison-name helpers of the dotted-constructor
-# cache.
-echo "[compile-profile] verify dense macro profile storage and helper layout"
-run_logged "$BUILD_STDOUT" "$BUILD_STDERR" "dense macro profile storage smoke failed" \
-    "$PROFILE_BIN" run src/tests/compiler_typecheck_smoke.tl \
-    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib \
-    --stdlib-root src --cfg compile-profile --cfg test
-
-echo "[compile-profile] verify native comptime host metadata parity"
-run_logged "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR" "native comptime host metadata smoke compile failed" \
-    "$PROFILE_BIN" compile src/tests/comptime_host_smoke.tl \
-    -o "$COMPTIME_HOST_SMOKE_ASM" --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src
-if ! assemble_and_link \
-    comptime-host-smoke \
-    "$COMPTIME_HOST_SMOKE_ASM" \
-    "$COMPTIME_HOST_SMOKE_OBJ" \
-    "$COMPTIME_HOST_SMOKE_BIN" \
-    >> "$COMPTIME_HOST_SMOKE_STDOUT" 2>> "$COMPTIME_HOST_SMOKE_STDERR"; then
-    show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
-    fail "native comptime host metadata smoke link failed"
-fi
-set +e
-"$COMPTIME_HOST_SMOKE_BIN" \
-    >> "$COMPTIME_HOST_SMOKE_STDOUT" 2>> "$COMPTIME_HOST_SMOKE_STDERR"
-COMPTIME_HOST_SMOKE_STATUS=$?
-set -e
-if [ "$COMPTIME_HOST_SMOKE_STATUS" -ne 42 ]; then
-    show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
-    fail "native comptime host metadata smoke expected exit 42, got $COMPTIME_HOST_SMOKE_STATUS"
-fi
-
-echo "[compile-profile] verify package-test native structural equality"
-run_logged "$BUILD_CLI_TEST_STDOUT" "$BUILD_CLI_TEST_STDERR" "profile package-test native structural equality failed" \
-    "$PROFILE_BIN" test --check src/build_cli_core_tests.tl --target "$NL_BOOTSTRAP_TARGET" \
-    --stdlib-root stdlib
-
-echo "[compile-profile] verify hydrated prelude bypass and source parity"
-run_logged "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR" "hydrated prelude profile fixture failed" \
-    "$PROFILE_BIN" compile tests/integration/arithmetic.tl -o "$SURFACE_HYDRATED_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args)
-profile_rows "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR" <<'ROWS'
-has compile-profile-detail|prelude.source_pipeline_entries|0
-has compile-profile-detail|prelude.hydrations|1
-has compile-profile-detail|prelude.macro_walk_decl_visits|0
-has compile-profile-detail|prelude.typecheck_decl_checks|0
-ROWS
-run_logged "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR" "source prelude parity fixture failed" \
-    "$PROFILE_BIN" compile tests/integration/arithmetic.tl -o "$SURFACE_SOURCE_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib
-profile_rows "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR" <<'ROWS'
-has compile-profile-detail|prelude.source_pipeline_entries|1
-has compile-profile-detail|prelude.hydrations|0
-ROWS
-assert_intern_storage_schema_in \
-    "$SURFACE_SOURCE_STDERR" \
-    "$SURFACE_SOURCE_STDOUT" \
-    "$SURFACE_SOURCE_STDERR"
-cmp "$SURFACE_HYDRATED_ASM" "$SURFACE_SOURCE_ASM" >/dev/null ||
-    fail "hydrated prelude assembly differs from source prelude output"
-
-# surface_fallback LABEL FILE VALUE: build the profile CLI while FILE, an input
-# of the embedded surface binding, holds VALUE (restored afterwards); its
-# compile of the arithmetic fixture must fall back to the source prelude and
-# match the explicit source route's assembly.
+# surface_fallback LABEL REL_FILE VALUE: stage an isolated copy of src/stdlib
+# and target/{build-stage0,embedded-stdlib-tlci} where REL_FILE holds VALUE,
+# build the profile CLI from that isolated tree without mutating $ROOT/target,
+# and verify its compile of the arithmetic fixture falls back to the source
+# prelude. Assembly parity against SURFACE_SOURCE_ASM is checked after join.
 surface_fallback() {
     _sf=$WORKDIR/surface-$1
-    _sf_saved=$(cat "$2")
-    printf '%s' "$3" > "$2"
-    set +e
-    "$COMPILER" compile src/main.tl -o "$_sf-profile.s" --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
+    _sf_root="$WORKDIR/surface-$1-root"
+    rm -rf "$_sf_root"
+    mkdir -p "$_sf_root/target/build-stage0" "$_sf_root/target/embedded-stdlib-tlci"
+    stage_readonly_tree "$ROOT/src" "$_sf_root/src"
+    stage_readonly_tree "$ROOT/stdlib" "$_sf_root/stdlib"
+    cp "$ROOT/target/build-stage0/git-hash.txt" "$_sf_root/target/build-stage0/git-hash.txt"
+    cp "$ROOT/target/build-stage0/tree-hash.txt" "$_sf_root/target/build-stage0/tree-hash.txt"
+    cp "$ROOT/target/embedded-stdlib-tlci/stdlib.tlci.tlch" "$_sf_root/target/embedded-stdlib-tlci/stdlib.tlci.tlch"
+    cp "$ROOT/target/embedded-stdlib-tlci/source-hash.txt" "$_sf_root/target/embedded-stdlib-tlci/source-hash.txt"
+    printf '%s' "$3" > "$_sf_root/$2"
+    _sf_status=0
+    run_tracked "$COMPILER" compile "$_sf_root/src/main.tl" -o "$_sf-profile.s" --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) --stdlib-root "$_sf_root/stdlib" --stdlib-root "$_sf_root/src" \
         --cfg compiler-build-identity --cfg compile-profile --cfg embedded-stdlib-tlci \
-        > "$BUILD_STDOUT" 2> "$BUILD_STDERR"
-    _sf_status=$?
-    set -e
-    printf '%s' "$_sf_saved" > "$2"
+        > "$_sf-build.stdout" 2> "$_sf-build.stderr" || _sf_status=$?
+    rm -rf "$_sf_root"
     [ "$_sf_status" -eq 0 ] || {
-        show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+        show_failure_logs "$_sf-build.stdout" "$_sf-build.stderr"
         fail "$1 profile CLI compile failed"
     }
     if ! assemble_and_link "surface-$1-profile-cli" "$_sf-profile.s" "$_sf-profile.$NL_OBJ_EXT" \
-        "$_sf-profile$NL_BIN_EXT" >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
-        show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+        "$_sf-profile$NL_BIN_EXT" >> "$_sf-build.stdout" 2>> "$_sf-build.stderr"; then
+        show_failure_logs "$_sf-build.stdout" "$_sf-build.stderr"
         fail "$1 profile CLI link failed"
     fi
     run_logged "$_sf.stdout" "$_sf.stderr" "$1 surface fallback fixture failed" \
@@ -756,38 +744,48 @@ surface_fallback() {
 has compile-profile-detail|prelude.source_pipeline_entries|1
 has compile-profile-detail|prelude.hydrations|0
 ROWS
-    cmp "$SURFACE_SOURCE_ASM" "$_sf.s" >/dev/null ||
-        fail "$1 fallback differs from explicit source output"
 }
 
-echo "[compile-profile] verify source-mismatched surface fallback"
-surface_fallback source-mismatch target/embedded-stdlib-tlci/source-hash.txt \
-    "$(cat target/embedded-stdlib-tlci/source-hash.txt)-mismatch"
-
-echo "[compile-profile] verify producer-compiler-mismatched surface fallback"
 MISMATCH_PRODUCER_IDENTITY=0000000000000000000000000000000000000000
 if [ "$MISMATCH_PRODUCER_IDENTITY" = "$PRODUCER_IDENTITY" ]; then
     MISMATCH_PRODUCER_IDENTITY=1111111111111111111111111111111111111111
 fi
-surface_fallback producer-mismatch target/build-stage0/tree-hash.txt "$MISMATCH_PRODUCER_IDENTITY"
 
-echo "[compile-profile] compile compact-summary CLI"
-run_logged "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR" "compact-summary CLI compile failed" \
-    "$COMPILER" compile src/main.tl -o "$SUMMARY_ASM" --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
-    --cfg compile-profile --cfg compile-profile-summary
-if ! assemble_and_link compile-profile-summary-cli \
-    "$SUMMARY_ASM" "$SUMMARY_OBJ" "$SUMMARY_BIN" \
-    >> "$SUMMARY_BUILD_STDOUT" 2>> "$SUMMARY_BUILD_STDERR"; then
-    show_failure_logs "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR"
-    fail "compact-summary CLI link failed"
-fi
+run_profile_build() {
+    echo "[compile-profile] compile profile-enabled CLI"
+    run_logged "$BUILD_STDOUT" "$BUILD_STDERR" "profile-enabled CLI compile failed" \
+        "$COMPILER" compile src/main.tl -o "$PROFILE_ASM" --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
+        --cfg compiler-build-identity --cfg compile-profile --cfg embedded-stdlib-tlci \
+        --cfg tlci-native-route-stress --cfg dependency-tlci-verification
 
-echo "[compile-profile] verify compact summary schema and bound"
-run_logged "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR" "compact-summary fixture compile failed" \
-    "$SUMMARY_BIN" compile tests/integration/arithmetic.tl -o "$SUMMARY_OUTPUT_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib
-profile_rows "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR" <<'ROWS'
+    echo "[compile-profile] link profile-enabled CLI"
+    if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFILE_BIN" \
+        >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
+        show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
+        fail "profile-enabled CLI link failed"
+    fi
+}
+
+run_summary_and_compiler_lane() {
+    PROFILE_ROWS_FILE="$WORKDIR/profile-rows-summary.txt"
+    echo "[compile-profile] compile compact-summary CLI"
+    run_logged "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR" "compact-summary CLI compile failed" \
+        "$COMPILER" compile src/main.tl -o "$SUMMARY_ASM" --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
+        --cfg compile-profile --cfg compile-profile-summary
+    if ! assemble_and_link compile-profile-summary-cli \
+        "$SUMMARY_ASM" "$SUMMARY_OBJ" "$SUMMARY_BIN" \
+        >> "$SUMMARY_BUILD_STDOUT" 2>> "$SUMMARY_BUILD_STDERR"; then
+        show_failure_logs "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR"
+        fail "compact-summary CLI link failed"
+    fi
+
+    echo "[compile-profile] verify compact summary schema and bound"
+    run_logged "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR" "compact-summary fixture compile failed" \
+        "$SUMMARY_BIN" compile tests/integration/arithmetic.tl -o "$SUMMARY_OUTPUT_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib
+    profile_rows "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR" <<'ROWS'
 has compile-profile-summary|scope|kind|rank|name|elapsed_ms|calls
 has compile-profile-summary|optimizer|pass|
 has compile-profile-summary|optimizer|pass|0|<remainder>|
@@ -802,29 +800,114 @@ has compile-profile-summary|backend|module|0|<remainder>|
 has compile-profile|total|
 lacks compile-profile-detail|
 ROWS
-summary_lines=$(grep -c '^compile-profile-summary|' "$SUMMARY_CHECK_STDERR")
-if [ "$summary_lines" -gt 46 ]; then
-    show_failure_logs "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
-    fail "compact summary exceeded 46 rows: $summary_lines"
-fi
-if ! awk -F'|' '
-    $1 == "compile-profile-summary" && $2 != "scope" {
-        key = $2 "|" $3
-        if ($4 != 0 && $4 != previous[key] + 1) bad = 1
-        if ($4 != 0) previous[key] = $4
-    }
-    END { exit bad ? 1 : 0 }
-' "$SUMMARY_CHECK_STDERR"; then
-    fail "compact summary ranks are not stable ascending rows"
-fi
+    summary_lines=$(grep -c '^compile-profile-summary|' "$SUMMARY_CHECK_STDERR")
+    if [ "$summary_lines" -gt 46 ]; then
+        show_failure_logs "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+        fail "compact summary exceeded 46 rows: $summary_lines"
+    fi
+    if ! awk -F'|' '
+        $1 == "compile-profile-summary" && $2 != "scope" {
+            key = $2 "|" $3
+            if ($4 != 0 && $4 != previous[key] + 1) bad = 1
+            if ($4 != 0) previous[key] = $4
+        }
+        END { exit bad ? 1 : 0 }
+    ' "$SUMMARY_CHECK_STDERR"; then
+        fail "compact summary ranks are not stable ascending rows"
+    fi
 
-echo "[compile-profile] verify normal compiler has no profile output"
-run_logged "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR" "normal fixture compile failed" \
-    "$COMPILER" compile tests/integration/arithmetic.tl -o "$NORMAL_OUTPUT_ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib
-profile_rows "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR" <<'ROWS'
+    echo "[compile-profile] verify normal compiler has no profile output"
+    run_logged "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR" "normal fixture compile failed" \
+        "$COMPILER" compile tests/integration/arithmetic.tl -o "$NORMAL_OUTPUT_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib
+    profile_rows "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR" <<'ROWS'
 lacks compile-profile
 ROWS
+
+    printf '%s|%s\n%s|%s\n' \
+        "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$NORMAL_BATCH_ARITH")" \
+        "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$NORMAL_BATCH_FUNCTIONS")" > "$NORMAL_BATCH_LIST"
+    # $PROFILE_BIN lives in $WORKDIR without a sibling sysroot while $COMPILER may
+    # carry one; disable prebuilt stdlib here so the assembly parity check below
+    # compares identical compilation paths.
+    run_logged "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR" "normal batch fixture failed" \
+        "$COMPILER" compile --batch "$NORMAL_BATCH_LIST" --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) --stdlib-root stdlib --no-prebuilt-stdlib
+    profile_rows "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR" <<'ROWS'
+lacks compile-batch-profile
+ROWS
+
+    echo "[compile-profile] scan scratch allocation regression"
+    mkdir -p "$WORKDIR/scan-growth"
+    run_tracked_in "$WORKDIR/scan-growth" \
+        "$COMPILER" test "$ROOT/src/tests/scan_storage_growth.tl" \
+        --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+        --cfg compile-profile --opt-level 2 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
+
+    echo "[compile-profile] verify producer-compiler-mismatched surface fallback"
+    surface_fallback producer-mismatch target/build-stage0/tree-hash.txt "$MISMATCH_PRODUCER_IDENTITY"
+}
+
+run_profile_fixtures_a() {
+    PROFILE_ROWS_FILE="$WORKDIR/profile-rows-a.txt"
+    # This also compiles the extracted poison-name helpers of the dotted-constructor
+    # cache.
+    echo "[compile-profile] verify dense macro profile storage and helper layout"
+    run_logged "$WORKDIR/typecheck-smoke.stdout" "$WORKDIR/typecheck-smoke.stderr" "dense macro profile storage smoke failed" \
+        "$PROFILE_BIN" run src/tests/compiler_typecheck_smoke.tl \
+        --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib \
+        --stdlib-root src --cfg compile-profile --cfg test
+
+    echo "[compile-profile] verify native comptime host metadata parity"
+    run_logged "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR" "native comptime host metadata smoke compile failed" \
+        "$PROFILE_BIN" compile src/tests/comptime_host_smoke.tl \
+        -o "$COMPTIME_HOST_SMOKE_ASM" --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src
+    if ! assemble_and_link \
+        comptime-host-smoke \
+        "$COMPTIME_HOST_SMOKE_ASM" \
+        "$COMPTIME_HOST_SMOKE_OBJ" \
+        "$COMPTIME_HOST_SMOKE_BIN" \
+        >> "$COMPTIME_HOST_SMOKE_STDOUT" 2>> "$COMPTIME_HOST_SMOKE_STDERR"; then
+        show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
+        fail "native comptime host metadata smoke link failed"
+    fi
+    COMPTIME_HOST_SMOKE_STATUS=0
+    run_tracked "$COMPTIME_HOST_SMOKE_BIN" \
+        >> "$COMPTIME_HOST_SMOKE_STDOUT" 2>> "$COMPTIME_HOST_SMOKE_STDERR" || COMPTIME_HOST_SMOKE_STATUS=$?
+    if [ "$COMPTIME_HOST_SMOKE_STATUS" -ne 42 ]; then
+        show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
+        fail "native comptime host metadata smoke expected exit 42, got $COMPTIME_HOST_SMOKE_STATUS"
+    fi
+
+    echo "[compile-profile] verify package-test native structural equality"
+    run_logged "$BUILD_CLI_TEST_STDOUT" "$BUILD_CLI_TEST_STDERR" "profile package-test native structural equality failed" \
+        "$PROFILE_BIN" test --check src/build_cli_core_tests.tl --target "$NL_BOOTSTRAP_TARGET" \
+        --stdlib-root stdlib
+
+    echo "[compile-profile] verify hydrated prelude bypass and source parity"
+    run_logged "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR" "hydrated prelude profile fixture failed" \
+        "$PROFILE_BIN" compile tests/integration/arithmetic.tl -o "$SURFACE_HYDRATED_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args)
+    profile_rows "$SURFACE_HYDRATED_STDOUT" "$SURFACE_HYDRATED_STDERR" <<'ROWS'
+has compile-profile-detail|prelude.source_pipeline_entries|0
+has compile-profile-detail|prelude.hydrations|1
+has compile-profile-detail|prelude.macro_walk_decl_visits|0
+has compile-profile-detail|prelude.typecheck_decl_checks|0
+ROWS
+    run_logged "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR" "source prelude parity fixture failed" \
+        "$PROFILE_BIN" compile tests/integration/arithmetic.tl -o "$SURFACE_SOURCE_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib
+    profile_rows "$SURFACE_SOURCE_STDOUT" "$SURFACE_SOURCE_STDERR" <<'ROWS'
+has compile-profile-detail|prelude.source_pipeline_entries|1
+has compile-profile-detail|prelude.hydrations|0
+ROWS
+    assert_intern_storage_schema_in \
+        "$SURFACE_SOURCE_STDERR" \
+        "$SURFACE_SOURCE_STDOUT" \
+        "$SURFACE_SOURCE_STDERR"
+    cmp "$SURFACE_HYDRATED_ASM" "$SURFACE_SOURCE_ASM" >/dev/null ||
+        fail "hydrated prelude assembly differs from source prelude output"
 
 echo "[compile-profile] verify macro detach structural-change decision"
 run_logged "$DETACH_NOCHANGE_STDOUT" "$DETACH_NOCHANGE_STDERR" "macro detach no-change fixture compile failed" \
@@ -999,11 +1082,11 @@ if ! awk -F'|' '
     show_failure_logs "$BATCH_STDOUT" "$BATCH_STDERR"
     fail "batch absolute live baseline drift exceeded 4 MiB"
 fi
-if ! "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
+if ! run_tracked "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
     -o "$BATCH_SINGLE_ARITH" --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) --stdlib-root stdlib \
     > "$BATCH_SINGLE_STDOUT" 2> "$BATCH_SINGLE_STDERR" ||
-   ! "$PROFILE_BIN" compile tests/integration/functions.tl \
+   ! run_tracked "$PROFILE_BIN" compile tests/integration/functions.tl \
     -o "$BATCH_SINGLE_FUNCTIONS" --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) --stdlib-root stdlib \
     >> "$BATCH_SINGLE_STDOUT" 2>> "$BATCH_SINGLE_STDERR"; then
@@ -1019,7 +1102,7 @@ echo "[compile-profile] verify failed-entry marker and diagnostic attribution"
 printf '%s|%s\n%s|%s\n' \
     "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$FAILED_BATCH_FIRST")" \
     "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$FAILED_BATCH_SECOND")" > "$FAILED_BATCH_LIST"
-if "$PROFILE_BIN" compile --batch "$FAILED_BATCH_LIST" \
+if run_tracked "$PROFILE_BIN" compile --batch "$FAILED_BATCH_LIST" \
     --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) \
     --stdlib-root stdlib \
@@ -1039,55 +1122,45 @@ fi
 cmp "$FAILED_BATCH_FIRST" "$BATCH_ARITH" >/dev/null ||
     fail "successful output before failed batch entry changed"
 
-printf '%s|%s\n%s|%s\n' \
-    "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$NORMAL_BATCH_ARITH")" \
-    "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$NORMAL_BATCH_FUNCTIONS")" > "$NORMAL_BATCH_LIST"
-# $PROFILE_BIN lives in $WORKDIR without a sibling sysroot while $COMPILER may
-# carry one; disable prebuilt stdlib here so the assembly parity check below
-# compares identical compilation paths.
-run_logged "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR" "normal batch fixture failed" \
-    "$COMPILER" compile --batch "$NORMAL_BATCH_LIST" --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) --stdlib-root stdlib --no-prebuilt-stdlib
-profile_rows "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR" <<'ROWS'
-lacks compile-batch-profile
-ROWS
-cmp "$BATCH_ARITH" "$NORMAL_BATCH_ARITH" >/dev/null ||
-    fail "profile-enabled batch changed normal arithmetic assembly"
-cmp "$BATCH_FUNCTIONS" "$NORMAL_BATCH_FUNCTIONS" >/dev/null ||
-    fail "profile-enabled batch changed normal functions assembly"
-
-if [ "$NL_HOST_OS" = windows ]; then
-    command -v pwsh >/dev/null 2>&1 || fail "pwsh is required for Windows batch memory telemetry"
-    if ! pwsh -NoProfile -File scripts/measure-compile-batch-memory.ps1 \
-        -Compiler "$PROFILE_BIN" \
-        -Batch "$BATCH_LIST" \
-        -OutputDir "$WINDOWS_MEMORY_DIR" \
-        -Target "$NL_BOOTSTRAP_TARGET" \
-        -StdlibRoot stdlib \
-        > "$WORKDIR/windows-memory.stdout" \
-        2> "$WORKDIR/windows-memory.stderr"; then
-        show_failure_logs "$WORKDIR/windows-memory.stdout" "$WORKDIR/windows-memory.stderr"
-        fail "Windows batch memory sampler failed"
+    if [ "$NL_HOST_OS" = windows ]; then
+        command -v pwsh >/dev/null 2>&1 || fail "pwsh is required for Windows batch memory telemetry"
+        if ! run_tracked pwsh -NoProfile -File scripts/measure-compile-batch-memory.ps1 \
+            -Compiler "$PROFILE_BIN" \
+            -Batch "$BATCH_LIST" \
+            -OutputDir "$WINDOWS_MEMORY_DIR" \
+            -Target "$NL_BOOTSTRAP_TARGET" \
+            -StdlibRoot stdlib \
+            > "$WORKDIR/windows-memory.stdout" \
+            2> "$WORKDIR/windows-memory.stderr"; then
+            show_failure_logs "$WORKDIR/windows-memory.stdout" "$WORKDIR/windows-memory.stderr"
+            fail "Windows batch memory sampler failed"
+        fi
+        windows_memory_rows=$(awk 'NR > 1 { rows++ } END { print rows + 0 }' \
+            "$WINDOWS_MEMORY_DIR/memory.tsv")
+        [ "$windows_memory_rows" -eq 12 ] ||
+            fail "Windows batch memory sampler expected 12 rows, got $windows_memory_rows"
     fi
-    windows_memory_rows=$(awk 'NR > 1 { rows++ } END { print rows + 0 }' \
-        "$WINDOWS_MEMORY_DIR/memory.tsv")
-    [ "$windows_memory_rows" -eq 12 ] ||
-        fail "Windows batch memory sampler expected 12 rows, got $windows_memory_rows"
-fi
 
-expected_heavy_sources='compiler_typecheck_smoke|src/tests/compiler_typecheck_smoke.tl
+    expected_heavy_sources='compiler_typecheck_smoke|src/tests/compiler_typecheck_smoke.tl
 compiler_lower_smoke|src/tests/compiler_lower_smoke.tl
 compiler_backend_smoke|src/tests/compiler_backend_smoke.tl
 doc_test_smoke|src/tests/doc_test_smoke.tl
 compiler_driver_pic_smoke|src/tests/compiler_driver_pic_smoke.tl'
-actual_heavy_sources=$(scripts/measure-heavy-closure-profile.sh --list)
-if [ "$actual_heavy_sources" != "$expected_heavy_sources" ]; then
-    fail "heavy-closure harness source list changed"
-fi
+    actual_heavy_sources=$(scripts/measure-heavy-closure-profile.sh --list)
+    if [ "$actual_heavy_sources" != "$expected_heavy_sources" ]; then
+        fail "heavy-closure harness source list changed"
+    fi
+}
 
-# A source selfhost compile exercises the compiler's embedded canonical stdlib
-# payloads and the retention/attribution invariants on the largest input. The
-# probe is Windows-only.
+run_surface_source_and_selfhost_lane() {
+    PROFILE_ROWS_FILE="$WORKDIR/profile-rows-surface.txt"
+    echo "[compile-profile] verify source-mismatched surface fallback"
+    surface_fallback source-mismatch target/embedded-stdlib-tlci/source-hash.txt \
+        "$(cat target/embedded-stdlib-tlci/source-hash.txt)-mismatch"
+
+    # A source selfhost compile exercises the compiler's embedded canonical stdlib
+    # payloads and the retention/attribution invariants on the largest input. The
+    # probe is Windows-only.
 if [ "$NL_HOST_OS" = windows ]; then
     echo "[compile-profile] selfhost embedded-stdlib allocation probe"
     run_logged "$SELFHOST_STDOUT" "$SELFHOST_STDERR" "profile-enabled selfhost compile failed" \
@@ -1264,8 +1337,11 @@ ROWS
 else
     echo "[compile-profile] selfhost allocation probe SKIPPED (windows-gated)"
 fi
+}
 
-echo "[compile-profile] alias module name-cache storage"
+run_profile_fixtures_b() {
+    PROFILE_ROWS_FILE="$WORKDIR/profile-rows-b.txt"
+    echo "[compile-profile] alias module name-cache storage"
 ALIAS_VIEW_ASM="$WORKDIR/profile-alias-view.s"
 ALIAS_VIEW_STDOUT="$WORKDIR/profile-alias-view.stdout"
 ALIAS_VIEW_STDERR="$WORKDIR/profile-alias-view.stderr"
@@ -1504,24 +1580,22 @@ fi
 
 echo "[compile-profile] verify embedded stdlib tlci routing and differential output"
 mkdir -p "$STDLIB_TLCI_DIR"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
+if ! run_tracked_in "$STDLIB_TLCI_DIR" \
     "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
-        -o "$STDLIB_TLCI_EMBEDDED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$STDLIB_TLCI_EMBEDDED_STDOUT" 2> "$STDLIB_TLCI_EMBEDDED_STDERR"; then
+    -o "$STDLIB_TLCI_EMBEDDED_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    > "$STDLIB_TLCI_EMBEDDED_STDOUT" 2> "$STDLIB_TLCI_EMBEDDED_STDERR"; then
     show_failure_logs "$STDLIB_TLCI_EMBEDDED_STDOUT" "$STDLIB_TLCI_EMBEDDED_STDERR"
     fail "embedded stdlib tlci routing fixture compile failed"
 fi
-if ! (
-    cd "$STDLIB_TLCI_DIR"
+if ! run_tracked_in "$STDLIB_TLCI_DIR" \
     "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
-        -o "$STDLIB_TLCI_SOURCE_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root "$ROOT/stdlib"
-) > "$STDLIB_TLCI_SOURCE_STDOUT" 2> "$STDLIB_TLCI_SOURCE_STDERR"; then
+    -o "$STDLIB_TLCI_SOURCE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root "$ROOT/stdlib" \
+    > "$STDLIB_TLCI_SOURCE_STDOUT" 2> "$STDLIB_TLCI_SOURCE_STDERR"; then
     show_failure_logs "$STDLIB_TLCI_SOURCE_STDOUT" "$STDLIB_TLCI_SOURCE_STDERR"
     fail "source stdlib routing fixture compile failed"
 fi
@@ -1567,14 +1641,13 @@ for f in "$ROOT"/stdlib/*.tl; do
     { cat "$f"; echo ";; provenance-control-comment"; } \
         > "$STDLIB_TLCI_MODIFIED_DIR/stdlib/$(basename "$f")"
 done
-if ! (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
+if ! run_tracked_in "$STDLIB_TLCI_MODIFIED_DIR" \
     "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
-        -o "$STDLIB_TLCI_MODIFIED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib
-) > "$STDLIB_TLCI_MODIFIED_STDOUT" 2> "$STDLIB_TLCI_MODIFIED_STDERR"; then
+    -o "$STDLIB_TLCI_MODIFIED_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$STDLIB_TLCI_MODIFIED_STDOUT" 2> "$STDLIB_TLCI_MODIFIED_STDERR"; then
     show_failure_logs "$STDLIB_TLCI_MODIFIED_STDOUT" "$STDLIB_TLCI_MODIFIED_STDERR"
     fail "modified stdlib routing fixture compile failed"
 fi
@@ -1606,11 +1679,9 @@ route_run() {
     if [ "$_rr_command" = compile ]; then
         set -- -o "$_rr_out.s" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) "$@"
     fi
-    set +e
-    (cd "$_rr_dir" && "$PROFILE_BIN" "$_rr_command" "$_rr_source" "$@") \
-        > "$_rr_out.stdout" 2> "$_rr_out.stderr"
-    route_status=$?
-    set -e
+    route_status=0
+    run_tracked_in "$_rr_dir" "$PROFILE_BIN" "$_rr_command" "$_rr_source" "$@" \
+        > "$_rr_out.stdout" 2> "$_rr_out.stderr" || route_status=$?
 }
 
 # route_pair LABEL SOURCE: both routes compile SOURCE to the same assembly.
@@ -1667,10 +1738,8 @@ route_native_exit() {
         show_failure_logs "$_rn.stdout" "$_rn.stderr"
         fail "native $1 fixture link failed"
     fi
-    set +e
-    "$_rn$NL_BIN_EXT" >> "$_rn.stdout" 2>> "$_rn.stderr"
-    _rn_status=$?
-    set -e
+    _rn_status=0
+    run_tracked "$_rn$NL_BIN_EXT" >> "$_rn.stdout" 2>> "$_rn.stderr" || _rn_status=$?
     [ "$_rn_status" -eq 42 ] || {
         show_failure_logs "$_rn.stdout" "$_rn.stderr"
         fail "native $1 fixture expected exit 42, got $_rn_status"
@@ -2269,9 +2338,72 @@ has compile-profile|lower.module_local_view.hits|
 has compile-profile|lower.module_local_view.entries|
 ROWS
 
-echo "[compile-profile] scan scratch allocation regression"
-"$COMPILER" test src/tests/scan_storage_growth.tl \
-    --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
-    --cfg compile-profile --opt-level 2 --stdlib-root stdlib --stdlib-root src
+    echo "[compile-profile] verify exhaustive stdlib tlci identity differential"
+    run_tracked sh scripts/verify-stdlib-tlci-identity-differential.sh "$PROFILE_BIN"
+}
+
+# Wave 1: build PROFILE_BIN concurrently with SUMMARY_BIN + normal-compiler
+# checks + producer-mismatch fallback (at most 2 heavy src/main.tl compiles at
+# once). Once PROFILE_BIN is linked, publish its handoff and launch Wave 2
+# (isolated source-mismatch fallback + two profile-fixture workers).
+( init_worker_traps; run_profile_build ) > "$WORKDIR/lane-profile-build.log" 2>&1 &
+_pid_profile_build=$!
+( init_worker_traps; run_summary_and_compiler_lane ) > "$WORKDIR/lane-summary.log" 2>&1 &
+_pid_summary=$!
+ACTIVE_BG_PIDS="$_pid_profile_build $_pid_summary"
+
+_rc_profile_build=0
+wait "$_pid_profile_build" || _rc_profile_build=$?
+ACTIVE_BG_PIDS="$_pid_summary"
+cat "$WORKDIR/lane-profile-build.log" || true
+if [ "$_rc_profile_build" -ne 0 ]; then
+    cleanup_bg_pids
+    fail "profile-enabled CLI build lane failed (status $_rc_profile_build)"
+fi
+
+# ci-verify reuses this one profile compiler for the sustained production-route
+# gate instead of paying for a second full self-compile. The handoff is written
+# only after a successful link and consumed only after this verifier passes.
+if [ -n "${TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE:-}" ]; then
+    mkdir -p "$(dirname -- "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE")"
+    printf '%s\n' "$PROFILE_BIN" > "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE"
+fi
+
+( init_worker_traps; run_surface_source_and_selfhost_lane ) > "$WORKDIR/lane-surface.log" 2>&1 &
+_pid_surface=$!
+( init_worker_traps; run_profile_fixtures_a ) > "$WORKDIR/lane-fixtures-a.log" 2>&1 &
+_pid_fixtures_a=$!
+( init_worker_traps; run_profile_fixtures_b ) > "$WORKDIR/lane-fixtures-b.log" 2>&1 &
+_pid_fixtures_b=$!
+ACTIVE_BG_PIDS="$_pid_summary $_pid_surface $_pid_fixtures_a $_pid_fixtures_b"
+
+_rc_summary=0
+_rc_surface=0
+_rc_fixtures_a=0
+_rc_fixtures_b=0
+wait "$_pid_summary" || _rc_summary=$?
+wait "$_pid_surface" || _rc_surface=$?
+wait "$_pid_fixtures_a" || _rc_fixtures_a=$?
+wait "$_pid_fixtures_b" || _rc_fixtures_b=$?
+ACTIVE_BG_PIDS=
+
+cat "$WORKDIR/lane-fixtures-a.log" || true
+cat "$WORKDIR/lane-surface.log" || true
+cat "$WORKDIR/lane-summary.log" || true
+cat "$WORKDIR/lane-fixtures-b.log" || true
+
+[ "$_rc_fixtures_a" -eq 0 ] || fail "compile-profile fixtures-a lane failed (status $_rc_fixtures_a)"
+[ "$_rc_surface" -eq 0 ] || fail "compile-profile surface-fallback lane failed (status $_rc_surface)"
+[ "$_rc_summary" -eq 0 ] || fail "compile-profile summary/compiler lane failed (status $_rc_summary)"
+[ "$_rc_fixtures_b" -eq 0 ] || fail "compile-profile fixtures-b lane failed (status $_rc_fixtures_b)"
+
+cmp "$SURFACE_SOURCE_ASM" "$WORKDIR/surface-source-mismatch.s" >/dev/null ||
+    fail "source-mismatch fallback differs from explicit source output"
+cmp "$SURFACE_SOURCE_ASM" "$WORKDIR/surface-producer-mismatch.s" >/dev/null ||
+    fail "producer-mismatch fallback differs from explicit source output"
+cmp "$BATCH_ARITH" "$NORMAL_BATCH_ARITH" >/dev/null ||
+    fail "profile-enabled batch changed normal arithmetic assembly"
+cmp "$BATCH_FUNCTIONS" "$NORMAL_BATCH_FUNCTIONS" >/dev/null ||
+    fail "profile-enabled batch changed normal functions assembly"
 
 echo "[compile-profile] ok"

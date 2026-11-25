@@ -401,6 +401,15 @@ count_uses_at_commit() {
 }
 
 run_check() {
+    # A local scripts/ci-affected.sh --run whose change leaves src/ and stdlib/
+    # alone cannot move either count (scripts/lib-ci-local.sh).
+    if [ -z "${SHARED_VIEW_COUNT_ROOT:-}" ] && [ -z "$BASE_OVERRIDE" ]; then
+        . "$ROOT/scripts/lib-ci-local.sh"
+        if ci_local_scope_active; then
+            echo "check-shared-view-count: the local change touches no src/ or stdlib/ source; hosted CI counts both"
+            return 0
+        fi
+    fi
     resolve_base_commit
     _rc_base_uses=$(count_uses_at_commit "$RESOLVED_BASE_COMMIT")
     _rc_uses=$(count_uses "$ROOT")

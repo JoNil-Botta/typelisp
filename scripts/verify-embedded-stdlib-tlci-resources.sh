@@ -304,6 +304,40 @@ show_logs() {
     sed 's/^/  /' "$WORKDIR/logs/$_show_name.stderr" >&2 || true
 }
 
+ACTIVE_BG_PIDS=
+cleanup_bg_pids() {
+    for _bg_pid in $ACTIVE_BG_PIDS; do
+        kill "$_bg_pid" 2>/dev/null || true
+    done
+    for _bg_pid in $ACTIVE_BG_PIDS; do
+        wait "$_bg_pid" 2>/dev/null || true
+    done
+    ACTIVE_BG_PIDS=
+}
+trap 'cleanup_bg_pids' EXIT
+trap 'cleanup_bg_pids; exit 1' HUP INT TERM
+
+validate_bounded_result() {
+    _val_requirement=$1
+    _val_name=$2
+    _val_status=$3
+    _val_report="$WORKDIR/reports/$_val_name.kv"
+    if ! read_bounded_report "$_val_report"; then
+        show_logs "$_val_name"
+        [ "$_val_requirement" = optional ] && return 1
+        fail "wrapper-failure: invalid report for workload=$_val_name"
+    fi
+    if [ "$_val_status" -ne 0 ] || [ "$BOUND_REASON" != success ] || [ "$BOUND_EXIT" -ne 0 ]; then
+        show_logs "$_val_name"
+        if [ "$_val_requirement" = optional ]; then
+            return 1
+        fi
+        fail "workload=$_val_name reason=$BOUND_REASON exit=$BOUND_EXIT wrapper-exit=$_val_status"
+    fi
+    [ "$BOUND_LIMIT" -eq "$CAP_BYTES" ] ||
+        fail "workload=$_val_name reported cap $BOUND_LIMIT, expected $CAP_BYTES"
+}
+
 run_bounded() {
     _run_requirement=$1
     _run_name=$2
@@ -318,20 +352,66 @@ run_bounded() {
         --working-directory "$ROOT" -- "$@" \
         > "$WORKDIR/logs/$_run_name.stdout" \
         2> "$WORKDIR/logs/$_run_name.stderr" || _run_status=$?
-    if ! read_bounded_report "$_run_report"; then
-        show_logs "$_run_name"
-        [ "$_run_requirement" = optional ] && return 1
-        fail "wrapper-failure: invalid report for workload=$_run_name"
-    fi
-    if [ "$_run_status" -ne 0 ] || [ "$BOUND_REASON" != success ] || [ "$BOUND_EXIT" -ne 0 ]; then
-        show_logs "$_run_name"
-        if [ "$_run_requirement" = optional ]; then
-            return 1
-        fi
-        fail "workload=$_run_name reason=$BOUND_REASON exit=$BOUND_EXIT wrapper-exit=$_run_status"
-    fi
-    [ "$BOUND_LIMIT" -eq "$CAP_BYTES" ] ||
-        fail "workload=$_run_name reported cap $BOUND_LIMIT, expected $CAP_BYTES"
+    validate_bounded_result "$_run_requirement" "$_run_name" "$_run_status"
+}
+
+# Run two independent bounded workloads concurrently, each under its own
+# CAP_MIB process-tree cap and report. Commands are logged and results are
+# validated in deterministic pair order (1 then 2), publishing PAIR{1,2}_*.
+# Usage: run_bounded_pair NAME1 CMD1... -- NAME2 CMD2...
+run_bounded_pair() {
+    _pair1_name=$1
+    shift
+    _pair1_cmd=()
+    while [ "$#" -gt 0 ] && [ "$1" != -- ]; do
+        _pair1_cmd+=("$1")
+        shift
+    done
+    [ "${1:-}" = -- ] || fail "internal error: run_bounded_pair missing separator"
+    shift
+    _pair2_name=$1
+    shift
+    _pair2_cmd=("$@")
+
+    _pair1_report="$WORKDIR/reports/$_pair1_name.kv"
+    _pair2_report="$WORKDIR/reports/$_pair2_name.kv"
+    command_add "$_pair1_name" "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" --report "$_pair1_report" -- "${_pair1_cmd[@]}"
+    command_add "$_pair2_name" "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" --report "$_pair2_report" -- "${_pair2_cmd[@]}"
+
+    "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" \
+        --report "$_pair1_report" \
+        --working-directory "$ROOT" -- "${_pair1_cmd[@]}" \
+        > "$WORKDIR/logs/$_pair1_name.stdout" \
+        2> "$WORKDIR/logs/$_pair1_name.stderr" &
+    _pair1_pid=$!
+
+    "$BOUNDED" --limit-mib "$CAP_MIB" \
+        --timeout-seconds "$TIMEOUT_SECONDS" \
+        --report "$_pair2_report" \
+        --working-directory "$ROOT" -- "${_pair2_cmd[@]}" \
+        > "$WORKDIR/logs/$_pair2_name.stdout" \
+        2> "$WORKDIR/logs/$_pair2_name.stderr" &
+    _pair2_pid=$!
+    ACTIVE_BG_PIDS="$_pair1_pid $_pair2_pid"
+
+    _pair1_status=0
+    _pair2_status=0
+    wait "$_pair1_pid" || _pair1_status=$?
+    wait "$_pair2_pid" || _pair2_status=$?
+    ACTIVE_BG_PIDS=
+
+    validate_bounded_result required "$_pair1_name" "$_pair1_status"
+    PAIR1_PEAK=$BOUND_PEAK
+    PAIR1_WALL=$BOUND_WALL
+    PAIR1_BACKEND=$BOUND_BACKEND
+
+    validate_bounded_result required "$_pair2_name" "$_pair2_status"
+    PAIR2_PEAK=$BOUND_PEAK
+    PAIR2_WALL=$BOUND_WALL
+    PAIR2_BACKEND=$BOUND_BACKEND
 }
 
 append_measurement() {
@@ -402,22 +482,26 @@ OPT2_DIR="$WORKDIR/opt2"
 OPT1_BIN="$OPT1_DIR/typelisp$NL_BIN_EXT"
 OPT2_BIN="$OPT2_DIR/typelisp$NL_BIN_EXT"
 
-run_bounded required compiler-build-opt1 \
-    "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 1 "$OPT1_DIR"
-OPT1_PEAK=$BOUND_PEAK
-OPT1_WALL=$BOUND_WALL
-OPT1_BACKEND=$BOUND_BACKEND
+# Run opt1 and opt2 compiler builds concurrently, each under its own 8 GiB cap
+# (combined peak ~5.5 GiB, safely inside 16 GiB runners and the gate budget).
+run_bounded_pair \
+    compiler-build-opt1 \
+    "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 1 "$OPT1_DIR" \
+    -- \
+    compiler-build-opt2 \
+    "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 2 "$OPT2_DIR"
+OPT1_PEAK=$PAIR1_PEAK
+OPT1_WALL=$PAIR1_WALL
+OPT1_BACKEND=$PAIR1_BACKEND
+OPT2_PEAK=$PAIR2_PEAK
+OPT2_WALL=$PAIR2_WALL
+OPT2_BACKEND=$PAIR2_BACKEND
 require_output compiler-build-opt1 "$OPT1_BIN" || exit 1
 OPT1_BYTES=$(file_bytes "$OPT1_BIN")
 OPT1_IDENTITY=$(producer_identity "$OPT1_BIN")
 [ "$OPT1_IDENTITY" = "$SOURCE_IDENTITY" ] ||
     fail "opt1 compiler identity $OPT1_IDENTITY does not match source"
 
-run_bounded required compiler-build-opt2 \
-    "$BASH_EXE" "$SCRIPT" --internal-build-compiler "$COMPILER" 2 "$OPT2_DIR"
-OPT2_PEAK=$BOUND_PEAK
-OPT2_WALL=$BOUND_WALL
-OPT2_BACKEND=$BOUND_BACKEND
 require_output compiler-build-opt2 "$OPT2_BIN" || exit 1
 OPT2_BYTES=$(file_bytes "$OPT2_BIN")
 OPT2_IDENTITY=$(producer_identity "$OPT2_BIN")
@@ -431,24 +515,22 @@ append_measurement compiler-build shared 2 "$OPT2_PEAK" "$OPT2_WALL" \
 assertion_add opt1-compiler-output required pass "identity=$OPT1_IDENTITY bytes=$OPT1_BYTES"
 assertion_add opt2-compiler-output required pass "identity=$OPT2_IDENTITY bytes=$OPT2_BYTES"
 
-for _startup_opt in 1 2; do
-    if [ "$_startup_opt" -eq 1 ]; then
-        _startup_bin=$OPT1_BIN
-    else
-        _startup_bin=$OPT2_BIN
-    fi
-    run_bounded required "cold-startup-opt$_startup_opt" \
-        "$_startup_bin" --producer-identity
-    _startup_peak=$BOUND_PEAK
-    _startup_wall=$BOUND_WALL
-    _startup_backend=$BOUND_BACKEND
-    _startup_value=$(tr -d '\r\n' < "$WORKDIR/logs/cold-startup-opt$_startup_opt.stdout")
-    [ "$_startup_value" = "$SOURCE_IDENTITY" ] ||
-        fail "cold opt$_startup_opt startup returned unexpected identity: $_startup_value"
-    append_measurement cold-startup shared "$_startup_opt" \
-        "$_startup_peak" "$_startup_wall" - not-applicable 0 \
-        "$RAW_BYTES" "$COMPRESSED_BYTES" 0 0 "$_startup_backend"
-done
+run_bounded_pair \
+    cold-startup-opt1 "$OPT1_BIN" --producer-identity \
+    -- \
+    cold-startup-opt2 "$OPT2_BIN" --producer-identity
+_startup1_value=$(tr -d '\r\n' < "$WORKDIR/logs/cold-startup-opt1.stdout")
+[ "$_startup1_value" = "$SOURCE_IDENTITY" ] ||
+    fail "cold opt1 startup returned unexpected identity: $_startup1_value"
+_startup2_value=$(tr -d '\r\n' < "$WORKDIR/logs/cold-startup-opt2.stdout")
+[ "$_startup2_value" = "$SOURCE_IDENTITY" ] ||
+    fail "cold opt2 startup returned unexpected identity: $_startup2_value"
+append_measurement cold-startup shared 1 \
+    "$PAIR1_PEAK" "$PAIR1_WALL" - not-applicable 0 \
+    "$RAW_BYTES" "$COMPRESSED_BYTES" 0 0 "$PAIR1_BACKEND"
+append_measurement cold-startup shared 2 \
+    "$PAIR2_PEAK" "$PAIR2_WALL" - not-applicable 0 \
+    "$RAW_BYTES" "$COMPRESSED_BYTES" 0 0 "$PAIR2_BACKEND"
 assertion_add cold-startup required pass "opt1 and opt2 identities exact"
 
 NATIVE_CWD="$WORKDIR/native-cwd"
@@ -487,20 +569,21 @@ EOF
 
 NATIVE_ASM="$WORKDIR/native.s"
 SOURCE_ASM="$WORKDIR/source.s"
-run_bounded required expansion-native \
+run_bounded_pair \
+    expansion-native \
     "$BASH_EXE" "$SCRIPT" --internal-expand "$OPT2_BIN" native \
-    "$FIXTURE" "$NATIVE_ASM" "$NATIVE_CWD" "$SOURCE_ROOT"
-NATIVE_PEAK=$BOUND_PEAK
-NATIVE_WALL=$BOUND_WALL
-NATIVE_BACKEND=$BOUND_BACKEND
-require_output expansion-native "$NATIVE_ASM" || exit 1
-
-run_bounded required expansion-source \
+    "$FIXTURE" "$NATIVE_ASM" "$NATIVE_CWD" "$SOURCE_ROOT" \
+    -- \
+    expansion-source \
     "$BASH_EXE" "$SCRIPT" --internal-expand "$OPT2_BIN" source \
     "$FIXTURE" "$SOURCE_ASM" "$NATIVE_CWD" "$SOURCE_ROOT"
-SOURCE_PEAK=$BOUND_PEAK
-SOURCE_WALL=$BOUND_WALL
-SOURCE_BACKEND=$BOUND_BACKEND
+NATIVE_PEAK=$PAIR1_PEAK
+NATIVE_WALL=$PAIR1_WALL
+NATIVE_BACKEND=$PAIR1_BACKEND
+SOURCE_PEAK=$PAIR2_PEAK
+SOURCE_WALL=$PAIR2_WALL
+SOURCE_BACKEND=$PAIR2_BACKEND
+require_output expansion-native "$NATIVE_ASM" || exit 1
 require_output expansion-source "$SOURCE_ASM" || exit 1
 cmp -s "$NATIVE_ASM" "$SOURCE_ASM" || fail "native/source expansion assembly differs"
 
@@ -528,11 +611,13 @@ if [ "$NL_HOST_OS" = linux ] && command -v valgrind >/dev/null 2>&1; then
     metadata_add "$METADATA" valgrind "$(valgrind --version | sed -n '1p')"
     NATIVE_CACHEGRIND="$WORKDIR/native.cachegrind"
     SOURCE_CACHEGRIND="$WORKDIR/source.cachegrind"
-    run_bounded required expansion-native-instructions \
+    run_bounded_pair \
+        expansion-native-instructions \
         "$BASH_EXE" "$SCRIPT" --internal-instructions "$OPT2_BIN" native \
         "$FIXTURE" "$WORKDIR/native.instructions.s" "$NATIVE_CWD" "$SOURCE_ROOT" \
-        "$NATIVE_CACHEGRIND" "$WORKDIR/native.valgrind.log"
-    run_bounded required expansion-source-instructions \
+        "$NATIVE_CACHEGRIND" "$WORKDIR/native.valgrind.log" \
+        -- \
+        expansion-source-instructions \
         "$BASH_EXE" "$SCRIPT" --internal-instructions "$OPT2_BIN" source \
         "$FIXTURE" "$WORKDIR/source.instructions.s" "$NATIVE_CWD" "$SOURCE_ROOT" \
         "$SOURCE_CACHEGRIND" "$WORKDIR/source.valgrind.log"

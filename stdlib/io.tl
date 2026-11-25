@@ -220,6 +220,9 @@
 ;: open flags (O_APPEND/O_RDWR/O_WRONLY, O_CREAT/O_TRUNC) into the kernel32
 ;: desired-access and creation-disposition the former shim used. `mode` is
 ;: unused (files are created with FILE_ATTRIBUTE_NORMAL), matching the shim.
+;: Every open shares read, write and delete access (`0x7`, as the file-lock
+;: open does) so a handle that antivirus, the indexer or a pending delete holds
+;: with DELETE access does not reject the open with a sharing violation.
 (cfg
   windows
   (unsafe
@@ -247,7 +250,7 @@
                 2)))]
         [handle : i64
           (unsafe
-            (io-win-create-file path access 0x3 0 disp 0x80 0))]
+            (io-win-create-file path access 0x7 0 disp 0x80 0))]
         (if (= handle -1)
           (begin
             (let

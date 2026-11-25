@@ -611,19 +611,43 @@ lane_check_case moved-need-undeclared fixture-gate-c '$1 == "fixture-gate-c" { $
 lane_check_case third-lane fixture-self-test '$1 == "fixture-self-test" { $10 = "linux-3" } { print }'
 lane_check_case wrong-host-lane fixture-gate-b '$1 == "fixture-gate-b" { $10 = "windows-1" } { print }'
 lane_check_case gate-not-on-host stage2-opt1-opt2-build-invariance '$1 == "stage2-opt1-opt2-build-invariance" { $11 = "windows-2" } { print }'
-# setup: three build-invariance workers only where nothing can run beside it.
-fixture_setup() { "$source/scripts/ci-lane.sh" setup "$1" | sed -n "s/^$2=//p"; }
-[ "$(fixture_setup linux-1 build_invariance_workers)" = 3 ] && [ -z "$(fixture_setup linux-2 build_invariance_workers)" ] &&
-    [ "$(fixture_setup linux-1 gates)" = bootstrap-fixpoint,fixture-opt2-cli,stage2-opt1-opt2-build-invariance ] || cica_fail 'lane setup changed'
+# setup: four build-invariance workers only where nothing can run beside it:
+# the lane is isolated, or the gate reserves the lane's whole ci-verify budget.
+# Each setup must succeed, so an empty worker count is never a failed setup.
+fixture_setup() {
+    "$source/scripts/ci-lane.sh" setup "$1" > "$work/lane-setup-$1.txt" || {
+        lane_restore_gates
+        cica_fail "lane setup failed: $1"
+    }
+}
+setup_field() { sed -n "s/^$2=//p" "$work/lane-setup-$1.txt"; }
+fixture_setup linux-1
+fixture_setup linux-2
+[ "$(setup_field linux-1 build_invariance_workers)" = 4 ] && [ -z "$(setup_field linux-2 build_invariance_workers)" ] &&
+    [ "$(setup_field linux-1 gates)" = bootstrap-fixpoint,fixture-opt2-cli,stage2-opt1-opt2-build-invariance ] || cica_fail 'lane setup changed'
+record_result setup-four-workers-when-isolated pass
+# fixture-self-test needs nothing and nothing needs it: in linux-1 it can run
+# beside build-invariance, which then keeps the script default.
 awk -F '\t' -v OFS='\t' '$1 == "fixture-self-test" { $10 = "linux-1" } { print }' \
     "$source/scripts/ci-gates.d/fixture-self-test.tsv" > "$work/ci-gate.shared-self-test"
 cp "$work/ci-gate.shared-self-test" "$source/scripts/ci-gates.d/fixture-self-test.tsv"
-awk -F '\t' -v OFS='\t' '$1 == "bootstrap-fixpoint" { $10 = "linux-1+linux-2" } { print }' \
-    "$source/scripts/ci-gates.d/bootstrap-fixpoint.tsv" > "$work/ci-gate.shared-fixpoint"
-cp "$work/ci-gate.shared-fixpoint" "$source/scripts/ci-gates.d/bootstrap-fixpoint.tsv"
-shared_workers=$(fixture_setup linux-1 build_invariance_workers)
+fixture_setup linux-1
+case ",$(setup_field linux-1 gates)," in
+    *,fixture-self-test,*) ;;
+    *) lane_restore_gates; cica_fail 'shared leaf is not planned in linux-1' ;;
+esac
+shared_workers=$(setup_field linux-1 build_invariance_workers)
+# Reserving the lane's whole ci-verify budget keeps the leaf from starting
+# beside build-invariance again.
+awk -F '\t' -v OFS='\t' '$1 == "stage2-opt1-opt2-build-invariance" { $7 = 14336 } { print }' \
+    "$source/scripts/ci-gates.d/stage2-opt1-opt2-build-invariance.tsv" > "$work/ci-gate.exclusive-invariance"
+cp "$work/ci-gate.exclusive-invariance" "$source/scripts/ci-gates.d/stage2-opt1-opt2-build-invariance.tsv"
+fixture_setup linux-1
+exclusive_workers=$(setup_field linux-1 build_invariance_workers)
 lane_restore_gates
-[ -z "$shared_workers" ] || cica_fail 'three workers granted to a lane that is not isolated'
-record_result setup-three-workers-only-when-isolated pass
+[ -z "$shared_workers" ] || cica_fail 'four workers granted to a lane that is not isolated'
+record_result setup-default-workers-beside-shared-leaf pass
+[ "$exclusive_workers" = 4 ] || cica_fail 'exclusive build-invariance reservation did not grant four workers'
+record_result setup-four-workers-when-exclusive pass
 cica_jq -sS '{schema:4,status:"pass",cases:.}' "$work/results.jsonl" > "$work/self-test.json"
 printf 'ci-compiler-artifact self-tests passed: %s cases\n' "$(jq '.cases|length' "$work/self-test.json")"

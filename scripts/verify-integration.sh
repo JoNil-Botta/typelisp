@@ -411,10 +411,16 @@ awk -v host="$HOST_OS" -v work_root="target/integration-verify/$HOST_OS$INTEGRAT
     > "$HOST_MANIFEST"
 
 # Batch chunks compile in a bounded pool (scripts/lib-bounded-pool.sh):
-# TYPELISP_INTEGRATION_WORKERS compiler processes at once (1-3, default 2), each
-# under an enforced memory cap and timeout (a user cgroup on Linux, a Job Object
-# on Windows), so at most workers x cap MiB of caps run concurrently.
-INTEGRATION_POOL_WORKERS=${TYPELISP_INTEGRATION_WORKERS:-2}
+# TYPELISP_INTEGRATION_WORKERS compiler processes at once (1-3; default 3 on
+# Linux, 2 on Windows until shards move to separate lanes), each under an
+# enforced memory cap and timeout (a user cgroup on Linux, a Job Object on
+# Windows), so at most workers x cap MiB of caps run concurrently.
+if [ "$HOST_OS" = windows ]; then
+    INTEGRATION_DEFAULT_WORKERS=2
+else
+    INTEGRATION_DEFAULT_WORKERS=3
+fi
+INTEGRATION_POOL_WORKERS=${TYPELISP_INTEGRATION_WORKERS:-$INTEGRATION_DEFAULT_WORKERS}
 case "$INTEGRATION_POOL_WORKERS" in
     1 | 2 | 3) ;;
     *)
@@ -424,6 +430,8 @@ case "$INTEGRATION_POOL_WORKERS" in
 esac
 INTEGRATION_POOL_CHUNK_CAP_MIB=4096
 INTEGRATION_POOL_BUDGET_MIB=$((INTEGRATION_POOL_WORKERS * INTEGRATION_POOL_CHUNK_CAP_MIB))
+INTEGRATION_BATCH_CHUNK_MAX_WEIGHT=550000
+INTEGRATION_LOCAL_FILTER_ACTIVE=0
 INTEGRATION_POOL_JOB_TIMEOUT_SECONDS=900
 # Internal: only the batch observability self-test turns enforcement off, on
 # Windows, where the Job Object wrapper cannot launch its shell-script compiler.
@@ -2108,6 +2116,10 @@ integration_select_shard() {
     NORMALIZED_MANIFEST="$WORKDIR/manifest.selected"
     SHARD_CASES="$WORKDIR/shard-cases.txt"
     : > "$SHARD_CASES" || return 1
+    INTEGRATION_LOCAL_FILTER_ACTIVE=0
+    if [ -n "${TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES:-}" ] && [ "${GITHUB_ACTIONS:-}" != true ]; then
+        INTEGRATION_LOCAL_FILTER_ACTIVE=1
+    fi
     while IFS='|' read -r _sel_name _sel_source _sel_want _sel_stdout _sel_args _sel_deps _sel_extra _sel_suite || [ -n "$_sel_name" ]; do
         case "$_sel_name" in
             "" | \#*) continue ;;
@@ -2130,8 +2142,85 @@ integration_select_shard() {
     done < "$HOST_MANIFEST" || return 1
     # Copy the selected rows byte for byte: the readers below depend on the
     # field layout the expansion emitted.
-    awk -F '|' 'FILENAME == ARGV[1] { keep[$1]; next } ($1 in keep)' \
-        "$SHARD_CASES" "$HOST_MANIFEST" > "$NORMALIZED_MANIFEST" || return 1
+    if [ "$INTEGRATION_LOCAL_FILTER_ACTIVE" -eq 0 ]; then
+        awk -F '|' 'FILENAME == ARGV[1] { keep[$1]; next } ($1 in keep)' \
+            "$SHARD_CASES" "$HOST_MANIFEST" > "$NORMALIZED_MANIFEST" || return 1
+    else
+        TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES="$TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES" \
+            awk -F '|' -v root="$ROOT" '
+            function normalize_path(p) {
+                sub(/\r$/, "", p)
+                gsub(/\\/, "/", p)
+                if (root != "" && substr(p, 1, length(root) + 1) == root "/") {
+                    p = substr(p, length(root) + 2)
+                }
+                while (substr(p, 1, 2) == "./") p = substr(p, 3)
+                while (length(p) > 1 && substr(p, length(p), 1) == "/") {
+                    p = substr(p, 1, length(p) - 1)
+                }
+                return p
+            }
+            function path_matches_changed(cand,    i, p) {
+                if (cand == "") return 0
+                if (cand in changed_set) return 1
+                for (i = 1; i <= nchanged; i++) {
+                    p = changed[i]
+                    if (substr(cand, 1, length(p) + 1) == p "/") return 1
+                    if (substr(p, 1, length(cand) + 1) == cand "/") return 1
+                }
+                return 0
+            }
+            function row_matches_changed(name, src, deps,    src_dir, src_base, name_dir, slashes, tmp, nd, dlist, j, d, i, p) {
+                if (src in changed_set) return 1
+                src_base = src
+                sub(/\.tl$/, "", src_base)
+                src_dir = src
+                if (src_dir ~ /\//) sub(/\/[^\/]+$/, "", src_dir)
+                else src_dir = ""
+                name_dir = "tests/integration/" name
+                tmp = src_dir
+                slashes = gsub(/\//, "/", tmp)
+                for (i = 1; i <= nchanged; i++) {
+                    p = changed[i]
+                    if (substr(src, 1, length(p) + 1) == p "/") return 1
+                    if (substr(p, 1, length(src_base) + 1) == src_base "/") return 1
+                    if (substr(p, 1, length(name_dir) + 1) == name_dir "/") return 1
+                    if (slashes >= 2 && substr(p, 1, length(src_dir) + 1) == src_dir "/") return 1
+                }
+                if (deps != "" && deps != "-") {
+                    nd = split(deps, dlist, /[[:space:]]+/)
+                    for (j = 1; j <= nd; j++) {
+                        d = dlist[j]
+                        if (d == "" || d == "-") continue
+                        if (path_matches_changed(d)) return 1
+                        if (src_dir != "" && path_matches_changed(src_dir "/" d)) return 1
+                        if (path_matches_changed("src/" d)) return 1
+                        if (path_matches_changed("src" "/tests/" d)) return 1
+                        if (path_matches_changed("tests/integration/" d)) return 1
+                    }
+                }
+                return 0
+            }
+            BEGIN {
+                changed_raw = ENVIRON["TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES"]
+                gsub(/\r/, "", changed_raw)
+                nraw = split(changed_raw, raw_items, /[[:space:],]+/)
+                nchanged = 0
+                for (i = 1; i <= nraw; i++) {
+                    p = normalize_path(raw_items[i])
+                    if (p != "" && !(p in changed_set)) {
+                        changed_set[p] = 1
+                        changed[++nchanged] = p
+                    }
+                }
+            }
+            FILENAME == ARGV[1] { keep[$1]; next }
+            ($1 in keep) && row_matches_changed($1, $2, $6) { print }
+        ' "$SHARD_CASES" "$HOST_MANIFEST" > "$NORMALIZED_MANIFEST" || return 1
+        _sel_total=$(wc -l < "$SHARD_CASES" | tr -d ' ')
+        _sel_kept=$(wc -l < "$NORMALIZED_MANIFEST" | tr -d ' ')
+        echo "[integration] local changed-file filter selected $_sel_kept of $_sel_total shard row(s)"
+    fi
 }
 
 
@@ -2164,8 +2253,10 @@ integration_batch_queue() {
     done < "$NORMALIZED_MANIFEST" || return 1
 
     # Every chunk is an independent compiler process writing only its own
-    # cases' outputs, so they are queued in chunk order and compiled in the
-    # bounded pool; settling afterwards walks the same order.
+    # cases' outputs. Split heavy compiler-importing rows by transitive closure
+    # weight so one group cannot pile all heavy smokes into a single straggler
+    # chunk, then emit chunks in descending weight order (LPT) in the pool queue
+    # (preserving original group/chunk order on equal weights).
     _pool_queue="$WORKDIR/batch-pool.queue"
     : > "$_pool_queue" || return 1
     set --
@@ -2174,24 +2265,166 @@ integration_batch_queue() {
         [ ! -s "$_group_list" ] || set -- "$@" "$_group_list"
     done
     [ "$#" -gt 0 ] || return 0
-    # Split every nonempty group in one process. Argument order preserves the
-    # group order; FNR preserves each group's row order and chunk boundaries.
     awk -v dir="$WORKDIR" -v size="$INTEGRATION_BATCH_SIZE" \
-        -v cap="$INTEGRATION_POOL_CHUNK_CAP_MIB" -v queue="$_pool_queue" '
-        (FNR - 1) % size == 0 {
-            if (output != "" && close(output) != 0) exit 1
-            group = FILENAME
-            sub(/^.*\/batch-/, "", group)
-            sub(/[.]list$/, "", group)
-            index_in_group = int((FNR - 1) / size) + 1
-            output = dir "/batch-" group "-" index_in_group ".list"
-            print "batch-" group "-" index_in_group "|" cap >> queue
-            chunks++
+        -v cap="$INTEGRATION_POOL_CHUNK_CAP_MIB" -v queue="$_pool_queue" \
+        -v manifest="$NORMALIZED_MANIFEST" \
+        -v max_w="$INTEGRATION_BATCH_CHUNK_MAX_WEIGHT" '
+        function resolve_mod(mod,    p, _line) {
+            if (mod ~ /^stdlib\./ || mod == "stdlib") return ""
+            p = "src/" mod ".tl"
+            if ((getline _line < p) >= 0) {
+                close(p)
+                return p
+            }
+            p = "src" "/tests/" mod ".tl"
+            if ((getline _line < p) >= 0) {
+                close(p)
+                return p
+            }
+            p = mod
+            gsub(/\./, "/", p)
+            p = p ".tl"
+            if ((getline _line < p) >= 0) {
+                close(p)
+                return p
+            }
+            return ""
         }
-        { print > output }
+        function scan_file(path,    line, n, mod, dep, i, in_str, ch, esc, k, len) {
+            if (path in scanned) return
+            scanned[path] = 1
+            n = 0
+            deg[path] = 0
+            in_str = 0
+            while ((getline line < path) > 0) {
+                n++
+                if (!in_str && line ~ /^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+/) {
+                    mod = line
+                    sub(/^[[:space:]]*(\(cfg[[:space:]]+[^()]+[[:space:]]+)?\(import[[:space:]]+\(?/, "", mod)
+                    sub(/[[:space:]\)\r].*/, "", mod)
+                    if (mod != "" && !seen_edge[path SUBSEP mod]++) {
+                        dep = resolve_mod(mod)
+                        if (dep != "" && dep != path) {
+                            deg[path]++
+                            edge[path, deg[path]] = dep
+                        }
+                    }
+                }
+                if (index(line, "\"") > 0) {
+                    len = length(line)
+                    esc = 0
+                    for (k = 1; k <= len; k++) {
+                        ch = substr(line, k, 1)
+                        if (in_str) {
+                            if (esc) { esc = 0 }
+                            else if (ch == "\\") { esc = 1 }
+                            else if (ch == "\"") { in_str = 0 }
+                        } else {
+                            if (ch == ";") { break }
+                            else if (ch == "\"") { in_str = 1 }
+                        }
+                    }
+                }
+            }
+            close(path)
+            lines[path] = n
+            for (i = 1; i <= deg[path]; i++) {
+                scan_file(edge[path, i])
+            }
+        }
+        function row_weight(src,    qhead, qtail, u, v, i, tot, vis, q) {
+            if (src == "") return 0
+            if (src in rw_cache) return rw_cache[src]
+            scan_file(src)
+            if (lines[src] == 0) {
+                rw_cache[src] = 0
+                return 0
+            }
+            qhead = 1
+            qtail = 1
+            q[1] = src
+            vis[src] = 1
+            tot = 0
+            while (qhead <= qtail) {
+                u = q[qhead++]
+                tot += lines[u]
+                for (i = 1; i <= deg[u]; i++) {
+                    v = edge[u, i]
+                    if (!(v in vis)) {
+                        vis[v] = 1
+                        q[++qtail] = v
+                    }
+                }
+            }
+            rw_cache[src] = tot + lines[src] * 4
+            return rw_cache[src]
+        }
+        function flush_chunk() {
+            if (output == "") return
+            if (close(output) != 0) exit 1
+            chunks++
+            chunk_id[chunks] = cur_job
+            chunk_w[chunks] = cw
+            output = ""
+        }
+        BEGIN {
+            if (manifest != "") {
+                while ((getline mline < manifest) > 0) {
+                    sub(/\r$/, "", mline)
+                    if (mline == "" || mline ~ /^#/) continue
+                    nm = split(mline, mfields, "|")
+                    if (nm >= 2) row_src[mfields[1]] = mfields[2]
+                }
+                close(manifest)
+            }
+        }
+        {
+            if (FNR == 1) {
+                flush_chunk()
+                group = FILENAME
+                sub(/^.*\/batch-/, "", group)
+                sub(/[.]list$/, "", group)
+                index_in_group = 0
+                cf = 0
+                cw = 0
+            }
+            case_name = $0
+            sub(/\|.*/, "", case_name)
+            sub(/^.*\//, "", case_name)
+            sub(/\.tl$/, "", case_name)
+            rw = row_weight(row_src[case_name])
+            if (cf == 0 || cf >= size || (max_w > 0 && cw > 0 && cw + rw > max_w)) {
+                flush_chunk()
+                index_in_group++
+                cur_job = "batch-" group "-" index_in_group
+                output = dir "/" cur_job ".list"
+                cf = 0
+                cw = 0
+            }
+            print > output
+            cf++
+            cw += rw
+        }
         END {
-            if (output != "" && close(output) != 0) exit 1
-            if (chunks && close(queue) != 0) exit 1
+            flush_chunk()
+            if (chunks > 0) {
+                for (i = 1; i <= chunks; i++) ord[i] = i
+                for (i = 2; i <= chunks; i++) {
+                    idx = ord[i]
+                    kw = chunk_w[idx]
+                    j = i - 1
+                    while (j >= 1 && chunk_w[ord[j]] < kw) {
+                        ord[j + 1] = ord[j]
+                        j--
+                    }
+                    ord[j + 1] = idx
+                }
+                for (i = 1; i <= chunks; i++) {
+                    idx = ord[i]
+                    print chunk_id[idx] "|" cap >> queue
+                }
+                if (close(queue) != 0) exit 1
+            }
         }
     ' "$@" || return 1
 }
@@ -2504,6 +2737,75 @@ EOF
         exit 1
     fi
     HOST_OS=linux
+
+    # Weight-bounded splitting breaks heavy rows out of oversized chunks and
+    # hoists the heaviest chunks to the front of the pool queue (LPT).
+    _lpt_dir="$_dir/lpt-split"
+    mkdir -p "$_lpt_dir/cases"
+    printf ';; light\n' > "$_lpt_dir/cases/light1.tl"
+    printf ';; light\n' > "$_lpt_dir/cases/light2.tl"
+    awk 'BEGIN { for (i = 0; i < 70; i++) print ";; heavy" }' > "$_lpt_dir/cases/heavy1.tl"
+    awk 'BEGIN { for (i = 0; i < 80; i++) print ";; heavier" }' > "$_lpt_dir/cases/heavy2.tl"
+    awk 'BEGIN { for (i = 0; i < 120; i++) print ";; heaviest" }' > "$_lpt_dir/cases/heavy_em.tl"
+    (
+        WORKDIR=$_lpt_dir
+        NORMALIZED_MANIFEST="$_lpt_dir/lpt.manifest"
+        cat > "$NORMALIZED_MANIFEST" <<EOF
+ss_l1|$_lpt_dir/cases/light1.tl|0|-|-|-|stage-stdlib
+ss_l2|$_lpt_dir/cases/light2.tl|0|-|-|-|stage-stdlib
+ss_h1|$_lpt_dir/cases/heavy1.tl|0|-|-|-|stage-stdlib
+ss_h2|$_lpt_dir/cases/heavy2.tl|0|-|-|-|stage-stdlib
+em_l1|$_lpt_dir/cases/light1.tl|0|-|-|-
+em_h1|$_lpt_dir/cases/heavy_em.tl|0|-|-|-
+EOF
+        INTEGRATION_BATCH_GROUPS='stage-stdlib embedded'
+        INTEGRATION_BATCH_SIZE=10
+        INTEGRATION_BATCH_CHUNK_MAX_WEIGHT=350
+        integration_batch_queue
+        if [ "$(head -n 1 "$_lpt_dir/batch-pool.queue")" != "batch-embedded-2|$INTEGRATION_POOL_CHUNK_CAP_MIB" ] ||
+            [ ! -s "$_lpt_dir/batch-stage-stdlib-3.list" ] ||
+            [ "$(cat "$_lpt_dir"/batch-*-[0-9]*.list | wc -l | tr -d ' ')" -ne 6 ]; then
+            echo "FAIL: weight-bounded integration batch queue did not split heavy rows or hoist heaviest chunk (LPT)" >&2
+            cat "$_lpt_dir/batch-pool.queue" >&2
+            exit 1
+        fi
+    ) || exit 1
+
+    # Local-only changed-file filter matches source path, case-dir prefix, and
+    # deps field 6, and is strictly ignored when GITHUB_ACTIONS=true.
+    _flt_dir="$_dir/local-filter"
+    mkdir -p "$_flt_dir"
+    cat > "$_flt_dir/host.manifest" <<'EOF'
+case_src|tests/integration/alpha.tl|0|-|-|-
+case_dir|tests/integration/beta/main.tl|0|-|-|-
+case_dep|tests/integration/gamma.tl|0|-|-|benchmarks/gamma_bench/baseline.c helper_dep.tl
+case_other|tests/integration/delta.tl|0|-|-|-
+EOF
+    (
+        WORKDIR=$_flt_dir
+        HOST_MANIFEST="$_flt_dir/host.manifest"
+        INTEGRATION_BATCH_GROUPS='stage-stdlib embedded'
+        INTEGRATION_ALL_GROUPS='stage-stdlib embedded'
+        GITHUB_ACTIONS=
+        TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES='tests\integration\alpha.tl tests/integration/beta benchmarks\gamma_bench\baseline.c'
+        export GITHUB_ACTIONS TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES
+        integration_select_shard > "$_flt_dir/filter.log"
+        if [ "$INTEGRATION_LOCAL_FILTER_ACTIVE" -ne 1 ] ||
+            [ "$(cut -d '|' -f 1 "$_flt_dir/manifest.selected" | tr '\n' ' ')" != 'case_src case_dir case_dep ' ]; then
+            echo "FAIL: local changed-file filter selected unexpected rows" >&2
+            cat "$_flt_dir/manifest.selected" >&2
+            exit 1
+        fi
+        GITHUB_ACTIONS=true
+        export GITHUB_ACTIONS
+        integration_select_shard > "$_flt_dir/ci.log"
+        if [ "$INTEGRATION_LOCAL_FILTER_ACTIVE" -ne 0 ] ||
+            [ "$(wc -l < "$_flt_dir/manifest.selected" | tr -d ' ')" -ne 4 ]; then
+            echo "FAIL: GITHUB_ACTIONS=true did not strictly ignore TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES" >&2
+            cat "$_flt_dir/manifest.selected" >&2
+            exit 1
+        fi
+    ) || exit 1
 
     # The pooled route: three chunks, one of whose compiles fails. Every chunk
     # is settled in queue order, the failed chunk's candidate output is removed
@@ -4531,7 +4833,7 @@ if [ "$HOST_OS" = windows ] && [ "$WINDOWS_MANIFEST_QUEUED" -gt 0 ]; then
     fi
     # The differential compares three already-built default-level corpus
     # binaries, so the canonical shard that stages them runs it for the host.
-    if [ "$INTEGRATION_SHARD_CANONICAL" -eq 1 ]; then
+    if [ "$INTEGRATION_SHARD_CANONICAL" -eq 1 ] && [ "$INTEGRATION_LOCAL_FILTER_ACTIVE" -eq 0 ]; then
         if ! windows_runner_differential_self_test; then
             exit 1
         fi
@@ -4597,7 +4899,9 @@ if [ "$INTEGRATION_SHARD_CANONICAL" -eq 1 ]; then
         echo "FAIL: $HOST_MANIFEST has no compiler_frontend_smoke_suite row" >&2
         exit 1
     }
-    assert_frontend_smoke_timing_rows
+    if [ "$INTEGRATION_LOCAL_FILTER_ACTIVE" -eq 0 ]; then
+        assert_frontend_smoke_timing_rows
+    fi
 fi
 
 # The host fixture corpora publish into the canonical work root, which is the

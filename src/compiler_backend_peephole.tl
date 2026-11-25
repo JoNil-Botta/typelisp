@@ -4339,6 +4339,8 @@
                     (= base3 7499640)
                     (= base3 7104627)
                     (= base3 7497843)
+                    ;; ror: the optimizer's immediate rotate.
+                    (= base3 7499634)
                     (= base3 7496051)
                     (= base3 7102835)
                     (= base3 6776174)

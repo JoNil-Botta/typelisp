@@ -1097,6 +1097,27 @@ mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal
 expected_cases=$(count_and_validate_manifest "$NORMALIZED_MANIFEST") || fail "infrastructure-resource-failure: malformed or duplicate manifest row"
 [ "$expected_cases" -gt 0 ] || fail "infrastructure-resource-failure: manifest contains no cases"
 
+# A local scripts/ci-affected.sh --run whose change is only tests/safety/*.tl
+# fixtures runs the cases whose source is, or names, a changed fixture
+# (scripts/lib-ci-local.sh). Any other change keeps the whole manifest.
+. "$ROOT/scripts/lib-ci-local.sh"
+if ci_local_scope_active &&
+    ! grep -v -E '^tests/safety/[^/]+[.]tl$' "$TYPELISP_CI_LOCAL_SCOPE_PATHS" > /dev/null; then
+    awk -F '|' '!/^#/ && NF { print $3 }' "$NORMALIZED_MANIFEST" | LC_ALL=C sort -u > "$WORKDIR/scope.sources"
+    ci_local_scope_filter "$WORKDIR/scope.sources" "$WORKDIR/scope.selected"
+    awk -F '|' 'NR == FNR { keep[$0] = 1; next } /^#/ || !NF || ($3 in keep)' \
+        "$WORKDIR/scope.selected" "$NORMALIZED_MANIFEST" > "$WORKDIR/manifest.scoped"
+    mv "$WORKDIR/manifest.scoped" "$NORMALIZED_MANIFEST"
+    scoped_cases=$(count_and_validate_manifest "$NORMALIZED_MANIFEST") ||
+        fail "infrastructure-resource-failure: malformed scoped manifest"
+    echo "[safety-corpus] local changed-file scope: $scoped_cases of $expected_cases case(s); hosted CI runs the whole manifest"
+    expected_cases=$scoped_cases
+    if [ "$expected_cases" -eq 0 ]; then
+        echo "safety corpus verification passed: the local change touches no safety case"
+        exit 0
+    fi
+fi
+
 plan_safety_pool
 POOL_DIR="$WORKDIR/pool"
 bounded_pool_init "$POOL_DIR" "$SAFETY_POOL_BUDGET_MIB" "$POOL_QUEUE" ||

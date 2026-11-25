@@ -29,8 +29,9 @@ the complete codegen smoke and build backend-tests at opt2 within 8 GiB.
 
 After opt1 compiler construction, all corpus compiles and the backend-tests
 build run in a pool of
-TYPELISP_BUILD_INVARIANCE_WORKERS processes (1-3, default 2), each under a
-kernel-enforced memory cap, with at most 12288 MiB of caps running at once.
+TYPELISP_BUILD_INVARIANCE_WORKERS processes (1-4, default 2), each under a
+kernel-enforced memory cap, with at most 12288 MiB of caps running at once
+(14336 MiB with four workers).
 EOF
 }
 
@@ -99,13 +100,15 @@ fi
 # Concurrency is bounded by enforcement rather than by what a host tolerates:
 # every pooled job runs under a kernel-enforced cap with swap disabled, and a
 # job starts only while the caps of all running jobs fit the pool budget. The
-# budget leaves a 16 GiB runner a quarter of its memory for everything outside
-# the pool. The complete backend-tests build, both producers' complete codegen
-# smoke and the four whole-compiler selfhost compiles keep the 8 GiB cap, so no
-# two of them overlap; every other chunk keeps its 4 GiB class. The outer
-# ci-verify scheduler reserves measured gate peaks separately from these hard
-# per-process caps.
-POOL_WORKERS_MAX=3
+# complete backend-tests build (4.1 GiB measured) keeps the 8 GiB cap; the
+# chunks' classes are build_invariance_chunk_class. The budget leaves a 16 GiB
+# runner a quarter of its memory for everything outside the pool, or with four
+# workers 2 GiB: CI grants four only to a lane where this gate runs alone or
+# reserves the lane's whole ci-verify budget (scripts/ci-lane.sh), and there
+# the 14336 MiB of caps (8192 + 3 * 2048 beside backend-tests) still bound the
+# measured peaks to under 9 GiB. The outer ci-verify scheduler reserves
+# measured gate peaks separately from these hard per-process caps.
+POOL_WORKERS_MAX=4
 POOL_WORKERS=${TYPELISP_BUILD_INVARIANCE_WORKERS:-2}
 case "$POOL_WORKERS" in
     "" | *[!0-9]*)
@@ -118,8 +121,8 @@ if [ "$POOL_WORKERS" -lt 1 ] || [ "$POOL_WORKERS" -gt "$POOL_WORKERS_MAX" ]; the
     exit 2
 fi
 POOL_BUDGET_MIB=12288
+[ "$POOL_WORKERS" -lt 4 ] || POOL_BUDGET_MIB=14336
 POOL_FULL_CAP_MIB=8192
-POOL_CHUNK_CAP_MIB=4096
 # Backend tests keep their deadline; chunk deadlines use the shared policy.
 POOL_JOB_TIMEOUT_SECONDS=600
 
@@ -613,14 +616,6 @@ run_batch_sentinels() {
     done
 }
 
-pool_job_cap_mib() {
-    if build_invariance_chunk_is_codegen_smoke "$1" || build_invariance_chunk_is_selfhost "$1"; then
-        printf '%s\n' "$POOL_FULL_CAP_MIB"
-    else
-        printf '%s\n' "$POOL_CHUNK_CAP_MIB"
-    fi
-}
-
 # The worker pool's job callback; see lib-bounded-pool.sh.
 bounded_pool_run_job() {
     pool_job=$1
@@ -715,9 +710,15 @@ run_batched_comparison() {
     POOL_QUEUE="$WORKDIR/pool-queue.txt"
     POOL_JOBS="$WORKDIR/pool-jobs.txt"
     POOL_PAIRS="$WORKDIR/pool-pairs.txt"
-    printf 'backend-tests|%s\n' "$POOL_FULL_CAP_MIB" > "$POOL_QUEUE"
+    # Rows of `rank|producer|order|job|cap` and `rank|order|left|right|cases`,
+    # sorted into the queue and the comparison order below. The longest
+    # build, backend-tests, comes first; within a class the opt1-built
+    # producer's slower compiles start before the opt2-built ones.
+    pool_order="$WORKDIR/pool-order.txt"
+    pair_order="$WORKDIR/pair-order.txt"
+    printf '0|0|0|backend-tests|%s\n' "$POOL_FULL_CAP_MIB" > "$pool_order"
+    : > "$pair_order"
     : > "$POOL_JOBS"
-    : > "$POOL_PAIRS"
 
     BATCH_CASE_COUNT=0
     batch_index=0
@@ -747,13 +748,17 @@ run_batched_comparison() {
             batch_index=$((batch_index + 1))
             left_job="opt1-built.opt$opt_level.$chunk_id"
             right_job="opt2-built.opt$opt_level.$chunk_id"
-            printf '%s|%s\n' "$left_job" "$(pool_job_cap_mib "$left_cases")" >> "$POOL_QUEUE"
-            printf '%s|%s\n' "$right_job" "$(pool_job_cap_mib "$right_cases")" >> "$POOL_QUEUE"
+            left_class=$(build_invariance_chunk_class "$left_cases" opt1-built)
+            right_class=$(build_invariance_chunk_class "$right_cases" opt2-built)
+            printf '%s|1|%s|%s|%s\n' "${left_class#* }" "$batch_index" "$left_job" "${left_class% *}" >> "$pool_order"
+            printf '%s|2|%s|%s|%s\n' "${right_class#* }" "$batch_index" "$right_job" "${right_class% *}" >> "$pool_order"
             printf '%s|opt1-built|%s|%s|%s|%s\n' "$left_job" "$opt_level" "$chunk_id" "$batch_index/$left_chunk_count" "$left_entries" >> "$POOL_JOBS"
             printf '%s|opt2-built|%s|%s|%s|%s\n' "$right_job" "$opt_level" "$chunk_id" "$batch_index/$left_chunk_count" "$right_entries" >> "$POOL_JOBS"
-            printf '%s|%s|%s\n' "$left_job" "$right_job" "$left_cases" >> "$POOL_PAIRS"
+            printf '%s|%s|%s|%s|%s\n' "${left_class#* }" "$batch_index" "$left_job" "$right_job" "$left_cases" >> "$pair_order"
         done
     done
+    LC_ALL=C sort -t '|' -k1,1n -k2,2n -k3,3n "$pool_order" | cut -d '|' -f 4- > "$POOL_QUEUE"
+    LC_ALL=C sort -t '|' -k1,1n -k2,2n "$pair_order" | cut -d '|' -f 3- > "$POOL_PAIRS"
     POOL_DIR="$WORKDIR/pool"
     bounded_pool_init "$POOL_DIR" "$POOL_BUDGET_MIB" "$POOL_QUEUE"
     mkdir -p "$POOL_DIR/metrics" "$POOL_DIR/timing" "$WORKDIR/backend-memory"

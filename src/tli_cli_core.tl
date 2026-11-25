@@ -157,72 +157,64 @@
 (define (tli-sysroot-options-explicit? [options : (& TliSysrootOptions)]) : bool
   (> (string.string-length (& options.explicit-root)) 0))
 
-;; Check whether a single directory tree overrides any embedded stdlib source
-;; file with contents that differ from it once inline tests are blanked, the
-;; same equivalence the loader uses to keep a disk stdlib module on its
-;; embedded identity.
-(define (tli-sysroot-dir-overrides-stdlib-at?
-  [dir : (& str)]
-  [prefix : (& str)]
-  [depth : i64]) : bool
-  (match (fs.try-read-dir dir)
-    [(ErrIoStringVector _) false]
-    [(OkIoStringVector entries)
+;; Return true when `full` cannot be read or differs from `expected` once
+;; inline tests are blanked, matching the loader's embedded-stdlib equivalence.
+(define (tli-sysroot-file-overrides-expected?
+  [full : (& str)]
+  [expected : (& str)]) : bool
+  (match (io.try-read-file full)
+    [(OkIoBytes actual)
       (let
-        [count : i64 (fs.string-vector-len (& entries))]
-        (for [i (iterator.range 0 count)]
-          (let
-            [entry : String (fs.string-vector-get (& entries) i "")]
-            [n : i64 (string.string-length (& entry))]
-            (unless
-              (or (= n 0) (string.is-string-prefix-at (& entry) "." 0))
-              (if (and
-                (> n 3)
-                (string.is-string-prefix-at (& entry) ".tl" (- n 3)))
-                (let
-                  [rel : String
-                    (if (= (string.string-length prefix) 0)
-                      (string.copy (& entry))
-                      (string.concat3-borrowed prefix "/" (& entry)))]
-                  (match (embedded.compiler-embedded-stdlib-lookup rel)
-                    [(CompilerEmbeddedStdlibSomeSource expected)
-                      (let
-                        [full : String (fs.path-join dir (& entry))]
-                        (match (io.try-read-file (& full))
-                          [(OkIoBytes actual)
-                            (let
-                              [actual-text : String (byte_buf.to-string actual)]
-                              (unless
-                                (embedded.compiler-embedded-stdlib-source-matches-blanked?
-                                  (& actual-text)
-                                  (& expected))
-                                (return true)))]
-                          [(ErrIoBytes _) (return true)]))]
-                    [(CompilerEmbeddedStdlibNoSource) unit]))
-                (when
-                  (> depth 0)
-                  (let
-                    [full : String (fs.path-join dir (& entry))]
-                    (match (fs.try-file-kind (& full))
-                      [(OkFsFileKind kind)
-                        (when
-                          (fs.file-kind-directory? kind)
-                          (let
-                            [rel : String
-                              (if (= (string.string-length prefix) 0)
-                                (string.copy (& entry))
-                                (string.concat3-borrowed prefix "/" (& entry)))]
-                            (when
-                              (tli-sysroot-dir-overrides-stdlib-at?
-                                (& full)
-                                (& rel)
-                                (- depth 1))
-                              (return true))))]
-                      [_ unit])))))))
-        false)]))
+        [actual-text : String (byte_buf.to-string actual)]
+        (not
+          (embedded.compiler-embedded-stdlib-source-matches-blanked?
+            (& actual-text)
+            expected)))]
+    [(ErrIoBytes _) true]))
 
+;; Check whether `dir`/`suffix` exists and differs from `expected` once inline
+;; tests are blanked.
+(define (tli-sysroot-dir-overrides-module?
+  [dir : (& str)]
+  [suffix : (& str)]
+  [expected : (& str)]) : bool
+  (let
+    [full : String (fs.path-join dir suffix)]
+    (match (io.try-file-exists? (& full))
+      [(OkIoBool exists?)
+        (if exists?
+          (tli-sysroot-file-overrides-expected? (& full) expected)
+          false)]
+      [(ErrIoBool _) true])))
+
+;; Check whether a single directory overrides any embedded stdlib source file
+;; with contents that differ from it once inline tests are blanked. Probe the
+;; canonical embedded suffix list in fixed order (never host directory order)
+;; and decode an embedded payload only when the candidate path exists on disk.
 (define (tli-sysroot-dir-overrides-stdlib? [dir : (& str)]) : bool
-  (tli-sysroot-dir-overrides-stdlib-at? dir "" 4))
+  (match (fs.try-file-kind dir)
+    [(OkFsFileKind kind)
+      (when (not (fs.file-kind-directory? kind)) (return false))]
+    [_ (return false)])
+  (let
+    [count : i64 (embedded.compiler-embedded-stdlib-suffix-count)]
+    (for [i (iterator.range 0 count)]
+      (let
+        [suffix : String (embedded.compiler-embedded-stdlib-suffix-at i)]
+        [full : String (fs.path-join dir (& suffix))]
+        (match (io.try-file-exists? (& full))
+          [(OkIoBool exists?)
+            (when
+              exists?
+              (match (embedded.compiler-embedded-stdlib-lookup
+                (string.copy (& suffix)))
+                [(CompilerEmbeddedStdlibSomeSource expected)
+                  (when
+                    (tli-sysroot-file-overrides-expected? (& full) (& expected))
+                    (return true))]
+                [(CompilerEmbeddedStdlibNoSource) unit]))]
+          [(ErrIoBool _) (return true)])))
+    false))
 
 ;; Fast check: zero filesystem calls when no `--stdlib-root` or
 ;; `TYPELISP_STDLIB_ROOT` is configured. When configured, disable prebuilt
@@ -297,6 +289,7 @@
   (cfg (not embedded-stdlib-tlci) (return Inactive))
   ;; Keep -O2 on source stdlib until HAS_COMPACT_IR is populated in Stage 3.
   (when (= opt-level 2) (return Inactive))
+  (when options.disabled (return Inactive))
   ;; Settle every sysroot-independent fallback before discovery: discovery
   ;; reads the executable path, so its cost depends on where the compiler is
   ;; installed, and a job that keeps the source stdlib must not pay it.

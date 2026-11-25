@@ -1,2 +1,2 @@
 id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
-stage2-opt1-opt2-build-invariance	880	linux	stage2 opt1/opt2 build-invariance	bootstrap-compiler	stage2	7168	-	gate_build_invariance	linux-1	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-opt1-opt2-build-invariance	1335	linux	stage2 opt1/opt2 build-invariance	bootstrap-compiler	stage2	14336	-	gate_build_invariance	linux-1	-	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

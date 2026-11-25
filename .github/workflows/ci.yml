@@ -65,9 +65,9 @@ jobs:
           fetch-depth: 2
 
       # Fails every lane when scripts/ci-gates.d/*.tsv leaves a gate unassigned,
-      # assigns one twice or omits a declared duplicate. Only a lane that holds
-      # nothing else beside build-invariance gets three pool workers (hosted
-      # only); under this layout no lane does.
+      # assigns one twice or omits a declared duplicate. Only a lane where
+      # nothing else can run beside build-invariance gets four pool workers
+      # (hosted only); its 14336 MiB reservation makes it run alone in linux-1.
       - name: Plan CI lane
         id: plan
         shell: bash

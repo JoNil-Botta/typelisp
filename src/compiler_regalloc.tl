@@ -9143,6 +9143,11 @@
       (not (compiler-reg-shift-const-in-range? rhs (& count-ty) ty))]
     [(Shr count-ty)
       (not (compiler-reg-shift-const-in-range? rhs (& count-ty) ty))]
+    [(Rotr)
+      (match rhs
+        [(I64 n)
+          (not (and (>= n 0) (< n (compiler-reg-clobber-shift-width ty))))]
+        [_ true])]
     [_ false]))
 
 (define (compiler-reg-clobber-instr-kind?

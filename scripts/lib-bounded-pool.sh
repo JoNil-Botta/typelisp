@@ -85,6 +85,15 @@ bounded_pool_read_report() {
 # per held lock) and `results/` (its exit status).
 BOUNDED_POOL_LOCK_TRIES=${BOUNDED_POOL_LOCK_TRIES:-600}
 
+# Idle workers and waiters poll the pool state. Across a pool of many short
+# jobs a whole-second poll leaves workers idle between jobs, so poll five
+# times a second where sleep takes fractions, and once a second otherwise.
+if sleep 0.0 2>/dev/null; then
+    BOUNDED_POOL_POLL_SECONDS=0.2
+else
+    BOUNDED_POOL_POLL_SECONDS=1
+fi
+
 # Ubuntu 26.04's uutils mkdir returns 0 to the loser of a race on the same
 # new directory (Ubuntu bug #2171333), so `mkdir "$pool/lock"` is not an
 # exclusive claim there. A noclobber redirection opens with O_EXCL in the
@@ -338,7 +347,7 @@ bounded_pool_worker() {
             0) ;;
             1) break ;;
             3)
-                sleep 1
+                sleep "$BOUNDED_POOL_POLL_SECONDS"
                 continue
                 ;;
             *) exit 1 ;;
@@ -396,7 +405,7 @@ bounded_pool_wait_for() {
             echo "[$BOUNDED_POOL_LABEL] every pool worker exited without a result for $_bp_wait_missing" >&2
             return 1
         fi
-        sleep 1
+        sleep "$BOUNDED_POOL_POLL_SECONDS"
     done
 }
 

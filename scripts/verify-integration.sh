@@ -2132,9 +2132,11 @@ integration_select_shard() {
         awk -F '|' 'FILENAME == ARGV[1] { keep[$1]; next } ($1 in keep)' \
             "$SHARD_CASES" "$HOST_MANIFEST" > "$NORMALIZED_MANIFEST" || return 1
     else
-        awk -F '|' -v root="$ROOT" -v changed_raw="$TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES" '
+        TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES="$TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES" \
+            awk -F '|' -v root="$ROOT" '
             function normalize_path(p) {
                 sub(/\r$/, "", p)
+                gsub(/\\/, "/", p)
                 if (root != "" && substr(p, 1, length(root) + 1) == root "/") {
                     p = substr(p, length(root) + 2)
                 }
@@ -2186,6 +2188,7 @@ integration_select_shard() {
                 return 0
             }
             BEGIN {
+                changed_raw = ENVIRON["TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES"]
                 gsub(/\r/, "", changed_raw)
                 nraw = split(changed_raw, raw_items, /[[:space:],]+/)
                 nchanged = 0
@@ -2770,7 +2773,7 @@ EOF
         INTEGRATION_BATCH_GROUPS='stage-stdlib embedded'
         INTEGRATION_ALL_GROUPS='stage-stdlib embedded'
         GITHUB_ACTIONS=
-        TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES='tests/integration/alpha.tl tests/integration/beta benchmarks/gamma_bench/baseline.c'
+        TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES='tests\integration\alpha.tl tests/integration/beta benchmarks\gamma_bench\baseline.c'
         export GITHUB_ACTIONS TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES
         integration_select_shard > "$_flt_dir/filter.log"
         if [ "$INTEGRATION_LOCAL_FILTER_ACTIVE" -ne 1 ] ||

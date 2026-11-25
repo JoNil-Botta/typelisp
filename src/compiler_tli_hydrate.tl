@@ -1517,6 +1517,93 @@
           canonical-id
           slot)))))
 
+(define (tli-hydrate-project-dispatch!
+  [facts : (&mut TliHydratedFacts)]
+  [decls : (&mut ast.AstDeclList)]
+  [paths : (&mut ast.AstDeclPathList)]
+  [modules : (&mut ast.AstDeclModuleList)]
+  [row : (& tli.TliDispatchDecl)]
+  [is-stdlib : bool]
+  [package-name : (& str)]
+  [package-version : (& str)]
+  [source-path : (& str)]
+  [mod-id : i64]
+  [prov-id : i64]) : unit
+  (let
+    [name-id : i64 (tli-hydrate-name (& row.name))]
+    [unsafe-decl : bool (!= (bit-and row.flags 1) 0)]
+    [meta : ast.AstDeclMeta (tli-hydrate-decl-meta false 0)]
+    [archive-sym : String
+      (if is-stdlib
+        (tli-hydrate-archive-qualified-symbol
+          source-path
+          (& row.module-name)
+          (& row.link-symbol))
+        (string.copy (& row.link-symbol)))]
+    [archive-sym-id : i64 (tli-hydrate-name (& archive-sym))]
+    [ext-flags : i64
+      (ast.ast-extern-metadata-flags
+        false
+        (string.eq (& archive-sym) (& row.name)))]
+    [spmd-meta : ast.AstImportedSpmdMetadata
+      (if (or is-stdlib (= (string.string-length package-name) 0))
+        (ast.AstImportedSpmdMetadata.No)
+        (let
+          [canonical : String
+            (if (> (string.string-length (& row.module-name)) 0)
+              (str_cat.str-cat
+                (string.copy (& row.module-name))
+                "/"
+                (string.copy (& row.name)))
+              (str_cat.str-cat
+                (string.copy package-name)
+                "/"
+                (string.copy (& row.name))))]
+          (ast.AstImportedSpmdMetadata.Package
+            (string.copy package-name)
+            (string.copy package-version)
+            (intern.intern-id-from-renderable
+              (intern.intern-generated-canonical-name canonical))
+            (box (ast.ast-imported-spmd-callable-list-new)))))]
+    [ext-meta : ast.AstExternMetadata
+      (ast.AstExternMetadata.Metadata
+        (ast.AstExternAbi.TypeLisp)
+        (intern.intern-id-from-renderable archive-sym-id)
+        (ast.ast-extern-link-input-list-new)
+        ext-flags
+        spmd-meta)]
+    [sig : ast.AstType (tli-hydrate-type (& row.signature))]
+    [decl : ast.AstDecl
+      (tli-hydrate-wrap-unsafe
+        unsafe-decl
+        (ast.AstDecl.Extern
+          meta
+          name-id
+          (ast.AstExternKind.Function)
+          (box ext-meta)
+          sig))]
+    (tli-hydrate-push-decl! decls paths modules decl source-path mod-id prov-id)
+    (in-arena
+      (unsafe
+        (arena.Arena facts.owner-arena))
+      (let
+        [canonical-id : i64
+          (csym.compiler-symbol-module-key-id-by-id mod-id name-id)]
+        [slot : i64 (fn_summary_vec.len (& facts.fn-summaries))]
+        (fn_summary_vec.push-ref!
+          (&mut facts.fn-summaries)
+          (TliHydratedFnSummaryRow
+            (if unsafe-decl
+              1
+              0)
+            0
+            (__tl_make-array i64 0)
+            (__tl_make-array TliHydratedGlobalWrite 0)))
+        (tli_i64_map.insert-ref!
+          (&mut facts.fn-summary-slots)
+          canonical-id
+          slot)))))
+
 (define (tli-hydrate-project-fn!
   [facts : (&mut TliHydratedFacts)]
   [decls : (&mut ast.AstDeclList)]
@@ -1870,6 +1957,19 @@
         package-name
         package-version
         spmd-callables
+        (& physical-path)
+        mod-id
+        prov-id))
+    (for [i (iterator.range 0 (array-length record.dispatches))]
+      (tli-hydrate-project-dispatch!
+        facts
+        decls
+        paths
+        modules
+        (& (array-ref record.dispatches i))
+        is-stdlib
+        package-name
+        package-version
         (& physical-path)
         mod-id
         prov-id))

@@ -1370,16 +1370,32 @@
             (& params)
             ret
             body-box))]
-      [(DefDispatch _ name _)
+      [(DefDispatch _ name variants)
         (let
           [spelling : String (tli-extract-name name)]
           [symbol : String
-            (symbols.compiler-symbol-module-key
-              (string.copy (& module-name))
-              (string.copy (& spelling)))]
+            (if is-stdlib
+              (symbols.compiler-symbol-module-key
+                (string.copy (& module-name))
+                (string.copy (& spelling)))
+              (tli-extract-package-link-symbol
+                decl-path
+                raw-module-name
+                (& spelling)))]
+          [sig-ast : ast.AstType
+            (match (tc.tc-dispatch-decl-type ctx name variants)
+              [(Ok ty) ty]
+              [(Err message) (io.panic message)])]
+          [sig-tli : tli.TliType
+            (tli-extract-type-in ctx sources root-type-slots sig-ast)]
           (dispatches.push-ref!
             (&mut out.dispatches)
-            (tli.TliDispatchDecl spelling module-name symbol 0)))]
+            (tli.TliDispatchDecl
+              spelling
+              module-name
+              symbol
+              (tli-extract-flag unsafe-decl 1)
+              sig-tli)))]
       [_ unit])))
 
 (define (tli-extract-find-module

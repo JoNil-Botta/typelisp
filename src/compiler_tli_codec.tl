@@ -549,7 +549,8 @@
   (tli-write-name! ctx (& row.name))
   (tli-write-name! ctx (& row.module-name))
   (tli-write-name! ctx (& row.link-symbol))
-  (tli-write-u32! ctx row.flags))
+  (tli-write-u32! ctx row.flags)
+  (tli-write-type! ctx (& row.signature)))
 
 (define (tli-write-module!
   [ctx : (&mut ctx TliWriteContext)]
@@ -1836,14 +1837,15 @@
     (tli-read-name! rd pool)
     (tli-read-name! rd pool)
     (tli-read-name! rd pool)
-    (tli-read-flags! rd 0)))
+    (tli-read-flags! rd 1)
+    (tli-read-type! rd pool false 1)))
 
 (define (tli-read-dispatches!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliDispatchDecl)
   (let
     [count : i64
-      (tli-read-count! rd 16 (comptime (size-of (type tli.TliDispatchDecl))))]
+      (tli-read-count! rd 17 (comptime (size-of (type tli.TliDispatchDecl))))]
     [items : (__tl_dyn-array tli.TliDispatchDecl)
       (__tl_make-array tli.TliDispatchDecl count)]
     [index : i64 0]

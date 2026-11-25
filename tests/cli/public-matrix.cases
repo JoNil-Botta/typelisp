@@ -593,8 +593,8 @@ sh sed -i 's/wrap_missing_on_linux/wrap_still_missing_on_linux/' "{{dir}}/wrap/t
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
 stdout contains Fresh {{dir}}/app/target/release/wrap_app
-# Replacing the wrapper's vendored archive relinks the binary; the TLCI image,
-# which no native input reaches, stays fresh.
+# Replacing the wrapper's vendored archive relinks the binary; the library
+# archive and interface, which no native input reaches, stay fresh.
 file ffi_add8.s
     .globl ffi_add7
 ffi_add7:
@@ -609,8 +609,11 @@ sh rm "{{dir}}/wrap/vendor/libffi_add7.a" && ar rcs "{{dir}}/wrap/vendor/libffi_
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --target linux-x86_64 --opt-level 0
 stderr empty
 stdout match ^Built .*/app/target/release/wrap_app$
-stdout contains Fresh {{dir}}/wrap/target/release/wrap.tlci
+stdout contains Fresh {{dir}}/wrap/target/release/libwrap.a
+stdout not-contains wrap.tlci
 stdout not-contains wrap_app.tlci
+test -s "{{dir}}/wrap/target/release/wrap.tli"
+test ! -e "{{dir}}/wrap/target/release/wrap.tlci"
 test ! -e "{{dir}}/app/target/release/wrap_app.tlci"
 step active-archive-run
 exec "{{dir}}/app/target/release/wrap_app"

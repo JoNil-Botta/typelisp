@@ -12936,16 +12936,24 @@
     [prefix : String (compiler-load-root-prefix root)]
     [prefix-len : i64 (string.string-length prefix)]
     [path-len : i64 (string.string-length path)]
-    (if (= prefix-len 0)
-      (if (compiler-load-absolute-path? path)
-        path
-        (str_cat.str-cat owner "/" (compiler-load-normalize-path path)))
-      (if (compiler-load-path-under-root? path root)
+    (cond
+      [(= prefix-len 0)
+        (if (compiler-load-absolute-path? path)
+          path
+          (str_cat.str-cat owner "/" (compiler-load-normalize-path path)))]
+      [(compiler-load-path-under-root? path root)
         (str_cat.str-cat
           owner
           "/"
           (compiler-load-normalize-path
-            (string.substring path prefix-len (- path-len prefix-len))))
+            (string.substring path prefix-len (- path-len prefix-len))))]
+      [(and
+          (or
+            (compiler-load-string-prefix-at? root "./" 0)
+            (compiler-load-string-prefix-at? root ".\\" 0))
+          (not (string.contains root "..")))
+        path]
+      [else
         (let
           [norm-path : String (compiler-load-normalize-path (& path))]
           [norm-root : String (compiler-load-normalize-path root)]
@@ -12963,7 +12971,7 @@
                   norm-path
                   norm-prefix-len
                   (- norm-path-len norm-prefix-len))))
-            path))))))
+            path))])))
 
 (define (compiler-load-stdlib-owner-root? [root : (& str)]) : bool
   (let

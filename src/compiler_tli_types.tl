@@ -206,7 +206,8 @@
   (name String)
   (module-name String)
   (link-symbol String)
-  (flags i64))
+  (flags i64)
+  (signature TliType))
 
 (defstruct TliModuleRecord
   (name String)

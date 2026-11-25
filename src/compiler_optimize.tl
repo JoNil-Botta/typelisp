@@ -23182,6 +23182,7 @@
   (let
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     (opt-licm-return-alias-add-functions-from functions (&mut out))
+    (opt-external-seed-return-alias! (&mut out))
     out))
 
 ;; The argument a direct call returns unchanged, if the table proves it does.
@@ -110019,7 +110020,8 @@
   [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
   [summaries : (& OptProgramSummaries)]
-  [input : (&mut input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
+  [input : (&mut input OptOptimizerInput)]
+  [avail-externs : (& opt_i64_i64_map.Map)]) : ir.CompilerIrFunctionSeq
   (if (= level 0)
     funcs
     (let
@@ -110032,7 +110034,8 @@
           level
           (arena.raw-handle scratch)
           summaries
-          input)]
+          input
+          avail-externs)]
       (allocation_profile.compiler-allocation-profile-control!
         2
         "optimize"
@@ -110110,51 +110113,69 @@
   [level : i64]
   [scratch : i64]
   [summaries : (& OptProgramSummaries)]
-  [input : (&mut input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
+  [input : (&mut input OptOptimizerInput)]
+  [avail-externs : (& opt_i64_i64_map.Map)]) : ir.CompilerIrFunctionSeq
   (let
     [release-cursor : i64 0]
+    [has-avail? : bool (> (opt_i64_i64_map.len avail-externs) 0)]
     [builder : ir.CompilerIrFunctionBuilder
       (ir.compiler-ir-function-builder-with-capacity funcs.len)]
     (for [index (iterator.range 0 funcs.len)]
       (let
         [func : ir.CompilerIrFunction
           (compiler-opt-global-array-element-shared-view funcs.slots index)]
-        [_start : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-detail-start
-              (owned_view.compiler-owned-reference-shared-view
-                (& summaries.profile-state))))]
-        [optimized : ir.CompilerIrFunction
-          (if (= level 1)
-            (optimize-function-level1-escaping-with-summaries
-              pools
-              type-segment-bases
-              (& func)
-              scratch
-              summaries)
-            (optimize-function-escaping-with-summaries
-              pools
-              type-segment-bases
-              (& func)
-              level
-              scratch
-              summaries))]
-        [_finish : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-detail-finish
-              (owned_view.compiler-owned-reference-shared-view
-                (& summaries.profile-state))
-              "function"
-              (compiler-opt-profile-function-name (& func))))]
-        (ir.compiler-ir-function-builder-push! (&mut builder) optimized)
-        (set!
-          release-cursor
-          (opt-optimizer-input-release-passed!
-            (&mut input.release)
-            index
-            release-cursor))))
+        [skip-avail? : bool
+          (and
+            has-avail?
+            (match (& func)
+              [(Function fn-name _ _ _ _ _)
+                (opt_i64_i64_map.contains?
+                  avail-externs
+                  (ir.compiler-ir-symbol-id fn-name))]))]
+        (if skip-avail?
+          (set!
+            release-cursor
+            (opt-optimizer-input-release-passed!
+              (&mut input.release)
+              index
+              release-cursor))
+          (let
+            [_start : unit
+              (cfg
+                compile-profile
+                (compiler-opt-profile-detail-start
+                  (owned_view.compiler-owned-reference-shared-view
+                    (& summaries.profile-state))))]
+            [optimized : ir.CompilerIrFunction
+              (if (= level 1)
+                (optimize-function-level1-escaping-with-summaries
+                  pools
+                  type-segment-bases
+                  (& func)
+                  scratch
+                  summaries)
+                (optimize-function-escaping-with-summaries
+                  pools
+                  type-segment-bases
+                  (& func)
+                  level
+                  scratch
+                  summaries))]
+            [_finish : unit
+              (cfg
+                compile-profile
+                (compiler-opt-profile-detail-finish
+                  (owned_view.compiler-owned-reference-shared-view
+                    (& summaries.profile-state))
+                  "function"
+                  (compiler-opt-profile-function-name (& func))))]
+            (ir.compiler-ir-function-builder-push! (&mut builder) optimized)
+            (set!
+              release-cursor
+              (opt-optimizer-input-release-passed!
+                (&mut input.release)
+                index
+                release-cursor))))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
 ;; Optimize one function inside `scratch`, compact its blocks there, then escape
@@ -111537,15 +111558,19 @@
   [index : (& index OptFunctionIndex)]
   [census : (& census OptInlineCensus)]
   [called? : bool]
-  [slot : i64]) : i64
+  [slot : i64]
+  [root-weight : i64]) : i64
   (match (opt-function-index-at-slot index slot)
     [(Function name _ _ _ _ _)
       (if (or
         (not called?)
         (string.eq (ir.compiler-ir-symbol-text name) "main")
         (opt-inline-census-address-taken? index census name))
-        1
+        root-weight
         0)]))
+
+(define opt-inline-library-mode? : bool
+  false)
 
 (define (opt-inline-synth-seed!
   [index : (& index OptFunctionIndex)]
@@ -111558,7 +111583,7 @@
     (for [slot (iterator.range 0 count)]
       (set!
         (array-ref opt-inline-synth-slots slot)
-        (opt-inline-synth-base index census (array-ref called slot) slot)))))
+        (opt-inline-synth-base index census (array-ref called slot) slot 1)))))
 
 ;; One SCC, top-down.
 (define (opt-inline-synth-group!
@@ -112602,6 +112627,133 @@
 ;; one the gate itself consults (opt-inline-body-instr-ok?,
 ;; opt-inline-body-terminator-ok?, opt-inline-max-body), so the reason cannot
 ;; drift from the verdict.
+(define (opt-inline-compact-ir-max-instrs) : i64
+  256)
+
+(define (opt-inline-compact-ir-max-blocks) : i64
+  48)
+
+(define (opt-inline-compact-ir-value-ok? [value : (& ir.CompilerIrValue)]) : bool
+  (match value
+    [(RuntimeGlobal _) false]
+    [_ true]))
+
+(define (opt-inline-compact-ir-call-args-ok? [args : (& ir.CompilerIrCallArgs)]) : bool
+  (match args
+    [(ir.CompilerIrCallArgs.Nil) true]
+    [(ir.CompilerIrCallArgs.One v) (opt-inline-compact-ir-value-ok? v)]
+    [(ir.CompilerIrCallArgs.Two a b)
+      (and
+        (opt-inline-compact-ir-value-ok? a)
+        (opt-inline-compact-ir-value-ok? b))]
+    [(or (ir.CompilerIrCallArgs.Array values)
+         (ir.CompilerIrCallArgs.Sret values _))
+      (let
+        [ok : bool true]
+        (for [i (iterator.range 0 (array-length values))]
+          (unless
+            (opt-inline-compact-ir-value-ok? (& (array-ref values i)))
+            (set! ok false)))
+        ok)]))
+
+(define (opt-inline-compact-ir-values-ok? [instr : (& ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(or (Mov _ v _) (Load _ v _) (Cast _ v _ _) (Bitcast _ v _ _)
+         (UnOp _ _ v _) (Store _ v _) (Branch v _ _) (TotalEnumBranch v _ _)
+         (Word _ v _ _) (Switch v _ _ _) (TotalEnumSwitch v _ _ _ _))
+      (opt-inline-compact-ir-value-ok? v)]
+    [(or (Gep _ a b _) (StoreOwned a b _) (StorePtr a b _) (CopyBytes a b _)
+         (BoundsCheck a b _) (BinOp _ _ a b _))
+      (and
+        (opt-inline-compact-ir-value-ok? a)
+        (opt-inline-compact-ir-value-ok? b))]
+    [(Return maybe-v)
+      (match maybe-v
+        [(Some v) (opt-inline-compact-ir-value-ok? v)]
+        [(No) true])]
+    [(or (Call _ _ args _) (TailCall _ args _))
+      (opt-inline-compact-ir-call-args-ok? args)]
+    [(or (CallIndirect _ callee args _) (CallIndirectC _ callee args _))
+      (and
+        (opt-inline-compact-ir-value-ok? callee)
+        (opt-inline-compact-ir-call-args-ok? args))]
+    [(Phi _ inputs _)
+      (let
+        [ok : bool true]
+        (for [i (iterator.range 0 (ir.compiler-ir-phi-input-seq-count inputs))]
+          (let
+            [inp : ir.CompilerIrPhiInput
+              (ir.compiler-ir-phi-input-seq-ref inputs i)]
+            (unless
+              (opt-inline-compact-ir-value-ok? (& inp.value))
+              (set! ok false))))
+        ok)]
+    [(Pack _ vals _)
+      (let
+        [ok : bool true]
+        (for [i (iterator.range 0 (ir.compiler-ir-value-seq-count vals))]
+          (unless
+            (opt-inline-compact-ir-value-ok?
+              (ir.compiler-ir-value-seq-borrow vals i))
+            (set! ok false)))
+        ok)]
+    [_ true]))
+
+;; Shared producer/consumer eligibility gate for `.tli` v3 `compact_ir` bodies.
+;; Matches the 27-instruction subset admitted by the single-block and multiblock
+;; inliners (`opt-inline-multiblock-instr-reason`), with both `Ordinary` and
+;; `ReturnStorage` ABIs supported.
+(define (opt-inline-compact-ir-eligible? [func : (& ir.CompilerIrFunction)]) : bool
+  (match func
+    [(Function _ params _ _ blocks abi)
+      (let
+        [abi-ok? : bool
+          (match abi
+            [(or (Ordinary) (ReturnStorage _)) true]
+            [_ false])]
+        (if (not abi-ok?)
+          false
+          (if (not (opt-inline-param-seq-sequential-from? params 0))
+            false
+            (match blocks
+              [(Array bseq)
+                (let
+                  [bcount : i64 (ir.compiler-ir-block-seq-count bseq)]
+                  [np : i64 (ir.compiler-ir-param-seq-count params)]
+                  [total-instrs : i64 0]
+                  (if (or
+                    (= bcount 0)
+                    (> bcount (opt-inline-compact-ir-max-blocks)))
+                    false
+                    (begin
+                      (for [bi (iterator.range 0 bcount)]
+                        (match (ir.compiler-ir-block-seq-borrow bseq bi)
+                          [(Block _ iseq)
+                            (let
+                              [icount : i64
+                                (ir.compiler-ir-instr-seq-count iseq)]
+                              (set! total-instrs (+ total-instrs icount))
+                              (when
+                                (>
+                                  total-instrs
+                                  (opt-inline-compact-ir-max-instrs))
+                                (return false))
+                              (for [ii (iterator.range 0 icount)]
+                                (let
+                                  [instr : ir.CompilerIrInstr
+                                    (ir.compiler-ir-instr-seq-ref iseq ii)]
+                                  (unless
+                                    (and
+                                      (=
+                                        (opt-inline-multiblock-instr-reason
+                                          (& instr)
+                                          np)
+                                        (opt-inline-shape-ok))
+                                      (opt-inline-compact-ir-values-ok?
+                                        (& instr)))
+                                    (return false)))))]))
+                      (> total-instrs 0))))]))))]))
+
 (define (opt-inline-single-instr-reason
   [instr : (& ir.CompilerIrInstr)]
   [np : i64]) : i64
@@ -114982,7 +115134,13 @@
 ;; populations.
 (define (opt-inline-bounds-loop-cascade-safe?) : bool
   (opt-inline-caller-facts-ensure!)
-  (or (not opt-inline-caller-single-site?) opt-inline-caller-has-bounds?))
+  ;; Prebuilt library builds emit exported functions standalone for external
+  ;; callers, so one internal call site does not make a caller
+  ;; single-site-absorbable.
+  (or
+    opt-inline-library-mode?
+    (not opt-inline-caller-single-site?)
+    opt-inline-caller-has-bounds?))
 
 ;; Ordered so the two free tests run first: the lazy caller facts are only
 ;; forced for a candidate that is already claimed by this site and already
@@ -115049,14 +115207,37 @@
 ;; is the nine-instruction character-class predicate, and a copy an order
 ;; larger than that moves the allocator exactly as the paragraph above says it
 ;; does not.
+(define (opt-inline-instr-non-trap-call? [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (match instr
+    [(Call _ callee _ _)
+      (let
+        [name : String (ir.compiler-ir-symbol-text callee)]
+        (not
+          (or
+            (string.eq (& name) "tl_oob_abort")
+            (string.eq (& name) "tl_div_abort")
+            (string.eq (& name) "tl_shift_abort"))))]
+    [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCall _ _ _)
+         (TailCallIndirect _ _ _) (Syscall _ _))
+      true]
+    [_ false]))
+
 (define (opt-inline-dup-absorb-ok?
   [absorb-class : i64]
   [callee-instrs : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (and
     (>= absorb-class 2)
-    (opt-inline-bounds-loop-absorb-ok? true callee-instrs blocks)
-    (opt-inline-blocks-call-free? blocks)))
+    (or
+      (and
+        (opt-inline-bounds-loop-absorb-ok? true callee-instrs blocks)
+        (opt-inline-blocks-call-free? blocks))
+      (and
+        opt-inline-library-mode?
+        (<= callee-instrs 32)
+        (<= (ir.compiler-ir-block-list-count blocks) 12)
+        (not (opt-blocks-any? blocks opt-inline-instr-non-trap-call?))))))
 
 ;; --- absorbing a leaf into a RECURSIVE caller -------------------------------
 ;;
@@ -120925,7 +121106,13 @@
       (if (<= growth 0)
         true
         (let
-          [frequency : i64 (opt-inline-checked-caller-count index census)]
+          ;; Prebuilt library APIs are invoked from external user loops, so
+          ;; predictive-band fanout checks use the hot ceiling without
+          ;; inflating cold checked-tier error paths.
+          [frequency : i64
+            (if opt-inline-library-mode?
+              2048
+              (opt-inline-checked-caller-count index census))]
           [frequency-budget : i64
             (+ 450 (* 12 (opt-inline-cost-min frequency 2048)))]
           [loop-credit : i64
@@ -123521,7 +123708,7 @@
   (if (opt-function-seq-defines? functions "main")
     (for [i (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
       (match (ir.compiler-ir-extern-seq-borrow externs i)
-        [(Extern name-id _ _ _ _ _ _ provided _)
+        [(Extern name-id _ _ _ _ _ _ provided _ _)
           (when
             provided
             (match (opt-function-index-slot-id index name-id)
@@ -124015,7 +124202,7 @@
   (if (>= seq-index (ir.compiler-ir-extern-seq-count externs))
     state
     (match (ir.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id _ _ _ _ _ _ provided _)
+      [(Extern name-id _ _ _ _ _ _ provided _ _)
         (opt-reach-add-provided-extern-seq
           index
           externs
@@ -124269,9 +124456,9 @@
       (opt_i64_i64_map.with-capacity (ir.compiler-ir-extern-seq-count externs))]
     (for [at (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
       (match (ir.compiler-ir-extern-seq-borrow externs at)
-        [(Extern name _ _ _ _ link _ provided _)
+        [(Extern name _ _ _ _ link _ provided _ body-available)
           (unless
-            provided
+            (or provided body-available)
             (opt_i64_i64_map.insert-ref!
               (&mut out)
               name
@@ -124293,13 +124480,282 @@
     [(LookupFound link) link]
     [(LookupMissing) name]))
 
+;; Prebuilt `.tli` external function summaries installed for one program run.
+;; Keyed by the extern's archive link-symbol intern id (and mirrored to any
+;; non-provided, non-body-available extern `name-id` that links to it).
+(defstruct OptExternalFnSummary
+  (link-id i64)
+  (effect-flags i64)
+  (call-memory i64)
+  (call-clean i64)
+  (return-alias i64)
+  (global-write-ids (__tl_dyn-array i64)))
+
+(defstruct OptExternalSummaries
+  (entries (__tl_dyn-array OptExternalFnSummary)))
+
+(define (opt-external-summaries-empty) : OptExternalSummaries
+  (OptExternalSummaries (__tl_make-array OptExternalFnSummary 0)))
+
+(define opt-external-summaries-active? : bool
+  false)
+(define opt-external-call-memory-map : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+(define opt-external-call-clean-map : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+(define opt-external-return-alias-map : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+(define opt-external-effect-flags-map : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+(define opt-external-no-local-writes-map : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+(define opt-external-has-global-writes-map : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+(define opt-external-call-memory-keys : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define opt-external-call-memory-vals : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define opt-external-call-clean-keys : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define opt-external-call-clean-vals : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define opt-external-return-alias-keys : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define opt-external-return-alias-vals : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+
+;; Flip only the active flag so optimizer-arena exits never store
+;; child-arena-allocated maps/arrays into module-level globals.
+(define (opt-external-summaries-clear!) : unit
+  (set! opt-external-summaries-active? false))
+
+(define (opt-external-summaries-install!
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]
+  [src : (& OptExternalSummaries)]) : unit
+  (let
+    [count : i64 (array-length src.entries)]
+    (if (= count 0)
+      (opt-external-summaries-clear!)
+      (let
+        [cap : i64 (opt-function-index-capacity (+ count externs.len))]
+        [global-set : opt_i64_i64_map.Map
+          (opt_i64_i64_map.with-capacity
+            (opt-function-index-capacity globals.len))]
+        [cm-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
+        [cc-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
+        [ra-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
+        [ef-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
+        [nlw-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
+        [hgw-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
+        [cm-k : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ count externs.len))]
+        [cm-v : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ count externs.len))]
+        [cm-len : i64 0]
+        [cc-k : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ count externs.len))]
+        [cc-v : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ count externs.len))]
+        [cc-len : i64 0]
+        [ra-k : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ count externs.len))]
+        [ra-v : (__tl_dyn-array i64)
+          (__tl_make-array i64 (+ count externs.len))]
+        [ra-len : i64 0]
+        (for [gi (iterator.range 0 globals.len)]
+          (match (ir.compiler-ir-global-seq-borrow globals gi)
+            [(Global gname _ _)
+              (opt_i64_i64_map.insert-ref!
+                (&mut global-set)
+                (ir.compiler-ir-symbol-id gname)
+                1)]))
+        (for [i (iterator.range 0 count)]
+          (let
+            [id : i64
+              (ir.compiler-ir-symbol-id (array-ref src.entries i).link-id)]
+            [ef : i64 (array-ref src.entries i).effect-flags]
+            [cm : i64 (array-ref src.entries i).call-memory]
+            [cc : i64 (array-ref src.entries i).call-clean]
+            [ra : i64 (array-ref src.entries i).return-alias]
+            [writes-local? : bool false]
+            [gw-count : i64
+              (array-length (array-ref src.entries i).global-write-ids)]
+            (when
+              (> gw-count 0)
+              (opt_i64_i64_map.insert-ref! (&mut hgw-map) id 1))
+            (for [wi (iterator.range 0 gw-count)]
+              (when
+                (opt_i64_i64_map.contains?
+                  (& global-set)
+                  (ir.compiler-ir-symbol-id
+                    (array-ref (array-ref src.entries i).global-write-ids wi)))
+                (set! writes-local? true)))
+            (opt_i64_i64_map.insert-ref! (&mut ef-map) id ef)
+            (when
+              (and (= (bit-and ef 32) 0) (not writes-local?))
+              (opt_i64_i64_map.insert-ref! (&mut nlw-map) id 1))
+            (when
+              (>= cm 0)
+              (opt_i64_i64_map.insert-ref! (&mut cm-map) id cm)
+              (set! (array-ref cm-k cm-len) id)
+              (set! (array-ref cm-v cm-len) cm)
+              (+= cm-len 1))
+            (when
+              (> cc 0)
+              (opt_i64_i64_map.insert-ref! (&mut cc-map) id cc)
+              (set! (array-ref cc-k cc-len) id)
+              (set! (array-ref cc-v cc-len) cc)
+              (+= cc-len 1))
+            (when
+              (> ra 0)
+              (opt_i64_i64_map.insert-ref! (&mut ra-map) id ra)
+              (set! (array-ref ra-k ra-len) id)
+              (set! (array-ref ra-v ra-len) ra)
+              (+= ra-len 1))))
+        ;; Mirror entries under extern `name-id` when it differs from `link-id`.
+        (for [ei (iterator.range 0 externs.len)]
+          (match (ir.compiler-ir-extern-seq-borrow externs ei)
+            [(Extern name-id _ _ _ _ link-id _ provided _ _)
+              (when
+                (and (not provided) (!= name-id link-id))
+                (let
+                  [nid : i64 (ir.compiler-ir-symbol-id name-id)]
+                  [lid : i64 (ir.compiler-ir-symbol-id link-id)]
+                  (match (opt_i64_i64_map.get (& cm-map) lid)
+                    [(LookupFound v)
+                      (unless
+                        (opt_i64_i64_map.contains? (& cm-map) nid)
+                        (opt_i64_i64_map.insert-ref! (&mut cm-map) nid v)
+                        (set! (array-ref cm-k cm-len) nid)
+                        (set! (array-ref cm-v cm-len) v)
+                        (+= cm-len 1))]
+                    [(LookupMissing) unit])
+                  (match (opt_i64_i64_map.get (& cc-map) lid)
+                    [(LookupFound v)
+                      (unless
+                        (opt_i64_i64_map.contains? (& cc-map) nid)
+                        (opt_i64_i64_map.insert-ref! (&mut cc-map) nid v)
+                        (set! (array-ref cc-k cc-len) nid)
+                        (set! (array-ref cc-v cc-len) v)
+                        (+= cc-len 1))]
+                    [(LookupMissing) unit])
+                  (match (opt_i64_i64_map.get (& ra-map) lid)
+                    [(LookupFound v)
+                      (unless
+                        (opt_i64_i64_map.contains? (& ra-map) nid)
+                        (opt_i64_i64_map.insert-ref! (&mut ra-map) nid v)
+                        (set! (array-ref ra-k ra-len) nid)
+                        (set! (array-ref ra-v ra-len) v)
+                        (+= ra-len 1))]
+                    [(LookupMissing) unit])))]))
+        (let
+          [cm-k-trim : (__tl_dyn-array i64) (__tl_make-array i64 cm-len)]
+          [cm-v-trim : (__tl_dyn-array i64) (__tl_make-array i64 cm-len)]
+          [cc-k-trim : (__tl_dyn-array i64) (__tl_make-array i64 cc-len)]
+          [cc-v-trim : (__tl_dyn-array i64) (__tl_make-array i64 cc-len)]
+          [ra-k-trim : (__tl_dyn-array i64) (__tl_make-array i64 ra-len)]
+          [ra-v-trim : (__tl_dyn-array i64) (__tl_make-array i64 ra-len)]
+          (for [i (iterator.range 0 cm-len)]
+            (set! (array-ref cm-k-trim i) (array-ref cm-k i))
+            (set! (array-ref cm-v-trim i) (array-ref cm-v i)))
+          (for [i (iterator.range 0 cc-len)]
+            (set! (array-ref cc-k-trim i) (array-ref cc-k i))
+            (set! (array-ref cc-v-trim i) (array-ref cc-v i)))
+          (for [i (iterator.range 0 ra-len)]
+            (set! (array-ref ra-k-trim i) (array-ref ra-k i))
+            (set! (array-ref ra-v-trim i) (array-ref ra-v i)))
+          (set! opt-external-call-memory-map cm-map)
+          (set! opt-external-call-clean-map cc-map)
+          (set! opt-external-return-alias-map ra-map)
+          (set! opt-external-effect-flags-map ef-map)
+          (set! opt-external-no-local-writes-map nlw-map)
+          (set! opt-external-has-global-writes-map hgw-map)
+          (set! opt-external-call-memory-keys cm-k-trim)
+          (set! opt-external-call-memory-vals cm-v-trim)
+          (set! opt-external-call-clean-keys cc-k-trim)
+          (set! opt-external-call-clean-vals cc-v-trim)
+          (set! opt-external-return-alias-keys ra-k-trim)
+          (set! opt-external-return-alias-vals ra-v-trim)
+          (set! opt-external-summaries-active? true))))))
+
+(define (opt-external-seed-call-memory! [rows : (&mut opt_i64_i64_map.Map)]) : unit
+  (when
+    opt-external-summaries-active?
+    (for [i (iterator.range 0 (array-length opt-external-call-memory-keys))]
+      (let
+        [k : i64 (array-ref opt-external-call-memory-keys i)]
+        (unless
+          (opt_i64_i64_map.contains? rows k)
+          (opt_i64_i64_map.insert-ref!
+            rows
+            k
+            (array-ref opt-external-call-memory-vals i)))))))
+
+(define (opt-external-seed-call-clean! [out : (&mut opt_i64_i64_map.Map)]) : unit
+  (when
+    opt-external-summaries-active?
+    (for [i (iterator.range 0 (array-length opt-external-call-clean-keys))]
+      (let
+        [k : i64 (array-ref opt-external-call-clean-keys i)]
+        (unless
+          (opt_i64_i64_map.contains? out k)
+          (opt_i64_i64_map.insert-ref!
+            out
+            k
+            (array-ref opt-external-call-clean-vals i)))))))
+
+(define (opt-external-seed-return-alias! [out : (&mut opt_i64_i64_map.Map)]) : unit
+  (when
+    opt-external-summaries-active?
+    (for [i (iterator.range 0 (array-length opt-external-return-alias-keys))]
+      (let
+        [k : i64 (array-ref opt-external-return-alias-keys i)]
+        (unless
+          (opt_i64_i64_map.contains? out k)
+          (opt_i64_i64_map.insert-ref!
+            out
+            k
+            (array-ref opt-external-return-alias-vals i)))))))
+
+(define (opt-external-direct-call-effect [link : i64]) : ir.CompilerIrEffect
+  (if (not opt-external-summaries-active?)
+    (ir.CompilerIrEffect.Unknown)
+    (let
+      [id : i64 (ir.compiler-ir-symbol-id link)]
+      (match (opt_i64_i64_map.get (& opt-external-effect-flags-map) id)
+        [(LookupFound flags)
+          (cond
+            [(!= (bit-and flags 8) 0) (ir.CompilerIrEffect.ControlFlow)]
+            [(and
+                (!= (bit-and flags 4) 0)
+                (=
+                  (opt_i64_i64_map.get-value-or
+                    (& opt-external-call-memory-map)
+                    id
+                    -1)
+                  0)
+                (not
+                  (opt_i64_i64_map.contains?
+                    (& opt-external-has-global-writes-map)
+                    id)))
+              (ir.CompilerIrEffect.MemoryRead)]
+            [else (ir.CompilerIrEffect.Unknown)])]
+        [(LookupMissing) (ir.CompilerIrEffect.Unknown)]))))
+
 ;; A runtime effect class is keyed on the helper's own identity. A call whose
 ;; identity reaches a different link is not that helper, even when it is
 ;; spelled like one, so it has the unknown effect of any other extern.
 (define (opt-direct-call-effect [name : i64]) : ir.CompilerIrEffect
-  (if (= (opt-effect-callee name) name)
-    (ir.compiler-ir-direct-call-effect-id name)
-    (ir.CompilerIrEffect.Unknown)))
+  (let
+    [link : i64 (opt-effect-callee name)]
+    [builtin : ir.CompilerIrEffect
+      (if (= link name)
+        (ir.compiler-ir-direct-call-effect-id name)
+        (ir.CompilerIrEffect.Unknown))]
+    (match builtin
+      [(ir.CompilerIrEffect.Unknown) (opt-external-direct-call-effect link)]
+      [_ builtin])))
 
 ;; The private globals a call to a callee outside the program's functions may
 ;; write, decided by the identity it reaches.
@@ -125344,8 +125800,12 @@
   [capacity : i64]) : opt_i64_i64_map.Map
   (let
     [rows : opt_i64_i64_map.Map
-      (opt-call-memory-seed-builtins
-        (& (opt_i64_i64_map.with-capacity capacity)))]
+      (let
+        [seeded : opt_i64_i64_map.Map
+          (opt-call-memory-seed-builtins
+            (& (opt_i64_i64_map.with-capacity capacity)))]
+        (opt-external-seed-call-memory! (&mut seeded))
+        seeded)]
     [count : i64 (opt-program-index-count index)]
     [kept : (__tl_dyn-array bool) (__tl_make-array bool count)]
     [changed-at : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -126705,7 +127165,54 @@
             (if (= bits 0)
               unit
               (opt_i64_i64_map.insert-ref! (&mut out) name-id bits)))]))
+    (opt-external-seed-call-clean! (&mut out))
     out))
+
+;; Whole-library optimizer summaries for `.tli` v3 sysroot/package producers
+;; (which have no `main` function).
+(defstruct OptLibrarySummaries
+  (call-memory opt_i64_i64_map.Map)
+  (direct-call-clean opt_i64_i64_map.Map)
+  (return-alias opt_i64_i64_map.Map)
+  (written-globals opt_i64_i64_map.Map))
+
+(define (opt-build-library-summaries
+  [type-segment-bases : i64]
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [externs : (& ir.CompilerIrExternSeq)]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]) : OptLibrarySummaries
+  (let
+    [count : i64 (opt-function-seq-count functions)]
+    [capacity : i64 (opt-function-index-capacity count)]
+    [_externs : unit (opt-effect-links-install! externs)]
+    [_clear-ext : unit (opt-external-summaries-clear!)]
+    [disq : OptGlobalDisqualifications
+      (opt-const-globals-disqualified capacity functions)]
+    [index : OptProgramIndex (opt-program-index-build functions)]
+    [descriptor-globals : opt_i64_i64_map.Map
+      (opt-call-memory-descriptor-globals
+        type-segment-bases
+        globals
+        (opt_i64_i64_map.with-capacity
+          (opt-function-index-capacity
+            (ir.compiler-ir-global-seq-count globals))))]
+    [call-memory : opt_i64_i64_map.Map
+      (opt-call-memory-build-with-descriptor-globals
+        type-segment-bases
+        (& descriptor-globals)
+        (& index)
+        capacity)]
+    [call-clean : opt_i64_i64_map.Map
+      (opt-direct-call-clean-map functions (& call-memory) capacity)]
+    [return-alias : opt_i64_i64_map.Map
+      (opt-licm-return-alias-map functions capacity)]
+    [written : opt_i64_i64_map.Map
+      (match disq
+        [(OptGlobalDisqualifications d a)
+          ;; `d` already contains both stored globals and addr-taken globals
+          ;; (`opt-const-globals-disq-instr` inserts both into `disq`).
+          d])]
+    (OptLibrarySummaries call-memory call-clean return-alias written)))
 
 (define (opt-program-call-summaries
   [type-segment-bases : i64]
@@ -126811,7 +127318,7 @@
     [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity capacity)]
     (for [index (iterator.range 0 (ir.compiler-ir-extern-seq-count externs))]
       (match (ir.compiler-ir-extern-seq-borrow externs index)
-        [(Extern name-id _ _ _ _ _ _ _ _)
+        [(Extern name-id _ _ _ _ _ _ _ _ _)
           (opt_i64_i64_map.insert-ref! (&mut out) name-id 1)]))
     out))
 
@@ -127838,9 +128345,15 @@
 ;; cells or storage without receiving a global address itself. `name` is an
 ;; effect identity (opt-effect-callee).
 (define (opt-global-mod-ref-external-mask [name : i64]) : i64
-  (if (opt-runtime-call-excludes-reentry? name)
-    0
-    (opt-global-mod-ref-effect-mask (ir.compiler-ir-direct-call-effect-id name))))
+  (cond
+    [(opt-runtime-call-excludes-reentry? name) 0]
+    [(and
+        opt-external-summaries-active?
+        (opt_i64_i64_map.contains?
+          (& opt-external-no-local-writes-map)
+          (ir.compiler-ir-symbol-id name)))
+      0]
+    [else (opt-global-mod-ref-effect-mask (opt-direct-call-effect name))]))
 
 ;; A direct callee's row, or the conservative external-call effect.
 (define (opt-global-mod-ref-call-mask
@@ -131117,7 +131630,7 @@
     scan
     (opt-arg-global-seed-externs
       (match (ir.compiler-ir-extern-seq-borrow externs index)
-        [(Extern name-id _ _ _ _ _ _ provided _)
+        [(Extern name-id _ _ _ _ _ _ provided _ _)
           (if provided
             (opt-arg-global-scan-opaque scan (ir.compiler-ir-symbol-id name-id))
             scan)])
@@ -134239,6 +134752,109 @@
                 (owned_view.compiler-owned-reference-shared-view source-spans))
               (& functions))])])))
 
+;; Collect all `body-available` extern name-ids in `externs`.
+(define (opt-available-externally-set [externs : (& ir.CompilerIrExternSeq)]) : opt_i64_i64_map.Map
+  (let
+    [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    (for [i (iterator.range 0 externs.len)]
+      (match (ir.compiler-ir-extern-seq-borrow externs i)
+        [(Extern name-id _ _ _ _ _ _ _ _ body-available)
+          (when
+            body-available
+            (opt_i64_i64_map.insert-ref!
+              (&mut out)
+              (ir.compiler-ir-symbol-id name-id)
+              1))]))
+    out))
+
+(defstruct OptStrippedProgram
+  (globals ir.CompilerIrGlobalSeq)
+  (functions ir.CompilerIrFunctionSeq)
+  (externs ir.CompilerIrExternSeq))
+
+;; Drop available-externally `.tli` function bodies and extern-declared compact
+;; globals before backend emission, and clear `body-available` on their externs
+;; so surviving calls/references resolve against `libstdlib.a`.
+(define (opt-strip-available-externally!
+  [pools : ast.AstNodePoolContext]
+  [globals : ir.CompilerIrGlobalSeq]
+  [functions : ir.CompilerIrFunctionSeq]
+  [externs : ir.CompilerIrExternSeq]
+  [avail : (& opt_i64_i64_map.Map)]) : OptStrippedProgram
+  (if (= (opt_i64_i64_map.len avail) 0)
+    (OptStrippedProgram globals functions externs)
+    (let
+      [g-builder : ir.CompilerIrGlobalBuilder
+        (ir.compiler-ir-global-builder-with-capacity globals.len)]
+      [f-builder : ir.CompilerIrFunctionBuilder
+        (ir.compiler-ir-function-builder-with-capacity functions.len)]
+      [e-builder : ir.CompilerIrExternBuilder
+        (ir.compiler-ir-extern-builder-with-capacity externs.len)]
+      (for [i (iterator.range 0 globals.len)]
+        (let
+          [keep? : bool
+            (match (ir.compiler-ir-global-seq-borrow (& globals) i)
+              [(Global gname _ _)
+                (not
+                  (opt_i64_i64_map.contains?
+                    avail
+                    (ir.compiler-ir-symbol-id gname)))])]
+          (when
+            keep?
+            (ir.compiler-ir-global-builder-push!
+              (&mut g-builder)
+              (ir.compiler-ir-clone-global
+                pools
+                (ir.compiler-ir-global-seq-borrow (& globals) i))))))
+      (for [i (iterator.range 0 functions.len)]
+        (let
+          [keep? : bool
+            (match (ir.compiler-ir-function-seq-borrow (& functions) i)
+              [(Function fname _ _ _ _ _)
+                (not
+                  (opt_i64_i64_map.contains?
+                    avail
+                    (ir.compiler-ir-symbol-id fname)))])]
+          (when
+            keep?
+            (ir.compiler-ir-function-builder-push!
+              (&mut f-builder)
+              (ir.compiler-ir-clone-function
+                pools
+                (ir.compiler-ir-function-seq-borrow (& functions) i))))))
+      (for [i (iterator.range 0 externs.len)]
+        (match (ir.compiler-ir-clone-extern
+          pools
+          (ir.compiler-ir-extern-seq-borrow (& externs) i))
+          [(Extern
+              name-id
+              source-name-id
+              name
+              ty
+              abi
+              symbol-id
+              links
+              provided
+              storage
+              _)
+            (ir.compiler-ir-extern-builder-push!
+              (&mut e-builder)
+              (ir.CompilerIrExtern.Extern
+                name-id
+                source-name-id
+                name
+                ty
+                abi
+                symbol-id
+                links
+                provided
+                storage
+                false))]))
+      (OptStrippedProgram
+        (ir.compiler-ir-global-builder-snapshot-seq (& g-builder))
+        (ir.compiler-ir-function-builder-to-seq f-builder)
+        (ir.compiler-ir-extern-builder-snapshot-seq (& e-builder))))))
+
 (define (optimize-program-with-context
   [pools : ast.AstNodePoolContext]
   [interns : (& interns ci.InternCompatState)]
@@ -134249,7 +134865,8 @@
   [profile-state : profile_state.CompilerProfileState]
   [representations : ir.CompilerIrRepresentationIndex]
   [input-retirement : OptInputRetirement]
-  [input-chunk-bounds : (__tl_dyn-array i64)]) : CompilerOptimizedProgram
+  [input-chunk-bounds : (__tl_dyn-array i64)]
+  [external-summaries : OptExternalSummaries]) : CompilerOptimizedProgram
   (match (owned_view.compiler-owned-reference-shared-view program)
     [(Program globals functions externs authority)
       (if (= level 0)
@@ -134285,6 +134902,13 @@
             ;; LICM-GDP: the header-typed-global table is per program.
             [_licm-headers : unit (opt-licm-global-headers-reset!)]
             [_effect-links : unit (opt-effect-links-install! (& externs))]
+            [_external-summaries : unit
+              (opt-external-summaries-install!
+                (& globals)
+                (& externs)
+                (& external-summaries))]
+            [avail-externs : opt_i64_i64_map.Map
+              (opt-available-externally-set (& externs))]
             [_licm-deref : unit
               (opt-licm-deref-program-facts!
                 type-segment-bases
@@ -134432,7 +135056,8 @@
                         optimizer-functions
                         level
                         (& summaries)
-                        (&mut optimizer-input))]
+                        (&mut optimizer-input)
+                        (& avail-externs))]
                     ;; No live pointer into the optimizer-input arenas remains
                     ;; here; the loop has already released every chunk it
                     ;; passed. Every function in `optimized-functions` was
@@ -134472,6 +135097,23 @@
                         compile-profile
                         (compiler-opt-profile-start profile-state))
                       (let
+                        [stripped : OptStrippedProgram
+                          (opt-strip-available-externally!
+                            pools
+                            globals
+                            optimized-functions
+                            externs
+                            (& avail-externs))]
+                        [stripped-globals : ir.CompilerIrGlobalSeq
+                          stripped.globals]
+                        [stripped-functions : ir.CompilerIrFunctionSeq
+                          stripped.functions]
+                        [stripped-externs : ir.CompilerIrExternSeq
+                          stripped.externs]
+                        [_refresh-links : unit
+                          (when
+                            (> (opt_i64_i64_map.len (& avail-externs)) 0)
+                            (opt-effect-links-install! (& stripped-externs)))]
                         [final-pruned
                           : OptPrunedProgram
                           ;; Keep scanning the original global initializers so a
@@ -134483,9 +135125,9 @@
                           ;; a live use exactly as it always has.
                           (opt-prune-unreachable-program
                             type-segment-bases
-                            globals
-                            optimized-functions
-                            (& externs)
+                            stripped-globals
+                            stripped-functions
+                            (& stripped-externs)
                             false
                             (opt_level.opt-level-full? level))]
                         [final-globals : ir.CompilerIrGlobalSeq
@@ -134496,7 +135138,7 @@
                           (opt-lga-specialize-program
                             type-segment-bases
                             (& final-globals)
-                            (& externs)
+                            (& stripped-externs)
                             final-functions
                             level)]
                         [late-functions : ir.CompilerIrFunctionSeq
@@ -134511,7 +135153,7 @@
                               type-segment-bases
                               final-globals
                               late-functions
-                              (& externs))
+                              (& stripped-externs))
                             (Merged final-globals late-functions))]
                         [optimized : ir.CompilerIrProgram
                           (match merged
@@ -134519,10 +135161,11 @@
                               (Program
                                 merged-globals
                                 merged-functions
-                                externs
+                                stripped-externs
                                 (ir.compiler-ir-clone-return-storage-authority
                                   pools
                                   authority))])]
+                        [_clear-ext : unit (opt-external-summaries-clear!)]
                         (begin
                           (cfg
                             compile-profile
@@ -134703,7 +135346,9 @@
   (input-retirement OptInputRetirement)
   ;; Lower-sequence chunk bounds for progressive level-2 retirement; empty
   ;; keeps whole-owner retirement only.
-  (input-chunk-bounds (__tl_dyn-array i64)))
+  (input-chunk-bounds (__tl_dyn-array i64))
+  (external-summaries OptExternalSummaries)
+  (library-mode? bool))
 
 ;; A run with a fresh profile state and the program's own representation index.
 (define (optimize-request [pools : ast.AstNodePoolContext] [level : i64]) : OptimizeRequest
@@ -134715,7 +135360,9 @@
     false
     (ir.compiler-ir-representation-index-empty)
     (OptInputRetirement.Retain)
-    (__tl_make-array i64 0)))
+    (__tl_make-array i64 0)
+    (opt-external-summaries-empty)
+    false))
 
 (define (optimize-program
   [program : ir.CompilerIrProgram]
@@ -134725,24 +135372,30 @@
     [pools : ast.AstNodePoolContext request.pools]
     [type-segment-bases : i64
       (ast.ast-node-pool-context-type-segment-bases pools)]
-    (optimize-program-with-context
-      pools
-      request.interns
-      type-segment-bases
-      (& program)
-      spans
-      request.level
-      request.profile-state
-      (if request.representations?
-        request.representations
-        (ir.compiler-ir-representation-index-with-authority
-          pools
-          request.interns
-          -1
-          (& program)
-          (ir.compiler-ir-representation-index-empty)))
-      request.input-retirement
-      request.input-chunk-bounds)))
+    [prev-library-mode? : bool opt-inline-library-mode?]
+    [_set-lib : unit (set! opt-inline-library-mode? request.library-mode?)]
+    [result : CompilerOptimizedProgram
+      (optimize-program-with-context
+        pools
+        request.interns
+        type-segment-bases
+        (& program)
+        spans
+        request.level
+        request.profile-state
+        (if request.representations?
+          request.representations
+          (ir.compiler-ir-representation-index-with-authority
+            pools
+            request.interns
+            -1
+            (& program)
+            (ir.compiler-ir-representation-index-empty)))
+        request.input-retirement
+        request.input-chunk-bounds
+        request.external-summaries)]
+    [_restore-lib : unit (set! opt-inline-library-mode? prev-library-mode?)]
+    result))
 
 ;; The entry with the installed reader's pools, as tests and standalone tools
 ;; call it.
@@ -136268,7 +136921,7 @@
     (set! at 0)
     (while (< at externs.len)
       (match (compiler-opt-global-array-element-shared-view externs.slots at)
-        [(Extern name-id _ _ _ _ symbol-id _ _ _)
+        [(Extern name-id _ _ _ _ symbol-id _ _ _ _)
           (opt-merge-note-symbol! (&mut observed) name-id)
           (opt-merge-note-symbol! (&mut observed) symbol-id)])
       (set! at (+ at 1)))

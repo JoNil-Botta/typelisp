@@ -937,7 +937,15 @@
   (effect-flags i64)
   (arena-arg-store-mask i64)
   (arena-arg-store-extra (__tl_dyn-array i64))
-  (global-writes (__tl_dyn-array TliHydratedGlobalWrite)))
+  (global-writes (__tl_dyn-array TliHydratedGlobalWrite))
+  (link-symbol-id i64)
+  (call-memory i64)
+  (call-clean u8)
+  (return-alias i64)
+  (inline-ir-offset i64)
+  (inline-ir-len i64)
+  (inline-ir-sha256 (Array u8 32))
+  (is-extern bool))
 
 (defstruct TliHydratedMacroEntry
   (identity-id i64)
@@ -963,6 +971,7 @@
   (hydrated-module-count i64)
   (hydrated-modules tli_i64_map.Map)
   (fn-summary-slots tli_i64_map.Map)
+  (fn-summary-by-link-slots tli_i64_map.Map)
   (fn-summaries fn_summary_vec.Vec)
   (macro-slots tli_i64_map.Map)
   (macros macro_vec.Vec)
@@ -976,11 +985,20 @@
     0
     (tli_i64_map.with-capacity 32)
     (tli_i64_map.with-capacity 256)
+    (tli_i64_map.with-capacity 256)
     (fn_summary_vec.new)
     (tli_i64_map.with-capacity 64)
     (macro_vec.new)
     (tli_i64_map.with-capacity 128)
     (layout_vec.new)))
+
+(define (tli-hydrated-facts-fn-summary-slot-by-link
+  [facts : (& TliHydratedFacts)]
+  [link-symbol-id : i64]) : i64
+  (tli_i64_map.get-value-or
+    (& facts.fn-summary-by-link-slots)
+    link-symbol-id
+    -1))
 
 (define (tli-hydrated-facts-module-hydrated?
   [facts : (& TliHydratedFacts)]
@@ -1329,7 +1347,154 @@
               mod-id
               prov-id)))])))
 
+(define (tli-hydrate-spmd-unary [tag : i64]) : ast.AstUnOp
+  (match tag
+    [0 (ast.AstUnOp.Neg)]
+    [1 (ast.AstUnOp.Not)]
+    [_ (ast.AstUnOp.BitNot)]))
+
+(define (tli-hydrate-spmd-binary [tag : i64]) : ast.AstBinOp
+  (match tag
+    [0 (ast.AstBinOp.Add)]
+    [1 (ast.AstBinOp.Sub)]
+    [2 (ast.AstBinOp.Mul)]
+    [3 (ast.AstBinOp.Div)]
+    [4 (ast.AstBinOp.Mod)]
+    [5 (ast.AstBinOp.Eq)]
+    [6 (ast.AstBinOp.Ne)]
+    [7 (ast.AstBinOp.Lt)]
+    [8 (ast.AstBinOp.Le)]
+    [9 (ast.AstBinOp.Gt)]
+    [10 (ast.AstBinOp.Ge)]
+    [11 (ast.AstBinOp.And)]
+    [12 (ast.AstBinOp.Or)]
+    [13 (ast.AstBinOp.BitAnd)]
+    [14 (ast.AstBinOp.BitOr)]
+    [15 (ast.AstBinOp.BitXor)]
+    [16 (ast.AstBinOp.Shl)]
+    [_ (ast.AstBinOp.Shr)]))
+
+(define (tli-hydrate-spmd-expr-list
+  [pools : ast.AstNodePoolContext]
+  [items : (& (__tl_dyn-array tli.TliSpmdExpr))]) : ast.AstExprList
+  (let
+    [n : i64 (array-length (deref items))]
+    [out : ast.AstExprList (ast.ast-expr-list-with-capacity n)]
+    (for [i (iterator.range 0 n)]
+      (ast.ast-expr-list-push
+        (&mut out)
+        (tli-hydrate-spmd-expr pools (& (array-ref (deref items) i)))))
+    out))
+
+(define (tli-hydrate-spmd-expr
+  [pools : ast.AstNodePoolContext]
+  [expr : (& tli.TliSpmdExpr)]) : i64
+  (let
+    [node : ast.AstExpr
+      (match expr
+        [(tli.TliSpmdExpr.Literal lit)
+          (ast.AstExpr.Literal
+            (match lit
+              [(tli.TliSpmdLiteral.Int n s)
+                (ast.AstLiteral.Int n (string.copy s))]
+              [(tli.TliSpmdLiteral.Float s)
+                (ast.AstLiteral.Float (string.copy s))]
+              [(tli.TliSpmdLiteral.Bool b) (ast.AstLiteral.Bool b)]
+              [(tli.TliSpmdLiteral.Char c)
+                (ast.AstLiteral.Char (cast c : char))]
+              [(tli.TliSpmdLiteral.String s)
+                (ast.AstLiteral.String (tli-hydrate-name s))]
+              [(tli.TliSpmdLiteral.Unit) (ast.AstLiteral.Unit)]))]
+        [(tli.TliSpmdExpr.Var s) (ast.AstExpr.Var (tli-hydrate-name s))]
+        [(tli.TliSpmdExpr.Unary op inner)
+          (ast.AstExpr.Unary
+            (tli-hydrate-spmd-unary op)
+            (tli-hydrate-spmd-expr pools (& (deref inner))))]
+        [(tli.TliSpmdExpr.Binary op l r)
+          (ast.AstExpr.Binary
+            (tli-hydrate-spmd-binary op)
+            (tli-hydrate-spmd-expr pools (& (deref l)))
+            (tli-hydrate-spmd-expr pools (& (deref r))))]
+        [(tli.TliSpmdExpr.Call callee args)
+          (ast.AstExpr.Call
+            (tli-hydrate-spmd-expr pools (& (deref callee)))
+            (tli-hydrate-spmd-expr-list pools args))]
+        [(tli.TliSpmdExpr.If c t e)
+          (ast.AstExpr.If
+            (tli-hydrate-spmd-expr pools (& (deref c)))
+            (tli-hydrate-spmd-expr pools (& (deref t)))
+            (tli-hydrate-spmd-expr pools (& (deref e))))]
+        [(tli.TliSpmdExpr.Let bindings body)
+          (let
+            [n : i64 (array-length bindings)]
+            [blist : ast.AstLetBindingList
+              (ast.ast-let-binding-list-with-capacity n)]
+            (for [i (iterator.range 0 n)]
+              (let
+                [bname : i64 (tli-hydrate-name (& (array-ref bindings i).name))]
+                [mty : ast.AstMaybeType
+                  (if (array-ref bindings i).has-type
+                    (ast.AstMaybeType.Some
+                      (tli-hydrate-type (& (array-ref bindings i).ty)))
+                    (ast.AstMaybeType.No))]
+                [init-id : i64
+                  (tli-hydrate-spmd-expr
+                    pools
+                    (& (deref (array-ref bindings i).init)))]
+                (ast.ast-let-binding-list-push
+                  (&mut blist)
+                  (ast.AstLetBinding.Binding bname mty init-id))))
+            (ast.AstExpr.Let
+              (box
+                (ast.AstLet.Let
+                  blist
+                  (tli-hydrate-spmd-expr pools (& (deref body)))))))]
+        [(tli.TliSpmdExpr.Begin items)
+          (ast.AstExpr.Begin (tli-hydrate-spmd-expr-list pools items))]
+        [(tli.TliSpmdExpr.Ann e ty)
+          (ast.AstExpr.Ann
+            (tli-hydrate-spmd-expr pools (& (deref e)))
+            (tli-hydrate-type-id ty))]
+        [(tli.TliSpmdExpr.Cast e ty)
+          (ast.AstExpr.Cast
+            (tli-hydrate-spmd-expr pools (& (deref e)))
+            (tli-hydrate-type-id ty))]
+        [(tli.TliSpmdExpr.ArrayRef a idx)
+          (ast.AstExpr.ArrayRef
+            (tli-hydrate-spmd-expr pools (& (deref a)))
+            (tli-hydrate-spmd-expr pools (& (deref idx))))]
+        [(tli.TliSpmdExpr.ArraySet a idx v)
+          (ast.AstExpr.ArraySet
+            (tli-hydrate-spmd-expr pools (& (deref a)))
+            (tli-hydrate-spmd-expr pools (& (deref idx)))
+            (tli-hydrate-spmd-expr pools (& (deref v))))]
+        [(tli.TliSpmdExpr.StructGet e f)
+          (ast.AstExpr.StructGet
+            (tli-hydrate-spmd-expr pools (& (deref e)))
+            (tli-hydrate-name f))]
+        [(tli.TliSpmdExpr.StructSet e f v)
+          (ast.AstExpr.StructSet
+            (tli-hydrate-spmd-expr pools (& (deref e)))
+            (tli-hydrate-name f)
+            (tli-hydrate-spmd-expr pools (& (deref v))))]
+        [(tli.TliSpmdExpr.Tuple items)
+          (ast.AstExpr.Tuple (tli-hydrate-spmd-expr-list pools items))]
+        [(tli.TliSpmdExpr.TupleRef e idx)
+          (ast.AstExpr.TupleRef (tli-hydrate-spmd-expr pools (& (deref e))) idx)]
+        [(tli.TliSpmdExpr.Set p v)
+          (ast.AstExpr.Set
+            (tli-hydrate-spmd-expr pools (& (deref p)))
+            (tli-hydrate-spmd-expr pools (& (deref v))))]
+        [(tli.TliSpmdExpr.Borrow is-mut life e)
+          (ast.AstExpr.Borrow
+            is-mut
+            (tli-hydrate-name life)
+            (tli-hydrate-spmd-expr pools (& (deref e))))])]
+    (ast.ast-node-pool-context-expr-push pools node)))
+
 (define (tli-hydrate-project-fn!
+  [directory : (& codec.TliDirectory)]
+  [pools : ast.AstNodePoolContext]
   [facts : (&mut TliHydratedFacts)]
   [decls : (&mut ast.AstDeclList)]
   [paths : (&mut ast.AstDeclPathList)]
@@ -1357,13 +1522,42 @@
         (ast.ast-extern-metadata-flags
           false
           (string.eq (& archive-sym) (& row.name))))]
+    [imported-spmd : ast.AstImportedSpmdMetadata
+      (if (and
+        (!= (bit-and eflags tli.tli-fn-spmd-inlineable) 0)
+        (> row.summary.inline-ir-len 0))
+        (match (codec.tli-decode-compact-body-at
+          directory
+          row.summary.inline-ir-offset
+          row.summary.inline-ir-len
+          (& row.summary.inline-ir-sha256))
+          [(codec.TliCompactBodyResult.Ok body)
+            (if (!= (bit-and body.kind tli.tli-compact-body-has-spmd-expr) 0)
+              (let
+                [pcount : i64 (array-length row.params)]
+                [ast-params : ast.AstParamList
+                  (ast.ast-param-list-with-capacity pcount)]
+                (for [pi (iterator.range 0 pcount)]
+                  (ast.ast-param-list-push
+                    (&mut ast-params)
+                    (ast.AstParam.Param
+                      (tli-hydrate-name (& (array-ref row.params pi).name))
+                      (tli-hydrate-type (& (array-ref row.params pi).ty))
+                      (array-ref row.params pi).is-mut)))
+                (ast.AstImportedSpmdMetadata.Inline
+                  ast-params
+                  (tli-hydrate-type (& row.return-type))
+                  (tli-hydrate-spmd-expr pools (& body.spmd-expr))))
+              (ast.AstImportedSpmdMetadata.No))]
+          [(codec.TliCompactBodyResult.Err _) (ast.AstImportedSpmdMetadata.No)])
+        (ast.AstImportedSpmdMetadata.No))]
     [ext-meta : ast.AstExternMetadata
       (ast.AstExternMetadata.Metadata
         fn-info.abi
         (intern.intern-id-from-renderable archive-sym-id)
         (tli-hydrate-link-inputs (& row.extern-link-inputs))
         ext-flags
-        (ast.AstImportedSpmdMetadata.No))]
+        imported-spmd)]
     [decl : ast.AstDecl
       (tli-hydrate-wrap-unsafe
         unsafe-decl
@@ -1403,11 +1597,25 @@
             eflags
             row.summary.arena-arg-store-mask
             extra-copy
-            w-copy))
+            w-copy
+            archive-sym-id
+            row.summary.call-memory
+            row.summary.call-clean
+            row.summary.return-alias
+            row.summary.inline-ir-offset
+            row.summary.inline-ir-len
+            row.summary.inline-ir-sha256
+            row.is-extern))
         (tli_i64_map.insert-ref!
           (&mut facts.fn-summary-slots)
           canonical-id
-          slot)))))
+          slot)
+        (unless
+          row.is-extern
+          (tli_i64_map.insert-ref!
+            (&mut facts.fn-summary-by-link-slots)
+            archive-sym-id
+            slot))))))
 
 (define (tli-hydrate-project-value!
   [pools : ast.AstNodePoolContext]
@@ -1611,6 +1819,7 @@
         prov-id))))
 
 (define (tli-hydrate-project-record!
+  [directory : (& codec.TliDirectory)]
   [facts : (&mut TliHydratedFacts)]
   [pools : ast.AstNodePoolContext]
   [dummy-body-id : i64]
@@ -1656,6 +1865,8 @@
         prov-id))
     (for [i (iterator.range 0 (array-length record.functions))]
       (tli-hydrate-project-fn!
+        directory
+        pools
         facts
         decls
         paths
@@ -1743,6 +1954,7 @@
                         pools
                         (ast.AstExpr.Literal (ast.AstLiteral.Unit)))))
                   (tli-hydrate-project-record!
+                    (& catalog.directory)
                     facts
                     pools
                     dummy-body-id

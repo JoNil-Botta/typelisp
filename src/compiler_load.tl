@@ -1294,6 +1294,23 @@
               (comptime (offset-of (type CompilerLoadTliCatalogBox) facts)))
             0))))))
 
+(define (compiler-load-session-state-tli-catalog-ptr
+  [state : (& CompilerLoadSessionState)]) : i64
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      0
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (if (> holder.facts.hydrated-module-count 0)
+            (+
+              addr
+              (comptime (offset-of (type CompilerLoadTliCatalogBox) catalog)))
+            0))))))
+
 (define (compiler-load-tli-addr-has-module?
   [addr : i64]
   [module-name : (& str)]) : bool

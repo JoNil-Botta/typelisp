@@ -4223,7 +4223,8 @@
           name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         bases
@@ -24635,7 +24636,8 @@ entry:
           link-id
           (ast.ast-extern-link-input-list-new)
           true
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
@@ -24692,7 +24694,8 @@ entry:
           debug-id
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     (match (compiler-backend-runtime-plan-for functions externs)
       [(Ok plan)
         (let
@@ -34200,7 +34203,8 @@ entry:
     symbol-id
     (ast.ast-extern-link-input-list-new)
     false
-    (ir.CompilerIrReturnStorage.None)))
+    (ir.CompilerIrReturnStorage.None)
+    false))
 
 (define (compiler-backend-non-direct-tail-call-emit
   [target : be_state.CompilerBackendTarget]
@@ -35814,7 +35818,8 @@ entry:
       provided-link-id
       (ast.ast-extern-link-input-list-new)
       true
-      (ir.CompilerIrReturnStorage.None))
+      (ir.CompilerIrReturnStorage.None)
+      false)
     (Extern
       referenced-id
       referenced-id
@@ -35826,7 +35831,8 @@ entry:
       referenced-link-id
       (ast.ast-extern-link-input-list-new)
       false
-      (ir.CompilerIrReturnStorage.None))))
+      (ir.CompilerIrReturnStorage.None)
+      false)))
 
 ;; A backend job owns one exact intern capability and one cache arena.  Keep a
 ;; compact one-word smoke here so the state boundary itself is exercised before
@@ -36476,7 +36482,8 @@ entry:
             extern-link-id
             (ast.ast-extern-link-input-list-new)
             false
-            (ir.CompilerIrReturnStorage.None))
+            (ir.CompilerIrReturnStorage.None)
+            false)
           (Extern
             same-name-id
             same-name-id
@@ -36488,7 +36495,8 @@ entry:
             same-name-link-id
             (ast.ast-extern-link-input-list-new)
             false
-            (ir.CompilerIrReturnStorage.None))))]
+            (ir.CompilerIrReturnStorage.None)
+            false)))]
     (and
       (= source-count-before (ci.intern-pool-len))
       (be_state.backend-and8
@@ -41521,7 +41529,8 @@ b_keep:
                     beta)
                   (ast.ast-extern-link-input-list-new)
                   false
-                  (ir.CompilerIrReturnStorage.None))))
+                  (ir.CompilerIrReturnStorage.None)
+                  false)))
             profile)]
         [expected : String
           (if (= mode 2)
@@ -43255,7 +43264,8 @@ b_keep:
           link-symbol-id
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))
+          (ir.CompilerIrReturnStorage.None)
+          false))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-unused-foreign-link-extern-ok?) : bool
@@ -43303,7 +43313,8 @@ b_keep:
           link-symbol-id
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))
+          (ir.CompilerIrReturnStorage.None)
+          false))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
@@ -45545,7 +45556,8 @@ user_fn:
           c-name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [_pointer : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -45558,7 +45570,8 @@ user_fn:
           pointer-name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [_value : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -45573,7 +45586,8 @@ user_fn:
           name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [globals : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 1)]
     [_address : unit
@@ -45745,7 +45759,8 @@ user_fn:
           link
           (ast.ast-extern-link-input-list-new)
           (>= kind 5)
-          (ir.CompilerIrReturnStorage.None)))
+          (ir.CompilerIrReturnStorage.None)
+          false))
       (let
         [index : be_state.CompilerBackendProgramIndex
           (compiler-backend-program-index-build
@@ -46234,7 +46249,8 @@ user_fn:
       id
       (ast.ast-extern-link-input-list-new)
       false
-      (ir.CompilerIrReturnStorage.None))))
+      (ir.CompilerIrReturnStorage.None)
+      false)))
 
 (define (compiler-backend-convention-site-builtin-call
   [symbol : String]
@@ -46837,7 +46853,8 @@ user_fn:
               (compiler-backend-test-symbol "bridge_c")
               (ast.ast-extern-link-input-list-new)
               true
-              (ir.CompilerIrReturnStorage.None))]
+              (ir.CompilerIrReturnStorage.None)
+              false)]
           (Program
             (ir.compiler-ir-global-seq-empty)
             (ir.compiler-ir-function-seq-prepend
@@ -48384,7 +48401,8 @@ user_fn:
         (compiler-backend-test-symbol "ext_tail_c")
         (ast.ast-extern-link-input-list-new)
         false
-        (ir.CompilerIrReturnStorage.None))]
+        (ir.CompilerIrReturnStorage.None)
+        false)]
     [prog : ir.CompilerIrProgram
       (Program
         (ir.compiler-ir-global-seq-empty)

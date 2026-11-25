@@ -52,7 +52,9 @@
         (__tl_make-array
           (tli-hydrate-fixture-module "dep" "__tl_mod_init_dep" dep-cfg)
           (tli-hydrate-fixture-module "root" "__tl_mod_init_root" 0)
-          (tli-hydrate-fixture-module "unused" "__tl_mod_init_unused" 1)))]
+          (tli-hydrate-fixture-module "unused" "__tl_mod_init_unused" 1))
+        (__tl_make-array tli.TliCompactGlobal 0)
+        (__tl_make-array tli.TliCompactBodyEntry 0))]
     (set!
       (array-ref bundle.modules 1).imports
       (__tl_make-array
@@ -220,8 +222,12 @@
         (bit-or (shl 1 63) 1)
         (__tl_make-array 64 80)
         (__tl_make-array tli.TliGlobalWrite 0)
+        -1
+        (cast 0 : u8)
         0
-        0)]
+        0
+        0
+        (make-array u8 32))]
     (test.assert-true
       (hydrate.tli-hydrate-arena-arg-store? (& summary) 0)
       "first mask bit")
@@ -302,8 +308,12 @@
           0
           (__tl_make-array i64 0)
           (__tl_make-array tli.TliGlobalWrite 0)
+          -1
+          (cast 0 : u8)
           0
-          0))]
+          0
+          0
+          (make-array u8 32)))]
     [abi : ast.AstExternAbi (ast.AstExternAbi.C)]
     (with-arena
       tli-job

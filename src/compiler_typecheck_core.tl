@@ -70828,7 +70828,12 @@
       (match (ast.ast-extern-metadata-imported-spmd
         (ast.ast-extern-metadata-box-shared-view metadata))
         [(No) (Ok (No))]
-        [(Package _ _ _ callables) (Ok (Imported ty callables))])]
+        [(Package _ _ _ callables) (Ok (Imported ty callables))]
+        [(Inline params ret body-id)
+          (let
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-id)]
+            (Ok (Some name-id module-id params ret body)))])]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]

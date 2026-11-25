@@ -681,7 +681,8 @@
               1)
             (= item.lanes 8)
             (ci.intern-id-eq? item.symbol symbol)))]
-      [(No) false])))
+      [(No) false]
+      [(Inline _ _ _) false])))
 
 ;; Pin `ast-expr-node-bytes` / `ast-type-node-bytes` to the compiler's REAL
 ;; inline array stride.

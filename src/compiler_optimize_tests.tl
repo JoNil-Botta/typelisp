@@ -13679,7 +13679,8 @@
                       asymbol
                       alinks
                       aprovided
-                      astorage)
+                      astorage
+                      _)
                     (match (ir.compiler-ir-extern-seq-borrow bexterns index)
                       [(Extern
                           bid
@@ -13690,7 +13691,8 @@
                           bsymbol
                           blinks
                           bprovided
-                          bstorage)
+                          bstorage
+                          _)
                         (set!
                           same?
                           (and
@@ -68294,7 +68296,8 @@ return 0" true)
     link
     (ast.ast-extern-link-input-list-new)
     provided
-    (ir.CompilerIrReturnStorage.None)))
+    (ir.CompilerIrReturnStorage.None)
+    false))
 
 (test
   global-mod-ref-extern-link-identity

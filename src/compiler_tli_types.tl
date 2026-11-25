@@ -146,18 +146,42 @@
 
 (define tli-fn-has-indirect-effects : i64
   32)
+(define tli-fn-has-inline-ir : i64
+  64)
+(define tli-fn-must-use : i64
+  128)
 (define tli-fn-stores-ambient-arena-arg : i64
   256)
+(define tli-fn-spmd-inlineable : i64
+  512)
+(define tli-fn-no-module-inits : i64
+  1024)
+(define tli-fn-effect-flags-mask : i64
+  2047)
 (define tli-macro-uses-expr-type : i64
   16)
+(define tli-compact-body-has-ir : i64
+  1)
+(define tli-compact-body-has-spmd-expr : i64
+  2)
+(define tli-compact-global-never-written : i64
+  1)
+(define tli-compact-ir-call-free : i64
+  1)
+(define tli-max-spmd-expr-depth : i64
+  64)
 
 (defstruct TliFnSummary
   (effect-flags i64)
   (arena-arg-store-mask i64)
   (arena-arg-store-extra (__tl_dyn-array i64))
   (global-writes (__tl_dyn-array TliGlobalWrite))
+  (call-memory i64)
+  (call-clean u8)
+  (return-alias i64)
   (inline-ir-offset i64)
-  (inline-ir-len i64))
+  (inline-ir-len i64)
+  (inline-ir-sha256 (Array u8 32)))
 
 (defstruct TliFnDecl
   (name String)
@@ -228,11 +252,199 @@
   (macros (__tl_dyn-array TliMacroHandle))
   (dispatches (__tl_dyn-array TliDispatchDecl)))
 
+(defenum TliCompactValue
+  (Var i64)
+  (Global String)
+  (GlobalAddr String)
+  (Function String)
+  (I64 i64)
+  (F64Bits i64)
+  (Bool bool)
+  (Char i64)
+  (String String)
+  (Bytes (__tl_dyn-array u8))
+  (Unit)
+  (StaticArray (__tl_dyn-array u8)))
+
+(defstruct TliCompactCallArgs
+  (args (__tl_dyn-array TliCompactValue))
+  (sret-index i64))
+
+(defenum TliCompactBinOp
+  (Add)
+  (Sub)
+  (Mul)
+  (Div)
+  (Mod)
+  (SafeDiv)
+  (SafeMod)
+  (Eq)
+  (Ne)
+  (Lt)
+  (Le)
+  (Gt)
+  (Ge)
+  (BitTestEq)
+  (BitTestNe)
+  (And)
+  (Or)
+  (BitAnd)
+  (BitOr)
+  (BitXor)
+  (Shl TliType)
+  (Shr TliType))
+
+(defenum TliCompactUnOp
+  (Neg)
+  (Not)
+  (BitNot)
+  (Sqrt)
+  (BitLength))
+
+(defstruct TliCompactPhiInput
+  (value TliCompactValue)
+  (label i64))
+
+(defstruct TliCompactSwitchCase
+  (value i64)
+  (label i64))
+
+(defenum TliCompactInstr
+  (Mov i64 TliCompactValue TliType)
+  (Alloc i64 TliType)
+  (AddrOf i64 i64 i64)
+  (Gep i64 TliCompactValue TliCompactValue TliType)
+  (Load i64 TliCompactValue TliType)
+  (StoreOwned TliCompactValue TliCompactValue TliType)
+  (StorePtr TliCompactValue TliCompactValue TliType)
+  (CopyBytes TliCompactValue TliCompactValue i64)
+  (BoundsCheck TliCompactValue TliCompactValue i64)
+  (Cast i64 TliCompactValue TliType TliType)
+  (Bitcast i64 TliCompactValue TliType TliType)
+  (BinOp i64 TliCompactBinOp TliCompactValue TliCompactValue TliType)
+  (UnOp i64 TliCompactUnOp TliCompactValue TliType)
+  (Call i64 String TliCompactCallArgs TliType)
+  (CallIndirect i64 TliCompactValue TliCompactCallArgs TliType)
+  (CallIndirectC i64 TliCompactValue TliCompactCallArgs TliType)
+  (TailCall String TliCompactCallArgs TliType)
+  (Store String TliCompactValue TliType)
+  (Jump i64)
+  (Branch TliCompactValue i64 i64)
+  (TotalEnumBranch TliCompactValue i64 i64)
+  (Return bool TliCompactValue)
+  (Phi i64 (__tl_dyn-array TliCompactPhiInput) TliType)
+  (Pack i64 (__tl_dyn-array TliCompactValue) TliType)
+  (Word i64 TliCompactValue i64 TliType)
+  (Switch TliCompactValue i64 (__tl_dyn-array TliCompactSwitchCase) i64)
+  (TotalEnumSwitch
+    TliCompactValue
+    i64
+    (__tl_dyn-array TliCompactSwitchCase)
+    i64
+    i64))
+
+(defstruct TliCompactBlock
+  (label i64)
+  (instrs (__tl_dyn-array TliCompactInstr)))
+
+(defstruct TliCompactParam
+  (name String)
+  (ty TliType)
+  (var-id i64))
+
+(defenum TliCompactReturnStorage
+  (None)
+  (Some i64 i64 i64 i64 TliType TliType (__tl_dyn-array TliType) TliType))
+
+(defstruct TliCompactExternRef
+  (symbol String)
+  (abi i64)
+  (link-symbol String)
+  (ty TliType)
+  (return-storage TliCompactReturnStorage))
+
+(defstruct TliCompactIrBody
+  (ir-flags i64)
+  (instr-count i64)
+  (params (__tl_dyn-array TliCompactParam))
+  (ret-type TliType)
+  (next-var i64)
+  (blocks (__tl_dyn-array TliCompactBlock))
+  (return-storage TliCompactReturnStorage)
+  (extern-refs (__tl_dyn-array TliCompactExternRef)))
+
+(defenum TliSpmdLiteral
+  (Int i64 String)
+  (Float String)
+  (Bool bool)
+  (Char i64)
+  (String String)
+  (Unit))
+
+(defstruct TliSpmdLetBinding
+  (name String)
+  (has-type bool)
+  (ty TliType)
+  (init (Box TliSpmdExpr)))
+
+(defenum TliSpmdExpr
+  (Literal TliSpmdLiteral)
+  (Var String)
+  (Unary i64 (Box TliSpmdExpr))
+  (Binary i64 (Box TliSpmdExpr) (Box TliSpmdExpr))
+  (Call (Box TliSpmdExpr) (__tl_dyn-array TliSpmdExpr))
+  (If (Box TliSpmdExpr) (Box TliSpmdExpr) (Box TliSpmdExpr))
+  (Let (__tl_dyn-array TliSpmdLetBinding) (Box TliSpmdExpr))
+  (Begin (__tl_dyn-array TliSpmdExpr))
+  (Ann (Box TliSpmdExpr) TliType)
+  (Cast (Box TliSpmdExpr) TliType)
+  (ArrayRef (Box TliSpmdExpr) (Box TliSpmdExpr))
+  (ArraySet (Box TliSpmdExpr) (Box TliSpmdExpr) (Box TliSpmdExpr))
+  (StructGet (Box TliSpmdExpr) String)
+  (StructSet (Box TliSpmdExpr) String (Box TliSpmdExpr))
+  (Tuple (__tl_dyn-array TliSpmdExpr))
+  (TupleRef (Box TliSpmdExpr) i64)
+  (Set (Box TliSpmdExpr) (Box TliSpmdExpr))
+  (Borrow bool String (Box TliSpmdExpr)))
+
+(defstruct TliCompactBody
+  (kind i64)
+  (ir-body TliCompactIrBody)
+  (spmd-expr TliSpmdExpr))
+
+(defstruct TliCompactBodyEntry
+  (module-name String)
+  (fn-name String)
+  (link-symbol String)
+  (body TliCompactBody))
+
+(defstruct TliCompactGlobal
+  (symbol String)
+  (ty TliType)
+  (flags i64)
+  (init TliCompactValue))
+
+(define (tli-compact-ir-body-empty) : TliCompactIrBody
+  (TliCompactIrBody
+    0
+    0
+    (__tl_make-array TliCompactParam 0)
+    (TliType.Unit)
+    0
+    (__tl_make-array TliCompactBlock 0)
+    (TliCompactReturnStorage.None)
+    (__tl_make-array TliCompactExternRef 0)))
+
+(define (tli-spmd-expr-empty) : TliSpmdExpr
+  (TliSpmdExpr.Literal (TliSpmdLiteral.Unit)))
+
 (defstruct TliBundle
   (flags i64)
   (compiler-build String)
   (target-triple String)
-  (modules (__tl_dyn-array TliModuleRecord)))
+  (modules (__tl_dyn-array TliModuleRecord))
+  (compact-globals (__tl_dyn-array TliCompactGlobal))
+  (compact-bodies (__tl_dyn-array TliCompactBodyEntry)))
 
 (defstruct TliDirectoryEntry
   (name String)

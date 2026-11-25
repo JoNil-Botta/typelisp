@@ -1,5 +1,6 @@
 ;; module_macro_generated_stdlib_vector_qualified_flat_import_exported.tl -
 ;; exported module macros retain provider-qualified generated-body imports.
+(import stdlib.eq)
 (import stdlib.test)
 
 ;; The explicit alias keeps the generated provider surface concise.
@@ -7,6 +8,8 @@
 
 (defstruct Pair
   (value i64))
+
+(eq.gen Pair)
 
 (import (provider.vector-user i64) as user)
 (import (provider.vector-user String) as string-user)

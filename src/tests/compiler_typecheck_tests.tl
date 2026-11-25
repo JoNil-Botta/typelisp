@@ -7985,7 +7985,27 @@
 (define (main) : i64
   (let [f : (-> i64 i64) (unsafe (danger-value))]
     (f 42)))"
-      "typecheck: danger is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")))
+      "typecheck: danger is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")
+    (compiler-typecheck-ok?
+      "(unsafe (extern (danger-ext [x : i64]) : i64))
+(define (main) : i64
+  (begin
+    (foreach ([i : i64 0 4])
+      (foreach-active [lane : i64]
+        (let [_ : i64 (unsafe (danger-ext (lane-value i)))]
+          unit)))
+    0))")
+    (compiler-typecheck-error-ok?
+      "(unsafe (extern (danger-ext [x : i64]) : i64))
+(define (main) : i64
+  (begin
+    (foreach ([i : i64 0 4])
+      (foreach-active [lane : i64]
+        (let [f : (-> i64 i64) (unsafe danger-ext)]
+          (let [_ : i64 (f (lane-value i))]
+            unit))))
+    0))"
+      "typecheck: danger-ext is an unsafe callable and cannot be used as a plain function value; call it directly inside unsafe")))
 
 (define (compiler-typecheck-arena-unsafe-tests-ok?) : bool
   (and

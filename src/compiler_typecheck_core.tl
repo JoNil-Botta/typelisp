@@ -71078,16 +71078,49 @@
     (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
     result))
 
+(define (tc-spmd-call-target-expr
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [func-id : i64]) : ResultTcSpmdExprInfo
+  (tc-semantic-spmd
+    ctx
+    env
+    (match (match (tc-expr
+      ctx
+      env
+      (ast.ast-expr-segment-bases-get expr-bases func-id))
+      [(Ok ty) (ResultTcType.Ok ty)]
+      [(Err message)
+        (if (tc-direct-call-target-error? message)
+          (tc-call-target-direct-name
+            ctx
+            env
+            (ast.ast-expr-segment-bases-get expr-bases func-id)
+            message)
+          (ResultTcType.Err message))])
+      [(Ok ty)
+        (tc-spmd-expr-typed
+          ctx
+          expr-bases
+          env
+          spmd-env
+          (ast.ast-expr-segment-bases-get expr-bases func-id)
+          ty)]
+      [(Err message) (ResultTcSpmdExprInfo.Err message)])))
+
 (define (tc-spmd-call-uniform-only
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
-  [func : ast.AstExpr]
+  [func-box : i64]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (let
-    [func-info (try (tc-spmd-expr ctx expr-bases env spmd-env func))]
+    [func-info
+      (try (tc-spmd-call-target-expr ctx expr-bases env spmd-env func-box))]
     (match func-info
       [(TcSpmdExprInfo _ _ func-env)
         (let
@@ -71203,11 +71236,11 @@
   [expr-ty : ast.AstType]
   [fn-ty : ast.AstType]
   [callables : (& callables ast.AstImportedSpmdCallableList)]
-  [func : ast.AstExpr]
+  [func-box : i64]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (let
     [func-info : TcSpmdExprInfo
-      (try (tc-spmd-expr ctx expr-bases env spmd-env func))]
+      (try (tc-spmd-call-target-expr ctx expr-bases env spmd-env func-box))]
     (match func-info
       [(TcSpmdExprInfo _ _ func-env)
         (let
@@ -71386,12 +71419,12 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
-  [func : ast.AstExpr]
+  [func-box : i64]
   [args : ast.AstExprList]
   [symbol : String]) : ResultTcSpmdExprInfo
   (let
     [func-info : TcSpmdExprInfo
-      (try (tc-spmd-expr ctx expr-bases env spmd-env func))]
+      (try (tc-spmd-call-target-expr ctx expr-bases env spmd-env func-box))]
     (match func-info
       [(TcSpmdExprInfo _ _ func-env)
         (let
@@ -71412,19 +71445,28 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (let
     [symbol (try (tc-spmd-atomic-call-symbol ctx env spmd-env func))]
     (if (string.eq symbol "")
-      (tc-spmd-inline-call ctx expr-bases env spmd-env expr-ty func args)
+      (tc-spmd-inline-call
+        ctx
+        expr-bases
+        env
+        spmd-env
+        expr-ty
+        func-box
+        func
+        args)
       (tc-spmd-atomic-call-with-symbol
         ctx
         expr-bases
         env
         spmd-env
         expr-ty
-        func
+        func-box
         args
         symbol))))
 
@@ -71434,6 +71476,7 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (let
@@ -71502,7 +71545,7 @@
             expr-ty
             fn-ty
             (& callable-items)
-            func
+            func-box
             args))]
       [(No)
         (tc-spmd-call-uniform-only
@@ -71511,7 +71554,7 @@
           env
           spmd-env
           expr-ty
-          func
+          func-box
           args)])))
 
 (define (tc-spmd-inline-call
@@ -71520,6 +71563,7 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (if (tc-type-env-scoped-runtime-active? env)
@@ -71533,11 +71577,20 @@
           env
           spmd-env
           expr-ty
+          func-box
           func
           args)]
       (tc-type-env-scoped-runtime-restore! saved)
       result)
-    (tc-spmd-inline-call-inner ctx expr-bases env spmd-env expr-ty func args)))
+    (tc-spmd-inline-call-inner
+      ctx
+      expr-bases
+      env
+      spmd-env
+      expr-ty
+      func-box
+      func
+      args)))
 
 (define (tc-spmd-masked-if-inline-helper-body
   [ctx : TcContext]
@@ -71634,6 +71687,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [expr : ast.AstExpr]) : ResultTcUnit
@@ -71652,7 +71706,7 @@
               (match (tc-expr ctx env expr)
                 [(Ok ty) ty]
                 [(Err _) (Unit)])
-              func
+              func-box
               args
               symbol))]
         Ok))))
@@ -72719,7 +72773,15 @@
               "varying calls inside masked branches")]
           [(>= ps-kind 0) Ok]
           [else
-            (tc-spmd-masked-if-call ctx expr-bases env spmd-env func args expr)]))]
+            (tc-spmd-masked-if-call
+              ctx
+              expr-bases
+              env
+              spmd-env
+              func-box
+              func
+              args
+              expr)]))]
     [(Syscall _)
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
     [(While cond-box body-box)
@@ -74462,7 +74524,15 @@
                   (tc-spmd-finish expr-ty Uniform args-env))])]
           [(>= ps-kind 0) (tc-spmd-finish expr-ty Uniform spmd-env)]
           [else
-            (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)]))]
+            (tc-spmd-atomic-call
+              ctx
+              expr-bases
+              env
+              spmd-env
+              expr-ty
+              func-box
+              func
+              args)]))]
     [(If cond-box then-branch-box else-branch-box)
       (let
         [cond : ast.AstExpr

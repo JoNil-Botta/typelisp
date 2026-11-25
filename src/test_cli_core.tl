@@ -3906,7 +3906,6 @@
               (match (build_run_core.source-tool-build-package-deps-only!
                 (& source-set.manifest-path)
                 backend-target
-                opt-level
                 (& roots)
                 (& tltest-user-cfg-slots))
                 [(Ok) unit]

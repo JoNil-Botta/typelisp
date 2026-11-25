@@ -410,7 +410,6 @@
           (match (build_run_core.source-tool-build-package-deps-only!
             (& source-set.manifest-path)
             (build_run_core.source-tool-backend-target options.target)
-            options.opt-level
             (& options.stdlib-roots)
             (& options.cfgs))
             [(Ok) unit]

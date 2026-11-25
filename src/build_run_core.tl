@@ -2262,10 +2262,11 @@
           (cli_svec.get values i ""))))
     out))
 
+;; Dependencies build at the dev profile's own opt-level, so `check` and `test`
+;; share target/dev artifacts with `build --profile dev` instead of rebuilding them.
 (define (source-tool-build-package-deps-only!
   [manifest-path : (& str)]
   [target : be_state.CompilerBackendTarget]
-  [opt-level : i64]
   [stdlib-roots : (& cli_svec.Vec)]
   [cfg-names : (& cli_svec.Vec)]) : SourceToolCommandStatus
   (let
@@ -2290,17 +2291,13 @@
       (source-tool-args-append
         (source-tool-args-append a2 "--target")
         (source-tool-target-name target))]
-    [a4 : process.ProcessStringList
-      (source-tool-args-append
-        (source-tool-args-append a3 "--opt-level")
-        (cli_option.cli-option-opt-level-name opt-level))]
     [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-active-sysroot-options)]
     [a5 : process.ProcessStringList
       (if (> (string.string-length (& sysroot.explicit-root)) 0)
         (source-tool-args-append
-          (source-tool-args-append a4 "--sysroot")
+          (source-tool-args-append a3 "--sysroot")
           sysroot.explicit-root)
-        a4)]
+        a3)]
     [a6 : process.ProcessStringList
       (if sysroot.disabled
         (source-tool-args-append a5 "--no-prebuilt-stdlib")

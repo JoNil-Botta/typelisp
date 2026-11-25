@@ -106369,12 +106369,15 @@
   [func : (& ast.AstExpr)]) : bool
   (match (ast.ast-expr-unspan-with-segment-bases owner.expr-bases func)
     [(Var name-id)
-      (=
-        (macro-output-syntax-id-at
-          (macro-sexpr-session owner)
-          name-id
-          "call-head")
-        cbi.compiler-builtin-id-fix-module)]
+      (let
+        [session : cis.InternStructuralSessionHandle
+          (macro-sexpr-session owner)]
+        (and
+          (not (macro-hygiene-global-id? session name-id))
+          (not (tc-structural-local-name-id? session name-id))
+          (=
+            (macro-output-syntax-id-at session name-id "call-head")
+            cbi.compiler-builtin-id-fix-module)))]
     [_ false]))
 
 (define (macro-module-call-args-to-spanned-sexpr

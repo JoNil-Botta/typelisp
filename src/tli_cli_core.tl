@@ -157,11 +157,14 @@
 (define (tli-sysroot-options-explicit? [options : (& TliSysrootOptions)]) : bool
   (> (string.string-length (& options.explicit-root)) 0))
 
-;; Check whether a single directory overrides any embedded stdlib source file
-;; with contents that differ from it once inline tests are blanked, the same
-;; equivalence the loader uses to keep a disk stdlib module on its embedded
-;; identity.
-(define (tli-sysroot-dir-overrides-stdlib? [dir : (& str)]) : bool
+;; Check whether a single directory tree overrides any embedded stdlib source
+;; file with contents that differ from it once inline tests are blanked, the
+;; same equivalence the loader uses to keep a disk stdlib module on its
+;; embedded identity.
+(define (tli-sysroot-dir-overrides-stdlib-at?
+  [dir : (& str)]
+  [prefix : (& str)]
+  [depth : i64]) : bool
   (match (fs.try-read-dir dir)
     [(ErrIoStringVector _) false]
     [(OkIoStringVector entries)
@@ -171,25 +174,55 @@
           (let
             [entry : String (fs.string-vector-get (& entries) i "")]
             [n : i64 (string.string-length (& entry))]
-            (when
-              (and (> n 3) (string.is-string-prefix-at (& entry) ".tl" (- n 3)))
-              (match (embedded.compiler-embedded-stdlib-lookup
-                (string.copy (& entry)))
-                [(CompilerEmbeddedStdlibSomeSource expected)
+            (unless
+              (or (= n 0) (string.is-string-prefix-at (& entry) "." 0))
+              (if (and
+                (> n 3)
+                (string.is-string-prefix-at (& entry) ".tl" (- n 3)))
+                (let
+                  [rel : String
+                    (if (= (string.string-length prefix) 0)
+                      (string.copy (& entry))
+                      (string.concat3-borrowed prefix "/" (& entry)))]
+                  (match (embedded.compiler-embedded-stdlib-lookup rel)
+                    [(CompilerEmbeddedStdlibSomeSource expected)
+                      (let
+                        [full : String (fs.path-join dir (& entry))]
+                        (match (io.try-read-file (& full))
+                          [(OkIoBytes actual)
+                            (let
+                              [actual-text : String (byte_buf.to-string actual)]
+                              (unless
+                                (embedded.compiler-embedded-stdlib-source-matches-blanked?
+                                  (& actual-text)
+                                  (& expected))
+                                (return true)))]
+                          [(ErrIoBytes _) (return true)]))]
+                    [(CompilerEmbeddedStdlibNoSource) unit]))
+                (when
+                  (> depth 0)
                   (let
                     [full : String (fs.path-join dir (& entry))]
-                    (match (io.try-read-file (& full))
-                      [(OkIoBytes actual)
-                        (let
-                          [actual-text : String (byte_buf.to-string actual)]
-                          (unless
-                            (embedded.compiler-embedded-stdlib-source-matches-blanked?
-                              (& actual-text)
-                              (& expected))
-                            (return true)))]
-                      [(ErrIoBytes _) (return true)]))]
-                [(CompilerEmbeddedStdlibNoSource) unit]))))
+                    (match (fs.try-file-kind (& full))
+                      [(OkFsFileKind kind)
+                        (when
+                          (fs.file-kind-directory? kind)
+                          (let
+                            [rel : String
+                              (if (= (string.string-length prefix) 0)
+                                (string.copy (& entry))
+                                (string.concat3-borrowed prefix "/" (& entry)))]
+                            (when
+                              (tli-sysroot-dir-overrides-stdlib-at?
+                                (& full)
+                                (& rel)
+                                (- depth 1))
+                              (return true))))]
+                      [_ unit])))))))
         false)]))
+
+(define (tli-sysroot-dir-overrides-stdlib? [dir : (& str)]) : bool
+  (tli-sysroot-dir-overrides-stdlib-at? dir "" 4))
 
 ;; Fast check: zero filesystem calls when no `--stdlib-root` or
 ;; `TYPELISP_STDLIB_ROOT` is configured. When configured, disable prebuilt

@@ -135,13 +135,12 @@ if [ "$HOST_OS" = linux ]; then
     fi
     ENTRY=$(linux_entry_symbol_for_asm "$ASM") || exit $?
     STDLIB_ARCHIVE=$(linux_stdlib_archive_for_asm "$ASM" "${COMPILER:-}")
-    STDLIB_LINK_ARGS=""
+    set -- "$OBJ" -o "$BIN" -static
     if [ -n "$STDLIB_ARCHIVE" ]; then
-        STDLIB_LINK_ARGS="-z noexecstack --gc-sections --start-group $STDLIB_ARCHIVE --end-group"
+        set -- "$@" -z noexecstack --gc-sections --start-group "$STDLIB_ARCHIVE" --end-group
     fi
-    # shellcheck disable=SC2086
-    if ! ld "$OBJ" -o "$BIN" -static $STDLIB_LINK_ARGS -e "$ENTRY" \
-        >> "$RUN_OUT" 2>> "$RUN_ERR"; then
+    set -- "$@" -e "$ENTRY"
+    if ! ld "$@" >> "$RUN_OUT" 2>> "$RUN_ERR"; then
         echo "spmd-runtime-dispatch: link failed" >&2
         sed 's/^/  /' "$RUN_ERR" >&2
         exit 1

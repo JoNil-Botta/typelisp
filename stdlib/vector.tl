@@ -358,37 +358,44 @@
             ;; slot whose liveness bit `into-next` has cleared. The state cell is
             ;; arena-backed; its cleanup field makes every wrapper alias converge
             ;; on the same idempotent liveness map.
+            ;; Opaque, so IntoIter's raw state pointer seals it (#9783): outside
+            ;; this module family only unsafe code can forge an IntoIter.
             (defstruct IntoIterState
+              (:opaque)
               (slots (__tl_dyn-array ,T))
               (live (__tl_dyn-array bool))
               (len i64)
               (index i64))
-            (define (into-iter-state-null? [state-ptr : (MutPtr IntoIterState)]) : bool
-              (=
-                (unsafe
-                  (ptr->int state-ptr))
-                (cast 0 : u64)))
-            (define (cleanup-into-iter-state
-              [state-ptr : (MutPtr IntoIterState)]) : unit
-              (if (into-iter-state-null? state-ptr)
-                unit
-                (let
-                  [state : IntoIterState
-                    (unsafe
-                      (ptr-read state-ptr))]
-                  [len : i64 state.len]
-                  (begin
-                    (cleanup-slot-state (SlotState state.slots state.live))
-                    ;; The storage moved into the cleanup: write back a drained
-                    ;; state rather than the partially moved one.
-                    (unsafe
-                      (ptr-write!
-                        state-ptr
-                        (IntoIterState
-                          (__tl_make-array ,T 0)
-                          (__tl_make-array bool 0)
-                          len
-                          len)))))))
+            (unsafe
+              (define (into-iter-state-null?
+                [state-ptr : (MutPtr IntoIterState)]) : bool
+                (=
+                  (unsafe
+                    (ptr->int state-ptr))
+                  (cast 0 : u64))))
+            (unsafe
+              (define (cleanup-into-iter-state
+                [state-ptr : (MutPtr IntoIterState)]) : unit
+                (if (unsafe
+                  (into-iter-state-null? state-ptr))
+                  unit
+                  (let
+                    [state : IntoIterState
+                      (unsafe
+                        (ptr-read state-ptr))]
+                    [len : i64 state.len]
+                    (begin
+                      (cleanup-slot-state (SlotState state.slots state.live))
+                      ;; The storage moved into the cleanup: write back a drained
+                      ;; state rather than the partially moved one.
+                      (unsafe
+                        (ptr-write!
+                          state-ptr
+                          (IntoIterState
+                            (__tl_make-array ,T 0)
+                            (__tl_make-array bool 0)
+                            len
+                            len))))))))
             (defstruct IntoIter
               (:cleanup cleanup-into-iter)
               (state (MutPtr IntoIterState) (:cleanup cleanup-into-iter-state)))
@@ -443,7 +450,8 @@
             ;; this module must still read the opaque state and check `live`
             ;; before touching a remaining slot.
             (define (into-remaining-len [iter : (& iter IntoIter)]) : i64
-              (if (into-iter-state-null? iter.state)
+              (if (unsafe
+                (into-iter-state-null? iter.state))
                 0
                 (let
                   [state : IntoIterState
@@ -451,7 +459,8 @@
                       (ptr-read iter.state))]
                   (- state.len state.index))))
             (define (into-next [iter : (&mut state IntoIter)]) : IntoNext
-              (if (into-iter-state-null? iter.state)
+              (if (unsafe
+                (into-iter-state-null? iter.state))
                 (IntoNext.Done)
                 (let
                   [owned-state : IntoIterState

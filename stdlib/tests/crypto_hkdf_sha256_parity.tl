@@ -35,7 +35,9 @@
                           (and
                             (= (hkdf.okm-length (& owned)) 33)
                             (hkdf.prk-live? (& key)))]
-                        (hkdf.close-prk (hkdf.HkdfSha256Prk key.storage))
+                        (hkdf.close-prk
+                          (unsafe
+                            (hkdf.HkdfSha256Prk key.storage)))
                         (if (and valid (not (hkdf.prk-live? (& key))))
                           42
                           4)))]))])))]))

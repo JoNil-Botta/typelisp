@@ -330,14 +330,15 @@
       (extract-fixture-module
         "(module fixture)
 (import stdlib.crypto_secret as other)
+(import stdlib.io as sink)
 (defstruct Wrapped
   (:cleanup other.close-fixed)
-  (qualified other.SecretHandle (:cleanup stdlib.crypto_secret/storage-close))
-  (slashed other.SecretNominalHandle (:cleanup other/nominal-handle-close)))
+  (qualified i64 (:cleanup stdlib.io/set-error-code))
+  (slashed i64 (:cleanup sink/set-error-code)))
 (defenum Choice
   (:cleanup other.close-bytes-result)
   (Empty)
-  (Payload other.SecretHandle (:cleanup other/storage-close)))
+  (Payload i64 (:cleanup sink/set-error-code)))
 ")]
     (match (& (array-ref row.types 0).cleanup)
       [(Fn name)
@@ -352,7 +353,7 @@
           [(Fn name)
             (test.assert-string-eq
               name
-              "stdlib.crypto_secret/storage-close"
+              "stdlib.io/set-error-code"
               "slash-alias enum payload cleanup")]
           [_ (io.panic "expected an enum payload cleanup")])]
       [_ (io.panic "expected an enum body")])
@@ -369,14 +370,14 @@
           [(Fn name)
             (test.assert-string-eq
               name
-              "stdlib.crypto_secret/storage-close"
+              "stdlib.io/set-error-code"
               "dotted struct field cleanup")]
           [_ (io.panic "expected dotted struct field cleanup")])
         (match (& (array-ref fields 1).cleanup)
           [(Fn name)
             (test.assert-string-eq
               name
-              "stdlib.crypto_secret/nominal-handle-close"
+              "stdlib.io/set-error-code"
               "slash-alias struct field cleanup")]
           [_ (io.panic "expected slash-alias struct field cleanup")])]
       [_ (io.panic "expected a struct body")])))

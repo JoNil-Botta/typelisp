@@ -308,6 +308,7 @@
 
 ;: Private owner storage; kind and adapter identity never come from a wrapper.
 (defstruct SocketState
+  (:opaque)
   (token i64)
   (kind SocketKind)
   (family i64)
@@ -393,14 +394,15 @@
                 (Err (error (AdapterCorrupt)))])))))))
 
 ;: Lexical cleanup is idempotent; stale values cannot close the active owner.
-(define (owner-cleanup [owner : SocketOwner]) : unit
-  (if (unsafe
-    (owner-claim owner))
-    (begin
-      (unsafe
-        (state-close owner.state))
-      unit)
-    unit))
+(unsafe
+  (define (owner-cleanup [owner : SocketOwner]) : unit
+    (if (unsafe
+      (owner-claim owner))
+      (begin
+        (unsafe
+          (state-close owner.state))
+        unit)
+      unit)))
 
 ;: Move-only TCP stream. Operations borrow mutably and validate private kind.
 (defstruct TcpStream
@@ -814,7 +816,8 @@
                       (match (step-status finished.step)
                         [(Ok) (OwnerOk owner)]
                         [(Err failure)
-                          (owner-cleanup owner)
+                          (unsafe
+                            (owner-cleanup owner))
                           (OwnerError failure)])))]
                 [(Failed failure)
                   (OwnerError

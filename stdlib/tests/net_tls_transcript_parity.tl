@@ -30,7 +30,8 @@
   [tag : transcript.TlsTranscriptBoundary]) : bool
   (match (transcript.snapshot-boundary state tag)
     [(TlsTranscriptHashOk value)
-      (match (transcript.boundary-digest value tag)
+      (match (unsafe
+        (transcript.boundary-digest value tag))
         [(TlsTranscriptDigestOk digest)
           (match (transcript.snapshot state)
             [(TlsTranscriptDigestOk expected)

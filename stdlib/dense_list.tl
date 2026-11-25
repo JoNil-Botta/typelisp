@@ -249,19 +249,21 @@
             ;; Moves `count` live elements from the old backing at `src` into
             ;; `dst`: each is read bitwise exactly once, and the caller
             ;; replaces the old backing without reading it again.
-            (define (,copy-range-name
-              [dst : (&mut dst (__tl_dyn-array ,T))]
-              [src : (MutPtr ,T)]
-              [index : i64]
-              [count : i64]) : unit
-              (if (>= index count)
-                unit
-                (begin
-                  (set!
-                    (array-ref dst index)
+            (unsafe
+              (define (,copy-range-name
+                [dst : (&mut dst (__tl_dyn-array ,T))]
+                [src : (MutPtr ,T)]
+                [index : i64]
+                [count : i64]) : unit
+                (if (>= index count)
+                  unit
+                  (begin
+                    (set!
+                      (array-ref dst index)
+                      (unsafe
+                        (ptr-read (ptr-offset src index))))
                     (unsafe
-                      (ptr-read (ptr-offset src index))))
-                  (,copy-range-name dst src (+ index 1) count))))
+                      (,copy-range-name dst src (+ index 1) count))))))
             (define (,grow-name [v : (&mut v ,list-type)]) : unit
               (let
                 [n : i64 v.len]
@@ -272,12 +274,12 @@
                     (* old-cap 2))]
                 [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
                 (begin
-                  (,copy-range-name
-                    (&mut bigger)
-                    (unsafe
-                      (__tl_array-data v.slots))
-                    0
-                    n)
+                  (unsafe
+                    (,copy-range-name
+                      (&mut bigger)
+                      (__tl_array-data v.slots)
+                      0
+                      n))
                   (set! v.slots bigger))))
             (define (,push-name [v : (&mut v ,list-type)] [value : ,T]) : unit
               (begin

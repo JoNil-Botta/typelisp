@@ -292,17 +292,21 @@
   (let
     [source : secret.SecretFixed (secret.fixed-zero (secret.Secret32))]
     [destination : secret.SecretBytes (new-bytes 64)]
-    [alias : secret.SecretBytes (secret.SecretBytes source.handle)]
+    [alias : secret.SecretBytes
+      (unsafe
+        (secret.SecretBytes source.handle))]
     [stale : secret.SecretFixed
-      (secret.SecretFixed
-        (secret.SecretHandle
-          source.handle.storage
-          (+ source.handle.generation 1)))]
+      (unsafe
+        (secret.SecretFixed
+          (secret.SecretHandle
+            source.handle.storage
+            (+ source.handle.generation 1))))]
     [stale-destination : secret.SecretBytes
-      (secret.SecretBytes
-        (secret.SecretHandle
-          destination.handle.storage
-          (+ destination.handle.generation 1)))]
+      (unsafe
+        (secret.SecretBytes
+          (secret.SecretHandle
+            destination.handle.storage
+            (+ destination.handle.generation 1))))]
     (test.assert-i64-eq
       (error-kind
         (secret.fixed-copy-range!
@@ -372,7 +376,8 @@
       [live : secret.SecretBytes (new-bytes 32)]
       [empty-destination : secret.SecretBytes (new-bytes 32)]
       [closed : secret.SecretBytes
-        (secret.SecretBytes stale-destination.handle)]
+        (unsafe
+          (secret.SecretBytes stale-destination.handle))]
       (test.assert-i64-eq
         (error-kind (secret.bytes-copy-range! (& live) 0 (&mut closed) 0 0))
         1
@@ -388,6 +393,25 @@
     (secret.close-bytes alias)
     (secret.close-fixed stale)
     (secret.close-bytes stale-destination)))
+
+;: Public header word INDEX of fixture storage: 0 state, 1 generation, 2 length
+;: and 3 capacity. The header type is opaque outside stdlib.crypto_secret.
+(define (header-word [storage : (MutPtr secret.SecretStorage)] [index : i64]) : u64
+  (unsafe
+    (ptr-read (ptr-offset (ptr-cast storage : (Ptr u64)) index))))
+
+;: Write the four public header words of fixture storage at WORDS.
+(define (write-header!
+  [words : (MutPtr u64)]
+  [state : u64]
+  [generation : u64]
+  [length : u64]
+  [capacity : u64]) : unit
+  (unsafe
+    (ptr-write! words state)
+    (ptr-write! (ptr-offset words 1) generation)
+    (ptr-write! (ptr-offset words 2) length)
+    (ptr-write! (ptr-offset words 3) capacity)))
 
 ;: Distinct header pointers still cannot admit overlapping secret ranges.
 (define (distinct-overlap) : unit
@@ -407,27 +431,26 @@
       [destination-storage : (MutPtr secret.SecretStorage)
         (unsafe
           (ptr-cast (ptr-offset raw 1) : (MutPtr secret.SecretStorage)))]
-      (unsafe
-        (ptr-write!
-          source-storage
-          (secret.SecretStorage
-            (cast 0 : u64)
-            (cast 0 : u64)
-            (cast 32 : u64)
-            (cast 64 : u64))))
-      (unsafe
-        (ptr-write!
-          destination-storage
-          (secret.SecretStorage
-            (cast 0 : u64)
-            (cast 32 : u64)
-            (cast 64 : u64)
-            (cast 64 : u64))))
+      (write-header!
+        raw
+        (cast 0 : u64)
+        (cast 0 : u64)
+        (cast 32 : u64)
+        (cast 64 : u64))
+      (write-header!
+        (unsafe
+          (ptr-offset raw 1))
+        (cast 0 : u64)
+        (cast 32 : u64)
+        (cast 64 : u64)
+        (cast 64 : u64))
       (let
         [source : secret.SecretBytes
-          (secret.SecretBytes (secret.SecretHandle source-storage 0))]
+          (unsafe
+            (secret.SecretBytes (secret.SecretHandle source-storage 0)))]
         [destination : secret.SecretBytes
-          (secret.SecretBytes (secret.SecretHandle destination-storage 32))]
+          (unsafe
+            (secret.SecretBytes (secret.SecretHandle destination-storage 32)))]
         (test.assert-i64-eq
           (error-kind
             (secret.bytes-copy-range! (& source) 0 (&mut destination) 0 16))
@@ -462,15 +485,16 @@
       [words : (MutPtr u64)
         (unsafe
           (ptr-cast handle.storage : (MutPtr u64)))]
-      (secret.SecretHandle
-        (unsafe
-          (int->ptr
-            (ptr-read (ptr-offset words 2))
-            : (MutPtr secret.SecretStorage)))
-        (cast
+      (unsafe
+        (secret.SecretHandle
           (unsafe
-            (ptr-read (ptr-offset words 3)))
-          : i64)))))
+            (int->ptr
+              (ptr-read (ptr-offset words 2))
+              : (MutPtr secret.SecretStorage)))
+          (cast
+            (unsafe
+              (ptr-read (ptr-offset words 3)))
+            : i64))))))
 
 ;: Test-only unsafe inspection of the retained outer header after cleanup.
 (define (outer-state [handle : secret.SecretNominalHandle]) : u64
@@ -500,16 +524,22 @@
           (test.assert-false
             (= inner.generation old.generation)
             "transfer rotates generation")
-          (secret.nominal-handle-close
-            (secret.SecretNominalHandle handle.storage (+ handle.generation 1)))
+          (unsafe
+            (secret.nominal-handle-close
+              (secret.SecretNominalHandle
+                handle.storage
+                (+ handle.generation 1))))
           (let
-            [stale : secret.SecretFixed (secret.SecretFixed old)]
+            [stale : secret.SecretFixed
+              (unsafe
+                (secret.SecretFixed old))]
             (test.assert-i64-eq
               (secret.fixed-length (& stale))
               0
               "old handle is stale")
             (secret.close-fixed stale))
-          (secret.storage-close old)
+          (unsafe
+            (secret.storage-close old))
           (match (unsafe
             (secret.nominal-read-pointer (& owner) 0 32))
             [(SecretReadOk data)
@@ -533,21 +563,16 @@
                 "stale close cannot wipe new generation")]
             [_ (test.assert-true false "nominal state remains live")])
           (secret.close-nominal owner)
-          (secret.nominal-handle-close handle)
+          (unsafe
+            (secret.nominal-handle-close handle))
           (test.assert-true
             (= (outer-state handle) (secret.state-closed))
             "outer closed")
           (test.assert-true
-            (=
-              (unsafe
-                (secret.storage-header inner.storage)).state
-              (secret.state-closed))
+            (= (header-word inner.storage 0) (secret.state-closed))
             "inner closed")
           (test.assert-true
-            (=
-              (unsafe
-                (secret.storage-header inner.storage)).length
-              (cast 0 : u64))
+            (= (header-word inner.storage 2) (cast 0 : u64))
             "inner length wiped")
           (let
             [index : i64 0]
@@ -563,17 +588,17 @@
                 0
                 "inner capacity wiped")
               (set! index (+ index 1)))
-            (unsafe
-              (ptr-write!
-                inner.storage
-                (secret.SecretStorage
-                  (secret.state-live)
-                  (cast inner.generation : u64)
-                  (cast 32 : u64)
-                  (cast 32 : u64))))
+            (write-header!
+              (unsafe
+                (ptr-cast inner.storage : (MutPtr u64)))
+              (secret.state-live)
+              (cast inner.generation : u64)
+              (cast 32 : u64)
+              (cast 32 : u64))
             (unsafe
               (ptr-write! data (cast 77 : u8)))
-            (secret.nominal-handle-close handle)
+            (unsafe
+              (secret.nominal-handle-close handle))
             (test.assert-i64-eq
               (cast
                 (unsafe
@@ -581,7 +606,8 @@
                 : i64)
               77
               "outer invokes inner cleanup exactly once")
-            (secret.storage-close inner)))])
+            (unsafe
+              (secret.storage-close inner))))])
     (secret.close-fixed expected))
   (let
     [wrong : secret.SecretFixed (secret.fixed-zero (secret.Secret16))]
@@ -594,10 +620,7 @@
         (test.assert-true false "wrong length transferred")
         (secret.close-nominal owner)])
     (test.assert-true
-      (=
-        (unsafe
-          (secret.storage-header handle.storage)).state
-        (secret.state-closed))
+      (= (header-word handle.storage 0) (secret.state-closed))
       "failed transfer cleans consumed source")))
 
 ;: Both stdlib verifiers and the opt0/1/2 codegen runtime rows use this corpus.
@@ -606,8 +629,9 @@
     [source : secret.SecretFixed (secret.fixed-zero (secret.Secret32))]
     [handle : secret.SecretHandle source.handle]
     [stale : secret.SecretFixed
-      (secret.SecretFixed
-        (secret.SecretHandle handle.storage (+ handle.generation 1)))]
+      (unsafe
+        (secret.SecretFixed
+          (secret.SecretHandle handle.storage (+ handle.generation 1))))]
     (match (unsafe
       (secret.transfer-fixed stale (secret.Secret32)))
       [(SecretNominalErr (SecretClosed)) unit]
@@ -622,7 +646,9 @@
       "stale transfer preserves live generation")
     (secret.close-fixed source)
     (let
-      [closed : secret.SecretFixed (secret.SecretFixed handle)]
+      [closed : secret.SecretFixed
+        (unsafe
+          (secret.SecretFixed handle))]
       (match (unsafe
         (secret.transfer-fixed closed (secret.Secret32)))
         [(SecretNominalErr (SecretClosed)) unit]
@@ -634,7 +660,9 @@
   (let
     [variable : secret.SecretBytes (new-bytes 64)]
     [destination : secret.SecretBytes (new-bytes 32)]
-    [fixed : secret.SecretFixed (secret.SecretFixed variable.handle)]
+    [fixed : secret.SecretFixed
+      (unsafe
+        (secret.SecretFixed variable.handle))]
     (ok
       (unsafe
         (secret.bytes-set-length! (&mut variable) 32)))
@@ -672,9 +700,10 @@
       (secret.Secret32)))
     [(SecretNominalErr _)
       (test.assert-true false "scoped transfer")
-      (secret.SecretNominalHandle
-        (ptr-null : (MutPtr secret.SecretNominalStorage))
-        0)]
+      (unsafe
+        (secret.SecretNominalHandle
+          (ptr-null : (MutPtr secret.SecretNominalStorage))
+          0))]
     [(SecretNominalOk owner)
       (let
         [seen : secret.SecretNominalHandle owner.handle]

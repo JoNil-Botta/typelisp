@@ -176,8 +176,9 @@
 (define (null-owners) : unit
   (with
     ([socket
-        (net.UdpSocket
-          (net.SocketOwner (ptr-null : (MutPtr net.SocketState)) 0))
+        (unsafe
+          (net.UdpSocket
+            (net.SocketOwner (ptr-null : (MutPtr net.SocketState)) 0)))
         net.cleanup-udp-socket])
     (c.assert-kind
       (net.udp-connect! (&mut socket) (c.endpoint) (net.default-limits))
@@ -185,8 +186,9 @@
       "safe null UDP owner"))
   (with
     ([stream
-        (net.TcpStream
-          (net.SocketOwner (ptr-null : (MutPtr net.SocketState)) 0))
+        (unsafe
+          (net.TcpStream
+            (net.SocketOwner (ptr-null : (MutPtr net.SocketState)) 0)))
         net.cleanup-tcp-stream])
     (c.assert-kind
       (net.tcp-stream-close! (&mut stream))

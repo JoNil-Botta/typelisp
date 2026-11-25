@@ -1,10 +1,10 @@
-;; A field cleanup hook runs implicitly at scope end, in safe code too, so it
-;; cannot name an unsafe declaration (#8267).
+;; A field cleanup hook may name an unsafe declaration: the owner becomes a
+;; sealed handle type, which its own module family still builds in safe code
+;; (#9783).
 (unsafe
   (define (raw-close [fd : i64]) : unit
     unit))
 
-; Must fail: `raw-close` is an unsafe declaration.
 (defstruct Handle
   (:cleanup close-handle)
   (fd i64 (:cleanup raw-close)))

@@ -134,7 +134,8 @@
     [expected : sha.Sha256Digest (snapshot state)]
     (match (transcript.snapshot-boundary state boundary)
       [(TlsTranscriptHashOk value)
-        (match (transcript.boundary-digest value boundary)
+        (match (unsafe
+          (transcript.boundary-digest value boundary))
           [(TlsTranscriptDigestOk actual)
             (test.assert-true
               (sha.digest-eq? (& actual) (& expected))
@@ -665,23 +666,20 @@
       [(TlsTranscriptHashOk value)
         (let
           [expected : sha.Sha256Digest (snapshot (& state))]
-          (match (transcript.boundary-digest
-            value
-            (transcript.ThroughClientHello))
+          (match (unsafe
+            (transcript.boundary-digest value (transcript.ThroughClientHello)))
             [(TlsTranscriptDigestOk actual)
               (test.assert-true
                 (sha.digest-eq? (& expected) (& actual))
                 "tagged digest exact")]
             [_ (test.assert-true false "matching boundary tag")])
-          (match (transcript.boundary-digest
-            value
-            (transcript.ThroughServerHello))
+          (match (unsafe
+            (transcript.boundary-digest value (transcript.ThroughServerHello)))
             [(TlsTranscriptDigestErr (TlsTranscriptWrongBoundary _ _)) unit]
             [_ (test.assert-true false "consumer must check tag")])
           (absorb-frame (&mut state) (byte_buf.as-bytes (& sh)))
-          (match (transcript.boundary-digest
-            value
-            (transcript.ThroughClientHello))
+          (match (unsafe
+            (transcript.boundary-digest value (transcript.ThroughClientHello)))
             [(TlsTranscriptDigestOk actual)
               (test.assert-true
                 (sha.digest-eq? (& expected) (& actual))
@@ -693,9 +691,10 @@
       (transcript.BeforeCertificateVerify))
       [(TlsTranscriptHashErr (TlsTranscriptBoundaryMismatch _ 2 _)) unit]
       [_ (test.assert-true false "wrong immediate predecessor rejected")]))
-  (match (transcript.boundary-digest
-    (ptr-null : (Ptr transcript.TlsTranscriptHash))
-    (transcript.ThroughServerHello))
+  (match (unsafe
+    (transcript.boundary-digest
+      (ptr-null : (Ptr transcript.TlsTranscriptHash))
+      (transcript.ThroughServerHello)))
     [(TlsTranscriptDigestErr (TlsTranscriptInvalidHash)) unit]
     [_ (test.assert-true false "null tagged hash rejected")]))
 

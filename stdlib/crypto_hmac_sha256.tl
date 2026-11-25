@@ -197,15 +197,16 @@
         : (MutPtr sha.Sha256State)))))
 
 ;: Field cleanup leaves null, terminal and generation-mismatched handles alone.
-(define (handle-close [handle : HmacSha256Handle]) : unit
-  (if (and
-    (not (ptr-null? handle.storage))
-    (unsafe
-      (= (deref handle.storage).generation handle.generation))
-    (not (= handle.generation 0)))
-    (unsafe
-      (terminate! handle.storage 3))
-    unit))
+(unsafe
+  (define (handle-close [handle : HmacSha256Handle]) : unit
+    (if (and
+      (not (ptr-null? handle.storage))
+      (unsafe
+        (= (deref handle.storage).generation handle.generation))
+      (not (= handle.generation 0)))
+      (unsafe
+        (terminate! handle.storage 3))
+      unit)))
 
 ;: Explicit borrowed closure for protocols that retain a terminal handle.
 (define (close! [state : (&mut state HmacSha256State)]) : unit

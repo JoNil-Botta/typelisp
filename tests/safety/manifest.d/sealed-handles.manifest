@@ -1,0 +1,43 @@
+# Safety corpus cases: sealed handle types (#9783) and opaque reflection at the query (#8735).
+# Format: id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+
+sealed_handle_ok|run-exit|tests/safety/sealed_handle_ok.tl|42|-
+sealed_handle_ptr_construct_reject|check-fail|tests/safety/sealed_handle_ptr_construct_reject.tl|-|construction of sealed handle type sealed_handle_dep/Handle outside its module family requires unsafe context
+sealed_handle_hook_construct_reject|check-fail|tests/safety/sealed_handle_hook_construct_reject.tl|-|construction of sealed handle type sealed_handle_dep/Hooked outside its module family requires unsafe context
+sealed_handle_embed_construct_reject|check-fail|tests/safety/sealed_handle_embed_construct_reject.tl|-|construction of sealed handle type sealed_handle_dep/Owner outside its module family requires unsafe context
+sealed_handle_field_set_reject|check-fail|tests/safety/sealed_handle_field_set_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Handle outside its module family requires unsafe context
+sealed_handle_field_borrow_reject|check-fail|tests/safety/sealed_handle_field_borrow_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Handle outside its module family requires unsafe context
+sealed_handle_field_replace_reject|check-fail|tests/safety/sealed_handle_field_replace_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Handle outside its module family requires unsafe context
+sealed_handle_nested_set_reject|check-fail|tests/safety/sealed_handle_nested_set_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/
+stdlib_secret_handle_forge_reject|check-fail|tests/safety/stdlib_secret_handle_forge_reject.tl|-|construction of sealed handle type stdlib.crypto_secret/SecretFixed outside its module family requires unsafe context
+stdlib_secret_field_set_reject|check-fail|tests/safety/stdlib_secret_field_set_reject.tl|-|field mutation of sealed handle type stdlib.crypto_secret/SecretHandle outside its module family requires unsafe context
+stdlib_secret_storage_close_reject|check-fail|tests/safety/stdlib_secret_storage_close_reject.tl|-|secret/storage-close requires unsafe context
+stdlib_hkdf_prk_forge_reject|check-fail|tests/safety/stdlib_hkdf_prk_forge_reject.tl|-|construction of sealed handle type stdlib.crypto_hkdf_sha256/HkdfSha256Prk outside its module family requires unsafe context
+stdlib_hkdf_prk_storage_close_reject|check-fail|tests/safety/stdlib_hkdf_prk_storage_close_reject.tl|-|hkdf/prk-storage-close requires unsafe context
+stdlib_fs_rooted_forge_reject|check-fail|tests/safety/stdlib_fs_rooted_forge_reject.tl|-|construction of sealed handle type stdlib.fs_rooted_linux/FsLinuxRootedDirectory outside its module family requires unsafe context
+stdlib_fs_rooted_state_cleanup_reject|check-fail|tests/safety/stdlib_fs_rooted_state_cleanup_reject.tl|-|rooted/linux-rooted-state-cleanup requires unsafe context
+stdlib_net_owner_forge_reject|check-fail|tests/safety/stdlib_net_owner_forge_reject.tl|-|construction of sealed handle type stdlib.net/TcpStream outside its module family requires unsafe context
+stdlib_ffi_raw_copy_reject|check-fail|tests/safety/stdlib_ffi_raw_copy_reject.tl|-|ffi/c-string-copy! requires unsafe context
+opaque_reflect_derived_field_count_reject|check-fail|tests/safety/opaque_reflect_derived_field_count_reject.tl|-|struct-field-count cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+opaque_reflect_derived_size_reject|check-fail|tests/safety/opaque_reflect_derived_size_reject.tl|-|size-of cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+opaque_reflect_composed_reject|check-fail|tests/safety/opaque_reflect_composed_reject.tl|-|struct-field-count cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+opaque_reflect_variant_reject|check-fail|tests/safety/opaque_reflect_variant_reject.tl|-|enum-variant-count cannot reach the representation of the opaque type opaque_dep/State outside its module family
+opaque_reflect_written_size_reject|check-fail|tests/safety/opaque_reflect_written_size_reject.tl|-|size-of cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+opaque_reflect_offset_reject|check-fail|tests/safety/opaque_reflect_offset_reject.tl|-|offset-of cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+opaque_reflect_name_ok|run-exit|tests/safety/opaque_reflect_name_ok.tl|42|-
+opaque_reflect_family_ok|run-exit|tests/safety/opaque_reflect_family_ok.tl|42|-
+cleanup_hook_unsafe_foreign_sealed_reject|check-fail|tests/safety/cleanup_hook_unsafe_foreign_sealed_reject.tl|-|struct Trigger field h cleanup function secret/storage-close is an unsafe declaration outside the module family of its owner
+sealed_handle_flat_import_value_reject|check-fail|tests/safety/sealed_handle_flat_import_value_reject.tl|-|construction of sealed handle type stdlib.crypto_secret/SecretHandle outside its module family requires unsafe context
+sealed_handle_nullary_variant_reject|check-fail|tests/safety/sealed_handle_nullary_variant_reject.tl|-|construction of sealed handle type sealed_handle_dep/Res outside its module family requires unsafe context
+sealed_handle_alias_variant_reject|check-fail|tests/safety/sealed_handle_alias_variant_reject.tl|-|construction of sealed handle type sealed_handle_dep/Res outside its module family requires unsafe context
+sealed_handle_make_array_reject|check-fail|tests/safety/sealed_handle_make_array_reject.tl|-|construction of sealed handle type sealed_handle_dep/Handle outside its module family requires unsafe context
+stdlib_secret_make_array_reject|check-fail|tests/safety/stdlib_secret_make_array_reject.tl|-|construction of sealed handle type stdlib.crypto_secret/SecretHandle outside its module family requires unsafe context
+sealed_handle_nested_struct_set_reject|check-fail|tests/safety/sealed_handle_nested_struct_set_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Nested outside its module family requires unsafe context
+sealed_handle_nested_array_set_reject|check-fail|tests/safety/sealed_handle_nested_array_set_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Nested outside its module family requires unsafe context
+sealed_handle_nested_tuple_set_reject|check-fail|tests/safety/sealed_handle_nested_tuple_set_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Nested outside its module family requires unsafe context
+sealed_handle_nested_array_replace_reject|check-fail|tests/safety/sealed_handle_nested_array_replace_reject.tl|-|field mutation of sealed handle type sealed_handle_dep/Nested outside its module family requires unsafe context
+opaque_reflect_macro_size_reject|check-fail|tests/safety/opaque_reflect_macro_size_reject.tl|-|size-of cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+opaque_reflect_macro_derived_reject|check-fail|tests/safety/opaque_reflect_macro_derived_reject.tl|-|struct-field-count cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+opaque_reflect_alias_reject|check-fail|tests/safety/opaque_reflect_alias_reject.tl|-|size-of cannot reach the representation of the opaque type opaque_dep/Connection outside its module family
+stdlib_vector_into_iter_forge_reject|check-fail|tests/safety/stdlib_vector_into_iter_forge_reject.tl|-|construction of sealed handle type stdlib.vector.generated.struct_Token/IntoIter outside its module family requires unsafe context
+stdlib_vector_into_iter_state_null_reject|check-fail|tests/safety/stdlib_vector_into_iter_state_null_reject.tl|-|tokens/into-iter-state-null? requires unsafe context

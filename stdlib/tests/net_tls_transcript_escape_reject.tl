@@ -14,9 +14,8 @@
       (with-arena scratch (transcript.snapshot-boundary (& state) boundary))]
     (match escaped
       [(TlsTranscriptHashOk value)
-        (match (transcript.boundary-digest
-          value
-          (transcript.ThroughServerHello))
+        (match (unsafe
+          (transcript.boundary-digest value (transcript.ThroughServerHello)))
           [(TlsTranscriptDigestOk _) 42]
           [_ 1])]
       [_ 2])))

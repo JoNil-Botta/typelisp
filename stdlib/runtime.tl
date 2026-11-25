@@ -193,9 +193,10 @@
       (atomic-cas! ptr expected new-value))))
 
 ;: Convert a read-only byte pointer into an integer (syscall/handle) argument.
-(define (ptr-arg [ptr : (Ptr u8)]) : i64
-  (unsafe
-    (cast (ptr->int ptr) : i64)))
+(unsafe
+  (define (ptr-arg [ptr : (Ptr u8)]) : i64
+    (unsafe
+      (cast (ptr->int ptr) : i64))))
 
 ;: Map a stdio fd (0/1/2) to its Windows standard handle, else treat the fd
 ;: value as the handle directly. Matches the former `_write` shim behavior.

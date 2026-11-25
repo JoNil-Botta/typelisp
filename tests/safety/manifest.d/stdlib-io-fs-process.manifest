@@ -48,7 +48,7 @@ io_core_raw_clear_safe_reject|check-fail|tests/safety/io_core_raw_clear_safe_rej
 io_raw_helper_callable_launder_reject|check-fail|tests/safety/io_raw_helper_callable_launder_reject.tl|-|io/c-string-length is an unsafe callable and cannot be used as a plain function value
 io_raw_helper_unsafe_call_ok|check-ok|tests/safety/io_raw_helper_unsafe_call_ok.tl|-|-
 io_formatter_callback_value_ok|check-ok|tests/safety/io_formatter_callback_value_ok.tl|-|-
-fs_rooted_linux_state_read_reject|check-fail|tests/safety/fs_rooted_linux_state_read_reject.tl|-|linux-rooted-state-read requires unsafe context
+fs_rooted_linux_state_read_reject|check-fail|tests/safety/fs_rooted_linux_state_read_reject.tl|-|cannot hold by value the opaque type stdlib.fs_rooted_linux/FsLinuxRootedHandleState
 fs_rooted_linux_raw_close_reject|check-fail|tests/safety/fs_rooted_linux_raw_close_reject.tl|-|linux-rooted-raw-close requires unsafe context
 fs_rooted_linux_raw_rewind_reject|check-fail|tests/safety/fs_rooted_linux_raw_rewind_reject.tl|-|linux-rooted-raw-rewind requires unsafe context
 fs_rooted_linux_rewind_shared_borrow_reject|check-fail|tests/safety/fs_rooted_linux_rewind_shared_borrow_reject.tl|-|argument 1 type mismatch: expected (&mut file

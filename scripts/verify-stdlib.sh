@@ -431,10 +431,10 @@ stdlib/tests/crypto_sha1_git_inline.tl|pass|-
 stdlib/tests/crypto_sha1_git_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_sha256_inline.tl|pass|-
 stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
-stdlib/tests/crypto_hkdf_sha256_construct_reject.tl|fail|opaque type
-stdlib/tests/crypto_hkdf_sha256_consumer_reject.tl|fail|opaque type
+stdlib/tests/crypto_hkdf_sha256_construct_reject.tl|fail|construction of sealed handle type stdlib.crypto_hkdf_sha256/HkdfSha256Prk
+stdlib/tests/crypto_hkdf_sha256_consumer_reject.tl|fail|construction of sealed handle type stdlib.crypto_hkdf_sha256/HkdfSha256Prk
 stdlib/tests/crypto_hkdf_sha256_view_reject.tl|fail|opaque type
-stdlib/tests/crypto_hkdf_sha256_okm_reject.tl|fail|opaque type
+stdlib/tests/crypto_hkdf_sha256_okm_reject.tl|fail|construction of sealed handle type stdlib.crypto_hkdf_sha256/HkdfSha256Okm
 stdlib/tests/crypto_hkdf_sha256_okm_view_reject.tl|fail|opaque type
 stdlib/tests/crypto_hkdf_sha256_okm_unsafe_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_hkdf_sha256_clone_reject.tl|fail|gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_hkdf_sha256/HkdfSha256Prk at clone.deep
@@ -464,12 +464,12 @@ stdlib/tests/crypto_aes_key_reuse_reject.tl|fail|use of moved value `key`
 stdlib/tests/crypto_aes_variant_reject.tl|fail|argument 1 type mismatch
 stdlib/tests/crypto_aes_clone_reject.tl|fail|gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_aes_core/Aes128Schedule at clone.deep
 stdlib/tests/crypto_aes_format_reject.tl|fail|format: unsupported nominal type struct_stdlib.crypto_aes_core/Aes256Schedule
-stdlib/tests/crypto_aes_raw_reject.tl|fail|ptr-read requires unsafe context
+stdlib/tests/crypto_aes_raw_reject.tl|fail|cannot hold by value the opaque type stdlib.crypto_secret/SecretStorage
 stdlib/tests/crypto_aes_rounds_reject.tl|fail|encrypt-checked! requires unsafe context
 stdlib/tests/crypto_aes_composed_reject.tl|fail|encrypt-composed-128! requires unsafe context
 stdlib/tests/crypto_secret_inline.tl|pass|-
 stdlib/tests/crypto_secret_unsafe_accessor_reject.tl|fail|crypto_secret/fixed-read-pointer requires unsafe context
-stdlib/tests/crypto_secret_storage_read_reject.tl|fail|ptr-read requires unsafe context
+stdlib/tests/crypto_secret_storage_read_reject.tl|fail|cannot hold by value the opaque type stdlib.crypto_secret/SecretStorage
 stdlib/tests/crypto_secret_clone_reject.tl|fail|gen-clone: unsupported cleanup-owning type struct_stdlib.crypto_secret/SecretFixed at clone.deep
 stdlib/tests/crypto_secret_use_after_close_reject.tl|fail|use of moved value `owner`
 stdlib/tests/env_nonmatching_count_unsafe_reject.tl|fail|env/linux-nonmatching-count requires unsafe context
@@ -480,11 +480,11 @@ stdlib/tests/env_unlock_unsafe_reject.tl|fail|env/linux-unlock! requires unsafe 
 stdlib/tests/crypto_sha512_inline.tl|pass|-
 stdlib/tests/crypto_sha512_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/env_api.tl|pass|-
-stdlib/tests/local_ipc_forged_connection_reject.tl|fail|int->ptr requires unsafe context
+stdlib/tests/local_ipc_forged_connection_reject.tl|fail|construction of sealed handle type stdlib.local_ipc/LocalIpcConnection
 stdlib/tests/local_ipc_connection_copy_reject.tl|fail|cleanup-required resource already has a cleanup owner
 stdlib/tests/local_ipc_raw_helper_reject.tl|fail|local_ipc/io-once requires unsafe context
 stdlib/tests/net_owner_copy_reject.tl|fail|cleanup-required resource already has a cleanup owner
-stdlib/tests/net_owner_forge_reject.tl|fail|int->ptr requires unsafe context
+stdlib/tests/net_owner_forge_reject.tl|fail|construction of sealed handle type stdlib.net/TcpStream
 stdlib/tests/net_raw_helper_reject.tl|fail|net/publish requires unsafe context
 stdlib/tests/local_ipc_linux_api.tl|pass|-
 stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal

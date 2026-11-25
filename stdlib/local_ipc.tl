@@ -418,6 +418,7 @@
 ;: Private connection state. `handle` is -1 once closed or never connected;
 ;: `result` is the construction outcome and `closed` the explicit close result.
 (defstruct LocalIpcConnectionState
+  (:opaque)
   (handle i64)
   (adapter LocalIpcAdapter)
   (peer LocalIpcPeer)
@@ -567,14 +568,15 @@
 
 ;: Cleanup-field adapter: lexical cleanup is idempotent and reports nothing. A
 ;: stale owner closes nothing.
-(define (owner-cleanup [owner : LocalIpcOwner]) : unit
-  (if (unsafe
-    (owner-claim owner.state owner.generation))
-    (begin
-      (unsafe
-        (state-close owner.state))
-      unit)
-    unit))
+(unsafe
+  (define (owner-cleanup [owner : LocalIpcOwner]) : unit
+    (if (unsafe
+      (owner-claim owner.state owner.generation))
+      (begin
+        (unsafe
+          (state-close owner.state))
+        unit)
+      unit)))
 
 ;: Move-only, cleanup-owning client connection. One operation at a time: every
 ;: operation takes `&mut`. It cannot be cloned.

@@ -71,19 +71,20 @@
 ;: `system-seed`. Returns the byte count or a negative status.
 (cfg
   (not windows)
-  (define (linux-syscall-getrandom
-    [buf : (MutPtr u8)]
-    [len : i64]
-    [flags : i64]) : i64
-    (io.linux-syscall-status
-      (unsafe
-        (syscall
-          318
-          (io.linux-ptr-arg
-            (unsafe
-              (ptr-cast buf : (Ptr u8))))
-          len
-          flags)))))
+  (unsafe
+    (define (linux-syscall-getrandom
+      [buf : (MutPtr u8)]
+      [len : i64]
+      [flags : i64]) : i64
+      (io.linux-syscall-status
+        (unsafe
+          (syscall
+            318
+            (io.linux-ptr-arg
+              (unsafe
+                (ptr-cast buf : (Ptr u8))))
+            len
+            flags))))))
 
 ;: Windows kernel32 `QueryPerformanceCounter` binding used for seed variation.
 (cfg
@@ -316,11 +317,11 @@
     (let
       [seed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
       [read-count : i64
-        (linux-syscall-getrandom
-          (unsafe
-            (ptr-cast (__tl_array-data seed) : (MutPtr u8)))
-          8
-          0)]
+        (unsafe
+          (linux-syscall-getrandom
+            (ptr-cast (__tl_array-data seed) : (MutPtr u8))
+            8
+            0))]
       (if (= read-count 8)
         (OkSystemSeed (array-ref seed 0))
         (system-seed-unavailable)))))

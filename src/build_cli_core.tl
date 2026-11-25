@@ -22,7 +22,6 @@
 (import stdlib.io)
 (import stdlib.io_core)
 (import stdlib.process)
-(import stdlib.sort)
 (import stdlib.string)
 (import stdlib.text_buf)
 (import stdlib.str_cat_runtime as str_cat)
@@ -63,12 +62,19 @@
 (import compiler_dependency_tlci)
 (import tlci_core as tlci)
 (import compiler_tlci_native_producer)
-(import compiler_tli_types as tli)
-(import compiler_tli_codec as tli_codec)
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_tli_types as tli))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_tli_codec as tli_codec))
 (import compiler_tli_extract as tli_extract)
-(import compiler_tli_hydrate as tli_hydrate)
-(import compiler_typecheck_api as tc_api)
-(import compiler_typecheck_core as tc_core)
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_typecheck_api as tc_api))
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (import compiler_typecheck_core as tc_core))
 (import sym_i64_env)
 
 ;; The package-build parser's result. `Source` only records that a source-file
@@ -6478,18 +6484,26 @@
                                           (iterator.range
                                             0
                                             (array-length emitted.asm-files))]
-                                          (match (io.try-read-file
-                                            (& (array-ref emitted.asm-files ai)))
-                                            [(io.OkIoBytes chunk)
-                                              (let
-                                                [chunk-text : String
-                                                  (byte_buf.to-string chunk)]
-                                                (set!
-                                                  combined-asm
-                                                  (text_buf.append
+                                          (let
+                                            [mod-asm-path : String
+                                              (fs.path-join
+                                                (& mods-dir)
+                                                (&
+                                                  (array-ref
+                                                    emitted.asm-files
+                                                    ai)))]
+                                            (match (io.try-read-file
+                                              (& mod-asm-path))
+                                              [(io.OkIoBytes chunk)
+                                                (let
+                                                  [chunk-text : String
+                                                    (byte_buf.to-string chunk)]
+                                                  (set!
                                                     combined-asm
-                                                    chunk-text)))]
-                                            [(io.ErrIoBytes _) unit])))
+                                                    (text_buf.append
+                                                      combined-asm
+                                                      chunk-text)))]
+                                              [(io.ErrIoBytes _) unit]))))
                                       (let
                                         [asm-text : String
                                           (text_buf.render combined-asm)]

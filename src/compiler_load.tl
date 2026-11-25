@@ -9,8 +9,6 @@
   compiler-dependency-audit
   (import compiler_dependency_trace as dependency_trace))
 (import compiler_ast_types as ast)
-(import compiler_abi as cabi)
-(import compiler_symbols as csym)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
 (import lex as lexer)
@@ -18,7 +16,6 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_cfg_core as cfg_core)
-(import compiler_build_identity as build_identity)
 (import compiler_tli_codec as tli_codec)
 (import compiler_tli_hydrate as tli_hydrate)
 (import sym_i64_env)
@@ -1343,13 +1340,15 @@
       0
       (unsafe
         (let
-          [holder : CompilerLoadTliCatalogBox
-            (ptr-read
-              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          [box-ptr : (Ptr CompilerLoadTliCatalogBox)
+            (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))]
+          [holder : CompilerLoadTliCatalogBox (ptr-read box-ptr)]
           (if (> holder.facts.hydrated-module-count 0)
             (+
               addr
-              (comptime (offset-of (type CompilerLoadTliCatalogBox) facts)))
+              (-
+                (cast (ptr->int (ptr-addr-of holder.facts)) : i64)
+                (cast (ptr->int (ptr-addr-of holder)) : i64)))
             0))))))
 
 (define (compiler-load-tli-addr-has-module?
@@ -12945,8 +12944,26 @@
         (str_cat.str-cat
           owner
           "/"
-          (string.substring path prefix-len (- path-len prefix-len)))
-        path))))
+          (compiler-load-normalize-path
+            (string.substring path prefix-len (- path-len prefix-len))))
+        (let
+          [norm-path : String (compiler-load-normalize-path (& path))]
+          [norm-root : String (compiler-load-normalize-path root)]
+          [norm-prefix : String (compiler-load-root-prefix (& norm-root))]
+          [norm-prefix-len : i64 (string.string-length norm-prefix)]
+          [norm-path-len : i64 (string.string-length norm-path)]
+          (if (and
+            (> norm-prefix-len 0)
+            (compiler-load-path-under-root? (& norm-path) (& norm-root)))
+            (str_cat.str-cat
+              owner
+              "/"
+              (compiler-load-normalize-path
+                (string.substring
+                  norm-path
+                  norm-prefix-len
+                  (- norm-path-len norm-prefix-len))))
+            path))))))
 
 (define (compiler-load-stdlib-owner-root? [root : (& str)]) : bool
   (let
@@ -13248,6 +13265,18 @@
         (return true))))
   false)
 
+(define (compiler-load-same-source-path-id? [a : i64] [b : i64]) : bool
+  (or
+    (= a b)
+    (and
+      (> a 1)
+      (> b 1)
+      (ci.intern-renderable-id? a)
+      (ci.intern-renderable-id? b)
+      (string.eq
+        (compiler-load-canonical-path (& (ci.intern-str a)))
+        (compiler-load-canonical-path (& (ci.intern-str b)))))))
+
 ;; A module identity has one recorded holder. A package import that finds its
 ;; module already held by another source would lose its declarations and bind
 ;; its alias to that source. Local sources may share a module among themselves.
@@ -13265,7 +13294,7 @@
         (and
           (not (= module-id cbi.compiler-builtin-id-fix-empty))
           (>= holder 0)
-          (not (= holder source-path-id))
+          (not (compiler-load-same-source-path-id? holder source-path-id))
           (or
             package-externs
             (and
@@ -13275,6 +13304,37 @@
                 manifest-dir
                 deps)))))]
     [(No) false]))
+
+;; Check every module hydrated in the transitive closure of a package
+;; dependency import against the pre-import holder table.
+(define (compiler-load-imported-closure-identity-taken?
+  [imported-decls : (& ast.AstDeclList)]
+  [imported-paths : (& ast.AstDeclPathList)]
+  [seen : sym_i64_env.SymI64Env]
+  [manifest-dir : (& str)]
+  [deps : (& CompilerPkgDeps)]) : bool
+  (let
+    [n : i64 (ast.ast-decl-list-len imported-decls)]
+    (for [i (iterator.range 0 n)]
+      (match (ast.ast-decl-list-ref-borrowed imported-decls i)
+        [(Module mod-id)
+          (let
+            [prov-id : i64
+              (ast.ast-decl-path-list-provenance-id
+                imported-paths
+                i
+                cbi.compiler-builtin-id-fix-empty)]
+            (when
+              (compiler-load-package-import-identity-taken?
+                prov-id
+                (Some mod-id)
+                seen
+                true
+                manifest-dir
+                deps)
+              (return true)))]
+        [_ unit]))
+    false))
 
 (define (compiler-load-package-force-source-import
   [resolved : String]
@@ -13372,16 +13432,31 @@
               seen
               pools)
               [(Missing)
-                (Err
-                  (box
-                    (cdiag.compiler-diagnostic-at-start
-                      resolved
-                      (str_cat.str-cat
-                        "compiler-load: missing prebuilt dependency interface (.tli) for '"
-                        owned-path
-                        "' in package '"
-                        entry.owner
-                        "'"))))]
+                (let
+                  [exists? : bool
+                    (match (fs.try-file-kind (& resolved))
+                      [(OkFsFileKind kind) (fs.file-kind-regular? kind)]
+                      [_ false])]
+                  (if (not exists?)
+                    (Err
+                      (box
+                        (cdiag.compiler-diagnostic-load
+                          ImportResolution
+                          (cdiag.compiler-diagnostic-at-start
+                            (string.copy (& resolved))
+                            (str_cat.str-cat
+                              "compiler-load: cannot read import "
+                              resolved)))))
+                    (Err
+                      (box
+                        (cdiag.compiler-diagnostic-at-start
+                          resolved
+                          (str_cat.str-cat
+                            "compiler-load: missing prebuilt dependency interface (.tli) for '"
+                            owned-path
+                            "' in package '"
+                            entry.owner
+                            "'"))))))]
               [(Err diag) (Err diag)]
               [(Ok
                   imported-decls
@@ -13794,13 +13869,22 @@
                                   alias
                                   (& imported-decls))])]
                           (when
-                            (compiler-load-package-import-identity-taken?
-                              resolved-id
-                              validated-module
-                              seen
-                              package-externs
-                              (& manifest-dir)
-                              deps)
+                            (or
+                              (compiler-load-package-import-identity-taken?
+                                resolved-id
+                                validated-module
+                                seen
+                                package-externs
+                                (& manifest-dir)
+                                deps)
+                              (and
+                                package-externs
+                                (compiler-load-imported-closure-identity-taken?
+                                  (& imported-decls)
+                                  (& imported-paths)
+                                  seen
+                                  (& manifest-dir)
+                                  deps)))
                             (return
                               (Err
                                 (box

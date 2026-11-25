@@ -1,4 +1,5 @@
 ;; Sysroot selection for prebuilt stdlib interfaces.
+(import compiler_cfg_core as cfg_core)
 (import compiler_target_cfg_core as target_cfg)
 (import cli_option_core as cli)
 (import compiler_build_identity as identity)
@@ -484,11 +485,7 @@
                   (& image.metadata.spmd-callables)))))])]))
 
 (define (tli-dep-cfgs-without-test [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (let
-    [test-id : i64 (hydrate.tli-hydrate-name "test")]
-    (if (not (sym_i64_env.sym-i64-contains-id cfgs test-id))
-      cfgs
-      (sym_i64_env.sym-i64-bind-id cfgs test-id 0))))
+  (cfg_core.compiler-cfg-remove-id cfgs (hydrate.tli-hydrate-name "test")))
 
 (define (tli-open-package-bundle-for-session!
   [load-state : (& compiler_load.CompilerLoadSessionState)]

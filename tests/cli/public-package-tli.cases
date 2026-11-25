@@ -123,8 +123,7 @@ file body/src/main.tl
 (module app.b
   (import libd.src.lib.f)
   (define (helper) : i64 5)
-  (define (entry) : i64 (f)))
-(define (main) : i64 (app.b.entry))
+  (define (main) : i64 (f)))
 end-file
 step named-check
 run check --manifest-path "{{dir}}/named/typelisp.pkg"
@@ -227,10 +226,11 @@ file typelisp.pkg
   (dependencies (purelib "vendor/purelib")))
 end-file
 file src/main.tl
-(import purelib as pm)
+(import stdlib.test)
+(import purelib.src.lib as pm)
 (define (main) : i64 (pm.add-base 2))
 (test uses-prebuilt-dep
-  (assert (= (pm.add-base 2) 42)))
+  (test.assert-i64-eq (pm.add-base 2) 42 "uses prebuilt dep"))
 end-file
 step check-pure
 run check --manifest-path "{{dir}}/typelisp.pkg"
@@ -239,7 +239,7 @@ test -s "{{dir}}/vendor/purelib/target/dev/purelib.tli"
 test ! -e "{{dir}}/vendor/purelib/target/dev/purelib.tlci"
 step test-pure
 run test --manifest-path "{{dir}}/typelisp.pkg"
-stderr empty
+stderr contains TypeLisp tests: 1 passed; 0 failed
 stdout contains TypeLisp package tests passed
 step build-pure
 run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}

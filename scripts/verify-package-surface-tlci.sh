@@ -288,16 +288,30 @@ assert_tli_route() {
     force_source=$7
     [ "$(grep -Fc 'dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3|' "$file")" -eq 1 ] ||
         fail "$label dependency runtime observation is missing or duplicated"
-    if ! grep -F \
-        "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
-        "$file" |
-        grep -F "|tli-active=$active|tli-package-bundles=$bundles|tli-hydrated-package-bundles=$hydrated_bundles|" |
-        grep -F "|tli-package-hits=$hits|tli-force-source=$force_source" \
-            >/dev/null; then
-        grep -F \
+    if [ "$force_source" = "1" ]; then
+        if ! grep -F \
             "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
-            "$file" >&2 || true
-        fail "$label dependency TLI route mismatch"
+            "$file" |
+            grep -F "|tli-package-bundles=$bundles|tli-hydrated-package-bundles=$hydrated_bundles|" |
+            grep -F "|tli-package-hits=$hits|tli-force-source=$force_source" \
+                >/dev/null; then
+            grep -F \
+                "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
+                "$file" >&2 || true
+            fail "$label dependency TLI route mismatch"
+        fi
+    else
+        if ! grep -F \
+            "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
+            "$file" |
+            grep -F "|tli-active=$active|tli-package-bundles=$bundles|tli-hydrated-package-bundles=$hydrated_bundles|" |
+            grep -F "|tli-package-hits=$hits|tli-force-source=$force_source" \
+                >/dev/null; then
+            grep -F \
+                "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
+                "$file" >&2 || true
+            fail "$label dependency TLI route mismatch"
+        fi
     fi
 }
 

@@ -963,6 +963,8 @@
                   ""
                   ""
                   "pkg"
+                  ""
+                  (& (cli_svec.new))
                   owned-sources
                   (&mut names)
                   (&mut captures))
@@ -1054,6 +1056,7 @@
         (build-package-rollback-test-path dir "o")
         (build-package-rollback-test-path dir "r")
         (build-package-rollback-test-path dir "f")
+        (build-package-rollback-test-path dir "i")
         (build-package-rollback-test-path dir "t")))))
 
 (cfg

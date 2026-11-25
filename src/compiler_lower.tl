@@ -78309,7 +78309,9 @@
                     (csym.compiler-symbol-module-key-id-by-id
                       cur-module-id
                       name)]
-                  (if (lower-comptime-runtime-skip-module? cur-module)
+                  (if (or
+                    (lower-comptime-runtime-skip-module? cur-module)
+                    (tc_core.tc-tli-hydrated-module? decl-ctx cur-module-id))
                     unit
                     (let
                       [globals-before : i64 cur-globals.len]
@@ -78403,7 +78405,9 @@
                     (csym.compiler-symbol-module-key-id-by-id
                       cur-module-id
                       name)]
-                  (if (lower-comptime-runtime-skip-module? cur-module)
+                  (if (or
+                    (lower-comptime-runtime-skip-module? cur-module)
+                    (tc_core.tc-tli-hydrated-module? decl-ctx cur-module-id))
                     unit
                     (let
                       [globals-before : i64 cur-globals.len]

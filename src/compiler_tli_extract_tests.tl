@@ -85,7 +85,7 @@
               cfgs
               (tc.tc-prefix-default-cache-scope))
             (& sources)
-            0
+            tli.tli-is-stdlib-bundle
             "test"
             "x86_64-unknown-linux-gnu")
             [(Ok bundle) bundle]

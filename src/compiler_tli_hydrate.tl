@@ -2667,8 +2667,10 @@
         (when
           (and (> ba 0) (!= ba root-arena))
           (unsafe
+            ;; lint-allow: raw-arena-op -- releases job-owned bundle arena deterministically.
             (arena.tl_arena_destroy ba)))))
     (when
       (> root-arena 0)
       (unsafe
+        ;; lint-allow: raw-arena-op -- releases job-owned multi-catalog root arena deterministically.
         (arena.tl_arena_destroy root-arena)))))

@@ -117533,19 +117533,13 @@
     (cfg
       windows
       (begin
-        (set! cfgs (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "windows") 1))
-        (set!
-          cfgs
-          (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "target-windows") 1))
-        (set!
-          cfgs
-          (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "os-windows") 1)))
+        (set! cfgs (parser.compiler-cfg-enable cfgs "windows"))
+        (set! cfgs (parser.compiler-cfg-enable cfgs "target-windows"))
+        (set! cfgs (parser.compiler-cfg-enable cfgs "os-windows")))
       (begin
-        (set! cfgs (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "linux") 1))
-        (set!
-          cfgs
-          (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "target-linux") 1))
-        (set! cfgs (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "os-linux") 1))))
+        (set! cfgs (parser.compiler-cfg-enable cfgs "linux"))
+        (set! cfgs (parser.compiler-cfg-enable cfgs "target-linux"))
+        (set! cfgs (parser.compiler-cfg-enable cfgs "os-linux"))))
     cfgs))
 
 (define (macro-find-defmacro-body-in-decls
@@ -117577,7 +117571,6 @@
   [fallback-module-id : i64]
   [declaration-id : i64]
   [macro-name-id : i64]
-  [macro-name : (& str)]
   [body : ast.AstExpr]) : ast.AstExpr
   (when
     (or
@@ -117585,11 +117578,8 @@
       (= (tc-job-state-tli-facts-ptr (tc-context-job-state ctx)) 0))
     (return body))
   (let
-    [mod-name : String (tc-env-key-name-text fallback-module-id)]
     [identity : String
-      (if (= (string.string-length (& mod-name)) 0)
-        (string.copy macro-name)
-        (str_cat.str-cat mod-name "/" (string.copy macro-name)))]
+      (macro-decl-name-display macro-name-id fallback-module-id)]
     [identity-id : i64 (ci.intern identity)]
     (unless (tc-tli-hydrated-macro-present? ctx identity-id) (return body))
     (let
@@ -117630,7 +117620,9 @@
                             (& (__tl-box-place decls-box))
                             macro-name-id)]
                         (if (>= body-id 0)
-                          (ast.ast-node-pool-context-expr-get pools body-id)
+                          (begin
+                            (tc-context-install-pools! ctx)
+                            (ast.ast-node-pool-context-expr-get pools body-id))
                           body))])]))])))))
 
 (define (macro-eval-transformer-interpreted-with-env
@@ -117662,7 +117654,6 @@
           fallback-module-id
           declaration-id
           macro-name-id
-          (& macro-name)
           body)]
       (match (ctfe_support.ctfe-eval-node
         (& eval-body)
@@ -134948,7 +134939,7 @@
         "compile-profile-detail|prelude.typecheck_decl_checks|0\n"))))
 
 (define (tc-check-decls-with-surface-prefix-hit
-  [load-state : cload.CompilerLoadSessionState]
+  [_load-state : cload.CompilerLoadSessionState]
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decls : ast.AstDeclList]

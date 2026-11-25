@@ -7,7 +7,6 @@
 (import stdlib.io)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
-(import compiler_symbols as csym)
 (import compiler_ast_types_tests as ast_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)

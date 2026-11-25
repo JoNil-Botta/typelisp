@@ -10680,6 +10680,21 @@ loaded file's own path, line and column for `.load`.
   value larger than 16 bytes is `MEMORY`: its parameter is passed in the stack
   argument area and its return uses a leading caller-owned sret pointer; the
   callee returns that pointer in `%rax`.
+- **Internal hidden results.** One hidden-result convention serves every
+  MEMORY-class internal result, nominal or structural: a Tuple or fixed array
+  larger than 16 bytes, and an inline struct or enum that is not
+  register-resident. The caller reserves the result storage in its own frame
+  and passes its address as the first integer argument (`%rdi`), before every
+  source argument; a closure body receives it immediately after `__tl_env`.
+  The callee writes its result there on every return path, `try` early exits
+  included, and returns the same pointer in `%rax` (physical result `u64`).
+  Equal-layout struct and tuple results therefore have identical parameter
+  order and return transport. Direct calls, closures, indirect calls, dispatch
+  thunks, and tail calls use the same position; a tail call forwards the
+  caller's own slot. Global initializer functions (`__global_init_*`) are
+  invoked only by startup code and still return a pointer to arena storage.
+  C `extern` declarations, `CFunc` calls, and C exports use the platform C ABI
+  instead.
 - Structural values are copied shallowly by representation. Passing or
   returning one never inserts an implicit clone, destructor, or drop.
 - Empty tuples and zero-sized fixed arrays are rejected in internal parameter
@@ -10738,6 +10753,11 @@ slots, with the fifth and later arguments on the stack after shadow space.
   temporary. A return of 1, 2, 4, or 8 bytes uses `%rax`; every other
   structural return size uses a leading caller-owned sret pointer and returns
   that pointer in `%rax`.
+- **Internal hidden results.** The System V rule above applies unchanged: a
+  MEMORY-class nominal or structural result takes the caller-owned result
+  pointer as the first integer argument (`%rcx`, or the slot after `__tl_env`
+  for a closure body) and returns it in `%rax` as `u64`, on every call form
+  including tail calls. Only the structural size classes differ by target.
 - Structural values are copied shallowly by representation. Passing or
   returning one never inserts an implicit clone, destructor, or drop.
 - Empty tuples and zero-sized fixed arrays are rejected in internal parameter

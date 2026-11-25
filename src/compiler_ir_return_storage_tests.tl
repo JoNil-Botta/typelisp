@@ -11,7 +11,7 @@
 
 (define (internal-callee) : ir.CompilerIrFunction
   (irt.func
-    "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {
+    "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {
      entry:
        return %0
      }"))
@@ -236,13 +236,13 @@
           (irt.func
             (cond
               [(= mode 0)
-                "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 8 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}"]
+                "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 8 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}"]
               [(= mode 1)
-                "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}"]
+                "function @make(output=%0:u64) -> u64 vars 1 abi return-storage sysv arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}"]
               [(= mode 2)
-                "function @make(value=%0:i64, output=%1:u64) -> u64 vars 2 abi return-storage internal-trailing arg 1 bytes 24 output SretValue result u64 params (i64 u64) source (-> SretValue) {\nentry:\nreturn %1\n}"]
+                "function @make(value=%0:i64, output=%1:u64) -> u64 vars 2 abi return-storage internal-leading arg 1 bytes 24 output SretValue result u64 params (i64 u64) source (-> SretValue) {\nentry:\nreturn %1\n}"]
               [else
-                "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}"]))))]
+                "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}"]))))]
     [authority : ir.CompilerIrReturnStorageAuthority
       (if (>= mode 3)
         (match authority
@@ -669,7 +669,7 @@
 (define (incoming-identity-range? [body : String] [var : i64]) : bool
   (match (irt.func
     (str_cat.str-cat
-      "function @identity(other=%1:u64, output=%0:u64) -> u64 vars 8 abi return-storage internal-trailing arg 1 bytes 24 output SretValue result u64 params (u64 u64) source (-> u64 SretValue) {\nentry:\n"
+      "function @identity(output=%0:u64, other=%1:u64) -> u64 vars 8 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64 u64) source (-> u64 SretValue) {\nentry:\n"
       body
       "\nreturn %0\n}"))
     [(ir.CompilerIrFunction.Function _ params _ vars blocks abi)

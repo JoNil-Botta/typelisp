@@ -287,9 +287,9 @@
         "%6 = gep %1, 8 : u8\n"
         "")
       (cond
-        [forwarded? "%4 = call make(%0, %6) : u64\n"]
-        [(= mode 5) "%4 = call make([sret arg 1] %7, %3) : u64\n"]
-        [else "%4 = call make([sret arg 1] %0, %3) : u64\n"])
+        [forwarded? "%4 = call make(%6, %0) : u64\n"]
+        [(= mode 5) "%4 = call make([sret arg 0] %3, %7) : u64\n"]
+        [else "%4 = call make([sret arg 0] %3, %0) : u64\n"])
       (cond
         [(= mode 2) "%9 = gep %1, 16 : u8\n%10 = load %9 : i64\n"]
         [(= mode 3) "%11 = call observe(%1) : i64\n"]
@@ -307,15 +307,15 @@
             ""
             "%6 = gep %1, 8 : u8\n")
           (if (= mode 4)
-            "copy_bytes %6, %4, 16\n"
-            "copy_bytes %6, %4, 24\n")))
+            "copy_bytes %6, %3, 16\n"
+            "copy_bytes %6, %3, 24\n")))
       (cond
         [(= mode 6) "%12 = load %4 : i64\n"]
         [(= mode 7) "store_ptr %0, %1 : u64\n"]
         [(= mode 10) "%12 = load %6 : i64\n"]
         [(= mode 12) "%13 = mov %3 : u64\n"]
-        [(= mode 13) "%14 = call refill(%0, %1) : u64\n"]
-        [(= mode 14) "%14 = call refill(%0, %1) : u64\n%15 = mov %0 : u64\n"]
+        [(= mode 13) "%14 = call refill(%1, %0) : u64\n"]
+        [(= mode 14) "%14 = call refill(%1, %0) : u64\n%15 = mov %0 : u64\n"]
         [else ""])
       "return %1")))
 
@@ -345,14 +345,14 @@
 
 ;; Modes 0, 8, 9, 11 and 13 forward (a plain site, a call that cannot reach
 ;; the slot, a store that cannot reach it, a destination computed before the
-;; call, a later call handed the slot as its trailing result slot and the slot
+;; call, a later call handed the slot as its leading result slot and the slot
 ;; returned at once). The rest keep their copy: 1 a window store into the
 ;; destination, 2 a window load from it, 3 the slot passed as an ordinary
 ;; argument, 4 a copy narrower than the reserved words, 5 an argument derived
-;; from the slot, 6 a second use of the call result, 7 the slot stored to
+;; from the slot, 6 a use of the call result, 7 the slot stored to
 ;; memory, 10 a second use of the destination address (moving its definition
-;; must not change what reaches another use), 12 a second use of the temp's
-;; address, 14 a trailing slot argument that is not returned at once.
+;; must not change what reaches another use), 12 a third use of the temp's
+;; address, 14 a leading slot argument that is not returned at once.
 (define (compiler-optimize-slot-fwd-self-test) : i64
   (let
     [mode : i64 0]
@@ -361,12 +361,12 @@
         [forwards? : bool
           (or (= mode 0) (= mode 8) (= mode 9) (= mode 11) (= mode 13))]
         [params : ir.CompilerIrParamSeq
-          (ir.compiler-ir-param-seq-append-one
-            (irt.params "x=%0:u64")
+          (ir.compiler-ir-param-seq-prepend
             (ir.CompilerIrParam.Param
               (ir.compiler-ir-hidden-sret-param-name)
               (ast.AstType.U64)
-              1))]
+              1)
+            (irt.params "x=%0:u64"))]
         [out : ir.CompilerIrBlockList
           (opt.opt-slot-fwd-function-blocks
             23
@@ -87569,12 +87569,12 @@ return
         "function @branch() -> unit vars 1 {\nentry:\n %0 = call make([sret arg 0] 0) : u64\nreturn\n}"
         "function @branch() -> unit vars 1 {\nentry:\n %0 = mov 0 : i64\n%0 = mov 1 : i64\nreturn\n}"
         "function @branch() -> unit vars 1 {\nentry:\n %1 = mov 0 : i64\nreturn\n}"
-        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return %0\n}"
-        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return 0\n}"
-        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return\n}"
+        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return %0\n}"
+        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return 0\n}"
+        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return\n}"
         "function @branch() -> unit vars 2 {\nentry:\n %0 = mov %1 : i64\n%0 = mov 1 : i64\nreturn\n}"
         "function @branch() -> unit vars 2 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage -1\nreturn %2\n}"
-        "function @branch(output=%0:u64) -> u64 vars 2 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n %1 = mov %2 : i64\nreturn 0\n}"
+        "function @branch(output=%0:u64) -> u64 vars 2 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n %1 = mov %2 : i64\nreturn 0\n}"
         "function @branch() -> unit vars 1 {\nentry:\n %0 = call_c* @make() : u64\nreturn\n}")]
     [expected : (Array String 20)
       (array
@@ -87808,7 +87808,7 @@ return
   (let
     [cases : (Array String 3)
       (array
-        "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}\nfunction @proof() -> unit vars 5 {\nentry:\n%0 = alloc SretValue\n%1 = alloc SretValue\n%2 = alloc SretValue\n%3 = addr_of %2 storage 3\n%4 = call make([sret arg 0] %3, 0) : u64\nreturn\n}"
+        "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}\nfunction @proof() -> unit vars 5 {\nentry:\n%0 = alloc SretValue\n%1 = alloc SretValue\n%2 = alloc SretValue\n%3 = addr_of %2 storage 3\n%4 = call make([sret arg 0] %3, 0) : u64\nreturn\n}"
         "function @proof(cb=%0:(CFunc non-null (-> SretValue))) -> unit vars 4 {\nentry:\n%1 = alloc i64\n%2 = addr_of %1 storage 1\n%3 = call* %0([sret arg 0] %2) : u64\nreturn\n}"
         "function @proof(cb=%0:u64) -> unit vars 4 {\nentry:\n%1 = alloc i64\n%2 = addr_of %1 storage 1\n%3 = call_c* %0([sret arg 0] %2) : u64\nreturn\n}")]
     [expected : (Array String 3)
@@ -87841,7 +87841,7 @@ return
   (let
     [cases : (Array String 3)
       (array
-        "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}\nfunction @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call make([sret arg 0] %0) : u64\nreturn\n}"
+        "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-leading arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}\nfunction @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call make([sret arg 0] %0) : u64\nreturn\n}"
         "function @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call* %1([sret arg 0] %0) : u64\nreturn\n}"
         "function @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call_c* %1([sret arg 0] %0) : u64\nreturn\n}")]
     (for [i (iterator.range 0 (array-length cases))]

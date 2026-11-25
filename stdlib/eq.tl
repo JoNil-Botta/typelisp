@@ -360,12 +360,15 @@
                     (comptime.string-append
                       function-name
                       (comptime.string-append manual ")"))))))))))
-    ;; The arity and result kind are checked here; the shared-borrow
-    ;; parameter types are checked by the typechecker at every hook call.
+    ;; A hook that no generated code calls (an eq hook validated by
+    ;; `hash.gen`) is checked only here, so every parameter must be a shared
+    ;; borrow of exactly `T`.
     (let
       [hook-type : comptime.Expr
         (comptime.module-value-type owner function-name)]
       [valid : bool (string-eq (type-kind hook-type) "function")]
+      [type-text : String (type-key T)]
+      [last-index : i64 (- arity 1)]
       (if valid
         (set! valid (= (function-param-count hook-type) arity))
         unit)
@@ -373,6 +376,37 @@
         (set!
           valid
           (string-eq (type-kind (function-return-type hook-type)) result-kind))
+        unit)
+      ;; The first and the last parameter cover both eq and hash arities.
+      (if valid
+        (set!
+          valid
+          (string-eq (type-kind (function-param-type hook-type 0)) "ref"))
+        unit)
+      (if valid
+        (set!
+          valid
+          (string-eq
+            (type-key
+              (comptime.reference-element-type
+                (function-param-type hook-type 0)))
+            type-text))
+        unit)
+      (if valid
+        (set!
+          valid
+          (string-eq
+            (type-kind (function-param-type hook-type last-index))
+            "ref"))
+        unit)
+      (if valid
+        (set!
+          valid
+          (string-eq
+            (type-key
+              (comptime.reference-element-type
+                (function-param-type hook-type last-index)))
+            type-text))
         unit)
       (if valid
         unit

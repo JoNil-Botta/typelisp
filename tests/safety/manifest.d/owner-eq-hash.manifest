@@ -12,3 +12,6 @@ hash_gen_missing_eq_reject|check-fail|tests/safety/hash_gen_missing_eq_reject.tl
 eq_hook_missing_reject|check-fail|tests/safety/eq_hook_missing_reject.tl|-|eq: nominal type Point needs its canonical owner hook eq-point in module <root>; add (eq.gen Point) there or define (eq-point [left : (& left Point)] [right : (& right Point)]) : bool)
 eq_hook_arity_reject|check-fail|tests/safety/eq_hook_arity_reject.tl|-|needs its canonical owner hook eq-point in module <root> with signature (-> (& Point) (& Point) bool)
 hash_hook_result_reject|check-fail|tests/safety/hash_hook_result_reject.tl|-|needs its canonical owner hook hash-point in module <root> with signature (-> (& Point) i64)
+eq_hook_param_hash_gen_reject|check-fail|tests/safety/eq_hook_param_hash_gen_reject.tl|-|eq: nominal type Point needs its canonical owner hook eq-point in module <root> with signature (-> (& Point) (& Point) bool), got
+eq_hook_param_by_value_reject|check-fail|tests/safety/eq_hook_param_by_value_reject.tl|-|eq: nominal type Point needs its canonical owner hook eq-point in module <root> with signature (-> (& Point) (& Point) bool), got
+hash_hook_param_reject|check-fail|tests/safety/hash_hook_param_reject.tl|-|hash: nominal type Point needs its canonical owner hook hash-point in module <root> with signature (-> (& Point) i64), got

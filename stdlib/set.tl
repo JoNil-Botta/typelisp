@@ -56,7 +56,12 @@
       (match type-key-name
         ["String" 1]
         ["i64" 2]
-        [_ 3])]
+        ;; A unit value has no reference form, so unit keys are hashed and
+        ;; compared by value.
+        [_
+          (if (string-eq (type-kind T) "unit")
+            4
+            3)])]
     (if (if (= key-kind 3)
       (type-cleanup-owning? T)
       false)
@@ -68,7 +73,10 @@
     (let
       [string-key? : bool (= key-kind 1)]
       [generated-key? : bool (= key-kind 3)]
-      [borrowed-key? : bool (not (= key-kind 2))]
+      [borrowed-key? : bool
+        (if string-key?
+          true
+          generated-key?)]
       [key-type : comptime.Expr
         (match key-kind
           [1 `String]
@@ -78,6 +86,7 @@
         (match key-kind
           [1 `(& key str)]
           [2 `i64]
+          [4 T]
           [_ `(& key ,T)])]
       [key-arg : comptime.Expr
         (if borrowed-key?
@@ -87,11 +96,13 @@
         (match key-kind
           [1 `(stdlib.string.copy (& key))]
           [2 `key]
+          [4 `key]
           [_ `(stdlib.clone.deep key)])]
       [key-eq : comptime.Expr
         (match key-kind
           [1 `(key-eq-borrowed? existing key)]
           [2 `(= existing key)]
+          [4 `(key_eq.eq existing key)]
           [_ `(key_eq.eq (& existing) key)])]
       [probe-from-name : comptime.Expr
         (if borrowed-key?
@@ -110,10 +121,8 @@
           `remove-borrowed-ref!
           `remove-ref!)]
       [hash-key-def : comptime.Expr
-        (if generated-key?
-          `(define (hash-key [key : (& key ,T)]) : i64
-            (key_hash.hash key))
-          (if string-key?
+        (match key-kind
+          [1
             `(define (hash-key [key : (& key str)]) : i64
               (let
                 [n : i64 (key-length key)]
@@ -126,9 +135,17 @@
                       (+ (+ (* hash 131) (cast (key-ref key i) : i64)) 1)
                       2147483647))
                   (set! i (+ i 1)))
-                hash))
+                hash))]
+          [2
             `(define (hash-key [key : i64]) : i64
-              (hash-normalize key))))]
+              (hash-normalize key))]
+          [4
+            `(define (hash-key [key : ,T]) : i64
+              (key_hash.hash key))]
+          [_
+            `(define (hash-key [key : (& key ,T)]) : i64
+              (key_hash.hash key))])]
+      [unit-type : comptime.Expr (comptime.type-expr T)]
       [string-imports : comptime.ExprList
         (match key-kind
           [1
@@ -136,6 +153,17 @@
               `(import stdlib.string)
               (comptime.expr-list-empty))]
           [2 (comptime.expr-list-empty)]
+          ;; A bare `unit` is not a type argument; pass it as a type literal.
+          [4
+            (comptime.expr-list-cons
+              `(import stdlib.eq)
+              (comptime.expr-list-cons
+                `(import stdlib.hash)
+                (comptime.expr-list-cons
+                  `(import (eq.eq ,unit-type) as key_eq)
+                  (comptime.expr-list-cons
+                    `(import (hash.hash ,unit-type) as key_hash)
+                    (comptime.expr-list-empty)))))]
           [_
             (comptime.expr-list-cons
               `(import stdlib.clone)

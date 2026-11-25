@@ -3,8 +3,9 @@
 ;; members through shared borrows; repeating a generator is idempotent; a
 ;; hand-written semantic pair is used by the adapters, a HashMap and a Set.
 ;; Equal values hash equally across structs, enums, nested nominals, tuples,
-;; arrays and String, including distinct-but-equal values. Exits 42, or the
-;; number of the failed check.
+;; arrays and String, including distinct-but-equal values. `unit` keys, which
+;; have no reference form, are hashed and compared by value.
+;; Exits 42, or the number of the failed check.
 (import stdlib.clone)
 (import stdlib.eq)
 (import stdlib.hash)
@@ -59,6 +60,8 @@
 (import (hash.hash Version) as version_hash)
 (import (hashmap.hashmap Version i64) as version_map)
 (import (set.set Version) as version_set)
+(import (hashmap.hashmap (type unit) i64) as unit_map)
+(import (set.set (type unit)) as unit_set)
 
 (define (copied [text : String]) : String
   (string.append "" text))
@@ -122,9 +125,25 @@
       (= (version_set.len (& s)) 2)
       (version_set.contains-borrowed? (& s) (& one-later)))))
 
+(define (unit-ok?) : bool
+  (let
+    [m : unit_map.Map (unit_map.new)]
+    [s : unit_set.Set (unit_set.new)]
+    (unit_map.insert! m unit 10)
+    (unit_map.insert! m unit 11)
+    (unit_set.insert! s unit)
+    (unit_set.insert! s unit)
+    (and
+      (= (unit_map.len (& m)) 1)
+      (= (unit_map.get-value-or (& m) unit -1) 11)
+      (unit_map.contains? (& m) unit)
+      (= (unit_set.len (& s)) 1)
+      (unit_set.contains? (& s) unit))))
+
 (define (main) : i64
   (cond
     [(not (generated-ok?)) 1]
     [(not (structural-ok?)) 2]
     [(not (semantic-ok?)) 3]
+    [(not (unit-ok?)) 4]
     [else 42]))

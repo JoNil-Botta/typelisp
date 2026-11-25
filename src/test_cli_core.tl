@@ -1517,9 +1517,9 @@
   ;; synthesize a String snapshot or source substring call.
   (tltest-reach-mark-name-id names cbi.compiler-builtin-id-runtime-substring))
 
-;; Generated-module imports resolve owner-written `eq-<name>`/`hash-<name>`
-;; hooks by reflection after pruning. Mark a sentinel so those hooks and their
-;; callees survive pruning.
+;; Generated-module imports and declaration macro calls resolve owner-written
+;; `eq-<name>`/`hash-<name>` hooks by reflection after pruning. Mark a sentinel
+;; so those hooks and their callees survive pruning.
 (define (tltest-reach-mark-owner-eq-hash-hooks [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-name-id names (ci.intern "__tl-owner-eq-hash")))
 
@@ -1895,15 +1895,16 @@
     ;; references: a constant named only by `(gen-slots first ...)` must survive
     ;; pruning, or the expansion reads an unbound name.
     ;; A generated-module import such as `(eq.eq T)`, `(hash.hash T)` or a
-    ;; collection family resolves nominal owner hooks by module-value
-    ;; reflection during expansion, after pruning.
-    [(Import _ (Spec (Macro body _) _ _ _ _))
+    ;; collection family, and a declaration macro call such as
+    ;; `(hash.gen T)` or `(eq.gen T)`, resolve nominal owner hooks by
+    ;; module-value reflection during expansion, after pruning.
+    [(or (Import _ (Spec (Macro body _) _ _ _ _))
+         (Import _ (Spec (MacroDecls body _) _ _ _ _)))
       (tltest-reach-mark-expr
         session
         body
         (tltest-reach-mark-owner-eq-hash-hooks names))]
-    [(or (DefMacro _ _ _ _ body) (Import _ (Spec (MacroDecls body _) _ _ _ _)))
-      (tltest-reach-mark-expr session body names)]
+    [(DefMacro _ _ _ _ body) (tltest-reach-mark-expr session body names)]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]

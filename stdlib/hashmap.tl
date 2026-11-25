@@ -91,7 +91,12 @@
       (match (type-key K)
         ["String" "string"]
         ["i64" "i64"]
-        [_ "generated"])]
+        ;; A unit value has no reference form, so unit keys are hashed and
+        ;; compared by value.
+        [_
+          (if (string.eq (type-kind K) "unit")
+            "unit"
+            "generated")])]
     [value-kind : String
       (match (type-kind V)
         ["i64" "i64"]
@@ -126,13 +131,23 @@
           (comptime.string-append "." module-key-v)))]
     [module-name : comptime.Expr (comptime.expr-var module-name-text)]
     [key-module-imports : comptime.ExprList
-      (if (string.eq key-kind "generated")
-        (comptime.expr-list-cons
-          `(import (hash.hash ,K) as key_hash)
+      (match key-kind
+        ["generated"
           (comptime.expr-list-cons
-            `(import (eq.eq ,K) as key_eq)
-            (comptime.expr-list-empty)))
-        (comptime.expr-list-empty))]
+            `(import (hash.hash ,K) as key_hash)
+            (comptime.expr-list-cons
+              `(import (eq.eq ,K) as key_eq)
+              (comptime.expr-list-empty)))]
+        ;; A bare `unit` is not a type argument; pass it as a type literal.
+        ["unit"
+          (let
+            [unit-type : comptime.Expr (comptime.type-expr K)]
+            (comptime.expr-list-cons
+              `(import (hash.hash ,unit-type) as key_hash)
+              (comptime.expr-list-cons
+                `(import (eq.eq ,unit-type) as key_eq)
+                (comptime.expr-list-empty))))]
+        [_ (comptime.expr-list-empty)])]
     [insert-helper-name : comptime.Expr
       (comptime.expr-string
         (comptime.string-append module-name-text ".insert-ref!"))]
@@ -200,6 +215,7 @@
       (match key-kind
         ["string" `(string_mod.copy (& (__tl-project-field-name slot "key")))]
         ["i64" `(__tl-project-field-name slot "key")]
+        ["unit" `(__tl-project-field-name slot "key")]
         [_ `(stdlib.clone.deep (__tl-project-field-name slot "key"))])]
     [insert-key-copy : comptime.Expr
       (if (string.eq key-kind "generated")

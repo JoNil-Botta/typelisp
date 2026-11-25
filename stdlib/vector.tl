@@ -704,9 +704,34 @@
                   (match kind
                     ["string" (expr-var "str")]
                     [_ `,T])]
+                ;; A unit value has no reference form, so the equality hook
+                ;; takes unit elements by value.
+                [unit-element? : bool (string-eq kind "unit")]
+                ;; A bare `unit` is not a type argument; pass it as a type
+                ;; literal.
+                [eq-type-arg : Expr
+                  (if unit-element?
+                    (comptime.type-expr T)
+                    T)]
+                [contains-item-type : Expr
+                  (if unit-element?
+                    T
+                    `(& x ,iter-item-type))]
+                [contains-slot : Expr
+                  (if unit-element?
+                    `(array-ref v.slots index)
+                    `(& (array-ref v.slots index)))]
+                [left-slot : Expr
+                  (if unit-element?
+                    `(array-ref left.slots index)
+                    `(& (array-ref left.slots index)))]
+                [right-slot : Expr
+                  (if unit-element?
+                    `(array-ref right.slots index)
+                    `(& (array-ref right.slots index)))]
                 `(begin
                   (module ,module-name)
-                  (import (eq.eq ,T) as value_eq)
+                  (import (eq.eq ,eq-type-arg) as value_eq)
                   ,@core
                   (define (copy-from-slice!
                     [out : (&mut out ,vec-name)]
@@ -910,14 +935,14 @@
                     (map-from v 0 mapper))
                   (define (contains?
                     [v : (& v ,vec-name)]
-                    [x : (& x ,iter-item-type)]) : bool
+                    [x : ,contains-item-type]) : bool
                     (let
                       [index : i64 0]
                       [found : bool false]
                       (while (if found
                         false
                         (< index (len v)))
-                        (if (value_eq.eq (& (array-ref v.slots index)) x)
+                        (if (value_eq.eq ,contains-slot x)
                           (set! found true)
                           (set! index (+ index 1))))
                       found))
@@ -933,9 +958,7 @@
                       (while (if same
                         (< index count)
                         false)
-                        (if (value_eq.eq
-                          (& (array-ref left.slots index))
-                          (& (array-ref right.slots index)))
+                        (if (value_eq.eq ,left-slot ,right-slot)
                           (set! index (+ index 1))
                           (set! same false)))
                       same)))))]

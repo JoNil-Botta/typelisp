@@ -4328,8 +4328,9 @@
       0
       true)))
 
-;; Function reflection used by the `for` protocol validator. Count is returned
-;; as data; return-type replaces the function value on the session stack.
+;; Function reflection used by the `for` protocol and owner-hook validators.
+;; Count is returned as data; param-type and return-type replace the function
+;; value on the session stack.
 (define (compiler-comptime-host-callback-function-param-count
   [session : i64]
   [_arg-a : i64]
@@ -4338,6 +4339,20 @@
   (compiler-comptime-host-data-callback
     session
     (compiler-comptime-host-type-query-data "function-param-count" 0)))
+
+(define (compiler-comptime-host-callback-function-param-type
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (compiler-comptime-host-type-query!
+      "function-param-type"
+      (compiler-comptime-host-structural-session)
+      arg-a
+      0
+      false)))
 
 (define (compiler-comptime-host-callback-function-return-type
   [session : i64]

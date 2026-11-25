@@ -1430,14 +1430,12 @@
       (tc_tests.compiler-typecheck-ok?
         "(defstruct Pair
   (value i64))
-(define (eq-pair [left : (& left Pair)] [right : (& right Pair)]) : bool
-  (= left.value right.value))
 (defmacro (vector-user [T : type]) : Module
   `(begin
     (module generated.local_import_param_vector_user)
     (import stdlib.vector)
 (import (vector.vector String) as svec)
-    (import (vector.vector ,T) as vec)
+    (import (vector.vector ,T core) as vec)
     (define (score [value : ,T]) : i64
       (let
         [items : vec.Vec (vec.new)]

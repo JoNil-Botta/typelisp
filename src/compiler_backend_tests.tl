@@ -37558,8 +37558,9 @@ entry:
             (set! i (+ at 1))))))
     seen))
 
-;; A `ret` no epilogue precedes -- neither a callee-saved `popq` nor the frame's
-;; own `%rsp` adjust -- returns from a path that never built the frame.
+;; A `ret` no epilogue precedes -- neither a callee-saved `popq`, the frame's
+;; own `%rsp` adjust, nor a framed `leave` -- returns from a path that never
+;; built the frame.
 (define (compiler-backend-swb-count-bare-ret [body : (& body str)]) : i64
   (let
     [i : i64 0]
@@ -37585,7 +37586,13 @@ entry:
                   (be_operand.compiler-backend-string-prefix-at?
                     body
                     "    popq %"
-                    (- at 14))))
+                    (- at 14)))
+                (and
+                  (>= at 10)
+                  (be_operand.compiler-backend-string-prefix-at?
+                    body
+                    "    leave\n"
+                    (- at 10))))
               (+= seen 1))
             (set! i (+ at 1))))))
     seen))
@@ -41112,6 +41119,89 @@ b_keep:
         (compiler-backend-placement-test-exit-block)))
     (__tl_make-array 0 1 2 3 4 5)))
 
+;; The layout of `blocks` for a function whose returns share an epilogue
+;; (`keep-tail?`), or a zero-length array when it declines.
+(define (compiler-backend-placement-keep-tail-order
+  [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
+  (match blocks
+    [(Array seq)
+      (match (backend.compiler-backend-placement-plan-for-seq seq true 0 true)
+        [(Some st) st.order]
+        [(No) (__tl_make-array i64 0)])]))
+
+;; With a shared epilogue, the sink point sits before the trailing
+;; fall-through chain, and that chain can start inside a loop's run. Here the
+;; loop's bottom block `tail` falls into the return `exit`, so the chain is
+;; tail / exit and the point is `tail` itself: `found` has nowhere outside the
+;; run to go and the order stays as it is (the loop keeps its top test).
+(define (compiler-backend-placement-tail-loop-keeps-exit-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-keep-tail-order
+      (irt.blocks
+        "entry:
+           %0 = mov 0 : i64
+           jump header
+         header:
+           %1 = phi [%0, entry], [%3, step], [%8, tail] : i64
+           %2 = ge %1, %9 : i64
+           branch %2, tail, body
+         body:
+           %4 = load %1 : i64
+           %5 = eq %4, 1 : i64
+           branch %5, found, step
+         found:
+           return 1
+         step:
+           %3 = add %1, 1 : i64
+           jump header
+         tail:
+           %8 = load %1 : i64
+           %6 = lt %8, %9 : i64
+           branch %6, header, exit
+         exit:
+           return %8"))
+    (__tl_make-array 0 1 2 3 4 5 6)))
+
+;; The chain may also start inside a LATER loop: `second`'s bottom block falls
+;; into `exit`, which puts the sink point between `skip` and `again`. The first
+;; loop's exit `found` must not land there; it moves out of its own run to the
+;; nearest point outside every run, before `second`.
+(define (compiler-backend-placement-tail-loop-skips-run-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-keep-tail-order
+      (irt.blocks
+        "entry:
+           %0 = mov 0 : i64
+           jump first
+         first:
+           %1 = phi [%0, entry], [%3, latch] : i64
+           %2 = ge %1, %9 : i64
+           branch %2, second, body
+         body:
+           %4 = load %1 : i64
+           %5 = eq %4, 1 : i64
+           branch %5, found, latch
+         found:
+           return 1
+         latch:
+           %3 = add %1, 1 : i64
+           %6 = lt %3, %9 : i64
+           branch %6, first, second
+         second:
+           %10 = phi [%1, first], [%3, latch], [%13, skip], [%18, again] : i64
+           %12 = ge %10, %9 : i64
+           branch %12, again, skip
+         skip:
+           %13 = add %10, 1 : i64
+           jump second
+         again:
+           %18 = load %10 : i64
+           %16 = lt %18, %9 : i64
+           branch %16, second, exit
+         exit:
+           return %18"))
+    (__tl_make-array 0 1 2 4 3 5 6 7 8)))
+
 ;; RETURN-ARM SINKING. entry / early / rest, where `early` is a guard's return
 ;; arm and `rest` the guard's other arm. `test` is the guard's compare.
 (define (compiler-backend-placement-guard-blocks [test : String]) : ir.CompilerIrBlockList
@@ -41332,6 +41422,8 @@ b_keep:
     (compiler-backend-placement-exit-sinking-ok?)
     (compiler-backend-placement-exit-sinking-keeps-top-test-ok?)
     (compiler-backend-placement-entry-path-stays-ok?)
+    (compiler-backend-placement-tail-loop-keeps-exit-ok?)
+    (compiler-backend-placement-tail-loop-skips-run-ok?)
     (compiler-backend-placement-return-arm-sinks-ok?)
     (compiler-backend-placement-return-arm-veto-ok?)
     (compiler-backend-placement-return-heuristic-ok?)

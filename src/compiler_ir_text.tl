@@ -427,7 +427,8 @@
     (ir.CompilerIrBinOp.BitOr)
     (ir.CompilerIrBinOp.BitXor)
     (ir.CompilerIrBinOp.Shl (ast.clone-ast-type (& shift-ty)))
-    (ir.CompilerIrBinOp.Shr shift-ty)))
+    (ir.CompilerIrBinOp.Shr shift-ty)
+    (ir.CompilerIrBinOp.Rotr)))
 
 ;; The binary operator the renderer spells `name`, or -1.
 (define (ir-text-binop-index [name : (& name str)]) : i64

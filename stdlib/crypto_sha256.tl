@@ -221,185 +221,206 @@
     0xbef9a3f7
     0xc67178f2))
 
-;: Build the 64-word SHA-256 message schedule from a validated 64-byte pointer.
-(unsafe
-  (define (build-schedule-from-pointer!
-    [sched : (MutPtr u32)]
-    [block : (Ptr u8)]) : unit
-    (unsafe
-      (let
-        [index : i64 0]
-        (while (< index 16)
-          (let
-            [off : i64 (shl index 2)]
-            [b0 : u32 (cast (ptr-read (ptr-offset block off)) : u32)]
-            [b1 : u32 (cast (ptr-read (ptr-offset block (+ off 1))) : u32)]
-            [b2 : u32 (cast (ptr-read (ptr-offset block (+ off 2))) : u32)]
-            [b3 : u32 (cast (ptr-read (ptr-offset block (+ off 3))) : u32)]
-            (ptr-write!
-              (ptr-offset sched index)
-              (bit-or
-                (shl b0 (cast 24 : u64))
-                (shl b1 (cast 16 : u64))
-                (shl b2 (cast 8 : u64))
-                b3)))
-          (+= index 1))
-        (while (< index 64)
-          (let
-            [w2 : u32 (ptr-read (ptr-offset sched (- index 2)))]
-            [w15 : u32 (ptr-read (ptr-offset sched (- index 15)))]
-            [s1 : u32
-              (bit-xor
-                (bit-or (shr w2 (cast 17 : u64)) (shl w2 (cast 15 : u64)))
-                (bit-or (shr w2 (cast 19 : u64)) (shl w2 (cast 13 : u64)))
-                (shr w2 (cast 10 : u64)))]
-            [s0 : u32
-              (bit-xor
-                (bit-or (shr w15 (cast 7 : u64)) (shl w15 (cast 25 : u64)))
-                (bit-or (shr w15 (cast 18 : u64)) (shl w15 (cast 14 : u64)))
-                (shr w15 (cast 3 : u64)))]
-            (ptr-write!
-              (ptr-offset sched index)
-              (+
-                s1
-                (ptr-read (ptr-offset sched (- index 7)))
-                s0
-                (ptr-read (ptr-offset sched (- index 16))))))
-          (+= index 1))))))
+;: One SHA-256 round over caller-named `u32` working variables, with `kw` the
+;: sum of the round constant and schedule word. It updates `d` and `h` in
+;: place, so the next round names the same eight variables rotated by one and
+;: no register shuffle is needed. `bc` carries `b ^ c` in and this round's
+;: `a ^ b` (the next round's `b ^ c`) out for the majority. Each rotate is the
+;: `shr`/`shl` pair the optimizer fuses into one `ror`; the big sigmas nest
+;: their rotates so the three share one operand copy.
+(defmacro (round!
+  [a : Expr]
+  [b : Expr]
+  [_c : Expr]
+  [d : Expr]
+  [e : Expr]
+  [f : Expr]
+  [g : Expr]
+  [h : Expr]
+  [bc : Expr]
+  [kw : Expr]) : unit
+  `(let
+    [e14 : u32 (bit-or (shr ,e (cast 14 : u64)) (shl ,e (cast 18 : u64)))]
+    [e5 : u32 (bit-xor e14 ,e)]
+    [e6 : u32
+      (bit-xor (bit-or (shr e5 (cast 5 : u64)) (shl e5 (cast 27 : u64))) ,e)]
+    [t1 : u32
+      (+
+        ,h
+        ,kw
+        (bit-or (shr e6 (cast 6 : u64)) (shl e6 (cast 26 : u64)))
+        (bit-xor ,g (bit-and ,e (bit-xor ,f ,g))))]
+    [a9 : u32 (bit-or (shr ,a (cast 9 : u64)) (shl ,a (cast 23 : u64)))]
+    [a11 : u32 (bit-xor a9 ,a)]
+    [a2 : u32
+      (bit-xor (bit-or (shr a11 (cast 11 : u64)) (shl a11 (cast 21 : u64))) ,a)]
+    [ab : u32 (bit-xor ,a ,b)]
+    (set! ,d (+ ,d t1))
+    (set!
+      ,h
+      (+
+        t1
+        (bit-or (shr a2 (cast 2 : u64)) (shl a2 (cast 30 : u64)))
+        (bit-xor ,b (bit-and ab ,bc))))
+    (set! ,bc ab)))
 
-;: Run the 64 SHA-256 compression rounds, writing the 8 round outputs to `out`.
-;: Taking initial words by value keeps the 64-round loop free of caller-state
-;: aliasing so all working registers stay live in GPRs.
+;: Advance one word of the rolling 16-word schedule at `w`: word `i` (holding
+;: W[t-16]) becomes W[t] from words `i2`, `i7` and `i15` (W[t-2], W[t-7] and
+;: W[t-15]), and `kw` word `i` becomes W[t] plus round constant `k` word `i`.
+;: Callers pass literal indices modulo 16.
+(defmacro (expand!
+  [w : Expr]
+  [kw : Expr]
+  [k : Expr]
+  [i : Expr]
+  [i2 : Expr]
+  [i7 : Expr]
+  [i15 : Expr]) : unit
+  `(let
+    [x2 : u32 (ptr-read (ptr-offset ,w ,i2))]
+    [x15 : u32 (ptr-read (ptr-offset ,w ,i15))]
+    [r2 : u32
+      (bit-xor (bit-or (shr x2 (cast 2 : u64)) (shl x2 (cast 30 : u64))) x2)]
+    [r15 : u32
+      (bit-xor (bit-or (shr x15 (cast 11 : u64)) (shl x15 (cast 21 : u64))) x15)]
+    [next : u32
+      (+
+        (ptr-read (ptr-offset ,w ,i))
+        (bit-xor
+          (bit-or (shr r2 (cast 17 : u64)) (shl r2 (cast 15 : u64)))
+          (shr x2 (cast 10 : u64)))
+        (ptr-read (ptr-offset ,w ,i7))
+        (bit-xor
+          (bit-or (shr r15 (cast 7 : u64)) (shl r15 (cast 25 : u64)))
+          (shr x15 (cast 3 : u64))))]
+    (ptr-write! (ptr-offset ,w ,i) next)
+    (ptr-write! (ptr-offset ,kw ,i) (+ next (ptr-read (ptr-offset ,k ,i))))))
+
+;: Advance the rolling schedule at `w` by sixteen words and store each plus its
+;: round constant from `k` into `kw`.
 (unsafe
-  (define (compress-rounds-into!
-    [out : (MutPtr u32)]
-    [sched : (Ptr u32)]
-    [a0 : u32]
-    [b0 : u32]
-    [c0 : u32]
-    [d0 : u32]
-    [e0 : u32]
-    [f0 : u32]
-    [g0 : u32]
-    [h0 : u32]) : unit
+  (define (expand-schedule!
+    [w : (MutPtr u32)]
+    [kw : (MutPtr u32)]
+    [k : (Ptr u32)]) : unit
+    (unsafe
+      (expand! w kw k 0 14 9 1)
+      (expand! w kw k 1 15 10 2)
+      (expand! w kw k 2 0 11 3)
+      (expand! w kw k 3 1 12 4)
+      (expand! w kw k 4 2 13 5)
+      (expand! w kw k 5 3 14 6)
+      (expand! w kw k 6 4 15 7)
+      (expand! w kw k 7 5 0 8)
+      (expand! w kw k 8 6 1 9)
+      (expand! w kw k 9 7 2 10)
+      (expand! w kw k 10 8 3 11)
+      (expand! w kw k 11 9 4 12)
+      (expand! w kw k 12 10 5 13)
+      (expand! w kw k 13 11 6 14)
+      (expand! w kw k 14 12 7 15)
+      (expand! w kw k 15 13 8 0))))
+
+;: Words of caller-owned compression scratch: the rolling 16-word message
+;: schedule, then all 64 schedule-plus-round-constant words.
+(define (scratch-words) : i64
+  80)
+
+;: Run the 64 rounds of one validated 64-byte block from `state.words`,
+;: leaving the eight round outputs in `scratch` words 0 to 7. The whole schedule
+;: is expanded before the rounds and `state` is read only up front, so the
+;: round loop makes no call and holds only working variables in registers;
+;: each loop trip runs sixteen rounds at constant offsets.
+(unsafe
+  (define (block-rounds!
+    [state : (& state Sha256State)]
+    [block : (Ptr u8)]
+    [scratch : (MutPtr u32)]) : unit
     (unsafe
       (let
+        [kw : (MutPtr u32) (ptr-offset scratch 16)]
+        [words : (Ptr u32) (ptr-cast block : (Ptr u32))]
         [k : (Ptr u32)
           (ptr-cast
             (ptr-addr-of (array-ref sha256-round-constants 0))
             : (Ptr u32))]
-        [a : u32 a0]
-        [b : u32 b0]
-        [c : u32 c0]
-        [d : u32 d0]
-        [e : u32 e0]
-        [f : u32 f0]
-        [g : u32 g0]
-        [h : u32 h0]
-        [round : i64 0]
-        (while (< round 64)
+        [index : i64 0]
+        (while (< index 16)
           (let
-            [t1 : u32
-              (+
-                h
-                (ptr-read (ptr-offset k round))
-                (ptr-read (ptr-offset sched round)))]
-            [ab : u32 (bit-or a b)]
-            [t2 : u32 (bit-or (bit-and a b) (bit-and c ab))]
-            (set!
-              t1
-              (+
-                t1
-                (bit-xor
-                  (bit-or (shr e (cast 6 : u64)) (shl e (cast 26 : u64)))
-                  (bit-or (shr e (cast 11 : u64)) (shl e (cast 21 : u64)))
-                  (bit-or (shr e (cast 25 : u64)) (shl e (cast 7 : u64))))
-                (bit-xor g (bit-and e (bit-xor f g)))))
-            (set!
-              t2
-              (+
-                t2
-                (bit-xor
-                  (bit-or (shr a (cast 2 : u64)) (shl a (cast 30 : u64)))
-                  (bit-or (shr a (cast 13 : u64)) (shl a (cast 19 : u64)))
-                  (bit-or (shr a (cast 22 : u64)) (shl a (cast 10 : u64))))))
-            (set! h g)
-            (set! g f)
-            (set! f e)
-            (set! e (+ d t1))
-            (set! d c)
-            (set! c b)
-            (set! b a)
-            (set! a (+ t1 t2))
-            (+= round 1)))
-        (ptr-write! out a)
-        (ptr-write! (ptr-offset out 1) b)
-        (ptr-write! (ptr-offset out 2) c)
-        (ptr-write! (ptr-offset out 3) d)
-        (ptr-write! (ptr-offset out 4) e)
-        (ptr-write! (ptr-offset out 5) f)
-        (ptr-write! (ptr-offset out 6) g)
-        (ptr-write! (ptr-offset out 7) h)))))
+            ;; Big-endian word: one load, then swap the byte pairs with two
+            ;; masked rotates.
+            [raw : u32 (ptr-read (ptr-offset words index))]
+            [even : u32 (bit-and raw (cast 0x00ff00ff : u32))]
+            [odd : u32 (bit-xor raw even)]
+            [value : u32
+              (bit-or
+                (bit-or (shr odd (cast 24 : u64)) (shl odd (cast 8 : u64)))
+                (bit-or (shr even (cast 8 : u64)) (shl even (cast 24 : u64))))]
+            (ptr-write! (ptr-offset scratch index) value)
+            (ptr-write!
+              (ptr-offset kw index)
+              (+ value (ptr-read (ptr-offset k index)))))
+          (+= index 1))
+        (expand-schedule! scratch (ptr-offset kw 16) (ptr-offset k 16))
+        (expand-schedule! scratch (ptr-offset kw 32) (ptr-offset k 32))
+        (expand-schedule! scratch (ptr-offset kw 48) (ptr-offset k 48))
+        (let
+          [a : u32 (array-ref state.words 0)]
+          [b : u32 (array-ref state.words 1)]
+          [c : u32 (array-ref state.words 2)]
+          [d : u32 (array-ref state.words 3)]
+          [e : u32 (array-ref state.words 4)]
+          [f : u32 (array-ref state.words 5)]
+          [g : u32 (array-ref state.words 6)]
+          [h : u32 (array-ref state.words 7)]
+          [bc : u32 (bit-xor b c)]
+          (set! index 0)
+          (while (< index 4)
+            (round! a b c d e f g h bc (ptr-read (ptr-offset kw 0)))
+            (round! h a b c d e f g bc (ptr-read (ptr-offset kw 1)))
+            (round! g h a b c d e f bc (ptr-read (ptr-offset kw 2)))
+            (round! f g h a b c d e bc (ptr-read (ptr-offset kw 3)))
+            (round! e f g h a b c d bc (ptr-read (ptr-offset kw 4)))
+            (round! d e f g h a b c bc (ptr-read (ptr-offset kw 5)))
+            (round! c d e f g h a b bc (ptr-read (ptr-offset kw 6)))
+            (round! b c d e f g h a bc (ptr-read (ptr-offset kw 7)))
+            (round! a b c d e f g h bc (ptr-read (ptr-offset kw 8)))
+            (round! h a b c d e f g bc (ptr-read (ptr-offset kw 9)))
+            (round! g h a b c d e f bc (ptr-read (ptr-offset kw 10)))
+            (round! f g h a b c d e bc (ptr-read (ptr-offset kw 11)))
+            (round! e f g h a b c d bc (ptr-read (ptr-offset kw 12)))
+            (round! d e f g h a b c bc (ptr-read (ptr-offset kw 13)))
+            (round! c d e f g h a b bc (ptr-read (ptr-offset kw 14)))
+            (round! b c d e f g h a bc (ptr-read (ptr-offset kw 15)))
+            (set! kw (ptr-offset kw 16))
+            (+= index 1))
+          (ptr-write! scratch a)
+          (ptr-write! (ptr-offset scratch 1) b)
+          (ptr-write! (ptr-offset scratch 2) c)
+          (ptr-write! (ptr-offset scratch 3) d)
+          (ptr-write! (ptr-offset scratch 4) e)
+          (ptr-write! (ptr-offset scratch 5) f)
+          (ptr-write! (ptr-offset scratch 6) g)
+          (ptr-write! (ptr-offset scratch 7) h))))))
 
-;: Compress one validated 64-byte block pointer directly into `state.words`.
+;: Compress one validated 64-byte block pointer into `state.words`. `scratch`
+;: holds `scratch-words` words that the caller wipes once after its last block.
 (unsafe
   (define (compress-block-pointer!
     [state : (&mut state Sha256State)]
-    [block : (Ptr u8)]) : unit
+    [block : (Ptr u8)]
+    [scratch : (MutPtr u32)]) : unit
     (unsafe
+      (block-rounds! state block scratch)
       (let
-        [schedule : (Array u32 64) (make-array u32 64)]
-        [delta : (Array u32 8) (make-array u32 8)]
-        [sched-mut : (MutPtr u32)
-          (ptr-cast (ptr-addr-of schedule) : (MutPtr u32))]
-        [sched-ro : (Ptr u32) (ptr-cast (ptr-addr-of schedule) : (Ptr u32))]
-        [delta-mut : (MutPtr u32) (ptr-cast (ptr-addr-of delta) : (MutPtr u32))]
-        (build-schedule-from-pointer! sched-mut block)
-        (compress-rounds-into!
-          delta-mut
-          sched-ro
-          (array-ref state.words 0)
-          (array-ref state.words 1)
-          (array-ref state.words 2)
-          (array-ref state.words 3)
-          (array-ref state.words 4)
-          (array-ref state.words 5)
-          (array-ref state.words 6)
-          (array-ref state.words 7))
-        (set!
-          (array-ref state.words 0)
-          (+ (array-ref state.words 0) (array-ref delta 0)))
-        (set!
-          (array-ref state.words 1)
-          (+ (array-ref state.words 1) (array-ref delta 1)))
-        (set!
-          (array-ref state.words 2)
-          (+ (array-ref state.words 2) (array-ref delta 2)))
-        (set!
-          (array-ref state.words 3)
-          (+ (array-ref state.words 3) (array-ref delta 3)))
-        (set!
-          (array-ref state.words 4)
-          (+ (array-ref state.words 4) (array-ref delta 4)))
-        (set!
-          (array-ref state.words 5)
-          (+ (array-ref state.words 5) (array-ref delta 5)))
-        (set!
-          (array-ref state.words 6)
-          (+ (array-ref state.words 6) (array-ref delta 6)))
-        (set!
-          (array-ref state.words 7)
-          (+ (array-ref state.words 7) (array-ref delta 7)))
-        (wipe-schedule-pointer! sched-mut)
-        ;; The round delta is keyed material for HMAC/HKDF callers too.
-        (volatile-store! delta-mut (cast 0 : u32))
-        (volatile-store! (ptr-offset delta-mut 1) (cast 0 : u32))
-        (volatile-store! (ptr-offset delta-mut 2) (cast 0 : u32))
-        (volatile-store! (ptr-offset delta-mut 3) (cast 0 : u32))
-        (volatile-store! (ptr-offset delta-mut 4) (cast 0 : u32))
-        (volatile-store! (ptr-offset delta-mut 5) (cast 0 : u32))
-        (volatile-store! (ptr-offset delta-mut 6) (cast 0 : u32))
-        (volatile-store! (ptr-offset delta-mut 7) (cast 0 : u32))))))
+        [word : i64 0]
+        (while (< word 8)
+          (set!
+            (array-ref state.words word)
+            (+
+              (array-ref state.words word)
+              (ptr-read (ptr-offset scratch word))))
+          (+= word 1))))))
 
 ;: Compress the complete 64-byte block currently stored in `state`.
 (define (compress! [state : (&mut state Sha256State)]) : unit
@@ -555,10 +576,28 @@
                     (= state.block-length 64)
                     (compress! state)
                     (set! state.block-length 0))))
-              (while (<= (+ offset 64) input-length)
-                (unsafe
-                  (compress-block-pointer! state (ptr-offset input offset)))
-                (+= offset 64))
+              (when
+                (<= (+ offset 64) input-length)
+                (let
+                  [schedule : (Array u32 80) (make-array u32 80)]
+                  [scratch : (MutPtr u32)
+                    (unsafe
+                      (ptr-cast (ptr-addr-of schedule) : (MutPtr u32)))]
+                  [index : i64 0]
+                  (while (<= (+ offset 64) input-length)
+                    (unsafe
+                      (compress-block-pointer!
+                        state
+                        (ptr-offset input offset)
+                        scratch))
+                    (+= offset 64))
+                  ;; One wipe per update retires every block's schedule.
+                  (while (< index (scratch-words))
+                    (unsafe
+                      (volatile-store!
+                        (ptr-offset scratch index)
+                        (cast 0 : u32)))
+                    (+= index 1))))
               (while (< offset input-length)
                 (set!
                   (array-ref state.block state.block-length)

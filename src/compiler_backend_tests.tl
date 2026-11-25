@@ -4223,7 +4223,8 @@
           name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         bases
@@ -12412,6 +12413,72 @@ high:
         out
         "    jae .Lf1_a.cold\n.Lf1_a:\n    ret\n.Lf1_a.cold:\n    call tl_oob_abort\n    .size g, . - g\n"))))
 
+;; COLD-EDGE: a jump over a cold edge block is inverted and the block moves to
+;; the end of its function under its own label, so the in-loop side falls
+;; through. `g`'s cold block makes a call, `h`'s jump does not land right
+;; after it, and `k`'s edge block is not cold: all three stay where they are.
+(define (compiler-backend-cold-edge-source) : String
+  (str_cat.str-cat
+    ".text\n.globl f\n    .type f,@function\nf:\n.Lf0_loop:\n"
+    "    cmpb (%rdx,%rax,1), %sil\n    je .Lf0_merge\n"
+    ".Lf0_loop_branch_cold_false:\n    xorl %eax, %eax\n    jmp .Lf0_exit\n"
+    ".Lf0_merge:\n    addq $1, %rax\n    cmpq %r9, %rax\n    jl .Lf0_loop\n"
+    "    movl $1, %eax\n.Lf0_exit:\n    ret\n    .size f, . - f\n"
+    ".globl g\n    .type g,@function\ng:\n.Lf1_loop:\n"
+    "    testq %rdi, %rdi\n    je .Lf1_merge\n"
+    ".Lf1_loop_branch_cold_true:\n    call h\n    jmp .Lf1_exit\n"
+    ".Lf1_merge:\n    jl .Lf1_loop\n.Lf1_exit:\n    ret\n    .size g, . - g\n"
+    ".globl h\n    .type h,@function\nh:\n.Lf2_loop:\n"
+    "    testq %rdi, %rdi\n    je .Lf2_exit\n"
+    ".Lf2_loop_branch_cold_true:\n    movq %rsi, %rax\n    jmp .Lf2_exit\n"
+    ".Lf2_merge:\n    jl .Lf2_loop\n.Lf2_exit:\n    ret\n    .size h, . - h\n"
+    ".globl k\n    .type k,@function\nk:\n.Lf3_loop:\n"
+    "    testq %rdi, %rdi\n    je .Lf3_merge\n"
+    ".Lf3_loop_branch_true:\n    movq %rsi, %rax\n    jmp .Lf3_exit\n"
+    ".Lf3_merge:\n    jl .Lf3_loop\n.Lf3_exit:\n    ret\n    .size k, . - k\n"))
+
+(define (compiler-backend-cold-edge-ok?) : bool
+  (let
+    [out : String
+      (text_buf.render
+        (compiler-backend-peephole-text-buf-once
+          (text_buf.append (text_buf.empty) (compiler-backend-cold-edge-source))))]
+    (and
+      (asm-has?
+        out
+        "    cmpb (%rdx,%rax,1), %sil\n    jne .Lf0_loop_branch_cold_false\n.Lf0_merge:\n")
+      (asm-has?
+        out
+        "    ret\n.Lf0_loop_branch_cold_false:\n    xorl %eax, %eax\n    jmp .Lf0_exit\n    .size f, . - f\n")
+      (asm-has?
+        out
+        "    je .Lf1_merge\n.Lf1_loop_branch_cold_true:\n    call h\n")
+      (asm-has?
+        out
+        "    je .Lf2_exit\n.Lf2_loop_branch_cold_true:\n    movq %rsi, %rax\n")
+      (asm-has?
+        out
+        "    je .Lf3_merge\n.Lf3_loop_branch_true:\n    movq %rsi, %rax\n"))))
+
+;; Hot-loop alignment: a moved cold edge block's jump back to its exit target
+;; is not a back edge, so `.Lf0_out` gets no padding. The same jump from an
+;; ordinary edge block still makes `.Lf1_out` a loop top.
+(define (compiler-backend-cold-edge-align-ok?) : bool
+  (let
+    [text : String
+      (str_cat.str-cat
+        "f:\n    jmp .Lf0_out\n.Lf0_out:\n    movl $1, %eax\n    jmp .Lf0_end\n"
+        ".Lf0_end:\n    ret\n.Lf0_loop_branch_cold_false:\n    xorl %eax, %eax\n"
+        "    jmp .Lf0_out\n"
+        "g:\n    jmp .Lf1_out\n.Lf1_out:\n    movl $1, %eax\n    jmp .Lf1_end\n"
+        ".Lf1_end:\n    ret\n.Lf1_loop_branch_false:\n    xorl %eax, %eax\n"
+        "    jmp .Lf1_out\n")]
+    [aligned : String
+      (be_peephole.compiler-backend-loop-align-text text (arena.current))]
+    (and
+      (asm-lacks? aligned "    .p2align 4,,10\n.Lf0_out:\n")
+      (asm-has? aligned "    .p2align 4,,10\n.Lf1_out:\n"))))
+
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
 ;; the recorded FPO sweep metadata before the streaming run.
@@ -14467,6 +14534,8 @@ f:
     (compiler-backend-chunked-peephole-equivalent?)
     (compiler-backend-cold-split-ok?)
     (compiler-backend-cold-share-ok?)
+    (compiler-backend-cold-edge-ok?)
+    (compiler-backend-cold-edge-align-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)
@@ -15115,10 +15184,30 @@ f:
 
 ;; #6306. A same-home float Phi is filtered from the parallel-copy list, but
 ;; its %xmm2 family already contains the final incoming value. The following
-;; spilled copy prefers %xmm2 as its scalar staging register and must preserve
+;; spilled copy prefers %xmm2 as its scalar staging register; the edge's
+;; phi-edge mask refuses it, so the copy stages through a free %xmm3 and the
+;; placed family is never written. Under pressure -- every XMM staging candidate
+;; holds a placed Phi -- the pick falls back to %xmm2 and the copy must preserve
 ;; the whole aliased physical family around that load/store pair.
 (define (compiler-backend-phi-xmm-stage-same-home-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%xmm2 %1=%xmm2 %2=spill:-24 %3=spill:-16"))
+
+;; The pressure variant: %xmm3..%xmm5, the rest of the XMM staging pool, also
+;; hold same-home placed Phis.
+(define (compiler-backend-phi-xmm-stage-pressure-assignments) : regalloc.CompilerRegAssignmentTable
+  (reg-homes
+    "%0=%xmm2 %1=%xmm2 %2=spill:-24 %3=spill:-16 %4=%xmm3 %5=%xmm3 %6=%xmm4 %7=%xmm4 %8=%xmm5 %9=%xmm5"))
+
+(define (compiler-backend-phi-xmm-stage-pressure-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       jump join
+     join:
+       %1 = phi [%0, entry] : f64
+       %5 = phi [%4, entry] : f64
+       %7 = phi [%6, entry] : f64
+       %9 = phi [%8, entry] : f64
+       %3 = phi [%2, entry] : f64"))
 
 (define (compiler-backend-phi-xmm-stage-same-home-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks-with-tail
@@ -15227,80 +15316,90 @@ f:
     (= (backend.compiler-backend-string-count asm "-128(%rbp)") 2)
     (asm-lacks? asm "-512(%rbp)")))
 
-(define (compiler-backend-phi-xmm-stage-preserved-ok?) : bool
-  (match (compiler-backend-phi-xmm-stage-edge-asm
-    (compiler-backend-phi-xmm-stage-same-home-assignments)
-    (compiler-backend-phi-xmm-stage-same-home-blocks)
-    4
-    (Scalar))
+(define (compiler-backend-phi-xmm-stage-free-shape? [asm : String]) : bool
+  (and
+    (asm-has? asm "    movsd -24(%rbp), %xmm3\n    movsd %xmm3, -16(%rbp)\n")
+    (asm-lacks? asm "%xmm2" "%ymm2" "%zmm2" "-128(%rbp)" "-512(%rbp)")))
+
+(define (compiler-backend-phi-xmm-stage-mode-asm
+  [pressure? : bool]
+  [mode : be_state.CompilerBackendMode]) : be_state.ResultCompilerBackend
+  (if pressure?
+    (compiler-backend-phi-xmm-stage-edge-asm
+      (compiler-backend-phi-xmm-stage-pressure-assignments)
+      (compiler-backend-phi-xmm-stage-pressure-blocks)
+      10
+      mode)
+    (compiler-backend-phi-xmm-stage-edge-asm
+      (compiler-backend-phi-xmm-stage-same-home-assignments)
+      (compiler-backend-phi-xmm-stage-same-home-blocks)
+      4
+      mode)))
+
+(define (compiler-backend-phi-xmm-stage-preserved-modes-ok? [pressure? : bool]) : bool
+  (match (compiler-backend-phi-xmm-stage-mode-asm pressure? (Scalar))
     [(Ok scalar)
-      (match (compiler-backend-phi-xmm-stage-edge-asm
-        (compiler-backend-phi-xmm-stage-same-home-assignments)
-        (compiler-backend-phi-xmm-stage-same-home-blocks)
-        4
-        (Avx2))
+      (match (compiler-backend-phi-xmm-stage-mode-asm pressure? (Avx2))
         [(Ok avx2)
-          (match (compiler-backend-phi-xmm-stage-edge-asm
-            (compiler-backend-phi-xmm-stage-same-home-assignments)
-            (compiler-backend-phi-xmm-stage-same-home-blocks)
-            4
-            (Avx512))
+          (match (compiler-backend-phi-xmm-stage-mode-asm pressure? (Avx512))
             [(Ok avx512)
-              (match (compiler-backend-phi-xmm-stage-edge-asm
-                (compiler-backend-phi-xmm-stage-placed-assignments)
-                (compiler-backend-phi-xmm-stage-placed-blocks)
-                3
-                (Scalar))
-                [(Ok placed)
-                  (match (compiler-backend-phi-xmm-stage-edge-asm
-                    (compiler-backend-phi-xmm-stage-safe-assignments)
-                    (compiler-backend-phi-xmm-stage-safe-blocks)
-                    2
-                    (Scalar))
-                    [(Ok safe)
-                      (let
-                        [placed-value : i64
-                          (backend.compiler-backend-string-find-from
-                            placed
-                            "    movsd .L_tl_f64_"
-                            0)]
-                        [placed-save : i64
-                          (backend.compiler-backend-string-find-from
-                            placed
-                            "    movdqu %xmm2, -128(%rbp)\n"
-                            0)]
-                        (and
-                          (compiler-backend-phi-xmm-stage-bracket-shape?
-                            scalar
-                            "    movdqu %xmm2, -128(%rbp)\n"
-                            "    movdqu -128(%rbp), %xmm2\n")
-                          (compiler-backend-phi-xmm-stage-bracket-shape?
-                            avx2
-                            "    vmovdqu %ymm2, -128(%rbp)\n"
-                            "    vmovdqu -128(%rbp), %ymm2\n")
-                          (compiler-backend-phi-xmm-stage-bracket-shape?
-                            avx512
-                            "    vmovdqu64 %zmm2, -128(%rbp)\n"
-                            "    vmovdqu64 -128(%rbp), %zmm2\n")
-                          (>= placed-value 0)
-                          (>= placed-save 0)
-                          (< placed-value placed-save)
-                          (compiler-backend-phi-xmm-stage-bracket-shape?
-                            placed
-                            "    movdqu %xmm2, -128(%rbp)\n"
-                            "    movdqu -128(%rbp), %xmm2\n")
-                          (asm-has?
-                            safe
-                            "    movsd -24(%rbp), %xmm2\n    movsd %xmm2, -16(%rbp)\n")
-                          (asm-lacks? safe "movdqu")))]
-                    [(Err _) false])]
-                [(Err _) false])]
+              (if pressure?
+                (and
+                  (compiler-backend-phi-xmm-stage-bracket-shape?
+                    scalar
+                    "    movdqu %xmm2, -128(%rbp)\n"
+                    "    movdqu -128(%rbp), %xmm2\n")
+                  (compiler-backend-phi-xmm-stage-bracket-shape?
+                    avx2
+                    "    vmovdqu %ymm2, -128(%rbp)\n"
+                    "    vmovdqu -128(%rbp), %ymm2\n")
+                  (compiler-backend-phi-xmm-stage-bracket-shape?
+                    avx512
+                    "    vmovdqu64 %zmm2, -128(%rbp)\n"
+                    "    vmovdqu64 -128(%rbp), %zmm2\n"))
+                (and
+                  (compiler-backend-phi-xmm-stage-free-shape? scalar)
+                  (compiler-backend-phi-xmm-stage-free-shape? avx2)
+                  (compiler-backend-phi-xmm-stage-free-shape? avx512)))]
             [(Err _) false])]
         [(Err _) false])]
     [(Err _) false]))
 
+(define (compiler-backend-phi-xmm-stage-preserved-ok?) : bool
+  (and
+    (compiler-backend-phi-xmm-stage-preserved-modes-ok? false)
+    (compiler-backend-phi-xmm-stage-preserved-modes-ok? true)
+    (match (compiler-backend-phi-xmm-stage-edge-asm
+      (compiler-backend-phi-xmm-stage-placed-assignments)
+      (compiler-backend-phi-xmm-stage-placed-blocks)
+      3
+      (Scalar))
+      [(Ok placed)
+        ;; The literal's own load is the only write of %xmm2.
+        (and
+          (asm-has? placed "    movsd .L_tl_f64_")
+          (= (backend.compiler-backend-string-count placed "%xmm2") 1)
+          (asm-has?
+            placed
+            "    movsd -24(%rbp), %xmm3\n    movsd %xmm3, -16(%rbp)\n")
+          (asm-lacks? placed "-128(%rbp)" "-512(%rbp)"))]
+      [(Err _) false])
+    (match (compiler-backend-phi-xmm-stage-edge-asm
+      (compiler-backend-phi-xmm-stage-safe-assignments)
+      (compiler-backend-phi-xmm-stage-safe-blocks)
+      2
+      (Scalar))
+      [(Ok safe)
+        (and
+          (asm-has?
+            safe
+            "    movsd -24(%rbp), %xmm2\n    movsd %xmm2, -16(%rbp)\n")
+          (asm-lacks? safe "movdqu"))]
+      [(Err _) false])))
+
 ;; Mov+Jump fusion substitutes var4 for the pre-fusion var2 source, then runs
-;; the dense target scan. The raw same-home Phi must still protect %xmm2.
+;; the dense target scan. The raw same-home Phi must still protect %xmm2: the
+;; copy stages through %xmm3 and never writes it.
 (define (compiler-backend-phi-xmm-fused-stage-preserved-ok?) : bool
   (let
     [blocks : ir.CompilerIrBlockList
@@ -15325,11 +15424,8 @@ f:
         (Var 4)
         program-index
         5)
-      (has
-        "    movdqu %xmm2, -128(%rbp)\n"
-        "    movsd -32(%rbp), %xmm2\n"
-        "    movsd %xmm2, -16(%rbp)\n"
-        "    movdqu -128(%rbp), %xmm2\n"))))
+      (has "    movsd -32(%rbp), %xmm3\n" "    movsd %xmm3, -16(%rbp)\n")
+      (lacks "%xmm2" "-128(%rbp)"))))
 
 (define (compiler-backend-phi-group-cycle-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%r12/%r13 %1=%r14/%r15"))
@@ -15933,6 +16029,153 @@ f:
           (= (backend.compiler-backend-string-count asm "%rax") 2)
           (= (backend.compiler-backend-string-count asm "%rdx") 2))]
       [(Err _) false])))
+
+;; #10009 review: edge-precise scavenge occupancy reads a register free once the
+;; predecessor's last use of it is behind the edge, but phi marshalling may
+;; already have placed a final value there -- a drained copy or, as in these
+;; fixtures, a same-home Phi filtered out before marshalling (deterministic: it
+;; holds its value before the first copy is emitted). Every scratch the edge
+;; scavenges must refuse those homes. No scavenge context is installed, so the
+;; occupancy model reads every register free, exactly the hazard.
+(define (compiler-backend-phi-edge-placed-asm
+  [index : be_state.CompilerBackendProgramIndex]
+  [assignments : regalloc.CompilerRegAssignmentTable]
+  [blocks : ir.CompilerIrBlockList]
+  [group-vars : compiler_liveness.CompilerLiveI64Set]
+  [vars : i64]) : be_state.ResultCompilerBackend
+  (let
+    [backend-state : be_state.CompilerBackendState index.backend-state]
+    [function-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state backend-state)]
+    [prev-count : i64 (scratch-cycle-temp-used-count function-state)]
+    [prev-base : i64 (scratch-cycle-temp-base-offset function-state)]
+    [_set : unit
+      (begin
+        (set-scratch-cycle-temp-used-count! function-state 0)
+        (set-scratch-cycle-temp-base-offset! function-state -512)
+        (set-scratch-emergency-slot-offset! function-state -128)
+        (be_facts.compiler-backend-current-slot-vars-set! backend-state vars)
+        (be_facts.compiler-backend-group-vars-enable!
+          backend-state
+          group-vars
+          (compiler_liveness.compiler-live-set-empty)))]
+    [copied : be_state.ResultCompilerBackend
+      (be_calls.compiler-backend-emit-phi-edge-copies
+        (ast.ast-node-pool-reader-type-segment-bases)
+        assignments
+        blocks
+        (ir.compiler-ir-label "join")
+        (ir.compiler-ir-label "entry")
+        index
+        vars)]
+    [_restore : unit
+      (begin
+        (be_facts.compiler-backend-group-vars-disable! backend-state)
+        (set-scratch-cycle-temp-used-count! function-state prev-count)
+        (set-scratch-cycle-temp-base-offset! function-state prev-base))]
+    ;; The mask is the marshalling's alone: once the edge is emitted it is back
+    ;; to the conservative "no list installed" default.
+    (if (=
+      (be_calls.compiler-backend-function-state-current-phi-dst-home-mask
+        backend-state)
+      -1)
+      copied
+      (Err
+        (box
+          (cdiag.compiler-diagnostic-at-start
+            ""
+            "phi dst-home mask outlived its edge"))))))
+
+(define (compiler-backend-phi-edge-group-pair-vars) : compiler_liveness.CompilerLiveI64Set
+  (compiler_liveness.compiler-live-set-insert
+    (compiler_liveness.compiler-live-set1 0)
+    1))
+
+;; (1) A group phi copy stages its words through %rax/%rdx (GP) or
+;; %xmm0/%xmm1 (SSE) by default; here those registers hold placed scalar phis.
+(define (compiler-backend-phi-group-copy-avoids-placed-ok?) : bool
+  (and
+    (asm-ok?
+      (compiler-backend-phi-edge-placed-asm
+        (compiler-backend-register-group-test-index)
+        (reg-homes "%0=spill:-16 %1=spill:-32 %2=%rax %3=%rdx %4=%rax %5=%rdx")
+        (irt.blocks
+          "join:
+             %2 = phi [%4, entry] : i64
+             %3 = phi [%5, entry] : i64
+             %1 = phi [%0, entry] : BackendGroupTest")
+        (compiler-backend-phi-edge-group-pair-vars)
+        6)
+      (has "-16(%rbp)" "-24(%rbp)" "-32(%rbp)" "-40(%rbp)")
+      (lacks "%rax" "%eax" "%rdx" "%edx"))
+    (asm-ok?
+      (compiler-backend-phi-edge-placed-asm
+        (compiler-backend-register-group-f64-test-index)
+        (reg-homes
+          "%0=spill:-16 %1=spill:-32 %2=%xmm0 %3=%xmm1 %4=%xmm0 %5=%xmm1")
+        (irt.blocks
+          "join:
+             %2 = phi [%4, entry] : f64
+             %3 = phi [%5, entry] : f64
+             %1 = phi [%0, entry] : BackendGroupF64Test")
+        (compiler-backend-phi-edge-group-pair-vars)
+        6)
+      (has "-16(%rbp)" "-24(%rbp)" "-32(%rbp)" "-40(%rbp)")
+      (lacks "%xmm0" "%xmm1"))))
+
+;; (2) Spilled phi cycles break through a frame Temp staged in %r10 (GP) and
+;; %xmm2 (float) by default; here those registers hold placed scalar phis.
+(define (compiler-backend-phi-spill-cycle-temp-avoids-placed-ok?) : bool
+  (asm-ok?
+    (compiler-backend-phi-edge-placed-asm
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))
+      (reg-homes
+        "%0=spill:-8 %1=spill:-16 %2=spill:-24 %3=spill:-32 %4=%r10 %5=%xmm2 %6=%r10 %7=%xmm2")
+      (irt.blocks
+        "join:
+           %4 = phi [%6, entry] : i64
+           %5 = phi [%7, entry] : f64
+           %0 = phi [%1, entry] : i64
+           %1 = phi [%0, entry] : i64
+           %2 = phi [%3, entry] : f64
+           %3 = phi [%2, entry] : f64")
+      (compiler_liveness.compiler-live-set-empty)
+      8)
+    (has "    movq %r9, -512(%rbp)\n" "    movsd %xmm3, -512(%rbp)\n")
+    (lacks "%r10" "%xmm2")))
+
+;; (3) A register cycle breaks through a scavenged Temp register. The pair
+;; phi drained first into %rcx/%r9; its HIGH half %r9 is the first pool
+;; candidate and must not become the Temp.
+(define (compiler-backend-phi-reg-cycle-temp-avoids-pair-hi-ok?) : bool
+  (asm-ok?
+    (compiler-backend-phi-edge-placed-asm
+      (compiler-backend-register-group-test-index)
+      (reg-homes "%0=%rcx/%r9 %1=spill:-16 %2=%rdx %3=%r10")
+      (irt.blocks
+        "join:
+           %0 = phi [%1, entry] : BackendGroupTest
+           %2 = phi [%3, entry] : i64
+           %3 = phi [%2, entry] : i64")
+      (compiler-backend-phi-edge-group-pair-vars)
+      4)
+    (has ", %rcx\n" ", %r9\n")
+    (lacks "    movq %r9, " "    movq %rdx, %r9\n" "    movq %r10, %r9\n")))
+
+(test
+  backend-phi-edge-scratch-avoids-placed-values
+  (test.assert-true
+    (compiler-backend-phi-group-copy-avoids-placed-ok?)
+    "group phi copy scratch avoids placed phi destinations")
+  (test.assert-true
+    (compiler-backend-phi-spill-cycle-temp-avoids-placed-ok?)
+    "spilled phi cycle Temp staging avoids placed phi destinations")
+  (test.assert-true
+    (compiler-backend-phi-reg-cycle-temp-avoids-pair-hi-ok?)
+    "register phi cycle Temp avoids both halves of a placed pair"))
 
 (define (compiler-backend-phi-float-cycle-copy-ok?) : bool
   (let
@@ -24635,7 +24878,8 @@ entry:
           link-id
           (ast.ast-extern-link-input-list-new)
           true
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
@@ -24692,7 +24936,8 @@ entry:
           debug-id
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     (match (compiler-backend-runtime-plan-for functions externs)
       [(Ok plan)
         (let
@@ -26136,6 +26381,26 @@ entry:
      %38 = mov %9 : i64"))
 
 (define (compiler-backend-gep-load-multi-emergency-asm) : be_state.ResultCompilerBackend
+  (compiler-backend-emergency-ctx-asm
+    "gep_load_multi_emergency"
+    (compiler-backend-gep-load-multi-emergency-instrs)
+    (ir.compiler-ir-blocks)
+    (compiler-backend-gep-load-multi-emergency-assignments)
+    40
+    14))
+
+;; Emit `instrs` under a real scavenge context built from the liveness of an
+;; entry block holding them followed by `tail` (successors that only keep
+;; values live), with every instruction starting at `post-base` and the
+;; emergency frame region at -512(%rbp), so a site whose pool is fully occupied
+;; takes the emergency save/park path exactly as a whole function would.
+(define (compiler-backend-emergency-ctx-asm
+  [name : String]
+  [instrs : ir.CompilerIrInstrSeq]
+  [tail : ir.CompilerIrBlockList]
+  [assignments : regalloc.CompilerRegAssignmentTable]
+  [vars : i64]
+  [post-base : i64]) : be_state.ResultCompilerBackend
   (let
     [backend-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
@@ -26144,27 +26409,24 @@ entry:
     [prev-emergency-slot-offset : i64
       (scratch-emergency-slot-offset
         (be_state.compiler-backend-state-function-state backend-state))]
-    [assignments : regalloc.CompilerRegAssignmentTable
-      (compiler-backend-gep-load-multi-emergency-assignments)]
-    [instrs : ir.CompilerIrInstrSeq
-      (compiler-backend-gep-load-multi-emergency-instrs)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-blocks
+      (ir.compiler-ir-blocks-with-tail
+        tail
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
-          "gep_load_multi_emergency"
+          name
           (ir.compiler-ir-param-seq-empty)
           (I64)
-          40
+          vars
           blocks
           assignments
           backend-state)
-        (set-state-emit-instr-post-base! backend-state 14)
-        (set-state-emit-current-count! backend-state 14)
+        (set-state-emit-instr-post-base! backend-state post-base)
+        (set-state-emit-current-count! backend-state post-base)
         (set-scratch-emergency-slot-offset!
           (be_state.compiler-backend-state-function-state backend-state)
           -512))]
@@ -26172,7 +26434,7 @@ entry:
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
         assignments
-        40
+        vars
         (be_state.CompilerBackendTarget.Linux)
         backend-state)]
     [_restore : unit
@@ -26221,6 +26483,124 @@ entry:
         (asm-lacks? asm "    movq %r9, -512(%rbp)\n")
         (asm-lacks? asm "    movq %rcx, -576(%rbp)\n"))]
     [(Err _) false]))
+
+;; #9976: a GAP8 gep-load ALU fold whose base is spilled and whose every pool
+;; register is occupied borrows an emergency scratch for the base. The
+;; non-loaded operand %1 (in %r9) is read into the ALU home %r12 AFTER the
+;; base is staged, so the borrowed scratch must never be %1's home: the old
+;; exclude set held only the index and destination homes, picked %r9, and
+;; emitted `movq -8(%rbp), %r9 ; movq %r9, %r12 ; addq (%r9,%rax,8), %r12` --
+;; the base pointer, not %1, was summed.
+(define (compiler-backend-gep-load-alu-emergency-asm [dynamic-index? : bool]) : be_state.ResultCompilerBackend
+  (compiler-backend-emergency-ctx-asm
+    "gep_load_alu_emergency"
+    (irt.instrs
+      (str_cat.str-cat
+        "%1 = mov 1 : i64
+         %2 = mov 2 : i64
+         %3 = mov 3 : i64
+         %4 = mov 4 : i64
+         %5 = mov 5 : i64
+         %6 = mov 6 : i64
+         %7 = mov 7 : i64
+         %8 = mov 8 : i64
+         %9 = mov 9 : i64
+         "
+        (if dynamic-index?
+          "%20 = gep %0, %9 : i64"
+          "%20 = gep %0, 3 : i64")
+        "
+         %21 = load %20 : i64
+         %22 = add %1, %21 : i64
+         %30 = mov %2 : i64
+         %31 = mov %3 : i64
+         %32 = mov %4 : i64
+         %33 = mov %5 : i64
+         %34 = mov %6 : i64
+         %35 = mov %7 : i64
+         %36 = mov %8 : i64
+         %37 = mov %9 : i64
+         %38 = mov %22 : i64"))
+    (ir.compiler-ir-blocks)
+    (reg-homes
+      "%1=%r9 %2=%rcx %3=%rdx %4=%r10 %5=%r11 %6=%r8 %7=%rsi %8=%rdi %9=%rax %22=%r12")
+    40
+    14))
+
+(define (compiler-backend-gep-load-alu-emergency-preserved-ok?
+  [dynamic-index? : bool]) : bool
+  (asm-ok?
+    (compiler-backend-gep-load-alu-emergency-asm dynamic-index?)
+    (has
+      "    movq %r9, %r12\n"
+      (if dynamic-index?
+        ",%rax,8), %r12\n"
+        "    addq 24(%"))
+    (lacks
+      "    movq -8(%rbp), %r9\n"
+      "    addq (%r9,%rax,8), %r12\n"
+      "    addq 24(%r9), %r12\n")))
+
+(test
+  backend-gep-load-alu-emergency-scratch-preserves-operand
+  (test.assert-true
+    (and
+      (compiler-backend-gep-load-alu-emergency-preserved-ok? true)
+      (compiler-backend-gep-load-alu-emergency-preserved-ok? false))
+    "a GAP8 fold's emergency base scratch clobbered the non-loaded operand"))
+
+;; #9976 sibling: the GAP9 const-offset gep-load compare+branch stages a
+;; spilled base and then compares it against the register-homed rhs %1 (in
+;; %r9) in place, so the base scratch must not be %1's home either -- the old
+;; empty exclude set let the full-occupancy emergency pick borrow %r9 and the
+;; compare read the base pointer as its rhs.
+(define (compiler-backend-gep-load-cmp-branch-emergency-asm) : be_state.ResultCompilerBackend
+  (compiler-backend-emergency-ctx-asm
+    "gep_load_cmp_branch_emergency"
+    (irt.instrs
+      "%1 = mov 1 : i64
+       %2 = mov 2 : i64
+       %3 = mov 3 : i64
+       %4 = mov 4 : i64
+       %5 = mov 5 : i64
+       %6 = mov 6 : i64
+       %7 = mov 7 : i64
+       %8 = mov 8 : i64
+       %9 = mov 9 : i64
+       %20 = gep %0, 3 : i64
+       %21 = load %20 : i64
+       %22 = lt %21, %1 : i64
+       branch %22, lo, hi")
+    (irt.blocks
+      "lo:
+         %30 = mov %1 : i64
+         %31 = mov %2 : i64
+         %32 = mov %3 : i64
+         %33 = mov %4 : i64
+         %34 = mov %5 : i64
+         %35 = mov %6 : i64
+         %36 = mov %7 : i64
+         %37 = mov %8 : i64
+         %38 = mov %9 : i64
+         return
+       hi:
+         return")
+    (reg-homes
+      "%1=%r9 %2=%rcx %3=%rdx %4=%r10 %5=%r11 %6=%r8 %7=%rsi %8=%rdi %9=%rax")
+    40
+    14))
+
+(define (compiler-backend-gep-load-cmp-branch-emergency-preserved-ok?) : bool
+  (asm-ok?
+    (compiler-backend-gep-load-cmp-branch-emergency-asm)
+    (has "    cmpq %r9, 24(%")
+    (lacks "    movq -8(%rbp), %r9\n" "    cmpq %r9, 24(%r9)\n")))
+
+(test
+  backend-gep-load-cmp-branch-emergency-scratch-preserves-operand
+  (test.assert-true
+    (compiler-backend-gep-load-cmp-branch-emergency-preserved-ok?)
+    "a GAP9 compare's emergency base scratch clobbered the register rhs"))
 
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
   (let
@@ -34200,7 +34580,8 @@ entry:
     symbol-id
     (ast.ast-extern-link-input-list-new)
     false
-    (ir.CompilerIrReturnStorage.None)))
+    (ir.CompilerIrReturnStorage.None)
+    false))
 
 (define (compiler-backend-non-direct-tail-call-emit
   [target : be_state.CompilerBackendTarget]
@@ -35814,7 +36195,8 @@ entry:
       provided-link-id
       (ast.ast-extern-link-input-list-new)
       true
-      (ir.CompilerIrReturnStorage.None))
+      (ir.CompilerIrReturnStorage.None)
+      false)
     (Extern
       referenced-id
       referenced-id
@@ -35826,7 +36208,8 @@ entry:
       referenced-link-id
       (ast.ast-extern-link-input-list-new)
       false
-      (ir.CompilerIrReturnStorage.None))))
+      (ir.CompilerIrReturnStorage.None)
+      false)))
 
 ;; A backend job owns one exact intern capability and one cache arena.  Keep a
 ;; compact one-word smoke here so the state boundary itself is exercised before
@@ -36476,7 +36859,8 @@ entry:
             extern-link-id
             (ast.ast-extern-link-input-list-new)
             false
-            (ir.CompilerIrReturnStorage.None))
+            (ir.CompilerIrReturnStorage.None)
+            false)
           (Extern
             same-name-id
             same-name-id
@@ -36488,7 +36872,8 @@ entry:
             same-name-link-id
             (ast.ast-extern-link-input-list-new)
             false
-            (ir.CompilerIrReturnStorage.None))))]
+            (ir.CompilerIrReturnStorage.None)
+            false)))]
     (and
       (= source-count-before (ci.intern-pool-len))
       (be_state.backend-and8
@@ -37526,7 +37911,8 @@ entry:
 ;; "Sunk" is spelled as a structural property of that body rather than as a line
 ;; match: an entry-placed prologue is the first thing after the function symbol,
 ;; so the body starts with `pushq`/`subq`; a shrink-wrapped one starts with the
-;; entry BLOCK label and the prologue appears later, after at least one `ret`.
+;; entry BLOCK label, the prologue appears later, and some `ret` returns
+;; without it.
 (define (compiler-backend-swb-find [body : (& body str)] [needle : String]) : i64
   (backend.compiler-backend-string-find-from body needle 0))
 
@@ -37557,8 +37943,49 @@ entry:
             (set! i (+ at 1))))))
     seen))
 
-;; The prologue sank: the body opens with a block label (not the prologue) and
-;; at least one `ret` is reached before the first prologue instruction.
+;; A `ret` no epilogue precedes -- neither a callee-saved `popq`, the frame's
+;; own `%rsp` adjust, nor a framed `leave` -- returns from a path that never
+;; built the frame.
+(define (compiler-backend-swb-count-bare-ret [body : (& body str)]) : i64
+  (let
+    [i : i64 0]
+    [seen : i64 0]
+    [done : bool false]
+    (while (not done)
+      (let
+        [at : i64
+          (backend.compiler-backend-string-find-from body "    ret\n" i)]
+        (if (< at 0)
+          (set! done true)
+          (begin
+            (unless
+              (or
+                (and
+                  (>= at 7)
+                  (be_operand.compiler-backend-string-prefix-at?
+                    body
+                    ", %rsp\n"
+                    (- at 7)))
+                (and
+                  (>= at 14)
+                  (be_operand.compiler-backend-string-prefix-at?
+                    body
+                    "    popq %"
+                    (- at 14)))
+                (and
+                  (>= at 10)
+                  (be_operand.compiler-backend-string-prefix-at?
+                    body
+                    "    leave\n"
+                    (- at 10))))
+              (+= seen 1))
+            (set! i (+ at 1))))))
+    seen))
+
+;; The prologue sank: the body opens with a block label (not the prologue), the
+;; prologue follows, and at least one `ret` returns without it. Where that bare
+;; exit is laid out is the block layout's business: a cold one sinks below the
+;; body, so its `ret` need not come before the prologue in the text.
 (define (compiler-backend-swb-sunk? [body : (& body str)]) : bool
   (let
     [prologue : i64 (compiler-backend-swb-prologue-index body)]
@@ -37566,7 +37993,7 @@ entry:
       (not (string.eq body ""))
       (be_operand.compiler-backend-string-prefix-at? body ".L" 0)
       (>= prologue 0)
-      (> (compiler-backend-swb-count-ret-before body prologue) 0))))
+      (> (compiler-backend-swb-count-bare-ret body) 0))))
 
 (define (compiler-backend-swb-entry-placed? [body : (& body str)]) : bool
   (and
@@ -38701,6 +39128,42 @@ entry:
                   "    movdqu -128(%rbp), %xmm2\n"))]
             [(Err _) false]))]
       [(Err _) false])))
+
+;; #phi-staged-copy obligation (3) under edge-precise scavenge occupancy: a phi
+;; input is live only to the end of its predecessor, so the target-entry query
+;; no longer sees its register and the edge home mask has to. Every
+;; register-homed input on every edge is in the mask next to every
+;; register-homed destination; a spilled one and an immediate add nothing.
+(define (compiler-backend-phi-leading-mask-covers-inputs-ok?) : bool
+  (let
+    [program-index : be_state.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [backend-state : be_state.CompilerBackendState program-index.backend-state]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (reg-homes "%0=%r8 %1=%r9 %2=%rsi %3=spill:-16 %4=%rdi %5=spill:-24")]
+    [instrs : ir.CompilerIrInstrSeq
+      (irt.instrs
+        "%2 = phi [%0, entry], [%1, latch] : i64
+         %3 = phi [5, entry], [%4, latch] : i64
+         %6 = add %5, 1 : i64
+         jump body")]
+    [mask : i64
+      (be_calls.compiler-backend-phi-leading-dst-home-mask-seq
+        backend-state
+        assignments
+        instrs)]
+    (=
+      mask
+      (bit-or
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%r8")
+          (be_operand.compiler-backend-scavenge-reg-bit "%r9"))
+        (bit-or
+          (be_operand.compiler-backend-scavenge-reg-bit "%rsi")
+          (be_operand.compiler-backend-scavenge-reg-bit "%rdi"))))))
 
 (define (compiler-backend-phi-rotated-back-edge-ok?) : bool
   (let
@@ -41005,6 +41468,255 @@ b_keep:
       (= (array-ref order 1) 1)
       (= (array-ref order 2) 2))))
 
+;; EXIT SINKING. A search loop whose two exits -- the bound test's `done` and
+;; the hit's `found` -- the front end laid out inside its run:
+;;
+;;   entry / header / done / body / found / latch
+;;
+;; Both exits return, so both leave every loop and have no successor in this
+;; one; each sits between the two arms of the branch that leaves through it.
+;; They move right behind the loop, keeping their order, and each exit test
+;; then falls into its in-loop arm. `counting?` picks the latch step as in the
+;; `while` fixtures: the search loop keeps its top test, the counting one also
+;; rotates once its run is contiguous.
+(define (compiler-backend-placement-search-exit-blocks [counting? : bool]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (compiler-backend-placement-test-entry-block)
+    (irt.block
+      "header:
+         %1 = phi [%0, entry], [%3, latch] : i64
+         %2 = ge %1, %9 : i64
+         branch %2, done, body")
+    (irt.block "done:
+         return 0")
+    (irt.block
+      "body:
+         %4 = load %1 : i64
+         %5 = eq %4, 1 : i64
+         branch %5, found, latch")
+    (irt.block "found:
+         return 1")
+    (compiler-backend-placement-test-latch-block counting?)))
+
+;; entry / header / body / latch / done / found: one taken branch per trip,
+;; the latch's jump.
+(define (compiler-backend-placement-exit-sinking-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-search-exit-blocks false))
+    (__tl_make-array 0 1 3 5 2 4)))
+
+;; The counting version sinks the same way but is NOT rotated: its run is
+;; contiguous only because exit sinking made it so, and a search loop that
+;; also counts -- a bounded hash probe -- usually exits on its first trip, which
+;; rotation would charge an entry jump. Same order as the search version.
+(define (compiler-backend-placement-exit-sinking-keeps-top-test-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-search-exit-blocks true))
+    (__tl_make-array 0 1 3 5 2 4)))
+
+;; A second way INTO the loop laid out inside its run -- `side` jumps to the
+;; header from outside -- is not an exit, and moving it would cost its own path
+;; a jump: the order is untouched.
+(define (compiler-backend-placement-entry-path-stays-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (ir.compiler-ir-blocks
+        (irt.block
+          "entry:
+             %0 = mov 0 : i64
+             %8 = lt %0, %9 : i64
+             branch %8, header, side")
+        (irt.block
+          "header:
+             %1 = phi [%0, entry], [%0, side], [%3, latch] : i64
+             %2 = lt %1, %9 : i64
+             branch %2, body, exit")
+        (irt.block "side:
+             jump header")
+        (compiler-backend-placement-test-body-block true)
+        (compiler-backend-placement-test-latch-block false)
+        (compiler-backend-placement-test-exit-block)))
+    (__tl_make-array 0 1 2 3 4 5)))
+
+;; The layout of `blocks` for a function whose returns share an epilogue
+;; (`keep-tail?`), or a zero-length array when it declines.
+(define (compiler-backend-placement-keep-tail-order
+  [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
+  (match blocks
+    [(Array seq)
+      (match (backend.compiler-backend-placement-plan-for-seq seq true 0 true)
+        [(Some st) st.order]
+        [(No) (__tl_make-array i64 0)])]))
+
+;; With a shared epilogue, the sink point sits before the trailing
+;; fall-through chain, and that chain can start inside a loop's run. Here the
+;; loop's bottom block `tail` falls into the return `exit`, so the chain is
+;; tail / exit and the point is `tail` itself: `found` has nowhere outside the
+;; run to go and the order stays as it is (the loop keeps its top test).
+(define (compiler-backend-placement-tail-loop-keeps-exit-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-keep-tail-order
+      (irt.blocks
+        "entry:
+           %0 = mov 0 : i64
+           jump header
+         header:
+           %1 = phi [%0, entry], [%3, step], [%8, tail] : i64
+           %2 = ge %1, %9 : i64
+           branch %2, tail, body
+         body:
+           %4 = load %1 : i64
+           %5 = eq %4, 1 : i64
+           branch %5, found, step
+         found:
+           return 1
+         step:
+           %3 = add %1, 1 : i64
+           jump header
+         tail:
+           %8 = load %1 : i64
+           %6 = lt %8, %9 : i64
+           branch %6, header, exit
+         exit:
+           return %8"))
+    (__tl_make-array 0 1 2 3 4 5 6)))
+
+;; The chain may also start inside a LATER loop: `second`'s bottom block falls
+;; into `exit`, which puts the sink point between `skip` and `again`. The first
+;; loop's exit `found` must not land there; it moves out of its own run to the
+;; nearest point outside every run, before `second`.
+(define (compiler-backend-placement-tail-loop-skips-run-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-keep-tail-order
+      (irt.blocks
+        "entry:
+           %0 = mov 0 : i64
+           jump first
+         first:
+           %1 = phi [%0, entry], [%3, latch] : i64
+           %2 = ge %1, %9 : i64
+           branch %2, second, body
+         body:
+           %4 = load %1 : i64
+           %5 = eq %4, 1 : i64
+           branch %5, found, latch
+         found:
+           return 1
+         latch:
+           %3 = add %1, 1 : i64
+           %6 = lt %3, %9 : i64
+           branch %6, first, second
+         second:
+           %10 = phi [%1, first], [%3, latch], [%13, skip], [%18, again] : i64
+           %12 = ge %10, %9 : i64
+           branch %12, again, skip
+         skip:
+           %13 = add %10, 1 : i64
+           jump second
+         again:
+           %18 = load %10 : i64
+           %16 = lt %18, %9 : i64
+           branch %16, second, exit
+         exit:
+           return %18"))
+    (__tl_make-array 0 1 2 4 3 5 6 7 8)))
+
+;; RETURN-ARM SINKING. entry / early / rest, where `early` is a guard's return
+;; arm and `rest` the guard's other arm. `test` is the guard's compare.
+(define (compiler-backend-placement-guard-blocks [test : String]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (irt.block
+      (str_cat.str-cat
+        "entry:
+           %1 = "
+        test
+        " : i64
+           branch %1, early, rest"))
+    (irt.block "early:
+         return 0")
+    (irt.block "rest:
+         %2 = add %0, 1 : i64
+         return %2")))
+
+;; `x < 0` is predicted false, so the return arm is cold and moves to the end:
+;; entry / rest / early.
+(define (compiler-backend-placement-return-arm-sinks-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-guard-blocks "lt %0, 0"))
+    (__tl_make-array 0 2 1)))
+
+;; `x != 0` is predicted TRUE, which is the return arm: the opcode heuristic
+;; keeps it as the fall-through and the function keeps its order (no plan).
+(define (compiler-backend-placement-return-arm-veto-ok?) : bool
+  (=
+    (array-length
+      (compiler-backend-placement-order-for-blocks
+        (compiler-backend-placement-guard-blocks "ne %0, 0")))
+    0))
+
+;; With the opcode heuristic silent -- two variables compared -- only the return
+;; heuristic speaks, and only when exactly one arm leaves the function. Both of
+;; the guard's arms return, so nothing moves; once `rest` continues to a block
+;; of its own, `early` is the one return arm and sinks: entry / rest / tail /
+;; early.
+(define (compiler-backend-placement-return-heuristic-ok?) : bool
+  (and
+    (=
+      (array-length
+        (compiler-backend-placement-order-for-blocks
+          (compiler-backend-placement-guard-blocks "lt %0, %3")))
+      0)
+    (compiler-backend-placement-test-order-eq?
+      (compiler-backend-placement-order-for-blocks
+        (ir.compiler-ir-blocks
+          (irt.block
+            "entry:
+               %1 = lt %0, %3 : i64
+               branch %1, early, rest")
+          (irt.block "early:
+               return 0")
+          (irt.block
+            "rest:
+               %2 = add %0, 1 : i64
+               jump tail")
+          (irt.block "tail:
+               return %2")))
+      (__tl_make-array 0 2 3 1))))
+
+;; Size-optimized and non-full builds pass `sink?` false, and a block in the
+;; pinned prefix -- the early-exit shrink-wrap's, rendered by index -- never
+;; moves. Nor does a return arm in a function whose returns share an epilogue
+;; (`keep-tail?`, a function that restores callee-saved registers). All three
+;; leave the same guard alone.
+(define (compiler-backend-placement-return-arm-gates-ok?) : bool
+  (and
+    (match (compiler-backend-placement-guard-blocks "lt %0, 0")
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          false
+          0
+          false)
+          [(Some _) false]
+          [(No) true])])
+    (match (compiler-backend-placement-guard-blocks "lt %0, 0")
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          2
+          false)
+          [(Some _) false]
+          [(No) true])])
+    (match (compiler-backend-placement-guard-blocks "lt %0, 0")
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq seq true 0 true)
+          [(Some _) false]
+          [(No) true])])))
+
 ;; The Windows end of the pass, built at the IR level so no source-level
 ;; transform (the unroller renames this exact loop) can move the shape out from
 ;; under the check. One counting loop over a parameter bound, emitted for the
@@ -41128,6 +41840,15 @@ b_keep:
     (compiler-backend-placement-open-block-declines-ok?)
     (compiler-backend-placement-viable-top-declines-ok?)
     (compiler-backend-placement-entry-stays-first-ok?)
+    (compiler-backend-placement-exit-sinking-ok?)
+    (compiler-backend-placement-exit-sinking-keeps-top-test-ok?)
+    (compiler-backend-placement-entry-path-stays-ok?)
+    (compiler-backend-placement-tail-loop-keeps-exit-ok?)
+    (compiler-backend-placement-tail-loop-skips-run-ok?)
+    (compiler-backend-placement-return-arm-sinks-ok?)
+    (compiler-backend-placement-return-arm-veto-ok?)
+    (compiler-backend-placement-return-heuristic-ok?)
+    (compiler-backend-placement-return-arm-gates-ok?)
     (compiler-backend-placement-windows-seh-shape-ok?)))
 
 ;; ---------------------------------------------------------------------------
@@ -41521,7 +42242,8 @@ b_keep:
                     beta)
                   (ast.ast-extern-link-input-list-new)
                   false
-                  (ir.CompilerIrReturnStorage.None))))
+                  (ir.CompilerIrReturnStorage.None)
+                  false)))
             profile)]
         [expected : String
           (if (= mode 2)
@@ -41704,6 +42426,7 @@ b_keep:
         (compiler-backend-scavenge-segment-pick-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)
         (compiler-backend-phi-rotated-back-edge-ok?)
+        (compiler-backend-phi-leading-mask-covers-inputs-ok?)
         (compiler-backend-divmod-live-dividend-src-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
         (compiler-backend-param-entry-float-copy-linux-ok?)
@@ -42399,7 +43122,11 @@ b_keep:
     (__tl_make-array i64 0)
     (match blocks
       [(Array seq)
-        (match (backend.compiler-backend-placement-plan-for-seq seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          0
+          false)
           [(Some st) st.order]
           [(No) (__tl_make-array i64 0)])])))
 
@@ -43255,7 +43982,8 @@ b_keep:
           link-symbol-id
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))
+          (ir.CompilerIrReturnStorage.None)
+          false))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-unused-foreign-link-extern-ok?) : bool
@@ -43303,7 +44031,8 @@ b_keep:
           link-symbol-id
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))
+          (ir.CompilerIrReturnStorage.None)
+          false))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
@@ -45545,7 +46274,8 @@ user_fn:
           c-name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [_pointer : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -45558,7 +46288,8 @@ user_fn:
           pointer-name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [_value : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -45573,7 +46304,8 @@ user_fn:
           name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [globals : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 1)]
     [_address : unit
@@ -45745,7 +46477,8 @@ user_fn:
           link
           (ast.ast-extern-link-input-list-new)
           (>= kind 5)
-          (ir.CompilerIrReturnStorage.None)))
+          (ir.CompilerIrReturnStorage.None)
+          false))
       (let
         [index : be_state.CompilerBackendProgramIndex
           (compiler-backend-program-index-build
@@ -46234,7 +46967,8 @@ user_fn:
       id
       (ast.ast-extern-link-input-list-new)
       false
-      (ir.CompilerIrReturnStorage.None))))
+      (ir.CompilerIrReturnStorage.None)
+      false)))
 
 (define (compiler-backend-convention-site-builtin-call
   [symbol : String]
@@ -46837,7 +47571,8 @@ user_fn:
               (compiler-backend-test-symbol "bridge_c")
               (ast.ast-extern-link-input-list-new)
               true
-              (ir.CompilerIrReturnStorage.None))]
+              (ir.CompilerIrReturnStorage.None)
+              false)]
           (Program
             (ir.compiler-ir-global-seq-empty)
             (ir.compiler-ir-function-seq-prepend
@@ -48384,7 +49119,8 @@ user_fn:
         (compiler-backend-test-symbol "ext_tail_c")
         (ast.ast-extern-link-input-list-new)
         false
-        (ir.CompilerIrReturnStorage.None))]
+        (ir.CompilerIrReturnStorage.None)
+        false)]
     [prog : ir.CompilerIrProgram
       (Program
         (ir.compiler-ir-global-seq-empty)

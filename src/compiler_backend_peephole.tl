@@ -5738,6 +5738,8 @@
   (abort-cand-len i64)
   (close-cands (__tl_dyn-array i64))
   (close-cand-len i64)
+  (edge-cands (__tl_dyn-array i64))
+  (edge-cand-len i64)
   ;; FLAGS-1: the tracked register the last pushed line wrote with an
   ;; arithmetic that sets ZF and SF from its result (sub/add/and/or/xor and
   ;; the one-operand inc/dec/neg), or -1 after any other line.
@@ -5781,6 +5783,8 @@
     walk.abort-cand-len
     walk.close-cands
     walk.close-cand-len
+    walk.edge-cands
+    walk.edge-cand-len
     walk.probe-cands
     walk.probe-cand-len
     walk.stack-lea-cands
@@ -6253,6 +6257,13 @@
       (compiler-backend-peephole-simple-stack-lea?
         (array-ref walk.lines index).meta)
       (compiler-backend-peephole-note-stack-lea! walk index))
+    (when
+      (=
+        (bit-and
+          (array-ref walk.lines index).meta
+          compiler-backend-peephole-record-kind-mask)
+        compiler-backend-sweep-line-kind-label)
+      (compiler-backend-cold-note-edge! walk index))
     (set! (array-ref walk.live index) 1)
     (set! walk.flags-reg flags-next)
     (set! walk.len (+ index 1))))
@@ -7845,6 +7856,185 @@
           (- 0 1)
           result)))))
 
+;; The live record before record `k`, or -1.
+(define (compiler-backend-cold-live-before
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [k : i64]) : i64
+  (let
+    [live : (__tl_dyn-array i64) v.live]
+    [j : i64 (- k 1)]
+    (while (and (>= j 0) (not (= (array-ref live j) 1)))
+      (-= j 1))
+    j))
+
+;; COLD-EDGE: index of the live record that opens the label run the cold edge
+;; block labelled at record `l` jumps over, or -1 unless the live records read
+;; exactly
+;;
+;;       j<cc> O          <- record `j`
+;;     <block>_branch_cold_<side>:   <- record `l`
+;;       <copies>         no jump, call, ret, push, pop, leave or %rsp write
+;;       jmp T            a direct jump
+;;     L1: ... O: ...     a run of labels holding O; L1 is the result
+;;
+;; which is the shape the emitter produced. Anything a later rewrite changed
+;; (a directive, a comment or a `.loc` line inside, a second jump, a tail
+;; merge) refuses and the block stays where it is.
+(define (compiler-backend-cold-edge-scan
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [j : i64]
+  [l : i64]) : i64
+  (let
+    [live : (__tl_dyn-array i64) v.live]
+    [count : i64 v.len]
+    [jrec : (& v be_state.CompilerBackendPeepholeLineRecord)
+      (& (array-ref v.lines j))]
+    [jdata : (Ptr u8) (compiler-backend-peephole-record-data jrec)]
+    [jstart : i64 (compiler-backend-peephole-record-start jrec)]
+    [jend : i64 (compiler-backend-peephole-record-end jrec)]
+    [jfirst : i64 (compiler-backend-cold-line-first jdata jstart jend)]
+    [jlast : i64 (compiler-backend-cold-line-last jdata jfirst jend)]
+    [mend : i64 (compiler-backend-cold-token-end jdata jfirst jlast)]
+    [tfirst : i64 (compiler-backend-cold-line-first jdata mend jlast)]
+    (if (or
+      (not
+        (=
+          (compiler-backend-peephole-record-kind jrec)
+          compiler-backend-sweep-line-kind-instruction))
+      (= jfirst jstart)
+      (>= jfirst jlast)
+      (not (= (be_state.compiler-backend-peephole-byte-at jdata jfirst) 106))
+      (=
+        (string.string-length
+          (compiler-backend-cold-jcc-inverse jdata jfirst mend))
+        0)
+      (>= tfirst jlast)
+      (not (= (compiler-backend-cold-token-end jdata tfirst jlast) jlast)))
+      (- 0 1)
+      (let
+        [k : i64 (+ l 1)]
+        [limit : i64 (+ l compiler-backend-cold-stub-scan-limit)]
+        [saw-jmp : bool false]
+        [run : i64 (- 0 1)]
+        [result : i64 (- 0 2)]
+        (while (and (= result (- 0 2)) (< k count))
+          (cond
+            [(>= k limit) (set! result (- 0 1))]
+            [(not (= (array-ref live k) 1)) unit]
+            [else
+              (let
+                [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+                  (& (array-ref v.lines k))]
+                [kind : i64 (compiler-backend-peephole-record-kind rec)]
+                [data : (Ptr u8) (compiler-backend-peephole-record-data rec)]
+                [start : i64 (compiler-backend-peephole-record-start rec)]
+                [end : i64 (compiler-backend-peephole-record-end rec)]
+                [first : i64 (compiler-backend-cold-line-first data start end)]
+                [last : i64 (compiler-backend-cold-line-last data first end)]
+                (cond
+                  [(= kind compiler-backend-sweep-line-kind-label)
+                    (cond
+                      [(not saw-jmp) (set! result (- 0 1))]
+                      [else
+                        (when (< run 0) (set! run k))
+                        (when
+                          (and
+                            (> last start)
+                            (be_operand.compiler-backend-peephole-ranges-eq?
+                              data
+                              start
+                              (- last 1)
+                              jdata
+                              tfirst
+                              jlast))
+                          (set! result run))])]
+                  [(= kind compiler-backend-sweep-line-kind-instruction)
+                    (let
+                      [lead : i64
+                        (if (< first last)
+                          (be_state.compiler-backend-peephole-byte-at
+                            data
+                            first)
+                          0)]
+                      [op-end : i64
+                        (compiler-backend-cold-token-end data first last)]
+                      [operand : i64
+                        (compiler-backend-cold-line-first data op-end last)]
+                      (cond
+                        [saw-jmp (set! result (- 0 1))]
+                        [(= lead 106)
+                          (if (and
+                            (be_operand.compiler-backend-peephole-range-eq?
+                              data
+                              first
+                              op-end
+                              "jmp")
+                            (< operand last)
+                            (not
+                              (=
+                                (be_state.compiler-backend-peephole-byte-at
+                                  data
+                                  operand)
+                                42)))
+                            (set! saw-jmp true)
+                            (set! result (- 0 1)))]
+                        [(or
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              "call")
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              "ret")
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              "push")
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              "pop")
+                            (compiler-backend-cold-prefix?
+                              data
+                              first
+                              last
+                              "leave")
+                            (and
+                              (>= (- last 4) first)
+                              (be_operand.compiler-backend-peephole-range-eq?
+                                data
+                                (- last 4)
+                                last
+                                "%rsp")))
+                          (set! result (- 0 1))]
+                        [else unit]))]
+                  [(>= first last) unit]
+                  [else (set! result (- 0 1))]))])
+          (+= k 1))
+        (if (< result 0)
+          (- 0 1)
+          result)))))
+
+;; COLD-EDGE: the moved block keeps its own label, the one at record `l`.
+(define (compiler-backend-cold-edge-name
+  [v : (& v be_state.CompilerBackendPeepholeLineVec)]
+  [l : i64]) : String
+  (let
+    [rec : (& v be_state.CompilerBackendPeepholeLineRecord)
+      (& (array-ref v.lines l))]
+    [start : i64 (compiler-backend-peephole-record-start rec)]
+    [last : i64
+      (compiler-backend-cold-line-last
+        (compiler-backend-peephole-record-data rec)
+        start
+        (compiler-backend-peephole-record-end rec))]
+    (string.substring rec.src start (- last (+ start 1)))))
+
 ;; Name the moved stub. A named continuation label `T` gives `T.cold`. A
 ;; numeric `1:` continuation gives the stub's first `.L_tl_abort_site_` label
 ;; plus `.cold`, or "" when the stub has none.
@@ -8023,6 +8213,62 @@
           (set! walk.close-cands grown)))
       (set! (array-ref walk.close-cands walk.close-cand-len) index)
       (+= walk.close-cand-len 1))))
+
+;; COLD-EDGE (see `compiler-backend-branch-cold-edge-side`): a label line
+;; that names a cold edge block, `<block>_branch_cold_true:` or
+;; `<block>_branch_cold_false:`. Both end in `e:`, which settles almost every
+;; other label in two loads.
+(define (compiler-backend-cold-edge-label?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [last : i64 (compiler-backend-cold-line-last data start end)]
+    (and
+      (>= (- last 18) start)
+      (= (be_state.compiler-backend-peephole-byte-at data (- last 1)) 58)
+      (= (be_state.compiler-backend-peephole-byte-at data (- last 2)) 101)
+      (or
+        (be_operand.compiler-backend-peephole-range-eq?
+          data
+          (- last 18)
+          last
+          "_branch_cold_true:")
+        (and
+          (>= (- last 19) start)
+          (be_operand.compiler-backend-peephole-range-eq?
+            data
+            (- last 19)
+            last
+            "_branch_cold_false:"))))))
+
+;; COLD-EDGE candidate: the record index of a cold edge-block label.
+(define (compiler-backend-cold-note-edge!
+  [walk : (&mut walk CompilerBackendPeepholeWalkState)]
+  [index : i64]) : unit
+  (let
+    [hit? : bool
+      (let
+        [rec : (& walk be_state.CompilerBackendPeepholeLineRecord)
+          (& (array-ref walk.lines index))]
+        (compiler-backend-cold-edge-label?
+          (compiler-backend-peephole-record-data rec)
+          (compiler-backend-peephole-record-start rec)
+          (compiler-backend-peephole-record-end rec)))]
+    (when
+      hit?
+      (unless
+        (< walk.edge-cand-len (array-length walk.edge-cands))
+        (let
+          [old : (__tl_dyn-array i64) walk.edge-cands]
+          [len : i64 walk.edge-cand-len]
+          [grown : (__tl_dyn-array i64)
+            (__tl_make-array i64 (+ (* (array-length old) 2) 16))]
+          (for [k (iterator.range 0 len)]
+            (set! (array-ref grown k) (array-ref old k)))
+          (set! walk.edge-cands grown)))
+      (set! (array-ref walk.edge-cands walk.edge-cand-len) index)
+      (+= walk.edge-cand-len 1))))
 
 ;; The conditional jump that opens the stub whose abort call is record `call`:
 ;; walking back over the call's argument staging -- live instructions that are
@@ -8291,21 +8537,43 @@
     [share-bodies : (__tl_dyn-array String) (__tl_make-array String 0)]
     [share-stubs : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     [share-count : i64 0]
-    (for [a (iterator.range 0 abort-count)]
+    ;; COLD-EDGE: cold edge blocks join the abort stubs, in record order.
+    [edges : (__tl_dyn-array i64) v.edge-cands]
+    [edge-count : i64 v.edge-cand-len]
+    [a : i64 0]
+    [e : i64 0]
+    (while (or (< a abort-count) (< e edge-count))
       (let
-        [call : i64 (array-ref aborts a)]
+        [edge? : bool
+          (and
+            (< e edge-count)
+            (or (>= a abort-count) (< (array-ref edges e) (array-ref aborts a))))]
+        [call : i64
+          (if edge?
+            (array-ref edges e)
+            (array-ref aborts a))]
+        (if edge?
+          (+= e 1)
+          (+= a 1))
         (when
           (> call done-to)
           (let
-            [j : i64 (compiler-backend-cold-stub-jump v call)]
+            [j : i64
+              (if edge?
+                (compiler-backend-cold-live-before v call)
+                (compiler-backend-cold-stub-jump v call))]
             [t : i64
-              (if (>= j 0)
-                (compiler-backend-cold-stub-scan v j)
-                (- 0 1))]
+              (cond
+                [(< j 0) (- 0 1)]
+                [edge? (compiler-backend-cold-edge-scan v j call)]
+                [else (compiler-backend-cold-stub-scan v j)])]
             (when
               (> t call)
               (let
-                [site-name : String (compiler-backend-cold-stub-name v j t)]
+                [site-name : String
+                  (if edge?
+                    (compiler-backend-cold-edge-name v call)
+                    (compiler-backend-cold-stub-name v j t))]
                 [label : i64
                   (if (> (string.string-length site-name) 0)
                     (- 0 1)
@@ -8354,14 +8622,21 @@
                       (compiler-backend-cold-line-last data first end)]
                     [mend : i64
                       (compiler-backend-cold-token-end data first last)]
-                    [cold-label : String (str_cat.str-cat name ".cold")]
+                    [cold-label : String
+                      (if edge?
+                        name
+                        (str_cat.str-cat name ".cold"))]
                     [inverse : String
                       (str_cat.str-cat
                         "    "
                         (compiler-backend-cold-jcc-inverse data first mend)
                         " "
                         cold-label)]
-                    [head : String (str_cat.str-cat cold-label ":")]
+                    ;; An edge block's own label travels with it.
+                    [head : String
+                      (if edge?
+                        ""
+                        (str_cat.str-cat cold-label ":"))]
                     [loc : i64 (compiler-backend-cold-loc-before v j)]
                     [loc-bytes : i64
                       (if (< loc 0)
@@ -8376,7 +8651,9 @@
                         (-
                           (+ (string.string-length inverse) 1)
                           (compiler-backend-cold-record-bytes rec))
-                        (+ (+ (string.string-length head) 1) loc-bytes))]
+                        (if edge?
+                          loc-bytes
+                          (+ (+ (string.string-length head) 1) loc-bytes)))]
                     [flush-at : i64 count]
                     ;; This stub's flush point: the first closing line
                     ;; after its continuation.
@@ -8431,7 +8708,7 @@
                     (set! (array-ref plan.head k) head)
                     (let
                       [body : String
-                        (if (< loc 0)
+                        (if (and (< loc 0) (not edge?))
                           (compiler-backend-cold-shared-body v j t)
                           "")]
                       [canonical : i64 (- 0 1)]
@@ -8539,14 +8816,16 @@
         [loc : i64 (array-ref plan.loc k)]
         (when
           (< (array-ref plan.share k) 0)
-          (set!
-            pos
-            (compiler-backend-cold-write-line!
-              dst
+          (unless
+            (= (string.string-length (& (array-ref plan.head k))) 0)
+            (set!
               pos
-              (be_state.compiler-backend-global-array-element-shared-view
-                plan.head
-                k)))
+              (compiler-backend-cold-write-line!
+                dst
+                pos
+                (be_state.compiler-backend-global-array-element-shared-view
+                  plan.head
+                  k))))
           (when
             (>= loc 0)
             (set!
@@ -9766,7 +10045,7 @@
   [v : be_state.CompilerBackendPeepholeLineVec]
   [merge-tails? : bool]
   [compact-branches? : bool]) : String
-  (if (= v.abort-cand-len 0)
+  (if (and (= v.abort-cand-len 0) (= v.edge-cand-len 0))
     (begin
       (when
         merge-tails?
@@ -10443,6 +10722,370 @@
               (set! from edit.end)))
           (text_buf_borrowed.copy-byte-range-into data from (- n from) dst pos)
           (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
+
+;; HOT-LOOP ALIGNMENT. On a group's final text -- after the layout plan, the
+;; tail merge, the branch compaction and COLD-1 have fixed the order of every
+;; line -- a LOOP TOP is a local label some later `jmp`/`j<cc>` of the same
+;; text branches back to. The first label of a loop top's label run gets
+;; `.p2align 4,,10` in front of it (GNU `as` and LLVM alike, ELF and COFF: pad
+;; to 16 when that costs at most 10 bytes), so the loop's first fetch block
+;; starts on a 16-byte boundary.
+;;
+;; A branch back to a block that ends in `ret` is a loop exit laid out above
+;; the loop and is not a top.
+;;
+;; Only a top whose padding can never execute is aligned: the line before its
+;; label run (blank lines aside) must be a `jmp` or a `ret`. A rotated loop is
+;; entered by the preheader's forward jump and the block above its top ends in
+;; an unconditional transfer, so this is the common case; a top reached by
+;; fall-through keeps its place, which keeps the executed instruction count
+;; unchanged. Anything else in between -- a directive, a comment -- refuses.
+;; The result is allocated in `home`, like the Win64 unwind lowering's.
+(define (compiler-backend-align-prev-line [flags : (MutPtr i64)] [line : i64]) : i64
+  (let
+    [p : i64 (- line 1)]
+    (while (and
+      (>= p 0)
+      (not
+        (=
+          (bit-and
+            (unsafe
+              (ptr-read (ptr-offset flags p)))
+            compiler-backend-layout-flag-blank)
+          0)))
+      (-= p 1))
+    p))
+
+;; Whether line `line` is a `ret`. The layout classifier flags only `ret ` and
+;; `retq`, so the bare `ret` the backend emits is recognised here by its bytes.
+(define (compiler-backend-align-ret-line?
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [line : i64]) : bool
+  (let
+    [s : i64
+      (unsafe
+        (ptr-read (ptr-offset starts line)))]
+    [e : i64
+      (-
+        (unsafe
+          (ptr-read (ptr-offset starts (+ line 1))))
+        1)]
+    (or
+      (not
+        (=
+          (bit-and
+            (unsafe
+              (ptr-read (ptr-offset flags line)))
+            compiler-backend-layout-flag-ret)
+          0))
+      (and
+        (= (- e s) 7)
+        (be_operand.compiler-backend-peephole-range-eq? data s e "    ret")))))
+
+;; Whether the block that starts at label line `line` ends in `ret`: such a
+;; block has no successor, so a branch back to it is a loop EXIT laid out above
+;; the loop, not a back edge.
+(define (compiler-backend-align-block-returns?
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [line : i64]
+  [lines : i64]) : bool
+  (let
+    [branch-bits : i64
+      (bit-or compiler-backend-layout-flag-jmp compiler-backend-layout-flag-jcc)]
+    [q : i64 (+ line 1)]
+    [done : bool false]
+    [returns : bool false]
+    (while (and (not done) (< q lines))
+      (cond
+        [(compiler-backend-align-ret-line? data starts flags q)
+          (set! returns true)
+          (set! done true)]
+        [(not
+            (=
+              (bit-and
+                (unsafe
+                  (ptr-read (ptr-offset flags q)))
+                branch-bits)
+              0))
+          (set! done true)]
+        [else (+= q 1)]))
+    returns))
+
+(define (compiler-backend-align-flags-at [flags : (MutPtr i64)] [line : i64]) : i64
+  (unsafe
+    (ptr-read (ptr-offset flags line))))
+
+;; Whether branch line `line` is the closing `jmp` of a COLD-EDGE block (see
+;; `compiler-backend-branch-cold-edge-side`): its target is in no loop, so the
+;; jump back to it is a loop exit, not a back edge -- the block now sits at the
+;; end of the function, below every loop.
+(define (compiler-backend-align-cold-edge-jump?
+  [data : (Ptr u8)]
+  [starts : (MutPtr i64)]
+  [flags : (MutPtr i64)]
+  [line : i64]) : bool
+  (let
+    [stop : i64 (- line compiler-backend-cold-stub-scan-limit)]
+    [p : i64 (- line 1)]
+    (if (=
+      (bit-and
+        (compiler-backend-align-flags-at flags line)
+        compiler-backend-layout-flag-jmp)
+      0)
+      false
+      (begin
+        (while (and
+          (>= p 0)
+          (> p stop)
+          (=
+            (bit-and
+              (compiler-backend-align-flags-at flags p)
+              (bit-or
+                compiler-backend-layout-flag-label
+                (bit-or
+                  compiler-backend-layout-flag-jmp
+                  compiler-backend-layout-flag-jcc)))
+            0))
+          (-= p 1))
+        (and
+          (>= p 0)
+          (> p stop)
+          (not
+            (=
+              (bit-and
+                (compiler-backend-align-flags-at flags p)
+                compiler-backend-layout-flag-label)
+              0))
+          (compiler-backend-cold-edge-label?
+            data
+            (unsafe
+              (ptr-read (ptr-offset starts p)))
+            (-
+              (unsafe
+                (ptr-read (ptr-offset starts (+ p 1))))
+              1)))))))
+
+(define (compiler-backend-loop-align-text [text : String] [home : arena.Arena]) : String
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& text)))]
+    [n : i64 (string.string-length (& text))]
+    [cap : i64 (compiler-backend-layout-line-capacity n)]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ cap 1))]
+    [lines : i64
+      (if (and
+        (> n 0)
+        (= (be_state.compiler-backend-peephole-byte-at data (- n 1)) 10))
+        (compiler-backend-layout-split-lines
+          data
+          n
+          cap
+          (unsafe
+            (__tl_array-data starts)))
+        0)]
+    (while (< lines 0)
+      (set! cap (* 2 cap))
+      (set! starts (__tl_make-array i64 (+ cap 1)))
+      (set!
+        lines
+        (compiler-backend-layout-split-lines
+          data
+          n
+          cap
+          (unsafe
+            (__tl_array-data starts)))))
+    (let
+      [flags : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+      [labels : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+      [flow : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+      [counts : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+      [starts-raw : (MutPtr i64)
+        (unsafe
+          (__tl_array-data starts))]
+      [flags-raw : (MutPtr i64)
+        (unsafe
+          (__tl_array-data flags))]
+      [labels-raw : (MutPtr i64)
+        (unsafe
+          (__tl_array-data labels))]
+      [flow-raw : (MutPtr i64)
+        (unsafe
+          (__tl_array-data flow))]
+      [_classify : unit
+        (when
+          (> lines 0)
+          (compiler-backend-layout-classify-lines!
+            data
+            lines
+            starts-raw
+            flags-raw)
+          (compiler-backend-layout-list-lines!
+            lines
+            flags-raw
+            labels-raw
+            flow-raw
+            (&mut counts)))]
+      [label-count : i64 (array-ref counts 0)]
+      [flow-count : i64 (array-ref counts 1)]
+      [branch-bits : i64
+        (bit-or
+          compiler-backend-layout-flag-jmp
+          compiler-backend-layout-flag-jcc)]
+      ;; 1 on a label line some later branch targets.
+      [top : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+      ;; The first line of each label run that gets the directive, ascending.
+      [sites : (__tl_dyn-array i64) (__tl_make-array i64 label-count)]
+      [site-count : i64 0]
+      (when
+        (and (> label-count 0) (> flow-count 0))
+        (let
+          [table-cap : i64 (compiler-backend-layout-table-capacity label-count)]
+          [table : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 table-cap))]
+          [table-raw : (MutPtr i64)
+            (unsafe
+              (__tl_array-data table))]
+          [target : (__tl_dyn-array i64) (__tl_make-array i64 lines)]
+          [target-raw : (MutPtr i64)
+            (unsafe
+              (__tl_array-data target))]
+          (compiler-backend-layout-build-table!
+            data
+            starts-raw
+            labels-raw
+            label-count
+            table-raw
+            table-cap)
+          (compiler-backend-layout-resolve-targets!
+            data
+            starts-raw
+            flags-raw
+            flow-raw
+            flow-count
+            branch-bits
+            target-raw
+            table-raw
+            table-cap)
+          (for [k (iterator.range 0 flow-count)]
+            (let
+              [i : i64
+                (unsafe
+                  (ptr-read (ptr-offset flow-raw k)))]
+              (unless
+                (=
+                  (bit-and
+                    (compiler-backend-align-flags-at flags-raw i)
+                    branch-bits)
+                  0)
+                (let
+                  [t : i64
+                    (unsafe
+                      (ptr-read (ptr-offset target-raw i)))]
+                  (when
+                    (and
+                      (>= t 0)
+                      (< t i)
+                      (not
+                        (compiler-backend-align-cold-edge-jump?
+                          data
+                          starts-raw
+                          flags-raw
+                          i)))
+                    (set! (array-ref top t) 1))))))))
+      (for [k (iterator.range 0 label-count)]
+        (let
+          [l : i64
+            (unsafe
+              (ptr-read (ptr-offset labels-raw k)))]
+          (when
+            (and
+              (= (array-ref top l) 1)
+              (not
+                (compiler-backend-align-block-returns?
+                  data
+                  starts-raw
+                  flags-raw
+                  l
+                  lines)))
+            (let
+              [run : i64 l]
+              (while (and
+                (> run 0)
+                (not
+                  (=
+                    (bit-and
+                      (compiler-backend-align-flags-at flags-raw (- run 1))
+                      compiler-backend-layout-flag-label)
+                    0)))
+                (-= run 1))
+              (let
+                [p : i64 (compiler-backend-align-prev-line flags-raw run)]
+                (when
+                  (and
+                    (>= p 0)
+                    (or
+                      (not
+                        (=
+                          (bit-and
+                            (compiler-backend-align-flags-at flags-raw p)
+                            compiler-backend-layout-flag-jmp)
+                          0))
+                      (compiler-backend-align-ret-line?
+                        data
+                        starts-raw
+                        flags-raw
+                        p))
+                    (or
+                      (= site-count 0)
+                      (not (= (array-ref sites (- site-count 1)) run))))
+                  (set! (array-ref sites site-count) run)
+                  (+= site-count 1)))))))
+      (unsafe
+        (in-arena
+          (arena.Arena (arena.raw-handle home))
+          (let
+            [directive : String "    .p2align 4,,10\n"]
+            [width : i64 (string.string-length (& directive))]
+            [total : i64 (+ n (* site-count width))]
+            [out : (__tl_dyn-array u8)
+              (__tl_make-array
+                u8
+                (if (< total 1)
+                  1
+                  total))]
+            [dst : (MutPtr u8) (__tl_array-data out)]
+            [from : i64 0]
+            [pos : i64 0]
+            (for [k (iterator.range 0 site-count)]
+              (let
+                [at : i64
+                  (ptr-read (ptr-offset starts-raw (array-ref sites k)))]
+                (text_buf_borrowed.copy-byte-range-into
+                  data
+                  from
+                  (- at from)
+                  dst
+                  pos)
+                (+= pos (- at from))
+                (text_buf_borrowed.copy-byte-range-into
+                  (string-data (& directive))
+                  0
+                  width
+                  dst
+                  pos)
+                (+= pos width)
+                (set! from at)))
+            (text_buf_borrowed.copy-byte-range-into
+              data
+              from
+              (- n from)
+              dst
+              pos)
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; RMW-2/RMW-3: fold an adjacent load / ALU / store of ONE memory location into
@@ -17504,6 +18147,8 @@
           be_state.CompilerBackendPeepholeLineRecord
           sink-capacity)
         (__tl_make-array i64 sink-capacity)
+        0
+        (__tl_make-array i64 0)
         0
         (__tl_make-array i64 0)
         0

@@ -27,6 +27,7 @@
 (import (vector.vector tli.TliMacroHandle core) as macros)
 (import (vector.vector tli.TliDispatchDecl core) as dispatches)
 (import (vector.vector tli.TliGlobalWrite core) as writes)
+(import (vector.vector tli.TliCompactBodyEntry core) as compact_bodies)
 (import (vector.vector i64) as indices)
 (cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci as tlci))
 
@@ -589,8 +590,12 @@
       mask
       (tli-extract-finish-vector i64 extra)
       (tli-extract-copy-writes (& (array-ref facts.globals index)))
+      -1
+      (cast 0 : u8)
       0
-      0)))
+      0
+      0
+      (make-array u8 32))))
 
 (define (tli-extract-params
   [ctx : tc.TcContext]
@@ -715,20 +720,13 @@
 (cfg
   embedded-stdlib-tlci
   (define (tli-extract-native-catalog-digest [generation : i64]) : (Array u8 32)
-    (with-arena
-      digest-scratch
-      (let
-        [frame : i64
-          (tlci.compiler-embedded-stdlib-tlci-session-index generation)]
-        [bytes : (__tl_dyn-array u8)
-          (unsafe
-            ;; The decoder caches in its own arena. Only the temporary
-            ;; uncompressed frame bytes stay in digest-scratch.
-            (tlci.compiler-embedded-stdlib-tlci-decode-frame frame true))]
-        (when
-          (= (array-length (& bytes)) 0)
-          (io.panic "TLI native macro catalog is unavailable"))
-        (codec.tli-module-digest (& bytes) 0 (array-length (& bytes)))))))
+    (let
+      [frame : i64
+        (tlci.compiler-embedded-stdlib-tlci-session-index generation)]
+      (unless
+        (tlci.compiler-embedded-stdlib-tlci-frame-present? frame)
+        (io.panic "TLI native macro catalog is unavailable"))
+      (tlci.compiler-embedded-stdlib-tlci-frame-sha256 frame))))
 
 (define (tli-extract-macro
   [ctx : tc.TcContext]
@@ -887,14 +885,342 @@
         [(No) true]
         [_ false]))))
 
+(define (tli-extract-spmd-type-ok? [ty : (& tli.TliType)]) : bool
+  (match ty
+    [(or (tli.TliType.I64) (tli.TliType.I32) (tli.TliType.I16) (tli.TliType.I8)
+         (tli.TliType.U64) (tli.TliType.U32) (tli.TliType.U16) (tli.TliType.U8)
+         (tli.TliType.F64) (tli.TliType.F32) (tli.TliType.Bool)
+         (tli.TliType.Char) (tli.TliType.Unit))
+      true]
+    [_ false]))
+
+(define (tli-extract-spmd-sig-ok?
+  [params : (& (__tl_dyn-array tli.TliParam))]
+  [ret : (& tli.TliType)]) : bool
+  (unless (tli-extract-spmd-type-ok? ret) (return false))
+  (for [i (iterator.range 0 (array-length params))]
+    (unless
+      (tli-extract-spmd-type-ok? (& (array-ref params i).ty))
+      (return false)))
+  true)
+
+(defenum TliSpmdExprExtractResult
+  (Ok tli.TliSpmdExpr)
+  (No))
+
+(define (tli-extract-binop-tag [op : ast.AstBinOp]) : i64
+  (match op
+    [(Add) 0]
+    [(Sub) 1]
+    [(Mul) 2]
+    [(Div) 3]
+    [(Mod) 4]
+    [(Eq) 5]
+    [(Ne) 6]
+    [(Lt) 7]
+    [(Le) 8]
+    [(Gt) 9]
+    [(Ge) 10]
+    [(And) 11]
+    [(Or) 12]
+    [(BitAnd) 13]
+    [(BitOr) 14]
+    [(BitXor) 15]
+    [(Shl) 16]
+    [(Shr) 17]))
+
+(define (tli-extract-unop-tag [op : ast.AstUnOp]) : i64
+  (match op
+    [(Neg) 0]
+    [(Not) 1]
+    [(BitNot) 2]))
+
+(define (tli-extract-spmd-expr-node
+  [ctx : tc.TcContext]
+  [module-id : i64]
+  [locals : sym_i64_env.SymI64Env]
+  [expr-id : i64]
+  [budget : (&mut i64)]
+  [depth : i64]) : TliSpmdExprExtractResult
+  (when (or (<= (deref budget) 0) (> depth 48)) (return (No)))
+  (set! (deref budget) (- (deref budget) 1))
+  (match (tc.tc-context-expr-get ctx expr-id)
+    [(Spanned inner-id _)
+      (set! (deref budget) (+ (deref budget) 1))
+      (tli-extract-spmd-expr-node ctx module-id locals inner-id budget depth)]
+    [(Literal lit)
+      (Ok
+        (tli.TliSpmdExpr.Literal
+          (match lit
+            [(Int n text) (tli.TliSpmdLiteral.Int n (string.copy (& text)))]
+            [(Float text) (tli.TliSpmdLiteral.Float (string.copy (& text)))]
+            [(Bool b) (tli.TliSpmdLiteral.Bool b)]
+            [(Char c) (tli.TliSpmdLiteral.Char (cast c : i64))]
+            [(String sid) (tli.TliSpmdLiteral.String (tli-extract-name sid))]
+            [(Unit) (tli.TliSpmdLiteral.Unit)])))]
+    [(Var name-id)
+      (let
+        [raw : String (tli-extract-name name-id)]
+        [resolved : String
+          (if (or
+            (sym_i64_env.sym-i64-contains-id (& locals) name-id)
+            (symbols.compiler-symbol-root-module-id? module-id))
+            raw
+            (let
+              [qual-id : i64
+                (symbols.compiler-symbol-module-key-id-by-id module-id name-id)]
+              [handle : i64
+                (symbols.compiler-symbols-lookup-value-id-or
+                  (tc.tc-context-symbols (& ctx))
+                  qual-id
+                  (symbols.compiler-symbols-missing-handle))]
+              (if (symbols.compiler-symbols-handle-found? handle)
+                (tli-extract-name qual-id)
+                raw)))]
+        (Ok (tli.TliSpmdExpr.Var resolved)))]
+    [(Unary op inner-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        inner-id
+        budget
+        (+ depth 1))
+        [(Ok inner)
+          (Ok (tli.TliSpmdExpr.Unary (tli-extract-unop-tag op) (box inner)))]
+        [(No) (No)])]
+    [(Binary op lhs-id rhs-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        lhs-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok lhs)
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            rhs-id
+            budget
+            (+ depth 1))
+            [(No) (No)]
+            [(Ok rhs)
+              (Ok
+                (tli.TliSpmdExpr.Binary
+                  (tli-extract-binop-tag op)
+                  (box lhs)
+                  (box rhs)))])])]
+    [(Call callee-id args)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        callee-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok callee)
+          (let
+            [out : (__tl_dyn-array tli.TliSpmdExpr)
+              (__tl_make-array tli.TliSpmdExpr args.len)]
+            (for [i (iterator.range 0 args.len)]
+              (match (tli-extract-spmd-expr-node
+                ctx
+                module-id
+                locals
+                (ast.ast-expr-list-get (& args) i 0)
+                budget
+                (+ depth 1))
+                [(No) (return (No))]
+                [(Ok item) (set! (array-ref out i) item)]))
+            (Ok (tli.TliSpmdExpr.Call (box callee) out)))])]
+    [(If cond-id then-id else-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        cond-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok c)
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            then-id
+            budget
+            (+ depth 1))
+            [(No) (No)]
+            [(Ok t)
+              (match (tli-extract-spmd-expr-node
+                ctx
+                module-id
+                locals
+                else-id
+                budget
+                (+ depth 1))
+                [(No) (No)]
+                [(Ok e) (Ok (tli.TliSpmdExpr.If (box c) (box t) (box e)))])])])]
+    [(Let let-box)
+      (match (& (__tl-box-place let-box))
+        [(Let bindings body-id)
+          (let
+            [bcount : i64 (ast.ast-let-binding-list-len bindings)]
+            [out-bindings : (__tl_dyn-array tli.TliSpmdLetBinding)
+              (__tl_make-array tli.TliSpmdLetBinding bcount)]
+            [cur-locals : sym_i64_env.SymI64Env locals]
+            (for [i (iterator.range 0 bcount)]
+              (match (ast.ast-let-binding-list-get
+                bindings
+                i
+                (ast.ast-let-binding-fallback))
+                [(Binding bname maybe-ty init-id)
+                  (match (tli-extract-spmd-expr-node
+                    ctx
+                    module-id
+                    cur-locals
+                    init-id
+                    budget
+                    (+ depth 1))
+                    [(No) (return (No))]
+                    [(Ok init-e)
+                      (let
+                        [has-ty : bool
+                          (match (& maybe-ty)
+                            [(Some _) true]
+                            [(No) false])]
+                        [bty : tli.TliType
+                          (match maybe-ty
+                            [(Some ty) (tli-extract-type ctx ty)]
+                            [(No) (tli.TliType.Unit)])]
+                        (set!
+                          (array-ref out-bindings i)
+                          (tli.TliSpmdLetBinding
+                            (tli-extract-name bname)
+                            has-ty
+                            bty
+                            (box init-e)))
+                        (set!
+                          cur-locals
+                          (sym_i64_env.sym-i64-bind-id cur-locals bname 1)))])]))
+            (match (tli-extract-spmd-expr-node
+              ctx
+              module-id
+              cur-locals
+              body-id
+              budget
+              (+ depth 1))
+              [(No) (No)]
+              [(Ok body-e) (Ok (tli.TliSpmdExpr.Let out-bindings (box body-e)))]))])]
+    [(Begin items)
+      (let
+        [out : (__tl_dyn-array tli.TliSpmdExpr)
+          (__tl_make-array tli.TliSpmdExpr items.len)]
+        (for [i (iterator.range 0 items.len)]
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            (ast.ast-expr-list-get (& items) i 0)
+            budget
+            (+ depth 1))
+            [(No) (return (No))]
+            [(Ok item) (set! (array-ref out i) item)]))
+        (Ok (tli.TliSpmdExpr.Begin out)))]
+    [(Ann inner-id ty-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        inner-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok inner)
+          (Ok (tli.TliSpmdExpr.Ann (box inner) (tli-extract-child ctx ty-id)))])]
+    [(Cast inner-id ty-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        inner-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok inner)
+          (Ok (tli.TliSpmdExpr.Cast (box inner) (tli-extract-child ctx ty-id)))])]
+    [(ArrayRef base-id idx-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        base-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok base)
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            idx-id
+            budget
+            (+ depth 1))
+            [(No) (No)]
+            [(Ok idx) (Ok (tli.TliSpmdExpr.ArrayRef (box base) (box idx)))])])]
+    [(StructGet base-id field-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        base-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok base)
+          (Ok
+            (tli.TliSpmdExpr.StructGet (box base) (tli-extract-name field-id)))])]
+    [(Tuple items)
+      (let
+        [out : (__tl_dyn-array tli.TliSpmdExpr)
+          (__tl_make-array tli.TliSpmdExpr items.len)]
+        (for [i (iterator.range 0 items.len)]
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            (ast.ast-expr-list-get (& items) i 0)
+            budget
+            (+ depth 1))
+            [(No) (return (No))]
+            [(Ok item) (set! (array-ref out i) item)]))
+        (Ok (tli.TliSpmdExpr.Tuple out)))]
+    [(TupleRef base-id idx)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        base-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok base) (Ok (tli.TliSpmdExpr.TupleRef (box base) idx))])]
+    [_ (No)]))
+
 (define (tli-extract-local-fn!
   [out : (&mut TliExtractModule)]
+  [bodies-out : (&mut compact_bodies.Vec)]
   [ctx : tc.TcContext]
   [module-name : String]
   [index : i64]
   [name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
+  [body-box : i64]
   [meta : (& ast.AstFnMetadata)]
   [facts : (& facts TliExtractEffects)]
   [original : (& ast.AstDecl)]
@@ -931,6 +1257,48 @@
       (match meta
         [(Export symbol) (string.copy (intern.intern-id-str symbol))]
         [_ ""])]
+    [tli-params : (__tl_dyn-array tli.TliParam)
+      (tli-extract-params ctx (& signature.params))]
+    [tli-ret : tli.TliType (tli-extract-type ctx result)]
+    (when
+      (and
+        (not unsafe-decl)
+        (= (bit-and summary.effect-flags 2) 0)
+        (!= (bit-and summary.effect-flags 4) 0)
+        (= (bit-and summary.effect-flags 8) 0)
+        (tli-extract-spmd-sig-ok? (& tli-params) (& tli-ret)))
+      (let
+        [locals : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+        [budget : i64 48]
+        (for [pi (iterator.range 0 signature.params.len)]
+          (match (ast.ast-param-list-get
+            (& signature.params)
+            pi
+            (ast.ast-param-fallback))
+            [(Param pname _ _)
+              (set! locals (sym_i64_env.sym-i64-bind-id locals pname 1))]))
+        (match (tli-extract-spmd-expr-node
+          ctx
+          (tc.tc-context-module-id ctx)
+          locals
+          body-box
+          (&mut budget)
+          1)
+          [(Ok spmd-expr)
+            (set!
+              summary.effect-flags
+              (bit-or summary.effect-flags tli.tli-fn-spmd-inlineable))
+            (compact_bodies.push-ref!
+              bodies-out
+              (tli.TliCompactBodyEntry
+                (string.copy (& module-name))
+                (string.copy (& spelling))
+                (string.copy (& fn-symbol))
+                (tli.TliCompactBody
+                  tli.tli-compact-body-has-spmd-expr
+                  (tli.tli-compact-ir-body-empty)
+                  spmd-expr)))]
+          [(No) unit])))
     (functions.push-ref!
       (&mut out.functions)
       (tli.TliFnDecl
@@ -943,8 +1311,8 @@
         false
         0
         (__tl_make-array tli.TliExternLinkInput 0)
-        (tli-extract-params ctx (& signature.params))
-        (tli-extract-type ctx result)
+        tli-params
+        tli-ret
         summary))))
 
 (define (tli-extract-extern!
@@ -1022,6 +1390,7 @@
 
 (define (tli-extract-decl!
   [out : (&mut TliExtractModule)]
+  [bodies-out : (&mut compact_bodies.Vec)]
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
   [module-name : String]
@@ -1055,15 +1424,17 @@
           (+
             (tli-extract-flag comptime-only 1)
             (tli-extract-flag unsafe-decl 2)))]
-      [(DefFn _ name params ret _ meta)
+      [(DefFn _ name params ret body-box meta)
         (tli-extract-local-fn!
           out
+          bodies-out
           ctx
           module-name
           index
           name
           params
           ret
+          body-box
           (& meta)
           facts
           decl
@@ -1407,11 +1778,15 @@
 (define (tli-extract-pin-imports! [bundle : (&mut bundle tli.TliBundle)]) : bool
   (let
     [count : i64 (array-length bundle.modules)]
+    [pool (codec.tli-collect-pool bundle)]
+    [encoded-ir : codec.TliEncodedCompactIr
+      (codec.tli-encode-compact-ir-section (& pool) bundle)]
     [ctx : codec.TliWriteContext
       (codec.TliWriteContext
         false
-        (codec.tli-collect-pool bundle)
-        (buf.byte-buf-builder-new))]
+        pool
+        (buf.byte-buf-builder-new)
+        encoded-ir.metas)]
     [states : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [digests : (__tl_dyn-array sha.Sha256Digest)
       (__tl_make-array sha.Sha256Digest count)]
@@ -1563,6 +1938,7 @@
     [paths-out : (__tl_dyn-array String) (__tl_make-array String count)]
     [modules : (__tl_dyn-array tli.TliModuleRecord)
       (__tl_make-array tli.TliModuleRecord count)]
+    [extracted-bodies : compact_bodies.Vec (compact_bodies.new)]
     [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [names : lower.LowerNameCache
       (lower.lower-name-cache-from-env
@@ -1611,6 +1987,7 @@
             [(Ok decl)
               (tli-extract-decl!
                 (&mut (array-ref records slot))
+                (&mut extracted-bodies)
                 (tc.tc-context-with-nominal-owner-index-module ctx index)
                 env
                 module-name
@@ -1628,7 +2005,20 @@
           (string.copy (& (array-ref paths-out slot)))
           cfg-digest
           (tuple-ref (__tl_array-take! records live slot) 1))))
-    (tli.TliBundle bundle-flags build target modules)))
+    (let
+      [bodies-arr : (__tl_dyn-array tli.TliCompactBodyEntry)
+        (tli-extract-finish-vector tli.TliCompactBodyEntry extracted-bodies)]
+      [final-flags : i64
+        (if (> (array-length bodies-arr) 0)
+          (bit-or bundle-flags tli.tli-has-compact-ir)
+          bundle-flags)]
+      (tli.TliBundle
+        final-flags
+        build
+        target
+        modules
+        (__tl_make-array tli.TliCompactGlobal 0)
+        bodies-arr))))
 
 (define (tli-extract
   [request : api.TypecheckRequest]

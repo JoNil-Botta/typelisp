@@ -1,8 +1,8 @@
 ;; A direct aggregate read through a borrowed vector rvalue remains move-only.
 ;; The diagnostic must blame the caller's borrowed vector, not the macro body.
 (import stdlib.comptime)
+(import stdlib.eq)
 (import stdlib.vector)
-(import (vector.vector Ball) as bvec)
 
 (defmacro (for-each [vec : Expr] [body : Expr]) : unit
   `(let
@@ -14,6 +14,10 @@
 (defstruct Ball
   (x i64)
   (y i64))
+
+(eq.gen Ball)
+
+(import (vector.vector Ball) as bvec)
 
 (defstruct World
   (balls bvec.Vec))

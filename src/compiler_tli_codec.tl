@@ -65,12 +65,27 @@
     32)
   (let
     [state : sha256.Sha256State (sha256.new)]
-    (tli-hash-range! (&mut state) bytes 0 80)
+    (tli-hash-range! (&mut state) bytes 0 tli.tli-content-digest-offset)
+    (tli-hash-range!
+      (&mut state)
+      bytes
+      tli.tli-index-digest-offset
+      (- (array-length bytes) tli.tli-index-digest-offset))
+    (tli-finish-hash! (&mut state))))
+
+;; `index_sha256` covers the header outside both digests, the string pool and
+;; the module directory: everything a lazy open reads before any record.
+(define (tli-index-digest
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [index-end : i64]) : (Array u8 32)
+  (let
+    [state : sha256.Sha256State (sha256.new)]
+    (tli-hash-range! (&mut state) bytes 0 tli.tli-content-digest-offset)
     (tli-hash-range!
       (&mut state)
       bytes
       tli.tli-header-size
-      (- (array-length bytes) tli.tli-header-size))
+      (- index-end tli.tli-header-size))
     (tli-finish-hash! (&mut state))))
 
 (define (tli-digest-eq?
@@ -82,10 +97,60 @@
       (+= index 1))
     (= index 32)))
 
+(defstruct TliCompactBodyMeta
+  (module-name String)
+  (fn-name String)
+  (link-symbol String)
+  (offset i64)
+  (length i64)
+  (sha256 (Array u8 32)))
+
 (defstruct TliWriteContext
   (collecting? bool)
   (pool strings.Vec)
-  (out buf.ByteBufBuilder))
+  (out buf.ByteBufBuilder)
+  (body-metas (__tl_dyn-array TliCompactBodyMeta)))
+
+(define (tli-body-meta-less?
+  [a-mod : (& str)]
+  [a-fn : (& str)]
+  [a-sym : (& str)]
+  [b-mod : (& str)]
+  [b-fn : (& str)]
+  [b-sym : (& str)]) : bool
+  (cond
+    [(not (string.eq a-mod b-mod)) (sort.string-less-borrowed? a-mod b-mod)]
+    [(not (string.eq a-fn b-fn)) (sort.string-less-borrowed? a-fn b-fn)]
+    [else (sort.string-less-borrowed? a-sym b-sym)]))
+
+(define (tli-find-body-meta
+  [metas : (& metas (__tl_dyn-array TliCompactBodyMeta))]
+  [module-name : (& str)]
+  [fn-name : (& str)]
+  [link-symbol : (& str)]) : i64
+  (let
+    [low : i64 0]
+    [high : i64 (array-length metas)]
+    (while (< low high)
+      (let
+        [mid : i64 (+ low (/ (- high low) 2))]
+        [row (& (array-ref metas mid))]
+        (cond
+          [(and
+              (string.eq (& row.module-name) module-name)
+              (string.eq (& row.fn-name) fn-name)
+              (string.eq (& row.link-symbol) link-symbol))
+            (return mid)]
+          [(tli-body-meta-less?
+              (& row.module-name)
+              (& row.fn-name)
+              (& row.link-symbol)
+              module-name
+              fn-name
+              link-symbol)
+            (set! low (+ mid 1))]
+          [else (set! high mid)])))
+    -1))
 
 (define (tli-write-u8! [ctx : (&mut ctx TliWriteContext)] [value : i64]) : unit
   (when
@@ -141,6 +206,18 @@
   (kind i64)
   (symbol i64)
   (index i64))
+
+;; The owner equality hook the full-mode `keys` vector (shared with
+;; `stdlib.sort.vec`) requires. It compares every field, unlike the tie test
+;; `tli-key-eq?`.
+(define (eq-tli-order-key
+  [left : (& left TliOrderKey)]
+  [right : (& right TliOrderKey)]) : bool
+  (and
+    (= left.name right.name)
+    (= left.kind right.kind)
+    (= left.symbol right.symbol)
+    (= left.index right.index)))
 
 (import (stdlib.vector.vector TliOrderKey) as keys)
 (import (stdlib.sort.vec TliOrderKey) as key_sort)
@@ -406,6 +483,9 @@
 
 (define (tli-write-summary!
   [ctx : (&mut ctx TliWriteContext)]
+  [module-name : (& str)]
+  [fn-name : (& str)]
+  [link-symbol : (& str)]
   [row : (& row tli.TliFnSummary)]) : unit
   (tli-write-u32! ctx row.effect-flags)
   (tli-write-u64! ctx row.arena-arg-store-mask)
@@ -448,8 +528,30 @@
                 (& (array-ref row.global-writes key.index)))))
           (set! (array-ref starts count) ctx.out.len)
           (tli-sort-tied-rows! (&mut ctx.out) slots (& starts) count)))))
-  (tli-write-u64! ctx row.inline-ir-offset)
-  (tli-write-u32! ctx row.inline-ir-len))
+  (tli-write-u64! ctx row.call-memory)
+  (tli-write-u8! ctx (cast row.call-clean : i64))
+  (tli-write-u64! ctx row.return-alias)
+  (let
+    [meta-idx : i64
+      (if ctx.collecting?
+        -1
+        (tli-find-body-meta (& ctx.body-metas) module-name fn-name link-symbol))]
+    (if (>= meta-idx 0)
+      (let
+        [offset : i64 (array-ref ctx.body-metas meta-idx).offset]
+        [length : i64 (array-ref ctx.body-metas meta-idx).length]
+        [digest : (Array u8 32) (make-array u8 32)]
+        (for [i (iterator.range 0 32)]
+          (set!
+            (array-ref digest i)
+            (array-ref (array-ref ctx.body-metas meta-idx).sha256 i)))
+        (tli-write-u64! ctx offset)
+        (tli-write-u32! ctx length)
+        (tli-write-digest! ctx (& digest)))
+      (begin
+        (tli-write-u64! ctx row.inline-ir-offset)
+        (tli-write-u32! ctx row.inline-ir-len)
+        (tli-write-digest! ctx (& row.inline-ir-sha256))))))
 
 (define (tli-write-fn-decl!
   [ctx : (&mut ctx TliWriteContext)]
@@ -471,7 +573,12 @@
   (for [index (iterator.range 0 (array-length row.params))]
     (tli-write-param! ctx (& (array-ref row.params index))))
   (tli-write-type! ctx (& row.return-type))
-  (tli-write-summary! ctx (& row.summary)))
+  (tli-write-summary!
+    ctx
+    (& row.module-name)
+    (& row.name)
+    (& row.link-symbol)
+    (& row.summary)))
 
 (define (tli-write-const!
   [ctx : (&mut ctx TliWriteContext)]
@@ -775,16 +882,624 @@
           (set! (array-ref starts count) ctx.out.len)
           (tli-sort-tied-rows! (&mut ctx.out) slots (& starts) count))))))
 
+(define (tli-write-compact-value!
+  [ctx : (&mut ctx TliWriteContext)]
+  [val : (& val tli.TliCompactValue)]) : unit
+  (match val
+    [(tli.TliCompactValue.Var id)
+      (tli-write-u8! ctx 0)
+      (tli-write-u32! ctx id)]
+    [(tli.TliCompactValue.Global sym)
+      (tli-write-u8! ctx 1)
+      (tli-write-name! ctx sym)]
+    [(tli.TliCompactValue.GlobalAddr sym)
+      (tli-write-u8! ctx 2)
+      (tli-write-name! ctx sym)]
+    [(tli.TliCompactValue.Function sym)
+      (tli-write-u8! ctx 3)
+      (tli-write-name! ctx sym)]
+    [(tli.TliCompactValue.I64 n)
+      (tli-write-u8! ctx 4)
+      (tli-write-u64! ctx n)]
+    [(tli.TliCompactValue.F64Bits bits)
+      (tli-write-u8! ctx 5)
+      (tli-write-u64! ctx bits)]
+    [(tli.TliCompactValue.Bool b)
+      (tli-write-u8! ctx 6)
+      (tli-write-bool! ctx b)]
+    [(tli.TliCompactValue.Char c)
+      (tli-write-u8! ctx 7)
+      (tli-write-u32! ctx c)]
+    [(tli.TliCompactValue.String s)
+      (tli-write-u8! ctx 8)
+      (tli-write-name! ctx s)]
+    [(tli.TliCompactValue.Bytes raw)
+      (tli-write-u8! ctx 9)
+      (tli-write-u32! ctx (array-length raw))
+      (when
+        (not ctx.collecting?)
+        (buf.byte-buf-builder-append-array (&mut ctx.out) raw))]
+    [(tli.TliCompactValue.Unit) (tli-write-u8! ctx 10)]
+    [(tli.TliCompactValue.StaticArray raw)
+      (tli-write-u8! ctx 11)
+      (tli-write-u32! ctx (array-length raw))
+      (when
+        (not ctx.collecting?)
+        (buf.byte-buf-builder-append-array (&mut ctx.out) raw))]))
+
+(define (tli-write-compact-values!
+  [ctx : (&mut ctx TliWriteContext)]
+  [items : (& items (__tl_dyn-array tli.TliCompactValue))]) : unit
+  (tli-write-u32! ctx (array-length items))
+  (for [index (iterator.range 0 (array-length items))]
+    (tli-write-compact-value! ctx (& (array-ref items index)))))
+
+(define (tli-write-compact-call-args!
+  [ctx : (&mut ctx TliWriteContext)]
+  [args : (& args tli.TliCompactCallArgs)]) : unit
+  (if (>= args.sret-index 0)
+    (begin
+      (tli-write-u8! ctx 1)
+      (tli-write-u32! ctx args.sret-index))
+    (tli-write-u8! ctx 0))
+  (tli-write-compact-values! ctx (& args.args)))
+
+(define (tli-write-compact-binop!
+  [ctx : (&mut ctx TliWriteContext)]
+  [op : (& op tli.TliCompactBinOp)]) : unit
+  (match op
+    [(tli.TliCompactBinOp.Add) (tli-write-u8! ctx 0)]
+    [(tli.TliCompactBinOp.Sub) (tli-write-u8! ctx 1)]
+    [(tli.TliCompactBinOp.Mul) (tli-write-u8! ctx 2)]
+    [(tli.TliCompactBinOp.Div) (tli-write-u8! ctx 3)]
+    [(tli.TliCompactBinOp.Mod) (tli-write-u8! ctx 4)]
+    [(tli.TliCompactBinOp.SafeDiv) (tli-write-u8! ctx 5)]
+    [(tli.TliCompactBinOp.SafeMod) (tli-write-u8! ctx 6)]
+    [(tli.TliCompactBinOp.Eq) (tli-write-u8! ctx 7)]
+    [(tli.TliCompactBinOp.Ne) (tli-write-u8! ctx 8)]
+    [(tli.TliCompactBinOp.Lt) (tli-write-u8! ctx 9)]
+    [(tli.TliCompactBinOp.Le) (tli-write-u8! ctx 10)]
+    [(tli.TliCompactBinOp.Gt) (tli-write-u8! ctx 11)]
+    [(tli.TliCompactBinOp.Ge) (tli-write-u8! ctx 12)]
+    [(tli.TliCompactBinOp.BitTestEq) (tli-write-u8! ctx 13)]
+    [(tli.TliCompactBinOp.BitTestNe) (tli-write-u8! ctx 14)]
+    [(tli.TliCompactBinOp.And) (tli-write-u8! ctx 15)]
+    [(tli.TliCompactBinOp.Or) (tli-write-u8! ctx 16)]
+    [(tli.TliCompactBinOp.BitAnd) (tli-write-u8! ctx 17)]
+    [(tli.TliCompactBinOp.BitOr) (tli-write-u8! ctx 18)]
+    [(tli.TliCompactBinOp.BitXor) (tli-write-u8! ctx 19)]
+    [(tli.TliCompactBinOp.Shl ty)
+      (tli-write-u8! ctx 20)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactBinOp.Shr ty)
+      (tli-write-u8! ctx 21)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactBinOp.Rotr) (tli-write-u8! ctx 22)]))
+
+(define (tli-write-compact-unop!
+  [ctx : (&mut ctx TliWriteContext)]
+  [op : (& op tli.TliCompactUnOp)]) : unit
+  (match op
+    [(tli.TliCompactUnOp.Neg) (tli-write-u8! ctx 0)]
+    [(tli.TliCompactUnOp.Not) (tli-write-u8! ctx 1)]
+    [(tli.TliCompactUnOp.BitNot) (tli-write-u8! ctx 2)]
+    [(tli.TliCompactUnOp.Sqrt) (tli-write-u8! ctx 3)]
+    [(tli.TliCompactUnOp.BitLength) (tli-write-u8! ctx 4)]))
+
+(define (tli-write-compact-instr!
+  [ctx : (&mut ctx TliWriteContext)]
+  [instr : (& instr tli.TliCompactInstr)]) : unit
+  (match instr
+    [(tli.TliCompactInstr.Mov dst val ty)
+      (tli-write-u8! ctx 0)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-value! ctx val)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.Alloc dst ty)
+      (tli-write-u8! ctx 1)
+      (tli-write-u32! ctx dst)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.AddrOf dst src size)
+      (tli-write-u8! ctx 2)
+      (tli-write-u32! ctx dst)
+      (tli-write-u32! ctx src)
+      (tli-write-u64! ctx size)]
+    [(tli.TliCompactInstr.Gep dst base idx ty)
+      (tli-write-u8! ctx 3)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-value! ctx base)
+      (tli-write-compact-value! ctx idx)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.Load dst ptr ty)
+      (tli-write-u8! ctx 4)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-value! ctx ptr)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.StoreOwned ptr val ty)
+      (tli-write-u8! ctx 5)
+      (tli-write-compact-value! ctx ptr)
+      (tli-write-compact-value! ctx val)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.StorePtr ptr val ty)
+      (tli-write-u8! ctx 6)
+      (tli-write-compact-value! ctx ptr)
+      (tli-write-compact-value! ctx val)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.CopyBytes dst src size)
+      (tli-write-u8! ctx 7)
+      (tli-write-compact-value! ctx dst)
+      (tli-write-compact-value! ctx src)
+      (tli-write-u64! ctx size)]
+    [(tli.TliCompactInstr.BoundsCheck idx len ok-label)
+      (tli-write-u8! ctx 8)
+      (tli-write-compact-value! ctx idx)
+      (tli-write-compact-value! ctx len)
+      (tli-write-u32! ctx ok-label)]
+    [(tli.TliCompactInstr.Cast dst val from-ty to-ty)
+      (tli-write-u8! ctx 9)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-value! ctx val)
+      (tli-write-type! ctx from-ty)
+      (tli-write-type! ctx to-ty)]
+    [(tli.TliCompactInstr.Bitcast dst val from-ty to-ty)
+      (tli-write-u8! ctx 10)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-value! ctx val)
+      (tli-write-type! ctx from-ty)
+      (tli-write-type! ctx to-ty)]
+    [(tli.TliCompactInstr.BinOp dst op lhs rhs ty)
+      (tli-write-u8! ctx 11)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-binop! ctx op)
+      (tli-write-compact-value! ctx lhs)
+      (tli-write-compact-value! ctx rhs)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.UnOp dst op val ty)
+      (tli-write-u8! ctx 12)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-unop! ctx op)
+      (tli-write-compact-value! ctx val)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.Call dst callee args ty)
+      (tli-write-u8! ctx 13)
+      (tli-write-u32! ctx dst)
+      (tli-write-name! ctx callee)
+      (tli-write-compact-call-args! ctx args)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.CallIndirect dst callee args ty)
+      (tli-write-u8! ctx 14)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-value! ctx callee)
+      (tli-write-compact-call-args! ctx args)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.CallIndirectC dst callee args ty)
+      (tli-write-u8! ctx 15)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-value! ctx callee)
+      (tli-write-compact-call-args! ctx args)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.TailCall callee args ty)
+      (tli-write-u8! ctx 16)
+      (tli-write-name! ctx callee)
+      (tli-write-compact-call-args! ctx args)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.Store sym val ty)
+      (tli-write-u8! ctx 17)
+      (tli-write-name! ctx sym)
+      (tli-write-compact-value! ctx val)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.Jump label)
+      (tli-write-u8! ctx 18)
+      (tli-write-u32! ctx label)]
+    [(tli.TliCompactInstr.Branch cond t-label f-label)
+      (tli-write-u8! ctx 19)
+      (tli-write-compact-value! ctx cond)
+      (tli-write-u32! ctx t-label)
+      (tli-write-u32! ctx f-label)]
+    [(tli.TliCompactInstr.TotalEnumBranch cond t-label f-label)
+      (tli-write-u8! ctx 20)
+      (tli-write-compact-value! ctx cond)
+      (tli-write-u32! ctx t-label)
+      (tli-write-u32! ctx f-label)]
+    [(tli.TliCompactInstr.Return has-val val)
+      (tli-write-u8! ctx 21)
+      (tli-write-bool! ctx has-val)
+      (when has-val (tli-write-compact-value! ctx val))]
+    [(tli.TliCompactInstr.Phi dst inputs ty)
+      (tli-write-u8! ctx 22)
+      (tli-write-u32! ctx dst)
+      (tli-write-u32! ctx (array-length inputs))
+      (for [i (iterator.range 0 (array-length inputs))]
+        (let
+          [inp (& (array-ref inputs i))]
+          (tli-write-compact-value! ctx (& inp.value))
+          (tli-write-u32! ctx inp.label)))
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.Pack dst vals ty)
+      (tli-write-u8! ctx 23)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-values! ctx vals)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.Word dst val idx ty)
+      (tli-write-u8! ctx 24)
+      (tli-write-u32! ctx dst)
+      (tli-write-compact-value! ctx val)
+      (tli-write-u32! ctx idx)
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactInstr.Switch val base cases def-label)
+      (tli-write-u8! ctx 25)
+      (tli-write-compact-value! ctx val)
+      (tli-write-u64! ctx base)
+      (tli-write-u32! ctx (array-length cases))
+      (for [i (iterator.range 0 (array-length cases))]
+        (let
+          [c (& (array-ref cases i))]
+          (tli-write-u64! ctx c.value)
+          (tli-write-u32! ctx c.label)))
+      (tli-write-u32! ctx def-label)]
+    [(tli.TliCompactInstr.TotalEnumSwitch val base cases def-label trap-label)
+      (tli-write-u8! ctx 26)
+      (tli-write-compact-value! ctx val)
+      (tli-write-u64! ctx base)
+      (tli-write-u32! ctx (array-length cases))
+      (for [i (iterator.range 0 (array-length cases))]
+        (let
+          [c (& (array-ref cases i))]
+          (tli-write-u64! ctx c.value)
+          (tli-write-u32! ctx c.label)))
+      (tli-write-u32! ctx def-label)
+      (tli-write-u64! ctx trap-label)]))
+
+(define (tli-write-compact-return-storage!
+  [ctx : (&mut ctx TliWriteContext)]
+  [rs : (& rs tli.TliCompactReturnStorage)]) : unit
+  (match rs
+    [(tli.TliCompactReturnStorage.None) (tli-write-u8! ctx 0)]
+    [(tli.TliCompactReturnStorage.Some
+      conv
+      idx
+      bytes
+      align
+      output
+      phys-ret
+      phys-params
+      src-sig)
+      (tli-write-u8! ctx 1)
+      (tli-write-u8! ctx conv)
+      (tli-write-u32! ctx idx)
+      (tli-write-u64! ctx bytes)
+      (tli-write-u64! ctx align)
+      (tli-write-type! ctx output)
+      (tli-write-type! ctx phys-ret)
+      (tli-write-types! ctx phys-params)
+      (tli-write-type! ctx src-sig)]))
+
+(define (tli-write-compact-extern-ref!
+  [ctx : (&mut ctx TliWriteContext)]
+  [row : (& row tli.TliCompactExternRef)]) : unit
+  (tli-write-name! ctx (& row.symbol))
+  (tli-write-u8! ctx row.abi)
+  (tli-write-name! ctx (& row.link-symbol))
+  (tli-write-type! ctx (& row.ty))
+  (tli-write-compact-return-storage! ctx (& row.return-storage)))
+
+(define (tli-write-compact-ir-body!
+  [ctx : (&mut ctx TliWriteContext)]
+  [body : (& body tli.TliCompactIrBody)]) : unit
+  (tli-write-u8! ctx body.ir-flags)
+  (tli-write-u32! ctx body.instr-count)
+  (tli-write-u32! ctx (array-length body.params))
+  (for [i (iterator.range 0 (array-length body.params))]
+    (let
+      [p (& (array-ref body.params i))]
+      (tli-write-name! ctx (& p.name))
+      (tli-write-type! ctx (& p.ty))
+      (tli-write-u32! ctx p.var-id)))
+  (tli-write-type! ctx (& body.ret-type))
+  (tli-write-u32! ctx body.next-var)
+  (tli-write-compact-return-storage! ctx (& body.return-storage))
+  (let
+    [rcount : i64 (array-length body.extern-refs)]
+    [order : keys.Vec
+      (keys.with-capacity
+        (if ctx.collecting?
+          0
+          rcount))]
+    [starts : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if ctx.collecting?
+          0
+          (+ rcount 1)))]
+    (tli-write-u32! ctx rcount)
+    (if ctx.collecting?
+      (for [i (iterator.range 0 rcount)]
+        (tli-write-compact-extern-ref! ctx (& (array-ref body.extern-refs i))))
+      (begin
+        (for [i (iterator.range 0 rcount)]
+          (let
+            [item (& (array-ref body.extern-refs i))]
+            (keys.push-ref!
+              (&mut order)
+              (tli-order-key
+                ctx
+                (& item.symbol)
+                item.abi
+                (& item.link-symbol)
+                i))))
+        (key_sort.sort! (&mut order) tli-key-less?)
+        (let
+          [slots (keys.slots (& order))]
+          (for [slot (iterator.range 0 rcount)]
+            (let
+              [key : TliOrderKey (array-ref slots slot)]
+              (set! (array-ref starts slot) ctx.out.len)
+              (tli-write-compact-extern-ref!
+                ctx
+                (& (array-ref body.extern-refs key.index)))))
+          (set! (array-ref starts rcount) ctx.out.len)
+          (tli-sort-tied-rows! (&mut ctx.out) slots (& starts) rcount)))))
+  (tli-write-u32! ctx (array-length body.blocks))
+  (for [bi (iterator.range 0 (array-length body.blocks))]
+    (let
+      [blk (& (array-ref body.blocks bi))]
+      (tli-write-u32! ctx blk.label)
+      (tli-write-u32! ctx (array-length blk.instrs))
+      (for [ii (iterator.range 0 (array-length blk.instrs))]
+        (tli-write-compact-instr! ctx (& (array-ref blk.instrs ii)))))))
+
+(define (tli-write-spmd-literal!
+  [ctx : (&mut ctx TliWriteContext)]
+  [lit : (& lit tli.TliSpmdLiteral)]) : unit
+  (match lit
+    [(tli.TliSpmdLiteral.Int n text)
+      (tli-write-u8! ctx 0)
+      (tli-write-u64! ctx n)
+      (tli-write-name! ctx text)]
+    [(tli.TliSpmdLiteral.Float text)
+      (tli-write-u8! ctx 1)
+      (tli-write-name! ctx text)]
+    [(tli.TliSpmdLiteral.Bool b)
+      (tli-write-u8! ctx 2)
+      (tli-write-bool! ctx b)]
+    [(tli.TliSpmdLiteral.Char c)
+      (tli-write-u8! ctx 3)
+      (tli-write-u32! ctx c)]
+    [(tli.TliSpmdLiteral.String s)
+      (tli-write-u8! ctx 4)
+      (tli-write-name! ctx s)]
+    [(tli.TliSpmdLiteral.Unit) (tli-write-u8! ctx 5)]))
+
+(define (tli-write-spmd-exprs!
+  [ctx : (&mut ctx TliWriteContext)]
+  [items : (& items (__tl_dyn-array tli.TliSpmdExpr))]) : unit
+  (tli-write-u32! ctx (array-length items))
+  (for [i (iterator.range 0 (array-length items))]
+    (tli-write-spmd-expr! ctx (& (array-ref items i)))))
+
+(define (tli-write-spmd-expr!
+  [ctx : (&mut ctx TliWriteContext)]
+  [expr : (& expr tli.TliSpmdExpr)]) : unit
+  (match expr
+    [(tli.TliSpmdExpr.Literal lit)
+      (tli-write-u8! ctx 0)
+      (tli-write-spmd-literal! ctx lit)]
+    [(tli.TliSpmdExpr.Var name)
+      (tli-write-u8! ctx 1)
+      (tli-write-name! ctx name)]
+    [(tli.TliSpmdExpr.Unary op inner)
+      (tli-write-u8! ctx 2)
+      (tli-write-u8! ctx op)
+      (tli-write-spmd-expr! ctx (& (deref inner)))]
+    [(tli.TliSpmdExpr.Binary op lhs rhs)
+      (tli-write-u8! ctx 3)
+      (tli-write-u8! ctx op)
+      (tli-write-spmd-expr! ctx (& (deref lhs)))
+      (tli-write-spmd-expr! ctx (& (deref rhs)))]
+    [(tli.TliSpmdExpr.Call callee args)
+      (tli-write-u8! ctx 4)
+      (tli-write-spmd-expr! ctx (& (deref callee)))
+      (tli-write-spmd-exprs! ctx args)]
+    [(tli.TliSpmdExpr.If cond-e then-e else-e)
+      (tli-write-u8! ctx 5)
+      (tli-write-spmd-expr! ctx (& (deref cond-e)))
+      (tli-write-spmd-expr! ctx (& (deref then-e)))
+      (tli-write-spmd-expr! ctx (& (deref else-e)))]
+    [(tli.TliSpmdExpr.Let bindings body)
+      (tli-write-u8! ctx 6)
+      (tli-write-u32! ctx (array-length bindings))
+      (for [i (iterator.range 0 (array-length bindings))]
+        (let
+          [b (& (array-ref bindings i))]
+          (tli-write-name! ctx (& b.name))
+          (tli-write-bool! ctx b.has-type)
+          (when b.has-type (tli-write-type! ctx (& b.ty)))
+          (tli-write-spmd-expr! ctx (& (deref b.init)))))
+      (tli-write-spmd-expr! ctx (& (deref body)))]
+    [(tli.TliSpmdExpr.Begin items)
+      (tli-write-u8! ctx 7)
+      (tli-write-spmd-exprs! ctx items)]
+    [(tli.TliSpmdExpr.Ann inner ty)
+      (tli-write-u8! ctx 8)
+      (tli-write-spmd-expr! ctx (& (deref inner)))
+      (tli-write-type! ctx ty)]
+    [(tli.TliSpmdExpr.Cast inner ty)
+      (tli-write-u8! ctx 9)
+      (tli-write-spmd-expr! ctx (& (deref inner)))
+      (tli-write-type! ctx ty)]
+    [(tli.TliSpmdExpr.ArrayRef base idx)
+      (tli-write-u8! ctx 10)
+      (tli-write-spmd-expr! ctx (& (deref base)))
+      (tli-write-spmd-expr! ctx (& (deref idx)))]
+    [(tli.TliSpmdExpr.ArraySet base idx val)
+      (tli-write-u8! ctx 11)
+      (tli-write-spmd-expr! ctx (& (deref base)))
+      (tli-write-spmd-expr! ctx (& (deref idx)))
+      (tli-write-spmd-expr! ctx (& (deref val)))]
+    [(tli.TliSpmdExpr.StructGet base field)
+      (tli-write-u8! ctx 12)
+      (tli-write-spmd-expr! ctx (& (deref base)))
+      (tli-write-name! ctx field)]
+    [(tli.TliSpmdExpr.StructSet base field val)
+      (tli-write-u8! ctx 13)
+      (tli-write-spmd-expr! ctx (& (deref base)))
+      (tli-write-name! ctx field)
+      (tli-write-spmd-expr! ctx (& (deref val)))]
+    [(tli.TliSpmdExpr.Tuple items)
+      (tli-write-u8! ctx 14)
+      (tli-write-spmd-exprs! ctx items)]
+    [(tli.TliSpmdExpr.TupleRef base idx)
+      (tli-write-u8! ctx 15)
+      (tli-write-spmd-expr! ctx (& (deref base)))
+      (tli-write-u32! ctx idx)]
+    [(tli.TliSpmdExpr.Set place val)
+      (tli-write-u8! ctx 16)
+      (tli-write-spmd-expr! ctx (& (deref place)))
+      (tli-write-spmd-expr! ctx (& (deref val)))]
+    [(tli.TliSpmdExpr.Borrow is-mut life place)
+      (tli-write-u8! ctx 17)
+      (tli-write-bool! ctx is-mut)
+      (tli-write-name! ctx life)
+      (tli-write-spmd-expr! ctx (& (deref place)))]))
+
+(define (tli-write-compact-body!
+  [ctx : (&mut ctx TliWriteContext)]
+  [body : (& body tli.TliCompactBody)]) : unit
+  (tli-write-u8! ctx body.kind)
+  (when
+    (!= (bit-and body.kind tli.tli-compact-body-has-ir) 0)
+    (tli-write-compact-ir-body! ctx (& body.ir-body)))
+  (when
+    (!= (bit-and body.kind tli.tli-compact-body-has-spmd-expr) 0)
+    (tli-write-spmd-expr! ctx (& body.spmd-expr))))
+
+(define (tli-write-compact-global!
+  [ctx : (&mut ctx TliWriteContext)]
+  [row : (& row tli.TliCompactGlobal)]) : unit
+  (tli-write-name! ctx (& row.symbol))
+  (tli-write-type! ctx (& row.ty))
+  (tli-write-u8! ctx row.flags)
+  (tli-write-compact-value! ctx (& row.init)))
+
+(defstruct TliEncodedCompactIr
+  (bytes (__tl_dyn-array u8))
+  (metas (__tl_dyn-array TliCompactBodyMeta)))
+
+(define (tli-bundle-has-compact-ir? [bundle : (& bundle tli.TliBundle)]) : bool
+  (or
+    (!= (bit-and bundle.flags tli.tli-has-compact-ir) 0)
+    (> (array-length bundle.compact-globals) 0)
+    (> (array-length bundle.compact-bodies) 0)))
+
+(define (tli-encode-compact-ir-section
+  [pool : (& pool strings.Vec)]
+  [bundle : (& bundle tli.TliBundle)]) : TliEncodedCompactIr
+  (if (not (tli-bundle-has-compact-ir? bundle))
+    (TliEncodedCompactIr
+      (__tl_make-array u8 0)
+      (__tl_make-array TliCompactBodyMeta 0))
+    (let
+      [pool-copy : strings.Vec (strings.with-capacity (strings.len pool))]
+      [pslots (strings.slots pool)]
+      (for [i (iterator.range 0 (strings.len pool))]
+        (strings.push-ref!
+          (&mut pool-copy)
+          (string.copy (& (array-ref pslots i)))))
+      (let
+        [ctx : TliWriteContext
+          (TliWriteContext
+            false
+            pool-copy
+            (buf.byte-buf-builder-new)
+            (__tl_make-array TliCompactBodyMeta 0))]
+        [gcount : i64 (array-length bundle.compact-globals)]
+        [bcount : i64 (array-length bundle.compact-bodies)]
+        [gorder : keys.Vec (keys.with-capacity gcount)]
+        [gstarts : (__tl_dyn-array i64) (__tl_make-array i64 (+ gcount 1))]
+        [border : keys.Vec (keys.with-capacity bcount)]
+        [metas : (__tl_dyn-array TliCompactBodyMeta)
+          (__tl_make-array TliCompactBodyMeta bcount)]
+        ;; section_flags = 0
+        (tli-write-u32! (&mut ctx) 0)
+        (tli-write-u32! (&mut ctx) gcount)
+        (for [i (iterator.range 0 gcount)]
+          (let
+            [item (& (array-ref bundle.compact-globals i))]
+            (keys.push-ref!
+              (&mut gorder)
+              (tli-order-key (& ctx) (& item.symbol) 0 "" i))))
+        (key_sort.sort! (&mut gorder) tli-key-less?)
+        (let
+          [gslots (keys.slots (& gorder))]
+          (for [slot (iterator.range 0 gcount)]
+            (let
+              [key : TliOrderKey (array-ref gslots slot)]
+              (set! (array-ref gstarts slot) ctx.out.len)
+              (tli-write-compact-global!
+                (&mut ctx)
+                (& (array-ref bundle.compact-globals key.index)))))
+          (set! (array-ref gstarts gcount) ctx.out.len)
+          (tli-sort-tied-rows! (&mut ctx.out) gslots (& gstarts) gcount))
+        (tli-write-u32! (&mut ctx) bcount)
+        (for [i (iterator.range 0 bcount)]
+          (let
+            [entry (& (array-ref bundle.compact-bodies i))]
+            (keys.push-ref!
+              (&mut border)
+              (tli-order-key
+                (& ctx)
+                (& entry.module-name)
+                (tli-find-string (& ctx.pool) (& entry.fn-name))
+                (& entry.link-symbol)
+                i))))
+        (key_sort.sort! (&mut border) tli-key-less?)
+        (let
+          [bslots (keys.slots (& border))]
+          (for [slot (iterator.range 0 bcount)]
+            (let
+              [key : TliOrderKey (array-ref bslots slot)]
+              [entry (& (array-ref bundle.compact-bodies key.index))]
+              [start : i64 ctx.out.len]
+              (tli-write-compact-body! (&mut ctx) (& entry.body))
+              (let
+                [length : i64 (- ctx.out.len start)]
+                [digest : (Array u8 32)
+                  (tli-module-digest (& ctx.out.slots) start length)]
+                (set!
+                  (array-ref metas slot)
+                  (TliCompactBodyMeta
+                    (string.copy (& entry.module-name))
+                    (string.copy (& entry.fn-name))
+                    (string.copy (& entry.link-symbol))
+                    start
+                    length
+                    digest))))))
+        (TliEncodedCompactIr
+          (buf.byte-buf-builder-finish-array (& ctx.out))
+          metas)))))
+
 (define (tli-collect-pool [bundle : (& bundle tli.TliBundle)]) : strings.Vec
   (let
     [ctx : TliWriteContext
-      (TliWriteContext true (strings.new) (buf.byte-buf-builder-new))]
+      (TliWriteContext
+        true
+        (strings.new)
+        (buf.byte-buf-builder-new)
+        (__tl_make-array TliCompactBodyMeta 0))]
     [pool : strings.Vec (strings.new)]
     (strings.push-ref! (&mut ctx.pool) "")
     (tli-write-name! (&mut ctx) (& bundle.compiler-build))
     (tli-write-name! (&mut ctx) (& bundle.target-triple))
     (for [index (iterator.range 0 (array-length bundle.modules))]
       (tli-write-module! (&mut ctx) (& (array-ref bundle.modules index))))
+    (for [index (iterator.range 0 (array-length bundle.compact-globals))]
+      (tli-write-compact-global!
+        (&mut ctx)
+        (& (array-ref bundle.compact-globals index))))
+    (for [index (iterator.range 0 (array-length bundle.compact-bodies))]
+      (tli-write-compact-body!
+        (&mut ctx)
+        (& (array-ref bundle.compact-bodies index).body)))
     (string_sort.sort! (&mut ctx.pool) sort.string-less?)
     (let
       [slots (strings.slots (& ctx.pool))]
@@ -810,11 +1525,16 @@
 (define (tli-encode-bundle [bundle : (& bundle tli.TliBundle)]) : (__tl_dyn-array
     u8)
   (let
+    [pool : strings.Vec (tli-collect-pool bundle)]
+    [has-compact? : bool (tli-bundle-has-compact-ir? bundle)]
+    [encoded-ir : TliEncodedCompactIr
+      (tli-encode-compact-ir-section (& pool) bundle)]
+    [bundle-flags : i64
+      (if has-compact?
+        (bit-or bundle.flags tli.tli-has-compact-ir)
+        bundle.flags)]
     [ctx : TliWriteContext
-      (TliWriteContext
-        false
-        (tli-collect-pool bundle)
-        (buf.byte-buf-builder-new))]
+      (TliWriteContext false pool (buf.byte-buf-builder-new) encoded-ir.metas)]
     [count : i64 (array-length bundle.modules)]
     [order : keys.Vec (keys.with-capacity count)]
     (for [index (iterator.range 0 count)]
@@ -829,10 +1549,15 @@
     (tli-write-u32! (&mut ctx) (strings.len (& ctx.pool)))
     (let
       [slots (strings.slots (& ctx.pool))]
+      [offset : i64 0]
+      (le.push-u32! (&mut ctx.out) 0)
       (for [index (iterator.range 0 (strings.len (& ctx.pool)))]
-        (binary.compiler-incremental-binary-push-string!
+        (+= offset (string.string-length (& (array-ref slots index))))
+        (le.push-u32! (&mut ctx.out) offset))
+      (for [index (iterator.range 0 (strings.len (& ctx.pool)))]
+        (buf.byte-buf-builder-append-string
           (&mut ctx.out)
-          (& (array-ref slots index)))))
+          (string.copy (& (array-ref slots index))))))
     (let
       [dir-offset : i64 ctx.out.len]
       [dir-len : i64 (* count tli.tli-directory-entry-size)]
@@ -856,29 +1581,52 @@
             (le.set-u64! (&mut ctx.out.slots) (+ entry 16) length)
             (tli-copy-digest! (&mut ctx.out.slots) (+ entry 24) (& digest)))))
       (let
-        [bytes : (__tl_dyn-array u8)
-          (buf.byte-buf-builder-finish-array (& ctx.out))]
-        (le.set-u32! (&mut bytes) 0 tli.tli-magic)
-        (le.set-u32! (&mut bytes) 4 tli.tli-schema-version)
-        (le.set-u32! (&mut bytes) 8 bundle.flags)
-        (le.set-u32! (&mut bytes) 12 count)
-        (le.set-u64! (&mut bytes) 16 (array-length bytes))
-        (le.set-u64! (&mut bytes) 24 tli.tli-header-size)
-        (le.set-u64! (&mut bytes) 32 (- dir-offset tli.tli-header-size))
-        (le.set-u64! (&mut bytes) 40 dir-offset)
-        (le.set-u64! (&mut bytes) 48 dir-len)
-        (le.set-u32!
-          (&mut bytes)
-          72
-          (tli-find-string (& ctx.pool) (& bundle.compiler-build)))
-        (le.set-u32!
-          (&mut bytes)
-          76
-          (tli-find-string (& ctx.pool) (& bundle.target-triple)))
+        [ir-offset : i64
+          (if has-compact?
+            ctx.out.len
+            0)]
+        [ir-len : i64 (array-length encoded-ir.bytes)]
+        (when
+          has-compact?
+          (buf.byte-buf-builder-append-array
+            (&mut ctx.out)
+            (& encoded-ir.bytes)))
         (let
-          [digest : (Array u8 32) (tli-content-digest (& bytes))]
-          (tli-copy-digest! (&mut bytes) 80 (& digest)))
-        bytes))))
+          [bytes : (__tl_dyn-array u8)
+            (buf.byte-buf-builder-finish-array (& ctx.out))]
+          (le.set-u32! (&mut bytes) 0 tli.tli-magic)
+          (le.set-u32! (&mut bytes) 4 tli.tli-schema-version)
+          (le.set-u32! (&mut bytes) 8 bundle-flags)
+          (le.set-u32! (&mut bytes) 12 count)
+          (le.set-u64! (&mut bytes) 16 (array-length bytes))
+          (le.set-u64! (&mut bytes) 24 tli.tli-header-size)
+          (le.set-u64! (&mut bytes) 32 (- dir-offset tli.tli-header-size))
+          (le.set-u64! (&mut bytes) 40 dir-offset)
+          (le.set-u64! (&mut bytes) 48 dir-len)
+          (le.set-u64! (&mut bytes) 56 ir-offset)
+          (le.set-u64! (&mut bytes) 64 ir-len)
+          (le.set-u32!
+            (&mut bytes)
+            72
+            (tli-find-string (& ctx.pool) (& bundle.compiler-build)))
+          (le.set-u32!
+            (&mut bytes)
+            76
+            (tli-find-string (& ctx.pool) (& bundle.target-triple)))
+          (let
+            [index : (Array u8 32)
+              (tli-index-digest (& bytes) (+ dir-offset dir-len))]
+            (tli-copy-digest!
+              (&mut bytes)
+              tli.tli-index-digest-offset
+              (& index)))
+          (let
+            [digest : (Array u8 32) (tli-content-digest (& bytes))]
+            (tli-copy-digest!
+              (&mut bytes)
+              tli.tli-content-digest-offset
+              (& digest)))
+          bytes)))))
 
 ;; Reader failures are sticky. The binary reader uses codes 7/8 for its string
 ;; and owned-byte limits, and ByteReader reserves the negative codes.
@@ -1069,8 +1817,6 @@
         (tli-fail! rd tli-error-limit "TLI string limit exceeded")
         ""]
       [(not (cursor.consume! (&mut rd.cursor) length)) ""]
-      [(not (cursor.consume! (&mut rd.cursor) length)) ""]
-      [(not (cursor.consume! (&mut rd.cursor) length)) ""]
       [(not (tli-utf8-valid? (& rd.cursor.bytes) start length))
         (tli-fail! rd tli-error-utf8 "TLI text is not valid UTF-8")
         ""]
@@ -1106,35 +1852,66 @@
       (__tl_make-array u8 0))))
 
 ;; A decoded string pool. An eager pool holds every string. A lazy pool leaves
-;; `strings` empty and records where each entry's text lies in the file bytes
-;; that the enclosing `TliDirectory` owns (`base`); `tli-read-name!` validates,
-;; charges and copies an entry only when a record uses it.
+;; `strings` empty and keeps where the pool's offset table and text lie in the
+;; file bytes that the enclosing `TliDirectory` owns (`base`);
+;; `tli-read-name!` reads an entry's two offsets, then validates, charges and
+;; copies its text only when a record uses it, so opening a file reads no entry.
 (defstruct TliPool
   (strings (__tl_dyn-array String))
-  (starts (__tl_dyn-array i64))
-  (lengths (__tl_dyn-array i64))
+  (lazy? bool)
+  (count i64)
+  (table i64)
+  (text i64)
+  (text-len i64)
   (base (Ptr u8)))
+
+(define (tli-pool-offset-at [pool : (& pool TliPool)] [id : i64]) : i64
+  (let
+    [at : i64 (+ pool.table (* 4 id))]
+    [value : i64 0]
+    (for [byte (iterator.range 0 4)]
+      (set!
+        value
+        (bit-or
+          value
+          (shl
+            (cast
+              (unsafe
+                (ptr-read (ptr-offset pool.base (+ at byte))))
+              : i64)
+            (* 8 byte)))))
+    value))
 
 (define (tli-read-lazy-name!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]
   [id : i64]) : String
   (let
-    [start : i64 (array-ref pool.starts id)]
-    [length : i64 (array-ref pool.lengths id)]
-    [valid? : bool
-      (or
-        (tli-ascii-range? pool.base start length)
-        (let
-          [text : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-          (for [index (iterator.range 0 length)]
-            (set!
-              (array-ref text index)
-              (unsafe
-                (ptr-read (ptr-offset pool.base (+ start index))))))
-          (tli-utf8-valid? (& text) 0 length)))]
+    [first : i64 (tli-pool-offset-at pool id)]
+    [last : i64 (tli-pool-offset-at pool (+ id 1))]
+    [start : i64 (+ pool.text first)]
+    [length : i64 (- last first)]
     (cond
-      [(not valid?)
+      [(or (< length 0) (> last pool.text-len))
+        (tli-fail!
+          rd
+          tli-error-offset
+          "TLI string lies outside its pool section")
+        ""]
+      [(> length tli-max-string-bytes)
+        (tli-fail! rd tli-error-limit "TLI string length limit exceeded")
+        ""]
+      [(not
+        (or
+          (tli-ascii-range? pool.base start length)
+          (let
+            [text : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+            (for [index (iterator.range 0 length)]
+              (set!
+                (array-ref text index)
+                (unsafe
+                  (ptr-read (ptr-offset pool.base (+ start index))))))
+            (tli-utf8-valid? (& text) 0 length))))
         (tli-fail! rd tli-error-utf8 "TLI text is not valid UTF-8")
         ""]
       [(not (tli-reserve! rd (+ 16 length))) ""]
@@ -1147,18 +1924,13 @@
   [pool : (& pool TliPool)]) : String
   (let
     [id : i64 (cursor.read-u32! (&mut rd.cursor))]
-    [lazy? : bool (> (array-length pool.starts) 0)]
     (cond
       [(not rd.cursor.ok?) ""]
-      [(>=
-        id
-        (if lazy?
-          (array-length pool.starts)
-          (array-length pool.strings)))
+      [(>= id pool.count)
         (tli-fail! rd tli-error-string-id "TLI string id is out of range")
         ""]
       [(= id 0) ""]
-      [lazy? (tli-read-lazy-name! rd pool id)]
+      [pool.lazy? (tli-read-lazy-name! rd pool id)]
       [else
         (let
           [text (& (array-ref pool.strings id))]
@@ -1186,6 +1958,18 @@
         (tli-fail! rd tli-error-tag "TLI tag is out of range")
         0)
       tag)))
+
+;; A `Char` is a Unicode scalar value: at most U+10FFFF and not a surrogate.
+(define (tli-read-char! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : i64
+  (let
+    [c : i64 (cursor.read-u32! (&mut rd.cursor))]
+    (when
+      (or (> c 1114111) (and (>= c 55296) (<= c 57343)))
+      (tli-fail!
+        rd
+        tli-error-tag
+        "TLI char literal is not a Unicode scalar value"))
+    c))
 
 (define (tli-read-bool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : bool
   (= (tli-read-tag! rd 1) 1))
@@ -1601,25 +2385,71 @@
       (+= index 1))
     items))
 
+(define (tli-zero-digest? [digest : (& digest (Array u8 32))]) : bool
+  (for [i (iterator.range 0 32)]
+    (when (!= (array-ref digest i) (cast 0 : u8)) (return false)))
+  true)
+
 (define (tli-read-summary-tail!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]
-  [effect-flags : i64]) : tli.TliFnSummary
+  [effect-flags : i64]
+  [directory : (& directory TliDirectory)]) : tli.TliFnSummary
   (let
     [mask : i64 (cursor.read-u64! (&mut rd.cursor))]
     [extra : (__tl_dyn-array i64) (tli-read-arena-extras! rd)]
     [writes : (__tl_dyn-array tli.TliGlobalWrite)
       (tli-read-global-writes! rd pool)]
+    [call-memory : i64 (cursor.read-u64! (&mut rd.cursor))]
+    [call-clean-raw : i64 (cursor.read-u8! (&mut rd.cursor))]
+    [return-alias : i64 (cursor.read-u64! (&mut rd.cursor))]
     [offset : i64 (cursor.read-u64! (&mut rd.cursor))]
     [length : i64 (cursor.read-u32! (&mut rd.cursor))]
+    [body-sha : (Array u8 32) (tli-read-digest! rd)]
+    [has-body? : bool
+      (!=
+        (bit-and
+          effect-flags
+          (bit-or tli.tli-fn-has-inline-ir tli.tli-fn-spmd-inlineable))
+        0)]
     (when
-      (or (not (= offset 0)) (not (= length 0)))
-      (tli-fail! rd tli-error-offset "TLI v2 reserves inline IR offsets"))
-    (tli.TliFnSummary effect-flags mask extra writes offset length)))
+      (not (= call-clean-raw (bit-and call-clean-raw 15)))
+      (tli-fail!
+        rd
+        tli-error-flags
+        "TLI call-clean flags contain reserved bits"))
+    (when
+      (< return-alias 0)
+      (tli-fail! rd tli-error-tag "TLI return-alias index is negative"))
+    (if has-body?
+      (when
+        (not (tli-compact-body-range-present? directory offset length))
+        (tli-fail!
+          rd
+          tli-error-offset
+          "TLI inline IR slice lies outside the compact body region"))
+      (when
+        (or (!= offset 0) (!= length 0) (not (tli-zero-digest? (& body-sha))))
+        (tli-fail!
+          rd
+          tli-error-offset
+          "TLI function without inline IR flags carries inline IR metadata")))
+    (tli.TliFnSummary
+      effect-flags
+      mask
+      extra
+      writes
+      call-memory
+      (cast call-clean-raw : u8)
+      return-alias
+      offset
+      length
+      body-sha)))
 
 (define (tli-read-fn-decl!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool TliPool)]) : tli.TliFnDecl
+  [pool : (& pool TliPool)]
+  [directory : (& directory TliDirectory)]) : tli.TliFnDecl
   (let
     [name : String (tli-read-name! rd pool)]
     [module-name : String (tli-read-name! rd pool)]
@@ -1633,8 +2463,7 @@
       (tli-read-extern-link-inputs! rd pool)]
     [params : (__tl_dyn-array tli.TliParam) (tli-read-params! rd pool true)]
     [ret : tli.TliType (tli-read-type! rd pool true 1)]
-    [effect-flags : i64
-      (tli-read-flags! rd (bit-or 191 tli.tli-fn-stores-ambient-arena-arg))]
+    [effect-flags : i64 (tli-read-flags! rd tli.tli-fn-effect-flags-mask)]
     (when
       (and (= abi 3) (= (array-length params) 0))
       (tli-fail! rd tli-error-tag "TLI typed varargs function has no tail type"))
@@ -1653,19 +2482,20 @@
       extern-inputs
       params
       ret
-      (tli-read-summary-tail! rd pool effect-flags))))
+      (tli-read-summary-tail! rd pool effect-flags directory))))
 
 (define (tli-read-fn-decls!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliFnDecl)
+  [pool : (& pool TliPool)]
+  [directory : (& directory TliDirectory)]) : (__tl_dyn-array tli.TliFnDecl)
   (let
     [count : i64
-      (tli-read-count! rd 68 (comptime (size-of (type tli.TliFnDecl))))]
+      (tli-read-count! rd 117 (comptime (size-of (type tli.TliFnDecl))))]
     [items : (__tl_dyn-array tli.TliFnDecl)
       (__tl_make-array tli.TliFnDecl count)]
     [index : i64 0]
     (while (and rd.cursor.ok? (< index count))
-      (set! (array-ref items index) (tli-read-fn-decl! rd pool))
+      (set! (array-ref items index) (tli-read-fn-decl! rd pool directory))
       (when
         (> index 0)
         (let
@@ -1935,6 +2765,12 @@
   (compiler-build String)
   (target-triple String)
   (content-sha256 (Array u8 32))
+  (compact-ir-offset i64)
+  (compact-ir-len i64)
+  ;; Section-relative start of the first compact body: just past the compact
+  ;; globals and the body count, which the directory decode reads in place.
+  (compact-bodies-start i64)
+  (compact-body-count i64)
   (entries (__tl_dyn-array tli.TliDirectoryEntry))
   (pool TliPool)
   (bytes (__tl_dyn-array u8))
@@ -1950,6 +2786,23 @@
 
 (defenum TliBundleResult
   (Ok tli.TliBundle)
+  (Err tli.TliDecodeFailure))
+
+(defenum TliCompactGlobalsResult
+  (Ok (__tl_dyn-array tli.TliCompactGlobal))
+  (Err tli.TliDecodeFailure))
+
+(defstruct TliCompactBodyHeader
+  (kind i64)
+  (ir-flags i64)
+  (instr-count i64))
+
+(defenum TliCompactBodyHeaderResult
+  (Ok TliCompactBodyHeader)
+  (Err tli.TliDecodeFailure))
+
+(defenum TliCompactBodyResult
+  (Ok tli.TliCompactBody)
   (Err tli.TliDecodeFailure))
 
 (define (tli-check-section!
@@ -1974,91 +2827,98 @@
     (and rd.cursor.ok? (not (cursor.at-end? (& rd.cursor))))
     (tli-fail! rd tli-error-trailing "TLI section has trailing bytes")))
 
-(define (tli-read-pool-lazy!
-  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
+;; The pool section is `u32 count`, `u32 offsets[count + 1]` relative to the
+;; text that follows them, then the text. Entry zero is the empty string and
+;; the last offset ends the section. Returns the pool header with no entry read.
+(define (tli-read-pool-header!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [lazy? : bool]) : TliPool
   (let
-    [count : i64 (tli-read-count! rd 4 (* 2 (comptime (size-of (type i64)))))]
-    [starts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [lengths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (when
-      (= count 0)
-      (tli-fail!
-        rd
-        tli-error-tag
-        "TLI string pool must start with an empty string"))
-    (while (and rd.cursor.ok? (< index count))
-      (let
-        [length : i64 (cursor.read-u32! (&mut rd.cursor))]
-        [start : i64 rd.cursor.offset]
-        (cond
-          [(not rd.cursor.ok?) unit]
-          [(> length tli-max-string-bytes)
-            (tli-fail! rd tli-error-limit "TLI string length limit exceeded")]
-          [(and (= index 0) (!= length 0))
-            (tli-fail!
-              rd
-              tli-error-tag
-              "TLI string pool must start with an empty string")]
-          [(not (cursor.range-present? rd.cursor.end start length))
-            (tli-fail!
-              rd
-              cursor.error-truncated
-              "TLI string lies outside its pool section")]
-          [else
-            (cursor.skip! (&mut rd.cursor) length)
-            (set! (array-ref starts index) start)
-            (set! (array-ref lengths index) length)]))
-      (+= index 1))
-    (tli-check-end! rd)
-    (TliPool
-      (__tl_make-array String 0)
-      starts
-      lengths
-      (unsafe
-        (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8))))))
-
-(define (tli-read-pool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
-  (let
-    [count : i64 (tli-read-count! rd 4 (comptime (size-of (type String))))]
-    [pool : (__tl_dyn-array String) (__tl_make-array String count)]
-    [index : i64 0]
-    (when
-      (= count 0)
-      (tli-fail!
-        rd
-        tli-error-tag
-        "TLI string pool must start with an empty string"))
-    (while (and rd.cursor.ok? (< index count))
-      (let
-        [text : String (tli-read-text! rd)]
-        [ordered? : bool
-          (if (= index 0)
-            (= (string.string-length (& text)) 0)
-            (sort.string-less-borrowed?
-              (& (array-ref pool (- index 1)))
-              (& text)))]
+    [section-end : i64 rd.cursor.end]
+    [count : i64 (cursor.read-u32! (&mut rd.cursor))]
+    [table : i64 rd.cursor.offset]
+    [text : i64 (+ table (* 4 (+ count 1)))]
+    [pool : TliPool
+      (TliPool
+        (__tl_make-array String 0)
+        lazy?
+        0
+        table
+        text
+        0
+        (unsafe
+          (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8))))]
+    (cond
+      [(not rd.cursor.ok?) pool]
+      [(or (= count 0) (> count tli-max-count))
+        (tli-fail!
+          rd
+          tli-error-tag
+          "TLI string pool must start with an empty string")
+        pool]
+      [(> text section-end)
+        (tli-fail!
+          rd
+          cursor.error-truncated
+          "TLI string pool offsets lie outside its section")
+        pool]
+      [else
+        (set! pool.count count)
+        (set! pool.text-len (- section-end text))
         (when
-          (not ordered?)
+          (or
+            (!= (tli-pool-offset-at (& pool) 0) 0)
+            (!= (tli-pool-offset-at (& pool) 1) 0)
+            (!= (tli-pool-offset-at (& pool) count) pool.text-len))
           (tli-fail!
             rd
             tli-error-tag
-            "TLI string pool is not in strict canonical order"))
-        (set! (array-ref pool index) text))
-      (+= index 1))
-    (tli-check-end! rd)
-    (TliPool
-      pool
-      (__tl_make-array i64 0)
-      (__tl_make-array i64 0)
-      (unsafe
-        (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8))))))
+            "TLI string pool offsets do not span its text"))
+        pool])))
+
+(define (tli-read-pool-lazy!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
+  (tli-read-pool-header! rd true))
+
+(define (tli-read-pool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
+  (let
+    [pool : TliPool (tli-read-pool-header! rd false)]
+    [strings : (__tl_dyn-array String)
+      (__tl_make-array
+        String
+        (if rd.cursor.ok?
+          pool.count
+          0))]
+    [index : i64 1]
+    (when
+      (and
+        rd.cursor.ok?
+        (tli-reserve! rd (* pool.count (comptime (size-of (type String))))))
+      (while (and rd.cursor.ok? (< index pool.count))
+        (let
+          [text : String (tli-read-lazy-name! rd (& pool) index)]
+          (when
+            (and
+              rd.cursor.ok?
+              (not
+                (sort.string-less-borrowed?
+                  (& (array-ref strings (- index 1)))
+                  (& text))))
+            (tli-fail!
+              rd
+              tli-error-tag
+              "TLI string pool is not in strict canonical order"))
+          (set! (array-ref strings index) text))
+        (+= index 1)))
+    (set! pool.strings strings)
+    pool))
 
 (define (tli-read-entries!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]
   [count : i64]
-  [records-start : i64]) : (__tl_dyn-array tli.TliDirectoryEntry)
+  [records-start : i64]
+  [records-end-expected : i64]) : (__tl_dyn-array tli.TliDirectoryEntry)
   (let
     [length : i64
       (tli-check-count!
@@ -2099,11 +2959,11 @@
       (+= index 1))
     (tli-check-end! rd)
     (when
-      (not (= record-end (array-length rd.cursor.bytes)))
+      (not (= record-end records-end-expected))
       (tli-fail!
         rd
         tli-error-trailing
-        "TLI file has bytes after its last module"))
+        "TLI module records do not end where the next section begins"))
     entries))
 
 ;; Open only the envelope, verifying its content hash (when requested) and all
@@ -2144,7 +3004,10 @@
           [flags : i64
             (tli-read-flags!
               (&mut rd)
-              (bit-or tli.tli-is-stdlib-bundle tli.tli-has-tlci-companion))]
+              (bit-or
+                tli.tli-is-stdlib-bundle
+                (bit-or tli.tli-has-compact-ir tli.tli-has-tlci-companion)))]
+          [has-compact? : bool (!= (bit-and flags tli.tli-has-compact-ir) 0)]
           [count : i64 (cursor.read-u32! (&mut rd.cursor))]
           [total : i64 (cursor.read-u64! (&mut rd.cursor))]
           [pool-start : i64 (cursor.read-u64! (&mut rd.cursor))]
@@ -2156,6 +3019,7 @@
           [_build-id : i64 (cursor.read-u32! (&mut rd.cursor))]
           [_target-id : i64 (cursor.read-u32! (&mut rd.cursor))]
           [digest : (Array u8 32) (tli-read-digest! (&mut rd))]
+          [index-digest : (Array u8 32) (tli-read-digest! (&mut rd))]
           (cond
             [(> total length)
               (tli-fail!
@@ -2172,11 +3036,23 @@
                 (&mut rd)
                 tli-error-trailing
                 "TLI file exceeds its declared length")]
-            [(or (not (= ir-start 0)) (not (= ir-size 0)))
+            [(and
+                (not has-compact?)
+                (or (not (= ir-start 0)) (not (= ir-size 0))))
               (tli-fail!
                 (&mut rd)
                 tli-error-offset
-                "TLI v2 reserves the compact IR range")]
+                "TLI compact IR range must be zero when HAS_COMPACT_IR is clear")]
+            [(and
+                has-compact?
+                (or
+                  (< ir-size 12)
+                  (not (cursor.range-present? length ir-start ir-size))
+                  (!= (+ ir-start ir-size) length)))
+              (tli-fail!
+                (&mut rd)
+                tli-error-offset
+                "TLI compact IR section lies outside file or has trailing bytes")]
             [(> count tli-max-count)
               (tli-fail!
                 (&mut rd)
@@ -2201,10 +3077,26 @@
               dir-size
               (+ pool-start pool-size)))
           (when
+            (and rd.cursor.ok? has-compact? (< ir-start (+ dir-start dir-size)))
+            (tli-fail!
+              (&mut rd)
+              tli-error-overlap
+              "TLI compact IR section overlaps the module directory"))
+          (when
             (not rd.cursor.ok?)
             (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
           (when
             verify-content-digest?
+            (unless
+              (tli-digest-eq?
+                (& index-digest)
+                (&
+                  (tli-index-digest (& rd.cursor.bytes) (+ dir-start dir-size))))
+              (tli-fail!
+                (&mut rd)
+                tli-error-digest
+                "TLI index SHA-256 mismatch")
+              (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
             (let
               [computed : (Array u8 32)
                 (tli-content-digest (& rd.cursor.bytes))]
@@ -2231,11 +3123,27 @@
               [build : String (tli-read-name! (&mut rd) (& pool))]
               [target : String (tli-read-name! (&mut rd) (& pool))]
               [record-start : i64 (+ dir-start dir-size)]
+              [records-end-expected : i64
+                (if has-compact?
+                  ir-start
+                  length)]
+              [prefix : TliCompactPrefix
+                (tli-read-compact-prefix!
+                  (&mut rd)
+                  (& pool)
+                  has-compact?
+                  ir-start
+                  ir-size)]
               (set! rd.cursor.offset dir-start)
               (set! rd.cursor.end record-start)
               (let
                 [entries : (__tl_dyn-array tli.TliDirectoryEntry)
-                  (tli-read-entries! (&mut rd) (& pool) count record-start)]
+                  (tli-read-entries!
+                    (&mut rd)
+                    (& pool)
+                    count
+                    record-start
+                    records-end-expected)]
                 (if rd.cursor.ok?
                   (TliDirectoryResult.Ok
                     (TliDirectory
@@ -2244,11 +3152,49 @@
                       build
                       target
                       digest
+                      ir-start
+                      ir-size
+                      prefix.bodies-start
+                      prefix.body-count
                       entries
                       pool
                       rd.cursor.bytes
                       rd.owned-bytes))
                   (TliDirectoryResult.Err (tli-read-error (& rd) 0)))))))))))
+
+(defstruct TliCompactPrefix
+  (bodies-start i64)
+  (body-count i64))
+
+;; Reads the compact globals and body count in place from the whole-file
+;; cursor, fixing where the body region starts. With no bodies the prefix is
+;; the whole section.
+(define (tli-read-compact-prefix!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]
+  [has-compact? : bool]
+  [ir-start : i64]
+  [ir-size : i64]) : TliCompactPrefix
+  (if (not has-compact?)
+    (TliCompactPrefix 0 0)
+    (begin
+      (set! rd.cursor.offset ir-start)
+      (set! rd.cursor.end (+ ir-start ir-size))
+      (tli-read-compact-globals! rd pool)
+      (let
+        [body-count : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [bodies-start : i64 (- rd.cursor.offset ir-start)]
+        (when
+          (and
+            rd.cursor.ok?
+            (if (= body-count 0)
+              (!= bodies-start ir-size)
+              (>= bodies-start ir-size)))
+          (tli-fail!
+            rd
+            tli-error-offset
+            "TLI compact body count disagrees with the compact IR section length"))
+        (TliCompactPrefix bodies-start body-count)))))
 
 (define (tli-decode-directory [bytes : (& bytes (__tl_dyn-array u8))]) : TliDirectoryResult
   (tli-decode-directory-inner bytes true))
@@ -2282,10 +3228,11 @@
   [expected-target : (& expected-target str)]) : TliDirectoryResult
   (tli-decode-directory-for-inner bytes expected-build expected-target true))
 
-;; Lazy open for compiler-job hydration: skips hashing unhydrated module bytes
-;; and decoding unused pool strings up front. Every string a record uses is
-;; validated as UTF-8 and charged when it is read, and every hydrated module
-;; verifies its exact per-module SHA-256 and import interface SHA-256.
+;; Lazy open for compiler-job hydration: skips up-front index and content
+;; SHA-256 hashing and decoding unused pool strings. Header fields, section
+;; bounds, every accessed pool string's UTF-8, every decoded module record's
+;; `module_sha256` and import digests, and every decoded compact body's
+;; `inline_ir_sha256` are verified fail-closed.
 (define (tli-decode-directory-for-lazy
   [bytes : (& bytes (__tl_dyn-array u8))]
   [expected-build : (& expected-build str)]
@@ -2295,7 +3242,8 @@
 (define (tli-read-record!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]
-  [entry : (& entry tli.TliDirectoryEntry)]) : tli.TliModuleRecord
+  [entry : (& entry tli.TliDirectoryEntry)]
+  [directory : (& directory TliDirectory)]) : tli.TliModuleRecord
   (let
     [name : String (tli-read-name! rd pool)]
     [source : String (tli-read-name! rd pool)]
@@ -2317,7 +3265,7 @@
       (tli-read-imports! rd pool)
       (tli-read-names! rd pool)
       (tli-read-type-decls! rd pool)
-      (tli-read-fn-decls! rd pool)
+      (tli-read-fn-decls! rd pool directory)
       (tli-read-value-decls! rd pool)
       (tli-read-macro-handles! rd pool)
       (tli-read-dispatches! rd pool))))
@@ -2381,11 +3329,848 @@
                   tli-max-owned-bytes
                   tli-max-string-bytes)]
               [record : tli.TliModuleRecord
-                (tli-read-record! (&mut rd) (& directory.pool) entry)]
+                (tli-read-record! (&mut rd) (& directory.pool) entry directory)]
               (tli-check-end! (&mut rd))
               (if rd.cursor.ok?
                 (TliBudgetedModuleResult.Ok record rd.owned-bytes)
                 (TliBudgetedModuleResult.Err (tli-read-error (& rd) start))))))])))
+
+(define (tli-read-compact-value!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]
+  [allow-static-array? : bool]) : tli.TliCompactValue
+  (let
+    [max-tag : i64
+      (if allow-static-array?
+        11
+        10)]
+    [tag : i64 (tli-read-tag! rd max-tag)]
+    (match tag
+      [0 (tli.TliCompactValue.Var (cursor.read-u32! (&mut rd.cursor)))]
+      [1 (tli.TliCompactValue.Global (tli-read-name! rd pool))]
+      [2 (tli.TliCompactValue.GlobalAddr (tli-read-name! rd pool))]
+      [3 (tli.TliCompactValue.Function (tli-read-name! rd pool))]
+      [4 (tli.TliCompactValue.I64 (cursor.read-u64! (&mut rd.cursor)))]
+      [5 (tli.TliCompactValue.F64Bits (cursor.read-u64! (&mut rd.cursor)))]
+      [6 (tli.TliCompactValue.Bool (tli-read-bool! rd))]
+      [7 (tli.TliCompactValue.Char (tli-read-char! rd))]
+      [8 (tli.TliCompactValue.String (tli-read-name! rd pool))]
+      [9 (tli.TliCompactValue.Bytes (tli-read-blob! rd))]
+      [10 (tli.TliCompactValue.Unit)]
+      [11 (tli.TliCompactValue.StaticArray (tli-read-blob! rd))]
+      [_ (tli.TliCompactValue.Unit)])))
+
+(define (tli-read-compact-values!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliCompactValue)
+  (let
+    [count : i64
+      (tli-read-count! rd 1 (comptime (size-of (type tli.TliCompactValue))))]
+    [items : (__tl_dyn-array tli.TliCompactValue)
+      (__tl_make-array tli.TliCompactValue count)]
+    [index : i64 0]
+    (while (and rd.cursor.ok? (< index count))
+      (set! (array-ref items index) (tli-read-compact-value! rd pool false))
+      (+= index 1))
+    items))
+
+(define (tli-read-compact-call-args!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : tli.TliCompactCallArgs
+  (let
+    [kind : i64 (tli-read-tag! rd 1)]
+    [sret-index : i64
+      (if (= kind 1)
+        (cursor.read-u32! (&mut rd.cursor))
+        -1)]
+    [args : (__tl_dyn-array tli.TliCompactValue)
+      (tli-read-compact-values! rd pool)]
+    (when
+      (and (= kind 1) (or (< sret-index 0) (>= sret-index (array-length args))))
+      (tli-fail! rd tli-error-tag "TLI compact IR sret index is out of range"))
+    (tli.TliCompactCallArgs args sret-index)))
+
+(define (tli-read-compact-binop!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : tli.TliCompactBinOp
+  (match (tli-read-tag! rd 22)
+    [0 (tli.TliCompactBinOp.Add)]
+    [1 (tli.TliCompactBinOp.Sub)]
+    [2 (tli.TliCompactBinOp.Mul)]
+    [3 (tli.TliCompactBinOp.Div)]
+    [4 (tli.TliCompactBinOp.Mod)]
+    [5 (tli.TliCompactBinOp.SafeDiv)]
+    [6 (tli.TliCompactBinOp.SafeMod)]
+    [7 (tli.TliCompactBinOp.Eq)]
+    [8 (tli.TliCompactBinOp.Ne)]
+    [9 (tli.TliCompactBinOp.Lt)]
+    [10 (tli.TliCompactBinOp.Le)]
+    [11 (tli.TliCompactBinOp.Gt)]
+    [12 (tli.TliCompactBinOp.Ge)]
+    [13 (tli.TliCompactBinOp.BitTestEq)]
+    [14 (tli.TliCompactBinOp.BitTestNe)]
+    [15 (tli.TliCompactBinOp.And)]
+    [16 (tli.TliCompactBinOp.Or)]
+    [17 (tli.TliCompactBinOp.BitAnd)]
+    [18 (tli.TliCompactBinOp.BitOr)]
+    [19 (tli.TliCompactBinOp.BitXor)]
+    [20 (tli.TliCompactBinOp.Shl (tli-read-type! rd pool false 1))]
+    [21 (tli.TliCompactBinOp.Shr (tli-read-type! rd pool false 1))]
+    [22 (tli.TliCompactBinOp.Rotr)]
+    [_ (tli.TliCompactBinOp.Add)]))
+
+(define (tli-read-compact-unop!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : tli.TliCompactUnOp
+  (match (tli-read-tag! rd 4)
+    [0 (tli.TliCompactUnOp.Neg)]
+    [1 (tli.TliCompactUnOp.Not)]
+    [2 (tli.TliCompactUnOp.BitNot)]
+    [3 (tli.TliCompactUnOp.Sqrt)]
+    [4 (tli.TliCompactUnOp.BitLength)]
+    [_ (tli.TliCompactUnOp.Neg)]))
+
+(define (tli-read-compact-phi-inputs!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliCompactPhiInput)
+  (let
+    [count : i64
+      (tli-read-count! rd 5 (comptime (size-of (type tli.TliCompactPhiInput))))]
+    [items : (__tl_dyn-array tli.TliCompactPhiInput)
+      (__tl_make-array tli.TliCompactPhiInput count)]
+    [i : i64 0]
+    (while (and rd.cursor.ok? (< i count))
+      (let
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+        (set! (array-ref items i) (tli.TliCompactPhiInput val lbl)))
+      (+= i 1))
+    items))
+
+(define (tli-read-compact-switch-cases!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : (__tl_dyn-array
+    tli.TliCompactSwitchCase)
+  (let
+    [count : i64
+      (tli-read-count!
+        rd
+        12
+        (comptime (size-of (type tli.TliCompactSwitchCase))))]
+    [items : (__tl_dyn-array tli.TliCompactSwitchCase)
+      (__tl_make-array tli.TliCompactSwitchCase count)]
+    [i : i64 0]
+    (while (and rd.cursor.ok? (< i count))
+      (let
+        [val : i64 (cursor.read-u64! (&mut rd.cursor))]
+        [lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+        (set! (array-ref items i) (tli.TliCompactSwitchCase val lbl)))
+      (+= i 1))
+    items))
+
+(define (tli-read-compact-instr!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : tli.TliCompactInstr
+  (match (tli-read-tag! rd 26)
+    [0
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Mov dst val ty))]
+    [1
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Alloc dst ty))]
+    [2
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [src : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [size : i64 (cursor.read-u64! (&mut rd.cursor))]
+        (tli.TliCompactInstr.AddrOf dst src size))]
+    [3
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [base : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [idx : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Gep dst base idx ty))]
+    [4
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [ptr : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Load dst ptr ty))]
+    [5
+      (let
+        [ptr : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.StoreOwned ptr val ty))]
+    [6
+      (let
+        [ptr : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.StorePtr ptr val ty))]
+    [7
+      (let
+        [dst : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [src : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [size : i64 (cursor.read-u64! (&mut rd.cursor))]
+        (tli.TliCompactInstr.CopyBytes dst src size))]
+    [8
+      (let
+        [idx : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [len : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [ok-lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+        (tli.TliCompactInstr.BoundsCheck idx len ok-lbl))]
+    [9
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [from-ty : tli.TliType (tli-read-type! rd pool false 1)]
+        [to-ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Cast dst val from-ty to-ty))]
+    [10
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [from-ty : tli.TliType (tli-read-type! rd pool false 1)]
+        [to-ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Bitcast dst val from-ty to-ty))]
+    [11
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [op : tli.TliCompactBinOp (tli-read-compact-binop! rd pool)]
+        [lhs : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [rhs : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.BinOp dst op lhs rhs ty))]
+    [12
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [op : tli.TliCompactUnOp (tli-read-compact-unop! rd)]
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.UnOp dst op val ty))]
+    [13
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [callee : String (tli-read-name! rd pool)]
+        [args : tli.TliCompactCallArgs (tli-read-compact-call-args! rd pool)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Call dst callee args ty))]
+    [14
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [callee : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [args : tli.TliCompactCallArgs (tli-read-compact-call-args! rd pool)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.CallIndirect dst callee args ty))]
+    [15
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [callee : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [args : tli.TliCompactCallArgs (tli-read-compact-call-args! rd pool)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.CallIndirectC dst callee args ty))]
+    [16
+      (let
+        [callee : String (tli-read-name! rd pool)]
+        [args : tli.TliCompactCallArgs (tli-read-compact-call-args! rd pool)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.TailCall callee args ty))]
+    [17
+      (let
+        [sym : String (tli-read-name! rd pool)]
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Store sym val ty))]
+    [18 (tli.TliCompactInstr.Jump (cursor.read-u32! (&mut rd.cursor)))]
+    [19
+      (let
+        [cond-v : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [t-lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [f-lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+        (tli.TliCompactInstr.Branch cond-v t-lbl f-lbl))]
+    [20
+      (let
+        [cond-v : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [t-lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [f-lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+        (tli.TliCompactInstr.TotalEnumBranch cond-v t-lbl f-lbl))]
+    [21
+      (let
+        [has-val : bool (tli-read-bool! rd)]
+        [val : tli.TliCompactValue
+          (if has-val
+            (tli-read-compact-value! rd pool false)
+            (tli.TliCompactValue.Unit))]
+        (tli.TliCompactInstr.Return has-val val))]
+    [22
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [inputs : (__tl_dyn-array tli.TliCompactPhiInput)
+          (tli-read-compact-phi-inputs! rd pool)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Phi dst inputs ty))]
+    [23
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [vals : (__tl_dyn-array tli.TliCompactValue)
+          (tli-read-compact-values! rd pool)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Pack dst vals ty))]
+    [24
+      (let
+        [dst : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [idx : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactInstr.Word dst val idx ty))]
+    [25
+      (let
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [base : i64 (cursor.read-u64! (&mut rd.cursor))]
+        [cases : (__tl_dyn-array tli.TliCompactSwitchCase)
+          (tli-read-compact-switch-cases! rd)]
+        [def-lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+        (tli.TliCompactInstr.Switch val base cases def-lbl))]
+    [26
+      (let
+        [val : tli.TliCompactValue (tli-read-compact-value! rd pool false)]
+        [base : i64 (cursor.read-u64! (&mut rd.cursor))]
+        [cases : (__tl_dyn-array tli.TliCompactSwitchCase)
+          (tli-read-compact-switch-cases! rd)]
+        [def-lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [trap-lbl : i64 (cursor.read-u64! (&mut rd.cursor))]
+        (tli.TliCompactInstr.TotalEnumSwitch val base cases def-lbl trap-lbl))]
+    [_ (tli.TliCompactInstr.Jump 0)]))
+
+(define (tli-read-compact-return-storage!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : tli.TliCompactReturnStorage
+  (match (tli-read-tag! rd 1)
+    [0 (tli.TliCompactReturnStorage.None)]
+    [1
+      (let
+        [conv : i64 (tli-read-tag! rd 3)]
+        [idx : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [bytes : i64 (cursor.read-u64! (&mut rd.cursor))]
+        [align : i64 (cursor.read-u64! (&mut rd.cursor))]
+        [output : tli.TliType (tli-read-type! rd pool false 1)]
+        [phys-ret : tli.TliType (tli-read-type! rd pool false 1)]
+        [phys-params : (__tl_dyn-array tli.TliType)
+          (tli-read-types! rd pool false 1)]
+        [src-sig : tli.TliType (tli-read-type! rd pool false 1)]
+        (tli.TliCompactReturnStorage.Some
+          conv
+          idx
+          bytes
+          align
+          output
+          phys-ret
+          phys-params
+          src-sig))]
+    [_ (tli.TliCompactReturnStorage.None)]))
+
+(define (tli-read-compact-extern-refs!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliCompactExternRef)
+  (let
+    [count : i64
+      (tli-read-count!
+        rd
+        11
+        (comptime (size-of (type tli.TliCompactExternRef))))]
+    [items : (__tl_dyn-array tli.TliCompactExternRef)
+      (__tl_make-array tli.TliCompactExternRef count)]
+    [i : i64 0]
+    (while (and rd.cursor.ok? (< i count))
+      (let
+        [sym : String (tli-read-name! rd pool)]
+        [abi : i64 (tli-read-tag! rd 2)]
+        [link : String (tli-read-name! rd pool)]
+        [ty : tli.TliType (tli-read-type! rd pool false 1)]
+        [rs : tli.TliCompactReturnStorage
+          (tli-read-compact-return-storage! rd pool)]
+        (set! (array-ref items i) (tli.TliCompactExternRef sym abi link ty rs))
+        (when
+          (> i 0)
+          (let
+            [prev (& (array-ref items (- i 1)))]
+            [cur (& (array-ref items i))]
+            (tli-check-order!
+              rd
+              (& prev.symbol)
+              prev.abi
+              (& prev.link-symbol)
+              (& cur.symbol)
+              cur.abi
+              (& cur.link-symbol)))))
+      (+= i 1))
+    items))
+
+(define (tli-read-compact-ir-body!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : tli.TliCompactIrBody
+  (let
+    [ir-flags : i64 (cursor.read-u8! (&mut rd.cursor))]
+    [instr-count : i64 (cursor.read-u32! (&mut rd.cursor))]
+    [pcount : i64
+      (tli-read-count! rd 9 (comptime (size-of (type tli.TliCompactParam))))]
+    [params : (__tl_dyn-array tli.TliCompactParam)
+      (__tl_make-array tli.TliCompactParam pcount)]
+    (when
+      (not (= ir-flags (bit-and ir-flags tli.tli-compact-ir-call-free)))
+      (tli-fail!
+        rd
+        tli-error-flags
+        "TLI compact IR flags contain reserved bits"))
+    (let
+      [pi : i64 0]
+      (while (and rd.cursor.ok? (< pi pcount))
+        (let
+          [pname : String (tli-read-name! rd pool)]
+          [pty : tli.TliType (tli-read-type! rd pool false 1)]
+          [pvar : i64 (cursor.read-u32! (&mut rd.cursor))]
+          (set! (array-ref params pi) (tli.TliCompactParam pname pty pvar)))
+        (+= pi 1)))
+    (let
+      [ret-ty : tli.TliType (tli-read-type! rd pool false 1)]
+      [next-var : i64 (cursor.read-u32! (&mut rd.cursor))]
+      [rs : tli.TliCompactReturnStorage
+        (tli-read-compact-return-storage! rd pool)]
+      [ext-refs : (__tl_dyn-array tli.TliCompactExternRef)
+        (tli-read-compact-extern-refs! rd pool)]
+      [bcount : i64
+        (tli-read-count! rd 8 (comptime (size-of (type tli.TliCompactBlock))))]
+      [blocks : (__tl_dyn-array tli.TliCompactBlock)
+        (__tl_make-array tli.TliCompactBlock bcount)]
+      [actual-instrs : i64 0]
+      [bi : i64 0]
+      (while (and rd.cursor.ok? (< bi bcount))
+        (let
+          [lbl : i64 (cursor.read-u32! (&mut rd.cursor))]
+          [icount : i64
+            (tli-read-count!
+              rd
+              1
+              (comptime (size-of (type tli.TliCompactInstr))))]
+          [instrs : (__tl_dyn-array tli.TliCompactInstr)
+            (__tl_make-array tli.TliCompactInstr icount)]
+          [ii : i64 0]
+          (+= actual-instrs icount)
+          (while (and rd.cursor.ok? (< ii icount))
+            (set! (array-ref instrs ii) (tli-read-compact-instr! rd pool))
+            (+= ii 1))
+          (set! (array-ref blocks bi) (tli.TliCompactBlock lbl instrs)))
+        (+= bi 1))
+      (when
+        (and rd.cursor.ok? (!= actual-instrs instr-count))
+        (tli-fail!
+          rd
+          tli-error-tag
+          "TLI compact IR instruction count disagrees with blocks"))
+      (tli.TliCompactIrBody
+        ir-flags
+        instr-count
+        params
+        ret-ty
+        next-var
+        blocks
+        rs
+        ext-refs))))
+
+(define (tli-read-spmd-literal!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : tli.TliSpmdLiteral
+  (match (tli-read-tag! rd 5)
+    [0
+      (let
+        [n : i64 (cursor.read-u64! (&mut rd.cursor))]
+        [text : String (tli-read-name! rd pool)]
+        (tli.TliSpmdLiteral.Int n text))]
+    [1 (tli.TliSpmdLiteral.Float (tli-read-name! rd pool))]
+    [2 (tli.TliSpmdLiteral.Bool (tli-read-bool! rd))]
+    [3 (tli.TliSpmdLiteral.Char (tli-read-char! rd))]
+    [4 (tli.TliSpmdLiteral.String (tli-read-name! rd pool))]
+    [5 (tli.TliSpmdLiteral.Unit)]
+    [_ (tli.TliSpmdLiteral.Unit)]))
+
+(define (tli-read-spmd-exprs!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]
+  [depth : i64]) : (__tl_dyn-array tli.TliSpmdExpr)
+  (let
+    [count : i64
+      (tli-read-count! rd 1 (comptime (size-of (type tli.TliSpmdExpr))))]
+    [items : (__tl_dyn-array tli.TliSpmdExpr)
+      (__tl_make-array tli.TliSpmdExpr count)]
+    [i : i64 0]
+    (while (and rd.cursor.ok? (< i count))
+      (set! (array-ref items i) (tli-read-spmd-expr! rd pool depth))
+      (+= i 1))
+    items))
+
+(define (tli-read-spmd-expr-box!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]
+  [depth : i64]) : (Box tli.TliSpmdExpr)
+  (box (tli-read-spmd-expr! rd pool depth)))
+
+(define (tli-read-spmd-expr!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]
+  [depth : i64]) : tli.TliSpmdExpr
+  (when
+    (> depth tli.tli-max-spmd-expr-depth)
+    (tli-fail! rd tli-error-limit "TLI SPMD expression nesting limit exceeded")
+    (return (tli.tli-spmd-expr-empty)))
+  (let
+    [tag : i64 (tli-read-tag! rd 17)]
+    [next : i64 (+ depth 1)]
+    (when
+      (and
+        (>= tag 2)
+        (not
+          (tli-reserve! rd (+ 16 (comptime (size-of (type tli.TliSpmdExpr)))))))
+      (return (tli.tli-spmd-expr-empty)))
+    (match tag
+      [0 (tli.TliSpmdExpr.Literal (tli-read-spmd-literal! rd pool))]
+      [1 (tli.TliSpmdExpr.Var (tli-read-name! rd pool))]
+      [2
+        (let
+          [op : i64 (tli-read-tag! rd 2)]
+          (tli.TliSpmdExpr.Unary op (tli-read-spmd-expr-box! rd pool next)))]
+      [3
+        (let
+          [op : i64 (tli-read-tag! rd 17)]
+          [lhs : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [rhs : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          (tli.TliSpmdExpr.Binary op lhs rhs))]
+      [4
+        (let
+          [callee : (Box tli.TliSpmdExpr)
+            (tli-read-spmd-expr-box! rd pool next)]
+          [args : (__tl_dyn-array tli.TliSpmdExpr)
+            (tli-read-spmd-exprs! rd pool next)]
+          (tli.TliSpmdExpr.Call callee args))]
+      [5
+        (let
+          [c : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [t : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [e : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          (tli.TliSpmdExpr.If c t e))]
+      [6
+        (let
+          [bcount : i64
+            (tli-read-count!
+              rd
+              6
+              (comptime (size-of (type tli.TliSpmdLetBinding))))]
+          [bindings : (__tl_dyn-array tli.TliSpmdLetBinding)
+            (__tl_make-array tli.TliSpmdLetBinding bcount)]
+          [i : i64 0]
+          (while (and rd.cursor.ok? (< i bcount))
+            (let
+              [bname : String (tli-read-name! rd pool)]
+              [has-ty : bool (tli-read-bool! rd)]
+              [bty : tli.TliType
+                (if has-ty
+                  (tli-read-type! rd pool false 1)
+                  (tli.TliType.Unit))]
+              [binit : (Box tli.TliSpmdExpr)
+                (tli-read-spmd-expr-box! rd pool next)]
+              (set!
+                (array-ref bindings i)
+                (tli.TliSpmdLetBinding bname has-ty bty binit)))
+            (+= i 1))
+          (tli.TliSpmdExpr.Let bindings (tli-read-spmd-expr-box! rd pool next)))]
+      [7 (tli.TliSpmdExpr.Begin (tli-read-spmd-exprs! rd pool next))]
+      [8
+        (let
+          [inner : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [ty : tli.TliType (tli-read-type! rd pool false 1)]
+          (tli.TliSpmdExpr.Ann inner ty))]
+      [9
+        (let
+          [inner : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [ty : tli.TliType (tli-read-type! rd pool false 1)]
+          (tli.TliSpmdExpr.Cast inner ty))]
+      [10
+        (let
+          [base : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [idx : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          (tli.TliSpmdExpr.ArrayRef base idx))]
+      [11
+        (let
+          [base : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [idx : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [val : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          (tli.TliSpmdExpr.ArraySet base idx val))]
+      [12
+        (let
+          [base : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [field : String (tli-read-name! rd pool)]
+          (tli.TliSpmdExpr.StructGet base field))]
+      [13
+        (let
+          [base : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [field : String (tli-read-name! rd pool)]
+          [val : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          (tli.TliSpmdExpr.StructSet base field val))]
+      [14 (tli.TliSpmdExpr.Tuple (tli-read-spmd-exprs! rd pool next))]
+      [15
+        (let
+          [base : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [idx : i64 (cursor.read-u32! (&mut rd.cursor))]
+          (tli.TliSpmdExpr.TupleRef base idx))]
+      [16
+        (let
+          [place : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          [val : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          (tli.TliSpmdExpr.Set place val))]
+      [17
+        (let
+          [is-mut : bool (tli-read-bool! rd)]
+          [life : String (tli-read-name! rd pool)]
+          [place : (Box tli.TliSpmdExpr) (tli-read-spmd-expr-box! rd pool next)]
+          (tli.TliSpmdExpr.Borrow is-mut life place))]
+      [_ (tli.tli-spmd-expr-empty)])))
+
+(define (tli-read-compact-body!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : tli.TliCompactBody
+  (let
+    [kind : i64 (cursor.read-u8! (&mut rd.cursor))]
+    (when
+      (or (< kind 1) (> kind 3))
+      (tli-fail! rd tli-error-tag "TLI compact body kind must be 1, 2, or 3")
+      (return
+        (tli.TliCompactBody
+          0
+          (tli.tli-compact-ir-body-empty)
+          (tli.tli-spmd-expr-empty))))
+    (let
+      [ir-body : tli.TliCompactIrBody
+        (if (!= (bit-and kind tli.tli-compact-body-has-ir) 0)
+          (tli-read-compact-ir-body! rd pool)
+          (tli.tli-compact-ir-body-empty))]
+      [spmd-expr : tli.TliSpmdExpr
+        (if (!= (bit-and kind tli.tli-compact-body-has-spmd-expr) 0)
+          (tli-read-spmd-expr! rd pool 1)
+          (tli.tli-spmd-expr-empty))]
+      (tli.TliCompactBody kind ir-body spmd-expr))))
+
+(define (tli-read-compact-global!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : tli.TliCompactGlobal
+  (let
+    [sym : String (tli-read-name! rd pool)]
+    [ty : tli.TliType (tli-read-type! rd pool false 1)]
+    [flags : i64 (cursor.read-u8! (&mut rd.cursor))]
+    [init : tli.TliCompactValue (tli-read-compact-value! rd pool true)]
+    (when
+      (not (= flags (bit-and flags tli.tli-compact-global-never-written)))
+      (tli-fail!
+        rd
+        tli-error-flags
+        "TLI compact global flags contain reserved bits"))
+    (when
+      (match (& init)
+        [(or (tli.TliCompactValue.I64 _) (tli.TliCompactValue.F64Bits _)
+             (tli.TliCompactValue.Bool _) (tli.TliCompactValue.Char _)
+             (tli.TliCompactValue.String _) (tli.TliCompactValue.Bytes _)
+             (tli.TliCompactValue.Unit) (tli.TliCompactValue.StaticArray _))
+          false]
+        [_ true])
+      (tli-fail!
+        rd
+        tli-error-tag
+        "TLI compact global initializer must be literal"))
+    (tli.TliCompactGlobal sym ty flags init)))
+
+;; The compact IR section prefix: `section_flags`, the sorted compact globals
+;; and the body count. Leaves the cursor at the first body.
+(define (tli-read-compact-globals!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliCompactGlobal)
+  (let
+    [_sec-flags : i64 (tli-read-flags! rd 0)]
+    [gcount : i64
+      (tli-read-count! rd 7 (comptime (size-of (type tli.TliCompactGlobal))))]
+    [items : (__tl_dyn-array tli.TliCompactGlobal)
+      (__tl_make-array tli.TliCompactGlobal gcount)]
+    [i : i64 0]
+    (while (and rd.cursor.ok? (< i gcount))
+      (set! (array-ref items i) (tli-read-compact-global! rd pool))
+      (when
+        (> i 0)
+        (let
+          [prev (& (array-ref items (- i 1)))]
+          [cur (& (array-ref items i))]
+          (tli-check-order! rd (& prev.symbol) 0 "" (& cur.symbol) 0 "")))
+      (+= i 1))
+    items))
+
+;; A body slice must lie in the body region, past the globals and body count.
+(define (tli-compact-body-range-present?
+  [directory : (& directory TliDirectory)]
+  [rel-offset : i64]
+  [length : i64]) : bool
+  (and
+    (!= (bit-and directory.flags tli.tli-has-compact-ir) 0)
+    (>= rel-offset directory.compact-bodies-start)
+    (> length 0)
+    (cursor.range-present? directory.compact-ir-len rel-offset length)))
+
+;; Copies only the globals prefix of the section, never the body region.
+(define (tli-decode-compact-globals [directory : (& directory TliDirectory)]) : TliCompactGlobalsResult
+  (when
+    (= (bit-and directory.flags tli.tli-has-compact-ir) 0)
+    (return
+      (TliCompactGlobalsResult.Ok (__tl_make-array tli.TliCompactGlobal 0))))
+  (let
+    [start : i64 directory.compact-ir-offset]
+    [length : i64 directory.compact-bodies-start]
+    (when
+      (> length (- tli-max-owned-bytes directory.owned-bytes))
+      (return
+        (TliCompactGlobalsResult.Err
+          (tli.TliDecodeFailure
+            (tli.TliDecodeError.Limit)
+            start
+            "TLI owned-byte limit exceeded"))))
+    (let
+      [sec-bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+      (for [i (iterator.range 0 length)]
+        (set! (array-ref sec-bytes i) (array-ref directory.bytes (+ start i))))
+      (let
+        [rd : binary.CompilerIncrementalBinaryReader
+          (binary.CompilerIncrementalBinaryReader
+            (cursor.new sec-bytes tli-max-work)
+            (+ directory.owned-bytes length)
+            tli-max-owned-bytes
+            tli-max-string-bytes)]
+        [items : (__tl_dyn-array tli.TliCompactGlobal)
+          (tli-read-compact-globals! (&mut rd) (& directory.pool))]
+        (cursor.read-u32! (&mut rd.cursor))
+        (tli-check-end! (&mut rd))
+        (if rd.cursor.ok?
+          (TliCompactGlobalsResult.Ok items)
+          (TliCompactGlobalsResult.Err (tli-read-error (& rd) start)))))))
+
+(define (tli-peek-compact-body-header
+  [directory : (& directory TliDirectory)]
+  [rel-offset : i64]
+  [length : i64]
+  [expected-sha : (& (Array u8 32))]) : TliCompactBodyHeaderResult
+  (when
+    (not (tli-compact-body-range-present? directory rel-offset length))
+    (return
+      (TliCompactBodyHeaderResult.Err
+        (tli.TliDecodeFailure
+          (tli.TliDecodeError.OffsetOutOfRange)
+          rel-offset
+          "TLI compact body slice lies outside compact IR section"))))
+  (let
+    [abs-start : i64 (+ directory.compact-ir-offset rel-offset)]
+    [computed : (Array u8 32)
+      (tli-module-digest (& directory.bytes) abs-start length)]
+    (unless
+      (tli-digest-eq? (& computed) expected-sha)
+      (return
+        (TliCompactBodyHeaderResult.Err
+          (tli.TliDecodeFailure
+            (tli.TliDecodeError.DigestMismatch)
+            abs-start
+            "TLI compact body SHA-256 mismatch"))))
+    (let
+      [kind : i64 (cast (array-ref directory.bytes abs-start) : i64)]
+      (when
+        (or (< kind 1) (> kind 3))
+        (return
+          (TliCompactBodyHeaderResult.Err
+            (tli.TliDecodeFailure
+              (tli.TliDecodeError.UnknownTag)
+              abs-start
+              "TLI compact body kind must be 1, 2, or 3"))))
+      (if (!= (bit-and kind tli.tli-compact-body-has-ir) 0)
+        (if (< length 6)
+          (TliCompactBodyHeaderResult.Err
+            (tli.TliDecodeFailure
+              (tli.TliDecodeError.Truncated)
+              abs-start
+              "TLI compact IR body header is truncated"))
+          (let
+            [ir-flags : i64
+              (cast (array-ref directory.bytes (+ abs-start 1)) : i64)]
+            [instr-count : i64
+              (le.read-u32 (& directory.bytes) (+ abs-start 2))]
+            (if (not
+              (= ir-flags (bit-and ir-flags tli.tli-compact-ir-call-free)))
+              (TliCompactBodyHeaderResult.Err
+                (tli.TliDecodeFailure
+                  (tli.TliDecodeError.Flags)
+                  (+ abs-start 1)
+                  "TLI compact IR flags contain reserved bits"))
+              (TliCompactBodyHeaderResult.Ok
+                (TliCompactBodyHeader kind ir-flags instr-count)))))
+        (TliCompactBodyHeaderResult.Ok (TliCompactBodyHeader kind 0 0))))))
+
+(define (tli-decode-compact-body-at
+  [directory : (& directory TliDirectory)]
+  [rel-offset : i64]
+  [length : i64]
+  [expected-sha : (& (Array u8 32))]) : TliCompactBodyResult
+  (when
+    (not (tli-compact-body-range-present? directory rel-offset length))
+    (return
+      (TliCompactBodyResult.Err
+        (tli.TliDecodeFailure
+          (tli.TliDecodeError.OffsetOutOfRange)
+          rel-offset
+          "TLI compact body slice lies outside compact IR section"))))
+  (let
+    [abs-start : i64 (+ directory.compact-ir-offset rel-offset)]
+    [computed : (Array u8 32)
+      (tli-module-digest (& directory.bytes) abs-start length)]
+    (unless
+      (tli-digest-eq? (& computed) expected-sha)
+      (return
+        (TliCompactBodyResult.Err
+          (tli.TliDecodeFailure
+            (tli.TliDecodeError.DigestMismatch)
+            abs-start
+            "TLI compact body SHA-256 mismatch"))))
+    (when
+      (> length (- tli-max-owned-bytes directory.owned-bytes))
+      (return
+        (TliCompactBodyResult.Err
+          (tli.TliDecodeFailure
+            (tli.TliDecodeError.Limit)
+            abs-start
+            "TLI owned-byte limit exceeded"))))
+    (let
+      [body-bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+      (for [i (iterator.range 0 length)]
+        (set!
+          (array-ref body-bytes i)
+          (array-ref directory.bytes (+ abs-start i))))
+      (let
+        [rd : binary.CompilerIncrementalBinaryReader
+          (binary.CompilerIncrementalBinaryReader
+            (cursor.new body-bytes tli-max-work)
+            (+ directory.owned-bytes length)
+            tli-max-owned-bytes
+            tli-max-string-bytes)]
+        [body : tli.TliCompactBody
+          (tli-read-compact-body! (&mut rd) (& directory.pool))]
+        (tli-check-end! (&mut rd))
+        (if rd.cursor.ok?
+          (TliCompactBodyResult.Ok body)
+          (TliCompactBodyResult.Err (tli-read-error (& rd) abs-start)))))))
 
 (define (tli-decode-module-at
   [directory : (& directory TliDirectory)]
@@ -2433,16 +4218,132 @@
         (let
           [modules : (__tl_dyn-array tli.TliModuleRecord)
             (__tl_make-array tli.TliModuleRecord count)]
+          [body-total : i64 0]
           (for [index (iterator.range 0 count)]
             (match (tli-decode-record-at (& directory) index owned)
               [(TliBudgetedModuleResult.Err error)
                 (return (TliBundleResult.Err error))]
               [(TliBudgetedModuleResult.Ok record used)
+                (for [fi (iterator.range 0 (array-length record.functions))]
+                  (when
+                    (!=
+                      (bit-and
+                        (array-ref record.functions fi).summary.effect-flags
+                        (bit-or
+                          tli.tli-fn-has-inline-ir
+                          tli.tli-fn-spmd-inlineable))
+                      0)
+                    (+= body-total 1)))
                 (set! (array-ref modules index) record)
                 (set! owned used)]))
-          (TliBundleResult.Ok
-            (tli.TliBundle
-              directory.flags
-              directory.compiler-build
-              directory.target-triple
-              modules))))]))
+          (let
+            [cglobals : (__tl_dyn-array tli.TliCompactGlobal)
+              (match (tli-decode-compact-globals (& directory))
+                [(TliCompactGlobalsResult.Err error)
+                  (return (TliBundleResult.Err error))]
+                [(TliCompactGlobalsResult.Ok g) g])]
+            [cbodies : (__tl_dyn-array tli.TliCompactBodyEntry)
+              (__tl_make-array tli.TliCompactBodyEntry body-total)]
+            [bpos : i64 0]
+            ;; Body slices as (name = offset, index = length) order keys.
+            [spans : keys.Vec (keys.with-capacity body-total)]
+            (when
+              (!= body-total directory.compact-body-count)
+              (return
+                (TliBundleResult.Err
+                  (tli.TliDecodeFailure
+                    (tli.TliDecodeError.OffsetOutOfRange)
+                    directory.compact-ir-offset
+                    "TLI compact body count disagrees with function summaries"))))
+            (for [mi (iterator.range 0 count)]
+              (let
+                [mod (& (array-ref modules mi))]
+                (for [fi (iterator.range 0 (array-length mod.functions))]
+                  (let
+                    [f (& (array-ref mod.functions fi))]
+                    [ef : i64 f.summary.effect-flags]
+                    [want-ir? : bool
+                      (!= (bit-and ef tli.tli-fn-has-inline-ir) 0)]
+                    [want-spmd? : bool
+                      (!= (bit-and ef tli.tli-fn-spmd-inlineable) 0)]
+                    (when
+                      (or want-ir? want-spmd?)
+                      (keys.push-ref!
+                        (&mut spans)
+                        (TliOrderKey
+                          f.summary.inline-ir-offset
+                          0
+                          0
+                          f.summary.inline-ir-len))
+                      (match (tli-decode-compact-body-at
+                        (& directory)
+                        f.summary.inline-ir-offset
+                        f.summary.inline-ir-len
+                        (& f.summary.inline-ir-sha256))
+                        [(TliCompactBodyResult.Err error)
+                          (return (TliBundleResult.Err error))]
+                        [(TliCompactBodyResult.Ok body)
+                          (let
+                            [got-ir? : bool
+                              (!=
+                                (bit-and body.kind tli.tli-compact-body-has-ir)
+                                0)]
+                            [got-spmd? : bool
+                              (!=
+                                (bit-and
+                                  body.kind
+                                  tli.tli-compact-body-has-spmd-expr)
+                                0)]
+                            (when
+                              (or
+                                (!= want-ir? got-ir?)
+                                (!= want-spmd? got-spmd?))
+                              (return
+                                (TliBundleResult.Err
+                                  (tli.TliDecodeFailure
+                                    (tli.TliDecodeError.Flags)
+                                    (+
+                                      directory.compact-ir-offset
+                                      f.summary.inline-ir-offset)
+                                    "TLI compact body kind disagrees with function summary flags"))))
+                            (set!
+                              (array-ref cbodies bpos)
+                              (tli.TliCompactBodyEntry
+                                (string.copy (& f.module-name))
+                                (string.copy (& f.name))
+                                (string.copy (& f.link-symbol))
+                                body))
+                            (+= bpos 1))]))))))
+            ;; The bodies tile the body region exactly: no gap, overlap or tail.
+            (key_sort.sort! (&mut spans) tli-key-less?)
+            (let
+              [slots (keys.slots (& spans))]
+              [next : i64 directory.compact-bodies-start]
+              (for [k (iterator.range 0 body-total)]
+                (let
+                  [span : TliOrderKey (array-ref slots k)]
+                  (when
+                    (!= span.name next)
+                    (return
+                      (TliBundleResult.Err
+                        (tli.TliDecodeFailure
+                          (tli.TliDecodeError.Overlap)
+                          (+ directory.compact-ir-offset span.name)
+                          "TLI compact bodies do not tile the body region"))))
+                  (set! next (+ span.name span.index))))
+              (when
+                (!= next directory.compact-ir-len)
+                (return
+                  (TliBundleResult.Err
+                    (tli.TliDecodeFailure
+                      (tli.TliDecodeError.TrailingBytes)
+                      (+ directory.compact-ir-offset next)
+                      "TLI compact IR section has bytes past its last body")))))
+            (TliBundleResult.Ok
+              (tli.TliBundle
+                directory.flags
+                directory.compiler-build
+                directory.target-triple
+                modules
+                cglobals
+                cbodies)))))]))

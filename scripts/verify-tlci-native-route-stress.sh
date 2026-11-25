@@ -130,7 +130,18 @@ generate_success_source() {
     cat > "$output" <<'FIXTURE'
 (import stdlib.hash)
 (import stdlib.text_buf)
+(import stdlib.vector)
 (import (hash.hash i64) as stress_hash_i64)
+(import (vector.vector i64 core) as stress_vec_i64)
+
+;; A macro of a generated stdlib module has no catalog entry, so this
+;; `push!` keeps the production source-interpretation route covered.
+(define (stress-generated-macro-probe) : i64
+  (let
+    [values : stress_vec_i64.Vec (stress_vec_i64.new)]
+    (begin
+      (stress_vec_i64.push! values 7)
+      (stress_vec_i64.len (& values)))))
 
 (define (main) : i64
   (let
@@ -157,8 +168,8 @@ FIXTURE
     cat >> "$output" <<'FIXTURE'
       (if (and
         (= (__tl_array-length items) 1)
-        (= (stress_hash_i64.hash (array-ref items 0))
-          (stress_hash_i64.hash 7)))
+        (= (stress_hash_i64.hash (& (array-ref items 0)))
+          (stress_hash_i64.hash (& 7))))
         42
         1))))
 FIXTURE
@@ -185,10 +196,14 @@ done
 
 TARGET_CFG_ARGS=$(native_target_cfg_args | tr '\n' ' ')
 cat > "$WORKDIR/reproduce.txt" <<EOF
-native: cd $NATIVE_CWD && TYPELISP_TLCI_NATIVE_ROUTE_STRESS=1 $COMPILER compile --batch $NATIVE_BATCH --target $NL_BOOTSTRAP_TARGET $TARGET_CFG_ARGS--opt-level 2
+native: cd $NATIVE_CWD && TYPELISP_TLCI_NATIVE_ROUTE_STRESS=1 $COMPILER compile --batch $NATIVE_BATCH --target $NL_BOOTSTRAP_TARGET $TARGET_CFG_ARGS--no-prebuilt-stdlib --opt-level 2
 source: cd $SOURCE_ROOT && TYPELISP_TLCI_NATIVE_ROUTE_STRESS=1 $COMPILER compile --batch $SOURCE_BATCH --target $NL_BOOTSTRAP_TARGET $TARGET_CFG_ARGS--opt-level 2 --stdlib-root stdlib
 EOF
 
+# The native route is the embedded TLCI stdlib. At --opt-level 2 a compile
+# without --stdlib-root would otherwise hydrate the prebuilt sysroot stdlib and
+# call into libstdlib.a, so the native batches opt out of it to stay comparable
+# with the source route.
 echo "[tlci-native-route-stress] native production-route batch"
 capture_now_ms
 NATIVE_STARTED_MS=$CAPTURED_NOW_MS
@@ -203,6 +218,7 @@ if [ "$NL_HOST_OS" = windows ]; then
             -OutputDir "$WINDOWS_MEMORY_DIR" \
             -Target "$NL_BOOTSTRAP_TARGET" \
             -NoStdlibRoot \
+            -NoPrebuiltStdlib \
             -OptLevel 2
     ) > "$WORKDIR/native-launch.stdout" 2> "$WORKDIR/native-launch.stderr"
     NATIVE_STATUS=$?
@@ -224,6 +240,7 @@ else
             "$COMPILER" compile --batch "$NATIVE_BATCH" \
                 --target "$NL_BOOTSTRAP_TARGET" \
                 $(native_target_cfg_args) \
+                --no-prebuilt-stdlib \
                 --opt-level 2
     ) > "$NATIVE_STDOUT" 2> "$NATIVE_STDERR"
     NATIVE_STATUS=$?
@@ -597,6 +614,7 @@ for case_name in unmatched-open too-many-arguments; do
         "$COMPILER" compile --batch "$native_failure_batch" \
             --target "$NL_BOOTSTRAP_TARGET" \
             $(native_target_cfg_args) \
+            --no-prebuilt-stdlib \
             --opt-level 2
     ) > "$WORKDIR/failure-$case_name-native.stdout" \
         2> "$WORKDIR/failure-$case_name-native.stderr"

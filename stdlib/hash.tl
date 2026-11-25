@@ -17,7 +17,9 @@
 ;#   (let [key : String "symbol"]
 ;#     (hash.combine (hash.string-key (& key)) (hash.i64 7))))
 ;# ```
+(import stdlib.clone)
 (import stdlib.comptime)
+(import stdlib.eq)
 (import stdlib.string as string_mod)
 (cfg test (import stdlib.test))
 
@@ -172,15 +174,7 @@
       ["u8"
         `(stdlib.hash.combine 47 (stdlib.hash.normalize (cast ,value : i64)))]
       ["string" `(stdlib.hash.combine 53 (stdlib.hash.string-key ,borrowed))]
-      ["struct"
-        `(let
-          [__hash_struct_value ,borrowed]
-          (stdlib.hash.struct-hash-fields
-            ,T
-            0
-            __hash_struct_value
-            59
-            ,path-expr))]
+      ["struct" `(stdlib.hash.owner-hash ,T ,operand)]
       ["tuple"
         `(let
           [__hash_tuple_value ,borrowed]
@@ -207,10 +201,7 @@
               ,length-expr
               ,borrowed
               ,(comptime.expr-string element-path))))]
-      ["enum"
-        `(let
-          [__hash_enum_value ,borrowed]
-          (stdlib.hash.enum-hash-dispatch ,T __hash_enum_value 0 ,path-expr))]
+      ["enum" `(stdlib.hash.owner-hash ,T ,operand)]
       [_
         (comptime.comptime-error
           (comptime.string-append
@@ -451,41 +442,138 @@
       (comptime.comptime-error
         "hash: enum variant index must be an integer literal")]))
 
-;: Evaluate one public hash operand and dispatch its inferred concrete type.
-(defmacro (hash-once [value : comptime.Expr]) : comptime.Expr
-  (let
-    [value-type : comptime.Expr (comptime.expr-type value)]
-    `(let
-      [__hash_value ,value]
-      (stdlib.hash.inline-hash ,value-type __hash_value "value"))))
+;: Emit a call of nominal `T`'s canonical `hash-<kebab-name>` owner hook.
+(defmacro (owner-hash [T : type (:kind struct enum)] [operand : comptime.Expr]) : comptime.Expr
+  `(stdlib.eq.owner-hook-call
+    ,T
+    (stdlib.eq.owner-hook-name
+      ,T
+      (stdlib.clone.nominal-hook-name
+        ,T
+        "hash-"
+        "hash: "
+        "nominal name is empty")
+      "hash")
+    "hash"
+    ,operand
+    unit))
 
-;: Generate a deterministic, unkeyed structural-hash module for finite `T`.
+;: Generate nominal `T`'s canonical `hash-<kebab-name>` owner hook.
 ;:
-;: The generated `hash` operation evaluates its argument once. Equal values
-;: under `(import (eq T))` always receive equal hashes for supported `T`.
-;: Collisions and adversarial hash-flood resistance are outside this v1 API;
-;: consumers must still compare candidate keys.
+;: Call it from `T`'s exact canonical owner module, after its `eq-<kebab-name>`
+;: hook (from `(eq.gen T)` or written by hand) and after the hooks of the
+;: nominal types `T` holds. The emitted function hashes a shared borrow with
+;: the same field order and scalar encodings as `(eq.gen T)` compares, so
+;: generated pairs keep the law that equal values hash equally; a hand-written
+;: pair must keep it too. Repeating the identical call is idempotent; a
+;: same-name value already in the owner module is a collision.
+(defmacro (gen [T : type (:kind struct enum)]) : Decls
+  (let
+    [owner : String (type-nominal-module T)]
+    [caller : String (comptime.current-module)]
+    (if (string-eq owner caller)
+      unit
+      (let
+        [owner-display : String
+          (if (string-eq owner "")
+            "<root>"
+            owner)]
+        [caller-display : String
+          (if (string-eq caller "")
+            "<root>"
+            caller)]
+        (comptime.comptime-error
+          (comptime.string-append
+            "hash.gen: "
+            (comptime.string-append
+              (type-nominal-name T)
+              (comptime.string-append
+                " must be generated in its canonical owner module "
+                (comptime.string-append
+                  owner-display
+                  (comptime.string-append
+                    " (current module "
+                    (comptime.string-append caller-display ")")))))))))
+    `(stdlib.hash.gen-named
+      ,T
+      (stdlib.clone.nominal-hook-name
+        ,T
+        "hash-"
+        "hash.gen: "
+        "nominal root name is empty")
+      (stdlib.eq.owner-hook-name
+        ,T
+        (stdlib.clone.nominal-hook-name
+          ,T
+          "eq-"
+          "hash.gen: "
+          "nominal root name is empty")
+        "eq"))))
+
+;: Emit the hash hook once its name is computed. Evaluating the third
+;: argument has already validated the owner's equality hook.
+(defmacro (gen-named
+  [T : type (:kind struct enum)]
+  [hook-name : String]
+  [_eq-hook : String]) : Decls
+  (let
+    [owner : String (type-nominal-module T)]
+    [owner-display : String
+      (if (string-eq owner "")
+        "<root>"
+        owner)]
+    [function-name-text : String (comptime.expr-string-value hook-name)]
+    (if (comptime.module-value? owner function-name-text)
+      (comptime.comptime-error
+        (comptime.string-append
+          "hash.gen: generated name collision for "
+          (comptime.string-append
+            function-name-text
+            (comptime.string-append " in canonical owner module " owner-display))))
+      unit)
+    (let
+      [function-name : comptime.Expr (comptime.expr-var function-name-text)]
+      [body : comptime.Expr
+        (match (type-kind T)
+          ["struct" `(stdlib.hash.struct-hash-fields ,T 0 value 59 "value")]
+          [_ `(stdlib.hash.enum-hash-dispatch ,T value 0 "value")])]
+      `(define (,function-name [value : (& value ,T)]) : i64
+        ,body))))
+
+;: Generate a deterministic, unkeyed hash adapter module for finite `T`.
+;:
+;: Its `hash` hashes a shared borrow of a `T` value without moving or copying
+;: it (a `unit` operand, which has no reference form, is passed by value). A nominal `T` delegates to its canonical `hash-<kebab-name>` owner hook;
+;: scalars, `String`, tuples, and fixed arrays hash structurally. Values equal
+;: under `(eq.eq T)` receive equal hashes for generated hooks. Collisions and
+;: adversarial hash-flood resistance are outside this v1 API; consumers must
+;: still compare candidate keys.
 (defmacro (hash [T : type]) : Module
   (let
     [module-name : comptime.Expr
       (comptime.expr-var
         (comptime.string-append "stdlib.hash.generated." (type-key T)))]
     (match (type-kind T)
+      ;; A unit reference has no runtime representation, so a unit operand is
+      ;; passed by value.
       ["unit"
         `(begin
           (module ,module-name)
           (import stdlib.hash)
-          (define (hash [value : ,T]) : i64
+          (define (hash [value : unit]) : i64
             (stdlib.hash.combine 11 0)))]
       [_
-        `(begin
-          (module ,module-name)
-          (import stdlib.comptime)
-          (import stdlib.hash)
-          (defmacro (hash [value : ,T]) : i64
-            (comptime.expr-call
-              (comptime.expr-var "stdlib.hash.hash-once")
-              (comptime.expr-list-cons value (comptime.expr-list-empty)))))])))
+        (let
+          ;; A borrowed `String` place is a `str` view.
+          [operand-type : comptime.Expr
+            (if (string-eq (type-kind T) "string")
+              (comptime.expr-var "str")
+              T)]
+          `(begin
+            (module ,module-name)
+            (import stdlib.hash)
+            (define (hash [value : (& value ,operand-type)]) : i64
+              (stdlib.hash.inline-hash ,T value "value"))))])))
 
 (test
   hash-api

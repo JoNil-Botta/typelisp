@@ -4291,6 +4291,35 @@
       0)
     0))
 
+;; Pooled-register bits no scavenge may hand out while a phi edge is being
+;; marshalled: the edge's current-phi-dst-home-mask, the home of every raw Phi
+;; destination (both halves of a register pair) and of every Phi input. A
+;; drained copy or a filtered same-home Phi has already placed its final value
+;; in its destination, and allocator occupancy, built on edge-precise liveness,
+;; models no such transient edge value, so it reads that register free. The
+;; mask is installed only for the duration of compiler-backend-emit-phi-copy-list;
+;; otherwise the slot holds its -1 "no list installed" default and this is 0.
+(define (compiler-backend-scavenge-phi-edge-mask
+  [function-state : be_state.CompilerBackendFunctionState]) : i64
+  (let
+    [mask : i64
+      (be_state.compiler-backend-function-state-i64
+        function-state
+        be_state.compiler-backend-function-i64-current-phi-dst-home-mask)]
+    (if (< mask 0)
+      0
+      mask)))
+
+;; Registers the current site must leave alone whatever occupancy says: the
+;; instruction's reserved homes and, on a phi edge, the edge's placed values.
+(define (compiler-backend-scavenge-reserved-mask
+  [function-state : be_state.CompilerBackendFunctionState]) : i64
+  (bit-or
+    (be_state.compiler-backend-function-scratch-i64
+      function-state
+      be_state.compiler-backend-scratch-i64-current-instr-reserved-mask)
+    (compiler-backend-scavenge-phi-edge-mask function-state)))
+
 (define (compiler-backend-scavenge-candidate-ok?
   [function-state : be_state.CompilerBackendFunctionState]
   [occupied-mask : i64]
@@ -4305,9 +4334,7 @@
         (bit-and
           (bit-or
             exclude-mask
-            (be_state.compiler-backend-function-scratch-i64
-              function-state
-              be_state.compiler-backend-scratch-i64-current-instr-reserved-mask))
+            (compiler-backend-scavenge-reserved-mask function-state))
           bit)
         0)
       (or
@@ -4347,9 +4374,7 @@
     (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback)
     (=
       (bit-and
-        (be_state.compiler-backend-function-scratch-i64
-          function-state
-          be_state.compiler-backend-scratch-i64-current-instr-reserved-mask)
+        (compiler-backend-scavenge-reserved-mask function-state)
         (compiler-backend-scavenge-reg-bit fallback))
       0)))
 
@@ -4384,9 +4409,7 @@
             (bit-and
               (bit-or
                 exclude-mask
-                (be_state.compiler-backend-function-scratch-i64
-                  function-state
-                  be_state.compiler-backend-scratch-i64-current-instr-reserved-mask))
+                (compiler-backend-scavenge-reserved-mask function-state))
               (compiler-backend-scavenge-reg-id-bit (array-ref cands i)))
             0))
           (set! found i)
@@ -4518,7 +4541,9 @@
           (compiler_abi.compiler-abi-register-spelling (array-ref cands emidx)))))))
 
 ;; Pick a register free at `point`: prefer `fallback`, else the first usable
-;; pool candidate, else `fallback` (degraded -- a no-free-register case).
+;; pool candidate, else `fallback` (degraded -- a no-free-register case). The
+;; preferred fallback is refused while it holds a placed phi-edge value, which
+;; occupancy cannot see (compiler-backend-scavenge-phi-edge-mask).
 (define (compiler-backend-scavenge-pick-with-mask
   [function-state : be_state.CompilerBackendFunctionState]
   [commit : bool]
@@ -4535,7 +4560,10 @@
         (& compiler-backend-scavenge-candidate-pool))]
     (if (and
       (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-      (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
+      (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback)
+      (compiler-backend-scavenge-reg-free-in-mask?
+        (compiler-backend-scavenge-phi-edge-mask function-state)
+        fallback))
       fallback
       (compiler-backend-scavenge-pick-iter
         function-state
@@ -4564,7 +4592,10 @@
       (compiler-backend-scavenge-exclude-mask (& exclude) exclude-n)]
     (if (and
       (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-      (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback))
+      (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback)
+      (compiler-backend-scavenge-reg-free-in-mask?
+        (compiler-backend-scavenge-phi-edge-mask function-state)
+        fallback))
       fallback
       (compiler-backend-scavenge-pick-iter
         function-state
@@ -4599,9 +4630,7 @@
         (and
           (= (bit-and (bit-or occupied-mask exclude-mask) fallback-bit) 0)
           (compiler-backend-scavenge-reg-free-in-mask?
-            (be_state.compiler-backend-function-scratch-i64
-              function-state
-              be_state.compiler-backend-scratch-i64-current-instr-reserved-mask)
+            (compiler-backend-scavenge-reserved-mask function-state)
             fallback))
         (>=
           (compiler-backend-scavenge-first-ok-index

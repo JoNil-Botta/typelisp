@@ -25,13 +25,22 @@ step prebuilt-compile
 run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} -o "{{dir}}/prebuilt.s"
 stderr empty
 in file {{dir}}/prebuilt.s
-contains _tl___tl_mod_init_stdlib
+contains .extern _tl_stdlib_io_stdlib_io_
 not-contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains _tl___tl_mod_init_stdlib
+step prebuilt-compile-opt2
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 2 -o "{{dir}}/prebuilt-o2.s"
+stderr empty
+in file {{dir}}/prebuilt-o2.s
+contains .extern _tl_stdlib_io_stdlib_io_
+not-contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains _tl___tl_mod_init_stdlib
 step source-compile
 run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --no-prebuilt-stdlib -o "{{dir}}/source.s"
 stderr empty
 in file {{dir}}/source.s
 contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains .extern _tl_stdlib_io_stdlib_io_
 not-contains _tl___tl_mod_init_stdlib
 step prebuilt-run
 run run "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl"
@@ -75,14 +84,16 @@ step pristine-root
 run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 1 --stdlib-root "{{root}}/stdlib" -o "{{dir}}/pristine.s"
 stderr empty
 in file {{dir}}/pristine.s
-contains _tl___tl_mod_init_stdlib
+contains .extern _tl_stdlib_io_stdlib_io_
 not-contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains _tl___tl_mod_init_stdlib
 sh mkdir -p "{{dir}}/modified-root" && cp "{{root}}/stdlib/io.tl" "{{dir}}/modified-root/io.tl" && printf '\n(define (prebuilt-root-probe) : i64 1)\n' >> "{{dir}}/modified-root/io.tl"
 step modified-root
 run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 1 --stdlib-root "{{dir}}/modified-root" -o "{{dir}}/modified.s"
 stderr empty
 in file {{dir}}/modified.s
 contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains .extern _tl_stdlib_io_stdlib_io_
 not-contains _tl___tl_mod_init_stdlib
 sh mkdir -p "{{dir}}/modified-nested-root/net" && cp "{{root}}/stdlib/net/ip.tl" "{{dir}}/modified-nested-root/net/ip.tl" && printf '\n(define (prebuilt-nested-root-probe) : i64 1)\n' >> "{{dir}}/modified-nested-root/net/ip.tl"
 step modified-nested-root
@@ -90,6 +101,7 @@ run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{
 stderr empty
 in file {{dir}}/modified-nested.s
 contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains .extern _tl_stdlib_io_stdlib_io_
 not-contains _tl___tl_mod_init_stdlib
 
 # An explicit sysroot without the archive is a clean error at every level.

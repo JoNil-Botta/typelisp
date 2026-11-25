@@ -4079,7 +4079,8 @@
     i64
     ast.AstExternLinkInputList
     bool
-    CompilerIrReturnStorage))
+    CompilerIrReturnStorage
+    bool))
 
 (defstruct CompilerIrExternSeq
   (slots (__tl_dyn-array CompilerIrExtern))
@@ -4695,11 +4696,22 @@
     (while (< i externs.len)
       (begin
         (match (compiler-ir-extern-seq-ref externs i)
-          [(CompilerIrExtern.Extern name _ _ signature abi _ _ provided storage)
-            ;; A provided export also has a definition with this identity;
-            ;; the definition is authoritative for internal calls.
-            (unless
+          [(CompilerIrExtern.Extern
+              name
+              _
+              _
+              signature
+              abi
+              _
+              _
               provided
+              storage
+              body-available)
+            ;; A provided export or available-externally body also has a
+            ;; definition with this identity; the definition is authoritative
+            ;; for internal calls.
+            (unless
+              (or provided body-available)
               (let
                 [budget : i64 4096]
                 (unless
@@ -4750,14 +4762,23 @@
                             index.problem
                             "return-storage differs from internal extern declaration")]
                         [else unit]))])
-                (compiler-ir-return-storage-index-add!
-                  bases
-                  (&mut index)
-                  (CompilerIrReturnStorageDeclaration
-                    name
-                    signature
-                    (ast.ast-extern-abi-c? abi)
-                    storage))))])
+                (let
+                  [decl-signature : ast.AstType
+                    (if (ast.ast-extern-abi-c? (& abi))
+                      signature
+                      (match (& storage)
+                        [(CompilerIrReturnStorage.Some boxed)
+                          (ast.clone-ast-type
+                            (& (deref boxed).source-signature))]
+                        [(CompilerIrReturnStorage.None) signature]))]
+                  (compiler-ir-return-storage-index-add!
+                    bases
+                    (&mut index)
+                    (CompilerIrReturnStorageDeclaration
+                      name
+                      decl-signature
+                      (ast.ast-extern-abi-c? abi)
+                      storage)))))])
         (set! i (+ i 1))))
     index))
 
@@ -6387,7 +6408,8 @@
     name-id
     (ast.ast-extern-link-input-list-new)
     false
-    (CompilerIrReturnStorage.None)))
+    (CompilerIrReturnStorage.None)
+    false))
 
 (define (compiler-ir-clone-value [value : (& CompilerIrValue)]) : CompilerIrValue
   (match value
@@ -6784,7 +6806,8 @@
         symbol-id
         links
         provided
-        storage)
+        storage
+        body-available)
       (Extern
         name-id
         source-name-id
@@ -6794,7 +6817,8 @@
         symbol-id
         (clone-ast-extern-link-input-list (& links))
         provided
-        (compiler-ir-clone-return-storage pools storage))]))
+        (compiler-ir-clone-return-storage pools storage)
+        body-available)]))
 
 (define (compiler-ir-clone-extern-seq
   [pools : ast.AstNodePoolContext]
@@ -7415,7 +7439,8 @@
         symbol-id
         links
         provided
-        storage)
+        storage
+        body-available)
       (Extern
         name-id
         source-name-id
@@ -7425,7 +7450,8 @@
         symbol-id
         (clone-ast-extern-link-input-list links)
         provided
-        (clone-compiler-ir-return-storage storage))]))
+        (clone-compiler-ir-return-storage storage)
+        body-available)]))
 
 (define (clone-compiler-ir-extern-seq [seq : (& CompilerIrExternSeq)]) : CompilerIrExternSeq
   (let
@@ -8970,7 +8996,7 @@
   [type-segment-bases : i64]
   [extern : (& CompilerIrExtern)]) : String
   (match (owned_view.compiler-owned-reference-shared-view extern)
-    [(Extern name _ symbol ty abi _ _ weak storage)
+    [(Extern name _ symbol ty abi _ _ weak storage _)
       (str_cat.str-cat
         "extern @"
         (compiler-ir-symbol-text name)
@@ -11637,7 +11663,7 @@
   (if (>= position externs.len)
     index
     (match (compiler-ir-extern-seq-borrow externs position)
-      [(Extern _ _ _ ty abi _ _ _ _)
+      [(Extern _ _ _ ty abi _ _ _ _ _)
         (compiler-ir-representation-collect-one-externs-from
           type-segment-bases
           require-layout

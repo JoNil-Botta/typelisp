@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/c40_loop_layout.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Loop-exit and guard-return sinking are pinned through opt2 assembly-shape cases.

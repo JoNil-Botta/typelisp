@@ -8,3 +8,8 @@ stdlib.eq/inline-eq	3	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	d
 stdlib.eq/enum-eq-payloads	3	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.eq/enum-eq-dispatch	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.eq/eq	1	fixed	module	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
+stdlib.eq/owner-eq	3	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
+stdlib.eq/owner-hook-name	3	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
+stdlib.eq/owner-hook-call	5	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
+stdlib.eq/gen	1	fixed	decls	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly
+stdlib.eq/gen-named	2	fixed	decls	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly

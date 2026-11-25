@@ -1249,6 +1249,9 @@
 (defstruct Pair
   (value i64))
 
+(define (eq-pair [left : (& left Pair)] [right : (& right Pair)]) : bool
+  (= left.value right.value))
+
 (defmacro (slice-user [T : type]) : Module
   (let
     [module-name : Expr

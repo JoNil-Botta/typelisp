@@ -1,6 +1,7 @@
 ;; #9257: Safe `vector` `get` and `last` on move-only owning aggregates and
 ;; `String` must return independent deep copies and never alias the vector's
 ;; live slots.
+(import stdlib.eq)
 (import stdlib.clone)
 (import stdlib.string)
 (import stdlib.vector)
@@ -10,6 +11,8 @@
   (count i64))
 
 (clone.gen-clone NamedCell)
+
+(eq.gen NamedCell)
 
 (import (vector.vector NamedCell) as nvec)
 (import (vector.vector String) as svec)

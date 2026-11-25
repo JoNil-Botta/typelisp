@@ -23,9 +23,12 @@
 ;# helpers. Core mode does not construct iterator, clone/pop, map/fold,
 ;# reverse, or contains declarations, so non-cloneable aggregate elements
 ;# remain usable.
-;# Full mode instantiates `stdlib.eq` structural equality for `contains?`;
-;# element types unsupported by generated equality can still use core mode
-;# when containment and the other full helpers are not required.
+;# Full mode instantiates the `(eq.eq T)` adapter for the borrowed
+;# `(contains? (& v) (& x))` and for `eq-vec`, the canonical owner equality hook
+;# of the generated `Vec`, so a nominal element type needs its owner's
+;# `eq-<kebab-name>` hook (from `(eq.gen T)` or written by hand). Element types
+;# without equality can still use core mode when containment and the other full
+;# helpers are not required.
 ;#
 ;# Generated family metadata is type-agnostic. Struct and enum element
 ;# instantiations use the same private dynamic storage and
@@ -99,7 +102,7 @@
 ;: `set!`, and `push!` plus their shared storage/growth helpers. Core mode is
 ;: suitable for append-oriented compiler-private collections and does not
 ;: instantiate clone-dependent operations such as `from-slice`, `pop!`, or
-;: generated equality for `contains?`.
+;: the `(eq.eq T)` equality behind `contains?` and `eq-vec`.
 ;: The kind constraint is the complete storable `type-kind` vocabulary.
 ;: Future kinds must be added here when vector backing storage supports them;
 ;: `never`, `region`, and unresolved `type-var` are intentionally excluded.
@@ -701,9 +704,34 @@
                   (match kind
                     ["string" (expr-var "str")]
                     [_ `,T])]
+                ;; A unit value has no reference form, so the equality hook
+                ;; takes unit elements by value.
+                [unit-element? : bool (string-eq kind "unit")]
+                ;; A bare `unit` is not a type argument; pass it as a type
+                ;; literal.
+                [eq-type-arg : Expr
+                  (if unit-element?
+                    (comptime.type-expr T)
+                    T)]
+                [contains-item-type : Expr
+                  (if unit-element?
+                    T
+                    `(& x ,iter-item-type))]
+                [contains-slot : Expr
+                  (if unit-element?
+                    `(array-ref v.slots index)
+                    `(& (array-ref v.slots index)))]
+                [left-slot : Expr
+                  (if unit-element?
+                    `(array-ref left.slots index)
+                    `(& (array-ref left.slots index)))]
+                [right-slot : Expr
+                  (if unit-element?
+                    `(array-ref right.slots index)
+                    `(& (array-ref right.slots index)))]
                 `(begin
                   (module ,module-name)
-                  (import (eq.eq ,T) as value_eq)
+                  (import (eq.eq ,eq-type-arg) as value_eq)
                   ,@core
                   (define (copy-from-slice!
                     [out : (&mut out ,vec-name)]
@@ -905,19 +933,35 @@
                         out)))
                   (define (map [v : (& v ,vec-name)] [mapper : (-> ,T ,T)]) : ,vec-name
                     (map-from v 0 mapper))
-                  (define (contains-from?
+                  (define (contains?
                     [v : (& v ,vec-name)]
-                    [x : ,T]
-                    [index : i64]) : bool
-                    (if (>= index (len v))
-                      false
-                      (if (value_eq.eq
-                        (stdlib.clone.deep (array-ref v.slots index))
-                        (stdlib.clone.deep x))
-                        true
-                        (contains-from? v x (+ index 1)))))
-                  (define (contains? [v : (& v ,vec-name)] [x : ,T]) : bool
-                    (contains-from? v x 0)))))]
+                    [x : ,contains-item-type]) : bool
+                    (let
+                      [index : i64 0]
+                      [found : bool false]
+                      (while (if found
+                        false
+                        (< index (len v)))
+                        (if (value_eq.eq ,contains-slot x)
+                          (set! found true)
+                          (set! index (+ index 1))))
+                      found))
+                  ;; The canonical owner equality hook of this module's `Vec`,
+                  ;; so a nominal type holding a vector can `(eq.gen T)`.
+                  (define (eq-vec
+                    [left : (& left ,vec-name)]
+                    [right : (& right ,vec-name)]) : bool
+                    (let
+                      [count : i64 (len left)]
+                      [index : i64 0]
+                      [same : bool (= count (len right))]
+                      (while (if same
+                        (< index count)
+                        false)
+                        (if (value_eq.eq ,left-slot ,right-slot)
+                          (set! index (+ index 1))
+                          (set! same false)))
+                      same)))))]
           [_ (comptime-error "vector: internal core declaration shape")]))
         [(Expr.Begin selected-decls)
           `(begin

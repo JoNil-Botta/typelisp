@@ -238,21 +238,18 @@
               (string.copy (& (array-ref directory.entries index).name))
               ": "
               failure.message))]))
-    (let
-      [bundle : tli.TliBundle
-        (tli.TliBundle
-          directory.flags
-          directory.compiler-build
-          directory.target-triple
-          modules)]
-      [reencoded : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
-      (when
-        (!= (array-length reencoded) (array-length bytes))
-        (io.panic "re-encoded TLI length changed"))
-      (for [index (iterator.range 0 (array-length bytes))]
-        (when
-          (!= (array-ref reencoded index) (array-ref bytes index))
-          (io.panic "re-encoded TLI bytes changed"))))
+    (match (codec.tli-decode-bundle (& bytes))
+      [(Err failure) (io.panic failure.message)]
+      [(Ok bundle)
+        (let
+          [reencoded : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
+          (when
+            (!= (array-length reencoded) (array-length bytes))
+            (io.panic "re-encoded TLI length changed"))
+          (for [index (iterator.range 0 (array-length bytes))]
+            (when
+              (!= (array-ref reencoded index) (array-ref bytes index))
+              (io.panic "re-encoded TLI bytes changed"))))])
     (io.println
       "{}/{} source modules and {} generated modules, {} bytes, bit-identical. imports={} inits={} types={} functions={} values={} macros={} dispatches={}"
       expected-source-modules

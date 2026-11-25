@@ -1,0 +1,4 @@
+# Native integration cases for C36 .tli v3 compact_ir O2 and non-entry SPMD foreach.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+c36_spmd_non_entry_clamp|all|0,1,2|tests/integration/c36_spmd_non_entry_clamp.tl|42|-|-|c36_spmd_non_entry_clamp_lib.tl|-

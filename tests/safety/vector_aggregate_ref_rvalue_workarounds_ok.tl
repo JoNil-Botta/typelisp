@@ -1,11 +1,15 @@
 ;; Both documented workarounds keep aggregate vector reads usable.
+(import stdlib.eq)
 (import stdlib.comptime)
 (import stdlib.vector)
-(import (vector.vector Ball) as bvec)
 
 (defstruct Ball
   (x i64)
   (y i64))
+
+(eq.gen Ball)
+
+(import (vector.vector Ball) as bvec)
 
 (defstruct World
   (balls bvec.Vec))

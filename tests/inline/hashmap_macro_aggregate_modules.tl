@@ -1,4 +1,6 @@
 ;; hashmap_macro_aggregate_modules.tl - aggregate generated-module hashmap surfaces (#3761).
+(import stdlib.hash)
+(import stdlib.eq)
 (import stdlib.clone)
 (import stdlib.test)
 (import stdlib.hashmap)
@@ -13,12 +15,20 @@
 
 (stdlib.clone.gen-clone GenericHashKeyTag)
 
+(eq.gen GenericHashKeyTag)
+
+(hash.gen GenericHashKeyTag)
+
 (defstruct GenericHashKey
   (pair (Tuple i32 bool))
   (codes (Array u8 3))
   (tag GenericHashKeyTag))
 
 (stdlib.clone.gen-clone GenericHashKey)
+
+(eq.gen GenericHashKey)
+
+(hash.gen GenericHashKey)
 
 (import (hashmap.hashmap String hashmap.HashPayload) as map_string_payload)
 (import (hashmap.hashmap i64 hashmap.HashState) as map_i64_state)

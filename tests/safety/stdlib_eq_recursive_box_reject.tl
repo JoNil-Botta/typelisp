@@ -4,6 +4,8 @@
 (defstruct EqRecursiveNode
   (next (Box EqRecursiveNode)))
 
+(eq.gen EqRecursiveNode)
+
 (import (eq.eq EqRecursiveNode) as recursive-node-eq)
 
 (define (main) : i64

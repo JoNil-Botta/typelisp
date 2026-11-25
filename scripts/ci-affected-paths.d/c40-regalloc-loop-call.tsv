@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/scavenge_phi_edge_liveness.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.

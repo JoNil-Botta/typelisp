@@ -1,0 +1,17 @@
+# opt2 assembly-shape gates for scavenge occupancy (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+
+# The variable shift seeding the rotated loop's estimate takes a FREE scratch:
+# no emergency save/restore through the frame between the shift and the loop.
+# Baseline liveness kept the loop counter's back-edge phi input live from
+# function entry, so its register read occupied there and the scratch pick
+# spilled and reloaded it for nothing.
+case scavenge-phi-edge-liveness
+source tests/integration/scavenge_phi_edge_liveness.tl
+in fn _tl_scavenge_phi_edge_liveness_pairs
+count >= 1 ^[[:space:]]+shlq %cl, %r
+narrow ranges:shlq %cl, %r~_rotate_land:$
+not-match \(%rsp\)

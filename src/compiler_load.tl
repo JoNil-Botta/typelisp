@@ -1228,6 +1228,11 @@
         [addr : i64
           (unsafe
             (cast (ptr->int (__tl_array-data cell)) : i64))]
+        (set!
+          (array-ref cell 0).facts.catalog-ptr
+          (+
+            addr
+            (comptime (offset-of (type CompilerLoadTliCatalogBox) catalog))))
         (unsafe
           (arena.tl_arena_set enclosing)
           (ptr-write!
@@ -1292,6 +1297,23 @@
             (+
               addr
               (comptime (offset-of (type CompilerLoadTliCatalogBox) facts)))
+            0))))))
+
+(define (compiler-load-session-state-tli-catalog-ptr
+  [state : (& CompilerLoadSessionState)]) : i64
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      0
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (if (> holder.facts.hydrated-module-count 0)
+            (+
+              addr
+              (comptime (offset-of (type CompilerLoadTliCatalogBox) catalog)))
             0))))))
 
 (define (compiler-load-tli-addr-has-module?

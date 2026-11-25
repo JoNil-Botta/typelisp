@@ -12,3 +12,14 @@
 
 (define (untagged [n : i64]) : Tagged
   (Tagged (opt.none) n))
+
+;: Owner equality: the generated Option family has no hook, so compare by hand.
+(define (eq-tagged [left : (& left Tagged)] [right : (& right Tagged)]) : bool
+  (and
+    (= left.n right.n)
+    (match left.tag
+      [(opt.Option.Some l)
+        (match right.tag
+          [(opt.Option.Some r) (= l r)]
+          [opt.Option.None false])]
+      [opt.Option.None (opt.is-none? (& right.tag))])))

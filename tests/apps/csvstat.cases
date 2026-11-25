@@ -166,7 +166,7 @@ step check-fails
 run check
 exit nonzero
 stderr contains error[E0206]
-stderr match ^  --> src[/\\]main\.tl:45:58$
+stderr match ^  --> src[/\\]main\.tl:48:58$
 stderr contains (io.read-stdin-bytes true)
 step build-fails
 run build

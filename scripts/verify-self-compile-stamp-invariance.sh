@@ -12,7 +12,8 @@ cd "$ROOT"
 # These are the shared inputs/handoffs rewritten or removed by the nested
 # bootstrap and measurement. Preserve entire input directories, not just the
 # files a successful run happens to produce. Absence is part of the snapshot.
-STAMP_INPUTS='target/embedded-stdlib-tlci
+STAMP_INPUTS='target/bootstrap-fixpoint
+target/embedded-stdlib-tlci
 target/build-stage0/git-hash.txt
 target/build-stage0/tree-hash.txt
 target/ci-verify-stage1.path
@@ -77,9 +78,10 @@ stamp_restore_self_test() {
     for _st_optional in ci-verify-opt2-reference.path ci-verify-compile-profile-cli.path; do
         _st_case="$_st_dir/$_st_optional"
         _st_root="$_st_case/root"
-        mkdir -p "$_st_root/target/embedded-stdlib-tlci" \
+        mkdir -p "$_st_root/target/bootstrap-fixpoint" \
+            "$_st_root/target/embedded-stdlib-tlci" \
             "$_st_root/target/build-stage0" "$_st_root/target/self-compile/measurement"
-        for _st_path in embedded-stdlib-tlci/stdlib.tlci.tlch \
+        for _st_path in bootstrap-fixpoint/stage3 embedded-stdlib-tlci/stdlib.tlci.tlch \
             embedded-stdlib-tlci/source-hash.txt build-stage0/git-hash.txt \
             build-stage0/tree-hash.txt self-compile/measurement/record.tsv \
             ci-verify-stage1.path ci-verify-stage2.path "$_st_optional"; do
@@ -91,6 +93,9 @@ stamp_restore_self_test() {
         (
             set -e
             trap 'stamp_state restore "$_st_root" "$_st_case/snapshot"' EXIT
+            rm -rf "$_st_root/target/bootstrap-fixpoint"
+            mkdir -p "$_st_root/target/bootstrap-fixpoint"
+            printf 'partial compiler' > "$_st_root/target/bootstrap-fixpoint/stage3"
             printf 'partial image' > "$_st_root/target/embedded-stdlib-tlci/stdlib.tlci.tlch"
             printf 'partial hash' > "$_st_root/target/embedded-stdlib-tlci/source-hash.txt"
             printf 'new artifact' > "$_st_root/target/embedded-stdlib-tlci/extra"
@@ -175,21 +180,24 @@ trap 'exit 1' INT TERM HUP
 trap restore EXIT
 
 git -c advice.detachedHead=false checkout --quiet --detach "$COMMIT_B"
-# A fresh work directory and the same retained seed; no output from the first
-# bootstrap can satisfy the second bootstrap's fixpoint or provenance checks.
+# The same retained seed and the same work directory, which the bootstrap wipes
+# first; no output from the first bootstrap can satisfy the second bootstrap's
+# fixpoint or provenance checks. Measured work depends on the compiler's own
+# path (sysroot discovery), so both compilers must run from one path.
 stamp_run_logged "$OUT/bootstrap-b.log" \
     env -u BASH_ENV scripts/run-memory-bounded.sh --limit-mib 6144 \
     --timeout-seconds 1800 --report "$OUT/bootstrap-b.memory" -- \
-    env -u BASH_ENV TYPELISP_BIN="$SEED" \
+    env -u BASH_ENV -u TYPELISP_CI_LOCAL_CACHE -u TYPELISP_BOOTSTRAP_WORKDIR \
+    TYPELISP_BIN="$SEED" \
     TYPELISP_INLINE_TEST_WORKERS=1 TYPELISP_BUILD_INVARIANCE_WORKERS=1 \
-    TYPELISP_BOOTSTRAP_WORKDIR="$OUT/bootstrap-b" \
     scripts/ci-verify.sh --gates bootstrap-fixpoint
 COMPILER_B=$(cat target/ci-verify-stage2.path)
-cmp "$OUT/bootstrap-b/stage2.s" "$OUT/bootstrap-b/stage3.s"
-cmp "$COMPILER_B" "$OUT/bootstrap-b/stage3"
+[ "$COMPILER_B" = "$COMPILER_A" ]
+cmp target/bootstrap-fixpoint/stage2.s target/bootstrap-fixpoint/stage3.s
+cmp "$COMPILER_B" target/bootstrap-fixpoint/stage3
 [ "$("$COMPILER_B" --producer-identity)" = "$TREE" ]
 cp "$COMPILER_B" "$OUT/b-stage2"
-cp "$OUT/bootstrap-b/stage2.s" "$OUT/b-stage2.s"
+cp target/bootstrap-fixpoint/stage2.s "$OUT/b-stage2.s"
 cp target/embedded-stdlib-tlci/stdlib.tlci "$OUT/b.tlci"
 cp target/embedded-stdlib-tlci/stdlib.tlci.tlch "$OUT/b.tlch"
 cmp "$OUT/a.tlci" "$OUT/b.tlci"

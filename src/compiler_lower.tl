@@ -4831,7 +4831,7 @@
     [(Package _ _ canonical-name _)
       (lower-derived-symbol-id
         (compiler-lower-state-intern-id-str lower-state canonical-name))]
-    [(No)
+    [(or (No) (Inline _ _ _))
       (let
         [direct : bool (lower-logical-symbol-id-direct? logical-id source-id)]
         [link-id : i64
@@ -9422,9 +9422,24 @@
         (Ok (Some handle params ret body)))]
     [(Extern _ _ (Function) metadata ty)
       (match (ast.ast-extern-metadata-imported-spmd (deref metadata))
-        [(No) (Ok (No))]
+        [(No)
+          (let
+            [canonical-id : i64
+              (tc_core.tc-tli-hydrated-decl-canonical-id
+                ctx
+                (csym.compiler-symbol-handle-index handle))]
+            (match (tc_core.tc-tli-hydrated-spmd-inline ctx canonical-id)
+              [(Inline params ret body-id)
+                (let
+                  [body : ast.AstExpr (lower-context-expr-get ctx body-id)]
+                  (Ok (Some handle params ret body)))]
+              [_ (Ok (No))]))]
         [(Package owner version canonical-name callables)
-          (Ok (Imported owner version canonical-name ty callables))])]
+          (Ok (Imported owner version canonical-name ty callables))]
+        [(Inline params ret body-id)
+          (let
+            [body : ast.AstExpr (lower-context-expr-get ctx body-id)]
+            (Ok (Some handle params ret body)))])]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]
@@ -9514,9 +9529,13 @@
           (cond
             [(not (csym.compiler-symbols-handle-found? handle)) (Ok (No))]
             [(and
-              (=
-                (csym.compiler-symbol-handle-kind handle)
-                (csym.compiler-symbol-kind-function-define))
+              (or
+                (=
+                  (csym.compiler-symbol-handle-kind handle)
+                  (csym.compiler-symbol-kind-function-define))
+                (=
+                  (csym.compiler-symbol-handle-kind handle)
+                  (csym.compiler-symbol-kind-extern)))
               (let
                 [helper-stack
                   (compiler-lower-function-state-inline-helper-stack
@@ -72032,6 +72051,28 @@
         (csym.compiler-symbol-handle-kind handle)
         (csym.compiler-symbol-kind-function-define)))))
 
+;; Prebuilt `.tli` TypeLisp-ABI extern functions share the exact TypeLisp
+;; internal return-storage ABI with local `define` functions.
+(define (lower-symbol-typelisp-extern-function-id?
+  [ctx : tc_core.TcContext]
+  [name-id : i64]) : bool
+  (let
+    [handle : i64
+      (csym.compiler-symbols-lookup-value-id-or
+        (tc_core.tc-context-symbols ctx)
+        name-id
+        (csym.compiler-symbols-missing-handle))]
+    (and
+      (csym.compiler-symbols-handle-found? handle)
+      (=
+        (csym.compiler-symbol-handle-kind handle)
+        (csym.compiler-symbol-kind-extern))
+      (lower-symbol-function-value-id? ctx name-id)
+      (not (lower-extern-value-decl-id? ctx name-id))
+      (match (tc_core.tc-call-extern-abi-for-name-id ctx name-id)
+        [(Some (ast.AstExternAbi.TypeLisp)) true]
+        [_ false]))))
+
 (define (lower-tail-call-compatible-return?
   [ctx : tc_core.TcContext]
   [callee-ret : ast.AstType]
@@ -72375,7 +72416,10 @@
     ;; closures, whose call must go through an INDIRECT load of the variable
     ;; (emitting a direct symbol call there would call into data). Same eligibility
     ;; rule `lower-tail-call-direct-supported?` uses for direct TCO.
-    (not (lower-symbol-function-define-id? ctx name-id))
+    (not
+      (or
+        (lower-symbol-function-define-id? ctx name-id)
+        (lower-symbol-typelisp-extern-function-id? ctx name-id)))
     (lower-bytes-view-from-parts-name? (lower-global-shared-view name))
     (lower-c-abi-extern-call?
       ctx
@@ -75875,7 +75919,8 @@
             archive-sym-id
             (ast.ast-extern-link-input-list-new)
             false
-            storage))))))
+            storage
+            false))))))
 
 (define (lower-struct-cleanup-decl
   [ctx : tc_core.TcContext]
@@ -77891,7 +77936,8 @@
                           (ast.ast-extern-metadata-link-inputs
                             (lower-box-shared-view metadata))
                           false
-                          storage))
+                          storage
+                          false))
                       (set! cur-decls rest))))]
               [(DefFn decl-meta name params ret body-box metadata)
                 (let
@@ -78006,7 +78052,8 @@
                                         (ci.intern-id-value symbol)
                                         (ast.ast-extern-link-input-list-new)
                                         true
-                                        (ir.CompilerIrReturnStorage.None)))])]
+                                        (ir.CompilerIrReturnStorage.None)
+                                        false))])]
                               (begin
                                 (cfg
                                   compile-profile

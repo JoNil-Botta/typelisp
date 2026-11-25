@@ -908,6 +908,16 @@
 
 (clone.gen-clone CompilerObjectElfRange)
 
+;; The owner equality hook the full-mode vector shared with `stdlib.sort.vec`
+;; requires.
+(define (eq-compiler-object-elf-range
+  [left : (& left CompilerObjectElfRange)]
+  [right : (& right CompilerObjectElfRange)]) : bool
+  (and
+    (= left.section right.section)
+    (= left.start right.start)
+    (string.eq (& left.name) (& right.name))))
+
 (import (stdlib.vector.vector CompilerObjectElfRange) as range_vec)
 (import (stdlib.sort.vec CompilerObjectElfRange) as range_sort)
 

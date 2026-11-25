@@ -133,6 +133,16 @@
   (Ok CompilerIncrementalTraceLogicalKey)
   (Err CompilerIncrementalTraceError))
 
+;; The owner equality hook the full-mode vector shared with `stdlib.sort.vec`
+;; requires.
+(define (eq-compiler-incremental-trace-record
+  [left : (& left CompilerIncrementalTraceRecord)]
+  [right : (& right CompilerIncrementalTraceRecord)]) : bool
+  (and
+    (string.eq (& left.key) (& right.key))
+    (string.eq (& left.observation) (& right.observation))
+    (= left.kind right.kind)))
+
 (import (stdlib.vector.vector CompilerIncrementalTraceRecord) as trace_record_vec)
 (import (stdlib.sort.vec CompilerIncrementalTraceRecord) as trace_record_sort)
 

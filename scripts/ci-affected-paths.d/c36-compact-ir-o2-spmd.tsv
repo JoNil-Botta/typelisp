@@ -1,0 +1,2 @@
+path	required	advisory	reason
+src/compiler_tli_compact_ir.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Compact IR v3 producer and O1/O2 consumer hydration.

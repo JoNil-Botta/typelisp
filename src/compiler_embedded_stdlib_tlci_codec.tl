@@ -16,7 +16,7 @@
   (Ok lzss.CompilerLzssModel))
 
 (define (compiler-embedded-stdlib-tlci-codec-prefix) : String
-  "__typelisp_embedded_stdlib_tlci_v3__")
+  "__typelisp_embedded_stdlib_tlci_v4__")
 
 ;; magic(36) + raw, index end, count, hash, stream bytes, groups (6 * 8).
 (define (compiler-embedded-stdlib-tlci-codec-header-bytes) : i64
@@ -32,6 +32,11 @@
   32)
 
 (define (compiler-embedded-stdlib-tlci-codec-record-bytes) : i64
+  80)
+
+;; A frame record ends with the SHA-256 of the frame's expanded image, so the
+;; image identity a `.tli` macro handle pins is read without expanding it.
+(define (compiler-embedded-stdlib-tlci-codec-record-sha256-offset) : i64
   48)
 
 ;; Frames per group after the first: frame zero is decoded on its own, so a

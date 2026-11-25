@@ -1040,11 +1040,11 @@ file repo/fake-seed
 #!/usr/bin/env sh
 set -eu
 
-printf 'seed' >> "$OPT2_HANDOFF_TEST_LOG"
+_log_line="seed"
 for arg in "$@"; do
-    printf '|%s' "$arg" >> "$OPT2_HANDOFF_TEST_LOG"
+    _log_line="$_log_line|$arg"
 done
-printf '\n' >> "$OPT2_HANDOFF_TEST_LOG"
+printf '%s\n' "$_log_line" >> "$OPT2_HANDOFF_TEST_LOG"
 
 command=${1:-}
 case "$command" in
@@ -1080,11 +1080,11 @@ file repo/fake-generated
 #!/usr/bin/env sh
 set -eu
 
-printf 'generated' >> "$OPT2_HANDOFF_TEST_LOG"
+_log_line="generated"
 for arg in "$@"; do
-    printf '|%s' "$arg" >> "$OPT2_HANDOFF_TEST_LOG"
+    _log_line="$_log_line|$arg"
 done
-printf '\n' >> "$OPT2_HANDOFF_TEST_LOG"
+printf '%s\n' "$_log_line" >> "$OPT2_HANDOFF_TEST_LOG"
 
 [ "${1:-}" = compile ] || exit 1
 out=""

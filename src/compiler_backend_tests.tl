@@ -5731,6 +5731,14 @@
   [source : String]
   [target : be_state.CompilerBackendTarget]
   [emit-entry : bool]) : be_state.ResultCompilerBackend
+  (compiler-backend-emit-source-opt2-sized source target emit-entry false))
+
+;; The opt2 IR emitted as `-O2` or, with `size?`, as `-Os`.
+(define (compiler-backend-emit-source-opt2-sized
+  [source : String]
+  [target : be_state.CompilerBackendTarget]
+  [emit-entry : bool]
+  [size? : bool]) : be_state.ResultCompilerBackend
   (match (backend.compiler-backend-lower-source-for-target source target)
     [(Ok program spans lower-owner)
       (let
@@ -5744,6 +5752,9 @@
                 (be_state.compiler-backend-state-set-scalar-registers-enabled!
                   backend-state
                   true)
+                (be_state.compiler-backend-state-set-optimize-for-size!
+                  backend-state
+                  size?)
                 (compiler-backend-test-emit-program-with-state
                   backend-state
                   target
@@ -37904,6 +37915,99 @@ entry:
           (asm-lacks? body "__shrinkwrap")))]
     [(Err _) false]))
 
+;; C40 early-return guard flip. At -O2 on Linux each form (a) guard falls
+;; through to the next guard or the saving block, and the bare-return clones
+;; move after the function's last block. -Os and Win64 keep the bare clones
+;; inline ahead of the saving block, and so does a guard whose early return
+;; the opcode heuristic predicts taken.
+(define compiler-backend-shrinkwrap-flip-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define (flip-guards [a : i64] [b : i64] [c : i64] [d : i64]) : i64
+  (if (>= a b)
+    1
+    (if (< c d)
+      (+ (opaque a) (opaque (opaque c)))
+      0)))
+(define (main) : i64 (flip-guards (opaque 1) 2 3 4))")
+
+;; `x > 0` predicts its TRUE arm, here the early return.
+(define compiler-backend-shrinkwrap-flip-veto-source : String
+  "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
+(define (flip-veto [x : i64] [y : i64]) : i64
+  (if (> x 0)
+    y
+    (+ (opaque x) (opaque (opaque y)))))
+(define (main) : i64 (flip-veto (opaque 1) 2))")
+
+(define (compiler-backend-shrinkwrap-flip-body
+  [source : (& source str)]
+  [target : be_state.CompilerBackendTarget]
+  [size? : bool]
+  [symbol : String]) : String
+  (match (compiler-backend-emit-source-opt2-sized
+    (string.copy source)
+    target
+    true
+    size?)
+    [(Ok asm) (compiler-backend-asm-function-body asm symbol)]
+    [(Err _) ""]))
+
+;; Flipped: the bare clones come after the saving block, which no guard jumps
+;; to. Otherwise every bare clone comes before it.
+(define (compiler-backend-shrinkwrap-flip-shape?
+  [body : String]
+  [flipped? : bool]) : bool
+  (let
+    [save : i64
+      (backend.compiler-backend-string-find-from body "__shrinkwrap_save:\n" 0)]
+    [first-bare : i64
+      (backend.compiler-backend-string-find-from body "__shrinkwrap_bare0:\n" 0)]
+    [after-save : i64
+      (if (< save 0)
+        -1
+        (backend.compiler-backend-string-find-from
+          body
+          "__shrinkwrap_bare"
+          save))]
+    (and
+      (>= save 0)
+      (>= first-bare 0)
+      (if flipped?
+        (and (> first-bare save) (asm-lacks? body "__shrinkwrap_save\n"))
+        (and (< first-bare save) (< after-save 0))))))
+
+(define (compiler-backend-shrinkwrap-flip-ok?) : bool
+  (let
+    [linux : String
+      (compiler-backend-shrinkwrap-flip-body
+        (& compiler-backend-shrinkwrap-flip-source)
+        (be_state.CompilerBackendTarget.Linux)
+        false
+        "_tl_flip_guards")]
+    [veto : String
+      (compiler-backend-shrinkwrap-flip-body
+        (& compiler-backend-shrinkwrap-flip-veto-source)
+        (be_state.CompilerBackendTarget.Linux)
+        false
+        "_tl_flip_veto")]
+    [win64 : String
+      (compiler-backend-shrinkwrap-flip-body
+        (& compiler-backend-shrinkwrap-flip-source)
+        (be_state.CompilerBackendTarget.Windows)
+        false
+        "_tl_flip_guards")]
+    [size : String
+      (compiler-backend-shrinkwrap-flip-body
+        (& compiler-backend-shrinkwrap-flip-source)
+        (be_state.CompilerBackendTarget.Linux)
+        true
+        "_tl_flip_guards")]
+    (and
+      (compiler-backend-shrinkwrap-flip-shape? linux true)
+      (compiler-backend-shrinkwrap-flip-shape? veto false)
+      (compiler-backend-shrinkwrap-flip-shape? win64 false)
+      (compiler-backend-shrinkwrap-flip-shape? size false))))
+
 ;; ---------------------------------------------------------------------------
 ;; SW-1: general shrink-wrapping.  The placement is decided on the FINAL emitted
 ;; text, so every one of these reads the emitted function body.
@@ -37924,24 +38028,6 @@ entry:
     [push : i64 (compiler-backend-swb-find body "    pushq %")]
     [rsp : i64 (compiler-backend-swb-find body ", %rsp\n")]
     (cond [(< push 0) rsp] [(< rsp 0) push] [(< push rsp) push] [else rsp])))
-
-(define (compiler-backend-swb-count-ret-before
-  [body : (& body str)]
-  [limit : i64]) : i64
-  (let
-    [i : i64 0]
-    [seen : i64 0]
-    [done : bool false]
-    (while (not done)
-      (let
-        [at : i64
-          (backend.compiler-backend-string-find-from body "    ret\n" i)]
-        (if (or (< at 0) (>= at limit))
-          (set! done true)
-          (begin
-            (+= seen 1)
-            (set! i (+ at 1))))))
-    seen))
 
 ;; A `ret` no epilogue precedes -- neither a callee-saved `popq`, the frame's
 ;; own `%rsp` adjust, nor a framed `leave` -- returns from a path that never
@@ -38040,7 +38126,7 @@ entry:
 ;; (2) The `kinds_remove` shape: a parameter compare (form (a)'s only shape)
 ;; followed by a second early exit that compares against a loaded global.  Form
 ;; (a) fires on the first exit; the general form must sink the prologue past the
-;; second, so two returns precede it.
+;; second, so both exits return without it.
 (define compiler-backend-swb-two-exit-source : String
   "(extern (opaque [value : i64]) : i64 (:symbol \"opaque\"))
 (define swb-limit : i64 0)
@@ -38063,10 +38149,9 @@ entry:
         (string.copy (& compiler-backend-swb-two-exit-source))
         (be_state.CompilerBackendTarget.Linux)
         "_tl_swb_remove")]
-    [prologue : i64 (compiler-backend-swb-prologue-index body)]
     (and
       (compiler-backend-swb-sunk? body)
-      (>= (compiler-backend-swb-count-ret-before body prologue) 2))))
+      (>= (compiler-backend-swb-count-bare-ret body) 2))))
 
 ;; (3) The `dispatch` shape: two tail-call arms that need no frame and one arm
 ;; that calls.  The arms are SIBLINGS, so the nearest common dominator of the
@@ -42407,6 +42492,7 @@ b_keep:
         (compiler-backend-spmd-call-loop-divmod-ok?)
         (compiler-backend-shrinkwrap-admission-state-ok?)
         (compiler-backend-shrinkwrap-large-guard-win64-ok?)
+        (compiler-backend-shrinkwrap-flip-ok?)
         (compiler-backend-swb-global-guard-ok?)
         (compiler-backend-swb-two-exit-ok?)
         (compiler-backend-swb-dispatch-ok?)

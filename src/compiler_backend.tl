@@ -20809,6 +20809,55 @@
             (-= limit 1))
           (+= r 1))))))
 
+;; C40 early-return guard flip, all or nothing: every guard of form (a)'s
+;; prefix must keep an arm equal to its flipped layout successor (the next
+;; guard, or the saving block after the prefix), and the opcode heuristic may
+;; predict no guard's other arm -- the early return -- taken. An admitted
+;; prefix falls through guard to guard into the saving block, and its bare
+;; returns leave the hot path.
+(define (compiler-backend-shrinkwrap-flip-admissible?
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockList)]
+  [prefix-count : i64]) : bool
+  (let
+    [seq : compiler_ir_types.CompilerIrBlockSeq
+      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+    [ok : bool
+      (and
+        (> prefix-count 0)
+        (< prefix-count (compiler_ir_types.compiler-ir-block-seq-count seq)))]
+    [index : i64 0]
+    (while (and ok (< index prefix-count))
+      (when
+        (not
+          (be_scalar.compiler-backend-shrinkwrap-bare-return-block?
+            (& seq)
+            index))
+        (match (compiler_ir_types.compiler-ir-block-seq-borrow seq index)
+          [(Block _ instrs)
+            (set!
+              ok
+              (and
+                (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 2)
+                (match (compiler_ir_types.compiler-ir-instr-scalar-fact
+                  (compiler_ir_types.compiler-ir-instr-seq-ref instrs 1))
+                  [(Branch _ on-true on-false)
+                    (match (be_scalar.compiler-backend-shrinkwrap-flip-fallthrough
+                      (& seq)
+                      index
+                      prefix-count)
+                      [(Some next)
+                        (let
+                          [predict : i64
+                            (compiler-backend-placement-opcode-predict instrs)]
+                          (cond
+                            [(= on-false next) (not (= predict 1))]
+                            [(= on-true next) (not (= predict -1))]
+                            [else false]))]
+                      [(No) false])]
+                  [_ false])))]))
+      (+= index 1))
+    ok))
+
 ;; `rotateLoop`. Innermost loops first, so an outer rotation moves whole inner
 ;; runs. Each loop's run is rotated left past its exiting block, which lands
 ;; that block at the bottom and makes the old bottom -- the latch -- adjacent to
@@ -22854,10 +22903,16 @@
                                 unit)
                               (+= i 1))
                             (set! (array-ref block-index b) found)
+                            ;; Text follows IR order, except that the -O2
+                            ;; guard flip places form (a)'s bare clones after
+                            ;; the last block, so finding one does not move
+                            ;; the scan past the blocks that follow it in IR.
                             (when
                               (>= found 0)
                               (set! (array-ref block-start found) 1)
-                              (set! scan (+ found 1))))])))]
+                              (when
+                                (= (array-ref bare-clone found) 0)
+                                (set! scan (+ found 1)))))])))]
                 ;; SWB-FIX-1: the text node of form (a)'s saving block, or -1
                 ;; when it does not resolve (which is a refusal, not a pass).
                 [saving-node : i64
@@ -23826,26 +23881,41 @@
             (not shrinkwrap-state-admissible?)
             (string.eq shrinkwrap-bare-label ""))
             ""
-            (be_scalar.compiler-backend-shrinkwrap-prefix-asm
-              type-segment-bases
-              target
-              (be_state.compiler-backend-global-shared-view emit-params)
-              emit-vars
-              assignments
-              (be_state.compiler-backend-global-shared-view label-scope)
-              name
-              (be_state.compiler-backend-global-shared-view emit-blocks-list)
-              (be_state.compiler-backend-global-shared-view
-                shrinkwrap-bare-label)
-              shrinkwrap-prefix-count
-              (be_state.compiler-backend-global-shared-view ret-ty)
-              program-index
-              false))]
-        [shrinkwrap-incoming-prefix : String
+            (tuple-ref
+              (be_scalar.compiler-backend-shrinkwrap-prefix-asm
+                type-segment-bases
+                target
+                (be_state.compiler-backend-global-shared-view emit-params)
+                emit-vars
+                assignments
+                (be_state.compiler-backend-global-shared-view label-scope)
+                name
+                (be_state.compiler-backend-global-shared-view emit-blocks-list)
+                (be_state.compiler-backend-global-shared-view
+                  shrinkwrap-bare-label)
+                shrinkwrap-prefix-count
+                (be_state.compiler-backend-global-shared-view ret-ty)
+                program-index
+                false
+                false)
+              0))]
+        ;; C40: the early-return guard flip is full-speed only (not -O1, not
+        ;; -Os) and Linux-shaped only: Win64 keeps its SEH unwind layout.
+        [shrinkwrap-flip? : bool
+          (and
+            (not (string.eq shrinkwrap-planned-guard ""))
+            scalar-registers-enabled
+            (not
+              (be_state.compiler-backend-state-optimize-for-size? backend-state))
+            (not target-policy.seh-unwind)
+            (compiler-backend-shrinkwrap-flip-admissible?
+              (& emit-blocks-list)
+              shrinkwrap-prefix-count))]
+        [shrinkwrap-incoming-parts : (Tuple String String)
           (if (or
             (not shrinkwrap-state-admissible?)
             (string.eq shrinkwrap-bare-label ""))
-            ""
+            (tuple "" "")
             (be_scalar.compiler-backend-shrinkwrap-prefix-asm
               type-segment-bases
               target
@@ -23860,14 +23930,18 @@
               shrinkwrap-prefix-count
               (be_state.compiler-backend-global-shared-view ret-ty)
               program-index
-              true))]
+              true
+              shrinkwrap-flip?))]
         [shrinkwrap-incoming-guard : String
-          (if (string.eq shrinkwrap-incoming-prefix "")
+          (if (string.eq (tuple-ref shrinkwrap-incoming-parts 0) "")
             ""
             (str_cat.str-cat
-              shrinkwrap-incoming-prefix
+              (tuple-ref shrinkwrap-incoming-parts 0)
               "    # shrinkwrap incoming guard\n"
               ""))]
+        ;; The flipped prefix's bare-return clones, placed after the return
+        ;; epilogue: nothing falls into them, and they name no frame.
+        [shrinkwrap-bare-tail : String (tuple-ref shrinkwrap-incoming-parts 1)]
         [shrinkwrap-candidate? : bool
           (and
             (not
@@ -24386,7 +24460,9 @@
                           slot-vars
                           (be_state.compiler-backend-global-shared-view
                             emit-blocks-list))
-                        "")]
+                        (if shrinkwrap-active?
+                          shrinkwrap-bare-tail
+                          ""))]
                     ;; The alignment duty is a property of the FINAL text,
                     ;; not of the IR: the prologue splice above adds the
                     ;; callee-save saves, the argv capture and (for `main`)

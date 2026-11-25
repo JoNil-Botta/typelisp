@@ -35,6 +35,14 @@ file rotate.tl
     [low : u32 (shr x (cast 7 : u64))]
     (bit-xor (bit-or low (shl x (cast 25 : u64))) low)))
 
+;; An intervening store through a pointer to `x` invalidates fusion.
+(define (addr-write32 [x : u32]) : u32
+  (let
+    [p : (MutPtr u32) (unsafe (ptr-addr-of x))]
+    [lo : u32 (shr x (cast 7 : u64))]
+    (unsafe (ptr-write! p (cast 0 : u32)))
+    (bit-or lo (shl x (cast 25 : u64)))))
+
 ;; Function values keep every body emitted for the shape checks.
 (define keep-rotr32 : (-> u32 u32) rotr32)
 (define keep-rotl32 : (-> u32 u32) rotl32)
@@ -44,6 +52,7 @@ file rotate.tl
 (define keep-gap32 : (-> u32 u32) gap32)
 (define keep-pair32 : (-> u32 u32 u32) pair32)
 (define keep-shared32 : (-> u32 u32) shared32)
+(define keep-addr-write32 : (-> u32 u32) addr-write32)
 
 (define seed : u64 0x0123456789abcdef)
 
@@ -59,6 +68,7 @@ file rotate.tl
       (= (gap32 narrow) (cast 0xef13579b : u32))
       (= (pair32 narrow (cast 1 : u32)) (cast 0x0313579b : u32))
       (= (shared32 narrow) (cast 0xde000000 : u32))
+      (= (addr-write32 narrow) (cast 0x0113579b : u32))
       (=
         (signed32 (cast (cast 0x89abcdef : u32) : i32))
         (cast (cast 0xff13579b : u32) : i32)))
@@ -88,6 +98,8 @@ not-match ^[[:space:]]+ror
 in fn _tl_rotate_pair32
 not-match ^[[:space:]]+ror
 in fn _tl_rotate_shared32
+not-match ^[[:space:]]+ror
+in fn _tl_rotate_addr_write32
 not-match ^[[:space:]]+ror
 
 case rotate-values

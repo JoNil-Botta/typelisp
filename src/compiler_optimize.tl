@@ -3385,6 +3385,7 @@
   8)
 
 ;; True when no instruction strictly between `from` and `to` redefines
+;; `source` or performs a write/call that could mutate an address-taken
 ;; `source`, so reading it at `to` sees the value the shift at `from` read.
 (define (opt-rotate-source-stable?
   [slots : (& (__tl_dyn-array ir.CompilerIrInstr))]
@@ -3395,9 +3396,16 @@
     [at : i64 (+ from 1)]
     [stable : bool true]
     (while (and stable (< at to))
-      (match (opt-instr-def-var (& (array-ref slots at)))
-        [(option_i64.Some def) (when (= def source) (set! stable false))]
-        [_ unit])
+      (match (opt-instr-effect
+        (& opt-summary-addr-taken-none)
+        (& (array-ref slots at)))
+        [(or (Pure) (MemoryRead)) unit]
+        [_ (set! stable false)])
+      (when
+        stable
+        (match (opt-instr-def-var (& (array-ref slots at)))
+          [(option_i64.Some def) (when (= def source) (set! stable false))]
+          [_ unit]))
       (+= at 1))
     stable))
 
@@ -3414,20 +3422,23 @@
     [stop : i64 (- index (opt-rotate-def-window))]
     [found : OptRotateHalf (No)]
     (while (and (>= at 0) (>= at stop))
-      (match (& (array-ref slots at))
-        [(BinOp def op (Var source) (I64 count) ty)
+      (match (opt-instr-def-var (& (array-ref slots at)))
+        [(option_i64.Some def)
           (when
             (= def var)
-            (when
-              (and
-                (= (opt-rotate-width ty) width)
-                (> count 0)
-                (< count width)
-                (opt-rotate-source-stable? slots at index source))
-              (match op
-                [(Shr _) (set! found (Half source count true))]
-                [(Shl _) (set! found (Half source (- width count) false))]
-                [_ unit]))
+            (match (& (array-ref slots at))
+              [(BinOp _ op (Var source) (I64 count) ty)
+                (when
+                  (and
+                    (= (opt-rotate-width ty) width)
+                    (> count 0)
+                    (< count width)
+                    (opt-rotate-source-stable? slots at index source))
+                  (match op
+                    [(Shr _) (set! found (Half source count true))]
+                    [(Shl _) (set! found (Half source (- width count) false))]
+                    [_ unit]))]
+              [_ unit])
             (set! at 0))]
         [_ unit])
       (-= at 1))
@@ -3540,16 +3551,19 @@
       ;; every instruction once. Rewrite an adjacent, single-use mask here
       ;; so compare admission adds no second instruction scan or dispatch.
       ;; The same walk fuses a shift pair into a rotate.
-      (opt-rotate-fuse!
-        (&mut items)
-        (&mut mirror)
-        (&mut slots)
-        index
-        dst
-        (& op)
-        (& lhs)
-        (& rhs)
-        (& ty))
+      (match (& op)
+        [(BitOr)
+          (opt-rotate-fuse!
+            (&mut items)
+            (&mut mirror)
+            (&mut slots)
+            index
+            dst
+            (& op)
+            (& lhs)
+            (& rhs)
+            (& ty))]
+        [_ unit])
       (if (and (> index 0) (opt-used-array-contains items dst))
         (match lhs
           [(Var and-var)

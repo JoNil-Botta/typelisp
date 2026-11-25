@@ -19858,7 +19858,7 @@
     [extra : String
       (match op
         [(or (Div) (Mod) (SafeDiv) (SafeMod) (Mul)) "%rdx"]
-        [(or (Shl _) (Shr _)) "%rcx"]
+        [(or (Shl _) (Shr _) (Rotr)) "%rcx"]
         [_ ""])]
     (__tl_make-array rax-extra extra "" "" "")))
 

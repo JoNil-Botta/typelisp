@@ -1,0 +1,2 @@
+path	required	advisory	reason
+scripts/lib-ci-local.sh	*	-	Local bootstrap cache and changed-file scoping library sourced by ci-verify, ci-affected and scoped gates.

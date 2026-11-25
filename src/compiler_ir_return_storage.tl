@@ -175,26 +175,21 @@
 
 ;; A claimed storage slot cannot simultaneously be an independent scalar
 ;; value. Ordinary aliases created with AddrOf are checked separately below.
-(define (storage-value-use!
-  [facts : (&mut facts StorageFacts)]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : unit
-  (match value
-    [(ir.CompilerIrValue.Var var)
+(define (storage-value-use! [facts : (&mut facts StorageFacts)] [var : i64]) : unit
+  (when
+    (and (>= var 0) (< var (array-length facts.storage-owner)))
+    (let
+      [owner : i64 (array-ref facts.storage-owner var)]
       (when
-        (and (>= var 0) (< var (array-length facts.storage-owner)))
-        (let
-          [owner : i64 (array-ref facts.storage-owner var)]
-          (when
-            (> owner 0)
-            (set! (array-ref facts.storage-invalid (- owner 1)) true))))]
-    [_ unit]))
+        (> owner 0)
+        (set! (array-ref facts.storage-invalid (- owner 1)) true)))))
 
 (define (storage-facts! [facts : (&mut facts StorageFacts)]) : unit
   (let
     [blocks : ir.CompilerIrBlockSeq
       (owned_view.compiler-owned-reference-shared-view (& facts.blocks))]
     [pass : i64 0]
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
     (while (< pass 2)
       (let
         [b : i64 0]
@@ -229,11 +224,12 @@
                                       (- owner 1))
                                     true))))]
                           [_
-                            (ir.compiler-ir-instr-visit-uses
-                              (owned_view.compiler-owned-reference-shared-view
-                                instr)
-                              storage-value-use!
-                              facts)]))
+                            (set! ids.len 0)
+                            (ir.compiler-ir-instr-use-var-ids-into!
+                              instr
+                              (&mut ids))
+                            (for [id (& ids)]
+                              (storage-value-use! facts (deref id)))]))
                       (set! i (+ i 1)))))])
             (set! b (+ b 1))))
         (set! pass (+ pass 1))))))

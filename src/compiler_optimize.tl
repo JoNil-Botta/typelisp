@@ -2836,7 +2836,7 @@
     [_ set]))
 
 ;; Use scans record either a variable read or another occurrence of a global.
-;; They share one expansion of compiler-ir-instr-visit-uses.
+;; They share one walk of ir.compiler-ir-instr-uses-into!.
 (defenum OptUseNote
   (Var)
   (GlobalCount)
@@ -2846,36 +2846,35 @@
 (define (opt-note-use!
   [note : OptUseNote]
   [set : (&mut set opt_i64_i64_map.Map)]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : unit
+  [use : (& ir.CompilerIrUse)]) : unit
   (match note
     [(Var)
-      (match value
-        [(Var id) (opt_i64_i64_map.insert-ref! set id 1)]
+      (match use.kind
+        [(VarUse) (opt_i64_i64_map.insert-ref! set use.id 1)]
         [_ unit])]
     [(GlobalCount)
-      (match value
-        [(Global name)
+      (match use.kind
+        [(GlobalUse)
           (let
-            [id : i64 (ir.compiler-ir-symbol-id name)]
+            [id : i64 (ir.compiler-ir-symbol-id use.id)]
             [seen : i64 (opt-cl-map-count set id)]
             (opt_i64_i64_map.insert-ref! set id (+ seen 1)))]
         [_ unit])]
     [(FunctionValue)
-      (match value
-        [(or (ir.CompilerIrValue.Function name) (GlobalAddr name))
-          (opt_i64_i64_map.insert-ref! set (ir.compiler-ir-symbol-id name) 1)]
+      (match use.kind
+        [(or (FunctionUse) (GlobalAddrUse))
+          (opt_i64_i64_map.insert-ref! set (ir.compiler-ir-symbol-id use.id) 1)]
         [_ unit])]))
 
 (define (opt-note-uses!
   [note : OptUseNote]
   [set : (&mut set opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]) : unit
-  (ir.compiler-ir-instr-visit-uses
-    (owned_view.compiler-owned-reference-shared-view instr)
-    opt-note-use!
-    note
-    set))
+  (let
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (ir.compiler-ir-instr-uses-into! instr (&mut uses))
+    (for [use (& uses)]
+      (opt-note-use! note set use))))
 
 (define (opt-collect-instr-uses
   [set : opt_i64_i64_map.Map]
@@ -2887,7 +2886,10 @@
     [_
       (let
         [out : opt_i64_i64_map.Map set]
-        (opt-note-uses! (Var) (&mut out) instr)
+        [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+        (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
+        (for [id (& ids)]
+          (opt_i64_i64_map.insert-ref! (&mut out) (deref id) 1))
         out)]))
 
 (define (opt-collect-instr-seq-uses-from
@@ -3007,43 +3009,6 @@
       false
       (> (array-ref items var) 0))))
 
-(define (opt-collect-value-uses-array
-  [items : (__tl_dyn-array i64)]
-  [value : ir.CompilerIrValue]) : unit
-  (match value
-    [(Var id) (opt-used-array-add items id)]
-    [_ unit]))
-
-(define (opt-collect-value-seq-uses-array
-  [items : (& (__tl_dyn-array i64))]
-  [values : (& ir.CompilerIrValueSeq)]) : unit
-  (ir.compiler-ir-value-seq-visit
-    (owned_view.compiler-owned-reference-shared-view values)
-    opt-collect-value-uses-array
-    (owned_view.compiler-owned-reference-shared-view items)))
-
-(define (opt-collect-call-args-uses-array
-  [items : (& (__tl_dyn-array i64))]
-  [args : (& ir.CompilerIrCallArgs)]) : unit
-  (ir.compiler-ir-call-args-visit
-    (owned_view.compiler-owned-reference-shared-view args)
-    opt-collect-value-uses-array
-    (owned_view.compiler-owned-reference-shared-view items)))
-
-(define (opt-collect-spmd-value-uses-array
-  [items : (__tl_dyn-array i64)]
-  [_class : ir.CompilerIrSpmdValueClass]
-  [value : ir.CompilerIrValue]) : unit
-  (opt-collect-value-uses-array items value))
-
-(define (opt-collect-spmd-call-args-uses-array
-  [items : (& (__tl_dyn-array i64))]
-  [args : (& ir.CompilerIrSpmdCallArgSeq)]) : unit
-  (ir.compiler-ir-spmd-call-args-visit
-    (owned_view.compiler-owned-reference-shared-view args)
-    opt-collect-spmd-value-uses-array
-    (owned_view.compiler-owned-reference-shared-view items)))
-
 (define (opt-collect-phi-uses-array
   [items : (__tl_dyn-array i64)]
   [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : unit
@@ -3055,143 +3020,20 @@
           (opt-used-array-add (compiler-opt-global-shared-view items) id)]
         [_ unit]))))
 
-;; Same tag-chain economics as `opt-instr-def-var` (see the note there): this
-;; `match` lowers to a linear compare chain, so arm position is cost, and
-;; `Alloc` -- the single most frequent shape, and non-using -- would otherwise
-;; walk the whole chain to the catch-all. Arms are ordered by dynamic
-;; frequency, with explicit no-use arms for the hot non-using shapes (Alloc,
-;; Jump, LaneId) so they do not reach the catch-all.
-;; Variant patterns over one enum are disjoint, so reordering cannot change
-;; which arm matches.
+;; Count the vars `instr` reads into `items`; AddrOf's raw slot is a read too.
 (define (opt-collect-instr-uses-array
   [items : (__tl_dyn-array i64)]
   [instr : (& ir.CompilerIrInstr)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(or (Alloc _ _) (Jump _) (LaneId _ _ _) (EntryArgc _) (EntryArgv _)
-         (EntryEnvp _))
-      unit]
-    [(or (Gep _ base offset _) (StorePtr base offset _)
-         (StoreOwned base offset _) (BinOp _ _ base offset _)
-         (CopyBytes base offset _) (BoundsCheck base offset _)
-         (MaskBinOp _ _ base offset _) (VectorLoad _ base offset _ _)
-         (TailMask _ base offset _) (CpuId _ base offset _))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        base)
-      (opt-collect-value-uses-array items offset)]
-    ;; Register-group ops use their operands (Pack: each word; Word: src).
-    [(or (Mov _ src _) (Load _ src _) (Branch src _ _) (Cast _ src _ _)
-         (UnOp _ _ src _) (Word _ src _ _) (Store _ src _) (Switch src _ _ _)
-         (TotalEnumSwitch src _ _ _ _) (TotalEnumBranch src _ _)
-         (Bitcast _ src _ _) (Splat _ src _ _) (VectorReduce _ _ src _ _)
-         (MaskNot _ src _) (MaskReduce _ _ src _) (Xgetbv _ src))
-      (opt-collect-value-uses-array items src)]
-    [(or (Call _ _ args _) (TailCall _ args _) (Syscall _ args))
-      (opt-collect-call-args-uses-array (& items) (& args))]
-    [(Return maybe)
-      (match maybe
-        [(Some value) (opt-collect-value-uses-array items value)]
-        [(No) unit])]
+  (match instr
     [(AddrOf _ src _storage-words) (opt-used-array-add items src)]
-    [(Phi _ inputs _) (opt-collect-phi-uses-array items inputs)]
-    [(Pack _ words _) (opt-collect-value-seq-uses-array (& items) (& words))]
-    [(or (CallIndirect _ func args _) (CallIndirectC _ func args _)
-         (TailCallIndirect func args _))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        func)
-      (opt-collect-call-args-uses-array (& items) (& args))]
-    [(CallCAbiStoreResult (box (fields base args)))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        base)
-      (opt-collect-call-args-uses-array (& items) (& args))]
-    [(CallIndirectCAbiStoreResult (box (fields base [func callee] args)))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        base)
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        func)
-      (opt-collect-call-args-uses-array (& items) (& args))]
-    [(SpmdCall (box (fields active-mask args)))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        active-mask)
-      (opt-collect-spmd-call-args-uses-array (& items) (& args))]
-    [(Select (box (fields mask on-true on-false)))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        mask)
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        on-true)
-      (opt-collect-value-uses-array items on-false)]
-    [(VectorBinOp (box (fields lhs rhs)))
-      (opt-collect-value-uses-array (compiler-opt-global-shared-view items) lhs)
-      (opt-collect-value-uses-array items rhs)]
-    [(VectorPrefix (box (fields src carry)))
-      (opt-collect-value-uses-array (compiler-opt-global-shared-view items) src)
-      (opt-collect-value-uses-array items carry)]
-    [(VectorCompare (box (fields lhs rhs)))
-      (opt-collect-value-uses-array (compiler-opt-global-shared-view items) lhs)
-      (opt-collect-value-uses-array items rhs)]
-    [(VectorStore (box (fields base index value)))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        base)
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        index)
-      (opt-collect-value-uses-array items value)]
-    [(PredicatedStore (box (fields base index value mask)))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        base)
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        index)
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        value)
-      (opt-collect-value-uses-array items mask)]
-    [(PredicatedLoad (box (fields base index mask)))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        base)
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        index)
-      (opt-collect-value-uses-array items mask)]
-    [(GatherLoad (box (fields base index-base index)))
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        base)
-      (opt-collect-value-uses-array
-        (compiler-opt-global-shared-view items)
-        index-base)
-      (opt-collect-value-uses-array items index)]
-    [(VectorShuffle payload-box)
+    [_
       (let
-        [source (compiler-opt-box-field-shared-view payload-box source)]
-        [selector-low
-          (compiler-opt-box-field-shared-view payload-box selector-low)]
-        [active-lanes
-          (compiler-opt-box-field-shared-view payload-box active-lanes)]
-        (opt-collect-value-uses-array
-          (compiler-opt-global-shared-view items)
-          source)
-        (opt-collect-value-uses-array
-          (compiler-opt-global-shared-view items)
-          selector-low)
-        (match (deref payload-box).selector-high
-          [(Some value)
-            (opt-collect-value-uses-array
-              (compiler-opt-global-shared-view items)
-              value)]
-          [(No) unit])
-        (opt-collect-value-uses-array items active-lanes))]
-    [_ unit]))
+        [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+        (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
+        (for [id (& ids)]
+          (opt-used-array-add
+            (compiler-opt-global-shared-view items)
+            (deref id))))]))
 
 ;; Decrement the operand use counts an instruction contributed. Called when DCE
 ;; deletes that instruction so a single backward sweep can retire the rest of a
@@ -8092,44 +7934,12 @@
       [(Var _) resolved]
       [_ value])))
 
-(define (opt-copy-subst-value-seq
-  [env : (& OptCopyEnv)]
-  [values : (& ir.CompilerIrValueSeq)]) : ir.CompilerIrValueSeq
-  (ir.compiler-ir-value-seq-map
-    (owned_view.compiler-owned-reference-shared-view values)
-    opt-copy-resolve
-    (owned_view.compiler-owned-reference-shared-view env)))
-
-(define (opt-copy-subst-call-args
-  [env : (& OptCopyEnv)]
-  [args : (& ir.CompilerIrCallArgs)]) : ir.CompilerIrCallArgs
-  (ir.compiler-ir-call-args-map
-    (owned_view.compiler-owned-reference-shared-view args)
-    opt-copy-resolve
-    (owned_view.compiler-owned-reference-shared-view env)))
-
-(define (opt-copy-resolve-spmd-value
-  [env : OptCopyEnv]
-  [class : ir.CompilerIrSpmdValueClass]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (match class
-    [(Uniform) (opt-copy-resolve env value)]
-    [(or (Varying) (Mask)) (opt-copy-resolve-mask env value)]))
-
-(define (opt-copy-subst-spmd-call-args
-  [env : (& OptCopyEnv)]
-  [args : (& ir.CompilerIrSpmdCallArgSeq)]) : ir.CompilerIrSpmdCallArgSeq
-  (ir.compiler-ir-spmd-call-args-map
-    (owned_view.compiler-owned-reference-shared-view args)
-    opt-copy-resolve-spmd-value
-    (owned_view.compiler-owned-reference-shared-view env)))
-
 ;; The operand rewrite of one pass, for opt-rewrite-operands: global copy
 ;; propagation (and its vector-only form for the SIMD payloads whose scalar
 ;; operands keep their vars), the SCCP constant rewrite, the global-cell
 ;; substitution, SSA renaming (with the def's new var, or -1 to keep it), and
 ;; a plain var-to-var renaming.
-;; The passes share one expansion of compiler-ir-instr-map.
+;; The passes share one ir.compiler-ir-instr-rewrite.
 (defenum OptOperandRewrite
   (GlobalCopy OptGlobalFactTable OptDomInfo i64 i64)
   (GlobalCopyVector OptGlobalFactTable OptDomInfo i64 i64)
@@ -8177,406 +7987,106 @@
         value)]
     [_ value]))
 
-(define (opt-operand-rewrite-def [rewrite : (& OptOperandRewrite)] [dst : i64]) : i64
-  (match rewrite
-    [(SsaRename _ next-var)
-      (if (< next-var 0)
-        dst
-        next-var)]
-    [_ dst]))
-
 (define (opt-rewrite-operands
   [rewrite : (& OptOperandRewrite)]
   [instr : (& ir.CompilerIrInstr)]) : ir.CompilerIrInstr
-  (ir.compiler-ir-instr-map
-    (owned_view.compiler-owned-reference-shared-view instr)
-    opt-operand-rewrite-use
-    opt-operand-rewrite-def
-    _
-    _
-    rewrite))
+  (let
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
+    (ir.compiler-ir-instr-rewrite-begin! (&mut rw) instr)
+    (for [index (iterator.range 0 rw.uses.len)]
+      (let
+        [use : ir.CompilerIrUse
+          (ir.compiler-ir-instr-rewrite-use-at (& rw) index)]
+        (ir.compiler-ir-instr-rewrite-use!
+          (&mut rw)
+          index
+          (opt-operand-rewrite-use
+            rewrite
+            use.role
+            (ir.compiler-ir-use-value (& use))))))
+    (match rewrite
+      [(SsaRename _ next-var)
+        (when
+          (>= next-var 0)
+          (ir.compiler-ir-instr-rewrite-def! (&mut rw) next-var))]
+      [_ unit])
+    (ir.compiler-ir-instr-rewrite-finish
+      (&mut rw)
+      (owned_view.compiler-owned-reference-shared-view instr))))
 
-;; Rewrite the value-use operands of an instruction through the copy env. Phi
-;; inputs and the raw var id of `CompilerIrInstr.AddrOf` are intentionally not rewritten.
+;; Rewrite the value-use operands of an instruction through the copy env.
+;; Vector and mask values are private aggregates: only var-to-var identities
+;; propagate into them, since scalar literals recorded by the general copy
+;; environment are not valid SIMD constants, and the boxed vector memory forms
+;; keep their scalar and address operands. The raw var id of `AddrOf` is no
+;; use; phi inputs belong to predecessor edges and are not block-local copies;
+;; VectorLoad, GatherLoad, VectorShuffle and TailMask keep every operand.
 (define (opt-copy-subst-instr
   [env : (& OptCopyEnv)]
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-shared-view instr)
-    [(Mov dst src ty)
-      (Mov
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          src)
-        ty)]
-    [(Gep dst base offset ty)
-      (Gep
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          base)
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          offset)
-        ty)]
-    [(Load dst src ty)
-      (Load
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          src)
-        ty)]
-    [(StorePtr ptr value ty)
-      (StorePtr
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          ptr)
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          value)
-        ty)]
-    [(StoreOwned ptr value ty)
-      (StoreOwned
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          ptr)
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          value)
-        ty)]
-    [(CopyBytes dst src size)
-      (CopyBytes
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          dst)
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          src)
-        size)]
-    [(Cast dst src from-ty to-ty)
-      (Cast
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          src)
-        from-ty
-        to-ty)]
-    [(Bitcast dst src from-ty to-ty)
-      (Bitcast
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          src)
-        from-ty
-        to-ty)]
-    [(BinOp dst op l r ty)
-      (BinOp
-        dst
-        op
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          l)
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          r)
-        ty)]
-    [(UnOp dst op v ty)
-      (UnOp
-        dst
-        op
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          v)
-        ty)]
-    [(Splat dst value lanes ty)
-      (Splat
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          value)
-        lanes
-        ty)]
-    ;; Vector and mask values are private aggregates. Only propagate var-to-var
-    ;; identities through them: scalar literals recorded by the general copy
-    ;; environment are not valid SIMD constants.
-    [(VectorBinOp payload-box)
-      (let
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-bin-op
-          (deref payload-box).dst
-          op
-          (opt-copy-resolve-mask env lhs)
-          (opt-copy-resolve-mask env rhs)
-          lanes
-          ty))]
-    [(VectorPrefix payload-box)
-      (let
-        [op (deref payload-box).op]
-        [src (compiler-opt-box-field-shared-view payload-box src)]
-        [carry (compiler-opt-box-field-shared-view payload-box carry)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-prefix
-          (deref payload-box).dst
-          op
-          (opt-copy-resolve-mask env src)
-          carry
-          lanes
-          ty))]
-    [(VectorReduce dst op src lanes ty)
-      (VectorReduce dst op (opt-copy-resolve-mask env src) lanes ty)]
-    [(VectorCompare payload-box)
-      (let
-        [op (compiler-opt-box-field-shared-view payload-box op)]
-        [lhs (compiler-opt-box-field-shared-view payload-box lhs)]
-        [rhs (compiler-opt-box-field-shared-view payload-box rhs)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-compare
-          (deref payload-box).dst
-          op
-          (opt-copy-resolve-mask env lhs)
-          (opt-copy-resolve-mask env rhs)
-          lanes
-          ty))]
-    [(MaskBinOp dst op lhs rhs lanes)
-      (MaskBinOp
-        dst
-        op
-        (opt-copy-resolve-mask env lhs)
-        (opt-copy-resolve-mask env rhs)
-        lanes)]
-    [(MaskNot dst src lanes)
-      (MaskNot dst (opt-copy-resolve-mask env src) lanes)]
-    [(MaskReduce dst op src lanes)
-      (MaskReduce dst op (opt-copy-resolve-mask env src) lanes)]
-    [(Select payload-box)
-      (let
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [on-true (compiler-opt-box-field-shared-view payload-box on-true)]
-        [on-false (compiler-opt-box-field-shared-view payload-box on-false)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-select
-          (deref payload-box).dst
-          (opt-copy-resolve-mask env mask)
-          (opt-copy-resolve-mask env on-true)
-          (opt-copy-resolve-mask env on-false)
-          lanes
-          ty))]
-    ;; `CompilerIrInstr.AddrOf` takes the address of a storage slot named by a raw var id,
-    ;; not a value, so its operand must not be copy-substituted.
-    ;; `CompilerIrInstr.Alloc`/`CompilerIrInstr.Jump` have no value operands; `CompilerIrInstr.Phi` inputs
-    ;; belong to predecessor edges and are not block-local copies.
-    [(or (VectorLoad _ _ _ _ _) (GatherLoad _) (VectorShuffle _)
-         (TailMask _ _ _ _) (EntryArgc _) (EntryArgv _) (EntryEnvp _)
-         (AddrOf _ _ _) (Alloc _ _) (LaneId _ _ _) (Jump _) (Phi _ _ _))
-      instr]
-    [(VectorStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-vector-store
-          base
-          index
-          (opt-copy-resolve-mask env value)
-          (deref payload-box).lanes
-          ty))]
-    [(PredicatedStore payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [value (compiler-opt-box-field-shared-view payload-box value)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-store
-          base
-          index
-          (opt-copy-resolve-mask env value)
-          (opt-copy-resolve-mask env mask)
-          (deref payload-box).lanes
-          ty))]
-    [(PredicatedLoad payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [index (compiler-opt-box-field-shared-view payload-box index)]
-        [mask (compiler-opt-box-field-shared-view payload-box mask)]
-        [lanes (deref payload-box).lanes]
-        [ty (compiler-opt-box-field-shared-view payload-box ty)]
-        (ir.ir-instr-predicated-load
-          (deref payload-box).dst
-          base
-          index
-          (opt-copy-resolve-mask env mask)
-          lanes
-          ty))]
-    [(CpuId dst leaf subleaf reg-index)
-      (CpuId
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          leaf)
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          subleaf)
-        reg-index)]
-    [(Xgetbv dst index)
-      (Xgetbv
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          index))]
-    [(Syscall dst args) (Syscall dst (opt-copy-subst-call-args env (& args)))]
-    [(Call dst name args ty)
-      (Call dst name (opt-copy-subst-call-args env (& args)) ty)]
-    [(CallIndirect dst func args ty)
-      (CallIndirect
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          func)
-        (opt-copy-subst-call-args env (& args))
-        ty)]
-    [(CallIndirectC dst func args ty)
-      (CallIndirectC
-        dst
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          func)
-        (opt-copy-subst-call-args env (& args))
-        ty)]
-    [(CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-opt-box-field-shared-view payload-box base)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-cabi-store-result
-          (opt-copy-resolve
-            (owned_view.compiler-owned-reference-shared-view env)
-            base)
-          (deref payload-box).name
-          (opt-copy-subst-call-args env (& args))
-          slots))]
-    [(CallIndirectCAbiStoreResult (box (fields base [func callee] args slots)))
-      (ir.ir-instr-call-indirect-cabi-store-result
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          base)
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          func)
-        (opt-copy-subst-call-args env (& args))
-        slots)]
-    [(SpmdCall payload-box)
-      (let
-        [callee (deref payload-box).callee]
-        [backend (deref payload-box).backend]
-        [lanes (deref payload-box).lanes]
-        [active-mask
-          (compiler-opt-box-field-shared-view payload-box active-mask)]
-        [args (compiler-opt-box-field-shared-view payload-box args)]
-        [result (compiler-opt-box-field-shared-view payload-box result)]
-        (ir.ir-instr-spmd-call-with-origin
-          callee
-          backend
-          lanes
-          (opt-copy-resolve-mask env active-mask)
-          (opt-copy-subst-spmd-call-args env (& args))
-          result
-          (ir.clone-compiler-ir-spmd-call-origin
-            (& (compiler-opt-box-field-shared-view payload-box origin)))))]
-    [(TailCall name args ty)
-      (TailCall name (opt-copy-subst-call-args env (& args)) ty)]
-    [(Store name value ty)
-      (Store
-        name
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          value)
-        ty)]
-    [(BoundsCheck index length ok-label)
-      (BoundsCheck
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          index)
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          length)
-        ok-label)]
-    [(Branch cond a b)
-      (Branch
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          cond)
-        a
-        b)]
-    [(TotalEnumBranch cond a b)
-      (TotalEnumBranch
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          cond)
-        a
-        b)]
-    [(Return maybe)
-      (match maybe
-        [(Some value)
-          (Return
-            (Some
+  (let
+    [vector-only? : bool
+      (match (& instr)
+        [(or (VectorPrefix _) (VectorStore _) (PredicatedStore _)
+             (PredicatedLoad _))
+          true]
+        [_ false])]
+    (match (& instr)
+      [(or (VectorLoad _ _ _ _ _) (GatherLoad _) (VectorShuffle _)
+           (TailMask _ _ _ _) (Phi _ _ _))
+        instr]
+      [_
+        ;; An empty env substitutes nothing.
+        (when (= env.len 0) (return instr))
+        (let
+          [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
+          (ir.compiler-ir-instr-rewrite-begin! (&mut rw) (& instr))
+          (for [index (iterator.range 0 rw.uses.len)]
+            (let
+              [use : ir.CompilerIrUse
+                (ir.compiler-ir-instr-rewrite-use-at (& rw) index)]
+              [value : ir.CompilerIrValue (ir.compiler-ir-use-value (& use))]
+              (cond
+                [(opt-vector-role? use.role)
+                  (ir.compiler-ir-instr-rewrite-use!
+                    (&mut rw)
+                    index
+                    (opt-copy-resolve-mask env value))]
+                [(not vector-only?)
+                  (ir.compiler-ir-instr-rewrite-use!
+                    (&mut rw)
+                    index
+                    (opt-copy-resolve
+                      (owned_view.compiler-owned-reference-shared-view env)
+                      value))]
+                [else unit])))
+          (opt-copy-subst-word
+            env
+            (ir.compiler-ir-instr-rewrite-finish (&mut rw) instr)))])))
+
+;; Register-group words: a Word of a group whose packed words the env knows
+;; becomes a Mov of that word.
+(define (opt-copy-subst-word
+  [env : (& OptCopyEnv)]
+  [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
+  (let
+    [word : ir.CompilerIrMaybeValue
+      (match (& instr)
+        [(Word _ (Var group) index _)
+          (opt-copy-pack-word-lookup env group index)]
+        [_ (No)])]
+    (match word
+      [(Some packed)
+        (match instr
+          [(Word dst _ _ ty)
+            (Mov
+              dst
               (opt-copy-resolve
                 (owned_view.compiler-owned-reference-shared-view env)
-                value)))]
-        [(No) instr])]
-    ;; Register-group ops carry value operands -- substitute copies into
-    ;; the packed words / the extracted source group.
-    [(Pack dst words ty) (Pack dst (opt-copy-subst-value-seq env (& words)) ty)]
-    [(Word dst src index ty)
-      (let
-        [resolved-src : ir.CompilerIrValue
-          (opt-copy-resolve
-            (owned_view.compiler-owned-reference-shared-view env)
-            src)]
-        (match (compiler-opt-global-shared-view resolved-src)
-          [(Var group)
-            (match (opt-copy-pack-word-lookup env group index)
-              [(Some word)
-                (Mov
-                  dst
-                  (opt-copy-resolve
-                    (owned_view.compiler-owned-reference-shared-view env)
-                    word)
-                  ty)]
-              [(No) (Word dst resolved-src index ty)])]
-          [_ (Word dst resolved-src index ty)]))]
-    [(TailCallIndirect func args ty)
-      (TailCallIndirect
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          func)
-        (opt-copy-subst-call-args env (& args))
-        ty)]
-    [(Switch index base cases default-label)
-      (Switch
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          index)
-        base
-        cases
-        default-label)]
-    [(TotalEnumSwitch index base cases default-label trap-label)
-      (TotalEnumSwitch
-        (opt-copy-resolve
-          (owned_view.compiler-owned-reference-shared-view env)
-          index)
-        base
-        cases
-        default-label
-        trap-label)]))
+                packed)
+              ty)]
+          [_ instr])]
+      [(No) instr])))
 
 ;; Update the copy env after an instruction. A `Mov dst src` (with `src` already
 ;; substituted) records a copy when `src` is a safe, non-self source. Every other
@@ -11165,74 +10675,16 @@
         (set! (array-ref set var) true)
         true))))
 
-;; Instruction-tag dispatch order matters here: a `match` over a payload enum
-;; lowers to a linear tag compare chain, so an arm's position is its cost, and
-;; anything routed to the trailing catch-all pays the whole chain. This is one
-;; of the two hottest primitives in an opt2 self-compile, and the terminators
-;; and memory writers -- Branch/Return/Jump/StorePtr, which are non-defining --
-;; are among the most frequent shapes in real IR.
-;;
-;; The arms below are ordered by dynamic frequency, and every hot non-defining
-;; shape gets an explicit `None` arm near the front instead of falling through
-;; the whole chain to reach the same answer. Variant patterns
-;; over one enum are disjoint, so reordering them cannot change which arm
-;; matches; the explicit `None` arms return exactly what the catch-all returns
-;; for those tags. Rare vector/mask/SPMD forms and the two value-returning
-;; indirect-call definition arms stay at the back. The shapes left in the
-;; catch-all (aggregate C-ABI store-result calls, vector and predicated stores,
-;; TailCallIndirect) answer `None`.
+;; The var `instr` defines, malformed negative ids included so the verifier
+;; sees them (ir.compiler-ir-instr-dst-or, whose arms are ordered for this hot
+;; path). The no-def sentinel is the one id no lowering can produce.
 (define (opt-instr-def-var [instr : (& ir.CompilerIrInstr)]) : option_i64.Option
-  (match instr
-    ;; Pack/Word define their dst like any scalar op. Without these arms
-    ;; the verifier saw every use of a register-group word as use-before-def
-    ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
-    [(or (Alloc dst _) (Gep dst _ _ _) (Mov dst _ _) (Call dst _ _ _)
-         (BinOp dst _ _ _ _) (Load dst _ _) (AddrOf dst _ _) (Phi dst _ _)
-         (Cast dst _ _ _) (UnOp dst _ _ _) (Word dst _ _ _) (Pack dst _ _)
-         (Bitcast dst _ _ _) (LaneId dst _ _) (Splat dst _ _ _)
-         (VectorReduce dst _ _ _ _) (MaskBinOp dst _ _ _ _) (MaskNot dst _ _)
-         (MaskReduce dst _ _ _) (VectorLoad dst _ _ _ _) (TailMask dst _ _ _)
-         (EntryArgc dst) (EntryArgv dst) (EntryEnvp dst) (CpuId dst _ _ _)
-         (Xgetbv dst _) (Syscall dst _) (CallIndirect dst _ _ _)
-         (CallIndirectC dst _ _ _))
-      (Some dst)]
-    [(or (Branch _ _ _) (StorePtr _ _ _) (StoreOwned _ _ _) (Return _) (Jump _)
-         (CopyBytes _ _ _) (BoundsCheck _ _ _) (TailCall _ _ _) (Store _ _ _)
-         (TotalEnumBranch _ _ _) (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
-      (None)]
-    [(SpmdCall payload-box)
-      (match (& (deref payload-box).result)
-        [(Unit) (None)]
-        [(Value dst _ _) (Some dst)])]
-    [(VectorBinOp payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (Some dst))]
-    [(VectorPrefix payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (Some dst))]
-    [(VectorCompare payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (Some dst))]
-    [(Select payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (Some dst))]
-    [(PredicatedLoad payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (Some dst))]
-    [(GatherLoad payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (Some dst))]
-    [(VectorShuffle payload-box)
-      (let
-        [dst (deref payload-box).dst]
-        (Some dst))]
-    [_ (None)]))
+  (let
+    [none : i64 (- -9223372036854775807 1)]
+    [dst : i64 (ir.compiler-ir-instr-dst-or instr none)]
+    (if (= dst none)
+      (None)
+      (Some dst))))
 
 (defenum OptMaybeInstr
   (No)
@@ -11892,14 +11344,13 @@
   [doms : (& OptDomInfo)]
   [use-block : i64]
   [use-pos : i64]
-  [_role : ir.CompilerIrOperandRole]
   [code : i64]
-  [value : ir.CompilerIrValue]) : i64
+  [use : (& ir.CompilerIrUse)]) : i64
   (if (!= code 0)
     code
-    (match value
-      [(Var var) (opt-verify-var-use-code defs doms var use-block use-pos)]
-      [(RuntimeGlobal _) 3]
+    (match use.kind
+      [(VarUse) (opt-verify-var-use-code defs doms use.id use-block use-pos)]
+      [(RuntimeGlobalUse) 3]
       [_ 0])))
 
 ;; The first failing operand of `instr`, in operand order.
@@ -11909,15 +11360,13 @@
   [use-block : i64]
   [use-pos : i64]
   [instr : (& ir.CompilerIrInstr)]) : ResultCompilerOptimizeVerify
-  (opt-verify-use-result
-    (ir.compiler-ir-instr-fold-uses
-      (owned_view.compiler-owned-reference-shared-view instr)
-      (cast 0 : i64)
-      opt-verify-use
-      defs
-      doms
-      use-block
-      use-pos)))
+  (let
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    [code : i64 0]
+    (ir.compiler-ir-instr-uses-into! instr (&mut uses))
+    (for [use (& uses)]
+      (set! code (opt-verify-use defs doms use-block use-pos code use)))
+    (opt-verify-use-result code)))
 
 (define (opt-owned-handle-type?
   [type-segment-bases : i64]
@@ -13091,20 +12540,19 @@
     (< var (array-length plan.words))
     (>= (array-ref plan.words var) 0)))
 
-(define (opt-group-split-note-use
+;; The accepted var that use `index` of `rw` reads, or -1.
+(define (opt-group-split-use-var
   [plan : (& plan OptGroupSplitPlan)]
-  [_role : ir.CompilerIrOperandRole]
-  [acc : opt_dense_i64_vec.Vec]
-  [value : ir.CompilerIrValue]) : opt_dense_i64_vec.Vec
-  (match value
-    [(Var var)
-      (if (opt-group-split-accepted? plan var)
-        (let
-          [out : opt_dense_i64_vec.Vec acc]
-          (opt_dense_i64_vec.push-ref! (&mut out) var)
-          out)
-        acc)]
-    [_ acc]))
+  [rw : (& rw ir.CompilerIrInstrRewrite)]
+  [index : i64]) : i64
+  (let
+    [use : ir.CompilerIrUse (ir.compiler-ir-instr-rewrite-use-at rw index)]
+    (match use.kind
+      [(VarUse)
+        (if (opt-group-split-accepted? plan use.id)
+          use.id
+          -1)]
+      [_ -1])))
 
 ;; The pack var built at the end of `label` for accepted var `var`, or -1.
 (define (opt-group-split-edge-pack
@@ -13157,7 +12605,6 @@
 ;; A use of a group read through this instruction's pack.
 (define (opt-group-split-map-use
   [remap : (& remap (__tl_dyn-array ir.CompilerIrValue))]
-  [_role : ir.CompilerIrOperandRole]
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
   (match (& value)
     [(Var var)
@@ -13198,38 +12645,43 @@
   [cursor : (&mut cursor (__tl_dyn-array i64))]
   [instr : (& ir.CompilerIrInstr)]) : unit
   (let
-    [used : opt_dense_i64_vec.Vec
-      (ir.compiler-ir-instr-fold-uses
-        (owned_view.compiler-owned-reference-shared-view instr)
-        (opt_dense_i64_vec.new)
-        opt-group-split-note-use
-        plan)]
-    [used-count : i64 (opt_dense_i64_vec.len (& used))]
-    (for [index (iterator.range 0 used-count)]
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
+    [used? : bool false]
+    (ir.compiler-ir-instr-rewrite-begin! (&mut rw) instr)
+    (for [index (iterator.range 0 rw.uses.len)]
       (let
-        [var : i64 (opt_dense_i64_vec.get (& used) index -1)]
-        (if (opt-group-split-remapped? remap var)
-          unit
-          (let
-            [dst : i64 (array-ref cursor 0)]
-            (set! (array-ref cursor 0) (+ dst 1))
-            (opt-group-split-emit-pack! plan builder dst var)
-            (set! (array-ref remap var) (ir.CompilerIrValue.Var dst))))))
+        [var : i64 (opt-group-split-use-var plan (& rw) index)]
+        (when
+          (>= var 0)
+          (set! used? true)
+          (unless
+            (opt-group-split-remapped? remap var)
+            (let
+              [dst : i64 (array-ref cursor 0)]
+              (set! (array-ref cursor 0) (+ dst 1))
+              (opt-group-split-emit-pack! plan builder dst var)
+              (set! (array-ref remap var) (ir.CompilerIrValue.Var dst)))))))
+    (when
+      used?
+      (for [index (iterator.range 0 rw.uses.len)]
+        (let
+          [use : ir.CompilerIrUse
+            (ir.compiler-ir-instr-rewrite-use-at (& rw) index)]
+          (ir.compiler-ir-instr-rewrite-use!
+            (&mut rw)
+            index
+            (opt-group-split-map-use remap (ir.compiler-ir-use-value (& use)))))))
     (let
       [rewritten : ir.CompilerIrInstr
-        (if (= used-count 0)
-          (owned_view.compiler-owned-reference-shared-view instr)
-          (ir.compiler-ir-instr-map
-            (owned_view.compiler-owned-reference-shared-view instr)
-            opt-group-split-map-use
-            _
-            _
-            _
-            remap))]
-      (for [index (iterator.range 0 used-count)]
-        (set!
-          (array-ref remap (opt_dense_i64_vec.get (& used) index -1))
-          (ir.CompilerIrValue.Var -1)))
+        (ir.compiler-ir-instr-rewrite-finish
+          (&mut rw)
+          (owned_view.compiler-owned-reference-shared-view instr))]
+      (for [index (iterator.range 0 rw.uses.len)]
+        (let
+          [var : i64 (opt-group-split-use-var plan (& rw) index)]
+          (when
+            (>= var 0)
+            (set! (array-ref remap var) (ir.CompilerIrValue.Var -1)))))
       (match (opt-instr-def-var (& rewritten))
         [(Some dst)
           (if (opt-group-split-accepted? plan dst)
@@ -22029,13 +21481,6 @@
     (> (array-length marks) 0)
     (opt-addr-taken-var? marks (ir.compiler-ir-instr-dst instr))))
 
-(define (opt-addr-taken-use-marked?
-  [marks : (& marks (__tl_dyn-array bool))]
-  [_role : ir.CompilerIrOperandRole]
-  [found : bool]
-  [value : ir.CompilerIrValue]) : bool
-  (or found (opt-addr-taken-value? marks (& value))))
-
 ;; Whether `instr` names an address-taken var as an operand: that operand
 ;; loads the var's storage, so a store through its address is not dead before
 ;; it and may not move past it.
@@ -22044,11 +21489,11 @@
   [instr : (& instr ir.CompilerIrInstr)]) : bool
   (and
     (> (array-length marks) 0)
-    (ir.compiler-ir-instr-fold-uses
-      (owned_view.compiler-owned-reference-shared-view instr)
-      false
-      opt-addr-taken-use-marked?
-      marks)))
+    (let
+      [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+      (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
+      (any? [id (& ids)]
+        (opt-addr-taken-var? marks (deref id))))))
 
 ;; The installed marks may only be read once a refresh or install made them
 ;; this function's; the count is safe to read always.
@@ -22268,14 +21713,13 @@
 (define (opt-loop-taint-note-use!
   [taint : (& taint (__tl_dyn-array bool))]
   [hit : (&mut hit (__tl_dyn-array bool))]
-  [role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : unit
-  (match value
-    [(Var id)
+  [use : (& ir.CompilerIrUse)]) : unit
+  (match use.kind
+    [(VarUse)
       (when
-        (opt-loop-taint-var? taint id)
+        (opt-loop-taint-var? taint use.id)
         (set! (array-ref hit 0) true)
-        (match role
+        (match use.role
           [(Condition) (set! (array-ref hit 1) true)]
           [_ unit]))]
     [_ unit]))
@@ -22287,11 +21731,11 @@
   [instr : (& instr ir.CompilerIrInstr)]) : bool
   (set! (array-ref hit 0) false)
   (set! (array-ref hit 1) false)
-  (ir.compiler-ir-instr-visit-uses
-    (owned_view.compiler-owned-reference-shared-view instr)
-    opt-loop-taint-note-use!
-    taint
-    hit)
+  (let
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (ir.compiler-ir-instr-uses-into! instr (&mut uses))
+    (for [use (& uses)]
+      (opt-loop-taint-note-use! taint hit use)))
   (array-ref hit 0))
 
 (define (opt-loop-taint-step!
@@ -66471,13 +65915,6 @@
   (ir.compiler-ir-label
     (& (str_cat.str-cat (ir.compiler-ir-label-text label) suffix))))
 
-(define (opt-region-clone-use
-  [remap : (& (__tl_dyn-array ir.CompilerIrValue))]
-  [_labels : (& OptCloneLabels)]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
-  (opt-unroll-subst-value remap value))
-
 (define (opt-region-clone-label
   [_remap : (& (__tl_dyn-array ir.CompilerIrValue))]
   [labels : (& OptCloneLabels)]
@@ -66507,14 +65944,31 @@
   [remap : (& (__tl_dyn-array ir.CompilerIrValue))]
   [labels : (& OptCloneLabels)]
   [instr : (& ir.CompilerIrInstr)]) : ir.CompilerIrInstr
-  (ir.compiler-ir-instr-map
-    (owned_view.compiler-owned-reference-shared-view instr)
-    opt-region-clone-use
-    _
-    _
-    opt-region-clone-label
-    remap
-    labels))
+  (let
+    [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
+    (ir.compiler-ir-instr-rewrite-begin! (&mut rw) instr)
+    (for [index (iterator.range 0 rw.uses.len)]
+      (let
+        [use : ir.CompilerIrUse
+          (ir.compiler-ir-instr-rewrite-use-at (& rw) index)]
+        (ir.compiler-ir-instr-rewrite-use!
+          (&mut rw)
+          index
+          (opt-unroll-subst-value remap (ir.compiler-ir-use-value (& use))))))
+    (ir.compiler-ir-instr-rewrite-labels! (&mut rw) instr)
+    (for [index (iterator.range 0 rw.labels.len)]
+      (ir.compiler-ir-instr-rewrite-label!
+        (&mut rw)
+        index
+        (opt-region-clone-label
+          remap
+          labels
+          (ir.compiler-ir-id-list-get (& rw.labels) index -1))))
+    ;; A clone owns its containers: rebuild even when nothing was renamed.
+    (set! rw.changed? true)
+    (ir.compiler-ir-instr-rewrite-finish
+      (&mut rw)
+      (owned_view.compiler-owned-reference-shared-view instr))))
 
 ;; The same clone with its def renamed to the fresh id a pre-pass put in REMAP.
 (define (opt-region-clone-instr-remapped
@@ -95159,21 +94613,14 @@
       true]
     [_ false]))
 
-(define (opt-load-sink-use-is-var?
-  [var : i64]
-  [_role : ir.CompilerIrOperandRole]
-  [found : bool]
-  [value : ir.CompilerIrValue]) : bool
-  (or found (opt-value-is-var? (& value) var)))
-
 (define (opt-load-sink-instr-uses-var?
   [instr : (& ir.CompilerIrInstr)]
   [var : i64]) : bool
-  (ir.compiler-ir-instr-fold-uses
-    (owned_view.compiler-owned-reference-shared-view instr)
-    false
-    opt-load-sink-use-is-var?
-    var))
+  (let
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
+    (ir.compiler-ir-instr-use-var-ids-into! instr (&mut ids))
+    (any? [id (& ids)]
+      (= (deref id) var))))
 
 (define (opt-load-sink-single-use?
   [use-counts : (& use-counts (__tl_dyn-array i64))]
@@ -111054,24 +110501,21 @@
           census.optimize-for-size))]
     [(None) census]))
 
-(define (opt-inline-census-use
-  [index : (& index OptFunctionIndex)]
-  [_role : ir.CompilerIrOperandRole]
-  [census : OptInlineCensus]
-  [value : ir.CompilerIrValue]) : OptInlineCensus
-  (match value
-    [(Function name) (opt-inline-census-add-address index census name)]
-    [_ census]))
-
 (define (opt-inline-census-uses
   [index : (& index OptFunctionIndex)]
   [census : (& OptInlineCensus)]
   [instr : (& ir.CompilerIrInstr)]) : OptInlineCensus
-  (ir.compiler-ir-instr-fold-uses
-    (owned_view.compiler-owned-reference-shared-view instr)
-    (owned_view.compiler-owned-reference-shared-view census)
-    opt-inline-census-use
-    index))
+  (let
+    [out : OptInlineCensus
+      (owned_view.compiler-owned-reference-shared-view census)]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (ir.compiler-ir-instr-uses-into! instr (&mut uses))
+    (for [use (& uses)]
+      (match use.kind
+        [(FunctionUse)
+          (set! out (opt-inline-census-add-address index out use.id))]
+        [_ unit]))
+    out))
 
 (define (opt-inline-census-instr
   [index : (& index OptFunctionIndex)]
@@ -113292,14 +112736,6 @@
   (addr-taken? bool)
   (global-call-arg? bool))
 
-(define (opt-inline-use-mark-global-addr!
-  [scan : (&mut scan OptInlineModRefScan)]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : unit
-  (match value
-    [(GlobalAddr _) (set! scan.addr-taken? true)]
-    [_ unit]))
-
 (define (opt-inline-mod-ref-scan-instr?
   [scan : (&mut scan OptInlineModRefScan)]
   [check-call-args? : bool]
@@ -113312,7 +112748,13 @@
           (opt-inline-call-args-has-global? (& args))
           (set! scan.global-call-arg? true))]
       [_ unit]))
-  (ir.compiler-ir-instr-visit-uses instr opt-inline-use-mark-global-addr! scan)
+  (let
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (ir.compiler-ir-instr-uses-into! (& instr) (&mut uses))
+    (for [use (& uses)]
+      (match use.kind
+        [(GlobalAddrUse) (set! scan.addr-taken? true)]
+        [_ unit])))
   scan.addr-taken?)
 
 (define (opt-inline-mod-ref-collect-store!
@@ -114194,18 +113636,6 @@
     np
     base))
 
-(define (opt-inline-remap-value-seq
-  [values : (& ir.CompilerIrValueSeq)]
-  [sa : (& ir.CompilerIrCallArgs)]
-  [np : i64]
-  [base : i64]) : ir.CompilerIrValueSeq
-  (ir.compiler-ir-value-seq-map
-    (owned_view.compiler-owned-reference-shared-view values)
-    opt-inline-remap-container-value
-    (owned_view.compiler-owned-reference-shared-view sa)
-    np
-    base))
-
 ;; Inlining renames a callee's blocks by prefixing the caller-site tag onto the
 ;; original spelling, so the derived name is re-interned into a fresh id.
 (define (opt-inline-maybe-prefix-label [prefix : String] [label : i64]) : i64
@@ -114214,18 +113644,16 @@
     (ir.compiler-ir-label
       (& (str_cat.str-cat prefix "." (ir.compiler-ir-label-text label))))))
 
+;; One callee instruction cloned into the caller: every def rebased, every use
+;; remapped through the call's arguments, every label prefixed with the call
+;; site's tag, and every value, type and container owned by the clone.
 (define (opt-inline-clone-instr
   [instr : (& instr ir.CompilerIrInstr)]
   [sa : (& ir.CompilerIrCallArgs)]
   [np : i64]
   [base : i64]
   [label-prefix : String]) : ir.CompilerIrInstr
-  (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Mov dst src ty)
-      (Mov
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value src sa np base)
-        (ast.clone-ast-type (& ty)))]
+  (match instr
     ;; A callee-frame temp becomes a caller-frame temp.
     ;;
     ;; `alloc T` reserves one word of the enclosing function's frame for the
@@ -114256,142 +113684,44 @@
     ;; body-local (`src >= np`, opt-inline-multiblock-instr-reason), so the
     ;; operand is never a call-site argument and can never become a literal or
     ;; a caller value whose address the callee never had.
-    [(Alloc dst ty)
-      (Alloc (opt-inline-rebase-var dst np base) (ast.clone-ast-type (& ty)))]
-    [(AddrOf dst src _storage-words)
+    [(AddrOf dst src storage-words)
       (AddrOf
         (opt-inline-rebase-var dst np base)
         (opt-inline-rebase-var src np base)
-        _storage-words)]
-    [(Gep dst b o ty)
-      (Gep
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value b sa np base)
-        (opt-inline-remap-value o sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(Load dst src ty)
-      (Load
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value src sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(Cast dst src from to)
-      (Cast
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value src sa np base)
-        (ast.clone-ast-type (& from))
-        (ast.clone-ast-type (& to)))]
-    [(Bitcast dst src from to)
-      (Bitcast
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value src sa np base)
-        (ast.clone-ast-type (& from))
-        (ast.clone-ast-type (& to)))]
-    [(BinOp dst op lhs rhs ty)
-      (BinOp
-        (opt-inline-rebase-var dst np base)
-        op
-        (opt-inline-remap-value lhs sa np base)
-        (opt-inline-remap-value rhs sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(UnOp dst op src ty)
-      (UnOp
-        (opt-inline-rebase-var dst np base)
-        op
-        (opt-inline-remap-value src sa np base)
-        (ast.clone-ast-type (& ty)))]
-    ;; Pack/Word need explicit remap arms; when they were inline-eligible
-    ;; without them, inlined register-group instructions kept their CALLEE-local
-    ;; var ids inside the caller -- an opt2 self-build miscompile (the
-    ;; stage2/stage3 fixpoint diverged and no-regalloc builds bounds-aborted
-    ;; in intern-str on garbage ids).
-    [(Pack dst words ty)
-      (Pack
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value-seq (& words) sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(Word dst src index ty)
-      (Word
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value src sa np base)
-        index
-        (ast.clone-ast-type (& ty)))]
-    [(BoundsCheck idx len msg)
-      (BoundsCheck
-        (opt-inline-remap-value idx sa np base)
-        (opt-inline-remap-value len sa np base)
-        (opt-inline-maybe-prefix-label label-prefix msg))]
-    [(StorePtr d s ty)
-      (StorePtr
-        (opt-inline-remap-value d sa np base)
-        (opt-inline-remap-value s sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(StoreOwned d s ty)
-      (StoreOwned
-        (opt-inline-remap-value d sa np base)
-        (opt-inline-remap-value s sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(CopyBytes d s size)
-      (CopyBytes
-        (opt-inline-remap-value d sa np base)
-        (opt-inline-remap-value s sa np base)
-        size)]
-    ;; INL-5. The destination is a module global named by SYMBOL, not a frame
-    ;; slot: it is the same cell whichever function the instruction sits in, so
-    ;; there is nothing to rebase and the symbol is carried across unchanged
-    ;; (cloned only because symbol ids are owned values). The VALUE is remapped
-    ;; exactly like a StorePtr's stored operand -- a body-local becomes the
-    ;; rebased caller temp, a parameter becomes the site's argument.
-    ;;
-    ;; This arm has to exist rather than fall through to the catch-all below:
-    ;; `[_ instr]` returns the callee's instruction verbatim, which for a
-    ;; `Store g, %v` would leave the CALLEE's var id inside the caller -- the
-    ;; same class of miscompile the Pack/Word arms above were added for.
-    ;;
-    ;; It is written for BOTH tiers, and both admit stores (see
-    ;; opt-inline-body-instr-op-ok?). The multiblock clone reaches every
-    ;; non-terminator instruction through this function
-    ;; (opt-inline-clone-multiblock-instr's fall-through).
-    [(Store name value ty)
-      (Store
-        (ir.compiler-ir-symbol-clone name)
-        (opt-inline-remap-value value sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(Call dst name a ty)
-      (Call
-        (opt-inline-rebase-var dst np base)
-        (ir.compiler-ir-symbol-clone name)
-        (opt-inline-remap-args a sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(CallIndirect dst callee a ty)
-      (CallIndirect
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value callee sa np base)
-        (opt-inline-remap-args a sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(CallIndirectC dst callee a ty)
-      (CallIndirectC
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-value callee sa np base)
-        (opt-inline-remap-args a sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [(CallCAbiStoreResult payload-box)
+        storage-words)]
+    [_
       (let
-        [a (compiler-opt-box-field-shared-view payload-box args)]
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-cabi-store-result
-          (opt-inline-remap-value (deref payload-box).base sa np base)
-          (ir.compiler-ir-symbol-clone (deref payload-box).name)
-          (opt-inline-remap-args a sa np base)
-          slots))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [slots (compiler-opt-box-field-shared-view payload-box slots)]
-        (ir.ir-instr-call-indirect-cabi-store-result
-          (opt-inline-remap-value (deref payload-box).base sa np base)
-          (opt-inline-remap-value (deref payload-box).callee sa np base)
-          (opt-inline-remap-args (deref payload-box).args sa np base)
-          slots))]
-    [_ (owned_view.compiler-owned-reference-shared-view instr)]))
+        [rw : ir.CompilerIrInstrRewrite (ir.compiler-ir-instr-rewrite-new)]
+        [dst : i64 (ir.compiler-ir-instr-dst instr)]
+        (ir.compiler-ir-instr-rewrite-begin! (&mut rw) instr)
+        (for [index (iterator.range 0 rw.uses.len)]
+          (let
+            [use : ir.CompilerIrUse
+              (ir.compiler-ir-instr-rewrite-use-at (& rw) index)]
+            (ir.compiler-ir-instr-rewrite-use!
+              (&mut rw)
+              index
+              (opt-inline-remap-value
+                (& (ir.compiler-ir-use-value (& use)))
+                sa
+                np
+                base))))
+        (when
+          (>= dst 0)
+          (ir.compiler-ir-instr-rewrite-def!
+            (&mut rw)
+            (opt-inline-rebase-var dst np base)))
+        (ir.compiler-ir-instr-rewrite-labels! (&mut rw) instr)
+        (for [index (iterator.range 0 rw.labels.len)]
+          (ir.compiler-ir-instr-rewrite-label!
+            (&mut rw)
+            index
+            (opt-inline-maybe-prefix-label
+              (compiler-opt-global-shared-view label-prefix)
+              (ir.compiler-ir-id-list-get (& rw.labels) index -1))))
+        (ir.compiler-ir-instr-rewrite-finish
+          (&mut rw)
+          (ir.clone-compiler-ir-instr instr)))]))
 
 ;; Rewrite the callee's exit instruction into the instruction that binds the
 ;; site's result. `Return v` becomes `dst = v`; a direct `TailCall f(args)`
@@ -114856,101 +114186,6 @@
 
 (define (opt-inline-cont-label [prefix : String]) : i64
   (ir.compiler-ir-label (& (str_cat.str-cat prefix ".cont"))))
-
-(define (opt-inline-remap-phi-inputs
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [prefix : String]
-  [sa : (& ir.CompilerIrCallArgs)]
-  [np : i64]
-  [base : i64]) : ir.CompilerIrPhiInputSeq
-  (let
-    [phi-inputs-at-110930-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-110930-3.len 0)
-      (ir.compiler-ir-phi-input-seq-empty)
-      (let
-        [phi-input-at-110930-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-110930-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-110930-3.value]
-        [label : i64 phi-input-at-110930-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-110930-3.slots
-            (+ phi-inputs-at-110930-3.start 1)
-            (- phi-inputs-at-110930-3.len 1))]
-        (ir.compiler-ir-phi-input-seq-prepend
-          (opt-inline-remap-value value sa np base)
-          (opt-inline-prefix-label
-            (compiler-opt-global-shared-view prefix)
-            label)
-          (& (opt-inline-remap-phi-inputs rest prefix sa np base)))))))
-
-(define (opt-inline-prefix-switch-cases
-  [cases : (& ir.CompilerIrSwitchCaseSeq)]
-  [prefix : String]) : ir.CompilerIrSwitchCaseSeq
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrSwitchCase)
-      (__tl_make-array ir.CompilerIrSwitchCase cases.len)]
-    (for [index (iterator.range 0 cases.len)]
-      (match (ir.compiler-ir-switch-case-seq-borrow cases index)
-        [(Case tag label)
-          (set!
-            (array-ref slots index)
-            (ir.CompilerIrSwitchCase.Case
-              tag
-              (opt-inline-prefix-label
-                (compiler-opt-global-shared-view prefix)
-                label)))]))
-    (ir.CompilerIrSwitchCaseSeq slots cases.len)))
-
-(define (opt-inline-clone-multiblock-instr
-  [instr : (& instr ir.CompilerIrInstr)]
-  [prefix : String]
-  [sa : (& ir.CompilerIrCallArgs)]
-  [np : i64]
-  [base : i64]) : ir.CompilerIrInstr
-  (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Jump label) (Jump (opt-inline-prefix-label prefix label))]
-    [(Branch cond true-label false-label)
-      (Branch
-        (opt-inline-remap-value cond sa np base)
-        (opt-inline-prefix-label
-          (compiler-opt-global-shared-view prefix)
-          true-label)
-        (opt-inline-prefix-label prefix false-label))]
-    [(TotalEnumBranch cond true-label false-label)
-      (TotalEnumBranch
-        (opt-inline-remap-value cond sa np base)
-        (opt-inline-prefix-label
-          (compiler-opt-global-shared-view prefix)
-          true-label)
-        (opt-inline-prefix-label prefix false-label))]
-    [(Switch value tag-base cases default-label)
-      (Switch
-        (opt-inline-remap-value value sa np base)
-        tag-base
-        (opt-inline-prefix-switch-cases
-          (& cases)
-          (compiler-opt-global-shared-view prefix))
-        (opt-inline-prefix-label prefix default-label))]
-    [(TotalEnumSwitch value tag-base cases default-label trap-label)
-      (TotalEnumSwitch
-        (opt-inline-remap-value value sa np base)
-        tag-base
-        (opt-inline-prefix-switch-cases
-          (& cases)
-          (compiler-opt-global-shared-view prefix))
-        (opt-inline-prefix-label
-          (compiler-opt-global-shared-view prefix)
-          default-label)
-        (if (= trap-label (ir.compiler-ir-label-none))
-          trap-label
-          (opt-inline-prefix-label prefix trap-label)))]
-    [(Phi dst inputs ty)
-      (Phi
-        (opt-inline-rebase-var dst np base)
-        (opt-inline-remap-phi-inputs inputs prefix sa np base)
-        (ast.clone-ast-type (& ty)))]
-    [_ (opt-inline-clone-instr instr sa np base prefix)]))
 
 (define (opt-inline-return-value
   [maybe : (& ir.CompilerIrMaybeValue)]
@@ -121876,12 +121111,12 @@
             [_
               (let
                 [cloned : ir.CompilerIrInstr
-                  (opt-inline-clone-multiblock-instr
+                  (opt-inline-clone-instr
                     instr
-                    (compiler-opt-global-shared-view prefix)
                     sa
                     np
-                    base)]
+                    base
+                    (compiler-opt-global-shared-view prefix))]
                 (ir.compiler-ir-instr-builder-push!
                   (&mut builder)
                   (compiler-opt-global-shared-view cloned))
@@ -124159,13 +123394,6 @@
       (opt-reach-add-function index state name)]
     [_ state]))
 
-(define (opt-reach-use
-  [index : (& index OptFunctionIndex)]
-  [_role : ir.CompilerIrOperandRole]
-  [state : OptReachState]
-  [value : ir.CompilerIrValue]) : OptReachState
-  (opt-reach-value index state (& value)))
-
 (define (opt-reach-uses
   [index : (& index OptFunctionIndex)]
   [state : OptReachState]
@@ -124176,11 +123404,15 @@
     ;; packing, so the group operands themselves reach nothing new.
     [(Pack _ _ _) state]
     [_
-      (ir.compiler-ir-instr-fold-uses
-        (owned_view.compiler-owned-reference-shared-view instr)
-        state
-        opt-reach-use
-        index)]))
+      (let
+        [out : OptReachState state]
+        [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+        (ir.compiler-ir-instr-uses-into! instr (&mut uses))
+        (for [use (& uses)]
+          (set!
+            out
+            (opt-reach-value index out (& (ir.compiler-ir-use-value use)))))
+        out)]))
 
 (define (opt-reach-instr
   [index : OptFunctionIndex]
@@ -126092,7 +125324,7 @@
 ;; `(& global)` was taken -- lowered to `CompilerIrValue.GlobalAddr name`. Disqualifying a
 ;; global on EITHER signal leaves only provably-never-written globals, whose value
 ;; equals the initializer at every use. The disqualify walk reaches operands
-;; through `compiler-ir-instr-visit-uses`, which has no wildcard arm, so adding
+;; through `ir.compiler-ir-instr-uses-into!` (compiler-ir-instr-visit-uses, which has no wildcard arm), so adding
 ;; a new IR instruction fails to compile until its operands are classified
 ;; there -- a new operand position can never silently escape the address-taken
 ;; check.
@@ -126102,12 +125334,11 @@
 ;; erase that address fact. The shared operand visitor includes every role.
 (define (opt-const-globals-disq-use!
   [scan : (&mut scan OptGlobalDisqualifications)]
-  [_role : ir.CompilerIrOperandRole]
-  [value : ir.CompilerIrValue]) : unit
-  (match value
-    [(GlobalAddr name)
+  [use : (& ir.CompilerIrUse)]) : unit
+  (match use.kind
+    [(GlobalAddrUse)
       (let
-        [id : i64 (ir.compiler-ir-symbol-id name)]
+        [id : i64 (ir.compiler-ir-symbol-id use.id)]
         (opt_i64_i64_map.insert-ref! (&mut scan.disq) id 1)
         (opt_i64_i64_map.insert-ref! (&mut scan.addr-taken) id 1))]
     [_ unit]))
@@ -126124,10 +125355,11 @@
           (ir.compiler-ir-symbol-id name)
           1)]
       [_ unit])
-    (ir.compiler-ir-instr-visit-uses
-      instr
-      opt-const-globals-disq-use!
-      (&mut out))
+    (let
+      [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+      (ir.compiler-ir-instr-uses-into! (& instr) (&mut uses))
+      (for [use (& uses)]
+        (opt-const-globals-disq-use! (&mut out) use)))
     out))
 
 (define (opt-const-globals-disqualified
@@ -128225,12 +127457,6 @@
       (opt-global-cell-scan-ref scan (ir.compiler-ir-symbol-id name))]
     [_ scan]))
 
-(define (opt-global-cell-scan-use
-  [_role : ir.CompilerIrOperandRole]
-  [scan : OptGlobalCellScan]
-  [value : ir.CompilerIrValue]) : OptGlobalCellScan
-  (opt-global-cell-scan-value scan value))
-
 ;; Pack words carry no global operands (the same invariant opt-reach-uses
 ;; relies on), so they are not scanned.
 (define (opt-global-cell-scan-uses
@@ -128239,10 +127465,18 @@
   (match instr
     [(Pack _ _ _) scan]
     [_
-      (ir.compiler-ir-instr-fold-uses
-        (owned_view.compiler-owned-reference-shared-view instr)
-        scan
-        opt-global-cell-scan-use)]))
+      (let
+        [out : OptGlobalCellScan scan]
+        [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+        (ir.compiler-ir-instr-uses-into! instr (&mut uses))
+        (for [use (& uses)]
+          (match use.kind
+            [(GlobalUse)
+              (set!
+                out
+                (opt-global-cell-scan-ref out (ir.compiler-ir-symbol-id use.id)))]
+            [_ unit]))
+        out)]))
 
 ;; Per-function fact scan: global-ref operand uses (refs), direct set! targets
 ;; (stores), and the RETURNING call-family instructions that remain -- named
@@ -131732,10 +130966,19 @@
 (define (opt-arg-global-scan-uses
   [scan : (& OptArgGlobalScan)]
   [instr : (& ir.CompilerIrInstr)]) : OptArgGlobalScan
-  (ir.compiler-ir-instr-fold-uses
-    (owned_view.compiler-owned-reference-shared-view instr)
-    (owned_view.compiler-owned-reference-shared-view scan)
-    opt-arg-global-scan-use))
+  (let
+    [out : OptArgGlobalScan
+      (owned_view.compiler-owned-reference-shared-view scan)]
+    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
+    (ir.compiler-ir-instr-uses-into! instr (&mut uses))
+    (for [use (& uses)]
+      (match use.kind
+        [(FunctionUse)
+          (set!
+            out
+            (opt-arg-global-scan-opaque out (ir.compiler-ir-symbol-id use.id)))]
+        [_ unit]))
+    out))
 
 (define (opt-arg-global-scan-instr
   [scan : OptArgGlobalScan]
@@ -134434,17 +133677,6 @@
     [(Gep _ _ _ _) (opt-collect-instr-uses-array uses instr)]
     [_ unit]))
 
-(define (opt-global-snapshot-count-use
-  [var : i64]
-  [_role : ir.CompilerIrOperandRole]
-  [left : i64]
-  [value : ir.CompilerIrValue]) : i64
-  (-
-    left
-    (if (opt-value-is-var? (& value) var)
-      1
-      0)))
-
 ;; A retained capture must not acquire a second set of descriptor loads.
 ;; The caller has proved every use is a Gep; count only uses the same block's
 ;; forwarding environment can replace, stopping before its first write barrier.
@@ -134463,6 +133695,7 @@
     [at : i64 start]
     [left : i64 expected]
     [ready? : bool (not policy.defer?)]
+    [ids : ir.CompilerIrIdList (ir.compiler-ir-id-list-new)]
     (while (and (< at instrs.len) (> left 0))
       (let
         [instr (ir.compiler-ir-instr-seq-ref instrs at)]
@@ -134480,13 +133713,10 @@
           (return false))
         (when
           ready?
-          (set!
-            left
-            (ir.compiler-ir-instr-fold-uses
-              instr
-              left
-              opt-global-snapshot-count-use
-              var)))
+          (set! ids.len 0)
+          (ir.compiler-ir-instr-use-var-ids-into! (& instr) (&mut ids))
+          (for [id (& ids)]
+            (when (= (deref id) var) (-= left 1))))
         (when boundary? (set! ready? true)))
       (+= at 1))
     (= left 0)))

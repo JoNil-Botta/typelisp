@@ -83761,7 +83761,7 @@ done:
     [out : ir.CompilerIrSpmdCallArgSeq
       (cond
         [(= mode 0)
-          (opt.opt-copy-subst-spmd-call-args
+          (opt-copy-subst-spmd-call-args
             (&
               (opt.opt-copy-env-push
                 (opt.opt-copy-env-empty)
@@ -85362,6 +85362,22 @@ done:
     blocks
     label
     (ir.clone-compiler-ir-instr-seq instrs)))
+
+(define (opt-copy-subst-spmd-value
+  [env : opt.OptCopyEnv]
+  [class : ir.CompilerIrSpmdValueClass]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match class
+    [(Uniform) (opt.opt-copy-resolve env value)]
+    [(or (Varying) (Mask)) (opt.opt-copy-resolve-mask (& env) value)]))
+
+(define (opt-copy-subst-spmd-call-args
+  [env : (& opt.OptCopyEnv)]
+  [args : (& ir.CompilerIrSpmdCallArgSeq)]) : ir.CompilerIrSpmdCallArgSeq
+  (ir.compiler-ir-spmd-call-args-map
+    (owned_view.compiler-owned-reference-shared-view args)
+    opt-copy-subst-spmd-value
+    (owned_view.compiler-owned-reference-shared-view env)))
 
 (define (opt-ssa-rewrite-spmd-call-args
   [env : opt.OptSsaRenameEnv]

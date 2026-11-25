@@ -5116,10 +5116,14 @@
     (opt-aggregate-split-classify-copy-side! (&mut plan) src size)
     ;; A register-to-register copy carries the destination's word type, so the
     ;; two aggregates must be the same type for that to describe both sides.
+    ;; A side already refused stays in memory, so the copy is word loads or
+    ;; stores there, which the other side's own word types describe.
     (when
       (and
         (>= dst-index 0)
         (>= src-index 0)
+        (not (opt-aggregate-split-refused? plan.cand dst-index))
+        (not (opt-aggregate-split-refused? plan.cand src-index))
         (not
           (opt-type-eq
             type-segment-bases

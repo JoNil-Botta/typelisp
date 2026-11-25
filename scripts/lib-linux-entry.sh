@@ -75,7 +75,7 @@ stdlib_archive_for_asm_triple() {
     [ -n "$STDLIB_ARCHIVE_PATH" ] || return 0
     [ -n "$_ls_asm" ] && [ -f "$_ls_asm" ] || return 0
     if ! grep -q '^tl_oom_abort:$' "$_ls_asm" 2>/dev/null && \
-        grep -qE '(^|[[:space:]])(tl_oom_abort|tl_region_abort|tl_oob_abort|tl_oob_abort_at|tl_c_fn_null_abort|tl_panic_at|_tl_stdlib_|_tl___tl_mod_init_stdlib_)' "$_ls_asm" 2>/dev/null; then
+        grep -qE '(^|[[:space:]])(tl_oom_abort|tl_region_abort|tl_windows_allocation_abort|tl_oob_abort|tl_oob_abort_at|tl_c_fn_null_abort|tl_panic_at|_tl_stdlib_|_tl___tl_mod_init_stdlib_)' "$_ls_asm" 2>/dev/null; then
         printf '%s\n' "$STDLIB_ARCHIVE_PATH"
     fi
     return 0

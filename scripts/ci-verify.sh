@@ -425,7 +425,19 @@ stage2_can_compile_native_windows() {
         sed 's/^/  /' "$probe_dir/asm.out" >&2 || true
         return 1
     fi
-    if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin")" \
+    # A pristine --stdlib-root compiles against the prebuilt stdlib beside the
+    # compiler, whose runtime lives in the sysroot archive.
+    probe_archive=$(windows_stdlib_archive_for_asm "$asm" "${compiler:-}")
+    if [ -n "$probe_archive" ]; then
+        if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "$(cygpath -aw "$probe_archive")" -OPT:REF \
+            "-OUT:$(cygpath -aw "$bin")" \
+            -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
+            > "$probe_dir/link.out" 2>&1; then
+            echo "[ci-verify] windows stage2 compile-native probe link failed"
+            sed 's/^/  /' "$probe_dir/link.out" >&2 || true
+            return 1
+        fi
+    elif ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin")" \
         -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
         > "$probe_dir/link.out" 2>&1; then
         echo "[ci-verify] windows stage2 compile-native probe link failed"

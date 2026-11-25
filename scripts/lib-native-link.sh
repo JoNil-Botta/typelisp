@@ -255,7 +255,7 @@ native_link_find_stdlib_archive() {
     if grep -q '^tl_oom_abort:$' "$_nl_asm" 2>/dev/null; then
         return 0
     fi
-    if ! grep -qE '(^|[[:space:]])(tl_oom_abort|tl_region_abort|tl_oob_abort|tl_oob_abort_at|tl_c_fn_null_abort|tl_panic_at|_tl_stdlib_|_tl___tl_mod_init_|tl_alloc$|tl_exit$)' "$_nl_asm" 2>/dev/null; then
+    if ! grep -qE '(^|[[:space:]])(tl_oom_abort|tl_region_abort|tl_windows_allocation_abort|tl_oob_abort|tl_oob_abort_at|tl_c_fn_null_abort|tl_panic_at|_tl_stdlib_|_tl___tl_mod_init_|tl_alloc$|tl_exit$)' "$_nl_asm" 2>/dev/null; then
         return 0
     fi
     if [ "$NL_HOST_OS" = windows ]; then

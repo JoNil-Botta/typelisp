@@ -93873,8 +93873,10 @@
     [nominal : i64 (tc-sealed-constructor-nominal ctx ty)]
     (if (and
       (>= nominal 0)
-      (tc-sealed-constructor-name? ctx name nominal)
+      ;; Sealedness is cached per nominal, so it runs before the name test,
+      ;; which resolves NAME: this runs on every global binding lookup.
       (tc-sealed-handle-foreign? ctx env nominal)
+      (tc-sealed-constructor-name? ctx name nominal)
       (< (tc-opaque-decl-index ctx nominal) 0))
       (tc-sealed-handle-require-unsafe ctx env nominal "construction")
       Ok)))

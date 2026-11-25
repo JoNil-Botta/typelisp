@@ -182,8 +182,8 @@
       (if (string.eq key-kind "generated")
         `(stdlib.clone.deep key)
         `key)]
-    ;; Generated keys are hashed and compared through shared borrows, so a
-    ;; lookup never clones its key to hash or confirm a probe.
+    ;; Generated keys are hashed and compared through shared borrows, so
+    ;; hashing a key and confirming a probed slot clone nothing.
     [owned-hash-arg : comptime.Expr
       (if (string.eq key-kind "generated")
         `(& key)

@@ -71,7 +71,7 @@ rows and the 15,000,000-byte limit from
   `Utf8`, `Limit`, `StringIdOutOfRange`, `UnknownTag`, `DigestMismatch`,
   `CfgFingerprintMismatch`, `CompilerBuildMismatch`, `TargetMismatch`,
   `TrailingBytes`). Nothing is left partially decoded into a useable state.
-  `schema_version` is `2` and there is no compatibility reader, so a newer
+  `schema_version` is `3` and there is no compatibility reader, so a newer
   reader rejects an older version instead of guessing.
 - **Lazy, job-scoped decoding.** The Module Directory alone answers
   `inspect`-style summaries. A record decodes on first use into the current
@@ -81,18 +81,18 @@ rows and the 15,000,000-byte limit from
   `scripts/verify-compile-profile.sh` keeps its `<= 1 MiB` post-emission pool
   release and `<= 4 MiB` batch-live drift bounds.
 
-## `.tli` v2 wire format
+## `.tli` v3 wire format
 
 Bytes are packed in this order with no padding and no gaps: header, string
 pool, module directory, module records, compact IR. Offsets and lengths are
 absolute from byte `0`.
 
-### File header (112 bytes)
+### File header (144 bytes)
 
 | Bytes | Field | Meaning |
 | --- | --- | --- |
 | `[0..4]` | `magic` | `"TLI\0"` (`0x00494C54`, little-endian) |
-| `[4..8]` | `schema_version: u32` | `2` |
+| `[4..8]` | `schema_version: u32` | `3` |
 | `[8..12]` | `flags: u32` | bit0 `IS_STDLIB_BUNDLE`, bit1 `HAS_COMPACT_IR`, bit2 `HAS_TLCI_COMPANION`; other bits `0` |
 | `[12..16]` | `module_count: u32` | directory entries |
 | `[16..24]` | `total_byte_len: u64` | must equal the file length |
@@ -102,14 +102,24 @@ absolute from byte `0`.
 | `[72..76]` | `compiler_build_str_id: u32` | writer's build identity |
 | `[76..80]` | `target_triple_str_id: u32` | writer's target |
 | `[80..112]` | `content_sha256: [u8; 32]` | SHA-256 over `[0..80] || [112..total_byte_len]` |
+| `[112..144]` | `index_sha256: [u8; 32]` | SHA-256 over `[0..80] || [144..module_dir_offset + module_dir_len]` |
 
 The build and target ids gate layout and ABI: a mismatch fails closed.
+Every open verifies `index_sha256`, so the header, string pool and module
+directory a lazy open reads are tamper-evident before any record decodes; a
+record is then checked against its `module_sha256` when it first decodes. A
+full open (`inspect`, round trips) also verifies `content_sha256`.
 
 ### String pool
 
-`u32 count`, then `count` × `(u32 len, utf8[len])`. The writer deduplicates and
-sorts by UTF-8 byte order, so the pool is canonical; index `0` is `""`.
-Lengths are byte counts, and every entry must be valid UTF-8.
+`u32 count`, then `u32 offsets[count + 1]`, then the text: entry `i` is the
+UTF-8 bytes `[offsets[i]..offsets[i + 1])` of the text that follows the table.
+`offsets[0]` and `offsets[1]` are `0` (index `0` is `""`) and
+`offsets[count]` ends the section. The writer deduplicates and sorts by UTF-8
+byte order, so the pool is canonical. A lazy open reads only the count and
+the table's end points; an entry's two offsets, its bounds and its UTF-8 are
+checked when a record first uses it, and a full open checks every entry and
+the strict order.
 
 ### Module directory
 
@@ -219,7 +229,7 @@ f) `macros` (`TliMacroHandle`): `s:name`, `s:module`, `s:macro_identity`,
    keep the image digest and carry entry index `-1`. An absent companion
    uses a zero digest and entry index `-1`.
 g) `dispatches` (`TliDispatchDecl`): `s:name`, `s:module`, `s:link_symbol`,
-   `u32 flags` (reserved, `0` in v2).
+   `u32 flags` (reserved, `0` in v3).
 
 ### `TliType` tags
 
@@ -263,7 +273,7 @@ bound (`<= 64`), so no hostile file can exhaust the stack.
 `compact_ir_offset`/`compact_ir_len` reserve a section for Stage 2/3 typed
 three-address post-lower IR of small hot functions (for example `<= 32`
 instructions), keyed by function index, so `--opt-level 2` inlines across
-module boundaries without AST bodies. It is reserved in v2: with
+module boundaries without AST bodies. It is reserved in v3: with
 `HAS_COMPACT_IR` clear both offsets are `0`, and a reader rejects a set bit
 until that section's grammar is locked.
 

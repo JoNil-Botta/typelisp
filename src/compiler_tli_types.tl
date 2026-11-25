@@ -6,8 +6,14 @@
 (define tli-magic : i64
   0x00494c54)
 (define tli-schema-version : i64
-  2)
+  3)
 (define tli-header-size : i64
+  144)
+
+;; `content_sha256` lies at [80..112] and `index_sha256` at [112..144].
+(define tli-content-digest-offset : i64
+  80)
+(define tli-index-digest-offset : i64
   112)
 (define tli-directory-entry-size : i64
   56)

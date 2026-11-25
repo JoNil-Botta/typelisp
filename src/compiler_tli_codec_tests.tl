@@ -330,8 +330,16 @@
 
 (define (tli-test-refresh-content! [bytes : (&mut bytes (__tl_dyn-array u8))]) : unit
   (let
-    [digest : (Array u8 32) (codec.tli-content-digest bytes)]
-    (codec.tli-copy-digest! bytes 80 (& digest))))
+    [index-end : i64 (+ (le.read-u64 bytes 40) (le.read-u64 bytes 48))]
+    [index : (Array u8 32) (codec.tli-index-digest bytes index-end)]
+    (codec.tli-copy-digest! bytes tli.tli-index-digest-offset (& index))
+    (let
+      [digest : (Array u8 32) (codec.tli-content-digest bytes)]
+      (codec.tli-copy-digest! bytes tli.tli-content-digest-offset (& digest)))))
+
+;; The first byte of pool entry 1, after the count and the offset table.
+(define (tli-test-pool-text [bytes : (& bytes (__tl_dyn-array u8))]) : i64
+  (+ tli.tli-header-size 4 (* 4 (+ (le.read-u32 bytes tli.tli-header-size) 1))))
 
 (define (tli-test-refresh-module!
   [bytes : (&mut bytes (__tl_dyn-array u8))]
@@ -499,9 +507,9 @@
     (le.set-u64! (&mut bytes) 16 length)
     (le.set-u64! (&mut bytes) 24 -1)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.OffsetOutOfRange))
-    (le.set-u64! (&mut bytes) 24 111)
+    (le.set-u64! (&mut bytes) 24 (- tli.tli-header-size 1))
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.Overlap))
-    (le.set-u64! (&mut bytes) 24 112)
+    (le.set-u64! (&mut bytes) 24 tli.tli-header-size)
     (le.set-u64! (&mut bytes) 64 1)
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.OffsetOutOfRange))
     (le.set-u64! (&mut bytes) 64 0)
@@ -515,11 +523,18 @@
     [entry : i64 (le.read-u64 (& bytes) 40)]
     [start : i64 (tli-test-record (& bytes))]
     [build : i64 (le.read-u32 (& bytes) 72)]
-    (set! (array-ref bytes 124) (cast 0xff : u8))
+    [text : i64 (tli-test-pool-text (& bytes))]
+    [first : u8 (array-ref bytes text)]
+    (set! (array-ref bytes text) (cast 0xff : u8))
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.DigestMismatch))
     (tli-test-refresh-content! (&mut bytes))
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.Utf8))
-    (set! (array-ref bytes 124) (cast 98 : u8))
+    (set! (array-ref bytes text) first)
+    (le.set-u32! (&mut bytes) (+ tli.tli-header-size 8) 7)
+    (tli-test-refresh-content! (&mut bytes))
+    (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))
+    (le.set-u32! (&mut bytes) (+ tli.tli-header-size 8) 0)
+    (tli-test-refresh-content! (&mut bytes))
     (le.set-u32! (&mut bytes) 72 0xffffffff)
     (tli-test-refresh-content! (&mut bytes))
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.StringIdOutOfRange))
@@ -531,6 +546,25 @@
     (le.set-u64! (&mut bytes) (+ entry 16) -1)
     (tli-test-refresh-content! (&mut bytes))
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.OffsetOutOfRange))))
+
+(test
+  tli-lazy-open-checks-index-digest
+  (let
+    [bytes : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
+    [text : i64 (tli-test-pool-text (& bytes))]
+    (match (codec.tli-decode-directory-for-lazy
+      (& bytes)
+      "build"
+      "linux-x86_64")
+      [(codec.TliDirectoryResult.Err error)
+        (test.assert-true false error.message)]
+      [(codec.TliDirectoryResult.Ok _) unit])
+    ;; A lazy open hashes no record, but the pool and directory it reads are
+    ;; covered by `index_sha256` even when `content_sha256` is left stale.
+    (set! (array-ref bytes text) (cast 0x7a : u8))
+    (tli-test-invalid-directory!
+      (codec.tli-decode-directory-for-lazy (& bytes) "build" "linux-x86_64")
+      (tli.TliDecodeError.DigestMismatch))))
 
 (test
   tli-bad-record
@@ -617,7 +651,7 @@
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.UnknownTag))))
 
 (test
-  tli-v2-wire-tags-and-digests
+  tli-v3-wire-tags-and-digests
   (let
     [wire : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
     [bundle : tli.TliBundle (tli-test-bundle false)]
@@ -627,11 +661,11 @@
         false
         (codec.tli-collect-pool (& bundle))
         (buf.byte-buf-builder-new))]
-    (test.assert-i64-eq (array-length wire) 375 "v2 exemplar length")
+    (test.assert-i64-eq (array-length wire) 411 "v3 exemplar length")
     (test.assert-i64-eq
       (tli-test-record (& wire))
-      248
-      "v2 exemplar record offset")
+      284
+      "v3 exemplar record offset")
     (match (codec.tli-decode-directory (& wire))
       [(codec.TliDirectoryResult.Err error)
         (test.assert-true false error.message)]
@@ -640,8 +674,18 @@
           [entry (& (array-ref directory.entries 0))]
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest directory.content-sha256)))
-            "db63cf4db3d3896f37d74628b812b5b08d2afd5562e54f65042ff2dbe40e02c2"
+            "cdd94face3ab4695c18f8ab2ce8400184fdb24f924be3ef1f05ee00e1fd1cd9b"
             "independently computed content digest")
+          (let
+            [index : (Array u8 32) (make-array u8 32)]
+            (for [byte (iterator.range 0 32)]
+              (set!
+                (array-ref index byte)
+                (array-ref wire (+ tli.tli-index-digest-offset byte))))
+            (test.assert-owned-string-eq
+              (sha256.to-hex (& (sha256.Sha256Digest index)))
+              "38e20bbf88c3d4a2bc549b9e29ffdaa5bcceb153d36aee033a395fbfc8b9c62c"
+              "independently computed index digest"))
           (test.assert-owned-string-eq
             (sha256.to-hex (& (sha256.Sha256Digest entry.module-sha256)))
             "96fc0aeed04dcf061acd20301f5d5ead15aa9657002d1e1a2112aaa1a787ab01"

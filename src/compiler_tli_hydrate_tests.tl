@@ -655,23 +655,26 @@
   (let
     [pool-start : i64 (byte_le.read-u64 wire 24)]
     [count : i64 (byte_le.read-u32 wire pool-start)]
-    [offset : i64 (+ pool-start 4)]
-    (for [_ (iterator.range 0 count)]
+    [table : i64 (+ pool-start 4)]
+    [base : i64 (+ table (* 4 (+ count 1)))]
+    (for [id (iterator.range 0 count)]
       (let
-        [length : i64 (byte_le.read-u32 wire offset)]
-        [start : i64 (+ offset 4)]
+        [first : i64 (byte_le.read-u32 wire (+ table (* 4 id)))]
+        [length : i64
+          (- (byte_le.read-u32 wire (+ table (* 4 (+ id 1)))) first)]
+        [start : i64 (+ base first)]
         [candidate : (__tl_dyn-array u8) (__tl_make-array u8 length)]
         (for [index (iterator.range 0 length)]
           (set! (array-ref candidate index) (array-ref wire (+ start index))))
         (let
           [found : String (byte_buf.to-string (byte_buf.from-array candidate))]
-          (when (string.eq (& found) text) (return start)))
-        (set! offset (+ start length))))
+          (when (string.eq (& found) text) (return start)))))
     (io.panic "pool text not found")))
 
-;; Opening rejects a damaged string pool before any hydration: the eager open
-;; through its content SHA-256 and UTF-8 checks, and the compiler's lazy
-;; stdlib.tli open through the UTF-8 check on each pool string it reads.
+;; Opening rejects a damaged string pool before any hydration: both opens
+;; through `index_sha256` (the eager one also through its content SHA-256),
+;; and, once the digests are re-stamped, through the UTF-8 check on each pool
+;; string they read.
 (define (tli-test-expect-open-failure
   [wire : (& wire (__tl_dyn-array u8))]
   [cfg-digest : (& (Array u8 32))]
@@ -712,11 +715,26 @@
         (& wire)
         (& cfg-digest)
         true
-        true
-        "lazy open rejects invalid UTF-8 pool text"))
+        false
+        "modified string pool bytes fail the lazy index SHA-256"))
     (let
-      [digest : (Array u8 32) (codec.tli-content-digest (& wire))]
-      (codec.tli-copy-digest! (&mut wire) 80 (& digest))
+      [index : (Array u8 32)
+        (codec.tli-index-digest
+          (& wire)
+          (+ (byte_le.read-u64 (& wire) 40) (byte_le.read-u64 (& wire) 48)))]
+      (codec.tli-copy-digest! (&mut wire) tli.tli-index-digest-offset (& index))
+      (codec.tli-copy-digest!
+        (&mut wire)
+        tli.tli-content-digest-offset
+        (& (codec.tli-content-digest (& wire))))
+      (with-arena
+        tli-job
+        (tli-test-expect-open-failure
+          (& wire)
+          (& cfg-digest)
+          true
+          true
+          "lazy open rejects invalid UTF-8 pool text"))
       (with-arena
         tli-job
         (tli-test-expect-open-failure

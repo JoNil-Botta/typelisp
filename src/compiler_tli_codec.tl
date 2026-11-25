@@ -65,12 +65,27 @@
     32)
   (let
     [state : sha256.Sha256State (sha256.new)]
-    (tli-hash-range! (&mut state) bytes 0 80)
+    (tli-hash-range! (&mut state) bytes 0 tli.tli-content-digest-offset)
+    (tli-hash-range!
+      (&mut state)
+      bytes
+      tli.tli-index-digest-offset
+      (- (array-length bytes) tli.tli-index-digest-offset))
+    (tli-finish-hash! (&mut state))))
+
+;; `index_sha256` covers the header outside both digests, the string pool and
+;; the module directory: everything a lazy open reads before any record.
+(define (tli-index-digest
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [index-end : i64]) : (Array u8 32)
+  (let
+    [state : sha256.Sha256State (sha256.new)]
+    (tli-hash-range! (&mut state) bytes 0 tli.tli-content-digest-offset)
     (tli-hash-range!
       (&mut state)
       bytes
       tli.tli-header-size
-      (- (array-length bytes) tli.tli-header-size))
+      (- index-end tli.tli-header-size))
     (tli-finish-hash! (&mut state))))
 
 (define (tli-digest-eq?
@@ -829,10 +844,15 @@
     (tli-write-u32! (&mut ctx) (strings.len (& ctx.pool)))
     (let
       [slots (strings.slots (& ctx.pool))]
+      [offset : i64 0]
+      (le.push-u32! (&mut ctx.out) 0)
       (for [index (iterator.range 0 (strings.len (& ctx.pool)))]
-        (binary.compiler-incremental-binary-push-string!
+        (+= offset (string.string-length (& (array-ref slots index))))
+        (le.push-u32! (&mut ctx.out) offset))
+      (for [index (iterator.range 0 (strings.len (& ctx.pool)))]
+        (buf.byte-buf-builder-append-string
           (&mut ctx.out)
-          (& (array-ref slots index)))))
+          (string.copy (& (array-ref slots index))))))
     (let
       [dir-offset : i64 ctx.out.len]
       [dir-len : i64 (* count tli.tli-directory-entry-size)]
@@ -876,8 +896,15 @@
           76
           (tli-find-string (& ctx.pool) (& bundle.target-triple)))
         (let
+          [index : (Array u8 32)
+            (tli-index-digest (& bytes) (+ dir-offset dir-len))]
+          (tli-copy-digest! (&mut bytes) tli.tli-index-digest-offset (& index)))
+        (let
           [digest : (Array u8 32) (tli-content-digest (& bytes))]
-          (tli-copy-digest! (&mut bytes) 80 (& digest)))
+          (tli-copy-digest!
+            (&mut bytes)
+            tli.tli-content-digest-offset
+            (& digest)))
         bytes))))
 
 ;; Reader failures are sticky. The binary reader uses codes 7/8 for its string
@@ -1069,8 +1096,6 @@
         (tli-fail! rd tli-error-limit "TLI string limit exceeded")
         ""]
       [(not (cursor.consume! (&mut rd.cursor) length)) ""]
-      [(not (cursor.consume! (&mut rd.cursor) length)) ""]
-      [(not (cursor.consume! (&mut rd.cursor) length)) ""]
       [(not (tli-utf8-valid? (& rd.cursor.bytes) start length))
         (tli-fail! rd tli-error-utf8 "TLI text is not valid UTF-8")
         ""]
@@ -1106,35 +1131,66 @@
       (__tl_make-array u8 0))))
 
 ;; A decoded string pool. An eager pool holds every string. A lazy pool leaves
-;; `strings` empty and records where each entry's text lies in the file bytes
-;; that the enclosing `TliDirectory` owns (`base`); `tli-read-name!` validates,
-;; charges and copies an entry only when a record uses it.
+;; `strings` empty and keeps where the pool's offset table and text lie in the
+;; file bytes that the enclosing `TliDirectory` owns (`base`);
+;; `tli-read-name!` reads an entry's two offsets, then validates, charges and
+;; copies its text only when a record uses it, so opening a file reads no entry.
 (defstruct TliPool
   (strings (__tl_dyn-array String))
-  (starts (__tl_dyn-array i64))
-  (lengths (__tl_dyn-array i64))
+  (lazy? bool)
+  (count i64)
+  (table i64)
+  (text i64)
+  (text-len i64)
   (base (Ptr u8)))
+
+(define (tli-pool-offset-at [pool : (& pool TliPool)] [id : i64]) : i64
+  (let
+    [at : i64 (+ pool.table (* 4 id))]
+    [value : i64 0]
+    (for [byte (iterator.range 0 4)]
+      (set!
+        value
+        (bit-or
+          value
+          (shl
+            (cast
+              (unsafe
+                (ptr-read (ptr-offset pool.base (+ at byte))))
+              : i64)
+            (* 8 byte)))))
+    value))
 
 (define (tli-read-lazy-name!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]
   [id : i64]) : String
   (let
-    [start : i64 (array-ref pool.starts id)]
-    [length : i64 (array-ref pool.lengths id)]
-    [valid? : bool
-      (or
-        (tli-ascii-range? pool.base start length)
-        (let
-          [text : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-          (for [index (iterator.range 0 length)]
-            (set!
-              (array-ref text index)
-              (unsafe
-                (ptr-read (ptr-offset pool.base (+ start index))))))
-          (tli-utf8-valid? (& text) 0 length)))]
+    [first : i64 (tli-pool-offset-at pool id)]
+    [last : i64 (tli-pool-offset-at pool (+ id 1))]
+    [start : i64 (+ pool.text first)]
+    [length : i64 (- last first)]
     (cond
-      [(not valid?)
+      [(or (< length 0) (> last pool.text-len))
+        (tli-fail!
+          rd
+          tli-error-offset
+          "TLI string lies outside its pool section")
+        ""]
+      [(> length tli-max-string-bytes)
+        (tli-fail! rd tli-error-limit "TLI string length limit exceeded")
+        ""]
+      [(not
+        (or
+          (tli-ascii-range? pool.base start length)
+          (let
+            [text : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+            (for [index (iterator.range 0 length)]
+              (set!
+                (array-ref text index)
+                (unsafe
+                  (ptr-read (ptr-offset pool.base (+ start index))))))
+            (tli-utf8-valid? (& text) 0 length))))
         (tli-fail! rd tli-error-utf8 "TLI text is not valid UTF-8")
         ""]
       [(not (tli-reserve! rd (+ 16 length))) ""]
@@ -1147,18 +1203,13 @@
   [pool : (& pool TliPool)]) : String
   (let
     [id : i64 (cursor.read-u32! (&mut rd.cursor))]
-    [lazy? : bool (> (array-length pool.starts) 0)]
     (cond
       [(not rd.cursor.ok?) ""]
-      [(>=
-        id
-        (if lazy?
-          (array-length pool.starts)
-          (array-length pool.strings)))
+      [(>= id pool.count)
         (tli-fail! rd tli-error-string-id "TLI string id is out of range")
         ""]
       [(= id 0) ""]
-      [lazy? (tli-read-lazy-name! rd pool id)]
+      [pool.lazy? (tli-read-lazy-name! rd pool id)]
       [else
         (let
           [text (& (array-ref pool.strings id))]
@@ -1974,85 +2025,91 @@
     (and rd.cursor.ok? (not (cursor.at-end? (& rd.cursor))))
     (tli-fail! rd tli-error-trailing "TLI section has trailing bytes")))
 
-(define (tli-read-pool-lazy!
-  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
+;; The pool section is `u32 count`, `u32 offsets[count + 1]` relative to the
+;; text that follows them, then the text. Entry zero is the empty string and
+;; the last offset ends the section. Returns the pool header with no entry read.
+(define (tli-read-pool-header!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [lazy? : bool]) : TliPool
   (let
-    [count : i64 (tli-read-count! rd 4 (* 2 (comptime (size-of (type i64)))))]
-    [starts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [lengths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (when
-      (= count 0)
-      (tli-fail!
-        rd
-        tli-error-tag
-        "TLI string pool must start with an empty string"))
-    (while (and rd.cursor.ok? (< index count))
-      (let
-        [length : i64 (cursor.read-u32! (&mut rd.cursor))]
-        [start : i64 rd.cursor.offset]
-        (cond
-          [(not rd.cursor.ok?) unit]
-          [(> length tli-max-string-bytes)
-            (tli-fail! rd tli-error-limit "TLI string length limit exceeded")]
-          [(and (= index 0) (!= length 0))
-            (tli-fail!
-              rd
-              tli-error-tag
-              "TLI string pool must start with an empty string")]
-          [(not (cursor.range-present? rd.cursor.end start length))
-            (tli-fail!
-              rd
-              cursor.error-truncated
-              "TLI string lies outside its pool section")]
-          [else
-            (cursor.skip! (&mut rd.cursor) length)
-            (set! (array-ref starts index) start)
-            (set! (array-ref lengths index) length)]))
-      (+= index 1))
-    (tli-check-end! rd)
-    (TliPool
-      (__tl_make-array String 0)
-      starts
-      lengths
-      (unsafe
-        (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8))))))
-
-(define (tli-read-pool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
-  (let
-    [count : i64 (tli-read-count! rd 4 (comptime (size-of (type String))))]
-    [pool : (__tl_dyn-array String) (__tl_make-array String count)]
-    [index : i64 0]
-    (when
-      (= count 0)
-      (tli-fail!
-        rd
-        tli-error-tag
-        "TLI string pool must start with an empty string"))
-    (while (and rd.cursor.ok? (< index count))
-      (let
-        [text : String (tli-read-text! rd)]
-        [ordered? : bool
-          (if (= index 0)
-            (= (string.string-length (& text)) 0)
-            (sort.string-less-borrowed?
-              (& (array-ref pool (- index 1)))
-              (& text)))]
+    [section-end : i64 rd.cursor.end]
+    [count : i64 (cursor.read-u32! (&mut rd.cursor))]
+    [table : i64 rd.cursor.offset]
+    [text : i64 (+ table (* 4 (+ count 1)))]
+    [pool : TliPool
+      (TliPool
+        (__tl_make-array String 0)
+        lazy?
+        0
+        table
+        text
+        0
+        (unsafe
+          (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8))))]
+    (cond
+      [(not rd.cursor.ok?) pool]
+      [(or (= count 0) (> count tli-max-count))
+        (tli-fail!
+          rd
+          tli-error-tag
+          "TLI string pool must start with an empty string")
+        pool]
+      [(> text section-end)
+        (tli-fail!
+          rd
+          cursor.error-truncated
+          "TLI string pool offsets lie outside its section")
+        pool]
+      [else
+        (set! pool.count count)
+        (set! pool.text-len (- section-end text))
         (when
-          (not ordered?)
+          (or
+            (!= (tli-pool-offset-at (& pool) 0) 0)
+            (!= (tli-pool-offset-at (& pool) 1) 0)
+            (!= (tli-pool-offset-at (& pool) count) pool.text-len))
           (tli-fail!
             rd
             tli-error-tag
-            "TLI string pool is not in strict canonical order"))
-        (set! (array-ref pool index) text))
-      (+= index 1))
-    (tli-check-end! rd)
-    (TliPool
-      pool
-      (__tl_make-array i64 0)
-      (__tl_make-array i64 0)
-      (unsafe
-        (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8))))))
+            "TLI string pool offsets do not span its text"))
+        pool])))
+
+(define (tli-read-pool-lazy!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
+  (tli-read-pool-header! rd true))
+
+(define (tli-read-pool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
+  (let
+    [pool : TliPool (tli-read-pool-header! rd false)]
+    [strings : (__tl_dyn-array String)
+      (__tl_make-array
+        String
+        (if rd.cursor.ok?
+          pool.count
+          0))]
+    [index : i64 1]
+    (when
+      (and
+        rd.cursor.ok?
+        (tli-reserve! rd (* pool.count (comptime (size-of (type String))))))
+      (while (and rd.cursor.ok? (< index pool.count))
+        (let
+          [text : String (tli-read-lazy-name! rd (& pool) index)]
+          (when
+            (and
+              rd.cursor.ok?
+              (not
+                (sort.string-less-borrowed?
+                  (& (array-ref strings (- index 1)))
+                  (& text))))
+            (tli-fail!
+              rd
+              tli-error-tag
+              "TLI string pool is not in strict canonical order"))
+          (set! (array-ref strings index) text))
+        (+= index 1)))
+    (set! pool.strings strings)
+    pool))
 
 (define (tli-read-entries!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
@@ -2156,6 +2213,7 @@
           [_build-id : i64 (cursor.read-u32! (&mut rd.cursor))]
           [_target-id : i64 (cursor.read-u32! (&mut rd.cursor))]
           [digest : (Array u8 32) (tli-read-digest! (&mut rd))]
+          [index-digest : (Array u8 32) (tli-read-digest! (&mut rd))]
           (cond
             [(> total length)
               (tli-fail!
@@ -2202,6 +2260,12 @@
               (+ pool-start pool-size)))
           (when
             (not rd.cursor.ok?)
+            (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
+          (unless
+            (tli-digest-eq?
+              (& index-digest)
+              (& (tli-index-digest (& rd.cursor.bytes) (+ dir-start dir-size))))
+            (tli-fail! (&mut rd) tli-error-digest "TLI index SHA-256 mismatch")
             (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
           (when
             verify-content-digest?

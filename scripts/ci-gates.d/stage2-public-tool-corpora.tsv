@@ -1,2 +1,2 @@
 id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
-stage2-public-tool-corpora	210	all	stage2 public tool corpora	bootstrap-compiler	stage2	512	-	scripts/verify-public-tools.sh corpora	linux-2	windows-1	compiler,stdlib,corpus,docs	Public LSP and REPL corpora, package artifact freshness, and the metadata-bearing SPEC.md examples.
+stage2-public-tool-corpora	210	all	stage2 public tool corpora	bootstrap-compiler	stage2	512	-	scripts/verify-public-tools.sh corpora	linux-1	windows-1	compiler,stdlib,corpus,docs	Public LSP and REPL corpora, package artifact freshness, and the metadata-bearing SPEC.md examples.

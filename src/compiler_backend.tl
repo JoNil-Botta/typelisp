@@ -26110,23 +26110,45 @@ tl_shared_object_init:
                   backend-state
                   (&mut records))]
               ;; Win64 renders into scratch: the unwind lowering writes the
-              ;; group's only home copy.
+              ;; group's only home copy. Loop alignment reads the final order,
+              ;; so it runs on the render; on Linux it writes the home copy.
+              [align? : bool
+                (be_state.compiler-backend-state-loop-align-enabled?
+                  backend-state)]
               [kept : String
-                (if (be_state.compiler-backend-state-emission-target-policy
-                  backend-state).seh-unwind
-                  (in-arena
-                    (arena.Arena (arena.raw-handle scratch-arena))
-                    (be_peephole.compiler-backend-win64-lower-unwind
-                      stream
-                      (be_peephole.compiler-backend-peephole-records-render
-                        records
-                        merge?
-                        merge?)
-                      (arena.Arena (arena.raw-handle home-arena))))
-                  (be_peephole.compiler-backend-peephole-records-render
-                    records
-                    merge?
-                    merge?))]
+                (cond
+                  [(be_state.compiler-backend-state-emission-target-policy
+                      backend-state).seh-unwind
+                    (in-arena
+                      (arena.Arena (arena.raw-handle scratch-arena))
+                      (be_peephole.compiler-backend-win64-lower-unwind
+                        stream
+                        (if align?
+                          (be_peephole.compiler-backend-loop-align-text
+                            (be_peephole.compiler-backend-peephole-records-render
+                              records
+                              merge?
+                              merge?)
+                            (arena.Arena (arena.raw-handle scratch-arena)))
+                          (be_peephole.compiler-backend-peephole-records-render
+                            records
+                            merge?
+                            merge?))
+                        (arena.Arena (arena.raw-handle home-arena))))]
+                  [align?
+                    (in-arena
+                      (arena.Arena (arena.raw-handle scratch-arena))
+                      (be_peephole.compiler-backend-loop-align-text
+                        (be_peephole.compiler-backend-peephole-records-render
+                          records
+                          merge?
+                          merge?)
+                        (arena.Arena (arena.raw-handle home-arena))))]
+                  [else
+                    (be_peephole.compiler-backend-peephole-records-render
+                      records
+                      merge?
+                      merge?)])]
               (be_state.CompilerBackendPeepholeSweepChunkState
                 (text_buf.append state.out kept)
                 (text_buf.empty)

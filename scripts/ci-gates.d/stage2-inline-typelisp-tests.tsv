@@ -1,2 +1,2 @@
 id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
-stage2-inline-typelisp-tests	1270	all	stage2 inline TypeLisp tests	bootstrap-compiler	stage2	6144	-	scripts/verify-inline-tests.sh	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-inline-typelisp-tests	1270	all	stage2 inline TypeLisp tests	bootstrap-compiler	stage2	8192	-	scripts/verify-inline-tests.sh	linux-2	windows-1	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

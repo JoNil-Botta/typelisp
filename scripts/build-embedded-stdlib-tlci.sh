@@ -98,6 +98,37 @@ BIN_EXT=
 SURFACE_TOOL="$TOOL_CACHE/build-surface$BIN_EXT"
 IMAGE_TOOL="$TOOL_CACHE/build$BIN_EXT"
 
+TOOL_LOCK_HELD=0
+TOOL_TEMP=
+TOOL_PIDS=
+ACTIVE_CHILD_PID=
+cleanup_build_script() {
+    for _tp in $TOOL_PIDS; do
+        kill "$_tp" 2>/dev/null || true
+    done
+    if [ -n "$ACTIVE_CHILD_PID" ]; then
+        kill "$ACTIVE_CHILD_PID" 2>/dev/null || true
+    fi
+    for _tp in $TOOL_PIDS; do
+        wait "$_tp" 2>/dev/null || true
+    done
+    if [ -n "$ACTIVE_CHILD_PID" ]; then
+        wait "$ACTIVE_CHILD_PID" 2>/dev/null || true
+    fi
+    TOOL_PIDS=
+    ACTIVE_CHILD_PID=
+    if [ -n "$TOOL_TEMP" ]; then
+        rm -rf -- "$TOOL_TEMP"
+        TOOL_TEMP=
+    fi
+    if [ "$TOOL_LOCK_HELD" -eq 1 ]; then
+        bounded_pool_unlock "$TOOL_CACHE/embedded-image"
+        TOOL_LOCK_HELD=0
+    fi
+}
+trap 'cleanup_build_script' EXIT
+trap 'trap "" HUP INT TERM; cleanup_build_script; exit 1' HUP INT TERM
+
 build_cached_tool() {
     _tool_dest=$1
     _tool_source=$2
@@ -110,9 +141,14 @@ build_cached_tool() {
     _tool_stage="$TOOL_TEMP/$_tool_name.dir"
     mkdir -p "$_tool_stage"
     _tool_temp="$_tool_stage/$_tool_name"
+    _tool_rc=0
     "$COMPILER" build "$_tool_source" \
         --stdlib-root "$TOOL_STDLIB_ROOT" --stdlib-root "$TOOL_COMPILER_ROOT" \
-        "$@" -o "$_tool_temp" >&2
+        "$@" -o "$_tool_temp" >&2 &
+    ACTIVE_CHILD_PID=$!
+    wait "$ACTIVE_CHILD_PID" || _tool_rc=$?
+    ACTIVE_CHILD_PID=
+    [ "$_tool_rc" -eq 0 ] || exit "$_tool_rc"
     [ -s "$_tool_temp" ] && [ -x "$_tool_temp" ] || {
         echo "embedded stdlib tlci tool build emitted no executable: $_tool_source" >&2
         exit 1
@@ -120,40 +156,56 @@ build_cached_tool() {
     mv -- "$_tool_temp" "$_tool_dest"
 }
 
-if [ ! -x "$SURFACE_TOOL" ] || [ ! -x "$IMAGE_TOOL" ]; then
-    (
-        cd "$SOURCE_ROOT"
-        mkdir -p "$TOOL_CACHE/embedded-image"
-        # CI serializes the image gates. Lock publication here as well for
-        # direct callers with different workdirs, and keep published executables
-        # immutable so Windows callers can continue running them.
-        bounded_pool_lock "$TOOL_CACHE/embedded-image"
-        TOOL_TEMP=
-        TOOL_PIDS=
-        trap 'for _tp in $TOOL_PIDS; do kill "$_tp" 2>/dev/null || true; done; for _tp in $TOOL_PIDS; do wait "$_tp" 2>/dev/null || true; done; [ -z "$TOOL_TEMP" ] || rm -rf -- "$TOOL_TEMP"; bounded_pool_unlock "$TOOL_CACHE/embedded-image"' EXIT
-        trap 'exit 1' HUP INT TERM
-        TOOL_TEMP=$(mktemp -d "$TOOL_CACHE/.build.XXXXXX")
-        if [ ! -x "$SURFACE_TOOL" ] && [ ! -x "$IMAGE_TOOL" ]; then
-            build_cached_tool "$SURFACE_TOOL" "$TOOL_SOURCE_DIR/build-surface.tl" --cfg "$SURFACE_CFG" \
-                2> "$TOOL_TEMP/surface.stderr" &
-            _surface_pid=$!
-            build_cached_tool "$IMAGE_TOOL" "$TOOL_SOURCE_DIR/build.tl" \
-                2> "$TOOL_TEMP/image.stderr" &
-            _image_pid=$!
-            TOOL_PIDS="$_surface_pid $_image_pid"
-            _surface_rc=0
-            _image_rc=0
-            wait "$_surface_pid" || _surface_rc=$?
-            wait "$_image_pid" || _image_rc=$?
-            TOOL_PIDS=
-            cat "$TOOL_TEMP/surface.stderr" >&2 || true
-            cat "$TOOL_TEMP/image.stderr" >&2 || true
-            [ "$_surface_rc" -eq 0 ] && [ "$_image_rc" -eq 0 ] || exit 1
-        else
-            build_cached_tool "$SURFACE_TOOL" "$TOOL_SOURCE_DIR/build-surface.tl" --cfg "$SURFACE_CFG"
-            build_cached_tool "$IMAGE_TOOL" "$TOOL_SOURCE_DIR/build.tl"
+run_build_cached_tool_worker() {
+    TOOL_LOCK_HELD=0
+    TOOL_PIDS=
+    ACTIVE_CHILD_PID=
+    cleanup_tool_worker() {
+        if [ -n "$ACTIVE_CHILD_PID" ]; then
+            kill "$ACTIVE_CHILD_PID" 2>/dev/null || true
+            wait "$ACTIVE_CHILD_PID" 2>/dev/null || true
+            ACTIVE_CHILD_PID=
         fi
-    )
+    }
+    trap 'cleanup_tool_worker' EXIT
+    trap 'trap "" HUP INT TERM; cleanup_tool_worker; exit 1' HUP INT TERM
+    build_cached_tool "$@"
+}
+
+if [ ! -x "$SURFACE_TOOL" ] || [ ! -x "$IMAGE_TOOL" ]; then
+    cd "$SOURCE_ROOT"
+    mkdir -p "$TOOL_CACHE/embedded-image"
+    # CI serializes the image gates. Lock publication here as well for
+    # direct callers with different workdirs, and keep published executables
+    # immutable so Windows callers can continue running them.
+    bounded_pool_lock "$TOOL_CACHE/embedded-image"
+    TOOL_LOCK_HELD=1
+    TOOL_TEMP=$(mktemp -d "$TOOL_CACHE/.build.XXXXXX")
+    if [ ! -x "$SURFACE_TOOL" ] && [ ! -x "$IMAGE_TOOL" ]; then
+        ( run_build_cached_tool_worker "$SURFACE_TOOL" "$TOOL_SOURCE_DIR/build-surface.tl" --cfg "$SURFACE_CFG" ) \
+            2> "$TOOL_TEMP/surface.stderr" &
+        _surface_pid=$!
+        ( run_build_cached_tool_worker "$IMAGE_TOOL" "$TOOL_SOURCE_DIR/build.tl" ) \
+            2> "$TOOL_TEMP/image.stderr" &
+        _image_pid=$!
+        TOOL_PIDS="$_surface_pid $_image_pid"
+        _surface_rc=0
+        _image_rc=0
+        wait "$_surface_pid" || _surface_rc=$?
+        wait "$_image_pid" || _image_rc=$?
+        TOOL_PIDS=
+        cat "$TOOL_TEMP/surface.stderr" >&2 || true
+        cat "$TOOL_TEMP/image.stderr" >&2 || true
+        [ "$_surface_rc" -eq 0 ] && [ "$_image_rc" -eq 0 ] || exit 1
+    else
+        build_cached_tool "$SURFACE_TOOL" "$TOOL_SOURCE_DIR/build-surface.tl" --cfg "$SURFACE_CFG"
+        build_cached_tool "$IMAGE_TOOL" "$TOOL_SOURCE_DIR/build.tl"
+    fi
+    rm -rf -- "$TOOL_TEMP"
+    TOOL_TEMP=
+    bounded_pool_unlock "$TOOL_CACHE/embedded-image"
+    TOOL_LOCK_HELD=0
+    cd "$ROOT"
 fi
 
 if [ "$ENSURE_TOOLS_ONLY" -eq 1 ]; then
@@ -235,15 +287,23 @@ printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
 # paths the compiler's own embedded-source route uses, and the image bytes do
 # not depend on the absolute checkout location (#9667). The selected root is
 # also the cwd, so cwd-relative stdlib lookups read that tree, never another one.
-(
-    cd "$SOURCE_ROOT"
-    "$SURFACE_TOOL" \
-        stdlib "$SURFACE" "$HOST_TARGET" \
-        "$PRODUCER_IDENTITY" "$SOURCE_HASH"
-    "$IMAGE_TOOL" \
-        "$MANIFEST" stdlib "$OUTPUT" "$HOST_TARGET" \
-        "$PRODUCER_IDENTITY" "$SURFACE"
-)
+cd "$SOURCE_ROOT"
+_run_rc=0
+"$SURFACE_TOOL" \
+    stdlib "$SURFACE" "$HOST_TARGET" \
+    "$PRODUCER_IDENTITY" "$SOURCE_HASH" &
+ACTIVE_CHILD_PID=$!
+wait "$ACTIVE_CHILD_PID" || _run_rc=$?
+ACTIVE_CHILD_PID=
+[ "$_run_rc" -eq 0 ] || exit "$_run_rc"
+"$IMAGE_TOOL" \
+    "$MANIFEST" stdlib "$OUTPUT" "$HOST_TARGET" \
+    "$PRODUCER_IDENTITY" "$SURFACE" &
+ACTIVE_CHILD_PID=$!
+wait "$ACTIVE_CHILD_PID" || _run_rc=$?
+ACTIVE_CHILD_PID=
+[ "$_run_rc" -eq 0 ] || exit "$_run_rc"
+cd "$ROOT"
 
 [ -s "$OUTPUT" ] || {
     echo "embedded stdlib tlci builder emitted no image: $OUTPUT" >&2

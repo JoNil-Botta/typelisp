@@ -211,7 +211,7 @@ cleanup_bg_pids() {
     ACTIVE_BG_PIDS=
 }
 trap 'cleanup_bg_pids' EXIT
-trap 'cleanup_bg_pids; exit 1' HUP INT TERM
+trap 'trap "" HUP INT TERM; cleanup_bg_pids; exit 1' HUP INT TERM
 
 if [ "$HOST_TARGET" = windows ]; then
     OTHER_HOST_TARGET=linux
@@ -238,6 +238,7 @@ grep -F "does not match build host '$HOST_TARGET'" \
 # Phase 1: warm the cached native producer tools concurrently with one auxiliary
 # worker running the independent surface AST smoke and diagnostic-walk bounded
 # test, keeping peak memory well inside the gate's 6144 MiB budget.
+rm -f "$WORKDIR"/*.status "$WORKDIR"/native-diagnostics.run.* "$WORKDIR"/native-diagnostics.build.*
 DIAGNOSTIC_DRIVER=$WORKDIR/native-diagnostics
 [ "$HOST_TARGET" != windows ] || DIAGNOSTIC_DRIVER=$DIAGNOSTIC_DRIVER.exe
 
@@ -246,27 +247,48 @@ scripts/build-embedded-stdlib-tlci.sh --ensure-tools "$COMPILER" "$HOST_TARGET" 
 _pid_tools=$!
 
 (
-    set +e
+    _aux_child=
+    cleanup_aux_child() {
+        if [ -n "$_aux_child" ]; then
+            kill "$_aux_child" 2>/dev/null || true
+            wait "$_aux_child" 2>/dev/null || true
+            _aux_child=
+        fi
+    }
+    trap 'cleanup_aux_child' EXIT
+    trap 'trap "" HUP INT TERM; cleanup_aux_child; exit 1' HUP INT TERM
+
+    _surface_rc=0
     "$COMPILER" run tools/compiler-surface-ast-smoke.tl \
         --stdlib-root stdlib --stdlib-root src \
         --cfg compiler-surface-selftest --cfg compiler-surface-producer \
-        >"$WORKDIR/surface-smoke.stdout" 2>"$WORKDIR/surface-smoke.stderr"
-    _surface_rc=$?
-    set -e
+        >"$WORKDIR/surface-smoke.stdout" 2>"$WORKDIR/surface-smoke.stderr" &
+    _aux_child=$!
+    wait "$_aux_child" || _surface_rc=$?
+    _aux_child=
     printf '%s\n' "$_surface_rc" > "$WORKDIR/surface-smoke.status"
     [ "$_surface_rc" -eq 42 ] || exit 1
 
     # Compile outside the short execution deadline so slow compiler hosts retain
     # the same diagnostic-walk bound. The old computed-splice walk never returns.
+    _diag_build_rc=0
     "$COMPILER" build tools/embedded-stdlib-tlci/native_diagnostics.tl \
         --stdlib-root stdlib --stdlib-root src -o "$DIAGNOSTIC_DRIVER" \
-        >"$WORKDIR/native-diagnostics.build.stdout" 2>"$WORKDIR/native-diagnostics.build.stderr" || exit 1
+        >"$WORKDIR/native-diagnostics.build.stdout" 2>"$WORKDIR/native-diagnostics.build.stderr" &
+    _aux_child=$!
+    wait "$_aux_child" || _diag_build_rc=$?
+    _aux_child=
+    [ "$_diag_build_rc" -eq 0 ] || exit 1
+
     diagnostic_status=0
     env -u BASH_ENV scripts/run-memory-bounded.sh \
         --limit-mib 1024 --timeout-seconds 10 \
         --report "$WORKDIR/native-diagnostics.report" -- \
         env -u BASH_ENV "$DIAGNOSTIC_DRIVER" \
-        >"$WORKDIR/native-diagnostics.run.stdout" 2>"$WORKDIR/native-diagnostics.run.stderr" || diagnostic_status=$?
+        >"$WORKDIR/native-diagnostics.run.stdout" 2>"$WORKDIR/native-diagnostics.run.stderr" &
+    _aux_child=$!
+    wait "$_aux_child" || diagnostic_status=$?
+    _aux_child=
     printf '%s\n' "$diagnostic_status" > "$WORKDIR/native-diagnostics.status"
     [ "$diagnostic_status" -eq 42 ] || exit 1
 ) &
@@ -279,7 +301,7 @@ wait "$_pid_tools" || _rc_tools=$?
 wait "$_pid_aux" || _rc_aux=$?
 ACTIVE_BG_PIDS=
 
-cat "$WORKDIR/tools.stderr" >&2 || true
+[ ! -f "$WORKDIR/tools.stderr" ] || cat "$WORKDIR/tools.stderr" >&2 || true
 if [ "$_rc_tools" -ne 0 ]; then
     echo "embedded stdlib tlci cached tool build failed (status $_rc_tools)" >&2
     exit 1
@@ -291,18 +313,18 @@ if [ ! -x "$SURFACE_TOOL" ] || [ ! -x "$IMAGE_TOOL" ]; then
     exit 1
 fi
 
-cat "$WORKDIR/surface-smoke.stdout" || true
-cat "$WORKDIR/surface-smoke.stderr" >&2 || true
+[ ! -f "$WORKDIR/surface-smoke.stdout" ] || cat "$WORKDIR/surface-smoke.stdout" || true
+[ ! -f "$WORKDIR/surface-smoke.stderr" ] || cat "$WORKDIR/surface-smoke.stderr" >&2 || true
 surface_status=$(cat "$WORKDIR/surface-smoke.status" 2>/dev/null || printf '1')
 if [ "$surface_status" -ne 42 ]; then
     echo "compiler surface selftest exited $surface_status, expected 42" >&2
     exit 1
 fi
 
-cat "$WORKDIR/native-diagnostics.build.stdout" || true
-cat "$WORKDIR/native-diagnostics.build.stderr" >&2 || true
-cat "$WORKDIR/native-diagnostics.run.stdout" || true
-cat "$WORKDIR/native-diagnostics.run.stderr" >&2 || true
+[ ! -f "$WORKDIR/native-diagnostics.build.stdout" ] || cat "$WORKDIR/native-diagnostics.build.stdout" || true
+[ ! -f "$WORKDIR/native-diagnostics.build.stderr" ] || cat "$WORKDIR/native-diagnostics.build.stderr" >&2 || true
+[ ! -f "$WORKDIR/native-diagnostics.run.stdout" ] || cat "$WORKDIR/native-diagnostics.run.stdout" || true
+[ ! -f "$WORKDIR/native-diagnostics.run.stderr" ] || cat "$WORKDIR/native-diagnostics.run.stderr" >&2 || true
 diagnostic_status=$(cat "$WORKDIR/native-diagnostics.status" 2>/dev/null || printf '1')
 if [ "$_rc_aux" -ne 0 ] || [ "$diagnostic_status" -ne 42 ]; then
     echo "native producer diagnostic regression exited $diagnostic_status, expected 42" >&2
@@ -461,10 +483,26 @@ _pid_blockers=$!
 _pid_identity=$!
 
 (
+    _mut_child=
+    cleanup_mut_child() {
+        if [ -n "$_mut_child" ]; then
+            kill "$_mut_child" 2>/dev/null || true
+            wait "$_mut_child" 2>/dev/null || true
+            _mut_child=
+        fi
+    }
+    trap 'cleanup_mut_child' EXIT
+    trap 'trap "" HUP INT TERM; cleanup_mut_child; exit 1' HUP INT TERM
+
+    _mut_rc=0
     "$SURFACE_TOOL" \
         "$MUTATED_ROOT" "$MUTATED_SURFACE" "$HOST_TARGET" \
-        "$BUILD_HASH" "$MUTATED_SOURCE_HASH" &&
-    "$IMAGE_TOOL" \
+        "$BUILD_HASH" "$MUTATED_SOURCE_HASH" &
+    _mut_child=$!
+    wait "$_mut_child" || _mut_rc=$?
+    _mut_child=
+    [ "$_mut_rc" -eq 0 ] || exit "$_mut_rc"
+    exec "$IMAGE_TOOL" \
         "$MANIFEST" "$MUTATED_ROOT" "$MUTATED_IMAGE" \
         "$HOST_TARGET" "$BUILD_HASH" "$MUTATED_SURFACE"
 ) > "$WORKDIR/mutated.stdout" 2> "$WORKDIR/mutated.stderr" &
@@ -699,6 +737,7 @@ fi
 
 # Phase 3b: run envelope verification, loader verification, and the single
 # native stress driver build concurrently.
+rm -f "$WORKDIR"/*.status
 STRESS_DRIVER=$WORKDIR/stress-driver
 [ "$HOST_TARGET" != windows ] || STRESS_DRIVER=$STRESS_DRIVER.exe
 
@@ -708,14 +747,10 @@ STRESS_DRIVER=$WORKDIR/stress-driver
     >"$WORKDIR/verify-envelope.stdout" 2>"$WORKDIR/verify-envelope.stderr" &
 _pid_envelope=$!
 
-(
-    set +e
-    "$COMPILER" run tools/embedded-stdlib-tlci/verify.tl \
-        --stdlib-root stdlib --stdlib-root src \
-        --cfg embedded-stdlib-tlci \
-        >"$WORKDIR/verify-loader.stdout" 2>"$WORKDIR/verify-loader.stderr"
-    printf '%s\n' "$?" > "$WORKDIR/verify-loader.status"
-) &
+"$COMPILER" run tools/embedded-stdlib-tlci/verify.tl \
+    --stdlib-root stdlib --stdlib-root src \
+    --cfg embedded-stdlib-tlci \
+    >"$WORKDIR/verify-loader.stdout" 2>"$WORKDIR/verify-loader.stderr" &
 _pid_loader=$!
 
 "$COMPILER" build tools/embedded-stdlib-tlci/stress.tl \
@@ -741,9 +776,8 @@ fi
 
 cat "$WORKDIR/verify-loader.stdout" || true
 cat "$WORKDIR/verify-loader.stderr" >&2 || true
-status=$(cat "$WORKDIR/verify-loader.status" 2>/dev/null || printf '1')
-if [ "$_rc_loader" -ne 0 ] || [ "$status" -ne 42 ]; then
-    echo "embedded stdlib tlci loader verifier exited $status, expected 42" >&2
+if [ "$_rc_loader" -ne 42 ]; then
+    echo "embedded stdlib tlci loader verifier exited $_rc_loader, expected 42" >&2
     exit 1
 fi
 
@@ -770,13 +804,9 @@ STRESS_ITERATIONS=${TYPELISP_TLCI_STRESS_ITERATIONS:-25000}
 for STRESS_TIER in 1 2 3; do
     STRESS_PROGRESS="$WORKDIR/stress-tier$STRESS_TIER.txt"
     echo "[embedded-stdlib-tlci] stress tier $STRESS_TIER ($STRESS_ITERATIONS iterations)"
-    (
-        set +e
-        "$STRESS_DRIVER" "$STRESS_TIER" "$STRESS_ITERATIONS" "$STRESS_PROGRESS" \
-            >"$WORKDIR/stress-tier$STRESS_TIER.stdout" \
-            2>"$WORKDIR/stress-tier$STRESS_TIER.stderr"
-        printf '%s\n' "$?" > "$WORKDIR/stress-tier$STRESS_TIER.status"
-    ) &
+    "$STRESS_DRIVER" "$STRESS_TIER" "$STRESS_ITERATIONS" "$STRESS_PROGRESS" \
+        >"$WORKDIR/stress-tier$STRESS_TIER.stdout" \
+        2>"$WORKDIR/stress-tier$STRESS_TIER.stderr" &
     eval "_pid_stress_$STRESS_TIER=\$!"
     ACTIVE_BG_PIDS="$ACTIVE_BG_PIDS $!"
 done
@@ -794,9 +824,8 @@ for STRESS_TIER in 1 2 3; do
     cat "$WORKDIR/stress-tier$STRESS_TIER.stdout" || true
     cat "$WORKDIR/stress-tier$STRESS_TIER.stderr" >&2 || true
     eval "_tier_rc=\$_rc_stress_$STRESS_TIER"
-    stress_status=$(cat "$WORKDIR/stress-tier$STRESS_TIER.status" 2>/dev/null || printf '1')
-    if [ "$_tier_rc" -ne 0 ] || [ "$stress_status" -ne 42 ]; then
-        echo "embedded stdlib tlci stress tier $STRESS_TIER exited $stress_status, expected 42" >&2
+    if [ "$_tier_rc" -ne 42 ]; then
+        echo "embedded stdlib tlci stress tier $STRESS_TIER exited $_tier_rc, expected 42" >&2
         echo "last durable progress record:" >&2
         cat "$STRESS_PROGRESS" >&2 || true
         echo "reproduce with: $COMPILER run tools/embedded-stdlib-tlci/stress.tl --stdlib-root stdlib --stdlib-root src -- $STRESS_TIER $STRESS_ITERATIONS $STRESS_PROGRESS" >&2

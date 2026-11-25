@@ -1172,9 +1172,33 @@ fi
 # Evaluate each case's independent expectation check across up to
 # MANIFEST_POOL_WORKERS workers, then report any failure in manifest order.
 _exp_pids=
+cleanup_exp_pids() {
+    for _exp_pid in $_exp_pids; do
+        kill "$_exp_pid" 2>/dev/null || true
+    done
+    for _exp_pid in $_exp_pids; do
+        wait "$_exp_pid" 2>/dev/null || true
+    done
+    _exp_pids=
+}
+trap 'cleanup_exp_pids' EXIT
+trap 'trap "" HUP INT TERM; cleanup_exp_pids; exit 1' HUP INT TERM
+
 _exp_worker=0
 while [ "$_exp_worker" -lt "$MANIFEST_POOL_WORKERS" ]; do
     (
+        _exp_pids=
+        _exp_child_pid=
+        cleanup_exp_worker() {
+            if [ -n "$_exp_child_pid" ]; then
+                kill "$_exp_child_pid" 2>/dev/null || true
+                wait "$_exp_child_pid" 2>/dev/null || true
+                _exp_child_pid=
+            fi
+        }
+        trap 'cleanup_exp_worker' EXIT
+        trap 'trap "" HUP INT TERM; cleanup_exp_worker; exit 1' HUP INT TERM
+
         _exp_idx=0
         while IFS="$EXPECTATION_TAB" read -r case_id main_policy; do
             if [ $((_exp_idx % MANIFEST_POOL_WORKERS)) -eq "$_exp_worker" ]; then
@@ -1182,7 +1206,10 @@ while [ "$_exp_worker" -lt "$MANIFEST_POOL_WORKERS" ]; do
                 case_expectations="$case_dir/expectations.tsv"
                 case_expectation_keys="$case_dir/expectation-keys.txt"
                 _exp_rc=0
-                ( expectation_case_check ) >"$case_dir/check.out" 2>"$case_dir/check.err" || _exp_rc=$?
+                ( expectation_case_check ) >"$case_dir/check.out" 2>"$case_dir/check.err" &
+                _exp_child_pid=$!
+                wait "$_exp_child_pid" || _exp_rc=$?
+                _exp_child_pid=
                 printf '%s\n' "$_exp_rc" > "$case_dir/check.status"
             fi
             _exp_idx=$((_exp_idx + 1))
@@ -1195,6 +1222,7 @@ _exp_wait_rc=0
 for _exp_pid in $_exp_pids; do
     wait "$_exp_pid" || _exp_wait_rc=1
 done
+_exp_pids=
 while IFS="$EXPECTATION_TAB" read -r case_id main_policy; do
     case_dir="$WORKDIR/$case_id"
     if [ ! -s "$case_dir/check.status" ]; then

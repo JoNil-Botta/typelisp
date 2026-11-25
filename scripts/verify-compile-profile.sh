@@ -158,7 +158,7 @@ run_logged() {
     _rl_err=$2
     _rl_msg=$3
     shift 3
-    if ! "$@" > "$_rl_out" 2> "$_rl_err"; then
+    if ! run_tracked "$@" > "$_rl_out" 2> "$_rl_err"; then
         show_failure_logs "$_rl_out" "$_rl_err"
         fail "$_rl_msg"
     fi
@@ -640,23 +640,67 @@ printf '%s' "$COMPILER_COMMIT" > target/build-stage0/git-hash.txt
 printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/tree-hash.txt
 
 ACTIVE_BG_PIDS=
+WORKER_CHILD_PID=
 cleanup_bg_pids() {
     for _bg_pid in $ACTIVE_BG_PIDS; do
         kill "$_bg_pid" 2>/dev/null || true
     done
+    if [ -n "$WORKER_CHILD_PID" ]; then
+        kill "$WORKER_CHILD_PID" 2>/dev/null || true
+    fi
     for _bg_pid in $ACTIVE_BG_PIDS; do
         wait "$_bg_pid" 2>/dev/null || true
     done
+    if [ -n "$WORKER_CHILD_PID" ]; then
+        wait "$WORKER_CHILD_PID" 2>/dev/null || true
+    fi
     ACTIVE_BG_PIDS=
+    WORKER_CHILD_PID=
 }
 trap 'cleanup_bg_pids' EXIT
-trap 'cleanup_bg_pids; exit 1' HUP INT TERM
+trap 'trap "" HUP INT TERM; cleanup_bg_pids; exit 1' HUP INT TERM
+
+cleanup_worker_child() {
+    if [ -n "$WORKER_CHILD_PID" ]; then
+        kill "$WORKER_CHILD_PID" 2>/dev/null || true
+        wait "$WORKER_CHILD_PID" 2>/dev/null || true
+        WORKER_CHILD_PID=
+    fi
+}
+init_worker_traps() {
+    ACTIVE_BG_PIDS=
+    WORKER_CHILD_PID=
+    trap 'cleanup_worker_child' EXIT
+    trap 'trap "" HUP INT TERM; cleanup_worker_child; exit 1' HUP INT TERM
+}
+run_tracked() {
+    _rt_rc=0
+    "$@" &
+    WORKER_CHILD_PID=$!
+    wait "$WORKER_CHILD_PID" || _rt_rc=$?
+    WORKER_CHILD_PID=
+    return "$_rt_rc"
+}
+run_tracked_in() {
+    _rti_dir=$1
+    shift
+    _rt_rc=0
+    (
+        cd "$_rti_dir" &&
+        exec "$@"
+    ) &
+    WORKER_CHILD_PID=$!
+    wait "$WORKER_CHILD_PID" || _rt_rc=$?
+    WORKER_CHILD_PID=
+    return "$_rt_rc"
+}
 
 stage_readonly_tree() {
     _srt_src=$1
     _srt_dst=$2
     rm -rf "$_srt_dst"
     if ! cp -Rl "$_srt_src" "$_srt_dst" 2>/dev/null; then
+        rm -rf "$_srt_dst"
         cp -R "$_srt_src" "$_srt_dst"
     fi
 }
@@ -678,13 +722,11 @@ surface_fallback() {
     cp "$ROOT/target/embedded-stdlib-tlci/stdlib.tlci.tlch" "$_sf_root/target/embedded-stdlib-tlci/stdlib.tlci.tlch"
     cp "$ROOT/target/embedded-stdlib-tlci/source-hash.txt" "$_sf_root/target/embedded-stdlib-tlci/source-hash.txt"
     printf '%s' "$3" > "$_sf_root/$2"
-    set +e
-    "$COMPILER" compile "$_sf_root/src/main.tl" -o "$_sf-profile.s" --target "$NL_BOOTSTRAP_TARGET" \
+    _sf_status=0
+    run_tracked "$COMPILER" compile "$_sf_root/src/main.tl" -o "$_sf-profile.s" --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) --stdlib-root "$_sf_root/stdlib" --stdlib-root "$_sf_root/src" \
         --cfg compiler-build-identity --cfg compile-profile --cfg embedded-stdlib-tlci \
-        > "$_sf-build.stdout" 2> "$_sf-build.stderr"
-    _sf_status=$?
-    set -e
+        > "$_sf-build.stdout" 2> "$_sf-build.stderr" || _sf_status=$?
     rm -rf "$_sf_root"
     [ "$_sf_status" -eq 0 ] || {
         show_failure_logs "$_sf-build.stdout" "$_sf-build.stderr"
@@ -794,12 +836,10 @@ ROWS
 
     echo "[compile-profile] scan scratch allocation regression"
     mkdir -p "$WORKDIR/scan-growth"
-    (
-        cd "$WORKDIR/scan-growth" &&
+    run_tracked_in "$WORKDIR/scan-growth" \
         "$COMPILER" test "$ROOT/src/tests/scan_storage_growth.tl" \
-            --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
-            --cfg compile-profile --opt-level 2 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
-    )
+        --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+        --cfg compile-profile --opt-level 2 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
 
     echo "[compile-profile] verify producer-compiler-mismatched surface fallback"
     surface_fallback producer-mismatch target/build-stage0/tree-hash.txt "$MISMATCH_PRODUCER_IDENTITY"
@@ -829,11 +869,9 @@ run_profile_fixtures_a() {
         show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
         fail "native comptime host metadata smoke link failed"
     fi
-    set +e
-    "$COMPTIME_HOST_SMOKE_BIN" \
-        >> "$COMPTIME_HOST_SMOKE_STDOUT" 2>> "$COMPTIME_HOST_SMOKE_STDERR"
-    COMPTIME_HOST_SMOKE_STATUS=$?
-    set -e
+    COMPTIME_HOST_SMOKE_STATUS=0
+    run_tracked "$COMPTIME_HOST_SMOKE_BIN" \
+        >> "$COMPTIME_HOST_SMOKE_STDOUT" 2>> "$COMPTIME_HOST_SMOKE_STDERR" || COMPTIME_HOST_SMOKE_STATUS=$?
     if [ "$COMPTIME_HOST_SMOKE_STATUS" -ne 42 ]; then
         show_failure_logs "$COMPTIME_HOST_SMOKE_STDOUT" "$COMPTIME_HOST_SMOKE_STDERR"
         fail "native comptime host metadata smoke expected exit 42, got $COMPTIME_HOST_SMOKE_STATUS"
@@ -1041,11 +1079,11 @@ if ! awk -F'|' '
     show_failure_logs "$BATCH_STDOUT" "$BATCH_STDERR"
     fail "batch absolute live baseline drift exceeded 4 MiB"
 fi
-if ! "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
+if ! run_tracked "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
     -o "$BATCH_SINGLE_ARITH" --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) --stdlib-root stdlib \
     > "$BATCH_SINGLE_STDOUT" 2> "$BATCH_SINGLE_STDERR" ||
-   ! "$PROFILE_BIN" compile tests/integration/functions.tl \
+   ! run_tracked "$PROFILE_BIN" compile tests/integration/functions.tl \
     -o "$BATCH_SINGLE_FUNCTIONS" --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) --stdlib-root stdlib \
     >> "$BATCH_SINGLE_STDOUT" 2>> "$BATCH_SINGLE_STDERR"; then
@@ -1061,7 +1099,7 @@ echo "[compile-profile] verify failed-entry marker and diagnostic attribution"
 printf '%s|%s\n%s|%s\n' \
     "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$FAILED_BATCH_FIRST")" \
     "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$FAILED_BATCH_SECOND")" > "$FAILED_BATCH_LIST"
-if "$PROFILE_BIN" compile --batch "$FAILED_BATCH_LIST" \
+if run_tracked "$PROFILE_BIN" compile --batch "$FAILED_BATCH_LIST" \
     --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) \
     --stdlib-root stdlib \
@@ -1083,7 +1121,7 @@ cmp "$FAILED_BATCH_FIRST" "$BATCH_ARITH" >/dev/null ||
 
     if [ "$NL_HOST_OS" = windows ]; then
         command -v pwsh >/dev/null 2>&1 || fail "pwsh is required for Windows batch memory telemetry"
-        if ! pwsh -NoProfile -File scripts/measure-compile-batch-memory.ps1 \
+        if ! run_tracked pwsh -NoProfile -File scripts/measure-compile-batch-memory.ps1 \
             -Compiler "$PROFILE_BIN" \
             -Batch "$BATCH_LIST" \
             -OutputDir "$WINDOWS_MEMORY_DIR" \
@@ -1539,24 +1577,22 @@ fi
 
 echo "[compile-profile] verify embedded stdlib tlci routing and differential output"
 mkdir -p "$STDLIB_TLCI_DIR"
-if ! (
-    cd "$STDLIB_TLCI_DIR"
+if ! run_tracked_in "$STDLIB_TLCI_DIR" \
     "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
-        -o "$STDLIB_TLCI_EMBEDDED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args)
-) > "$STDLIB_TLCI_EMBEDDED_STDOUT" 2> "$STDLIB_TLCI_EMBEDDED_STDERR"; then
+    -o "$STDLIB_TLCI_EMBEDDED_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    > "$STDLIB_TLCI_EMBEDDED_STDOUT" 2> "$STDLIB_TLCI_EMBEDDED_STDERR"; then
     show_failure_logs "$STDLIB_TLCI_EMBEDDED_STDOUT" "$STDLIB_TLCI_EMBEDDED_STDERR"
     fail "embedded stdlib tlci routing fixture compile failed"
 fi
-if ! (
-    cd "$STDLIB_TLCI_DIR"
+if ! run_tracked_in "$STDLIB_TLCI_DIR" \
     "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
-        -o "$STDLIB_TLCI_SOURCE_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root "$ROOT/stdlib"
-) > "$STDLIB_TLCI_SOURCE_STDOUT" 2> "$STDLIB_TLCI_SOURCE_STDERR"; then
+    -o "$STDLIB_TLCI_SOURCE_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root "$ROOT/stdlib" \
+    > "$STDLIB_TLCI_SOURCE_STDOUT" 2> "$STDLIB_TLCI_SOURCE_STDERR"; then
     show_failure_logs "$STDLIB_TLCI_SOURCE_STDOUT" "$STDLIB_TLCI_SOURCE_STDERR"
     fail "source stdlib routing fixture compile failed"
 fi
@@ -1602,14 +1638,13 @@ for f in "$ROOT"/stdlib/*.tl; do
     { cat "$f"; echo ";; provenance-control-comment"; } \
         > "$STDLIB_TLCI_MODIFIED_DIR/stdlib/$(basename "$f")"
 done
-if ! (
-    cd "$STDLIB_TLCI_MODIFIED_DIR"
+if ! run_tracked_in "$STDLIB_TLCI_MODIFIED_DIR" \
     "$PROFILE_BIN" compile "$ROOT/tests/integration/array_qualified_macros.tl" \
-        -o "$STDLIB_TLCI_MODIFIED_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib
-) > "$STDLIB_TLCI_MODIFIED_STDOUT" 2> "$STDLIB_TLCI_MODIFIED_STDERR"; then
+    -o "$STDLIB_TLCI_MODIFIED_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$STDLIB_TLCI_MODIFIED_STDOUT" 2> "$STDLIB_TLCI_MODIFIED_STDERR"; then
     show_failure_logs "$STDLIB_TLCI_MODIFIED_STDOUT" "$STDLIB_TLCI_MODIFIED_STDERR"
     fail "modified stdlib routing fixture compile failed"
 fi
@@ -1641,11 +1676,9 @@ route_run() {
     if [ "$_rr_command" = compile ]; then
         set -- -o "$_rr_out.s" --target "$NL_BOOTSTRAP_TARGET" $(native_target_cfg_args) "$@"
     fi
-    set +e
-    (cd "$_rr_dir" && "$PROFILE_BIN" "$_rr_command" "$_rr_source" "$@") \
-        > "$_rr_out.stdout" 2> "$_rr_out.stderr"
-    route_status=$?
-    set -e
+    route_status=0
+    run_tracked_in "$_rr_dir" "$PROFILE_BIN" "$_rr_command" "$_rr_source" "$@" \
+        > "$_rr_out.stdout" 2> "$_rr_out.stderr" || route_status=$?
 }
 
 # route_pair LABEL SOURCE: both routes compile SOURCE to the same assembly.
@@ -1702,10 +1735,8 @@ route_native_exit() {
         show_failure_logs "$_rn.stdout" "$_rn.stderr"
         fail "native $1 fixture link failed"
     fi
-    set +e
-    "$_rn$NL_BIN_EXT" >> "$_rn.stdout" 2>> "$_rn.stderr"
-    _rn_status=$?
-    set -e
+    _rn_status=0
+    run_tracked "$_rn$NL_BIN_EXT" >> "$_rn.stdout" 2>> "$_rn.stderr" || _rn_status=$?
     [ "$_rn_status" -eq 42 ] || {
         show_failure_logs "$_rn.stdout" "$_rn.stderr"
         fail "native $1 fixture expected exit 42, got $_rn_status"
@@ -2305,21 +2336,22 @@ has compile-profile|lower.module_local_view.entries|
 ROWS
 
     echo "[compile-profile] verify exhaustive stdlib tlci identity differential"
-    sh scripts/verify-stdlib-tlci-identity-differential.sh "$PROFILE_BIN"
+    run_tracked sh scripts/verify-stdlib-tlci-identity-differential.sh "$PROFILE_BIN"
 }
 
 # Wave 1: build PROFILE_BIN concurrently with SUMMARY_BIN + normal-compiler
 # checks + producer-mismatch fallback (at most 2 heavy src/main.tl compiles at
 # once). Once PROFILE_BIN is linked, publish its handoff and launch Wave 2
 # (isolated source-mismatch fallback + two profile-fixture workers).
-( run_profile_build ) > "$WORKDIR/lane-profile-build.log" 2>&1 &
+( init_worker_traps; run_profile_build ) > "$WORKDIR/lane-profile-build.log" 2>&1 &
 _pid_profile_build=$!
-( run_summary_and_compiler_lane ) > "$WORKDIR/lane-summary.log" 2>&1 &
+( init_worker_traps; run_summary_and_compiler_lane ) > "$WORKDIR/lane-summary.log" 2>&1 &
 _pid_summary=$!
 ACTIVE_BG_PIDS="$_pid_profile_build $_pid_summary"
 
 _rc_profile_build=0
 wait "$_pid_profile_build" || _rc_profile_build=$?
+ACTIVE_BG_PIDS="$_pid_summary"
 cat "$WORKDIR/lane-profile-build.log" || true
 if [ "$_rc_profile_build" -ne 0 ]; then
     cleanup_bg_pids
@@ -2334,11 +2366,11 @@ if [ -n "${TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE:-}" ]; then
     printf '%s\n' "$PROFILE_BIN" > "$TYPELISP_COMPILE_PROFILE_CLI_PATH_FILE"
 fi
 
-( run_surface_source_and_selfhost_lane ) > "$WORKDIR/lane-surface.log" 2>&1 &
+( init_worker_traps; run_surface_source_and_selfhost_lane ) > "$WORKDIR/lane-surface.log" 2>&1 &
 _pid_surface=$!
-( run_profile_fixtures_a ) > "$WORKDIR/lane-fixtures-a.log" 2>&1 &
+( init_worker_traps; run_profile_fixtures_a ) > "$WORKDIR/lane-fixtures-a.log" 2>&1 &
 _pid_fixtures_a=$!
-( run_profile_fixtures_b ) > "$WORKDIR/lane-fixtures-b.log" 2>&1 &
+( init_worker_traps; run_profile_fixtures_b ) > "$WORKDIR/lane-fixtures-b.log" 2>&1 &
 _pid_fixtures_b=$!
 ACTIVE_BG_PIDS="$_pid_summary $_pid_surface $_pid_fixtures_a $_pid_fixtures_b"
 

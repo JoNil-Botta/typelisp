@@ -118,7 +118,7 @@ cleanup_bg_pids() {
     ACTIVE_BG_PIDS=
 }
 trap 'cleanup_bg_pids' EXIT
-trap 'cleanup_bg_pids; exit 1' HUP INT TERM
+trap 'trap "" HUP INT TERM; cleanup_bg_pids; exit 1' HUP INT TERM
 
 # Phase 1: build the release opt2 compiler concurrently with the independent
 # optimizer inline tests (and, on Windows/standalone runs without a supplied
@@ -132,29 +132,41 @@ else
     echo "[opt2-cli-gate] reference: converged compiler compiles src/main.tl at opt1 (after optimizer inline tests)"
 fi
 
-(
-    scripts/run-memory-bounded.sh --limit-mib 8192 \
-        --report "$WORKDIR/build.memory" -- \
-        "$COMPILER" build \
-        --manifest-path typelisp.pkg \
-        --profile release \
-        --opt-level 2 \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        --stdlib-root stdlib \
-        --stdlib-root src \
-        >"$BUILD_STDOUT" 2>"$BUILD_STDERR"
-) &
+scripts/run-memory-bounded.sh --limit-mib 8192 \
+    --report "$WORKDIR/build.memory" -- \
+    "$COMPILER" build \
+    --manifest-path typelisp.pkg \
+    --profile release \
+    --opt-level 2 \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    >"$BUILD_STDOUT" 2>"$BUILD_STDERR" &
 _pid_build=$!
 
 (
+    _aux_child=
+    cleanup_aux_child() {
+        if [ -n "$_aux_child" ]; then
+            kill "$_aux_child" 2>/dev/null || true
+            wait "$_aux_child" 2>/dev/null || true
+            _aux_child=
+        fi
+    }
+    trap 'cleanup_aux_child' EXIT
+    trap 'trap "" HUP INT TERM; cleanup_aux_child; exit 1' HUP INT TERM
+
     optimizer_status=0
     (
         cd "$WORKDIR/work-smoke" &&
-        "$COMPILER" test "$ROOT/src/tests/compiler_optimize_smoke.tl" \
+        exec "$COMPILER" test "$ROOT/src/tests/compiler_optimize_smoke.tl" \
             --stdlib-root "$ROOT/stdlib" \
             --stdlib-root "$ROOT/src" \
             --opt-level 2
-    ) >"$OPTIMIZER_STDOUT" 2>"$OPTIMIZER_STDERR" || optimizer_status=$?
+    ) >"$OPTIMIZER_STDOUT" 2>"$OPTIMIZER_STDERR" &
+    _aux_child=$!
+    wait "$_aux_child" || optimizer_status=$?
+    _aux_child=
     printf '%s\n' "$optimizer_status" > "$WORKDIR/optimizer.status"
     [ "$optimizer_status" -eq 0 ] || exit "$optimizer_status"
     if [ "$REFERENCE_SUPPLIED" -eq 0 ]; then
@@ -166,7 +178,10 @@ _pid_build=$!
             --opt-level 1 \
             --stdlib-root stdlib \
             --stdlib-root src \
-            >"$REF_STDOUT" 2>"$REF_STDERR" || ref_status=$?
+            >"$REF_STDOUT" 2>"$REF_STDERR" &
+        _aux_child=$!
+        wait "$_aux_child" || ref_status=$?
+        _aux_child=
         printf '%s\n' "$ref_status" > "$WORKDIR/ref.status"
         [ "$ref_status" -eq 0 ] || exit "$ref_status"
     fi

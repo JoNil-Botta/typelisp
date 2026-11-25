@@ -6,3 +6,9 @@
 
 (define (compiler-embedded-stdlib-payload-lookup [_suffix : String]) : CompilerEmbeddedStdlibPayload
   (CompilerEmbeddedStdlibPayloadNone))
+
+(define (compiler-embedded-stdlib-payload-suffix-count) : i64
+  0)
+
+(define (compiler-embedded-stdlib-payload-suffix-at [_index : i64]) : String
+  "")

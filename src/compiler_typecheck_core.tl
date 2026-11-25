@@ -55955,10 +55955,16 @@
         importer-module
         import-unqualified)]))
 
+;; The alias materialization a module's selected import or alias binding
+;; publishes: one per (importer, alias, target) row. The importer is part of the
+;; key because an alias names a binding in its own module's namespace, so two
+;; modules selecting the same item of the same target under the same alias each
+;; materialize theirs.
 (define (tc-import-alias-materialized-key-id
+  [module-id : i64]
   [alias-key : i64]
   [target-module : i64]) : i64
-  (csym.compiler-composite-pair-key-id alias-key target-module))
+  (csym.compiler-composite-triple-key-id module-id alias-key target-module))
 
 (define (tc-import-alias-materialized?
   [seen : (& seen tc_i64_i64_map.Map)]
@@ -56068,7 +56074,10 @@
             [alias-key : i64
               (csym.compiler-symbols-import-alias-key-id cur-module-id alias)]
             [seen-key : i64
-              (tc-import-alias-materialized-key-id alias-key target-module)]
+              (tc-import-alias-materialized-key-id
+                cur-module-id
+                alias-key
+                target-module)]
             (unless
               (tc-import-alias-materialized? seen-aliases seen-key)
               (tc_i64_i64_map.insert-ref! (&mut seen-aliases) seen-key 1)
@@ -56098,7 +56107,10 @@
             [alias-key : i64
               (csym.compiler-symbols-import-alias-key-id cur-module-id alias)]
             [seen-key : i64
-              (tc-import-alias-materialized-key-id alias-key target-module)]
+              (tc-import-alias-materialized-key-id
+                cur-module-id
+                alias-key
+                target-module)]
             (unless
               (tc-import-alias-materialized? seen-aliases seen-key)
               (tc_i64_i64_map.insert-ref! (&mut seen-aliases) seen-key 1)
@@ -59684,6 +59696,47 @@
           source-id)))
     (tc-constructor-source-name-id? ctx name-id)))
 
+;; The type handle a constructor spelling names, probed by the same key the
+;; variant registry uses: a bare name in a named module is that module's own
+;; nominal (VARIANT-KEY), so a same-name `defstruct` or `defenum` in another
+;; named module never answers for it. A bare name still reaches a root/prelude
+;; struct, whose handle is the one cross-module fallback allowed here; the flat
+;; type registry holds root names, so that fallback is checked for the root
+;; owner rather than assumed.
+(define (tc-constructor-type-handle-id
+  [ctx : TcContext]
+  [symbols : (& symbols csym.CompilerSymbols)]
+  [non-root-bare? : bool]
+  [name-id : i64]
+  [variant-key : i64]) : i64
+  (let
+    [state : TcNominalCacheState
+      (tc-job-state-nominal-cache (tc-context-job-state ctx))]
+    [handle : i64
+      (tc-type-handle-lookup-id
+        state
+        symbols
+        variant-key
+        tc-type-handle-lookup-caller-constructor)]
+    (if (or (csym.compiler-symbols-handle-found? handle) (not non-root-bare?))
+      handle
+      (let
+        [root-handle : i64
+          (tc-type-handle-lookup-id
+            state
+            symbols
+            name-id
+            tc-type-handle-lookup-caller-constructor)]
+        (if (and
+          (csym.compiler-symbols-handle-found? root-handle)
+          (csym.compiler-symbol-root-module-id?
+            (csym.compiler-symbols-owner-module-id-at-index-or
+              symbols
+              (csym.compiler-symbol-handle-index root-handle)
+              (csym.compiler-symbol-root-module-id))))
+          root-handle
+          handle)))))
+
 (define (tc-constructor-source-name-id? [ctx : TcContext] [name-id : i64]) : bool
   (let
     [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
@@ -59704,11 +59757,12 @@
         (csym.compiler-composite-pair-key-id module-id name-id)
         name-id)]
     [handle : i64
-      (tc-type-handle-lookup-id
-        (tc-job-state-nominal-cache (tc-context-job-state ctx))
-        (& symbols)
+      (tc-constructor-type-handle-id
+        ctx
+        symbols
+        non-root-bare?
         name-id
-        tc-type-handle-lookup-caller-constructor)]
+        variant-key)]
     [variant-found : bool
       (if (and
         (not non-root-bare?)
@@ -72734,6 +72788,8 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
+        [_admission : unit
+          (try (tc-place-mutation-admission ctx env (& array)))]
         [_ (try (tc-spmd-masked-if-expr ctx expr-bases env spmd-env array))]
         (let
           [_ (try (tc-spmd-masked-if-index ctx expr-bases env spmd-env index))]
@@ -74667,6 +74723,8 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
+        [_admission : unit
+          (try (tc-place-mutation-admission ctx env (& array)))]
         [array-info : TcSpmdExprInfo
           (try (tc-spmd-expr ctx expr-bases env spmd-env array))]
         (match array-info
@@ -74848,6 +74906,8 @@
           (ast.ast-expr-segment-bases-get expr-bases array-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
+        [_admission : unit
+          (try (tc-place-mutation-admission ctx env (& array)))]
         [array-info : TcSpmdExprInfo
           (try (tc-spmd-expr ctx expr-bases env spmd-env array))]
         (match array-info
@@ -89233,7 +89293,9 @@
   [live-box : i64]
   [index-box : i64]) : ResultTcType
   (let
+    [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
     [array-ty (try (tc-expr-id ctx env array-box))]
+    [_admission : unit (try (tc-place-mutation-admission ctx env (& array)))]
     [receiver (try (tc-array-set-receiver ctx array-ty))]
     (match receiver
       [(TcArrayReceiver container-ty elem-ty)
@@ -89289,6 +89351,7 @@
     [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
     [value : ast.AstExpr (tc-context-expr-get ctx value-box)]
     [array-ty (try (tc-expr-id ctx env array-box))]
+    [_admission : unit (try (tc-place-mutation-admission ctx env (& array)))]
     [receiver (try (tc-array-push-receiver ctx array-ty))]
     (match receiver
       [(TcArrayReceiver container-ty elem-ty)
@@ -110470,25 +110533,34 @@
           (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name)))]
     [(EnumArgs name lifetimes)
       (ast.ast-ty-enum-args
-        name
+        (macro-hygiene-rename-var-id env macro-name -1 name)
         (macro-hygiene-lifetime-list
           (ast.ast-lifetime-list-box-shared-view lifetimes)
           env
           macro-name))]
     [(StructArgs name lifetimes)
       (ast.ast-ty-struct-args
-        name
+        (macro-hygiene-rename-var-id env macro-name -1 name)
         (macro-hygiene-lifetime-list
           (ast.ast-lifetime-list-box-shared-view lifetimes)
           env
           macro-name))]
     [(VarArgs name lifetimes)
       (ast.ast-ty-var-args
-        name
+        (macro-hygiene-rename-var-id env macro-name -1 name)
         (macro-hygiene-lifetime-list
           (ast.ast-lifetime-list-box-shared-view lifetimes)
           env
           macro-name))]
+    ;; A nominal type a template splices names its definition module's type, not
+    ;; whatever the call site happens to call that. A name the env binds keeps
+    ;; its binding: a macro parameter, a declaration's own generic parameter, or
+    ;; a caller-spliced type, whose ids hygiene leaves as the caller spelled
+    ;; them.
+    [(Var name) (Var (macro-hygiene-rename-var-id env macro-name -1 name))]
+    [(Struct name)
+      (Struct (macro-hygiene-rename-var-id env macro-name -1 name))]
+    [(Enum name) (Enum (macro-hygiene-rename-var-id env macro-name -1 name))]
     [_ ty]))
 
 (define (macro-hygiene-maybe-type

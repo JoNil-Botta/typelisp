@@ -5015,6 +5015,10 @@
     [(Shr actual-count-ty)
       (match want
         [(Shr want-count-ty) (tc_core.tc-type-eq actual-count-ty want-count-ty)]
+        [_ false])]
+    [(Rotr)
+      (match want
+        [(Rotr) true]
         [_ false])]))
 
 (define (lower-test-instr-binop-op-count

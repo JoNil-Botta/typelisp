@@ -76,6 +76,7 @@ echo "win64 SEH savereg oracle rows match"
     --target windows-x86_64 \
     --opt-level 2 \
     --stdlib-root "$ROOT/stdlib" \
+    --no-prebuilt-stdlib \
     -o "$WORK/fixture.s"
 cp "$FIXTURES/driver.s.in" "$WORK/driver.s"
 clang --target=x86_64-pc-windows-msvc -c "$WORK/fixture.s" -o "$WORK/fixture.obj"

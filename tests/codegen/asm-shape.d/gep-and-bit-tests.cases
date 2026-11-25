@@ -5,8 +5,10 @@ args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
 
 
 # string.append addresses its destination with one scaled lea, no add.
+# Inspect the emitted stdlib_string_append body, not an archive call.
 case gep-value-direct
 source tests/integration/gep_value_direct.tl
+args --no-prebuilt-stdlib
 capture append ^(_tl_.*stdlib_string_append):$
 in fn {{append}}
 match ^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %rdi$

@@ -713,7 +713,10 @@ ci_local_cache_store "$v_entry" "$vrepo" "$vrepo/target/bootstrap-fixpoint" "$vr
 run_verify_cache() {
     rm -f "$work/v.marker"
     v_status=0
-    env -u GITHUB_ACTIONS TYPELISP_CI_LOCAL_CACHE="$vrepo/target/ci-affected-cache" \
+    env -u GITHUB_ACTIONS -u TYPELISP_CI_COMPILER_ENVELOPES -u TYPELISP_CI_COMPILER_ENVELOPE_DIR \
+        -u TYPELISP_BOOTSTRAP_WORKDIR -u TYPELISP_CI_TIMING -u TYPELISP_CI_TIMING_FILE \
+        -u TYPELISP_CI_TIMING_GATE -u TYPELISP_CI_LOCAL_SCOPE_PATHS \
+        TYPELISP_CI_LOCAL_CACHE="$vrepo/target/ci-affected-cache" \
         TYPELISP_BIN="$vrepo/target/stage0/typelisp" VERIFY_CACHE_TEST_MARKER="$work/v.marker" \
         "$vrepo/scripts/ci-verify.sh" --gates "$1" > "$work/v.out" 2>&1 || v_status=$?
 }

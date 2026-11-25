@@ -130,7 +130,10 @@ build_invariance_copy_aliases() {
 
 # A large source remains the only unique input in its process. Consecutive
 # logical aliases of that input share the fresh output through the ordinary
-# chunk planner; they still count toward the logical-case ceiling.
+# chunk planner; they still count toward the logical-case ceiling. Sources
+# under src/ import the compiler itself and never share a chunk with test
+# programs, so one slow compiler-source chunk cannot carry a test-program tail
+# and a test-program chunk keeps the light memory class.
 build_invariance_write_chunks() {
     _bib_chunk_records=$1
     _bib_chunk_dir=$2
@@ -145,6 +148,9 @@ build_invariance_write_chunks() {
         function singleton(name, source) {
             return name ~ /^selfhost_main_/ || source ~ /^src\/tests\/compiler_[^/]*\.tl$/
         }
+        function compiler_source(source) {
+            return source ~ /^src\//
+        }
         function finish_chunk() {
             if (chunk_entries > 0) {
                 close(cases_path)
@@ -154,15 +160,18 @@ build_invariance_write_chunks() {
         }
         $1 != "" {
             alone = singleton($1, $2)
+            heavy = compiler_source($2)
             if (chunk_entries > 0 && (alone || chunk_alone) &&
                 !(alone && chunk_alone && $3 == chunk_source && $5 == chunk_opt)) {
                 finish_chunk()
             }
+            if (chunk_entries > 0 && heavy != chunk_heavy) finish_chunk()
             if (chunk_entries == 0) {
                 cases_path = chunk_dir "/cases." sprintf("%04d", chunk_index) ".txt"
                 chunk_source = $3
                 chunk_opt = $5
                 chunk_alone = alone
+                chunk_heavy = heavy
             }
             print $0 >> cases_path
             chunk_entries += 1
@@ -179,4 +188,34 @@ build_invariance_chunk_is_codegen_smoke() {
         NF != 5 || $3 != "src/tests/compiler_codegen_smoke_suite.tl" { exit 1 }
         END { if (NR == 0) exit 1 }
     ' "$1"
+}
+
+# Pool admission of one producer's chunk, printed as `CAP_MIB RANK`. Every
+# chunk runs under its hard cap; the classes follow the per-chunk peaks of
+# hosted run 45535549120 with headroom. The opt1-built complete codegen smoke
+# (3.5 GiB) keeps the full 8 GiB ownership-regression cap; whole-compiler
+# opt2 selfhost compiles (3.7 GiB) get 6 GiB; the opt1 selfhost compile
+# (1.1 GiB), the opt2-built codegen smoke and every chunk with a src/ source
+# (up to 3.5 GiB) get 4 GiB; chunks of test programs alone (under 0.6 GiB)
+# get 2 GiB. RANK orders the queue longest-first by class: whole-compiler and
+# compiler-source compiles first, test-program chunks last, so the light
+# chunks fill the workers that the larger caps leave free and the pool ends
+# without a long compile running alone.
+build_invariance_chunk_class() {
+    if build_invariance_chunk_is_codegen_smoke "$1"; then
+        if [ "$2" = opt1-built ]; then
+            printf '8192 2\n'
+        else
+            printf '4096 2\n'
+        fi
+    elif build_invariance_chunk_is_selfhost "$1"; then
+        case "$(awk -F'|' 'NR == 1 { print $1; exit }' "$1")" in
+            selfhost_main_opt2) printf '6144 1\n' ;;
+            *) printf '4096 4\n' ;;
+        esac
+    elif awk -F'|' '$2 ~ /^src\// { found = 1; exit } END { exit !found }' "$1"; then
+        printf '4096 3\n'
+    else
+        printf '2048 5\n'
+    fi
 }

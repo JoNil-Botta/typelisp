@@ -912,31 +912,98 @@
       [(io.OkIoUnit) unit]
       [(io.ErrIoUnit _) unit])))
 
-(define (copy-file-ok? [src : (& src str)] [dst : (& dst str)]) : bool
-  (let
-    [r : ReadFileResult (read-file-result src)]
-    (if r.ok
-      (write-file-ok? dst (& r.text))
-      false)))
+;; Outcome of a native `cp`: `error` names the failing step, path and OS error.
+(defstruct CopyResult
+  (ok bool)
+  (error String))
 
-(define (copy-recursive-ok? [src : (& src str)] [dst : (& dst str)]) : bool
+;; One copy attempt's failure: the step that failed and its I/O error.
+(defenum CopyStep
+  (CopyStepOk)
+  (CopyStepFailed String io.IoError))
+
+;; On Windows, pause and return true when `_error` is a sharing or access
+;; failure that antivirus, the indexer or a pending delete can cause for a
+;; moment and attempt `_attempt` is not the last. Linux never retries.
+(define (copy-retry-after-pause? [_error : (& io.IoError)] [_attempt : i64]) : bool
+  (cfg
+    windows
+    (if (and
+      (< _attempt fs.fs-windows-transient-retry-attempts)
+      (match _error
+        [(io.IoPermissionDenied _) true]
+        [(io.IoSystemCode code _) (fs.fs-windows-transient-error-code? code)]
+        [_ false]))
+      (begin
+        (fs.fs-windows-transient-retry-pause _attempt)
+        true)
+      false)
+    false))
+
+(define (copy-file-attempt [src : (& src str)] [dst : (& dst str)]) : CopyStep
+  (match (io.try-read-file src)
+    [(io.ErrIoBytes error) (CopyStepFailed "cannot read" error)]
+    [(io.OkIoBytes buf)
+      (match (io.try-write-file dst (byte_buf.as-bytes (& buf)))
+        [(io.OkIoUnit) (CopyStepOk)]
+        [(io.ErrIoUnit error) (CopyStepFailed "cannot write" error)])]))
+
+(define (copy-file-result [src : (& src str)] [dst : (& dst str)]) : CopyResult
+  (let
+    [nsrc : String (win-fs-path src)]
+    [ndst : String (win-fs-path dst)]
+    [parent : String (path-dirname (& ndst))]
+    [attempt : i64 1]
+    [done : bool false]
+    [result : CopyResult (CopyResult true "")]
+    (when
+      (not (string.eq (& parent) "."))
+      (let
+        [_ok : bool (mkdir-all! (& parent))]
+        unit))
+    (while (not done)
+      (match (copy-file-attempt (& nsrc) (& ndst))
+        [(CopyStepOk) (set! done true)]
+        [(CopyStepFailed step error)
+          (if (copy-retry-after-pause? (& error) attempt)
+            (set! attempt (+ attempt 1))
+            (begin
+              (set!
+                result
+                (CopyResult
+                  false
+                  (str_cat.str-cat step ": " (io.error-message error))))
+              (set! done true)))]))
+    result))
+
+(define (copy-recursive-result [src : (& src str)] [dst : (& dst str)]) : CopyResult
   (let
     [nsrc : String (win-fs-path src)]
     [ndst : String (win-fs-path dst)]
     (match (fs.try-file-kind (& nsrc))
-      [(fs.ErrFsFileKind _) false]
+      [(fs.ErrFsFileKind error)
+        (CopyResult
+          false
+          (str_cat.str-cat "cannot stat: " (io.error-message error)))]
       [(fs.OkFsFileKind kind)
         (if (fs.file-kind-directory? kind)
           (if (not (mkdir-all! (& ndst)))
-            false
+            (CopyResult
+              false
+              (str_cat.str-cat "cannot create directory: " ndst))
             (match (fs.try-read-dir (& nsrc))
-              [(fs.ErrIoStringVector _) false]
+              [(fs.ErrIoStringVector error)
+                (CopyResult
+                  false
+                  (str_cat.str-cat
+                    "cannot list directory: "
+                    (io.error-message error)))]
               [(fs.OkIoStringVector entries)
                 (let
                   [i : i64 0]
                   [count : i64 (svec.len (& entries.items))]
-                  [ok : bool true]
-                  (while (and ok (< i count))
+                  [result : CopyResult (CopyResult true "")]
+                  (while (and result.ok (< i count))
                     (let
                       [name : String (svec.get (& entries.items) i "")]
                       [csrc : String
@@ -946,12 +1013,10 @@
                           (string.copy (& name)))]
                       [cdst : String
                         (str_cat.str-cat (string.copy (& ndst)) "/" name)]
-                      (when
-                        (not (copy-recursive-ok? (& csrc) (& cdst)))
-                        (set! ok false)))
+                      (set! result (copy-recursive-result (& csrc) (& cdst))))
                     (set! i (+ i 1)))
-                  ok)]))
-          (copy-file-ok? (& nsrc) (& ndst)))])))
+                  result)]))
+          (copy-file-result (& nsrc) (& ndst)))])))
 
 (define (files-equal? [a : (& a str)] [b : (& b str)]) : bool
   (let

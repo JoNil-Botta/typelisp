@@ -86,19 +86,20 @@ INLINE_TEST_COMBINED_HEAVY_CHUNKS=3
 INLINE_TEST_COMBINED_LIGHT_CHUNKS=2
 INLINE_TEST_COMBINED_STDLIB_CHUNKS=2
 INLINE_TEST_COMBINED_HUB_MIN_LINES=40000
-# Linux cgroup MemoryMax bounds resident pages (RSS); Windows Job Objects bound
+INLINE_TEST_COMBINED_HUB_TARGET_WEIGHT=60000
+# Linux cgroup MemoryMax bounds resident pages (RSS; measured heavy peak
+# ~3.45 GiB on 16 GiB runners), so 3 Linux workers can admit three 4096 MiB
+# heavy chunks concurrently (12288 MiB budget). Windows Job Objects bound
 # committed virtual memory across the compiler and child test binary (~1.5-1.7x
-# Linux RSS on the largest compiler test suites). Heavy 1-2 file compiler chunks
-# keep the full per-chunk cap while lighter >=3-file chunks take a lower cap so
-# the 3-worker pool budget admits at most two heavy chunks plus one light chunk
-# at once, preventing three heavy chunks from stacking peak memory together.
+# Linux RSS, historical peak ~5.5 GiB), so 3 Windows workers keep at most two
+# heavy 6144 MiB chunks plus one light 5120 MiB chunk at once.
 INLINE_TEST_CHUNK_CAP_MIB=4096
 INLINE_TEST_LIGHT_CHUNK_CAP_MIB=3072
 if [ "$HOST_OS" = windows ]; then
     INLINE_TEST_CHUNK_CAP_MIB=6144
     INLINE_TEST_LIGHT_CHUNK_CAP_MIB=5120
 fi
-if [ "$INLINE_TEST_WORKERS" -le 2 ]; then
+if [ "$INLINE_TEST_WORKERS" -le 2 ] || [ "$HOST_OS" = linux ]; then
     INLINE_TEST_POOL_BUDGET_MIB=$((INLINE_TEST_WORKERS * INLINE_TEST_CHUNK_CAP_MIB))
 else
     INLINE_TEST_POOL_BUDGET_MIB=$((2 * INLINE_TEST_CHUNK_CAP_MIB + (INLINE_TEST_WORKERS - 2) * INLINE_TEST_LIGHT_CHUNK_CAP_MIB))
@@ -138,6 +139,7 @@ inline_test_plan_chunks() {
         -v light_chunks="$INLINE_TEST_COMBINED_LIGHT_CHUNKS" \
         -v std_chunks="$INLINE_TEST_COMBINED_STDLIB_CHUNKS" \
         -v hub_min_lines="$INLINE_TEST_COMBINED_HUB_MIN_LINES" \
+        -v hub_target_w="$INLINE_TEST_COMBINED_HUB_TARGET_WEIGHT" \
         -v dir="$_plan_dir" \
         -v cap="$INLINE_TEST_CHUNK_CAP_MIB" \
         -v light_cap="$INLINE_TEST_LIGHT_CHUNK_CAP_MIB" \
@@ -361,6 +363,15 @@ inline_test_plan_chunks() {
             if (ln > 15000) ln = 15000
             return ln + 4000
         }
+        function combined_hub_chunks(arr, n,    i, tot, k) {
+            if (n <= 1 || hub_target_w <= 0) return 1
+            tot = 0
+            for (i = 1; i <= n; i++) tot += split_weight(arr[i])
+            k = int((tot + hub_target_w - 1) / hub_target_w)
+            if (k < 1) k = 1
+            if (k > n) k = n
+            return k
+        }
         # Partition sorted arr[1..n] into k contiguous slices balanced by a
         # capped file weight so a single huge shared module (already in every
         # heavy chunk'\''s closure) does not force the remaining files into one
@@ -368,7 +379,7 @@ inline_test_plan_chunks() {
         # Then promote each chunk'\''s largest non-chunk-imported file to index 1
         # (the root-module leader) and relocate any importer of that leader to
         # the next unprocessed chunk when collision-free, or defer it to deff.
-        function plan_contiguous_combined(arr, n, k, bcap, use_leader,    i, j, m, b, nb, tot, target, acc, f, best, best_dup, cur_dup, imp, leader, dst, job, cs, ce, dst_cs, dst_ce, defn, deff) {
+        function plan_contiguous_combined(arr, n, k, bcap, use_leader,    i, j, m, b, nb, tot, target, acc, f, u, best, best_dup, cur_dup, imp, leader, dst, job, cs, ce, dst_cs, dst_ce, defn, deff, cvis, u_lines, f_lines) {
             if (n <= 0) return
             sort_asc_path(arr, n)
             nb = (k > 0 && k < n) ? k : n
@@ -464,15 +475,30 @@ inline_test_plan_chunks() {
                 if (bcount[b] <= 0) continue
                 c++
                 job = sprintf("chunk-%03d", c)
+                delete cvis
+                u_lines = 0
+                f_lines = 0
                 for (i = 1; i <= bcount[b]; i++) {
-                    print bfile[b, i] > (dir "/" job ".list")
+                    f = bfile[b, i]
+                    print f > (dir "/" job ".list")
+                    f_lines += lines[f]
+                    for (m = 1; m <= cl_cnt[f]; m++) {
+                        u = cl_node[f, m]
+                        if (!(u in cvis)) {
+                            cvis[u] = 1
+                            u_lines += lines[u]
+                        }
+                    }
                 }
                 close(dir "/" job ".list")
                 if (bcount[b] > 1) {
                     print "1" > (dir "/" job ".combined")
                     close(dir "/" job ".combined")
                 }
-                print job "|" bcap >> queue
+                ncomb++
+                comb_job[ncomb] = job
+                comb_cap[ncomb] = bcap
+                comb_w[ncomb] = u_lines + f_lines + bcount[b] * 4000
             }
             if (defn > 0) {
                 plan_contiguous_combined(deff, defn, 1, bcap, use_leader)
@@ -519,13 +545,14 @@ inline_test_plan_chunks() {
                 }
             }
             c = 0
+            ncomb = 0
             sort_asc_path(extra_hub_keys, nextra_hubs)
             for (h = 1; h <= nextra_hubs; h++) {
                 hk = extra_hub_keys[h]
                 delete hfiles
                 hn = extra_hub_cnt[hk]
                 for (i = 1; i <= hn; i++) hfiles[i] = extra_hub_file[hk, i]
-                plan_contiguous_combined(hfiles, hn, 1, cap, 1)
+                plan_contiguous_combined(hfiles, hn, combined_hub_chunks(hfiles, hn), cap, 1)
             }
             plan_contiguous_combined(heavy_files, nheavy, heavy_chunks, cap, 1)
             sort_asc_path(single_hub_keys, nsingle_hubs)
@@ -534,11 +561,29 @@ inline_test_plan_chunks() {
                 delete hfiles
                 hn = single_hub_cnt[hk]
                 for (i = 1; i <= hn; i++) hfiles[i] = single_hub_file[hk, i]
-                plan_contiguous_combined(hfiles, hn, 1, cap, 1)
+                plan_contiguous_combined(hfiles, hn, combined_hub_chunks(hfiles, hn), cap, 1)
             }
             plan_contiguous_combined(light_files, nlight, light_chunks, light_cap, 1)
             plan_contiguous_combined(inline_light_files, ninline_light, 1, light_cap, 1)
             plan_contiguous_combined(std_files, nstd, std_chunks, light_cap, 0)
+
+            # Emit combined chunks in descending estimated weight order (LPT) so
+            # the heaviest chunks start first regardless of group discovery order.
+            for (i = 1; i <= ncomb; i++) comb_ord[i] = i
+            for (i = 2; i <= ncomb; i++) {
+                idx = comb_ord[i]
+                kw = comb_w[idx]
+                j = i - 1
+                while (j >= 1 && comb_w[comb_ord[j]] < kw) {
+                    comb_ord[j + 1] = comb_ord[j]
+                    j--
+                }
+                comb_ord[j + 1] = idx
+            }
+            for (i = 1; i <= ncomb; i++) {
+                idx = comb_ord[i]
+                print comb_job[idx] "|" comb_cap[idx] >> queue
+            }
 
             # Standalone / non-combined files in regular LPT chunks.
             if (nplain > 0) {
@@ -849,6 +894,43 @@ inline_test_self_test_chunks() {
             exit 1
         fi
     done
+
+    # A large single_hub group must split across multiple balanced chunks when
+    # its total split_weight exceeds INLINE_TEST_COMBINED_HUB_TARGET_WEIGHT, and
+    # combined chunks must be emitted in descending weight order (LPT) in queue.
+    _hub_dir=$(mktemp -d "$INLINE_TEST_SELF_TEST_ROOT/single-hub.XXXXXX")
+    mkdir -p "$_hub_dir/src"
+    awk 'BEGIN { for (i = 0; i < 40; i++) print ";; small hub" }' > "$_hub_dir/src/a_small_hub.tl"
+    awk 'BEGIN { for (i = 0; i < 12000; i++) print ";; large hub" }' > "$_hub_dir/src/z_large_hub.tl"
+    printf '(import a_small_hub)\n(test s1 unit)\n' > "$_hub_dir/src/s1.tl"
+    printf '(import a_small_hub)\n(test s2 unit)\n' > "$_hub_dir/src/s2.tl"
+    for _hf in t1 t2 t3 t4 t5 t6; do
+        printf '(import z_large_hub)\n(test %s unit)\n' "$_hf" > "$_hub_dir/src/$_hf.tl"
+    done
+    (
+        cd "$_hub_dir" || exit 1
+        printf '%s\n' src/s1.tl src/s2.tl src/t1.tl src/t2.tl src/t3.tl src/t4.tl src/t5.tl src/t6.tl > discovered.txt
+        INLINE_TEST_COMBINED_HUB_MIN_LINES=30
+        INLINE_TEST_COMBINED_HUB_TARGET_WEIGHT=10000
+        inline_test_plan_chunks discovered.txt "$_hub_dir" "$_hub_dir/queue"
+    )
+    if [ "$(cat "$_hub_dir"/chunk-*.list | LC_ALL=C sort)" != "$(printf '%s\n' src/s1.tl src/s2.tl src/t1.tl src/t2.tl src/t3.tl src/t4.tl src/t5.tl src/t6.tl)" ]; then
+        echo "inline test chunk self-test: single_hub split lost or duplicated a source" >&2
+        exit 1
+    fi
+    _hub_large_chunks=$(grep -l '^src/t[1-6]\.tl$' "$_hub_dir"/chunk-*.list | wc -l | tr -d ' ')
+    if [ "$_hub_large_chunks" -lt 2 ]; then
+        echo "inline test chunk self-test: oversized single_hub group did not split (got $_hub_large_chunks chunk(s))" >&2
+        exit 1
+    fi
+    _hub_first_job=$(head -n 1 "$_hub_dir/queue" | cut -d '|' -f 1)
+    _hub_last_job=$(tail -n 1 "$_hub_dir/queue" | cut -d '|' -f 1)
+    if ! grep -q '^src/t[1-6]\.tl$' "$_hub_dir/$_hub_first_job.list" ||
+        ! grep -q '^src/s[12]\.tl$' "$_hub_dir/$_hub_last_job.list"; then
+        echo "inline test chunk self-test: combined chunks were not ordered by descending weight (LPT)" >&2
+        cat "$_hub_dir/queue" >&2
+        exit 1
+    fi
 
     inline_test_self_test_fixture "$_self_dir"
     mv "$_self_dir/chunk-002.status" "$_self_dir/chunk-002.status.saved"

@@ -1837,7 +1837,7 @@
       paths
       modules
       (ast.ast-decl-module-id mod-id)
-      (& source-path)
+      (& physical-path)
       mod-id
       prov-id)
     (for [i (iterator.range 0 (array-length record.imports))]
@@ -1846,7 +1846,7 @@
         paths
         modules
         (& (array-ref record.imports i))
-        (& source-path)
+        (& physical-path)
         mod-id
         prov-id))
     (for [i (iterator.range 0 (array-length record.types))]
@@ -1856,7 +1856,7 @@
         paths
         modules
         (& (array-ref record.types i))
-        (& source-path)
+        (& physical-path)
         mod-id
         prov-id))
     (for [i (iterator.range 0 (array-length record.functions))]
@@ -1870,7 +1870,7 @@
         package-name
         package-version
         spmd-callables
-        (& source-path)
+        (& physical-path)
         mod-id
         prov-id))
     (for [i (iterator.range 0 (array-length record.values))]
@@ -1881,7 +1881,7 @@
         modules
         (& (array-ref record.values i))
         is-stdlib
-        (& source-path)
+        (& physical-path)
         mod-id
         prov-id))
     (for [i (iterator.range 0 (array-length record.macros))]
@@ -1892,7 +1892,7 @@
         paths
         modules
         (& (array-ref record.macros i))
-        (& source-path)
+        (& physical-path)
         mod-id
         prov-id))))
 

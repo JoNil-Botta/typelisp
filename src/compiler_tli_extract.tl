@@ -1999,7 +1999,29 @@
           (string.copy (& (array-ref paths-out slot)))
           cfg-digest
           (tuple-ref (__tl_array-take! records live slot) 1))))
-    (tli.TliBundle bundle-flags build target modules)))
+    (let
+      [sorted : (__tl_dyn-array tli.TliModuleRecord)
+        (__tl_make-array tli.TliModuleRecord count)]
+      [avail : (__tl_dyn-array bool) (__tl_make-array bool count)]
+      (for [i (iterator.range 0 count)]
+        (set! (array-ref avail i) true))
+      (for [out-idx (iterator.range 0 count)]
+        (let
+          [best : i64 -1]
+          (for [cand (iterator.range 0 count)]
+            (when
+              (array-ref avail cand)
+              (when
+                (or
+                  (< best 0)
+                  (sort.string-less-borrowed?
+                    (& (array-ref modules cand).name)
+                    (& (array-ref modules best).name)))
+                (set! best cand))))
+          (set!
+            (array-ref sorted out-idx)
+            (tuple-ref (__tl_array-take! modules avail best) 1))))
+      (tli.TliBundle bundle-flags build target sorted))))
 
 (define (tli-extract-checked
   [ctx : tc.TcContext]

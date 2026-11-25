@@ -16316,7 +16316,12 @@
             (ci.intern "_tl_surface_left_src_lib_tl_same"))
           (ast.ast-extern-link-input-list-new)
           1
-          (ast.AstImportedSpmdMetadata.No))]
+          (ast.AstImportedSpmdMetadata.Package
+            "surface_left"
+            "0.1.0"
+            (ci.intern-id-from-renderable
+              (ci.intern-generated-canonical-name "left.src.lib/same"))
+            (box (ast.ast-imported-spmd-callable-list-new))))]
       [right-meta : ast.AstExternMetadata
         (ast.AstExternMetadata.Metadata
           (ast.AstExternAbi.TypeLisp)
@@ -16324,7 +16329,12 @@
             (ci.intern "_tl_surface_right_src_lib_tl_same"))
           (ast.ast-extern-link-input-list-new)
           1
-          (ast.AstImportedSpmdMetadata.No))]
+          (ast.AstImportedSpmdMetadata.Package
+            "surface_right"
+            "0.1.0"
+            (ci.intern-id-from-renderable
+              (ci.intern-generated-canonical-name "right.src.lib/same"))
+            (box (ast.ast-imported-spmd-callable-list-new))))]
       [lower-state : lower.CompilerLowerState
         (lower.compiler-lower-state-new-with-intern-state
           (ci.intern-compat-state-capture-active))]

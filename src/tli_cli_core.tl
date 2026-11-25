@@ -483,6 +483,13 @@
                 (compiler_load.compiler-load-copy-spmd-callables
                   (& image.metadata.spmd-callables)))))])]))
 
+(define (tli-dep-cfgs-without-test [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (let
+    [test-id : i64 (hydrate.tli-hydrate-name "test")]
+    (if (not (sym_i64_env.sym-i64-contains-id cfgs test-id))
+      cfgs
+      (sym_i64_env.sym-i64-bind-id cfgs test-id 0))))
+
 (define (tli-open-package-bundle-for-session!
   [load-state : (& compiler_load.CompilerLoadSessionState)]
   [manifest-dir : (& str)]
@@ -540,8 +547,10 @@
               [(Ok bytes)
                 (let
                   [build : String (identity.compiler-build-producer-identity)]
+                  [dep-cfgs : sym_i64_env.SymI64Env
+                    (tli-dep-cfgs-without-test cfgs)]
                   [cfg-digest : (Array u8 32)
-                    (hydrate.tli-hydrate-cfg-digest cfgs)]
+                    (hydrate.tli-hydrate-cfg-digest dep-cfgs)]
                   (match (hydrate.tli-catalog-open-directory
                     (& bytes)
                     (& build)

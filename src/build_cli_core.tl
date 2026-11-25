@@ -5938,16 +5938,20 @@
                           index
                           (ast.ast-decl-fallback))]
                       [mod-name : String
-                        (match decl
-                          [(Module name-id) (ci.intern-str name-id)]
-                          [_
+                        (let
+                          [explicit : String
+                            (match decl
+                              [(Module name-id) (ci.intern-str name-id)]
+                              [_ ""])]
+                          (if (> (string.string-length (& explicit)) 0)
+                            explicit
                             (let
                               [canon : String
                                 (load.compiler-load-canonical-module-id-from-path
                                   (& owned-p))]
                               (if (> (string.string-length (& canon)) 0)
                                 canon
-                                (string.copy package-name)))])]
+                                (string.copy package-name)))))]
                       (build_string_i64_map.insert-ref!
                         (&mut seen-owned)
                         (string.copy (& owned-p))
@@ -6375,11 +6379,11 @@
                             (be_facts.compiler-backend-target-windows? target)
                             request.opt-level
                             false)]
-                        (lower.compiler-lower-arena-state-release!
-                          (lower.compiler-lower-state-arenas lower-owner))
-                        (build-package-runtime-scope-release! scope)
                         (match part-result
                           [(Err message)
+                            (lower.compiler-lower-arena-state-release!
+                              (lower.compiler-lower-state-arenas lower-owner))
+                            (build-package-runtime-scope-release! scope)
                             (build-package-lib-clean-mods-dir! (& mods-dir))
                             (build-package-clean-stage stage)
                             (io.print-error message)
@@ -6393,6 +6397,10 @@
                                   source-digest)]
                               (match tlci-emitted
                                 [(Err message)
+                                  (lower.compiler-lower-arena-state-release!
+                                    (lower.compiler-lower-state-arenas
+                                      lower-owner))
+                                  (build-package-runtime-scope-release! scope)
                                   (build-package-lib-clean-mods-dir!
                                     (& mods-dir))
                                   (build-package-clean-stage stage)
@@ -6420,8 +6428,14 @@
                                             (string.copy (& request.tlci-path))
                                             (string.copy (& tlci-text)))))]
                                     (unless
-                                      (tli_extract.tli-extract-pin-imports!
-                                        (&mut bundle))
+                                      (tli_extract.tli-extract-pin-imports-with-load-state!
+                                        (&mut bundle)
+                                        (& scope.state.load-session))
+                                      (lower.compiler-lower-arena-state-release!
+                                        (lower.compiler-lower-state-arenas
+                                          lower-owner))
+                                      (build-package-runtime-scope-release!
+                                        scope)
                                       (build-package-lib-clean-mods-dir!
                                         (& mods-dir))
                                       (build-package-clean-stage stage)
@@ -6433,6 +6447,11 @@
                                         (tli_codec.tli-encode-bundle (& bundle))]
                                       [encoded-buf : byte_buf.ByteBuf
                                         (byte_buf.from-array encoded-arr)]
+                                      (lower.compiler-lower-arena-state-release!
+                                        (lower.compiler-lower-state-arenas
+                                          lower-owner))
+                                      (build-package-runtime-scope-release!
+                                        scope)
                                       (match (io.try-write-file
                                         (& stage.tli)
                                         (byte_buf.as-bytes (& encoded-buf)))
@@ -6446,6 +6465,45 @@
                                               "build: failed to write package tli: "
                                               (io.error-message err)))
                                           (return 1)]))
+                                    (let
+                                      [combined-asm : text_buf.TextBuf
+                                        (text_buf.empty)]
+                                      (if (= (array-length emitted.asm-files) 0)
+                                        (set!
+                                          combined-asm
+                                          (text_buf.append
+                                            combined-asm
+                                            "; empty library package\n"))
+                                        (for [ai
+                                          (iterator.range
+                                            0
+                                            (array-length emitted.asm-files))]
+                                          (match (io.try-read-file
+                                            (& (array-ref emitted.asm-files ai)))
+                                            [(io.OkIoBytes chunk)
+                                              (let
+                                                [chunk-text : String
+                                                  (byte_buf.to-string chunk)]
+                                                (set!
+                                                  combined-asm
+                                                  (text_buf.append
+                                                    combined-asm
+                                                    chunk-text)))]
+                                            [(io.ErrIoBytes _) unit])))
+                                      (let
+                                        [asm-text : String
+                                          (text_buf.render combined-asm)]
+                                        (match (build_run_core.source-tool-write-file
+                                          (& stage.asm)
+                                          (& asm-text)
+                                          "build: failed to stage package library assembly")
+                                          [(Ok) unit]
+                                          [(Err message)
+                                            (build-package-lib-clean-mods-dir!
+                                              (& mods-dir))
+                                            (build-package-clean-stage stage)
+                                            (io.print-error message)
+                                            (return 1)])))
                                     (match (build-package-lib-assemble-and-archive
                                       (& mods-dir)
                                       (& emitted.asm-files)
@@ -6503,7 +6561,13 @@
                                                     (build-package-commit-plan-add
                                                       (build-package-commit-plan-add
                                                         (build-package-commit-plan-add
-                                                          (build-package-commit-plan-new)
+                                                          (build-package-commit-plan-add
+                                                            (build-package-commit-plan-new)
+                                                            (string.copy
+                                                              (&
+                                                                request.asm-path))
+                                                            (string.copy
+                                                              (& stage.asm)))
                                                           (string.copy
                                                             (& request.tli-path))
                                                           (string.copy

@@ -124,7 +124,6 @@ file body/src/main.tl
   (import libd.src.lib.f)
   (define (helper) : i64 5)
   (define (entry) : i64 (f)))
-(import app.b)
 (define (main) : i64 (app.b.entry))
 end-file
 step named-check
@@ -219,7 +218,7 @@ file vendor/purelib/typelisp.pkg
 (package (name "purelib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
 end-file
 file vendor/purelib/src/lib.tl
-(module purelib.math)
+(module purelib)
 (define base : i64 40)
 (define (add-base [x : i64]) : i64 (+ base x))
 end-file
@@ -228,7 +227,7 @@ file typelisp.pkg
   (dependencies (purelib "vendor/purelib")))
 end-file
 file src/main.tl
-(import purelib.math as pm)
+(import purelib as pm)
 (define (main) : i64 (pm.add-base 2))
 (test uses-prebuilt-dep
   (assert (= (pm.add-base 2) 42)))

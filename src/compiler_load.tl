@@ -901,7 +901,7 @@
   (Err (Box cdiag.CompilerDiagnostic)))
 
 (define (compiler-load-tli-ptr-cell) : (__tl_dyn-array i64)
-  (__tl_make-array i64 1))
+  (__tl_make-array i64 6))
 
 ;; Loader cache and traversal data is owned by an explicit session state. The
 ;; no-argument compatibility helpers below are serial/test-only adapters over
@@ -1151,10 +1151,6 @@
   [state : (& CompilerLoadSessionState)]) : unit
   (let
     [addr : i64 (array-ref state.tli-catalog-ptr 0)]
-    (unsafe
-      (ptr-write!
-        (ptr-cast (__tl_array-data state.tli-catalog-ptr) : (MutPtr i64))
-        0))
     (when
       (!= addr 0)
       (unsafe
@@ -1162,6 +1158,23 @@
           [holder : CompilerLoadTliCatalogBox
             (ptr-read
               (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          [total-bundles : i64
+            (tli_hydrate.tli-multi-bundle-count (& holder.multi))]
+          [pkg-bundles : i64
+            (if holder.multi.has-stdlib-bundle
+              (- total-bundles 1)
+              total-bundles)]
+          [hydrated-pkg : i64
+            (tli_hydrate.tli-multi-hydrated-package-bundle-count
+              (& holder.multi))]
+          [base : (MutPtr i64)
+            (ptr-cast (__tl_array-data state.tli-catalog-ptr) : (MutPtr i64))]
+          (ptr-write! (ptr-offset base 1) 1)
+          (ptr-write! (ptr-offset base 2) pkg-bundles)
+          (ptr-write! (ptr-offset base 3) hydrated-pkg)
+          (ptr-write! (ptr-offset base 4) holder.facts.hydrated-module-count)
+          (ptr-write! (ptr-offset base 5) holder.package-tli-hits)
+          (ptr-write! base 0)
           (tli_hydrate.tli-multi-catalog-release! (& holder.multi)))))))
 
 (define (compiler-load-session-state-tli-ensure-box!
@@ -1191,11 +1204,17 @@
                 (cast (ptr->int (__tl_array-data cell)) : i64))]
             (unsafe
               (arena.tl_arena_set enclosing)
-              (ptr-write!
-                (ptr-cast
-                  (__tl_array-data state.tli-catalog-ptr)
-                  : (MutPtr i64))
-                addr))
+              (let
+                [base : (MutPtr i64)
+                  (ptr-cast
+                    (__tl_array-data state.tli-catalog-ptr)
+                    : (MutPtr i64))]
+                (ptr-write! base addr)
+                (ptr-write! (ptr-offset base 1) 0)
+                (ptr-write! (ptr-offset base 2) 0)
+                (ptr-write! (ptr-offset base 3) 0)
+                (ptr-write! (ptr-offset base 4) 0)
+                (ptr-write! (ptr-offset base 5) 0)))
             addr))))))
 
 (define (compiler-load-session-state-tli-attach-bundle!
@@ -2299,11 +2318,28 @@
           (+= import-bytes (array-length image.imports))]))
     (let
       [tli-addr : i64 (array-ref state.tli-catalog-ptr 0)]
-      [tli-active : bool (!= tli-addr 0)]
-      [tli-pkg-bundles : i64 0]
-      [tli-hydrated-pkg-bundles : i64 0]
-      [tli-hydrated-modules : i64 0]
-      [tli-pkg-hits : i64 0]
+      [tli-active : bool
+        (or
+          (!= tli-addr 0)
+          (and
+            (>= (array-length state.tli-catalog-ptr) 6)
+            (!= (array-ref state.tli-catalog-ptr 1) 0)))]
+      [tli-pkg-bundles : i64
+        (if (and (= tli-addr 0) (>= (array-length state.tli-catalog-ptr) 6))
+          (array-ref state.tli-catalog-ptr 2)
+          0)]
+      [tli-hydrated-pkg-bundles : i64
+        (if (and (= tli-addr 0) (>= (array-length state.tli-catalog-ptr) 6))
+          (array-ref state.tli-catalog-ptr 3)
+          0)]
+      [tli-hydrated-modules : i64
+        (if (and (= tli-addr 0) (>= (array-length state.tli-catalog-ptr) 6))
+          (array-ref state.tli-catalog-ptr 4)
+          0)]
+      [tli-pkg-hits : i64
+        (if (and (= tli-addr 0) (>= (array-length state.tli-catalog-ptr) 6))
+          (array-ref state.tli-catalog-ptr 5)
+          0)]
       (when
         (!= tli-addr 0)
         (unsafe
@@ -4813,9 +4849,11 @@
   [resolver : (& CompilerLoadImportResolver)]
   [module-name : String]
   [expected-module : ast.AstMaybeModuleName]) : ResultPkgResolve
-  (if (compiler-load-tli-addr-has-module?
-    resolver.tli-catalog-addr
-    (& module-name))
+  (if (and
+    (compiler-load-string-prefix-at? (& module-name) "stdlib." 0)
+    (compiler-load-tli-addr-has-module?
+      resolver.tli-catalog-addr
+      (& module-name)))
     (Ok
       (compiler-load-tli-addr-module-path
         resolver.tli-catalog-addr
@@ -13634,6 +13672,10 @@
                     [tli-hit : bool
                       (and
                         (not package-externs)
+                        (compiler-load-string-prefix-at?
+                          (& import-path)
+                          "stdlib."
+                          0)
                         (compiler-load-tli-has-module? (& import-path)))]
                     [preload-candidate : bool
                       (and

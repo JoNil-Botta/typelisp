@@ -60,6 +60,17 @@ for root in stdlib src examples tests docs; do
     fi
 done | sort > "$CANDIDATES"
 
+# A local scripts/ci-affected.sh --run whose change leaves src/, stdlib/ and
+# scripts/ alone tests only the files it touches (scripts/lib-ci-local.sh).
+. "$ROOT/scripts/lib-ci-local.sh"
+DOC_TESTS_SCOPED=0
+if ci_local_scope_active; then
+    DOC_TESTS_SCOPED=1
+    ci_local_scope_filter "$CANDIDATES" "$CANDIDATES.scoped"
+    ci_local_scope_report doc-tests "$CANDIDATES.scoped" "$CANDIDATES"
+    mv "$CANDIDATES.scoped" "$CANDIDATES"
+fi
+
 safe_name() {
     printf '%s' "$1" | sed 's#[/\\:]#_#g'
 }
@@ -88,11 +99,15 @@ runnable_count=$(awk -v discovered="$DISCOVERED" '
     END { print runnable + 0 }
 ' "$CANDIDATES")
 
+if [ ! -s "$DISCOVERED" ] && [ "$DOC_TESTS_SCOPED" = 1 ]; then
+    echo "doc test verification passed: the local change touches no documented TypeLisp file"
+    exit 0
+fi
 if [ ! -s "$DISCOVERED" ]; then
     echo "doc test verification found no documented TypeLisp files" >&2
     exit 1
 fi
-if [ "$runnable_count" -eq 0 ]; then
+if [ "$runnable_count" -eq 0 ] && [ "$DOC_TESTS_SCOPED" = 0 ]; then
     echo "doc test verification found no runnable doctest files" >&2
     exit 1
 fi

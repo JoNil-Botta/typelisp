@@ -291,23 +291,34 @@ ci_verify_load_handoffs() {
 # this gate leaves behind changes those bytes, so bootstrap-fixpoint proves the
 # embedded-provenance parity beside the downstream gates instead of in front of
 # them.
+#
+# A local scripts/ci-affected.sh --run may name a content-addressed cache entry
+# (scripts/lib-ci-local.sh): a valid one restores this gate's outputs instead of
+# rebuilding them; otherwise the gate records them there once it passes.
 gate_bootstrap_compiler() {
-    TYPELISP_BOOTSTRAP_PHASE=compiler \
-        TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$CI_VERIFY_STAGE1_PATH_FILE \
-        TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$CI_VERIFY_STAGE2_PATH_FILE \
-        TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR=$CI_COMPILER_ENVELOPE_DIR \
-        scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN" || return $?
-    # The cross-mode differential also runs the previous-stage compiler.
-    ci_verify_load_handoffs bootstrap-compiler || return 1
-    echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
+    if ci_local_cache_valid "$CI_LOCAL_CACHE_ENTRY"; then
+        ci_local_cache_restore "$CI_LOCAL_CACHE_ENTRY" "$ROOT" "$CI_LOCAL_BOOTSTRAP_WORKDIR" \
+            "$CI_VERIFY_STAGE1_PATH_FILE" "$CI_VERIFY_STAGE2_PATH_FILE" || return 1
+        ci_verify_load_handoffs bootstrap-compiler || return 1
+        echo "[ci-verify] local cache hit: reused the proven bootstrap and stdlib sysroot: $STAGE2_BIN"
+    else
+        TYPELISP_BOOTSTRAP_PHASE=compiler \
+            TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$CI_VERIFY_STAGE1_PATH_FILE \
+            TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$CI_VERIFY_STAGE2_PATH_FILE \
+            TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR=$CI_COMPILER_ENVELOPE_DIR \
+            scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN" || return $?
+        # The cross-mode differential also runs the previous-stage compiler.
+        ci_verify_load_handoffs bootstrap-compiler || return 1
+        echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
 
-    # Build the prebuilt stdlib sysroot beside the converged handed-off compiler
-    # AFTER bootstrap_resolve_fixpoint succeeds so downstream CI gates see it
-    # without affecting fixpoint.
-    sysroot_target=linux-x86_64
-    [ "$HOST_OS" != windows ] || sysroot_target=windows-x86_64
-    scripts/build-stdlib-sysroot.sh "$STAGE2_BIN" "$(dirname -- "$STAGE2_BIN")" \
-        --target "$sysroot_target" --opt-level 2 || return $?
+        # Build the prebuilt stdlib sysroot beside the converged handed-off
+        # compiler AFTER bootstrap_resolve_fixpoint succeeds so downstream CI
+        # gates see it without affecting fixpoint.
+        sysroot_target=linux-x86_64
+        [ "$HOST_OS" != windows ] || sysroot_target=windows-x86_64
+        scripts/build-stdlib-sysroot.sh "$STAGE2_BIN" "$(dirname -- "$STAGE2_BIN")" \
+            --target "$sysroot_target" --opt-level 2 || return $?
+    fi
 
     # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
     # RUN a native program before the run-assert tiers may execute. A failed
@@ -325,6 +336,9 @@ gate_bootstrap_compiler() {
         fi
         echo "[ci-verify] stage2 compile->clang->lld-link->run capability confirmed"
     fi
+    if [ -n "$CI_LOCAL_CACHE_ENTRY" ] && ! ci_local_cache_valid "$CI_LOCAL_CACHE_ENTRY"; then
+        ci_local_cache_store "$CI_LOCAL_CACHE_ENTRY" "$ROOT" "$(dirname -- "$STAGE2_BIN")" "$STAGE2_BIN" || return 1
+    fi
 }
 
 # The rest of the bootstrap fixpoint, and the only gate that publishes the
@@ -333,8 +347,15 @@ gate_bootstrap_compiler() {
 # the stage records into the lane envelope. A failure here fails the lane and
 # its receipt, exactly as if the parity had never left the bootstrap gate.
 gate_bootstrap_fixpoint() {
+    if ci_local_cache_valid "$CI_LOCAL_CACHE_ENTRY" && [ -f "$CI_LOCAL_CACHE_ENTRY/fixpoint.ok" ]; then
+        echo "[ci-verify] local cache hit: embedded-provenance parity already passed for $CI_LOCAL_CACHE_ENTRY"
+        return 0
+    fi
     TYPELISP_BOOTSTRAP_PHASE=parity \
         scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN" || return $?
+    if ci_local_cache_valid "$CI_LOCAL_CACHE_ENTRY"; then
+        : > "$CI_LOCAL_CACHE_ENTRY/fixpoint.ok"
+    fi
     ci_verify_load_handoffs bootstrap-compiler || return 1
     if [ -n "$CI_COMPILER_ENVELOPE_DIR" ]; then
         ci_timing_run bootstrap-converged artifact-snapshot \
@@ -659,6 +680,11 @@ if [ "$CI_VERIFY_JOBS" -gt 1 ] && [ -z "$CI_VERIFY_MEMORY_MIB" ]; then
     exit 2
 fi
 
+# Local-only acceleration that only scripts/ci-affected.sh --run requests;
+# hosted CI fails closed if it ever sees it.
+. "$ROOT/scripts/lib-ci-local.sh"
+ci_local_require_not_hosted
+
 . "$ROOT/scripts/lib-linux-entry.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
 . "$ROOT/scripts/lib-benchmark.sh"
@@ -717,6 +743,26 @@ case ",$CI_VERIFY_PLAN_IDS" in
             SEED_TYPELISP_BIN=$TYPELISP_BIN
         fi
         ensure_executable "seed" "$SEED_TYPELISP_BIN"
+        ;;
+esac
+
+# The local bootstrap cache entry keyed on the sources and this seed, if any.
+CI_LOCAL_CACHE_ENTRY=
+CI_LOCAL_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint"
+case ",$CI_VERIFY_PLAN_IDS" in
+    *,bootstrap-compiler,*)
+        if [ -n "${TYPELISP_CI_LOCAL_CACHE:-}" ]; then
+            if [ "${TYPELISP_CI_COMPILER_ENVELOPES:-0}" != 0 ] || [ -n "${TYPELISP_BOOTSTRAP_WORKDIR:-}" ]; then
+                ci_verify_error "the local bootstrap cache records neither compiler envelopes nor a custom bootstrap workdir"
+                exit 2
+            fi
+            CI_LOCAL_CACHE_ENTRY="$TYPELISP_CI_LOCAL_CACHE/$(ci_local_cache_key "$ROOT" "$SEED_TYPELISP_BIN")" || exit 1
+            if ci_local_cache_valid "$CI_LOCAL_CACHE_ENTRY"; then
+                echo "[ci-verify] local bootstrap cache hit: $CI_LOCAL_CACHE_ENTRY"
+            else
+                echo "[ci-verify] local bootstrap cache miss; the bootstrap will record: $CI_LOCAL_CACHE_ENTRY"
+            fi
+        fi
         ;;
 esac
 

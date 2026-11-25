@@ -138,6 +138,19 @@ git ls-files '*.tl' \
     | grep -v '^tests/safety/' \
     | sort > "$FILES"
 
+# A local scripts/ci-affected.sh --run whose change leaves src/, stdlib/ and
+# scripts/ alone lints only the files it touches (scripts/lib-ci-local.sh).
+. "$ROOT/scripts/lib-ci-local.sh"
+if ci_local_scope_active; then
+    ci_local_scope_filter "$FILES" "$FILTERED_FILES"
+    ci_local_scope_report tl-lint "$FILTERED_FILES" "$FILES"
+    mv "$FILTERED_FILES" "$FILES"
+    if [ ! -s "$FILES" ]; then
+        echo "TypeLisp lint check passed: the local change touches no linted TypeLisp source."
+        exit 0
+    fi
+fi
+
 : > "$CURRENT_SYNTAX_FILES"
 
 # Some integration fixtures intentionally land in the same PR as parser support

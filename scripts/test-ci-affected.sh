@@ -4,6 +4,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 . "$ROOT/scripts/lib-manifest.sh"
 . "$ROOT/scripts/lib-ci-gates.sh"
+. "$ROOT/scripts/lib-ci-local.sh"
 mkdir -p "$ROOT/target/exp/ci-affected-test"
 work=$(mktemp -d "$ROOT/target/exp/ci-affected-test/run.XXXXXX")
 selector="$ROOT/scripts/ci-affected.sh"
@@ -505,13 +506,16 @@ done
 repo="$work/repo"
 mkdir -p "$repo/scripts" "$repo/tests/safety/manifest.d"
 printf '/target/\n' > "$repo/.gitignore"
-cp "$selector" "$ROOT/scripts/lib-ci-gates.sh" "$repo/scripts/"
+cp "$selector" "$ROOT/scripts/lib-ci-gates.sh" "$ROOT/scripts/lib-ci-local.sh" "$ROOT/scripts/lib-stage0.sh" "$repo/scripts/"
 cp -R "$ROOT/scripts/ci-gates.d" "$ROOT/scripts/ci-affected-paths.d" "$repo/scripts/"
 cat > "$repo/scripts/ci-verify.sh" <<'STUB'
 #!/usr/bin/env sh
 set -eu
 if [ "${1:-}" = --list-gates ]; then exec "$CI_AFFECTED_TEST_VERIFY" "$@"; fi
-printf '%s\n' "$TYPELISP_INLINE_TEST_WORKERS" "$TYPELISP_BUILD_INVARIANCE_WORKERS" "$TYPELISP_INTEGRATION_WORKERS" "$TYPELISP_COMPILE_MANIFEST_WORKERS" "$@" > "$CI_AFFECTED_TEST_CALL"
+printf '%s\n' "${TYPELISP_INLINE_TEST_WORKERS-unset}" "${TYPELISP_BUILD_INVARIANCE_WORKERS-unset}" \
+    "${TYPELISP_INTEGRATION_WORKERS-unset}" "${TYPELISP_COMPILE_MANIFEST_WORKERS-unset}" \
+    "cache=${TYPELISP_CI_LOCAL_CACHE-unset}" "scope=${TYPELISP_CI_LOCAL_SCOPE_PATHS-unset}" \
+    "bin=${TYPELISP_BIN-unset}" "$@" > "$CI_AFFECTED_TEST_CALL"
 printf 'run\n' >> "$CI_AFFECTED_TEST_EXECUTIONS"
 exit "${CI_AFFECTED_TEST_EXIT:-0}"
 STUB
@@ -542,14 +546,159 @@ git -C "$repo" -c user.name=Test -c user.email=test@example.invalid commit -qm e
 cmp "$work/staged.ids" "$work/committed.ids" || fail 'committed edit missed'
 
 case "$(uname -s)" in Linux*) native_host=linux ;; *) native_host=windows ;; esac
-env -u TYPELISP_INLINE_TEST_WORKERS -u TYPELISP_BUILD_INVARIANCE_WORKERS -u TYPELISP_INTEGRATION_WORKERS -u TYPELISP_COMPILE_MANIFEST_WORKERS "$fixture_selector" --base "$base" --run > "$work/run.ids" 2> "$work/run.log"
-sed -n '1,4p' "$work/run.call" > "$work/workers.actual"
-printf '1\n1\n1\n1\n' > "$work/workers.expected"
-cmp "$work/workers.actual" "$work/workers.expected" || fail 'worker defaults were not exported as 1'
-sed -n '5p' "$work/run.call" | grep -Fx -- --gates >/dev/null || fail 'subset was not passed to ci-verify'
+# The stub records the four pool worker counts, the local cache root, the scope
+# inventory and the seed (lines 1-7), then ci-verify's arguments. Local runs
+# drop the hosted and seed environment so their expectations hold anywhere.
+local_run() {
+    env -u GITHUB_ACTIONS -u TYPELISP_BIN -u TYPELISP_STAGE0_DIR -u TYPELISP_INLINE_TEST_WORKERS \
+        -u TYPELISP_BUILD_INVARIANCE_WORKERS -u TYPELISP_INTEGRATION_WORKERS -u TYPELISP_COMPILE_MANIFEST_WORKERS "$@"
+}
+cpus=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
+# expect_workers JOBS: unset worker counts keep script defaults with at least
+# three CPUs per gate, otherwise share the CPUs between the parallel gates.
+expect_workers() {
+    per_gate=$((cpus / $1))
+    [ "$per_gate" -ge 1 ] || per_gate=1
+    [ "$per_gate" -lt 3 ] || per_gate=unset
+    printf '%s\n' "$per_gate" "$per_gate" "$per_gate" "$per_gate" > "$work/workers.expected"
+    sed -n '1,4p' "$work/run.call" > "$work/workers.actual"
+    cmp "$work/workers.actual" "$work/workers.expected" || fail "worker counts for --jobs $1 differ from the CPU share"
+}
+expect_call_line() {
+    sed -n "$1p" "$work/run.call" | grep -Fx -- "$2" >/dev/null || fail "ci-verify call line $1 is not $2 ($3)"
+}
+local_run "$fixture_selector" --base "$base" --run --jobs 1 > "$work/run.ids" 2> "$work/run.log"
+expect_workers 1
+expect_call_line 5 "cache=$repo/target/ci-affected-cache" 'local cache root'
+scope_file=$(sed -n '6s/^scope=//p' "$work/run.call")
+git -C "$repo" -c core.quotePath=true diff --no-relative --name-only --no-renames "$base" -- > "$work/scope.expected"
+cmp "$scope_file" "$work/scope.expected" || fail 'scope inventory differs from the changed paths'
+expect_call_line 7 bin=unset 'no seed without a cache hit'
+expect_call_line 8 --gates 'subset flag'
 tr '\n' ',' < "$work/committed.ids" | sed 's/,$//' > "$work/run.expected-csv"
-sed -n '6p' "$work/run.call" | tr -d '\n' > "$work/run.actual-csv"
+sed -n '9p' "$work/run.call" | tr -d '\n' > "$work/run.actual-csv"
 cmp "$work/run.actual-csv" "$work/run.expected-csv" || fail 'executed selection differs from printed selection'
+[ "$(wc -l < "$work/run.call")" -eq 9 ] || fail '--jobs 1 passed a parallel flag'
+cmp "$work/run.ids" "$work/committed.ids" || fail '--run changed the printed selection'
+
+# Parallel runs pass --jobs and the memory budget; explicit workers are kept.
+local_run env TYPELISP_INTEGRATION_WORKERS=3 "$fixture_selector" --base "$base" --run --jobs 2 --memory-mib 16384 \
+    > "$work/parallel.ids" 2> "$work/parallel.log"
+cmp "$work/parallel.ids" "$work/committed.ids" || fail '--jobs changed the printed selection'
+expect_call_line 3 3 'explicit integration workers'
+expect_call_line 10 --jobs 'parallel flag'
+expect_call_line 11 2 'parallel job count'
+expect_call_line 12 --memory-mib 'memory flag'
+expect_call_line 13 16384 'memory budget'
+local_run "$fixture_selector" --base "$base" --run --jobs 2 --memory-mib 16384 > /dev/null 2>&1
+expect_workers 2
+local_run "$fixture_selector" --base "$base" --run --jobs 1 --no-cache --no-scope > /dev/null 2>&1
+expect_call_line 5 cache=unset '--no-cache'
+expect_call_line 6 scope=unset '--no-scope'
+local_run env GITHUB_ACTIONS=true "$fixture_selector" --base "$base" --run --jobs 1 > /dev/null 2>&1
+expect_call_line 5 cache=unset 'hosted runs have no local cache'
+expect_call_line 6 scope=unset 'hosted runs have no local scope'
+
+# A valid entry for the local seed skips the stage0 fetch; any input change,
+# a different seed or a damaged entry is a miss.
+cache_fixture() {
+    mkdir -p "$1/src" "$1/stdlib" "$1/target/stage0" "$1/target/build-stage0" \
+        "$1/target/embedded-stdlib-tlci/tools" "$1/target/bootstrap-fixpoint/lib/triple"
+    printf '(define (main) : i64 0)\n' > "$1/src/main.tl"
+    printf '(define (helper) : i64 1)\n' > "$1/stdlib/core.tl"
+    printf '#!/bin/sh\n' > "$1/target/stage0/typelisp"
+    chmod +x "$1/target/stage0/typelisp"
+    for stage in stage1 stage2 stage3; do printf '#!/bin/sh\necho %s\n' "$stage" > "$1/target/bootstrap-fixpoint/$stage"; done
+    chmod +x "$1/target/bootstrap-fixpoint/"stage[123]
+    printf 'fixpoint\n' > "$1/target/bootstrap-fixpoint/stage3.s"
+    printf 'object\n' > "$1/target/bootstrap-fixpoint/stage3.o"
+    printf 'sysroot\n' > "$1/target/bootstrap-fixpoint/lib/triple/stdlib.tli"
+    printf 'commit' > "$1/target/build-stage0/git-hash.txt"
+    printf 'tree' > "$1/target/build-stage0/tree-hash.txt"
+    printf 'image\n' > "$1/target/embedded-stdlib-tlci/stdlib.tlci"
+    printf 'tool\n' > "$1/target/embedded-stdlib-tlci/tools/tool"
+}
+cache_fixture "$repo"
+cache_key=$(ci_local_cache_key "$repo" "$repo/target/stage0/typelisp")
+cache_entry="$repo/target/ci-affected-cache/$cache_key"
+ci_local_cache_valid "$cache_entry" && fail 'an absent cache entry was valid'
+ci_local_cache_store "$cache_entry" "$repo" "$repo/target/bootstrap-fixpoint" "$repo/target/bootstrap-fixpoint/stage3" > /dev/null
+ci_local_cache_valid "$cache_entry" || fail 'a stored cache entry was invalid'
+[ ! -e "$cache_entry/bootstrap-fixpoint/stage3.o" ] || fail 'the cache stored an object file'
+[ ! -e "$cache_entry/embedded-stdlib-tlci/tools" ] || fail 'the cache stored the image tool cache'
+[ "$(ci_local_cache_key "$repo" "$repo/target/stage0/typelisp")" = "$cache_key" ] || fail 'the cache key is unstable'
+local_run "$fixture_selector" --base "$base" --run --jobs 1 > /dev/null 2> "$work/hit.log"
+expect_call_line 7 "bin=$repo/target/stage0/typelisp" 'a cache hit reuses the local seed'
+grep -F 'skipping the stage0 fetch' "$work/hit.log" > /dev/null || fail 'a cache hit did not report the skipped fetch'
+local_run "$fixture_selector" --base "$base" --run --jobs 1 --no-cache > /dev/null 2>&1
+expect_call_line 7 bin=unset '--no-cache fetches stage0'
+local_run env GITHUB_ACTIONS=true "$fixture_selector" --base "$base" --run --jobs 1 > /dev/null 2>&1
+expect_call_line 7 bin=unset 'hosted runs fetch stage0'
+# Restore puts the outputs and both compiler handoffs back.
+rm -rf "$repo/target/bootstrap-fixpoint" "$repo/target/build-stage0" "$repo/target/embedded-stdlib-tlci"
+ci_local_cache_restore "$cache_entry" "$repo" "$repo/target/bootstrap-fixpoint" "$work/stage1.path" "$work/stage2.path" > /dev/null ||
+    fail 'a valid cache entry did not restore'
+[ "$(cat "$work/stage1.path")" = "$repo/target/bootstrap-fixpoint/stage1" ] || fail 'restore wrote the wrong stage1 handoff'
+[ "$(cat "$work/stage2.path")" = "$repo/target/bootstrap-fixpoint/stage3" ] || fail 'restore wrote the wrong converged handoff'
+[ -x "$repo/target/bootstrap-fixpoint/stage3" ] || fail 'restore lost the converged compiler'
+cmp "$repo/target/bootstrap-fixpoint/lib/triple/stdlib.tli" "$cache_entry/bootstrap-fixpoint/lib/triple/stdlib.tli" || fail 'restore lost the sysroot'
+[ "$(cat "$repo/target/build-stage0/git-hash.txt")" = commit ] || fail 'restore lost the build identity'
+[ -f "$repo/target/embedded-stdlib-tlci/stdlib.tlci" ] || fail 'restore lost the embedded image'
+for change in src/main.tl stdlib/core.tl target/stage0/typelisp scripts/lib-ci-local.sh; do
+    cp "$repo/$change" "$work/held-change"
+    printf '\n' >> "$repo/$change"
+    [ "$(ci_local_cache_key "$repo" "$repo/target/stage0/typelisp")" != "$cache_key" ] || fail "changing $change kept the cache key"
+    cp "$work/held-change" "$repo/$change"
+done
+printf 'damaged\n' >> "$cache_entry/bootstrap-fixpoint/stage3"
+ci_local_cache_valid "$cache_entry" && fail 'a damaged cache entry was valid'
+local_run "$fixture_selector" --base "$base" --run --jobs 1 > /dev/null 2>&1
+expect_call_line 7 bin=unset 'a damaged entry is a miss'
+ci_local_cache_restore "$cache_entry" "$repo" "$work/restore" "$work/stage1.path" "$work/stage2.path" > /dev/null 2>&1 &&
+    fail 'a damaged cache entry restored'
+rm -rf "$repo/src" "$repo/stdlib" "$repo/target"
+
+# Changed-file scoping: only a change outside src/, stdlib/ and scripts/ is
+# scoped, to the changed candidates and the files that name a changed module.
+mkdir -p "$work/scope/tests"
+printf '(import tests.helper)\n' > "$work/scope/tests/user.tl"
+printf '(define (helper) : i64 1)\n' > "$work/scope/tests/helper.tl"
+printf '(define (other) : i64 2)\n' > "$work/scope/tests/other.tl"
+printf 'tests/helper.tl\ntests/other.tl\ntests/user.tl\n' > "$work/scope/candidates"
+printf 'tests/helper.tl\ndocs/guide.md\n' > "$work/scope/changed"
+(
+    cd "$work/scope"
+    TYPELISP_CI_LOCAL_SCOPE_PATHS="$work/scope/changed"
+    unset GITHUB_ACTIONS
+    ci_local_scope_active || fail 'a corpus-only change was not scoped'
+    ci_local_scope_filter candidates selected
+    printf 'tests/helper.tl\ntests/user.tl\n' > expected
+    cmp selected expected || fail 'scope filter missed a changed file or its importer'
+    for unscoped in src/compiler.tl stdlib/core.tl scripts/check-tl-lint.sh '"quoted\npath"'; do
+        printf 'docs/guide.md\n%s\n' "$unscoped" > changed
+        ! ci_local_scope_active || fail "a change to $unscoped was scoped"
+    done
+    : > changed
+    ! ci_local_scope_active || fail 'an empty inventory was scoped'
+    TYPELISP_CI_LOCAL_SCOPE_PATHS="$work/scope/missing"
+    ! ci_local_scope_active || fail 'an unreadable inventory was scoped'
+    TYPELISP_CI_LOCAL_SCOPE_PATHS=
+    ! ci_local_scope_active || fail 'a run without an inventory was scoped'
+)
+printf 'docs/guide.md\n' > "$work/scope/docs-only"
+env -u GITHUB_ACTIONS TYPELISP_CI_LOCAL_SCOPE_PATHS="$work/scope/docs-only" "$ROOT/scripts/check-shared-view-count.sh" > "$work/shared-view.out" 2>&1 ||
+    fail 'the scoped shared-view check failed'
+grep -F 'touches no src/ or stdlib/ source' "$work/shared-view.out" > /dev/null || fail 'the shared-view check ignored the local scope'
+# Hosted CI fails closed on any local-only variable, before any gate starts.
+for hosted in "$ROOT/scripts/ci-verify.sh --gates shared-view-count-ratchet" "$ROOT/scripts/check-shared-view-count.sh"; do
+    for variable in TYPELISP_CI_LOCAL_CACHE TYPELISP_CI_LOCAL_SCOPE_PATHS; do
+        status=0
+        # shellcheck disable=SC2086
+        env GITHUB_ACTIONS=true "$variable=$work/scope/docs-only" $hosted > "$work/hosted.out" 2> "$work/hosted.err" || status=$?
+        [ "$status" = 2 ] || fail "hosted $hosted accepted $variable (exit $status)"
+        grep -F 'local-only' "$work/hosted.err" > /dev/null || fail "hosted $hosted rejection lost its diagnostic"
+    done
+done
 
 expect_rejected() {
     label=$1
@@ -561,13 +710,20 @@ expect_rejected() {
     [ ! -s "$work/$label.out" ] || fail "$label emitted a successful plan before failing"
     cmp "$CI_AFFECTED_TEST_EXECUTIONS" "$work/rejected.before" || fail "$label executed a gate"
 }
-expect_rejected inline-workers env TYPELISP_INLINE_TEST_WORKERS=2 "$fixture_selector" --base "$base" --run
-expect_rejected invariance-workers env TYPELISP_BUILD_INVARIANCE_WORKERS=2 "$fixture_selector" --base "$base" --run
-expect_rejected integration-workers env TYPELISP_INTEGRATION_WORKERS=2 "$fixture_selector" --base "$base" --run
-expect_rejected manifest-workers env TYPELISP_COMPILE_MANIFEST_WORKERS=2 "$fixture_selector" --base "$base" --run
 for name in TYPELISP_INLINE_TEST_WORKERS TYPELISP_BUILD_INVARIANCE_WORKERS TYPELISP_INTEGRATION_WORKERS TYPELISP_COMPILE_MANIFEST_WORKERS; do
     expect_rejected "empty-$name" env "$name=" "$fixture_selector" --base "$base" --run
-    expect_rejected "three-$name" env "$name=3" "$fixture_selector" --base "$base" --run
+    expect_rejected "zero-$name" env "$name=0" "$fixture_selector" --base "$base" --run
+    expect_rejected "four-$name" env "$name=4" "$fixture_selector" --base "$base" --run
+done
+expect_rejected zero-jobs "$fixture_selector" --base "$base" --run --jobs 0
+expect_rejected many-jobs "$fixture_selector" --base "$base" --run --jobs 17
+expect_rejected word-jobs "$fixture_selector" --base "$base" --run --jobs two
+expect_rejected zero-memory "$fixture_selector" --base "$base" --run --jobs 2 --memory-mib 0
+expect_rejected small-memory "$fixture_selector" --base "$base" --run --jobs 2 --memory-mib 1
+expect_rejected duplicate-jobs "$fixture_selector" --base "$base" --run --jobs 2 --jobs 2
+for flag in '--jobs 2' '--memory-mib 16384' --no-cache --no-scope; do
+    # shellcheck disable=SC2086
+    expect_rejected "plan-only-${flag%% *}" "$fixture_selector" --base "$base" $flag
 done
 expect_rejected invalid-base "$fixture_selector" --base no-such-ref --run
 expect_rejected invalid-tier "$fixture_selector" --base "$base" --tier invalid --run
@@ -576,7 +732,7 @@ other_host=windows
 [ "$native_host" != windows ] || other_host=linux
 expect_rejected foreign-host "$fixture_selector" --base "$base" --host "$other_host" --run
 status=0
-CI_AFFECTED_TEST_EXIT=19 "$fixture_selector" --base "$base" --run > "$work/exit.out" 2> "$work/exit.err" || status=$?
+CI_AFFECTED_TEST_EXIT=19 "$fixture_selector" --base "$base" --run --jobs 1 > "$work/exit.out" 2> "$work/exit.err" || status=$?
 [ "$status" = 19 ] || fail "ci-verify failure not propagated: $status"
 
 # Deletion must keep its old mapped path; renames must include both paths.
@@ -589,9 +745,13 @@ mv "$repo/tests/safety/manifest.d/sample.manifest" "$work/deleted-manifest.txt"
 "$fixture_selector" --base "$base" > "$work/deleted.ids" 2> "$work/deleted.log"
 has_gate "$work/deleted.ids" stage2-safety-corpus
 printf 'unknown\n' > "$repo/untracked file.txt"
-"$fixture_selector" --base "$base" --run > "$work/untracked.ids" 2> "$work/untracked.log"
+"$fixture_selector" --base "$base" --run --jobs 1 > "$work/untracked.ids" 2> "$work/untracked.log"
 cmp "$work/untracked.ids" "$work/$native_host.full" || fail 'untracked path did not select full table'
-[ "$(wc -l < "$work/run.call")" -eq 4 ] || fail 'full run added a subset flag'
+[ "$(wc -l < "$work/run.call")" -eq 7 ] || fail 'full run added a subset flag'
+"$fixture_selector" --base "$base" --run --jobs 2 --memory-mib 16384 > /dev/null 2>&1
+sed '1,7d' "$work/run.call" > "$work/full-parallel.args"
+printf '%s\n' --jobs 2 --memory-mib 16384 > "$work/full-parallel.expected"
+cmp "$work/full-parallel.args" "$work/full-parallel.expected" || fail 'a parallel full run added a subset flag'
 mv "$repo/untracked file.txt" "$work/untracked-file.txt"
 printf 'unknown\n' > "$repo/line
 break.txt"
@@ -683,4 +843,4 @@ cmp "$work/kahn.actual" "$work/kahn.expected" || fail 'Kahn topological (priorit
 # The fixture repository's .git must not block clean --experiments after
 # success. Every failure exits above and retains its evidence.
 rm -rf -- "${work:?}"
-echo "ci-affected self-tests passed (Linux/Windows plans and checkout filters, three historical failed-run diffs, Git discovery, worker guards and execution)"
+echo "ci-affected self-tests passed (Linux/Windows plans and checkout filters, three historical failed-run diffs, Git discovery, worker and job guards, local cache and scope, and execution)"

@@ -6858,37 +6858,33 @@
             ctx.current-label
             ctx.program-index
             ctx.vars))]
-      (Ok
-        (be_calls.compiler-backend-emit-branch-edges
+      [edges : be_calls.CompilerBackendBranchEdges
+        (be_calls.compiler-backend-branch-edges-plan
           ctx.backend-state
-          (be_state.compiler-backend-global-shared-view ctx.function)
           ctx.current-label
           true-label
           false-label
           true-copies
           false-copies
+          branch-fallthrough)]
+      (Ok
+        (be_calls.compiler-backend-emit-branch-edges
+          ctx.backend-state
+          (be_state.compiler-backend-global-shared-view ctx.function)
+          true-label
+          false-label
+          edges.true-target
+          edges.false-target
+          edges.true-copies
+          edges.false-copies
           branch-fallthrough
           (str_cat.str-cat
             cmp-asm
             (be_scalar.compiler-backend-emit-compare-branch-jumps
               ctx.function
-              (be_calls.compiler-backend-branch-edge-target
-                (be_calls.compiler-backend-branch-edge-label
-                  ctx.current-label
-                  "true")
-                true-label
-                true-copies)
-              (be_calls.compiler-backend-branch-edge-target
-                (be_calls.compiler-backend-branch-edge-label
-                  ctx.current-label
-                  "false")
-                false-label
-                false-copies)
-              (be_calls.compiler-backend-branch-edge-fallthrough
-                ctx.current-label
-                true-copies
-                false-copies
-                branch-fallthrough)
+              edges.true-target
+              edges.false-target
+              edges.fallthrough
               true-jcc
               false-jcc
               ctx.backend-state)))))))

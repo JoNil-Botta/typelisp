@@ -12412,6 +12412,72 @@ high:
         out
         "    jae .Lf1_a.cold\n.Lf1_a:\n    ret\n.Lf1_a.cold:\n    call tl_oob_abort\n    .size g, . - g\n"))))
 
+;; COLD-EDGE: a jump over a cold edge block is inverted and the block moves to
+;; the end of its function under its own label, so the in-loop side falls
+;; through. `g`'s cold block makes a call, `h`'s jump does not land right
+;; after it, and `k`'s edge block is not cold: all three stay where they are.
+(define (compiler-backend-cold-edge-source) : String
+  (str_cat.str-cat
+    ".text\n.globl f\n    .type f,@function\nf:\n.Lf0_loop:\n"
+    "    cmpb (%rdx,%rax,1), %sil\n    je .Lf0_merge\n"
+    ".Lf0_loop_branch_cold_false:\n    xorl %eax, %eax\n    jmp .Lf0_exit\n"
+    ".Lf0_merge:\n    addq $1, %rax\n    cmpq %r9, %rax\n    jl .Lf0_loop\n"
+    "    movl $1, %eax\n.Lf0_exit:\n    ret\n    .size f, . - f\n"
+    ".globl g\n    .type g,@function\ng:\n.Lf1_loop:\n"
+    "    testq %rdi, %rdi\n    je .Lf1_merge\n"
+    ".Lf1_loop_branch_cold_true:\n    call h\n    jmp .Lf1_exit\n"
+    ".Lf1_merge:\n    jl .Lf1_loop\n.Lf1_exit:\n    ret\n    .size g, . - g\n"
+    ".globl h\n    .type h,@function\nh:\n.Lf2_loop:\n"
+    "    testq %rdi, %rdi\n    je .Lf2_exit\n"
+    ".Lf2_loop_branch_cold_true:\n    movq %rsi, %rax\n    jmp .Lf2_exit\n"
+    ".Lf2_merge:\n    jl .Lf2_loop\n.Lf2_exit:\n    ret\n    .size h, . - h\n"
+    ".globl k\n    .type k,@function\nk:\n.Lf3_loop:\n"
+    "    testq %rdi, %rdi\n    je .Lf3_merge\n"
+    ".Lf3_loop_branch_true:\n    movq %rsi, %rax\n    jmp .Lf3_exit\n"
+    ".Lf3_merge:\n    jl .Lf3_loop\n.Lf3_exit:\n    ret\n    .size k, . - k\n"))
+
+(define (compiler-backend-cold-edge-ok?) : bool
+  (let
+    [out : String
+      (text_buf.render
+        (compiler-backend-peephole-text-buf-once
+          (text_buf.append (text_buf.empty) (compiler-backend-cold-edge-source))))]
+    (and
+      (asm-has?
+        out
+        "    cmpb (%rdx,%rax,1), %sil\n    jne .Lf0_loop_branch_cold_false\n.Lf0_merge:\n")
+      (asm-has?
+        out
+        "    ret\n.Lf0_loop_branch_cold_false:\n    xorl %eax, %eax\n    jmp .Lf0_exit\n    .size f, . - f\n")
+      (asm-has?
+        out
+        "    je .Lf1_merge\n.Lf1_loop_branch_cold_true:\n    call h\n")
+      (asm-has?
+        out
+        "    je .Lf2_exit\n.Lf2_loop_branch_cold_true:\n    movq %rsi, %rax\n")
+      (asm-has?
+        out
+        "    je .Lf3_merge\n.Lf3_loop_branch_true:\n    movq %rsi, %rax\n"))))
+
+;; Hot-loop alignment: a moved cold edge block's jump back to its exit target
+;; is not a back edge, so `.Lf0_out` gets no padding. The same jump from an
+;; ordinary edge block still makes `.Lf1_out` a loop top.
+(define (compiler-backend-cold-edge-align-ok?) : bool
+  (let
+    [text : String
+      (str_cat.str-cat
+        "f:\n    jmp .Lf0_out\n.Lf0_out:\n    movl $1, %eax\n    jmp .Lf0_end\n"
+        ".Lf0_end:\n    ret\n.Lf0_loop_branch_cold_false:\n    xorl %eax, %eax\n"
+        "    jmp .Lf0_out\n"
+        "g:\n    jmp .Lf1_out\n.Lf1_out:\n    movl $1, %eax\n    jmp .Lf1_end\n"
+        ".Lf1_end:\n    ret\n.Lf1_loop_branch_false:\n    xorl %eax, %eax\n"
+        "    jmp .Lf1_out\n")]
+    [aligned : String
+      (be_peephole.compiler-backend-loop-align-text text (arena.current))]
+    (and
+      (asm-lacks? aligned "    .p2align 4,,10\n.Lf0_out:\n")
+      (asm-has? aligned "    .p2align 4,,10\n.Lf1_out:\n"))))
+
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
 ;; the recorded FPO sweep metadata before the streaming run.
@@ -14467,6 +14533,8 @@ f:
     (compiler-backend-chunked-peephole-equivalent?)
     (compiler-backend-cold-split-ok?)
     (compiler-backend-cold-share-ok?)
+    (compiler-backend-cold-edge-ok?)
+    (compiler-backend-cold-edge-align-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)

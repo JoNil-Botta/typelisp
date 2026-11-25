@@ -5,6 +5,7 @@ param(
     [string]$Target = "windows-x86_64",
     [string[]]$StdlibRoot = @("stdlib"),
     [switch]$NoStdlibRoot,
+    [switch]$NoPrebuiltStdlib,
     [int]$OptLevel = -1
 )
 
@@ -55,6 +56,9 @@ if (-not $NoStdlibRoot) {
         $startInfo.ArgumentList.Add("--stdlib-root")
         $startInfo.ArgumentList.Add([System.IO.Path]::GetFullPath($root))
     }
+}
+if ($NoPrebuiltStdlib) {
+    $startInfo.ArgumentList.Add("--no-prebuilt-stdlib")
 }
 if ($OptLevel -ge 0) {
     $startInfo.ArgumentList.Add("--opt-level")

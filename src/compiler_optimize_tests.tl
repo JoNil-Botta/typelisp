@@ -13679,7 +13679,8 @@
                       asymbol
                       alinks
                       aprovided
-                      astorage)
+                      astorage
+                      _)
                     (match (ir.compiler-ir-extern-seq-borrow bexterns index)
                       [(Extern
                           bid
@@ -13690,7 +13691,8 @@
                           bsymbol
                           blinks
                           bprovided
-                          bstorage)
+                          bstorage
+                          _)
                         (set!
                           same?
                           (and
@@ -68271,7 +68273,7 @@ return 0" true)
         [id (array-ref ids index)]
         [generated (opt-test-symbol (string.copy (array-ref names index)))]
         (test.assert-i64-eq
-          (opt.opt-global-mod-ref-external-mask id)
+          (opt.opt-global-mod-ref-external-mask id false)
           0
           "runtime copies do not re-enter user code")
         (test.assert-true
@@ -68280,7 +68282,7 @@ return 0" true)
               (ir.compiler-ir-direct-call-effect-id generated)
               Unknown)
             (opt.opt-global-mod-ref-any?
-              (opt.opt-global-mod-ref-external-mask generated)))
+              (opt.opt-global-mod-ref-external-mask generated false)))
           "a generated lookalike retains unknown re-entry effects")))))
 
 ;; IR text has no extern declaration syntax; only this metadata is constructed.
@@ -68294,7 +68296,8 @@ return 0" true)
     link
     (ast.ast-extern-link-input-list-new)
     provided
-    (ir.CompilerIrReturnStorage.None)))
+    (ir.CompilerIrReturnStorage.None)
+    false))
 
 (test
   global-mod-ref-extern-link-identity
@@ -68743,6 +68746,66 @@ return 0" true)
                   (< order 2))
                 "conflicting links join to the unknown effect in either order"))])))))
 
+;; A prebuilt summary zeroes a callee's global-cell row only with a known
+;; `call-memory` free of global and unknown writes, and its storage row only
+;; when it writes no memory: a `(&mut g)` helper or an opaque extern that may
+;; re-enter a global writer must not let LICM or guard sinking cross the call.
+(test
+  external-summary-global-write-gates
+  (let
+    [globals (ir.compiler-ir-global-seq-empty)]
+    [externs (ir.compiler-ir-extern-seq-empty)]
+    [pure (opt-test-symbol "c36_lib_pure")]
+    [param-writer (opt-test-symbol "c36_lib_param_writer")]
+    [global-writer (opt-test-symbol "c36_lib_global_storage_writer")]
+    [unknown-writer (opt-test-symbol "c36_lib_unknown_writer")]
+    [opaque (opt-test-symbol "c36_lib_opaque_extern")]
+    [links (array pure param-writer global-writer unknown-writer opaque)]
+    [memory : (Array i64 5)
+      (array
+        0
+        1
+        (opt.opt-call-memory-global-bit)
+        (opt.opt-call-memory-unknown-bit)
+        -1)]
+    [entries : (__tl_dyn-array opt.OptExternalFnSummary)
+      (__tl_make-array opt.OptExternalFnSummary 5)]
+    [_fill : unit
+      (for [at (iterator.range 0 5)]
+        (set!
+          (array-ref entries at)
+          (opt.OptExternalFnSummary
+            (array-ref links at)
+            0
+            (array-ref memory at)
+            0
+            0
+            (__tl_make-array i64 0))))]
+    [summaries (opt.OptExternalSummaries entries)]
+    [writers (array global-writer unknown-writer opaque)]
+    (opt.opt-external-summaries-install! (& globals) (& externs) (& summaries))
+    (test.assert-i64-eq
+      (bit-or
+        (opt.opt-global-mod-ref-external-mask pure false)
+        (opt.opt-global-mod-ref-external-mask pure true))
+      0
+      "a callee that writes no memory writes neither cells nor storage")
+    (test.assert-true
+      (and
+        (= (opt.opt-global-mod-ref-external-mask param-writer false) 0)
+        (opt.opt-global-mod-ref-any?
+          (opt.opt-global-mod-ref-external-mask param-writer true)))
+      "a parameter writer may write storage reached through its arguments")
+    (for [at (iterator.range 0 (array-length writers))]
+      (test.assert-true
+        (and
+          (opt.opt-global-mod-ref-any?
+            (opt.opt-global-mod-ref-external-mask (array-ref writers at) false))
+          (opt.opt-global-mod-ref-any?
+            (opt.opt-global-mod-ref-external-mask (array-ref writers at) true)))
+        "global, unknown and opaque writers keep the external effect"))
+    (opt.opt-external-summaries-clear!)))
+
 ;; Compiler-owned runtime helpers never call user code. The atomic helpers keep
 ;; their effect, and a generated lookalike is no helper at all.
 (test
@@ -68761,16 +68824,19 @@ return 0" true)
         cbi.compiler-builtin-id-tl-mem-copy-fwd)]
     (for [at (iterator.range 0 (array-length helpers))]
       (test.assert-i64-eq
-        (opt.opt-global-mod-ref-external-mask (array-ref helpers at))
+        (opt.opt-global-mod-ref-external-mask (array-ref helpers at) false)
         0
         "a runtime helper cannot re-enter a global writer"))
     (test.assert-true
       (and
         (opt.opt-global-mod-ref-any?
           (opt.opt-global-mod-ref-external-mask
-            cbi.compiler-builtin-id-tl-atomic-i64-load-ptr))
+            cbi.compiler-builtin-id-tl-atomic-i64-load-ptr
+            false))
         (opt.opt-global-mod-ref-any?
-          (opt.opt-global-mod-ref-external-mask (opt-test-symbol "tl_str_view"))))
+          (opt.opt-global-mod-ref-external-mask
+            (opt-test-symbol "tl_str_view")
+            false)))
       "atomic helpers and generated lookalikes keep the external effect")))
 
 (define (compiler-optimize-global-obj-mod-ref-self-test) : i64

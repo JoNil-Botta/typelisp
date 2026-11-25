@@ -1964,7 +1964,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ _ link-symbol _ provided _)
+      [(Extern name-id source-name-id _ _ _ link-symbol _ provided _ _)
         (let
           [with-startup-role : be_state.CompilerBackendRuntimeIndex
             (compiler-backend-runtime-index-with-startup-profile-role
@@ -2000,7 +2000,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     index
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ _ link-symbol _ _ _)
+      [(Extern name-id source-name-id _ _ _ link-symbol _ _ _ _)
         (compiler-backend-runtime-index-arena-debug-call-link-seq
           (if (and
             (cbi.compiler-builtin-backend-runtime-arena-debug-id? link-symbol)
@@ -2374,7 +2374,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     buf
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ abi link-symbol-id _ provided _)
+      [(Extern name-id source-name-id _ _ abi link-symbol-id _ provided _ _)
         (compiler-backend-emit-extern-seq-into
           backend-state
           externs
@@ -2483,7 +2483,7 @@
         0
         (compiler_ir_types.compiler-ir-extern-seq-count externs))]
       (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs i)
-        [(Extern name source _ _ _ link _ _ _)
+        [(Extern name source _ _ _ link _ _ _ _)
           (let
             [bit : i64 (compiler-backend-runtime-leaf-bit backend-state link)]
             (when

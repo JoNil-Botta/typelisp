@@ -29,6 +29,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_load)
+(import compiler_tli_compact_ir as tli_compact_ir)
 (import tli_cli_core as tli_cli)
 (cfg embedded-stdlib-tlci (import compiler_build_identity as build_identity))
 (cfg
@@ -1418,6 +1419,147 @@
         (__tl_make-array String 0))
       (set! compiler-driver-last-hydrated-archive-path-state ""))))
 
+(define compiler-driver-pending-external-summaries : (__tl_dyn-array
+    compiler_optimize.OptExternalSummaries)
+  (__tl_make-array (compiler_optimize.opt-external-summaries-empty)))
+(define compiler-driver-pending-external-summaries-present? : bool
+  false)
+(define compiler-driver-pending-startup-plan : (__tl_dyn-array
+    tli_compact_ir.TliStartupInitPlan)
+  (__tl_make-array (tli_compact_ir.tli-startup-init-plan-empty)))
+(define compiler-driver-pending-startup-plan-present? : bool
+  false)
+
+;; Clear only presence flags so child-arena release paths never install a
+;; child-arena-allocated empty struct into module-level globals.
+(define (compiler-driver-clear-pending-external-summaries!) : unit
+  (set! compiler-driver-pending-external-summaries-present? false)
+  (set! compiler-driver-pending-startup-plan-present? false))
+
+(define (compiler-driver-take-pending-startup-plan!) : tli_compact_ir.TliStartupInitPlan
+  (if (not compiler-driver-pending-startup-plan-present?)
+    (tli_compact_ir.tli-startup-init-plan-empty)
+    (let
+      [icount : i64
+        (array-length
+          (array-ref compiler-driver-pending-startup-plan 0).init-symbols)]
+      [dcount : i64
+        (array-length (array-ref compiler-driver-pending-startup-plan 0).deps)]
+      [syms : (__tl_dyn-array String) (__tl_make-array String icount)]
+      [deps : (__tl_dyn-array tli_compact_ir.TliStartupInitDep)
+        (__tl_make-array tli_compact_ir.TliStartupInitDep dcount)]
+      (for [i (iterator.range 0 icount)]
+        (set!
+          (array-ref syms i)
+          (string.copy
+            (&
+              (array-ref
+                (array-ref compiler-driver-pending-startup-plan 0).init-symbols
+                i)))))
+      (for [di (iterator.range 0 dcount)]
+        (let
+          [kn : i64
+            (array-length
+              (array-ref
+                (array-ref compiler-driver-pending-startup-plan 0).deps
+                di).init-indices)]
+          [icopy : (__tl_dyn-array i64) (__tl_make-array i64 kn)]
+          (for [k (iterator.range 0 kn)]
+            (set!
+              (array-ref icopy k)
+              (array-ref
+                (array-ref
+                  (array-ref compiler-driver-pending-startup-plan 0).deps
+                  di).init-indices
+                k)))
+          (set!
+            (array-ref deps di)
+            (tli_compact_ir.TliStartupInitDep
+              (array-ref
+                (array-ref compiler-driver-pending-startup-plan 0).deps
+                di).sym-id
+              icopy))))
+      (set! compiler-driver-pending-startup-plan-present? false)
+      (tli_compact_ir.TliStartupInitPlan syms deps))))
+
+(define (compiler-driver-take-pending-external-summaries!) : compiler_optimize.OptExternalSummaries
+  (if (not compiler-driver-pending-external-summaries-present?)
+    (compiler_optimize.opt-external-summaries-empty)
+    (let
+      [n : i64
+        (array-length
+          (array-ref compiler-driver-pending-external-summaries 0).entries)]
+      [out : (__tl_dyn-array compiler_optimize.OptExternalFnSummary)
+        (__tl_make-array compiler_optimize.OptExternalFnSummary n)]
+      (for [i (iterator.range 0 n)]
+        (let
+          [gn : i64
+            (array-length
+              (array-ref
+                (array-ref compiler-driver-pending-external-summaries 0).entries
+                i).global-write-ids)]
+          [gcopy : (__tl_dyn-array i64) (__tl_make-array i64 gn)]
+          (for [gi (iterator.range 0 gn)]
+            (set!
+              (array-ref gcopy gi)
+              (array-ref
+                (array-ref
+                  (array-ref compiler-driver-pending-external-summaries 0).entries
+                  i).global-write-ids
+                gi)))
+          (set!
+            (array-ref out i)
+            (compiler_optimize.OptExternalFnSummary
+              (array-ref
+                (array-ref compiler-driver-pending-external-summaries 0).entries
+                i).link-id
+              (array-ref
+                (array-ref compiler-driver-pending-external-summaries 0).entries
+                i).effect-flags
+              (array-ref
+                (array-ref compiler-driver-pending-external-summaries 0).entries
+                i).call-memory
+              (array-ref
+                (array-ref compiler-driver-pending-external-summaries 0).entries
+                i).call-clean
+              (array-ref
+                (array-ref compiler-driver-pending-external-summaries 0).entries
+                i).return-alias
+              gcopy))))
+      (set! compiler-driver-pending-external-summaries-present? false)
+      (compiler_optimize.OptExternalSummaries out))))
+
+(define (compiler-driver-hydrate-tli-compact-ir!
+  [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [pools : compiler_ast_types.AstNodePoolContext]
+  [program : compiler_ir_types.CompilerIrProgram]
+  [opt-level : i64]) : compiler_ir_types.CompilerIrProgram
+  (compiler-driver-clear-pending-external-summaries!)
+  (let
+    [cat-ptr : i64
+      (compiler_load.compiler-load-session-state-tli-catalog-ptr load-state)]
+    [facts-ptr : i64
+      (compiler_load.compiler-load-session-state-tli-facts-ptr load-state)]
+    (if (or (= cat-ptr 0) (= facts-ptr 0) (= opt-level 0))
+      program
+      (let
+        [hydrated : tli_compact_ir.TliHydratedCompactProgram
+          (tli_compact_ir.tli-hydrate-compact-ir-from-ptrs!
+            cat-ptr
+            facts-ptr
+            pools
+            program
+            opt-level)]
+        (set!
+          (array-ref compiler-driver-pending-external-summaries 0)
+          hydrated.external-summaries)
+        (set! compiler-driver-pending-external-summaries-present? true)
+        (set!
+          (array-ref compiler-driver-pending-startup-plan 0)
+          hydrated.startup-plan)
+        (set! compiler-driver-pending-startup-plan-present? true)
+        hydrated.program))))
+
 (define (compiler-driver-finish-tli-hydrated-session!
   [state : (& state CompilerDriverState)]) : unit
   ;; Lowering is the last TLI consumer. Copy the backend's archive facts into
@@ -1438,6 +1580,7 @@
   (compiler_load.compiler-load-default-session-use!)
   (compiler_load.compiler-load-tli-release!)
   (compiler-driver-clear-last-hydrated-archive-path!)
+  (compiler-driver-clear-pending-external-summaries!)
   (compiler_load.compiler-load-session-reset-pools!)
   (compiler_load.compiler-load-session-reset-interns!)
   (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)
@@ -1457,6 +1600,7 @@
   (compiler_load.compiler-load-session-state-tli-release!
     (& state.load-session))
   (compiler-driver-clear-last-hydrated-archive-path!)
+  (compiler-driver-clear-pending-external-summaries!)
   (compiler-driver-state-apply-session-flags!
     (owned_view.compiler-owned-shared-view state))
   (compiler-driver-state-reset-owned-pool-arena-if-uncached!
@@ -1500,6 +1644,7 @@
   [state : CompilerDriverState]) : unit
   (compiler_load.compiler-load-session-state-tli-release!
     (& state.load-session))
+  (compiler-driver-clear-pending-external-summaries!)
   (compiler-driver-state-apply-session-flags!
     (owned_view.compiler-owned-shared-view state))
   (compiler-driver-state-release-owned-pool-arena-if-uncached!
@@ -1543,6 +1688,7 @@
       (owned_view.compiler-owned-shared-view state))
     (compiler_load.compiler-load-session-state-tli-release!
       (& state.load-session))
+    (compiler-driver-clear-pending-external-summaries!)
     (compiler-driver-batch-profile-mark!
       (compiler-driver-state-profile state)
       ordinal
@@ -2740,7 +2886,20 @@
           backend?
           representations
           (compiler-driver-lowered-input-retirement lower-state)
-          (compiler-driver-lowered-input-chunk-bounds lower-state)))]
+          (compiler-driver-lowered-input-chunk-bounds lower-state)
+          (compiler-driver-take-pending-external-summaries!)
+          false))]
+    [startup-plan : tli_compact_ir.TliStartupInitPlan
+      (compiler-driver-take-pending-startup-plan!)]
+    (when
+      (> (array-length startup-plan.init-symbols) 0)
+      (match (& result)
+        [(compiler_optimize.CompilerOptimizedProgram.Program opt-program _)
+          (be_state.compiler-backend-state-set-startup-init-symbols!
+            backend-state
+            (tli_compact_ir.tli-filter-startup-init-symbols
+              (& startup-plan)
+              opt-program))]))
     (cfg
       compile-profile
       (when
@@ -4196,14 +4355,20 @@
                             input-path))
                         (compiler-driver-serial-advisories)))
                     (let
+                      [active-load : compiler_load.CompilerLoadSessionState
+                        (compiler_load.compiler-load-serial-test-session-state)]
+                      [hydrated-program : compiler_ir_types.CompilerIrProgram
+                        (compiler-driver-hydrate-tli-compact-ir!
+                          (& active-load)
+                          (compiler_ast_types.ast-node-pool-reader-context-current)
+                          program
+                          opt-level)]
                       [lowered-res : ResultCompilerDriverLowered
                         (compiler-driver-lowered-from-active-pools-and-profile-state
-                          program
+                          hydrated-program
                           spans
                           profile-state
                           lower-state)]
-                      [active-load : compiler_load.CompilerLoadSessionState
-                        (compiler_load.compiler-load-serial-test-session-state)]
                       (compiler-driver-apply-tli-hydrated-lowered-result!
                         (& active-load)
                         (& lowered-res))
@@ -4733,33 +4898,50 @@
                                 input-path))
                             (compiler-driver-state-advisories state)))
                         (if (and dest-committed? retire-after-lower?)
-                          (begin
-                            (when
-                              (and
-                                route-source-allocations?
-                                (not frontend-released?))
-                              ;; Keep front-end storage alive until the outer
-                              ;; result adapter has cloned program shells/spans
-                              ;; and persisted interned strings. Return allocation
-                              ;; to the caller-owned arena so the optimizer's
-                              ;; escaped output does not share either retiring
-                              ;; frontend or checked-pool storage.
-                              (set!
-                                compiler-driver-pending-retired-frontend-arena
-                                (arena.tl_arena_current))
-                              (unsafe
-                                (arena.tl_arena_set
-                                  compiler-driver-pending-frontend-return-arena)))
+                          (let
+                            [hydrated-program : compiler_ir_types.CompilerIrProgram
+                              (begin
+                                (when
+                                  (and
+                                    route-source-allocations?
+                                    (not frontend-released?))
+                                  ;; Keep front-end storage alive until the outer
+                                  ;; result adapter has cloned program shells/spans
+                                  ;; and persisted interned strings. Return allocation
+                                  ;; to the caller-owned arena so the optimizer's
+                                  ;; escaped output does not share either retiring
+                                  ;; frontend or checked-pool storage.
+                                  (set!
+                                    compiler-driver-pending-retired-frontend-arena
+                                    (arena.tl_arena_current))
+                                  (unsafe
+                                    (arena.tl_arena_set
+                                      compiler-driver-pending-frontend-return-arena)))
+                                (compiler-driver-hydrate-tli-compact-ir!
+                                  (& state.load-session)
+                                  result-pools
+                                  program
+                                  opt-level))]
+                            (compiler-driver-state-capture-active-interns!
+                              (&mut state))
                             (compiler-driver-finish-tli-hydrated-session! state)
                             (compiler-driver-state-retain-lowered-types!
                               state
-                              program
+                              hydrated-program
                               spans
                               result-pools))
-                          (begin
+                          (let
+                            [hydrated-program : compiler_ir_types.CompilerIrProgram
+                              (compiler-driver-hydrate-tli-compact-ir!
+                                (& state.load-session)
+                                result-pools
+                                program
+                                opt-level)]
+                            (compiler-driver-state-capture-active-interns!
+                              (&mut state))
                             (compiler-driver-finish-tli-hydrated-session! state)
                             (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
-                              program
+                              hydrated-program
                               spans
                               result-pools
                               (compiler-driver-state-profile state)

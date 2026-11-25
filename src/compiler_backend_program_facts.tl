@@ -724,6 +724,7 @@
           link-symbol-id
           _
           _
+          _
           _)
         (let
           [call-info : i64
@@ -805,7 +806,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     link-references
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern _ _ _ _ _ link-symbol _ provided _)
+      [(Extern _ _ _ _ _ link-symbol _ provided _ _)
         (let
           [next-link-references : backend_i64_i64_map.Map link-references]
           (set! (array-ref link-symbols out-index) link-symbol)
@@ -841,7 +842,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     reference-ids
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern extern-name-id source-name-id _ _ _ _ _ _ _)
+      [(Extern extern-name-id source-name-id _ _ _ _ _ _ _ _)
         (compiler-backend-program-index-extern-reference-name-seq-into
           externs
           (compiler-backend-program-index-bind-extern-ids
@@ -1650,7 +1651,7 @@
   (for [seq-index
     (iterator.range 0 (compiler_ir_types.compiler-ir-extern-seq-count externs))]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id _ _ ty abi link-symbol-id _ provided _)
+      [(Extern name-id _ _ ty abi link-symbol-id _ provided _ _)
         (if (compiler-backend-emits-extern-symbol?
           backend-state
           name-id
@@ -1825,7 +1826,7 @@
   [emit-entry : bool]) : be_state.ResultCompilerBackendSymbolValidation
   (for [position (iterator.range 0 externs.len)]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs position)
-      [(Extern id source name ty abi link _ _ _)
+      [(Extern id source name ty abi link _ _ _ _)
         (match abi
           [(TypeLisp)
             (when

@@ -285,7 +285,7 @@
   (if (or (< index 0) (>= index externs.len))
     false
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs index)
-      [(Extern _ _ name _ _ _ _ _ _) (string.eq name want)])))
+      [(Extern _ _ name _ _ _ _ _ _ _) (string.eq name want)])))
 
 (define (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) : bool
   (let
@@ -2025,7 +2025,8 @@
             external-name
             (ast.ast-extern-link-input-list-new)
             false
-            (compiler_ir_types.CompilerIrReturnStorage.None)))
+            (compiler_ir_types.CompilerIrReturnStorage.None)
+            false))
         (compiler_ir_types.CompilerIrReturnStorageAuthority.None))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
     [index : compiler_ir_types.CompilerIrRepresentationIndex

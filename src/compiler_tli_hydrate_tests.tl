@@ -22,6 +22,11 @@
 (import stdlib.iterator)
 (import stdlib.profile)
 (import stdlib.test)
+(import compiler_builtin_ids as cbi)
+(import compiler_ir_types as ir)
+(import compiler_tli_compact_ir as compact)
+(import stdlib.hashmap)
+(import (hashmap.hashmap i64 i64) as i64_map)
 
 (define (tli-hydrate-fixture-module [name : String] [init : String] [cfg : i64]) : tli.TliModuleRecord
   (let
@@ -52,7 +57,9 @@
         (__tl_make-array
           (tli-hydrate-fixture-module "dep" "__tl_mod_init_dep" dep-cfg)
           (tli-hydrate-fixture-module "root" "__tl_mod_init_root" 0)
-          (tli-hydrate-fixture-module "unused" "__tl_mod_init_unused" 1)))]
+          (tli-hydrate-fixture-module "unused" "__tl_mod_init_unused" 1))
+        (__tl_make-array tli.TliCompactGlobal 0)
+        (__tl_make-array tli.TliCompactBodyEntry 0))]
     (set!
       (array-ref bundle.modules 1).imports
       (__tl_make-array
@@ -220,8 +227,12 @@
         (bit-or (shl 1 63) 1)
         (__tl_make-array 64 80)
         (__tl_make-array tli.TliGlobalWrite 0)
+        -1
+        (cast 0 : u8)
         0
-        0)]
+        0
+        0
+        (make-array u8 32))]
     (test.assert-true
       (hydrate.tli-hydrate-arena-arg-store? (& summary) 0)
       "first mask bit")
@@ -302,8 +313,12 @@
           0
           (__tl_make-array i64 0)
           (__tl_make-array tli.TliGlobalWrite 0)
+          -1
+          (cast 0 : u8)
           0
-          0))]
+          0
+          0
+          (make-array u8 32)))]
     [abi : ast.AstExternAbi (ast.AstExternAbi.C)]
     (with-arena
       tli-job
@@ -722,23 +737,26 @@
   (let
     [pool-start : i64 (byte_le.read-u64 wire 24)]
     [count : i64 (byte_le.read-u32 wire pool-start)]
-    [offset : i64 (+ pool-start 4)]
-    (for [_ (iterator.range 0 count)]
+    [table : i64 (+ pool-start 4)]
+    [base : i64 (+ table (* 4 (+ count 1)))]
+    (for [id (iterator.range 0 count)]
       (let
-        [length : i64 (byte_le.read-u32 wire offset)]
-        [start : i64 (+ offset 4)]
+        [first : i64 (byte_le.read-u32 wire (+ table (* 4 id)))]
+        [length : i64
+          (- (byte_le.read-u32 wire (+ table (* 4 (+ id 1)))) first)]
+        [start : i64 (+ base first)]
         [candidate : (__tl_dyn-array u8) (__tl_make-array u8 length)]
         (for [index (iterator.range 0 length)]
           (set! (array-ref candidate index) (array-ref wire (+ start index))))
         (let
           [found : String (byte_buf.to-string (byte_buf.from-array candidate))]
-          (when (string.eq (& found) text) (return start)))
-        (set! offset (+ start length))))
+          (when (string.eq (& found) text) (return start)))))
     (io.panic "pool text not found")))
 
-;; Opening rejects a damaged string pool before any hydration: the eager open
-;; through its content SHA-256 and UTF-8 checks, and the compiler's lazy
-;; stdlib.tli open through the UTF-8 check on each pool string it reads.
+;; Full open verifies `index_sha256` and `content_sha256` before pool decoding;
+;; lazy compile open skips both up-front index/content hashes and rejects
+;; invalid UTF-8 pool strings on read, tampered module records via
+;; `module_sha256`, and tampered compact bodies via `inline_ir_sha256`.
 (define (tli-test-expect-open-failure
   [wire : (& wire (__tl_dyn-array u8))]
   [cfg-digest : (& (Array u8 32))]
@@ -764,31 +782,319 @@
     [cfg-digest : (Array u8 32)
       (array-ref bundle.modules 0).cfg-fingerprint-sha256]
     [wire : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
-    ;; The directory names every module, so both opens read this entry.
-    [text : i64 (tli-test-pool-text-offset (& wire) "stdlib.io")]
-    (set! (array-ref wire text) (cast 0xff : u8))
-    (with-arena
-      tli-job
-      (tli-test-expect-open-failure
-        (& wire)
-        (& cfg-digest)
-        false
-        false
-        "modified string pool bytes fail the content SHA-256")
-      (tli-test-expect-open-failure
-        (& wire)
-        (& cfg-digest)
-        true
-        true
-        "lazy open rejects invalid UTF-8 pool text"))
+    ;; 1. Tampering `index_sha256` (even with `content_sha256` re-stamped) is
+    ;; rejected by full open (`tli-catalog-open` / `inspect`).
     (let
-      [digest : (Array u8 32) (codec.tli-content-digest (& wire))]
-      (codec.tli-copy-digest! (&mut wire) 80 (& digest))
+      [saved-idx : u8 (array-ref wire tli.tli-index-digest-offset)]
+      (set!
+        (array-ref wire tli.tli-index-digest-offset)
+        (cast (bit-xor (cast saved-idx : i64) 1) : u8))
+      (codec.tli-copy-digest!
+        (&mut wire)
+        tli.tli-content-digest-offset
+        (& (codec.tli-content-digest (& wire))))
       (with-arena
         tli-job
         (tli-test-expect-open-failure
           (& wire)
           (& cfg-digest)
           false
+          false
+          "tampered index_sha256 fails full open even when content_sha256 matches"))
+      (set! (array-ref wire tli.tli-index-digest-offset) saved-idx)
+      (codec.tli-copy-digest!
+        (&mut wire)
+        tli.tli-content-digest-offset
+        (& (codec.tli-content-digest (& wire)))))
+    ;; 2. Tampering a module record's bytes is rejected on lazy hydration via
+    ;; `module_sha256`.
+    (let
+      [rec-start : i64
+        (byte_le.read-u64 (& wire) (+ (byte_le.read-u64 (& wire) 40) 8))]
+      [saved-rec : u8 (array-ref wire rec-start)]
+      (set!
+        (array-ref wire rec-start)
+        (cast (bit-xor (cast saved-rec : i64) 1) : u8))
+      (with-arena
+        tli-job
+        (match (hydrate.tli-catalog-open-lazy
+          (& wire)
+          "build"
+          "target"
+          (& cfg-digest))
+          [(Err failure) (io.panic failure.message)]
+          [(Ok catalog-val)
+            (let
+              [catalog : hydrate.TliCatalog catalog-val]
+              [mod-name : String
+                (string.copy (& (array-ref catalog.directory.entries 0).name))]
+              (match (hydrate.tli-catalog-hydrate! (&mut catalog) (& mod-name))
+                [(Err failure)
+                  (test.assert-true
+                    (match failure.kind
+                      [(DigestMismatch) true]
+                      [_ false])
+                    "tampered module record fails lazy module_sha256")]
+                [(Ok _)
+                  (io.panic "lazy hydrate accepted tampered module_sha256")]))]))
+      (set! (array-ref wire rec-start) saved-rec))
+    ;; 3. Invalid UTF-8 in a directory-referenced pool string fails full open
+    ;; via digest (then UTF-8 once re-stamped) and fails lazy open directly via
+    ;; UTF-8 validation.
+    (let
+      [text : i64 (tli-test-pool-text-offset (& wire) "stdlib.io")]
+      (set! (array-ref wire text) (cast 0xff : u8))
+      (with-arena
+        tli-job
+        (tli-test-expect-open-failure
+          (& wire)
+          (& cfg-digest)
+          false
+          false
+          "modified string pool bytes fail full open digest")
+        (tli-test-expect-open-failure
+          (& wire)
+          (& cfg-digest)
           true
-          "re-hashed invalid UTF-8 pool text is rejected")))))
+          true
+          "lazy open rejects invalid UTF-8 pool text directly"))
+      (let
+        [index : (Array u8 32)
+          (codec.tli-index-digest
+            (& wire)
+            (+ (byte_le.read-u64 (& wire) 40) (byte_le.read-u64 (& wire) 48)))]
+        (codec.tli-copy-digest!
+          (&mut wire)
+          tli.tli-index-digest-offset
+          (& index))
+        (codec.tli-copy-digest!
+          (&mut wire)
+          tli.tli-content-digest-offset
+          (& (codec.tli-content-digest (& wire))))
+        (with-arena
+          tli-job
+          (tli-test-expect-open-failure
+            (& wire)
+            (& cfg-digest)
+            true
+            true
+            "lazy open rejects re-hashed invalid UTF-8 pool text"))
+        (with-arena
+          tli-job
+          (tli-test-expect-open-failure
+            (& wire)
+            (& cfg-digest)
+            false
+            true
+            "re-hashed invalid UTF-8 pool text is rejected"))))))
+
+(test
+  tli-lazy-open-rejects-tampered-inline-ir-sha256
+  (let
+    [zero : (Array u8 32) (make-array u8 32)]
+    [cfg-digest : (Array u8 32) (make-array u8 32)]
+    [fns : (__tl_dyn-array tli.TliFnDecl) (__tl_make-array tli.TliFnDecl 1)]
+    [mods : (__tl_dyn-array tli.TliModuleRecord)
+      (__tl_make-array tli.TliModuleRecord 1)]
+    [bodies : (__tl_dyn-array tli.TliCompactBodyEntry)
+      (__tl_make-array tli.TliCompactBodyEntry 1)]
+    (set!
+      (array-ref fns 0)
+      (tli.TliFnDecl
+        "spmd-id"
+        "test.compact"
+        "test.compact/spmd-id"
+        0
+        0
+        ""
+        false
+        0
+        (__tl_make-array tli.TliExternLinkInput 0)
+        (__tl_make-array tli.TliParam 0)
+        (tli.TliType.Unit)
+        (tli.TliFnSummary
+          tli.tli-fn-spmd-inlineable
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array tli.TliGlobalWrite 0)
+          -1
+          (cast 0 : u8)
+          0
+          0
+          0
+          zero)))
+    (set!
+      (array-ref mods 0)
+      (tli.TliModuleRecord
+        "test.compact"
+        "test/compact.tl"
+        zero
+        cfg-digest
+        0
+        (__tl_make-array tli.TliImport 0)
+        (__tl_make-array String 0)
+        (__tl_make-array tli.TliTypeDecl 0)
+        fns
+        (__tl_make-array tli.TliValueDecl 0)
+        (__tl_make-array tli.TliMacroHandle 0)
+        (__tl_make-array tli.TliDispatchDecl 0)))
+    (set!
+      (array-ref bodies 0)
+      (tli.TliCompactBodyEntry
+        "test.compact"
+        "spmd-id"
+        "test.compact/spmd-id"
+        (tli.TliCompactBody
+          tli.tli-compact-body-has-spmd-expr
+          (tli.tli-compact-ir-body-empty)
+          (tli.TliSpmdExpr.Literal (tli.TliSpmdLiteral.Unit)))))
+    (let
+      [bundle : tli.TliBundle
+        (tli.TliBundle
+          tli.tli-has-compact-ir
+          "build"
+          "target"
+          mods
+          (__tl_make-array tli.TliCompactGlobal 0)
+          bodies)]
+      [wire : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
+      [ir-start : i64 (byte_le.read-u64 (& wire) 56)]
+      (with-arena
+        tli-job
+        (match (hydrate.tli-catalog-open-lazy
+          (& wire)
+          "build"
+          "target"
+          (& cfg-digest))
+          [(Err failure) (io.panic failure.message)]
+          [(Ok catalog-val)
+            (let
+              [catalog : hydrate.TliCatalog catalog-val]
+              (match (hydrate.tli-catalog-hydrate!
+                (&mut catalog)
+                "test.compact")
+                [(Err failure) (io.panic failure.message)]
+                [(Ok _)
+                  (let
+                    [fn0
+                      (& (array-ref (array-ref catalog.records 0).functions 0))]
+                    [body-pos : i64 (+ ir-start fn0.summary.inline-ir-offset)]
+                    (set!
+                      (array-ref wire body-pos)
+                      (cast
+                        (bit-xor (cast (array-ref wire body-pos) : i64) 1)
+                        : u8))
+                    (match (hydrate.tli-catalog-open-lazy
+                      (& wire)
+                      "build"
+                      "target"
+                      (& cfg-digest))
+                      [(Err failure) (io.panic failure.message)]
+                      [(Ok bad-catalog)
+                        (match (codec.tli-decode-compact-body-at
+                          (& bad-catalog.directory)
+                          fn0.summary.inline-ir-offset
+                          fn0.summary.inline-ir-len
+                          (& fn0.summary.inline-ir-sha256))
+                          [(codec.TliCompactBodyResult.Err failure)
+                            (test.assert-true
+                              (match failure.kind
+                                [(DigestMismatch) true]
+                                [_ false])
+                              "tampered compact body fails lazy inline_ir_sha256")]
+                          [(codec.TliCompactBodyResult.Ok _)
+                            (io.panic
+                              "lazy decode accepted tampered inline_ir_sha256")])]))]))])))))
+
+;; `() : i64` whose body returns a call to `callee`.
+(define (tli-compact-test-call-fn [name : i64] [callee : i64]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    name
+    (ir.compiler-ir-param-seq-empty)
+    (ast.AstType.I64)
+    1
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-seq2
+          (ir.CompilerIrInstr.Call
+            0
+            callee
+            (ir.CompilerIrCallArgs.Nil)
+            (ast.AstType.I64))
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0))))))
+    (ir.CompilerIrFunctionAbi.Ordinary)))
+
+;; A body calling itself would encode its own archive symbol with no extern-ref,
+;; and hydration names the body by its source symbol, so the self-call would be
+;; mangled twice; such a body ships no compact IR. Its caller still does.
+(test
+  tli-compact-ir-rejects-self-recursive-body
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [self-sym : i64 (ir.compiler-ir-test-symbol "c36_compact_self")]
+    [caller-sym : i64 (ir.compiler-ir-test-symbol "c36_compact_caller")]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& (tli-compact-test-call-fn self-sym self-sym))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (tli-compact-test-call-fn caller-sym self-sym))
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [globals : ir.CompilerIrGlobalSeq (ir.compiler-ir-global-seq-empty)]
+    [externs : ir.CompilerIrExternSeq (ir.compiler-ir-extern-seq-empty)]
+    [fn-ids : i64_map.Map (i64_map.with-capacity 4)]
+    [fn-skip : (__tl_dyn-array bool) (__tl_make-array bool 2)]
+    [fn-links : (__tl_dyn-array String) (__tl_make-array String 2)]
+    (i64_map.insert-ref! (&mut fn-ids) (ir.compiler-ir-symbol-id self-sym) 0)
+    (i64_map.insert-ref! (&mut fn-ids) (ir.compiler-ir-symbol-id caller-sym) 1)
+    (set! (array-ref fn-skip 0) false)
+    (set! (array-ref fn-skip 1) false)
+    (set! (array-ref fn-links 0) "_tl_c36_compact_self")
+    (set! (array-ref fn-links 1) "_tl_c36_compact_caller")
+    (let
+      [tables : compact.TliIrEncodeTables
+        (compact.TliIrEncodeTables
+          fn-ids
+          (i64_map.with-capacity 1)
+          (i64_map.with-capacity 1)
+          fn-skip
+          (__tl_make-array bool 0)
+          (__tl_make-array bool 0)
+          fn-links
+          (__tl_make-array String 0))]
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [interns : intern.InternCompatState
+        (intern.intern-compat-state-capture-active)]
+      (match (compact.tli-encode-compact-ir-function
+        pools
+        (& tables)
+        (& interns)
+        (& globals)
+        (& functions)
+        (& externs)
+        0)
+        [(compact.TliEncodeCompactIrBodyResult.No) unit]
+        [(compact.TliEncodeCompactIrBodyResult.Ok _)
+          (test.assert-true false "encoded a self-recursive compact body")])
+      (match (compact.tli-encode-compact-ir-function
+        pools
+        (& tables)
+        (& interns)
+        (& globals)
+        (& functions)
+        (& externs)
+        1)
+        [(compact.TliEncodeCompactIrBodyResult.No)
+          (test.assert-true false "rejected the caller of a recursive body")]
+        [(compact.TliEncodeCompactIrBodyResult.Ok body)
+          (test.assert-i64-eq
+            (array-length body.extern-refs)
+            1
+            "the caller names its callee by extern-ref")
+          (test.assert-string-eq
+            (& (array-ref body.extern-refs 0).link-symbol)
+            "_tl_c36_compact_self"
+            "the extern-ref carries the callee's archive symbol")]))))

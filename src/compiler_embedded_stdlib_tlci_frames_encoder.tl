@@ -7,6 +7,7 @@
 (import compiler_lzss as lzss)
 (import compiler_embedded_stdlib_tlci_frames as frames)
 (import compiler_embedded_stdlib_tlci_codec as codec)
+(import compiler_tli_codec as tli_codec)
 (import compiler_tlci_native_producer as producer)
 (import tlci_core as tlci)
 
@@ -199,6 +200,14 @@
             (tlci.tlci-push-u64!
               (&mut out)
               (tlci.tlci-read-u64 (& (array-ref images index)) 48))
+            (let
+              [digest : (Array u8 32)
+                (tli_codec.tli-module-digest
+                  (& (array-ref images index))
+                  0
+                  (array-length (& (array-ref images index))))]
+              (for [byte (iterator.range 0 32)]
+                (buf.byte-buf-builder-push (&mut out) (array-ref digest byte))))
             (+= name-cursor name-len)
             (+= raw-offset (string.string-length (& source))))
           (set! index (+ index 1)))

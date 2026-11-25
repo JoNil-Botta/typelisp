@@ -235,8 +235,11 @@ for variant in small large; do
     fi
 done
 fixture_inventory_require "$WORK/fixtures.tsv" tests/fixtures/linux_stack_foreign.tl
+# The foreign hosts below link this object without libstdlib.a, so it carries
+# its stdlib code itself instead of calling into the prebuilt archive.
 bounded foreign-compile 512 "$COMPILER" compile tests/fixtures/linux_stack_foreign.tl \
-    --no-entry --stdlib-root stdlib --opt-level 2 -o "$WORK/foreign.s"
+    --no-entry --stdlib-root stdlib --no-prebuilt-stdlib --opt-level 2 \
+    -o "$WORK/foreign.s"
 as "$WORK/foreign.s" -o "$WORK/foreign.o"
 as "$WORK/foreign-copy.s" -o "$WORK/foreign-copy.o"
 cc -no-pie "$WORK/foreign.o" "$WORK/foreign-copy.o" -o "$WORK/foreign-crt"

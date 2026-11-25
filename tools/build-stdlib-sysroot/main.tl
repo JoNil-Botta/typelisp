@@ -21,6 +21,7 @@
 (import compiler_specialize as spec)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_tli_codec as codec)
+(import compiler_tli_compact_ir as compact_ir)
 (import compiler_tli_extract as extract)
 (import compiler_tli_types as tli)
 (import compiler_typecheck_api as api)
@@ -387,6 +388,34 @@
                           true
                           retain-global-call-effects)]))]))))])))
 
+(define (cross-module-tiny-helper? [blocks : (& ir.CompilerIrBlockList)]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Array block-seq)
+      (if (> block-seq.len 4)
+        false
+        (let
+          [total : i64 0]
+          [ok : bool true]
+          (for [bi (iterator.range 0 block-seq.len)]
+            (when
+              ok
+              (match (& (array-ref block-seq.slots bi))
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set! total (+ total instrs.len))
+                  (if (> total 16)
+                    (set! ok false)
+                    (for [ii (iterator.range 0 instrs.len)]
+                      (match (& (array-ref instrs.slots ii))
+                        [(or (ir.CompilerIrInstr.Call _ _ _ _)
+                             (ir.CompilerIrInstr.CallIndirect _ _ _ _)
+                             (ir.CompilerIrInstr.CallIndirectC _ _ _ _)
+                             (ir.CompilerIrInstr.TailCall _ _ _)
+                             (ir.CompilerIrInstr.TailCallIndirect _ _ _))
+                          (set! ok false)]
+                        [_ unit])))])))
+          ok))]
+    [_ false]))
+
 (define (build-sysroot!
   [tli-out : (& str)]
   [asm-dir : (& str)]
@@ -519,41 +548,11 @@
                 bundle-flags
                 (string.copy producer-identity)
                 (string.copy (& target-triple)))]
-            (unless
-              (extract.tli-extract-pin-imports! (&mut bundle))
-              (io.panic "TLI import cycle cannot pin module record digests"))
             (tc.tc-global-call-effects-finish! job)
-            (let
-              [encoded-arr : (__tl_dyn-array u8)
-                (codec.tli-encode-bundle (& bundle))]
-              [encoded : byte_buf.ByteBuf
-                (byte_buf.from-array
-                  (let
-                    [copy-bytes : (__tl_dyn-array u8)
-                      (__tl_make-array u8 (array-length encoded-arr))]
-                    (for [i (iterator.range 0 (array-length encoded-arr))]
-                      (set! (array-ref copy-bytes i) (array-ref encoded-arr i)))
-                    copy-bytes))]
-              (match (codec.tli-decode-directory-for
-                (& encoded-arr)
-                producer-identity
-                (& target-triple))
-                [(Err fail) (io.panic fail.message)]
-                [(Ok dir)
-                  (when
-                    (!=
-                      (array-length dir.entries)
-                      (array-length bundle.modules))
-                    (io.panic "TLI directory count mismatch"))])
-              (match (io.try-write-file tli-out (byte_buf.as-bytes (& encoded)))
-                [(OkIoUnit) unit]
-                [(ErrIoUnit _)
-                  (io.panic
-                    (str_cat.str-cat
-                      "cannot write stdlib.tli: "
-                      (string.copy tli-out)))]))
-            ;; Now lower the EXACT same checked program once with opt-in module
-            ;; ownership and per-module startup wrappers.
+            ;; Lower the EXACT same checked program once with opt-in module
+            ;; ownership and per-module startup wrappers, then attach v3
+            ;; compact_ir + packed optimizer summaries to `stdlib.tli` before
+            ;; emitting partitioned per-module `.s` files.
             (let
               [pools : ast.AstNodePoolContext (tc.tc-context-pools ctx)]
               [checked-program : ast.AstProgram (tc.tc-context-program ctx)]
@@ -590,7 +589,10 @@
                   [(Ok whole-program whole-spans lower-owner)
                     (tc.tc-checked-let-binding-facts-finish! let-facts)
                     (emit-partitioned-sysroot!
-                      (& bundle)
+                      (&mut bundle)
+                      tli-out
+                      producer-identity
+                      (& target-triple)
                       whole-program
                       whole-spans
                       lower-owner
@@ -608,7 +610,10 @@
             (tlci.compiler-embedded-stdlib-tlci-session-close!))]))))
 
 (define (emit-partitioned-sysroot!
-  [bundle : (& tli.TliBundle)]
+  [bundle : (&mut tli.TliBundle)]
+  [tli-out : (& str)]
+  [producer-identity : (& str)]
+  [target-triple : (& str)]
   [whole-program : ir.CompilerIrProgram]
   [whole-spans : ir.CompilerSourceSpans]
   [lower-state : lower.CompilerLowerState]
@@ -674,7 +679,7 @@
             (__tl_make-array bool module-count)]
           (for [i (iterator.range 0 ex-count)]
             (match (& (array-ref whole-externs.slots i))
-              [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided _)
+              [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided _ _)
                 (when
                   provided
                   (i64_map.insert-ref!
@@ -769,6 +774,10 @@
               (__tl_make-array ir.CompilerIrExtern fn-count)]
             [gl-cross-externs : (__tl_dyn-array ir.CompilerIrExtern)
               (__tl_make-array ir.CompilerIrExtern gl-count)]
+            [fn-link-syms : (__tl_dyn-array String)
+              (__tl_make-array String fn-count)]
+            [gl-link-syms : (__tl_dyn-array String)
+              (__tl_make-array String gl-count)]
             [base-reps : ir.CompilerIrRepresentationIndex
               (lower.lower-representation-index-from-layouts
                 type-segment-bases
@@ -801,6 +810,7 @@
                               prov-sym
                               _
                               _
+                              _
                               _)
                             (let
                               [raw : String
@@ -821,7 +831,10 @@
                             (be_state.compiler-backend-user-symbol-uncached
                               (string.copy (& fn-name-str))))))]
                     [link-sym-id : i64
-                      (intern-symbol! (&mut interns) link-sym-str)]
+                      (intern-symbol!
+                        (&mut interns)
+                        (string.copy (& link-sym-str)))]
+                    (set! (array-ref fn-link-syms i) link-sym-str)
                     (set!
                       (array-ref fn-cross-externs i)
                       (ir.CompilerIrExtern.Extern
@@ -833,7 +846,8 @@
                         link-sym-id
                         (ast.ast-extern-link-input-list-new)
                         false
-                        (ir.CompilerIrReturnStorage.None))))]))
+                        (ir.CompilerIrReturnStorage.None)
+                        false)))]))
             (for [i (iterator.range 0 gl-count)]
               (when
                 (not (array-ref gl-private i))
@@ -846,7 +860,10 @@
                         (be_state.compiler-backend-user-symbol-uncached
                           (string.copy (& gl-name-str)))]
                       [link-sym-id : i64
-                        (intern-symbol! (&mut interns) link-sym-str)]
+                        (intern-symbol!
+                          (&mut interns)
+                          (string.copy (& link-sym-str)))]
+                      (set! (array-ref gl-link-syms i) link-sym-str)
                       (set!
                         (array-ref gl-cross-externs i)
                         (ir.CompilerIrExtern.Extern
@@ -860,7 +877,53 @@
                           link-sym-id
                           (ast.ast-extern-link-input-list-new)
                           false
-                          (ir.CompilerIrReturnStorage.None))))])))
+                          (ir.CompilerIrReturnStorage.None)
+                          false)))])))
+            ;; Attach v3 compact_ir + packed optimizer summaries, pin module
+            ;; digests, verify, and write `stdlib.tli`.
+            (compact_ir.tli-attach-compact-ir!
+              bundle
+              pools
+              (& interns)
+              (& whole-globals)
+              (& whole-functions)
+              (& whole-externs)
+              (& fn-skip)
+              (& fn-link-syms)
+              (& gl-link-syms)
+              (& gl-private))
+            (unless
+              (extract.tli-extract-pin-imports! bundle)
+              (io.panic "TLI import cycle cannot pin module record digests"))
+            (let
+              [encoded-arr : (__tl_dyn-array u8)
+                (codec.tli-encode-bundle bundle)]
+              [encoded : byte_buf.ByteBuf
+                (byte_buf.from-array
+                  (let
+                    [copy-bytes : (__tl_dyn-array u8)
+                      (__tl_make-array u8 (array-length encoded-arr))]
+                    (for [i (iterator.range 0 (array-length encoded-arr))]
+                      (set! (array-ref copy-bytes i) (array-ref encoded-arr i)))
+                    copy-bytes))]
+              (match (codec.tli-decode-directory-for
+                (& encoded-arr)
+                producer-identity
+                target-triple)
+                [(Err fail) (io.panic fail.message)]
+                [(Ok dir)
+                  (when
+                    (!=
+                      (array-length dir.entries)
+                      (array-length bundle.modules))
+                    (io.panic "TLI directory count mismatch"))])
+              (match (io.try-write-file tli-out (byte_buf.as-bytes (& encoded)))
+                [(OkIoUnit) unit]
+                [(ErrIoUnit _)
+                  (io.panic
+                    (str_cat.str-cat
+                      "cannot write stdlib.tli: "
+                      (string.copy tli-out)))]))
             ;; Emit each non-empty module independently.
             (for [m (iterator.range 0 module-count)]
               (let
@@ -895,13 +958,59 @@
                         (intern.intern-compat-state-capture-active))]
                     [init-globals : ir.CompilerIrGlobalSeq
                       (ir.compiler-ir-global-builder-snapshot-seq (& g-builder))]
-                    [mod-functions : ir.CompilerIrFunctionSeq
+                    [init-functions : ir.CompilerIrFunctionSeq
                       (ir.compiler-ir-function-builder-snapshot (& f-builder))]
-                    [refs : ModuleRefs
+                    [init-refs : ModuleRefs
                       (collect-module-refs
                         pools
                         (& init-globals)
-                        (& mod-functions))]
+                        (& init-functions))]
+                    [cross-avail : i64_map.Map (i64_map.with-capacity 64)]
+                    ;; At O2, attach small call-free cross-module `compact_ir`
+                    ;; helpers (`<= 16` instrs, `<= 4` blocks) with
+                    ;; `body-available = true` so `libstdlib.a` modules inline
+                    ;; trivial accessors (e.g. `string.string-length` inside
+                    ;; `formatter-write-raw-at!`) without bloating cold paths
+                    ;; or altering cross-module call boundaries.
+                    [_cross-hydrate : unit
+                      (when
+                        (>= opt-level 2)
+                        (for [i (iterator.range 0 fn-count)]
+                          (when
+                            (and
+                              (!= (array-ref fn-owners i) m)
+                              (not (array-ref fn-skip i)))
+                            (match (& (array-ref whole-functions.slots i))
+                              [(ir.CompilerIrFunction.Function
+                                  fn-name
+                                  _
+                                  _
+                                  _
+                                  fn-blocks
+                                  _)
+                                (when
+                                  (and
+                                    (module-refs-contains?
+                                      (& init-refs)
+                                      fn-name)
+                                    (opt.opt-inline-compact-ir-eligible?
+                                      (& (array-ref whole-functions.slots i)))
+                                    (cross-module-tiny-helper? (& fn-blocks)))
+                                  (i64_map.insert-ref! (&mut cross-avail) i 1)
+                                  (ir.compiler-ir-function-builder-push!
+                                    (&mut f-builder)
+                                    (ir.compiler-ir-clone-function
+                                      pools
+                                      (& (array-ref whole-functions.slots i)))))]))))]
+                    [mod-functions : ir.CompilerIrFunctionSeq
+                      (ir.compiler-ir-function-builder-snapshot (& f-builder))]
+                    [refs : ModuleRefs
+                      (if (= cross-avail.len 0)
+                        init-refs
+                        (collect-module-refs
+                          pools
+                          (& init-globals)
+                          (& mod-functions)))]
                     [e-builder : ir.CompilerIrExternBuilder
                       (ir.compiler-ir-extern-builder-with-capacity 64)]
                     [added-externs : i64_map.Map (i64_map.with-capacity 128)]
@@ -957,6 +1066,7 @@
                             link-id
                             _
                             provided
+                            _
                             _)
                           (when
                             (and
@@ -992,11 +1102,40 @@
                                   (not
                                     (i64_map.contains? (& added-externs) fid)))
                                 (i64_map.insert-ref! (&mut added-externs) fid 1)
-                                (ir.compiler-ir-extern-builder-push!
-                                  (&mut e-builder)
-                                  (ir.compiler-ir-clone-extern
-                                    pools
-                                    (& (array-ref fn-cross-externs i))))))])))
+                                (let
+                                  [cloned-ext : ir.CompilerIrExtern
+                                    (ir.compiler-ir-clone-extern
+                                      pools
+                                      (& (array-ref fn-cross-externs i)))]
+                                  (if (i64_map.contains? (& cross-avail) i)
+                                    (match cloned-ext
+                                      [(ir.CompilerIrExtern.Extern
+                                          en
+                                          es
+                                          enm
+                                          ety
+                                          eabi
+                                          elink
+                                          elinks
+                                          eprov
+                                          estor
+                                          _)
+                                        (ir.compiler-ir-extern-builder-push!
+                                          (&mut e-builder)
+                                          (ir.CompilerIrExtern.Extern
+                                            en
+                                            es
+                                            enm
+                                            ety
+                                            eabi
+                                            elink
+                                            elinks
+                                            eprov
+                                            estor
+                                            true))])
+                                    (ir.compiler-ir-extern-builder-push!
+                                      (&mut e-builder)
+                                      cloned-ext)))))])))
                     ;; 4. Other modules' non-private globals referenced by this module.
                     (for [i (iterator.range 0 gl-count)]
                       (when
@@ -1078,7 +1217,9 @@
                           true
                           mod-reps
                           (opt.OptInputRetirement.Retain)
-                          (__tl_make-array i64 0)))
+                          (__tl_make-array i64 0)
+                          (opt.opt-external-summaries-empty)
+                          true))
                         [(opt.CompilerOptimizedProgram.Program
                             opt-program
                             opt-spans)

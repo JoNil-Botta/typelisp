@@ -4295,6 +4295,7 @@
             (& callable))))]
     (match metadata
       [(No) false]
+      [(Inline _ _ _) false]
       [(Package owner version canonical-name callables-box)
         (let
           [callables : ast.AstImportedSpmdCallableList (deref callables-box)]

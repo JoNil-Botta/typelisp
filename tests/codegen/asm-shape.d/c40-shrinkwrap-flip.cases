@@ -1,0 +1,35 @@
+# Early-return guard flip (gate stage2-regalloc-backend-asm-shape-gates): at
+# -O2 on Linux each form (a) guard falls through to the next guard and then
+# into the saving block, and the bare-return clones are placed after the
+# function's last block. -Os and Win64 keep them inline ahead of the saving
+# block.
+# See tests/integration/c40_shrinkwrap_flip.tl.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+# Both guards jump out of line, nothing jumps to the saving block, and the
+# bare returns follow the shared epilogue.
+case shrinkwrap-flip-linux
+source tests/integration/c40_shrinkwrap_flip.tl
+target linux-x86_64
+opt 2
+in fn _tl_c40_shrinkwrap_flip_weight
+count = 2 ^[[:space:]]+jge [.]L[^ ]*__shrinkwrap_bare[0-9]+$
+not-match __shrinkwrap_save$
+order __shrinkwrap_save: || popq %r12 || __shrinkwrap_bare0: || __shrinkwrap_bare1:
+
+# Win64 keeps its SEH unwind layout: no flip.
+case shrinkwrap-flip-off-win64
+source tests/integration/c40_shrinkwrap_flip.tl
+target windows-x86_64
+opt 2
+in fn _tl_c40_shrinkwrap_flip_weight
+order __shrinkwrap_bare0: || __shrinkwrap_save:
+
+# Size keeps the bare returns inline on both targets.
+case shrinkwrap-flip-off-size
+source tests/integration/c40_shrinkwrap_flip.tl
+target linux-x86_64 windows-x86_64
+opt s
+in fn _tl_c40_shrinkwrap_flip_weight
+order __shrinkwrap_bare0: || __shrinkwrap_save:

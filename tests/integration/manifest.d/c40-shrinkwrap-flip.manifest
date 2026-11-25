@@ -1,0 +1,4 @@
+# Native integration cases: SHRINKWRAP-FLIP out-of-line early-return guards.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+c40_shrinkwrap_flip|all|0,1,2|tests/integration/c40_shrinkwrap_flip.tl|42|-|-|-|-

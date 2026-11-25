@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/c40_shrinkwrap_flip.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Out-of-line form (a) early-return guards are pinned through opt2 assembly-shape cases.

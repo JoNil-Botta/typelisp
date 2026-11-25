@@ -1405,11 +1405,44 @@
       [(Block next-label _) (Some next-label)])
     (No)))
 
+;; A prefix block that is one bare `Return`: a form (a) bare-return clone.
+(define (compiler-backend-shrinkwrap-bare-return-block?
+  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]
+  [index : i64]) : bool
+  (match (compiler_ir_types.compiler-ir-block-seq-borrow seq index)
+    [(Block _ instrs)
+      (and
+        (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 1)
+        (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs 0)
+          [(Return _) true]
+          [_ false]))]))
+
+;; The flipped prefix leaves its bare-return clones out of line, so a guard's
+;; layout successor is the next guard, or the block after the prefix (the
+;; saving block).
+(define (compiler-backend-shrinkwrap-flip-fallthrough
+  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]
+  [index : i64]
+  [prefix-count : i64]) : be_state.CompilerBackendMaybeLabel
+  (let
+    [next : i64 (+ index 1)]
+    (while (and
+      (< next prefix-count)
+      (compiler-backend-shrinkwrap-bare-return-block? seq next))
+      (+= next 1))
+    (compiler-backend-shrinkwrap-fallthrough seq (- next 1))))
+
 ;; Emit exactly the rewritten prefix with either the allocator's planned homes
 ;; (the textual splice needle) or incoming ABI homes (the replacement). The
 ;; prefix count is supplied by the property rewrite and every block is proven to
 ;; be compare+branch or a bare return. Any drift returns "" and triggers the
 ;; existing unwrapped full-pipeline retry.
+;;
+;; `flip?` (incoming render only) is the -O2 early-return guard flip: each
+;; guard falls through to its flipped successor, and the bare-return clones are
+;; returned as the second text, for the caller to place after the function's
+;; last block. The first text then holds the guards alone. Without `flip?` the
+;; second text is empty.
 (define (compiler-backend-shrinkwrap-prefix-asm
   [type-segment-bases : i64]
   [target : be_state.CompilerBackendTarget]
@@ -1423,7 +1456,8 @@
   [prefix-count : i64]
   [ret-ty : compiler_ast_types.AstType]
   [program-index : be_state.CompilerBackendProgramIndex]
-  [incoming? : bool]) : String
+  [incoming? : bool]
+  [flip? : bool]) : (Tuple String String)
   (let
     [seq : compiler_ir_types.CompilerIrBlockSeq
       (compiler_liveness.compiler-live-ir-block-list-to-seq (& blocks))]
@@ -1467,6 +1501,7 @@
         function-state
         be_state.compiler-backend-function-bool-emit-assignment-index-active)]
     [acc : String ""]
+    [bare-acc : String ""]
     [index : i64 0]
     (be_state.compiler-backend-function-state-set-string!
       function-state
@@ -1520,9 +1555,14 @@
                                 ty
                                 on-true
                                 on-false
-                                (compiler-backend-shrinkwrap-fallthrough
-                                  seq
-                                  index)
+                                (if flip?
+                                  (compiler-backend-shrinkwrap-flip-fallthrough
+                                    seq
+                                    index
+                                    prefix-count)
+                                  (compiler-backend-shrinkwrap-fallthrough
+                                    seq
+                                    index))
                                 program-index.backend-state)
                               (Err
                                 (box
@@ -1582,15 +1622,17 @@
                         "shrinkwrap prefix drift")))))]
             (match piece
               [(Ok asm)
-                (set!
-                  acc
-                  (str_cat.str-cat
-                    acc
-                    (be_operand.compiler-backend-asm-label
-                      (be_state.compiler-backend-global-shared-view function)
-                      label)
-                    ":\n"
-                    asm))]
+                (let
+                  [text : String
+                    (str_cat.str-cat
+                      (be_operand.compiler-backend-asm-label
+                        (be_state.compiler-backend-global-shared-view function)
+                        label)
+                      ":\n"
+                      asm)]
+                  (if (and flip? (= count 1))
+                    (set! bare-acc (str_cat.str-cat bare-acc text ""))
+                    (set! acc (str_cat.str-cat acc text ""))))]
               [(Err _) (set! ready false)]))])
       (+= index 1))
     (be_state.compiler-backend-function-state-set-string!
@@ -1606,8 +1648,8 @@
       be_state.compiler-backend-function-bool-emit-assignment-index-active
       old-assignment-index-active)
     (if ready
-      acc
-      "")))
+      (tuple acc bare-acc)
+      (tuple "" ""))))
 
 ;; True once a branch terminator has already emitted its emergency restore INLINE
 ;; (right after the flag-setting compare/test, before the conditional jumps) -- so

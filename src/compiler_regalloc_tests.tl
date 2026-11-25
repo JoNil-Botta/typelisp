@@ -2897,6 +2897,244 @@
                 2)
               1)))])))
 
+;; How many instructions of `seq` define `var`.
+(cfg
+  test
+  (define (compiler-reg-loop-split-def-count
+    [seq : (& seq ir.CompilerIrBlockSeq)]
+    [var : i64]) : i64
+    (let
+      [defs : i64 0]
+      (for [b (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (let
+          [instrs : ir.CompilerIrInstrSeq
+            (reg.compiler-reg-loop-park-block-instrs seq b)]
+          (for [i (iterator.range 0 instrs.len)]
+            (when
+              (= (compiler-reg-loop-split-instr-dst seq b i) var)
+              (+= defs 1)))))
+      defs)))
+
+;; Every piece of a split function is defined exactly once.
+(cfg
+  test
+  (define (compiler-reg-loop-split-pieces-defined?
+    [seq : (& seq ir.CompilerIrBlockSeq)]
+    [vars : i64]
+    [split-vars : i64]) : bool
+    (for [piece (iterator.range vars split-vars)]
+      (unless
+        (= (compiler-reg-loop-split-def-count seq piece) 1)
+        (return false)))
+    true))
+
+;; `loop_split_nested`: the spilled value %6 is defined in the inner loop L1
+;; (h1..latch1) and live out of it to exit1, which is inside the outer loop L2,
+;; and on to exit2, outside L2. Both loops have a register-homed bound to trade
+;; (%1 for L1, %2 for L2), so %6 is a resident each loop would split -- but the
+;; inner loop takes it first, and a second split around L2 would rename the
+;; uses L1's piece feeds.
+(cfg
+  test
+  (define (compiler-reg-loop-split-nested-function) : ir.CompilerIrFunction
+    (irt.func
+      "function @loop_split_nested(seed=%0:i64) -> i64 vars 14 {
+       entry:
+         %1 = mov 100 : i64
+         %2 = mov 50 : i64
+         jump pre2
+       pre2:
+         jump h2
+       h2:
+         %3 = phi [0, pre2], [%11, latch2] : i64
+         jump pre1
+       pre1:
+         jump h1
+       h1:
+         %5 = phi [0, pre1], [%9, latch1] : i64
+         jump body1
+       body1:
+         %6 = add %5, %0 : i64
+         %7 = mul %6, %6 : i64
+         %8 = add %7, %6 : i64
+         %10 = lt %5, %1 : i64
+         branch %10, latch1, exit1
+       latch1:
+         %9 = add %5, %8 : i64
+         jump h1
+       exit1:
+         %11 = add %3, %6 : i64
+         %12 = lt %11, %2 : i64
+         branch %12, latch2, exit2
+       latch2:
+         jump h2
+       exit2:
+         %13 = add %6, %11 : i64
+         return %13
+       }")))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-nested-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-loop-split-nested-function)]
+      [vars : i64
+        (match func
+          [(Function _ _ _ function-vars _ _) function-vars])]
+      [plan : reg.CompilerRegPlan
+        (Plan
+          (reg.compiler-reg-assignments-prepend
+            (&
+              (reg.CompilerRegAssignment 1 (Register cabi.compiler-reg-id-r12)))
+            (reg.compiler-reg-assignments-prepend
+              (&
+                (reg.CompilerRegAssignment
+                  2
+                  (Register cabi.compiler-reg-id-r13)))
+              (reg.compiler-reg-assignments-prepend
+                (&
+                  (reg.CompilerRegAssignment
+                    6
+                    (Spill (reg.compiler-reg-stack-slot-offset 1))))
+                (reg.compiler-reg-assignment-table-empty))))
+          (live.compiler-live-set-empty)
+          (reg.compiler-reg-interval-seq-empty)
+          (reg.compiler-reg-var-types-empty)
+          (reg.compiler-reg-call-split-empty))]
+      [split : reg.CompilerRegCallHoleSplit
+        (reg.compiler-reg-loop-park-rewrite-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          Linux
+          (& func)
+          (reg.compiler-reg-function-var-types func)
+          (& plan)
+          (- 0 1)
+          false
+          true)]
+      [split-vars : i64 (reg.compiler-reg-call-hole-split-vars (& split))]
+      [blocks : ir.CompilerIrBlockList
+        (reg.compiler-reg-call-hole-split-blocks (& split))]
+      [seq : ir.CompilerIrBlockSeq
+        (live.compiler-live-ir-block-list-to-seq (& blocks))]
+      [writebacks : i64 0]
+      (for [piece (iterator.range vars split-vars)]
+        (for [b (iterator.range 0 (ir.compiler-ir-block-seq-count (& seq)))]
+          (let
+            [instrs : ir.CompilerIrInstrSeq
+              (reg.compiler-reg-loop-park-block-instrs (& seq) b)]
+            (for [i (iterator.range 0 instrs.len)]
+              (when
+                (and
+                  (= (compiler-reg-loop-split-instr-dst (& seq) b i) 6)
+                  (compiler-reg-loop-split-instr-uses? (& seq) b i piece))
+                (+= writebacks 1))))))
+      (and
+        ;; the round splits L1 and keeps it
+        (> split-vars vars)
+        (compiler-reg-loop-split-pieces-defined? (& seq) vars split-vars)
+        ;; %6 has one piece, written back once (at exit1) and never renamed
+        ;; out of its own definition
+        (= writebacks 1)
+        (= (compiler-reg-loop-split-def-count (& seq) 6) 1)))))
+
+;; `loop_split_sibling`: the spilled value %2 is a non-entry phi input of the
+;; first loop LA, which therefore rejects it, and a plain read-only resident of
+;; its sibling LB, which must still see it. LA's rejection leaves no pick behind,
+;; so its marks have to be undone when LA's decision ends.
+(cfg
+  test
+  (define (compiler-reg-loop-split-sibling-function) : ir.CompilerIrFunction
+    (irt.func
+      "function @loop_split_sibling(seed=%0:i64) -> i64 vars 14 {
+       entry:
+         %1 = mov 100 : i64
+         %2 = mul %0, %0 : i64
+         %3 = mov 10 : i64
+         jump preA
+       preA:
+         jump hA
+       hA:
+         %4 = phi [0, preA], [%2, latchA] : i64
+         %5 = lt %4, %3 : i64
+         branch %5, latchA, preB
+       latchA:
+         jump hA
+       preB:
+         jump hB
+       hB:
+         %6 = phi [0, preB], [%9, latchB] : i64
+         %7 = lt %6, %1 : i64
+         branch %7, bodyB, exitB
+       bodyB:
+         %8 = mul %2, %2 : i64
+         %10 = add %8, %2 : i64
+         %11 = add %10, %2 : i64
+         jump latchB
+       latchB:
+         %9 = add %6, %11 : i64
+         jump hB
+       exitB:
+         %12 = add %1, %6 : i64
+         %13 = add %12, %4 : i64
+         return %13
+       }")))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-sibling-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-loop-split-sibling-function)]
+      [vars : i64
+        (match func
+          [(Function _ _ _ function-vars _ _) function-vars])]
+      [plan : reg.CompilerRegPlan
+        (Plan
+          (reg.compiler-reg-assignments-prepend
+            (&
+              (reg.CompilerRegAssignment 1 (Register cabi.compiler-reg-id-r12)))
+            (reg.compiler-reg-assignments-prepend
+              (&
+                (reg.CompilerRegAssignment
+                  3
+                  (Register cabi.compiler-reg-id-r13)))
+              (reg.compiler-reg-assignments-prepend
+                (&
+                  (reg.CompilerRegAssignment
+                    2
+                    (Spill (reg.compiler-reg-stack-slot-offset 1))))
+                (reg.compiler-reg-assignment-table-empty))))
+          (live.compiler-live-set-empty)
+          (reg.compiler-reg-interval-seq-empty)
+          (reg.compiler-reg-var-types-empty)
+          (reg.compiler-reg-call-split-empty))]
+      [split : reg.CompilerRegCallHoleSplit
+        (reg.compiler-reg-loop-park-rewrite-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          Linux
+          (& func)
+          (reg.compiler-reg-function-var-types func)
+          (& plan)
+          (- 0 1)
+          false
+          true)]
+      [split-vars : i64 (reg.compiler-reg-call-hole-split-vars (& split))]
+      [blocks : ir.CompilerIrBlockList
+        (reg.compiler-reg-call-hole-split-blocks (& split))]
+      [seq : ir.CompilerIrBlockSeq
+        (live.compiler-live-ir-block-list-to-seq (& blocks))]
+      [pre : i64 (compiler-reg-loop-park-block-index (& seq) "preB")]
+      [body : i64 (compiler-reg-loop-park-block-index (& seq) "bodyB")]
+      ;; the bound's piece is picked first, %2's second
+      [piece : i64 (+ vars 1)]
+      (and
+        (= split-vars (+ vars 2))
+        (compiler-reg-loop-split-pieces-defined? (& seq) vars split-vars)
+        ;; LB copies %2 into its piece and reads only the piece
+        (= (compiler-reg-loop-split-instr-dst (& seq) pre 1) piece)
+        (compiler-reg-loop-split-instr-uses? (& seq) pre 1 2)
+        (compiler-reg-loop-split-instr-uses? (& seq) body 0 piece)
+        (not (compiler-reg-loop-split-instr-uses? (& seq) body 0 2))))))
+
 ;; --- P12: the merged-kernel shape, and the two ladders that decide it --------
 ;; A hand-inlined kernel puts its hottest loop DEEP. `it-intern-slice` inlined
 ;; into its driver leaves the byte compare at loop depth 5, inside a depth-4
@@ -14951,6 +15189,8 @@
     (cfg test (compiler-reg-loop-park-declines-ok?) true)
     (cfg test (compiler-reg-loop-split-round-ok?) true)
     (cfg test (compiler-reg-loop-split-phi-refused-ok?) true)
+    (cfg test (compiler-reg-loop-split-nested-ok?) true)
+    (cfg test (compiler-reg-loop-split-sibling-ok?) true)
     (cfg test (compiler-reg-loop-park-deep-parks-ok?) true)
     (cfg test (compiler-reg-loop-park-deep-two-bases-homed-ok?) true)
     (cfg test (compiler-reg-loop-park-deep-declines-ok?) true)

@@ -17136,17 +17136,27 @@
   (compiler-reg-loop-park-fill-bool-array (&mut sc.picked) false)
   (compiler-reg-loop-park-fill-bool-array (&mut sc.chosen) false))
 
-;; Undo the two per-loop mark arrays. Only the entries this loop set are
-;; touched, so the cost is the size of the decision and not the size of the
-;; function.
+;; Undo the two per-loop mark arrays. Only the entries this loop can have set
+;; are touched -- its picks, and its residents, which the S3 pairing also marks
+;; when it rejects one without recording a pick -- so the cost is the size of
+;; the decision and not the size of the function.
 (define (compiler-reg-loop-park-clear-marks!
   [sc : CompilerRegLoopParkScratch]
-  [picks : i64]) : unit
+  [picks : i64]
+  [resident-count : i64]) : unit
   (for [index (iterator.range 0 picks)]
     (set! (array-ref sc.picked (array-ref sc.pick-var index)) false)
-    (set! (array-ref sc.chosen (array-ref sc.pick-resident index)) false)))
+    (set! (array-ref sc.chosen (array-ref sc.pick-resident index)) false))
+  (for [index (iterator.range 0 resident-count)]
+    (let
+      [var : i64 (array-ref sc.residents index)]
+      (set! (array-ref sc.picked var) false)
+      (set! (array-ref sc.chosen var) false))))
 
-;; The hottest spilled resident of L not already chosen.
+;; The hottest spilled resident of L not already chosen, and not already
+;; parked or split by an earlier loop of the round: an inner loop's piece of it
+;; is defined only on that loop's boundary, so a second split around the outer
+;; loop would rename the uses that piece feeds.
 ;;
 ;; This is the value the next parked register is FOR, and it is a resident
 ;; rather than any spilled value live over L for a structural reason: the
@@ -17168,6 +17178,7 @@
           (and
             (< var ctx.threshold)
             (not (array-ref sc.chosen var))
+            (not (array-ref sc.taken var))
             (array-ref ctx.spilled var))
           (when
             (or (< best 0) (> (array-ref sc.resident-refs var) best-weight))
@@ -17767,7 +17778,7 @@
         [site-base : i64 (compiler-reg-loop-park-site-count pk)]
         (when
           (= picks 0)
-          (compiler-reg-loop-park-clear-marks! sc picks)
+          (compiler-reg-loop-park-clear-marks! sc picks resident-count)
           (return 0))
         (for [index (iterator.range 0 picks)]
           (set! used (bit-or used (array-ref sc.pick-mask index))))
@@ -17786,7 +17797,7 @@
             site-count
             used)
           (set! (array-ref pk.counts 1) site-base)
-          (compiler-reg-loop-park-clear-marks! sc picks)
+          (compiler-reg-loop-park-clear-marks! sc picks resident-count)
           (return 0))
         (compiler-reg-loop-park-commit!
           ctx
@@ -17798,7 +17809,7 @@
           site-count
           resident-count
           total)
-        (compiler-reg-loop-park-clear-marks! sc picks)
+        (compiler-reg-loop-park-clear-marks! sc picks resident-count)
         picks))))
 
 ;; Loop headers innermost-first: a header depth is the number of loops that
@@ -18413,6 +18424,25 @@
             (not (= mask 0))
             (compiler-reg-call-hole-register-homed? assignments var))
           (set! rescued (bit-or rescued mask)))))
+    ;; An S3 piece of a spilled resident is the resident inside its loop: the
+    ;; piece coming out of memory is that loop's rescue too.
+    (for [slot (iterator.range 0 (compiler-reg-loop-park-parked-count pk))]
+      (let
+        [k : i64 (array-ref pk.park-loop slot)]
+        (when
+          (and
+            (not
+              (=
+                (bit-and
+                  (shr
+                    (array-ref pk.resident-mask (array-ref pk.park-var slot))
+                    k)
+                  1)
+                0))
+            (compiler-reg-call-hole-register-homed?
+              assignments
+              (array-ref pk.park-carrier slot)))
+          (set! rescued (bit-or rescued (shl 1 k))))))
     (for [k (iterator.range 0 loops)]
       (when
         (= (bit-and (shr rescued k) 1) 0)
@@ -18692,11 +18722,14 @@
                   none
                   (let
                     [benefit : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+                    ;; Only P3c's through-value pick reads it.
                     [_benefit : unit
-                      (compiler-reg-call-hole-ref-weights!
-                        (&mut benefit)
-                        seq
-                        weights)]
+                      (unless
+                        split?
+                        (compiler-reg-call-hole-ref-weights!
+                          (&mut benefit)
+                          seq
+                          weights))]
                     [ineligible : live.CompilerLiveI64Set
                       (compiler-reg-ineligible-vars-non-params
                         type-segment-bases

@@ -88,6 +88,26 @@
         (cast 0 : i32)))
     false))
 
+;; Windows lets DeleteFileA remove `path` while an `io.file-open` read handle is
+;; open only when that open shared delete access (FILE_SHARE_DELETE); the file
+;; is gone once the handle closes.
+(define (fixture-read-open-shares-delete? [path : (& path str)]) : bool
+  (let
+    [contents : String "shared"]
+    (if (not
+      (= (io.write-file-status path (byte_buf.str-as-bytes (& contents))) 0))
+      false
+      (match (io.file-open path (io.OpenRead))
+        [(io.ErrIoFile _) false]
+        [(io.OkIoFile handle)
+          (let
+            [remove-status : i64 (fs.remove-file-status path)]
+            [close-ok : bool (io.result-unit-ok? (io.file-close handle))]
+            (and
+              (= remove-status 0)
+              close-ok
+              (not (io.file-exists? (string.copy path)))))]))))
+
 (define (fixture-cleanup
   [created : String]
   [sentinel : String]
@@ -122,6 +142,7 @@
     [outside : String (fixture-path-join (& base) "outside")]
     [junction : String (fixture-path-join (& root) "link")]
     [created : String (fixture-path-join (& root) "created.txt")]
+    [shared : String (fixture-path-join (& root) "shared.txt")]
     [sentinel : String (fixture-path-join (& outside) "sentinel.txt")]
     (cond
       [(not (= (fs.mkdir-status (& base)) 0)) 1]
@@ -247,12 +268,16 @@
                                         reparse-result)
                                       root-close-ok))
                                     11
-                                    (if (fixture-cleanup
-                                      created
-                                      sentinel
-                                      junction
-                                      root
-                                      outside
-                                      base)
-                                      42
-                                      12)))))))))))))))])))
+                                    (if (not
+                                      (fixture-read-open-shares-delete?
+                                        (& shared)))
+                                      13
+                                      (if (fixture-cleanup
+                                        created
+                                        sentinel
+                                        junction
+                                        root
+                                        outside
+                                        base)
+                                        42
+                                        12))))))))))))))))])))

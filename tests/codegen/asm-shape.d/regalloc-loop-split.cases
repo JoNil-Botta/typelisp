@@ -1,0 +1,16 @@
+# S3 loop-region live-range split (gate stage2-regalloc-backend-asm-shape-gates).
+# See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+# The inner loop's loop-local `d2` lives across an inlined Newton loop while
+# the bound and the outer index are live over the whole function and read once
+# per inner iteration. Splitting the bound around the inner loop hands its
+# register to `d2`: the hot loop stores nothing to the frame.
+case loop-split-loop-local-register
+source tests/integration/regalloc_loop_split.tl
+target linux-x86_64
+opt 2
+in fn _tl_regalloc_loop_split_forces
+narrow ranges:^[.]L[^ ]*while_body[.]4__bce_fast:$~^[.]L[^ ]*while_exit[.]5__bce_fast:$
+count = 0 ^[[:space:]]+movq %r[a-z0-9]+, [0-9]+\(%rsp\)$

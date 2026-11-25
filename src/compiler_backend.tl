@@ -23311,28 +23311,47 @@
               hole-types
               (& hole-reg-plan)
               hole-temp-start
-              cold-call-split?)
+              cold-call-split?
+              false)
             (compiler_regalloc.compiler-reg-call-hole-split-none
               hole-func
               hole-vars
               hole-reg-plan
               hole-types
               hole-temp-start))]
+        ;; S3: the P3c round again, in SPLIT mode. Where a hot loop's spilled
+        ;; resident loses its register to a sprawling value that the loop
+        ;; barely reads, split that value around the loop (copy in at the
+        ;; preheader, write back on the exits) so it keeps its register
+        ;; outside the loop and competes inside it only on its in-loop
+        ;; references, and REPLAN. Kept only when the replanned function's
+        ;; estimated cost, split copies included, is strictly lower.
+        [loop-split : compiler_regalloc.CompilerRegCallHoleSplit
+          (if scalar-plan?
+            (match loop-park-split
+              [(Split park-func _ park-plan park-types park-threshold)
+                (compiler_regalloc.compiler-reg-loop-park-rewrite-function
+                  type-segment-bases
+                  fn-abi
+                  (& park-func)
+                  park-types
+                  (& park-plan)
+                  park-threshold
+                  cold-call-split?
+                  true)])
+            loop-park-split)]
         ;; Everything downstream of the initial plan consumes the SPLIT view:
         ;; the caller-save rewrite, storage coloring and emission. When every
         ;; round declines, these are the pre-split values unchanged.
         [split-blocks : compiler_ir_types.CompilerIrBlockList
-          (compiler_regalloc.compiler-reg-call-hole-split-blocks
-            (& loop-park-split))]
+          (compiler_regalloc.compiler-reg-call-hole-split-blocks (& loop-split))]
         [split-vars : i64
-          (compiler_regalloc.compiler-reg-call-hole-split-vars
-            (& loop-park-split))]
+          (compiler_regalloc.compiler-reg-call-hole-split-vars (& loop-split))]
         [split-types : compiler_regalloc.CompilerRegVarTypes
-          (compiler_regalloc.compiler-reg-call-hole-split-types
-            (& loop-park-split))]
+          (compiler_regalloc.compiler-reg-call-hole-split-types (& loop-split))]
         [split-reg-plan : compiler_regalloc.CompilerRegPlan
           (compiler_regalloc.compiler-reg-call-hole-split-plan
-            (be_state.compiler-backend-global-shared-view loop-park-split))]
+            (be_state.compiler-backend-global-shared-view loop-split))]
         ;; The caller-save rewrite runs whenever scalar register allocation is
         ;; enabled.
         [call-save-enabled : bool

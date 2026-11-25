@@ -436,6 +436,62 @@
         (fs.try-remove-dir-if-exists (& root))
         unit)]))
 
+(test
+  tli-sysroot-dir-override-probe
+  (tli-test-mkdir "target")
+  (tli-test-mkdir "target/exp")
+  (match (fs.try-create-temp-dir-in "target/exp" "tli-override")
+    [(ErrIoString error) (io.panic (io.error-message error))]
+    [(OkIoString root)
+      (let
+        [missing-dir : String (fs.path-join (& root) "absent")]
+        [top-file : String (fs.path-join (& root) "arena.tl")]
+        [nested-dir : String (fs.path-join (& root) "compress")]
+        [nested-file : String (fs.path-join (& nested-dir) "adler32.tl")]
+        (when
+          (sysroot.tli-sysroot-dir-overrides-stdlib? (& missing-dir))
+          (io.panic "absent directory reported stdlib override"))
+        (when
+          (sysroot.tli-sysroot-dir-overrides-module?
+            (& root)
+            "arena.tl"
+            "(define x : i64 1)\n")
+          (io.panic "missing file reported stdlib override"))
+        (match (io.try-write-file
+          (& top-file)
+          (byte_buf.str-as-bytes "(define x : i64 1)\n"))
+          [(OkIoUnit) unit]
+          [(ErrIoUnit error) (io.panic (io.error-message error))])
+        (when
+          (sysroot.tli-sysroot-dir-overrides-module?
+            (& root)
+            "arena.tl"
+            "(define x : i64 1)\n")
+          (io.panic "exact-matching file reported stdlib override"))
+        (unless
+          (sysroot.tli-sysroot-dir-overrides-module?
+            (& root)
+            "arena.tl"
+            "(define x : i64 2)\n")
+          (io.panic "modified top-level file missed stdlib override"))
+        (tli-test-mkdir (& nested-dir))
+        (match (io.try-write-file
+          (& nested-file)
+          (byte_buf.str-as-bytes "(define y : i64 9)\n"))
+          [(OkIoUnit) unit]
+          [(ErrIoUnit error) (io.panic (io.error-message error))])
+        (unless
+          (sysroot.tli-sysroot-dir-overrides-module?
+            (& root)
+            "compress/adler32.tl"
+            "(define y : i64 0)\n")
+          (io.panic "modified nested file missed stdlib override"))
+        (fs.try-remove-file-if-exists (& nested-file))
+        (fs.try-remove-dir-if-exists (& nested-dir))
+        (fs.try-remove-file-if-exists (& top-file))
+        (fs.try-remove-dir-if-exists (& root))
+        unit)]))
+
 (define (tli-test-extract-io) : tli.TliBundle
   (api.compiler-typecheck-reset-load-session!)
   (let

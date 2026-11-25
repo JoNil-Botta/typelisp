@@ -12615,6 +12615,22 @@
                               (and
                                 (compiler-backend-divmod-op? op)
                                 (string.eq rhs-reg staging))]
+                            ;; Div/mod has no `op src, dst` form, but a
+                            ;; divisor already homed in a register other than
+                            ;; the dividend's %rax and the %rdx that cqto/xor
+                            ;; writes is a valid idiv/div operand as it stands.
+                            ;; Copying it into a scavenged scratch costs a move,
+                            ;; and when no scratch is free a save/restore of a
+                            ;; live register around every division -- a store
+                            ;; per iteration of a division loop.
+                            [direct-divisor : String
+                              (if (and
+                                (compiler-backend-divmod-op? op)
+                                (not (string.eq rhs-reg ""))
+                                (not (string.eq rhs-reg staging))
+                                (not (string.eq rhs-reg "%rdx")))
+                                (string.copy rhs-reg)
+                                "")]
                             (match (if (if (string.eq rhs-reg "")
                               false
                               (not (string.eq rhs-reg staging)))
@@ -12644,74 +12660,93 @@
                                       result-ty
                                       backend-state)))]
                               [(No)
-                                ;; A directly encodable register source has
-                                ;; already been selected above. Defer the
-                                ;; side-effecting scratch request until this
-                                ;; staged fallback is certain to consume it.
-                                (let
-                                  [scav-rhs : String
-                                    (be_operand.compiler-backend-scavenge-reg-here
-                                      (if preserve-rhs-before-lhs?
-                                        (compiler-backend-scavenge-exclude-regs2
-                                          (be_state.compiler-backend-global-shared-view
-                                            staging)
-                                          lhs-reg)
-                                        (compiler-backend-scavenge-exclude-regs2
-                                          (be_state.compiler-backend-global-shared-view
-                                            staging)
-                                          ""))
-                                      7
-                                      "%r8"
-                                      backend-state)]
-                                  [rhs-asm
-                                    (try
-                                      (be_operand.compiler-backend-emit-load-value
-                                        assignments
-                                        rhs
-                                        (be_state.compiler-backend-global-shared-view
-                                          scav-rhs)
-                                        backend-state))]
+                                (if (not (string.eq direct-divisor ""))
                                   (Ok
-                                    (if preserve-rhs-before-lhs?
-                                      (str_cat.str-cat
-                                        rhs-asm
-                                        lhs-asm
-                                        (compiler-backend-binop-asm
-                                          type-segment-bases
-                                          op
-                                          operand-ty
-                                          scav-rhs
-                                          (be_state.compiler-backend-global-shared-view
-                                            staging)
-                                          ""
-                                          ""
-                                          backend-state)
-                                        (be_operand.compiler-backend-emit-store-typed-var
+                                    (str_cat.str-cat
+                                      lhs-asm
+                                      (compiler-backend-binop-asm
+                                        type-segment-bases
+                                        op
+                                        operand-ty
+                                        direct-divisor
+                                        (string.copy staging)
+                                        ""
+                                        ""
+                                        backend-state)
+                                      (be_operand.compiler-backend-emit-store-typed-var
+                                        assignments
+                                        dst
+                                        staging
+                                        result-ty
+                                        backend-state)))
+                                  ;; A directly encodable register source has
+                                  ;; already been selected above. Defer the
+                                  ;; side-effecting scratch request until this
+                                  ;; staged fallback is certain to consume it.
+                                  (let
+                                    [scav-rhs : String
+                                      (be_operand.compiler-backend-scavenge-reg-here
+                                        (if preserve-rhs-before-lhs?
+                                          (compiler-backend-scavenge-exclude-regs2
+                                            (be_state.compiler-backend-global-shared-view
+                                              staging)
+                                            lhs-reg)
+                                          (compiler-backend-scavenge-exclude-regs2
+                                            (be_state.compiler-backend-global-shared-view
+                                              staging)
+                                            ""))
+                                        7
+                                        "%r8"
+                                        backend-state)]
+                                    [rhs-asm
+                                      (try
+                                        (be_operand.compiler-backend-emit-load-value
                                           assignments
-                                          dst
+                                          rhs
                                           (be_state.compiler-backend-global-shared-view
-                                            staging)
-                                          result-ty
-                                          backend-state))
-                                      (str_cat.str-cat
-                                        lhs-asm
-                                        rhs-asm
-                                        (compiler-backend-binop-asm
-                                          type-segment-bases
-                                          op
-                                          operand-ty
-                                          scav-rhs
-                                          (be_state.compiler-backend-global-shared-view
-                                            staging)
-                                          ""
-                                          ""
-                                          backend-state)
-                                        (be_operand.compiler-backend-emit-store-typed-var
-                                          assignments
-                                          dst
-                                          staging
-                                          result-ty
-                                          backend-state)))))]))))])]))))))))
+                                            scav-rhs)
+                                          backend-state))]
+                                    (Ok
+                                      (if preserve-rhs-before-lhs?
+                                        (str_cat.str-cat
+                                          rhs-asm
+                                          lhs-asm
+                                          (compiler-backend-binop-asm
+                                            type-segment-bases
+                                            op
+                                            operand-ty
+                                            scav-rhs
+                                            (be_state.compiler-backend-global-shared-view
+                                              staging)
+                                            ""
+                                            ""
+                                            backend-state)
+                                          (be_operand.compiler-backend-emit-store-typed-var
+                                            assignments
+                                            dst
+                                            (be_state.compiler-backend-global-shared-view
+                                              staging)
+                                            result-ty
+                                            backend-state))
+                                        (str_cat.str-cat
+                                          lhs-asm
+                                          rhs-asm
+                                          (compiler-backend-binop-asm
+                                            type-segment-bases
+                                            op
+                                            operand-ty
+                                            scav-rhs
+                                            (be_state.compiler-backend-global-shared-view
+                                              staging)
+                                            ""
+                                            ""
+                                            backend-state)
+                                          (be_operand.compiler-backend-emit-store-typed-var
+                                            assignments
+                                            dst
+                                            staging
+                                            result-ty
+                                            backend-state))))))]))))])]))))))))
 
 (define (compiler-backend-rax-forwardable-binop?
   [types : compiler_regalloc.CompilerRegVarTypes]

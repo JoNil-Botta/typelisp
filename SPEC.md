@@ -4089,15 +4089,19 @@ stdlib source table through it. The embedded stdlib therefore carries no
 inline tests; those compile only under `--cfg test` from the repository
 sources (#8713). It carries no prose comment text either (#8659). The stdlib comptime image is
 embedded with `include-bin` instead, as a compiler-owned catalog envelope
-(`__typelisp_embedded_stdlib_tlci_v3__`): a header with the total raw length,
+(`__typelisp_embedded_stdlib_tlci_v4__`): a header with the total raw length,
 index end, frame count, index hash, stream length and group count; one stored
 model in the same code-lengths form as the fixed model; a group table of 32-byte
-records; an index of 48-byte frame records with names; and one token stream that
+records; an index of 80-byte frame records with names, each ending with the
+SHA-256 of its expanded frame so a `.tli` macro handle's image identity is read
+without expanding the frame; and one token stream that
 expands to every frame's `.tlci` bytes back to back. Frame zero is its own group
 and the rest come sixteen at a time, so a reader expands only the group holding
 the frame it needs: a plain compile expands the surface frame alone, and a group
 is one window, so a match may reach into the frames before it but never across
-groups. The decoded group belongs to the compile that asked for it and is
+groups. A reader first expands only the prefix of the group that ends at the
+frame it needs, and the whole group once a later frame lies past that prefix.
+The decoded group belongs to the compile that asked for it and is
 released with it; `inspect embedded:stdlib.tlci` expands every group and
 re-aggregates the frames into the canonical `.tlci` image.
 

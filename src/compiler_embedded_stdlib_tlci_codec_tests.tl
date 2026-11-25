@@ -1,10 +1,12 @@
 ;; Catalog envelope coverage: the stored model parse, the group index, the
 ;; grouped decode path, and malformed or truncated envelopes.
+(import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.byte_buf_core as buf)
 (import compiler_embedded_stdlib_tlci_codec as codec)
 (import compiler_embedded_stdlib_tlci_frames as frames)
 (import compiler_lzss as lzss)
+(import compiler_tli_codec as tli_codec)
 (import tlci_core as tlci)
 
 ;; A frame image with the TLCI header shape the index records checksums for.
@@ -42,6 +44,15 @@
 
 ;; Two frames in two groups: the fixed model is stored verbatim, group 0 holds
 ;; frame 0 alone and group 1 the second frame.
+(define (tlci-codec-test-push-sha256!
+  [out : (&mut out buf.ByteBufBuilder)]
+  [frame : (& frame (__tl_dyn-array u8))]) : unit
+  (let
+    [digest : (Array u8 32)
+      (tli_codec.tli-module-digest frame 0 (array-length frame))]
+    (for [byte (iterator.range 0 32)]
+      (buf.byte-buf-builder-push out (array-ref digest byte)))))
+
 (define (tlci-codec-test-envelope) : (__tl_dyn-array u8)
   (let
     [model : lzss.CompilerLzssModel (tlci-codec-test-model)]
@@ -85,19 +96,22 @@
     (tlci.tlci-push-u64! (&mut out) (string.string-length (& second-stream)))
     (tlci.tlci-push-u64! (&mut out) (array-length first))
     (tlci.tlci-push-u64! (&mut out) (array-length second))
-    ;; Frame records: name off, name len, raw off, raw len, group, checksum.
+    ;; Frame records: name off, name len, raw off, raw len, group, checksum,
+    ;; frame SHA-256.
     (tlci.tlci-push-u64! (&mut out) (+ directory (* 2 record-bytes)))
     (tlci.tlci-push-u64! (&mut out) 0)
     (tlci.tlci-push-u64! (&mut out) 0)
     (tlci.tlci-push-u64! (&mut out) (array-length first))
     (tlci.tlci-push-u64! (&mut out) 0)
     (tlci.tlci-push-u64! (&mut out) 100)
+    (tlci-codec-test-push-sha256! (&mut out) (& first))
     (tlci.tlci-push-u64! (&mut out) (+ directory (* 2 record-bytes)))
     (tlci.tlci-push-u64! (&mut out) name-bytes)
     (tlci.tlci-push-u64! (&mut out) (array-length first))
     (tlci.tlci-push-u64! (&mut out) (array-length second))
     (tlci.tlci-push-u64! (&mut out) 1)
     (tlci.tlci-push-u64! (&mut out) 101)
+    (tlci-codec-test-push-sha256! (&mut out) (& second))
     (buf.byte-buf-builder-append-string (&mut out) (string.copy (& name)))
     (buf.byte-buf-builder-append-string (&mut out) first-stream)
     (buf.byte-buf-builder-append-string (&mut out) second-stream)

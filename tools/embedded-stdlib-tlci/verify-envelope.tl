@@ -26,21 +26,23 @@
     [(Err _) false]
     [(Ok catalog)
       ;; Case 0 breaks the first frame's checksum, case 1 a byte of the first
-      ;; group's token stream, and case 2 the last frame's checksum. None may
-      ;; produce a valid ordinary catalog.
-      (for [case (iterator.range 0 3)]
+      ;; group's token stream, case 2 the last frame's checksum, and case 3
+      ;; the last frame's recorded SHA-256. None may produce a valid ordinary
+      ;; catalog.
+      (for [case (iterator.range 0 4)]
         (let
           [changed : (__tl_dyn-array u8) (clone.deep (deref envelope))]
           [record : i64
             (frames.compiler-embedded-stdlib-tlci-frames-record
               catalog
-              (if (= case 2)
+              (if (>= case 2)
                 (- catalog.count 1)
                 0))]
           [offset : i64
-            (if (= case 1)
-              catalog.index-end
-              (+ record 40))]
+            (cond
+              [(= case 1) catalog.index-end]
+              [(= case 3) (+ record 48)]
+              [else (+ record 40)])]
           (set!
             (array-ref changed offset)
             (cast (bit-xor (cast (array-ref changed offset) : i64) 128) : u8))

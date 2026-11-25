@@ -715,20 +715,13 @@
 (cfg
   embedded-stdlib-tlci
   (define (tli-extract-native-catalog-digest [generation : i64]) : (Array u8 32)
-    (with-arena
-      digest-scratch
-      (let
-        [frame : i64
-          (tlci.compiler-embedded-stdlib-tlci-session-index generation)]
-        [bytes : (__tl_dyn-array u8)
-          (unsafe
-            ;; The decoder caches in its own arena. Only the temporary
-            ;; uncompressed frame bytes stay in digest-scratch.
-            (tlci.compiler-embedded-stdlib-tlci-decode-frame frame true))]
-        (when
-          (= (array-length (& bytes)) 0)
-          (io.panic "TLI native macro catalog is unavailable"))
-        (codec.tli-module-digest (& bytes) 0 (array-length (& bytes)))))))
+    (let
+      [frame : i64
+        (tlci.compiler-embedded-stdlib-tlci-session-index generation)]
+      (unless
+        (tlci.compiler-embedded-stdlib-tlci-frame-present? frame)
+        (io.panic "TLI native macro catalog is unavailable"))
+      (tlci.compiler-embedded-stdlib-tlci-frame-sha256 frame))))
 
 (define (tli-extract-macro
   [ctx : tc.TcContext]

@@ -256,19 +256,21 @@ stamp_index() {
     u64 "$index_hash" | dd of="$work/v3" bs=1 seek=60 conv=notrunc 2>/dev/null
 }
 # magic(36) + raw, index end, count, hash, stream bytes, groups(84),
-# model(4413), one group record(32), one frame record(48), then the stream.
+# model(4413), one group record(32), one frame record(80: six words and the
+# frame image SHA-256), then the stream.
 model_start=84
 model_bytes=4413
 group_table=$((model_start + model_bytes))
 directory=$((group_table + 32))
-index_end=$((directory + 48))
+index_end=$((directory + 80))
 write_v3() {
     {
-        printf '__typelisp_embedded_stdlib_tlci_v3__'
+        printf '__typelisp_embedded_stdlib_tlci_v4__'
         u64 176; u64 "$index_end"; u64 1; u64 0; u64 1; u64 1
         dd if=/dev/zero bs="$model_bytes" count=1 2>/dev/null
         u64 0; u64 1; u64 0; u64 176
         u64 "$index_end"; u64 0; u64 0; u64 176; u64 0; u64 1
+        dd if=/dev/zero bs=32 count=1 2>/dev/null
         printf 'x'
     } > "$work/v3"
     stamp_index "$index_end"

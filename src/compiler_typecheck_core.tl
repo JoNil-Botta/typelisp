@@ -37,7 +37,6 @@
 (import token)
 (cfg compile-profile (import stdlib.profile))
 (import compiler_tli_hydrate as tli_hydrate)
-(cfg embedded-stdlib-tlci (import compiler_tli_codec as tli_codec))
 (cfg
   embedded-stdlib-tlci
   (import compiler_embedded_stdlib_tlci as embedded_tlci))
@@ -116081,45 +116080,9 @@
 
 (cfg
   embedded-stdlib-tlci
-  (define tc-tli-native-catalog-digest-ready : (Array bool 512)
-    (make-array bool 512)))
-(cfg
-  embedded-stdlib-tlci
-  (define tc-tli-native-catalog-digest-vals : (Array (Array u8 32) 512)
-    (make-array (Array u8 32) 512)))
-
-(cfg
-  embedded-stdlib-tlci
   (define (tc-tli-native-catalog-digest [generation : i64]) : (Array u8 32)
-    (let
-      [frame : i64
-        (embedded_tlci.compiler-embedded-stdlib-tlci-session-index generation)]
-      (if (and
-        (>= frame 0)
-        (< frame 512)
-        (array-ref tc-tli-native-catalog-digest-ready frame))
-        (array-ref tc-tli-native-catalog-digest-vals frame)
-        (let
-          [digest : (Array u8 32)
-            (with-arena
-              digest-scratch
-              (let
-                [bytes : (__tl_dyn-array u8)
-                  (unsafe
-                    (embedded_tlci.compiler-embedded-stdlib-tlci-decode-frame
-                      frame
-                      true))]
-                (if (= (array-length (& bytes)) 0)
-                  (make-array u8 32)
-                  (tli_codec.tli-module-digest
-                    (& bytes)
-                    0
-                    (array-length (& bytes))))))]
-          (when
-            (and (>= frame 0) (< frame 512))
-            (set! (array-ref tc-tli-native-catalog-digest-vals frame) digest)
-            (set! (array-ref tc-tli-native-catalog-digest-ready frame) true))
-          digest)))))
+    (embedded_tlci.compiler-embedded-stdlib-tlci-frame-sha256
+      (embedded_tlci.compiler-embedded-stdlib-tlci-session-index generation))))
 
 (cfg
   embedded-stdlib-tlci

@@ -7,6 +7,7 @@
 (import stdlib.byte_buf_core as buf)
 (import compiler_embedded_stdlib_tlci_codec as codec)
 (import compiler_lzss as lzss)
+(import compiler_tli_codec as tli_codec)
 (import tlci_core as tlci)
 
 (defstruct CompilerEmbeddedStdlibTlciFrames
@@ -315,6 +316,21 @@
     [record : i64 (compiler-embedded-stdlib-tlci-frames-record catalog index)]
     (tlci.tlci-read-u64 payload (+ record 24))))
 
+;; The SHA-256 of frame `index`'s expanded image, as the encoder recorded it.
+(define (compiler-embedded-stdlib-tlci-frames-frame-sha256
+  [payload : (& payload (__tl_dyn-array u8))]
+  [catalog : (& catalog CompilerEmbeddedStdlibTlciFrames)]
+  [index : i64]) : (Array u8 32)
+  (let
+    [start : i64
+      (+
+        (compiler-embedded-stdlib-tlci-frames-record catalog index)
+        (codec.compiler-embedded-stdlib-tlci-codec-record-sha256-offset))]
+    [digest : (Array u8 32) (make-array u8 32)]
+    (for [byte (iterator.range 0 32)]
+      (set! (array-ref digest byte) (array-ref payload (+ start byte))))
+    digest))
+
 ;; Expand one group of frames, or only the prefix of it that ends at
 ;; `raw-limit` (a caller that needs one early frame then pays for that frame).
 (define (compiler-embedded-stdlib-tlci-frames-decode-group-prefix
@@ -410,6 +426,20 @@
               (return
                 (Err
                   "embedded stdlib tlci frames: frame checksum identity mismatch")))
+            (unless
+              (tli_codec.tli-digest-eq?
+                (&
+                  (tli_codec.tli-module-digest
+                    (& frame)
+                    0
+                    (array-length (& frame))))
+                (&
+                  (compiler-embedded-stdlib-tlci-frames-frame-sha256
+                    payload
+                    catalog
+                    index)))
+              (return
+                (Err "embedded stdlib tlci frames: frame SHA-256 mismatch")))
             (set! (array-ref images index) frame))
           (set! index (+ index 1))))
       (set! group (+ group 1)))

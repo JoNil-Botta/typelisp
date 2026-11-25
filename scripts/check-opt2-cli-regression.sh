@@ -99,14 +99,90 @@ print_asm_fingerprint() {
 }
 
 rm -f "$GENERATED"
+mkdir -p "$WORKDIR/work-smoke" "$WORKDIR/work-ref" "$WORKDIR/work-opt2" "$WORKDIR/work-opt1"
 
-echo "[opt2-cli-gate] optimizer inline tests at opt2"
-optimizer_status=0
-"$COMPILER" test src/tests/compiler_optimize_smoke.tl \
-    --stdlib-root stdlib \
-    --stdlib-root src \
-    --opt-level 2 \
-    >"$OPTIMIZER_STDOUT" 2>"$OPTIMIZER_STDERR" || optimizer_status=$?
+CROSS_OPT1="$WORKDIR/cli-opt2built-opt1.s"
+REF_STDOUT="$WORKDIR/ref.stdout"
+REF_STDERR="$WORKDIR/ref.stderr"
+CROSS_STDOUT="$WORKDIR/cross.stdout"
+CROSS_STDERR="$WORKDIR/cross.stderr"
+
+ACTIVE_BG_PIDS=
+cleanup_bg_pids() {
+    for _bg_pid in $ACTIVE_BG_PIDS; do
+        kill "$_bg_pid" 2>/dev/null || true
+    done
+    for _bg_pid in $ACTIVE_BG_PIDS; do
+        wait "$_bg_pid" 2>/dev/null || true
+    done
+    ACTIVE_BG_PIDS=
+}
+trap 'cleanup_bg_pids' EXIT
+trap 'cleanup_bg_pids; exit 1' HUP INT TERM
+
+# Phase 1: build the release opt2 compiler concurrently with the independent
+# optimizer inline tests (and, on Windows/standalone runs without a supplied
+# reference assembly, the converged reference @opt1 compile). Both workers stay
+# within the gate's 7680 MiB budget while keeping isolated workdirs.
+echo "[opt2-cli-gate] build release opt2 compiler ($NL_BOOTSTRAP_TARGET) alongside optimizer inline tests at opt2"
+if [ "$REFERENCE_SUPPLIED" -eq 1 ]; then
+    echo "[opt2-cli-gate] reference: reuse validated build-invariance stage4 src/main @ opt1 assembly"
+    echo "[opt2-cli-gate] reference path: $REF_OPT1"
+else
+    echo "[opt2-cli-gate] reference: converged compiler compiles src/main.tl at opt1 (after optimizer inline tests)"
+fi
+
+(
+    scripts/run-memory-bounded.sh --limit-mib 8192 \
+        --report "$WORKDIR/build.memory" -- \
+        "$COMPILER" build \
+        --manifest-path typelisp.pkg \
+        --profile release \
+        --opt-level 2 \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        --stdlib-root stdlib \
+        --stdlib-root src \
+        >"$BUILD_STDOUT" 2>"$BUILD_STDERR"
+) &
+_pid_build=$!
+
+(
+    optimizer_status=0
+    (
+        cd "$WORKDIR/work-smoke" &&
+        "$COMPILER" test "$ROOT/src/tests/compiler_optimize_smoke.tl" \
+            --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/src" \
+            --opt-level 2
+    ) >"$OPTIMIZER_STDOUT" 2>"$OPTIMIZER_STDERR" || optimizer_status=$?
+    printf '%s\n' "$optimizer_status" > "$WORKDIR/optimizer.status"
+    [ "$optimizer_status" -eq 0 ] || exit "$optimizer_status"
+    if [ "$REFERENCE_SUPPLIED" -eq 0 ]; then
+        ref_status=0
+        (
+            cd "$WORKDIR/work-ref" &&
+            "$COMPILER" compile "$ROOT/src/main.tl" \
+                -o "$REF_OPT1" \
+                --target "$NL_BOOTSTRAP_TARGET" \
+                $(native_target_cfg_args) \
+                --opt-level 1 \
+                --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/src"
+        ) >"$REF_STDOUT" 2>"$REF_STDERR" || ref_status=$?
+        printf '%s\n' "$ref_status" > "$WORKDIR/ref.status"
+        [ "$ref_status" -eq 0 ] || exit "$ref_status"
+    fi
+) &
+_pid_aux=$!
+ACTIVE_BG_PIDS="$_pid_build $_pid_aux"
+
+_rc_build=0
+_rc_aux=0
+wait "$_pid_build" || _rc_build=$?
+wait "$_pid_aux" || _rc_aux=$?
+ACTIVE_BG_PIDS=
+
+optimizer_status=$(cat "$WORKDIR/optimizer.status" 2>/dev/null || printf '1')
 if [ "$optimizer_status" -ne 0 ]; then
     print_log_pair \
         "opt2 optimizer inline tests failed (status $optimizer_status)" \
@@ -114,21 +190,18 @@ if [ "$optimizer_status" -ne 0 ]; then
         "$OPTIMIZER_STDERR"
     exit 1
 fi
-
-echo "[opt2-cli-gate] build release opt2 compiler ($NL_BOOTSTRAP_TARGET)"
-if ! run_with_heartbeat_capture \
-    "build release opt2 compiler" \
-    "$BUILD_STDOUT" \
-    "$BUILD_STDERR" \
-    scripts/run-memory-bounded.sh --limit-mib 8192 \
-    --report "$WORKDIR/build.memory" -- \
-    "$COMPILER" build \
-    --manifest-path typelisp.pkg \
-    --profile release \
-    --opt-level 2 \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    --stdlib-root stdlib \
-    --stdlib-root src; then
+if [ "$REFERENCE_SUPPLIED" -eq 0 ]; then
+    ref_status=$(cat "$WORKDIR/ref.status" 2>/dev/null || printf '1')
+    if [ "$ref_status" -ne 0 ]; then
+        print_log_pair "opt2-cli-gate reference compile failed" "$REF_STDOUT" "$REF_STDERR"
+        exit 1
+    fi
+fi
+if [ "$_rc_aux" -ne 0 ]; then
+    echo "[opt2-cli-gate] auxiliary worker failed (status $_rc_aux)" >&2
+    exit 1
+fi
+if [ "$_rc_build" -ne 0 ]; then
     print_log_pair "opt2-cli-gate build failed" "$BUILD_STDOUT" "$BUILD_STDERR"
     exit 1
 fi
@@ -146,77 +219,53 @@ if [ ! -x "$GENERATED" ]; then
     exit 1
 fi
 
-echo "[opt2-cli-gate] generated compiler compiles src/main.tl at opt2"
-if ! run_with_heartbeat_capture \
-    "opt2 compiler compiles cli.tl" \
-    "$COMPILE_STDOUT" \
-    "$COMPILE_STDERR" \
-    "$GENERATED" compile src/main.tl \
-    -o "$ASM" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --opt-level 2 \
-    --stdlib-root stdlib \
-    --stdlib-root src; then
+# Phase 2: run the crash gate ($GENERATED@opt2) and cross-fixpoint compile
+# ($GENERATED@opt1) concurrently in isolated workdirs. Both read the same
+# immutable $GENERATED binary and source tree while writing distinct outputs.
+echo "[opt2-cli-gate] generated compiler compiles src/main.tl at opt2 and opt1 concurrently"
+(
+    cd "$WORKDIR/work-opt2" &&
+    "$GENERATED" compile "$ROOT/src/main.tl" \
+        -o "$ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --opt-level 2 \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/src"
+) >"$COMPILE_STDOUT" 2>"$COMPILE_STDERR" &
+_pid_opt2=$!
+
+(
+    cd "$WORKDIR/work-opt1" &&
+    "$GENERATED" compile "$ROOT/src/main.tl" \
+        -o "$CROSS_OPT1" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --opt-level 1 \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/src"
+) >"$CROSS_STDOUT" 2>"$CROSS_STDERR" &
+_pid_opt1=$!
+ACTIVE_BG_PIDS="$_pid_opt2 $_pid_opt1"
+
+_rc_opt2=0
+_rc_opt1=0
+wait "$_pid_opt2" || _rc_opt2=$?
+wait "$_pid_opt1" || _rc_opt1=$?
+ACTIVE_BG_PIDS=
+
+if [ "$_rc_opt2" -ne 0 ]; then
     print_log_pair "opt2-cli-gate compile failed" "$COMPILE_STDOUT" "$COMPILE_STDERR"
     exit 1
 fi
-
 if [ ! -s "$ASM" ]; then
     print_log_pair "opt2-cli-gate compile output" "$COMPILE_STDOUT" "$COMPILE_STDERR"
     echo "[opt2-cli-gate] opt2 compiler did not emit assembly: $ASM" >&2
     exit 1
 fi
-
 echo "[opt2-cli-gate] wrote $ASM"
 
-# Correctness cross-fixpoint. The crash gate above only proves the opt2-built
-# compiler does not crash and emits non-empty assembly; it cannot see a
-# miscompile that still produces output. A CORRECT opt2-built compiler must
-# emit byte-identical opt1 assembly to the validated reference compiler, so we
-# compare opt2-built@opt1 against that reference over src/main.tl. No second
-# bootstrap: this reuses $GENERATED (built above) plus one generated-compiler
-# single-file compile. A standalone invocation also performs the local
-# reference compile below.
-CROSS_OPT1="$WORKDIR/cli-opt2built-opt1.s"
-REF_STDOUT="$WORKDIR/ref.stdout"
-REF_STDERR="$WORKDIR/ref.stderr"
-CROSS_STDOUT="$WORKDIR/cross.stdout"
-CROSS_STDERR="$WORKDIR/cross.stderr"
-
-if [ "$REFERENCE_SUPPLIED" -eq 1 ]; then
-    echo "[opt2-cli-gate] reference: reuse validated build-invariance stage4 src/main @ opt1 assembly"
-    echo "[opt2-cli-gate] reference path: $REF_OPT1"
-else
-    echo "[opt2-cli-gate] reference: converged compiler compiles src/main.tl at opt1"
-    if ! run_with_heartbeat_capture \
-        "reference compiler compiles cli.tl at opt1" \
-        "$REF_STDOUT" \
-        "$REF_STDERR" \
-        "$COMPILER" compile src/main.tl \
-        -o "$REF_OPT1" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --opt-level 1 \
-        --stdlib-root stdlib \
-        --stdlib-root src; then
-        print_log_pair "opt2-cli-gate reference compile failed" "$REF_STDOUT" "$REF_STDERR"
-        exit 1
-    fi
-fi
-
-echo "[opt2-cli-gate] cross: opt2-built compiler compiles src/main.tl at opt1"
-if ! run_with_heartbeat_capture \
-    "opt2-built compiler compiles cli.tl at opt1" \
-    "$CROSS_STDOUT" \
-    "$CROSS_STDERR" \
-    "$GENERATED" compile src/main.tl \
-    -o "$CROSS_OPT1" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    $(native_target_cfg_args) \
-    --opt-level 1 \
-    --stdlib-root stdlib \
-    --stdlib-root src; then
+if [ "$_rc_opt1" -ne 0 ]; then
     print_log_pair "opt2-cli-gate cross compile failed" "$CROSS_STDOUT" "$CROSS_STDERR"
     exit 1
 fi

@@ -14,14 +14,22 @@ cd "$ROOT"
 # repository; check up front rather than dying partway through the build.
 build_provenance_require_repository "$0"
 
-if [ "$#" -ne 3 ]; then
+ENSURE_TOOLS_ONLY=0
+if [ "$#" -eq 3 ] && [ "$1" = --ensure-tools ]; then
+    ENSURE_TOOLS_ONLY=1
+    COMPILER=$2
+    OUTPUT=
+    HOST_TARGET=$3
+elif [ "$#" -eq 3 ]; then
+    COMPILER=$1
+    OUTPUT=$2
+    HOST_TARGET=$3
+else
     echo "usage: $0 <typelisp-compiler> <output.tlci> <linux|windows>" >&2
+    echo "       $0 --ensure-tools <typelisp-compiler> <linux|windows>" >&2
     exit 2
 fi
 
-COMPILER=$1
-OUTPUT=$2
-HOST_TARGET=$3
 case "$HOST_TARGET" in
     linux | windows) ;;
     *)
@@ -47,10 +55,12 @@ case "$COMPILER" in
     /* | [A-Za-z]:[\\/]*) ;;
     *) COMPILER="$ROOT/$COMPILER" ;;
 esac
-case "$OUTPUT" in
-    /* | [A-Za-z]:[\\/]*) ;;
-    *) OUTPUT="$ROOT/$OUTPUT" ;;
-esac
+if [ "$ENSURE_TOOLS_ONLY" -eq 0 ]; then
+    case "$OUTPUT" in
+        /* | [A-Za-z]:[\\/]*) ;;
+        *) OUTPUT="$ROOT/$OUTPUT" ;;
+    esac
+fi
 
 if [ ! -x "$COMPILER" ]; then
     echo "embedded stdlib tlci compiler is not executable: $COMPILER" >&2
@@ -65,6 +75,90 @@ esac
 if [ ! -d "$SOURCE_ROOT/src" ] || [ ! -d "$SOURCE_ROOT/stdlib" ]; then
     echo "embedded stdlib tlci source root must contain src/ and stdlib/: $SOURCE_ROOT" >&2
     exit 2
+fi
+
+TOOL_SOURCE_DIR="$ROOT/tools/embedded-stdlib-tlci"
+TOOL_STDLIB_ROOT=stdlib
+TOOL_COMPILER_ROOT=src
+SURFACE_CFG=compiler-surface-producer
+# Include the source roots used by the tools' transitive imports. The optional
+# source tree can contain local mutations even when the compiler is unchanged.
+TOOL_SOURCE_HASHES=$(
+    cd "$SOURCE_ROOT"
+    find -L "$TOOL_SOURCE_DIR" "$TOOL_STDLIB_ROOT" "$TOOL_COMPILER_ROOT" \
+        -type f -exec sha256sum -- {} +
+)
+TOOL_SOURCE_HASH=$(printf '%s\n' "$TOOL_SOURCE_HASHES" | LC_ALL=C sort | ci_compiler_artifact_sha256_stdin)
+COMPILER_HASH=$(ci_compiler_artifact_sha256_stdin < "$COMPILER")
+TOOL_KEY=$(printf '%s\n' "$COMPILER_HASH" "$TOOL_SOURCE_HASH" "$HOST_TARGET" "$SURFACE_CFG" |
+    ci_compiler_artifact_sha256_stdin)
+TOOL_CACHE="$ROOT/target/embedded-stdlib-tlci/tools/$TOOL_KEY"
+BIN_EXT=
+[ "$HOST_TARGET" != windows ] || BIN_EXT=.exe
+SURFACE_TOOL="$TOOL_CACHE/build-surface$BIN_EXT"
+IMAGE_TOOL="$TOOL_CACHE/build$BIN_EXT"
+
+build_cached_tool() {
+    _tool_dest=$1
+    _tool_source=$2
+    shift 2
+    if [ -e "$_tool_dest" ]; then
+        [ -s "$_tool_dest" ] && [ -x "$_tool_dest" ]
+        return
+    fi
+    _tool_name=${_tool_dest##*/}
+    _tool_stage="$TOOL_TEMP/$_tool_name.dir"
+    mkdir -p "$_tool_stage"
+    _tool_temp="$_tool_stage/$_tool_name"
+    "$COMPILER" build "$_tool_source" \
+        --stdlib-root "$TOOL_STDLIB_ROOT" --stdlib-root "$TOOL_COMPILER_ROOT" \
+        "$@" -o "$_tool_temp" >&2
+    [ -s "$_tool_temp" ] && [ -x "$_tool_temp" ] || {
+        echo "embedded stdlib tlci tool build emitted no executable: $_tool_source" >&2
+        exit 1
+    }
+    mv -- "$_tool_temp" "$_tool_dest"
+}
+
+if [ ! -x "$SURFACE_TOOL" ] || [ ! -x "$IMAGE_TOOL" ]; then
+    (
+        cd "$SOURCE_ROOT"
+        mkdir -p "$TOOL_CACHE/embedded-image"
+        # CI serializes the image gates. Lock publication here as well for
+        # direct callers with different workdirs, and keep published executables
+        # immutable so Windows callers can continue running them.
+        bounded_pool_lock "$TOOL_CACHE/embedded-image"
+        TOOL_TEMP=
+        TOOL_PIDS=
+        trap 'for _tp in $TOOL_PIDS; do kill "$_tp" 2>/dev/null || true; done; for _tp in $TOOL_PIDS; do wait "$_tp" 2>/dev/null || true; done; [ -z "$TOOL_TEMP" ] || rm -rf -- "$TOOL_TEMP"; bounded_pool_unlock "$TOOL_CACHE/embedded-image"' EXIT
+        trap 'exit 1' HUP INT TERM
+        TOOL_TEMP=$(mktemp -d "$TOOL_CACHE/.build.XXXXXX")
+        if [ ! -x "$SURFACE_TOOL" ] && [ ! -x "$IMAGE_TOOL" ]; then
+            build_cached_tool "$SURFACE_TOOL" "$TOOL_SOURCE_DIR/build-surface.tl" --cfg "$SURFACE_CFG" \
+                2> "$TOOL_TEMP/surface.stderr" &
+            _surface_pid=$!
+            build_cached_tool "$IMAGE_TOOL" "$TOOL_SOURCE_DIR/build.tl" \
+                2> "$TOOL_TEMP/image.stderr" &
+            _image_pid=$!
+            TOOL_PIDS="$_surface_pid $_image_pid"
+            _surface_rc=0
+            _image_rc=0
+            wait "$_surface_pid" || _surface_rc=$?
+            wait "$_image_pid" || _image_rc=$?
+            TOOL_PIDS=
+            cat "$TOOL_TEMP/surface.stderr" >&2 || true
+            cat "$TOOL_TEMP/image.stderr" >&2 || true
+            [ "$_surface_rc" -eq 0 ] && [ "$_image_rc" -eq 0 ] || exit 1
+        else
+            build_cached_tool "$SURFACE_TOOL" "$TOOL_SOURCE_DIR/build-surface.tl" --cfg "$SURFACE_CFG"
+            build_cached_tool "$IMAGE_TOOL" "$TOOL_SOURCE_DIR/build.tl"
+        fi
+    )
+fi
+
+if [ "$ENSURE_TOOLS_ONLY" -eq 1 ]; then
+    printf 'SURFACE_TOOL=%s\nIMAGE_TOOL=%s\n' "$SURFACE_TOOL" "$IMAGE_TOOL"
+    exit 0
 fi
 
 WORKDIR=${TYPELISP_EMBEDDED_STDLIB_WORKDIR:-$ROOT/target/embedded-stdlib-tlci}
@@ -134,63 +228,6 @@ SOURCE_HASH=$(
     done < "$MANIFEST" | git hash-object --stdin
 )
 printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
-
-TOOL_SOURCE_DIR="$ROOT/tools/embedded-stdlib-tlci"
-TOOL_STDLIB_ROOT=stdlib
-TOOL_COMPILER_ROOT=src
-SURFACE_CFG=compiler-surface-producer
-# Include the source roots used by the tools' transitive imports. The optional
-# source tree can contain local mutations even when the compiler is unchanged.
-TOOL_SOURCE_HASHES=$(
-    cd "$SOURCE_ROOT"
-    find -L "$TOOL_SOURCE_DIR" "$TOOL_STDLIB_ROOT" "$TOOL_COMPILER_ROOT" \
-        -type f -exec sha256sum -- {} +
-)
-TOOL_SOURCE_HASH=$(printf '%s\n' "$TOOL_SOURCE_HASHES" | LC_ALL=C sort | ci_compiler_artifact_sha256_stdin)
-COMPILER_HASH=$(ci_compiler_artifact_sha256_stdin < "$COMPILER")
-TOOL_KEY=$(printf '%s\n' "$COMPILER_HASH" "$TOOL_SOURCE_HASH" "$HOST_TARGET" "$SURFACE_CFG" |
-    ci_compiler_artifact_sha256_stdin)
-TOOL_CACHE="$ROOT/target/embedded-stdlib-tlci/tools/$TOOL_KEY"
-BIN_EXT=
-[ "$HOST_TARGET" != windows ] || BIN_EXT=.exe
-SURFACE_TOOL="$TOOL_CACHE/build-surface$BIN_EXT"
-IMAGE_TOOL="$TOOL_CACHE/build$BIN_EXT"
-
-build_cached_tool() {
-    _tool_dest=$1
-    _tool_source=$2
-    shift 2
-    if [ -e "$_tool_dest" ]; then
-        [ -s "$_tool_dest" ] && [ -x "$_tool_dest" ]
-        return
-    fi
-    _tool_temp="$TOOL_TEMP/${_tool_dest##*/}"
-    "$COMPILER" build "$_tool_source" \
-        --stdlib-root "$TOOL_STDLIB_ROOT" --stdlib-root "$TOOL_COMPILER_ROOT" \
-        "$@" -o "$_tool_temp" >&2
-    [ -s "$_tool_temp" ] && [ -x "$_tool_temp" ] || {
-        echo "embedded stdlib tlci tool build emitted no executable: $_tool_source" >&2
-        exit 1
-    }
-    mv -- "$_tool_temp" "$_tool_dest"
-}
-
-if [ ! -x "$SURFACE_TOOL" ] || [ ! -x "$IMAGE_TOOL" ]; then
-    (
-        cd "$SOURCE_ROOT"
-        mkdir -p "$TOOL_CACHE/embedded-image"
-        # CI serializes the image gates. Lock publication here as well for
-        # direct callers with different workdirs, and keep published executables
-        # immutable so Windows callers can continue running them.
-        bounded_pool_lock "$TOOL_CACHE/embedded-image"
-        TOOL_TEMP=
-        trap '[ -z "$TOOL_TEMP" ] || rm -rf -- "$TOOL_TEMP"; bounded_pool_unlock "$TOOL_CACHE/embedded-image"' EXIT
-        trap 'exit 1' HUP INT TERM
-        TOOL_TEMP=$(mktemp -d "$TOOL_CACHE/.build.XXXXXX")
-        build_cached_tool "$SURFACE_TOOL" "$TOOL_SOURCE_DIR/build-surface.tl" --cfg "$SURFACE_CFG"
-        build_cached_tool "$IMAGE_TOOL" "$TOOL_SOURCE_DIR/build.tl"
-    )
-fi
 
 # The frontend surface records each prelude declaration's source path and the
 # names interned while loading it. Run from the selected source root with

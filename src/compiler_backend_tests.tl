@@ -37526,7 +37526,8 @@ entry:
 ;; "Sunk" is spelled as a structural property of that body rather than as a line
 ;; match: an entry-placed prologue is the first thing after the function symbol,
 ;; so the body starts with `pushq`/`subq`; a shrink-wrapped one starts with the
-;; entry BLOCK label and the prologue appears later, after at least one `ret`.
+;; entry BLOCK label, the prologue appears later, and some `ret` returns
+;; without it.
 (define (compiler-backend-swb-find [body : (& body str)] [needle : String]) : i64
   (backend.compiler-backend-string-find-from body needle 0))
 
@@ -37557,8 +37558,42 @@ entry:
             (set! i (+ at 1))))))
     seen))
 
-;; The prologue sank: the body opens with a block label (not the prologue) and
-;; at least one `ret` is reached before the first prologue instruction.
+;; A `ret` no epilogue precedes -- neither a callee-saved `popq` nor the frame's
+;; own `%rsp` adjust -- returns from a path that never built the frame.
+(define (compiler-backend-swb-count-bare-ret [body : (& body str)]) : i64
+  (let
+    [i : i64 0]
+    [seen : i64 0]
+    [done : bool false]
+    (while (not done)
+      (let
+        [at : i64
+          (backend.compiler-backend-string-find-from body "    ret\n" i)]
+        (if (< at 0)
+          (set! done true)
+          (begin
+            (unless
+              (or
+                (and
+                  (>= at 7)
+                  (be_operand.compiler-backend-string-prefix-at?
+                    body
+                    ", %rsp\n"
+                    (- at 7)))
+                (and
+                  (>= at 14)
+                  (be_operand.compiler-backend-string-prefix-at?
+                    body
+                    "    popq %"
+                    (- at 14))))
+              (+= seen 1))
+            (set! i (+ at 1))))))
+    seen))
+
+;; The prologue sank: the body opens with a block label (not the prologue), the
+;; prologue follows, and at least one `ret` returns without it. Where that bare
+;; exit is laid out is the block layout's business: a cold one sinks below the
+;; body, so its `ret` need not come before the prologue in the text.
 (define (compiler-backend-swb-sunk? [body : (& body str)]) : bool
   (let
     [prologue : i64 (compiler-backend-swb-prologue-index body)]
@@ -37566,7 +37601,7 @@ entry:
       (not (string.eq body ""))
       (be_operand.compiler-backend-string-prefix-at? body ".L" 0)
       (>= prologue 0)
-      (> (compiler-backend-swb-count-ret-before body prologue) 0))))
+      (> (compiler-backend-swb-count-bare-ret body) 0))))
 
 (define (compiler-backend-swb-entry-placed? [body : (& body str)]) : bool
   (and
@@ -41103,13 +41138,42 @@ b_keep:
     (__tl_make-array 0 2 1)))
 
 ;; `x != 0` is predicted TRUE, which is the return arm: the opcode heuristic
-;; vetoes the return heuristic and the function keeps its order (no plan).
+;; keeps it as the fall-through and the function keeps its order (no plan).
 (define (compiler-backend-placement-return-arm-veto-ok?) : bool
   (=
     (array-length
       (compiler-backend-placement-order-for-blocks
         (compiler-backend-placement-guard-blocks "ne %0, 0")))
     0))
+
+;; With the opcode heuristic silent -- two variables compared -- only the return
+;; heuristic speaks, and only when exactly one arm leaves the function. Both of
+;; the guard's arms return, so nothing moves; once `rest` continues to a block
+;; of its own, `early` is the one return arm and sinks: entry / rest / tail /
+;; early.
+(define (compiler-backend-placement-return-heuristic-ok?) : bool
+  (and
+    (=
+      (array-length
+        (compiler-backend-placement-order-for-blocks
+          (compiler-backend-placement-guard-blocks "lt %0, %3")))
+      0)
+    (compiler-backend-placement-test-order-eq?
+      (compiler-backend-placement-order-for-blocks
+        (ir.compiler-ir-blocks
+          (irt.block
+            "entry:
+               %1 = lt %0, %3 : i64
+               branch %1, early, rest")
+          (irt.block "early:
+               return 0")
+          (irt.block
+            "rest:
+               %2 = add %0, 1 : i64
+               jump tail")
+          (irt.block "tail:
+               return %2")))
+      (__tl_make-array 0 2 3 1))))
 
 ;; Size-optimized and non-full builds pass `sink?` false, and a block in the
 ;; pinned prefix -- the early-exit shrink-wrap's, rendered by index -- never
@@ -41270,6 +41334,7 @@ b_keep:
     (compiler-backend-placement-entry-path-stays-ok?)
     (compiler-backend-placement-return-arm-sinks-ok?)
     (compiler-backend-placement-return-arm-veto-ok?)
+    (compiler-backend-placement-return-heuristic-ok?)
     (compiler-backend-placement-return-arm-gates-ok?)
     (compiler-backend-placement-windows-seh-shape-ok?)))
 

@@ -20294,9 +20294,11 @@
 ;; Outside loops the same shape is `test x / jge L / ret / L:` -- a guard's
 ;; return arm laid out as the fall-through. A RETURN block whose only
 ;; predecessor is the block before it -- a two-arm branch outside every loop
-;; whose other arm is the block after it -- moves to the end: Ball and Larus's
-;; return heuristic, vetoed when their opcode heuristic predicts the return arm
-;; taken. Each arm keeps exactly one jump, so only which one is taken changes.
+;; whose other arm is the block after it -- moves to the end when Ball and
+;; Larus's heuristics predict it not taken: the opcode heuristic when it speaks,
+;; else the return heuristic, which speaks only when the other arm does not
+;; leave the function too. Each arm keeps exactly one jump, so only which one is
+;; taken changes.
 ;; This runs only where the returns do not share an epilogue, so every return
 ;; block is self-contained.
 ;;
@@ -20686,10 +20688,10 @@
                   (compiler-backend-placement-opcode-predict instrs)]
                 [on-true? : bool
                   (= (array-ref st.succ-buf (array-ref st.succ-off p)) b)]
-                (not
-                  (or
-                    (and on-true? (= predict 1))
-                    (and (not on-true?) (= predict -1)))))]))
+                (cond
+                  [(= predict 0) (not (= (array-ref st.term-kind next) 4))]
+                  [on-true? (= predict -1)]
+                  [else (= predict 1)]))]))
           (begin
             (compiler-backend-placement-move-before! st r 1 dest)
             (-= limit 1))

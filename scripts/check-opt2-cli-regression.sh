@@ -99,7 +99,7 @@ print_asm_fingerprint() {
 }
 
 rm -f "$GENERATED"
-mkdir -p "$WORKDIR/work-smoke" "$WORKDIR/work-ref" "$WORKDIR/work-opt2" "$WORKDIR/work-opt1"
+mkdir -p "$WORKDIR/work-smoke"
 
 CROSS_OPT1="$WORKDIR/cli-opt2built-opt1.s"
 REF_STDOUT="$WORKDIR/ref.stdout"
@@ -123,7 +123,7 @@ trap 'cleanup_bg_pids; exit 1' HUP INT TERM
 # Phase 1: build the release opt2 compiler concurrently with the independent
 # optimizer inline tests (and, on Windows/standalone runs without a supplied
 # reference assembly, the converged reference @opt1 compile). Both workers stay
-# within the gate's 7680 MiB budget while keeping isolated workdirs.
+# within the gate's 7680 MiB budget while keeping isolated outputs/workdirs.
 echo "[opt2-cli-gate] build release opt2 compiler ($NL_BOOTSTRAP_TARGET) alongside optimizer inline tests at opt2"
 if [ "$REFERENCE_SUPPLIED" -eq 1 ]; then
     echo "[opt2-cli-gate] reference: reuse validated build-invariance stage4 src/main @ opt1 assembly"
@@ -159,16 +159,14 @@ _pid_build=$!
     [ "$optimizer_status" -eq 0 ] || exit "$optimizer_status"
     if [ "$REFERENCE_SUPPLIED" -eq 0 ]; then
         ref_status=0
-        (
-            cd "$WORKDIR/work-ref" &&
-            "$COMPILER" compile "$ROOT/src/main.tl" \
-                -o "$REF_OPT1" \
-                --target "$NL_BOOTSTRAP_TARGET" \
-                $(native_target_cfg_args) \
-                --opt-level 1 \
-                --stdlib-root "$ROOT/stdlib" \
-                --stdlib-root "$ROOT/src"
-        ) >"$REF_STDOUT" 2>"$REF_STDERR" || ref_status=$?
+        "$COMPILER" compile src/main.tl \
+            -o "$REF_OPT1" \
+            --target "$NL_BOOTSTRAP_TARGET" \
+            $(native_target_cfg_args) \
+            --opt-level 1 \
+            --stdlib-root stdlib \
+            --stdlib-root src \
+            >"$REF_STDOUT" 2>"$REF_STDERR" || ref_status=$?
         printf '%s\n' "$ref_status" > "$WORKDIR/ref.status"
         [ "$ref_status" -eq 0 ] || exit "$ref_status"
     fi
@@ -220,31 +218,27 @@ if [ ! -x "$GENERATED" ]; then
 fi
 
 # Phase 2: run the crash gate ($GENERATED@opt2) and cross-fixpoint compile
-# ($GENERATED@opt1) concurrently in isolated workdirs. Both read the same
-# immutable $GENERATED binary and source tree while writing distinct outputs.
+# ($GENERATED@opt1) concurrently. Both read the same immutable $GENERATED
+# binary and source tree while writing distinct output paths.
 echo "[opt2-cli-gate] generated compiler compiles src/main.tl at opt2 and opt1 concurrently"
-(
-    cd "$WORKDIR/work-opt2" &&
-    "$GENERATED" compile "$ROOT/src/main.tl" \
-        -o "$ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --opt-level 2 \
-        --stdlib-root "$ROOT/stdlib" \
-        --stdlib-root "$ROOT/src"
-) >"$COMPILE_STDOUT" 2>"$COMPILE_STDERR" &
+"$GENERATED" compile src/main.tl \
+    -o "$ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --opt-level 2 \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    >"$COMPILE_STDOUT" 2>"$COMPILE_STDERR" &
 _pid_opt2=$!
 
-(
-    cd "$WORKDIR/work-opt1" &&
-    "$GENERATED" compile "$ROOT/src/main.tl" \
-        -o "$CROSS_OPT1" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --opt-level 1 \
-        --stdlib-root "$ROOT/stdlib" \
-        --stdlib-root "$ROOT/src"
-) >"$CROSS_STDOUT" 2>"$CROSS_STDERR" &
+"$GENERATED" compile src/main.tl \
+    -o "$CROSS_OPT1" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --opt-level 1 \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    >"$CROSS_STDOUT" 2>"$CROSS_STDERR" &
 _pid_opt1=$!
 ACTIVE_BG_PIDS="$_pid_opt2 $_pid_opt1"
 

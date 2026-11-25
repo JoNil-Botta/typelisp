@@ -15978,6 +15978,7 @@
                     ctx.target-abi
                     (& split-func)
                     ctx.threshold
+                    (- 0 1)
                     false
                     split-types
                     (compiler-reg-assignment-table-empty))]
@@ -16372,6 +16373,9 @@
   (resident-mask (__tl_dyn-array i64))
   ;; per parked loop slot: its header block
   (loop-header (__tl_dyn-array i64))
+  ;; per block: the S3 slots whose var is renamed to its piece in this block
+  ;; (every block of the slot's loop); always zero for a P3c park
+  (rename-mask (__tl_dyn-array i64))
   ;; 0 = parked values, 1 = sites, 2 = parked loops
   (counts (__tl_dyn-array i64)))
 
@@ -16392,12 +16396,14 @@
     (__tl_make-array i64 blocks)
     (__tl_make-array i64 vars)
     (__tl_make-array i64 (compiler-reg-loop-park-max-loops))
+    (__tl_make-array i64 blocks)
     (__tl_make-array i64 3)))
 
 (define (compiler-reg-loop-park-plan-reset!
   [pk : (&mut pk CompilerRegLoopParkPlan)]) : unit
   (compiler-reg-fill-i64-array (&mut pk.pre-mask) 0)
   (compiler-reg-fill-i64-array (&mut pk.direct-mask) 0)
+  (compiler-reg-fill-i64-array (&mut pk.rename-mask) 0)
   (compiler-reg-fill-i64-array (&mut pk.resident-mask) 0)
   (compiler-reg-fill-i64-array (&mut pk.counts) 0))
 
@@ -17063,7 +17069,13 @@
   ;; "a value the plan left in memory".
   (spilled (__tl_dyn-array bool))
   (vars i64)
-  (threshold i64))
+  (threshold i64)
+  ;; S3 mode: split a register-homed RESIDENT around L instead of parking a
+  ;; through value (see `compiler-reg-loop-split-pair!`).
+  (split bool)
+  ;; S3 mode, per var: P3c's through-eligibility (a single GP register home,
+  ;; a protectable type, not ineligible), decided once per function.
+  (homed (__tl_dyn-array bool)))
 
 ;; Everything it writes to. All of it is reused across loops and across rounds;
 ;; the per-loop state is stamped rather than cleared.
@@ -17086,6 +17098,9 @@
   (pick-var (__tl_dyn-array i64))
   (pick-mask (__tl_dyn-array i64))
   (pick-resident (__tl_dyn-array i64))
+  ;; per pick: does its preheader copy run? A parked value always needs one; an
+  ;; S3 piece only when its var is live into the header.
+  (pick-store (__tl_dyn-array bool))
   ;; 0 = a callee out-parameter, 1 = the resident-list cursor
   (tmp (__tl_dyn-array i64)))
 
@@ -17111,6 +17126,7 @@
     (__tl_make-array i64 (compiler-reg-loop-park-max-per-loop))
     (__tl_make-array i64 (compiler-reg-loop-park-max-per-loop))
     (__tl_make-array i64 (compiler-reg-loop-park-max-per-loop))
+    (__tl_make-array bool (compiler-reg-loop-park-max-per-loop))
     (__tl_make-array i64 2)))
 
 (define (compiler-reg-loop-park-scratch-reset!
@@ -17220,6 +17236,7 @@
                   (set! (array-ref sc.pick-var picks) through)
                   (set! (array-ref sc.pick-mask picks) (array-ref sc.tmp 0))
                   (set! (array-ref sc.pick-resident picks) resident)
+                  (set! (array-ref sc.pick-store picks) true)
                   (set! (array-ref sc.picked through) true)
                   (set! (array-ref sc.chosen resident) true)
                   (+= picks 1))))))))
@@ -17270,7 +17287,8 @@
   [pre : i64]
   [picks : i64]
   [site-count : i64]
-  [resident-count : i64]) : unit
+  [resident-count : i64]
+  [total : i64]) : unit
   (let
     [loop-slot : i64 (array-ref pk.counts 2)]
     (set! (array-ref pk.loop-header loop-slot) header)
@@ -17298,9 +17316,19 @@
         (set!
           (array-ref pk.park-store-at slot)
           (compiler-reg-loop-park-store-position ctx.seq pre var))
-        (set!
-          (array-ref pk.pre-mask pre)
-          (bit-or (array-ref pk.pre-mask pre) (shl 1 slot)))
+        (when
+          (array-ref sc.pick-store index)
+          (set!
+            (array-ref pk.pre-mask pre)
+            (bit-or (array-ref pk.pre-mask pre) (shl 1 slot))))
+        (when
+          ctx.split
+          (compiler-reg-loop-split-mark-members!
+            (& ctx.nest)
+            header
+            total
+            (shl 1 slot)
+            (&mut pk.rename-mask)))
         (for [site (iterator.range 0 site-count)]
           (when
             (not (= (bit-and (shr mask site) 1) 0))
@@ -17321,6 +17349,333 @@
         (set! (array-ref sc.taken var) true)
         (set! (array-ref pk.counts 0) (+ slot 1))))
     (set! (array-ref pk.counts 2) (+ loop-slot 1))))
+
+;; ---------------------------------------------------------------------------
+;; S3: loop-region live-range SPLIT (the P3c round in `split` mode).
+;;
+;; P3c frees a register over L by parking a value L never mentions. The value
+;; that most often holds the register a hot loop-local value needs is instead a
+;; SPRAWLING one: live over the whole function, heavy in total, and referenced
+;; only once or twice per iteration of L -- a loop bound read by the latch
+;; compare, a base pointer read once. Ranking the greedy by density instead of
+;; weight would hand the register over, but the loser would then be spilled for
+;; its WHOLE interval, outside L as well; that regresses more than it gains.
+;;
+;; So the round splits the sprawling value W around L instead:
+;;
+;;     preheader(L):  Mov W_L <- W
+;;     ... every mention of W inside L reads or writes W_L ...
+;;     exit edge:     Mov W <- W_L          (one per exit W is live on)
+;;
+;; and REPLANS. W keeps its register outside L, and inside L the two values
+;; compete as W_L and V on what they are worth THERE: W_L's in-loop references
+;; against the spilled resident V's, both on the same block weights. The pair
+;; is chosen only when W_L's in-loop references plus its own boundary movs come
+;; to strictly less than V's in-loop references, which is the density
+;; comparison restricted to the one region where the two actually compete. The
+;; greedy itself is unchanged.
+;;
+;; When V itself lives past L it is split around L the same way, so its piece
+;; competes for the register W_L gives up and nothing else. A V that L only
+;; reads keeps its own home untouched outside L, so its piece needs no
+;; writeback; a V that L redefines is written back on every exit it is live on.
+;;
+;; The pieces are minted above the P3c carriers and are NOT forced to memory:
+;; the replan passes `split-from`, which ends the forced carrier range below
+;; them and keeps them out of move coalescing (a piece no longer interferes
+;; with the value it came from, so the coalescer would merge them straight
+;; back). Admission, exit coverage, reserved sites, splicing and the
+;; strictly-lower `compiler-reg-call-hole-plan-cost` accept are P3c's own,
+;; plus the register-to-register copies the replan could not fold
+;; (`compiler-reg-loop-split-copy-cost`).
+;;
+;; A var that is a phi result, or a phi input other than its header's entry
+;; input, anywhere in L is never split: its piece would be a singleton class
+;; next to the phi's, and the phi would need a copy on every iteration.
+;; A loop that calls is not split at all (`compiler-reg-loop-split-has-call?`).
+;; ---------------------------------------------------------------------------
+;; Set `bit` in the rename mask of every block of L.
+(define (compiler-reg-loop-split-mark-members!
+  [nest : (& nest CompilerRegLoopNest)]
+  [header : i64]
+  [total : i64]
+  [bit : i64]
+  [rename-mask : (&mut rename-mask (__tl_dyn-array i64))]) : unit
+  (let
+    [members : (__tl_dyn-array i64) nest.members]
+    (set!
+      (array-ref rename-mask header)
+      (bit-or (array-ref rename-mask header) bit))
+    (for [index (iterator.range 0 total)]
+      (let
+        [b : i64 (array-ref members index)]
+        (set! (array-ref rename-mask b) (bit-or (array-ref rename-mask b) bit))))))
+
+;; Does a phi read `var` on an edge other than `entry-label`?
+(define (compiler-reg-loop-split-phi-reads?
+  [inputs : (& ir.CompilerIrPhiInputSeq)]
+  [entry-label : i64]
+  [var : i64]) : bool
+  (let
+    [count : i64 inputs.len]
+    (for [index (iterator.range 0 count)]
+      (let
+        [input (ir.compiler-ir-phi-input-seq-ref inputs index)]
+        (unless
+          (= input.label entry-label)
+          (match input.value
+            [(Var v) (when (= v var) (return true))]
+            [_ unit]))))
+    false))
+
+;; How `var` appears in L: bit 0 = an instruction of L defines it; bit 1 = it is
+;; a phi result, or a phi input other than the header's entry input keyed on
+;; `pre-label`.
+(define (compiler-reg-loop-split-mentions
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [nest : (& nest CompilerRegLoopNest)]
+  [header : i64]
+  [total : i64]
+  [pre-label : i64]
+  [var : i64]) : i64
+  (let
+    [members : (__tl_dyn-array i64) nest.members]
+    [flags : i64 0]
+    (for [index (iterator.range (- 0 1) total)]
+      (let
+        [b : i64
+          (if (< index 0)
+            header
+            (array-ref members index))]
+        [entry-label : i64
+          (if (= b header)
+            pre-label
+            (ir.compiler-ir-label-none))]
+        [instrs : ir.CompilerIrInstrSeq
+          (compiler-reg-loop-park-block-instrs seq b)]
+        [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+        (for [i (iterator.range 0 instrs.len)]
+          (when
+            (= (ir.compiler-ir-instr-dst (& (array-ref slots i))) var)
+            (set! flags (bit-or flags 1)))
+          (match (owned_view.compiler-owned-element-view slots i)
+            [(Phi dst inputs _)
+              (when
+                (or
+                  (= dst var)
+                  (compiler-reg-loop-split-phi-reads?
+                    (& inputs)
+                    entry-label
+                    var))
+                (set! flags (bit-or flags 2)))]
+            [_ unit]))))
+    flags))
+
+;; Does any block of L call (or syscall)? S3 admits only call-free loops: a
+;; piece live across a call needs a callee-saved home or a reload after every
+;; call, and a piece feeding a call argument changes the argument moves the
+;; arg-entry peephole matches across the whole function -- neither of which
+;; the plan-cost estimate sees.
+(define (compiler-reg-loop-split-has-call?
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [nest : (& nest CompilerRegLoopNest)]
+  [header : i64]
+  [total : i64]) : bool
+  (let
+    [members : (__tl_dyn-array i64) nest.members]
+    (for [index (iterator.range (- 0 1) total)]
+      (let
+        [b : i64
+          (if (< index 0)
+            header
+            (array-ref members index))]
+        [instrs : ir.CompilerIrInstrSeq
+          (compiler-reg-loop-park-block-instrs seq b)]
+        (when
+          (compiler-reg-loop-split-seq-has-call-or-syscall? (& instrs))
+          (return true))))
+    false))
+
+;; The cheapest register-homed resident of L live into its header: in-loop
+;; references plus the split boundary (the preheader copy and one writeback per
+;; exit it is live on), strictly below `limit`. Returns the var or -1; its
+;; writeback mask lands in `sc.tmp` slot 0.
+(define (compiler-reg-loop-split-cheapest-resident
+  [ctx : (& ctx CompilerRegLoopParkContext)]
+  [sc : (&mut sc CompilerRegLoopParkScratch)]
+  [live-in : (& live-in live.CompilerLiveI64Set)]
+  [resident-count : i64]
+  [site-count : i64]
+  [pre-weight : i64]
+  [limit : i64]) : i64
+  (let
+    [best : i64 (- 0 1)]
+    [best-cost : i64 limit]
+    [best-mask : i64 0]
+    (for [index (iterator.range 0 resident-count)]
+      (let
+        [var : i64 (array-ref sc.residents index)]
+        (when
+          (and
+            (< var ctx.threshold)
+            (not (array-ref sc.taken var))
+            (not (array-ref sc.picked var))
+            (< (array-ref sc.resident-refs var) best-cost)
+            (live.compiler-live-set-contains? live-in var)
+            (array-ref ctx.homed var))
+          (let
+            [cost : i64
+              (+
+                (array-ref sc.resident-refs var)
+                (compiler-reg-loop-park-var-cost
+                  (& ctx.seq)
+                  (& ctx.liveness)
+                  (& sc.lsite-from)
+                  (& sc.lsite-to)
+                  (& sc.lsite-kind)
+                  (& sc.lsite-weight)
+                  site-count
+                  pre-weight
+                  var
+                  (&mut sc.tmp)))]
+            (when
+              (< cost best-cost)
+              (set! best var)
+              (set! best-cost cost)
+              (set! best-mask (array-ref sc.tmp 0)))))))
+    (set! (array-ref sc.tmp 0) best-mask)
+    best))
+
+;; Record one split piece of this loop.
+(define (compiler-reg-loop-split-pick!
+  [sc : (&mut sc CompilerRegLoopParkScratch)]
+  [picks : i64]
+  [var : i64]
+  [mask : i64]
+  [resident : i64]
+  [store? : bool]) : unit
+  (set! (array-ref sc.pick-var picks) var)
+  (set! (array-ref sc.pick-mask picks) mask)
+  (set! (array-ref sc.pick-resident picks) resident)
+  (set! (array-ref sc.pick-store picks) store?)
+  (set! (array-ref sc.picked var) true))
+
+;; Pair L's hottest spilled residents against the cheapest residents whose
+;; register a split around L would hand over, stopping at the first resident
+;; that no remaining candidate pays for. Each pair takes one or two picks (the
+;; spilled resident is split too when it lives past L). Returns the pick count.
+(define (compiler-reg-loop-split-pair!
+  [ctx : (& ctx CompilerRegLoopParkContext)]
+  [sc : (&mut sc CompilerRegLoopParkScratch)]
+  [pk : (& pk CompilerRegLoopParkPlan)]
+  [live-in : (& live-in live.CompilerLiveI64Set)]
+  [header : i64]
+  [total : i64]
+  [resident-count : i64]
+  [site-count : i64]
+  [pre-weight : i64]
+  [pre-label : i64]) : i64
+  (let
+    [parked : i64 (compiler-reg-loop-park-parked-count pk)]
+    [picks : i64 0]
+    [tries : i64 0]
+    [done : bool
+      (compiler-reg-loop-split-has-call? (& ctx.seq) (& ctx.nest) header total)]
+    (while (not done)
+      (if (or
+        (> (+ picks 2) (compiler-reg-loop-park-max-per-loop))
+        (> (+ parked (+ picks 2)) (compiler-reg-loop-park-max-parked))
+        (>= tries (compiler-reg-loop-park-max-per-loop)))
+        (set! done true)
+        (let
+          [loser : i64
+            (compiler-reg-loop-park-hottest-spilled ctx sc resident-count)]
+          (if (< loser 0)
+            (set! done true)
+            (let
+              [loser-refs : i64 (array-ref sc.resident-refs loser)]
+              [loser-live-in? : bool
+                (live.compiler-live-set-contains? live-in loser)]
+              [loser-mask : i64
+                (begin
+                  (compiler-reg-loop-park-var-cost
+                    (& ctx.seq)
+                    (& ctx.liveness)
+                    (& sc.lsite-from)
+                    (& sc.lsite-to)
+                    (& sc.lsite-kind)
+                    (& sc.lsite-weight)
+                    site-count
+                    pre-weight
+                    loser
+                    (&mut sc.tmp))
+                  (array-ref sc.tmp 0))]
+              [loser-split? : bool (or loser-live-in? (not (= loser-mask 0)))]
+              [loser-flags : i64
+                (if loser-split?
+                  (compiler-reg-loop-split-mentions
+                    (& ctx.seq)
+                    (& ctx.nest)
+                    header
+                    total
+                    pre-label
+                    loser)
+                  0)]
+              (+= tries 1)
+              (if (not (= (bit-and loser-flags 2) 0))
+                ;; Its piece would sit next to a phi; leave it for P11b.
+                (set! (array-ref sc.chosen loser) true)
+                (let
+                  [winner : i64
+                    (compiler-reg-loop-split-cheapest-resident
+                      ctx
+                      sc
+                      live-in
+                      resident-count
+                      site-count
+                      pre-weight
+                      loser-refs)]
+                  [winner-mask : i64 (array-ref sc.tmp 0)]
+                  (cond
+                    [(< winner 0) (set! done true)]
+                    [(not
+                        (=
+                          (bit-and
+                            (compiler-reg-loop-split-mentions
+                              (& ctx.seq)
+                              (& ctx.nest)
+                              header
+                              total
+                              pre-label
+                              winner)
+                            2)
+                          0))
+                      (set! (array-ref sc.picked winner) true)]
+                    [else
+                      (compiler-reg-loop-split-pick!
+                        sc
+                        picks
+                        winner
+                        winner-mask
+                        loser
+                        true)
+                      (+= picks 1)
+                      (when
+                        loser-split?
+                        (compiler-reg-loop-split-pick!
+                          sc
+                          picks
+                          loser
+                          ;; A loser L only reads keeps its home intact
+                          ;; outside L: no writeback.
+                          (if (= (bit-and loser-flags 1) 0)
+                            0
+                            loser-mask)
+                          loser
+                          loser-live-in?)
+                        (+= picks 1))
+                      (set! (array-ref sc.chosen loser) true)]))))))))
+    picks))
 
 ;; One loop's whole decision. Returns how many values it parked.
 (define (compiler-reg-loop-park-try-loop!
@@ -17387,15 +17742,27 @@
       (when (< site-count 0) (return 0))
       (let
         [picks : i64
-          (compiler-reg-loop-park-pair!
-            (compiler-reg-global-shared-view ctx)
-            (compiler-reg-global-shared-view sc)
-            pk
-            (& live-in)
-            resident-count
-            site-count
-            (array-ref ctx.weights pre)
-            generation)]
+          (if ctx.split
+            (compiler-reg-loop-split-pair!
+              (& ctx)
+              (&mut sc)
+              (& pk)
+              (& live-in)
+              header
+              total
+              resident-count
+              site-count
+              (array-ref ctx.weights pre)
+              (compiler-reg-loop-park-block-label seq pre))
+            (compiler-reg-loop-park-pair!
+              (compiler-reg-global-shared-view ctx)
+              (compiler-reg-global-shared-view sc)
+              pk
+              (& live-in)
+              resident-count
+              site-count
+              (array-ref ctx.weights pre)
+              generation))]
         [used : i64 0]
         [site-base : i64 (compiler-reg-loop-park-site-count pk)]
         (when
@@ -17429,7 +17796,8 @@
           pre
           picks
           site-count
-          resident-count)
+          resident-count
+          total)
         (compiler-reg-loop-park-clear-marks! sc picks)
         picks))))
 
@@ -17841,10 +18209,147 @@
         (+= total 1)))
     total))
 
+;; P3c's through-eligibility for every var below `limit` (none when 0).
+(define (compiler-reg-loop-split-homed
+  [type-segment-bases : i64]
+  [type-info : CompilerRegVarTypes]
+  [assignments : CompilerRegAssignmentTable]
+  [ineligible : (& ineligible live.CompilerLiveI64Set)]
+  [limit : i64]) : (__tl_dyn-array bool)
+  (let
+    [homed : (__tl_dyn-array bool) (__tl_make-array bool limit)]
+    (for [var (iterator.range 0 limit)]
+      (set!
+        (array-ref homed var)
+        (compiler-reg-loop-park-through-eligible?
+          type-segment-bases
+          type-info
+          assignments
+          ineligible
+          var)))
+    homed))
+
+;; Is `input` the ENTRY input of a header phi of one of the S3 slots in `mask`
+;; whose loop this block heads? It is read on the preheader edge, outside the
+;; loop, so it keeps naming the original var.
+(define (compiler-reg-loop-split-entry-input?
+  [pk : (& pk CompilerRegLoopParkPlan)]
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [index : i64]
+  [mask : i64]
+  [input : (& input ir.CompilerIrPhiInput)]) : bool
+  (match input.value
+    [(Var v)
+      (let
+        [count : i64 (compiler-reg-loop-park-parked-count pk)]
+        (for [slot (iterator.range 0 count)]
+          (when
+            (and
+              (not (= (bit-and (shr mask slot) 1) 0))
+              (= (array-ref pk.park-var slot) v)
+              (= (array-ref pk.loop-header (array-ref pk.park-loop slot)) index)
+              (=
+                (compiler-reg-loop-park-block-label
+                  seq
+                  (array-ref pk.park-pre slot))
+                input.label))
+            (return true)))
+        false)]
+    [_ false]))
+
+(define (compiler-reg-loop-split-rename-instr
+  [pk : (& pk CompilerRegLoopParkPlan)]
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [remap : (& remap (__tl_dyn-array i64))]
+  [index : i64]
+  [mask : i64]
+  [instr : (& instr ir.CompilerIrInstr)]) : ir.CompilerIrInstr
+  (match instr
+    [(Phi dst inputs ty)
+      (let
+        [count : i64 inputs.len]
+        [out : (__tl_dyn-array ir.CompilerIrPhiInput)
+          (__tl_make-array ir.CompilerIrPhiInput count)]
+        (for [k (iterator.range 0 count)]
+          (let
+            [input : ir.CompilerIrPhiInput
+              (ir.compiler-ir-phi-input-seq-ref (& inputs) k)]
+            (set!
+              (array-ref out k)
+              (ir.compiler-ir-phi-input-of
+                (if (compiler-reg-loop-split-entry-input?
+                  pk
+                  seq
+                  index
+                  mask
+                  (& input))
+                  input.value
+                  (compiler-reg-remap-value remap input.value))
+                input.label))))
+        (Phi
+          (compiler-reg-remap-id remap dst)
+          (ir.compiler-ir-phi-input-seq-of out 0 count)
+          (ast.clone-ast-type ty)))]
+    [_ (compiler-reg-remap-instr remap instr)]))
+
+;; Rename every S3 slot of this block to its piece. The remap is the identity
+;; outside the slots in this block's mask and is restored before returning.
+(define (compiler-reg-loop-split-rename-block
+  [pk : (& pk CompilerRegLoopParkPlan)]
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [remap : (&mut remap (__tl_dyn-array i64))]
+  [block : (& block ir.CompilerIrBlock)]
+  [index : i64]) : ir.CompilerIrBlock
+  (let
+    [mask : i64 (array-ref pk.rename-mask index)]
+    [parked : i64 (compiler-reg-loop-park-parked-count pk)]
+    (for [slot (iterator.range 0 parked)]
+      (when
+        (not (= (bit-and (shr mask slot) 1) 0))
+        (set!
+          (array-ref remap (array-ref pk.park-var slot))
+          (array-ref pk.park-carrier slot))))
+    (let
+      [out : ir.CompilerIrBlock
+        (match block
+          [(Block label instrs)
+            (let
+              [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+              [count : i64 instrs.len]
+              [builder : ir.CompilerIrInstrBuilder
+                (ir.compiler-ir-instr-builder-with-capacity count)]
+              (for [i (iterator.range 0 count)]
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (compiler-reg-loop-split-rename-instr
+                    pk
+                    seq
+                    remap
+                    index
+                    mask
+                    (& (array-ref slots i)))))
+              (Block label (ir.compiler-ir-instr-builder-to-seq builder)))])]
+      (for [slot (iterator.range 0 parked)]
+        (let
+          [var : i64 (array-ref pk.park-var slot)]
+          (set! (array-ref remap var) var)))
+      out)))
+
+;; The identity remap over `vars` (the pieces included); empty for a P3c park,
+;; which renames nothing.
+(define (compiler-reg-loop-split-identity-remap [vars : i64]) : (__tl_dyn-array
+    i64)
+  (let
+    [remap : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    (for [var (iterator.range 0 vars)]
+      (set! (array-ref remap var) var))
+    remap))
+
 (define (compiler-reg-loop-park-rewrite-blocks
   [pk : (& pk CompilerRegLoopParkPlan)]
   [seq : (& seq ir.CompilerIrBlockSeq)]
-  [type-info : CompilerRegVarTypes]) : ir.CompilerIrBlockList
+  [type-info : CompilerRegVarTypes]
+  [vars : i64]) : ir.CompilerIrBlockList
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     [splices : i64 (compiler-reg-loop-park-splice-count pk)]
@@ -17852,10 +18357,28 @@
     [out : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock (+ count splices))]
     [write : i64 count]
+    [remap : (__tl_dyn-array i64)
+      (compiler-reg-loop-split-identity-remap
+        (if (> vars 0)
+          (+ vars (compiler-reg-loop-park-parked-count pk))
+          0))]
     (for [index (iterator.range 0 count)]
       (set!
         (array-ref out index)
-        (compiler-reg-loop-park-rewrite-block pk seq type-info index)))
+        (compiler-reg-loop-park-rewrite-block pk seq type-info index))
+      ;; S3 slots rename inside their loop AFTER P3c's movs and edge
+      ;; redirects are in: the copies sit in the preheader and on the exits,
+      ;; outside every block they rename.
+      (unless
+        (= (array-ref pk.rename-mask index) 0)
+        (set!
+          (array-ref out index)
+          (compiler-reg-loop-split-rename-block
+            pk
+            seq
+            (&mut remap)
+            (& (array-ref out index))
+            index))))
     (for [index (iterator.range 0 sites)]
       (when
         (= (array-ref pk.site-kind index) (compiler-reg-loop-park-site-splice))
@@ -17896,6 +18419,75 @@
         (set! (array-ref dropped (array-ref pk.loop-header k)) true)
         (+= failed 1)))
     failed))
+
+;; Is `var` homed in a register other than `piece`'s? Their split copy is then a
+;; real mov; with the same register (the copy hint) it folds away.
+(define (compiler-reg-loop-split-distinct-registers?
+  [assignments : CompilerRegAssignmentTable]
+  [var : i64]
+  [piece : i64]) : bool
+  (match (compiler-reg-assignment-lookup assignments var)
+    [(No) false]
+    [(Some left)
+      (match (compiler-reg-assignment-lookup assignments piece)
+        [(No) false]
+        [(Some right)
+          (match left
+            [(Register left-reg)
+              (match right
+                [(Register right-reg) (not (= left-reg right-reg))]
+                [_ false])]
+            [_ false])])]))
+
+;; The register-to-register split copies of an S3 replan, on the round's block
+;; weights: one per preheader entry and one per writeback site of every piece
+;; whose value sits in a DIFFERENT register. `compiler-reg-call-hole-plan-cost`
+;; prices memory references only, and a copy to or from memory is one, so
+;; together they price every mov the split adds.
+(define (compiler-reg-loop-split-copy-cost
+  [pk : (& pk CompilerRegLoopParkPlan)]
+  [weights : (& weights (__tl_dyn-array i64))]
+  [plan : (& CompilerRegPlan)]) : i64
+  (let
+    [assignments : CompilerRegAssignmentTable
+      (compiler-reg-plan-assignments plan)]
+    [parked : i64 (compiler-reg-loop-park-parked-count pk)]
+    [sites : i64 (compiler-reg-loop-park-site-count pk)]
+    [cost : i64 0]
+    (for [slot (iterator.range 0 parked)]
+      (when
+        (compiler-reg-loop-split-distinct-registers?
+          assignments
+          (array-ref pk.park-var slot)
+          (array-ref pk.park-carrier slot))
+        (let
+          [pre : i64 (array-ref pk.park-pre slot)]
+          (unless
+            (= (bit-and (shr (array-ref pk.pre-mask pre) slot) 1) 0)
+            (+= cost (array-ref weights pre)))
+          (for [row (iterator.range 0 sites)]
+            (unless
+              (= (bit-and (shr (array-ref pk.site-mask row) slot) 1) 0)
+              (+= cost (array-ref pk.site-weight row)))))))
+    cost))
+
+;; Does an S3 rewrite pay? The estimate prices references and nothing else:
+;; not the loop-region registers the constant hoist claims after allocation,
+;; nor the scratch the scavenger needs where two memory-homed operands meet.
+;; The replan reshuffles the whole function, so that blind spot grows with the
+;; function's traffic, and a split that only breaks even on paper loses in
+;; practice. So the rewrite must save at least one reference per iteration of
+;; every loop it splits around AND at least 1/16 of the function's estimate.
+(define (compiler-reg-loop-split-pays?
+  [pk : (& pk CompilerRegLoopParkPlan)]
+  [weights : (& weights (__tl_dyn-array i64))]
+  [cost : i64]
+  [base-cost : i64]) : bool
+  (let
+    [margin : i64 0]
+    (for [k (iterator.range 0 (compiler-reg-loop-park-loop-count pk))]
+      (+= margin (array-ref weights (array-ref pk.loop-header k))))
+    (and (< (+ cost margin) base-cost) (<= (* 16 cost) (* 15 base-cost)))))
 
 ;; The parts of the round that do not change between retries.
 (defstruct CompilerRegLoopParkRound
@@ -17952,7 +18544,10 @@
                   (compiler-reg-loop-park-rewrite-blocks
                     pk
                     ctx.seq
-                    rd.type-info)]
+                    rd.type-info
+                    (if ctx.split
+                      rd.vars
+                      0))]
                 [park-vars : i64 (+ rd.vars parked)]
                 [park-func : ir.CompilerIrFunction
                   (Function
@@ -17973,6 +18568,9 @@
                     rd.target-abi
                     (& park-func)
                     rd.threshold
+                    (if ctx.split
+                      rd.vars
+                      (- 0 1))
                     rd.cold-split
                     park-types
                     (compiler-reg-assignment-table-empty))]
@@ -17993,7 +18591,20 @@
                         (& (compiler-reg-function-loop-depths (& park-blocks)))))
                     park-vars
                     (& park-plan))]
-                (if (< park-cost rd.base-cost)
+                [copy-cost : i64
+                  (if ctx.split
+                    (compiler-reg-loop-split-copy-cost
+                      (& pk)
+                      (& ctx.weights)
+                      (& park-plan))
+                    0)]
+                (if (if ctx.split
+                  (compiler-reg-loop-split-pays?
+                    (& pk)
+                    (& ctx.weights)
+                    (+ park-cost copy-cost)
+                    rd.base-cost)
+                  (< park-cost rd.base-cost))
                   (Split park-func park-vars park-plan park-types rd.threshold)
                   ;; The set did not pay for itself. Drop the loops whose
                   ;; previously spilled residents the replan left in memory --
@@ -18029,7 +18640,8 @@
   [type-info : CompilerRegVarTypes]
   [plan : (& CompilerRegPlan)]
   [temp-start : i64]
-  [cold-split : bool]) : CompilerRegCallHoleSplit
+  [cold-split : bool]
+  [split? : bool]) : CompilerRegCallHoleSplit
   (match func
     [(Function _ _ _ vars blocks _)
       (let
@@ -18101,6 +18713,15 @@
                         ineligible
                         threshold
                         (&mut spilled))]
+                    [homed : (__tl_dyn-array bool)
+                      (compiler-reg-loop-split-homed
+                        type-segment-bases
+                        type-info
+                        (compiler-reg-plan-assignments plan)
+                        (& ineligible)
+                        (if split?
+                          threshold
+                          0))]
                     [ctx : CompilerRegLoopParkContext
                       (CompilerRegLoopParkContext
                         type-segment-bases
@@ -18118,7 +18739,9 @@
                         benefit
                         spilled
                         vars
-                        threshold)]
+                        threshold
+                        split?
+                        homed)]
                     (if (= spilled-count 0)
                       none
                       (compiler-reg-loop-park-round
@@ -25607,10 +26230,11 @@
   [params : (& params live.CompilerLiveI64Set)]
   [parents : (& parents (__tl_dyn-array i64))]
   [forced-spill-from : i64]
+  [split-from : i64]
   [register-home? : bool]
   [var : i64]) : i64
   (cond
-    [(and (>= forced-spill-from 0) (>= var forced-spill-from))
+    [(compiler-reg-forced-spill-var? forced-spill-from split-from var)
       (compiler-reg-trace-reason-forced-carrier)]
     [(live.compiler-live-set-contains? ineligible var)
       (compiler-reg-trace-reason-memory-rule)]
@@ -25645,7 +26269,8 @@
   [blocked : (& live.CompilerLiveI64Set)]
   [call-points : (& live.CompilerLiveI64Set)]
   [call-split : (& CompilerRegCallSplit)]
-  [forced-spill-from : i64]) : unit
+  [forced-spill-from : i64]
+  [split-from : i64]) : unit
   (match func
     [(Function name _ _ vars blocks _)
       (let
@@ -25694,6 +26319,7 @@
                       param-vars
                       parents
                       forced-spill-from
+                      split-from
                       (match (compiler-reg-assignment-table-lookup
                         assignments
                         var)
@@ -25747,7 +26373,8 @@
   [mask-vars-use-vector-registers : bool]
   [target-abi : cabi.CompilerRegTargetAbi]
   [ignore-single-cold-call? : bool]
-  [forced-spill-from : i64]) : CompilerRegPlan
+  [forced-spill-from : i64]
+  [split-from : i64]) : CompilerRegPlan
   (let
     ;; RG-1: one reason slot per var of THIS function. A no-op (and no
     ;; allocation) whenever the tracer is off.
@@ -25769,7 +26396,7 @@
               (compiler-reg-live-set-insert-range
                 base
                 forced-spill-from
-                fn-vars)])
+                (compiler-reg-forced-spill-end split-from fn-vars))])
           base))]
     ;; Destructive operand/result ties carry different values and never receive
     ;; the same-value overlap waiver. Keep their ordinary non-overlap relation
@@ -25839,12 +26466,19 @@
         (live.compiler-live-set-union
           (live.clone-compiler-live-i64-set (& vector-vars))
           (live.clone-compiler-live-i64-set (& mask-vars))))]
+    ;; S3 split pieces stay singleton classes: each one is copy-related to the
+    ;; value it was split from and no longer interferes with it, so the move
+    ;; coalescer would otherwise merge the two halves back into one interval.
     [non-coalesce-vars : live.CompilerLiveI64Set
-      (if vector-mask-empty?
-        (live.clone-compiler-live-i64-set (& group-vars))
-        (live.compiler-live-set-union
+      (compiler-reg-split-range-insert
+        (if vector-mask-empty?
           (live.clone-compiler-live-i64-set (& group-vars))
-          (live.clone-compiler-live-i64-set (& vector-and-mask-vars))))]
+          (live.compiler-live-set-union
+            (live.clone-compiler-live-i64-set (& group-vars))
+            (live.clone-compiler-live-i64-set (& vector-and-mask-vars))))
+        split-from
+        (match func
+          [(Function _ _ _ fn-vars _ _) fn-vars]))]
     [xmm-call-points : live.CompilerLiveI64Set (compiler-reg-call-points func)]
     [sv-parents : (__tl_dyn-array i64)
       (compiler-reg-function-same-value-parents-multi
@@ -26317,7 +26951,8 @@
           blocked
           (& call-points)
           (& call-save-split)
-          forced-spill-from)
+          forced-spill-from
+          split-from)
         unit)]
     (Plan pair-assignments ineligible intervals type-info call-save-split)))
 
@@ -26425,6 +27060,7 @@
               mask-vars-use-vector-registers
               target-abi
               false
+              (- 0 1)
               (- 0 1))
             (let
               [param-plan : CompilerRegParamAssignPlan
@@ -26453,6 +27089,7 @@
                     mask-vars-use-vector-registers
                     target-abi
                     false
+                    (- 0 1)
                     (- 0 1))]))))])))
 
 (define (compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics
@@ -26601,6 +27238,32 @@
               unit))
           unit)])))
 
+;; The forced-to-memory carrier range of a replan is [forced-spill-from, end):
+;; every var from the threshold up, unless an S3 loop split minted FREE pieces
+;; above the carriers, in which case the range stops at `split-from`.
+(define (compiler-reg-forced-spill-end [split-from : i64] [vars : i64]) : i64
+  (if (>= split-from 0)
+    split-from
+    vars))
+
+(define (compiler-reg-forced-spill-var?
+  [forced-spill-from : i64]
+  [split-from : i64]
+  [var : i64]) : bool
+  (and
+    (>= forced-spill-from 0)
+    (>= var forced-spill-from)
+    (or (< split-from 0) (< var split-from))))
+
+;; Add the S3 split pieces [split-from, vars) to `set` (none when split-from < 0).
+(define (compiler-reg-split-range-insert
+  [set : live.CompilerLiveI64Set]
+  [split-from : i64]
+  [vars : i64]) : live.CompilerLiveI64Set
+  (if (< split-from 0)
+    set
+    (compiler-reg-live-set-insert-range set split-from vars)))
+
 (define (compiler-reg-live-set-insert-range
   [set : live.CompilerLiveI64Set]
   [start : i64]
@@ -26637,6 +27300,7 @@
     target-abi
     func
     forced-spill-from
+    (- 0 1)
     (>= forced-spill-from 0)
     type-info
     forced-assignments))
@@ -26777,6 +27441,7 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : (& ir.CompilerIrFunction)]
   [forced-spill-from : i64]
+  [split-from : i64]
   [cold-split? : bool]
   [type-info : CompilerRegVarTypes]
   [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
@@ -26788,6 +27453,7 @@
           target-abi
           func
           forced-spill-from
+          split-from
           cold-split?
           type-info
           forced-assignments)
@@ -26796,6 +27462,7 @@
           target-abi
           func
           forced-spill-from
+          split-from
           cold-split?
           type-info
           forced-assignments))]))
@@ -26805,6 +27472,7 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : (& ir.CompilerIrFunction)]
   [forced-spill-from : i64]
+  [split-from : i64]
   [cold-split? : bool]
   [type-info : CompilerRegVarTypes]
   [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
@@ -26820,6 +27488,7 @@
           target-abi
           func
           forced-spill-from
+          split-from
           cold-split?
           type-info
           forced-assignments))]
@@ -26844,6 +27513,7 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [func : (& ir.CompilerIrFunction)]
   [forced-spill-from : i64]
+  [split-from : i64]
   [cold-split? : bool]
   [type-info : CompilerRegVarTypes]
   [forced-assignments : CompilerRegAssignmentTable]) : CompilerRegPlan
@@ -26914,7 +27584,10 @@
                   type-info
                   target-abi)]
               (if forced-spill?
-                (compiler-reg-live-set-insert-range base forced-spill-from vars)
+                (compiler-reg-live-set-insert-range
+                  base
+                  forced-spill-from
+                  (compiler-reg-forced-spill-end split-from vars))
                 base))]
           [param-plan : CompilerRegParamAssignPlan
             (compiler-reg-param-assign-plan
@@ -26947,7 +27620,8 @@
                   false
                   target-abi
                   cold-split?
-                  forced-spill-from))]))])))
+                  forced-spill-from
+                  split-from))]))])))
 
 (define (compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types
   [type-segment-bases : i64]

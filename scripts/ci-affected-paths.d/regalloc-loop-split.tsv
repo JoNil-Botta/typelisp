@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/regalloc_loop_split.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	S3 loop-split hot-loop register shape is pinned through asm-shape.d/regalloc-loop-split.cases.

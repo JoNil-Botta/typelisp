@@ -1,0 +1,4 @@
+# Native integration cases for the S3 loop-region live-range split.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+regalloc_loop_split|all|0,1,2|tests/integration/regalloc_loop_split.tl|42|598905\n|-|-|-

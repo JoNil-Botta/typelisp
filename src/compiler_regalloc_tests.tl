@@ -2062,7 +2062,7 @@
 (cfg
   test
   (define (compiler-reg-loop-park-block-index
-    [seq : ir.CompilerIrBlockSeq]
+    [seq : (& seq ir.CompilerIrBlockSeq)]
     [name : String]) : i64
     (let
       [want : i64 (ir.compiler-ir-label (& name))]
@@ -2087,18 +2087,9 @@
           [count : i64 (ir.compiler-ir-block-seq-count seq)]
           [nest : reg.CompilerRegLoopNest
             (reg.compiler-reg-loop-nest-build-seq seq)]
-          [header : i64
-            (compiler-reg-loop-park-block-index
-              (ir.compiler-ir-global-shared-view seq)
-              "header")]
-          [entry : i64
-            (compiler-reg-loop-park-block-index
-              (ir.compiler-ir-global-shared-view seq)
-              "entry")]
-          [pre : i64
-            (compiler-reg-loop-park-block-index
-              (ir.compiler-ir-global-shared-view seq)
-              "preheader")]
+          [header : i64 (compiler-reg-loop-park-block-index (& seq) "header")]
+          [entry : i64 (compiler-reg-loop-park-block-index (& seq) "entry")]
+          [pre : i64 (compiler-reg-loop-park-block-index (& seq) "preheader")]
           [total : i64
             (reg.compiler-reg-loop-nest-header-members! nest header 1)]
           [depths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -2253,30 +2244,12 @@
       [kind : (__tl_dyn-array i64) (__tl_make-array i64 8)]
       [weight : (__tl_dyn-array i64) (__tl_make-array i64 8)]
       [scratch : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-      [dh : i64
-        (compiler-reg-loop-park-block-index
-          (ir.compiler-ir-global-shared-view direct-seq)
-          "header")]
-      [de : i64
-        (compiler-reg-loop-park-block-index
-          (ir.compiler-ir-global-shared-view direct-seq)
-          "exit")]
-      [sh : i64
-        (compiler-reg-loop-park-block-index
-          (ir.compiler-ir-global-shared-view splice-seq)
-          "header")]
-      [sl : i64
-        (compiler-reg-loop-park-block-index
-          (ir.compiler-ir-global-shared-view splice-seq)
-          "latch")]
-      [se : i64
-        (compiler-reg-loop-park-block-index
-          (ir.compiler-ir-global-shared-view splice-seq)
-          "exit")]
-      [sr : i64
-        (compiler-reg-loop-park-block-index
-          (ir.compiler-ir-global-shared-view splice-seq)
-          "ret_blk")]
+      [dh : i64 (compiler-reg-loop-park-block-index (& direct-seq) "header")]
+      [de : i64 (compiler-reg-loop-park-block-index (& direct-seq) "exit")]
+      [sh : i64 (compiler-reg-loop-park-block-index (& splice-seq) "header")]
+      [sl : i64 (compiler-reg-loop-park-block-index (& splice-seq) "latch")]
+      [se : i64 (compiler-reg-loop-park-block-index (& splice-seq) "exit")]
+      [sr : i64 (compiler-reg-loop-park-block-index (& splice-seq) "ret_blk")]
       [direct-total : i64
         (reg.compiler-reg-loop-nest-header-members! direct-nest dh 1)]
       [direct-count : i64
@@ -2459,14 +2432,8 @@
             (let
               [func (compiler-reg-loop-park-direct-function)]
               (reg.compiler-reg-function-var-types func))]
-          [pre : i64
-            (compiler-reg-loop-park-block-index
-              (ir.compiler-ir-global-shared-view seq)
-              "preheader")]
-          [exit : i64
-            (compiler-reg-loop-park-block-index
-              (ir.compiler-ir-global-shared-view seq)
-              "exit")]
+          [pre : i64 (compiler-reg-loop-park-block-index (& seq) "preheader")]
+          [exit : i64 (compiler-reg-loop-park-block-index (& seq) "exit")]
           [pk : reg.CompilerRegLoopParkPlan
             (reg.compiler-reg-loop-park-plan-make count vars)]
           (reg.compiler-reg-loop-park-plan-reset! (&mut pk))
@@ -2494,7 +2461,8 @@
           (let
             [out : ir.CompilerIrBlockSeq
               (live.compiler-live-ir-block-list-to-seq
-                (& (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info)))]
+                (&
+                  (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info 0)))]
             (and
               ;; a direct reload adds no block
               (= (ir.compiler-ir-block-seq-count out) count)
@@ -2539,18 +2507,9 @@
             (let
               [func (compiler-reg-loop-park-splice-function)]
               (reg.compiler-reg-function-var-types func))]
-          [pre : i64
-            (compiler-reg-loop-park-block-index
-              (ir.compiler-ir-global-shared-view seq)
-              "preheader")]
-          [header : i64
-            (compiler-reg-loop-park-block-index
-              (ir.compiler-ir-global-shared-view seq)
-              "header")]
-          [exit : i64
-            (compiler-reg-loop-park-block-index
-              (ir.compiler-ir-global-shared-view seq)
-              "exit")]
+          [pre : i64 (compiler-reg-loop-park-block-index (& seq) "preheader")]
+          [header : i64 (compiler-reg-loop-park-block-index (& seq) "header")]
+          [exit : i64 (compiler-reg-loop-park-block-index (& seq) "exit")]
           [splice-label : i64
             (reg.compiler-reg-loop-park-splice-label seq header 0)]
           [pk : reg.CompilerRegLoopParkPlan
@@ -2579,10 +2538,11 @@
           (let
             [out : ir.CompilerIrBlockSeq
               (live.compiler-live-ir-block-list-to-seq
-                (& (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info)))]
+                (&
+                  (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info 0)))]
             [spliced : i64
               (compiler-reg-loop-park-block-index
-                (ir.compiler-ir-global-shared-view out)
+                (& out)
                 (ir.compiler-ir-label-text splice-label))]
             (and
               ;; exactly one block is added, and it is APPENDED, so every
@@ -2718,6 +2678,7 @@
           type-info
           (& plan)
           (- 0 1)
+          false
           false)]
       (match func
         [(Function _ _ _ vars _ _)
@@ -2756,12 +2717,185 @@
           type-info
           (& plan)
           (- 0 1)
+          false
           false)]
       (match func
         [(Function _ _ _ vars _ _)
           (and
             (= (reg.compiler-reg-call-hole-split-vars (& split)) vars)
             (= (reg.compiler-reg-call-hole-split-temp-start (& split)) (- 0 1)))]))))
+
+;; --- S3: loop-region live-range split ---------------------------------------
+;; `loop_split_resident` is the shape S3 exists for: a loop-local value (%2,
+;; defined in the body and read twice more there) sits in memory while the
+;; loop bound (%1, live over the whole function, read ONCE per iteration by the
+;; header compare and again after the loop) holds a register. Ranked on its
+;; whole-function weight the bound wins; ranked on what it is worth INSIDE the
+;; loop it is the cheaper of the two.
+(cfg
+  test
+  (define (compiler-reg-loop-split-resident-function) : ir.CompilerIrFunction
+    (irt.func
+      "function @loop_split_resident(seed=%0:i64) -> i64 vars 9 {
+       entry:
+         %1 = mov 100 : i64
+         jump preheader
+       preheader:
+         jump header
+       header:
+         %3 = phi [0, preheader], [%6, latch] : i64
+         %5 = lt %3, %1 : i64
+         branch %5, body, exit
+       body:
+         %2 = add %3, %0 : i64
+         %4 = mul %2, %2 : i64
+         %8 = add %4, %2 : i64
+         jump latch
+       latch:
+         %6 = add %3, %8 : i64
+         jump header
+       exit:
+         %7 = add %1, %3 : i64
+         return %7
+       }")))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-resident-plan) : reg.CompilerRegPlan
+    (Plan
+      (reg.compiler-reg-assignments-prepend
+        (& (reg.CompilerRegAssignment 1 (Register cabi.compiler-reg-id-r12)))
+        (reg.compiler-reg-assignments-prepend
+          (&
+            (reg.CompilerRegAssignment
+              2
+              (Spill (reg.compiler-reg-stack-slot-offset 1))))
+          (reg.compiler-reg-assignment-table-empty)))
+      (live.compiler-live-set-empty)
+      (reg.compiler-reg-interval-seq-empty)
+      (reg.compiler-reg-var-types-empty)
+      (reg.compiler-reg-call-split-empty))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-instr-uses?
+    [seq : (& seq ir.CompilerIrBlockSeq)]
+    [block : i64]
+    [index : i64]
+    [var : i64]) : bool
+    (let
+      [instrs : ir.CompilerIrInstrSeq
+        (reg.compiler-reg-loop-park-block-instrs seq block)]
+      (live.compiler-live-set-contains?
+        (&
+          (live.compiler-live-instr-uses
+            (ir.compiler-ir-instr-seq-borrow instrs index)))
+        var))))
+
+(cfg
+  test
+  (define (compiler-reg-loop-split-instr-dst
+    [seq : (& seq ir.CompilerIrBlockSeq)]
+    [block : i64]
+    [index : i64]) : i64
+    (let
+      [instrs : ir.CompilerIrInstrSeq
+        (reg.compiler-reg-loop-park-block-instrs seq block)]
+      (ir.compiler-ir-instr-dst (ir.compiler-ir-instr-seq-borrow instrs index)))))
+
+;; End to end: the bound is split around the loop and the rewrite is kept. Its
+;; piece is minted at the old watermark, copied in at the preheader, read by
+;; the header compare and written back at the exit; the replan homes it in a
+;; register (it is NOT a forced carrier) and the loop-local value comes out of
+;; memory. The spilled value lives entirely inside the loop, so it is not split.
+(cfg
+  test
+  (define (compiler-reg-loop-split-round-ok?) : bool
+    (let
+      [func : ir.CompilerIrFunction (compiler-reg-loop-split-resident-function)]
+      [vars : i64
+        (match func
+          [(Function _ _ _ function-vars _ _) function-vars])]
+      [split : reg.CompilerRegCallHoleSplit
+        (reg.compiler-reg-loop-park-rewrite-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          Linux
+          (& func)
+          (reg.compiler-reg-function-var-types func)
+          (& (compiler-reg-loop-split-resident-plan))
+          (- 0 1)
+          false
+          true)]
+      [split-vars : i64 (reg.compiler-reg-call-hole-split-vars (& split))]
+      [blocks : ir.CompilerIrBlockList
+        (reg.compiler-reg-call-hole-split-blocks (& split))]
+      [seq : ir.CompilerIrBlockSeq
+        (live.compiler-live-ir-block-list-to-seq (& blocks))]
+      [assignments : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-plan-assignments
+          (& (reg.compiler-reg-call-hole-split-plan split)))]
+      [pre : i64 (compiler-reg-loop-park-block-index (& seq) "preheader")]
+      [header : i64 (compiler-reg-loop-park-block-index (& seq) "header")]
+      [exit : i64 (compiler-reg-loop-park-block-index (& seq) "exit")]
+      (and
+        (= split-vars (+ vars 1))
+        ;; preheader: Mov piece <- %1, then its jump
+        (compiler-reg-loop-split-instr-uses? (& seq) pre 0 1)
+        (= (compiler-reg-loop-split-instr-dst (& seq) pre 0) vars)
+        ;; the header compare reads the piece, not %1
+        (compiler-reg-loop-split-instr-uses? (& seq) header 1 vars)
+        (not (compiler-reg-loop-split-instr-uses? (& seq) header 1 1))
+        ;; the exit writes %1 back from the piece before reading it
+        (compiler-reg-loop-split-instr-uses? (& seq) exit 0 vars)
+        (= (compiler-reg-loop-split-instr-dst (& seq) exit 0) 1)
+        (reg.compiler-reg-call-hole-register-homed? assignments vars)
+        (reg.compiler-reg-call-hole-register-homed? assignments 2)))))
+
+;; A value that is a phi result inside the loop is never split: its piece would
+;; be a singleton class next to the phi's and cost a copy on every iteration.
+;; The induction variable %3 qualifies on everything else.
+(cfg
+  test
+  (define (compiler-reg-loop-split-phi-refused-ok?) : bool
+    (match (compiler-reg-loop-split-resident-function)
+      [(Function _ _ _ _ blocks _)
+        (let
+          [seq : ir.CompilerIrBlockSeq
+            (live.compiler-live-ir-block-list-to-seq (& blocks))]
+          [nest : reg.CompilerRegLoopNest
+            (reg.compiler-reg-loop-nest-build-seq (& seq))]
+          [header : i64 (compiler-reg-loop-park-block-index (& seq) "header")]
+          [pre-label : i64 (reg.compiler-reg-loop-park-block-label (& seq) 1)]
+          [total : i64
+            (reg.compiler-reg-loop-nest-header-members! (& nest) header 1)]
+          (and
+            (=
+              (reg.compiler-reg-loop-split-mentions
+                (& seq)
+                (& nest)
+                header
+                total
+                pre-label
+                3)
+              3)
+            (=
+              (reg.compiler-reg-loop-split-mentions
+                (& seq)
+                (& nest)
+                header
+                total
+                pre-label
+                1)
+              0)
+            (=
+              (reg.compiler-reg-loop-split-mentions
+                (& seq)
+                (& nest)
+                header
+                total
+                pre-label
+                2)
+              1)))])))
 
 ;; --- P12: the merged-kernel shape, and the two ladders that decide it --------
 ;; A hand-inlined kernel puts its hottest loop DEEP. `it-intern-slice` inlined
@@ -3146,6 +3280,7 @@
         (reg.compiler-reg-function-var-types func)
         (& (compiler-reg-loop-park-deep-nest-plan bases-homed))
         (- 0 1)
+        false
         false))))
 
 ;; (1) The rotated inner-loop shape PARKS. Two base pointers are in memory and
@@ -14814,6 +14949,8 @@
     (cfg test (compiler-reg-loop-park-verify-ok?) true)
     (cfg test (compiler-reg-loop-park-round-ok?) true)
     (cfg test (compiler-reg-loop-park-declines-ok?) true)
+    (cfg test (compiler-reg-loop-split-round-ok?) true)
+    (cfg test (compiler-reg-loop-split-phi-refused-ok?) true)
     (cfg test (compiler-reg-loop-park-deep-parks-ok?) true)
     (cfg test (compiler-reg-loop-park-deep-two-bases-homed-ok?) true)
     (cfg test (compiler-reg-loop-park-deep-declines-ok?) true)
@@ -15681,6 +15818,7 @@
           (ast.ast-node-pool-reader-type-segment-bases)
           Linux
           (& func)
+          (- 0 1)
           (- 0 1)
           false
           types

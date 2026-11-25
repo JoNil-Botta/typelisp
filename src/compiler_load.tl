@@ -1317,6 +1317,19 @@
       (string.copy (& (array-ref paths (- (array-length paths) 1))))
       "")))
 
+(define (compiler-load-session-state-tli-stdlib-hydrated?
+  [state : (& CompilerLoadSessionState)]) : bool
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      false
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (tli_hydrate.tli-multi-stdlib-hydrated? (& holder.multi)))))))
+
 (define (compiler-load-session-state-tli-startup-symbols
   [state : (& CompilerLoadSessionState)]) : (__tl_dyn-array String)
   (let

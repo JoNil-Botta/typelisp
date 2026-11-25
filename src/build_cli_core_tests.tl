@@ -283,7 +283,7 @@
         (build.build-package-decl-has-spmd-callable?
           (owned_view.compiler-owned-shared-view spmd-decl))
         (build.build-package-decls-have-spmd-callable?
-          (ast.ast-decl-cons (& spmd-decl) (& (ast.ast-decl-list-new))))
+          (& (ast.ast-decl-cons (& spmd-decl) (& (ast.ast-decl-list-new)))))
         (= (build.build-package-direct-object-owned-path-count (& mixed)) 1)
         (build-package-direct-object-within-budget? (& within))
         (not (build-package-direct-object-within-budget? (& over)))))))
@@ -342,7 +342,7 @@
               false
               512
               false
-              (owned_view.compiler-owned-shared-view empty-decls)
+              (& empty-decls)
               (& empty-paths))
             "artifact-kind-unavailable")
           (build-package-preflight-category-is?
@@ -353,7 +353,7 @@
               true
               512
               false
-              (owned_view.compiler-owned-shared-view empty-decls)
+              (& empty-decls)
               (& empty-paths))
             "debug-metadata")
           (build-package-preflight-category-is?
@@ -364,7 +364,7 @@
               false
               512
               false
-              (owned_view.compiler-owned-shared-view empty-decls)
+              (& empty-decls)
               (& empty-paths))
             "backend-mode")
           (build-package-preflight-category-is?
@@ -375,7 +375,7 @@
               false
               512
               false
-              spmd-decls
+              (& spmd-decls)
               (& empty-paths))
             "private-spmd-abi")
           (build-package-preflight-category-is?
@@ -386,7 +386,7 @@
               false
               0
               false
-              (owned_view.compiler-owned-shared-view empty-decls)
+              (& empty-decls)
               (& one-path))
             "resource-budget")
           (match (build.build-package-direct-object-preflight
@@ -396,7 +396,7 @@
             false
             1
             false
-            empty-decls
+            (& empty-decls)
             (& one-path))
             [(Eligible) true]
             [_ false]))
@@ -466,7 +466,7 @@
               (= debug-index 1)
               0
               (= override-index 1)
-              decls
+              (& decls)
               (& paths))
             expected)
           (return false))

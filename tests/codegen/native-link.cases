@@ -724,7 +724,7 @@ file fallback/typelisp.pkg
 end-file
 sh mkdir -p "{{dir}}/fallback/src" && cp "{{work}}/semantic-fallback.tl" "{{dir}}/fallback/src/main.tl"
 sh chmod +x "{{work}}/no-assembler-bin/as"
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/package/typelisp.pkg" --target linux-x86_64 --opt-level 0 --stdlib-root "{{root}}/stdlib"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --manifest-path "{{dir}}/package/typelisp.pkg" --target linux-x86_64 --opt-level 0 --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib
 stderr empty
 stdout contains Built {{dir}}/package/vendor/math/target/release/libdirect_object_math.a
 stdout contains Built {{dir}}/package/target/release/direct_object_pkg

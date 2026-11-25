@@ -279,7 +279,8 @@
                       (be_state.CompilerBackendMode.Scalar)
                       windows?
                       opt-level
-                      true)
+                      true
+                      (extract.TliPartitionObjectRoute.Assembly))
                       [(Err message) (io.panic message)]
                       [(Ok emitted)
                         (io.println

@@ -2587,13 +2587,13 @@
         (ast.ast-decl-box-shared-view inner))]
     [_ false]))
 
-(define (build-package-decls-have-spmd-callable? [decls : ast.AstDeclList]) : bool
+(define (build-package-decls-have-spmd-callable? [decls : (& ast.AstDeclList)]) : bool
   (match (ast.ast-decl-list-step decls)
     [(Nil) false]
     [(Cons decl rest)
       (or
         (build-package-decl-has-spmd-callable? decl)
-        (build-package-decls-have-spmd-callable? rest))]))
+        (build-package-decls-have-spmd-callable? (& rest)))]))
 
 (define (build-package-direct-object-owned-path-budget) : i64
   ;; Large package direct-object emission duplicates enough object/ELF state to
@@ -2641,7 +2641,7 @@
   [debug-info : bool]
   [path-budget : i64]
   [linux-budget-override : bool]
-  [decls : ast.AstDeclList]
+  [decls : (& ast.AstDeclList)]
   [paths : (& paths ast.AstDeclPathList)]) : BuildPackageDirectObjectPreflight
   (cond
     ;; COFF archive production remains on the assembler path.
@@ -5751,7 +5751,7 @@
           request.debug-info
           request.path-budget
           request.linux-budget-override
-          (owned_view.compiler-owned-shared-view request.decls)
+          (& request.decls)
           (& request.paths))]
       [lowered : compiler_driver_core.ResultCompilerDriverLowered
         (compiler_driver_core.compiler-driver-package-runtime-lower
@@ -5763,11 +5763,15 @@
           request.paths
           request.cfgs
           request.opt-level)]
+      ;; TLI hydration marks every hydrated archive as runtime-dependent. The
+      ;; package knows its archives: only those that reference the native
+      ;; runtime, or a hydrated prebuilt stdlib, keep the whole runtime.
       [_archive-runtime : unit
-        (when
-          archive-runtime
-          (compiler_driver_core.compiler-driver-lowered-result-enable-archive-runtime!
-            (& lowered)))]
+        (compiler_driver_core.compiler-driver-lowered-result-set-archive-runtime!
+          (& lowered)
+          (or
+            archive-runtime
+            (compiler_driver_core.compiler-driver-last-hydrated-stdlib?)))]
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-emit-preflighted-runtime
           request.entry-path
@@ -6057,6 +6061,25 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  ;; Writes one partitioned module's ELF archive object beside its assembly.
+  ;; False keeps that module on the assembler.
+  (define (build-package-lib-write-direct-object
+    [image : cobj.CompilerObjectImage]
+    [asm-path : String]) : bool
+    (match (build-package-render-linux-direct-object
+      (load.CompilerPkgKind.CompilerPkgKindLib)
+      image)
+      [(Fallback _) false]
+      [(Ok object)
+        (match (build_run_core.source-tool-write-file
+          (& (build-package-lib-obj-name (& asm-path) (Linux)))
+          (& object)
+          "build: failed to write package direct object")
+          [(Ok) true]
+          [(Err _) false])])))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-lib-clean-mods-dir! [mods-dir : (& str)]) : unit
     (match (fs.try-read-dir mods-dir)
       [(ErrIoStringVector _) unit]
@@ -6074,6 +6097,7 @@
   (define (build-package-lib-assemble-and-archive
     [mods-dir : (& str)]
     [asm-files : (& (__tl_dyn-array String))]
+    [direct-objects : (& (__tl_dyn-array bool))]
     [package-name : (& str)]
     [target : be_state.CompilerBackendTarget]
     [archive-path : String]) : build_run_core.SourceToolCommandStatus
@@ -6124,17 +6148,20 @@
               (fs.path-join
                 mods-dir
                 (& (build-package-lib-obj-name (& fname) target)))]
-            [asm-cmd : process.ProcessCommand
-              (try
-                (build-package-assembler-command-for
-                  target
-                  (string.copy (& asm-p))
-                  (string.copy (& obj-p))))]
-            (try
-              (build_run_core.source-tool-run-command
-                "build: assembler failed"
-                target
-                asm-cmd))
+            (unless
+              (array-ref (deref direct-objects) i)
+              (let
+                [asm-cmd : process.ProcessCommand
+                  (try
+                    (build-package-assembler-command-for
+                      target
+                      (string.copy (& asm-p))
+                      (string.copy (& obj-p))))]
+                (try
+                  (build_run_core.source-tool-run-command
+                    "build: assembler failed"
+                    target
+                    asm-cmd))))
             (set!
               obj-paths
               (build_run_core.source-tool-args-append obj-paths obj-p)))))
@@ -6280,6 +6307,20 @@
             (& request.manifest-dir)
             (& request.stdlib-roots)
             (& source-set))]
+        ;; Same route policy as a whole-package library: eligible modules
+        ;; become ELF objects without the system assembler.
+        [direct-object? : bool
+          (match (build-package-direct-object-preflight
+            (load.CompilerPkgKind.CompilerPkgKindLib)
+            (be_state.clone-compiler-backend-target (& target))
+            (be_state.clone-compiler-backend-mode (& mode))
+            (ir.compiler-debug-info-enabled?)
+            (build-package-direct-object-owned-path-budget)
+            (build_run_core.source-tool-linux-direct-object-enabled?)
+            (& decls)
+            (& owned-paths))
+            [(Eligible) true]
+            [_ false])]
         [_capture-fe : unit
           (compiler_driver_core.compiler-driver-package-runtime-capture-frontend!
             (owned_view.compiler-owned-shared-view scope))]
@@ -6439,7 +6480,11 @@
                             mode
                             (be_facts.compiler-backend-target-windows? target)
                             request.opt-level
-                            false)]
+                            false
+                            (if direct-object?
+                              (tli_extract.TliPartitionObjectRoute.DirectObject
+                                build-package-lib-write-direct-object)
+                              (tli_extract.TliPartitionObjectRoute.Assembly)))]
                         (match part-result
                           [(Err message)
                             (lower.compiler-lower-arena-state-release!
@@ -6588,6 +6633,7 @@
                                     (match (build-package-lib-assemble-and-archive
                                       (& mods-dir)
                                       (& emitted.asm-files)
+                                      (& emitted.direct-objects)
                                       (& request.manifest.name)
                                       target
                                       (string.copy (& stage.artifact)))

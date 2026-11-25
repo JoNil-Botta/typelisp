@@ -1368,6 +1368,13 @@
 (define compiler-driver-last-hydrated-archive-paths-state : (__tl_dyn-array
     String)
   (__tl_make-array String 0))
+(define compiler-driver-last-hydrated-stdlib-state : bool
+  false)
+
+;; The last TLI session hydrated the prebuilt stdlib, whose archive needs the
+;; full native runtime. Hydrated package archives alone do not.
+(define (compiler-driver-last-hydrated-stdlib?) : bool
+  compiler-driver-last-hydrated-stdlib-state)
 
 (define (compiler-driver-last-hydrated-archive-path) : String
   (string.copy (& compiler-driver-last-hydrated-archive-path-state)))
@@ -1385,6 +1392,7 @@
 
 (define (compiler-driver-clear-last-hydrated-archive-path!) : unit
   (set! compiler-driver-last-hydrated-archive-path-state "")
+  (set! compiler-driver-last-hydrated-stdlib-state false)
   (set!
     compiler-driver-last-hydrated-archive-paths-state
     (__tl_make-array String 0)))
@@ -1484,7 +1492,11 @@
           (string.copy (& (array-ref archives (- (array-length archives) 1))))
           ""))
       (set! compiler-driver-last-hydrated-archive-paths-state archives)
-      (set! compiler-driver-last-hydrated-startup-symbols-state startup))
+      (set! compiler-driver-last-hydrated-startup-symbols-state startup)
+      (set!
+        compiler-driver-last-hydrated-stdlib-state
+        (compiler_load.compiler-load-session-state-tli-stdlib-hydrated?
+          load-state)))
     (begin
       ;; A batch reuses one backend state, so a source-stdlib entry must not
       ;; inherit the archive runtime of a prebuilt-stdlib entry before it.
@@ -1516,7 +1528,11 @@
             (string.copy (& (array-ref archives (- (array-length archives) 1))))
             ""))
         (set! compiler-driver-last-hydrated-archive-paths-state archives)
-        (set! compiler-driver-last-hydrated-startup-symbols-state startup))
+        (set! compiler-driver-last-hydrated-startup-symbols-state startup)
+        (set!
+          compiler-driver-last-hydrated-stdlib-state
+          (compiler_load.compiler-load-session-state-tli-stdlib-hydrated?
+            (& load-state))))
       (begin
         (set!
           compiler-driver-last-hydrated-startup-symbols-state
@@ -3369,11 +3385,14 @@
 ;; retire the lowered source arena around the route's emit body, then drop
 ;; the lower arenas. Only Assembly and Buffer record the retain phases, and
 ;; Buffer leaves its lower arenas to the caller.
-(define (compiler-driver-lowered-result-enable-archive-runtime!
-  [lowered : (& ResultCompilerDriverLowered)]) : unit
+(define (compiler-driver-lowered-result-set-archive-runtime!
+  [lowered : (& ResultCompilerDriverLowered)]
+  [enabled : bool]) : unit
   (match lowered
     [(Ok _ _ _ _ backend-state _ _)
-      (be_state.compiler-backend-state-set-archive-runtime! backend-state true)]
+      (be_state.compiler-backend-state-set-archive-runtime!
+        backend-state
+        enabled)]
     [_ unit]))
 
 (define (compiler-driver-emit-lowered-result

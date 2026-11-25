@@ -2732,6 +2732,14 @@
 (define (tli-multi-bundle-count [multi : (& TliMultiCatalog)]) : i64
   (tli_bundle_vec.len (& multi.bundles)))
 
+;; The sysroot stdlib bundle supplied a hydrated module, so its archive (which
+;; references the native runtime) joins the link.
+(define (tli-multi-stdlib-hydrated? [multi : (& TliMultiCatalog)]) : bool
+  (and
+    multi.has-stdlib-bundle
+    (>= multi.stdlib-bundle-index 0)
+    (array-ref multi.bundles.slots multi.stdlib-bundle-index).hydrated-any))
+
 (define (tli-multi-hydrated-package-bundle-count [multi : (& TliMultiCatalog)]) : i64
   (let
     [bcount : i64 (tli_bundle_vec.len (& multi.bundles))]

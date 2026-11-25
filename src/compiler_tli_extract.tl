@@ -19,6 +19,7 @@
 (import compiler_intern as intern)
 (import compiler_diagnostic as diag)
 (import compiler_lower as lower)
+(import compiler_object as cobj)
 (import compiler_ir_types as ir)
 (import sym_i64_env)
 (import stdlib.math)
@@ -60,12 +61,21 @@
 
 (defstruct TliPartitionedEmitResult
   (asm-files (__tl_dyn-array String))
+  ;; Per asm file: the route already wrote that module's object.
+  (direct-objects (__tl_dyn-array bool))
   (emitted-modules i64)
   (skipped-modules i64))
 
 (defenum ResultTliPartitionedEmit
   (Ok TliPartitionedEmitResult)
   (Err String))
+
+;; How a partitioned module reaches its object. DirectObject is handed each
+;; object-eligible module's image with its asm path and returns whether it
+;; wrote the object; the caller assembles every module it did not write.
+(defenum TliPartitionObjectRoute
+  (Assembly)
+  (DirectObject (-> cobj.CompilerObjectImage String bool)))
 
 (defstruct TliSource
   (module-name String)
@@ -2458,6 +2468,58 @@
 (define (tli-partition-noexecstack-note) : String
   "\n    .section .note.GNU-stack,\"\",@progbits\n")
 
+;; One module's object through `route`, from its own backend state so the
+;; module's assembly emission keeps the caller's state. False when the route is
+;; Assembly, the program is not object-eligible, or the route did not write it.
+(define (tli-partition-emit-direct-object
+  [route : (& TliPartitionObjectRoute)]
+  [pools : ast.AstNodePoolContext]
+  [program : (& ir.CompilerIrProgram)]
+  [spans : (& ir.CompilerSourceSpans)]
+  [backend-target : be_state.CompilerBackendTarget]
+  [backend-mode : be_state.CompilerBackendMode]
+  [opt-level : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [asm-path : (& str)]) : bool
+  (match route
+    [(Assembly) false]
+    [(DirectObject write-object)
+      (let
+        [state : be_state.CompilerBackendState
+          (be_state.compiler-backend-state-new
+            (intern.intern-compat-state-capture-active))]
+        [prof : profile_state.CompilerProfileState
+          (profile_state.compiler-profile-state-new)]
+        (be_state.compiler-backend-state-set-opt-level! state opt-level)
+        (be_state.compiler-backend-state-set-representations-for-pools!
+          state
+          (& pools)
+          representations)
+        (let
+          [written : bool
+            (match (backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
+              state
+              pools
+              (ir.clone-compiler-ir-program program)
+              backend-target
+              prof)
+              [(Unsupported _) false]
+              [(Eligible)
+                (match (backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                  state
+                  pools
+                  (ir.clone-compiler-ir-program program)
+                  backend-target
+                  backend-mode
+                  (ir.compiler-source-spans-escape spans)
+                  false
+                  false
+                  prof)
+                  [(Ok image) (write-object image (string.copy asm-path))]
+                  [(Err _) false])])]
+          (backend.compiler-backend-state-release-final-arenas! state)
+          written))]))
+
 (define (tli-emit-partitioned-modules!
   [bundle : (& tli.TliBundle)]
   [whole-program : ir.CompilerIrProgram]
@@ -2471,7 +2533,8 @@
   [backend-mode : be_state.CompilerBackendMode]
   [windows? : bool]
   [opt-level : i64]
-  [is-stdlib? : bool]) : ResultTliPartitionedEmit
+  [is-stdlib? : bool]
+  [object-route : TliPartitionObjectRoute]) : ResultTliPartitionedEmit
   (let
     [interns : intern.InternCompatState
       (lower.compiler-lower-state-interns lower-state)]
@@ -2632,6 +2695,7 @@
                 (ir.compiler-ir-representation-index-empty))]
             [manifest-buf : text_buf.TextBuf (text_buf.empty)]
             [emitted-files : strings.Vec (strings.new)]
+            [emitted-direct : indices.Vec (indices.new)]
             [emitted-modules : i64 0]
             [skipped-modules : i64 0]
             (for [i (iterator.range 0 fn-count)]
@@ -2932,6 +2996,14 @@
                           (ir.compiler-ir-clone-representation-index
                             pools
                             (& base-reps)))]
+                      [object-reps : ir.CompilerIrRepresentationIndex
+                        (match (& object-route)
+                          [(Assembly)
+                            (ir.compiler-ir-representation-index-empty)]
+                          [(DirectObject _)
+                            (ir.compiler-ir-clone-representation-index
+                              pools
+                              (& mod-reps))])]
                       (be_state.compiler-backend-state-set-opt-level!
                         be-state-mod
                         opt-level)
@@ -2956,75 +3028,90 @@
                         [(opt.CompilerOptimizedProgram.Program
                             opt-program
                             opt-spans)
-                          (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-                            be-state-mod
-                            pools
-                            opt-program
-                            backend-target
-                            backend-mode
-                            opt-spans
-                            false
-                            false
-                            prof)
-                            [(Err diag-box)
-                              (backend.compiler-backend-state-release-final-arenas!
-                                be-state-mod)
-                              (return
-                                (Err
-                                  (str_cat.str-cat
-                                    "tli-partition: backend failed for module "
-                                    (string.copy mod-name)
-                                    ": "
-                                    (diag.compiler-diagnostic-render
-                                      (& (__tl-box-place diag-box))))))]
-                            [(Ok asm)
-                              (let
-                                [sep : String
-                                  (if is-stdlib?
-                                    "-"
-                                    "_")]
-                                [file-name : String
-                                  (str_cat.str-cat
-                                    (tli-partition-pad3 m)
-                                    sep
-                                    (tli-partition-sanitize-module-filename
-                                      mod-name)
-                                    ".s")]
-                                [asm-path : String
-                                  (fs.path-join asm-dir (& file-name))]
-                                [final-asm : String
-                                  (if (and
-                                    (not windows?)
-                                    (not is-stdlib?)
-                                    (not
-                                      (string.contains
-                                        (& asm)
-                                        ".note.GNU-stack")))
+                          (let
+                            [file-name : String
+                              (str_cat.str-cat
+                                (tli-partition-pad3 m)
+                                (if is-stdlib?
+                                  "-"
+                                  "_")
+                                (tli-partition-sanitize-module-filename
+                                  mod-name)
+                                ".s")]
+                            [direct-object : bool
+                              (tli-partition-emit-direct-object
+                                (& object-route)
+                                pools
+                                (& opt-program)
+                                (& opt-spans)
+                                backend-target
+                                backend-mode
+                                opt-level
+                                object-reps
+                                (& (fs.path-join asm-dir (& file-name))))]
+                            (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                              be-state-mod
+                              pools
+                              opt-program
+                              backend-target
+                              backend-mode
+                              opt-spans
+                              false
+                              false
+                              prof)
+                              [(Err diag-box)
+                                (backend.compiler-backend-state-release-final-arenas!
+                                  be-state-mod)
+                                (return
+                                  (Err
                                     (str_cat.str-cat
-                                      asm
-                                      (tli-partition-noexecstack-note))
-                                    asm)]
-                                (match (io.try-write-file
-                                  (& asm-path)
-                                  (byte_buf.str-as-bytes (& final-asm)))
-                                  [(OkIoUnit) unit]
-                                  [(ErrIoUnit _)
-                                    (backend.compiler-backend-state-release-final-arenas!
-                                      be-state-mod)
-                                    (return
-                                      (Err
-                                        (str_cat.str-cat
-                                          "cannot write module asm: "
-                                          asm-path)))])
-                                (strings.push-ref!
-                                  (&mut emitted-files)
-                                  (string.copy (& file-name)))
-                                (set!
-                                  manifest-buf
-                                  (text_buf.append
-                                    (text_buf.append manifest-buf file-name)
-                                    "\n"))
-                                (+= emitted-modules 1))])])
+                                      "tli-partition: backend failed for module "
+                                      (string.copy mod-name)
+                                      ": "
+                                      (diag.compiler-diagnostic-render
+                                        (& (__tl-box-place diag-box))))))]
+                              [(Ok asm)
+                                (let
+                                  [asm-path : String
+                                    (fs.path-join asm-dir (& file-name))]
+                                  [final-asm : String
+                                    (if (and
+                                      (not windows?)
+                                      (not is-stdlib?)
+                                      (not
+                                        (string.contains
+                                          (& asm)
+                                          ".note.GNU-stack")))
+                                      (str_cat.str-cat
+                                        asm
+                                        (tli-partition-noexecstack-note))
+                                      asm)]
+                                  (match (io.try-write-file
+                                    (& asm-path)
+                                    (byte_buf.str-as-bytes (& final-asm)))
+                                    [(OkIoUnit) unit]
+                                    [(ErrIoUnit _)
+                                      (backend.compiler-backend-state-release-final-arenas!
+                                        be-state-mod)
+                                      (return
+                                        (Err
+                                          (str_cat.str-cat
+                                            "cannot write module asm: "
+                                            asm-path)))])
+                                  (strings.push-ref!
+                                    (&mut emitted-files)
+                                    (string.copy (& file-name)))
+                                  (indices.push-ref!
+                                    (&mut emitted-direct)
+                                    (if direct-object
+                                      1
+                                      0))
+                                  (set!
+                                    manifest-buf
+                                    (text_buf.append
+                                      (text_buf.append manifest-buf file-name)
+                                      "\n"))
+                                  (+= emitted-modules 1))]))])
                       (backend.compiler-backend-state-release-final-arenas!
                         be-state-mod))))))
             (when
@@ -3045,12 +3132,18 @@
               [out-count : i64 (strings.len (& emitted-files))]
               [out-arr : (__tl_dyn-array String)
                 (__tl_make-array String out-count)]
+              [direct-arr : (__tl_dyn-array bool)
+                (__tl_make-array bool out-count)]
               (for [i (iterator.range 0 out-count)]
                 (set!
                   (array-ref out-arr i)
-                  (strings.get (& emitted-files) i "")))
+                  (strings.get (& emitted-files) i ""))
+                (set!
+                  (array-ref direct-arr i)
+                  (= (indices.get (& emitted-direct) i 0) 1)))
               (Ok
                 (TliPartitionedEmitResult
                   out-arr
+                  direct-arr
                   emitted-modules
                   skipped-modules)))))])))

@@ -2378,6 +2378,11 @@
   (init-symbols (__tl_dyn-array String))
   (deps (__tl_dyn-array TliStartupInitDep)))
 
+;; `TliStartupInitDep.sym-id` of inits that run whether or not any program
+;; symbol references them.
+(define tli-startup-init-always : i64
+  -1)
+
 (define (tli-startup-init-plan-empty) : TliStartupInitPlan
   (TliStartupInitPlan
     (__tl_make-array String 0)
@@ -2596,8 +2601,44 @@
           (tli-compact-scan-ir-all-syms-value! ginit (&mut syms) (&mut unused))]))
     syms))
 
+;; Owning bundle of hydrated summary row `slot`, or `-1` when the row's bundle
+;; carries no `compact_ir` section (package bundles and dispatch rows).
+(define (tli-compact-slot-bundle
+  [multi : (& hydrate.TliMultiCatalog)]
+  [facts : (& hydrate.TliHydratedFacts)]
+  [slot : i64]) : i64
+  (if (< slot 0)
+    -1
+    (hydrate.tli-multi-gid-bundle-index
+      multi
+      (array-ref facts.fn-summaries.slots slot).record-index)))
+
+;; The summary slot of archive symbol `link-id` when its owning bundle carries
+;; `compact_ir`; `-1` otherwise.
+(define (tli-compact-ir-slot-by-link
+  [multi : (& hydrate.TliMultiCatalog)]
+  [facts : (& hydrate.TliHydratedFacts)]
+  [link-id : i64]) : i64
+  (let
+    [slot : i64
+      (hydrate.tli-hydrated-facts-fn-summary-slot-by-link facts link-id)]
+    (if (< (tli-compact-slot-bundle multi facts slot) 0)
+      -1
+      slot)))
+
+(define (tli-multi-has-compact-ir? [multi : (& hydrate.TliMultiCatalog)]) : bool
+  (for [bi (iterator.range 0 multi.bundles.len)]
+    (when
+      (!=
+        (bit-and
+          (array-ref multi.bundles.slots bi).directory.flags
+          tli.tli-has-compact-ir)
+        0)
+      (return true)))
+  false)
+
 (define (tli-build-startup-init-plan
-  [catalog : (& hydrate.TliCatalog)]
+  [multi : (& multi hydrate.TliMultiCatalog)]
   [facts : (& hydrate.TliHydratedFacts)]
   [functions : (& ir.CompilerIrFunctionSeq)]
   [globals : (& ir.CompilerIrGlobalSeq)]
@@ -2606,33 +2647,50 @@
   [defined-gls : (& i64_map.Map)]) : TliStartupInitPlan
   (let
     [init-count : i64 0]
-    (when catalog.failed (return (tli-startup-init-plan-empty)))
-    (for [pos (iterator.range 0 catalog.ready-count)]
-      (+=
-        init-count
-        (array-length
-          (array-ref catalog.records (array-ref catalog.startup-order pos)).global-inits)))
+    (when multi.failed (return (tli-startup-init-plan-empty)))
+    (for [pos (iterator.range 0 multi.startup-order.len)]
+      (let
+        [mi : i64 (array-ref multi.startup-order.slots pos)]
+        [rec
+          (&
+            (array-ref
+              (array-ref
+                multi.bundles.slots
+                (array-ref multi.gid-bundle.slots mi)).records
+              (array-ref multi.gid-local.slots mi)))]
+        (+= init-count (array-length rec.global-inits))))
     (when (= init-count 0) (return (tli-startup-init-plan-empty)))
     (let
-      [mod-count : i64 (array-length catalog.records)]
+      [mod-count : i64 multi.gid-bundle.len]
       [init-symbols : (__tl_dyn-array String)
         (__tl_make-array String init-count)]
       [mod-init-start : (__tl_dyn-array i64) (__tl_make-array i64 mod-count)]
       [mod-init-len : (__tl_dyn-array i64) (__tl_make-array i64 mod-count)]
       [mod-name-to-idx : str_map.Map
-        (str_map.with-capacity (* (+ catalog.ready-count 1) 2))]
+        (str_map.with-capacity (* (+ multi.startup-order.len 1) 2))]
       [sym-to-mod : str_map.Map (str_map.with-capacity 512)]
       [next-init : i64 0]
       (for [mi (iterator.range 0 mod-count)]
         (set! (array-ref mod-init-start mi) 0)
         (set! (array-ref mod-init-len mi) 0))
-      (for [pos (iterator.range 0 catalog.ready-count)]
+      (for [pos (iterator.range 0 multi.startup-order.len)]
         (let
-          [mi : i64 (array-ref catalog.startup-order pos)]
-          [ic : i64 (array-length (array-ref catalog.records mi).global-inits)]
+          [mi : i64 (array-ref multi.startup-order.slots pos)]
+          [rec
+            (&
+              (array-ref
+                (array-ref
+                  multi.bundles.slots
+                  (array-ref multi.gid-bundle.slots mi)).records
+                (array-ref multi.gid-local.slots mi)))]
+          [mi-stdlib : bool
+            (array-ref
+              multi.bundles.slots
+              (array-ref multi.gid-bundle.slots mi)).is-stdlib]
+          [ic : i64 (array-length rec.global-inits)]
           (str_map.insert-ref!
             (&mut mod-name-to-idx)
-            (string.copy (& (array-ref catalog.records mi).name))
+            (string.copy (& rec.name))
             mi)
           (set! (array-ref mod-init-start mi) next-init)
           (set! (array-ref mod-init-len mi) ic)
@@ -2640,34 +2698,43 @@
             (set!
               (array-ref init-symbols next-init)
               (hydrate.tli-hydrate-archive-user-symbol
-                (& (array-ref (array-ref catalog.records mi).global-inits k))))
+                (& (array-ref rec.global-inits k))))
             (+= next-init 1))
           (let
-            [fn-count : i64
-              (array-length (array-ref catalog.records mi).functions)]
-            [val-count : i64
-              (array-length (array-ref catalog.records mi).values)]
+            [fn-count : i64 (array-length rec.functions)]
+            [val-count : i64 (array-length rec.values)]
             (for [fi (iterator.range 0 fn-count)]
               (unless
-                (array-ref (array-ref catalog.records mi).functions fi).is-extern
+                (array-ref rec.functions fi).is-extern
                 (let
                   [asym : String
-                    (hydrate.tli-hydrate-archive-fn-symbol
-                      (& (array-ref catalog.records mi).source-path)
-                      (&
-                        (array-ref (array-ref catalog.records mi).functions fi)))]
+                    (hydrate.tli-hydrate-archive-fn-symbol-with-mode
+                      mi-stdlib
+                      (& rec.source-path)
+                      (& (array-ref rec.functions fi)))]
                   (str_map.insert-ref! (&mut sym-to-mod) asym mi))))
             (for [vi (iterator.range 0 val-count)]
               (unless
-                (array-ref (array-ref catalog.records mi).values vi).is-extern
+                (array-ref rec.values vi).is-extern
                 (let
                   [asym : String
-                    (hydrate.tli-hydrate-archive-value-symbol
-                      (& (array-ref catalog.records mi).source-path)
-                      (& (array-ref (array-ref catalog.records mi).values vi)))]
-                  (str_map.insert-ref! (&mut sym-to-mod) asym mi)))))))
+                    (hydrate.tli-hydrate-archive-value-symbol-with-mode
+                      mi-stdlib
+                      (& rec.source-path)
+                      (& (array-ref rec.values vi)))]
+                  (str_map.insert-ref! (&mut sym-to-mod) asym mi))))
+            ;; A dispatch call reaches one of its module's variants, so it
+            ;; needs that module's inits like a direct function call.
+            (for [di (iterator.range 0 (array-length rec.dispatches))]
+              (let
+                [asym : String
+                  (hydrate.tli-hydrate-archive-dispatch-symbol-with-mode
+                    mi-stdlib
+                    (& rec.source-path)
+                    (& (array-ref rec.dispatches di)))]
+                (str_map.insert-ref! (&mut sym-to-mod) asym mi))))))
       ;; Precompute transitive module-import init reachability.
-      ;; `catalog.startup-order` is already topological (imports before importers).
+      ;; `multi.startup-order` is already topological (imports before importers).
       (let
         [mod-trans : (__tl_dyn-array bool)
           (__tl_make-array bool (* mod-count init-count))]
@@ -2680,23 +2747,27 @@
         [cand-seen : i64_map.Map (i64_map.with-capacity 128)]
         (for [i (iterator.range 0 (* mod-count init-count))]
           (set! (array-ref mod-trans i) false))
-        (for [pos (iterator.range 0 catalog.ready-count)]
+        (for [pos (iterator.range 0 multi.startup-order.len)]
           (let
-            [mi : i64 (array-ref catalog.startup-order pos)]
+            [mi : i64 (array-ref multi.startup-order.slots pos)]
+            [rec
+              (&
+                (array-ref
+                  (array-ref
+                    multi.bundles.slots
+                    (array-ref multi.gid-bundle.slots mi)).records
+                  (array-ref multi.gid-local.slots mi)))]
             [base : i64 (* mi init-count)]
             [istart : i64 (array-ref mod-init-start mi)]
             [ilen : i64 (array-ref mod-init-len mi)]
             (for [k (iterator.range 0 ilen)]
               (set! (array-ref mod-trans (+ base istart k)) true))
             (let
-              [imp-count : i64
-                (array-length (array-ref catalog.records mi).imports)]
+              [imp-count : i64 (array-length rec.imports)]
               (for [ii (iterator.range 0 imp-count)]
                 (match (str_map.get
                   (& mod-name-to-idx)
-                  (string.copy
-                    (&
-                      (array-ref (array-ref catalog.records mi).imports ii).module-name)))
+                  (string.copy (& (array-ref rec.imports ii).module-name)))
                   [(LookupFound dep-mi)
                     (let
                       [dep-base : i64 (* dep-mi init-count)]
@@ -2736,20 +2807,31 @@
                         (str_vec.push-ref! (&mut cand-strs) arch))))))]))
         ;; Also check referenced globals directly belonging to hydrated modules
         ;; that have `global-inits` (in case accessed without an extern entry).
-        (for [pos (iterator.range 0 catalog.ready-count)]
+        (for [pos (iterator.range 0 multi.startup-order.len)]
           (let
-            [mi : i64 (array-ref catalog.startup-order pos)]
+            [mi : i64 (array-ref multi.startup-order.slots pos)]
+            [rec
+              (&
+                (array-ref
+                  (array-ref
+                    multi.bundles.slots
+                    (array-ref multi.gid-bundle.slots mi)).records
+                  (array-ref multi.gid-local.slots mi)))]
+            [mi-stdlib : bool
+              (array-ref
+                multi.bundles.slots
+                (array-ref multi.gid-bundle.slots mi)).is-stdlib]
             (when
               (> (array-ref mod-init-len mi) 0)
               (let
-                [val-count : i64
-                  (array-length (array-ref catalog.records mi).values)]
+                [val-count : i64 (array-length rec.values)]
                 (for [vi (iterator.range 0 val-count)]
                   (let
                     [asym : String
-                      (hydrate.tli-hydrate-archive-value-symbol
-                        (& (array-ref catalog.records mi).source-path)
-                        (& (array-ref (array-ref catalog.records mi).values vi)))]
+                      (hydrate.tli-hydrate-archive-value-symbol-with-mode
+                        mi-stdlib
+                        (& rec.source-path)
+                        (& (array-ref rec.values vi)))]
                     [sid : i64
                       (ir.compiler-ir-symbol-id
                         (tli-compact-dec-symbol (& asym)))]
@@ -2764,10 +2846,8 @@
         (let
           [cand-count : i64 (i64_vec.len (& cand-sids))]
           [deps-tmp : (__tl_dyn-array TliStartupInitDep)
-            (__tl_make-array TliStartupInitDep cand-count)]
+            (__tl_make-array TliStartupInitDep (+ cand-count 1))]
           [dep-count : i64 0]
-          [has-compact? : bool
-            (!= (bit-and catalog.directory.flags tli.tli-has-compact-ir) 0)]
           (for [ci (iterator.range 0 cand-count)]
             (let
               [sid : i64 (i64_vec.get (& cand-sids) ci 0)]
@@ -2791,11 +2871,7 @@
                       (let
                         [cur-lid : i64 (intern.intern (string.copy (& cur)))]
                         [slot : i64
-                          (if has-compact?
-                            (hydrate.tli-hydrated-facts-fn-summary-slot-by-link
-                              facts
-                              cur-lid)
-                            -1)]
+                          (tli-compact-ir-slot-by-link multi facts cur-lid)]
                         [no-inits? : bool
                           (and
                             (>= slot 0)
@@ -2831,7 +2907,13 @@
                                       0)
                                     (> ir-len 0))
                                   (match (codec.tli-decode-compact-body-at
-                                    (& catalog.directory)
+                                    (&
+                                      (array-ref
+                                        multi.bundles.slots
+                                        (tli-compact-slot-bundle
+                                          multi
+                                          facts
+                                          slot)).directory)
                                     ir-off
                                     ir-len
                                     (& ir-sha))
@@ -2909,6 +2991,42 @@
                       (array-ref deps-tmp dep-count)
                       (TliStartupInitDep sid idxs))
                     (+= dep-count 1))))))
+          ;; Package-bundle modules keep source-mode startup semantics: their
+          ;; inits, and every init they import, always run. Only stdlib inits
+          ;; are pruned to the referenced closure.
+          (let
+            [always : (__tl_dyn-array bool) (__tl_make-array bool init-count)]
+            [nc : i64 0]
+            (for [k (iterator.range 0 init-count)]
+              (set! (array-ref always k) false))
+            (for [pos (iterator.range 0 multi.startup-order.len)]
+              (let
+                [mi : i64 (array-ref multi.startup-order.slots pos)]
+                [base : i64 (* mi init-count)]
+                (unless
+                  (array-ref
+                    multi.bundles.slots
+                    (array-ref multi.gid-bundle.slots mi)).is-stdlib
+                  (for [k (iterator.range 0 init-count)]
+                    (when
+                      (array-ref mod-trans (+ base k))
+                      (set! (array-ref always k) true))))))
+            (for [k (iterator.range 0 init-count)]
+              (when (array-ref always k) (+= nc 1)))
+            (when
+              (> nc 0)
+              (let
+                [idxs : (__tl_dyn-array i64) (__tl_make-array i64 nc)]
+                [pos : i64 0]
+                (for [k (iterator.range 0 init-count)]
+                  (when
+                    (array-ref always k)
+                    (set! (array-ref idxs pos) k)
+                    (+= pos 1)))
+                (set!
+                  (array-ref deps-tmp dep-count)
+                  (TliStartupInitDep tli-startup-init-always idxs))
+                (+= dep-count 1))))
           (let
             [deps : (__tl_dyn-array TliStartupInitDep)
               (__tl_make-array TliStartupInitDep dep-count)]
@@ -2943,7 +3061,9 @@
             (set! (array-ref needed k) false))
           (for [di (iterator.range 0 dcount)]
             (when
-              (i64_map.contains? (& ref-syms) (array-ref plan.deps di).sym-id)
+              (or
+                (= (array-ref plan.deps di).sym-id tli-startup-init-always)
+                (i64_map.contains? (& ref-syms) (array-ref plan.deps di).sym-id))
               (let
                 [kn : i64 (array-length (array-ref plan.deps di).init-indices)]
                 (for [k (iterator.range 0 kn)]
@@ -2968,7 +3088,7 @@
             out))])))
 
 (define (tli-hydrate-compact-ir-into-program!
-  [catalog : (& hydrate.TliCatalog)]
+  [multi : (& multi hydrate.TliMultiCatalog)]
   [facts : (& hydrate.TliHydratedFacts)]
   [pools : ast.AstNodePoolContext]
   [program : ir.CompilerIrProgram]
@@ -3019,7 +3139,7 @@
               (let
                 [startup-plan : TliStartupInitPlan
                   (tli-build-startup-init-plan
-                    catalog
+                    multi
                     facts
                     (& functions)
                     (& globals)
@@ -3035,8 +3155,7 @@
                   (opt.opt-external-summaries-empty)
                   startup-plan)))
             (let
-              [has-compact? : bool
-                (!= (bit-and catalog.directory.flags tli.tli-has-compact-ir) 0)]
+              [has-compact? : bool (tli-multi-has-compact-ir? multi)]
               [defined-fns : i64_map.Map
                 (i64_map.with-capacity (* (+ functions.len 1) 2))]
               [defined-gls : i64_map.Map
@@ -3152,7 +3271,8 @@
                             (>= link-id 0)
                             (let
                               [slot : i64
-                                (hydrate.tli-hydrated-facts-fn-summary-slot-by-link
+                                (tli-compact-ir-slot-by-link
+                                  multi
                                   facts
                                   link-id)]
                               (when
@@ -3180,7 +3300,10 @@
                             (!= (bit-and eflags tli.tli-fn-has-inline-ir) 0)
                             (> ir-len 0))
                           (match (codec.tli-decode-compact-body-at
-                            (& catalog.directory)
+                            (&
+                              (array-ref
+                                multi.bundles.slots
+                                (tli-compact-slot-bundle multi facts slot)).directory)
                             ir-off
                             ir-len
                             (& ir-sha))
@@ -3265,7 +3388,8 @@
                                             ref-sym)))
                                       (let
                                         [cslot : i64
-                                          (hydrate.tli-hydrated-facts-fn-summary-slot-by-link
+                                          (tli-compact-ir-slot-by-link
+                                            multi
                                             facts
                                             ref-link)]
                                         (when
@@ -3285,50 +3409,65 @@
                     (or
                       (> (str_map.len (& body-ref-globals)) 0)
                       (and o2? (> (str_map.len (& ref-globals)) 0)))
-                    (match (codec.tli-decode-compact-globals
-                      (& catalog.directory))
-                      [(codec.TliCompactGlobalsResult.Err _) unit]
-                      [(codec.TliCompactGlobalsResult.Ok cglobals)
-                        (for [gi (iterator.range 0 (array-length cglobals))]
-                          (let
-                            [flags : i64 (array-ref cglobals gi).flags]
-                            [sym-copy : String
-                              (string.copy (& (array-ref cglobals gi).symbol))]
-                            [needed? : bool
-                              (or
-                                (str_map.contains?
-                                  (& body-ref-globals)
-                                  (string.copy (& sym-copy)))
-                                (and
-                                  o2?
-                                  (str_map.contains? (& ref-globals) sym-copy)))]
-                            (when
-                              (and
-                                needed?
-                                (!=
-                                  (bit-and
-                                    flags
-                                    tli.tli-compact-global-never-written)
-                                  0))
+                    (for [cb (iterator.range 0 multi.bundles.len)]
+                      (when
+                        (!=
+                          (bit-and
+                            (array-ref multi.bundles.slots cb).directory.flags
+                            tli.tli-has-compact-ir)
+                          0)
+                        (match (codec.tli-decode-compact-globals
+                          (& (array-ref multi.bundles.slots cb).directory))
+                          [(codec.TliCompactGlobalsResult.Err _) unit]
+                          [(codec.TliCompactGlobalsResult.Ok cglobals)
+                            (for [gi (iterator.range 0 (array-length cglobals))]
                               (let
-                                [gid : i64
-                                  (tli-compact-dec-symbol
+                                [flags : i64 (array-ref cglobals gi).flags]
+                                [sym-copy : String
+                                  (string.copy
                                     (& (array-ref cglobals gi).symbol))]
-                                (unless
-                                  (i64_map.contains? (& defined-gls) gid)
-                                  (ir.compiler-ir-global-builder-push!
-                                    (&mut gl-builder)
-                                    (tli-compact-global-to-ir
-                                      pools
-                                      (& (array-ref cglobals gi))))
-                                  (+= added-gls 1)
-                                  (i64_map.insert-ref! (&mut defined-gls) gid 1)
-                                  (when
-                                    (i64_map.contains? (& extern-by-name) gid)
-                                    (i64_map.insert-ref!
-                                      (&mut avail-names)
-                                      gid
-                                      1)))))))])))
+                                [needed? : bool
+                                  (or
+                                    (str_map.contains?
+                                      (& body-ref-globals)
+                                      (string.copy (& sym-copy)))
+                                    (and
+                                      o2?
+                                      (str_map.contains?
+                                        (& ref-globals)
+                                        sym-copy)))]
+                                (when
+                                  (and
+                                    needed?
+                                    (!=
+                                      (bit-and
+                                        flags
+                                        tli.tli-compact-global-never-written)
+                                      0))
+                                  (let
+                                    [gid : i64
+                                      (tli-compact-dec-symbol
+                                        (& (array-ref cglobals gi).symbol))]
+                                    (unless
+                                      (i64_map.contains? (& defined-gls) gid)
+                                      (ir.compiler-ir-global-builder-push!
+                                        (&mut gl-builder)
+                                        (tli-compact-global-to-ir
+                                          pools
+                                          (& (array-ref cglobals gi))))
+                                      (+= added-gls 1)
+                                      (i64_map.insert-ref!
+                                        (&mut defined-gls)
+                                        gid
+                                        1)
+                                      (when
+                                        (i64_map.contains?
+                                          (& extern-by-name)
+                                          gid)
+                                        (i64_map.insert-ref!
+                                          (&mut avail-names)
+                                          gid
+                                          1)))))))])))))
                 ;; Assemble final extern sequence with `body-available` updated.
                 (let
                   [final-ex-builder : ir.CompilerIrExternBuilder
@@ -3549,7 +3688,7 @@
                             (opt.OptExternalSummaries out))))]
                     [startup-plan : TliStartupInitPlan
                       (tli-build-startup-init-plan
-                        catalog
+                        multi
                         facts
                         (& final-functions)
                         (& final-globals)
@@ -3578,14 +3717,14 @@
       (tli-startup-init-plan-empty))
     (unsafe
       (let
-        [catalog : hydrate.TliCatalog
+        [multi : hydrate.TliMultiCatalog
           (ptr-read
-            (int->ptr (cast catalog-ptr : u64) : (Ptr hydrate.TliCatalog)))]
+            (int->ptr (cast catalog-ptr : u64) : (Ptr hydrate.TliMultiCatalog)))]
         [facts : hydrate.TliHydratedFacts
           (ptr-read
             (int->ptr (cast facts-ptr : u64) : (Ptr hydrate.TliHydratedFacts)))]
         (tli-hydrate-compact-ir-into-program!
-          (& catalog)
+          (& multi)
           (& facts)
           pools
           program

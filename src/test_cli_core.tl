@@ -36,6 +36,7 @@
 (import compiler_intern_state as cis)
 (import compiler_cfg_core as cfg_core)
 (import compiler_load)
+(import compiler_dependency_tlci)
 (import compiler_lower as lower)
 (import package_source_core)
 (import compiler_optimize)
@@ -2285,6 +2286,52 @@
       (io.print-error message)
       1]))
 
+(define (tltest-package-open-tli-and-deps!
+  [entry-path : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [stdlib-roots : (& cli_svec.Vec)]
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [opt-level : i64]
+  [require-archive : bool]) : tli_cli.ResultTliCatalogOpen
+  (let
+    [load-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-serial-test-session-state)]
+    (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
+      (owned_view.compiler-owned-shared-view load-state)
+      (string.copy manifest-dir)
+      (compiler_load.clone-compiler-pkg-deps deps))
+    (match (tli_cli.tli-open-catalog-for-session!
+      (& load-state)
+      entry-path
+      target
+      stdlib-roots
+      cfgs
+      opt-level
+      require-archive)
+      [(Err tli-msg) (Err tli-msg)]
+      [(Ok)
+        (if (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)
+          (tli_cli.ResultTliCatalogOpen.Ok)
+          (tli_cli.tli-open-transitive-package-deps-for-session!
+            (& load-state)
+            manifest-dir
+            deps
+            target
+            cfgs
+            require-archive))])))
+
+(define (tltest-package-release-tli-and-deps!) : unit
+  (let
+    [load-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-serial-test-session-state)]
+    (compiler_load.compiler-load-tli-release!)
+    (match (compiler_load.compiler-load-session-state-dependency-catalog-release!
+      load-state)
+      [(Ok) unit]
+      [(Err _) unit])))
+
 (define (tltest-inline-typecheck-package-source-with-cfg
   [source : String]
   [roots : cli_svec.Vec]
@@ -2298,32 +2345,52 @@
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
       [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& roots))]
-      (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
-        (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view legacy-roots)
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view package-owner)
-        deps
-        true
-        test-cfgs)
-        [(Ok decls paths _ _)
-          (tltest-inline-typecheck-loaded
-            (compiler_load.compiler-load-package-owned-path
-              (string.copy (& package-owner))
-              (& manifest-dir)
-              (& legacy-roots)
-              (string.copy (& source)))
-            (tltest-diagnostic-source source (& decls) (& paths))
-            decls
-            paths
-            roots
-            test-cfgs
-            cache-scope-prefix)]
-        [(Err diag)
-          (io.print-error
-            (driver.compiler-driver-render-source-diagnostic
-              (tltest-diagnostic-with-source-fallback source (deref diag))))
-          1]))
+      (match (tltest-package-open-tli-and-deps!
+        (& source)
+        (compiler_check_core.compiler-check-target-from-cfgs test-cfgs)
+        (& legacy-roots)
+        (& manifest-dir)
+        (& deps)
+        test-cfgs
+        1
+        false)
+        [(Err tli-msg)
+          (tltest-package-release-tli-and-deps!)
+          (io.print-error tli-msg)
+          1]
+        [(Ok)
+          (let
+            [status : i64
+              (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
+                (owned_view.compiler-owned-shared-view source)
+                (owned_view.compiler-owned-shared-view legacy-roots)
+                (owned_view.compiler-owned-shared-view manifest-dir)
+                (owned_view.compiler-owned-shared-view package-owner)
+                deps
+                true
+                test-cfgs)
+                [(Ok decls paths _ _)
+                  (tltest-inline-typecheck-loaded
+                    (compiler_load.compiler-load-package-owned-path
+                      (string.copy (& package-owner))
+                      (& manifest-dir)
+                      (& legacy-roots)
+                      (string.copy (& source)))
+                    (tltest-diagnostic-source source (& decls) (& paths))
+                    decls
+                    paths
+                    roots
+                    test-cfgs
+                    cache-scope-prefix)]
+                [(Err diag)
+                  (io.print-error
+                    (driver.compiler-driver-render-source-diagnostic
+                      (tltest-diagnostic-with-source-fallback
+                        source
+                        (deref diag))))
+                  1])]
+            (tltest-package-release-tli-and-deps!)
+            status)]))
     0))
 
 (define (tltest-inline-typecheck-package-source-scoped
@@ -2341,8 +2408,6 @@
       (unsafe
         ;; unsafe: installs the global load session; replaced before this arena ends
         (driver.compiler-driver-reset-file-state!))
-      (compiler_load.compiler-load-session-state-dependency-surfaces-release!
-        (compiler_load.compiler-load-active-session-state-shared-view))
       (unsafe
         ;; unsafe: resets the global persistent intern arena
         (ci.intern-persistent-arena-reset!))
@@ -2377,8 +2442,6 @@
           (unsafe
             ;; unsafe: installs the global load session; replaced before this arena ends
             (driver.compiler-driver-reset-file-state!))
-          (compiler_load.compiler-load-session-state-dependency-surfaces-release!
-            (compiler_load.compiler-load-active-session-state-shared-view))
           (unsafe
             ;; unsafe: installs global AST pool state; replaced before this arena ends
             (driver.compiler-driver-state-destroy-uncommitted-pools! retired))
@@ -2680,44 +2743,49 @@
         legacy-roots
         (tltest-cfgs target)))
       [(Ok ir spans lower-state)
-        (match (build_run_core.source-tool-link-and-run
-          (build_run_core.SourceToolLinkRequest
-            (owned_view.compiler-owned-shared-view source)
-            (Lowered ir spans lower-state)
-            target
-            opt-level
-            backend-mode
-            (build_run_core.source-tool-link-inputs-empty)
-            (owned_view.compiler-owned-shared-view files)
-            "test: failed to write assembly artifact")
-          (process.args-empty)
-          (if (tltest-stdlib-env-fixture-source? source)
-            (tltest-stdlib-env-fixture-env target)
-            (process.env-empty))
-          false)
-          [(LinkFailed message)
-            (io.print-error message)
-            (build_run_core.source-tool-clean-temp-files files true)
-            failed]
-          [(Ran output)
-            (let
-              [status : i64 (process.output-status output)]
-              (driver.compiler-driver-reset-analysis-state!)
-              (build_run_core.source-tool-forward-output output)
-              (if (or (= status 0) (and inline-harness (= status 1)))
-                unit
-                (tltest-report-child-status output))
+        (driver.compiler-driver-finish-tli-hydrated-serial-session!)
+        (let
+          [link-inputs : build_run_core.SourceToolLinkInputs
+            (build_run_core.source-tool-link-inputs-with-hydrated-archives
+              (build_run_core.source-tool-link-inputs-empty))]
+          (match (build_run_core.source-tool-link-and-run
+            (build_run_core.SourceToolLinkRequest
+              (owned_view.compiler-owned-shared-view source)
+              (Lowered ir spans lower-state)
+              target
+              opt-level
+              backend-mode
+              link-inputs
+              (owned_view.compiler-owned-shared-view files)
+              "test: failed to write assembly artifact")
+            (process.args-empty)
+            (if (tltest-stdlib-env-fixture-source? source)
+              (tltest-stdlib-env-fixture-env target)
+              (process.env-empty))
+            false)
+            [(LinkFailed message)
+              (io.print-error message)
               (build_run_core.source-tool-clean-temp-files files true)
-              (cond
-                [(= status 0) 0]
-                [(and inline-harness (= status 1)) 1]
-                [else failed]))]
-          ;; Keep the artifacts of a harness that would not start.
-          [(SpawnFailed error)
-            (driver.compiler-driver-reset-analysis-state!)
-            (io.print-error
-              (tltest-run-executable-error-message files.bin files.dir error))
-            failed])]
+              failed]
+            [(Ran output)
+              (let
+                [status : i64 (process.output-status output)]
+                (driver.compiler-driver-reset-analysis-state!)
+                (build_run_core.source-tool-forward-output output)
+                (if (or (= status 0) (and inline-harness (= status 1)))
+                  unit
+                  (tltest-report-child-status output))
+                (build_run_core.source-tool-clean-temp-files files true)
+                (cond
+                  [(= status 0) 0]
+                  [(and inline-harness (= status 1)) 1]
+                  [else failed]))]
+            ;; Keep the artifacts of a harness that would not start.
+            [(SpawnFailed error)
+              (driver.compiler-driver-reset-analysis-state!)
+              (io.print-error
+                (tltest-run-executable-error-message files.bin files.dir error))
+              failed]))]
       [(Err diag)
         (io.print-error
           (tltest-render-source-diagnostic
@@ -3257,38 +3325,63 @@
       (begin
         (io.print-format "{}" (str_cat.str-cat source "\n"))
         (Ok 1 1))
-      (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
-        (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view roots)
-        manifest-dir
-        package-owner
-        deps
-        true
-        (tltest-cfgs backend-target))
-        [(Ok decls paths _ _)
-          (match test-mode
-            [(Check)
-              (tltest-package-integration-check
-                source
-                decls
-                paths
-                roots
-                backend-target)]
-            [(Run)
-              (tltest-package-integration-run
-                source
-                target
-                roots
-                opt-level
-                backend-mode
-                decls
-                paths)])]
-        [(Err diag)
-          (io.print-error
-            (str_cat.str-cat "test: integration test source failed: " source))
-          (io.print-error
-            (driver.compiler-driver-render-source-diagnostic (deref diag)))
-          (Err 1)]))
+      (let
+        [cfgs : sym_i64_env.SymI64Env (tltest-cfgs backend-target)]
+        [target-cfg : target_cfg.CompilerTargetCfg
+          (compiler_check_core.compiler-check-target-from-cfgs cfgs)]
+        (match (tltest-package-open-tli-and-deps!
+          (& source)
+          target-cfg
+          (& roots)
+          (& manifest-dir)
+          (& deps)
+          cfgs
+          opt-level
+          (not (tltest-check-mode? test-mode)))
+          [(Err tli-msg)
+            (tltest-package-release-tli-and-deps!)
+            (io.print-error tli-msg)
+            (Err 1)]
+          [(Ok)
+            (let
+              [result : ResultTestPackageTotals
+                (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
+                  (owned_view.compiler-owned-shared-view source)
+                  (owned_view.compiler-owned-shared-view roots)
+                  manifest-dir
+                  package-owner
+                  deps
+                  true
+                  cfgs)
+                  [(Ok decls paths _ _)
+                    (match test-mode
+                      [(Check)
+                        (tltest-package-integration-check
+                          source
+                          decls
+                          paths
+                          roots
+                          backend-target)]
+                      [(Run)
+                        (tltest-package-integration-run
+                          source
+                          target
+                          roots
+                          opt-level
+                          backend-mode
+                          decls
+                          paths)])]
+                  [(Err diag)
+                    (io.print-error
+                      (str_cat.str-cat
+                        "test: integration test source failed: "
+                        source))
+                    (io.print-error
+                      (driver.compiler-driver-render-source-diagnostic
+                        (deref diag)))
+                    (Err 1)])]
+              (tltest-package-release-tli-and-deps!)
+              result)])))
     (Ok 0 0)))
 
 ;; A test entry borrows its inputs from the caller and owns every temporary
@@ -3406,39 +3499,61 @@
     (let
       [source-roots : cli_svec.Vec (tltest-source-roots (& source) roots)]
       [legacy-roots : cli_svec.Vec (cli_svec.clone-vec (& source-roots))]
-      (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
-        (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view legacy-roots)
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (owned_view.compiler-owned-shared-view package-owner)
-        deps
-        true
-        (tltest-cfgs backend-target))
-        [(Ok decls paths _ _)
+      [cfgs : sym_i64_env.SymI64Env (tltest-cfgs backend-target)]
+      [target-cfg : target_cfg.CompilerTargetCfg
+        (compiler_check_core.compiler-check-target-from-cfgs cfgs)]
+      (match (tltest-package-open-tli-and-deps!
+        (& source)
+        target-cfg
+        (& legacy-roots)
+        (& manifest-dir)
+        (& deps)
+        cfgs
+        opt-level
+        (not (tltest-check-mode? test-mode)))
+        [(Err tli-msg)
+          (tltest-package-release-tli-and-deps!)
+          (io.print-error tli-msg)
+          (Err 1)]
+        [(Ok)
           (let
-            [owned-source : String
-              (compiler_load.compiler-load-package-owned-path
-                (string.copy (& package-owner))
-                (& manifest-dir)
-                (& legacy-roots)
-                (string.copy (& source)))]
-            (tltest-package-run-one
-              owned-source
-              (tltest-diagnostic-source source (& decls) (& paths))
-              target
-              source-roots
-              opt-level
-              backend-mode
-              test-mode
-              backend-target
-              decls
-              paths))]
-        [(Err diag)
-          (io.print-error
-            (str_cat.str-cat "test: package source failed: " source))
-          (io.print-error
-            (driver.compiler-driver-render-source-diagnostic (deref diag)))
-          (Err 1)]))
+            [result : ResultTestPackageTotals
+              (match (driver.compiler-driver-load-package-file-with-runtime-owned-cfg
+                (owned_view.compiler-owned-shared-view source)
+                (owned_view.compiler-owned-shared-view legacy-roots)
+                (owned_view.compiler-owned-shared-view manifest-dir)
+                (owned_view.compiler-owned-shared-view package-owner)
+                deps
+                true
+                cfgs)
+                [(Ok decls paths _ _)
+                  (let
+                    [owned-source : String
+                      (compiler_load.compiler-load-package-owned-path
+                        (string.copy (& package-owner))
+                        (& manifest-dir)
+                        (& legacy-roots)
+                        (string.copy (& source)))]
+                    (tltest-package-run-one
+                      owned-source
+                      (tltest-diagnostic-source source (& decls) (& paths))
+                      target
+                      source-roots
+                      opt-level
+                      backend-mode
+                      test-mode
+                      backend-target
+                      decls
+                      paths))]
+                [(Err diag)
+                  (io.print-error
+                    (str_cat.str-cat "test: package source failed: " source))
+                  (io.print-error
+                    (driver.compiler-driver-render-source-diagnostic
+                      (deref diag)))
+                  (Err 1)])]
+            (tltest-package-release-tli-and-deps!)
+            result)]))
     (Ok 0 0)))
 
 (define (tltest-package-run-source-isolated-count
@@ -3805,72 +3920,95 @@
             [tests-prefix : String
               (tltest-package-tests-prefix
                 (owned_view.compiler-owned-shared-view manifest-dir))]
-            [production-status : i64
-              (if tltest-list-only
-                0
-                (tltest-package-check-entry
-                  (& source-set)
-                  (& roots)
-                  backend-target))]
-            (if (not (= production-status 0))
-              production-status
-              (match (package_source_core.package-source-discover-tests-for
-                "test"
-                (owned_view.compiler-owned-shared-view source-set))
+            (compiler_load.compiler-load-set-package-artifact-profile! "dev")
+            (when
+              (and
+                (not tltest-list-only)
+                (>
+                  (compiler_load.compiler-pkg-dep-list-count
+                    (&
+                      (compiler_load.compiler-pkg-deps-list
+                        (compiler_load.clone-compiler-pkg-deps
+                          (& manifest.deps)))))
+                  0)
+                (not
+                  (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)))
+              (match (build_run_core.source-tool-build-package-deps-only!
+                (& source-set.manifest-path)
+                backend-target
+                (& roots)
+                (& tltest-user-cfg-slots))
+                [(Ok) unit]
                 [(Err message)
                   (io.print-error message)
-                  1]
-                [(Ok integration-sources)
-                  (match (tltest-package-run-sources
-                    source-set.sources
-                    tests-prefix
-                    (owned_view.compiler-owned-shared-view target)
-                    (owned_view.compiler-owned-shared-view roots)
-                    opt-level
-                    backend-mode
-                    test-mode
-                    backend-target
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    (owned_view.compiler-owned-shared-view package-owner)
-                    (owned_view.compiler-owned-shared-view manifest.deps)
-                    0
-                    0)
-                    [(Err status) status]
-                    [(Failed
-                        inline-file-count
-                        inline-test-count
-                        inline-failed-file-count)
-                      (tltest-run-package-integrations
-                        integration-sources
-                        tests-prefix
-                        target
-                        roots
-                        opt-level
-                        backend-mode
-                        test-mode
-                        backend-target
-                        manifest-dir
-                        package-owner
-                        manifest.deps
-                        inline-file-count
-                        inline-test-count
-                        inline-failed-file-count)]
-                    [(Ok inline-file-count inline-test-count)
-                      (tltest-run-package-integrations
-                        integration-sources
-                        tests-prefix
-                        target
-                        roots
-                        opt-level
-                        backend-mode
-                        test-mode
-                        backend-target
-                        manifest-dir
-                        package-owner
-                        manifest.deps
-                        inline-file-count
-                        inline-test-count
-                        0)])])))])]))
+                  (return 1)]))
+            (let
+              [production-status : i64
+                (if tltest-list-only
+                  0
+                  (tltest-package-check-entry
+                    (& source-set)
+                    (& roots)
+                    backend-target))]
+              (if (not (= production-status 0))
+                production-status
+                (match (package_source_core.package-source-discover-tests-for
+                  "test"
+                  (owned_view.compiler-owned-shared-view source-set))
+                  [(Err message)
+                    (io.print-error message)
+                    1]
+                  [(Ok integration-sources)
+                    (match (tltest-package-run-sources
+                      source-set.sources
+                      tests-prefix
+                      (owned_view.compiler-owned-shared-view target)
+                      (owned_view.compiler-owned-shared-view roots)
+                      opt-level
+                      backend-mode
+                      test-mode
+                      backend-target
+                      (owned_view.compiler-owned-shared-view manifest-dir)
+                      (owned_view.compiler-owned-shared-view package-owner)
+                      (owned_view.compiler-owned-shared-view manifest.deps)
+                      0
+                      0)
+                      [(Err status) status]
+                      [(Failed
+                          inline-file-count
+                          inline-test-count
+                          inline-failed-file-count)
+                        (tltest-run-package-integrations
+                          integration-sources
+                          tests-prefix
+                          target
+                          roots
+                          opt-level
+                          backend-mode
+                          test-mode
+                          backend-target
+                          manifest-dir
+                          package-owner
+                          manifest.deps
+                          inline-file-count
+                          inline-test-count
+                          inline-failed-file-count)]
+                      [(Ok inline-file-count inline-test-count)
+                        (tltest-run-package-integrations
+                          integration-sources
+                          tests-prefix
+                          target
+                          roots
+                          opt-level
+                          backend-mode
+                          test-mode
+                          backend-target
+                          manifest-dir
+                          package-owner
+                          manifest.deps
+                          inline-file-count
+                          inline-test-count
+                          0)])]))))])]))
 
 (define (tltest-check-file-loaded
   [source : String]

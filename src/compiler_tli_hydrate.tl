@@ -8,6 +8,7 @@
 (import compiler_float as cfloat)
 (import compiler_intern as intern)
 (import compiler_symbols as csym)
+(import tlci_core as tlci)
 (import sym_i64_env)
 (import stdlib.arena)
 (import stdlib.byte_buf)
@@ -16,6 +17,7 @@
 (import stdlib.crypto_sha256 as sha256)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as tli_i64_map)
+(import (hashmap.hashmap String i64) as tli_str_map)
 (import stdlib.iterator)
 (import stdlib.math)
 (import stdlib.sort)
@@ -23,6 +25,8 @@
 (import stdlib.string)
 (import stdlib.text_buf_borrowed)
 (import stdlib.vector)
+(import (vector.vector i64) as tli_i64_vec)
+(import (vector.vector String) as tli_svec)
 
 (defstruct TliCatalog
   (directory codec.TliDirectory)
@@ -866,7 +870,8 @@
         (tli-hydrate-archive-user-symbol (& qualified)))]
     [else (tli-hydrate-archive-user-symbol link-symbol)]))
 
-(define (tli-hydrate-archive-fn-symbol
+(define (tli-hydrate-archive-fn-symbol-with-mode
+  [is-stdlib : bool]
   [source-path : (& str)]
   [row : (& tli.TliFnDecl)]) : String
   (cond
@@ -876,6 +881,7 @@
         (> (string.string-length (& row.export-symbol)) 0))
       (cabi.compiler-abi-c-export-body-symbol
         (string.copy (& row.export-symbol)))]
+    [(not is-stdlib) (string.copy (& row.link-symbol))]
     [else
       (let
         [rt-sym : String
@@ -888,6 +894,22 @@
             source-path
             (& row.module-name)
             (& row.link-symbol))))]))
+
+(define (tli-hydrate-archive-dispatch-symbol-with-mode
+  [is-stdlib : bool]
+  [source-path : (& str)]
+  [row : (& tli.TliDispatchDecl)]) : String
+  (if is-stdlib
+    (tli-hydrate-archive-qualified-symbol
+      source-path
+      (& row.module-name)
+      (& row.link-symbol))
+    (string.copy (& row.link-symbol))))
+
+(define (tli-hydrate-archive-fn-symbol
+  [source-path : (& str)]
+  [row : (& tli.TliFnDecl)]) : String
+  (tli-hydrate-archive-fn-symbol-with-mode true source-path row))
 
 (define (tli-catalog-startup-archive-symbols [catalog : (& TliCatalog)]) : (__tl_dyn-array
     String)
@@ -918,15 +940,21 @@
             (+= next 1))))
       symbols)))
 
-(define (tli-hydrate-archive-value-symbol
+(define (tli-hydrate-archive-value-symbol-with-mode
+  [is-stdlib : bool]
   [source-path : (& str)]
   [row : (& tli.TliValueDecl)]) : String
-  (if row.is-extern
+  (if (or row.is-extern (not is-stdlib))
     (string.copy (& row.link-symbol))
     (tli-hydrate-archive-qualified-symbol
       source-path
       (& row.module-name)
       (& row.link-symbol))))
+
+(define (tli-hydrate-archive-value-symbol
+  [source-path : (& str)]
+  [row : (& tli.TliValueDecl)]) : String
+  (tli-hydrate-archive-value-symbol-with-mode true source-path row))
 
 ;; Compact sidecar facts projected alongside body-less interface ASTs.
 (defstruct TliHydratedGlobalWrite
@@ -959,7 +987,12 @@
   (flags i64)
   (result-kind u8)
   (tlci-entry-index i64)
-  (tlci-catalog-sha256 (Array u8 32)))
+  (tlci-catalog-sha256 (Array u8 32))
+  ;; The interpreted fallback re-reads the defining source: only the module,
+  ;; source digest and cfgs this interface was produced from select its body.
+  (module-id i64)
+  (source-sha256 (Array u8 32))
+  (source-cfg-names (__tl_dyn-array String)))
 
 (defstruct TliHydratedTypeLayout
   (is-struct bool)
@@ -1064,6 +1097,39 @@
         (bit-and
           (tli-hydrated-facts-macro-at facts slot).flags
           tli.tli-macro-uses-expr-type)))))
+
+;; What the interpreted fallback needs to re-read a hydrated macro's body.
+(defstruct TliHydratedMacroSource
+  (module-id i64)
+  (source-sha256 (Array u8 32))
+  (source-cfg-names (__tl_dyn-array String)))
+
+(define (tli-hydrated-facts-macro-source
+  [facts : (& TliHydratedFacts)]
+  [slot : i64]) : TliHydratedMacroSource
+  (let
+    [digest : (Array u8 32) (make-array u8 32)]
+    (for [index (iterator.range 0 32)]
+      (set!
+        (array-ref digest index)
+        (array-ref (tli-hydrated-facts-macro-at facts slot).source-sha256 index)))
+    (TliHydratedMacroSource
+      (tli-hydrated-facts-macro-at facts slot).module-id
+      digest
+      (tli-hydrate-string-array-copy
+        (& (array-ref facts.macros.slots slot).source-cfg-names)))))
+
+;; The fallback may read a body only from the exact source text the interface
+;; was produced from.
+(define (tli-hydrated-macro-source-matches?
+  [source : (& TliHydratedMacroSource)]
+  [text : (& str)]) : bool
+  (match (sha256.digest (byte_buf.str-as-bytes text))
+    [(Sha256FinalizeOk digest)
+      (let
+        [actual : (Array u8 32) (sha256.digest-bytes (& digest))]
+        (codec.tli-digest-eq? (& actual) (& source.source-sha256)))]
+    [_ false]))
 
 (define (tli-hydrated-macro-validate
   [entry : (& TliHydratedMacroEntry)]
@@ -1555,57 +1621,23 @@
             (unsafe
               (arena.Arena facts.owner-arena))
             (let
-              [catalog : TliCatalog
+              [multi : TliMultiCatalog
                 (unsafe
                   (ptr-read
-                    (int->ptr (cast facts.catalog-ptr : u64) : (Ptr TliCatalog))))]
-              (match (codec.tli-decode-compact-body-at
-                (& catalog.directory)
+                    (int->ptr
+                      (cast facts.catalog-ptr : u64)
+                      : (Ptr TliMultiCatalog))))]
+              (tli-multi-hydrate-spmd-inline-slot!
+                facts
+                (& multi)
+                canonical-id
+                pools
+                expr-arena
+                rec-idx
+                fn-idx
                 ir-off
                 ir-len
-                (& ir-sha))
-                [(codec.TliCompactBodyResult.Ok body)
-                  (if (!=
-                    (bit-and body.kind tli.tli-compact-body-has-spmd-expr)
-                    0)
-                    (let
-                      [fn-row
-                        (&
-                          (array-ref
-                            (array-ref catalog.records rec-idx).functions
-                            fn-idx))]
-                      [pcount : i64 (array-length fn-row.params)]
-                      [ast-params : ast.AstParamList
-                        (ast.ast-param-list-with-capacity pcount)]
-                      (for [pi (iterator.range 0 pcount)]
-                        (ast.ast-param-list-push
-                          (&mut ast-params)
-                          (ast.AstParam.Param
-                            (tli-hydrate-name
-                              (& (array-ref fn-row.params pi).name))
-                            (tli-hydrate-type
-                              (& (array-ref fn-row.params pi).ty))
-                            (array-ref fn-row.params pi).is-mut)))
-                      (let
-                        [ret-ty : ast.AstType
-                          (tli-hydrate-type (& fn-row.return-type))]
-                        [body-id : i64
-                          (in-arena
-                            (unsafe
-                              (arena.Arena expr-arena))
-                            (tli-hydrate-spmd-expr pools (& body.spmd-expr)))]
-                        [inserted : i64
-                          (spmd_inline_vec.len (& facts.spmd-inline-entries))]
-                        (spmd_inline_vec.push-ref!
-                          (&mut facts.spmd-inline-entries)
-                          (TliHydratedSpmdInline ast-params ret-ty body-id))
-                        (tli_i64_map.insert-ref!
-                          (&mut facts.spmd-inline-slots)
-                          canonical-id
-                          inserted)
-                        inserted))
-                    -1)]
-                [(codec.TliCompactBodyResult.Err _) -1])))]
+                (& ir-sha))))]
         (if (< new-slot 0)
           (ast.AstImportedSpmdMetadata.No)
           (ast.AstImportedSpmdMetadata.Inline
@@ -1638,12 +1670,95 @@
           (ptr-write! fp facts))
         result))))
 
-(define (tli-hydrate-project-fn!
+(define (tli-hydrate-imported-spmd-specializations
+  [items : (& tlci.TlciSpmdSpecializations)]) : ast.AstImportedSpmdSpecializationList
+  (let
+    [out : ast.AstImportedSpmdSpecializationList
+      (ast.ast-imported-spmd-specialization-list-new)]
+    [count : i64 (tlci.tlci-spmd-specializations-len items)]
+    (for [index (iterator.range 0 count)]
+      (let
+        [item : tlci.TlciSpmdSpecialization
+          (tlci.tlci-spmd-specializations-ref items index)]
+        (ast.ast-imported-spmd-specialization-list-push
+          (&mut out)
+          (ast.AstImportedSpmdSpecialization
+            (intern.intern-id-from-renderable
+              (intern.intern-generated-canonical-name item.abi))
+            (intern.intern-id-from-renderable
+              (intern.intern-generated-canonical-name item.backend))
+            item.lanes
+            (intern.intern-id-from-renderable
+              (intern.intern-generated-canonical-name item.args))
+            (intern.intern-id-from-renderable
+              (intern.intern-generated-canonical-name item.result))
+            item.index-param
+            (intern.intern-id-from-renderable
+              (intern.intern-generated-canonical-name item.symbol))))))
+    out))
+
+(define (tli-hydrate-imported-spmd-callables-for
+  [canonical-name : (& str)]
+  [items : (& tlci.TlciSpmdCallables)]) : ast.AstImportedSpmdCallableList
+  (let
+    [out : ast.AstImportedSpmdCallableList
+      (ast.ast-imported-spmd-callable-list-new)]
+    [count : i64 (tlci.tlci-spmd-callables-len items)]
+    (for [index (iterator.range 0 count)]
+      (let
+        [item : tlci.TlciSpmdCallable
+          (tlci.tlci-spmd-callables-ref items index)]
+        (when
+          (string.eq (& item.name) canonical-name)
+          (ast.ast-imported-spmd-callable-list-push
+            (&mut out)
+            (ast.AstImportedSpmdCallable
+              (intern.intern-id-from-renderable
+                (intern.intern-generated-canonical-name item.signature))
+              (tli-hydrate-imported-spmd-specializations
+                (& item.specializations)))))))
+    out))
+
+(define (tli-hydrate-imported-spmd-metadata
+  [is-stdlib : bool]
+  [package-name : (& str)]
+  [package-version : (& str)]
+  [spmd-callables : (& tlci.TlciSpmdCallables)]
+  [row : (& tli.TliFnDecl)]) : ast.AstImportedSpmdMetadata
+  (if (or is-stdlib row.is-extern (= (string.string-length package-name) 0))
+    (ast.AstImportedSpmdMetadata.No)
+    (let
+      [canonical : String
+        (if (> (string.string-length (& row.module-name)) 0)
+          (str_cat.str-cat
+            (string.copy (& row.module-name))
+            "/"
+            (string.copy (& row.name)))
+          (str_cat.str-cat
+            (string.copy package-name)
+            "/"
+            (string.copy (& row.name))))]
+      [callables : ast.AstImportedSpmdCallableList
+        (if (= row.meta-kind 2)
+          (tli-hydrate-imported-spmd-callables-for (& canonical) spmd-callables)
+          (ast.ast-imported-spmd-callable-list-new))]
+      (ast.AstImportedSpmdMetadata.Package
+        (string.copy package-name)
+        (string.copy package-version)
+        (intern.intern-id-from-renderable
+          (intern.intern-generated-canonical-name canonical))
+        (box callables)))))
+
+(define (tli-hydrate-project-fn-with-context!
   [facts : (&mut TliHydratedFacts)]
   [decls : (&mut ast.AstDeclList)]
   [paths : (&mut ast.AstDeclPathList)]
   [modules : (&mut ast.AstDeclModuleList)]
   [row : (& tli.TliFnDecl)]
+  [is-stdlib : bool]
+  [package-name : (& str)]
+  [package-version : (& str)]
+  [spmd-callables : (& tlci.TlciSpmdCallables)]
   [source-path : (& str)]
   [mod-id : i64]
   [prov-id : i64]
@@ -1660,7 +1775,8 @@
         1
         0)]
     [meta : ast.AstDeclMeta (tli-hydrate-decl-meta comptime-only markers)]
-    [archive-sym : String (tli-hydrate-archive-fn-symbol source-path row)]
+    [archive-sym : String
+      (tli-hydrate-archive-fn-symbol-with-mode is-stdlib source-path row)]
     [archive-sym-id : i64 (tli-hydrate-name (& archive-sym))]
     [ext-flags : i64
       (if row.is-extern
@@ -1668,13 +1784,20 @@
         (ast.ast-extern-metadata-flags
           false
           (string.eq (& archive-sym) (& row.name))))]
+    [spmd-meta : ast.AstImportedSpmdMetadata
+      (tli-hydrate-imported-spmd-metadata
+        is-stdlib
+        package-name
+        package-version
+        spmd-callables
+        row)]
     [ext-meta : ast.AstExternMetadata
       (ast.AstExternMetadata.Metadata
         fn-info.abi
         (intern.intern-id-from-renderable archive-sym-id)
         (tli-hydrate-link-inputs (& row.extern-link-inputs))
         ext-flags
-        (ast.AstImportedSpmdMetadata.No))]
+        spmd-meta)]
     [decl : ast.AstDecl
       (tli-hydrate-wrap-unsafe
         unsafe-decl
@@ -1691,37 +1814,12 @@
       (let
         [canonical-id : i64
           (csym.compiler-symbol-module-key-id-by-id mod-id fn-info.name)]
-        [extra-len : i64 (array-length row.summary.arena-arg-store-extra)]
-        [extra-copy : (__tl_dyn-array i64) (__tl_make-array i64 extra-len)]
-        [w-len : i64 (array-length row.summary.global-writes)]
-        [w-copy : (__tl_dyn-array TliHydratedGlobalWrite)
-          (__tl_make-array TliHydratedGlobalWrite w-len)]
         [slot : i64 (fn_summary_vec.len (& facts.fn-summaries))]
-        (for [i (iterator.range 0 extra-len)]
-          (set!
-            (array-ref extra-copy i)
-            (array-ref row.summary.arena-arg-store-extra i)))
-        (for [i (iterator.range 0 w-len)]
-          (set!
-            (array-ref w-copy i)
-            (TliHydratedGlobalWrite
-              (tli-hydrate-name
-                (& (array-ref row.summary.global-writes i).symbol))
-              (array-ref row.summary.global-writes i).flags)))
         (fn_summary_vec.push-ref!
           (&mut facts.fn-summaries)
-          (TliHydratedFnSummaryRow
-            eflags
-            row.summary.arena-arg-store-mask
-            extra-copy
-            w-copy
+          (tli-hydrate-summary-row
+            (& row.summary)
             archive-sym-id
-            row.summary.call-memory
-            row.summary.call-clean
-            row.summary.return-alias
-            row.summary.inline-ir-offset
-            row.summary.inline-ir-len
-            row.summary.inline-ir-sha256
             row.is-extern
             record-index
             fn-index))
@@ -1736,12 +1834,135 @@
             archive-sym-id
             slot))))))
 
-(define (tli-hydrate-project-value!
+;; `record-index` is the owning module's multi-catalog gid; with `fn-index` it
+;; names the row whose compact body O2 / SPMD hydration decodes on demand.
+(define (tli-hydrate-summary-row
+  [summary : (& tli.TliFnSummary)]
+  [link-symbol-id : i64]
+  [is-extern : bool]
+  [record-index : i64]
+  [fn-index : i64]) : TliHydratedFnSummaryRow
+  (let
+    [extra-len : i64 (array-length summary.arena-arg-store-extra)]
+    [extra-copy : (__tl_dyn-array i64) (__tl_make-array i64 extra-len)]
+    [w-len : i64 (array-length summary.global-writes)]
+    [w-copy : (__tl_dyn-array TliHydratedGlobalWrite)
+      (__tl_make-array TliHydratedGlobalWrite w-len)]
+    (for [i (iterator.range 0 extra-len)]
+      (set!
+        (array-ref extra-copy i)
+        (array-ref summary.arena-arg-store-extra i)))
+    (for [i (iterator.range 0 w-len)]
+      (set!
+        (array-ref w-copy i)
+        (TliHydratedGlobalWrite
+          (tli-hydrate-name (& (array-ref summary.global-writes i).symbol))
+          (array-ref summary.global-writes i).flags)))
+    (TliHydratedFnSummaryRow
+      summary.effect-flags
+      summary.arena-arg-store-mask
+      extra-copy
+      w-copy
+      link-symbol-id
+      summary.call-memory
+      summary.call-clean
+      summary.return-alias
+      summary.inline-ir-offset
+      summary.inline-ir-len
+      summary.inline-ir-sha256
+      is-extern
+      record-index
+      fn-index)))
+
+(define (tli-hydrate-project-dispatch!
+  [facts : (&mut TliHydratedFacts)]
+  [decls : (&mut ast.AstDeclList)]
+  [paths : (&mut ast.AstDeclPathList)]
+  [modules : (&mut ast.AstDeclModuleList)]
+  [row : (& tli.TliDispatchDecl)]
+  [is-stdlib : bool]
+  [package-name : (& str)]
+  [package-version : (& str)]
+  [source-path : (& str)]
+  [mod-id : i64]
+  [prov-id : i64]) : unit
+  (let
+    [name-id : i64 (tli-hydrate-name (& row.name))]
+    [unsafe-decl : bool (!= (bit-and row.flags 1) 0)]
+    [meta : ast.AstDeclMeta (tli-hydrate-decl-meta false 0)]
+    [archive-sym : String
+      (tli-hydrate-archive-dispatch-symbol-with-mode is-stdlib source-path row)]
+    [archive-sym-id : i64 (tli-hydrate-name (& archive-sym))]
+    [ext-flags : i64
+      (ast.ast-extern-metadata-flags
+        false
+        (string.eq (& archive-sym) (& row.name)))]
+    [spmd-meta : ast.AstImportedSpmdMetadata
+      (if (or is-stdlib (= (string.string-length package-name) 0))
+        (ast.AstImportedSpmdMetadata.No)
+        (let
+          [canonical : String
+            (if (> (string.string-length (& row.module-name)) 0)
+              (str_cat.str-cat
+                (string.copy (& row.module-name))
+                "/"
+                (string.copy (& row.name)))
+              (str_cat.str-cat
+                (string.copy package-name)
+                "/"
+                (string.copy (& row.name))))]
+          (ast.AstImportedSpmdMetadata.Package
+            (string.copy package-name)
+            (string.copy package-version)
+            (intern.intern-id-from-renderable
+              (intern.intern-generated-canonical-name canonical))
+            (box (ast.ast-imported-spmd-callable-list-new)))))]
+    [ext-meta : ast.AstExternMetadata
+      (ast.AstExternMetadata.Metadata
+        (ast.AstExternAbi.TypeLisp)
+        (intern.intern-id-from-renderable archive-sym-id)
+        (ast.ast-extern-link-input-list-new)
+        ext-flags
+        spmd-meta)]
+    [sig : ast.AstType (tli-hydrate-type (& row.signature))]
+    [decl : ast.AstDecl
+      (tli-hydrate-wrap-unsafe
+        unsafe-decl
+        (ast.AstDecl.Extern
+          meta
+          name-id
+          (ast.AstExternKind.Function)
+          (box ext-meta)
+          sig))]
+    (tli-hydrate-push-decl! decls paths modules decl source-path mod-id prov-id)
+    (in-arena
+      (unsafe
+        (arena.Arena facts.owner-arena))
+      (let
+        [canonical-id : i64
+          (csym.compiler-symbol-module-key-id-by-id mod-id name-id)]
+        [slot : i64 (fn_summary_vec.len (& facts.fn-summaries))]
+        (fn_summary_vec.push-ref!
+          (&mut facts.fn-summaries)
+          (tli-hydrate-summary-row (& row.summary) archive-sym-id false -1 -1))
+        (tli_i64_map.insert-ref!
+          (&mut facts.fn-summary-slots)
+          canonical-id
+          slot)
+        ;; The joined variant summary lets O2 external summaries cover calls
+        ;; to the dispatch's archive symbol too.
+        (tli_i64_map.insert-ref!
+          (&mut facts.fn-summary-by-link-slots)
+          archive-sym-id
+          slot)))))
+
+(define (tli-hydrate-project-value-with-mode!
   [pools : ast.AstNodePoolContext]
   [decls : (&mut ast.AstDeclList)]
   [paths : (&mut ast.AstDeclPathList)]
   [modules : (&mut ast.AstDeclModuleList)]
   [row : (& tli.TliValueDecl)]
+  [is-stdlib : bool]
   [source-path : (& str)]
   [mod-id : i64]
   [prov-id : i64]) : unit
@@ -1773,7 +1994,7 @@
           prov-id))
       (let
         [archive-sym : String
-          (tli-hydrate-archive-value-symbol source-path row)]
+          (tli-hydrate-archive-value-symbol-with-mode is-stdlib source-path row)]
         [archive-sym-id : i64 (tli-hydrate-name (& archive-sym))]
         [abi : ast.AstExternAbi
           (if row.is-extern
@@ -1806,6 +2027,26 @@
           mod-id
           prov-id)))))
 
+(define (tli-hydrate-project-value!
+  [pools : ast.AstNodePoolContext]
+  [decls : (&mut ast.AstDeclList)]
+  [paths : (&mut ast.AstDeclPathList)]
+  [modules : (&mut ast.AstDeclModuleList)]
+  [row : (& tli.TliValueDecl)]
+  [source-path : (& str)]
+  [mod-id : i64]
+  [prov-id : i64]) : unit
+  (tli-hydrate-project-value-with-mode!
+    pools
+    decls
+    paths
+    modules
+    row
+    true
+    source-path
+    mod-id
+    prov-id))
+
 (define (tli-hydrate-macro-param [p : (& tli.TliMacroParam)]) : ast.AstMacroParam
   (let
     [kcount : i64 (array-length p.type-kinds)]
@@ -1828,6 +2069,8 @@
   [paths : (&mut ast.AstDeclPathList)]
   [modules : (&mut ast.AstDeclModuleList)]
   [row : (& tli.TliMacroHandle)]
+  [source-sha256 : (& (Array u8 32))]
+  [source-cfg-names : (& (__tl_dyn-array String))]
   [source-path : (& str)]
   [mod-id : i64]
   [prov-id : i64]) : unit
@@ -1875,7 +2118,10 @@
             row.flags
             row.result-kind
             row.tlci-entry-index
-            row.tlci-catalog-sha256))
+            row.tlci-catalog-sha256
+            mod-id
+            (deref source-sha256)
+            (tli-hydrate-string-array-copy source-cfg-names)))
         (tli_i64_map.insert-ref! (&mut facts.macro-slots) identity-id slot)))))
 
 (define (tli-hydrate-default-module-alias [module-name : (& str)]) : String
@@ -1937,7 +2183,47 @@
         mod-id
         prov-id))))
 
-(define (tli-hydrate-project-record!
+(define (tli-hydrate-string-starts-with? [text : (& str)] [prefix : (& str)]) : bool
+  (let
+    [tlen : i64 (string.string-length text)]
+    [plen : i64 (string.string-length prefix)]
+    (if (< tlen plen)
+      false
+      (begin
+        (for [i (iterator.range 0 plen)]
+          (when
+            (!= (string.string-ref text i) (string.string-ref prefix i))
+            (return false)))
+        true))))
+
+(define (tli-hydrate-physical-path
+  [is-stdlib : bool]
+  [package-name : (& str)]
+  [package-root : (& str)]
+  [source-path : (& str)]) : String
+  (let
+    [root-len : i64 (string.string-length package-root)]
+    [pkg-len : i64 (string.string-length package-name)]
+    [src-len : i64 (string.string-length source-path)]
+    (if (or is-stdlib (= root-len 0) (= pkg-len 0))
+      (string.copy source-path)
+      (if (and
+        (> src-len (+ pkg-len 1))
+        (tli-hydrate-string-starts-with? source-path package-name)
+        (= (string.string-ref source-path pkg-len) '/'))
+        (let
+          [rel : String
+            (string.substring
+              source-path
+              (+ pkg-len 1)
+              (- src-len (+ pkg-len 1)))]
+          [last : char (string.string-ref package-root (- root-len 1))]
+          (if (or (= last '/') (= last '\\'))
+            (str_cat.str-cat (string.copy package-root) rel)
+            (str_cat.str-cat (string.copy package-root) "/" rel)))
+        (string.copy source-path)))))
+
+(define (tli-hydrate-project-record-with-context!
   [facts : (&mut TliHydratedFacts)]
   [pools : ast.AstNodePoolContext]
   [dummy-body-id : i64]
@@ -1945,11 +2231,23 @@
   [paths : (&mut ast.AstDeclPathList)]
   [modules : (&mut ast.AstDeclModuleList)]
   [record : (& tli.TliModuleRecord)]
-  [slot-index : i64]) : unit
+  [slot-index : i64]
+  [is-stdlib : bool]
+  [package-name : (& str)]
+  [package-version : (& str)]
+  [package-root : (& str)]
+  [spmd-callables : (& tlci.TlciSpmdCallables)]
+  [source-cfg-names : (& (__tl_dyn-array String))]) : unit
   (let
     [mod-id : i64 (tli-hydrate-name (& record.name))]
     [source-path : String (string.copy (& record.source-path))]
-    [prov-id : i64 (tli-hydrate-name (& source-path))]
+    [physical-path : String
+      (tli-hydrate-physical-path
+        is-stdlib
+        package-name
+        package-root
+        (& source-path))]
+    [prov-id : i64 (tli-hydrate-name (& physical-path))]
     (in-arena
       (unsafe
         (arena.Arena facts.owner-arena))
@@ -1959,7 +2257,7 @@
       paths
       modules
       (ast.ast-decl-module-id mod-id)
-      (& source-path)
+      (& physical-path)
       mod-id
       prov-id)
     (for [i (iterator.range 0 (array-length record.imports))]
@@ -1968,7 +2266,7 @@
         paths
         modules
         (& (array-ref record.imports i))
-        (& source-path)
+        (& physical-path)
         mod-id
         prov-id))
     (for [i (iterator.range 0 (array-length record.types))]
@@ -1978,29 +2276,47 @@
         paths
         modules
         (& (array-ref record.types i))
-        (& source-path)
+        (& physical-path)
         mod-id
         prov-id))
     (for [i (iterator.range 0 (array-length record.functions))]
-      (tli-hydrate-project-fn!
+      (tli-hydrate-project-fn-with-context!
         facts
         decls
         paths
         modules
         (& (array-ref record.functions i))
-        (& source-path)
+        is-stdlib
+        package-name
+        package-version
+        spmd-callables
+        (& physical-path)
         mod-id
         prov-id
         slot-index
         i))
+    (for [i (iterator.range 0 (array-length record.dispatches))]
+      (tli-hydrate-project-dispatch!
+        facts
+        decls
+        paths
+        modules
+        (& (array-ref record.dispatches i))
+        is-stdlib
+        package-name
+        package-version
+        (& physical-path)
+        mod-id
+        prov-id))
     (for [i (iterator.range 0 (array-length record.values))]
-      (tli-hydrate-project-value!
+      (tli-hydrate-project-value-with-mode!
         pools
         decls
         paths
         modules
         (& (array-ref record.values i))
-        (& source-path)
+        is-stdlib
+        (& physical-path)
         mod-id
         prov-id))
     (for [i (iterator.range 0 (array-length record.macros))]
@@ -2011,9 +2327,38 @@
         paths
         modules
         (& (array-ref record.macros i))
-        (& source-path)
+        (& record.source-sha256)
+        source-cfg-names
+        (& physical-path)
         mod-id
         prov-id))))
+
+(define (tli-hydrate-project-record!
+  [facts : (&mut TliHydratedFacts)]
+  [pools : ast.AstNodePoolContext]
+  [dummy-body-id : i64]
+  [decls : (&mut ast.AstDeclList)]
+  [paths : (&mut ast.AstDeclPathList)]
+  [modules : (&mut ast.AstDeclModuleList)]
+  [record : (& tli.TliModuleRecord)]
+  [slot-index : i64]) : unit
+  (let
+    [empty-spmd : tlci.TlciSpmdCallables (tlci.tlci-spmd-callables-empty)]
+    (tli-hydrate-project-record-with-context!
+      facts
+      pools
+      dummy-body-id
+      decls
+      paths
+      modules
+      record
+      slot-index
+      true
+      ""
+      ""
+      ""
+      (& empty-spmd)
+      (& (__tl_make-array String 0)))))
 
 (defenum TliProjectClosureResult
   (Ok
@@ -2087,3 +2432,805 @@
                     out-seen
                     (sym_i64_env.sym-i64-bind-id out-seen mod-id path-id))))))
           (Ok decls paths modules out-seen))])))
+
+(defenum TliOptionalDigest
+  (Some (Array u8 32))
+  (None))
+
+(defenum TliMultiAttachResult
+  (Ok i64)
+  (Err String))
+
+(defstruct TliMultiBundle
+  (arena i64)
+  (is-stdlib bool)
+  (package-name String)
+  (package-version String)
+  (package-root String)
+  (archive-path String)
+  (spmd-callables tlci.TlciSpmdCallables)
+  (directory codec.TliDirectory)
+  (cfg-digest (Array u8 32))
+  (cfg-names (__tl_dyn-array String))
+  (records (__tl_dyn-array tli.TliModuleRecord))
+  (owned-bytes i64)
+  (hydrated-any bool)
+  (base-gid i64))
+
+(import (vector.vector TliMultiBundle core) as tli_bundle_vec)
+
+(defstruct TliMultiCatalog
+  (root-arena i64)
+  (bundles tli_bundle_vec.Vec)
+  (has-stdlib-bundle bool)
+  (stdlib-bundle-index i64)
+  (module-to-gid tli_str_map.Map)
+  (gid-bundle tli_i64_vec.Vec)
+  (gid-local tli_i64_vec.Vec)
+  (states tli_i64_vec.Vec)
+  (startup-order tli_i64_vec.Vec)
+  (projected-cursor i64)
+  (pending-source-stdlib tli_svec.Vec)
+  (failed bool))
+
+(define (tli-hydrate-digest-zero? [digest : (& (Array u8 32))]) : bool
+  (for [i (iterator.range 0 32)]
+    (when (!= (array-ref (deref digest) i) (cast 0 : u8)) (return false)))
+  true)
+
+(define (tli-multi-catalog-new [root-arena : i64]) : TliMultiCatalog
+  (in-arena
+    (unsafe
+      (arena.Arena root-arena))
+    (TliMultiCatalog
+      root-arena
+      (tli_bundle_vec.new)
+      false
+      -1
+      (tli_str_map.with-capacity 256)
+      (tli_i64_vec.new)
+      (tli_i64_vec.new)
+      (tli_i64_vec.new)
+      (tli_i64_vec.new)
+      0
+      (tli_svec.new)
+      false)))
+
+;; The active cfg names a bundle was opened under, owned by the catalog arena.
+(define (tli-hydrate-cfg-names [cfgs : sym_i64_env.SymI64Env]) : (__tl_dyn-array
+    String)
+  (let
+    [snapshot : cfg_core.CompilerCfgSnapshot
+      (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
+    [active : i64 0]
+    (for [index (iterator.range 0 snapshot.len)]
+      (when (!= (array-ref snapshot.values index) 0) (+= active 1)))
+    (let
+      [out : (__tl_dyn-array String) (__tl_make-array String active)]
+      [slot : i64 0]
+      (for [index (iterator.range 0 snapshot.len)]
+        (when
+          (!= (array-ref snapshot.values index) 0)
+          (set!
+            (array-ref out slot)
+            (string.copy (& (array-ref snapshot.slots index))))
+          (+= slot 1)))
+      out)))
+
+(define (tli-hydrate-string-array-copy [items : (& (__tl_dyn-array String))]) : (__tl_dyn-array
+    String)
+  (let
+    [n : i64 (array-length (deref items))]
+    [out : (__tl_dyn-array String) (__tl_make-array String n)]
+    (for [index (iterator.range 0 n)]
+      (set!
+        (array-ref out index)
+        (string.copy (& (array-ref (deref items) index)))))
+    out))
+
+(define (tli-multi-catalog-attach-bundle!
+  [multi : (&mut TliMultiCatalog)]
+  [bundle-arena : i64]
+  [is-stdlib : bool]
+  [package-name : String]
+  [package-version : String]
+  [package-root : String]
+  [archive-path : String]
+  [spmd-callables : tlci.TlciSpmdCallables]
+  [directory : codec.TliDirectory]
+  [cfg-digest : (& (Array u8 32))]
+  [cfgs : sym_i64_env.SymI64Env]) : TliMultiAttachResult
+  (when
+    (and is-stdlib multi.has-stdlib-bundle)
+    (return (TliMultiAttachResult.Err "duplicate stdlib TLI bundle")))
+  (let
+    [count : i64 (array-length directory.entries)]
+    (for [local (iterator.range 0 count)]
+      (let
+        [mod-name (& (array-ref directory.entries local).name)]
+        (when
+          (tli_str_map.contains? (& multi.module-to-gid) (string.copy mod-name))
+          (return
+            (TliMultiAttachResult.Err
+              (str_cat.str-cat
+                "duplicate TLI module name: "
+                (string.copy mod-name)))))))
+    (let
+      [owned : i64
+        (+
+          directory.owned-bytes
+          80
+          (* count (+ 32 (comptime (size-of (type tli.TliModuleRecord))))))]
+      (when
+        (> owned codec.tli-max-owned-bytes)
+        (return
+          (TliMultiAttachResult.Err "TLI catalog exceeds the owned-byte limit")))
+      (let
+        [records : (__tl_dyn-array tli.TliModuleRecord)
+          (in-arena
+            (unsafe
+              (arena.Arena bundle-arena))
+            (__tl_make-array tli.TliModuleRecord count))]
+        [base-gid : i64 (tli_i64_vec.len (& multi.gid-bundle))]
+        [bundle-index : i64 (tli_bundle_vec.len (& multi.bundles))]
+        (in-arena
+          (unsafe
+            (arena.Arena multi.root-arena))
+          (for [local (iterator.range 0 count)]
+            (let
+              [mod-name : String
+                (string.copy (& (array-ref directory.entries local).name))]
+              (tli_str_map.insert-ref!
+                (&mut multi.module-to-gid)
+                mod-name
+                (+ base-gid local))
+              (tli_i64_vec.push-ref! (&mut multi.gid-bundle) bundle-index)
+              (tli_i64_vec.push-ref! (&mut multi.gid-local) local)
+              (tli_i64_vec.push-ref! (&mut multi.states) 0)))
+          (tli_bundle_vec.push-ref!
+            (&mut multi.bundles)
+            (TliMultiBundle
+              bundle-arena
+              is-stdlib
+              (string.copy (& package-name))
+              (string.copy (& package-version))
+              (string.copy (& package-root))
+              (string.copy (& archive-path))
+              spmd-callables
+              directory
+              (deref cfg-digest)
+              (tli-hydrate-cfg-names cfgs)
+              records
+              owned
+              false
+              base-gid))
+          (when
+            is-stdlib
+            (set! multi.has-stdlib-bundle true)
+            (set! multi.stdlib-bundle-index bundle-index)))
+        (TliMultiAttachResult.Ok bundle-index)))))
+
+;; Owning bundle of `gid`, or `-1` when it names no attached module or that
+;; bundle carries no `compact_ir` section.
+(define (tli-multi-gid-bundle-index [multi : (& TliMultiCatalog)] [gid : i64]) : i64
+  (if (or (< gid 0) (>= gid (tli_i64_vec.len (& multi.gid-bundle))))
+    -1
+    (let
+      [b-idx : i64 (array-ref multi.gid-bundle.slots gid)]
+      (if (=
+        (bit-and
+          (array-ref multi.bundles.slots b-idx).directory.flags
+          tli.tli-has-compact-ir)
+        0)
+        -1
+        b-idx))))
+
+;; Decode `gid`'s `HAS_SPMD_EXPR` body from its owning bundle and cache it in
+;; `facts`; the new entry slot, or `-1` when the bundle has no compact body.
+(define (tli-multi-hydrate-spmd-inline-slot!
+  [facts : (&mut TliHydratedFacts)]
+  [multi : (& multi TliMultiCatalog)]
+  [canonical-id : i64]
+  [pools : ast.AstNodePoolContext]
+  [expr-arena : i64]
+  [rec-idx : i64]
+  [fn-idx : i64]
+  [ir-off : i64]
+  [ir-len : i64]
+  [ir-sha : (& (Array u8 32))]) : i64
+  (let
+    [b-idx : i64 (tli-multi-gid-bundle-index multi rec-idx)]
+    (if (< b-idx 0)
+      -1
+      (match (codec.tli-decode-compact-body-at
+        (& (array-ref multi.bundles.slots b-idx).directory)
+        ir-off
+        ir-len
+        ir-sha)
+        [(codec.TliCompactBodyResult.Ok body)
+          (if (!= (bit-and body.kind tli.tli-compact-body-has-spmd-expr) 0)
+            (let
+              [local : i64 (array-ref multi.gid-local.slots rec-idx)]
+              [fn-row
+                (&
+                  (array-ref
+                    (array-ref
+                      (array-ref multi.bundles.slots b-idx).records
+                      local).functions
+                    fn-idx))]
+              [pcount : i64 (array-length fn-row.params)]
+              [ast-params : ast.AstParamList
+                (ast.ast-param-list-with-capacity pcount)]
+              (for [pi (iterator.range 0 pcount)]
+                (ast.ast-param-list-push
+                  (&mut ast-params)
+                  (ast.AstParam.Param
+                    (tli-hydrate-name (& (array-ref fn-row.params pi).name))
+                    (tli-hydrate-type (& (array-ref fn-row.params pi).ty))
+                    (array-ref fn-row.params pi).is-mut)))
+              (let
+                [ret-ty : ast.AstType (tli-hydrate-type (& fn-row.return-type))]
+                [body-id : i64
+                  (in-arena
+                    (unsafe
+                      (arena.Arena expr-arena))
+                    (tli-hydrate-spmd-expr pools (& body.spmd-expr)))]
+                [inserted : i64
+                  (spmd_inline_vec.len (& facts.spmd-inline-entries))]
+                (spmd_inline_vec.push-ref!
+                  (&mut facts.spmd-inline-entries)
+                  (TliHydratedSpmdInline ast-params ret-ty body-id))
+                (tli_i64_map.insert-ref!
+                  (&mut facts.spmd-inline-slots)
+                  canonical-id
+                  inserted)
+                inserted))
+            -1)]
+        [(codec.TliCompactBodyResult.Err _) -1]))))
+
+(define (tli-multi-catalog-find-module
+  [multi : (& TliMultiCatalog)]
+  [module-name : (& str)]) : i64
+  (tli_str_map.get-value-or
+    (& multi.module-to-gid)
+    (string.copy module-name)
+    -1))
+
+(define (tli-multi-catalog-has-module?
+  [multi : (& TliMultiCatalog)]
+  [module-name : (& str)]) : bool
+  (>= (tli-multi-catalog-find-module multi module-name) 0))
+
+(define (tli-multi-catalog-module-name-at
+  [multi : (& TliMultiCatalog)]
+  [gid : i64]) : String
+  (if (or (< gid 0) (>= gid (tli_i64_vec.len (& multi.gid-bundle))))
+    ""
+    (let
+      [b-idx : i64 (array-ref multi.gid-bundle.slots gid)]
+      [local : i64 (array-ref multi.gid-local.slots gid)]
+      (string.copy
+        (&
+          (array-ref
+            (array-ref multi.bundles.slots b-idx).directory.entries
+            local).name)))))
+
+(define (tli-multi-catalog-module-sha256
+  [multi : (& TliMultiCatalog)]
+  [module-name : (& str)]) : TliOptionalDigest
+  (let
+    [gid : i64 (tli-multi-catalog-find-module multi module-name)]
+    (if (< gid 0)
+      (TliOptionalDigest.None)
+      (let
+        [b-idx : i64 (array-ref multi.gid-bundle.slots gid)]
+        [local : i64 (array-ref multi.gid-local.slots gid)]
+        (TliOptionalDigest.Some
+          (array-ref
+            (array-ref multi.bundles.slots b-idx).directory.entries
+            local).module-sha256)))))
+
+(define (tli-multi-catalog-find-package-bundle
+  [multi : (& TliMultiCatalog)]
+  [package-root : (& str)]) : i64
+  (let
+    [count : i64 (tli_bundle_vec.len (& multi.bundles))]
+    (for [i (iterator.range 0 count)]
+      (when
+        (and
+          (not (array-ref multi.bundles.slots i).is-stdlib)
+          (string.eq
+            (& (array-ref multi.bundles.slots i).package-root)
+            package-root))
+        (return i)))
+    -1))
+
+(define (tli-multi-catalog-has-package-root?
+  [multi : (& TliMultiCatalog)]
+  [package-root : (& str)]) : bool
+  (>= (tli-multi-catalog-find-package-bundle multi package-root) 0))
+
+(define (tli-multi-catalog-find-package-gids
+  [multi : (& TliMultiCatalog)]
+  [package-root : (& str)]
+  [owned-path : (& str)]
+  [candidate-module : (& str)]) : (__tl_dyn-array i64)
+  (let
+    [b-idx : i64 (tli-multi-catalog-find-package-bundle multi package-root)]
+    (when (< b-idx 0) (return (__tl_make-array i64 0)))
+    (let
+      [count : i64
+        (array-length (array-ref multi.bundles.slots b-idx).directory.entries)]
+      [base-gid : i64 (array-ref multi.bundles.slots b-idx).base-gid]
+      [cand-local : i64
+        (if (> (string.string-length candidate-module) 0)
+          (tli-catalog-find
+            (& (array-ref multi.bundles.slots b-idx).directory)
+            candidate-module)
+          -1)]
+      [cand-matches : bool false]
+      [matches : tli_i64_vec.Vec (tli_i64_vec.new)]
+      (when
+        (>= cand-local 0)
+        (let
+          [sp : String
+            (codec.tli-peek-record-source-path-at
+              (& (array-ref multi.bundles.slots b-idx).directory)
+              cand-local)]
+          (when
+            (or
+              (= (string.string-length owned-path) 0)
+              (string.eq (& sp) owned-path))
+            (set! cand-matches true)
+            (tli_i64_vec.push-ref! (&mut matches) (+ base-gid cand-local)))))
+      (when
+        (> (string.string-length owned-path) 0)
+        (for [local (iterator.range 0 count)]
+          (when
+            (or (not cand-matches) (!= local cand-local))
+            (let
+              [sp : String
+                (codec.tli-peek-record-source-path-at
+                  (& (array-ref multi.bundles.slots b-idx).directory)
+                  local)]
+              (when
+                (string.eq (& sp) owned-path)
+                (tli_i64_vec.push-ref! (&mut matches) (+ base-gid local)))))))
+      (let
+        [n : i64 (tli_i64_vec.len (& matches))]
+        [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+        (for [i (iterator.range 0 n)]
+          (set! (array-ref out i) (array-ref matches.slots i)))
+        out))))
+
+(define (tli-multi-push-pending-source-stdlib!
+  [multi : (&mut TliMultiCatalog)]
+  [module-name : (& str)]) : unit
+  (let
+    [count : i64 (tli_svec.len (& multi.pending-source-stdlib))]
+    (for [i (iterator.range 0 count)]
+      (when
+        (string.eq
+          (& (array-ref multi.pending-source-stdlib.slots i))
+          module-name)
+        (return unit)))
+    (in-arena
+      (unsafe
+        (arena.Arena multi.root-arena))
+      (tli_svec.push-ref!
+        (&mut multi.pending-source-stdlib)
+        (string.copy module-name)))))
+
+(define (tli-multi-catalog-hydrate-gid!
+  [multi : (&mut TliMultiCatalog)]
+  [root-gid : i64]) : TliHydrateResult
+  (when
+    multi.failed
+    (return
+      (Err
+        (tli.TliDecodeFailure
+          (tli.TliDecodeError.UnknownTag)
+          0
+          "TLI catalog has a previously rejected record"))))
+  (when
+    (or (< root-gid 0) (>= root-gid (tli_i64_vec.len (& multi.states))))
+    (return
+      (Err
+        (tli.TliDecodeFailure
+          (tli.TliDecodeError.UnknownTag)
+          0
+          "TLI module is missing from the directory"))))
+  (when (>= (array-ref multi.states.slots root-gid) 2) (return (Ok root-gid)))
+  (let
+    [stack : tli_i64_vec.Vec (tli_i64_vec.new)]
+    [next-edge : tli_i64_vec.Vec (tli_i64_vec.new)]
+    [depth : i64 1]
+    (tli_i64_vec.push-ref! (&mut stack) root-gid)
+    (tli_i64_vec.push-ref! (&mut next-edge) 0)
+    (while (> depth 0)
+      (let
+        [top : i64 (- depth 1)]
+        [gid : i64 (array-ref stack.slots top)]
+        [b-idx : i64 (array-ref multi.gid-bundle.slots gid)]
+        [local : i64 (array-ref multi.gid-local.slots gid)]
+        [offset : i64
+          (array-ref
+            (array-ref multi.bundles.slots b-idx).directory.entries
+            local).record-offset]
+        (when
+          (= (array-ref multi.states.slots gid) 0)
+          (let
+            [b-arena : i64 (array-ref multi.bundles.slots b-idx).arena]
+            [decoded : codec.TliBudgetedModuleResult
+              (in-arena
+                (unsafe
+                  (arena.Arena b-arena))
+                (codec.tli-decode-record-at
+                  (& (array-ref multi.bundles.slots b-idx).directory)
+                  local
+                  (array-ref multi.bundles.slots b-idx).owned-bytes))]
+            (match decoded
+              [(Err failure)
+                (set! multi.failed true)
+                (return (Err failure))]
+              [(Ok record used)
+                (unless
+                  (codec.tli-digest-eq?
+                    (& record.cfg-fingerprint-sha256)
+                    (& (array-ref multi.bundles.slots b-idx).cfg-digest))
+                  (return
+                    (tli-catalog-fail!
+                      (&mut multi.failed)
+                      (tli.TliDecodeError.CfgFingerprintMismatch)
+                      (+ offset 40)
+                      "TLI configuration fingerprint mismatch")))
+                (set!
+                  (array-ref
+                    (array-ref multi.bundles.slots b-idx).records
+                    local)
+                  record)
+                (set! (array-ref multi.bundles.slots b-idx).owned-bytes used)
+                (set! (array-ref multi.states.slots gid) 1)
+                (set! (array-ref next-edge.slots top) 0)])))
+        (let
+          [next : i64 (array-ref next-edge.slots top)]
+          [imp-count : i64
+            (array-length
+              (array-ref (array-ref multi.bundles.slots b-idx).records local).imports)]
+          (if (= next imp-count)
+            (begin
+              (set! (array-ref multi.states.slots gid) 2)
+              (set! (array-ref multi.bundles.slots b-idx).hydrated-any true)
+              (in-arena
+                (unsafe
+                  (arena.Arena multi.root-arena))
+                (tli_i64_vec.push-ref! (&mut multi.startup-order) gid))
+              (-= depth 1))
+            (let
+              [src-is-stdlib : bool
+                (array-ref multi.bundles.slots b-idx).is-stdlib]
+              [imp-name : String
+                (string.copy
+                  (&
+                    (array-ref
+                      (array-ref
+                        (array-ref multi.bundles.slots b-idx).records
+                        local).imports
+                      next).module-name))]
+              [imp-sha : (Array u8 32)
+                (array-ref
+                  (array-ref
+                    (array-ref multi.bundles.slots b-idx).records
+                    local).imports
+                  next).interface-sha256]
+              [dep-gid : i64 (tli-multi-catalog-find-module multi (& imp-name))]
+              (if (< dep-gid 0)
+                (if (and
+                  (not src-is-stdlib)
+                  (not multi.has-stdlib-bundle)
+                  (tli-hydrate-string-starts-with? (& imp-name) "stdlib."))
+                  (begin
+                    (tli-multi-push-pending-source-stdlib! multi (& imp-name))
+                    (+= (array-ref next-edge.slots top) 1))
+                  (return
+                    (tli-catalog-fail!
+                      (&mut multi.failed)
+                      (tli.TliDecodeError.UnknownTag)
+                      offset
+                      "TLI import is missing from the directory")))
+                (let
+                  [dst-b-idx : i64 (array-ref multi.gid-bundle.slots dep-gid)]
+                  [dst-local : i64 (array-ref multi.gid-local.slots dep-gid)]
+                  [dst-is-stdlib : bool
+                    (array-ref multi.bundles.slots dst-b-idx).is-stdlib]
+                  [digest-ok : bool
+                    (or
+                      (codec.tli-digest-eq?
+                        (& imp-sha)
+                        (&
+                          (array-ref
+                            (array-ref multi.bundles.slots dst-b-idx).directory.entries
+                            dst-local).module-sha256))
+                      (and
+                        (not src-is-stdlib)
+                        dst-is-stdlib
+                        (tli-hydrate-digest-zero? (& imp-sha))))]
+                  (unless
+                    digest-ok
+                    (return
+                      (tli-catalog-fail!
+                        (&mut multi.failed)
+                        (tli.TliDecodeError.DigestMismatch)
+                        offset
+                        "TLI import SHA-256 mismatch")))
+                  (+= (array-ref next-edge.slots top) 1)
+                  (match (array-ref multi.states.slots dep-gid)
+                    [0
+                      (if (< depth (tli_i64_vec.len (& stack)))
+                        (begin
+                          (set! (array-ref stack.slots depth) dep-gid)
+                          (set! (array-ref next-edge.slots depth) 0))
+                        (begin
+                          (tli_i64_vec.push-ref! (&mut stack) dep-gid)
+                          (tli_i64_vec.push-ref! (&mut next-edge) 0)))
+                      (+= depth 1)]
+                    [1
+                      (return
+                        (tli-catalog-fail!
+                          (&mut multi.failed)
+                          (tli.TliDecodeError.UnknownTag)
+                          offset
+                          "TLI import cycle"))]
+                    [_ unit]))))))))
+    (Ok root-gid)))
+
+(define (tli-multi-project-gids-closure!
+  [multi : (&mut TliMultiCatalog)]
+  [facts : (&mut TliHydratedFacts)]
+  [gids : (& (__tl_dyn-array i64))]
+  [seen : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : TliProjectClosureResult
+  (for [i (iterator.range 0 (array-length (deref gids)))]
+    (match (tli-multi-catalog-hydrate-gid! multi (array-ref (deref gids) i))
+      [(Err failure) (return (Err failure))]
+      [(Ok _) unit]))
+  (let
+    [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+    [paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+    [modules : ast.AstDeclModuleList (ast.ast-decl-module-list-new)]
+    [out-seen : sym_i64_env.SymI64Env seen]
+    [dummy-body-id : i64 -1]
+    [ready-count : i64 (tli_i64_vec.len (& multi.startup-order))]
+    (for [pos (iterator.range multi.projected-cursor ready-count)]
+      (let
+        [gid : i64 (array-ref multi.startup-order.slots pos)]
+        (when
+          (= (array-ref multi.states.slots gid) 2)
+          (set! (array-ref multi.states.slots gid) 3)
+          (+= facts.hydrated-module-count 1)
+          (let
+            [b-idx : i64 (array-ref multi.gid-bundle.slots gid)]
+            [local : i64 (array-ref multi.gid-local.slots gid)]
+            (set! (array-ref multi.bundles.slots b-idx).hydrated-any true)
+            (let
+              [mod-id : i64
+                (tli-hydrate-name
+                  (&
+                    (array-ref
+                      (array-ref multi.bundles.slots b-idx).records
+                      local).name))]
+              [phys-path : String
+                (tli-hydrate-physical-path
+                  (array-ref multi.bundles.slots b-idx).is-stdlib
+                  (& (array-ref multi.bundles.slots b-idx).package-name)
+                  (& (array-ref multi.bundles.slots b-idx).package-root)
+                  (&
+                    (array-ref
+                      (array-ref multi.bundles.slots b-idx).records
+                      local).source-path))]
+              [prov-id : i64 (tli-hydrate-name (& phys-path))]
+              (when
+                (and
+                  (< dummy-body-id 0)
+                  (>
+                    (array-length
+                      (array-ref
+                        (array-ref multi.bundles.slots b-idx).records
+                        local).macros)
+                    0))
+                (set!
+                  dummy-body-id
+                  (ast.ast-node-pool-context-expr-push
+                    pools
+                    (ast.AstExpr.Literal (ast.AstLiteral.Unit)))))
+              (tli-hydrate-project-record-with-context!
+                facts
+                pools
+                dummy-body-id
+                (&mut decls)
+                (&mut paths)
+                (&mut modules)
+                (&
+                  (array-ref
+                    (array-ref multi.bundles.slots b-idx).records
+                    local))
+                gid
+                (array-ref multi.bundles.slots b-idx).is-stdlib
+                (& (array-ref multi.bundles.slots b-idx).package-name)
+                (& (array-ref multi.bundles.slots b-idx).package-version)
+                (& (array-ref multi.bundles.slots b-idx).package-root)
+                (& (array-ref multi.bundles.slots b-idx).spmd-callables)
+                (& (array-ref multi.bundles.slots b-idx).cfg-names))
+              (set! out-seen (sym_i64_env.sym-i64-bind-id out-seen prov-id 1))
+              (set!
+                out-seen
+                (sym_i64_env.sym-i64-bind-id out-seen mod-id prov-id)))))))
+    (set! multi.projected-cursor ready-count)
+    (Ok decls paths modules out-seen)))
+
+(define (tli-multi-project-module-closure!
+  [multi : (&mut TliMultiCatalog)]
+  [facts : (&mut TliHydratedFacts)]
+  [module-name : (& str)]
+  [seen : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : TliProjectClosureResult
+  (let
+    [gid : i64 (tli-multi-catalog-find-module multi module-name)]
+    (if (< gid 0)
+      (Err
+        (tli.TliDecodeFailure
+          (tli.TliDecodeError.UnknownTag)
+          0
+          "TLI module is missing from the directory"))
+      (let
+        [gids : (__tl_dyn-array i64) (__tl_make-array gid)]
+        (tli-multi-project-gids-closure! multi facts (& gids) seen pools)))))
+
+(define (tli-multi-startup-archive-symbols [multi : (& TliMultiCatalog)]) : (__tl_dyn-array
+    String)
+  (when multi.failed (return (__tl_make-array String 0)))
+  (let
+    [ready-count : i64 (tli_i64_vec.len (& multi.startup-order))]
+    [count : i64 0]
+    (for [pos (iterator.range 0 ready-count)]
+      (let
+        [gid : i64 (array-ref multi.startup-order.slots pos)]
+        [b-idx : i64 (array-ref multi.gid-bundle.slots gid)]
+        [local : i64 (array-ref multi.gid-local.slots gid)]
+        (+=
+          count
+          (array-length
+            (array-ref (array-ref multi.bundles.slots b-idx).records local).global-inits))))
+    (let
+      [symbols : (__tl_dyn-array String) (__tl_make-array String count)]
+      [next : i64 0]
+      (for [pos (iterator.range 0 ready-count)]
+        (let
+          [gid : i64 (array-ref multi.startup-order.slots pos)]
+          [b-idx : i64 (array-ref multi.gid-bundle.slots gid)]
+          [local : i64 (array-ref multi.gid-local.slots gid)]
+          [init-count : i64
+            (array-length
+              (array-ref (array-ref multi.bundles.slots b-idx).records local).global-inits)]
+          (for [index (iterator.range 0 init-count)]
+            (set!
+              (array-ref symbols next)
+              (tli-hydrate-archive-user-symbol
+                (&
+                  (array-ref
+                    (array-ref
+                      (array-ref multi.bundles.slots b-idx).records
+                      local).global-inits
+                    index))))
+            (+= next 1))))
+      symbols)))
+
+;; Reverse topological order of hydrated package archives, followed by the
+;; stdlib archive last (single-pass linker order: consumer -> dep -> stdlib).
+(define (tli-multi-hydrated-archive-paths [multi : (& TliMultiCatalog)]) : (__tl_dyn-array
+    String)
+  (when multi.failed (return (__tl_make-array String 0)))
+  (let
+    [bcount : i64 (tli_bundle_vec.len (& multi.bundles))]
+    [out : tli_svec.Vec (tli_svec.new)]
+    [idx : i64 (- bcount 1)]
+    (while (>= idx 0)
+      (when
+        (and
+          (not (array-ref multi.bundles.slots idx).is-stdlib)
+          (array-ref multi.bundles.slots idx).hydrated-any
+          (>
+            (string.string-length
+              (& (array-ref multi.bundles.slots idx).archive-path))
+            0))
+        (tli_svec.push-ref!
+          (&mut out)
+          (string.copy (& (array-ref multi.bundles.slots idx).archive-path))))
+      (-= idx 1))
+    (when
+      (and multi.has-stdlib-bundle (>= multi.stdlib-bundle-index 0))
+      (when
+        (and
+          (array-ref multi.bundles.slots multi.stdlib-bundle-index).hydrated-any
+          (>
+            (string.string-length
+              (&
+                (array-ref multi.bundles.slots multi.stdlib-bundle-index).archive-path))
+            0))
+        (tli_svec.push-ref!
+          (&mut out)
+          (string.copy
+            (&
+              (array-ref multi.bundles.slots multi.stdlib-bundle-index).archive-path)))))
+    (let
+      [n : i64 (tli_svec.len (& out))]
+      [arr : (__tl_dyn-array String) (__tl_make-array String n)]
+      (for [i (iterator.range 0 n)]
+        (set! (array-ref arr i) (string.copy (& (array-ref out.slots i)))))
+      arr)))
+
+(define (tli-multi-take-pending-source-stdlib! [multi : (&mut TliMultiCatalog)]) : (__tl_dyn-array
+    String)
+  (let
+    [n : i64 (tli_svec.len (& multi.pending-source-stdlib))]
+    [out : (__tl_dyn-array String) (__tl_make-array String n)]
+    (for [i (iterator.range 0 n)]
+      (set!
+        (array-ref out i)
+        (string.copy (& (array-ref multi.pending-source-stdlib.slots i)))))
+    (set! multi.pending-source-stdlib.len 0)
+    out))
+
+(define (tli-multi-bundle-count [multi : (& TliMultiCatalog)]) : i64
+  (tli_bundle_vec.len (& multi.bundles)))
+
+;; The sysroot stdlib bundle supplied a hydrated module, so its archive (which
+;; references the native runtime) joins the link.
+(define (tli-multi-stdlib-hydrated? [multi : (& TliMultiCatalog)]) : bool
+  (and
+    multi.has-stdlib-bundle
+    (>= multi.stdlib-bundle-index 0)
+    (array-ref multi.bundles.slots multi.stdlib-bundle-index).hydrated-any))
+
+(define (tli-multi-hydrated-package-bundle-count [multi : (& TliMultiCatalog)]) : i64
+  (let
+    [bcount : i64 (tli_bundle_vec.len (& multi.bundles))]
+    [count : i64 0]
+    (for [i (iterator.range 0 bcount)]
+      (when
+        (and
+          (not (array-ref multi.bundles.slots i).is-stdlib)
+          (array-ref multi.bundles.slots i).hydrated-any)
+        (+= count 1)))
+    count))
+
+(define (tli-multi-catalog-arenas [multi : (& TliMultiCatalog)]) : (__tl_dyn-array
+    i64)
+  (let
+    [bcount : i64 (tli_bundle_vec.len (& multi.bundles))]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 (+ bcount 1))]
+    (set! (array-ref out 0) multi.root-arena)
+    (for [i (iterator.range 0 bcount)]
+      (set! (array-ref out (+ i 1)) (array-ref multi.bundles.slots i).arena))
+    out))
+
+(define (tli-multi-catalog-release! [multi : (& TliMultiCatalog)]) : unit
+  (let
+    [root-arena : i64 multi.root-arena]
+    [bcount : i64 (tli_bundle_vec.len (& multi.bundles))]
+    [bundle-arenas : (__tl_dyn-array i64) (__tl_make-array i64 bcount)]
+    (for [i (iterator.range 0 bcount)]
+      (set! (array-ref bundle-arenas i) (array-ref multi.bundles.slots i).arena))
+    (for [i (iterator.range 0 bcount)]
+      (let
+        [ba : i64 (array-ref bundle-arenas i)]
+        (when
+          (and (> ba 0) (!= ba root-arena))
+          (unsafe
+            ;; lint-allow: raw-arena-op -- releases job-owned bundle arena deterministically.
+            (arena.tl_arena_destroy ba)))))
+    (when
+      (> root-arena 0)
+      (unsafe
+        ;; lint-allow: raw-arena-op -- releases job-owned multi-catalog root arena deterministically.
+        (arena.tl_arena_destroy root-arena)))))

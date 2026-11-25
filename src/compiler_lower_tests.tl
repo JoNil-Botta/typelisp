@@ -16325,62 +16325,55 @@
       [name : i64 (ci.intern "same")]
       [left-module : i64 (ci.intern "left.src.lib")]
       [right-module : i64 (ci.intern "right.src.lib")]
-      [left : ast.AstDecl
-        (load.compiler-load-package-def-fn-extern
-          "surface_left"
-          "C:/surface_left/"
-          (& (svec.new))
-          "C:/surface_left/src/lib.tl"
-          "left.src.lib"
-          name
-          (& (ast.ast-param-list-new))
-          (& (I64))
-          (No)
-          (& (Unavailable)))]
-      [right : ast.AstDecl
-        (load.compiler-load-package-def-fn-extern
-          "surface_right"
-          "C:/surface_right/"
-          (& (svec.new))
-          "C:/surface_right/src/lib.tl"
-          "right.src.lib"
-          name
-          (& (ast.ast-param-list-new))
-          (& (I64))
-          (No)
-          (& (Unavailable)))]
+      [left-meta : ast.AstExternMetadata
+        (ast.AstExternMetadata.Metadata
+          (ast.AstExternAbi.TypeLisp)
+          (ci.intern-id-from-renderable
+            (ci.intern "_tl_surface_left_src_lib_tl_same"))
+          (ast.ast-extern-link-input-list-new)
+          1
+          (ast.AstImportedSpmdMetadata.Package
+            "surface_left"
+            "0.1.0"
+            (ci.intern-id-from-renderable
+              (ci.intern-generated-canonical-name "left.src.lib/same"))
+            (box (ast.ast-imported-spmd-callable-list-new))))]
+      [right-meta : ast.AstExternMetadata
+        (ast.AstExternMetadata.Metadata
+          (ast.AstExternAbi.TypeLisp)
+          (ci.intern-id-from-renderable
+            (ci.intern "_tl_surface_right_src_lib_tl_same"))
+          (ast.ast-extern-link-input-list-new)
+          1
+          (ast.AstImportedSpmdMetadata.Package
+            "surface_right"
+            "0.1.0"
+            (ci.intern-id-from-renderable
+              (ci.intern-generated-canonical-name "right.src.lib/same"))
+            (box (ast.ast-imported-spmd-callable-list-new))))]
       [lower-state : lower.CompilerLowerState
         (lower.compiler-lower-state-new-with-intern-state
           (ci.intern-compat-state-capture-active))]
-      (match left
-        [(Extern _ _ _ left-meta _)
-          (match right
-            [(Extern _ _ _ right-meta _)
-              (let
-                [left-symbol : i64
-                  (lower.lower-extern-logical-symbol-id
-                    lower-state
-                    (csym.compiler-symbol-module-key-id-by-id left-module name)
-                    "same"
-                    name
-                    (ast.ast-extern-metadata-box-shared-view left-meta))]
-                [right-symbol : i64
-                  (lower.lower-extern-logical-symbol-id
-                    lower-state
-                    (csym.compiler-symbol-module-key-id-by-id right-module name)
-                    "same"
-                    name
-                    (ast.ast-extern-metadata-box-shared-view right-meta))]
-                (and
-                  (not (= left-symbol right-symbol))
-                  (string.eq
-                    (ir.compiler-ir-symbol-text left-symbol)
-                    "left.src.lib/same")
-                  (string.eq
-                    (ir.compiler-ir-symbol-text right-symbol)
-                    "right.src.lib/same")))]
-            [_ false])]
-        [_ false]))
+      [left-symbol : i64
+        (lower.lower-extern-logical-symbol-id
+          lower-state
+          (csym.compiler-symbol-module-key-id-by-id left-module name)
+          "same"
+          name
+          left-meta)]
+      [right-symbol : i64
+        (lower.lower-extern-logical-symbol-id
+          lower-state
+          (csym.compiler-symbol-module-key-id-by-id right-module name)
+          "same"
+          name
+          right-meta)]
+      (and
+        (not (= left-symbol right-symbol))
+        (string.eq (ir.compiler-ir-symbol-text left-symbol) "left.src.lib/same")
+        (string.eq
+          (ir.compiler-ir-symbol-text right-symbol)
+          "right.src.lib/same")))
     "package extern aliases preserve canonical call symbols"))
 
 (test

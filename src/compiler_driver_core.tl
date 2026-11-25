@@ -1366,12 +1366,37 @@
 
 (define compiler-driver-last-hydrated-archive-path-state : String
   "")
+(define compiler-driver-last-hydrated-archive-paths-state : (__tl_dyn-array
+    String)
+  (__tl_make-array String 0))
+(define compiler-driver-last-hydrated-stdlib-state : bool
+  false)
+
+;; The last TLI session hydrated the prebuilt stdlib, whose archive needs the
+;; full native runtime. Hydrated package archives alone do not.
+(define (compiler-driver-last-hydrated-stdlib?) : bool
+  compiler-driver-last-hydrated-stdlib-state)
 
 (define (compiler-driver-last-hydrated-archive-path) : String
   (string.copy (& compiler-driver-last-hydrated-archive-path-state)))
 
+(define (compiler-driver-last-hydrated-archive-paths) : (__tl_dyn-array String)
+  (let
+    [n : i64 (array-length compiler-driver-last-hydrated-archive-paths-state)]
+    [out : (__tl_dyn-array String) (__tl_make-array String n)]
+    (for [i (iterator.range 0 n)]
+      (set!
+        (array-ref out i)
+        (string.copy
+          (& (array-ref compiler-driver-last-hydrated-archive-paths-state i)))))
+    out))
+
 (define (compiler-driver-clear-last-hydrated-archive-path!) : unit
-  (set! compiler-driver-last-hydrated-archive-path-state ""))
+  (set! compiler-driver-last-hydrated-archive-path-state "")
+  (set! compiler-driver-last-hydrated-stdlib-state false)
+  (set!
+    compiler-driver-last-hydrated-archive-paths-state
+    (__tl_make-array String 0)))
 
 (define (compiler-driver-target-cfg-from-backend
   [target : be_state.CompilerBackendTarget]) : target_cfg.CompilerTargetCfg
@@ -1387,7 +1412,7 @@
   [cfgs : sym_i64_env.SymI64Env]
   [opt-level : i64]
   [require-archive : bool]) : tli_cli.ResultTliCatalogOpen
-  (set! compiler-driver-last-hydrated-archive-path-state "")
+  (compiler-driver-clear-last-hydrated-archive-path!)
   (tli_cli.tli-open-catalog-for-session!
     load-state
     entry-path
@@ -1397,19 +1422,82 @@
     opt-level
     require-archive))
 
+(define (compiler-driver-open-package-tli-catalogs-for-session!
+  [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [entry-path : (& str)]
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]
+  [target : target_cfg.CompilerTargetCfg]
+  [stdlib-roots : (& svec.Vec)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [opt-level : i64]
+  [require-archive : bool]) : tli_cli.ResultTliCatalogOpen
+  (match (compiler-driver-open-tli-catalog-for-session!
+    load-state
+    entry-path
+    target
+    stdlib-roots
+    cfgs
+    opt-level
+    require-archive)
+    [(Err msg) (tli_cli.ResultTliCatalogOpen.Err msg)]
+    [(Ok)
+      (tli_cli.tli-open-transitive-package-deps-for-session!
+        load-state
+        manifest-dir
+        deps
+        target
+        cfgs
+        require-archive)]))
+
+(define compiler-driver-last-hydrated-startup-symbols-state : (__tl_dyn-array
+    String)
+  (__tl_make-array String 0))
+
+(define (compiler-driver-copy-string-array [src : (& (__tl_dyn-array String))]) : (__tl_dyn-array
+    String)
+  (let
+    [n : i64 (array-length (deref src))]
+    [out : (__tl_dyn-array String) (__tl_make-array String n)]
+    (for [i (iterator.range 0 n)]
+      (set! (array-ref out i) (string.copy (& (array-ref (deref src) i)))))
+    out))
+
+(define (compiler-driver-apply-cached-tli-to-backend!
+  [backend-state : be_state.CompilerBackendState]) : unit
+  (when
+    (> (array-length compiler-driver-last-hydrated-archive-paths-state) 0)
+    (be_state.compiler-backend-state-set-archive-runtime! backend-state true)
+    (be_state.compiler-backend-state-set-startup-init-symbols!
+      backend-state
+      (compiler-driver-copy-string-array
+        (& compiler-driver-last-hydrated-startup-symbols-state)))))
+
 (define (compiler-driver-apply-tli-hydrated-backend-state!
   [load-state : (& compiler_load.CompilerLoadSessionState)]
   [backend-state : be_state.CompilerBackendState]) : unit
   (if (compiler_load.compiler-load-session-state-tli-hydrated-any? load-state)
-    (begin
+    (let
+      [archives : (__tl_dyn-array String)
+        (compiler_load.compiler-load-session-state-tli-archive-paths load-state)]
+      [startup : (__tl_dyn-array String)
+        (compiler_load.compiler-load-session-state-tli-startup-symbols
+          load-state)]
       (be_state.compiler-backend-state-set-archive-runtime! backend-state true)
       (be_state.compiler-backend-state-set-startup-init-symbols!
         backend-state
-        (compiler_load.compiler-load-session-state-tli-startup-symbols
-          load-state))
+        (compiler-driver-copy-string-array (& startup)))
       (set!
         compiler-driver-last-hydrated-archive-path-state
-        (compiler_load.compiler-load-session-state-tli-archive-path load-state)))
+        (if (> (array-length archives) 0)
+          (string.copy (& (array-ref archives (- (array-length archives) 1))))
+          ""))
+      (set! compiler-driver-last-hydrated-archive-paths-state archives)
+      (set! compiler-driver-last-hydrated-startup-symbols-state startup)
+      (set!
+        compiler-driver-last-hydrated-stdlib-state
+        (compiler_load.compiler-load-session-state-tli-stdlib-hydrated?
+          load-state)))
     (begin
       ;; A batch reuses one backend state, so a source-stdlib entry must not
       ;; inherit the archive runtime of a prebuilt-stdlib entry before it.
@@ -1417,7 +1505,44 @@
       (be_state.compiler-backend-state-set-startup-init-symbols!
         backend-state
         (__tl_make-array String 0))
-      (set! compiler-driver-last-hydrated-archive-path-state ""))))
+      (set!
+        compiler-driver-last-hydrated-startup-symbols-state
+        (__tl_make-array String 0))
+      (compiler-driver-clear-last-hydrated-archive-path!))))
+
+(define (compiler-driver-finish-tli-hydrated-serial-session!) : unit
+  (let
+    [load-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-serial-test-session-state)]
+    (if (compiler_load.compiler-load-session-state-tli-hydrated-any?
+      (& load-state))
+      (let
+        [archives : (__tl_dyn-array String)
+          (compiler_load.compiler-load-session-state-tli-archive-paths
+            (& load-state))]
+        [startup : (__tl_dyn-array String)
+          (compiler_load.compiler-load-session-state-tli-startup-symbols
+            (& load-state))]
+        (set!
+          compiler-driver-last-hydrated-archive-path-state
+          (if (> (array-length archives) 0)
+            (string.copy (& (array-ref archives (- (array-length archives) 1))))
+            ""))
+        (set! compiler-driver-last-hydrated-archive-paths-state archives)
+        (set! compiler-driver-last-hydrated-startup-symbols-state startup)
+        (set!
+          compiler-driver-last-hydrated-stdlib-state
+          (compiler_load.compiler-load-session-state-tli-stdlib-hydrated?
+            (& load-state))))
+      (begin
+        (set!
+          compiler-driver-last-hydrated-startup-symbols-state
+          (__tl_make-array String 0))
+        (compiler-driver-clear-last-hydrated-archive-path!)))
+    (compiler_load.compiler-load-session-state-tli-release! (& load-state))
+    (compiler_typecheck_core.tc-job-state-set-tli-facts-ptr!
+      (compiler_typecheck_core.tc-serial-job-state)
+      0)))
 
 (define compiler-driver-pending-external-summaries : (__tl_dyn-array
     compiler_optimize.OptExternalSummaries)
@@ -2003,7 +2128,7 @@
     [state : profile_state.CompilerProfileState]
     [pools : compiler_ast_types.AstNodePoolContext]
     [surface-arena : i64]
-    [tli-arena : i64]
+    [tli-arenas : (__tl_dyn-array i64)]
     [boundary : String]
     [parser-control : i64]) : unit
     (let
@@ -2063,9 +2188,13 @@
             state
             compiler-driver-load-profile-type-start-metric))]
       [tli-bytes : i64
-        (if (> tli-arena 0)
-          (compiler-driver-profile-owner-delta tli-arena 0)
-          0)]
+        (let
+          [sum : i64 0]
+          (for [i (iterator.range 0 (array-length tli-arenas))]
+            (let
+              [h : i64 (array-ref tli-arenas i)]
+              (when (> h 0) (+= sum (compiler-driver-profile-owner-delta h 0)))))
+          sum)]
       [surface : i64
         (+
           (compiler-driver-profile-owner-delta
@@ -2085,6 +2214,16 @@
         (compiler-driver-profile-value
           state
           compiler-driver-load-profile-enclosing-handle-metric)]
+      [enclosing-is-tli : bool
+        (let
+          [hit : bool false]
+          (for [i (iterator.range 0 (array-length tli-arenas))]
+            (when
+              (and
+                (> (array-ref tli-arenas i) 0)
+                (= enclosing-handle (array-ref tli-arenas i)))
+              (set! hit true)))
+          hit)]
       [enclosing : i64
         (if (or
           (=
@@ -2097,7 +2236,7 @@
             enclosing-handle
             (compiler_ast_types.ast-node-pool-context-type-storage-arena pools))
           (= enclosing-handle surface-arena)
-          (and (> tli-arena 0) (= enclosing-handle tli-arena))
+          enclosing-is-tli
           (= enclosing-handle (ci.intern-persistent-arena-handle))
           (= enclosing-handle (ci.intern-structural-records-arena-handle))
           (= enclosing-handle (ci.intern-structural-map-arena-handle))
@@ -2638,6 +2777,8 @@
       (be_state.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
         (profile_state.compiler-profile-state-metrics profile-state))]
+    [_apply-tli : unit
+      (compiler-driver-apply-cached-tli-to-backend! backend-state)]
     [result : ResultCompilerDriver
       (match (compiler-driver-emit-lowered
         (CompilerDriverOutputRoute.Assembly)
@@ -3263,6 +3404,8 @@
       (be_state.compiler-backend-state-new-with-metrics
         (ci.intern-compat-state-capture-active)
         (profile_state.compiler-profile-state-metrics profile-state))]
+    [_apply-tli : unit
+      (compiler-driver-apply-cached-tli-to-backend! backend-state)]
     [emitted : ResultCompilerDriverEmit
       (compiler-driver-emit-lowered
         (CompilerDriverOutputRoute.ObjectImage)
@@ -3401,11 +3544,14 @@
 ;; retire the lowered source arena around the route's emit body, then drop
 ;; the lower arenas. Only Assembly and Buffer record the retain phases, and
 ;; Buffer leaves its lower arenas to the caller.
-(define (compiler-driver-lowered-result-enable-archive-runtime!
-  [lowered : (& ResultCompilerDriverLowered)]) : unit
+(define (compiler-driver-lowered-result-set-archive-runtime!
+  [lowered : (& ResultCompilerDriverLowered)]
+  [enabled : bool]) : unit
   (match lowered
     [(Ok _ _ _ _ backend-state _ _)
-      (be_state.compiler-backend-state-set-archive-runtime! backend-state true)]
+      (be_state.compiler-backend-state-set-archive-runtime!
+        backend-state
+        enabled)]
     [_ unit]))
 
 (define (compiler-driver-emit-lowered-result
@@ -4750,7 +4896,7 @@
                   (compiler-driver-state-profile state)
                   pools
                   (compiler-driver-state-surface-arena state)
-                  (compiler_load.compiler-load-session-state-tli-arena
+                  (compiler_load.compiler-load-session-state-tli-arenas
                     (& state.load-session))
                   "load.complete"
                   (compiler_parse_core.compiler-parse-state-control-addr
@@ -4793,7 +4939,7 @@
                   (compiler-driver-state-profile state)
                   pools
                   (compiler-driver-state-surface-arena state)
-                  (compiler_load.compiler-load-session-state-tli-arena
+                  (compiler_load.compiler-load-session-state-tli-arenas
                     (& state.load-session))
                   "load.handoff"
                   (compiler_parse_core.compiler-parse-state-control-addr
@@ -4973,7 +5119,7 @@
                   (compiler-driver-state-profile state)
                   pools
                   (compiler-driver-state-surface-arena state)
-                  (compiler_load.compiler-load-session-state-tli-arena
+                  (compiler_load.compiler-load-session-state-tli-arenas
                     (& state.load-session))
                   "load.complete"
                   (compiler_parse_core.compiler-parse-state-control-addr
@@ -5036,7 +5182,7 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              0
+              (__tl_make-array i64 0)
               "load.complete"
               (compiler_parse_core.compiler-parse-state-control-addr
                 (& state.parser-state))))
@@ -5066,7 +5212,7 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              0
+              (__tl_make-array i64 0)
               "load.handoff"
               (compiler_parse_core.compiler-parse-state-control-addr
                 (& state.parser-state))))
@@ -5183,7 +5329,7 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              0
+              (__tl_make-array i64 0)
               "load.complete"
               (compiler_parse_core.compiler-parse-state-control-addr
                 (& state.parser-state))))
@@ -5464,8 +5610,6 @@
         (compiler-driver-state-prefix-cache-clear! state)
         (compiler_backend.compiler-backend-state-release-final-arenas!
           (compiler-driver-state-backend state))
-        (compiler_load.compiler-load-session-state-dependency-surfaces-release!
-          (owned_view.compiler-owned-shared-view state.load-session))
         (compiler_load.compiler-load-transfer-frontend-handoff!)
         (let
           [retired : compiler_ast_types.AstNodePoolContext
@@ -5515,6 +5659,27 @@
       (compiler_ast_types.ast-node-pool-context-capture-active))
     (compiler-driver-state-capture-active-interns! (&mut state))
     (compiler-driver-state-capture-active-builtins! (&mut state))))
+
+(define (compiler-driver-package-runtime-open-tli!
+  [scope : CompilerDriverPackageRuntimeScope]
+  [entry-path : (& str)]
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]
+  [target : be_state.CompilerBackendTarget]
+  [stdlib-roots : (& svec.Vec)]
+  [cfgs : sym_i64_env.SymI64Env]
+  [opt-level : i64]
+  [require-archive : bool]) : tli_cli.ResultTliCatalogOpen
+  (compiler-driver-open-package-tli-catalogs-for-session!
+    (& scope.state.load-session)
+    entry-path
+    manifest-dir
+    deps
+    (compiler-driver-target-cfg-from-backend target)
+    stdlib-roots
+    cfgs
+    opt-level
+    require-archive))
 
 (define (compiler-driver-package-runtime-load
   [scope : CompilerDriverPackageRuntimeScope]
@@ -5614,6 +5779,8 @@
         pools
         handoff
         raw)]
+    [_finish-tli : unit
+      (compiler-driver-finish-tli-hydrated-session! (& state))]
     [_frontend : unit
       (begin
         (unless
@@ -5745,6 +5912,29 @@
           (unsafe
             ;; unsafe: resets global analysis state; it holds no allocation of this arena
             (compiler-driver-reset-analysis-state!))]
+        [discovery-cfgs : sym_i64_env.SymI64Env
+          (unsafe
+            ;; unsafe: interned cfg names live in the persistent intern arena
+            (compiler-driver-target-cfgs
+              target
+              (target_cfg.compiler-target-user-cfgs cfg-names)))]
+        [_open-tli : unit
+          (unsafe
+            ;; unsafe: TLI bundles own their own arenas and are released below
+            (match (tli_cli.tli-open-transitive-package-deps-for-session!
+              (& state)
+              (& manifest-dir)
+              (& deps)
+              (compiler-driver-target-cfg-from-backend target)
+              discovery-cfgs
+              false)
+              [(Ok) unit]
+              [(Err _)
+                (compiler_load.compiler-load-session-state-tli-release!
+                  (& state))
+                (compiler_load.compiler-load-session-state-set-dependency-tlci-force-source!
+                  (owned_view.compiler-owned-shared-view state)
+                  true)]))]
         [result : ResultCompilerDriverPackagePaths
           (match (unsafe
             ;; unsafe: publishes global surface facts; cleared before this arena ends
@@ -5755,9 +5945,7 @@
               manifest-dir
               deps
               emit-entry
-              (compiler-driver-target-cfgs
-                target
-                (target_cfg.compiler-target-user-cfgs cfg-names))))
+              discovery-cfgs))
             [(Ok _ paths _ seen)
               (in-arena
                 home
@@ -5774,6 +5962,8 @@
                 (Err
                   (box
                     (compiler_diagnostic.compiler-diagnostic-copy (deref diag)))))])]
+        [_release-tli : unit
+          (compiler_load.compiler-load-session-state-tli-release! (& state))]
         [retired-pools : compiler_ast_types.AstNodePoolContext
           (compiler_ast_types.ast-node-pool-context-capture-active)]
         [intern-arena : i64 (ci.intern-persistent-arena-handle)]
@@ -5794,8 +5984,6 @@
             home-pools
             home-interns
             home-builtins))
-        (compiler_load.compiler-load-dependency-surface-list-destroy-storage!
-          (& (array-ref state.dependency-surfaces.fragments 0)))
         (compiler_ast_types.ast-node-pool-context-destroy-storage!
           retired-pools)
         (ci.intern-compat-state-release-structural-generations! (&mut interns))

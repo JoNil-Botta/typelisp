@@ -69,6 +69,7 @@ src/compiler_symbols.tl	stage2-selfhost-compile-manifest,stage2-deterministic-as
 src/compiler_tli_codec.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by the compile manifest.
 src/compiler_tli_extract.tl	stage2-selfhost-compile-manifest,stage2-codegen-target-parity	@compiler	Checked interface extraction.
 src/compiler_tli_extract_tests.tl	stage2-inline-typelisp-tests	@compiler	Checked interface extraction and wire round trip.
+src/compiler_tli_hydrate_tests.tl	stage2-inline-typelisp-tests,package-native-tlci-dependency-macros	@compiler	Checked interface hydration and multi-bundle package tests; direct input in verify-package-native-tlci.sh.
 src/compiler_tli_types.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by the compile manifest.
 src/compiler_typecheck_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_typed_occurrence_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
@@ -92,7 +93,6 @@ src/sym_i64_env.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembl
 src/token.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/build_cli_core_tests.tl	stage2-compile-profile-verifier	@compiler	Direct named source input to its owning verifier.
 src/compiler_embedded_stdlib_tlci_payload.tl	stage0-size-ratchet	@compiler	Direct named source input to its owning verifier.
-src/compiler_package_surface_producer.tl	package-native-tlci-dependency-macros	@compiler	Direct named source input to its owning verifier.
 src/compiler_profile_summary.tl	stage2-inline-typelisp-tests	@compiler	Direct named source input to its owning verifier.
 src/tests/canonical_import_alias_first_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 src/tests/canonical_import_default_first_smoke.tl	stage2-native-integration-corpus,stage2-native-integration-corpus-opt-levels	@compiler	Declared primary source or suite member in the reviewed fixture inventories.

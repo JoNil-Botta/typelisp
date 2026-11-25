@@ -360,7 +360,9 @@ step build-package-bin
 exec "{{dir}}/pkg/target/release/stage1_pkg"
 exit 42
 step build-package-dev
-sh rm -rf "{{dir}}/pkg/target"
+# `check` prebuilds dependencies into their dev profile; start clean so this
+# step observes a full dev build of the dependency.
+sh rm -rf "{{dir}}/pkg/target" "{{dir}}/pkg/vendor/math/target/dev"
 run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --profile dev
 test -x "{{dir}}/pkg/target/dev/stage1_pkg"
 test -f "{{dir}}/pkg/target/dev/stage1_pkg.s"
@@ -393,9 +395,11 @@ file libpkg/src/lib.tl
 end-file
 run build --manifest-path "{{dir}}/libpkg/typelisp.pkg"
 test -s "{{dir}}/libpkg/target/release/libstage1_lib.a"
-test -s "{{dir}}/libpkg/target/release/stage1_lib.tlci"
+# A library without macros publishes its interface as .tli and has no .tlci.
+test -s "{{dir}}/libpkg/target/release/stage1_lib.tli"
+test ! -e "{{dir}}/libpkg/target/release/stage1_lib.tlci"
 stdout contains Built {{dir}}/libpkg/target/release/libstage1_lib.a
-stdout contains Built {{dir}}/libpkg/target/release/stage1_lib.tlci
+stdout not-contains stage1_lib.tlci
 
 case package-missing
 each build check

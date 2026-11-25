@@ -1,8 +1,18 @@
-;; Stage 1 producer. The checked context and its process-local IDs stay here.
+;; Stage 1/3 shared TLI producer. The checked context and its process-local IDs stay here.
+(import compiler_abi as abi)
 (import compiler_tli_types as tli)
 (import compiler_tli_codec as codec)
 (import compiler_tli_hydrate as hydrate)
+(import compiler_tli_compact_ir as compact_ir)
 (import compiler_ast_types as ast)
+(import compiler_backend as backend)
+(import compiler_backend_operands as be_operand)
+(import compiler_backend_state as be_state)
+(import compiler_load as load)
+(import compiler_optimize as opt)
+(import compiler_parse_core as parser)
+(import compiler_profile_state as profile_state)
+(import compiler_specialize as spec)
 (import compiler_symbols as symbols)
 (import compiler_typecheck_api as api)
 (import compiler_typecheck_core as tc)
@@ -10,16 +20,25 @@
 (import compiler_intern as intern)
 (import compiler_diagnostic as diag)
 (import compiler_lower as lower)
+(import compiler_object as cobj)
 (import compiler_ir_types as ir)
 (import sym_i64_env)
 (import stdlib.math)
 (import stdlib.byte_buf)
 (import stdlib.byte_buf_core as buf)
 (import stdlib.crypto_sha256 as sha)
+(import stdlib.fs)
+(import stdlib.hashmap)
+(import (hashmap.hashmap i64 i64) as i64_map)
+(import (hashmap.hashmap String i64) as str_map)
 (import stdlib.iterator)
 (import stdlib.io)
+(import stdlib.sort)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
+(import stdlib.text_buf)
 (import stdlib.vector)
+(import (vector.vector String) as strings)
 (import (vector.vector tli.TliImport core) as imports)
 (import (vector.vector tli.TliTypeDecl core) as types)
 (import (vector.vector tli.TliFnDecl core) as functions)
@@ -30,6 +49,35 @@
 (import (vector.vector tli.TliCompactBodyEntry core) as compact_bodies)
 (import (vector.vector i64) as indices)
 (cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci as tlci))
+
+(defstruct TliPackageCompanionBinding
+  (has-companion bool)
+  (tlci-sha256 (Array u8 32))
+  (macro-identities (__tl_dyn-array String)))
+
+(define (tli-package-companion-binding-empty) : TliPackageCompanionBinding
+  (TliPackageCompanionBinding
+    false
+    (make-array u8 32)
+    (__tl_make-array String 0)))
+
+(defstruct TliPartitionedEmitResult
+  (asm-files (__tl_dyn-array String))
+  ;; Per asm file: the route already wrote that module's object.
+  (direct-objects (__tl_dyn-array bool))
+  (emitted-modules i64)
+  (skipped-modules i64))
+
+(defenum ResultTliPartitionedEmit
+  (Ok TliPartitionedEmitResult)
+  (Err String))
+
+;; How a partitioned module reaches its object. DirectObject is handed each
+;; object-eligible module's image with its asm path and returns whether it
+;; wrote the object; the caller assembles every module it did not write.
+(defenum TliPartitionObjectRoute
+  (Assembly)
+  (DirectObject (-> cobj.CompilerObjectImage String bool)))
 
 (defstruct TliSource
   (module-name String)
@@ -72,20 +120,56 @@
         (tli-extract-name (array-ref items.slots index))))
     out))
 
-(define (tli-extract-types [ctx : tc.TcContext] [items : (& ast.AstTypeList)]) : (__tl_dyn-array
-    tli.TliType)
+(define (tli-extract-nominal-name
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [id : i64]) : String
+  (let
+    [raw : String (tli-extract-name id)]
+    (if (string.contains (& raw) "/")
+      raw
+      (let
+        [slot : i64
+          (str_map.get-value-or root-type-slots (string.copy (& raw)) -1)]
+        (if (and (>= slot 0) (< slot (array-length sources)))
+          (symbols.compiler-symbol-module-key
+            (string.copy (& (array-ref sources slot).module-name))
+            raw)
+          raw)))))
+
+(define (tli-extract-types-in
+  [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [items : (& ast.AstTypeList)]) : (__tl_dyn-array tli.TliType)
   (let
     [out : (__tl_dyn-array tli.TliType) (__tl_make-array tli.TliType items.len)]
     (for [index (iterator.range 0 items.len)]
       (set!
         (array-ref out index)
-        (tli-extract-child ctx (array-ref items.slots index))))
+        (tli-extract-child-in
+          ctx
+          sources
+          root-type-slots
+          (array-ref items.slots index))))
     out))
 
-(define (tli-extract-child [ctx : tc.TcContext] [id : i64]) : tli.TliType
-  (tli-extract-type ctx (tc.tc-context-type-get ctx id)))
+(define (tli-extract-child-in
+  [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [id : i64]) : tli.TliType
+  (tli-extract-type-in
+    ctx
+    sources
+    root-type-slots
+    (tc.tc-context-type-get ctx id)))
 
-(define (tli-extract-type [ctx : tc.TcContext] [ty : ast.AstType]) : tli.TliType
+(define (tli-extract-type-in
+  [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [ty : ast.AstType]) : tli.TliType
   (match (tc.tc-resolve-type ctx ty)
     [(I64) (tli.TliType.I64)]
     [(I32) (tli.TliType.I32)]
@@ -106,57 +190,96 @@
     [(Never) (tli.TliType.Never)]
     [(Expr) (tli.TliType.Expr)]
     [(ExprList) (tli.TliType.ExprList)]
-    [(DynArray elem) (tli.TliType.DynArray (box (tli-extract-child ctx elem)))]
-    [(Box elem) (tli.TliType.Box (box (tli-extract-child ctx elem)))]
-    [(Ptr elem) (tli.TliType.Ptr (box (tli-extract-child ctx elem)))]
-    [(MutPtr elem) (tli.TliType.MutPtr (box (tli-extract-child ctx elem)))]
-    [(Slice elem) (tli.TliType.Slice (box (tli-extract-child ctx elem)))]
+    [(DynArray elem)
+      (tli.TliType.DynArray
+        (box (tli-extract-child-in ctx sources root-type-slots elem)))]
+    [(Box elem)
+      (tli.TliType.Box
+        (box (tli-extract-child-in ctx sources root-type-slots elem)))]
+    [(Ptr elem)
+      (tli.TliType.Ptr
+        (box (tli-extract-child-in ctx sources root-type-slots elem)))]
+    [(MutPtr elem)
+      (tli.TliType.MutPtr
+        (box (tli-extract-child-in ctx sources root-type-slots elem)))]
+    [(Slice elem)
+      (tli.TliType.Slice
+        (box (tli-extract-child-in ctx sources root-type-slots elem)))]
     [(Region life inner)
       (tli.TliType.Region
         (tli-extract-name life)
-        (box (tli-extract-child ctx inner)))]
+        (box (tli-extract-child-in ctx sources root-type-slots inner)))]
     [(Ref life inner)
       (tli.TliType.Ref
         (tli-extract-name life)
-        (box (tli-extract-child ctx inner)))]
+        (box (tli-extract-child-in ctx sources root-type-slots inner)))]
     [(MutRef life inner)
       (tli.TliType.MutRef
         (tli-extract-name life)
-        (box (tli-extract-child ctx inner)))]
+        (box (tli-extract-child-in ctx sources root-type-slots inner)))]
     [(Invalidate life inner)
       (tli.TliType.Invalidate
         (tli-extract-name life)
-        (box (tli-extract-child ctx inner)))]
-    [(Enum nominal) (tli.TliType.Enum (tli-extract-name nominal))]
+        (box (tli-extract-child-in ctx sources root-type-slots inner)))]
+    [(Enum nominal)
+      (tli.TliType.Enum
+        (tli-extract-nominal-name sources root-type-slots nominal))]
     [(EnumArgs nominal lives)
       (tli.TliType.EnumArgs
-        (tli-extract-name nominal)
+        (tli-extract-nominal-name sources root-type-slots nominal)
         (tli-extract-lifetimes (& (__tl-box-place lives))))]
-    [(Struct nominal) (tli.TliType.Struct (tli-extract-name nominal))]
+    [(Struct nominal)
+      (tli.TliType.Struct
+        (tli-extract-nominal-name sources root-type-slots nominal))]
     [(StructArgs nominal lives)
       (tli.TliType.StructArgs
-        (tli-extract-name nominal)
+        (tli-extract-nominal-name sources root-type-slots nominal)
         (tli-extract-lifetimes (& (__tl-box-place lives))))]
-    [(Var nominal) (tli.TliType.Var (tli-extract-name nominal))]
+    [(Var nominal)
+      (tli.TliType.Var
+        (tli-extract-nominal-name sources root-type-slots nominal))]
     [(VarArgs nominal lives)
       (tli.TliType.VarArgs
-        (tli-extract-name nominal)
+        (tli-extract-nominal-name sources root-type-slots nominal)
         (tli-extract-lifetimes (& (__tl-box-place lives))))]
     [(Func params ret)
       (tli.TliType.Func
-        (tli-extract-types ctx (& (__tl-box-place params)))
-        (box (tli-extract-child ctx ret)))]
+        (tli-extract-types-in
+          ctx
+          sources
+          root-type-slots
+          (& (__tl-box-place params)))
+        (box (tli-extract-child-in ctx sources root-type-slots ret)))]
     [(Tuple items)
-      (tli.TliType.Tuple (tli-extract-types ctx (& (__tl-box-place items))))]
+      (tli.TliType.Tuple
+        (tli-extract-types-in
+          ctx
+          sources
+          root-type-slots
+          (& (__tl-box-place items))))]
     [(Array elem count)
-      (tli.TliType.Array (box (tli-extract-child ctx elem)) count)]
+      (tli.TliType.Array
+        (box (tli-extract-child-in ctx sources root-type-slots elem))
+        count)]
     [(CFunc signature mode)
       (tli.TliType.CFunc
-        (box (tli-extract-child ctx signature))
+        (box (tli-extract-child-in ctx sources root-type-slots signature))
         (ast.ast-c-function-mode-key mode))]))
+
+(define (tli-extract-type [ctx : tc.TcContext] [ty : ast.AstType]) : tli.TliType
+  (let
+    [empty-sources : (__tl_dyn-array TliSource) (__tl_make-array TliSource 0)]
+    [empty-roots : str_map.Map (str_map.with-capacity 4)]
+    (tli-extract-type-in ctx (& empty-sources) (& empty-roots) ty)))
+
+;; Stdlib-only SPMD bodies name no package-local type root.
+(define (tli-extract-child [ctx : tc.TcContext] [id : i64]) : tli.TliType
+  (tli-extract-type ctx (tc.tc-context-type-get ctx id)))
 
 (define (tli-extract-cleanup-symbol
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [name : intern.InternSyntaxId]) : tli.TliCleanup
   (let
     [raw : i64 (intern.intern-syntax-id-value name)]
@@ -179,7 +302,7 @@
         [(or
             (= kind (symbols.compiler-symbol-kind-function-define))
             (= kind (symbols.compiler-symbol-kind-extern)))
-          (tli-extract-symbol-at ctx index)]
+          (tli-extract-symbol-at ctx sources root-origins index)]
         [(or
             (= kind (symbols.compiler-symbol-kind-struct-cleanup))
             (= kind (symbols.compiler-symbol-kind-enum-cleanup)))
@@ -193,7 +316,7 @@
                      (DefEnum _ _ (Fn cleanup) _)
                      (DefEnumLifetimes _ _ _ (Fn cleanup) _))
                   (tc.macro-tlci-catalog-identity
-                    (tli-extract-module-name (tli-extract-owner ctx index))
+                    (tli-extract-module-at ctx sources root-origins index)
                     (tli-extract-name (intern.intern-syntax-id-value cleanup)))]
                 [_ (io.panic "TLI expected a cleanup declaration")])]
             [(Err message) (io.panic message)])]
@@ -204,6 +327,9 @@
 
 (define (tli-extract-fields
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [items : (& ast.AstFieldDefList)]
   [offsets : (& tc.TcInlineFieldLayoutList)]
   [aligns : (& ast.AstFieldAligns)]) : tli.TliTypeBody
@@ -230,9 +356,14 @@
               (array-ref out index)
               (tli.TliField
                 (intern.intern-syntax-id-text name)
-                (tli-extract-type ctx ty)
+                (tli-extract-type-in ctx sources root-type-slots ty)
                 (match cleanup
-                  [(Fn fn-name) (tli-extract-cleanup-symbol ctx fn-name)]
+                  [(Fn fn-name)
+                    (tli-extract-cleanup-symbol
+                      ctx
+                      sources
+                      root-origins
+                      fn-name)]
                   [(Owned) (tli.TliCleanup.Owned)]
                   [(No) (tli.TliCleanup.No)])
                 offset
@@ -241,6 +372,9 @@
 
 (define (tli-extract-variants
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [items : (& ast.AstVariantDefList)]) : tli.TliTypeBody
   (let
     [out : (__tl_dyn-array tli.TliVariant)
@@ -255,10 +389,19 @@
               (set!
                 (array-ref payloads slot)
                 (tli.TliPayload
-                  (tli-extract-child ctx (array-ref items.slots slot))
+                  (tli-extract-child-in
+                    ctx
+                    sources
+                    root-type-slots
+                    (array-ref items.slots slot))
                   (if (< slot cleanups.len)
                     (match (& (array-ref cleanups.slots slot))
-                      [(Fn fn-name) (tli-extract-cleanup-symbol ctx fn-name)]
+                      [(Fn fn-name)
+                        (tli-extract-cleanup-symbol
+                          ctx
+                          sources
+                          root-origins
+                          fn-name)]
                       [(Owned) (tli.TliCleanup.Owned)]
                       [(No) (tli.TliCleanup.No)])
                     (tli.TliCleanup.No)))))
@@ -283,9 +426,59 @@
     ""
     (tli-extract-name id)))
 
-(define (tli-extract-symbol-at [ctx : tc.TcContext] [index : i64]) : String
+;; The interface module a declaration belongs to. A moduleless (root) package
+;; declaration belongs to its file's dotted module, which `root-origins` maps
+;; from the declaration index to its source row.
+(define (tli-extract-module-at
+  [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
+  [index : i64]) : String
+  (let
+    [owner : i64 (tli-extract-owner ctx index)]
+    [origin : i64
+      (if (and
+        (symbols.compiler-symbol-root-module-id? owner)
+        (>= index 0)
+        (< index (array-length root-origins)))
+        (array-ref root-origins index)
+        -1)]
+    (if (>= origin 0)
+      (string.copy (& (array-ref sources origin).module-name))
+      (tli-extract-module-name owner))))
+
+;; Index -> source row of each root-owned package declaration, or -1.
+(define (tli-extract-root-origins
+  [ctx : tc.TcContext]
+  [decls : (& ast.AstDeclList)]
+  [paths : (& ast.AstDeclPathList)]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [is-stdlib : bool]) : (__tl_dyn-array i64)
+  (let
+    [count : i64
+      (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref out index)
+        (if (or
+          is-stdlib
+          (not
+            (symbols.compiler-symbol-root-module-id?
+              (tli-extract-owner ctx index))))
+          -1
+          (tli-extract-source-for-path
+            sources
+            (& (symbols.compiler-symbol-path-at-index decls paths index 0))))))
+    out))
+
+(define (tli-extract-symbol-at
+  [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
+  [index : i64]) : String
   (symbols.compiler-symbol-module-key
-    (tli-extract-module-name (tli-extract-owner ctx index))
+    (tli-extract-module-at ctx sources root-origins index)
     (tli-extract-name
       (symbols.compiler-symbols-decl-name-id-at-index
         (tc.tc-context-symbols (& ctx))
@@ -321,6 +514,9 @@
 (define (tli-extract-struct!
   [out : (&mut types.Vec)]
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [module-name : String]
   [name : i64]
   [flags : i64]
@@ -372,6 +568,9 @@
                   0
                   (tli-extract-fields
                     ctx
+                    sources
+                    root-type-slots
+                    root-origins
                     fields
                     offsets
                     (& (ast.AstFieldAligns (__tl_make-array i64 0))))))]
@@ -388,12 +587,22 @@
                   alignment
                   1
                   align
-                  (tli-extract-fields ctx fields offsets fields-align)))]))]
+                  (tli-extract-fields
+                    ctx
+                    sources
+                    root-type-slots
+                    root-origins
+                    fields
+                    offsets
+                    fields-align)))]))]
       [_ (io.panic "TLI expected a checked struct layout")])))
 
 (define (tli-extract-enum!
   [out : (&mut types.Vec)]
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [module-name : String]
   [name : i64]
   [flags : i64]
@@ -440,7 +649,12 @@
               alignment
               0
               0
-              (tli-extract-variants ctx variants))))]
+              (tli-extract-variants
+                ctx
+                sources
+                root-type-slots
+                root-origins
+                variants))))]
       [_ (io.panic "TLI expected a checked enum layout")])))
 
 (defstruct TliExtractEffects
@@ -472,7 +686,11 @@
         [_ false])]
     [(Err _) true]))
 
-(define (tli-extract-effects [ctx : tc.TcContext] [env : tc.TcTypeEnv]) : TliExtractEffects
+(define (tli-extract-effects
+  [ctx : tc.TcContext]
+  [env : tc.TcTypeEnv]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]) : TliExtractEffects
   (let
     [state : (MutPtr tc.TcGlobalCallEffects)
       (tc.tc-global-call-effects-ensure! ctx)]
@@ -496,7 +714,8 @@
         (when
           (effects.written? (& graph) index)
           (let
-            [symbol : String (tli-extract-symbol-at ctx index)]
+            [symbol : String
+              (tli-extract-symbol-at ctx sources root-origins index)]
             [summary : (__tl_dyn-array i64)
               (effects.summary! (&mut graph) index)]
             (for [node (iterator.range 0 count)]
@@ -597,8 +816,96 @@
       0
       (make-array u8 32))))
 
+;; The declaration index of each defdispatch variant, or -1 when unresolved.
+(define (tli-extract-dispatch-variant-indices
+  [ctx : tc.TcContext]
+  [variants : (& ast.AstDispatchVariantList)]) : (__tl_dyn-array i64)
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 variants.len)]
+    (for [slot (iterator.range 0 variants.len)]
+      (set!
+        (array-ref out slot)
+        (match (ast.ast-dispatch-variant-list-get
+          variants
+          slot
+          (ast.ast-dispatch-variant-fallback))
+          [(Variant _ variant-name)
+            (tc.tc-dispatch-variant-decl-index ctx variant-name)])))
+    out))
+
+;; A dispatch call runs exactly one of its variants, so its summary is their
+;; join: PURE and NEVER only when every variant has them, every other effect
+;; and arena-argument store when any variant has it. An unresolved variant
+;; keeps only conservative facts.
+(define (tli-extract-dispatch-summary
+  [facts : (& facts TliExtractEffects)]
+  [variant-indices : (& (__tl_dyn-array i64))]
+  [sig : (& ast.AstType)]
+  [unsafe-decl : bool]
+  [must-use : bool]) : tli.TliFnSummary
+  (let
+    [params : i64
+      (match sig
+        [(Func args _) args.len]
+        [_ 0])]
+    [ret : ast.AstType
+      (match sig
+        [(Func _ result-id) (ast.ty-node-get result-id)]
+        [_ (ast.AstType.Unit)])]
+    [all-flags : i64 12]
+    [any-flags : i64
+      (+ (tli-extract-flag unsafe-decl 1) (tli-extract-flag must-use 128))]
+    [mask : i64 0]
+    [extra : indices.Vec (indices.new)]
+    [writes-out : writes.Vec (writes.new)]
+    (for [slot (iterator.range 0 (array-length (deref variant-indices)))]
+      (let
+        [index : i64 (array-ref (deref variant-indices) slot)]
+        (if (< index 0)
+          (begin
+            (set! all-flags 0)
+            (set! any-flags (bit-or any-flags tli.tli-fn-has-indirect-effects)))
+          (let
+            [row : tli.TliFnSummary
+              (tli-extract-summary
+                facts
+                index
+                params
+                (& ret)
+                false
+                unsafe-decl
+                must-use)]
+            (set! all-flags (bit-and all-flags row.effect-flags))
+            (set!
+              any-flags
+              (bit-or any-flags (bit-and row.effect-flags (bit-not 12))))
+            (set! mask (bit-or mask row.arena-arg-store-mask))
+            (for [k (iterator.range 0 (array-length row.arena-arg-store-extra))]
+              (indices.push-ref!
+                (&mut extra)
+                (array-ref row.arena-arg-store-extra k)))
+            (for [k (iterator.range 0 (array-length row.global-writes))]
+              (writes.push-ref!
+                (&mut writes-out)
+                (tli.TliGlobalWrite
+                  (string.copy (& (array-ref row.global-writes k).symbol))
+                  (array-ref row.global-writes k).flags)))))))
+    (tli.TliFnSummary
+      (bit-or any-flags all-flags)
+      mask
+      (tli-extract-finish-vector i64 extra)
+      (tli-extract-copy-writes (& writes-out))
+      -1
+      (cast 0 : u8)
+      0
+      0
+      0
+      (make-array u8 32))))
+
 (define (tli-extract-params
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
   [params : (& ast.AstParamList)]) : (__tl_dyn-array tli.TliParam)
   (let
     [out : (__tl_dyn-array tli.TliParam)
@@ -610,7 +917,7 @@
             (array-ref out index)
             (tli.TliParam
               (tli-extract-name name)
-              (tli-extract-type ctx ty)
+              (tli-extract-type-in ctx sources root-type-slots ty)
               mut?))]))
     out))
 
@@ -618,6 +925,8 @@
 ;; carries the homogeneous tail type when the ABI tag is CVarargsTyped.
 (define (tli-extract-extern-params
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
   [params : (& ast.AstTypeList)]
   [abi : ast.AstExternAbi]) : (__tl_dyn-array tli.TliParam)
   (let
@@ -634,13 +943,20 @@
         (array-ref out index)
         (tli.TliParam
           ""
-          (tli-extract-child ctx (array-ref params.slots index))
+          (tli-extract-child-in
+            ctx
+            sources
+            root-type-slots
+            (array-ref params.slots index))
           false)))
     (match abi
       [(CVarargsTyped tail)
         (set!
           (array-ref out params.len)
-          (tli.TliParam "" (tli-extract-type ctx tail) false))]
+          (tli.TliParam
+            ""
+            (tli-extract-type-in ctx sources root-type-slots tail)
+            false))]
       [_ unit])
     out))
 
@@ -691,6 +1007,8 @@
 
 (define (tli-extract-macro-params
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
   [items : (& ast.AstMacroParamList)]) : (__tl_dyn-array tli.TliMacroParam)
   (let
     [out : (__tl_dyn-array tli.TliMacroParam)
@@ -712,7 +1030,7 @@
               (array-ref out index)
               (tli.TliMacroParam
                 (tli-extract-name name)
-                (tli-extract-type ctx ty)
+                (tli-extract-type-in ctx sources root-type-slots ty)
                 by-ref
                 tags)))]))
     out))
@@ -728,8 +1046,22 @@
         (io.panic "TLI native macro catalog is unavailable"))
       (tlci.compiler-embedded-stdlib-tlci-frame-sha256 frame))))
 
+(define (tli-extract-companion-macro-index
+  [companion : (& TliPackageCompanionBinding)]
+  [identity : (& str)]) : i64
+  (when (not companion.has-companion) (return -1))
+  (for [i (iterator.range 0 (array-length companion.macro-identities))]
+    (when
+      (string.eq (& (array-ref companion.macro-identities i)) identity)
+      (return i)))
+  -1)
+
 (define (tli-extract-macro
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [companion : (& TliPackageCompanionBinding)]
+  [is-stdlib : bool]
   [module-name : String]
   [name : String]
   [params : (& ast.AstMacroParamList)]
@@ -758,48 +1090,86 @@
         (tli-extract-flag uses-expr-type? tli.tli-macro-uses-expr-type))]
     [index : i64 -1]
     [digest : (Array u8 32) (make-array u8 32)]
-    (cfg
-      embedded-stdlib-tlci
-      (match (tlci.compiler-embedded-stdlib-tlci-catalog-lookup
-        (string.copy (& identity)))
-        [(Resolved entry)
-          (set! index entry.entry-index)
-          (set!
-            digest
-            (tli-extract-native-catalog-digest entry.catalog-generation))
-          (+= flags 1)]
-        [(Shell entry)
-          (set!
-            digest
-            (tli-extract-native-catalog-digest entry.catalog-generation))
-          (+= flags 2)]
-        [_ unit]))
+    (if is-stdlib
+      (cfg
+        embedded-stdlib-tlci
+        (match (tlci.compiler-embedded-stdlib-tlci-catalog-lookup
+          (string.copy (& identity)))
+          [(Resolved entry)
+            (set! index entry.entry-index)
+            (set!
+              digest
+              (tli-extract-native-catalog-digest entry.catalog-generation))
+            (+= flags 1)]
+          [(Shell entry)
+            (set!
+              digest
+              (tli-extract-native-catalog-digest entry.catalog-generation))
+            (+= flags 2)]
+          [_ unit]))
+      (let
+        [companion-index : i64
+          (tli-extract-companion-macro-index companion (& identity))]
+        (when
+          (>= companion-index 0)
+          (set! index companion-index)
+          (set! digest companion.tlci-sha256)
+          (+= flags 1))))
     (tli.TliMacroHandle
       name
       module-name
       identity
       flags
       result-kind
-      (tli-extract-macro-params ctx params)
+      (tli-extract-macro-params ctx sources root-type-slots params)
       index
       digest)))
+
+(define (tli-extract-package-link-symbol
+  [decl-path : (& str)]
+  [raw-module-name : (& str)]
+  [spelling : (& str)]) : String
+  (let
+    [logical : String
+      (if (= (string.string-length raw-module-name) 0)
+        (if (> (string.string-length decl-path) 0)
+          (str_cat.str-cat (string.copy decl-path) "::" (string.copy spelling))
+          (string.copy spelling))
+        (if (> (string.string-length decl-path) 0)
+          (str_cat.str-cat
+            (string.copy decl-path)
+            "::"
+            (string.copy raw-module-name)
+            "/"
+            (string.copy spelling))
+          (symbols.compiler-symbol-module-key
+            (string.copy raw-module-name)
+            (string.copy spelling))))]
+    (hydrate.tli-hydrate-archive-user-symbol (& logical))))
 
 (define (tli-extract-value!
   [out : (&mut TliExtractModule)]
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
   [names : lower.LowerNameCache]
   [decl : (& ast.AstDecl)]
   [module-name : String]
+  [raw-module-name : (& str)]
+  [decl-path : (& str)]
+  [is-stdlib : bool]
   [name : i64]
   [expr : i64]
   [flags : i64]) : unit
   (let
     [spelling : String (tli-extract-name name)]
     [symbol : String
-      (symbols.compiler-symbol-module-key
-        (string.copy (& module-name))
-        (string.copy (& spelling)))]
+      (if is-stdlib
+        (symbols.compiler-symbol-module-key
+          (string.copy (& module-name))
+          (string.copy (& spelling)))
+        (tli-extract-package-link-symbol decl-path raw-module-name (& spelling)))]
     [ty : ast.AstType
       (match (tc.tc-lookup-id
         env
@@ -831,7 +1201,7 @@
         spelling
         module-name
         symbol
-        (tli-extract-type ctx ty)
+        (tli-extract-type-in ctx sources root-type-slots ty)
         (+
           flags
           (tli-extract-flag runtime-init 4)
@@ -1215,7 +1585,12 @@
   [out : (&mut TliExtractModule)]
   [bodies-out : (&mut compact_bodies.Vec)]
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
   [module-name : String]
+  [raw-module-name : (& str)]
+  [decl-path : (& str)]
+  [is-stdlib : bool]
   [index : i64]
   [name : i64]
   [params : ast.AstParamList]
@@ -1235,9 +1610,11 @@
         [(Err message) (io.panic message)])]
     [spelling : String (tli-extract-name name)]
     [fn-symbol : String
-      (symbols.compiler-symbol-module-key
-        (string.copy (& module-name))
-        (string.copy (& spelling)))]
+      (if is-stdlib
+        (symbols.compiler-symbol-module-key
+          (string.copy (& module-name))
+          (string.copy (& spelling)))
+        (tli-extract-package-link-symbol decl-path raw-module-name (& spelling)))]
     [result : ast.AstType (tc.tc-resolve-type ctx signature.ret)]
     [summary : tli.TliFnSummary
       (tli-extract-summary
@@ -1258,10 +1635,14 @@
         [(Export symbol) (string.copy (intern.intern-id-str symbol))]
         [_ ""])]
     [tli-params : (__tl_dyn-array tli.TliParam)
-      (tli-extract-params ctx (& signature.params))]
-    [tli-ret : tli.TliType (tli-extract-type ctx result)]
+      (tli-extract-params ctx sources root-type-slots (& signature.params))]
+    [tli-ret : tli.TliType
+      (tli-extract-type-in ctx sources root-type-slots result)]
+    ;; Only the stdlib bundle carries compact bodies; package bundles keep
+    ;; `tli-has-compact-ir` clear so loads skip the compact-IR decode.
     (when
       (and
+        is-stdlib
         (not unsafe-decl)
         (= (bit-and summary.effect-flags 2) 0)
         (!= (bit-and summary.effect-flags 4) 0)
@@ -1318,6 +1699,8 @@
 (define (tli-extract-extern!
   [out : (&mut TliExtractModule)]
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
   [module-name : String]
   [index : i64]
   [name : i64]
@@ -1361,9 +1744,15 @@
                         (tli-extract-link-inputs (& links))
                         (tli-extract-extern-params
                           ctx
+                          sources
+                          root-type-slots
                           (& (__tl-box-place params))
                           abi)
-                        (tli-extract-type ctx (ast.ty-node-persist (& result)))
+                        (tli-extract-type-in
+                          ctx
+                          sources
+                          root-type-slots
+                          (ast.ty-node-persist (& result)))
                         (tli-extract-summary
                           facts
                           index
@@ -1380,7 +1769,7 @@
                   spelling
                   module-name
                   link
-                  (tli-extract-type ctx ty)
+                  (tli-extract-type-in ctx sources root-type-slots ty)
                   (+
                     (tli-extract-flag comptime-only 1)
                     (tli-extract-flag unsafe-decl 2))
@@ -1393,7 +1782,14 @@
   [bodies-out : (&mut compact_bodies.Vec)]
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
+  [companion : (& TliPackageCompanionBinding)]
   [module-name : String]
+  [raw-module-name : (& str)]
+  [decl-path : (& str)]
+  [is-stdlib : bool]
   [index : i64]
   [unsafe-decl : bool]
   [decl : (& ast.AstDecl)]
@@ -1413,12 +1809,17 @@
           out
           ctx
           env
+          sources
+          root-type-slots
           (lower.lower-name-cache-overlay
             lower-state
             lower.LowerNameEnv.Nil
             (tc.tc-context-module-id ctx))
           decl
           module-name
+          raw-module-name
+          decl-path
+          is-stdlib
           name
           expr
           (+
@@ -1429,7 +1830,12 @@
           out
           bodies-out
           ctx
+          sources
+          root-type-slots
           module-name
+          raw-module-name
+          decl-path
+          is-stdlib
           index
           name
           params
@@ -1443,6 +1849,8 @@
         (tli-extract-extern!
           out
           ctx
+          sources
+          root-type-slots
           module-name
           index
           name
@@ -1456,6 +1864,9 @@
         (tli-extract-struct!
           (&mut out.types)
           ctx
+          sources
+          root-type-slots
+          root-origins
           module-name
           name
           type-flags
@@ -1467,6 +1878,9 @@
         (tli-extract-struct!
           (&mut out.types)
           ctx
+          sources
+          root-type-slots
+          root-origins
           module-name
           name
           type-flags
@@ -1478,6 +1892,9 @@
         (tli-extract-enum!
           (&mut out.types)
           ctx
+          sources
+          root-type-slots
+          root-origins
           module-name
           name
           type-flags
@@ -1488,6 +1905,9 @@
         (tli-extract-enum!
           (&mut out.types)
           ctx
+          sources
+          root-type-slots
+          root-origins
           module-name
           name
           type-flags
@@ -1500,21 +1920,51 @@
           (&mut out.macros)
           (tli-extract-macro
             ctx
+            sources
+            root-type-slots
+            companion
+            is-stdlib
             module-name
             (tli-extract-name name)
             (& params)
             ret
             body-box))]
-      [(DefDispatch _ name _)
+      [(DefDispatch _ name variants)
         (let
           [spelling : String (tli-extract-name name)]
           [symbol : String
-            (symbols.compiler-symbol-module-key
-              (string.copy (& module-name))
-              (string.copy (& spelling)))]
+            (if is-stdlib
+              (symbols.compiler-symbol-module-key
+                (string.copy (& module-name))
+                (string.copy (& spelling)))
+              (tli-extract-package-link-symbol
+                decl-path
+                raw-module-name
+                (& spelling)))]
+          [variant-indices : (__tl_dyn-array i64)
+            (tli-extract-dispatch-variant-indices ctx (& variants))]
+          [sig-ast : ast.AstType
+            (match (tc.tc-dispatch-decl-type ctx name variants)
+              [(Ok ty) ty]
+              [(Err message) (io.panic message)])]
+          [summary : tli.TliFnSummary
+            (tli-extract-dispatch-summary
+              facts
+              (& variant-indices)
+              (& sig-ast)
+              unsafe-decl
+              (ast.ast-decl-must-use? decl))]
+          [sig-tli : tli.TliType
+            (tli-extract-type-in ctx sources root-type-slots sig-ast)]
           (dispatches.push-ref!
             (&mut out.dispatches)
-            (tli.TliDispatchDecl spelling module-name symbol 0)))]
+            (tli.TliDispatchDecl
+              spelling
+              module-name
+              symbol
+              (tli-extract-flag unsafe-decl 1)
+              sig-tli
+              summary)))]
       [_ unit])))
 
 (define (tli-extract-find-module
@@ -1604,6 +2054,8 @@
   [records : (&mut (__tl_dyn-array TliExtractModule))]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [decls : (& decls ast.AstDeclList)]
+  [paths : (& ast.AstDeclPathList)]
+  [has-paths : bool]
   [initial-owner : i64]
   [expr-bases : i64]) : unit
   (let
@@ -1616,14 +2068,22 @@
             records
             sources
             (& (__tl-box-place body))
+            paths
+            false
             owner
             expr-bases)]
         [(Import _ spec)
           (let
+            [mod-name : String (tli-extract-module-name current)]
             [slot : i64
-              (tli-extract-find-module
-                sources
-                (& (tli-extract-module-name current)))]
+              (if (> (string.string-length (& mod-name)) 0)
+                (tli-extract-find-module sources (& mod-name))
+                (if has-paths
+                  (let
+                    [decl-path : String
+                      (ast.ast-decl-path-list-get paths index "")]
+                    (tli-extract-source-for-path sources (& decl-path)))
+                  -1))]
             (when
               (>= slot 0)
               (match (& spec)
@@ -1724,6 +2184,8 @@
           (&mut records)
           sources
           (& (deref decls))
+          (& request.paths)
+          true
           (symbols.compiler-symbol-root-module-id)
           (ast.ast-node-pool-context-expr-segment-bases (& request.pools)))])
     records))
@@ -1910,7 +2372,7 @@
         (tli-extract-empty-module (& (array-ref sources index).path))))
     records))
 
-(define (tli-extract-checked
+(define (tli-extract-checked-with-companion
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
   [paths : (& ast.AstDeclPathList)]
@@ -1919,17 +2381,22 @@
   [cfg-digest : (& (Array u8 32))]
   [bundle-flags : i64]
   [build : String]
-  [target : String]) : tli.TliBundle
+  [target : String]
+  [companion : (& TliPackageCompanionBinding)]) : tli.TliBundle
   ;; Macro-expansion CTFE probes aggregate layouts before generated-instance
   ;; import aliases resolve, and caches what it saw. Recorded layouts must match
   ;; the ones lowering emits, so start from the same clean view lowering uses.
   (tc.tc-agg-caches-reset-for-job! (tc.tc-context-job-state ctx))
   (tc.tc-nominal-owner-cache-reset-for-job! (tc.tc-context-job-state ctx))
   (let
-    [facts : TliExtractEffects (tli-extract-effects ctx env)]
+    [is-stdlib : bool (!= (bit-and bundle-flags tli.tli-is-stdlib-bundle) 0)]
     [decls : ast.AstDeclList
       (match (tc.tc-context-program ctx)
         [(Program decls) (deref decls)])]
+    [root-origins : (__tl_dyn-array i64)
+      (tli-extract-root-origins ctx (& decls) paths sources is-stdlib)]
+    [facts : TliExtractEffects
+      (tli-extract-effects ctx env sources (& root-origins))]
     [count : i64 (array-length sources)]
     [decl-count : i64
       (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
@@ -1938,6 +2405,7 @@
     [paths-out : (__tl_dyn-array String) (__tl_make-array String count)]
     [modules : (__tl_dyn-array tli.TliModuleRecord)
       (__tl_make-array tli.TliModuleRecord count)]
+    [root-type-slots : str_map.Map (str_map.with-capacity 16)]
     [extracted-bodies : compact_bodies.Vec (compact_bodies.new)]
     [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [names : lower.LowerNameCache
@@ -1959,6 +2427,8 @@
       (&mut records)
       sources
       (& decls)
+      paths
+      true
       (symbols.compiler-symbol-root-module-id)
       (tc.tc-context-expr-segment-bases ctx))
     (when
@@ -1966,21 +2436,56 @@
         (tli-extract-unsafe-decls! (&mut unsafe-decls) (& decls) 0)
         decl-count)
       (io.panic "TLI source and symbol declaration indices disagree"))
-    (for [index
-      (iterator.range
-        0
-        (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx))))]
+    (unless
+      is-stdlib
+      (for [index (iterator.range 0 decl-count)]
+        (let
+          [raw-owner-id : i64 (tli-extract-owner ctx index)]
+          (when
+            (symbols.compiler-symbol-root-module-id? raw-owner-id)
+            (let
+              [decl-path : String
+                (symbols.compiler-symbol-path-at-index (& decls) paths index 0)]
+              [origin : i64 (tli-extract-source-for-path sources (& decl-path))]
+              (when
+                (>= origin 0)
+                (match (symbols.compiler-symbols-decl-at-index
+                  (tc.tc-context-symbols (& ctx))
+                  index)
+                  [(Ok decl)
+                    (match (ast.ast-decl-unwrapped (& decl))
+                      [(or (DefStruct _ name _ _ _)
+                           (DefStructLifetimes _ name _ _ _ _)
+                           (DefEnum _ name _ _) (DefEnumLifetimes _ name _ _ _))
+                        (str_map.insert-ref!
+                          (&mut root-type-slots)
+                          (tli-extract-name name)
+                          origin)]
+                      [_ unit])]
+                  [(Err _) unit])))))))
+    (for [index (iterator.range 0 decl-count)]
       (let
         [module-id : i64 (tli-extract-owner ctx index)]
-        [module-name : String (tli-extract-module-name module-id)]
-        [slot : i64 (tli-extract-find-module sources (& module-name))]
+        [raw-module-name : String (tli-extract-module-name module-id)]
+        [decl-path : String
+          (symbols.compiler-symbol-path-at-index (& decls) paths index 0)]
+        [slot : i64
+          (if (> (string.string-length (& raw-module-name)) 0)
+            (tli-extract-find-module sources (& raw-module-name))
+            (if is-stdlib
+              (tli-extract-find-module sources (& raw-module-name))
+              (tli-extract-source-for-path sources (& decl-path))))]
+        [module-name : String
+          (if (> (string.string-length (& raw-module-name)) 0)
+            (string.copy (& raw-module-name))
+            (if (and (not is-stdlib) (>= slot 0))
+              (string.copy (& (array-ref sources slot).module-name))
+              (string.copy (& raw-module-name))))]
         (when
           (>= slot 0)
           (when
             (= (string.string-length (& (array-ref paths-out slot))) 0)
-            (set!
-              (array-ref paths-out slot)
-              (symbols.compiler-symbol-path-at-index (& decls) paths index 0)))
+            (set! (array-ref paths-out slot) (string.copy (& decl-path))))
           (match (symbols.compiler-symbols-decl-at-index
             (tc.tc-context-symbols (& ctx))
             index)
@@ -1990,7 +2495,14 @@
                 (&mut extracted-bodies)
                 (tc.tc-context-with-nominal-owner-index-module ctx index)
                 env
+                sources
+                (& root-type-slots)
+                (& root-origins)
+                companion
                 module-name
+                (& raw-module-name)
+                (& decl-path)
+                is-stdlib
                 index
                 (array-ref unsafe-decls index)
                 (& decl)
@@ -2006,19 +2518,66 @@
           cfg-digest
           (tuple-ref (__tl_array-take! records live slot) 1))))
     (let
-      [bodies-arr : (__tl_dyn-array tli.TliCompactBodyEntry)
-        (tli-extract-finish-vector tli.TliCompactBodyEntry extracted-bodies)]
-      [final-flags : i64
-        (if (> (array-length bodies-arr) 0)
-          (bit-or bundle-flags tli.tli-has-compact-ir)
-          bundle-flags)]
-      (tli.TliBundle
-        final-flags
-        build
-        target
-        modules
-        (__tl_make-array tli.TliCompactGlobal 0)
-        bodies-arr))))
+      [sorted : (__tl_dyn-array tli.TliModuleRecord)
+        (__tl_make-array tli.TliModuleRecord count)]
+      [avail : (__tl_dyn-array bool) (__tl_make-array bool count)]
+      (for [i (iterator.range 0 count)]
+        (set! (array-ref avail i) true))
+      (for [out-idx (iterator.range 0 count)]
+        (let
+          [best : i64 -1]
+          (for [cand (iterator.range 0 count)]
+            (when
+              (array-ref avail cand)
+              (when
+                (or
+                  (< best 0)
+                  (sort.string-less-borrowed?
+                    (& (array-ref modules cand).name)
+                    (& (array-ref modules best).name)))
+                (set! best cand))))
+          (set!
+            (array-ref sorted out-idx)
+            (tuple-ref (__tl_array-take! modules avail best) 1))))
+      (let
+        [bodies-arr : (__tl_dyn-array tli.TliCompactBodyEntry)
+          (tli-extract-finish-vector tli.TliCompactBodyEntry extracted-bodies)]
+        [final-flags : i64
+          (if (> (array-length bodies-arr) 0)
+            (bit-or bundle-flags tli.tli-has-compact-ir)
+            bundle-flags)]
+        (tli.TliBundle
+          final-flags
+          build
+          target
+          sorted
+          (__tl_make-array tli.TliCompactGlobal 0)
+          bodies-arr)))))
+
+(define (tli-extract-checked
+  [ctx : tc.TcContext]
+  [env : tc.TcTypeEnv]
+  [paths : (& ast.AstDeclPathList)]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [records : (__tl_dyn-array TliExtractModule)]
+  [cfg-digest : (& (Array u8 32))]
+  [bundle-flags : i64]
+  [build : String]
+  [target : String]) : tli.TliBundle
+  (let
+    [empty-companion : TliPackageCompanionBinding
+      (tli-package-companion-binding-empty)]
+    (tli-extract-checked-with-companion
+      ctx
+      env
+      paths
+      sources
+      records
+      cfg-digest
+      bundle-flags
+      build
+      target
+      (& empty-companion))))
 
 (define (tli-extract
   [request : api.TypecheckRequest]
@@ -2066,3 +2625,1197 @@
         embedded-stdlib-tlci
         (tlci.compiler-embedded-stdlib-tlci-session-close!))
       result)))
+
+;; --- Shared single-pass typecheck + partitioned module emitter ---------------
+(define (tli-partition-sanitize-module-filename [name : (& str)]) : String
+  (let
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    [n : i64 (string.string-length name)]
+    (for [i (iterator.range 0 n)]
+      (let
+        [c : char (string.string-ref name i)]
+        [ok : bool
+          (or
+            (and (>= c 'a') (<= c 'z'))
+            (and (>= c 'A') (<= c 'Z'))
+            (and (>= c '0') (<= c '9'))
+            (= c '_')
+            (= c '-'))]
+        (if ok
+          (set! buf (text_buf.append buf (string.substring name i 1)))
+          (set! buf (text_buf.append buf "_")))))
+    (text_buf.render buf)))
+
+(define (tli-partition-pad3 [n : i64]) : String
+  (let
+    [s : String (string.int->string n)]
+    (cond
+      [(< n 10) (str_cat.str-cat "00" s)]
+      [(< n 100) (str_cat.str-cat "0" s)]
+      [else s])))
+
+(define (tli-partition-sort-strings! [items : (&mut (__tl_dyn-array String))]) : unit
+  (let
+    [n : i64 (array-length (deref items))]
+    (for [i (iterator.range 1 n)]
+      (let
+        [j : i64 i]
+        (while (> j 0)
+          (let
+            [left-gt : bool
+              (sort.string-less-borrowed?
+                (& (array-ref (deref items) j))
+                (& (array-ref (deref items) (- j 1))))]
+            (if left-gt
+              (let
+                [a : String (string.copy (& (array-ref (deref items) (- j 1))))]
+                [b : String (string.copy (& (array-ref (deref items) j)))]
+                (set! (array-ref (deref items) (- j 1)) b)
+                (set! (array-ref (deref items) j) a)
+                (-= j 1))
+              (break))))))))
+
+(define (tli-partition-fn-physical-signature
+  [pools : ast.AstNodePoolContext]
+  [params : (& ir.CompilerIrParamSeq)]
+  [ret : (& ast.AstType)]) : ast.AstType
+  (let
+    [list : ast.AstTypeList (ast.ast-type-list-with-capacity params.len)]
+    (for [i (iterator.range 0 params.len)]
+      (match (& (array-ref params.slots i))
+        [(ir.CompilerIrParam.Param _ pty _)
+          (ast.ast-type-list-push
+            (&mut list)
+            (ast.ast-node-pool-context-type-push
+              pools
+              (ir.compiler-ir-clone-type pools (ast.ty-node-persist pty))))]))
+    (let
+      [ret-copy : ast.AstType
+        (ir.compiler-ir-clone-type pools (ast.ty-node-persist ret))]
+      (ast.ast-ty-func list (& ret-copy)))))
+
+(define (tli-partition-intern-symbol!
+  [interns : (&mut intern.InternCompatState)]
+  [text : String]) : i64
+  (let
+    [id : i64 (intern.intern-compat-state-intern interns text)]
+    (intern.intern-compat-state-install! (& (deref interns)))
+    id))
+
+(define (tli-partition-note-ref! [refs : (&mut i64_map.Map)] [symbol-id : i64]) : unit
+  (i64_map.insert-ref! refs (ir.compiler-ir-symbol-id symbol-id) 1))
+
+(define (tli-partition-collect-value-refs!
+  [refs : (&mut i64_map.Map)]
+  [value : (& ir.CompilerIrValue)]) : unit
+  (match value
+    [(ir.CompilerIrValue.Function name) (tli-partition-note-ref! refs name)]
+    [(ir.CompilerIrValue.Global name) (tli-partition-note-ref! refs name)]
+    [(ir.CompilerIrValue.GlobalAddr name) (tli-partition-note-ref! refs name)]
+    [_ unit]))
+
+(define (tli-partition-fold-value-ref
+  [_role : ir.CompilerIrOperandRole]
+  [refs : i64_map.Map]
+  [value : ir.CompilerIrValue]) : i64_map.Map
+  (let
+    [out : i64_map.Map refs]
+    (tli-partition-collect-value-refs! (&mut out) (& value))
+    out))
+
+(define (tli-partition-collect-instr-refs
+  [pools : ast.AstNodePoolContext]
+  [refs : i64_map.Map]
+  [slots : (& (__tl_dyn-array ir.CompilerIrInstr))]
+  [index : i64]) : i64_map.Map
+  (let
+    [out : i64_map.Map refs]
+    (match (& (array-ref (deref slots) index))
+      [(or (ir.CompilerIrInstr.Call _ name _ _)
+           (ir.CompilerIrInstr.TailCall name _ _))
+        (tli-partition-note-ref! (&mut out) name)]
+      [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+        (match (& (deref payload-box))
+          [(fields name) (tli-partition-note-ref! (&mut out) name)])]
+      [(ir.CompilerIrInstr.SpmdCall payload-box)
+        (match (& (deref payload-box))
+          [(fields callee) (tli-partition-note-ref! (&mut out) callee)])]
+      [(ir.CompilerIrInstr.Store name _ _)
+        (tli-partition-note-ref! (&mut out) name)]
+      [_ unit])
+    (ir.compiler-ir-instr-fold-uses
+      (ir.compiler-ir-clone-instr-at pools slots index)
+      out
+      tli-partition-fold-value-ref)))
+
+(defstruct TliPartitionModuleRefs
+  (refs i64_map.Map))
+
+(define (tli-partition-module-refs-contains?
+  [mrefs : (& TliPartitionModuleRefs)]
+  [symbol-id : i64]) : bool
+  (i64_map.contains? (& mrefs.refs) (ir.compiler-ir-symbol-id symbol-id)))
+
+(define (tli-partition-function-has-syscall? [func : (& ir.CompilerIrFunction)]) : bool
+  (match func
+    [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+      (match blocks
+        [(ir.CompilerIrBlockList.Array block-seq)
+          (let
+            [found : bool false]
+            (for [bi (iterator.range 0 block-seq.len)]
+              (when
+                (not found)
+                (match (& (array-ref block-seq.slots bi))
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (for [ii (iterator.range 0 instrs.len)]
+                      (match (& (array-ref instrs.slots ii))
+                        [(ir.CompilerIrInstr.Syscall _ _) (set! found true)]
+                        [_ unit]))])))
+            found)])]))
+
+(define (tli-partition-function-collect-refs
+  [pools : ast.AstNodePoolContext]
+  [func : (& ir.CompilerIrFunction)]) : i64_map.Map
+  (let
+    [refs : i64_map.Map (i64_map.with-capacity 32)]
+    (match func
+      [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+        (match blocks
+          [(ir.CompilerIrBlockList.Array block-seq)
+            (for [bi (iterator.range 0 block-seq.len)]
+              (match (& (array-ref block-seq.slots bi))
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (for [ii (iterator.range 0 instrs.len)]
+                    (set!
+                      refs
+                      (tli-partition-collect-instr-refs
+                        pools
+                        refs
+                        (& instrs.slots)
+                        ii)))]))])])
+    refs))
+
+(define (tli-partition-windows-syscall-skip-mask
+  [pools : ast.AstNodePoolContext]
+  [functions : (& ir.CompilerIrFunctionSeq)]) : (__tl_dyn-array bool)
+  (let
+    [fn-count : i64 functions.len]
+    [skip : (__tl_dyn-array bool) (__tl_make-array bool fn-count)]
+    [fn-ids : (__tl_dyn-array i64) (__tl_make-array i64 fn-count)]
+    [fn-refs : (__tl_dyn-array i64_map.Map)
+      (__tl_make-array i64_map.Map fn-count)]
+    [changed : bool false]
+    (for [i (iterator.range 0 fn-count)]
+      (match (& (array-ref functions.slots i))
+        [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+          (set! (array-ref fn-ids i) (ir.compiler-ir-symbol-id fn-name))])
+      (set!
+        (array-ref fn-refs i)
+        (tli-partition-function-collect-refs
+          pools
+          (& (array-ref functions.slots i))))
+      (when
+        (tli-partition-function-has-syscall? (& (array-ref functions.slots i)))
+        (set! (array-ref skip i) true)
+        (set! changed true)))
+    (while changed
+      (set! changed false)
+      (for [i (iterator.range 0 fn-count)]
+        (when
+          (not (array-ref skip i))
+          (let
+            [hit : bool false]
+            (for [j (iterator.range 0 fn-count)]
+              (when
+                (and
+                  (not hit)
+                  (array-ref skip j)
+                  (i64_map.contains?
+                    (& (array-ref fn-refs i))
+                    (array-ref fn-ids j)))
+                (set! hit true)))
+            (when hit (set! (array-ref skip i) true) (set! changed true))))))
+    skip))
+
+(define (tli-partition-collect-module-refs
+  [pools : ast.AstNodePoolContext]
+  [globals : (& ir.CompilerIrGlobalSeq)]
+  [functions : (& ir.CompilerIrFunctionSeq)]) : TliPartitionModuleRefs
+  (let
+    [refs : i64_map.Map (i64_map.with-capacity 256)]
+    (for [gi (iterator.range 0 globals.len)]
+      (match (& (array-ref globals.slots gi))
+        [(ir.CompilerIrGlobal.Global _ _ value)
+          (tli-partition-collect-value-refs! (&mut refs) (& value))]))
+    (for [fi (iterator.range 0 functions.len)]
+      (match (& (array-ref functions.slots fi))
+        [(ir.CompilerIrFunction.Function _ _ _ _ blocks _)
+          (match blocks
+            [(ir.CompilerIrBlockList.Array block-seq)
+              (for [bi (iterator.range 0 block-seq.len)]
+                (match (& (array-ref block-seq.slots bi))
+                  [(ir.CompilerIrBlock.Block _ instrs)
+                    (for [ii (iterator.range 0 instrs.len)]
+                      (set!
+                        refs
+                        (tli-partition-collect-instr-refs
+                          pools
+                          refs
+                          (& instrs.slots)
+                          ii)))]))])]))
+    (TliPartitionModuleRefs refs)))
+
+(define (tli-typecheck-for-extract-and-lower [request : api.TypecheckRequest]) : tc.ResultCompilerTypecheckChecked
+  (let
+    [observer-job : tc.TcJobState request.job-state]
+    (tc.tc-job-state-set-parser-control!
+      observer-job
+      (parser.compiler-parse-control-from-cfg request.cfgs))
+    (match request
+      [(api.TypecheckRequest
+          load-state
+          prefix-cache
+          job-state
+          program
+          paths
+          stdlib-roots
+          cfgs
+          cache-scope
+          pools
+          request-intern-state
+          _semantic-observer
+          retain-global-call-effects)
+        (let
+          [intern-state : intern.InternCompatState request-intern-state]
+          (tc.tc-spmd-inline-helper-stack-reset-for-job! job-state)
+          (tc.tc-macro-call-site-state-reset!
+            (tc.tc-job-state-macro-call-sites job-state))
+          (tc.tc-typecheck-checked-result-with-pool-check
+            job-state
+            (let
+              [owner-context : spec.SpecOwnerContext
+                (spec.spec-owner-context-new pools (& intern-state))]
+              [generated-result : spec.ResultGenProgramWithPaths
+                (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
+                  (& program)
+                  (& paths)
+                  ""
+                  owner-context)]
+              (ast.ast-node-pool-context-install! pools)
+              (intern.intern-compat-state-capture-from-globals!
+                (&mut intern-state))
+              (intern.intern-compat-state-install! (& intern-state))
+              (match generated-result
+                [(Err diag-box)
+                  (tc.ResultCompilerTypecheckChecked.Err
+                    (diag.compiler-diagnostic-list-box-single diag-box))]
+                [(Ok generated generated-paths)
+                  (let
+                    [load-state-addr : u64 load-state.shared-address]
+                    [macro-load-state : load.CompilerLoadSessionState
+                      (if (= load-state-addr 0)
+                        (load.compiler-load-serial-test-session-state)
+                        (unsafe
+                          (ptr-read
+                            (int->ptr
+                              load-state-addr
+                              : (Ptr load.CompilerLoadSessionState)))))]
+                    [macro-result : tc.ResultMacroExpand
+                      (tc.macro-expand-program-with-paths-and-pools-roots-cfg-with-load-state-and-job-state-and-intern-state
+                        macro-load-state
+                        job-state
+                        generated
+                        generated-paths
+                        pools
+                        (strings.clone-vec (& stdlib-roots))
+                        cfgs
+                        (intern.intern-compat-state-capture-active))]
+                    (ast.ast-node-pool-context-capture-active! pools)
+                    (intern.intern-compat-state-capture-from-globals!
+                      (&mut intern-state))
+                    (match macro-result
+                      [(Err diag-box)
+                        (tc.ResultCompilerTypecheckChecked.Err
+                          (diag.compiler-diagnostic-list-box-single diag-box))]
+                      [(Ok expanded expanded-paths)
+                        (tc.tc-typecheck-specialized-program-with-selected-lowering
+                          load-state
+                          prefix-cache
+                          job-state
+                          expanded
+                          expanded-paths
+                          stdlib-roots
+                          cache-scope
+                          pools
+                          (intern.intern-source-name-session-handle
+                            (intern.intern-source-name-session-from-state
+                              (& intern-state)))
+                          (intern.intern-compat-state-capture-active)
+                          true
+                          retain-global-call-effects)]))]))))])))
+
+(define (tli-partition-owner-slot
+  [name-to-slot : (& str_map.Map)]
+  [owner-name : (& str)]) : i64
+  (let
+    [direct : i64
+      (str_map.get-value-or name-to-slot (string.copy owner-name) -1)]
+    (if (>= direct 0)
+      direct
+      (if (> (string.string-length owner-name) 0)
+        (let
+          [canonical : String
+            (load.compiler-load-canonical-module-id-from-path owner-name)]
+          (str_map.get-value-or name-to-slot canonical -1))
+        -1))))
+
+(define (tli-partition-noexecstack-note) : String
+  "\n    .section .note.GNU-stack,\"\",@progbits\n")
+
+;; One module's object through `route`, from its own backend state so the
+;; module's assembly emission keeps the caller's state. False when the route is
+;; Assembly, the program is not object-eligible, or the route did not write it.
+(define (tli-partition-emit-direct-object
+  [route : (& TliPartitionObjectRoute)]
+  [pools : ast.AstNodePoolContext]
+  [program : (& ir.CompilerIrProgram)]
+  [spans : (& ir.CompilerSourceSpans)]
+  [backend-target : be_state.CompilerBackendTarget]
+  [backend-mode : be_state.CompilerBackendMode]
+  [opt-level : i64]
+  [representations : ir.CompilerIrRepresentationIndex]
+  [asm-path : (& str)]) : bool
+  (match route
+    [(Assembly) false]
+    [(DirectObject write-object)
+      (let
+        [state : be_state.CompilerBackendState
+          (be_state.compiler-backend-state-new
+            (intern.intern-compat-state-capture-active))]
+        [prof : profile_state.CompilerProfileState
+          (profile_state.compiler-profile-state-new)]
+        (be_state.compiler-backend-state-set-opt-level! state opt-level)
+        (be_state.compiler-backend-state-set-representations-for-pools!
+          state
+          (& pools)
+          representations)
+        (let
+          [written : bool
+            (match (backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
+              state
+              pools
+              (ir.clone-compiler-ir-program program)
+              backend-target
+              prof)
+              [(Unsupported _) false]
+              [(Eligible)
+                (match (backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                  state
+                  pools
+                  (ir.clone-compiler-ir-program program)
+                  backend-target
+                  backend-mode
+                  (ir.compiler-source-spans-escape spans)
+                  false
+                  false
+                  prof)
+                  [(Ok image) (write-object image (string.copy asm-path))]
+                  [(Err _) false])])]
+          (backend.compiler-backend-state-release-final-arenas! state)
+          written))]))
+
+(define (tli-partition-cross-module-tiny-helper?
+  [blocks : (& ir.CompilerIrBlockList)]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Array block-seq)
+      (if (> block-seq.len 4)
+        false
+        (let
+          [total : i64 0]
+          [ok : bool true]
+          (for [bi (iterator.range 0 block-seq.len)]
+            (when
+              ok
+              (match (& (array-ref block-seq.slots bi))
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set! total (+ total instrs.len))
+                  (if (> total 16)
+                    (set! ok false)
+                    (for [ii (iterator.range 0 instrs.len)]
+                      (match (& (array-ref instrs.slots ii))
+                        [(or (ir.CompilerIrInstr.Call _ _ _ _)
+                             (ir.CompilerIrInstr.CallIndirect _ _ _ _)
+                             (ir.CompilerIrInstr.CallIndirectC _ _ _ _)
+                             (ir.CompilerIrInstr.TailCall _ _ _)
+                             (ir.CompilerIrInstr.TailCallIndirect _ _ _))
+                          (set! ok false)]
+                        [_ unit])))])))
+          ok))]
+    [_ false]))
+
+(define (tli-emit-partitioned-modules!
+  [bundle : (&mut tli.TliBundle)]
+  [tli-out : (& str)]
+  [producer-identity : (& str)]
+  [target-triple : (& str)]
+  [whole-program : ir.CompilerIrProgram]
+  [whole-spans : ir.CompilerSourceSpans]
+  [lower-state : lower.CompilerLowerState]
+  [pools : ast.AstNodePoolContext]
+  [job : tc.TcJobState]
+  [asm-dir : (& str)]
+  [manifest-out : (& str)]
+  [backend-target : be_state.CompilerBackendTarget]
+  [backend-mode : be_state.CompilerBackendMode]
+  [windows? : bool]
+  [opt-level : i64]
+  [is-stdlib? : bool]
+  [object-route : TliPartitionObjectRoute]) : ResultTliPartitionedEmit
+  (let
+    [interns : intern.InternCompatState
+      (lower.compiler-lower-state-interns lower-state)]
+    [type-segment-bases : i64
+      (ast.ast-node-pool-context-type-segment-bases (& pools))]
+    [module-count : i64 (array-length bundle.modules)]
+    [sorted-names : (__tl_dyn-array String)
+      (__tl_make-array String module-count)]
+    [name-to-slot : str_map.Map
+      (str_map.with-capacity (+ (* module-count 2) 4))]
+    [expected-inits : (__tl_dyn-array bool) (__tl_make-array bool module-count)]
+    (intern.intern-compat-state-install! (& interns))
+    (ast.ast-node-pool-context-install! pools)
+    (for [i (iterator.range 0 module-count)]
+      (set!
+        (array-ref sorted-names i)
+        (string.copy (& (array-ref bundle.modules i).name))))
+    (tli-partition-sort-strings! (&mut sorted-names))
+    (for [i (iterator.range 0 module-count)]
+      (str_map.insert-ref!
+        (&mut name-to-slot)
+        (string.copy (& (array-ref sorted-names i)))
+        i))
+    (for [i (iterator.range 0 module-count)]
+      (let
+        [slot : i64
+          (str_map.get-value-or
+            (& name-to-slot)
+            (string.copy (& (array-ref bundle.modules i).name))
+            -1)]
+        (when (< slot 0) (return (Err "tli-partition: missing module slot")))
+        (set!
+          (array-ref expected-inits slot)
+          (> (array-length (array-ref bundle.modules i).global-inits) 0))))
+    (match whole-program
+      [(ir.CompilerIrProgram.Program
+          whole-globals
+          whole-functions
+          whole-externs
+          _)
+        (let
+          [fn-count : i64 whole-functions.len]
+          [gl-count : i64 whole-globals.len]
+          [ex-count : i64 whole-externs.len]
+          [fn-owners : (__tl_dyn-array i64) (__tl_make-array i64 fn-count)]
+          [fn-skip : (__tl_dyn-array bool)
+            (if (and windows? is-stdlib?)
+              (tli-partition-windows-syscall-skip-mask
+                pools
+                (& whole-functions))
+              (__tl_make-array bool fn-count))]
+          [gl-owners : (__tl_dyn-array i64) (__tl_make-array i64 gl-count)]
+          [gl-private : (__tl_dyn-array bool) (__tl_make-array bool gl-count)]
+          [provided-by-fn : i64_map.Map (i64_map.with-capacity 64)]
+          [found-inits : (__tl_dyn-array bool)
+            (__tl_make-array bool module-count)]
+          (for [i (iterator.range 0 ex-count)]
+            (match (& (array-ref whole-externs.slots i))
+              [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided _ _)
+                (when
+                  provided
+                  (i64_map.insert-ref!
+                    (&mut provided-by-fn)
+                    (ir.compiler-ir-symbol-id name-id)
+                    i))]))
+          (for [i (iterator.range 0 fn-count)]
+            (match (& (array-ref whole-functions.slots i))
+              [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+                (let
+                  [owner-id : i64
+                    (lower.compiler-lower-state-function-owner-module-id
+                      lower-state
+                      fn-name)]
+                  [owner-name : String
+                    (if (>= owner-id 0)
+                      (lower.lower-name-id-text lower-state owner-id)
+                      "")]
+                  [slot : i64
+                    (tli-partition-owner-slot (& name-to-slot) (& owner-name))]
+                  (when
+                    (and (< slot 0) is-stdlib?)
+                    (return
+                      (Err
+                        (str_cat.str-cat
+                          "build-stdlib-sysroot: unowned function "
+                          (ir.compiler-ir-symbol-text fn-name)
+                          " (owner="
+                          owner-name
+                          ")"))))
+                  (set! (array-ref fn-owners i) slot)
+                  (when
+                    (>= slot 0)
+                    (let
+                      [fn-text : String (ir.compiler-ir-symbol-text fn-name)]
+                      [expected-wrapper : String
+                        (tli.tli-module-init-symbol
+                          (& (array-ref sorted-names slot)))]
+                      (when
+                        (string.eq (& fn-text) (& expected-wrapper))
+                        (when
+                          (array-ref fn-skip i)
+                          (return
+                            (Err
+                              (str_cat.str-cat
+                                "build-stdlib-sysroot: startup init uses Linux syscall on Windows: "
+                                fn-text))))
+                        (set! (array-ref found-inits slot) true)))))]))
+          (for [i (iterator.range 0 gl-count)]
+            (match (& (array-ref whole-globals.slots i))
+              [(ir.CompilerIrGlobal.Global gl-name _ _)
+                (let
+                  [owner-id : i64
+                    (lower.compiler-lower-state-global-owner-module-id
+                      lower-state
+                      gl-name)]
+                  [owner-name : String
+                    (if (>= owner-id 0)
+                      (lower.lower-name-id-text lower-state owner-id)
+                      "")]
+                  [slot : i64
+                    (tli-partition-owner-slot (& name-to-slot) (& owner-name))]
+                  (when
+                    (and (< slot 0) is-stdlib?)
+                    (return
+                      (Err
+                        (str_cat.str-cat
+                          "build-stdlib-sysroot: unowned global "
+                          (ir.compiler-ir-symbol-text gl-name)
+                          " (owner="
+                          owner-name
+                          ")"))))
+                  (set! (array-ref gl-owners i) slot)
+                  (set!
+                    (array-ref gl-private i)
+                    (intern.intern-compat-state-generated-role-symbol?
+                      (& interns)
+                      gl-name
+                      (intern.intern-generated-symbol-role-nullary-enum-object))))]))
+          (for [m (iterator.range 0 module-count)]
+            (when
+              (!= (array-ref expected-inits m) (array-ref found-inits m))
+              (return
+                (Err
+                  (str_cat.str-cat
+                    "tli-partition: .tli and archive disagree on startup init for module "
+                    (string.copy (& (array-ref sorted-names m))))))))
+          ;; Precompute cross-module extern descriptors for all functions and
+          ;; non-private globals.
+          (let
+            [fn-cross-externs : (__tl_dyn-array ir.CompilerIrExtern)
+              (__tl_make-array ir.CompilerIrExtern fn-count)]
+            [gl-cross-externs : (__tl_dyn-array ir.CompilerIrExtern)
+              (__tl_make-array ir.CompilerIrExtern gl-count)]
+            [fn-link-syms : (__tl_dyn-array String)
+              (__tl_make-array String fn-count)]
+            [gl-link-syms : (__tl_dyn-array String)
+              (__tl_make-array String gl-count)]
+            [base-reps : ir.CompilerIrRepresentationIndex
+              (lower.lower-representation-index-from-layouts
+                type-segment-bases
+                job
+                (ir.compiler-ir-representation-index-empty))]
+            [manifest-buf : text_buf.TextBuf (text_buf.empty)]
+            [emitted-files : strings.Vec (strings.new)]
+            [emitted-direct : indices.Vec (indices.new)]
+            [emitted-modules : i64 0]
+            [skipped-modules : i64 0]
+            (for [i (iterator.range 0 fn-count)]
+              (match (& (array-ref whole-functions.slots i))
+                [(ir.CompilerIrFunction.Function fn-name fn-params fn-ret _ _ _)
+                  (let
+                    [fn-name-str : String (ir.compiler-ir-symbol-text fn-name)]
+                    [fn-sig : ast.AstType
+                      (tli-partition-fn-physical-signature
+                        pools
+                        fn-params
+                        fn-ret)]
+                    [provided-idx : i64
+                      (i64_map.get-value-or
+                        (& provided-by-fn)
+                        (ir.compiler-ir-symbol-id fn-name)
+                        -1)]
+                    [link-sym-str : String
+                      (if (>= provided-idx 0)
+                        (match (& (array-ref whole-externs.slots provided-idx))
+                          [(ir.CompilerIrExtern.Extern
+                              _
+                              _
+                              _
+                              _
+                              prov-abi
+                              prov-sym
+                              _
+                              _
+                              _
+                              _)
+                            (let
+                              [raw : String
+                                (intern.intern-compat-state-str
+                                  (& interns)
+                                  prov-sym)]
+                              (if (and
+                                windows?
+                                (ast.ast-extern-abi-c? prov-abi))
+                                (abi.compiler-abi-c-export-body-symbol raw)
+                                raw))])
+                        (let
+                          [rt-sym : String
+                            (be_operand.compiler-backend-runtime-prelude-string-helper-symbol
+                              (string.copy (& fn-name-str)))]
+                          (if (> (string.string-length (& rt-sym)) 0)
+                            rt-sym
+                            (be_state.compiler-backend-user-symbol-uncached
+                              (string.copy (& fn-name-str))))))]
+                    [link-sym-id : i64
+                      (tli-partition-intern-symbol!
+                        (&mut interns)
+                        (string.copy (& link-sym-str)))]
+                    (set! (array-ref fn-link-syms i) link-sym-str)
+                    (set!
+                      (array-ref fn-cross-externs i)
+                      (ir.CompilerIrExtern.Extern
+                        fn-name
+                        fn-name
+                        fn-name-str
+                        fn-sig
+                        (ast.AstExternAbi.TypeLisp)
+                        link-sym-id
+                        (ast.ast-extern-link-input-list-new)
+                        false
+                        (ir.CompilerIrReturnStorage.None)
+                        false)))]))
+            (for [i (iterator.range 0 gl-count)]
+              (when
+                (not (array-ref gl-private i))
+                (match (& (array-ref whole-globals.slots i))
+                  [(ir.CompilerIrGlobal.Global gl-name gl-ty _)
+                    (let
+                      [gl-name-str : String
+                        (ir.compiler-ir-symbol-text gl-name)]
+                      [link-sym-str : String
+                        (be_state.compiler-backend-user-symbol-uncached
+                          (string.copy (& gl-name-str)))]
+                      [link-sym-id : i64
+                        (tli-partition-intern-symbol!
+                          (&mut interns)
+                          (string.copy (& link-sym-str)))]
+                      (set! (array-ref gl-link-syms i) link-sym-str)
+                      (set!
+                        (array-ref gl-cross-externs i)
+                        (ir.CompilerIrExtern.Extern
+                          gl-name
+                          gl-name
+                          gl-name-str
+                          (ir.compiler-ir-clone-type
+                            pools
+                            (ast.ty-node-persist gl-ty))
+                          (ast.AstExternAbi.TypeLisp)
+                          link-sym-id
+                          (ast.ast-extern-link-input-list-new)
+                          false
+                          (ir.CompilerIrReturnStorage.None)
+                          false)))])))
+            ;; The stdlib sysroot attaches v3 compact_ir + packed optimizer
+            ;; summaries, pins module digests, verifies, and writes its `.tli`
+            ;; here. Package builders write their own `.tli` (no `compact_ir`).
+            (when
+              (> (string.string-length tli-out) 0)
+              (compact_ir.tli-attach-compact-ir!
+                bundle
+                pools
+                (& interns)
+                (& whole-globals)
+                (& whole-functions)
+                (& whole-externs)
+                (& fn-skip)
+                (& fn-link-syms)
+                (& gl-link-syms)
+                (& gl-private))
+              (unless
+                (tli-extract-pin-imports! bundle)
+                (return
+                  (Err "TLI import cycle cannot pin module record digests")))
+              (let
+                [encoded : (__tl_dyn-array u8) (codec.tli-encode-bundle bundle)]
+                (match (codec.tli-decode-directory-for
+                  (& encoded)
+                  producer-identity
+                  target-triple)
+                  [(Err fail) (return (Err fail.message))]
+                  [(Ok dir)
+                    (when
+                      (!=
+                        (array-length dir.entries)
+                        (array-length bundle.modules))
+                      (return (Err "TLI directory count mismatch")))])
+                (let
+                  [encoded-buf : byte_buf.ByteBuf (byte_buf.from-array encoded)]
+                  (match (io.try-write-file
+                    tli-out
+                    (byte_buf.as-bytes (& encoded-buf)))
+                    [(OkIoUnit) unit]
+                    [(ErrIoUnit _)
+                      (return
+                        (Err
+                          (str_cat.str-cat
+                            "cannot write stdlib.tli: "
+                            (string.copy tli-out))))]))))
+            ;; Emit each non-empty module independently.
+            (for [m (iterator.range 0 module-count)]
+              (let
+                [mod-name (& (array-ref sorted-names m))]
+                [g-builder : ir.CompilerIrGlobalBuilder
+                  (ir.compiler-ir-global-builder-with-capacity 16)]
+                [f-builder : ir.CompilerIrFunctionBuilder
+                  (ir.compiler-ir-function-builder-with-capacity 32)]
+                (for [i (iterator.range 0 gl-count)]
+                  (when
+                    (= (array-ref gl-owners i) m)
+                    (ir.compiler-ir-global-builder-push!
+                      (&mut g-builder)
+                      (ir.compiler-ir-clone-global
+                        pools
+                        (& (array-ref whole-globals.slots i))))))
+                (for [i (iterator.range 0 fn-count)]
+                  (when
+                    (and
+                      (= (array-ref fn-owners i) m)
+                      (not (array-ref fn-skip i)))
+                    (ir.compiler-ir-function-builder-push!
+                      (&mut f-builder)
+                      (ir.compiler-ir-clone-function
+                        pools
+                        (& (array-ref whole-functions.slots i))))))
+                (if (and (= g-builder.len 0) (= f-builder.len 0))
+                  (+= skipped-modules 1)
+                  (let
+                    [be-state-mod : be_state.CompilerBackendState
+                      (be_state.compiler-backend-state-new
+                        (intern.intern-compat-state-capture-active))]
+                    [init-globals : ir.CompilerIrGlobalSeq
+                      (ir.compiler-ir-global-builder-snapshot-seq (& g-builder))]
+                    [init-functions : ir.CompilerIrFunctionSeq
+                      (ir.compiler-ir-function-builder-snapshot (& f-builder))]
+                    [init-refs : TliPartitionModuleRefs
+                      (tli-partition-collect-module-refs
+                        pools
+                        (& init-globals)
+                        (& init-functions))]
+                    [cross-avail : i64_map.Map (i64_map.with-capacity 64)]
+                    ;; At O2, attach small call-free cross-module `compact_ir`
+                    ;; helpers (`<= 16` instrs, `<= 4` blocks) with
+                    ;; `body-available = true` so `libstdlib.a` modules inline
+                    ;; trivial accessors (e.g. `string.string-length` inside
+                    ;; `formatter-write-raw-at!`) without bloating cold paths
+                    ;; or altering cross-module call boundaries.
+                    [_cross-hydrate : unit
+                      (when
+                        (and is-stdlib? (>= opt-level 2))
+                        (for [i (iterator.range 0 fn-count)]
+                          (when
+                            (and
+                              (!= (array-ref fn-owners i) m)
+                              (not (array-ref fn-skip i)))
+                            (match (& (array-ref whole-functions.slots i))
+                              [(ir.CompilerIrFunction.Function
+                                  fn-name
+                                  _
+                                  _
+                                  _
+                                  fn-blocks
+                                  _)
+                                (when
+                                  (and
+                                    (tli-partition-module-refs-contains?
+                                      (& init-refs)
+                                      fn-name)
+                                    (opt.opt-inline-compact-ir-eligible?
+                                      (& (array-ref whole-functions.slots i)))
+                                    (tli-partition-cross-module-tiny-helper?
+                                      (& fn-blocks)))
+                                  (i64_map.insert-ref! (&mut cross-avail) i 1)
+                                  (ir.compiler-ir-function-builder-push!
+                                    (&mut f-builder)
+                                    (ir.compiler-ir-clone-function
+                                      pools
+                                      (& (array-ref whole-functions.slots i)))))]))))]
+                    [mod-functions : ir.CompilerIrFunctionSeq
+                      (ir.compiler-ir-function-builder-snapshot (& f-builder))]
+                    [refs : TliPartitionModuleRefs
+                      (if (= cross-avail.len 0)
+                        init-refs
+                        (tli-partition-collect-module-refs
+                          pools
+                          (& init-globals)
+                          (& mod-functions)))]
+                    [e-builder : ir.CompilerIrExternBuilder
+                      (ir.compiler-ir-extern-builder-with-capacity 64)]
+                    [added-externs : i64_map.Map (i64_map.with-capacity 128)]
+                    ;; Copy any referenced private (nullary enum) globals locally.
+                    (for [i (iterator.range 0 gl-count)]
+                      (when
+                        (and
+                          (!= (array-ref gl-owners i) m)
+                          (array-ref gl-private i))
+                        (match (& (array-ref whole-globals.slots i))
+                          [(ir.CompilerIrGlobal.Global gl-name _ _)
+                            (when
+                              (tli-partition-module-refs-contains?
+                                (& refs)
+                                gl-name)
+                              (ir.compiler-ir-global-builder-push!
+                                (&mut g-builder)
+                                (ir.compiler-ir-clone-global
+                                  pools
+                                  (& (array-ref whole-globals.slots i)))))])))
+                    ;; 1. Keep provided externs owned by this module.
+                    (for [i (iterator.range 0 fn-count)]
+                      (when
+                        (and
+                          (= (array-ref fn-owners i) m)
+                          (not (array-ref fn-skip i)))
+                        (match (& (array-ref whole-functions.slots i))
+                          [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+                            (let
+                              [pidx : i64
+                                (i64_map.get-value-or
+                                  (& provided-by-fn)
+                                  (ir.compiler-ir-symbol-id fn-name)
+                                  -1)]
+                              (when
+                                (>= pidx 0)
+                                (i64_map.insert-ref!
+                                  (&mut added-externs)
+                                  (ir.compiler-ir-symbol-id fn-name)
+                                  1)
+                                (ir.compiler-ir-extern-builder-push!
+                                  (&mut e-builder)
+                                  (ir.compiler-ir-clone-extern
+                                    pools
+                                    (& (array-ref whole-externs.slots pidx))))))])))
+                    ;; 2. Keep referenced base non-provided externs (e.g. C FFI).
+                    (for [i (iterator.range 0 ex-count)]
+                      (match (& (array-ref whole-externs.slots i))
+                        [(ir.CompilerIrExtern.Extern
+                            name-id
+                            src-id
+                            _
+                            _
+                            _
+                            link-id
+                            _
+                            provided
+                            _
+                            _)
+                          (when
+                            (and
+                              (not provided)
+                              (not
+                                (i64_map.contains?
+                                  (& added-externs)
+                                  (ir.compiler-ir-symbol-id name-id)))
+                              (or
+                                (tli-partition-module-refs-contains?
+                                  (& refs)
+                                  name-id)
+                                (tli-partition-module-refs-contains?
+                                  (& refs)
+                                  src-id)
+                                (tli-partition-module-refs-contains?
+                                  (& refs)
+                                  link-id)))
+                            (i64_map.insert-ref!
+                              (&mut added-externs)
+                              (ir.compiler-ir-symbol-id name-id)
+                              1)
+                            (ir.compiler-ir-extern-builder-push!
+                              (&mut e-builder)
+                              (ir.compiler-ir-clone-extern
+                                pools
+                                (& (array-ref whole-externs.slots i)))))]))
+                    ;; 3. Other modules' functions referenced by this module.
+                    (for [i (iterator.range 0 fn-count)]
+                      (when
+                        (!= (array-ref fn-owners i) m)
+                        (match (& (array-ref whole-functions.slots i))
+                          [(ir.CompilerIrFunction.Function fn-name _ _ _ _ _)
+                            (let
+                              [fid : i64 (ir.compiler-ir-symbol-id fn-name)]
+                              (when
+                                (and
+                                  (tli-partition-module-refs-contains?
+                                    (& refs)
+                                    fn-name)
+                                  (not
+                                    (i64_map.contains? (& added-externs) fid)))
+                                (i64_map.insert-ref! (&mut added-externs) fid 1)
+                                (let
+                                  [cloned-ext : ir.CompilerIrExtern
+                                    (ir.compiler-ir-clone-extern
+                                      pools
+                                      (& (array-ref fn-cross-externs i)))]
+                                  (if (i64_map.contains? (& cross-avail) i)
+                                    (match cloned-ext
+                                      [(ir.CompilerIrExtern.Extern
+                                          en
+                                          es
+                                          enm
+                                          ety
+                                          eabi
+                                          elink
+                                          elinks
+                                          eprov
+                                          estor
+                                          _)
+                                        (ir.compiler-ir-extern-builder-push!
+                                          (&mut e-builder)
+                                          (ir.CompilerIrExtern.Extern
+                                            en
+                                            es
+                                            enm
+                                            ety
+                                            eabi
+                                            elink
+                                            elinks
+                                            eprov
+                                            estor
+                                            true))])
+                                    (ir.compiler-ir-extern-builder-push!
+                                      (&mut e-builder)
+                                      cloned-ext)))))])))
+                    ;; 4. Other modules' non-private globals referenced by this module.
+                    (for [i (iterator.range 0 gl-count)]
+                      (when
+                        (and
+                          (!= (array-ref gl-owners i) m)
+                          (not (array-ref gl-private i)))
+                        (match (& (array-ref whole-globals.slots i))
+                          [(ir.CompilerIrGlobal.Global gl-name _ _)
+                            (let
+                              [gid : i64 (ir.compiler-ir-symbol-id gl-name)]
+                              (when
+                                (and
+                                  (tli-partition-module-refs-contains?
+                                    (& refs)
+                                    gl-name)
+                                  (not
+                                    (i64_map.contains? (& added-externs) gid)))
+                                (i64_map.insert-ref! (&mut added-externs) gid 1)
+                                (ir.compiler-ir-extern-builder-push!
+                                  (&mut e-builder)
+                                  (ir.compiler-ir-clone-extern
+                                    pools
+                                    (& (array-ref gl-cross-externs i))))))])))
+                    (let
+                      [mod-globals : ir.CompilerIrGlobalSeq
+                        (ir.compiler-ir-global-builder-snapshot-seq
+                          (& g-builder))]
+                      [mod-externs : ir.CompilerIrExternSeq
+                        (ir.compiler-ir-extern-builder-snapshot-seq
+                          (& e-builder))]
+                      [claims : ir.CompilerIrReturnStorageIndex
+                        (ir.compiler-ir-return-storage-index-claims
+                          type-segment-bases
+                          (ir.compiler-ir-type-pool-count pools)
+                          (& mod-functions)
+                          (& mod-externs))]
+                      [authority : ir.CompilerIrReturnStorageAuthority
+                        (ir.compiler-ir-return-storage-authority-capture
+                          pools
+                          (& interns)
+                          (if windows?
+                            1
+                            0)
+                          claims)]
+                      [mod-program : ir.CompilerIrProgram
+                        (ir.CompilerIrProgram.Program
+                          mod-globals
+                          mod-functions
+                          mod-externs
+                          authority)]
+                      [prof : profile_state.CompilerProfileState
+                        (profile_state.compiler-profile-state-new)]
+                      [mod-reps : ir.CompilerIrRepresentationIndex
+                        (ir.compiler-ir-representation-index-with-authority
+                          pools
+                          (& interns)
+                          (if windows?
+                            1
+                            0)
+                          (& mod-program)
+                          (ir.compiler-ir-clone-representation-index
+                            pools
+                            (& base-reps)))]
+                      [object-reps : ir.CompilerIrRepresentationIndex
+                        (match (& object-route)
+                          [(Assembly)
+                            (ir.compiler-ir-representation-index-empty)]
+                          [(DirectObject _)
+                            (ir.compiler-ir-clone-representation-index
+                              pools
+                              (& mod-reps))])]
+                      (be_state.compiler-backend-state-set-opt-level!
+                        be-state-mod
+                        opt-level)
+                      (be_state.compiler-backend-state-set-representations-for-pools!
+                        be-state-mod
+                        (& pools)
+                        (ir.compiler-ir-clone-representation-index
+                          pools
+                          (& mod-reps)))
+                      (match (opt.optimize-program
+                        mod-program
+                        (ir.compiler-source-spans-escape (& whole-spans))
+                        (opt.OptimizeRequest
+                          pools
+                          (intern.intern-compat-state-capture-active)
+                          opt-level
+                          prof
+                          true
+                          mod-reps
+                          (opt.OptInputRetirement.Retain)
+                          (__tl_make-array i64 0)
+                          (opt.opt-external-summaries-empty)
+                          true))
+                        [(opt.CompilerOptimizedProgram.Program
+                            opt-program
+                            opt-spans)
+                          (let
+                            [file-name : String
+                              (str_cat.str-cat
+                                (tli-partition-pad3 m)
+                                (if is-stdlib?
+                                  "-"
+                                  "_")
+                                (tli-partition-sanitize-module-filename
+                                  mod-name)
+                                ".s")]
+                            [direct-object : bool
+                              (tli-partition-emit-direct-object
+                                (& object-route)
+                                pools
+                                (& opt-program)
+                                (& opt-spans)
+                                backend-target
+                                backend-mode
+                                opt-level
+                                object-reps
+                                (& (fs.path-join asm-dir (& file-name))))]
+                            (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                              be-state-mod
+                              pools
+                              opt-program
+                              backend-target
+                              backend-mode
+                              opt-spans
+                              false
+                              false
+                              prof)
+                              [(Err diag-box)
+                                (backend.compiler-backend-state-release-final-arenas!
+                                  be-state-mod)
+                                (return
+                                  (Err
+                                    (str_cat.str-cat
+                                      "tli-partition: backend failed for module "
+                                      (string.copy mod-name)
+                                      ": "
+                                      (diag.compiler-diagnostic-render
+                                        (& (__tl-box-place diag-box))))))]
+                              [(Ok asm)
+                                (let
+                                  [asm-path : String
+                                    (fs.path-join asm-dir (& file-name))]
+                                  [final-asm : String
+                                    (if (and
+                                      (not windows?)
+                                      (not is-stdlib?)
+                                      (not
+                                        (string.contains
+                                          (& asm)
+                                          ".note.GNU-stack")))
+                                      (str_cat.str-cat
+                                        asm
+                                        (tli-partition-noexecstack-note))
+                                      asm)]
+                                  (match (io.try-write-file
+                                    (& asm-path)
+                                    (byte_buf.str-as-bytes (& final-asm)))
+                                    [(OkIoUnit) unit]
+                                    [(ErrIoUnit _)
+                                      (backend.compiler-backend-state-release-final-arenas!
+                                        be-state-mod)
+                                      (return
+                                        (Err
+                                          (str_cat.str-cat
+                                            "cannot write module asm: "
+                                            asm-path)))])
+                                  (strings.push-ref!
+                                    (&mut emitted-files)
+                                    (string.copy (& file-name)))
+                                  (indices.push-ref!
+                                    (&mut emitted-direct)
+                                    (if direct-object
+                                      1
+                                      0))
+                                  (set!
+                                    manifest-buf
+                                    (text_buf.append
+                                      (text_buf.append manifest-buf file-name)
+                                      "\n"))
+                                  (+= emitted-modules 1))]))])
+                      (backend.compiler-backend-state-release-final-arenas!
+                        be-state-mod))))))
+            (when
+              (> (string.string-length manifest-out) 0)
+              (let
+                [manifest-text : String (text_buf.render manifest-buf)]
+                (match (io.try-write-file
+                  manifest-out
+                  (byte_buf.str-as-bytes (& manifest-text)))
+                  [(OkIoUnit) unit]
+                  [(ErrIoUnit _)
+                    (return
+                      (Err
+                        (str_cat.str-cat
+                          "cannot write manifest: "
+                          (string.copy manifest-out))))])))
+            (let
+              [out-count : i64 (strings.len (& emitted-files))]
+              [out-arr : (__tl_dyn-array String)
+                (__tl_make-array String out-count)]
+              [direct-arr : (__tl_dyn-array bool)
+                (__tl_make-array bool out-count)]
+              (for [i (iterator.range 0 out-count)]
+                (set!
+                  (array-ref out-arr i)
+                  (strings.get (& emitted-files) i ""))
+                (set!
+                  (array-ref direct-arr i)
+                  (= (indices.get (& emitted-direct) i 0) 1)))
+              (Ok
+                (TliPartitionedEmitResult
+                  out-arr
+                  direct-arr
+                  emitted-modules
+                  skipped-modules)))))])))

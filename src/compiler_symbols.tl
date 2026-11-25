@@ -1160,14 +1160,28 @@
   [handle : i64]) : ResultCompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-names decl-count)
-      (if (compiler-symbol-map-contains-id? (& types) name-id)
-        (Err
-          (compiler-symbols-duplicate-type-message
-            (compiler-symbol-module-key-by-id module-id decl-name-id)))
-        (begin
+      (match (compiler-symbol-map-lookup-id (& types) name-id)
+        [(Some existing)
+          (if (and
+            (compiler-symbol-root-module-id? module-id)
+            (compiler-symbols-handle-from-nonroot-owner? symbols existing))
+            (begin
+              (compiler-symbol-map-bind-id! (&mut types) name-id handle)
+              (Ok
+                (CompilerSymbols
+                  values
+                  types
+                  macros
+                  decls
+                  owner-names
+                  decl-count)))
+            (Err
+              (compiler-symbols-duplicate-type-message
+                (compiler-symbol-module-key-by-id module-id decl-name-id))))]
+        [(None)
           (compiler-symbol-map-bind-id! (&mut types) name-id handle)
           (Ok
-            (CompilerSymbols values types macros decls owner-names decl-count))))]))
+            (CompilerSymbols values types macros decls owner-names decl-count))])]))
 
 (define (compiler-symbols-add-macro-id
   [symbols : (& CompilerSymbols)]
@@ -1353,14 +1367,33 @@
     [(CompilerSymbols values types macros decls owner-names decl-count)
       (match (compiler-symbol-map-lookup-id (& values) key-id)
         [(Some existing)
-          (if (=
-            (compiler-symbol-handle-kind existing)
-            (compiler-symbol-kind-enum-variant))
-            (Ok
-              (CompilerSymbols values types macros decls owner-names decl-count))
-            (Err
-              (compiler-symbols-duplicate-value-message
-                (compiler-symbol-module-key-by-id module-id display-name-id))))]
+          (if (and
+            (compiler-symbol-root-module-id? module-id)
+            (compiler-symbols-handle-from-nonroot-owner? symbols existing))
+            (begin
+              (compiler-symbol-map-bind-id! (&mut values) key-id handle)
+              (Ok
+                (CompilerSymbols
+                  values
+                  types
+                  macros
+                  decls
+                  owner-names
+                  decl-count)))
+            (if (=
+              (compiler-symbol-handle-kind existing)
+              (compiler-symbol-kind-enum-variant))
+              (Ok
+                (CompilerSymbols
+                  values
+                  types
+                  macros
+                  decls
+                  owner-names
+                  decl-count))
+              (Err
+                (compiler-symbols-duplicate-value-message
+                  (compiler-symbol-module-key-by-id module-id display-name-id)))))]
         [(None)
           (compiler-symbol-map-bind-id! (&mut values) key-id handle)
           (Ok

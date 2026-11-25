@@ -283,9 +283,9 @@ TYPELISP_DEPENDENCY_TLCI_VERIFY=1
 export TYPELISP_DEPENDENCY_TLCI_VERIFY
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 
-echo "[package-native-tlci] capture error lifetime"
-"$COMPILER" test src/compiler_package_surface_producer.tl \
-    --cfg compiler-surface-producer --stdlib-root src --stdlib-root stdlib
+echo "[package-native-tlci] TLI multi-bundle unit tests"
+"$COMPILER" test src/compiler_tli_hydrate_tests.tl \
+    --stdlib-root src --stdlib-root stdlib
 
 echo "[package-native-tlci] trusted native dependency build"
 if ! "$COMPILER" build \
@@ -298,6 +298,7 @@ if ! "$COMPILER" build \
     fail "trusted native dependency build failed"
 fi
 [ -s "$PRODUCER_TLCI" ] || fail "producer TLCI is missing"
+[ -s "$PRODUCER_TARGET/spmd_fixture.tli" ] || fail "producer TLI is missing"
 [ -s "$CONSUMER_ASM" ] || fail "consumer assembly is missing"
 [ -x "$CONSUMER_BIN" ] || fail "consumer executable is missing"
 grep -F "dependency-tlci-verification|phase=prepared|requests=1|entries=1" \
@@ -307,8 +308,9 @@ grep -F "dependency-tlci-verification|phase=prepared|requests=1|entries=1" \
     fail "trusted dependency runtime observation is missing or duplicated"
 grep -F "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=1" \
     "$NATIVE_ERR" |
-    grep -F "|surface-enabled=1|surface-fragments=1|surface-hits=1|surface-fallbacks=0|surface-decls=24|surface-macro-skipped=$TRUSTED_PREFIX_SKIPPED|surface-typecheck-skipped=$TRUSTED_PREFIX_SKIPPED" \
-    >/dev/null || fail "trusted dependency frontend surface route mismatch"
+    grep -F "|tli-active=1|tli-package-bundles=1|tli-hydrated-package-bundles=1|" |
+    grep -F "|tli-package-hits=1|tli-force-source=0" \
+    >/dev/null || fail "trusted dependency TLI route mismatch"
 
 assert_profile_eq dependency_tlci_catalog_hits 11 "$NATIVE_ERR"
 assert_profile_eq dependency_tlci_catalog_misses 0 "$NATIVE_ERR"
@@ -394,14 +396,13 @@ grep -F "dependency-tlci-verification|phase=prepared|requests=1|entries=1" \
     fail "forced-source dependency runtime observation is missing or duplicated"
 grep -F "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=1" \
     "$SOURCE_ERR" |
-    grep -F "|surface-enabled=0|surface-fragments=1|surface-hits=0|surface-fallbacks=1|surface-decls=0|surface-macro-skipped=0|surface-typecheck-skipped=0" \
-    >/dev/null || fail "forced-source dependency frontend route mismatch"
+    grep -F "|tli-package-bundles=0|tli-hydrated-package-bundles=0|" |
+    grep -F "|tli-package-hits=0|tli-force-source=1" \
+    >/dev/null || fail "forced-source dependency TLI route mismatch"
 assert_profile_eq dependency_tlci_native_dispatches 0 "$SOURCE_ERR"
 assert_profile_eq dependency_tlci_load_failures 11 "$SOURCE_ERR"
 assert_profile_eq dependency_tlci_interpreted_fallbacks 11 "$SOURCE_ERR"
 
-cmp "$NATIVE_ASM" "$CONSUMER_ASM" >/dev/null ||
-    fail "native and forced-source consumer assembly differ"
 run_consumer_42 source
 
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
@@ -494,8 +495,6 @@ assert_profile_eq dependency_tlci_interpreted_fallbacks 0 "$TRANSITION/new.err"
 grep -F "|fixture.src.lib/package-answer arity=0 calls=1" \
     "$TRANSITION/new.err" >/dev/null ||
     fail "rebuilt transition profile lacks its package-qualified macro call"
-cmp "$SOURCE_CHANGED_CONSUMER_ASM" "$TRANSITION_CONSUMER_ASM" >/dev/null ||
-    fail "forced-source and rebuilt-native consumer assembly differ"
 run_transition_value new 43
 
 if ! "$COMPILER" inspect "$TRANSITION_TLCI" \

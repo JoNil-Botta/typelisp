@@ -241,7 +241,14 @@ f) `macros` (`TliMacroHandle`): `s:name`, `s:module`, `s:macro_identity`,
    keep the image digest and carry entry index `-1`. An absent companion
    uses a zero digest and entry index `-1`.
 g) `dispatches` (`TliDispatchDecl`): `s:name`, `s:module`, `s:link_symbol`,
-   `u32 flags` (reserved, `0` in v3).
+   `u32 flags` (bit0 `UNSAFE`), `TliType signature`, then a `TliFnSummary`
+   with the same encoding as a function's. A dispatch call runs one of its
+   variants, so the summary is their join: `PURE` and `NEVER` only when every
+   variant has them, every other effect, arena-argument store and global
+   write when any variant has it. A dispatch summary never carries a compact
+   body: `HAS_INLINE_IR` and `SPMD_INLINEABLE` are rejected,
+   `call_memory` is `-1`, and the inline-IR slice and digest are zero. O2
+   external summaries cover a dispatch's archive symbol like a function's.
 
 ### `TliType` tags
 
@@ -324,6 +331,15 @@ external summaries from packed `TliFnSummary` facts (`call_memory`,
 `opt-strip-available-externally!` drops all available-externally bodies and
 extern-declared globals before backend emission so out-of-line calls link
 against `libstdlib.a`.
+
+A job may attach several bundles (the sysroot `stdlib.tli` plus each package
+dependency's `.tli`). Hydration walks every attached bundle in one startup
+order: each hydrated function and dispatch summary records its owning module,
+so compact bodies decode from that bundle's own section, and external
+summaries, startup inits and imports span all bundles. Only the stdlib
+bundle carries `compact_ir`; package bundles leave `HAS_COMPACT_IR` clear and
+skip the decode. Startup-init pruning applies to stdlib inits only: a package
+module's inits, and the inits it imports, always run.
 
 ## Sysroot discovery
 

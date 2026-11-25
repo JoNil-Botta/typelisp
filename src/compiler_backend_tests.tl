@@ -15115,10 +15115,30 @@ f:
 
 ;; #6306. A same-home float Phi is filtered from the parallel-copy list, but
 ;; its %xmm2 family already contains the final incoming value. The following
-;; spilled copy prefers %xmm2 as its scalar staging register and must preserve
+;; spilled copy prefers %xmm2 as its scalar staging register; the edge's
+;; phi-edge mask refuses it, so the copy stages through a free %xmm3 and the
+;; placed family is never written. Under pressure -- every XMM staging candidate
+;; holds a placed Phi -- the pick falls back to %xmm2 and the copy must preserve
 ;; the whole aliased physical family around that load/store pair.
 (define (compiler-backend-phi-xmm-stage-same-home-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%xmm2 %1=%xmm2 %2=spill:-24 %3=spill:-16"))
+
+;; The pressure variant: %xmm3..%xmm5, the rest of the XMM staging pool, also
+;; hold same-home placed Phis.
+(define (compiler-backend-phi-xmm-stage-pressure-assignments) : regalloc.CompilerRegAssignmentTable
+  (reg-homes
+    "%0=%xmm2 %1=%xmm2 %2=spill:-24 %3=spill:-16 %4=%xmm3 %5=%xmm3 %6=%xmm4 %7=%xmm4 %8=%xmm5 %9=%xmm5"))
+
+(define (compiler-backend-phi-xmm-stage-pressure-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       jump join
+     join:
+       %1 = phi [%0, entry] : f64
+       %5 = phi [%4, entry] : f64
+       %7 = phi [%6, entry] : f64
+       %9 = phi [%8, entry] : f64
+       %3 = phi [%2, entry] : f64"))
 
 (define (compiler-backend-phi-xmm-stage-same-home-blocks) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks-with-tail
@@ -15227,80 +15247,90 @@ f:
     (= (backend.compiler-backend-string-count asm "-128(%rbp)") 2)
     (asm-lacks? asm "-512(%rbp)")))
 
-(define (compiler-backend-phi-xmm-stage-preserved-ok?) : bool
-  (match (compiler-backend-phi-xmm-stage-edge-asm
-    (compiler-backend-phi-xmm-stage-same-home-assignments)
-    (compiler-backend-phi-xmm-stage-same-home-blocks)
-    4
-    (Scalar))
+(define (compiler-backend-phi-xmm-stage-free-shape? [asm : String]) : bool
+  (and
+    (asm-has? asm "    movsd -24(%rbp), %xmm3\n    movsd %xmm3, -16(%rbp)\n")
+    (asm-lacks? asm "%xmm2" "%ymm2" "%zmm2" "-128(%rbp)" "-512(%rbp)")))
+
+(define (compiler-backend-phi-xmm-stage-mode-asm
+  [pressure? : bool]
+  [mode : be_state.CompilerBackendMode]) : be_state.ResultCompilerBackend
+  (if pressure?
+    (compiler-backend-phi-xmm-stage-edge-asm
+      (compiler-backend-phi-xmm-stage-pressure-assignments)
+      (compiler-backend-phi-xmm-stage-pressure-blocks)
+      10
+      mode)
+    (compiler-backend-phi-xmm-stage-edge-asm
+      (compiler-backend-phi-xmm-stage-same-home-assignments)
+      (compiler-backend-phi-xmm-stage-same-home-blocks)
+      4
+      mode)))
+
+(define (compiler-backend-phi-xmm-stage-preserved-modes-ok? [pressure? : bool]) : bool
+  (match (compiler-backend-phi-xmm-stage-mode-asm pressure? (Scalar))
     [(Ok scalar)
-      (match (compiler-backend-phi-xmm-stage-edge-asm
-        (compiler-backend-phi-xmm-stage-same-home-assignments)
-        (compiler-backend-phi-xmm-stage-same-home-blocks)
-        4
-        (Avx2))
+      (match (compiler-backend-phi-xmm-stage-mode-asm pressure? (Avx2))
         [(Ok avx2)
-          (match (compiler-backend-phi-xmm-stage-edge-asm
-            (compiler-backend-phi-xmm-stage-same-home-assignments)
-            (compiler-backend-phi-xmm-stage-same-home-blocks)
-            4
-            (Avx512))
+          (match (compiler-backend-phi-xmm-stage-mode-asm pressure? (Avx512))
             [(Ok avx512)
-              (match (compiler-backend-phi-xmm-stage-edge-asm
-                (compiler-backend-phi-xmm-stage-placed-assignments)
-                (compiler-backend-phi-xmm-stage-placed-blocks)
-                3
-                (Scalar))
-                [(Ok placed)
-                  (match (compiler-backend-phi-xmm-stage-edge-asm
-                    (compiler-backend-phi-xmm-stage-safe-assignments)
-                    (compiler-backend-phi-xmm-stage-safe-blocks)
-                    2
-                    (Scalar))
-                    [(Ok safe)
-                      (let
-                        [placed-value : i64
-                          (backend.compiler-backend-string-find-from
-                            placed
-                            "    movsd .L_tl_f64_"
-                            0)]
-                        [placed-save : i64
-                          (backend.compiler-backend-string-find-from
-                            placed
-                            "    movdqu %xmm2, -128(%rbp)\n"
-                            0)]
-                        (and
-                          (compiler-backend-phi-xmm-stage-bracket-shape?
-                            scalar
-                            "    movdqu %xmm2, -128(%rbp)\n"
-                            "    movdqu -128(%rbp), %xmm2\n")
-                          (compiler-backend-phi-xmm-stage-bracket-shape?
-                            avx2
-                            "    vmovdqu %ymm2, -128(%rbp)\n"
-                            "    vmovdqu -128(%rbp), %ymm2\n")
-                          (compiler-backend-phi-xmm-stage-bracket-shape?
-                            avx512
-                            "    vmovdqu64 %zmm2, -128(%rbp)\n"
-                            "    vmovdqu64 -128(%rbp), %zmm2\n")
-                          (>= placed-value 0)
-                          (>= placed-save 0)
-                          (< placed-value placed-save)
-                          (compiler-backend-phi-xmm-stage-bracket-shape?
-                            placed
-                            "    movdqu %xmm2, -128(%rbp)\n"
-                            "    movdqu -128(%rbp), %xmm2\n")
-                          (asm-has?
-                            safe
-                            "    movsd -24(%rbp), %xmm2\n    movsd %xmm2, -16(%rbp)\n")
-                          (asm-lacks? safe "movdqu")))]
-                    [(Err _) false])]
-                [(Err _) false])]
+              (if pressure?
+                (and
+                  (compiler-backend-phi-xmm-stage-bracket-shape?
+                    scalar
+                    "    movdqu %xmm2, -128(%rbp)\n"
+                    "    movdqu -128(%rbp), %xmm2\n")
+                  (compiler-backend-phi-xmm-stage-bracket-shape?
+                    avx2
+                    "    vmovdqu %ymm2, -128(%rbp)\n"
+                    "    vmovdqu -128(%rbp), %ymm2\n")
+                  (compiler-backend-phi-xmm-stage-bracket-shape?
+                    avx512
+                    "    vmovdqu64 %zmm2, -128(%rbp)\n"
+                    "    vmovdqu64 -128(%rbp), %zmm2\n"))
+                (and
+                  (compiler-backend-phi-xmm-stage-free-shape? scalar)
+                  (compiler-backend-phi-xmm-stage-free-shape? avx2)
+                  (compiler-backend-phi-xmm-stage-free-shape? avx512)))]
             [(Err _) false])]
         [(Err _) false])]
     [(Err _) false]))
 
+(define (compiler-backend-phi-xmm-stage-preserved-ok?) : bool
+  (and
+    (compiler-backend-phi-xmm-stage-preserved-modes-ok? false)
+    (compiler-backend-phi-xmm-stage-preserved-modes-ok? true)
+    (match (compiler-backend-phi-xmm-stage-edge-asm
+      (compiler-backend-phi-xmm-stage-placed-assignments)
+      (compiler-backend-phi-xmm-stage-placed-blocks)
+      3
+      (Scalar))
+      [(Ok placed)
+        ;; The literal's own load is the only write of %xmm2.
+        (and
+          (asm-has? placed "    movsd .L_tl_f64_")
+          (= (backend.compiler-backend-string-count placed "%xmm2") 1)
+          (asm-has?
+            placed
+            "    movsd -24(%rbp), %xmm3\n    movsd %xmm3, -16(%rbp)\n")
+          (asm-lacks? placed "-128(%rbp)" "-512(%rbp)"))]
+      [(Err _) false])
+    (match (compiler-backend-phi-xmm-stage-edge-asm
+      (compiler-backend-phi-xmm-stage-safe-assignments)
+      (compiler-backend-phi-xmm-stage-safe-blocks)
+      2
+      (Scalar))
+      [(Ok safe)
+        (and
+          (asm-has?
+            safe
+            "    movsd -24(%rbp), %xmm2\n    movsd %xmm2, -16(%rbp)\n")
+          (asm-lacks? safe "movdqu"))]
+      [(Err _) false])))
+
 ;; Mov+Jump fusion substitutes var4 for the pre-fusion var2 source, then runs
-;; the dense target scan. The raw same-home Phi must still protect %xmm2.
+;; the dense target scan. The raw same-home Phi must still protect %xmm2: the
+;; copy stages through %xmm3 and never writes it.
 (define (compiler-backend-phi-xmm-fused-stage-preserved-ok?) : bool
   (let
     [blocks : ir.CompilerIrBlockList
@@ -15325,11 +15355,8 @@ f:
         (Var 4)
         program-index
         5)
-      (has
-        "    movdqu %xmm2, -128(%rbp)\n"
-        "    movsd -32(%rbp), %xmm2\n"
-        "    movsd %xmm2, -16(%rbp)\n"
-        "    movdqu -128(%rbp), %xmm2\n"))))
+      (has "    movsd -32(%rbp), %xmm3\n" "    movsd %xmm3, -16(%rbp)\n")
+      (lacks "%xmm2" "-128(%rbp)"))))
 
 (define (compiler-backend-phi-group-cycle-assignments) : regalloc.CompilerRegAssignmentTable
   (reg-homes "%0=%r12/%r13 %1=%r14/%r15"))
@@ -15933,6 +15960,153 @@ f:
           (= (backend.compiler-backend-string-count asm "%rax") 2)
           (= (backend.compiler-backend-string-count asm "%rdx") 2))]
       [(Err _) false])))
+
+;; #10009 review: edge-precise scavenge occupancy reads a register free once the
+;; predecessor's last use of it is behind the edge, but phi marshalling may
+;; already have placed a final value there -- a drained copy or, as in these
+;; fixtures, a same-home Phi filtered out before marshalling (deterministic: it
+;; holds its value before the first copy is emitted). Every scratch the edge
+;; scavenges must refuse those homes. No scavenge context is installed, so the
+;; occupancy model reads every register free, exactly the hazard.
+(define (compiler-backend-phi-edge-placed-asm
+  [index : be_state.CompilerBackendProgramIndex]
+  [assignments : regalloc.CompilerRegAssignmentTable]
+  [blocks : ir.CompilerIrBlockList]
+  [group-vars : compiler_liveness.CompilerLiveI64Set]
+  [vars : i64]) : be_state.ResultCompilerBackend
+  (let
+    [backend-state : be_state.CompilerBackendState index.backend-state]
+    [function-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state backend-state)]
+    [prev-count : i64 (scratch-cycle-temp-used-count function-state)]
+    [prev-base : i64 (scratch-cycle-temp-base-offset function-state)]
+    [_set : unit
+      (begin
+        (set-scratch-cycle-temp-used-count! function-state 0)
+        (set-scratch-cycle-temp-base-offset! function-state -512)
+        (set-scratch-emergency-slot-offset! function-state -128)
+        (be_facts.compiler-backend-current-slot-vars-set! backend-state vars)
+        (be_facts.compiler-backend-group-vars-enable!
+          backend-state
+          group-vars
+          (compiler_liveness.compiler-live-set-empty)))]
+    [copied : be_state.ResultCompilerBackend
+      (be_calls.compiler-backend-emit-phi-edge-copies
+        (ast.ast-node-pool-reader-type-segment-bases)
+        assignments
+        blocks
+        (ir.compiler-ir-label "join")
+        (ir.compiler-ir-label "entry")
+        index
+        vars)]
+    [_restore : unit
+      (begin
+        (be_facts.compiler-backend-group-vars-disable! backend-state)
+        (set-scratch-cycle-temp-used-count! function-state prev-count)
+        (set-scratch-cycle-temp-base-offset! function-state prev-base))]
+    ;; The mask is the marshalling's alone: once the edge is emitted it is back
+    ;; to the conservative "no list installed" default.
+    (if (=
+      (be_calls.compiler-backend-function-state-current-phi-dst-home-mask
+        backend-state)
+      -1)
+      copied
+      (Err
+        (box
+          (cdiag.compiler-diagnostic-at-start
+            ""
+            "phi dst-home mask outlived its edge"))))))
+
+(define (compiler-backend-phi-edge-group-pair-vars) : compiler_liveness.CompilerLiveI64Set
+  (compiler_liveness.compiler-live-set-insert
+    (compiler_liveness.compiler-live-set1 0)
+    1))
+
+;; (1) A group phi copy stages its words through %rax/%rdx (GP) or
+;; %xmm0/%xmm1 (SSE) by default; here those registers hold placed scalar phis.
+(define (compiler-backend-phi-group-copy-avoids-placed-ok?) : bool
+  (and
+    (asm-ok?
+      (compiler-backend-phi-edge-placed-asm
+        (compiler-backend-register-group-test-index)
+        (reg-homes "%0=spill:-16 %1=spill:-32 %2=%rax %3=%rdx %4=%rax %5=%rdx")
+        (irt.blocks
+          "join:
+             %2 = phi [%4, entry] : i64
+             %3 = phi [%5, entry] : i64
+             %1 = phi [%0, entry] : BackendGroupTest")
+        (compiler-backend-phi-edge-group-pair-vars)
+        6)
+      (has "-16(%rbp)" "-24(%rbp)" "-32(%rbp)" "-40(%rbp)")
+      (lacks "%rax" "%eax" "%rdx" "%edx"))
+    (asm-ok?
+      (compiler-backend-phi-edge-placed-asm
+        (compiler-backend-register-group-f64-test-index)
+        (reg-homes
+          "%0=spill:-16 %1=spill:-32 %2=%xmm0 %3=%xmm1 %4=%xmm0 %5=%xmm1")
+        (irt.blocks
+          "join:
+             %2 = phi [%4, entry] : f64
+             %3 = phi [%5, entry] : f64
+             %1 = phi [%0, entry] : BackendGroupF64Test")
+        (compiler-backend-phi-edge-group-pair-vars)
+        6)
+      (has "-16(%rbp)" "-24(%rbp)" "-32(%rbp)" "-40(%rbp)")
+      (lacks "%xmm0" "%xmm1"))))
+
+;; (2) Spilled phi cycles break through a frame Temp staged in %r10 (GP) and
+;; %xmm2 (float) by default; here those registers hold placed scalar phis.
+(define (compiler-backend-phi-spill-cycle-temp-avoids-placed-ok?) : bool
+  (asm-ok?
+    (compiler-backend-phi-edge-placed-asm
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))
+      (reg-homes
+        "%0=spill:-8 %1=spill:-16 %2=spill:-24 %3=spill:-32 %4=%r10 %5=%xmm2 %6=%r10 %7=%xmm2")
+      (irt.blocks
+        "join:
+           %4 = phi [%6, entry] : i64
+           %5 = phi [%7, entry] : f64
+           %0 = phi [%1, entry] : i64
+           %1 = phi [%0, entry] : i64
+           %2 = phi [%3, entry] : f64
+           %3 = phi [%2, entry] : f64")
+      (compiler_liveness.compiler-live-set-empty)
+      8)
+    (has "    movq %r9, -512(%rbp)\n" "    movsd %xmm3, -512(%rbp)\n")
+    (lacks "%r10" "%xmm2")))
+
+;; (3) A register cycle breaks through a scavenged Temp register. The pair
+;; phi drained first into %rcx/%r9; its HIGH half %r9 is the first pool
+;; candidate and must not become the Temp.
+(define (compiler-backend-phi-reg-cycle-temp-avoids-pair-hi-ok?) : bool
+  (asm-ok?
+    (compiler-backend-phi-edge-placed-asm
+      (compiler-backend-register-group-test-index)
+      (reg-homes "%0=%rcx/%r9 %1=spill:-16 %2=%rdx %3=%r10")
+      (irt.blocks
+        "join:
+           %0 = phi [%1, entry] : BackendGroupTest
+           %2 = phi [%3, entry] : i64
+           %3 = phi [%2, entry] : i64")
+      (compiler-backend-phi-edge-group-pair-vars)
+      4)
+    (has ", %rcx\n" ", %r9\n")
+    (lacks "    movq %r9, " "    movq %rdx, %r9\n" "    movq %r10, %r9\n")))
+
+(test
+  backend-phi-edge-scratch-avoids-placed-values
+  (test.assert-true
+    (compiler-backend-phi-group-copy-avoids-placed-ok?)
+    "group phi copy scratch avoids placed phi destinations")
+  (test.assert-true
+    (compiler-backend-phi-spill-cycle-temp-avoids-placed-ok?)
+    "spilled phi cycle Temp staging avoids placed phi destinations")
+  (test.assert-true
+    (compiler-backend-phi-reg-cycle-temp-avoids-pair-hi-ok?)
+    "register phi cycle Temp avoids both halves of a placed pair"))
 
 (define (compiler-backend-phi-float-cycle-copy-ok?) : bool
   (let

@@ -1,8 +1,11 @@
+(import stdlib.eq)
 (import stdlib.hashmap)
 
 (defstruct UnsupportedHashmapKey
   (value i64)
   (indirect (Box i64)))
+
+(eq.gen UnsupportedHashmapKey)
 
 (import (hashmap.hashmap UnsupportedHashmapKey i64) as unsupported_key_map)
 

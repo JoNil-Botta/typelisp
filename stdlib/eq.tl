@@ -1,6 +1,28 @@
-;# Generated structural equality modules.
-;: Generate an equality module for concrete scalar and aggregate type `T`.
+;# Owner-side nominal equality and generated equality adapter modules.
+;#
+;# A nominal type's equality lives beside the type. Its exact canonical owner
+;# module either calls `(eq.gen T)`, which emits one ordinary function
+;# `eq-<kebab-name>` comparing fields in declaration order (variant tag, then
+;# payloads, for an enum), or defines that function itself for a semantic
+;# equality:
+;#
+;# ```typelisp
+;# (module geometry)
+;# (import stdlib.eq)
+;# (defstruct Point (x i64) (y i64))
+;# (eq.gen Point) ; (define (eq-point [left : (& left Point)] [right : (& right Point)]) : bool ...)
+;# ```
+;#
+;# The hook name is the lowercase kebab form of the nominal name, as for
+;# `clone-<kebab-name>`. `(eq.eq T)` is the capability-module adapter used by
+;# collections: its `eq` and `eq?` take shared borrows of two `T` values. For a
+;# nominal `T` it validates and calls the owner hook and never reflects the
+;# fields, so it also works for an `(:opaque)` type outside its module family.
+;# Scalars, `String`, tuples, and fixed arrays compare structurally, and nested
+;# nominal members always dispatch through their own owner hooks. A type's
+;# nominal dependencies must have their hooks before `(eq.gen T)` expands.
 (import stdlib.comptime)
+(import stdlib.clone)
 
 ;; Generated equality reads its operands through shared borrows, as Rust's
 ;; derived `PartialEq` does: nothing is copied out or moved, so a compared
@@ -119,11 +141,7 @@
     ["u8" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
     ["f64" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
     ["f32" `(= (stdlib.eq.eq-value ,left) (stdlib.eq.eq-value ,right))]
-    ["struct"
-      `(let
-        [__eq_left (stdlib.eq.eq-ref ,left)]
-        [__eq_right (stdlib.eq.eq-ref ,right)]
-        (stdlib.eq.struct-eq-fields ,T 0 __eq_left __eq_right))]
+    ["struct" `(stdlib.eq.owner-eq ,T ,left ,right)]
     ["tuple"
       `(let
         [__eq_left (stdlib.eq.eq-ref ,left)]
@@ -141,11 +159,7 @@
             ,length-expr
             ,left
             ,right)))]
-    ["enum"
-      `(let
-        [__eq_left (stdlib.eq.eq-ref ,left)]
-        [__eq_right (stdlib.eq.eq-ref ,right)]
-        (stdlib.eq.enum-eq-dispatch ,T __eq_left __eq_right 0))]
+    ["enum" `(stdlib.eq.owner-eq ,T ,left ,right)]
     [_
       (comptime.comptime-error
         (comptime.string-append "eq: unsupported type " (type-key T)))]))
@@ -252,146 +266,295 @@
       (comptime.comptime-error
         "eq: enum variant index must be an integer literal")]))
 
-;: Generate a concrete equality module for `T`.
+;: Emit a call of nominal `T`'s canonical `eq-<kebab-name>` owner hook.
+(defmacro (owner-eq
+  [T : type (:kind struct enum)]
+  [left : comptime.Expr]
+  [right : comptime.Expr]) : comptime.Expr
+  `(stdlib.eq.owner-hook-call
+    ,T
+    (stdlib.eq.owner-hook-name
+      ,T
+      (stdlib.clone.nominal-hook-name ,T "eq-" "eq: " "nominal name is empty")
+      "eq")
+    "eq"
+    ,left
+    ,right))
+
+;: Return HOOK-NAME after checking that nominal `T`'s canonical owner module
+;: defines it as a function with the owner-hook shape of FAMILY-EXPR: "eq"
+;: expects `(-> (& T) (& T) bool)` and "hash" expects `(-> (& T) i64)`.
+(defmacro (owner-hook-name
+  [T : type (:kind struct enum)]
+  [hook-name : String]
+  [family-expr : comptime.Expr]) : comptime.Expr
+  (let
+    [family : String (comptime.expr-string-value family-expr)]
+    [eq-family? : bool (string-eq family "eq")]
+    [owner : String (type-nominal-module T)]
+    [owner-display : String
+      (if (string-eq owner "")
+        "<root>"
+        owner)]
+    [type-name : String (type-nominal-name T)]
+    [function-name : String (comptime.expr-string-value hook-name)]
+    [arity : i64
+      (if eq-family?
+        2
+        1)]
+    [result-kind : String
+      (if eq-family?
+        "bool"
+        "i64")]
+    [signature : String
+      (if eq-family?
+        (comptime.string-append
+          "(-> (& "
+          (comptime.string-append
+            type-name
+            (comptime.string-append
+              ") (& "
+              (comptime.string-append type-name ") bool)"))))
+        (comptime.string-append
+          "(-> (& "
+          (comptime.string-append type-name ") i64)")))]
+    [manual : String
+      (if eq-family?
+        (comptime.string-append
+          " [left : (& left "
+          (comptime.string-append
+            type-name
+            (comptime.string-append
+              ")] [right : (& right "
+              (comptime.string-append type-name ")]) : bool"))))
+        (comptime.string-append
+          " [value : (& value "
+          (comptime.string-append type-name ")]) : i64")))]
+    [context : String
+      (comptime.string-append
+        family
+        (comptime.string-append
+          ": nominal type "
+          (comptime.string-append
+            type-name
+            (comptime.string-append
+              " needs its canonical owner hook "
+              (comptime.string-append
+                function-name
+                (comptime.string-append " in module " owner-display))))))]
+    (if (comptime.module-value? owner function-name)
+      unit
+      (comptime.comptime-error
+        (comptime.string-append
+          context
+          (comptime.string-append
+            "; add ("
+            (comptime.string-append
+              family
+              (comptime.string-append
+                ".gen "
+                (comptime.string-append
+                  type-name
+                  (comptime.string-append
+                    ") there or define ("
+                    (comptime.string-append
+                      function-name
+                      (comptime.string-append manual ")"))))))))))
+    ;; A hook that no generated code calls (an eq hook validated by
+    ;; `hash.gen`) is checked only here, so every parameter must be a shared
+    ;; borrow of exactly `T`.
+    (let
+      [hook-type : comptime.Expr
+        (comptime.module-value-type owner function-name)]
+      [valid : bool (string-eq (type-kind hook-type) "function")]
+      [type-text : String (type-key T)]
+      [last-index : i64 (- arity 1)]
+      (if valid
+        (set! valid (= (function-param-count hook-type) arity))
+        unit)
+      (if valid
+        (set!
+          valid
+          (string-eq (type-kind (function-return-type hook-type)) result-kind))
+        unit)
+      ;; The first and the last parameter cover both eq and hash arities.
+      (if valid
+        (set!
+          valid
+          (string-eq (type-kind (function-param-type hook-type 0)) "ref"))
+        unit)
+      (if valid
+        (set!
+          valid
+          (string-eq
+            (type-key
+              (comptime.reference-element-type
+                (function-param-type hook-type 0)))
+            type-text))
+        unit)
+      (if valid
+        (set!
+          valid
+          (string-eq
+            (type-kind (function-param-type hook-type last-index))
+            "ref"))
+        unit)
+      (if valid
+        (set!
+          valid
+          (string-eq
+            (type-key
+              (comptime.reference-element-type
+                (function-param-type hook-type last-index)))
+            type-text))
+        unit)
+      (if valid
+        unit
+        (comptime.comptime-error
+          (comptime.string-append
+            context
+            (comptime.string-append
+              " with signature "
+              (comptime.string-append
+                signature
+                (comptime.string-append ", got " (type-key hook-type)))))))
+      (comptime.expr-string function-name))))
+
+;: Call the validated owner hook HOOK-NAME of nominal `T` on shared borrows of
+;: its operands. An "eq" hook takes LEFT and RIGHT; a "hash" hook takes LEFT.
+(defmacro (owner-hook-call
+  [T : type (:kind struct enum)]
+  [hook-name : String]
+  [family-expr : comptime.Expr]
+  [left : comptime.Expr]
+  [right : comptime.Expr]) : comptime.Expr
+  (let
+    [hook : comptime.Expr
+      (comptime.module-value-expr
+        (type-nominal-module T)
+        (comptime.expr-string-value hook-name))]
+    [left-arg : comptime.Expr `(stdlib.eq.eq-ref ,left)]
+    (if (string-eq (comptime.expr-string-value family-expr) "eq")
+      (comptime.expr-call
+        hook
+        (comptime.expr-list-cons
+          left-arg
+          (comptime.expr-list-cons
+            `(stdlib.eq.eq-ref ,right)
+            (comptime.expr-list-empty))))
+      (comptime.expr-call
+        hook
+        (comptime.expr-list-cons left-arg (comptime.expr-list-empty))))))
+
+;: Generate nominal `T`'s canonical `eq-<kebab-name>` owner hook.
+;:
+;: Call it from `T`'s exact canonical owner module, after the hooks of the
+;: nominal types `T` holds. The emitted function compares two shared borrows
+;: field by field, or by variant tag and then payload, short-circuiting at the
+;: first difference. Repeating the identical call is idempotent; a same-name
+;: value already in the owner module is a collision.
+(defmacro (gen [T : type (:kind struct enum)]) : Decls
+  (let
+    [owner : String (type-nominal-module T)]
+    [caller : String (comptime.current-module)]
+    (if (string-eq owner caller)
+      unit
+      (let
+        [owner-display : String
+          (if (string-eq owner "")
+            "<root>"
+            owner)]
+        [caller-display : String
+          (if (string-eq caller "")
+            "<root>"
+            caller)]
+        (comptime.comptime-error
+          (comptime.string-append
+            "eq.gen: "
+            (comptime.string-append
+              (type-nominal-name T)
+              (comptime.string-append
+                " must be generated in its canonical owner module "
+                (comptime.string-append
+                  owner-display
+                  (comptime.string-append
+                    " (current module "
+                    (comptime.string-append caller-display ")")))))))))
+    `(stdlib.eq.gen-named
+      ,T
+      (stdlib.clone.nominal-hook-name
+        ,T
+        "eq-"
+        "eq.gen: "
+        "nominal root name is empty"))))
+
+;: Emit the equality hook after its nominal name has been computed.
+(defmacro (gen-named [T : type (:kind struct enum)] [hook-name : String]) : Decls
+  (let
+    [owner : String (type-nominal-module T)]
+    [owner-display : String
+      (if (string-eq owner "")
+        "<root>"
+        owner)]
+    [function-name-text : String (comptime.expr-string-value hook-name)]
+    (if (comptime.module-value? owner function-name-text)
+      (comptime.comptime-error
+        (comptime.string-append
+          "eq.gen: generated name collision for "
+          (comptime.string-append
+            function-name-text
+            (comptime.string-append " in canonical owner module " owner-display))))
+      unit)
+    (let
+      [function-name : comptime.Expr (comptime.expr-var function-name-text)]
+      [body : comptime.Expr
+        (match (type-kind T)
+          ["struct" `(stdlib.eq.struct-eq-fields ,T 0 left right)]
+          [_ `(stdlib.eq.enum-eq-dispatch ,T left right 0)])]
+      `(define (,function-name [left : (& left ,T)] [right : (& right ,T)]) : bool
+        ,body))))
+
+;: Generate an equality adapter module for `T`.
+;:
+;: Its `eq` and `eq?` compare two shared borrows of `T` values without moving
+;: or copying them (`unit` operands, which have no reference form, are passed
+;: by value). A nominal `T` delegates to its canonical owner hook.
 (defmacro (eq [T : type]) : Module
   (let
     [module-name : Expr
       (expr-var (comptime.string-append "stdlib.eq.generated." (type-key T)))]
-    [kind : String (type-kind T)]
-    (match kind
-      ["string"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (__tl_string_eq left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (__tl_string_eq left right)))]
-      ["unit"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            true)
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            true))]
-      ["struct"
-        `(begin
-          (module ,module-name)
-          (import stdlib.eq)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.inline-eq ,T left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.inline-eq ,T left right)))]
-      ["tuple"
-        `(begin
-          (module ,module-name)
-          (import stdlib.eq)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.inline-eq ,T left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.inline-eq ,T left right)))]
+    (match (type-kind T)
       ["array"
         (if (array-dynamic? T)
           (comptime.comptime-error
             (comptime.string-append "eq: unsupported type " (type-key T)))
+          unit)]
+      [_ unit])
+    (match (type-kind T)
+      ;; A unit reference has no runtime representation, so unit operands are
+      ;; passed by value; every unit value is equal.
+      ["unit"
+        `(begin
+          (module ,module-name)
+          (define (eq [left : unit] [right : unit]) : bool
+            true)
+          (define (eq? [left : unit] [right : unit]) : bool
+            true))]
+      [_
+        (let
+          ;; A borrowed `String` place is a `str` view.
+          [operand-type : comptime.Expr
+            (if (string-eq (type-kind T) "string")
+              (comptime.expr-var "str")
+              T)]
           `(begin
             (module ,module-name)
             (import stdlib.eq)
-            (define (eq [left : ,T] [right : ,T]) : bool
+            (define (eq
+              [left : (& left ,operand-type)]
+              [right : (& right ,operand-type)]) : bool
               (stdlib.eq.inline-eq ,T left right))
-            (define (eq? [left : ,T] [right : ,T]) : bool
-              (stdlib.eq.inline-eq ,T left right))))]
-      ["enum"
-        `(begin
-          (module ,module-name)
-          (import stdlib.eq)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.inline-eq ,T left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (stdlib.eq.inline-eq ,T left right)))]
-      ["bool"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["char"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["i64"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["i32"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["i16"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["i8"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["u64"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["u32"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["u16"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["u8"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["f64"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      ["f32"
-        `(begin
-          (module ,module-name)
-          (define (eq [left : ,T] [right : ,T]) : bool
-            (= left right))
-          (define (eq? [left : ,T] [right : ,T]) : bool
-            (= left right)))]
-      [_
-        (comptime.comptime-error
-          (comptime.string-append "eq: unsupported type " (type-key T)))])))
+            (define (eq?
+              [left : (& left ,operand-type)]
+              [right : (& right ,operand-type)]) : bool
+              (stdlib.eq.inline-eq ,T left right))))])))

@@ -91,7 +91,9 @@
         (ivec.get (& mapped) 0 -1)
         15
         "map returns transformed first")
-      (test.assert-true (ivec.contains? (& mapped) 18) "contains? finds scalar")
+      (test.assert-true
+        (ivec.contains? (& mapped) (& 18))
+        "contains? finds scalar")
       (match (ivec.pop! v)
         [(Ok value)
           (test.assert-i64-eq value 4 "pop returns last value")
@@ -114,7 +116,7 @@
         2
         "string native slice preserves String element"))
     (test.assert-true
-      (svec.contains? (& words) "bee")
+      (svec.contains? (& words) (& "bee"))
       "aliased string contains")
     (match (svec.pop! words)
       [(Ok value)

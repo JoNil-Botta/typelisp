@@ -1,5 +1,6 @@
 ;; Generated Vec shared iterator coverage: borrowed scalar and aggregate items
 ;; retain their vector source lifetime without moving the stored element.
+(import stdlib.eq)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
 
@@ -7,9 +8,13 @@
   (x i64)
   (y i64))
 
+(eq.gen SharedIteratorPoint)
+
 (defstruct SharedIteratorBall
   (center SharedIteratorPoint)
   (radius i64))
+
+(eq.gen SharedIteratorBall)
 
 (import (vector.vector SharedIteratorBall) as ballvec)
 

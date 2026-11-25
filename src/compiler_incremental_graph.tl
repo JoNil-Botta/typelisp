@@ -180,8 +180,8 @@
 
 (stdlib.clone.gen-clone CompilerIncrementalGraphNodeRecord)
 
-(import (stdlib.vector.vector CompilerIncrementalGraphRootRecord) as graph_root_vec)
-(import (stdlib.vector.vector CompilerIncrementalGraphNodeRecord) as graph_node_vec)
+(import (stdlib.vector.vector CompilerIncrementalGraphRootRecord core) as graph_root_vec)
+(import (stdlib.vector.vector CompilerIncrementalGraphNodeRecord core) as graph_node_vec)
 
 ;; state: 1 open, 2 finalized, 3 failed (`error` holds the first failure).
 (defstruct CompilerIncrementalGraphBuilder
@@ -982,7 +982,7 @@
 
 (stdlib.clone.gen-clone CompilerIncrementalGraphEdgeRecord)
 
-(import (stdlib.vector.vector CompilerIncrementalGraphEdgeRecord) as graph_edge_vec)
+(import (stdlib.vector.vector CompilerIncrementalGraphEdgeRecord core) as graph_edge_vec)
 
 (defenum ResultCompilerIncrementalGraphTrace
   (Ok trace.CompilerIncrementalTrace)

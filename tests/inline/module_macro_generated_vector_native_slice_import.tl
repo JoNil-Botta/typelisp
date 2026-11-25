@@ -1,10 +1,13 @@
 ;; Generated module bodies can expose a native Slice through a nested generated
 ;; vector import for both scalar and aggregate element types.
+(import stdlib.eq)
 (import stdlib.test)
 (import stdlib.vector)
 
 (defstruct Pair
   (value i64))
+
+(eq.gen Pair)
 
 (defmacro (slice-user [T : type]) : Module
   (let

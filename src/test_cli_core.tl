@@ -1517,6 +1517,20 @@
   ;; synthesize a String snapshot or source substring call.
   (tltest-reach-mark-name-id names cbi.compiler-builtin-id-runtime-substring))
 
+;; Generated-module imports and declaration macro calls resolve owner-written
+;; `eq-<name>`/`hash-<name>` hooks by reflection after pruning. Mark a sentinel
+;; so those hooks and their callees survive pruning.
+(define (tltest-reach-mark-owner-eq-hash-hooks [names : tltest_name_map.Map]) : tltest_name_map.Map
+  (tltest-reach-mark-name-id names (ci.intern "__tl-owner-eq-hash")))
+
+;: Return whether NAME-ID spells an owner equality or hash hook.
+(define (tltest-owner-eq-hash-hook-name? [name-id : i64]) : bool
+  (let
+    [name : String (ci.intern-str name-id)]
+    (or
+      (string.is-string-prefix-at (& name) "eq-" 0)
+      (string.is-string-prefix-at (& name) "hash-" 0))))
+
 ;; Harness pruning runs before macro expansion expands `with-scratch`,
 ;; `with-escape`, or `clone.deep` into calls to owner-written `clone-<name>`
 ;; hooks. Mark a sentinel so those hooks and their callees survive pruning.
@@ -1839,12 +1853,19 @@
         [(No)
           (if (tltest-reachable-name-marked? session names name)
             (tltest-reach-mark-expr session body names)
-            (if (and
-              (tltest-reachable-name-marked?
-                session
-                names
-                (ci.intern "__tl-clone-out"))
-              (string.is-string-prefix-at (& (ci.intern-str name)) "clone-" 0))
+            (if (or
+              (and
+                (tltest-reachable-name-marked?
+                  session
+                  names
+                  (ci.intern "__tl-clone-out"))
+                (string.is-string-prefix-at (& (ci.intern-str name)) "clone-" 0))
+              (and
+                (tltest-reachable-name-marked?
+                  session
+                  names
+                  (ci.intern "__tl-owner-eq-hash"))
+                (tltest-owner-eq-hash-hook-name? name)))
               (tltest-reach-mark-expr
                 session
                 body
@@ -1873,8 +1894,17 @@
     ;; kept (tltest-reachable-runtime-decl?). Its arguments are the caller's
     ;; references: a constant named only by `(gen-slots first ...)` must survive
     ;; pruning, or the expansion reads an unbound name.
-    [(or (DefMacro _ _ _ _ body) (Import _ (Spec (MacroDecls body _) _ _ _ _)))
-      (tltest-reach-mark-expr session body names)]
+    ;; A generated-module import such as `(eq.eq T)`, `(hash.hash T)` or a
+    ;; collection family, and a declaration macro call such as
+    ;; `(hash.gen T)` or `(eq.gen T)`, resolve nominal owner hooks by
+    ;; module-value reflection during expansion, after pruning.
+    [(or (Import _ (Spec (Macro body _) _ _ _ _))
+         (Import _ (Spec (MacroDecls body _) _ _ _ _)))
+      (tltest-reach-mark-expr
+        session
+        body
+        (tltest-reach-mark-owner-eq-hash-hooks names))]
+    [(DefMacro _ _ _ _ body) (tltest-reach-mark-expr session body names)]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]

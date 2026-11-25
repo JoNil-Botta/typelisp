@@ -7,5 +7,7 @@ stdlib.hash/tuple-hash-elements	5	fixed	expr	tests/integration/stdlib_hash_gener
 stdlib.hash/inline-fixed-array-hash	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/enum-hash-payloads	6	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/enum-hash-dispatch	4	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
-stdlib.hash/hash-once	1	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
 stdlib.hash/hash	1	fixed	module	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/owner-hash	2	fixed	expr	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/gen	1	fixed	decls	tests/integration/stdlib_hash_generated.tl	ok	default	assembly
+stdlib.hash/gen-named	3	fixed	decls	tests/integration/stdlib_hash_generated.tl	ok	default	assembly

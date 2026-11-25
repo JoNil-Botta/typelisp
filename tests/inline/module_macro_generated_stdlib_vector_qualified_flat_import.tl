@@ -1,10 +1,13 @@
 ;; module_macro_generated_stdlib_vector_qualified_flat_import.tl - generated
 ;; module bodies can flat-import a provider-qualified Module macro result.
+(import stdlib.eq)
 (import stdlib.test)
 (import stdlib.vector)
 
 (defstruct Pair
   (value i64))
+
+(eq.gen Pair)
 
 (defmacro (vector-user [T : type]) : Module
   (let

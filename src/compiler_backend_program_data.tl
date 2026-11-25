@@ -37,6 +37,17 @@
   (offset i64)
   (owner-address u64))
 
+;; The owner equality hook the full-mode vector shared with `stdlib.sort.vec`
+;; requires.
+(define (eq-compiler-backend-literal-key
+  [left : (& left CompilerBackendLiteralKey)]
+  [right : (& right CompilerBackendLiteralKey)]) : bool
+  (and
+    (= left.slot-address right.slot-address)
+    (= left.owner right.owner)
+    (= left.offset right.offset)
+    (= left.owner-address right.owner-address)))
+
 (import (stdlib.vector.vector CompilerBackendLiteralKey) as literal_vec)
 (import (stdlib.sort.vec CompilerBackendLiteralKey) as literal_sort)
 

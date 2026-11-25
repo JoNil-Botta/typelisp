@@ -9,25 +9,49 @@
   (OtherNumber i64)
   (Text bool String char))
 
+(eq.gen HashStructuralChoice)
+
+(hash.gen HashStructuralChoice)
+
 (defstruct HashStructuralPoint
   (x i32)
   (enabled bool)
   (label String)
   (code char))
 
+(eq.gen HashStructuralPoint)
+
+(hash.gen HashStructuralPoint)
+
 (defstruct HashStructuralSample
   (point HashStructuralPoint)
   (choice HashStructuralChoice))
 
+(eq.gen HashStructuralSample)
+
+(hash.gen HashStructuralSample)
+
 (defstruct HashStructuralTuple
   (items (Tuple u8 u8)))
+
+(eq.gen HashStructuralTuple)
+
+(hash.gen HashStructuralTuple)
 
 (defstruct HashStructuralArray
   (items (Array i16 3)))
 
+(eq.gen HashStructuralArray)
+
+(hash.gen HashStructuralArray)
+
 (defstruct HashStructuralEmpty
   (unit-value unit)
   (items (Array u8 0)))
+
+(eq.gen HashStructuralEmpty)
+
+(hash.gen HashStructuralEmpty)
 
 (import (hash.hash HashStructuralSample) as hash_structural_sample)
 (import (hash.hash HashStructuralTuple) as hash_structural_tuple)
@@ -74,25 +98,25 @@
     [ordered-array : HashStructuralArray (HashStructuralArray (array 1 2 3))]
     [reversed-array : HashStructuralArray (HashStructuralArray (array 3 2 1))]
     [empty : HashStructuralEmpty (HashStructuralEmpty unit (array))]
-    [same-left : i64 (hash_structural_sample.hash hash-left)]
-    [same-right : i64 (hash_structural_sample.hash hash-right)]
-    [field-hash : i64 (hash_structural_sample.hash field-different)]
-    [variant-hash : i64 (hash_structural_sample.hash variant-different)]
-    [empty-variant-hash : i64 (hash_structural_sample.hash empty-variant)]
-    [text-hash : i64 (hash_structural_sample.hash text-choice)]
-    [tuple-hash : i64 (hash_structural_tuple.hash ordered-tuple)]
-    [tuple-reversed-hash : i64 (hash_structural_tuple.hash reversed-tuple)]
-    [array-hash : i64 (hash_structural_array.hash ordered-array)]
-    [array-reversed-hash : i64 (hash_structural_array.hash reversed-array)]
-    [empty-hash : i64 (hash_structural_empty.hash empty)]
+    [same-left : i64 (hash_structural_sample.hash (& hash-left))]
+    [same-right : i64 (hash_structural_sample.hash (& hash-right))]
+    [field-hash : i64 (hash_structural_sample.hash (& field-different))]
+    [variant-hash : i64 (hash_structural_sample.hash (& variant-different))]
+    [empty-variant-hash : i64 (hash_structural_sample.hash (& empty-variant))]
+    [text-hash : i64 (hash_structural_sample.hash (& text-choice))]
+    [tuple-hash : i64 (hash_structural_tuple.hash (& ordered-tuple))]
+    [tuple-reversed-hash : i64 (hash_structural_tuple.hash (& reversed-tuple))]
+    [array-hash : i64 (hash_structural_array.hash (& ordered-array))]
+    [array-reversed-hash : i64 (hash_structural_array.hash (& reversed-array))]
+    [empty-hash : i64 (hash_structural_empty.hash (& empty))]
     [evaluations : i64 0]
     [evaluated-once-hash : i64
       (hash_structural_sample.hash
         (begin
           (set! evaluations (+ evaluations 1))
-          evaluated-once))]
+          (& evaluated-once)))]
     (require
-      (eq_structural_sample.eq equal-left equal-right)
+      (eq_structural_sample.eq (& equal-left) (& equal-right))
       "generated hash equality fixture must compare equal")
     (require (= same-left same-right) "equal values must hash equally")
     (require
@@ -120,38 +144,42 @@
     (require (= empty-hash 323376260) "empty hash golden value changed")
     (require (= (hash_unit.hash unit) 1442) "unit hash golden value changed")
     (require
-      (!= (hash_bool.hash true) (hash_bool.hash false))
+      (!= (hash_bool.hash (& true)) (hash_bool.hash (& false)))
       "bool values affect the hash")
     (require
-      (!= (hash_char.hash 'A') (hash_char.hash 'B'))
+      (!= (hash_char.hash (& 'A')) (hash_char.hash (& 'B')))
       "char values affect the hash")
     (require
-      (= (hash_i64.hash -7) (hash_i64.hash -7))
+      (= (hash_i64.hash (& -7)) (hash_i64.hash (& -7)))
       "i64 hashes deterministically")
     (require
-      (= (hash_i32.hash (cast -7 : i32)) (hash_i32.hash (cast -7 : i32)))
+      (=
+        (hash_i32.hash (& (cast -7 : i32)))
+        (hash_i32.hash (& (cast -7 : i32))))
       "i32 hashes deterministically")
     (require
-      (= (hash_i16.hash (cast -7 : i16)) (hash_i16.hash (cast -7 : i16)))
+      (=
+        (hash_i16.hash (& (cast -7 : i16)))
+        (hash_i16.hash (& (cast -7 : i16))))
       "i16 hashes deterministically")
     (require
-      (= (hash_i8.hash (cast -7 : i8)) (hash_i8.hash (cast -7 : i8)))
+      (= (hash_i8.hash (& (cast -7 : i8))) (hash_i8.hash (& (cast -7 : i8))))
       "i8 hashes deterministically")
     (require
-      (= (hash_u64.hash (cast 7 : u64)) (hash_u64.hash (cast 7 : u64)))
+      (= (hash_u64.hash (& (cast 7 : u64))) (hash_u64.hash (& (cast 7 : u64))))
       "u64 hashes deterministically")
     (require
-      (= (hash_u32.hash (cast 7 : u32)) (hash_u32.hash (cast 7 : u32)))
+      (= (hash_u32.hash (& (cast 7 : u32))) (hash_u32.hash (& (cast 7 : u32))))
       "u32 hashes deterministically")
     (require
-      (= (hash_u16.hash (cast 7 : u16)) (hash_u16.hash (cast 7 : u16)))
+      (= (hash_u16.hash (& (cast 7 : u16))) (hash_u16.hash (& (cast 7 : u16))))
       "u16 hashes deterministically")
     (require
-      (= (hash_u8.hash (cast 7 : u8)) (hash_u8.hash (cast 7 : u8)))
+      (= (hash_u8.hash (& (cast 7 : u8))) (hash_u8.hash (& (cast 7 : u8))))
       "u8 hashes deterministically")
     (require
       (=
-        (hash_string.hash "same")
-        (hash_string.hash (string_mod.append "sa" "me")))
+        (hash_string.hash (& "same"))
+        (hash_string.hash (& (string_mod.append "sa" "me"))))
       "equal distinct owned strings must hash equally")
     0))

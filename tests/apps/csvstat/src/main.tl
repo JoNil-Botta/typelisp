@@ -7,6 +7,7 @@
 ;; column reports how many cells are non-empty. Output is tab-separated and in
 ;; column order. Malformed input is reported as `PATH:LINE:COL: error: ...`
 ;; with exit status 1; usage and read errors exit with status 2.
+(import stdlib.eq)
 (import stdlib.clone)
 (import stdlib.io)
 (import stdlib.byte_buf)
@@ -26,6 +27,8 @@
   (max i64))
 
 (stdlib.clone.gen-clone Column)
+
+(eq.gen Column)
 
 (import (vector.vector Column) as column-vec)
 

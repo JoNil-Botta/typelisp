@@ -1,4 +1,5 @@
 ;; Generated Vec consuming iteration moves the source and yields owned items.
+(import stdlib.eq)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
 
@@ -6,9 +7,13 @@
   (x i64)
   (y i64))
 
+(eq.gen ConsumingIteratorPoint)
+
 (defstruct ConsumingIteratorBall
   (center ConsumingIteratorPoint)
   (radius i64))
+
+(eq.gen ConsumingIteratorBall)
 
 (import (vector.vector ConsumingIteratorBall) as ballvec)
 

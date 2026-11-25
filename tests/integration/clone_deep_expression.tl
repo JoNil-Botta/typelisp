@@ -1,3 +1,4 @@
+(import stdlib.eq)
 (import stdlib.arena)
 (import stdlib.clone)
 (import stdlib.comptime)
@@ -9,13 +10,19 @@
 (defstruct CopyCell
   (count i64))
 
+(eq.gen CopyCell)
+
 (defenum CopyChoice
   (Missing)
   (Present CopyCell))
 
+(eq.gen CopyChoice)
+
 (defstruct CopyPair
   (left CopyChoice)
   (right CopyChoice))
+
+(eq.gen CopyPair)
 
 (import (vector.vector CopyPair) as copy_vec)
 (import (vector.vector String) as text_vec)

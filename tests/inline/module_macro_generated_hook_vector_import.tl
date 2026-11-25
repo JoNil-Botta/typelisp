@@ -1,5 +1,6 @@
 ;; module_macro_generated_hook_vector_import.tl - generated module bodies can
 ;; import stdlib `(vector T)` through a module hook macro value.
+(import stdlib.eq)
 (import stdlib.test)
 (import stdlib.comptime)
 
@@ -9,6 +10,8 @@
 
 (defstruct Pair
   (value i64))
+
+(eq.gen Pair)
 
 (defmacro (vector-user [factory : Module] [T : type]) : Module
   (let

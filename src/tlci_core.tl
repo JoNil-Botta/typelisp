@@ -659,6 +659,7 @@
   compiler-comptime-host-callback-tuple-element-count
   compiler-comptime-host-callback-tuple-element-type
   compiler-comptime-host-callback-function-param-count
+  compiler-comptime-host-callback-function-param-type
   compiler-comptime-host-callback-function-return-type
   compiler-comptime-host-callback-expr-list-length
   compiler-comptime-host-callback-expr-list-nth

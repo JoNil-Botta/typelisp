@@ -98,16 +98,19 @@ bounded check-compiler "$SANITIZED" check src/main.tl \
 grep -Fx 'Type checking passed!' "$WORKDIR/check-compiler.stdout" >/dev/null ||
     fail "instrumented check of the compiler did not pass"
 
+# $SANITIZED lives in $WORKDIR without a sibling sysroot while $COMPILER may
+# carry one; disable prebuilt stdlib on both so the assembly diff compares
+# identical compilation paths.
 # shellcheck disable=SC2046
 bounded selfhost-instrumented "$SANITIZED" compile src/main.tl \
     -o "$WORKDIR/selfhost-instrumented.s" --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
-    --opt-level 1
+    --opt-level 1 --no-prebuilt-stdlib
 # shellcheck disable=SC2046
 bounded selfhost-ordinary "$COMPILER" compile src/main.tl \
     -o "$WORKDIR/selfhost-ordinary.s" --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src \
-    --opt-level 1
+    --opt-level 1 --no-prebuilt-stdlib
 cmp "$WORKDIR/selfhost-instrumented.s" "$WORKDIR/selfhost-ordinary.s" ||
     fail "instrumented self-compile emitted different assembly"
 

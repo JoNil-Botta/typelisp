@@ -268,6 +268,8 @@ native_link_find_stdlib_archive() {
         "${TYPELISP_SYSROOT:-}" \
         "${COMPILER:+$(dirname -- "$COMPILER")}" \
         "${COMPILER:+$(dirname -- "$(dirname -- "$COMPILER")")}" \
+        "${TYPELISP_BIN:+$(dirname -- "$TYPELISP_BIN")}" \
+        "${TYPELISP_BIN:+$(dirname -- "$(dirname -- "$TYPELISP_BIN")")}" \
         "${STAGE3_BIN:+$(dirname -- "$STAGE3_BIN")}" \
         "${STAGE2_BIN:+$(dirname -- "$STAGE2_BIN")}" \
         "${BIN:+$(dirname -- "$BIN")}"; do

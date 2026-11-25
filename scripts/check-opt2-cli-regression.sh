@@ -199,7 +199,8 @@ else
         $(native_target_cfg_args) \
         --opt-level 1 \
         --stdlib-root stdlib \
-        --stdlib-root src; then
+        --stdlib-root src \
+        --no-prebuilt-stdlib; then
         print_log_pair "opt2-cli-gate reference compile failed" "$REF_STDOUT" "$REF_STDERR"
         exit 1
     fi
@@ -216,7 +217,8 @@ if ! run_with_heartbeat_capture \
     $(native_target_cfg_args) \
     --opt-level 1 \
     --stdlib-root stdlib \
-    --stdlib-root src; then
+    --stdlib-root src \
+    --no-prebuilt-stdlib; then
     print_log_pair "opt2-cli-gate cross compile failed" "$CROSS_STDOUT" "$CROSS_STDERR"
     exit 1
 fi

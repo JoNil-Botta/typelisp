@@ -46,12 +46,16 @@ assemble_and_link \
     "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFILE_BIN"
 
 echo "[compile-startup-profile] compile marker smoke"
+# $PROFILE_BIN lives in $WORKDIR without a sibling sysroot, while $COMPILER
+# may carry one; disable prebuilt stdlib on both so the assembly diff compares
+# identical compilation paths.
 "$PROFILE_BIN" compile "$INPUT" -o "$PROFILE_OUTPUT" \
     --target "$NL_BOOTSTRAP_TARGET" \
     $(native_target_cfg_args) \
     --stdlib-root stdlib \
     --stdlib-root src \
     --opt-level 0 \
+    --no-prebuilt-stdlib \
     2>"$PROFILE_STDERR"
 
 "$COMPILER" compile "$INPUT" -o "$CONTROL_OUTPUT" \
@@ -60,6 +64,7 @@ echo "[compile-startup-profile] compile marker smoke"
     --stdlib-root stdlib \
     --stdlib-root src \
     --opt-level 0 \
+    --no-prebuilt-stdlib \
     2>"$CONTROL_STDERR"
 
 cmp "$PROFILE_OUTPUT" "$CONTROL_OUTPUT" >/dev/null || {

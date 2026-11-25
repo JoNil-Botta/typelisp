@@ -1,0 +1,4 @@
+# Native integration cases for hot-loop register pressure in division loops.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+divisor_register_operand|all|0,1,2|tests/integration/divisor_register_operand.tl|42|733\n|-|-|-

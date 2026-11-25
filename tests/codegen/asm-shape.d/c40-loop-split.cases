@@ -1,0 +1,13 @@
+# opt2 assembly-shape gates for hot-loop spill work (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+
+# A divisor already homed in a register is the idiv operand itself, not a copy
+# staged through the %r9 scratch (which, with every scratch busy, saved and
+# restored a live register around each division of the Newton loops).
+case divisor-register-operand
+source tests/integration/divisor_register_operand.tl
+in fn main
+count >= 4 ^[[:space:]]+idivq %r(si|di|bx|bp|8|1[0-5])$

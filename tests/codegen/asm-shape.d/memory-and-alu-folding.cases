@@ -51,7 +51,9 @@ not-match ^[[:space:]]+movq .*\(%r[^)]*\), %r
 not-match call (\.L_tl_abort_)?tl_oob_abort
 
 # M6-I: a scalar global read folds into the compare's rip-relative operand, on
-# either side, with the unfolded branch sense; a twice-read local refuses.
+# either side, with the unfolded branch sense; a twice-read local refuses. The
+# jcc is pinned with its target: return-arm sinking lays the `1` arm out last,
+# so the compare jumps to it (`if_then.2`) and falls into the `0` arm.
 case global-cmp-mem-fold
 source tests/integration/global_cmp_mem_fold.tl
 target linux-x86_64 windows-x86_64
@@ -59,12 +61,12 @@ in fn _tl_global_cmp_mem_fold_probe_lhs
 count = 1 ^[[:space:]]+cmpq %r[a-z0-9]+, _tl_global_cmp_mem_fold_gcmp_gen\(%rip\)$
 not-match ^[[:space:]]+movq _tl_global_cmp_mem_fold_gcmp_gen\(%rip\), %r
 after cmpq %r[a-z0-9]+, _tl_global_cmp_mem_fold_gcmp_gen[(]%rip[)]
-next-line ^[[:space:]]+jne[ ]
+next-line ^[[:space:]]+je [.]L.*_if_then[.]2$
 in fn _tl_global_cmp_mem_fold_probe_rhs
 count = 1 ^[[:space:]]+cmpq _tl_global_cmp_mem_fold_gcmp_limit\(%rip\), %r[a-z0-9]+$
 not-match ^[[:space:]]+movq _tl_global_cmp_mem_fold_gcmp_limit\(%rip\), %r
 after cmpq _tl_global_cmp_mem_fold_gcmp_limit[(]%rip[)], %r[a-z0-9]+
-next-line ^[[:space:]]+jge[ ]
+next-line ^[[:space:]]+jl [.]L.*_if_then[.]2$
 in fn _tl_global_cmp_mem_fold_probe_refused
 match ^[[:space:]]+movq _tl_global_cmp_mem_fold_gcmp_gen\(%rip\), %r
 not-match ^[[:space:]]+cmpq .*_tl_global_cmp_mem_fold_gcmp_gen\(%rip\)

@@ -43,19 +43,21 @@ match ^[[:space:]]+movzbl \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %(e[a-z]+|r[0-9]+d)$
 match movb[ ]
 
 # Single-bit and matching-mask tests become `test` + the right jcc sense;
-# multi-bit, mismatched, ordered and dynamic masks keep and/cmp.
+# multi-bit, mismatched, ordered and dynamic masks keep and/cmp. The jcc is
+# pinned with its target: return-arm sinking lays the `1` arm out last, so the
+# test jumps to it (`if_then.2`) and falls into the `0` arm.
 case mask-test-admission
 source tests/integration/bit_test_mask_admission.tl
 in fn _tl_bit_test_mask_admission_parity_set
 count = 1 ^[[:space:]]+testb [$]1, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
 after ^[[:space:]]+testb [$]1, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
-next-line ^[[:space:]]+je[ ]
+next-line ^[[:space:]]+jne [.]L.*_if_then[.]2$
 not-match ^[[:space:]]+and[bwlq] [$]1, %[a-z0-9]+$
 not-match ^[[:space:]]+cmp[bwlq] [$]1, %[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_bit3_clear
 count = 1 ^[[:space:]]+testb [$]8, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
 after ^[[:space:]]+testb [$]8, %([abcd]l|[sd]il|[bs]pl|r[0-9]+b)$
-next-line ^[[:space:]]+jne[ ]
+next-line ^[[:space:]]+je [.]L.*_if_then[.]2$
 not-match ^[[:space:]]+and[bwlq] [$]8, %[a-z0-9]+$
 in fn _tl_bit_test_mask_admission_pair_both_set
 match ^[[:space:]]+andl [$]3, %(e[a-z]+|r[0-9]+d)$

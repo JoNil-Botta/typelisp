@@ -1,0 +1,27 @@
+# opt2 assembly-shape gates for #block-placement exit sinking (gate
+# stage2-regalloc-backend-asm-shape-gates). See tests/codegen/asm-shape.d/.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+# Exit sinking: the search loop's two early returns leave its run, so the
+# bound test and the hit test each fall into the loop and the only branch
+# taken per trip is the latch's jump back to the bound test.
+case c40-loop-exit-sinking
+source tests/integration/c40_loop_layout.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_c40_loop_layout_first_one_from
+after ^[[:space:]]+jge [.]L.*_if_then[.]0$
+next-line ^[.]L.*_if_else[.]1:$
+after ^[[:space:]]+je [.]L.*_if_then[.]3$
+next-line ^[.]L.*_if_else[.]4:$
+after ^[[:space:]]+jmp [.]L.*_entry$
+next-line ^[.]L.*_if_then[.]0:$
+
+# Size-optimized and -O1 builds keep the front end's order: the bound test's
+# return arm still follows it.
+case c40-loop-exit-sinking-size
+source tests/integration/c40_loop_layout.tl
+opt s 1
+in fn _tl_c40_loop_layout_first_one_from
+after ^[[:space:]]+jl [.]L.*_if_else[.]1$
+next-line ^[.]L.*_if_then[.]0:$

@@ -248,3 +248,172 @@ test -s "{{dir}}/vendor/purelib/target/release/purelib.tli"
 test ! -e "{{dir}}/vendor/purelib/target/release/purelib.tlci"
 exec "{{dir}}/target/release/app_pure{{exe}}"
 exit 42
+
+# `: Decls`-generated dependency macros reach the companion .tlci, and the
+# interpreted fallback re-reads a prebuilt macro's body only from its own
+# module, under the dependency's cfgs, with its `(type ...)` literals resolved;
+# a macro with neither a runnable entry nor a source body fails closed.
+case package-tli-generated-and-fallback-macros
+file gen/typelisp.pkg
+(package (name "genlib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file gen/src/lib.tl
+(defmacro (gen) : Decls `(defmacro (seven) : Expr `7))
+(gen)
+(define (one) : i64 1)
+end-file
+file genapp/typelisp.pkg
+(package (name "genapp") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (genlib "../gen")))
+end-file
+file genapp/src/main.tl
+(import genlib.src.lib as g)
+(define (main) : i64 (+ (g.seven) (g.one)))
+end-file
+file hyg/typelisp.pkg
+(package (name "hyglib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file hyg/src/lib.tl
+(import stdlib.comptime)
+(defmacro (gen) : Decls
+  `(defmacro (peek [e : Expr]) : Expr
+     (match e [(comptime.Expr.Var i) (comptime.expr-int 2)] [_ (comptime.expr-int 1)])))
+(gen)
+end-file
+file hygapp/typelisp.pkg
+(package (name "hygapp") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (hyglib "../hyg")))
+end-file
+file hygapp/src/main.tl
+(import hyglib.src.lib as h)
+(define (main) : i64 (h.peek 5))
+end-file
+file fb/typelisp.pkg
+(package (name "fblib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file fb/src/shapes.tl
+(defstruct Pt (x i64) (y i64) (z i64))
+end-file
+file fb/src/lib.tl
+(import stdlib.comptime)
+(import stdlib.string)
+(import src.shapes as sh)
+(module fbinner
+  (import stdlib.comptime)
+  (defmacro (peek [e : Expr]) : Expr (comptime.expr-int 99)))
+(cfg feat
+  (defmacro (peek [e : Expr]) : Expr
+    (comptime.expr-int
+      (+ (size-of (type sh.Pt)) (string.string-length (string.int->string 4321))))))
+(cfg (not feat)
+  (defmacro (peek [e : Expr]) : Expr
+    (comptime.expr-int
+      (+ (size-of (type sh.Pt)) (string.string-length (string.int->string 21))))))
+end-file
+file fbapp/typelisp.pkg
+(package (name "fbapp") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (fblib "../fb")))
+end-file
+file fbapp/src/main.tl
+(import fblib.src.lib as f)
+(define (main) : i64 (f.peek 5))
+end-file
+step generated-build
+run run --manifest-path "{{dir}}/genapp/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 8
+step generated-hygienic-fails-closed
+run check --manifest-path "{{dir}}/hygapp/typelisp.pkg"
+exit nonzero
+stderr contains prebuilt macro hyglib.src.lib/peek has no runnable .tlci entry and its source body is unavailable
+step fallback-default-cfgs
+run run --manifest-path "{{dir}}/fbapp/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 26
+step fallback-user-cfg
+sh rm -rf "{{dir}}/fb/target" "{{dir}}/fbapp/target"
+run run --manifest-path "{{dir}}/fbapp/typelisp.pkg" --target {{host-target}} --opt-level 0 --cfg feat
+exit 28
+
+# Library module records: a `(module m (...))` body or an import-led
+# `(module m)` file gets no phantom dotted record, while root declarations
+# after a body keep theirs.
+case package-tli-module-body-records
+file body/typelisp.pkg
+(package (name "bodylib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file body/src/lib.tl
+(module bodyonly (define (one) : i64 1))
+end-file
+file led/typelisp.pkg
+(package (name "ledlib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file led/src/lib.tl
+(import stdlib.io)
+(module ledonly)
+(define (one) : i64 1)
+end-file
+file mixed/typelisp.pkg
+(package (name "mixedlib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file mixed/src/lib.tl
+(module mixedinner (define (two) : i64 2))
+(define (one) : i64 1)
+end-file
+file mixedapp/typelisp.pkg
+(package (name "mixedapp") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (mixedlib "../mixed")))
+end-file
+file mixedapp/src/main.tl
+(import mixedlib.src.lib as m)
+(define (main) : i64 (+ (m.one) 4))
+end-file
+step body-build
+run build --manifest-path "{{dir}}/body/typelisp.pkg" --target {{host-target}}
+stderr empty
+step body-records
+run inspect "{{dir}}/body/target/release/bodylib.tli"
+stdout contains bodyonly: flags=
+stdout not-contains bodylib.src.lib:
+step led-build
+run build --manifest-path "{{dir}}/led/typelisp.pkg" --target {{host-target}}
+stderr empty
+step led-records
+run inspect "{{dir}}/led/target/release/ledlib.tli"
+stdout contains ledonly: flags=
+stdout not-contains ledlib.src.lib:
+step mixed-run
+run run --manifest-path "{{dir}}/mixedapp/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 5
+step mixed-records
+run inspect "{{dir}}/mixed/target/release/mixedlib.tli"
+stdout contains mixedlib.src.lib: flags=
+stdout contains mixedinner: flags=
+
+# A moduleless library's global writes and defdispatch effect summaries name
+# its dotted module, so an optimizing consumer keeps reads ordered after them.
+case package-tli-moduleless-effects
+file lib/typelisp.pkg
+(package (name "efflib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file lib/src/lib.tl
+(define counter : i64 0)
+(define (bump) : unit (set! counter (+ counter 10)))
+(define (count) : i64 counter)
+(define (tick-scalar [n : i64]) : i64 (begin (set! counter (+ counter n)) counter))
+(define (tick-avx2 [n : i64]) : i64 (begin (set! counter (+ counter n)) counter))
+(defdispatch tick (scalar tick-scalar) (avx2 tick-avx2))
+end-file
+file app/typelisp.pkg
+(package (name "effapp") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (efflib "../lib")))
+end-file
+file app/src/main.tl
+(import efflib.src.lib as e)
+(define (main) : i64
+  (let [a : i64 (e.count)]
+    (e.bump)
+    (e.tick 5)
+    (+ a (e.count))))
+end-file
+step effects-run
+run run --manifest-path "{{dir}}/app/typelisp.pkg" --target {{host-target}} --opt-level 2
+exit 15

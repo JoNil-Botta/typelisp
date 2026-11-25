@@ -71,7 +71,7 @@ rows and the 15,000,000-byte limit from
   `Utf8`, `Limit`, `StringIdOutOfRange`, `UnknownTag`, `DigestMismatch`,
   `CfgFingerprintMismatch`, `CompilerBuildMismatch`, `TargetMismatch`,
   `TrailingBytes`). Nothing is left partially decoded into a useable state.
-  `schema_version` is `2` and there is no compatibility reader, so a newer
+  `schema_version` is `3` and there is no compatibility reader, so a newer
   reader rejects an older version instead of guessing.
 - **Lazy, job-scoped decoding.** The Module Directory alone answers
   `inspect`-style summaries. A record decodes on first use into the current
@@ -81,7 +81,7 @@ rows and the 15,000,000-byte limit from
   `scripts/verify-compile-profile.sh` keeps its `<= 1 MiB` post-emission pool
   release and `<= 4 MiB` batch-live drift bounds.
 
-## `.tli` v2 wire format
+## `.tli` v3 wire format
 
 Bytes are packed in this order with no padding and no gaps: header, string
 pool, module directory, module records, compact IR. Offsets and lengths are
@@ -92,7 +92,7 @@ absolute from byte `0`.
 | Bytes | Field | Meaning |
 | --- | --- | --- |
 | `[0..4]` | `magic` | `"TLI\0"` (`0x00494C54`, little-endian) |
-| `[4..8]` | `schema_version: u32` | `2` |
+| `[4..8]` | `schema_version: u32` | `3` |
 | `[8..12]` | `flags: u32` | bit0 `IS_STDLIB_BUNDLE`, bit1 `HAS_COMPACT_IR`, bit2 `HAS_TLCI_COMPANION`; other bits `0` |
 | `[12..16]` | `module_count: u32` | directory entries |
 | `[16..24]` | `total_byte_len: u64` | must equal the file length |
@@ -219,7 +219,11 @@ f) `macros` (`TliMacroHandle`): `s:name`, `s:module`, `s:macro_identity`,
    keep the image digest and carry entry index `-1`. An absent companion
    uses a zero digest and entry index `-1`.
 g) `dispatches` (`TliDispatchDecl`): `s:name`, `s:module`, `s:link_symbol`,
-   `u32 flags` (reserved, `0` in v2).
+   `u32 flags` (bit0 `UNSAFE`), `TliType signature`, then a `TliFnSummary`
+   (v3) with the same encoding as a function's. A dispatch call runs one of
+   its variants, so the summary is their join: `PURE` and `NEVER` only when
+   every variant has them, every other effect, arena-argument store and
+   global write when any variant has it.
 
 ### `TliType` tags
 

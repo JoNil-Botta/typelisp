@@ -54928,6 +54928,34 @@
     "typecheck: defdispatch variant is not a function "
     (tc-env-key-name-text name)))
 
+(define (tc-dispatch-variant-handle [ctx : TcContext] [variant-name : i64]) : i64
+  (if (tc-name-qualified-id? (tc-context-structural-session ctx) variant-name)
+    (csym.compiler-symbols-lookup-value-id-or
+      (tc-context-symbols ctx)
+      variant-name
+      (csym.compiler-symbols-missing-handle))
+    (csym.compiler-symbols-lookup-value-in-module-id-or
+      (tc-context-symbols ctx)
+      (tc-context-module-id ctx)
+      variant-name
+      (csym.compiler-symbols-missing-handle))))
+
+;; The declaration index of a defdispatch variant function, or -1.
+(define (tc-dispatch-variant-decl-index [ctx : TcContext] [variant-name : i64]) : i64
+  (let
+    [handle : i64 (tc-dispatch-variant-handle ctx variant-name)]
+    (if (and
+      (csym.compiler-symbols-handle-found? handle)
+      (or
+        (=
+          (csym.compiler-symbol-handle-kind handle)
+          (csym.compiler-symbol-kind-function-define))
+        (=
+          (csym.compiler-symbol-handle-kind handle)
+          (csym.compiler-symbol-kind-extern))))
+      (csym.compiler-symbol-handle-index handle)
+      -1)))
+
 (define (tc-dispatch-variant-type
   [ctx : TcContext]
   [dispatch-name : i64]
@@ -54938,21 +54966,8 @@
     (if (= lookup-key logical-key)
       (Err "typecheck: defdispatch cannot use itself as a variant")
       (let
-        [module-id : i64 (tc-context-module-id ctx)]
         [symbols-ctx : TcContext ctx]
-        [handle : i64
-          (if (tc-name-qualified-id?
-            (tc-context-structural-session ctx)
-            variant-name)
-            (csym.compiler-symbols-lookup-value-id-or
-              (tc-context-symbols symbols-ctx)
-              variant-name
-              (csym.compiler-symbols-missing-handle))
-            (csym.compiler-symbols-lookup-value-in-module-id-or
-              (tc-context-symbols symbols-ctx)
-              module-id
-              variant-name
-              (csym.compiler-symbols-missing-handle)))]
+        [handle : i64 (tc-dispatch-variant-handle ctx variant-name)]
         (if (csym.compiler-symbols-handle-found? handle)
           (let
             [kind : i64 (csym.compiler-symbol-handle-kind handle)]
@@ -117572,102 +117587,163 @@
   [module-id : i64]
   [declaration-id : i64]
   [env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
-  (let
-    [body-id : i64
-      (if (not
-        (= (bit-and parser.compiler-parse-qualified-type-literal-state 2) 0))
-        (match (csym.compiler-symbols-decl-at-index
-          (tc-context-symbols ctx)
-          declaration-id)
-          [(Ok decl)
-            (if (not
-              (= (bit-and (ast.ast-decl-aggregate-markers (& decl)) 4) 0))
-              (match (ast.ast-decl-unwrapped (& decl))
-                [(DefMacro _ _ _ _ id) id]
-                [_ -1])
-              -1)]
-          [(Err _) -1])
-        -1)]
-    (if (>= body-id 0)
-      (let
-        [module-ctx : TcContext
-          (cond
-            [(= ctx.module-id module-id) ctx]
-            [(csym.compiler-symbol-root-module-id? module-id)
-              (tc-context-with-module-id ctx "" module-id)]
-            [else
-              (tc-context-with-module-id
-                ctx
-                (tc-env-key-name-text module-id)
-                module-id)])]
-        [resolutions : ctfe_support.CtfeTypeLiteralResolutions
-          (ctfe_support.ctfe-type-literal-resolutions-empty)]
-        ;; The whole body: a multi-form body is an unspanned `Begin`.
-        (tc-ctfe-type-literal-resolutions-into
-          module-ctx
-          (&mut resolutions)
-          (tc-context-expr-get ctx body-id))
-        (if (ast.ast-type-list-empty? (& resolutions.written))
-          env
-          (ctfe_support.ctfe-env-with-type-literals env resolutions)))
-      env)))
+  (macro-transformer-type-literal-env-for-body
+    ctx
+    module-id
+    (if (not
+      (= (bit-and parser.compiler-parse-qualified-type-literal-state 2) 0))
+      (match (csym.compiler-symbols-decl-at-index
+        (tc-context-symbols ctx)
+        declaration-id)
+        [(Ok decl) (macro-type-literal-body-id (& decl))]
+        [(Err _) -1])
+      -1)
+    env))
 
-(define (macro-tli-fallback-host-cfgs) : sym_i64_env.SymI64Env
-  (let
-    [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
-    (cfg
-      windows
-      (begin
-        (set! cfgs (parser.compiler-cfg-enable cfgs "windows"))
-        (set! cfgs (parser.compiler-cfg-enable cfgs "target-windows"))
-        (set! cfgs (parser.compiler-cfg-enable cfgs "os-windows")))
-      (begin
-        (set! cfgs (parser.compiler-cfg-enable cfgs "linux"))
-        (set! cfgs (parser.compiler-cfg-enable cfgs "target-linux"))
-        (set! cfgs (parser.compiler-cfg-enable cfgs "os-linux"))))
-    cfgs))
+;; The body of a `defmacro` carrying the parser's type-literal marker 4, or -1.
+(define (macro-type-literal-body-id [decl : (& ast.AstDecl)]) : i64
+  (if (not (= (bit-and (ast.ast-decl-aggregate-markers decl) 4) 0))
+    (macro-defmacro-body-id decl)
+    -1))
 
-(define (macro-find-defmacro-body-in-decls
+(define (macro-transformer-type-literal-env-for-body
+  [ctx : TcContext]
+  [module-id : i64]
+  [body-id : i64]
+  [env : ctfe_support.CtfeEnv]) : ctfe_support.CtfeEnv
+  (if (>= body-id 0)
+    (let
+      [module-ctx : TcContext
+        (cond
+          [(= ctx.module-id module-id) ctx]
+          [(csym.compiler-symbol-root-module-id? module-id)
+            (tc-context-with-module-id ctx "" module-id)]
+          [else
+            (tc-context-with-module-id
+              ctx
+              (tc-env-key-name-text module-id)
+              module-id)])]
+      [resolutions : ctfe_support.CtfeTypeLiteralResolutions
+        (ctfe_support.ctfe-type-literal-resolutions-empty)]
+      ;; The whole body: a multi-form body is an unspanned `Begin`.
+      (tc-ctfe-type-literal-resolutions-into
+        module-ctx
+        (&mut resolutions)
+        (tc-context-expr-get ctx body-id))
+      (if (ast.ast-type-list-empty? (& resolutions.written))
+        env
+        (ctfe_support.ctfe-env-with-type-literals env resolutions)))
+    env))
+
+;; Whether a parsed file switches to (or nests) module `module-id`.
+(define (macro-decls-declare-module?
   [decls : (& ast.AstDeclList)]
-  [macro-name-id : i64]) : i64
+  [module-id : i64]) : bool
   (let
     [n : i64 (ast.ast-decl-list-len decls)]
     (for [i (iterator.range 0 n)]
       (match (ast.ast-decl-list-get decls i (ast.ast-decl-fallback))
-        [(DefMacro _ name _ _ body-id)
-          (when (= name macro-name-id) (return body-id))]
-        [(Unsafe inner)
-          (match (deref inner)
-            [(DefMacro _ name _ _ body-id)
-              (when (= name macro-name-id) (return body-id))]
-            [_ unit])]
-        [(ModuleBody _ body-box)
-          (let
-            [found : i64
-              (macro-find-defmacro-body-in-decls
+        [(Module name) (when (= name module-id) (return true))]
+        [(ModuleBody nested body-box)
+          (when
+            (or
+              (= nested module-id)
+              (macro-decls-declare-module?
                 (& (__tl-box-place body-box))
-                macro-name-id)]
-            (when (>= found 0) (return found)))]
+                module-id))
+            (return true))]
         [_ unit]))
-    -1))
+    false))
 
+;; The `defmacro` named `macro-name-id` declared in module `module-id` of one
+;; parsed file, or the fallback declaration. Top-level forms follow the file's
+;; `(module ...)` switches; forms before any switch belong to
+;; `initial-module-id`.
+(define (macro-find-module-defmacro-in-decls
+  [decls : (& ast.AstDeclList)]
+  [initial-module-id : i64]
+  [module-id : i64]
+  [macro-name-id : i64]) : ast.AstDecl
+  (let
+    [current : i64 initial-module-id]
+    [n : i64 (ast.ast-decl-list-len decls)]
+    (for [i (iterator.range 0 n)]
+      (let
+        [decl : ast.AstDecl
+          (ast.ast-decl-list-get decls i (ast.ast-decl-fallback))]
+        (match decl
+          [(Module name) (set! current name)]
+          [(ModuleBody nested body-box)
+            (let
+              [found : ast.AstDecl
+                (macro-find-module-defmacro-in-decls
+                  (& (__tl-box-place body-box))
+                  nested
+                  module-id
+                  macro-name-id)]
+              (when (>= (macro-defmacro-body-id (& found)) 0) (return found)))]
+          [_
+            (when
+              (and
+                (= current module-id)
+                (match (ast.ast-decl-unwrapped (& decl))
+                  [(DefMacro _ name _ _ _) (= name macro-name-id)]
+                  [_ false]))
+              (return decl))])))
+    (ast.ast-decl-fallback)))
+
+(define (macro-defmacro-body-id [decl : (& ast.AstDecl)]) : i64
+  (match (ast.ast-decl-unwrapped decl)
+    [(DefMacro _ _ _ _ id) id]
+    [_ -1]))
+
+(define (macro-tli-fallback-cfgs [names : (& (__tl_dyn-array String))]) : sym_i64_env.SymI64Env
+  (let
+    [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
+    (for [index (iterator.range 0 (array-length (deref names)))]
+      (set!
+        cfgs
+        (parser.compiler-cfg-enable
+          cfgs
+          (string.copy (& (array-ref (deref names) index))))))
+    cfgs))
+
+(defenum MacroTliFallbackBody
+  ;; Not a hydrated macro: evaluate the declaration's own body.
+  (Own)
+  ;; A hydrated macro's source body and its type-literal body id (or -1).
+  (Source ast.AstExpr i64)
+  (Unavailable String))
+
+;; A hydrated (`.tli`) macro carries no body. When its native `.tlci` entry
+;; cannot run, the interpreted fallback re-reads the declaring source, which
+;; must be the exact text the interface was produced from, parsed with the
+;; cfgs it was produced under; the body is the one in the macro's own module.
+;; Anything else fails closed instead of evaluating the placeholder body.
 (define (macro-resolve-tli-hydrated-fallback-body
   [ctx : TcContext]
   [fallback-module-id : i64]
   [declaration-id : i64]
-  [macro-name-id : i64]
-  [body : ast.AstExpr]) : ast.AstExpr
-  (when
-    (or
-      (< declaration-id 0)
-      (= (tc-job-state-tli-facts-ptr (tc-context-job-state ctx)) 0))
-    (return body))
+  [macro-name-id : i64]) : MacroTliFallbackBody
   (let
-    [identity : String
-      (macro-decl-name-display macro-name-id fallback-module-id)]
-    [identity-id : i64 (ci.intern identity)]
-    (unless (tc-tli-hydrated-macro-present? ctx identity-id) (return body))
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (when (or (< declaration-id 0) (= facts-ptr 0)) (return Own))
     (let
+      [identity : String
+        (macro-decl-name-display macro-name-id fallback-module-id)]
+      [identity-id : i64 (ci.intern (string.copy (& identity)))]
+      [entry : tli_hydrate.TliHydratedMacroSource
+        (unsafe
+          (let
+            [facts : tli_hydrate.TliHydratedFacts
+              (ptr-read
+                (int->ptr
+                  (cast facts-ptr : u64)
+                  : (Ptr tli_hydrate.TliHydratedFacts)))]
+            [slot : i64
+              (tli_hydrate.tli-hydrated-facts-macro-slot (& facts) identity-id)]
+            (when (< slot 0) (return Own))
+            (tli_hydrate.tli-hydrated-facts-macro-source (& facts) slot)))]
       [provenance-id : i64
         (csym.compiler-symbols-provenance-id-at-index-or
           (tc-context-symbols ctx)
@@ -117676,39 +117752,68 @@
       [source-names : ci.InternSourceNameSession
         (ci.intern-source-name-session-handle-session
           (tc-context-source-names ctx))]
+      [unavailable : String
+        (str_cat.str-cat
+          "typecheck: prebuilt macro "
+          (string.copy (& identity))
+          " has no runnable .tlci entry and its source body is unavailable")]
       (when
         (or
           (< provenance-id 0)
           (>= provenance-id source-names.source-count)
           (>= provenance-id (array-length source-names.pool-slots)))
-        (return body))
+        (return (Unavailable unavailable)))
       (let
         [path : String
           (string.copy (& (array-ref source-names.pool-slots provenance-id)))]
         (match (cload.compiler-load-session-try-read-input-text (& path))
-          [(ErrIoString _) body]
+          [(ErrIoString _) (Unavailable unavailable)]
           [(OkIoString text)
-            (let
-              [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-              (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
-                path
-                (& text)
-                (macro-tli-fallback-host-cfgs)
-                pools)
-                [(Err _) body]
-                [(Ok prog)
-                  (match prog
-                    [(Program decls-box)
-                      (let
-                        [body-id : i64
-                          (macro-find-defmacro-body-in-decls
-                            (& (__tl-box-place decls-box))
-                            macro-name-id)]
-                        (if (>= body-id 0)
-                          (begin
-                            (tc-context-install-pools! ctx)
-                            (ast.ast-node-pool-context-expr-get pools body-id))
-                          body))])]))])))))
+            (if (not
+              (tli_hydrate.tli-hydrated-macro-source-matches?
+                (& entry)
+                (& text)))
+              (Unavailable
+                (str_cat.str-cat
+                  "typecheck: prebuilt macro "
+                  (string.copy (& identity))
+                  " source "
+                  (string.copy (& path))
+                  " changed since its .tli was built; rebuild the dependency"))
+              (let
+                [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+                (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
+                  path
+                  (& text)
+                  (macro-tli-fallback-cfgs (& entry.source-cfg-names))
+                  pools)
+                  [(Err _) (Unavailable unavailable)]
+                  [(Ok prog)
+                    (match prog
+                      [(Program decls-box)
+                        (let
+                          [file-decls (& (__tl-box-place decls-box))]
+                          [decl : ast.AstDecl
+                            (macro-find-module-defmacro-in-decls
+                              file-decls
+                              ;; Root forms belong to the file's implicit module.
+                              (if (macro-decls-declare-module?
+                                file-decls
+                                entry.module-id)
+                                -1
+                                entry.module-id)
+                              entry.module-id
+                              macro-name-id)]
+                          [body-id : i64 (macro-defmacro-body-id (& decl))]
+                          (if (>= body-id 0)
+                            (begin
+                              (tc-context-install-pools! ctx)
+                              (Source
+                                (ast.ast-node-pool-context-expr-get
+                                  pools
+                                  body-id)
+                                (macro-type-literal-body-id (& decl))))
+                            (Unavailable unavailable)))])])))])))))
 
 (define (macro-eval-transformer-interpreted-with-env
   [ctx : TcContext]
@@ -117733,21 +117838,52 @@
     (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
     (cfg compile-profile (compiler-tc-macro-profile-start))
     (let
-      [eval-body : ast.AstExpr
+      [fallback : MacroTliFallbackBody
         (macro-resolve-tli-hydrated-fallback-body
           ctx
           fallback-module-id
           declaration-id
-          macro-name-id
-          body)]
+          macro-name-id)]
+      [_available : unit
+        (match (& fallback)
+          [(Unavailable message)
+            (cfg
+              compile-profile
+              (compiler-tc-macro-profile-finish
+                (tc-context-macro-state ctx)
+                (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+                macro-name
+                expanded-args))
+            (return
+              (Err
+                (box
+                  (ctfe_support.ctfe-diagnostic-at-expr
+                    (MacroUse)
+                    (& body)
+                    (string.copy message)))))]
+          [_ unit])]
+      [literal-env : ctfe_support.CtfeEnv
+        (match (& fallback)
+          [(Source _ literal-body-id)
+            (macro-transformer-type-literal-env-for-body
+              ctx
+              fallback-module-id
+              literal-body-id
+              env)]
+          [_
+            (macro-transformer-type-literal-env
+              ctx
+              fallback-module-id
+              declaration-id
+              env)])]
+      [eval-body : ast.AstExpr
+        (match fallback
+          [(Source source-body _) source-body]
+          [_ body])]
       (match (ctfe_support.ctfe-eval-node
         (& eval-body)
         (ctfe_support.ctfe-env-extend-id
-          (macro-transformer-type-literal-env
-            ctx
-            fallback-module-id
-            declaration-id
-            env)
+          literal-env
           (ctfe_support.ctfe-hygiene-enabled-id)
           (& (Bool true)))
         (ctfe_support.ctfe-fuel-limit))

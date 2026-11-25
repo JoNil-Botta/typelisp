@@ -961,7 +961,12 @@
   (flags i64)
   (result-kind u8)
   (tlci-entry-index i64)
-  (tlci-catalog-sha256 (Array u8 32)))
+  (tlci-catalog-sha256 (Array u8 32))
+  ;; The interpreted fallback re-reads the defining source: only the module,
+  ;; source digest and cfgs this interface was produced from select its body.
+  (module-id i64)
+  (source-sha256 (Array u8 32))
+  (source-cfg-names (__tl_dyn-array String)))
 
 (defstruct TliHydratedTypeLayout
   (is-struct bool)
@@ -1049,6 +1054,39 @@
         (bit-and
           (tli-hydrated-facts-macro-at facts slot).flags
           tli.tli-macro-uses-expr-type)))))
+
+;; What the interpreted fallback needs to re-read a hydrated macro's body.
+(defstruct TliHydratedMacroSource
+  (module-id i64)
+  (source-sha256 (Array u8 32))
+  (source-cfg-names (__tl_dyn-array String)))
+
+(define (tli-hydrated-facts-macro-source
+  [facts : (& TliHydratedFacts)]
+  [slot : i64]) : TliHydratedMacroSource
+  (let
+    [digest : (Array u8 32) (make-array u8 32)]
+    (for [index (iterator.range 0 32)]
+      (set!
+        (array-ref digest index)
+        (array-ref (tli-hydrated-facts-macro-at facts slot).source-sha256 index)))
+    (TliHydratedMacroSource
+      (tli-hydrated-facts-macro-at facts slot).module-id
+      digest
+      (tli-hydrate-string-array-copy
+        (& (array-ref facts.macros.slots slot).source-cfg-names)))))
+
+;; The fallback may read a body only from the exact source text the interface
+;; was produced from.
+(define (tli-hydrated-macro-source-matches?
+  [source : (& TliHydratedMacroSource)]
+  [text : (& str)]) : bool
+  (match (sha256.digest (byte_buf.str-as-bytes text))
+    [(Sha256FinalizeOk digest)
+      (let
+        [actual : (Array u8 32) (sha256.digest-bytes (& digest))]
+        (codec.tli-digest-eq? (& actual) (& source.source-sha256)))]
+    [_ false]))
 
 (define (tli-hydrated-macro-validate
   [entry : (& TliHydratedMacroEntry)]
@@ -1488,34 +1526,37 @@
       (let
         [canonical-id : i64
           (csym.compiler-symbol-module-key-id-by-id mod-id fn-info.name)]
-        [extra-len : i64 (array-length row.summary.arena-arg-store-extra)]
-        [extra-copy : (__tl_dyn-array i64) (__tl_make-array i64 extra-len)]
-        [w-len : i64 (array-length row.summary.global-writes)]
-        [w-copy : (__tl_dyn-array TliHydratedGlobalWrite)
-          (__tl_make-array TliHydratedGlobalWrite w-len)]
         [slot : i64 (fn_summary_vec.len (& facts.fn-summaries))]
-        (for [i (iterator.range 0 extra-len)]
-          (set!
-            (array-ref extra-copy i)
-            (array-ref row.summary.arena-arg-store-extra i)))
-        (for [i (iterator.range 0 w-len)]
-          (set!
-            (array-ref w-copy i)
-            (TliHydratedGlobalWrite
-              (tli-hydrate-name
-                (& (array-ref row.summary.global-writes i).symbol))
-              (array-ref row.summary.global-writes i).flags)))
         (fn_summary_vec.push-ref!
           (&mut facts.fn-summaries)
-          (TliHydratedFnSummaryRow
-            eflags
-            row.summary.arena-arg-store-mask
-            extra-copy
-            w-copy))
+          (tli-hydrate-summary-row (& row.summary)))
         (tli_i64_map.insert-ref!
           (&mut facts.fn-summary-slots)
           canonical-id
           slot)))))
+
+(define (tli-hydrate-summary-row [summary : (& tli.TliFnSummary)]) : TliHydratedFnSummaryRow
+  (let
+    [extra-len : i64 (array-length summary.arena-arg-store-extra)]
+    [extra-copy : (__tl_dyn-array i64) (__tl_make-array i64 extra-len)]
+    [w-len : i64 (array-length summary.global-writes)]
+    [w-copy : (__tl_dyn-array TliHydratedGlobalWrite)
+      (__tl_make-array TliHydratedGlobalWrite w-len)]
+    (for [i (iterator.range 0 extra-len)]
+      (set!
+        (array-ref extra-copy i)
+        (array-ref summary.arena-arg-store-extra i)))
+    (for [i (iterator.range 0 w-len)]
+      (set!
+        (array-ref w-copy i)
+        (TliHydratedGlobalWrite
+          (tli-hydrate-name (& (array-ref summary.global-writes i).symbol))
+          (array-ref summary.global-writes i).flags)))
+    (TliHydratedFnSummaryRow
+      summary.effect-flags
+      summary.arena-arg-store-mask
+      extra-copy
+      w-copy)))
 
 (define (tli-hydrate-project-dispatch!
   [facts : (&mut TliHydratedFacts)]
@@ -1592,13 +1633,7 @@
         [slot : i64 (fn_summary_vec.len (& facts.fn-summaries))]
         (fn_summary_vec.push-ref!
           (&mut facts.fn-summaries)
-          (TliHydratedFnSummaryRow
-            (if unsafe-decl
-              1
-              0)
-            0
-            (__tl_make-array i64 0)
-            (__tl_make-array TliHydratedGlobalWrite 0)))
+          (tli-hydrate-summary-row (& row.summary)))
         (tli_i64_map.insert-ref!
           (&mut facts.fn-summary-slots)
           canonical-id
@@ -1742,6 +1777,8 @@
   [paths : (&mut ast.AstDeclPathList)]
   [modules : (&mut ast.AstDeclModuleList)]
   [row : (& tli.TliMacroHandle)]
+  [source-sha256 : (& (Array u8 32))]
+  [source-cfg-names : (& (__tl_dyn-array String))]
   [source-path : (& str)]
   [mod-id : i64]
   [prov-id : i64]) : unit
@@ -1789,7 +1826,10 @@
             row.flags
             row.result-kind
             row.tlci-entry-index
-            row.tlci-catalog-sha256))
+            row.tlci-catalog-sha256
+            mod-id
+            (deref source-sha256)
+            (tli-hydrate-string-array-copy source-cfg-names)))
         (tli_i64_map.insert-ref! (&mut facts.macro-slots) identity-id slot)))))
 
 (define (tli-hydrate-default-module-alias [module-name : (& str)]) : String
@@ -1904,7 +1944,8 @@
   [package-name : (& str)]
   [package-version : (& str)]
   [package-root : (& str)]
-  [spmd-callables : (& tlci.TlciSpmdCallables)]) : unit
+  [spmd-callables : (& tlci.TlciSpmdCallables)]
+  [source-cfg-names : (& (__tl_dyn-array String))]) : unit
   (let
     [mod-id : i64 (tli-hydrate-name (& record.name))]
     [source-path : String (string.copy (& record.source-path))]
@@ -1992,6 +2033,8 @@
         paths
         modules
         (& (array-ref record.macros i))
+        (& record.source-sha256)
+        source-cfg-names
         (& physical-path)
         mod-id
         prov-id))))
@@ -2020,7 +2063,8 @@
       ""
       ""
       ""
-      (& empty-spmd))))
+      (& empty-spmd)
+      (& (__tl_make-array String 0)))))
 
 (defenum TliProjectClosureResult
   (Ok
@@ -2113,6 +2157,7 @@
   (spmd-callables tlci.TlciSpmdCallables)
   (directory codec.TliDirectory)
   (cfg-digest (Array u8 32))
+  (cfg-names (__tl_dyn-array String))
   (records (__tl_dyn-array tli.TliModuleRecord))
   (owned-bytes i64)
   (hydrated-any bool)
@@ -2157,6 +2202,38 @@
       (tli_svec.new)
       false)))
 
+;; The active cfg names a bundle was opened under, owned by the catalog arena.
+(define (tli-hydrate-cfg-names [cfgs : sym_i64_env.SymI64Env]) : (__tl_dyn-array
+    String)
+  (let
+    [snapshot : cfg_core.CompilerCfgSnapshot
+      (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
+    [active : i64 0]
+    (for [index (iterator.range 0 snapshot.len)]
+      (when (!= (array-ref snapshot.values index) 0) (+= active 1)))
+    (let
+      [out : (__tl_dyn-array String) (__tl_make-array String active)]
+      [slot : i64 0]
+      (for [index (iterator.range 0 snapshot.len)]
+        (when
+          (!= (array-ref snapshot.values index) 0)
+          (set!
+            (array-ref out slot)
+            (string.copy (& (array-ref snapshot.slots index))))
+          (+= slot 1)))
+      out)))
+
+(define (tli-hydrate-string-array-copy [items : (& (__tl_dyn-array String))]) : (__tl_dyn-array
+    String)
+  (let
+    [n : i64 (array-length (deref items))]
+    [out : (__tl_dyn-array String) (__tl_make-array String n)]
+    (for [index (iterator.range 0 n)]
+      (set!
+        (array-ref out index)
+        (string.copy (& (array-ref (deref items) index)))))
+    out))
+
 (define (tli-multi-catalog-attach-bundle!
   [multi : (&mut TliMultiCatalog)]
   [bundle-arena : i64]
@@ -2167,7 +2244,8 @@
   [archive-path : String]
   [spmd-callables : tlci.TlciSpmdCallables]
   [directory : codec.TliDirectory]
-  [cfg-digest : (& (Array u8 32))]) : TliMultiAttachResult
+  [cfg-digest : (& (Array u8 32))]
+  [cfgs : sym_i64_env.SymI64Env]) : TliMultiAttachResult
   (when
     (and is-stdlib multi.has-stdlib-bundle)
     (return (TliMultiAttachResult.Err "duplicate stdlib TLI bundle")))
@@ -2227,6 +2305,7 @@
               spmd-callables
               directory
               (deref cfg-digest)
+              (tli-hydrate-cfg-names cfgs)
               records
               owned
               false
@@ -2608,7 +2687,8 @@
                 (& (array-ref multi.bundles.slots b-idx).package-name)
                 (& (array-ref multi.bundles.slots b-idx).package-version)
                 (& (array-ref multi.bundles.slots b-idx).package-root)
-                (& (array-ref multi.bundles.slots b-idx).spmd-callables))
+                (& (array-ref multi.bundles.slots b-idx).spmd-callables)
+                (& (array-ref multi.bundles.slots b-idx).cfg-names))
               (set! out-seen (sym_i64_env.sym-i64-bind-id out-seen prov-id 1))
               (set!
                 out-seen

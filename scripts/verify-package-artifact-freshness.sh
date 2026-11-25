@@ -138,13 +138,16 @@ if check_prepared_runtime_boundary "$WORK/retained-frontend.tl"; then
     fail "prepared runtime guard accepted a retained frontend graph"
 fi
 # Export finishing cannot keep or revisit the parsed frontend. The capture
-# belongs before partitioned TLI emission and transfers only text/catalogs.
+# reads the expanded program before lowering, transfers only text/catalogs,
+# and the companion is finished only after lowering and the package runtime
+# are released on the success path itself (not merely on an error arm).
 check_package_export_boundary() {
     awk '
         /^[[:space:]]*\(define \(/ {
             mode = ""
             if ($0 ~ /\(build-package-tlci-emit-optional$/) { mode = "finish"; finish += 1 }
             if ($0 ~ /\(build-package-emit-lib-tli!$/) { mode = "pipeline"; pipeline += 1 }
+            if ($0 ~ /\(build-package-lib-lower-and-emit$/) { mode = "lower"; lower += 1 }
             if ($0 ~ /\(build-package-runtime-scope-release!$/) { mode = "release"; release_owner += 1 }
         }
         mode == "release" {
@@ -154,13 +157,24 @@ check_package_export_boundary() {
             if ($0 ~ /AstDecl|AstNode|TlciNativeMacroCaptures|build-package-tlci-(callable|macro)-collector|embedded-native-emit-package$/) forbidden += 1
             if ($0 ~ /embedded-native-emit-package-source/) source_emit += 1
         }
-        mode == "pipeline" {
-            if ($0 ~ /\(build-package-tlci-capture-exports$/) { capture += 1; if (partitioned) forbidden += 1 }
+        mode == "lower" {
             if ($0 ~ /tli_extract[.]tli-emit-partitioned-modules!/) partitioned += 1
-            if ($0 ~ /build-package-runtime-scope-release!/) { if (partitioned) released_after_part += 1 }
-            if ($0 ~ /\(build-package-tlci-emit-optional$/ && !released_after_part) forbidden += 1
+            if ($0 ~ /lower[.]compiler-lower-arena-state-release!/ && partitioned && !arms) lower_released += 1
+            if ($0 ~ /\(match part-result$/) arms += 1
         }
-        END { exit !(finish == 1 && pipeline == 1 && source_emit == 1 && capture == 1 && partitioned == 1 && released_after_part >= 1 && release_owner == 1 && release_call == 1 && forbidden == 0) }
+        mode == "pipeline" {
+            line = $0
+            sub(/^[[:space:]]+/, "", line)
+            if (line ~ /^;/ || line == "") next
+            if (line ~ /^\(build-package-tlci-capture-exports$/) { capture += 1; if (lowered) forbidden += 1 }
+            if (line ~ /^\(build-package-lib-lower-and-emit$/) lowered += 1
+            if (line ~ /^\(build-package-tlci-emit-optional$/) {
+                emits += 1
+                if (!(p3 == "(build-package-runtime-scope-release! scope)" && p2 == "(let" && p1 ~ /^\[tlci-emitted : BuildPackageTlciEmitted$/ && lowered)) forbidden += 1
+            }
+            p3 = p2; p2 = p1; p1 = line
+        }
+        END { exit !(finish == 1 && pipeline == 1 && lower == 1 && source_emit == 1 && capture == 1 && lowered == 1 && partitioned == 1 && lower_released == 1 && emits == 1 && release_owner == 1 && release_call == 1 && forbidden == 0) }
     ' "$1"
 }
 check_package_export_boundary src/build_cli_core.tl || fail "package export finishing retains the parsed frontend"
@@ -184,6 +198,30 @@ sed 's/compiler_driver_core[.]compiler-driver-package-runtime-scope-release!/mis
     src/build_cli_core.tl > "$WORK/unreleased-runtime-source.tl"
 if check_package_export_boundary "$WORK/unreleased-runtime-source.tl"; then
     fail "package export guard accepted a wrapper without runtime release"
+fi
+# Only the error arms release the runtime: the success path finishes live.
+awk '
+    { line = $0; sub(/^[[:space:]]+/, "", line) }
+    line == "(build-package-runtime-scope-release! scope)" { held = $0; next }
+    held != "" {
+        if (line != "(let") print held
+        held = ""
+    }
+    { print }
+' src/build_cli_core.tl > "$WORK/ok-path-unreleased-export.tl"
+if check_package_export_boundary "$WORK/ok-path-unreleased-export.tl"; then
+    fail "package export guard accepted companion finishing before the success-path runtime release"
+fi
+# Lowering arenas released only on an error arm.
+awk '
+    /\(match part-result$/ { moved = 1 }
+    /lower[.]compiler-lower-arena-state-release!/ && !moved && seen_part { skip = 2 }
+    /tli_extract[.]tli-emit-partitioned-modules!/ { seen_part = 1 }
+    skip > 0 { skip -= 1; next }
+    { print }
+' src/build_cli_core.tl > "$WORK/ok-path-unreleased-lowering.tl"
+if check_package_export_boundary "$WORK/ok-path-unreleased-lowering.tl"; then
+    fail "package export guard accepted lowering arenas live through the success path"
 fi
 # Checked lowering has one owner for pool adoption, error cleanup and arena
 # restoration. Source and PIC routes must share it with package retirement.

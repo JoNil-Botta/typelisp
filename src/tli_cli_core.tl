@@ -9,6 +9,7 @@
 (import compiler_tli_hydrate as hydrate)
 (import compiler_tli_types as tli)
 (import tlci_core as tlci)
+(import package_source_core)
 (import sym_i64_env)
 (import stdlib.arena)
 (import stdlib.byte_buf)
@@ -439,7 +440,8 @@
             tli-arena
             sysroot-dir
             archive-path
-            catalog)
+            catalog
+            cfgs)
           ResultTliCatalogOpen.Ok]
         [(Inactive)
           (unsafe
@@ -475,6 +477,7 @@
 
 (define (tli-load-package-spmd-callables
   [tlci-path : (& str)]
+  [manifest-dir : (& str)]
   [package-name : (& str)]
   [package-version : (& str)]
   [target-arena : i64]) : ResultTliSpmdCallables
@@ -488,31 +491,96 @@
           error
           "\n"))]
     [(Ok bytes)
-      (match (tlci.tlci-parse-image (& bytes))
-        [(Err message)
-          (ResultTliSpmdCallables.Err
-            (str_cat.str-cat
-              "package tli: invalid companion tlci '"
-              (string.copy tlci-path)
-              "': "
-              message
-              "\n"))]
-        [(Ok image)
-          (if (or
-            (not (string.eq (& image.metadata.package-name) package-name))
-            (not (string.eq (& image.metadata.package-version) package-version)))
-            (ResultTliSpmdCallables.Err
-              (str_cat.str-cat
-                "package tli: companion tlci identity mismatch for '"
-                (string.copy tlci-path)
-                "'\n"))
-            (ResultTliSpmdCallables.Ok
-              (in-arena
-                (unsafe
-                  ;; lint-allow: raw-arena-op -- copy companion metadata into bundle arena.
-                  (arena.Arena target-arena))
-                (compiler_load.compiler-load-copy-spmd-callables
-                  (& image.metadata.spmd-callables)))))])]))
+      ;; The image is parsed and authenticated in scratch; only the cloned-out
+      ;; callable metadata reaches the bundle arena.
+      (in-arena
+        (unsafe
+          ;; lint-allow: raw-arena-op -- companion metadata lives in the bundle arena.
+          (arena.Arena target-arena))
+        (with-scratch
+          ;; Metadata parsing interns names; the scratch arena owns the image.
+          (unsafe
+            (tli-admit-package-spmd-callables
+              (& bytes)
+              tlci-path
+              manifest-dir
+              package-name
+              package-version))))]))
+
+(define (clone-result-tli-spmd-callables
+  [value : (& value ResultTliSpmdCallables)]) : ResultTliSpmdCallables
+  (match value
+    [(Ok callables)
+      (ResultTliSpmdCallables.Ok
+        (compiler_load.compiler-load-copy-spmd-callables callables))]
+    [(Err message) (ResultTliSpmdCallables.Err (string.copy message))]))
+
+(define (tli-package-companion-error [tlci-path : (& str)] [detail : String]) : ResultTliSpmdCallables
+  (ResultTliSpmdCallables.Err
+    (str_cat.str-cat
+      "package tli: companion tlci '"
+      (string.copy tlci-path)
+      "' "
+      detail
+      "\n")))
+
+;; A companion is admitted only when this compiler produced it, it names the
+;; dependency's package identity, and its source binding matches the
+;; dependency's current source set.
+(define (tli-admit-package-spmd-callables
+  [bytes : (& (__tl_dyn-array u8))]
+  [tlci-path : (& str)]
+  [manifest-dir : (& str)]
+  [package-name : (& str)]
+  [package-version : (& str)]) : ResultTliSpmdCallables
+  (match (tlci.tlci-parse-image bytes)
+    [(Err message)
+      (tli-package-companion-error
+        tlci-path
+        (str_cat.str-cat "is invalid: " message))]
+    [(Ok image)
+      (let
+        [producer : String (identity.compiler-build-producer-identity)]
+        (cond
+          [(not (string.eq (& image.compiler-build-hash) (& producer)))
+            (tli-package-companion-error
+              tlci-path
+              "was produced by a different compiler")]
+          [(or
+              (not (string.eq (& image.metadata.package-name) package-name))
+              (not
+                (string.eq (& image.metadata.package-version) package-version)))
+            (tli-package-companion-error tlci-path "identity mismatch")]
+          [else
+            (match (tli-package-source-digest manifest-dir)
+              [(Err message) (tli-package-companion-error tlci-path message)]
+              [(Ok digest)
+                (match (tlci.tlci-package-source-binding-admit
+                  (& image.rodata)
+                  digest)
+                  [(Match _)
+                    (ResultTliSpmdCallables.Ok image.metadata.spmd-callables)]
+                  [_
+                    (tli-package-companion-error
+                      tlci-path
+                      "is not bound to the dependency's current sources")])])]))]))
+
+(define (tli-package-source-digest [manifest-dir : (& str)]) : ResultTliPackageSourceDigest
+  (match (package_source_core.package-source-discover-for
+    "build"
+    (compiler_load.compiler-load-join-root-path
+      (string.copy manifest-dir)
+      "typelisp.pkg")
+    true)
+    [(Err message) (ResultTliPackageSourceDigest.Err message)]
+    [(Ok source-set)
+      (match (package_source_core.package-source-set-digest source-set)
+        [(Err message) (ResultTliPackageSourceDigest.Err message)]
+        [(Ok digest) (ResultTliPackageSourceDigest.Ok digest)])]))
+
+(defenum ResultTliPackageSourceDigest
+  (Ok i64)
+  (Err String))
 
 (define (tli-dep-cfgs-without-test [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-remove-id cfgs (hydrate.tli-hydrate-name "test")))
@@ -617,6 +685,7 @@
                                     (string.copy package-name))]
                                 (tli-load-package-spmd-callables
                                   (& tlci-path)
+                                  manifest-dir
                                   package-name
                                   package-version
                                   bundle-arena))
@@ -635,7 +704,8 @@
                                 (string.copy (& archive-path))
                                 spmd-callables
                                 directory
-                                (& cfg-digest))
+                                (& cfg-digest)
+                                dep-cfgs)
                                 [(Ok _) ResultTliCatalogOpen.Ok]
                                 [(Err msg)
                                   (ResultTliCatalogOpen.Err

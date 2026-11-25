@@ -219,6 +219,16 @@
 (define (embedded-native-local-push! [name : String]) : i64
   (embedded-native-local-push-kind! name false))
 
+;; A pattern binder's local slot, or -1 for an expansion-produced (hygienic)
+;; binder that has no source spelling: such a pattern stays interpreted.
+(define (embedded-native-binder-push!
+  [context : (& context TlciNativeSourceContext)]
+  [bind-id : i64]) : i64
+  (if (and (>= bind-id 0) (< bind-id (ci.intern-capacity)))
+    (embedded-native-local-push!
+      (ci.intern-compat-state-str context.intern-state bind-id))
+    -1))
+
 (define (embedded-native-local-bool? [slot : i64]) : bool
   (and
     (>= slot 0)
@@ -6465,9 +6475,7 @@
         pat-args
         0
         (compiler_ast_types.ast-pattern-fallback))
-        [(Binding bind-id)
-          (embedded-native-local-push!
-            (ci.intern-compat-state-str context.intern-state bind-id))]
+        [(Binding bind-id) (embedded-native-binder-push! context bind-id)]
         [(Wildcard) -2]
         [_ -1])]
     [arm-code : String
@@ -7817,9 +7825,7 @@
         pat-args
         0
         (compiler_ast_types.ast-pattern-fallback))
-        [(Binding bind-id)
-          (embedded-native-local-push!
-            (ci.intern-compat-state-str context.intern-state bind-id))]
+        [(Binding bind-id) (embedded-native-binder-push! context bind-id)]
         [(Wildcard) -2]
         [_ -1])]
     [arm-code : String
@@ -8037,9 +8043,7 @@
           [(Wildcard) ""]
           [(Binding bind-id)
             (let
-              [slot : i64
-                (embedded-native-local-push!
-                  (ci.intern-compat-state-str context.intern-state bind-id))]
+              [slot : i64 (embedded-native-binder-push! context bind-id)]
               (if (< slot 0)
                 "$tlci-unsupported"
                 (str_cat.str-cat

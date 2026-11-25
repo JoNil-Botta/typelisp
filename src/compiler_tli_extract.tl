@@ -272,6 +272,8 @@
 
 (define (tli-extract-cleanup-symbol
   [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [name : intern.InternSyntaxId]) : tli.TliCleanup
   (let
     [raw : i64 (intern.intern-syntax-id-value name)]
@@ -294,7 +296,7 @@
         [(or
             (= kind (symbols.compiler-symbol-kind-function-define))
             (= kind (symbols.compiler-symbol-kind-extern)))
-          (tli-extract-symbol-at ctx index)]
+          (tli-extract-symbol-at ctx sources root-origins index)]
         [(or
             (= kind (symbols.compiler-symbol-kind-struct-cleanup))
             (= kind (symbols.compiler-symbol-kind-enum-cleanup)))
@@ -308,7 +310,7 @@
                      (DefEnum _ _ (Fn cleanup) _)
                      (DefEnumLifetimes _ _ _ (Fn cleanup) _))
                   (tc.macro-tlci-catalog-identity
-                    (tli-extract-module-name (tli-extract-owner ctx index))
+                    (tli-extract-module-at ctx sources root-origins index)
                     (tli-extract-name (intern.intern-syntax-id-value cleanup)))]
                 [_ (io.panic "TLI expected a cleanup declaration")])]
             [(Err message) (io.panic message)])]
@@ -321,6 +323,7 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [items : (& ast.AstFieldDefList)]
   [offsets : (& tc.TcInlineFieldLayoutList)]
   [aligns : (& ast.AstFieldAligns)]) : tli.TliTypeBody
@@ -349,7 +352,12 @@
                 (intern.intern-syntax-id-text name)
                 (tli-extract-type-in ctx sources root-type-slots ty)
                 (match cleanup
-                  [(Fn fn-name) (tli-extract-cleanup-symbol ctx fn-name)]
+                  [(Fn fn-name)
+                    (tli-extract-cleanup-symbol
+                      ctx
+                      sources
+                      root-origins
+                      fn-name)]
                   [(Owned) (tli.TliCleanup.Owned)]
                   [(No) (tli.TliCleanup.No)])
                 offset
@@ -360,6 +368,7 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [items : (& ast.AstVariantDefList)]) : tli.TliTypeBody
   (let
     [out : (__tl_dyn-array tli.TliVariant)
@@ -381,7 +390,12 @@
                     (array-ref items.slots slot))
                   (if (< slot cleanups.len)
                     (match (& (array-ref cleanups.slots slot))
-                      [(Fn fn-name) (tli-extract-cleanup-symbol ctx fn-name)]
+                      [(Fn fn-name)
+                        (tli-extract-cleanup-symbol
+                          ctx
+                          sources
+                          root-origins
+                          fn-name)]
                       [(Owned) (tli.TliCleanup.Owned)]
                       [(No) (tli.TliCleanup.No)])
                     (tli.TliCleanup.No)))))
@@ -406,9 +420,59 @@
     ""
     (tli-extract-name id)))
 
-(define (tli-extract-symbol-at [ctx : tc.TcContext] [index : i64]) : String
+;; The interface module a declaration belongs to. A moduleless (root) package
+;; declaration belongs to its file's dotted module, which `root-origins` maps
+;; from the declaration index to its source row.
+(define (tli-extract-module-at
+  [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
+  [index : i64]) : String
+  (let
+    [owner : i64 (tli-extract-owner ctx index)]
+    [origin : i64
+      (if (and
+        (symbols.compiler-symbol-root-module-id? owner)
+        (>= index 0)
+        (< index (array-length root-origins)))
+        (array-ref root-origins index)
+        -1)]
+    (if (>= origin 0)
+      (string.copy (& (array-ref sources origin).module-name))
+      (tli-extract-module-name owner))))
+
+;; Index -> source row of each root-owned package declaration, or -1.
+(define (tli-extract-root-origins
+  [ctx : tc.TcContext]
+  [decls : (& ast.AstDeclList)]
+  [paths : (& ast.AstDeclPathList)]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [is-stdlib : bool]) : (__tl_dyn-array i64)
+  (let
+    [count : i64
+      (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    (for [index (iterator.range 0 count)]
+      (set!
+        (array-ref out index)
+        (if (or
+          is-stdlib
+          (not
+            (symbols.compiler-symbol-root-module-id?
+              (tli-extract-owner ctx index))))
+          -1
+          (tli-extract-source-for-path
+            sources
+            (& (symbols.compiler-symbol-path-at-index decls paths index 0))))))
+    out))
+
+(define (tli-extract-symbol-at
+  [ctx : tc.TcContext]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
+  [index : i64]) : String
   (symbols.compiler-symbol-module-key
-    (tli-extract-module-name (tli-extract-owner ctx index))
+    (tli-extract-module-at ctx sources root-origins index)
     (tli-extract-name
       (symbols.compiler-symbols-decl-name-id-at-index
         (tc.tc-context-symbols (& ctx))
@@ -446,6 +510,7 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [module-name : String]
   [name : i64]
   [flags : i64]
@@ -499,6 +564,7 @@
                     ctx
                     sources
                     root-type-slots
+                    root-origins
                     fields
                     offsets
                     (& (ast.AstFieldAligns (__tl_make-array i64 0))))))]
@@ -519,6 +585,7 @@
                     ctx
                     sources
                     root-type-slots
+                    root-origins
                     fields
                     offsets
                     fields-align)))]))]
@@ -529,6 +596,7 @@
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [module-name : String]
   [name : i64]
   [flags : i64]
@@ -575,7 +643,12 @@
               alignment
               0
               0
-              (tli-extract-variants ctx sources root-type-slots variants))))]
+              (tli-extract-variants
+                ctx
+                sources
+                root-type-slots
+                root-origins
+                variants))))]
       [_ (io.panic "TLI expected a checked enum layout")])))
 
 (defstruct TliExtractEffects
@@ -607,7 +680,11 @@
         [_ false])]
     [(Err _) true]))
 
-(define (tli-extract-effects [ctx : tc.TcContext] [env : tc.TcTypeEnv]) : TliExtractEffects
+(define (tli-extract-effects
+  [ctx : tc.TcContext]
+  [env : tc.TcTypeEnv]
+  [sources : (& sources (__tl_dyn-array TliSource))]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]) : TliExtractEffects
   (let
     [state : (MutPtr tc.TcGlobalCallEffects)
       (tc.tc-global-call-effects-ensure! ctx)]
@@ -631,7 +708,8 @@
         (when
           (effects.written? (& graph) index)
           (let
-            [symbol : String (tli-extract-symbol-at ctx index)]
+            [symbol : String
+              (tli-extract-symbol-at ctx sources root-origins index)]
             [summary : (__tl_dyn-array i64)
               (effects.summary! (&mut graph) index)]
             (for [node (iterator.range 0 count)]
@@ -725,6 +803,88 @@
       mask
       (tli-extract-finish-vector i64 extra)
       (tli-extract-copy-writes (& (array-ref facts.globals index)))
+      0
+      0)))
+
+;; The declaration index of each defdispatch variant, or -1 when unresolved.
+(define (tli-extract-dispatch-variant-indices
+  [ctx : tc.TcContext]
+  [variants : (& ast.AstDispatchVariantList)]) : (__tl_dyn-array i64)
+  (let
+    [out : (__tl_dyn-array i64) (__tl_make-array i64 variants.len)]
+    (for [slot (iterator.range 0 variants.len)]
+      (set!
+        (array-ref out slot)
+        (match (ast.ast-dispatch-variant-list-get
+          variants
+          slot
+          (ast.ast-dispatch-variant-fallback))
+          [(Variant _ variant-name)
+            (tc.tc-dispatch-variant-decl-index ctx variant-name)])))
+    out))
+
+;; A dispatch call runs exactly one of its variants, so its summary is their
+;; join: PURE and NEVER only when every variant has them, every other effect
+;; and arena-argument store when any variant has it. An unresolved variant
+;; keeps only conservative facts.
+(define (tli-extract-dispatch-summary
+  [facts : (& facts TliExtractEffects)]
+  [variant-indices : (& (__tl_dyn-array i64))]
+  [sig : (& ast.AstType)]
+  [unsafe-decl : bool]
+  [must-use : bool]) : tli.TliFnSummary
+  (let
+    [params : i64
+      (match sig
+        [(Func args _) args.len]
+        [_ 0])]
+    [ret : ast.AstType
+      (match sig
+        [(Func _ result-id) (ast.ty-node-get result-id)]
+        [_ (ast.AstType.Unit)])]
+    [all-flags : i64 12]
+    [any-flags : i64
+      (+ (tli-extract-flag unsafe-decl 1) (tli-extract-flag must-use 128))]
+    [mask : i64 0]
+    [extra : indices.Vec (indices.new)]
+    [writes-out : writes.Vec (writes.new)]
+    (for [slot (iterator.range 0 (array-length (deref variant-indices)))]
+      (let
+        [index : i64 (array-ref (deref variant-indices) slot)]
+        (if (< index 0)
+          (begin
+            (set! all-flags 0)
+            (set! any-flags (bit-or any-flags tli.tli-fn-has-indirect-effects)))
+          (let
+            [row : tli.TliFnSummary
+              (tli-extract-summary
+                facts
+                index
+                params
+                (& ret)
+                false
+                unsafe-decl
+                must-use)]
+            (set! all-flags (bit-and all-flags row.effect-flags))
+            (set!
+              any-flags
+              (bit-or any-flags (bit-and row.effect-flags (bit-not 12))))
+            (set! mask (bit-or mask row.arena-arg-store-mask))
+            (for [k (iterator.range 0 (array-length row.arena-arg-store-extra))]
+              (indices.push-ref!
+                (&mut extra)
+                (array-ref row.arena-arg-store-extra k)))
+            (for [k (iterator.range 0 (array-length row.global-writes))]
+              (writes.push-ref!
+                (&mut writes-out)
+                (tli.TliGlobalWrite
+                  (string.copy (& (array-ref row.global-writes k).symbol))
+                  (array-ref row.global-writes k).flags)))))))
+    (tli.TliFnSummary
+      (bit-or any-flags all-flags)
+      mask
+      (tli-extract-finish-vector i64 extra)
+      (tli-extract-copy-writes (& writes-out))
       0
       0)))
 
@@ -1242,6 +1402,7 @@
   [env : tc.TcTypeEnv]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
+  [root-origins : (& root-origins (__tl_dyn-array i64))]
   [companion : (& TliPackageCompanionBinding)]
   [module-name : String]
   [raw-module-name : (& str)]
@@ -1321,6 +1482,7 @@
           ctx
           sources
           root-type-slots
+          root-origins
           module-name
           name
           type-flags
@@ -1334,6 +1496,7 @@
           ctx
           sources
           root-type-slots
+          root-origins
           module-name
           name
           type-flags
@@ -1347,6 +1510,7 @@
           ctx
           sources
           root-type-slots
+          root-origins
           module-name
           name
           type-flags
@@ -1359,6 +1523,7 @@
           ctx
           sources
           root-type-slots
+          root-origins
           module-name
           name
           type-flags
@@ -1392,10 +1557,19 @@
                 decl-path
                 raw-module-name
                 (& spelling)))]
+          [variant-indices : (__tl_dyn-array i64)
+            (tli-extract-dispatch-variant-indices ctx (& variants))]
           [sig-ast : ast.AstType
             (match (tc.tc-dispatch-decl-type ctx name variants)
               [(Ok ty) ty]
               [(Err message) (io.panic message)])]
+          [summary : tli.TliFnSummary
+            (tli-extract-dispatch-summary
+              facts
+              (& variant-indices)
+              (& sig-ast)
+              unsafe-decl
+              (ast.ast-decl-must-use? decl))]
           [sig-tli : tli.TliType
             (tli-extract-type-in ctx sources root-type-slots sig-ast)]
           (dispatches.push-ref!
@@ -1405,7 +1579,8 @@
               module-name
               symbol
               (tli-extract-flag unsafe-decl 1)
-              sig-tli)))]
+              sig-tli
+              summary)))]
       [_ unit])))
 
 (define (tli-extract-find-module
@@ -1678,83 +1853,6 @@
       (set! (array-ref states slot) 2)
       true]))
 
-(define (tli-extract-pin-module-with-load-state!
-  [ctx : (&mut ctx codec.TliWriteContext)]
-  [modules : (&mut modules (__tl_dyn-array tli.TliModuleRecord))]
-  [states : (&mut states (__tl_dyn-array i64))]
-  [digests : (&mut digests (__tl_dyn-array sha.Sha256Digest))]
-  [load-state : (& load.CompilerLoadSessionState)]
-  [slot : i64]) : bool
-  (match (array-ref states slot)
-    [2 true]
-    [1 false]
-    [_
-      (set! (array-ref states slot) 1)
-      (let
-        [count : i64 (array-length (array-ref modules slot).imports)]
-        (for [index (iterator.range 0 count)]
-          (let
-            [imp-name : String
-              (string.copy
-                (&
-                  (array-ref (array-ref modules slot).imports index).module-name))]
-            [target : i64 (tli-extract-find-record modules (& imp-name))]
-            (if (>= target 0)
-              (begin
-                (unless
-                  (tli-extract-pin-module-with-load-state!
-                    ctx
-                    modules
-                    states
-                    digests
-                    load-state
-                    target)
-                  (return false))
-                (set!
-                  (array-ref (array-ref modules slot).imports index).interface-sha256
-                  (sha.digest-bytes (& (array-ref digests target)))))
-              (match (load.compiler-load-session-state-tli-module-sha256
-                load-state
-                (& imp-name))
-                [(Some ext-digest)
-                  (set!
-                    (array-ref (array-ref modules slot).imports index).interface-sha256
-                    ext-digest)]
-                [(None) unit])))))
-      (set! ctx.out.len 0)
-      (codec.tli-write-module! ctx (& (array-ref modules slot)))
-      (set!
-        (array-ref digests slot)
-        (sha.Sha256Digest
-          (codec.tli-module-digest (& ctx.out.slots) 0 ctx.out.len)))
-      (set! (array-ref states slot) 2)
-      true]))
-
-(define (tli-extract-pin-imports-with-load-state!
-  [bundle : (&mut bundle tli.TliBundle)]
-  [load-state : (& load.CompilerLoadSessionState)]) : bool
-  (let
-    [count : i64 (array-length bundle.modules)]
-    [ctx : codec.TliWriteContext
-      (codec.TliWriteContext
-        false
-        (codec.tli-collect-pool bundle)
-        (buf.byte-buf-builder-new))]
-    [states : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [digests : (__tl_dyn-array sha.Sha256Digest)
-      (__tl_make-array sha.Sha256Digest count)]
-    (for [slot (iterator.range 0 count)]
-      (unless
-        (tli-extract-pin-module-with-load-state!
-          (&mut ctx)
-          (&mut bundle.modules)
-          (&mut states)
-          (&mut digests)
-          load-state
-          slot)
-        (return false)))
-    true))
-
 (define (tli-extract-pin-imports! [bundle : (&mut bundle tli.TliBundle)]) : bool
   (let
     [count : i64 (array-length bundle.modules)]
@@ -1904,10 +2002,13 @@
   (tc.tc-nominal-owner-cache-reset-for-job! (tc.tc-context-job-state ctx))
   (let
     [is-stdlib : bool (!= (bit-and bundle-flags tli.tli-is-stdlib-bundle) 0)]
-    [facts : TliExtractEffects (tli-extract-effects ctx env)]
     [decls : ast.AstDeclList
       (match (tc.tc-context-program ctx)
         [(Program decls) (deref decls)])]
+    [root-origins : (__tl_dyn-array i64)
+      (tli-extract-root-origins ctx (& decls) paths sources is-stdlib)]
+    [facts : TliExtractEffects
+      (tli-extract-effects ctx env sources (& root-origins))]
     [count : i64 (array-length sources)]
     [decl-count : i64
       (symbols.compiler-symbols-decl-count (tc.tc-context-symbols (& ctx)))]
@@ -2006,6 +2107,7 @@
                 env
                 sources
                 (& root-type-slots)
+                (& root-origins)
                 companion
                 module-name
                 (& raw-module-name)

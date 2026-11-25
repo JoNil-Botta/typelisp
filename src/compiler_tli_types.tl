@@ -6,7 +6,7 @@
 (define tli-magic : i64
   0x00494c54)
 (define tli-schema-version : i64
-  2)
+  3)
 (define tli-header-size : i64
   112)
 (define tli-directory-entry-size : i64
@@ -207,7 +207,8 @@
   (module-name String)
   (link-symbol String)
   (flags i64)
-  (signature TliType))
+  (signature TliType)
+  (summary TliFnSummary))
 
 (defstruct TliModuleRecord
   (name String)

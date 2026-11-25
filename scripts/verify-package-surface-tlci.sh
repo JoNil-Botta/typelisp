@@ -640,18 +640,34 @@ unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 rm -rf "$CONSUMER/target"
 
 echo "[package-surface-tlci] corrupted .tli fail-closed rejection"
-cp "$RIGHT_TLI" "$WORKDIR/surface_right.tli.bak"
-printf 'CORRUPT' > "$RIGHT_TLI"
-set +e
+# `check` prebuilds the dev dependency interfaces; `test --list` then reads
+# them without a dependency build, so a corrupt .tli must be rejected (and
+# left in place), never silently rebuilt.
+cp "$CONSUMER/src/main.tl" "$WORKDIR/consumer-main.bak"
+cat >> "$CONSUMER/src/main.tl" <<'EOF'
+(import stdlib.test)
+(test right-surface (test.assert-i64-eq (right.same 1) (right.same 1) "right surface"))
+EOF
 "$COMPILER" check \
+    --manifest-path "$CONSUMER/typelisp.pkg" \
+    --target "$NL_BOOTSTRAP_TARGET" > "$WORKDIR/malformed-prebuild.out" 2> "$WORKDIR/malformed-prebuild.err" ||
+    fail "check before .tli corruption failed: $(cat "$WORKDIR/malformed-prebuild.err")"
+RIGHT_DEV_TLI="$RIGHT/target/dev/surface_right.tli"
+[ -s "$RIGHT_DEV_TLI" ] || fail "check did not prebuild $RIGHT_DEV_TLI"
+cp "$RIGHT_DEV_TLI" "$WORKDIR/surface_right.dev.tli.bak"
+printf 'CORRUPT' > "$RIGHT_DEV_TLI"
+set +e
+"$COMPILER" test --list \
     --manifest-path "$CONSUMER/typelisp.pkg" \
     --target "$NL_BOOTSTRAP_TARGET" > "$WORKDIR/malformed.out" 2> "$WORKDIR/malformed.err"
 malformed_status=$?
 set -e
-# Note: check runs --deps-only which sees the corrupted .tli fingerprint mismatch and
-# cleanly rebuilds it; directly corrupting after --deps-only is tested by unit tests.
-[ "$malformed_status" -eq 0 ] || fail "check did not recover from stale corrupted .tli"
-cp "$WORKDIR/surface_right.tli.bak" "$RIGHT_TLI"
+[ "$malformed_status" -ne 0 ] || fail "consumer accepted a corrupt dependency .tli"
+grep -F "package tli: $RIGHT_DEV_TLI:" "$WORKDIR/malformed.err" >/dev/null ||
+    fail "corrupt dependency .tli rejection did not name the interface: $(cat "$WORKDIR/malformed.err")"
+[ "$(cat "$RIGHT_DEV_TLI")" = CORRUPT ] || fail "corrupt dependency .tli was overwritten"
+cp "$WORKDIR/surface_right.dev.tli.bak" "$RIGHT_DEV_TLI"
+cp "$WORKDIR/consumer-main.bak" "$CONSUMER/src/main.tl"
 
 echo "[package-surface-tlci] #9755 v7 and v11 under TYPELISP_DEPENDENCY_TLCI_VERIFY=1"
 V7_NP="$WORKDIR/v7/np"

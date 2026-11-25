@@ -5925,50 +5925,93 @@
       [owned-list : cli_svec.Vec (cli_svec.new)]
       [raw-list : cli_svec.Vec (cli_svec.new)]
       [count : i64 (ast.ast-decl-list-len decls)]
+      ;; Per file: its first `(module ...)` switch or `(module m (...))` body,
+      ;; whether a switch is in effect, and whether root declarations other
+      ;; than imports exist. Only root declarations get the file's dotted
+      ;; fallback module; any other module is added from the checked program.
+      [first-modules : (__tl_dyn-array String) (__tl_make-array String count)]
+      [switched : (__tl_dyn-array bool) (__tl_make-array bool count)]
+      [has-root : (__tl_dyn-array bool) (__tl_make-array bool count)]
       (for [index (iterator.range 0 count)]
         (let
           [raw-p : String (ast.ast-decl-path-list-get raw-paths index "")]
+          [owned-p : String (ast.ast-decl-path-list-get owned-paths index "")]
           (when
-            (build-package-tlci-source-owned? (& owned-sources) (& raw-p))
+            (and
+              (build-package-tlci-source-owned? (& owned-sources) (& raw-p))
+              (> (string.string-length (& owned-p)) 0))
             (let
-              [owned-p : String
-                (ast.ast-decl-path-list-get owned-paths index "")]
-              (when
-                (> (string.string-length (& owned-p)) 0)
+              [slot : i64
                 (match (build_string_i64_map.get
                   (& seen-owned)
                   (string.copy (& owned-p)))
-                  [(LookupFound _) unit]
+                  [(LookupFound found) found]
                   [(LookupMissing)
                     (let
-                      [slot : i64 (cli_svec.len (& owned-list))]
-                      [decl : ast.AstDecl
-                        (ast.ast-decl-list-get
-                          decls
-                          index
-                          (ast.ast-decl-fallback))]
-                      [mod-name : String
-                        (let
-                          [explicit : String
-                            (match decl
-                              [(Module name-id) (ci.intern-str name-id)]
-                              [_ ""])]
-                          (if (> (string.string-length (& explicit)) 0)
-                            explicit
-                            (let
-                              [canon : String
-                                (load.compiler-load-canonical-module-id-from-path
-                                  (& owned-p))]
-                              (if (> (string.string-length (& canon)) 0)
-                                canon
-                                (string.copy package-name)))))]
+                      [fresh : i64 (cli_svec.len (& owned-list))]
                       (build_string_i64_map.insert-ref!
                         (&mut seen-owned)
                         (string.copy (& owned-p))
-                        slot)
-                      (cli_svec.push-ref! (&mut mod-names) mod-name)
-                      (cli_svec.push-ref! (&mut owned-list) owned-p)
-                      (cli_svec.push-ref! (&mut raw-list) raw-p))]))))))
+                        fresh)
+                      (set! (array-ref first-modules fresh) "")
+                      (cli_svec.push-ref!
+                        (&mut owned-list)
+                        (string.copy (& owned-p)))
+                      (cli_svec.push-ref! (&mut raw-list) raw-p)
+                      fresh)])]
+              (match (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))
+                ;; A flat marker naming the root or the file's own dotted module
+                ;; (the loader prepends one to moduleless files) selects its
+                ;; root declarations.
+                [(Module name-id)
+                  (let
+                    [name : String (ci.intern-str name-id)]
+                    [canonical : String
+                      (load.compiler-load-canonical-module-id-from-path
+                        (& owned-p))]
+                    [root? : bool
+                      (or
+                        (csym.compiler-symbol-root-module-id? name-id)
+                        (= (string.string-length (& name)) 0)
+                        (string.eq (& name) (& canonical)))]
+                    (set! (array-ref switched slot) (not root?))
+                    (when
+                      (and
+                        (not root?)
+                        (=
+                          (string.string-length
+                            (& (array-ref first-modules slot)))
+                          0))
+                      (set! (array-ref first-modules slot) name)))]
+                [(ModuleBody name-id _)
+                  (when
+                    (=
+                      (string.string-length (& (array-ref first-modules slot)))
+                      0)
+                    (set!
+                      (array-ref first-modules slot)
+                      (ci.intern-str name-id)))]
+                [(Import _ _) unit]
+                [_
+                  (unless
+                    (array-ref switched slot)
+                    (set! (array-ref has-root slot) true))])))))
+      (for [slot (iterator.range 0 (cli_svec.len (& owned-list)))]
+        (let
+          [owned-p : String (cli_svec.get (& owned-list) slot "")]
+          [explicit : String (string.copy (& (array-ref first-modules slot)))]
+          (cli_svec.push-ref!
+            (&mut mod-names)
+            (if (and
+              (> (string.string-length (& explicit)) 0)
+              (not (array-ref has-root slot)))
+              explicit
+              (let
+                [canon : String
+                  (load.compiler-load-canonical-module-id-from-path (& owned-p))]
+                (if (> (string.string-length (& canon)) 0)
+                  canon
+                  (string.copy package-name)))))))
       (when
         (= (cli_svec.len (& owned-list)) 0)
         (let
@@ -6222,6 +6265,318 @@
           (build-package-clean-stage stage)
           0]))))
 
+;; The expanded program carries owned package paths; the export capture
+;; selects declarations by the raw source paths of the package source set.
+;; Generated declarations keep the owned path of the file that expanded them.
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-lib-checked-raw-paths
+    [checked-paths : (& ast.AstDeclPathList)]
+    [raw-paths : (& ast.AstDeclPathList)]
+    [raw-by-owned : (& build_string_i64_map.Map)]) : ast.AstDeclPathList
+    (let
+      [count : i64 (ast.ast-decl-path-list-len checked-paths)]
+      [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
+      (for [index (iterator.range 0 count)]
+        (let
+          [owned : String (ast.ast-decl-path-list-get checked-paths index "")]
+          [raw : String
+            (match (build_string_i64_map.get
+              (& raw-by-owned)
+              (string.copy (& owned)))
+              [(LookupFound slot)
+                (ast.ast-decl-path-list-get raw-paths slot "")]
+              [(LookupMissing) owned])]
+          (ast.ast-decl-path-list-push-with-owner-and-provenance-id
+            (&mut out)
+            raw
+            (ast.ast-decl-path-list-owner-id
+              checked-paths
+              index
+              cbi.compiler-builtin-id-fix-empty)
+            (ast.ast-decl-path-list-provenance-id
+              checked-paths
+              index
+              cbi.compiler-builtin-id-fix-empty))))
+      out)))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-lib-owned-path-slots
+    [owned-paths : (& ast.AstDeclPathList)]) : build_string_i64_map.Map
+    (let
+      [out : build_string_i64_map.Map (build_string_i64_map.with-capacity 16)]
+      (for [index (iterator.range 0 (ast.ast-decl-path-list-len owned-paths))]
+        (build_string_i64_map.insert-ref!
+          (&mut out)
+          (ast.ast-decl-path-list-get owned-paths index "")
+          index))
+      out)))
+
+;; Pin in-bundle import digests (external ones were snapshotted from the load
+;; session) and encode. The bytes own every string of the bundle.
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (defenum ResultBuildPackageLibInterface
+    (Ok (__tl_dyn-array u8))
+    (Err String)))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-lib-encode-interface [bundle : (&mut tli.TliBundle)]) : ResultBuildPackageLibInterface
+    (if (tli_extract.tli-extract-pin-imports! bundle)
+      (ResultBuildPackageLibInterface.Ok (tli_codec.tli-encode-bundle bundle))
+      (ResultBuildPackageLibInterface.Err
+        "build: TLI import cycle cannot pin module record digests"))))
+
+;; Stamp the companion digest into an encoded interface after the package
+;; runtime is gone: decode the owned bytes, stamp, re-pin and re-encode.
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-lib-stamp-interface
+    [bytes : (& (__tl_dyn-array u8))]
+    [tlci-sha256 : (& (Array u8 32))]) : ResultBuildPackageLibInterface
+    (match (tli_codec.tli-decode-bundle bytes)
+      [(Err failure)
+        (ResultBuildPackageLibInterface.Err
+          (str_cat.str-cat
+            "build: failed to re-read package tli: "
+            (string.copy (& failure.message))))]
+      [(Ok decoded)
+        (let
+          [bundle : tli.TliBundle decoded]
+          (build-package-lib-stamp-tlci-companion!
+            (&mut bundle)
+            (deref tlci-sha256))
+          (build-package-lib-encode-interface (&mut bundle)))])))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (defenum BuildPackageLibCode
+    (InterfaceOnly)
+    (Emitted tli_extract.TliPartitionedEmitResult)
+    (Failed String)))
+
+;; Lower the checked library and emit its module objects. Lowering arenas are
+;; released here on every path; a failure is rendered while the package
+;; frontend is still live.
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-lib-lower-and-emit
+    [ctx : tc_core.TcContext]
+    [env : tc_core.TcTypeEnv]
+    [checked-paths : ast.AstDeclPathList]
+    [job : tc_core.TcJobState]
+    [let-facts : tc_core.TcCheckedLetBindingFactState]
+    [bundle : (& tli.TliBundle)]
+    [mods-dir : (& str)]
+    [target : be_state.CompilerBackendTarget]
+    [mode : be_state.CompilerBackendMode]
+    [request : (& BuildPackageEmitRequest)]
+    [direct-object? : bool]) : BuildPackageLibCode
+    (let
+      [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+      [checked-program : ast.AstProgram (tc_core.tc-context-program ctx)]
+      [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+      [lower-mode : lower.CompilerLowerMode
+        (compiler_driver_core.compiler-driver-lower-mode-for-target target mode)]
+      (lower.compiler-lower-state-enable-module-ownership! lower-state true)
+      (lower.compiler-lower-state-set-spmd-package!
+        lower-state
+        (string.copy (& request.manifest.name)))
+      (ast.ast-node-pool-context-install! pools)
+      (let
+        [lower-names : lower.LowerNameEnv
+          (match (& checked-program)
+            [(ast.AstProgram.Program decls-box)
+              (lower.lower-name-env-from-decls-with-state
+                lower-state
+                (& (deref decls-box))
+                (& checked-paths)
+                ""
+                lower.LowerNameEnv.Nil)])]
+        (match (lower.lower-compiler-program-checked-with-names-mode
+          lower-state
+          ctx
+          (tc_core.tc-env-with-cache env)
+          checked-program
+          checked-paths
+          ""
+          lower-names
+          lower-mode)
+          [(Err diag-box)
+            (tc_core.tc-checked-let-binding-facts-finish! let-facts)
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas lower-state))
+            (BuildPackageLibCode.Failed
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (deref diag-box)))]
+          [(Ok whole-program whole-spans lower-owner)
+            (tc_core.tc-checked-let-binding-facts-finish! let-facts)
+            (let
+              [part-result : tli_extract.ResultTliPartitionedEmit
+                (tli_extract.tli-emit-partitioned-modules!
+                  bundle
+                  whole-program
+                  whole-spans
+                  lower-owner
+                  pools
+                  job
+                  mods-dir
+                  ""
+                  target
+                  mode
+                  (be_facts.compiler-backend-target-windows? target)
+                  request.opt-level
+                  false
+                  (if direct-object?
+                    (tli_extract.TliPartitionObjectRoute.DirectObject
+                      build-package-lib-write-direct-object)
+                    (tli_extract.TliPartitionObjectRoute.Assembly)))]
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas lower-owner))
+              (match part-result
+                [(Err message) (BuildPackageLibCode.Failed message)]
+                [(Ok emitted) (BuildPackageLibCode.Emitted emitted)]))])))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-lib-finish-archive!
+    [request : (& BuildPackageEmitRequest)]
+    [stage : BuildPackageStagePaths]
+    [mods-dir : String]
+    [emitted : tli_extract.TliPartitionedEmitResult]
+    [target : be_state.CompilerBackendTarget]
+    [fingerprint-path : String]
+    [tlci-text : String]
+    [has-tlci : bool]
+    [tlci-dirty : bool]) : i64
+    (let
+      [combined-asm : text_buf.TextBuf (text_buf.empty)]
+      (if (= (array-length emitted.asm-files) 0)
+        (set!
+          combined-asm
+          (text_buf.append combined-asm "; empty library package\n"))
+        (for [ai (iterator.range 0 (array-length emitted.asm-files))]
+          (let
+            [mod-asm-path : String
+              (fs.path-join (& mods-dir) (& (array-ref emitted.asm-files ai)))]
+            (match (io.try-read-file (& mod-asm-path))
+              [(io.OkIoBytes chunk)
+                (let
+                  [chunk-text : String (byte_buf.to-string chunk)]
+                  (set! combined-asm (text_buf.append combined-asm chunk-text)))]
+              [(io.ErrIoBytes _) unit]))))
+      (let
+        [asm-text : String (text_buf.render combined-asm)]
+        (match (build_run_core.source-tool-write-file
+          (& stage.asm)
+          (& asm-text)
+          "build: failed to stage package library assembly")
+          [(Ok) unit]
+          [(Err message)
+            (build-package-lib-clean-mods-dir! (& mods-dir))
+            (build-package-clean-stage stage)
+            (io.print-error message)
+            (return 1)])))
+    (match (build-package-lib-assemble-and-archive
+      (& mods-dir)
+      (& emitted.asm-files)
+      (& emitted.direct-objects)
+      (& request.manifest.name)
+      target
+      (string.copy (& stage.artifact)))
+      [(Err message)
+        (build-package-lib-clean-mods-dir! (& mods-dir))
+        (build-package-clean-stage stage)
+        (io.print-error message)
+        1]
+      [(Ok)
+        (build-package-lib-clean-mods-dir! (& mods-dir))
+        (when
+          tlci-dirty
+          (match (build-package-write-tlci (& stage.tlci) tlci-text)
+            [(Ok) unit]
+            [(Err message)
+              (build-package-clean-stage stage)
+              (io.print-error message)
+              (return 1)]))
+        (match (build-package-lib-output-fingerprint
+          (string.copy (& request.lib-input-transcript))
+          (& stage.tli)
+          (& stage.artifact)
+          (&
+            (if has-tlci
+              (if tlci-dirty
+                (string.copy (& stage.tlci))
+                (string.copy (& request.tlci-path)))
+              "")))
+          [(Err message)
+            (build-package-clean-stage stage)
+            (io.print-error message)
+            1]
+          [(Ok fp-text)
+            (match (build_run_core.source-tool-write-file
+              (& stage.fingerprint)
+              (& fp-text)
+              "build: failed to stage package runtime fingerprint")
+              [(Err message)
+                (build-package-clean-stage stage)
+                (io.print-error message)
+                1]
+              [(Ok)
+                (let
+                  [plan : BuildPackageCommitPlan
+                    (build-package-commit-plan-add
+                      (build-package-commit-plan-add
+                        (build-package-commit-plan-add
+                          (build-package-commit-plan-add
+                            (build-package-commit-plan-new)
+                            (string.copy (& request.asm-path))
+                            (string.copy (& stage.asm)))
+                          (string.copy (& request.tli-path))
+                          (string.copy (& stage.tli)))
+                        (string.copy (& request.artifact-path))
+                        (string.copy (& stage.artifact)))
+                      (string.copy (& fingerprint-path))
+                      (string.copy (& stage.fingerprint)))]
+                  (when
+                    tlci-dirty
+                    (set!
+                      plan
+                      (build-package-commit-plan-add
+                        plan
+                        (string.copy (& request.tlci-path))
+                        (string.copy (& stage.tlci)))))
+                  (compiler_driver_core.compiler-driver-reset-file-state!)
+                  (match (build-package-commit-plan-run plan)
+                    [(Err message rollback)
+                      (build-package-clean-stage-after-rollback
+                        (& stage)
+                        (owned_view.compiler-owned-shared-view rollback))
+                      (io.print-error
+                        (build-package-commit-error-message
+                          message
+                          rollback
+                          stage.dir))
+                      1]
+                    [(Ok)
+                      (unless
+                        has-tlci
+                        (let
+                          [_ : io.ResultIoUnit
+                            (fs.try-remove-file-if-exists (& request.tlci-path))]
+                          unit))
+                      (build-package-clean-stage stage)
+                      (build-package-announce-freshness
+                        (string.copy (& request.artifact-path))
+                        (if has-tlci
+                          (string.copy (& request.tlci-path))
+                          "")
+                        true
+                        tlci-dirty
+                        request.announce)]))])])])))
+
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-emit-lib-tli!
@@ -6265,38 +6620,7 @@
             (build-package-runtime-scope-release! scope)
             (io.print-error "build: missing library source set")
             (return 1)])]
-      [source-context : compiler_tlci_native_producer.TlciNativeSourceContext
-        (compiler_tlci_native_producer.tlci-native-source-context-new
-          (compiler_driver_core.compiler-driver-state-pool-context
-            (& scope.state))
-          (compiler_driver_core.compiler-driver-state-owned-interns
-            (& scope.state)))]
-      [exports : ResultBuildPackageTlciExports
-        (build-package-tlci-capture-exports
-          (& source-context)
-          (& request.manifest)
-          (& request.stdlib-roots)
-          mode
-          (owned_view.compiler-owned-shared-view decls)
-          (owned_view.compiler-owned-shared-view raw-paths)
-          (& source-set))]
-      (match (& exports)
-        [(Err message)
-          (build-package-runtime-scope-release! scope)
-          (io.print-error message)
-          (return 1)]
-        [_ unit])
       (let
-        [macro-names : (__tl_dyn-array String)
-          (match (& exports)
-            [(Ok _ names _ _)
-              (let
-                [n : i64 (array-length names)]
-                [dst : (__tl_dyn-array String) (__tl_make-array String n)]
-                (for [i (iterator.range 0 n)]
-                  (set! (array-ref dst i) (string.copy (& (array-ref names i)))))
-                dst)]
-            [(Err _) (__tl_make-array String 0)])]
         [pre-sources : (__tl_dyn-array tli_extract.TliSource)
           (build-package-lib-pre-sources
             (& decls)
@@ -6307,6 +6631,8 @@
             (& request.manifest-dir)
             (& request.stdlib-roots)
             (& source-set))]
+        [raw-by-owned : build_string_i64_map.Map
+          (build-package-lib-owned-path-slots (& owned-paths))]
         ;; Same route policy as a whole-package library: eligible modules
         ;; become ELF objects without the system assembler.
         [direct-object? : bool
@@ -6375,19 +6701,62 @@
         (tc_core.tc-checked-let-binding-facts-begin! let-facts false)
         (match (tli_extract.tli-typecheck-for-extract-and-lower tc-req)
           [(or (Partial diagnostics _ _ _) (Err diagnostics))
-            (tc_core.tc-global-call-effects-finish! job)
-            (tc_core.tc-checked-let-binding-facts-finish! let-facts)
-            (build-package-runtime-scope-release! scope)
-            (build-package-lib-clean-mods-dir! (& mods-dir))
-            (build-package-clean-stage stage)
-            (io.print-error
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (compiler_diagnostic.compiler-diagnostic-list-first
-                  (& (__tl-box-place diagnostics)))))
-            1]
+            ;; The diagnostic names package-runtime sources: render it first.
+            (let
+              [message : String
+                (compiler_driver_core.compiler-driver-render-source-diagnostic
+                  (compiler_diagnostic.compiler-diagnostic-list-first
+                    (& (__tl-box-place diagnostics))))]
+              (tc_core.tc-global-call-effects-finish! job)
+              (tc_core.tc-checked-let-binding-facts-finish! let-facts)
+              (build-package-runtime-scope-release! scope)
+              (build-package-lib-clean-mods-dir! (& mods-dir))
+              (build-package-clean-stage stage)
+              (io.print-error message)
+              1)]
           [(Ok _ ctx env checked-paths)
             (tc_core.tc-checked-let-binding-facts-freeze! let-facts)
             (let
+              ;; Capture the expanded program: a `: Decls` or `: Module`
+              ;; macro's generated `defmacro` exists only after expansion,
+              ;; and the companion catalog must carry it.
+              [checked-decls : ast.AstDeclList
+                (match (tc_core.tc-context-program ctx)
+                  [(ast.AstProgram.Program decls-box) (deref decls-box)])]
+              [exports : ResultBuildPackageTlciExports
+                (build-package-tlci-capture-exports
+                  (&
+                    (compiler_tlci_native_producer.tlci-native-source-context-new
+                      (tc_core.tc-context-pools ctx)
+                      (ci.intern-compat-state-capture-active)))
+                  (& request.manifest)
+                  (& request.stdlib-roots)
+                  mode
+                  (owned_view.compiler-owned-shared-view checked-decls)
+                  (build-package-lib-checked-raw-paths
+                    (& checked-paths)
+                    (& raw-paths)
+                    (& raw-by-owned))
+                  (& source-set))]
+              [macro-names : (__tl_dyn-array String)
+                (match (& exports)
+                  [(Ok _ names _ _)
+                    (let
+                      [n : i64 (array-length names)]
+                      [dst : (__tl_dyn-array String) (__tl_make-array String n)]
+                      (for [i (iterator.range 0 n)]
+                        (set!
+                          (array-ref dst i)
+                          (string.copy (& (array-ref names i)))))
+                      dst)]
+                  [(Err message)
+                    (tc_core.tc-global-call-effects-finish! job)
+                    (tc_core.tc-checked-let-binding-facts-finish! let-facts)
+                    (build-package-runtime-scope-release! scope)
+                    (build-package-lib-clean-mods-dir! (& mods-dir))
+                    (build-package-clean-stage stage)
+                    (io.print-error message)
+                    (return 1)])]
               [all-sources : (__tl_dyn-array tli_extract.TliSource)
                 (tli_extract.tli-extract-add-generated-sources
                   ctx
@@ -6417,344 +6786,131 @@
                 (& scope.state.load-session))
               (tc_core.tc-global-call-effects-finish! job)
               (let
-                [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
-                [checked-program : ast.AstProgram
-                  (tc_core.tc-context-program ctx)]
-                [lower-state : lower.CompilerLowerState
-                  (lower.compiler-lower-state-new)]
-                [lower-mode : lower.CompilerLowerMode
-                  (compiler_driver_core.compiler-driver-lower-mode-for-target
-                    target
-                    mode)]
-                (lower.compiler-lower-state-enable-module-ownership!
-                  lower-state
-                  true)
-                (lower.compiler-lower-state-set-spmd-package!
-                  lower-state
-                  (string.copy (& request.manifest.name)))
-                (ast.ast-node-pool-context-install! pools)
-                (let
-                  [lower-names : lower.LowerNameEnv
-                    (match (& checked-program)
-                      [(ast.AstProgram.Program decls-box)
-                        (lower.lower-name-env-from-decls-with-state
-                          lower-state
-                          (& (deref decls-box))
-                          (& checked-paths)
-                          ""
-                          lower.LowerNameEnv.Nil)])]
-                  (match (lower.lower-compiler-program-checked-with-names-mode
-                    lower-state
-                    ctx
-                    (tc_core.tc-env-with-cache env)
-                    checked-program
-                    checked-paths
-                    ""
-                    lower-names
-                    lower-mode)
-                    [(Err diag-box)
+                [code : BuildPackageLibCode
+                  (if request.interface-only
+                    (begin
                       (tc_core.tc-checked-let-binding-facts-finish! let-facts)
-                      (lower.compiler-lower-arena-state-release!
-                        (lower.compiler-lower-state-arenas lower-state))
-                      (build-package-runtime-scope-release! scope)
+                      (BuildPackageLibCode.InterfaceOnly))
+                    (build-package-lib-lower-and-emit
+                      ctx
+                      env
+                      checked-paths
+                      job
+                      let-facts
+                      (& bundle)
+                      (& mods-dir)
+                      target
+                      mode
+                      request
+                      direct-object?))]
+                ;; The extracted bundle still names package-runtime strings: encode it
+                ;; while the runtime is live, so finishing reads only owned bytes.
+                [interface : ResultBuildPackageLibInterface
+                  (build-package-lib-encode-interface (&mut bundle))]
+                (match (& code)
+                  [(Failed message)
+                    (build-package-runtime-scope-release! scope)
+                    (build-package-lib-clean-mods-dir! (& mods-dir))
+                    (build-package-clean-stage stage)
+                    (io.print-error (string.copy message))
+                    (return 1)]
+                  [_ unit])
+                (match (& interface)
+                  [(Err message)
+                    (build-package-runtime-scope-release! scope)
+                    (build-package-lib-clean-mods-dir! (& mods-dir))
+                    (build-package-clean-stage stage)
+                    (io.print-error (string.copy message))
+                    (return 1)]
+                  [_ unit])
+                ;; Finishing reads only owned capture text and interface bytes, so lowering
+                ;; (released by the emit) and the package frontend retire first.
+                (build-package-runtime-scope-release! scope)
+                (let
+                  [tlci-emitted : BuildPackageTlciEmitted
+                    (build-package-tlci-emit-optional
+                      exports
+                      (string.copy (& request.producer-identity))
+                      source-digest)]
+                  (match tlci-emitted
+                    [(Err message)
                       (build-package-lib-clean-mods-dir! (& mods-dir))
                       (build-package-clean-stage stage)
-                      (io.print-error
-                        (compiler_driver_core.compiler-driver-render-source-diagnostic
-                          (deref diag-box)))
+                      (io.print-error message)
                       1]
-                    [(Ok whole-program whole-spans lower-owner)
-                      (tc_core.tc-checked-let-binding-facts-finish! let-facts)
+                    [_
                       (let
-                        [part-result : tli_extract.ResultTliPartitionedEmit
-                          (tli_extract.tli-emit-partitioned-modules!
-                            (& bundle)
-                            whole-program
-                            whole-spans
-                            lower-owner
-                            pools
-                            job
-                            (& mods-dir)
-                            ""
-                            target
-                            mode
-                            (be_facts.compiler-backend-target-windows? target)
-                            request.opt-level
-                            false
-                            (if direct-object?
-                              (tli_extract.TliPartitionObjectRoute.DirectObject
-                                build-package-lib-write-direct-object)
-                              (tli_extract.TliPartitionObjectRoute.Assembly)))]
-                        (match part-result
+                        [has-tlci : bool
+                          (match (& tlci-emitted)
+                            [(SomeTlci _ _) true]
+                            [_ false])]
+                        [stamped : ResultBuildPackageLibInterface
+                          (match (& tlci-emitted)
+                            [(SomeTlci _ digest)
+                              (match (& interface)
+                                [(Ok bytes)
+                                  (build-package-lib-stamp-interface
+                                    bytes
+                                    digest)]
+                                [(Err message)
+                                  (ResultBuildPackageLibInterface.Err
+                                    (string.copy message))])]
+                            [_ interface])]
+                        [tlci-text : String
+                          (match tlci-emitted
+                            [(SomeTlci text _) text]
+                            [_ ""])]
+                        [tlci-dirty : bool
+                          (and
+                            has-tlci
+                            (not
+                              (build-package-file-text-eq?
+                                (string.copy (& request.tlci-path))
+                                (string.copy (& tlci-text)))))]
+                        (match stamped
                           [(Err message)
-                            (lower.compiler-lower-arena-state-release!
-                              (lower.compiler-lower-state-arenas lower-owner))
-                            (build-package-runtime-scope-release! scope)
                             (build-package-lib-clean-mods-dir! (& mods-dir))
                             (build-package-clean-stage stage)
                             (io.print-error message)
-                            1]
-                          [(Ok emitted)
+                            (return 1)]
+                          [(Ok encoded-arr)
                             (let
-                              [tlci-emitted : BuildPackageTlciEmitted
-                                (build-package-tlci-emit-optional
-                                  exports
-                                  (string.copy (& request.producer-identity))
-                                  source-digest)]
-                              (match tlci-emitted
-                                [(Err message)
-                                  (lower.compiler-lower-arena-state-release!
-                                    (lower.compiler-lower-state-arenas
-                                      lower-owner))
-                                  (build-package-runtime-scope-release! scope)
+                              [encoded-buf : byte_buf.ByteBuf
+                                (byte_buf.from-array encoded-arr)]
+                              (match (io.try-write-file
+                                (& stage.tli)
+                                (byte_buf.as-bytes (& encoded-buf)))
+                                [(OkIoUnit) unit]
+                                [(ErrIoUnit err)
                                   (build-package-lib-clean-mods-dir!
                                     (& mods-dir))
                                   (build-package-clean-stage stage)
-                                  (io.print-error message)
-                                  1]
-                                [_
-                                  (let
-                                    [has-tlci : bool
-                                      (match (& tlci-emitted)
-                                        [(SomeTlci _ _) true]
-                                        [_ false])]
-                                    [tlci-text : String
-                                      (match tlci-emitted
-                                        [(SomeTlci text digest)
-                                          (build-package-lib-stamp-tlci-companion!
-                                            (&mut bundle)
-                                            digest)
-                                          text]
-                                        [_ ""])]
-                                    [tlci-dirty : bool
-                                      (and
-                                        has-tlci
-                                        (not
-                                          (build-package-file-text-eq?
-                                            (string.copy (& request.tlci-path))
-                                            (string.copy (& tlci-text)))))]
-                                    (unless
-                                      (tli_extract.tli-extract-pin-imports-with-load-state!
-                                        (&mut bundle)
-                                        (& scope.state.load-session))
-                                      (lower.compiler-lower-arena-state-release!
-                                        (lower.compiler-lower-state-arenas
-                                          lower-owner))
-                                      (build-package-runtime-scope-release!
-                                        scope)
-                                      (build-package-lib-clean-mods-dir!
-                                        (& mods-dir))
-                                      (build-package-clean-stage stage)
-                                      (io.print-error
-                                        "build: TLI import cycle cannot pin module record digests")
-                                      (return 1))
-                                    (let
-                                      [encoded-arr : (__tl_dyn-array u8)
-                                        (tli_codec.tli-encode-bundle (& bundle))]
-                                      [encoded-buf : byte_buf.ByteBuf
-                                        (byte_buf.from-array encoded-arr)]
-                                      (lower.compiler-lower-arena-state-release!
-                                        (lower.compiler-lower-state-arenas
-                                          lower-owner))
-                                      (build-package-runtime-scope-release!
-                                        scope)
-                                      (match (io.try-write-file
-                                        (& stage.tli)
-                                        (byte_buf.as-bytes (& encoded-buf)))
-                                        [(OkIoUnit) unit]
-                                        [(ErrIoUnit err)
-                                          (build-package-lib-clean-mods-dir!
-                                            (& mods-dir))
-                                          (build-package-clean-stage stage)
-                                          (io.print-error
-                                            (str_cat.str-cat
-                                              "build: failed to write package tli: "
-                                              (io.error-message err)))
-                                          (return 1)]))
-                                    (when
-                                      request.interface-only
-                                      (build-package-lib-clean-mods-dir!
-                                        (& mods-dir))
-                                      (return
-                                        (build-package-lib-commit-interface-only!
-                                          stage
-                                          (& request.tli-path)
-                                          (& request.tlci-path)
-                                          tlci-text
-                                          has-tlci
-                                          tlci-dirty)))
-                                    (let
-                                      [combined-asm : text_buf.TextBuf
-                                        (text_buf.empty)]
-                                      (if (= (array-length emitted.asm-files) 0)
-                                        (set!
-                                          combined-asm
-                                          (text_buf.append
-                                            combined-asm
-                                            "; empty library package\n"))
-                                        (for [ai
-                                          (iterator.range
-                                            0
-                                            (array-length emitted.asm-files))]
-                                          (let
-                                            [mod-asm-path : String
-                                              (fs.path-join
-                                                (& mods-dir)
-                                                (&
-                                                  (array-ref
-                                                    emitted.asm-files
-                                                    ai)))]
-                                            (match (io.try-read-file
-                                              (& mod-asm-path))
-                                              [(io.OkIoBytes chunk)
-                                                (let
-                                                  [chunk-text : String
-                                                    (byte_buf.to-string chunk)]
-                                                  (set!
-                                                    combined-asm
-                                                    (text_buf.append
-                                                      combined-asm
-                                                      chunk-text)))]
-                                              [(io.ErrIoBytes _) unit]))))
-                                      (let
-                                        [asm-text : String
-                                          (text_buf.render combined-asm)]
-                                        (match (build_run_core.source-tool-write-file
-                                          (& stage.asm)
-                                          (& asm-text)
-                                          "build: failed to stage package library assembly")
-                                          [(Ok) unit]
-                                          [(Err message)
-                                            (build-package-lib-clean-mods-dir!
-                                              (& mods-dir))
-                                            (build-package-clean-stage stage)
-                                            (io.print-error message)
-                                            (return 1)])))
-                                    (match (build-package-lib-assemble-and-archive
-                                      (& mods-dir)
-                                      (& emitted.asm-files)
-                                      (& emitted.direct-objects)
-                                      (& request.manifest.name)
-                                      target
-                                      (string.copy (& stage.artifact)))
-                                      [(Err message)
-                                        (build-package-lib-clean-mods-dir!
-                                          (& mods-dir))
-                                        (build-package-clean-stage stage)
-                                        (io.print-error message)
-                                        1]
-                                      [(Ok)
-                                        (build-package-lib-clean-mods-dir!
-                                          (& mods-dir))
-                                        (when
-                                          tlci-dirty
-                                          (match (build-package-write-tlci
-                                            (& stage.tlci)
-                                            tlci-text)
-                                            [(Ok) unit]
-                                            [(Err message)
-                                              (build-package-clean-stage stage)
-                                              (io.print-error message)
-                                              (return 1)]))
-                                        (match (build-package-lib-output-fingerprint
-                                          (string.copy
-                                            (& request.lib-input-transcript))
-                                          (& stage.tli)
-                                          (& stage.artifact)
-                                          (&
-                                            (if has-tlci
-                                              (if tlci-dirty
-                                                (string.copy (& stage.tlci))
-                                                (string.copy
-                                                  (& request.tlci-path)))
-                                              "")))
-                                          [(Err message)
-                                            (build-package-clean-stage stage)
-                                            (io.print-error message)
-                                            1]
-                                          [(Ok fp-text)
-                                            (match (build_run_core.source-tool-write-file
-                                              (& stage.fingerprint)
-                                              (& fp-text)
-                                              "build: failed to stage package runtime fingerprint")
-                                              [(Err message)
-                                                (build-package-clean-stage
-                                                  stage)
-                                                (io.print-error message)
-                                                1]
-                                              [(Ok)
-                                                (let
-                                                  [plan : BuildPackageCommitPlan
-                                                    (build-package-commit-plan-add
-                                                      (build-package-commit-plan-add
-                                                        (build-package-commit-plan-add
-                                                          (build-package-commit-plan-add
-                                                            (build-package-commit-plan-new)
-                                                            (string.copy
-                                                              (&
-                                                                request.asm-path))
-                                                            (string.copy
-                                                              (& stage.asm)))
-                                                          (string.copy
-                                                            (& request.tli-path))
-                                                          (string.copy
-                                                            (& stage.tli)))
-                                                        (string.copy
-                                                          (&
-                                                            request.artifact-path))
-                                                        (string.copy
-                                                          (& stage.artifact)))
-                                                      (string.copy
-                                                        (& fingerprint-path))
-                                                      (string.copy
-                                                        (& stage.fingerprint)))]
-                                                  (when
-                                                    tlci-dirty
-                                                    (set!
-                                                      plan
-                                                      (build-package-commit-plan-add
-                                                        plan
-                                                        (string.copy
-                                                          (& request.tlci-path))
-                                                        (string.copy
-                                                          (& stage.tlci)))))
-                                                  (compiler_driver_core.compiler-driver-reset-file-state!)
-                                                  (match (build-package-commit-plan-run
-                                                    plan)
-                                                    [(Err message rollback)
-                                                      (build-package-clean-stage-after-rollback
-                                                        (& stage)
-                                                        (owned_view.compiler-owned-shared-view
-                                                          rollback))
-                                                      (io.print-error
-                                                        (build-package-commit-error-message
-                                                          message
-                                                          rollback
-                                                          stage.dir))
-                                                      1]
-                                                    [(Ok)
-                                                      (unless
-                                                        has-tlci
-                                                        (let
-                                                          [_ : io.ResultIoUnit
-                                                            (fs.try-remove-file-if-exists
-                                                              (&
-                                                                request.tlci-path))]
-                                                          unit))
-                                                      (build-package-clean-stage
-                                                        stage)
-                                                      (build-package-announce-freshness
-                                                        (string.copy
-                                                          (&
-                                                            request.artifact-path))
-                                                        (if has-tlci
-                                                          (string.copy
-                                                            (&
-                                                              request.tlci-path))
-                                                          "")
-                                                        true
-                                                        tlci-dirty
-                                                        request.announce)]))])])]))]))]))]))))])))))
+                                  (io.print-error
+                                    (str_cat.str-cat
+                                      "build: failed to write package tli: "
+                                      (io.error-message err)))
+                                  (return 1)]))])
+                        (match code
+                          [(Emitted emitted)
+                            (build-package-lib-finish-archive!
+                              request
+                              stage
+                              mods-dir
+                              emitted
+                              target
+                              fingerprint-path
+                              tlci-text
+                              has-tlci
+                              tlci-dirty)]
+                          [_
+                            (build-package-lib-clean-mods-dir! (& mods-dir))
+                            (build-package-lib-commit-interface-only!
+                              stage
+                              (& request.tli-path)
+                              (& request.tlci-path)
+                              tlci-text
+                              has-tlci
+                              tlci-dirty)]))]))))])))))
 
 (define (build-package-doctest-paths
   [owner : String]

@@ -949,7 +949,8 @@
       "/pkg_a/target/dev/libpkg_a.a"
       (tlci.tlci-spmd-callables-empty)
       cat-a.directory
-      (& cfg-digest))
+      (& cfg-digest)
+      (sym_i64_env.sym-i64-empty))
       [(Ok _) unit]
       [(Err m) (io.panic m)])
     (match (hydrate.tli-multi-catalog-attach-bundle!
@@ -962,7 +963,8 @@
       "/pkg_b/target/dev/libpkg_b.a"
       (tlci.tlci-spmd-callables-empty)
       cat-b.directory
-      (& cfg-digest))
+      (& cfg-digest)
+      (sym_i64_env.sym-i64-empty))
       [(Ok _) unit]
       [(Err m) (io.panic m)])
     ;; Duplicate module name must fail closed.
@@ -985,7 +987,8 @@
         "/pkg_a_dup/target/dev/libpkg_a_dup.a"
         (tlci.tlci-spmd-callables-empty)
         cat-dup.directory
-        (& cfg-digest))
+        (& cfg-digest)
+        (sym_i64_env.sym-i64-empty))
         [(Ok _) (io.panic "duplicate module across bundles must fail closed")]
         [(Err _) unit]))
     ;; Hydrating pkg_b hydrates pkg_a first and orders startup init & archives.
@@ -1057,7 +1060,8 @@
           "/pkg_c/target/dev/libpkg_c.a"
           (tlci.tlci-spmd-callables-empty)
           cat-c.directory
-          (& cfg-digest))
+          (& cfg-digest)
+          (sym_i64_env.sym-i64-empty))
           [(Ok _) unit]
           [(Err m) (io.panic m)])
         (let

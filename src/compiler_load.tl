@@ -1224,7 +1224,8 @@
   [archive-path : String]
   [spmd-callables : tlci.TlciSpmdCallables]
   [directory : tli_codec.TliDirectory]
-  [cfg-digest : (& (Array u8 32))]) : tli_hydrate.TliMultiAttachResult
+  [cfg-digest : (& (Array u8 32))]
+  [cfgs : sym_i64_env.SymI64Env]) : tli_hydrate.TliMultiAttachResult
   (let
     [addr : i64 (compiler-load-session-state-tli-ensure-box! state)]
     (unsafe
@@ -1248,7 +1249,8 @@
                   archive-path
                   spmd-callables
                   directory
-                  cfg-digest)]
+                  cfg-digest
+                  cfgs)]
               (ptr-write!
                 p-rw
                 (CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v))
@@ -1259,7 +1261,8 @@
   [tli-arena : i64]
   [_sysroot-dir : String]
   [archive-path : String]
-  [catalog : tli_hydrate.TliCatalog]) : unit
+  [catalog : tli_hydrate.TliCatalog]
+  [cfgs : sym_i64_env.SymI64Env]) : unit
   (compiler-load-session-state-tli-release! state)
   (match (compiler-load-session-state-tli-attach-bundle!
     state
@@ -1271,7 +1274,8 @@
     archive-path
     (tlci.tlci-spmd-callables-empty)
     catalog.directory
-    (& catalog.cfg-digest))
+    (& catalog.cfg-digest)
+    cfgs)
     [(Ok _) unit]
     [(Err _)
       (compiler-load-session-state-tli-release! state)
@@ -1705,13 +1709,15 @@
   [tli-arena : i64]
   [sysroot-dir : String]
   [archive-path : String]
-  [catalog : tli_hydrate.TliCatalog]) : unit
+  [catalog : tli_hydrate.TliCatalog]
+  [cfgs : sym_i64_env.SymI64Env]) : unit
   (compiler-load-session-state-tli-attach!
     (& compiler-load-active-session-state)
     tli-arena
     sysroot-dir
     archive-path
-    catalog))
+    catalog
+    cfgs))
 
 (define (compiler-load-tli-hydrated-any?) : bool
   (compiler-load-session-state-tli-hydrated-any?

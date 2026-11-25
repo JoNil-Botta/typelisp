@@ -550,7 +550,8 @@
   (tli-write-name! ctx (& row.module-name))
   (tli-write-name! ctx (& row.link-symbol))
   (tli-write-u32! ctx row.flags)
-  (tli-write-type! ctx (& row.signature)))
+  (tli-write-type! ctx (& row.signature))
+  (tli-write-summary! ctx (& row.summary)))
 
 (define (tli-write-module!
   [ctx : (&mut ctx TliWriteContext)]
@@ -1838,7 +1839,11 @@
     (tli-read-name! rd pool)
     (tli-read-name! rd pool)
     (tli-read-flags! rd 1)
-    (tli-read-type! rd pool false 1)))
+    (tli-read-type! rd pool false 1)
+    (tli-read-summary-tail!
+      rd
+      pool
+      (tli-read-flags! rd (bit-or 191 tli.tli-fn-stores-ambient-arena-arg)))))
 
 (define (tli-read-dispatches!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]

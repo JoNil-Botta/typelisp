@@ -157,7 +157,8 @@
 (define (tli-sysroot-options-explicit? [options : (& TliSysrootOptions)]) : bool
   (> (string.string-length (& options.explicit-root)) 0))
 
-;; Return true when `full` cannot be read or differs byte-for-byte from `expected`.
+;; Return true when `full` cannot be read or differs from `expected` once
+;; inline tests are blanked, matching the loader's embedded-stdlib equivalence.
 (define (tli-sysroot-file-overrides-expected?
   [full : (& str)]
   [expected : (& str)]) : bool
@@ -165,10 +166,14 @@
     [(OkIoBytes actual)
       (let
         [actual-text : String (byte_buf.to-string actual)]
-        (not (string.eq (& actual-text) expected)))]
+        (not
+          (embedded.compiler-embedded-stdlib-source-matches-blanked?
+            (& actual-text)
+            expected)))]
     [(ErrIoBytes _) true]))
 
-;; Check whether `dir`/`suffix` exists and differs byte-for-byte from `expected`.
+;; Check whether `dir`/`suffix` exists and differs from `expected` once inline
+;; tests are blanked.
 (define (tli-sysroot-dir-overrides-module?
   [dir : (& str)]
   [suffix : (& str)]
@@ -183,9 +188,9 @@
       [(ErrIoBool _) true])))
 
 ;; Check whether a single directory overrides any embedded stdlib source file
-;; with non-byte-identical contents. Probe the canonical embedded suffix list
-;; in fixed order (never host directory order) and decode an embedded payload
-;; only when the candidate path exists on disk.
+;; with contents that differ from it once inline tests are blanked. Probe the
+;; canonical embedded suffix list in fixed order (never host directory order)
+;; and decode an embedded payload only when the candidate path exists on disk.
 (define (tli-sysroot-dir-overrides-stdlib? [dir : (& str)]) : bool
   (match (fs.try-file-kind dir)
     [(OkFsFileKind kind)

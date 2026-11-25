@@ -6,6 +6,20 @@ cd "$ROOT"
 gate_compiler
 gate_compiler_absolute
 gate_require_compiler
+. "$ROOT/scripts/lib-linux-entry.sh"
+stdlib_archive_resolve_triple x86_64-unknown-linux-gnu "$COMPILER"
+link_linux_bin() {
+    _llb_asm=$1
+    _llb_obj=$2
+    _llb_bin=$3
+    _llb_archive=$(linux_stdlib_archive_for_asm "$_llb_asm" "$COMPILER")
+    if [ -n "$_llb_archive" ]; then
+        ld -e _tl_start -z noexecstack --gc-sections "$_llb_obj" \
+            --start-group "$_llb_archive" --end-group -o "$_llb_bin"
+    else
+        ld -e _tl_start "$_llb_obj" -o "$_llb_bin"
+    fi
+}
 [ "$(uname -s)" = Linux ] || fail "Linux stack verification requires Linux"
 for tool in as ld objcopy objdump gdb; do
     command -v "$tool" >/dev/null || fail "Linux stack verification requires $tool"
@@ -91,7 +105,7 @@ for opt in 0 1 2; do
         bounded "$cell-compile" 512 "$COMPILER" compile "$source" \
             --stdlib-root stdlib --stdlib-root src --opt-level "$opt" -o "$WORK/$cell.s"
         as "$WORK/$cell.s" -o "$WORK/$cell.o"
-        ld -e _tl_start "$WORK/$cell.o" -o "$WORK/$cell"
+        link_linux_bin "$WORK/$cell.s" "$WORK/$cell.o" "$WORK/$cell"
         objdump -dr "$WORK/$cell" > "$WORK/$cell.dump"
         require_recursion "$WORK/$cell.dump"
         if [ "$size" = large ]; then
@@ -116,7 +130,7 @@ for fixture in lifetime canary observations; do
     bounded "$cell-compile" 512 "$COMPILER" compile "tests/fixtures/linux_stack_$fixture.tl" \
         --stdlib-root stdlib --stdlib-root src --opt-level 2 -o "$WORK/$cell.s"
     as "$WORK/$cell.s" -o "$WORK/$cell.o"
-    ld -e _tl_start "$WORK/$cell.o" -o "$WORK/$cell"
+    link_linux_bin "$WORK/$cell.s" "$WORK/$cell.o" "$WORK/$cell"
     status=0
     bounded "$cell-run" 2048 "$WORK/$cell" || status=$?
     [ "$status" -eq 42 ] || fail "$cell returned $status, expected 42"

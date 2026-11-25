@@ -484,6 +484,17 @@
             "arena.tl"
             "(define x : i64 2)\n")
           (io.panic "modified top-level file missed stdlib override"))
+        (match (io.try-write-file
+          (& top-file)
+          (byte_buf.str-as-bytes "(define x : i64 1)\n(test probe unit)\n"))
+          [(OkIoUnit) unit]
+          [(ErrIoUnit error) (io.panic (io.error-message error))])
+        (when
+          (sysroot.tli-sysroot-dir-overrides-module?
+            (& root)
+            "arena.tl"
+            "(define x : i64 1)\n\n")
+          (io.panic "blanked inline-test file reported stdlib override"))
         (tli-test-mkdir (& nested-dir))
         (match (io.try-write-file
           (& nested-file)

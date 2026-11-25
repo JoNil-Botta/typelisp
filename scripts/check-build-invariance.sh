@@ -205,7 +205,8 @@ compile_stage() {
         --backend-mode scalar \
         --opt-level "$opt_level" \
         --stdlib-root stdlib \
-        --stdlib-root src; then
+        --stdlib-root src \
+        --no-prebuilt-stdlib; then
         print_log_pair "build-invariance opt$opt_level $stage_label compile failed" "$stdout" "$stderr"
         exit 1
     fi
@@ -448,7 +449,8 @@ run_batch_chunk() {
         $(native_target_cfg_args) \
         --backend-mode scalar \
         --opt-level "$batch_opt_level" \
-        --stdlib-root stdlib --stdlib-root src
+        --stdlib-root stdlib --stdlib-root src \
+        --no-prebuilt-stdlib
     batch_suffix=${batch_chunk_path##*/entries.}
     batch_memory_report="$WORKDIR/backend-memory/$batch_compiler_label.opt$batch_opt_level.chunk${batch_suffix%.txt}.memory"
     if [ "$batch_compiler_label" = opt1-built ] && build_invariance_chunk_is_codegen_smoke "$batch_case_chunk"; then
@@ -579,7 +581,8 @@ run_batch_sentinel() {
         --backend-mode scalar \
         --opt-level "$opt_level" \
         --stdlib-root stdlib \
-        --stdlib-root src; then
+        --stdlib-root src \
+        --no-prebuilt-stdlib; then
         print_log_pair "build-invariance $sentinel_compiler_label standalone sentinel $sentinel_name failed" "$stdout" "$stderr"
         exit 1
     fi

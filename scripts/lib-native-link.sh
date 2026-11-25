@@ -255,7 +255,7 @@ native_link_find_stdlib_archive() {
     if grep -q '^tl_oom_abort:$' "$_nl_asm" 2>/dev/null; then
         return 0
     fi
-    if ! grep -qE '(^|[[:space:]])(tl_oom_abort|tl_region_abort|tl_oob_abort|tl_oob_abort_at|tl_c_fn_null_abort|tl_panic_at|_tl_stdlib_|_tl___tl_mod_init_|tl_alloc$|tl_exit$)' "$_nl_asm" 2>/dev/null; then
+    if ! grep -qE '(^|[[:space:]])(tl_oom_abort|tl_region_abort|tl_windows_allocation_abort|tl_oob_abort|tl_oob_abort_at|tl_c_fn_null_abort|tl_panic_at|_tl_stdlib_|_tl___tl_mod_init_|tl_alloc$|tl_exit$)' "$_nl_asm" 2>/dev/null; then
         return 0
     fi
     if [ "$NL_HOST_OS" = windows ]; then
@@ -268,6 +268,8 @@ native_link_find_stdlib_archive() {
         "${TYPELISP_SYSROOT:-}" \
         "${COMPILER:+$(dirname -- "$COMPILER")}" \
         "${COMPILER:+$(dirname -- "$(dirname -- "$COMPILER")")}" \
+        "${TYPELISP_BIN:+$(dirname -- "$TYPELISP_BIN")}" \
+        "${TYPELISP_BIN:+$(dirname -- "$(dirname -- "$TYPELISP_BIN")")}" \
         "${STAGE3_BIN:+$(dirname -- "$STAGE3_BIN")}" \
         "${STAGE2_BIN:+$(dirname -- "$STAGE2_BIN")}" \
         "${BIN:+$(dirname -- "$BIN")}"; do

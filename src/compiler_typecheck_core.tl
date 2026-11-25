@@ -106357,6 +106357,86 @@
     [(MakeArray _ _) (ci.intern "__tl_make-array")]
     [_ -1]))
 
+;; A `(module <name> ...)` declaration's name is a whole module identifier,
+;; never a `module/item` nominal reference. Generated module names whose
+;; type-key includes a qualified nominal (for example
+;; `stdlib.vector.generated.core.struct_stdlib.x509/Constraint`) carry `/` and
+;; are marked qualified when already present in the source intern pool (such as
+;; after hydrating stdlib.tli); routing them through
+;; `macro-output-source-identity-id-at` would split them into a composite pair.
+(define (macro-module-name-expr-to-spanned-sexpr
+  [owner : (& owner MacroSexprOwner)]
+  [expr : ast.AstExpr]
+  [span : token.SourceSpan]
+  [origin : (& ast.AstExpr)]) : ResultMacroSexpr
+  (match expr
+    [(Spanned inner-box ast-span)
+      (macro-module-name-expr-to-spanned-sexpr
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
+        (macro-source-span-from-ast ast-span)
+        origin)]
+    [(or (MacroExpansion inner-box _ _) (CloneOut inner-box _))
+      (macro-module-name-expr-to-spanned-sexpr
+        owner
+        (ast.ast-expr-segment-bases-get owner.expr-bases inner-box)
+        span
+        origin)]
+    [(Var name)
+      (Ok
+        (macro-spanned-symbol-id
+          (macro-output-syntax-id-at
+            (macro-sexpr-session owner)
+            name
+            "module-name")
+          span))]
+    [_ (macro-expr-to-spanned-sexpr-with-span owner expr span origin)]))
+
+(define (macro-call-head-is-module?
+  [owner : (& owner MacroSexprOwner)]
+  [func : (& ast.AstExpr)]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases owner.expr-bases func)
+    [(Var name-id)
+      (let
+        [session : cis.InternStructuralSessionHandle
+          (macro-sexpr-session owner)]
+        (and
+          (not (macro-hygiene-global-id? session name-id))
+          (not (tc-structural-local-name-id? session name-id))
+          (=
+            (macro-output-syntax-id-at session name-id "call-head")
+            cbi.compiler-builtin-id-fix-module)))]
+    [_ false]))
+
+(define (macro-module-call-args-to-spanned-sexpr
+  [owner : (& owner MacroSexprOwner)]
+  [exprs : ast.AstExprList]
+  [span : token.SourceSpan]
+  [origin : (& ast.AstExpr)]) : ResultMacroSexpr
+  (if (= exprs.len 0)
+    (macro-expr-list-to-spanned-sexpr owner exprs span origin)
+    (let
+      [first-expr : ast.AstExpr
+        (ast.ast-expr-segment-bases-get
+          owner.expr-bases
+          (ast.ast-expr-list-get (& exprs) 0 0))]
+      (match (macro-module-name-expr-to-spanned-sexpr
+        owner
+        first-expr
+        span
+        origin)
+        [(Ok sfirst)
+          (macro-expr-list-to-spanned-sexpr-at
+            owner
+            (& exprs)
+            1
+            span
+            origin
+            (reader.spanned-sexpr-builder-push
+              (reader.spanned-sexpr-builder-new)
+              sfirst))]
+        [(Err diag) (Err diag)]))))
+
 (define (macro-expr-to-spanned-sexpr-with-span
   [owner : (& owner MacroSexprOwner)]
   [expr : ast.AstExpr]
@@ -106389,8 +106469,13 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get owner.expr-bases func-box)]
+        [is-module? : bool (macro-call-head-is-module? owner (& func))]
         [head (try (macro-call-head-to-spanned-sexpr owner func span origin))]
-        [tail (try (macro-expr-list-to-spanned-sexpr owner args span origin))]
+        [tail
+          (try
+            (if is-module?
+              (macro-module-call-args-to-spanned-sexpr owner args span origin)
+              (macro-expr-list-to-spanned-sexpr owner args span origin)))]
         (Ok (reader.spanned-sexpr-list-prepend head tail span)))]
     [(BracketClause items)
       (let

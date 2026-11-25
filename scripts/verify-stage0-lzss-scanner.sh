@@ -28,7 +28,8 @@ payload_of() {
     printf '(include-str-lzss payload "payload.txt")\n(define (main) : i64 0)\n' \
         > "$work/build/main.tl"
     "$compiler" compile "$work/build/main.tl" -o "$work/build/main.s" \
-        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 0 \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+        --opt-level 0 --no-prebuilt-stdlib \
         >/dev/null 2>&1
     # The assembler emits the payload as `.byte` rows of decimal values; awk's
     # `%c` would re-encode them as UTF-8, so print the values and write bytes.

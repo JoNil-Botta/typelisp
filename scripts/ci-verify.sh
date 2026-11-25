@@ -390,7 +390,11 @@ stage2_safety_corpus_supported() {
         return 1
     fi
     entry=$(linux_entry_symbol_for_asm "$asm") || exit $?
-    if ! ld "$obj" -o "$bin" -static -e "$entry" \
+    # A pristine --stdlib-root compiles against the prebuilt stdlib beside the
+    # compiler, whose runtime lives in the sysroot archive.
+    probe_archive=$(linux_stdlib_archive_for_asm "$asm" "${compiler:-}")
+    if ! ld "$obj" ${probe_archive:+-z noexecstack --gc-sections --start-group "$probe_archive" --end-group} \
+        -o "$bin" -static -e "$entry" \
         > "$probe_dir/link.stdout" 2> "$probe_dir/link.stderr"; then
         echo "[ci-verify] stage2 safety probe link failed"
         sed 's/^/  /' "$probe_dir/link.stdout" >&2 || true
@@ -442,7 +446,19 @@ stage2_can_compile_native_windows() {
         sed 's/^/  /' "$probe_dir/asm.out" >&2 || true
         return 1
     fi
-    if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin")" \
+    # A pristine --stdlib-root compiles against the prebuilt stdlib beside the
+    # compiler, whose runtime lives in the sysroot archive.
+    probe_archive=$(windows_stdlib_archive_for_asm "$asm" "${compiler:-}")
+    if [ -n "$probe_archive" ]; then
+        if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "$(cygpath -aw "$probe_archive")" -OPT:REF \
+            "-OUT:$(cygpath -aw "$bin")" \
+            -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
+            > "$probe_dir/link.out" 2>&1; then
+            echo "[ci-verify] windows stage2 compile-native probe link failed"
+            sed 's/^/  /' "$probe_dir/link.out" >&2 || true
+            return 1
+        fi
+    elif ! lld-link -NOLOGO "$(cygpath -aw "$obj")" "-OUT:$(cygpath -aw "$bin")" \
         -SUBSYSTEM:CONSOLE -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
         > "$probe_dir/link.out" 2>&1; then
         echo "[ci-verify] windows stage2 compile-native probe link failed"

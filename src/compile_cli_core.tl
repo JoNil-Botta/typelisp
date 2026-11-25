@@ -1462,6 +1462,13 @@
       ;; selected paths come from the outer parsed plan and the kind/category
       ;; strings are stable literals, so pushing them after restoring `home`
       ;; leaves no scratch-owned payload in the result vector.
+      ;; A program lowered against the prebuilt stdlib calls into the sysroot
+      ;; libstdlib.a, so its row tells the linker to add that archive.
+      [archive : String
+        (if (be_state.compiler-backend-state-archive-runtime?
+          (compiler_driver_core.compiler-driver-state-backend (& state)))
+          "stdlib-archive"
+          "none")]
       [status : i64
         (begin
           (compiler_driver_core.compiler-driver-restore-arena-owner-current!
@@ -1474,6 +1481,7 @@
               (cli_svec.push-ref! results kind)
               (cli_svec.push-ref! results path)
               (cli_svec.push-ref! results category)
+              (cli_svec.push-ref! results archive)
               0]
             [(Err entry-status) entry-status]))]
       (begin
@@ -1560,8 +1568,10 @@
       (text_buf.append! out (cli_svec.get results (+ index 2) ""))
       (text_buf.append! out "|")
       (text_buf.append! out (cli_svec.get results (+ index 3) ""))
+      (text_buf.append! out "|")
+      (text_buf.append! out (cli_svec.get results (+ index 4) ""))
       (text_buf.append! out "\n")
-      (+= index 4))
+      (+= index 5))
     (text_buf.render out)))
 
 (define (compile-cli-write-windows-batch-result-plan

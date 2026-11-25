@@ -116228,9 +116228,11 @@
         (ci.intern-source-name-session-handle-session
           (tc-context-source-names ctx))]
       [state : TcMacroState (tc-context-macro-state ctx)]
+      ;; A provenance path may sit in either lane of the session's table: a
+      ;; hydrated dependency's physical path is interned as a generated name
+      ;; when its `.tli` is opened after parsing (the inline-test preflight).
       (if (or
         (< provenance-id 0)
-        (>= provenance-id source-names.source-count)
         (>= provenance-id (array-length source-names.pool-slots)))
         -1
         (let
@@ -117819,10 +117821,11 @@
           "typecheck: prebuilt macro "
           (string.copy (& identity))
           " has no runnable .tlci entry and its source body is unavailable")]
+      ;; Either lane of the session's table names a path (see
+      ;; `macro-dependency-tlci-catalog-slot-for-declaration`).
       (when
         (or
           (< provenance-id 0)
-          (>= provenance-id source-names.source-count)
           (>= provenance-id (array-length source-names.pool-slots)))
         (return (Unavailable unavailable)))
       (let

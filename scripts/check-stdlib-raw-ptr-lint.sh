@@ -11,9 +11,10 @@ set -eu
 #    declaration of an `(unsafe (define ...))` wrapper, the only form the parser
 #    accepts as an unsafe function. This covers top-level definitions, those
 #    nested under `(cfg ...)` (which must be `(cfg p (unsafe (define ...)))`)
-#    and those a macro emits through a quasiquote template. A raw-pointer
-#    return type or an `(unsafe ...)` body does not make a function unsafe to
-#    call and is not flagged.
+#    and those a macro emits through a quasiquote template. A value-form
+#    `(define f : (-> P... R) ...)` whose parameter types mention a raw pointer
+#    is held to the same rule. A raw-pointer return type or an `(unsafe ...)`
+#    body does not make a function unsafe to call and is not flagged.
 # 2. No `define` or `defmacro` names a `*-shared-view` helper (#9257).
 #
 # The scanner is a paren-, string-, character-literal- and comment-aware
@@ -84,16 +85,35 @@ scan() {
             name[depth] = ""
             signature[depth] = 0
             quoted[depth] = template
+            spliced[depth] = 0
+            colon[depth] = 0
+            arrow[depth] = 0
+            first_pointer[depth] = 0
             if (!bracket && depth > 1 && count[depth - 1] == 2 &&
                 (head[depth - 1] == "define" || head[depth - 1] == "defmacro")) {
                 signature[depth] = 1
             }
+            # The annotated type of a value-form `(define name : T ...)`.
+            if (!bracket && depth > 1 && count[depth - 1] == 4 &&
+                head[depth - 1] == "define" && colon[depth - 1]) {
+                arrow[depth] = 1
+            }
             insig[depth] = signature[depth] ? depth : insig[depth - 1]
+            intype[depth] = arrow[depth] ? depth : intype[depth - 1]
         }
         function close_frame() {
             if (depth == 0) return
+            # A function type `(-> P... R)` takes a raw pointer when one of
+            # its parameter elements (every element but the head and the
+            # last) mentions Ptr/MutPtr.
+            if (arrow[depth] && head[depth] == "->" && first_pointer[depth] &&
+                first_pointer[depth] < count[depth]) {
+                pointer[depth - 1] = 1
+            }
+            # Only an unquoted, unspliced `(unsafe (define ...))` seals.
             if (head[depth] == "define" && pointer[depth] &&
-                !(depth > 1 && head[depth - 1] == "unsafe" && count[depth - 1] == 2 && !quoted[depth])) {
+                !(depth > 1 && head[depth - 1] == "unsafe" && !spliced[depth - 1] &&
+                  count[depth - 1] == 2 && !quoted[depth])) {
                 print path ":" opened[depth] ": safe function `" name[depth] \
                     "` takes a raw-pointer (Ptr/MutPtr) parameter; seal it as (unsafe (define ...)) or borrow with &/&mut"
             }
@@ -110,20 +130,28 @@ scan() {
             if (depth == 0) return
             count[depth]++
         }
-        function atom(text) {
+        function atom(text,    template) {
+            template = prefixed
             prefixed = 0
             if (depth == 0) return
             element()
             if (count[depth] == 1) {
                 head[depth] = text
+                spliced[depth] = template
                 if (signature[depth]) name[depth - 1] = text
             } else if (count[depth] == 2 &&
                 (head[depth] == "define" || head[depth] == "defmacro")) {
                 name[depth] = text
+            } else if (count[depth] == 3 && head[depth] == "define" && text == ":") {
+                colon[depth] = 1
             }
-            if (insig[depth] && (text == "Ptr" || text == "MutPtr") &&
-                !(depth == insig[depth] && count[depth] == 1)) {
-                pointer[insig[depth] - 1] = 1
+            if (text == "Ptr" || text == "MutPtr") {
+                if (insig[depth] && !(depth == insig[depth] && count[depth] == 1)) {
+                    pointer[insig[depth] - 1] = 1
+                }
+                if (intype[depth] && !first_pointer[intype[depth]]) {
+                    first_pointer[intype[depth]] = count[intype[depth]]
+                }
             }
         }
         function scan_line(text) {
@@ -181,7 +209,8 @@ scan() {
                     prefixed = 1
                     continue
                 }
-                if (match(rest, /^[^][ \t\r()";`,]+/)) {
+                # A symbol or number run: the symbol bytes of src/lex.tl.
+                if (match(rest, /^[A-Za-z0-9*+.\/:<=>?!%&_-]+/)) {
                     atom(substr(rest, 1, RLENGTH))
                     rest = substr(rest, RLENGTH + 1)
                     continue
@@ -197,6 +226,7 @@ scan() {
             prefixed = 0
             lineno = 0
             insig[0] = 0
+            intype[0] = 0
             while ((getline line < file) > 0) {
                 lineno++
                 scan_line(line)
@@ -322,6 +352,23 @@ EOF
   (begin
     (define (also [p : (Ptr u8)]) : u8 0)))
 EOF
+    # An apostrophe ends a symbol, so a character literal right after one is
+    # still a literal rather than an unterminated string.
+    st_probe char-literal-after-symbol reject '3 4' <<'EOF'
+(define (quote-char? [c : char]) : bool (= c'"'))
+(define (open-char? [c : char]) : bool (= c'('))
+(define (peek [p : (Ptr u8)]) : u8 0)
+(define (poke! [p : (MutPtr u8)]) : unit ())
+EOF
+    # A spliced `,unsafe` head is a template operand, not the unsafe wrapper.
+    st_probe spliced-unsafe-head reject 2 <<'EOF'
+(defmacro (m [unsafe : Expr] [T : Expr]) : Expr
+  `(,unsafe (define (peek [p : (Ptr ,T)]) : ,T 0)))
+EOF
+    st_probe value-form-function-type reject '1 2' <<'EOF'
+(define peek : (-> (Ptr u8) u8) (lambda ([p : (Ptr u8)]) 0))
+(define poke! : (-> i64 (-> (MutPtr u8) unit) unit) callback)
+EOF
     st_probe shared-view-define reject 1 <<'EOF'
 (define (thing-shared-view [x : (& Thing)]) : Thing (deref x))
 EOF
@@ -341,6 +388,8 @@ EOF
   `(unsafe
     (define (,function-name [p : (Ptr ,T)]) : ,T
       (unsafe (ptr-read p)))))
+(unsafe
+  (define peek-value : (-> (Ptr u8) u8) peek))
 EOF
     st_probe safe-without-pointer-parameters accept '' <<'EOF'
 (define (data [view : (& source bytes)]) : (Ptr u8)
@@ -352,6 +401,8 @@ EOF
 (defmacro (peek-macro [p : Expr]) : Expr
   `(unsafe (ptr-read (ptr-cast ,p : (Ptr u8)))))
 (define (Ptr-name [x : i64]) : i64 x)
+(define make : (-> i64 (Ptr u8)) allocate)
+(define make-table : (-> i64 (MutPtr i64)) allocate-table)
 (define (view [items : (& Slice u8)]) : i64 (length items))
 EOF
     st_probe comments-strings-and-chars accept '' <<'EOF'

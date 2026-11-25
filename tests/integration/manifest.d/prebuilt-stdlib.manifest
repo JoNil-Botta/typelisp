@@ -6,3 +6,4 @@ prebuilt_stdlib_vector_i64|all|0,1,2|tests/integration/prebuilt_stdlib_vector_i6
 prebuilt_stdlib_json_roundtrip|all|0,1,2|tests/integration/prebuilt_stdlib_json_roundtrip.tl|42|{"a":[1,true,null],"b":"x"}\n|-|stdlib/io.tl stdlib/json.tl stdlib/string.tl|-
 prebuilt_stdlib_format_init|all|0,1,2|tests/integration/prebuilt_stdlib_format_init.tl|42|40-2\n|-|stdlib/format.tl stdlib/io.tl stdlib/string.tl|-
 prebuilt_stdlib_instance_field_layout|all|0,1,2|tests/integration/prebuilt_stdlib_instance_field_layout.tl|42|-|-|stdlib/fs.tl stdlib/process.tl stdlib/vector.tl|-
+prebuilt_stdlib_string_concat_chain|all|0,1,2|tests/integration/prebuilt_stdlib_string_concat_chain.tl|42|root/leaf,root/dir/,root/dir/leaf.tl\n|-|stdlib/io.tl stdlib/string.tl|-

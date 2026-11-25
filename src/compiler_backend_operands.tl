@@ -2053,11 +2053,39 @@
               index.backend-state
               (compiler-backend-extern-call-info-c-abi?
                 (compiler-backend-index-extern-call-info index name)))))]
+      [(compiler-backend-internal-prelude-export-call? index name)
+        (compiler_abi.compiler-abi-internal-link-symbol
+          (be_state.compiler-backend-state-emission-target-policy
+            index.backend-state).abi
+          (compiler_abi.compiler-abi-c-export-body-symbol name-text))]
       [(and
           (compiler-backend-call-raw-symbol-id? plan index.backend-state name)
           (not (compiler-backend-index-function-defines? index name)))
         name-text]
       [else (compiler-backend-function-symbol-index index name)])))
+
+;; The lowering calls the stdlib prelude's fixed exports (`tl_string_concat3`,
+;; `tl_substring`, ...) by their raw export symbol. Source stdlib text declares
+;; each export's C extern alias, which gives the call the Platform convention
+;; and the raw symbol names its Platform entry. A program linked against a
+;; prebuilt libstdlib.a has no alias, so the call keeps the Internal convention
+;; and must name the Internal body instead, even though the runtime plan counts
+;; the called-but-undefined export as a raw provided symbol: on Win64 the raw
+;; symbol is the entry bridge, which reads a fifth argument from the stack, not
+;; from RSI. SysV shares one convention, so the body identity resolves to the
+;; raw symbol there.
+(define (compiler-backend-internal-prelude-export-call?
+  [index : be_state.CompilerBackendProgramIndex]
+  [name : i64]) : bool
+  (and
+    (or
+      (cbi.compiler-builtin-backend-runtime-concat-id? name)
+      (cbi.compiler-builtin-backend-tl-substring-id? name)
+      (cbi.compiler-builtin-backend-tl-str-view-id? name)
+      (cbi.compiler-builtin-backend-tl-int-to-string-id? name))
+    (not (compiler-backend-index-function-defines? index name))
+    (compiler_abi.compiler-abi-internal?
+      (compiler_regalloc.compiler-reg-direct-call-convention name))))
 
 (define (compiler-backend-type-size
   [type-segment-bases : i64]

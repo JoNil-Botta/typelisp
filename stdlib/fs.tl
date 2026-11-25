@@ -265,9 +265,10 @@
   (unsafe
     (extern (fs-win-find-close [arg0 : i64]) : i32 (:symbol "FindClose"))))
 
-;: Windows `_mkdir` replacement via CreateDirectoryA; ERROR_ALREADY_EXISTS
-;: (183) maps to EEXIST (17) so building over an existing directory keeps the
-;: prior behavior (see the freestanding errno-mapping fix).
+;: Windows `_mkdir` replacement via CreateDirectoryA; ERROR_FILE_EXISTS (80)
+;: and ERROR_ALREADY_EXISTS (183) map to EEXIST (17) so building over an
+;: existing directory keeps the prior behavior (see the freestanding
+;: errno-mapping fix).
 (cfg
   windows
   (unsafe
@@ -277,10 +278,10 @@
           (fs-win-create-directory path 0))
         (cast 0 : i32))
         (begin
-          (io.set-error-code
-            (if (= (fs-win-get-last-error) (cast 183 : i32))
-              17
-              2))
+          (let
+            [code : i64 (cast (fs-win-get-last-error) : i64)]
+            (io.set-error-code
+              (fs-windows-nonzero-status (fs-windows-error-status code))))
           (cast -1 : i32))
         (cast 0 : i32)))))
 
@@ -298,16 +299,18 @@
             (unsafe
               (fs-win-delete-file path))
             (cast 0 : i32))
-            (if (and
-              (fs-windows-transient-error-code?
-                (cast (fs-win-get-last-error) : i64))
-              (< attempt fs-windows-transient-retry-attempts))
-              (begin
-                (fs-windows-transient-retry-pause attempt)
-                (set! attempt (+ attempt 1)))
-              (begin
-                (io.set-error-code 2)
-                (set! done true)))
+            (let
+              [code : i64 (cast (fs-win-get-last-error) : i64)]
+              (if (and
+                (fs-windows-transient-error-code? code)
+                (< attempt fs-windows-transient-retry-attempts))
+                (begin
+                  (fs-windows-transient-retry-pause attempt)
+                  (set! attempt (+ attempt 1)))
+                (begin
+                  (io.set-error-code
+                    (fs-windows-nonzero-status (fs-windows-error-status code)))
+                  (set! done true))))
             (begin
               (set! result (cast 0 : i32))
               (set! done true))))
@@ -323,7 +326,10 @@
           (fs-win-remove-directory path))
         (cast 0 : i32))
         (begin
-          (io.set-error-code 2)
+          (let
+            [code : i64 (cast (fs-win-get-last-error) : i64)]
+            (io.set-error-code
+              (fs-windows-nonzero-status (fs-windows-error-status code))))
           (cast -1 : i32))
         (cast 0 : i32)))))
 
@@ -629,16 +635,18 @@
             (unsafe
               (fs-win-move-file-ex source destination (cast 1 : i32)))
             (cast 0 : i32))
-            (if (and
-              (fs-windows-transient-error-code?
-                (cast (fs-win-get-last-error) : i64))
-              (< attempt fs-windows-transient-retry-attempts))
-              (begin
-                (fs-windows-transient-retry-pause attempt)
-                (set! attempt (+ attempt 1)))
-              (begin
-                (io.set-error-code 2)
-                (set! done true)))
+            (let
+              [code : i64 (cast (fs-win-get-last-error) : i64)]
+              (if (and
+                (fs-windows-transient-error-code? code)
+                (< attempt fs-windows-transient-retry-attempts))
+                (begin
+                  (fs-windows-transient-retry-pause attempt)
+                  (set! attempt (+ attempt 1)))
+                (begin
+                  (io.set-error-code
+                    (fs-windows-nonzero-status (fs-windows-error-status code)))
+                  (set! done true))))
             (begin
               (set! result (cast 0 : i32))
               (set! done true))))
@@ -658,7 +666,10 @@
           (fs-win-move-file-ex source destination (cast 9 : i32)))
         (cast 0 : i32))
         (begin
-          (io.set-error-code (fs-windows-last-error-status))
+          (let
+            [code : i64 (cast (fs-win-get-last-error) : i64)]
+            (io.set-error-code
+              (fs-windows-nonzero-status (fs-windows-error-status code))))
           (cast -1 : i32))
         (cast 0 : i32)))))
 
@@ -1164,29 +1175,28 @@
             (read-dir-bytes-string (&mut out))
             ""))))))
 
-;: Map Windows `GetLastError` values to errno-style stdlib statuses.
+;: Map a Windows `GetLastError` value to an errno-style stdlib status.
+(cfg
+  windows
+  (define (fs-windows-error-status [code : i64]) : i64
+    (cond
+      [(= code 2) io.io-status-not-found]
+      [(= code 3) io.io-status-not-directory]
+      [(= code 5) io.io-status-permission-denied]
+      [(= code 87) io.io-status-invalid]
+      [(= code 123) io.io-status-invalid]
+      [(= code 161) io.io-status-invalid]
+      [(= code 206) io.io-status-name-too-long]
+      [(= code 267) io.io-status-not-directory]
+      [(= code 80) fs-status-already-exists]
+      [(= code 183) fs-status-already-exists]
+      [else code])))
+
+;: Map the current Windows `GetLastError` value to an errno-style stdlib status.
 (cfg
   windows
   (define (fs-windows-last-error-status) : i64
-    (let
-      [code : i64 (cast (fs-win-get-last-error) : i64)]
-      (if (= code 2)
-        io.io-status-not-found
-        (if (= code 3)
-          io.io-status-not-directory
-          (if (= code 5)
-            io.io-status-permission-denied
-            (if (= code 87)
-              io.io-status-invalid
-              (if (= code 123)
-                io.io-status-invalid
-                (if (= code 161)
-                  io.io-status-invalid
-                  (if (= code 206)
-                    io.io-status-name-too-long
-                    (if (= code 267)
-                      io.io-status-not-directory
-                      code)))))))))))
+    (fs-windows-error-status (cast (fs-win-get-last-error) : i64))))
 
 ;: Return an I/O error status when Windows reported no concrete code.
 (cfg
@@ -2554,7 +2564,7 @@
 
 (cfg
   test
-  (define (fs-test-assert-not-found-unit
+  (define (fs-test-assert-err-unit
     [result : io.ResultIoUnit]
     [message : (& message str)]) : unit
     (match result
@@ -2563,12 +2573,17 @@
 
 (cfg
   test
+  (define (fs-test-assert-not-found-unit
+    [result : io.ResultIoUnit]
+    [message : (& message str)]) : unit
+    (fs-test-assert-err-unit result message)))
+
+(cfg
+  test
   (define (fs-test-assert-invalid-unit
     [result : io.ResultIoUnit]
     [message : (& message str)]) : unit
-    (match result
-      [(OkIoUnit) (io.panic message)]
-      [(ErrIoUnit error) unit])))
+    (fs-test-assert-err-unit result message)))
 
 (cfg
   test
@@ -3160,6 +3175,73 @@
       "windows empty rename destination is invalid")))
 
 (cfg
+  (all test windows)
+  (define (fs-test-assert-windows-status) : unit
+    (fs-test-assert-i64-eq
+      (fs-windows-error-status 2)
+      io.io-status-not-found
+      "windows error 2 is not found")
+    (fs-test-assert-i64-eq
+      (fs-windows-error-status 3)
+      io.io-status-not-directory
+      "windows error 3 is not a directory")
+    (fs-test-assert-i64-eq
+      (fs-windows-error-status 5)
+      io.io-status-permission-denied
+      "windows error 5 is permission denied")
+    (fs-test-assert-i64-eq
+      (fs-windows-error-status 32)
+      32
+      "windows sharing violation stays a system code")
+    (fs-test-assert-i64-eq
+      (fs-windows-error-status 33)
+      33
+      "windows lock violation stays a system code")
+    (fs-test-assert-i64-eq
+      (fs-windows-error-status 80)
+      fs-status-already-exists
+      "windows error 80 is already exists")
+    (fs-test-assert-i64-eq
+      (fs-windows-error-status 145)
+      145
+      "windows directory-not-empty stays a system code")
+    (fs-test-assert-i64-eq
+      (fs-windows-error-status 183)
+      fs-status-already-exists
+      "windows error 183 is already exists")
+    (fs-test-assert-i64-eq
+      (fs-windows-error-status 267)
+      io.io-status-not-directory
+      "windows error 267 is not a directory")
+    (let
+      [dir : String
+        (fs-test-expect-ok-string
+          (fs-api-test-try-create-temp-dir "typelisp fs windows status test")
+          "create windows status temp dir: ")]
+      [file : String (fs-api-test-fs-path-join dir "artifact.s")]
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-write-file file "data")
+        "write windows status artifact: ")
+      (let
+        [file-status : i64 (remove-file-status dir)]
+        [dir-status : i64 (remove-dir-status dir)]
+        (fs-test-assert-i64-eq
+          file-status
+          io.io-status-permission-denied
+          "windows remove-file-status on a directory is permission denied")
+        (fs-test-assert-true
+          (and
+            (not (= dir-status io.io-status-ok))
+            (not (= dir-status io.io-status-not-found)))
+          "windows remove-dir-status on a non-empty directory is not not-found")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-remove-file file)
+          "cleanup windows status artifact: ")
+        (fs-test-assert-ok-unit
+          (fs-api-test-try-remove-dir dir)
+          "cleanup windows status temp dir: ")))))
+
+(cfg
   test
   (define (fs-test-assert-read-dir-api [root : (& root str)]) : unit
     (let
@@ -3569,7 +3651,10 @@
         (fs-test-assert-windows-nt-create-abi)
         (fs-test-assert-raw-structure-bounds)
         (fs-test-assert-metadata-byte-decode)
-        (cfg windows unit (fs-test-assert-linux-dirent-bounds))
+        (cfg
+          windows
+          (fs-test-assert-windows-status)
+          (fs-test-assert-linux-dirent-bounds))
         (fs-test-assert-owned-string-eq
           joined
           (string.copy expected-join)
@@ -3806,6 +3891,12 @@
               (fs-test-assert-runtime-metadata-not-found
                 (fs-api-test-fs-path-join dir "missing artifact.s")
                 "windows runtime metadata missing")
+              (fs-test-assert-err-unit
+                (fs-api-test-try-remove-file-if-exists dir)
+                "windows remove-file-if-exists on a directory is an error")
+              (fs-test-assert-err-unit
+                (fs-api-test-try-remove-dir-if-exists dir)
+                "windows remove-dir-if-exists on a non-empty directory is an error")
               (fs-test-assert-ok-unit
                 (fs-api-test-try-remove-file file-a)
                 "windows remove temp artifact: ")
@@ -3884,6 +3975,12 @@
             (fs-test-assert-runtime-metadata-not-found
               (fs-api-test-fs-path-join dir-a "missing artifact.s")
               "runtime metadata missing")
+            (fs-test-assert-err-unit
+              (fs-api-test-try-remove-file-if-exists dir-a)
+              "remove-file-if-exists on a directory is an error")
+            (fs-test-assert-err-unit
+              (fs-api-test-try-remove-dir-if-exists dir-a)
+              "remove-dir-if-exists on a non-empty directory is an error")
             (fs-test-assert-ok-unit
               (fs-api-test-try-remove-file file-a)
               "remove temp artifact a: ")

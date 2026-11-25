@@ -312,6 +312,7 @@
                     "abcdef0")
                   (Some (tlci_loader_tests.tlci-loader-test-image 0))
                   (tlci.tlci-spmd-callables-empty)
+                  (make-array u8 32)
                   (TrustedCode loaded)))
               0)])])))
 
@@ -340,8 +341,7 @@
       (Windows))
       [(Err _) unit]
       [(Ok _) (io.panic "native catalog must not hide malformed discovery")])
-    (load.compiler-load-session-state-dependency-surfaces-release!
-      (owned_view.compiler-owned-shared-view state))
+    (load.compiler-load-session-state-tli-release! (& state))
     (discovery-test-reuse-storage!)
     (match (load.compiler-load-dependency-catalog-admitted-image state 0)
       [(TrustedCode _ loaded)

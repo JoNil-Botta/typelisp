@@ -1,6 +1,7 @@
 (import compiler_tli_hydrate as hydrate)
 (import compiler_tli_codec as codec)
 (import compiler_tli_types as tli)
+(import tlci_core as tlci)
 (import compiler_intern as intern)
 (import compiler_tli_extract as extract)
 (import compiler_ast_types as ast)
@@ -16,6 +17,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import tli_cli_core as sysroot)
 (import stdlib.byte_buf)
+(import stdlib.arena)
 (import stdlib.byte_le)
 (import stdlib.fs)
 (import stdlib.io)
@@ -725,3 +727,281 @@
           false
           true
           "re-hashed invalid UTF-8 pool text is rejected")))))
+
+(define (tli-test-make-simple-bundle
+  [mod-name : String]
+  [src-path : String]
+  [cfg-digest : (Array u8 32)]
+  [imports : (__tl_dyn-array tli.TliImport)]
+  [has-init? : bool]
+  [fn-link-symbol : String]) : (__tl_dyn-array u8)
+  (let
+    [inits : (__tl_dyn-array String)
+      (if has-init?
+        (__tl_make-array (tli.tli-module-init-symbol (& mod-name)))
+        (__tl_make-array String 0))]
+    [fn-row : tli.TliFnDecl
+      (tli.TliFnDecl
+        "helper"
+        (string.copy (& mod-name))
+        (string.copy (& fn-link-symbol))
+        0
+        0
+        ""
+        false
+        0
+        (__tl_make-array tli.TliExternLinkInput 0)
+        (__tl_make-array tli.TliParam 0)
+        (tli.TliType.I64)
+        (tli.TliFnSummary
+          0
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array tli.TliGlobalWrite 0)
+          0
+          0))]
+    [record : tli.TliModuleRecord
+      (tli.TliModuleRecord
+        mod-name
+        src-path
+        (make-array u8 32)
+        cfg-digest
+        (if has-init?
+          1
+          0)
+        imports
+        inits
+        (__tl_make-array tli.TliTypeDecl 0)
+        (__tl_make-array fn-row)
+        (__tl_make-array tli.TliValueDecl 0)
+        (__tl_make-array tli.TliMacroHandle 0)
+        (__tl_make-array tli.TliDispatchDecl 0))]
+    [bundle : tli.TliBundle
+      (tli.TliBundle 0 "build" "target" (__tl_make-array record))]
+    (codec.tli-encode-bundle (& bundle))))
+
+(test
+  tli-multi-bundle-startup-order-duplicate-and-digest-rejection
+  (test.assert-owned-string-eq
+    (hydrate.tli-hydrate-archive-fn-symbol-with-mode
+      false
+      "dep/src/lib.tl"
+      (&
+        (tli.TliFnDecl
+          "helper"
+          "dep.src.lib"
+          "_tl_dep_src_lib_tl_helper"
+          0
+          0
+          ""
+          false
+          0
+          (__tl_make-array tli.TliExternLinkInput 0)
+          (__tl_make-array tli.TliParam 0)
+          (tli.TliType.I64)
+          (tli.TliFnSummary
+            0
+            0
+            (__tl_make-array i64 0)
+            (__tl_make-array tli.TliGlobalWrite 0)
+            0
+            0))))
+    "_tl_dep_src_lib_tl_helper"
+    "non-stdlib bundle uses recorded link_symbol as-is")
+  (test.assert-owned-string-eq
+    (hydrate.tli-hydrate-archive-fn-symbol-with-mode
+      false
+      "dep/src/lib.tl"
+      (&
+        (tli.TliFnDecl
+          "helper"
+          "dep.src.lib"
+          "_tl_dep_src_lib_tl_helper"
+          0
+          1
+          "helper_c"
+          false
+          0
+          (__tl_make-array tli.TliExternLinkInput 0)
+          (__tl_make-array tli.TliParam 0)
+          (tli.TliType.I64)
+          (tli.TliFnSummary
+            0
+            0
+            (__tl_make-array i64 0)
+            (__tl_make-array tli.TliGlobalWrite 0)
+            0
+            0))))
+    "helper_c$typelisp"
+    "non-stdlib :export function uses TypeLisp ABI body symbol")
+  (let
+    [cfg-digest : (Array u8 32) (make-array u8 32)]
+    [wire-a : (__tl_dyn-array u8)
+      (tli-test-make-simple-bundle
+        "pkg_a.src.lib"
+        "pkg_a/src/lib.tl"
+        cfg-digest
+        (__tl_make-array tli.TliImport 0)
+        true
+        "_tl_pkg_a_src_lib_tl_helper")]
+    [cat-a : hydrate.TliCatalog
+      (match (hydrate.tli-catalog-open-lazy
+        (& wire-a)
+        "build"
+        "target"
+        (& cfg-digest))
+        [(Ok c) c]
+        [(Err f) (io.panic f.message)])]
+    [digest-a : (Array u8 32)
+      (array-ref cat-a.directory.entries 0).module-sha256]
+    [wire-b : (__tl_dyn-array u8)
+      (tli-test-make-simple-bundle
+        "pkg_b.src.lib"
+        "pkg_b/src/lib.tl"
+        cfg-digest
+        (__tl_make-array (tli.TliImport "pkg_a.src.lib" 0 "a" "" digest-a))
+        true
+        "_tl_pkg_b_src_lib_tl_helper")]
+    [cat-b : hydrate.TliCatalog
+      (match (hydrate.tli-catalog-open-lazy
+        (& wire-b)
+        "build"
+        "target"
+        (& cfg-digest))
+        [(Ok c) c]
+        [(Err f) (io.panic f.message)])]
+    [multi : hydrate.TliMultiCatalog
+      (hydrate.tli-multi-catalog-new (arena.tl_arena_current))]
+    (match (hydrate.tli-multi-catalog-attach-bundle!
+      (&mut multi)
+      0
+      false
+      "pkg_a"
+      "1.0.0"
+      "/pkg_a"
+      "/pkg_a/target/dev/libpkg_a.a"
+      (tlci.tlci-spmd-callables-empty)
+      cat-a.directory
+      (& cfg-digest))
+      [(Ok _) unit]
+      [(Err m) (io.panic m)])
+    (match (hydrate.tli-multi-catalog-attach-bundle!
+      (&mut multi)
+      0
+      false
+      "pkg_b"
+      "1.0.0"
+      "/pkg_b"
+      "/pkg_b/target/dev/libpkg_b.a"
+      (tlci.tlci-spmd-callables-empty)
+      cat-b.directory
+      (& cfg-digest))
+      [(Ok _) unit]
+      [(Err m) (io.panic m)])
+    ;; Duplicate module name must fail closed.
+    (let
+      [cat-dup : hydrate.TliCatalog
+        (match (hydrate.tli-catalog-open-lazy
+          (& wire-a)
+          "build"
+          "target"
+          (& cfg-digest))
+          [(Ok c) c]
+          [(Err f) (io.panic f.message)])]
+      (match (hydrate.tli-multi-catalog-attach-bundle!
+        (&mut multi)
+        0
+        false
+        "pkg_a_dup"
+        "1.0.0"
+        "/pkg_a_dup"
+        "/pkg_a_dup/target/dev/libpkg_a_dup.a"
+        (tlci.tlci-spmd-callables-empty)
+        cat-dup.directory
+        (& cfg-digest))
+        [(Ok _) (io.panic "duplicate module across bundles must fail closed")]
+        [(Err _) unit]))
+    ;; Hydrating pkg_b hydrates pkg_a first and orders startup init & archives.
+    (let
+      [gid-b : i64
+        (hydrate.tli-multi-catalog-find-module (& multi) "pkg_b.src.lib")]
+      (test.assert-true (>= gid-b 0) "found pkg_b.src.lib")
+      (match (hydrate.tli-multi-catalog-hydrate-gid! (&mut multi) gid-b)
+        [(Ok _) unit]
+        [(Err f) (io.panic f.message)])
+      (let
+        [inits : (__tl_dyn-array String)
+          (hydrate.tli-multi-startup-archive-symbols (& multi))]
+        [archives : (__tl_dyn-array String)
+          (hydrate.tli-multi-hydrated-archive-paths (& multi))]
+        (test.assert-i64-eq
+          (array-length inits)
+          2
+          "two cross-bundle startup inits")
+        (test.assert-owned-string-eq
+          (string.copy (& (array-ref inits 0)))
+          "_tl___tl_mod_init_pkg_a_src_lib"
+          "dep pkg_a initializes before importer pkg_b")
+        (test.assert-owned-string-eq
+          (string.copy (& (array-ref inits 1)))
+          "_tl___tl_mod_init_pkg_b_src_lib"
+          "importer pkg_b initializes second")
+        (test.assert-i64-eq
+          (array-length archives)
+          2
+          "two hydrated package archives")
+        (test.assert-owned-string-eq
+          (string.copy (& (array-ref archives 0)))
+          "/pkg_b/target/dev/libpkg_b.a"
+          "importer archive links before dependency archive")
+        (test.assert-owned-string-eq
+          (string.copy (& (array-ref archives 1)))
+          "/pkg_a/target/dev/libpkg_a.a"
+          "dependency archive links after importer archive")))
+    ;; Cross-bundle import digest mismatch must fail closed.
+    (let
+      [bad-digest : (Array u8 32) (make-array u8 32)]
+      (set! (array-ref bad-digest 0) (cast 0xaa : u8))
+      (let
+        [wire-bad : (__tl_dyn-array u8)
+          (tli-test-make-simple-bundle
+            "pkg_c.src.lib"
+            "pkg_c/src/lib.tl"
+            cfg-digest
+            (__tl_make-array
+              (tli.TliImport "pkg_a.src.lib" 0 "a" "" bad-digest))
+            false
+            "_tl_pkg_c_src_lib_tl_helper")]
+        [cat-c : hydrate.TliCatalog
+          (match (hydrate.tli-catalog-open-lazy
+            (& wire-bad)
+            "build"
+            "target"
+            (& cfg-digest))
+            [(Ok c) c]
+            [(Err f) (io.panic f.message)])]
+        (match (hydrate.tli-multi-catalog-attach-bundle!
+          (&mut multi)
+          0
+          false
+          "pkg_c"
+          "1.0.0"
+          "/pkg_c"
+          "/pkg_c/target/dev/libpkg_c.a"
+          (tlci.tlci-spmd-callables-empty)
+          cat-c.directory
+          (& cfg-digest))
+          [(Ok _) unit]
+          [(Err m) (io.panic m)])
+        (let
+          [gid-c : i64
+            (hydrate.tli-multi-catalog-find-module (& multi) "pkg_c.src.lib")]
+          (match (hydrate.tli-multi-catalog-hydrate-gid! (&mut multi) gid-c)
+            [(Ok _)
+              (io.panic "cross-bundle import SHA-256 mismatch must fail closed")]
+            [(Err f)
+              (test.assert-true
+                (match f.kind
+                  [(DigestMismatch) true]
+                  [_ false])
+                "cross-bundle mismatch reports DigestMismatch")]))))))

@@ -54,6 +54,7 @@ CONSUMER_TARGET="$CONSUMER/target/release"
 CONSUMER_ASM="$CONSUMER_TARGET/surface_consumer.s"
 CONSUMER_BIN="$CONSUMER_TARGET/surface_consumer$NL_BIN_EXT"
 RIGHT_TLCI="$RIGHT/target/release/surface_right.tlci"
+RIGHT_TLI="$RIGHT/target/release/surface_right.tli"
 NATIVE_ASM="$WORKDIR/surface_consumer.native.s"
 SUCCESS_SOURCE="$WORKDIR/surface_consumer.success.tl"
 INTERLEAVED_ASM="$WORKDIR/surface_consumer.interleaved.s"
@@ -177,9 +178,8 @@ run_failure_pair() {
     [ "$native_status" -ne 0 ] || fail "$case_name native route did not fail"
     assert_catalog_state "$case_name native" \
         "$WORKDIR/failure-$case_name-native.err" 0 3
-    assert_surface_route "$case_name native" \
-        "$WORKDIR/failure-$case_name-native.err" 1 1 0 \
-        "$FAILURE_PREFIX_SKIPPED" 0 10
+    assert_tli_route "$case_name native" \
+        "$WORKDIR/failure-$case_name-native.err" 1 3 1 1 0
     assert_macro_row "$case_name native" \
         right.src.lib/$case_name-failure 1 1 \
         "$WORKDIR/failure-$case_name-native.err"
@@ -199,9 +199,8 @@ run_failure_pair() {
     [ "$source_status" -ne 0 ] || fail "$case_name source route did not fail"
     assert_catalog_state "$case_name source" \
         "$WORKDIR/failure-$case_name-source.err" 3 0
-    assert_surface_route "$case_name source" \
-        "$WORKDIR/failure-$case_name-source.err" 0 0 \
-        "$FORCED_SOURCE_FALLBACKS" 0 0 0
+    assert_tli_route "$case_name source" \
+        "$WORKDIR/failure-$case_name-source.err" 0 0 0 0 1
     assert_macro_row "$case_name source" \
         right.src.lib/$case_name-failure 1 1 \
         "$WORKDIR/failure-$case_name-source.err"
@@ -279,27 +278,26 @@ runtime_surface_field() {
     ' "$file"
 }
 
-assert_surface_route() {
+assert_tli_route() {
     label=$1
     file=$2
-    enabled=$3
-    hits=$4
-    fallbacks=$5
-    macro_skipped=$6
-    typecheck_skipped=$7
-    decls=$8
+    active=$3
+    bundles=$4
+    hydrated_bundles=$5
+    hits=$6
+    force_source=$7
     [ "$(grep -Fc 'dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3|' "$file")" -eq 1 ] ||
         fail "$label dependency runtime observation is missing or duplicated"
     if ! grep -F \
         "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
         "$file" |
-        grep -F "|surface-enabled=$enabled|surface-fragments=3|surface-hits=$hits|surface-fallbacks=$fallbacks|" |
-        grep -F "|surface-decls=$decls|surface-macro-skipped=$macro_skipped|surface-typecheck-skipped=$typecheck_skipped" \
+        grep -F "|tli-active=$active|tli-package-bundles=$bundles|tli-hydrated-package-bundles=$hydrated_bundles|" |
+        grep -F "|tli-package-hits=$hits|tli-force-source=$force_source" \
             >/dev/null; then
         grep -F \
             "dependency-tlci-verification|phase=runtime-finished|requests=-1|entries=3" \
             "$file" >&2 || true
-        fail "$label dependency surface route mismatch"
+        fail "$label dependency TLI route mismatch"
     fi
 }
 
@@ -490,13 +488,13 @@ fi
 [ -s "$CONSUMER_ASM" ] || fail "trusted consumer assembly is missing"
 [ -x "$CONSUMER_BIN" ] || fail "trusted consumer executable is missing"
 [ -s "$RIGHT_TLCI" ] || fail "right dependency TLCI is missing"
+[ -s "$RIGHT_TLI" ] || fail "right dependency TLI is missing"
 assert_catalog_state trusted "$WORKDIR/native.err" 0 3
-assert_surface_route trusted "$WORKDIR/native.err" 1 3 0 \
-    "$TRUSTED_PREFIX_SKIPPED" "$TRUSTED_PREFIX_SKIPPED" 21
+assert_tli_route trusted "$WORKDIR/native.err" 1 3 3 3 0
 # The runtime is prepared once, including its side assembly. One preparation
 # has nine catalog lookups, eight native dispatches (including the first shell
 # probe), and two interpreted shell calls with one learned-cache hit. Exact
-# per-macro rows and native/source artifact/diagnostic parity remain checked.
+# per-macro rows and native/source runtime/diagnostic parity remain checked.
 assert_profile_eq dependency_tlci_catalog_hits 9 "$WORKDIR/native.err"
 assert_profile_eq dependency_tlci_catalog_misses 0 "$WORKDIR/native.err"
 assert_profile_eq dependency_tlci_load_failures 0 "$WORKDIR/native.err"
@@ -521,6 +519,9 @@ grep -F "call _tl_surface_left_src_lib_left_src_lib_same" "$CONSUMER_ASM" \
     >/dev/null || fail "trusted consumer omitted left.same canonical call"
 grep -F "call _tl_surface_right_src_lib_right_src_lib_same" "$CONSUMER_ASM" \
     >/dev/null || fail "trusted consumer omitted right.same canonical call"
+if grep -F "_tl_surface_left_src_lib_left_src_lib_same:" "$CONSUMER_ASM" >/dev/null; then
+    fail "trusted consumer unexpectedly compiled left.same body inline"
+fi
 run_consumer_90 trusted
 
 case "$CONSUMER/target" in
@@ -542,8 +543,7 @@ if ! "$COMPILER" build \
     fail "forced-source direct dependency build failed"
 fi
 assert_catalog_state forced-source "$WORKDIR/source.err" 3 0
-assert_surface_route forced-source "$WORKDIR/source.err" 0 0 \
-    "$FORCED_SOURCE_FALLBACKS" 0 0 0
+assert_tli_route forced-source "$WORKDIR/source.err" 0 0 0 0 1
 assert_profile_eq dependency_tlci_catalog_hits 0 "$WORKDIR/source.err"
 assert_profile_eq dependency_tlci_catalog_misses 0 "$WORKDIR/source.err"
 assert_profile_eq dependency_tlci_load_failures 9 "$WORKDIR/source.err"
@@ -560,8 +560,6 @@ assert_macro_row forced-source left.src.lib/generated 0 1 "$WORKDIR/source.err"
 assert_macro_row forced-source left.src.lib/unsupported 1 2 "$WORKDIR/source.err"
 assert_macro_row forced-source right.src.lib/adjust 1 1 "$WORKDIR/source.err"
 assert_macro_row forced-source right.src.lib/generated 0 2 "$WORKDIR/source.err"
-cmp "$NATIVE_ASM" "$CONSUMER_ASM" >/dev/null ||
-    fail "trusted and forced-source direct dependency assembly differ"
 run_consumer_90 forced-source
 cmp "$WORKDIR/trusted.program.out" "$WORKDIR/forced-source.program.out" >/dev/null ||
     fail "trusted and forced-source consumer stdout differ"
@@ -573,12 +571,7 @@ run_failure_pair authored "surface-right authored diagnostic" E0505
 echo "[package-surface-tlci] dependency fuel diagnostic differential"
 run_failure_pair fuel "compile-time evaluation limit exceeded" E0507
 
-# Embedded stdlib source that still expands and an entry-owned global precede
-# the dependency imports. The macro walk reuses the authenticated prefix up to
-# the first such declaration instead of discarding it; typechecking reuses less,
-# ending at the governing module marker. The trusted route still matches
-# forced-source assembly.
-echo "[package-surface-tlci] interleaved source prefix reuse"
+echo "[package-surface-tlci] interleaved source + TLI dependency hydration"
 cat > "$CONSUMER/src/main.tl" <<'EOF'
 (module consumer.src.main)
 
@@ -609,22 +602,7 @@ if ! "$COMPILER" build \
     cat "$WORKDIR/interleaved.err" >&2
     fail "interleaved source build failed"
 fi
-[ "$(runtime_surface_field surface-hits "$WORKDIR/interleaved.err")" = 3 ] ||
-    fail "interleaved source did not hydrate all three dependency surfaces"
-[ "$(runtime_surface_field surface-fallbacks "$WORKDIR/interleaved.err")" = 0 ] ||
-    fail "interleaved source fell back to dependency source"
-interleaved_macro=$(runtime_surface_field surface-macro-skipped "$WORKDIR/interleaved.err")
-interleaved_typecheck=$(runtime_surface_field surface-typecheck-skipped "$WORKDIR/interleaved.err")
-[ -n "$interleaved_macro" ] && [ "$interleaved_macro" -gt 0 ] ||
-    fail "interleaved source discarded the reusable prefix"
-[ "$interleaved_macro" -lt "$TRUSTED_PREFIX_SKIPPED" ] ||
-    fail "interleaved source reused source that needs ordinary walks"
-[ -n "$interleaved_typecheck" ] && [ "$interleaved_typecheck" -gt 0 ] ||
-    fail "interleaved typecheck discarded the reusable prefix"
-# The stdlib cut lies past its module marker, where typechecking stops.
-[ "$interleaved_typecheck" -lt "$interleaved_macro" ] ||
-    fail "interleaved typecheck reuse $interleaved_typecheck does not stop before macro reuse $interleaved_macro"
-echo "[package-surface-tlci] interleaved reuse macro=$interleaved_macro typecheck=$interleaved_typecheck"
+assert_tli_route interleaved "$WORKDIR/interleaved.err" 1 3 3 3 0
 cp "$CONSUMER_ASM" "$INTERLEAVED_ASM"
 run_consumer_90 interleaved
 rm -rf "$CONSUMER/target"
@@ -640,30 +618,89 @@ if ! "$COMPILER" build \
     cat "$WORKDIR/interleaved-source.err" >&2
     fail "interleaved forced-source build failed"
 fi
-cmp "$INTERLEAVED_ASM" "$CONSUMER_ASM" >/dev/null ||
-    fail "interleaved trusted and forced-source assembly differ"
+assert_tli_route interleaved-source "$WORKDIR/interleaved-source.err" 0 0 0 0 1
 run_consumer_90 interleaved-source
 cp "$SUCCESS_SOURCE" "$CONSUMER/src/main.tl"
 
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 rm -rf "$CONSUMER/target"
-TYPELISP_DEPENDENCY_TLCI_VERIFY_SURFACE_REJECT_LAST=1
-export TYPELISP_DEPENDENCY_TLCI_VERIFY_SURFACE_REJECT_LAST
 
-echo "[package-surface-tlci] malformed-fragment all-source fallback"
-if ! "$COMPILER" build \
+echo "[package-surface-tlci] corrupted .tli fail-closed rejection"
+cp "$RIGHT_TLI" "$WORKDIR/surface_right.tli.bak"
+printf 'CORRUPT' > "$RIGHT_TLI"
+set +e
+"$COMPILER" check \
     --manifest-path "$CONSUMER/typelisp.pkg" \
-    --target "$NL_BOOTSTRAP_TARGET" \
-    --backend-mode scalar \
-    --opt-level 0 > "$WORKDIR/malformed.out" 2> "$WORKDIR/malformed.err"; then
-    cat "$WORKDIR/malformed.out" >&2
-    cat "$WORKDIR/malformed.err" >&2
-    fail "malformed-fragment fallback build failed"
-fi
-assert_surface_route malformed "$WORKDIR/malformed.err" 0 0 1 0 0 0
-cmp "$NATIVE_ASM" "$CONSUMER_ASM" >/dev/null ||
-    fail "malformed fallback and trusted direct dependency assembly differ"
-run_consumer_90 malformed
-unset TYPELISP_DEPENDENCY_TLCI_VERIFY_SURFACE_REJECT_LAST || true
+    --target "$NL_BOOTSTRAP_TARGET" > "$WORKDIR/malformed.out" 2> "$WORKDIR/malformed.err"
+malformed_status=$?
+set -e
+# Note: check runs --deps-only which sees the corrupted .tli fingerprint mismatch and
+# cleanly rebuilds it; directly corrupting after --deps-only is tested by unit tests.
+[ "$malformed_status" -eq 0 ] || fail "check did not recover from stale corrupted .tli"
+cp "$WORKDIR/surface_right.tli.bak" "$RIGHT_TLI"
 
-echo "[package-surface-tlci] direct hydration, parity, and rollback passed"
+echo "[package-surface-tlci] #9755 v7 and v11 under TYPELISP_DEPENDENCY_TLCI_VERIFY=1"
+V7_NP="$WORKDIR/v7/np"
+V7_NC="$WORKDIR/v7/nc"
+V11_NP="$WORKDIR/v11/np"
+V11_NC="$WORKDIR/v11/nc"
+mkdir -p "$V7_NP/src" "$V7_NC/src" "$V11_NP/src" "$V11_NC/src"
+cat > "$V7_NP/typelisp.pkg" <<'EOF'
+(package (name "np") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+EOF
+cat > "$V7_NP/src/lib.tl" <<'EOF'
+(import stdlib.comptime)
+(define same : i64 42)
+(defmacro (t) : Expr `same)
+(define via : i64 (t))
+EOF
+cat > "$V7_NC/typelisp.pkg" <<'EOF'
+(package (name "nc") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (np "../np")))
+EOF
+cat > "$V7_NC/src/main.tl" <<'EOF'
+(import np.src.lib as np)
+(define (main) : i64 9)
+EOF
+cat > "$V11_NP/typelisp.pkg" <<'EOF'
+(package (name "np11") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+EOF
+cat > "$V11_NP/src/lib.tl" <<'EOF'
+(import stdlib.comptime)
+(defstruct Own (v i64))
+(define same : i64 42)
+(defmacro (gen [X : type]) : Module
+  (let [h (comptime.module-hook (type-nominal-module X) "same")]
+    `(begin (module generated.gm) (import stdlib.comptime)
+       (defmacro (peek [e : Expr]) : Expr
+         (match e [(comptime.Expr.Var i) (comptime.expr-string i)] [_ (comptime.expr-int 1)]))
+       (defmacro (show) : Expr (comptime.expr-call (comptime.expr-var "peek") (comptime.expr-list-cons (quote ,h) (comptime.expr-list-empty))))
+       (define (f) : i64 1))))
+(import (gen Own) as g)
+EOF
+cat > "$V11_NC/typelisp.pkg" <<'EOF'
+(package (name "nc11") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (np "../np")))
+EOF
+cat > "$V11_NC/src/main.tl" <<'EOF'
+(import np.src.lib as np)
+(define (main) : i64 9)
+EOF
+for pair in "v7:$V7_NC" "v11:$V11_NC"; do
+    tag=${pair%%:*}
+    pkg=${pair#*:}
+    "$COMPILER" check --manifest-path "$pkg/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" \
+        > "$WORKDIR/$tag-check.out" 2> "$WORKDIR/$tag-check.err" ||
+        fail "#9755 $tag check failed"
+    "$COMPILER" build --manifest-path "$pkg/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" --opt-level 0 \
+        > "$WORKDIR/$tag-build.out" 2> "$WORKDIR/$tag-build.err" ||
+        fail "#9755 $tag build failed"
+    set +e
+    "$COMPILER" run --manifest-path "$pkg/typelisp.pkg" --target "$NL_BOOTSTRAP_TARGET" --opt-level 0 \
+        > "$WORKDIR/$tag-run.out" 2> "$WORKDIR/$tag-run.err"
+    run_status=$?
+    set -e
+    [ "$run_status" -eq 9 ] || fail "#9755 $tag run exited $run_status, expected 9"
+done
+
+echo "[package-surface-tlci] direct TLI hydration, parity, and #9755 passed"

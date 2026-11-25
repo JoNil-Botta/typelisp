@@ -1,0 +1,251 @@
+# Stage 3 prebuilt user library package TLI dependencies, #9750, and #9755
+# (gate stage2-public-tool-cli-transcripts-2).
+do none
+target -
+opt -
+
+# #9750: moduleless dependency with : Decls macro-generated items keeps its
+# canonical dotted identity across check and build (cold and warm) for s33,
+# s28, repeated aliases, and same-named local macros.
+case package-tli-9750-witnesses
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(defmacro (gen) : Decls `(define (made) : i64 0))
+(gen)
+(define (lv) : i64 41)
+end-file
+file s33/typelisp.pkg
+(package (name "app_s33") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "../vendor/libd")))
+end-file
+file s33/src/main.tl
+(import libd.src.lib as l)
+(defmacro (m) : i64 `(l.lv))
+(define (main) : i64 (+ (m) 1))
+end-file
+file s28/typelisp.pkg
+(package (name "app_s28") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "../vendor/libd")))
+end-file
+file s28/src/main.tl
+(module app.m)
+(import libd.src.lib as l)
+(defmacro (m) : i64 `(l.lv))
+(define (main) : i64 (+ (m) 1))
+end-file
+file rep/typelisp.pkg
+(package (name "app_rep") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "../vendor/libd")))
+end-file
+file rep/src/main.tl
+(import libd.src.lib as l)
+(import libd.src.lib as l2)
+(define (main) : i64 (+ (l.lv) (+ (l2.made) 1)))
+end-file
+file local_macro/typelisp.pkg
+(package (name "app_local") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "../vendor/libd")))
+end-file
+file local_macro/src/main.tl
+(import libd.src.lib as l)
+(defmacro (made) : i64 `42)
+(define (main) : i64 (+ (made) (- (l.lv) 41)))
+end-file
+step s33-check
+run check --manifest-path "{{dir}}/s33/typelisp.pkg"
+stderr empty
+step s33-build-cold
+run build --manifest-path "{{dir}}/s33/typelisp.pkg" --target {{host-target}}
+stderr empty
+test -s "{{dir}}/vendor/libd/target/release/libd.tli"
+exec "{{dir}}/s33/target/release/app_s33{{exe}}"
+exit 42
+step s33-build-warm
+run build --manifest-path "{{dir}}/s33/typelisp.pkg" --target {{host-target}}
+stderr empty
+exec "{{dir}}/s33/target/release/app_s33{{exe}}"
+exit 42
+step s28-check
+run check --manifest-path "{{dir}}/s28/typelisp.pkg"
+stderr empty
+step s28-build
+run build --manifest-path "{{dir}}/s28/typelisp.pkg" --target {{host-target}}
+stderr empty
+exec "{{dir}}/s28/target/release/app_s28{{exe}}"
+exit 42
+step rep-check
+run check --manifest-path "{{dir}}/rep/typelisp.pkg"
+stderr empty
+step rep-build
+run build --manifest-path "{{dir}}/rep/typelisp.pkg" --target {{host-target}}
+stderr empty
+exec "{{dir}}/rep/target/release/app_rep{{exe}}"
+exit 42
+step local-macro-check
+run check --manifest-path "{{dir}}/local_macro/typelisp.pkg"
+stderr empty
+step local-macro-build
+run build --manifest-path "{{dir}}/local_macro/typelisp.pkg" --target {{host-target}}
+stderr empty
+exec "{{dir}}/local_macro/target/release/app_local{{exe}}"
+exit 42
+
+# #9750 addendum: a macro template's own helper in a moduleless dep with
+# generated items resolves to the dependency's helper (exit 7), not the
+# importer's same-named local helper (5), in both named modules and module bodies.
+case package-tli-9750-addendum-helper
+file vendor/libd/typelisp.pkg
+(package (name "libd") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/libd/src/lib.tl
+(defmacro (gen) : Decls `(define (made) : i64 1))
+(gen)
+(define (helper) : i64 7)
+(defmacro (f) : i64 `(helper))
+end-file
+file named/typelisp.pkg
+(package (name "app_named") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "../vendor/libd")))
+end-file
+file named/src/main.tl
+(module app.m)
+(import libd.src.lib.f)
+(define (helper) : i64 5)
+(define (main) : i64 (f))
+end-file
+file body/typelisp.pkg
+(package (name "app_body") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (libd "../vendor/libd")))
+end-file
+file body/src/main.tl
+(module app.b
+  (import libd.src.lib.f)
+  (define (helper) : i64 5)
+  (define (entry) : i64 (f)))
+(import app.b)
+(define (main) : i64 (app.b.entry))
+end-file
+step named-check
+run check --manifest-path "{{dir}}/named/typelisp.pkg"
+stderr empty
+step named-build
+run build --manifest-path "{{dir}}/named/typelisp.pkg" --target {{host-target}}
+stderr empty
+exec "{{dir}}/named/target/release/app_named{{exe}}"
+exit 7
+step body-check
+run check --manifest-path "{{dir}}/body/typelisp.pkg"
+stderr empty
+step body-build
+run build --manifest-path "{{dir}}/body/typelisp.pkg" --target {{host-target}}
+stderr empty
+exec "{{dir}}/body/target/release/app_body{{exe}}"
+exit 7
+
+# #9755: moduleless dependency holding macro-global identities (v7 template
+# global and v11 generated module macro holding a reflected module-hook)
+# hydrates cleanly without aborting across check, build, and run.
+case package-tli-9755-v7-and-v11
+file v7/np/typelisp.pkg
+(package (name "np") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file v7/np/src/lib.tl
+(import stdlib.comptime)
+(define same : i64 42)
+(defmacro (t) : Expr `same)
+(define via : i64 (t))
+end-file
+file v7/nc/typelisp.pkg
+(package (name "nc") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (np "../np")))
+end-file
+file v7/nc/src/main.tl
+(import np.src.lib as np)
+(define (main) : i64 9)
+end-file
+file v11/np/typelisp.pkg
+(package (name "np11") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file v11/np/src/lib.tl
+(import stdlib.comptime)
+(defstruct Own (v i64))
+(define same : i64 42)
+(defmacro (gen [X : type]) : Module
+  (let [h (comptime.module-hook (type-nominal-module X) "same")]
+    `(begin (module generated.gm) (import stdlib.comptime)
+       (defmacro (peek [e : Expr]) : Expr
+         (match e [(comptime.Expr.Var i) (comptime.expr-string i)] [_ (comptime.expr-int 1)]))
+       (defmacro (show) : Expr (comptime.expr-call (comptime.expr-var "peek") (comptime.expr-list-cons (quote ,h) (comptime.expr-list-empty))))
+       (define (f) : i64 1))))
+(import (gen Own) as g)
+end-file
+file v11/nc/typelisp.pkg
+(package (name "nc11") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (np "../np")))
+end-file
+file v11/nc/src/main.tl
+(import np.src.lib as np)
+(define (main) : i64 9)
+end-file
+step v7-check
+run check --manifest-path "{{dir}}/v7/nc/typelisp.pkg"
+stderr empty
+step v7-build
+run build --manifest-path "{{dir}}/v7/nc/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+exec "{{dir}}/v7/nc/target/release/nc{{exe}}"
+exit 9
+step v7-run
+run run --manifest-path "{{dir}}/v7/nc/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 9
+step v11-check
+run check --manifest-path "{{dir}}/v11/nc/typelisp.pkg"
+stderr empty
+step v11-build
+run build --manifest-path "{{dir}}/v11/nc/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+exec "{{dir}}/v11/nc/target/release/nc11{{exe}}"
+exit 9
+step v11-run
+run run --manifest-path "{{dir}}/v11/nc/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 9
+
+# Pure library emits .tli + .a without .tlci, and typelisp test runs package
+# inline tests against prebuilt dep .tli/.a.
+case package-tli-pure-lib-and-test
+file vendor/purelib/typelisp.pkg
+(package (name "purelib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file vendor/purelib/src/lib.tl
+(module purelib.math)
+(define base : i64 40)
+(define (add-base [x : i64]) : i64 (+ base x))
+end-file
+file typelisp.pkg
+(package (name "app_pure") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (purelib "vendor/purelib")))
+end-file
+file src/main.tl
+(import purelib.math as pm)
+(define (main) : i64 (pm.add-base 2))
+(test uses-prebuilt-dep
+  (assert (= (pm.add-base 2) 42)))
+end-file
+step check-pure
+run check --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+test -s "{{dir}}/vendor/purelib/target/dev/purelib.tli"
+test ! -e "{{dir}}/vendor/purelib/target/dev/purelib.tlci"
+step test-pure
+run test --manifest-path "{{dir}}/typelisp.pkg"
+stderr empty
+stdout contains TypeLisp package tests passed
+step build-pure
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{host-target}}
+stderr empty
+test -s "{{dir}}/vendor/purelib/target/release/purelib.tli"
+test ! -e "{{dir}}/vendor/purelib/target/release/purelib.tlci"
+exec "{{dir}}/target/release/app_pure{{exe}}"
+exit 42

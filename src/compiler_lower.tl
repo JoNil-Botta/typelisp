@@ -36,9 +36,6 @@
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_spmd_numeric_policy as spmd_numeric)
 (import compiler_spmd_logical_gang as spmd_gang)
-(cfg
-  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (import compiler_package_surface_producer as package_surface))
 (import stdlib.hashmap)
 (import stdlib.hash)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
@@ -935,7 +932,15 @@
           (for [mod-index (iterator.range 0 init-module-count)]
             (let
               [owner-id : i64 (array-ref init-modules mod-index)]
-              [module-name : String (lower-name-id-text lower-state owner-id)]
+              [raw-module-name : String
+                (lower-name-id-text lower-state owner-id)]
+              [module-name : String
+                (if (or
+                  (string.contains (& raw-module-name) "/")
+                  (string.contains (& raw-module-name) "\\"))
+                  (load.compiler-load-canonical-module-id-from-path
+                    (& raw-module-name))
+                  raw-module-name)]
               [wrapper-name : String
                 (tli.tli-module-init-symbol (& module-name))]
               [guard-name : String
@@ -79486,27 +79491,6 @@
           (let
             [_freeze-let-facts : unit
               (tc_core.tc-checked-let-binding-facts-freeze! let-facts)]
-            [_finish-package-surface : unit
-              (cfg
-                (any
-                  compiler-surface-producer
-                  compiler-build-identity
-                  embedded-stdlib-tlci)
-                (let
-                  [source-decl-count : i64
-                    (match (lower-global-shared-view program)
-                      [(Program decls-box)
-                        (let
-                          [decls : ast.AstDeclList (deref decls-box)]
-                          (ast.ast-decl-list-len (& decls)))])]
-                  (match summary
-                    [(CompilerTypecheckSummary values functions externs)
-                      (package_surface.package-surface-capture-finish!
-                        source-decl-count
-                        values
-                        functions
-                        externs)]))
-                unit)]
             [_install-pools : unit (ast.ast-node-pool-context-install! pools)]
             [lower-names : LowerNameEnv
               (match (lower-global-shared-view program)
@@ -79615,27 +79599,11 @@
         [(Partial diag _ _ _)
           (begin
             (cfg
-              (any
-                compiler-surface-producer
-                compiler-build-identity
-                embedded-stdlib-tlci)
-              (package_surface.package-surface-capture-abort!
-                "package surface: checked compilation was partial")
-              unit)
-            (cfg
               compile-profile
               (compiler-lower-profile-finish lower-state "typecheck"))
             (Err (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
         [(Err diag)
           (begin
-            (cfg
-              (any
-                compiler-surface-producer
-                compiler-build-identity
-                embedded-stdlib-tlci)
-              (package_surface.package-surface-capture-abort!
-                "package surface: checked compilation failed")
-              unit)
             (cfg
               compile-profile
               (compiler-lower-profile-finish lower-state "typecheck"))
@@ -79725,17 +79693,6 @@
   [source-names : ci.InternSourceNameSessionHandle]
   [intern-state-input : ci.InternCompatState]) : ResultCompilerLower
   (begin
-    (cfg
-      (any
-        compiler-surface-producer
-        compiler-build-identity
-        embedded-stdlib-tlci)
-      (package_surface.package-surface-capture-expanded!
-        (cis.intern-structural-session-handle-from-source-names source-names)
-        (lower-global-shared-view program)
-        (lower-global-shared-view paths)
-        pools)
-      unit)
     (cfg
       (any compile-profile test)
       (compiler-lower-profile-reset! lower-state)
@@ -79836,13 +79793,25 @@
               ;; optimize, and codegen are gated on reachability. This up-front
               ;; walk records the dense declaration selection consumed by the
               ;; final linear prune.
-              (match (lower-prune-unreachable-functions-with-plan
-                lower-state
-                pools
-                (lower-global-shared-view entry-path)
-                (lower-global-shared-view specialized)
-                (lower-global-shared-view specialized-paths)
-                prune-names)
+              (match (if (>
+                (array-length
+                  (load.compiler-load-session-state-tli-source-stdlib-needed
+                    (& load-state)))
+                0)
+                (Program
+                  (lower-global-shared-view specialized)
+                  (lower-global-shared-view specialized-paths)
+                  (lower-decl-keep-plan-all
+                    (match (lower-global-shared-view specialized)
+                      [(Program decls-box)
+                        (ast.ast-decl-list-len (& (deref decls-box)))])))
+                (lower-prune-unreachable-functions-with-plan
+                  lower-state
+                  pools
+                  (lower-global-shared-view entry-path)
+                  (lower-global-shared-view specialized)
+                  (lower-global-shared-view specialized-paths)
+                  prune-names))
                 [(Program _reach-program _reach-paths reach-keep-plan)
                   (begin
                     (if (= prune-names-arena 0)
@@ -79944,14 +79913,6 @@
                         intern-state)))])))]
         [(Err diag)
           (begin
-            (cfg
-              (any
-                compiler-surface-producer
-                compiler-build-identity
-                embedded-stdlib-tlci)
-              (package_surface.package-surface-capture-abort!
-                "package surface: specialization failed")
-              unit)
             (cfg
               compile-profile
               (compiler-lower-profile-finish lower-state "specialize"))

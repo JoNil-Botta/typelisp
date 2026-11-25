@@ -8,6 +8,7 @@
 (import (vector.vector String) as svec)
 (cfg compile-profile (import stdlib.profile))
 (import compiler_load)
+(import compiler_dependency_tlci)
 (import compiler_source_overlay as source_overlay)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
@@ -410,6 +411,58 @@
     (target_cfg.CompilerTargetCfg.Windows)
     (target_cfg.CompilerTargetCfg.Linux)))
 
+(define (compiler-check-package-open-tli-and-deps!
+  [entry-path : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [stdlib-roots : (& svec.Vec)]
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]
+  [cfgs : sym_i64_env.SymI64Env]) : tli_cli.ResultTliCatalogOpen
+  (let
+    [load-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-serial-test-session-state)]
+    (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
+      (owned_view.compiler-owned-shared-view load-state)
+      (string.copy manifest-dir)
+      (compiler_load.clone-compiler-pkg-deps deps))
+    (match (tli_cli.tli-open-catalog-for-session!
+      (& load-state)
+      entry-path
+      target
+      stdlib-roots
+      cfgs
+      1
+      false)
+      [(Err tli-msg) (Err tli-msg)]
+      [(Ok)
+        (if (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)
+          (tli_cli.ResultTliCatalogOpen.Ok)
+          (tli_cli.tli-open-transitive-package-deps-for-session!
+            (& load-state)
+            manifest-dir
+            deps
+            target
+            cfgs
+            false))])))
+
+(define (compiler-check-package-finish-tli-and-deps!) : unit
+  (let
+    [load-state : compiler_load.CompilerLoadSessionState
+      (compiler_load.compiler-load-serial-test-session-state)]
+    (cfg
+      dependency-tlci-verification
+      (compiler_dependency_tlci.compiler-dependency-tlci-verification-record!
+        (owned_view.compiler-owned-shared-view load-state)
+        "runtime-finished"
+        -1))
+    (compiler_dependency_tlci.compiler-dependency-tlci-verification-finish!
+      (owned_view.compiler-owned-shared-view load-state))
+    (compiler_load.compiler-load-tli-release!)
+    (match (compiler_load.compiler-load-session-state-dependency-catalog-release!
+      load-state)
+      [(Ok) unit]
+      [(Err _) unit])))
+
 (define (compiler-check-package-source-with-roots-and-cfg
   [path : String]
   [source : String]
@@ -421,15 +474,15 @@
     (compiler-check-reset-pools!)
     (tc.tc-job-state-reset-advisories! (tc.tc-serial-job-state))
     (cfg compile-profile (compiler-check-profile-start))
-    (match (tli_cli.tli-open-catalog-for-session!
-      (& (compiler_load.compiler-load-serial-test-session-state))
+    (match (compiler-check-package-open-tli-and-deps!
       (& path)
       (compiler-check-target-from-cfgs cfgs)
       (& stdlib-roots)
-      cfgs
-      1
-      false)
+      (& manifest-dir)
+      (& deps)
+      cfgs)
       [(Err tli-msg)
+        (compiler-check-package-finish-tli-and-deps!)
         (Err
           (cdiag.compiler-diagnostic-list-box-single
             (box (cdiag.compiler-diagnostic-at-start path tli-msg)))
@@ -462,7 +515,7 @@
                   (Err
                     (cdiag.compiler-diagnostic-list-box-single diag)
                     (compiler-check-serial-advisories)))])]
-          (compiler_load.compiler-load-tli-release!)
+          (compiler-check-package-finish-tli-and-deps!)
           result)])))
 
 (define (compiler-check-package-begin! [job-state : tc.TcJobState]) : unit
@@ -497,15 +550,15 @@
   [cfgs : sym_i64_env.SymI64Env]
   [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
   (compiler-check-package-begin! job-state)
-  (match (tli_cli.tli-open-catalog-for-session!
-    (& (compiler_load.compiler-load-serial-test-session-state))
+  (match (compiler-check-package-open-tli-and-deps!
     (& path)
     (compiler-check-target-from-cfgs cfgs)
     (& stdlib-roots)
-    cfgs
-    1
-    false)
+    (& manifest-dir)
+    (& deps)
+    cfgs)
     [(Err tli-msg)
+      (compiler-check-package-finish-tli-and-deps!)
       (Err
         (cdiag.compiler-diagnostic-list-box-single
           (box (cdiag.compiler-diagnostic-at-start path tli-msg)))
@@ -525,7 +578,7 @@
             stdlib-roots
             cfgs
             job-state)]
-        (compiler_load.compiler-load-tli-release!)
+        (compiler-check-package-finish-tli-and-deps!)
         result)]))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck

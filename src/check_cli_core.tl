@@ -17,10 +17,12 @@
 (import tli_cli_core as tli_cli)
 (import doc_test)
 (import compiler_load)
+(import compiler_dependency_tlci)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as cdiag)
 (import compiler_intern as ci)
 (import package_source_core)
+(import build_run_core)
 (import test_cli_core)
 (import stdlib.string)
 (import stdlib.vector)
@@ -394,95 +396,137 @@
             (owned_view.compiler-owned-shared-view manifest-dir)
             (owned_view.compiler-owned-shared-view manifest))]
         [emit-entry : bool (selfhost-check-package-kind-entry? manifest.kind)]
-        [_reset-file-state : unit
-          (compiler_driver_core.compiler-driver-reset-file-state!)]
-        [job : tc.TcJobState (tc.tc-serial-job-state)]
-        [cfgs : sym_i64_env.SymI64Env
-          (target_cfg.compiler-target-cfgs-with-names
-            options.target
-            (svec.clone-vec (& options.cfgs)))]
-        [_begin-check : unit
-          (compiler_check_core.compiler-check-package-begin! job)]
-        [loaded : compiler_load.ResultCompilerLoadWithPaths
-          (compiler_load.compiler-load-package-file-with-runtime-cfg
+        (compiler_load.compiler-load-set-package-artifact-profile! "dev")
+        (when
+          (and
+            (>
+              (compiler_load.compiler-pkg-dep-list-count
+                (&
+                  (compiler_load.compiler-pkg-deps-list
+                    (compiler_load.clone-compiler-pkg-deps (& manifest.deps)))))
+              0)
+            (not
+              (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)))
+          (match (build_run_core.source-tool-build-package-deps-only!
+            (& source-set.manifest-path)
+            (build_run_core.source-tool-backend-target options.target)
+            options.opt-level
+            (& options.stdlib-roots)
+            (& options.cfgs))
+            [(Ok) unit]
+            [(Err message)
+              (io.print-error message)
+              (return 1)]))
+        (let
+          [_reset-file-state : unit
+            (compiler_driver_core.compiler-driver-reset-file-state!)]
+          [job : tc.TcJobState (tc.tc-serial-job-state)]
+          [cfgs : sym_i64_env.SymI64Env
+            (target_cfg.compiler-target-cfgs-with-names
+              options.target
+              (svec.clone-vec (& options.cfgs)))]
+          [_begin-check : unit
+            (compiler_check_core.compiler-check-package-begin! job)]
+          (match (compiler_check_core.compiler-check-package-open-tli-and-deps!
             (& entry-path)
+            options.target
             (& options.stdlib-roots)
             (& manifest-dir)
             (& manifest.deps)
-            emit-entry
-            cfgs)]
-        ;; Reachable paths own their strings and carry no session-local ids.
-        [reachable : ast.AstDeclPathList
-          (match (& loaded)
-            [(Ok _ paths _ seen)
-              (compiler_load.compiler-load-package-reachable-paths
+            cfgs)
+            [(Err tli-msg)
+              (compiler_check_core.compiler-check-package-finish-tli-and-deps!)
+              (io.print-error tli-msg)
+              (return 1)]
+            [(Ok) unit])
+          (let
+            [loaded : compiler_load.ResultCompilerLoadWithPaths
+              (compiler_load.compiler-load-package-file-with-runtime-cfg
                 (& entry-path)
-                paths
-                seen)]
-            [(Err _) (ast.ast-decl-path-list-new)])]
-        [sources : svec.Vec
-          (package_source_core.package-source-reachable-owned-files
-            (& reachable)
-            (& manifest-dir)
-            (& options.stdlib-roots))]
-        [checked : compiler_check_core.ResultCompilerCheckWithPaths
-          (if (selfhost-check-package-has-inline-tests? (& sources))
-            (let
-              [status : i64
-                (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
-                  sources
-                  (svec.clone-vec (& options.stdlib-roots))
-                  (string.copy (& manifest-dir))
-                  (string.copy (& manifest.name))
-                  (compiler_load.clone-compiler-pkg-deps (& manifest.deps))
-                  cfgs
-                  "typecheck-prefix-inline-check-package")]
-              (when (not (= status 0)) (return status))
-              ;; Inline preflight resets the loader pools and interned cfg ids.
-              (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
-                entry-path
-                (svec.clone-vec (& options.stdlib-roots))
-                (string.copy (& manifest-dir))
-                (compiler_load.clone-compiler-pkg-deps (& manifest.deps))
+                (& options.stdlib-roots)
+                (& manifest-dir)
+                (& manifest.deps)
                 emit-entry
-                (target_cfg.compiler-target-cfgs-with-names
-                  options.target
-                  (svec.clone-vec (& options.cfgs)))
-                job))
-            (compiler_check_core.compiler-check-package-loaded
-              entry-path
-              loaded
-              (svec.clone-vec (& options.stdlib-roots))
-              cfgs
-              job))]
-        (match checked
-          [(Ok _ _ advisories)
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (let
-              [_reset-after-entry : unit
+                cfgs)]
+            ;; Reachable paths own their strings and carry no session-local ids.
+            [reachable : ast.AstDeclPathList
+              (match (& loaded)
+                [(Ok _ paths _ seen)
+                  (compiler_load.compiler-load-package-reachable-paths
+                    (& entry-path)
+                    paths
+                    seen)]
+                [(Err _) (ast.ast-decl-path-list-new)])]
+            [sources : svec.Vec
+              (package_source_core.package-source-reachable-owned-files
+                (& reachable)
+                (& manifest-dir)
+                (& options.stdlib-roots))]
+            [checked : compiler_check_core.ResultCompilerCheckWithPaths
+              (if (selfhost-check-package-has-inline-tests? (& sources))
                 (begin
-                  (compiler_driver_core.compiler-driver-reset-file-state!)
-                  (ci.intern-persistent-arena-reset!))]
-              [doctest-status : i64
-                (doc_test.doc-test-report-status
-                  (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
-                    reachable
-                    options.stdlib-roots
-                    manifest-dir
-                    manifest.deps
-                    (target_cfg.compiler-target-cfgs-with-names
-                      options.target
-                      options.cfgs)))]
-              (if (= doctest-status 0)
-                (selfhost-check-print-passed)
-                doctest-status))]
-          [(Err diag advisories)
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (selfhost-check-report-diagnostics
-              (cdiag.compiler-diagnostic-list-box-shared-view diag))
-            1]))]))
+                  (compiler_check_core.compiler-check-package-finish-tli-and-deps!)
+                  (let
+                    [status : i64
+                      (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
+                        sources
+                        (svec.clone-vec (& options.stdlib-roots))
+                        (string.copy (& manifest-dir))
+                        (string.copy (& manifest.name))
+                        (compiler_load.clone-compiler-pkg-deps
+                          (& manifest.deps))
+                        cfgs
+                        "typecheck-prefix-inline-check-package")]
+                    (when (not (= status 0)) (return status))
+                    ;; Inline preflight resets the loader pools and interned cfg ids.
+                    (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
+                      entry-path
+                      (svec.clone-vec (& options.stdlib-roots))
+                      (string.copy (& manifest-dir))
+                      (compiler_load.clone-compiler-pkg-deps (& manifest.deps))
+                      emit-entry
+                      (target_cfg.compiler-target-cfgs-with-names
+                        options.target
+                        (svec.clone-vec (& options.cfgs)))
+                      job)))
+                (let
+                  [r : compiler_check_core.ResultCompilerCheckWithPaths
+                    (compiler_check_core.compiler-check-package-loaded
+                      entry-path
+                      loaded
+                      (svec.clone-vec (& options.stdlib-roots))
+                      cfgs
+                      job)]
+                  (compiler_check_core.compiler-check-package-finish-tli-and-deps!)
+                  r))]
+            (match checked
+              [(Ok _ _ advisories)
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (let
+                  [_reset-after-entry : unit
+                    (begin
+                      (compiler_driver_core.compiler-driver-reset-file-state!)
+                      (ci.intern-persistent-arena-reset!))]
+                  [doctest-status : i64
+                    (doc_test.doc-test-report-status
+                      (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
+                        reachable
+                        options.stdlib-roots
+                        manifest-dir
+                        manifest.deps
+                        (target_cfg.compiler-target-cfgs-with-names
+                          options.target
+                          options.cfgs)))]
+                  (if (= doctest-status 0)
+                    (selfhost-check-print-passed)
+                    doctest-status))]
+              [(Err diag advisories)
+                (compiler_driver_core.compiler-driver-print-advisories
+                  (& advisories))
+                (selfhost-check-report-diagnostics
+                  (cdiag.compiler-diagnostic-list-box-shared-view diag))
+                1]))))]))
 
 ;; Run the `check` command over arguments starting at `start`.
 (define (selfhost-check-run-from [start : i64] [count : i64]) : i64

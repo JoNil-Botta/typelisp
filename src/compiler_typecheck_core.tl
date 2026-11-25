@@ -116123,11 +116123,11 @@
 
 (cfg
   embedded-stdlib-tlci
-  (define (tc-tli-hydrated-macro-validate
+  (define (tc-tli-hydrated-macro-validate-with-digest
     [ctx : TcContext]
     [identity-id : i64]
     [actual-entry : i64]
-    [generation : i64]) : bool
+    [digest : (& (Array u8 32))]) : bool
     (let
       [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
       (if (= facts-ptr 0)
@@ -116143,15 +116143,27 @@
               (tli_hydrate.tli-hydrated-facts-macro-slot (& facts) identity-id)]
             (if (< slot 0)
               false
-              (let
-                [digest : (Array u8 32)
-                  (tc-tli-native-catalog-digest generation)]
-                (match (tli_hydrate.tli-hydrated-macro-validate
-                  (tli_hydrate.tli-hydrated-facts-macro-at (& facts) slot)
-                  actual-entry
-                  (& digest))
-                  [(Native _ _ _) true]
-                  [(Unavailable) false])))))))))
+              (match (tli_hydrate.tli-hydrated-macro-validate
+                (tli_hydrate.tli-hydrated-facts-macro-at (& facts) slot)
+                actual-entry
+                digest)
+                [(Native _ _ _) true]
+                [(Unavailable) false]))))))))
+
+(cfg
+  embedded-stdlib-tlci
+  (define (tc-tli-hydrated-macro-validate
+    [ctx : TcContext]
+    [identity-id : i64]
+    [actual-entry : i64]
+    [generation : i64]) : bool
+    (let
+      [digest : (Array u8 32) (tc-tli-native-catalog-digest generation)]
+      (tc-tli-hydrated-macro-validate-with-digest
+        ctx
+        identity-id
+        actual-entry
+        (& digest)))))
 
 (cfg
   embedded-stdlib-tlci
@@ -116202,11 +116214,28 @@
                 None)))
           None)]
       [(Resolved capability)
-        (tc-dependency-tlci-route-counter-add!
-          (tc-context-macro-state ctx)
-          tc-dependency-tlci-catalog-hits
-          1)
-        (Resolved (Dependency capability))]
+        (let
+          [identity-id : i64 (ci.intern (string.copy (& identity)))]
+          (if (and
+            (tc-tli-hydrated-macro-present? ctx identity-id)
+            (not
+              (tc-tli-hydrated-macro-validate-with-digest
+                ctx
+                identity-id
+                capability.resolved.entry-index
+                (& capability.catalog-sha256))))
+            (begin
+              (tc-dependency-tlci-route-counter-add!
+                (tc-context-macro-state ctx)
+                tc-dependency-tlci-interpreted-fallbacks
+                1)
+              Unavailable)
+            (begin
+              (tc-dependency-tlci-route-counter-add!
+                (tc-context-macro-state ctx)
+                tc-dependency-tlci-catalog-hits
+                1)
+              (Resolved (Dependency capability)))))]
       [(Shell capability)
         (tc-dependency-tlci-route-counter-add!
           (tc-context-macro-state ctx)
@@ -117498,6 +117527,112 @@
           (ctfe_support.ctfe-env-with-type-literals env resolutions)))
       env)))
 
+(define (macro-tli-fallback-host-cfgs) : sym_i64_env.SymI64Env
+  (let
+    [cfgs : sym_i64_env.SymI64Env (parser.compiler-cfg-empty)]
+    (cfg
+      windows
+      (begin
+        (set! cfgs (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "windows") 1))
+        (set!
+          cfgs
+          (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "target-windows") 1))
+        (set!
+          cfgs
+          (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "os-windows") 1)))
+      (begin
+        (set! cfgs (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "linux") 1))
+        (set!
+          cfgs
+          (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "target-linux") 1))
+        (set! cfgs (sym_i64_env.sym-i64-bind-id cfgs (ci.intern "os-linux") 1))))
+    cfgs))
+
+(define (macro-find-defmacro-body-in-decls
+  [decls : (& ast.AstDeclList)]
+  [macro-name-id : i64]) : i64
+  (let
+    [n : i64 (ast.ast-decl-list-len decls)]
+    (for [i (iterator.range 0 n)]
+      (match (ast.ast-decl-list-get decls i (ast.ast-decl-fallback))
+        [(DefMacro _ name _ _ body-id)
+          (when (= name macro-name-id) (return body-id))]
+        [(Unsafe inner)
+          (match (deref inner)
+            [(DefMacro _ name _ _ body-id)
+              (when (= name macro-name-id) (return body-id))]
+            [_ unit])]
+        [(ModuleBody _ body-box)
+          (let
+            [found : i64
+              (macro-find-defmacro-body-in-decls
+                (& (__tl-box-place body-box))
+                macro-name-id)]
+            (when (>= found 0) (return found)))]
+        [_ unit]))
+    -1))
+
+(define (macro-resolve-tli-hydrated-fallback-body
+  [ctx : TcContext]
+  [fallback-module-id : i64]
+  [declaration-id : i64]
+  [macro-name-id : i64]
+  [macro-name : (& str)]
+  [body : ast.AstExpr]) : ast.AstExpr
+  (when
+    (or
+      (< declaration-id 0)
+      (= (tc-job-state-tli-facts-ptr (tc-context-job-state ctx)) 0))
+    (return body))
+  (let
+    [mod-name : String (tc-env-key-name-text fallback-module-id)]
+    [identity : String
+      (if (= (string.string-length (& mod-name)) 0)
+        (string.copy macro-name)
+        (str_cat.str-cat mod-name "/" (string.copy macro-name)))]
+    [identity-id : i64 (ci.intern identity)]
+    (unless (tc-tli-hydrated-macro-present? ctx identity-id) (return body))
+    (let
+      [provenance-id : i64
+        (csym.compiler-symbols-provenance-id-at-index-or
+          (tc-context-symbols ctx)
+          declaration-id
+          cbi.compiler-builtin-id-fix-empty)]
+      [source-names : ci.InternSourceNameSession
+        (ci.intern-source-name-session-handle-session
+          (tc-context-source-names ctx))]
+      (when
+        (or
+          (< provenance-id 0)
+          (>= provenance-id source-names.source-count)
+          (>= provenance-id (array-length source-names.pool-slots)))
+        (return body))
+      (let
+        [path : String
+          (string.copy (& (array-ref source-names.pool-slots provenance-id)))]
+        (match (cload.compiler-load-session-try-read-input-text (& path))
+          [(ErrIoString _) body]
+          [(OkIoString text)
+            (let
+              [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
+              (match (parser.parse-ast-source-diagnostic-with-cfg-and-pools
+                path
+                (& text)
+                (macro-tli-fallback-host-cfgs)
+                pools)
+                [(Err _) body]
+                [(Ok prog)
+                  (match prog
+                    [(Program decls-box)
+                      (let
+                        [body-id : i64
+                          (macro-find-defmacro-body-in-decls
+                            (& (__tl-box-place decls-box))
+                            macro-name-id)]
+                        (if (>= body-id 0)
+                          (ast.ast-node-pool-context-expr-get pools body-id)
+                          body))])]))])))))
+
 (define (macro-eval-transformer-interpreted-with-env
   [ctx : TcContext]
   [fallback-module-id : i64]
@@ -117520,38 +117655,47 @@
       captured-body?)
     (macro-hygiene-produced-eval-start! (tc-context-macro-state ctx) env)
     (cfg compile-profile (compiler-tc-macro-profile-start))
-    (match (ctfe_support.ctfe-eval-node
-      (& body)
-      (ctfe_support.ctfe-env-extend-id
-        (macro-transformer-type-literal-env
+    (let
+      [eval-body : ast.AstExpr
+        (macro-resolve-tli-hydrated-fallback-body
           ctx
           fallback-module-id
           declaration-id
-          env)
-        (ctfe_support.ctfe-hygiene-enabled-id)
-        (& (Bool true)))
-      (ctfe_support.ctfe-fuel-limit))
-      [(Ok value _)
-        (begin
-          (macro-adopt-transformer-env-pools! ctx env)
-          (cfg
-            compile-profile
-            (compiler-tc-macro-profile-finish
-              (tc-context-macro-state ctx)
-              (ci.intern-composite-pair-id fallback-module-id macro-name-id)
-              macro-name
-              expanded-args))
-          (Ok value env))]
-      [(Err diag)
-        (begin
-          (cfg
-            compile-profile
-            (compiler-tc-macro-profile-finish
-              (tc-context-macro-state ctx)
-              (ci.intern-composite-pair-id fallback-module-id macro-name-id)
-              macro-name
-              expanded-args))
-          (Err diag))])))
+          macro-name-id
+          (& macro-name)
+          body)]
+      (match (ctfe_support.ctfe-eval-node
+        (& eval-body)
+        (ctfe_support.ctfe-env-extend-id
+          (macro-transformer-type-literal-env
+            ctx
+            fallback-module-id
+            declaration-id
+            env)
+          (ctfe_support.ctfe-hygiene-enabled-id)
+          (& (Bool true)))
+        (ctfe_support.ctfe-fuel-limit))
+        [(Ok value _)
+          (begin
+            (macro-adopt-transformer-env-pools! ctx env)
+            (cfg
+              compile-profile
+              (compiler-tc-macro-profile-finish
+                (tc-context-macro-state ctx)
+                (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+                macro-name
+                expanded-args))
+            (Ok value env))]
+        [(Err diag)
+          (begin
+            (cfg
+              compile-profile
+              (compiler-tc-macro-profile-finish
+                (tc-context-macro-state ctx)
+                (ci.intern-composite-pair-id fallback-module-id macro-name-id)
+                macro-name
+                expanded-args))
+            (Err diag))]))))
 
 (define (macro-bind-transformer-expanded-profiled
   [ctx : TcContext]
@@ -127157,166 +127301,17 @@
 ;; must also need no expansion. Caller-owned bodies, and stdlib source the
 ;; expander would change, start the ordinary walks. Typechecking, and any later
 ;; macro plan in the same use, reuses no more than the first macro plan hydrated
-;; and stops at the module marker governing that plan's cut, counted among all
-;; module markers. Generated declaration normalization and template
-;; specialization keep markers in order, so declarations they drop cannot shift
-;; expanded source into the prefix.
-(define (tc-dependency-surface-prefix-candidate
-  [load-state : (& cload.CompilerLoadSessionState)]
-  [state : TcMacroState]
-  [expr-bases : i64]
-  [macro-walk : bool]
-  [decls : (& ast.AstDeclList)]
-  [paths : (& ast.AstDeclPathList)]
-  [cache-scope : String]
-  [surface-count : i64]) : TcPrefixCandidate
-  (let
-    [decl-count : i64 (ast.ast-decl-list-len decls)]
-    [path-count : i64 (ast.ast-decl-path-list-len paths)]
-    [hydrated : i64
-      (cload.compiler-load-session-state-dependency-surface-macro-skip-count
-        load-state)]
-    [limit : i64
-      (if (> hydrated 0)
-        hydrated
-        decl-count)]
-    [cut-marker : i64
-      (cload.compiler-load-session-state-dependency-surface-macro-cut-marker
-        load-state)]
-    [markers : i64 0]
-    [index : i64 0]
-    [remaining : i64 surface-count]
-    [stopped : bool false]
-    [module : String ""]
-    [module-id : i64 cbi.compiler-builtin-id-fix-empty]
-    [embedded-modules : sym_i64_env.SymI64Env
-      (cload.compiler-load-session-state-embedded-module-ids-shared-view
-        (owned_view.compiler-owned-reference-shared-view load-state))]
-    ;; Flattened modules keep one provenance per run of declarations.
-    [last-provenance-id : i64 -1]
-    [dependency : bool false]
-    [stdlib : bool false]
-    (if (<= surface-count 0)
-      No
-      (begin
-        (while (and
-          (> remaining 0)
-          (not stopped)
-          (< index limit)
-          (< index decl-count)
-          (< index path-count))
-          (let
-            [decl : ast.AstDecl
-              (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))]
-            [provenance-id : i64
-              (ast.ast-decl-path-list-provenance-id
-                paths
-                index
-                cbi.compiler-builtin-id-fix-empty)]
-            (unless
-              (= provenance-id last-provenance-id)
-              (set! last-provenance-id provenance-id)
-              (set!
-                dependency
-                (cload.compiler-load-session-state-dependency-surface-provenance?
-                  load-state
-                  provenance-id))
-              (set!
-                stdlib
-                (cload.compiler-load-stdlib-import?
-                  (ci.intern-str provenance-id))))
-            (cond
-              [(and
-                  (= (+ markers 1) cut-marker)
-                  (match (& decl)
-                    [(Module _) true]
-                    [_ false]))
-                (set! stopped true)]
-              [dependency (-= remaining 1)]
-              [(or
-                  (match (& decl)
-                    [(Module _) true]
-                    [(Import _ (Spec (Module) _ _ _ _)) true]
-                    [_ false])
-                  (and
-                    stdlib
-                    (sym_i64_env.sym-i64-contains-id embedded-modules module-id)
-                    (or
-                      (not macro-walk)
-                      (macro-surface-source-decl-expanded?
-                        state
-                        expr-bases
-                        (& decl)))))
-                unit]
-              [else (set! stopped true)])
-            (unless
-              stopped
-              (match decl
-                [(Module next-module)
-                  (set! module (tc-env-key-name-text next-module))
-                  (set! module-id next-module)
-                  (+= markers 1)]
-                [_ unit])
-              (+= index 1))))
-        (cond
-          [(or
-              (= index 0)
-              (not
-                (or
-                  stopped
-                  (= remaining 0)
-                  (and (> hydrated 0) (= index hydrated))))
-              (and macro-walk stopped (= markers 0)))
-            No]
-          [else
-            (when
-              (and macro-walk stopped (= cut-marker 0))
-              (cload.compiler-load-session-state-dependency-surface-note-macro-cut!
-                load-state
-                markers))
-            (Some (tc-prefix-key-start cache-scope) index module module-id)])))))
-
-(define (macro-surface-source-decl-expanded?
-  [state : TcMacroState]
-  [expr-bases : i64]
-  [decl : (& decl ast.AstDecl)]) : bool
-  (match decl
-    [(Unsafe inner)
-      (macro-surface-source-decl-expanded? state expr-bases (& (deref inner)))]
-    [_
-      (or
-        (not (macro-decl-expansion-can-change-program? decl))
-        (macro-decl-cannot-fire? state expr-bases decl))]))
-
 (define (macro-surface-prefix-plan
-  [load-state : cload.CompilerLoadSessionState]
-  [state : TcMacroState]
-  [expr-bases : i64]
+  [_load-state : cload.CompilerLoadSessionState]
+  [_state : TcMacroState]
+  [_expr-bases : i64]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : MacroSurfacePrefixPlan
   (if (surface_facts.surface-typecheck-facts-active?)
     (let
       [facts : surface_facts.SurfaceTypecheckFacts
         (surface_facts.surface-typecheck-facts-current)]
-      [count : i64
-        (if (surface_facts.surface-typecheck-facts-composite-active?)
-          (match (tc-dependency-surface-prefix-candidate
-            load-state
-            state
-            expr-bases
-            true
-            decls
-            paths
-            (tc-prefix-default-cache-scope)
-            (cload.compiler-load-session-state-dependency-surface-provenance-count
-              (& load-state)))
-            [(Some _ candidate-count _ _)
-              (if (surface_facts.surface-typecheck-facts-rebase-composite-macro-prefix!
-                candidate-count)
-                candidate-count
-                0)]
-            [(No) 0])
-          facts.macro-prefix-decl-count)]
+      [count : i64 facts.macro-prefix-decl-count]
       [decl-count : i64 (ast.ast-decl-list-len (& decls))]
       [path-count : i64 (ast.ast-decl-path-list-len (& paths))]
       (if (and (> count 0) (< count decl-count) (<= count path-count))
@@ -127328,11 +127323,6 @@
           [module : MacroSurfacePrefixModule
             (macro-surface-prefix-module (tc-global-shared-view prefix-decls))]
           (begin
-            (if (surface_facts.surface-typecheck-facts-composite-active?)
-              (cload.compiler-load-session-state-dependency-surface-note-macro-skip!
-                load-state
-                count)
-              unit)
             (cfg compile-profile (macro-profile-surface-prefix-hit))
             (Hydrated
               (tc-decl-list-drop (tc-global-shared-view decls) count)
@@ -127347,11 +127337,7 @@
               (macro-decl-list-reverse prefix-decls)
               (macro-decl-path-list-reverse prefix-paths)
               count)))
-        (begin
-          (if (surface_facts.surface-typecheck-facts-composite-active?)
-            (surface_facts.surface-typecheck-facts-clear!)
-            unit)
-          (Cold))))
+        (Cold)))
     (Cold)))
 
 (define (macro-expand-decls-with-surface-prefix
@@ -134982,11 +134968,6 @@
       paths
       (CompilerTypecheckSummary 0 0 0))
     (begin
-      (when
-        (surface_facts.surface-typecheck-facts-composite-active?)
-        (cload.compiler-load-session-state-dependency-surface-note-typecheck-skip!
-          load-state
-          count))
       (cfg compile-profile (tc-profile-surface-prefix-hit))
       (cfg
         compile-profile
@@ -135056,39 +135037,16 @@
           (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))))
       (tc-check-decls-with-paths-cold ctx top-env decls paths summary)]
     [(surface_facts.surface-typecheck-facts-active?)
-      (match (if (surface_facts.surface-typecheck-facts-composite-active?)
-        (tc-dependency-surface-prefix-candidate
-          load-state
-          (tc-context-macro-state ctx)
-          (tc-context-expr-bases ctx)
-          false
-          decls
-          paths
-          cache-scope
-          (cload.compiler-load-session-state-dependency-surface-provenance-count
-            (& load-state)))
-        (tc-prefix-candidate
-          (tc-global-shared-view decls)
-          (tc-global-shared-view paths)
-          stdlib-roots
-          cache-scope))
+      (match (tc-prefix-candidate
+        (tc-global-shared-view decls)
+        (tc-global-shared-view paths)
+        stdlib-roots
+        cache-scope)
         [(Some _ count module module-id)
           (let
-            [rebased : bool
-              (if (surface_facts.surface-typecheck-facts-composite-active?)
-                (match (tc-summary-decl-prefix
-                  (tc-global-shared-view decls)
-                  count)
-                  [(CompilerTypecheckSummary values functions externs)
-                    (surface_facts.surface-typecheck-facts-rebase-composite-typecheck-prefix!
-                      count
-                      values
-                      functions
-                      externs)])
-                true)]
             [facts : surface_facts.SurfaceTypecheckFacts
               (surface_facts.surface-typecheck-facts-current)]
-            (if (and rebased (= count facts.prefix-decl-count))
+            (if (= count facts.prefix-decl-count)
               (tc-check-decls-with-surface-prefix-hit
                 load-state
                 ctx

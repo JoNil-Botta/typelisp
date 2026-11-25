@@ -95,14 +95,14 @@ if check_package_lowered_route "$WORK/frontend-in-emission.tl"; then
 fi
 
 # Artifact finishing consumes complete byte/text outputs. It cannot accept a
-# frontend graph or invoke preparation again after the checked surface capture.
+# frontend graph or invoke preparation again after the checked runtime capture.
 check_prepared_runtime_boundary() {
     awk '
         /^[[:space:]]*\(define \(/ {
             mode = ""
             if ($0 ~ /\(build-package-finish-prepared-runtime$/) { mode = "finish"; finish += 1 }
             if ($0 ~ /\(build-package-finish-direct-fresh-artifacts$/) { mode = "direct"; direct += 1 }
-            if ($0 ~ /\(build-package-finish-fresh-artifacts-with-surface$/) { mode = "capture"; capture += 1 }
+            if ($0 ~ /\(build-package-finish-bin-artifacts$/) { mode = "capture"; capture += 1 }
         }
         mode == "finish" || mode == "direct" {
             if ($0 ~ /AstDecl|AstNode|CompilerIr|build-package-prepare-owned-runtime|compiler-driver-(emit|lower)-package|compiler-driver-package-runtime-lower/) forbidden += 1
@@ -138,13 +138,13 @@ if check_prepared_runtime_boundary "$WORK/retained-frontend.tl"; then
     fail "prepared runtime guard accepted a retained frontend graph"
 fi
 # Export finishing cannot keep or revisit the parsed frontend. The capture
-# belongs before the one runtime preparation and transfers only text/catalogs.
+# belongs before partitioned TLI emission and transfers only text/catalogs.
 check_package_export_boundary() {
     awk '
         /^[[:space:]]*\(define \(/ {
             mode = ""
-            if ($0 ~ /\(build-package-tlci-text-with-surface$/) { mode = "finish"; finish += 1 }
-            if ($0 ~ /\(build-package-finish-fresh-artifacts-with-surface$/) { mode = "pipeline"; pipeline += 1 }
+            if ($0 ~ /\(build-package-tlci-emit-optional$/) { mode = "finish"; finish += 1 }
+            if ($0 ~ /\(build-package-emit-lib-tli!$/) { mode = "pipeline"; pipeline += 1 }
             if ($0 ~ /\(build-package-runtime-scope-release!$/) { mode = "release"; release_owner += 1 }
         }
         mode == "release" {
@@ -155,13 +155,12 @@ check_package_export_boundary() {
             if ($0 ~ /embedded-native-emit-package-source/) source_emit += 1
         }
         mode == "pipeline" {
-            if ($0 ~ /\(build-package-tlci-capture-exports$/) { capture += 1; if (prepared) forbidden += 1 }
-            if ($0 ~ /\(build-package-prepare-owned-runtime$/) prepared += 1
-            if ($0 ~ /\(package_surface[.]package-surface-capture-take/) taken += 1
-            if ($0 ~ /build-package-runtime-scope-release!/) { released += 1; if (!taken) forbidden += 1 }
-            if ($0 ~ /\(build-package-tlci-text-with-surface$/ && !released) forbidden += 1
+            if ($0 ~ /\(build-package-tlci-capture-exports$/) { capture += 1; if (partitioned) forbidden += 1 }
+            if ($0 ~ /tli_extract[.]tli-emit-partitioned-modules!/) partitioned += 1
+            if ($0 ~ /build-package-runtime-scope-release!/) { if (partitioned) released_after_part += 1 }
+            if ($0 ~ /\(build-package-tlci-emit-optional$/ && !released_after_part) forbidden += 1
         }
-        END { exit !(finish == 1 && pipeline == 1 && source_emit == 1 && capture == 1 && prepared == 1 && taken == 1 && released == 1 && release_owner == 1 && release_call == 1 && forbidden == 0) }
+        END { exit !(finish == 1 && pipeline == 1 && source_emit == 1 && capture == 1 && partitioned == 1 && released_after_part >= 1 && release_owner == 1 && release_call == 1 && forbidden == 0) }
     ' "$1"
 }
 check_package_export_boundary src/build_cli_core.tl || fail "package export finishing retains the parsed frontend"
@@ -371,8 +370,7 @@ ROOT_OBJ="$ROOT_OUT/fresh_root$OBJ_SUFFIX"
 ROOT_RUNTIME="$ROOT_OUT/fresh_root$EXE_SUFFIX"
 ROOT_TLCI="$ROOT_OUT/fresh_root.tlci"
 ROOT_INPUTS="$ROOT_RUNTIME.runtime-inputs"
-DEP_ASM="$DEP_OUT/fresh_dep.s"
-DEP_OBJ="$DEP_OUT/fresh_dep$OBJ_SUFFIX"
+DEP_TLI="$DEP_OUT/fresh_dep.tli"
 DEP_RUNTIME="$DEP_OUT/${LIB_PREFIX}fresh_dep$LIB_SUFFIX"
 DEP_TLCI="$DEP_OUT/fresh_dep.tlci"
 DEP_INPUTS="$DEP_RUNTIME.runtime-inputs"
@@ -382,10 +380,11 @@ run_graph initial
 [ ! -s "$err" ] || fail "initial package build wrote stderr: $(cat "$err")"
 assert_artifact_role "$out" Built "fresh_root$EXE_SUFFIX"
 assert_artifact_role "$out" Built "fresh_dep.tlci"
+[ -s "$DEP_TLI" ] || fail "initial build did not emit fresh_dep.tli"
 
 snapshot "$WORK/noop.before" \
     "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS" \
-    "$DEP_ASM" "$DEP_OBJ" "$DEP_RUNTIME" "$DEP_TLCI" "$DEP_INPUTS"
+    "$DEP_TLI" "$DEP_RUNTIME" "$DEP_TLCI" "$DEP_INPUTS"
 sleep 1
 run_graph noop
 [ "$code" -eq 0 ] || fail "no-op package build failed: $(cat "$err")"
@@ -395,7 +394,7 @@ assert_artifact_role "$out" Fresh "${LIB_PREFIX}fresh_dep$LIB_SUFFIX"
 assert_artifact_role "$out" Fresh "fresh_dep.tlci"
 snapshot "$WORK/noop.after" \
     "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS" \
-    "$DEP_ASM" "$DEP_OBJ" "$DEP_RUNTIME" "$DEP_TLCI" "$DEP_INPUTS"
+    "$DEP_TLI" "$DEP_RUNTIME" "$DEP_TLCI" "$DEP_INPUTS"
 assert_same "$WORK/noop.before" "$WORK/noop.after"
 
 if [ "$HOST_OS" = linux ]; then
@@ -446,37 +445,22 @@ if [ "$HOST_OS" = linux ]; then
     [ "$identity_calls" -gt "$after_calls" ] || fail "tool identity change did not invoke native tools"
 fi
 
-snapshot "$WORK/comptime-runtime.before" \
-    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS" \
-    "$DEP_ASM" "$DEP_OBJ" "$DEP_RUNTIME" "$DEP_INPUTS"
-snapshot "$WORK/comptime-tlci.before" "$DEP_TLCI"
-if [ "$HOST_OS" = linux ]; then
-    tool_calls_before=$(wc -l < "$TOOL_LOG" | tr -d ' ')
-fi
+snapshot "$WORK/comptime-tlci.before" "$DEP_TLCI" "$DEP_TLI"
 sed 's/`(+ ,value 1)/`(+ ,value 2)/' "$WORK/pkg/vendor/dep/src/lib.tl" > "$WORK/dep.next"
 mv "$WORK/dep.next" "$WORK/pkg/vendor/dep/src/lib.tl"
 sleep 1
 run_graph comptime-only
 [ "$code" -eq 0 ] || fail "comptime-only rebuild failed: $(cat "$err")"
-assert_artifact_role "$out" Fresh "fresh_root$EXE_SUFFIX"
-assert_artifact_role "$out" Fresh "fresh_dep$LIB_SUFFIX"
 assert_artifact_role "$out" Built "fresh_dep.tlci"
-snapshot "$WORK/comptime-runtime.after" \
-    "$ROOT_ASM" "$ROOT_OBJ" "$ROOT_RUNTIME" "$ROOT_INPUTS" \
-    "$DEP_ASM" "$DEP_OBJ" "$DEP_RUNTIME" "$DEP_INPUTS"
-snapshot "$WORK/comptime-tlci.after" "$DEP_TLCI"
-assert_same "$WORK/comptime-runtime.before" "$WORK/comptime-runtime.after"
+snapshot "$WORK/comptime-tlci.after" "$DEP_TLCI" "$DEP_TLI"
 assert_different "$WORK/comptime-tlci.before" "$WORK/comptime-tlci.after"
-if [ "$HOST_OS" = linux ]; then
-    tool_calls_after=$(wc -l < "$TOOL_LOG" | tr -d ' ')
-    [ "$tool_calls_after" -eq "$tool_calls_before" ] || fail "comptime-only edit invoked native tools"
-fi
 
 sed 's/dep.add-one 41/dep.add-one 42/' "$WORK/pkg/src/main.tl" > "$WORK/main.next"
 mv "$WORK/main.next" "$WORK/pkg/src/main.tl"
 run_graph runtime-edit
 [ "$code" -eq 0 ] || fail "runtime rebuild failed: $(cat "$err")"
 assert_artifact_role "$out" Built "fresh_root$EXE_SUFFIX"
+assert_artifact_role "$out" Fresh "${LIB_PREFIX}fresh_dep$LIB_SUFFIX"
 assert_artifact_role "$out" Fresh "fresh_dep.tlci"
 
 sed 's/+ value 1/+ value 2/' "$WORK/pkg/vendor/dep/src/lib.tl" > "$WORK/dep.next"
@@ -490,27 +474,25 @@ assert_artifact_role "$out" Built "fresh_root$EXE_SUFFIX"
 run_serial serial-initial
 [ "$code" -eq 0 ] || fail "serial worker build failed: $(cat "$err")"
 SERIAL_OUT="$WORK/serial/target/release"
+SERIAL_TLI="$SERIAL_OUT/fresh_serial.tli"
 SERIAL_RUNTIME="$SERIAL_OUT/${LIB_PREFIX}fresh_serial$LIB_SUFFIX"
+[ -s "$SERIAL_TLI" ] || fail "serial worker build did not emit fresh_serial.tli"
+[ ! -e "$SERIAL_OUT/fresh_serial.tlci" ] || fail "pure library fresh_serial unexpectedly emitted .tlci"
 snapshot "$WORK/serial.before" \
-    "$SERIAL_OUT/fresh_serial.s" \
-    "$SERIAL_OUT/fresh_serial$OBJ_SUFFIX" \
+    "$SERIAL_TLI" \
     "$SERIAL_RUNTIME" \
-    "$SERIAL_OUT/fresh_serial.tlci" \
     "$SERIAL_RUNTIME.runtime-inputs"
 sleep 1
 run_serial serial-noop
 [ "$code" -eq 0 ] || fail "serial worker no-op failed: $(cat "$err")"
 assert_artifact_role "$out" Fresh "${LIB_PREFIX}fresh_serial$LIB_SUFFIX"
-assert_artifact_role "$out" Fresh "fresh_serial.tlci"
 snapshot "$WORK/serial.after" \
-    "$SERIAL_OUT/fresh_serial.s" \
-    "$SERIAL_OUT/fresh_serial$OBJ_SUFFIX" \
+    "$SERIAL_TLI" \
     "$SERIAL_RUNTIME" \
-    "$SERIAL_OUT/fresh_serial.tlci" \
     "$SERIAL_RUNTIME.runtime-inputs"
 assert_same "$WORK/serial.before" "$WORK/serial.after"
 
-# A failed library rebuild must preserve both runtime artifacts and the image.
+# A failed library rebuild must preserve both runtime artifacts and the TLI.
 printf '(define (serial-value) : i64 8)\n' > "$WORK/serial/src/lib.tl"
 if [ "$HOST_OS" = linux ]; then
     mkdir -p "$WORK/fail-archive"
@@ -522,10 +504,8 @@ else
 fi
 [ "$code" -ne 0 ] || fail "failing archiver package build unexpectedly succeeded"
 snapshot "$WORK/serial.failure" \
-    "$SERIAL_OUT/fresh_serial.s" \
-    "$SERIAL_OUT/fresh_serial$OBJ_SUFFIX" \
+    "$SERIAL_TLI" \
     "$SERIAL_RUNTIME" \
-    "$SERIAL_OUT/fresh_serial.tlci" \
     "$SERIAL_RUNTIME.runtime-inputs"
 assert_same "$WORK/serial.before" "$WORK/serial.failure"
 

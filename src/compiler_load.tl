@@ -19,10 +19,7 @@
 (import compiler_intern_state as cis)
 (import compiler_cfg_core as cfg_core)
 (import compiler_build_identity as build_identity)
-(import compiler_surface_facts as surface_facts)
-(import compiler_surface_hydrate as surface_hydrate)
-(import compiler_surface_ast as surface_ast)
-(import compiler_surface_identity as surface_identity)
+(import compiler_tli_codec as tli_codec)
 (import compiler_tli_hydrate as tli_hydrate)
 (import sym_i64_env)
 (import stdlib.env)
@@ -770,6 +767,7 @@
   ;; Metadata parser strings are reader-session views. Admission deep-copies
   ;; the SPMD interface into the registry owner before that session retires.
   (spmd-callables tlci.TlciSpmdCallables)
+  (catalog-sha256 (Array u8 32))
   (status CompilerLoadDependencyCatalogStatus))
 
 (defstruct CompilerLoadDependencyCatalogList
@@ -782,39 +780,6 @@
   (owner-arena (__tl_dyn-array i64))
   (entries (__tl_dyn-array CompilerLoadDependencyCatalogList))
   (generation (__tl_dyn-array i64)))
-
-;; Hydrated frontend fragments are a derived view of the admitted catalog, not
-;; a second image registry. They retain catalog slot ordering and are rebuilt
-;; whenever the session interner generation or target cfg changes. Each view
-;; owns private AST storage so decoding cannot alias the parsed image arena.
-(defenum CompilerLoadDependencySurfaceFragment
-  (Unavailable)
-  (Ready surface_hydrate.CompilerSurfaceHydration tlci.TlciSpmdCallables))
-
-(defstruct CompilerLoadDependencySurfaceList
-  (slots (__tl_dyn-array CompilerLoadDependencySurfaceFragment))
-  (imported (__tl_dyn-array bool))
-  (len i64))
-
-(defenum CompilerLoadDependencySurfaceBaseFacts
-  (None)
-  (Some surface_facts.SurfaceTypecheckFacts))
-
-(defstruct CompilerLoadDependencySurfaceState
-  (intern-generation (__tl_dyn-array i64))
-  (configuration (__tl_dyn-array String))
-  (prepared (__tl_dyn-array bool))
-  (enabled (__tl_dyn-array bool))
-  (fragments (__tl_dyn-array CompilerLoadDependencySurfaceList))
-  (base-facts (__tl_dyn-array CompilerLoadDependencySurfaceBaseFacts))
-  (facts-builder (__tl_dyn-array surface_facts.SurfaceTypecheckFactsBuilder))
-  (surface-decl-count (__tl_dyn-array i64))
-  (surface-provenance-count (__tl_dyn-array i64))
-  (hit-count (__tl_dyn-array i64))
-  (fallback-count (__tl_dyn-array i64))
-  (macro-skip-count (__tl_dyn-array i64))
-  (macro-cut-marker (__tl_dyn-array i64))
-  (typecheck-skip-count (__tl_dyn-array i64)))
 
 ;; Small lifetime-bound capability used by typechecking after dependency
 ;; discovery is complete. The address points at the registry's stable one-slot
@@ -840,6 +805,7 @@
   (package-name-id i64)
   (package-version-id i64)
   (artifact-path-id i64)
+  (catalog-sha256 (Array u8 32))
   (resolved tlci_loader_support.TlciResolvedMacroEntry))
 
 (defenum CompilerLoadDependencyCatalogLookup
@@ -856,10 +822,8 @@
   (TrustedMetadataOnly tlci.TlciImage)
   (TrustedCode tlci.TlciImage tlci_loader_support.TlciLoadedImage))
 
-;; Stable verification summary for a job-owned dependency catalog. Besides
-;; keeping package gates independent of registry storage, the executable
-;; section totals make the metadata-only no-map boundary non-vacuous: every
-;; admitted metadata image must contribute zero code/fixup/entry/import bytes.
+;; Stable verification summary for a job-owned dependency catalog and multi-
+;; bundle TLI session.
 (defstruct CompilerLoadDependencyCatalogObservation
   (entries i64)
   (generation i64)
@@ -870,13 +834,12 @@
   (fixup-bytes i64)
   (entry-bytes i64)
   (import-bytes i64)
-  (surface-enabled bool)
-  (surface-fragments i64)
-  (surface-hits i64)
-  (surface-fallbacks i64)
-  (surface-decls i64)
-  (surface-macro-skipped i64)
-  (surface-typecheck-skipped i64))
+  (tli-active bool)
+  (tli-package-bundles i64)
+  (tli-hydrated-package-bundles i64)
+  (tli-hydrated-modules i64)
+  (tli-package-hits i64)
+  (tli-force-source bool))
 
 (defenum ResultCompilerLoadDependencyCatalogUnit
   (Ok)
@@ -898,38 +861,6 @@
     (__tl_make-array (compiler-load-dependency-catalog-empty-list))
     (__tl_make-array 0)))
 
-(define (compiler-load-dependency-surface-list-empty) : CompilerLoadDependencySurfaceList
-  (CompilerLoadDependencySurfaceList
-    (__tl_make-array CompilerLoadDependencySurfaceFragment 0)
-    (__tl_make-array bool 0)
-    0))
-
-(define (compiler-load-dependency-surface-state-new) : CompilerLoadDependencySurfaceState
-  (CompilerLoadDependencySurfaceState
-    (__tl_make-array -1)
-    (__tl_make-array "")
-    (__tl_make-array false)
-    (__tl_make-array false)
-    (__tl_make-array (compiler-load-dependency-surface-list-empty))
-    (__tl_make-array CompilerLoadDependencySurfaceBaseFacts.None)
-    (__tl_make-array (surface_facts.surface-typecheck-facts-builder-empty))
-    (__tl_make-array 0)
-    (__tl_make-array 0)
-    (__tl_make-array 0)
-    (__tl_make-array 0)
-    (__tl_make-array 0)
-    (__tl_make-array 0)
-    (__tl_make-array 0)))
-
-(cfg
-  dependency-tlci-verification
-  (define (compiler-load-dependency-surface-verify-reject-last?) : bool
-    (let
-      [name : String "TYPELISP_DEPENDENCY_TLCI_VERIFY_SURFACE_REJECT_LAST"]
-      (match (env.get (& name))
-        [(EnvSomeString value) (string.eq value "1")]
-        [(EnvNoString) false]))))
-
 ;; What answers a session's source reads during an overlay check (#7455). While
 ;; `active`, an admitted overlay entry answers its canonical path, every other
 ;; source is read as usual, and each consumed source is recorded in `ledger`,
@@ -940,15 +871,34 @@
   (ledger source_overlay.CompilerSourceLedger)
   (owner-arena i64))
 
-;; Job-scoped prebuilt stdlib TLI catalog and hydrated semantic sidecar.
-;; Allocated inside its own `arena` so `compiler-load-session-state-tli-release!`
-;; can destroy every catalog byte deterministically at job end or reset.
+;; Job-scoped multi-bundle TLI catalog (sysroot stdlib.tli + transitive package
+;; dependency .tli bundles) and hydrated semantic sidecar. Each bundle owns its
+;; own arena so `compiler-load-session-state-tli-release!` destroys every byte
+;; deterministically at job end or reset.
 (defstruct CompilerLoadTliCatalogBox
-  (arena i64)
-  (sysroot-dir String)
-  (archive-path String)
-  (catalog tli_hydrate.TliCatalog)
-  (facts tli_hydrate.TliHydratedFacts))
+  (multi tli_hydrate.TliMultiCatalog)
+  (facts tli_hydrate.TliHydratedFacts)
+  (source-stdlib-needed svec.Vec)
+  (package-tli-hits i64))
+
+(defenum ResultCompilerLoadPackageTliHydrate
+  (Ok
+    ast.AstDeclList
+    ast.AstDeclPathList
+    ast.AstDeclModuleList
+    sym_i64_env.SymI64Env
+    i64)
+  (Missing)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(defenum ResultCompilerLoadPackageDepImport
+  (Ok
+    ast.AstDeclList
+    ast.AstDeclPathList
+    ast.AstDeclModuleList
+    sym_i64_env.SymI64Env
+    i64)
+  (Err (Box cdiag.CompilerDiagnostic)))
 
 (define (compiler-load-tli-ptr-cell) : (__tl_dyn-array i64)
   (__tl_make-array i64 1))
@@ -982,7 +932,6 @@
   (lazy-qualified-observer CompilerLoadLazyQualifiedObserverState)
   (embedded-stdlib-provenance CompilerLoadEmbeddedStdlibProvenanceState)
   (dependency-catalog CompilerLoadDependencyCatalogRegistry)
-  (dependency-surfaces CompilerLoadDependencySurfaceState)
   ;; Verification policy is snapshotted per package build before admission.
   ;; A process environment lookup must never become mutable route state shared
   ;; by interleaved compiler jobs.
@@ -1123,7 +1072,6 @@
         lazy-qualified-observer
         (compiler-load-embedded-stdlib-provenance-state-new)
         catalog
-        (compiler-load-dependency-surface-state-new)
         (compiler-load-session-state-bool-cell false)
         (__tl_make-array ci.InternCompatState 1)
         (compiler-load-session-state-bool-cell false)
@@ -1184,55 +1132,137 @@
     (if (= addr 0)
       0
       (unsafe
-        (deref (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))).arena))))
+        (deref (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))).multi.root-arena))))
+
+(define (compiler-load-session-state-tli-arenas
+  [state : (& CompilerLoadSessionState)]) : (__tl_dyn-array i64)
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      (__tl_make-array i64 0)
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (tli_hydrate.tli-multi-catalog-arenas (& holder.multi)))))))
 
 (define (compiler-load-session-state-tli-release!
   [state : (& CompilerLoadSessionState)]) : unit
   (let
-    [old-arena : i64 (compiler-load-session-state-tli-arena state)]
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
     (unsafe
       (ptr-write!
         (ptr-cast (__tl_array-data state.tli-catalog-ptr) : (MutPtr i64))
         0))
     (when
-      (> old-arena 0)
+      (!= addr 0)
       (unsafe
-        (arena.tl_arena_destroy old-arena)))))
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (tli_hydrate.tli-multi-catalog-release! (& holder.multi)))))))
+
+(define (compiler-load-session-state-tli-ensure-box!
+  [state : (& CompilerLoadSessionState)]) : i64
+  (let
+    [existing : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (!= existing 0)
+      existing
+      (let
+        [enclosing : i64 (arena.tl_arena_current)]
+        [root-arena : i64 (arena.tl_arena_make)]
+        (unsafe
+          (arena.tl_arena_set root-arena))
+        (let
+          [multi : tli_hydrate.TliMultiCatalog
+            (tli_hydrate.tli-multi-catalog-new root-arena)]
+          [facts : tli_hydrate.TliHydratedFacts
+            (tli_hydrate.tli-hydrated-facts-new 0)]
+          [cell : (__tl_dyn-array CompilerLoadTliCatalogBox)
+            (__tl_make-array CompilerLoadTliCatalogBox 1)]
+          (set!
+            (array-ref cell 0)
+            (CompilerLoadTliCatalogBox multi facts (svec.new) 0))
+          (let
+            [addr : i64
+              (unsafe
+                (cast (ptr->int (__tl_array-data cell)) : i64))]
+            (unsafe
+              (arena.tl_arena_set enclosing)
+              (ptr-write!
+                (ptr-cast
+                  (__tl_array-data state.tli-catalog-ptr)
+                  : (MutPtr i64))
+                addr))
+            addr))))))
+
+(define (compiler-load-session-state-tli-attach-bundle!
+  [state : (& CompilerLoadSessionState)]
+  [bundle-arena : i64]
+  [is-stdlib : bool]
+  [package-name : String]
+  [package-version : String]
+  [package-root : String]
+  [archive-path : String]
+  [spmd-callables : tlci.TlciSpmdCallables]
+  [directory : tli_codec.TliDirectory]
+  [cfg-digest : (& (Array u8 32))]) : tli_hydrate.TliMultiAttachResult
+  (let
+    [addr : i64 (compiler-load-session-state-tli-ensure-box! state)]
+    (unsafe
+      (let
+        [p-ro : (Ptr CompilerLoadTliCatalogBox)
+          (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))]
+        [p-rw : (MutPtr CompilerLoadTliCatalogBox)
+          (int->ptr (cast addr : u64) : (MutPtr CompilerLoadTliCatalogBox))]
+        [holder : CompilerLoadTliCatalogBox (ptr-read p-ro)]
+        (match holder
+          [(CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v)
+            (let
+              [res : tli_hydrate.TliMultiAttachResult
+                (tli_hydrate.tli-multi-catalog-attach-bundle!
+                  (&mut multi-v)
+                  bundle-arena
+                  is-stdlib
+                  package-name
+                  package-version
+                  package-root
+                  archive-path
+                  spmd-callables
+                  directory
+                  cfg-digest)]
+              (ptr-write!
+                p-rw
+                (CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v))
+              res)])))))
 
 (define (compiler-load-session-state-tli-attach!
   [state : (& CompilerLoadSessionState)]
   [tli-arena : i64]
-  [sysroot-dir : String]
+  [_sysroot-dir : String]
   [archive-path : String]
   [catalog : tli_hydrate.TliCatalog]) : unit
   (compiler-load-session-state-tli-release! state)
-  (let
-    [enclosing : i64 (arena.tl_arena_current)]
-    (unsafe
-      (arena.tl_arena_set tli-arena))
-    (let
-      [count : i64 (array-length catalog.directory.entries)]
-      [facts : tli_hydrate.TliHydratedFacts
-        (tli_hydrate.tli-hydrated-facts-new count)]
-      [cell : (__tl_dyn-array CompilerLoadTliCatalogBox)
-        (__tl_make-array CompilerLoadTliCatalogBox 1)]
-      (set!
-        (array-ref cell 0)
-        (CompilerLoadTliCatalogBox
-          tli-arena
-          (string.copy (& sysroot-dir))
-          (string.copy (& archive-path))
-          catalog
-          facts))
-      (let
-        [addr : i64
-          (unsafe
-            (cast (ptr->int (__tl_array-data cell)) : i64))]
+  (match (compiler-load-session-state-tli-attach-bundle!
+    state
+    tli-arena
+    true
+    ""
+    ""
+    ""
+    archive-path
+    (tlci.tlci-spmd-callables-empty)
+    catalog.directory
+    (& catalog.cfg-digest))
+    [(Ok _) unit]
+    [(Err _)
+      (compiler-load-session-state-tli-release! state)
+      (when
+        (> tli-arena 0)
         (unsafe
-          (arena.tl_arena_set enclosing)
-          (ptr-write!
-            (ptr-cast (__tl_array-data state.tli-catalog-ptr) : (MutPtr i64))
-            addr))))))
+          (arena.tl_arena_destroy tli-arena)))]))
 
 (define (compiler-load-session-state-tli-hydrated-any?
   [state : (& CompilerLoadSessionState)]) : bool
@@ -1247,20 +1277,29 @@
               (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
           (> holder.facts.hydrated-module-count 0))))))
 
-(define (compiler-load-session-state-tli-archive-path
-  [state : (& CompilerLoadSessionState)]) : String
+(define (compiler-load-session-state-tli-archive-paths
+  [state : (& CompilerLoadSessionState)]) : (__tl_dyn-array String)
   (let
     [addr : i64 (array-ref state.tli-catalog-ptr 0)]
     (if (= addr 0)
-      ""
+      (__tl_make-array String 0)
       (unsafe
         (let
           [holder : CompilerLoadTliCatalogBox
             (ptr-read
               (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
           (if (> holder.facts.hydrated-module-count 0)
-            (string.copy (& holder.archive-path))
-            ""))))))
+            (tli_hydrate.tli-multi-hydrated-archive-paths (& holder.multi))
+            (__tl_make-array String 0)))))))
+
+(define (compiler-load-session-state-tli-archive-path
+  [state : (& CompilerLoadSessionState)]) : String
+  (let
+    [paths : (__tl_dyn-array String)
+      (compiler-load-session-state-tli-archive-paths state)]
+    (if (> (array-length paths) 0)
+      (string.copy (& (array-ref paths (- (array-length paths) 1))))
+      "")))
 
 (define (compiler-load-session-state-tli-startup-symbols
   [state : (& CompilerLoadSessionState)]) : (__tl_dyn-array String)
@@ -1274,7 +1313,7 @@
             (ptr-read
               (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
           (if (> holder.facts.hydrated-module-count 0)
-            (tli_hydrate.tli-catalog-startup-archive-symbols (& holder.catalog))
+            (tli_hydrate.tli-multi-startup-archive-symbols (& holder.multi))
             (__tl_make-array String 0)))))))
 
 (define (compiler-load-session-state-tli-facts-ptr
@@ -1304,11 +1343,39 @@
         [holder : CompilerLoadTliCatalogBox
           (ptr-read
             (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
-        (>=
-          (tli_hydrate.tli-catalog-find
-            (& holder.catalog.directory)
-            module-name)
-          0)))))
+        (tli_hydrate.tli-multi-catalog-has-module? (& holder.multi) module-name)))))
+
+(define (compiler-load-session-state-tli-module-sha256
+  [state : (& CompilerLoadSessionState)]
+  [module-name : (& str)]) : tli_hydrate.TliOptionalDigest
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      (tli_hydrate.TliOptionalDigest.None)
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (tli_hydrate.tli-multi-catalog-module-sha256
+            (& holder.multi)
+            module-name))))))
+
+(define (compiler-load-session-state-tli-has-package-root?
+  [state : (& CompilerLoadSessionState)]
+  [package-root : (& str)]) : bool
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      false
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (tli_hydrate.tli-multi-catalog-has-package-root?
+            (& holder.multi)
+            package-root))))))
 
 (define (compiler-load-tli-addr-module-path
   [addr : i64]
@@ -1369,10 +1436,6 @@
             "compiler-load: TLI catalog is inactive")))
       (let
         [enclosing : i64 (arena.tl_arena_current)]
-        [tli-arena : i64
-          (unsafe
-            (deref
-              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))).arena)]
         [prev-pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         ;; Ensure builtin intern IDs (such as `cbi.compiler-builtin-id-fix-empty`)
@@ -1391,29 +1454,22 @@
                     : (MutPtr CompilerLoadTliCatalogBox))]
                 [holder : CompilerLoadTliCatalogBox (ptr-read p-ro)]
                 (match holder
-                  [(CompilerLoadTliCatalogBox
-                      arena-v
-                      sysroot-v
-                      archive-v
-                      catalog-v
-                      facts-v)
+                  [(CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v)
                     (let
                       [out : tli_hydrate.TliProjectClosureResult
-                        (tli_hydrate.tli-hydrate-project-closure!
-                          (&mut catalog-v)
+                        (tli_hydrate.tli-multi-project-module-closure!
+                          (&mut multi-v)
                           (&mut facts-v)
                           module-name
                           seen
-                          pools
-                          tli-arena)]
+                          pools)]
                       (ptr-write!
                         p-rw
                         (CompilerLoadTliCatalogBox
-                          arena-v
-                          sysroot-v
-                          archive-v
-                          catalog-v
-                          facts-v))
+                          multi-v
+                          facts-v
+                          needed-v
+                          hits-v))
                       out)])))]
           (ast.ast-node-pool-context-capture-active! pools)
           (when
@@ -1434,6 +1490,177 @@
                     (str_cat.str-cat
                       "compiler-load: TLI hydration failed: "
                       (string.copy (& failure.message))))))]))))))
+
+(define (compiler-load-session-state-tli-hydrate-package-file!
+  [state : (& CompilerLoadSessionState)]
+  [package-root : (& str)]
+  [owned-path : (& str)]
+  [candidate-module : (& str)]
+  [seen : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadPackageTliHydrate
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      (ResultCompilerLoadPackageTliHydrate.Missing)
+      (let
+        [enclosing : i64 (arena.tl_arena_current)]
+        [prev-pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        (cbi.compiler-builtin-initialize-for-parse!)
+        (ast.ast-node-pool-context-install! pools)
+        (let
+          [result : ResultCompilerLoadPackageTliHydrate
+            (unsafe
+              (let
+                [p-ro : (Ptr CompilerLoadTliCatalogBox)
+                  (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))]
+                [p-rw : (MutPtr CompilerLoadTliCatalogBox)
+                  (int->ptr
+                    (cast addr : u64)
+                    : (MutPtr CompilerLoadTliCatalogBox))]
+                [holder : CompilerLoadTliCatalogBox (ptr-read p-ro)]
+                (match holder
+                  [(CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v)
+                    (let
+                      [gids : (__tl_dyn-array i64)
+                        (tli_hydrate.tli-multi-catalog-find-package-gids
+                          (& multi-v)
+                          package-root
+                          owned-path
+                          candidate-module)]
+                      (if (= (array-length gids) 0)
+                        (begin
+                          (ptr-write!
+                            p-rw
+                            (CompilerLoadTliCatalogBox
+                              multi-v
+                              facts-v
+                              needed-v
+                              hits-v))
+                          (ResultCompilerLoadPackageTliHydrate.Missing))
+                        (let
+                          [primary-name : String
+                            (tli_hydrate.tli-multi-catalog-module-name-at
+                              (& multi-v)
+                              (array-ref gids 0))]
+                          [primary-mod-id : i64 (ci.intern primary-name)]
+                          [projected : tli_hydrate.TliProjectClosureResult
+                            (tli_hydrate.tli-multi-project-gids-closure!
+                              (&mut multi-v)
+                              (&mut facts-v)
+                              (& gids)
+                              seen
+                              pools)]
+                          [next-hits : i64
+                            (match (& projected)
+                              [(Ok _ _ _ _) (+ hits-v 1)]
+                              [_ hits-v])]
+                          (ptr-write!
+                            p-rw
+                            (CompilerLoadTliCatalogBox
+                              multi-v
+                              facts-v
+                              needed-v
+                              next-hits))
+                          (match projected
+                            [(Ok decls paths modules next-seen)
+                              (ResultCompilerLoadPackageTliHydrate.Ok
+                                decls
+                                paths
+                                modules
+                                next-seen
+                                primary-mod-id)]
+                            [(Err failure)
+                              (ResultCompilerLoadPackageTliHydrate.Err
+                                (box
+                                  (cdiag.compiler-diagnostic-at-start
+                                    (string.copy owned-path)
+                                    (str_cat.str-cat
+                                      "compiler-load: TLI hydration failed: "
+                                      (string.copy (& failure.message))))))]))))])))]
+          (ast.ast-node-pool-context-capture-active! pools)
+          (when
+            (!=
+              (ast.ast-node-pool-context-expr-segment-bases (& prev-pools))
+              (ast.ast-node-pool-context-expr-segment-bases (& pools)))
+            (ast.ast-node-pool-context-install! prev-pools))
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          result)))))
+
+(define (compiler-load-session-state-tli-take-pending-source-stdlib!
+  [state : (& CompilerLoadSessionState)]) : (__tl_dyn-array String)
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      (__tl_make-array String 0)
+      (unsafe
+        (let
+          [p-ro : (Ptr CompilerLoadTliCatalogBox)
+            (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))]
+          [p-rw : (MutPtr CompilerLoadTliCatalogBox)
+            (int->ptr (cast addr : u64) : (MutPtr CompilerLoadTliCatalogBox))]
+          [holder : CompilerLoadTliCatalogBox (ptr-read p-ro)]
+          (match holder
+            [(CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v)
+              (let
+                [out : (__tl_dyn-array String)
+                  (tli_hydrate.tli-multi-take-pending-source-stdlib!
+                    (&mut multi-v))]
+                (ptr-write!
+                  p-rw
+                  (CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v))
+                out)]))))))
+
+(define (compiler-load-session-state-tli-note-source-stdlib-needed!
+  [state : (& CompilerLoadSessionState)]
+  [module-name : (& str)]) : unit
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (when
+      (!= addr 0)
+      (unsafe
+        (let
+          [p-ro : (Ptr CompilerLoadTliCatalogBox)
+            (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))]
+          [p-rw : (MutPtr CompilerLoadTliCatalogBox)
+            (int->ptr (cast addr : u64) : (MutPtr CompilerLoadTliCatalogBox))]
+          [holder : CompilerLoadTliCatalogBox (ptr-read p-ro)]
+          (match holder
+            [(CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v)
+              (let
+                [found : bool false]
+                (for [i (iterator.range 0 (svec.len (& needed-v)))]
+                  (when
+                    (string.eq (& (array-ref needed-v.slots i)) module-name)
+                    (set! found true)))
+                (unless
+                  found
+                  (in-arena
+                    (arena.Arena multi-v.root-arena)
+                    (svec.push-ref! (&mut needed-v) (string.copy module-name))))
+                (ptr-write!
+                  p-rw
+                  (CompilerLoadTliCatalogBox multi-v facts-v needed-v hits-v)))]))))))
+
+(define (compiler-load-session-state-tli-source-stdlib-needed
+  [state : (& CompilerLoadSessionState)]) : (__tl_dyn-array String)
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      (__tl_make-array String 0)
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          [n : i64 (svec.len (& holder.source-stdlib-needed))]
+          [out : (__tl_dyn-array String) (__tl_make-array String n)]
+          (for [i (iterator.range 0 n)]
+            (set!
+              (array-ref out i)
+              (string.copy (& (array-ref holder.source-stdlib-needed.slots i)))))
+          out)))))
 
 (define (compiler-load-tli-active?) : bool
   (compiler-load-session-state-tli-active?
@@ -1691,35 +1918,6 @@
             message
             first-error))])))
 
-;; Retire only derived frontend views; admitted catalog mappings stay live.
-;; Call after clearing typecheck/prefix references, in the arena that should
-;; own the replacement empty session carriers.
-(define (compiler-load-session-state-dependency-surfaces-release!
-  [state : CompilerLoadSessionState]) : unit
-  (let
-    [surface-state : CompilerLoadDependencySurfaceState
-      state.dependency-surfaces]
-    (compiler-load-dependency-surface-list-destroy-storage!
-      (& (array-ref surface-state.fragments 0)))
-    (set!
-      (array-ref surface-state.fragments 0)
-      (compiler-load-dependency-surface-list-empty))
-    (set! (array-ref surface-state.prepared 0) false)
-    (set! (array-ref surface-state.enabled 0) false)
-    (set! (array-ref surface-state.intern-generation 0) -1)
-    (set! (array-ref surface-state.configuration 0) "")
-    (set!
-      (array-ref surface-state.base-facts 0)
-      CompilerLoadDependencySurfaceBaseFacts.None)
-    (set!
-      (array-ref surface-state.facts-builder 0)
-      (surface_facts.surface-typecheck-facts-builder-empty))
-    (set! (array-ref surface-state.surface-decl-count 0) 0)
-    (set! (array-ref surface-state.surface-provenance-count 0) 0)
-    (set! (array-ref surface-state.macro-skip-count 0) 0)
-    (set! (array-ref surface-state.macro-cut-marker 0) 0)
-    (set! (array-ref surface-state.typecheck-skip-count 0) 0)))
-
 (define (compiler-load-session-state-dependency-catalog-release!
   [state : CompilerLoadSessionState]) : ResultCompilerLoadDependencyCatalogUnit
   (let
@@ -1729,7 +1927,6 @@
       (owned_view.compiler-owned-array-element-shared-view registry.entries 0)]
     [owner : i64 (array-ref registry.owner-arena 0)]
     [error : String (compiler-load-dependency-catalog-release-from! items 0 "")]
-    (compiler-load-session-state-dependency-surfaces-release! state)
     (if (> owner 0)
       (unsafe
         (arena.tl_arena_destroy owner))
@@ -1848,6 +2045,7 @@
                       package-name-id
                       package-version-id
                       artifact-path-id
+                      entry.catalog-sha256
                       resolved))]
                 [(Shell resolved)
                   (Shell
@@ -1859,6 +2057,7 @@
                       package-name-id
                       package-version-id
                       artifact-path-id
+                      entry.catalog-sha256
                       resolved))]
                 [(Missing) Missing]
                 [(Err message) (Unavailable (MappingFailure message))]))])))))
@@ -2011,89 +2210,7 @@
                   (Malformed
                     "dependency catalog: trusted code entry has no image"))])])))))
 
-(define (compiler-load-dependency-surface-configuration
-  [cfgs : sym_i64_env.SymI64Env]) : String
-  (let
-    [windows-id : i64 (ci.intern "windows")]
-    [linux-id : i64 (ci.intern "linux")]
-    (cond
-      [(cfg_core.compiler-cfg-enabled? cfgs windows-id) "windows-x86_64"]
-      [(cfg_core.compiler-cfg-enabled? cfgs linux-id) "linux-x86_64"]
-      [else ""])))
-
-(define (compiler-load-dependency-surface-list-destroy-storage!
-  [surfaces : (& CompilerLoadDependencySurfaceList)]) : unit
-  (for [index (iterator.range 0 surfaces.len)]
-    (match (owned_view.compiler-owned-array-element-shared-view
-      surfaces.slots
-      index)
-      [(Ready hydration _)
-        (let
-          [pools : ast.AstNodePoolContext hydration.ast.pools]
-          [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-          (ast.ast-node-pool-context-destroy-storage! pools)
-          (unsafe
-            (arena.tl_arena_destroy base-arena)))]
-      [(Unavailable) unit])))
-
-(define (compiler-load-dependency-surface-reset-use!
-  [state : CompilerLoadSessionState]) : unit
-  (let
-    [surface-state : CompilerLoadDependencySurfaceState
-      state.dependency-surfaces]
-    [fragments : CompilerLoadDependencySurfaceList
-      (owned_view.compiler-owned-array-element-shared-view
-        surface-state.fragments
-        0)]
-    [base-facts : CompilerLoadDependencySurfaceBaseFacts
-      (if (and
-        (surface_facts.surface-typecheck-facts-active?)
-        (not (surface_facts.surface-typecheck-facts-composite-active?)))
-        (Some (surface_facts.surface-typecheck-facts-current))
-        None)]
-    [base-builder : surface_facts.SurfaceTypecheckFactsBuilder
-      (match (owned_view.compiler-owned-shared-view base-facts)
-        [(None) (surface_facts.surface-typecheck-facts-builder-empty)]
-        [(Some facts)
-          (match (surface_facts.surface-typecheck-facts-builder-append
-            (surface_facts.surface-typecheck-facts-builder-empty)
-            facts)
-            [(Ok next) next]
-            [(Err _) (surface_facts.surface-typecheck-facts-builder-empty)])])]
-    [index : i64 0]
-    (while (< index fragments.len)
-      (set! (array-ref fragments.imported index) false)
-      (+= index 1))
-    (set! (array-ref surface-state.base-facts 0) base-facts)
-    (set! (array-ref surface-state.facts-builder 0) base-builder)
-    (set! (array-ref surface-state.surface-decl-count 0) 0)
-    (set! (array-ref surface-state.surface-provenance-count 0) 0)
-    (set! (array-ref surface-state.hit-count 0) 0)
-    (set! (array-ref surface-state.macro-skip-count 0) 0)
-    (set! (array-ref surface-state.macro-cut-marker 0) 0)
-    (set! (array-ref surface-state.typecheck-skip-count 0) 0)
-    (if (surface_facts.surface-typecheck-facts-composite-active?)
-      (surface_facts.surface-typecheck-facts-clear!)
-      unit)))
-
-(define (compiler-load-dependency-surface-key-current?
-  [catalog-key : (& CompilerLoadDependencyCatalogKey)]
-  [surface-key : (& surface-key surface_identity.SurfaceIdentityKey)]
-  [configuration : (& configuration str)]) : bool
-  (and
-    (string.eq surface-key.package-name catalog-key.package-name)
-    (string.eq
-      surface-key.source-hash
-      (string.int->string catalog-key.source-digest))
-    (string.eq surface-key.compiler-build catalog-key.compiler-identity)
-    (string.eq surface-key.configuration configuration)
-    (match (tlci.tlci-producer-identity-admit
-      catalog-key.compiler-identity
-      (build_identity.compiler-build-producer-identity))
-      [(ExactMatch) true]
-      [_ false])))
-
-(define (compiler-load-dependency-surface-copy-specializations
+(define (compiler-load-copy-spmd-specializations
   [source : (& tlci.TlciSpmdSpecializations)]) : tlci.TlciSpmdSpecializations
   (let
     [count : i64 (tlci.tlci-spmd-specializations-len source)]
@@ -2116,7 +2233,7 @@
               (string.copy (& item.symbol)))))))
     out))
 
-(define (compiler-load-dependency-surface-copy-spmd-callables
+(define (compiler-load-copy-spmd-callables
   [source : (& source tlci.TlciSpmdCallables)]) : tlci.TlciSpmdCallables
   (let
     [count : i64 (tlci.tlci-spmd-callables-len source)]
@@ -2132,73 +2249,8 @@
             (tlci.TlciSpmdCallable
               (string.copy (& item.name))
               (string.copy (& item.signature))
-              (compiler-load-dependency-surface-copy-specializations
-                (& item.specializations)))))))
+              (compiler-load-copy-spmd-specializations (& item.specializations)))))))
     out))
-
-(define (compiler-load-dependency-surface-hydrate-entry
-  [_owner : i64]
-  [entry : (& CompilerLoadDependencyCatalogEntry)]
-  [configuration : (& configuration str)]
-  [structural-session : cis.InternStructuralSessionHandle]) : CompilerLoadDependencySurfaceFragment
-  (match (owned_view.compiler-owned-reference-shared-view (& entry.status))
-    [(Unavailable _) Unavailable]
-    [_
-      (match (owned_view.compiler-owned-reference-shared-view (& entry.image))
-        [(None) Unavailable]
-        [(Some image)
-          (match (tlci.tlci-aux-checked-directory (& image.rodata))
-            [(or (Missing) (Err _)) Unavailable]
-            [(Ok checked)
-              (match (surface_hydrate.compiler-surface-key
-                (& image.rodata)
-                (& checked))
-                [(or (Missing) (Err _)) Unavailable]
-                [(Ok key)
-                  (if (not
-                    (compiler-load-dependency-surface-key-current?
-                      (& entry.key)
-                      key
-                      configuration))
-                    Unavailable
-                    (let
-                      [pool-arena : i64 (ast.ast-node-pool-arena-make)]
-                      [pools : ast.AstNodePoolContext
-                        (in-arena
-                          (unsafe
-                            (arena.Arena pool-arena))
-                          (ast.ast-node-pool-context-new-with-capacities-in-arena
-                            1
-                            1
-                            pool-arena))]
-                      [spmd-callables : tlci.TlciSpmdCallables
-                        (in-arena
-                          (unsafe
-                            (arena.Arena
-                              (ast.ast-node-pool-context-base-arena pools)))
-                          (compiler-load-dependency-surface-copy-spmd-callables
-                            entry.spmd-callables))]
-                      [hydrated : surface_hydrate.ResultCompilerSurfaceHydration
-                        (in-arena
-                          (unsafe
-                            (arena.Arena
-                              (ast.ast-node-pool-context-base-arena pools)))
-                          (surface_hydrate.compiler-surface-hydrate
-                            (& image.rodata)
-                            (& checked)
-                            (& key)
-                            structural-session
-                            pools))]
-                      (match hydrated
-                        [(Ok hydration) (Ready hydration spmd-callables)]
-                        [_
-                          (let
-                            [base-arena : i64
-                              (ast.ast-node-pool-context-base-arena pools)]
-                            (ast.ast-node-pool-context-destroy-storage! pools)
-                            (unsafe
-                              (arena.tl_arena_destroy base-arena))
-                            Unavailable)])))])])])]))
 
 (define (compiler-load-session-state-structural-session
   [state : (& CompilerLoadSessionState)]) : cis.InternStructuralSessionHandle
@@ -2211,111 +2263,6 @@
       (cis.intern-structural-session-handle-from-source-names
         (ci.intern-source-name-session-handle-from-state (& intern-state))))
     (cis.InternStructuralSessionHandle 0)))
-
-(define (compiler-load-dependency-surfaces-build-cache!
-  [state : CompilerLoadSessionState]
-  [configuration : (& configuration str)]) : bool
-  (let
-    [surface-state : CompilerLoadDependencySurfaceState
-      (owned_view.compiler-owned-shared-view state.dependency-surfaces)]
-    [catalog : CompilerLoadDependencyCatalogList
-      (owned_view.compiler-owned-array-element-shared-view
-        state.dependency-catalog.entries
-        0)]
-    [owner : i64
-      (compiler-load-dependency-catalog-owner-arena-ensure!
-        (owned_view.compiler-owned-shared-view state))]
-    [prior : CompilerLoadDependencySurfaceList
-      (owned_view.compiler-owned-array-element-shared-view
-        surface-state.fragments
-        0)]
-    [structural-session : cis.InternStructuralSessionHandle
-      (compiler-load-session-state-structural-session (& state))]
-    [verify-reject-last : bool
-      (cfg
-        dependency-tlci-verification
-        (compiler-load-dependency-surface-verify-reject-last?)
-        false)]
-    (compiler-load-dependency-surface-list-destroy-storage! (& prior))
-    (in-arena
-      (unsafe
-        (arena.Arena owner))
-      (let
-        [slots : (__tl_dyn-array CompilerLoadDependencySurfaceFragment)
-          (__tl_make-array CompilerLoadDependencySurfaceFragment catalog.len)]
-        [imported : (__tl_dyn-array bool) (__tl_make-array bool catalog.len)]
-        [ok : bool (> catalog.len 0)]
-        [preflight-facts : surface_facts.SurfaceTypecheckFactsBuilder
-          (surface_facts.surface-typecheck-facts-builder-empty)]
-        (for [index (iterator.range 0 catalog.len)]
-          (let
-            [fragment : CompilerLoadDependencySurfaceFragment
-              (if (and
-                verify-reject-last
-                (> catalog.len 1)
-                (= index (- catalog.len 1)))
-                Unavailable
-                (compiler-load-dependency-surface-hydrate-entry
-                  owner
-                  (& (array-ref catalog.slots index))
-                  configuration
-                  structural-session))]
-            (set!
-              (array-ref slots index)
-              (owned_view.compiler-owned-shared-view fragment))
-            (match fragment
-              [(Unavailable) (set! ok false)]
-              [(Ready hydration _)
-                (match (surface_facts.surface-typecheck-facts-builder-append
-                  (owned_view.compiler-owned-shared-view preflight-facts)
-                  hydration.facts)
-                  [(Err _) (set! ok false)]
-                  [(Ok next) (set! preflight-facts next)])])))
-        (set!
-          (array-ref surface-state.fragments 0)
-          (CompilerLoadDependencySurfaceList slots imported catalog.len))
-        (set!
-          (array-ref surface-state.intern-generation 0)
-          (ci.intern-generation))
-        (set!
-          (array-ref surface-state.configuration 0)
-          (string.copy configuration))
-        (set! (array-ref surface-state.prepared 0) true)
-        (set! (array-ref surface-state.enabled 0) ok)
-        (if ok
-          unit
-          (set!
-            (array-ref surface-state.fallback-count 0)
-            (+ (array-ref surface-state.fallback-count 0) 1)))
-        ok))))
-
-(define (compiler-load-dependency-surfaces-prepare!
-  [state : CompilerLoadSessionState]
-  [stdlib-roots : (& svec.Vec)]
-  [cfgs : sym_i64_env.SymI64Env]) : bool
-  (let
-    [surface-state : CompilerLoadDependencySurfaceState
-      (owned_view.compiler-owned-shared-view state.dependency-surfaces)]
-    [configuration : String
-      (compiler-load-dependency-surface-configuration cfgs)]
-    (compiler-load-dependency-surface-reset-use!
-      (owned_view.compiler-owned-shared-view state))
-    (if (or
-      (compiler-load-stdlib-root-configured? stdlib-roots)
-      (= (string.string-length configuration) 0)
-      (= (array-ref state.dependency-catalog.entries 0).len 0))
-      (begin
-        (set! (array-ref surface-state.enabled 0) false)
-        false)
-      (if (and
-        (array-ref surface-state.prepared 0)
-        (= (array-ref surface-state.intern-generation 0) (ci.intern-generation))
-        (string.eq (array-ref surface-state.configuration 0) configuration)
-        (=
-          (array-ref surface-state.fragments 0).len
-          (array-ref state.dependency-catalog.entries 0).len))
-        (array-ref surface-state.enabled 0)
-        (compiler-load-dependency-surfaces-build-cache! state configuration)))))
 
 (define (compiler-load-dependency-catalog-observe
   [state : (& state CompilerLoadSessionState)]) : CompilerLoadDependencyCatalogObservation
@@ -2350,23 +2297,51 @@
           (+= fixup-bytes (array-length image.fixups))
           (+= entry-bytes (array-length image.entries))
           (+= import-bytes (array-length image.imports))]))
-    (CompilerLoadDependencyCatalogObservation
-      items.len
-      (array-ref registry.generation 0)
-      unavailable
-      metadata-only
-      trusted-code
-      code-bytes
-      fixup-bytes
-      entry-bytes
-      import-bytes
-      (array-ref state.dependency-surfaces.enabled 0)
-      (array-ref state.dependency-surfaces.fragments 0).len
-      (array-ref state.dependency-surfaces.hit-count 0)
-      (array-ref state.dependency-surfaces.fallback-count 0)
-      (array-ref state.dependency-surfaces.surface-decl-count 0)
-      (array-ref state.dependency-surfaces.macro-skip-count 0)
-      (array-ref state.dependency-surfaces.typecheck-skip-count 0))))
+    (let
+      [tli-addr : i64 (array-ref state.tli-catalog-ptr 0)]
+      [tli-active : bool (!= tli-addr 0)]
+      [tli-pkg-bundles : i64 0]
+      [tli-hydrated-pkg-bundles : i64 0]
+      [tli-hydrated-modules : i64 0]
+      [tli-pkg-hits : i64 0]
+      (when
+        (!= tli-addr 0)
+        (unsafe
+          (let
+            [holder : CompilerLoadTliCatalogBox
+              (ptr-read
+                (int->ptr
+                  (cast tli-addr : u64)
+                  : (Ptr CompilerLoadTliCatalogBox)))]
+            [total-bundles : i64
+              (tli_hydrate.tli-multi-bundle-count (& holder.multi))]
+            (set!
+              tli-pkg-bundles
+              (if holder.multi.has-stdlib-bundle
+                (- total-bundles 1)
+                total-bundles))
+            (set!
+              tli-hydrated-pkg-bundles
+              (tli_hydrate.tli-multi-hydrated-package-bundle-count
+                (& holder.multi)))
+            (set! tli-hydrated-modules holder.facts.hydrated-module-count)
+            (set! tli-pkg-hits holder.package-tli-hits))))
+      (CompilerLoadDependencyCatalogObservation
+        items.len
+        (array-ref registry.generation 0)
+        unavailable
+        metadata-only
+        trusted-code
+        code-bytes
+        fixup-bytes
+        entry-bytes
+        import-bytes
+        tli-active
+        tli-pkg-bundles
+        tli-hydrated-pkg-bundles
+        tli-hydrated-modules
+        tli-pkg-hits
+        (compiler-load-session-state-dependency-tlci-force-source? (& state))))))
 
 (define compiler-load-default-session-state : (__tl_dyn-array
     CompilerLoadSessionState)
@@ -13051,6 +13026,9 @@
         (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push (& ty)))])
     (compiler-load-param-type-list-into params (+ index 1) out)))
 
+(define (compiler-load-package-artifact-profile-name) : String
+  (string.copy (& compiler-load-package-artifact-profile)))
+
 (define (compiler-load-package-tlci-path
   [manifest-dir : String]
   [package-name : String]) : String
@@ -13060,275 +13038,14 @@
       (string.copy (& compiler-load-package-artifact-profile)))
     (str_cat.str-cat package-name ".tlci")))
 
-(define (compiler-load-package-spmd-interface
-  [manifest-dir : (& str)]
-  [package-name : String]
-  [package-version : String]) : ResultCompilerLoadPackageSpmdInterface
-  (let
-    [path : String
-      (compiler-load-package-tlci-path
-        (string.copy manifest-dir)
-        (string.copy package-name))]
-    (if (not (io.file-exists? (string.copy path)))
-      (Ok Unavailable)
-      (match (compiler-load-session-try-read-input-text (& path))
-        [(ErrIoString error)
-          (Err
-            (str_cat.str-cat
-              "compiler-load: cannot read dependency tlci '"
-              path
-              "': "
-              (io.error-message error)))]
-        [(OkIoString contents)
-          (match (tlci.tlci-parse-image
-            (& (tlci.tlci-string->bytes (& contents))))
-            [(Err message)
-              (Err
-                (str_cat.str-cat
-                  "compiler-load: invalid dependency tlci '"
-                  path
-                  "': "
-                  message))]
-            [(Ok image)
-              (let
-                [metadata : tlci.TlciMetadata image.metadata]
-                (if (or
-                  (not (string.eq metadata.package-name package-name))
-                  (not (string.eq metadata.package-version package-version)))
-                  (Err
-                    (str_cat.str-cat
-                      "compiler-load: dependency tlci package identity mismatch for '"
-                      path
-                      "': expected "
-                      package-name
-                      "@"
-                      package-version
-                      ", found "
-                      metadata.package-name
-                      "@"
-                      metadata.package-version))
-                  (Ok
-                    (Available
-                      (string.copy metadata.package-version)
-                      metadata.spmd-callables))))])]))))
-
-(define (compiler-load-imported-spmd-specializations
-  [items : (& tlci.TlciSpmdSpecializations)]) : ast.AstImportedSpmdSpecializationList
-  (let
-    [out : ast.AstImportedSpmdSpecializationList
-      (ast.ast-imported-spmd-specialization-list-new)]
-    [count : i64 (tlci.tlci-spmd-specializations-len items)]
-    (for [index (iterator.range 0 count)]
-      (let
-        [item : tlci.TlciSpmdSpecialization
-          (tlci.tlci-spmd-specializations-ref items index)]
-        (ast.ast-imported-spmd-specialization-list-push
-          (&mut out)
-          (ast.AstImportedSpmdSpecialization
-            (ci.intern-id-from-renderable
-              (ci.intern-generated-canonical-name item.abi))
-            (ci.intern-id-from-renderable
-              (ci.intern-generated-canonical-name item.backend))
-            item.lanes
-            (ci.intern-id-from-renderable
-              (ci.intern-generated-canonical-name item.args))
-            (ci.intern-id-from-renderable
-              (ci.intern-generated-canonical-name item.result))
-            item.index-param
-            (ci.intern-id-from-renderable
-              (ci.intern-generated-canonical-name item.symbol))))))
-    out))
-
-(define (compiler-load-imported-spmd-callables-for
-  [canonical-name : String]
-  [items : (& tlci.TlciSpmdCallables)]) : ast.AstImportedSpmdCallableList
-  (let
-    [out : ast.AstImportedSpmdCallableList
-      (ast.ast-imported-spmd-callable-list-new)]
-    [count : i64 (tlci.tlci-spmd-callables-len items)]
-    (for [index (iterator.range 0 count)]
-      (let
-        [item : tlci.TlciSpmdCallable
-          (tlci.tlci-spmd-callables-ref items index)]
-        (if (string.eq item.name canonical-name)
-          (ast.ast-imported-spmd-callable-list-push
-            (&mut out)
-            (ast.AstImportedSpmdCallable
-              (ci.intern-id-from-renderable
-                (ci.intern-generated-canonical-name item.signature))
-              (compiler-load-imported-spmd-specializations
-                (& item.specializations))))
-          unit)))
-    out))
-
-(define (compiler-load-imported-spmd-metadata
-  [package-owner : String]
-  [module : String]
-  [name : i64]
-  [interface : CompilerLoadPackageSpmdInterface]) : ast.AstImportedSpmdMetadata
-  (let
-    [canonical-name : String
-      (compiler-load-package-module-key
-        (if (= (string.string-length module) 0)
-          (owned_view.compiler-owned-shared-view package-owner)
-          module)
-        (ci.intern-str name))]
-    [callables : ast.AstImportedSpmdCallableList
-      (match (& interface)
-        [(Unavailable) (ast.ast-imported-spmd-callable-list-new)]
-        [(Available _ items)
-          (compiler-load-imported-spmd-callables-for
-            (string.copy canonical-name)
-            items)])]
-    (Package
-      (string.copy package-owner)
-      (match interface
-        [(Available version _) version]
-        [(Unavailable) ""])
-      (ci.intern-id-from-renderable
-        (ci.intern-generated-canonical-name canonical-name))
-      (box callables))))
-
-(define (compiler-load-package-def-fn-extern
-  [package-owner : String]
-  [package-root : (& str)]
-  [stdlib-roots : (& svec.Vec)]
-  [decl-path : String]
-  [module : String]
-  [name : i64]
-  [params : (& ast.AstParamList)]
-  [ret : (& ast.AstType)]
-  [export : ast.AstFnExport]
-  [spmd-interface : (& CompilerLoadPackageSpmdInterface)]) : ast.AstDecl
-  (let
-    [name-str : String (ci.intern-str name)]
-    [logical-path : String
-      (compiler-load-package-owned-path
-        (string.copy package-owner)
-        (& (string.copy package-root))
-        stdlib-roots
-        decl-path)]
-    [normalized-logical-path : String
-      (compiler-load-normalize-path logical-path)]
-    [logical : String
-      (compiler-load-package-decl-logical-name-normalized
-        "."
-        normalized-logical-path
-        (string.copy module)
-        name-str)]
-    [link-name : String
-      (match export
-        [(Export symbol)
-          (cabi.compiler-abi-c-export-body-symbol (ci.intern-id-str symbol))]
-        [(No) (compiler-load-package-user-symbol (string.copy logical))])]
-    (Extern
-      (ast.ast-decl-meta-runtime-shared-view)
-      name
-      (Function)
-      (box
-        (ast.AstExternMetadata.Metadata
-          (TypeLisp)
-          (ci.intern-id-from-renderable
-            (ci.intern-generated-canonical-name
-              (owned_view.compiler-owned-shared-view link-name)))
-          (ast.ast-extern-link-input-list-new)
-          (ast.ast-extern-metadata-flags false (string.eq link-name logical))
-          (compiler-load-imported-spmd-metadata
-            package-owner
-            module
-            name
-            (owned_view.compiler-owned-reference-shared-view spmd-interface))))
-      (ast.ast-ty-func (compiler-load-param-type-list params) ret))))
-
-(define (compiler-load-package-transform-decl
-  [package-owner : String]
-  [package-root : (& str)]
-  [stdlib-roots : (& svec.Vec)]
-  [decl-path : String]
-  [module : String]
-  [spmd-interface : (& CompilerLoadPackageSpmdInterface)]
-  [symbols : (& csym.CompilerSymbols)]
-  [module-id : i64]
-  [decl : ast.AstDecl]) : CompilerLoadMaybeDecl
-  (if (match (& decl)
-    [(or (DefMacro _ _ _ _ _) (DefStruct _ _ _ _ _) (Module _)) true]
-    [_ false])
-    (CompilerLoadSomeDecl decl)
-    (match decl
-      [(DefFn decl-meta name params ret _ metadata)
-        (CompilerLoadSomeDecl
-          (ast.ast-decl-with-meta
-            decl-meta
-            (compiler-load-package-def-fn-extern
-              package-owner
-              package-root
-              stdlib-roots
-              decl-path
-              module
-              name
-              (& params)
-              (& ret)
-              (ast.ast-fn-metadata-export (& metadata))
-              spmd-interface)))]
-      [(DefDispatch decl-meta name variants)
-        ;; The archive owns the resolver and its cache. Import only its shared
-        ;; signature, using normal symbol resolution for qualified variants too.
-        (match (ast.ast-dispatch-variant-list-get
-          (& variants)
-          0
-          (ast.ast-dispatch-variant-fallback))
-          [(Variant _ variant-name)
-            (let
-              [handle : i64
-                (if (ci.intern-qualified? variant-name)
-                  (csym.compiler-symbols-lookup-value-id-or
-                    symbols
-                    variant-name
-                    -1)
-                  (csym.compiler-symbols-lookup-value-in-module-id-or
-                    symbols
-                    module-id
-                    variant-name
-                    -1))]
-              (match (csym.compiler-symbols-decl-at-index
-                symbols
-                (csym.compiler-symbol-handle-index handle))
-                [(Ok variant)
-                  (match (ast.ast-decl-unwrapped (& variant))
-                    [(DefFn _ _ params ret _ _)
-                      (CompilerLoadSomeDecl
-                        (ast.ast-decl-with-meta
-                          decl-meta
-                          (compiler-load-package-def-fn-extern
-                            package-owner
-                            package-root
-                            stdlib-roots
-                            decl-path
-                            module
-                            name
-                            (& params)
-                            (& ret)
-                            (ast.AstFnExport.No)
-                            spmd-interface)))]
-                    [_ (CompilerLoadNoDecl)])]
-                [(Err _) (CompilerLoadNoDecl)]))])]
-      [(Unsafe inner-box)
-        (let
-          [inner : ast.AstDecl (deref inner-box)]
-          (match (compiler-load-package-transform-decl
-            package-owner
-            package-root
-            stdlib-roots
-            decl-path
-            module
-            spmd-interface
-            symbols
-            module-id
-            inner)
-            [(CompilerLoadSomeDecl transformed)
-              (CompilerLoadSomeDecl (ast.ast-decl-unsafe transformed))]
-            [(CompilerLoadNoDecl) (CompilerLoadNoDecl)]))]
-      [_ (CompilerLoadNoDecl)])))
+(define (compiler-load-package-tli-path
+  [manifest-dir : String]
+  [package-name : String]) : String
+  (compiler-load-join-root-path
+    (compiler-load-join-root-path
+      (compiler-load-join-root-path manifest-dir "target")
+      (string.copy (& compiler-load-package-artifact-profile)))
+    (str_cat.str-cat package-name ".tli")))
 
 (define (compiler-load-path-list-head-or
   [paths : (& ast.AstDeclPathList)]
@@ -13444,138 +13161,6 @@
     (owned_view.compiler-owned-reference-shared-view paths)
     ""))
 
-(define (compiler-load-package-extern-decls-from
-  [package-owner : String]
-  [package-root : (& str)]
-  [stdlib-roots : (& svec.Vec)]
-  [decls : (& ast.AstDeclList)]
-  [paths : (& ast.AstDeclPathList)]
-  [seen : sym_i64_env.SymI64Env]
-  [module : String]
-  [module-id : i64]
-  [moduleless-context-id : i64]
-  [symbols : (& csym.CompilerSymbols)]
-  [spmd-interface : (& CompilerLoadPackageSpmdInterface)]) : ResultCompilerLoadWithPaths
-  (match (ast.ast-decl-list-step decls)
-    [(Nil)
-      (Ok
-        (ast.ast-decl-list-new)
-        (ast.ast-decl-path-list-new)
-        (ast.ast-decl-module-list-new)
-        seen)]
-    [(Cons decl rest)
-      (let
-        [rest : ast.AstDeclList rest]
-        [decl-path : String
-          (compiler-load-path-list-head-or paths (string.copy package-root))]
-        [decl-path-id : i64
-          (ast.ast-decl-path-list-owner-id
-            paths
-            0
-            cbi.compiler-builtin-id-fix-empty)]
-        [decl-provenance-id : i64
-          (ast.ast-decl-path-list-provenance-id
-            paths
-            0
-            cbi.compiler-builtin-id-fix-empty)]
-        [owned-decl-path : String
-          (compiler-load-package-owned-path
-            (string.copy package-owner)
-            (& (string.copy package-root))
-            stdlib-roots
-            (string.copy decl-path))]
-        [rest-paths : ast.AstDeclPathList (compiler-load-path-list-tail paths)]
-        [next-module : String
-          (match (& decl)
-            ;; The archive was compiled with this source as its root, so the
-            ;; dotted identity its importer gives it is not part of link names.
-            ;; A same-named module body owns its marker and keeps its module.
-            [(Module name)
-              (if (and
-                (= name moduleless-context-id)
-                (not (= decl-path-id name)))
-                ""
-                (ci.intern-str name))]
-            [_ (string.copy module)])]
-        [next-module-id : i64
-          (match (& decl)
-            [(Module name) name]
-            [_ module-id])]
-        (match (compiler-load-package-extern-decls-from
-          (string.copy package-owner)
-          (& (string.copy package-root))
-          stdlib-roots
-          (& rest)
-          (& rest-paths)
-          seen
-          next-module
-          next-module-id
-          moduleless-context-id
-          symbols
-          spmd-interface)
-          [(Ok rest-decls rest-decl-paths rest-modules rest-seen)
-            (match (compiler-load-package-transform-decl
-              package-owner
-              package-root
-              stdlib-roots
-              decl-path
-              module
-              spmd-interface
-              symbols
-              module-id
-              decl)
-              [(CompilerLoadSomeDecl transformed)
-                (Ok
-                  (compiler-load-decl-list-prepend-from-source
-                    (& transformed)
-                    decls
-                    rest-decls)
-                  (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
-                    owned-decl-path
-                    decl-path-id
-                    decl-provenance-id
-                    rest-decl-paths)
-                  (ast.ast-decl-module-list-prepend-builder-id
-                    module-id
-                    rest-modules)
-                  rest-seen)]
-              [(CompilerLoadNoDecl)
-                (Ok rest-decls rest-decl-paths rest-modules rest-seen)])]
-          [(Err diag) (Err diag)]))]))
-
-(define (compiler-load-package-extern-decls
-  [package-owner : String]
-  [package-root : (& str)]
-  [stdlib-roots : (& svec.Vec)]
-  [decls : (& ast.AstDeclList)]
-  [paths : (& ast.AstDeclPathList)]
-  [seen : sym_i64_env.SymI64Env]
-  [moduleless-context-id : i64]
-  [spmd-interface : (& CompilerLoadPackageSpmdInterface)]) : ResultCompilerLoadWithPaths
-  (match (csym.compiler-symbols-insert-decls
-    (& (csym.compiler-symbols-empty))
-    decls
-    (csym.compiler-symbol-root-module-id))
-    [(Err message)
-      (Err
-        (box
-          (cdiag.compiler-diagnostic-at-start
-            (string.copy package-root)
-            message)))]
-    [(Ok symbols)
-      (compiler-load-package-extern-decls-from
-        package-owner
-        package-root
-        stdlib-roots
-        decls
-        paths
-        seen
-        ""
-        cbi.compiler-builtin-id-fix-empty
-        moduleless-context-id
-        (& symbols)
-        spmd-interface)]))
-
 (define (compiler-load-package-entry-for-source [source-path : String]) : ResultCompilerLoadPackageEntry
   (match (compiler-load-discover-manifest (& (string.copy source-path)))
     [(CompilerLoadNoPath)
@@ -13606,146 +13191,6 @@
                 manifest-dir
                 manifest.name
                 manifest.version)))])]))
-
-(defstruct CompilerLoadDependencySurfaceSelection
-  (decls ast.AstDeclList)
-  (paths ast.AstDeclPathList)
-  (modules ast.AstDeclModuleList)
-  (seen sym_i64_env.SymI64Env))
-
-(defenum CompilerLoadDependencySurfaceImport
-  (Unavailable)
-  (Ok ResultCompilerLoadWithPaths))
-
-(define (compiler-load-dependency-surface-decl-seen?
-  [seen : sym_i64_env.SymI64Env]
-  [decl : (& ast.AstDecl)]
-  [paths : (& paths ast.AstDeclPathList)]
-  [modules : (& modules ast.AstDeclModuleList)]
-  [index : i64]) : bool
-  (let
-    [owner-id : i64
-      (ast.ast-decl-path-list-owner-id
-        (& paths)
-        index
-        cbi.compiler-builtin-id-fix-empty)]
-    [module-id : i64
-      (ast.ast-decl-module-list-get-id
-        (& modules)
-        index
-        cbi.compiler-builtin-id-fix-empty)]
-    (match decl
-      ;; A module declaration's side-table entry names the module that was
-      ;; active *before* the marker.  Select the marker by the module it
-      ;; introduces, otherwise the first declaration from a dependency can be
-      ;; rebound under the final module of an already-seen prelude surface.
-      [(Module name) (sym_i64_env.sym-i64-contains-id seen name)]
-      [_
-        (or
-          (and
-            (not (= module-id cbi.compiler-builtin-id-fix-empty))
-            (sym_i64_env.sym-i64-contains-id seen module-id))
-          (and
-            (not (= owner-id cbi.compiler-builtin-id-fix-empty))
-            (sym_i64_env.sym-i64-contains-id
-              seen
-              (compiler-load-seen-path-key-id owner-id module-id))))])))
-
-(define (compiler-load-dependency-surface-select
-  [hydration : (& hydration surface_hydrate.CompilerSurfaceHydration)]
-  [seen : sym_i64_env.SymI64Env]) : CompilerLoadDependencySurfaceSelection
-  (let
-    [surface : surface_ast.SurfaceAstHydration hydration.ast]
-    [count : i64 (ast.ast-decl-list-len (& surface.decls))]
-    [decls : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
-    [paths : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
-    [modules : ast.AstDeclModuleList
-      (ast.ast-decl-module-list-with-capacity count)]
-    [held : sym_i64_env.SymI64Env seen]
-    (for [index (iterator.range 0 count)]
-      (unless
-        (compiler-load-dependency-surface-decl-seen?
-          seen
-          (&
-            (ast.ast-decl-list-get
-              (& surface.decls)
-              index
-              (ast.ast-decl-fallback)))
-          surface.paths
-          surface.modules
-          index)
-        (ast.ast-decl-list-push-from
-          (&mut decls)
-          (& surface.decls.slots)
-          (+ surface.decls.offset index))
-        (ast.ast-decl-path-list-push-with-owner-and-provenance-id
-          (&mut paths)
-          (ast.ast-decl-path-list-get (& surface.paths) index "")
-          (ast.ast-decl-path-list-owner-id
-            (& surface.paths)
-            index
-            cbi.compiler-builtin-id-fix-empty)
-          (ast.ast-decl-path-list-provenance-id
-            (& surface.paths)
-            index
-            cbi.compiler-builtin-id-fix-empty))
-        (ast.ast-decl-module-list-push-id
-          (&mut modules)
-          (ast.ast-decl-module-list-get-id
-            (& surface.modules)
-            index
-            cbi.compiler-builtin-id-fix-empty))
-        ;; The root module has no holder, and a module body owns its marker.
-        (match (ast.ast-decl-list-get
-          (& surface.decls)
-          index
-          (ast.ast-decl-fallback))
-          [(Module name)
-            (unless
-              (or
-                (= name cbi.compiler-builtin-id-fix-empty)
-                (=
-                  (ast.ast-decl-path-list-owner-id
-                    (& surface.paths)
-                    index
-                    cbi.compiler-builtin-id-fix-empty)
-                  name))
-              (set!
-                held
-                (sym_i64_env.sym-i64-bind-id
-                  held
-                  name
-                  (compiler-load-source-path-id
-                    (compiler-load-normalize-path
-                      (ci.intern-str
-                        (ast.ast-decl-path-list-provenance-id
-                          (& surface.paths)
-                          index
-                          cbi.compiler-builtin-id-fix-empty)))))))]
-          [_ unit])))
-    (CompilerLoadDependencySurfaceSelection decls paths modules held)))
-
-(define (compiler-load-dependency-surface-merge-seen
-  [base : sym_i64_env.SymI64Env]
-  [extra : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (let
-    [cursor : sym_i64_env.SymI64Env extra]
-    [out : sym_i64_env.SymI64Env base]
-    [done : bool false]
-    (while (not done)
-      (match (sym_i64_env.sym-i64-view cursor)
-        [(SymI64ViewNil) (set! done true)]
-        [(SymI64ViewBind key value rest)
-          (unless
-            (sym_i64_env.sym-i64-contains-id out key)
-            (set! out (sym_i64_env.sym-i64-bind-id out key value)))
-          (set! cursor rest)]))
-    out))
-
-(define (compiler-load-dependency-surface-interface
-  [version : String]
-  [spmd-callables : tlci.TlciSpmdCallables]) : CompilerLoadPackageSpmdInterface
-  (Available version spmd-callables))
 
 (define (compiler-load-path-in-package-dependency?
   [path : (& str)]
@@ -13793,356 +13238,204 @@
                 deps)))))]
     [(No) false]))
 
-;; The module governing the entry source's declarations in a hydrated
-;; dependency, or -1 when the source route must serve it instead. Declarations
-;; of a moduleless dependency source sit in the producer's root module with
-;; their facts keyed there, so they cannot adopt the dotted identity the
-;; importing package gives them. Macro-generated items exist only in the
-;; surface, so a moduleless dependency with any keeps its root identity here.
-(define (compiler-load-dependency-surface-source-module-id
-  [state : (& CompilerLoadSessionState)]
-  [hydration : (& hydration surface_hydrate.CompilerSurfaceHydration)]
-  [slot : i64]
-  [source-path-id : i64]
-  [held-modules : sym_i64_env.SymI64Env]) : i64
-  (let
-    [surface : surface_ast.SurfaceAstHydration hydration.ast]
-    [count : i64 (ast.ast-decl-list-len (& surface.decls))]
-    [root-module-id : i64 cbi.compiler-builtin-id-fix-empty]
-    [source-module-id : i64 root-module-id]
-    [checked-provenance-id : i64 -1]
-    [in-package : bool false]
-    [in-source : bool false]
-    [moduleless : bool false]
-    [generated : bool false]
-    (for [index (iterator.range 0 count)]
-      (let
-        [provenance-id : i64
-          (ast.ast-decl-path-list-provenance-id
-            (& surface.paths)
-            index
-            root-module-id)]
-        [row-module-id : i64
-          (ast.ast-decl-module-list-get-id
-            (& surface.modules)
-            index
-            root-module-id)]
-        [decl : ast.AstDecl
-          (ast.ast-decl-list-get
-            (& surface.decls)
-            index
-            (ast.ast-decl-fallback))]
-        (unless
-          (= provenance-id checked-provenance-id)
-          (set! checked-provenance-id provenance-id)
-          (set!
-            in-package
-            (=
-              (compiler-load-dependency-catalog-slot-for-provenance-id
-                state
-                provenance-id)
-              slot))
-          ;; The artifact keeps the manifest's own spelling of the entry path.
-          (set!
-            in-source
-            (=
-              (compiler-load-source-path-id
-                (compiler-load-normalize-path (ci.intern-str provenance-id)))
-              source-path-id)))
-        (match decl
-          [(Module name)
-            ;; A module another source already holds would lose these rows.
-            (when
-              (and
-                in-package
-                (not (= name root-module-id))
-                (sym_i64_env.sym-i64-contains-id held-modules name))
-              (return -1))
-            (when in-source (set! source-module-id name))]
-          [_
-            (when
-              in-package
-              (when (= row-module-id root-module-id) (set! moduleless true))
-              (when
-                (compiler-load-surface-generated-meta?
-                  (& (ast.ast-decl-generated-meta (& decl))))
-                (set! generated true)))
-            (when in-source (set! source-module-id row-module-id))])))
-    (cond
-      [moduleless
-        (if generated
-          root-module-id
-          -1)]
-      [(= source-module-id root-module-id) -1]
-      [else source-module-id])))
-
-(define (compiler-load-session-state-dependency-surface-provenance?
-  [state : (& CompilerLoadSessionState)]
-  [provenance-id : i64]) : bool
-  (>=
-    (compiler-load-dependency-catalog-slot-for-provenance-id
-      state
-      provenance-id)
-    0))
-
-(define (compiler-load-dependency-surface-provenance-count
-  [state : (& CompilerLoadSessionState)]
-  [paths : (& paths ast.AstDeclPathList)]) : i64
-  (let
-    [count : i64 (ast.ast-decl-path-list-len (& paths))]
-    [matched : i64 0]
-    (for [index (iterator.range 0 count)]
-      (if (compiler-load-session-state-dependency-surface-provenance?
-        state
-        (ast.ast-decl-path-list-provenance-id
-          (& paths)
-          index
-          cbi.compiler-builtin-id-fix-empty))
-        (+= matched 1)
-        unit))
-    matched))
-
-(define (compiler-load-session-state-dependency-surface-provenance-count
-  [state : (& CompilerLoadSessionState)]) : i64
-  (array-ref state.dependency-surfaces.surface-provenance-count 0))
-
-(define (compiler-load-session-state-dependency-surface-note-macro-skip!
-  [state : CompilerLoadSessionState]
-  [count : i64]) : unit
-  (set! (array-ref state.dependency-surfaces.macro-skip-count 0) count))
-
-;; Declarations the macro walk hydrated this use, or 0 before any hydration.
-(define (compiler-load-session-state-dependency-surface-macro-skip-count
-  [state : (& CompilerLoadSessionState)]) : i64
-  (array-ref state.dependency-surfaces.macro-skip-count 0))
-
-;; When the macro plan stopped before source work, the ordinal among all module
-;; markers of the one governing that declaration (0 when none).
-(define (compiler-load-session-state-dependency-surface-note-macro-cut!
-  [state : (& state CompilerLoadSessionState)]
-  [marker : i64]) : unit
-  (owned_view.compiler-owned-cell-set!
-    state.dependency-surfaces.macro-cut-marker
-    0
-    marker))
-
-(define (compiler-load-session-state-dependency-surface-macro-cut-marker
-  [state : (& CompilerLoadSessionState)]) : i64
-  (array-ref state.dependency-surfaces.macro-cut-marker 0))
-
-(define (compiler-load-session-state-dependency-surface-note-typecheck-skip!
-  [state : CompilerLoadSessionState]
-  [count : i64]) : unit
-  (set! (array-ref state.dependency-surfaces.typecheck-skip-count 0) count))
-
-(define (compiler-load-dependency-surface-import
+(define (compiler-load-package-force-source-import
   [resolved : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [entry : CompilerLoadPackageEntry]
-  [expected-module : ast.AstMaybeModuleName]) : CompilerLoadDependencySurfaceImport
-  (let
-    [state : CompilerLoadSessionState
-      (compiler-load-active-session-state-shared-view)]
-    [surface-state : CompilerLoadDependencySurfaceState
-      (owned_view.compiler-owned-shared-view state.dependency-surfaces)]
-    (if (not (array-ref surface-state.enabled 0))
-      Unavailable
-      (let
-        [slot : i64
-          (compiler-load-dependency-catalog-slot-for-provenance-id
-            (& state)
-            (compiler-load-source-path-id resolved))]
-        [fragments : CompilerLoadDependencySurfaceList
-          (owned_view.compiler-owned-array-element-shared-view
-            surface-state.fragments
-            0)]
-        (if (or (< slot 0) (>= slot fragments.len))
-          Unavailable
-          (match (owned_view.compiler-owned-array-element-shared-view
-            fragments.slots
-            slot)
-            [(Unavailable) Unavailable]
-            [(Ready hydration spmd-callables)
-              (let
-                [source-path-id : i64 (compiler-load-source-path-id resolved)]
-                ;; Only the entry's module is known to be its own: the producer
-                ;; gave any other moduleless file an identity from its own import.
-                [source-module-id : i64
-                  (if (string.eq resolved entry.entry-path)
-                    (compiler-load-dependency-surface-source-module-id
-                      (& state)
-                      hydration
-                      slot
-                      source-path-id
-                      (match (compiler-load-session-state-surface-summary-find-source
-                        (& state)
-                        source-path-id)
-                        [(CompilerLoadSomeSurfaceSummary _)
-                          (sym_i64_env.sym-i64-empty)]
-                        [(CompilerLoadNoSurfaceSummary) seen]))
-                    -1)]
-                [_ : unit (when (< source-module-id 0) (return Unavailable))]
-                [selection : CompilerLoadDependencySurfaceSelection
-                  (compiler-load-dependency-surface-select hydration seen)]
-                [active-pools : ast.AstNodePoolContext
-                  (if (ast.ast-node-pool-has-active-context?)
-                    (ast.ast-node-pool-context-active-live)
-                    (ast.ast-node-pool-context-capture-active))]
-                [copy : ast.AstProgramCompaction
-                  (ast.ast-program-copy-append-with-pools
-                    hydration.ast.pools
-                    active-pools
-                    (& (ast.ast-program selection.decls)))]
-                [copied-program : ast.AstProgram
-                  (match (owned_view.compiler-owned-shared-view copy)
-                    [(AstProgramCompaction program _) program])]
-                [copied-decls : ast.AstDeclList
-                  (match copied-program
-                    [(Program decls-box) (__tl-box-place decls-box)])]
-                [copied-pools : ast.AstNodePoolContext
-                  (match copy
-                    [(AstProgramCompaction _ pools) pools])]
-                [merged-seen : sym_i64_env.SymI64Env
-                  (compiler-load-dependency-surface-merge-seen
-                    selection.seen
-                    hydration.ast.seen)]
-                (ast.ast-node-pool-context-install! copied-pools)
-                ;; Source loading publishes this compact summary before
-                ;; traversing a file. Rebuild the same summary from the
-                ;; hydrated AST so qualified macro imports retain their
-                ;; ordinary visibility rules. The registry's exact package
-                ;; and source binding already authenticated these decls;
-                ;; package import spellings need not equal a declared module.
-                ;; A repeated import selects none of these decls, so the first
-                ;; summary stands.
-                (match (compiler-load-session-state-surface-summary-find-source
-                  (& state)
-                  source-path-id)
-                  [(CompilerLoadSomeSurfaceSummary _) unit]
-                  [(CompilerLoadNoSurfaceSummary)
-                    (compiler-load-record-surface-summary!
-                      (&
-                        (compiler-load-surface-summary-from-decls
-                          (& resolved)
-                          source-path-id
-                          (& entry.manifest-dir)
-                          source-module-id
-                          source-module-id
-                          true
-                          (not
-                            (compiler-load-no-expected-module? expected-module))
-                          (& copied-decls))))])
-                (match (compiler-load-package-extern-decls
-                  entry.owner
-                  (& entry.manifest-dir)
-                  (& stdlib-roots)
-                  (& copied-decls)
-                  (& selection.paths)
-                  merged-seen
-                  -1
-                  (&
-                    (compiler-load-dependency-surface-interface
-                      entry.version
-                      spmd-callables)))
-                  [(Err _) Unavailable]
-                  [(Ok decls paths modules loaded-seen)
-                    (let
-                      [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-                      [provenance-count : i64
-                        (compiler-load-dependency-surface-provenance-count
-                          (& state)
-                          paths)]
-                      (if (array-ref fragments.imported slot)
-                        unit
-                        (match (surface_facts.surface-typecheck-facts-builder-append
-                          (owned_view.compiler-owned-array-element-shared-view
-                            surface-state.facts-builder
-                            0)
-                          hydration.facts)
-                          [(Err _) (return Unavailable)]
-                          [(Ok next)
-                            (set!
-                              (array-ref surface-state.facts-builder 0)
-                              next)
-                            (set! (array-ref fragments.imported slot) true)]))
-                      (set! (array-ref surface-state.fragments 0) fragments)
-                      (set!
-                        (array-ref surface-state.surface-decl-count 0)
-                        (+
-                          (array-ref surface-state.surface-decl-count 0)
-                          decl-count))
-                      (set!
-                        (array-ref surface-state.surface-provenance-count 0)
-                        (+
-                          (array-ref surface-state.surface-provenance-count 0)
-                          provenance-count))
-                      (set!
-                        (array-ref surface-state.hit-count 0)
-                        (+ (array-ref surface-state.hit-count 0) 1))
-                      (Ok (Ok decls paths modules loaded-seen)))]))]))))))
-
-;; The module context a moduleless source received at its load, or -1 for a
-;; source that declares its own module.
-(define (compiler-load-moduleless-source-context-id [resolved : String]) : i64
-  (match (compiler-load-session-state-surface-summary-find-source
-    (& (compiler-load-active-session-state-shared-view))
-    (compiler-load-source-path-id resolved))
-    [(CompilerLoadSomeSurfaceSummary summary)
-      (if summary.explicit-module
-        -1
-        summary.declaration-module-id)]
-    [(CompilerLoadNoSurfaceSummary) -1]))
-
-(define (compiler-load-package-externs-from-import
-  [resolved : String]
+  [resolved-id : i64]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : (& svec.Vec)]
   [expected-module : ast.AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]
   [module-id-fallback : String]
-  [source-module-fallback : (& str)]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-package-entry-for-source (string.copy resolved))
-    [(Err message)
-      (Err
-        (box
-          (cdiag.compiler-diagnostic-at-start (string.copy resolved) message)))]
-    [(Ok entry)
-      (match (compiler-load-dependency-surface-import
-        (string.copy resolved)
+  [source-module-fallback : (& str)]) : ResultCompilerLoadPackageDepImport
+  (match (compiler-load-discover-manifest (& (string.copy resolved)))
+    [(CompilerLoadNoPath)
+      (let
+        [msg : String
+          (str_cat.str-cat
+            "compiler-load: dependency package manifest not found for "
+            (string.copy (& resolved)))]
+        (Err (box (cdiag.compiler-diagnostic-at-start resolved msg))))]
+    [(CompilerLoadSomePath manifest-path)
+      (match (compiler-load-parse-manifest-diagnostic-infer-kind
+        (string.copy manifest-path)
+        (& (compiler-load-session-read-source-text manifest-path)))
+        [(Err diag) (Err diag)]
+        [(Ok manifest)
+          (let
+            [dep-dir : String (compiler-load-dirname manifest-path)]
+            (match (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
+              resolved
+              resolved-id
+              seen
+              stdlib-roots
+              expected-module
+              (& dep-dir)
+              (& manifest.deps)
+              cfgs
+              true
+              module-id-fallback
+              (string.copy source-module-fallback)
+              -1)
+              [(Ok decls paths modules next-seen)
+                (ResultCompilerLoadPackageDepImport.Ok
+                  decls
+                  paths
+                  modules
+                  next-seen
+                  -1)]
+              [(Err diag) (Err diag)]))])]))
+
+(define (compiler-load-package-dependency-import!
+  [resolved : String]
+  [resolved-id : i64]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : (& svec.Vec)]
+  [expected-module : ast.AstMaybeModuleName]
+  [cfgs : sym_i64_env.SymI64Env]
+  [module-id-fallback : String]
+  [source-module-fallback : (& str)]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadPackageDepImport
+  (let
+    [force-source : bool
+      (compiler-load-session-state-dependency-tlci-force-source?
+        (& compiler-load-active-session-state))]
+    (if force-source
+      (compiler-load-package-force-source-import
+        resolved
+        resolved-id
         seen
-        (owned_view.compiler-owned-reference-shared-view stdlib-roots)
-        (owned_view.compiler-owned-shared-view entry)
-        expected-module)
-        [(Ok loaded) loaded]
-        [(Unavailable)
-          (match (compiler-load-package-spmd-interface
-            (& (string.copy entry.manifest-dir))
-            (string.copy entry.owner)
-            (string.copy entry.version))
-            [(Err message)
-              (Err (box (cdiag.compiler-diagnostic-at-start resolved message)))]
-            [(Ok spmd-interface)
-              (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
-                (& (string.copy resolved))
-                seen
+        stdlib-roots
+        expected-module
+        cfgs
+        module-id-fallback
+        source-module-fallback)
+      (match (compiler-load-package-entry-for-source (string.copy resolved))
+        [(Err message)
+          (Err
+            (box
+              (cdiag.compiler-diagnostic-at-start
+                (string.copy resolved)
+                message)))]
+        [(Ok entry)
+          (let
+            [canonical-root : String
+              (compiler-load-canonical-path (& entry.manifest-dir))]
+            [owned-path : String
+              (compiler-load-package-owned-path
+                (string.copy entry.owner)
+                (& entry.manifest-dir)
                 stdlib-roots
-                expected-module
-                cfgs
-                module-id-fallback
-                source-module-fallback)
-                [(Ok imported-decls imported-paths _ import-seen)
-                  (compiler-load-package-extern-decls
-                    entry.owner
-                    (& entry.manifest-dir)
-                    stdlib-roots
-                    (& imported-decls)
-                    (& imported-paths)
-                    import-seen
-                    (compiler-load-moduleless-source-context-id
-                      (string.copy resolved))
-                    (& spmd-interface))]
-                [(Err diag) (Err diag)])])])]))
+                (string.copy resolved))]
+            (match (compiler-load-session-state-tli-hydrate-package-file!
+              (& compiler-load-active-session-state)
+              (& canonical-root)
+              (& owned-path)
+              (& module-id-fallback)
+              seen
+              pools)
+              [(Missing)
+                (Err
+                  (box
+                    (cdiag.compiler-diagnostic-at-start
+                      resolved
+                      (str_cat.str-cat
+                        "compiler-load: missing prebuilt dependency interface (.tli) for '"
+                        owned-path
+                        "' in package '"
+                        entry.owner
+                        "'"))))]
+              [(Err diag) (Err diag)]
+              [(Ok
+                  imported-decls
+                  imported-paths
+                  imported-modules
+                  import-seen
+                  primary-mod-id)
+                (let
+                  [pending-stdlib : (__tl_dyn-array String)
+                    (compiler-load-session-state-tli-take-pending-source-stdlib!
+                      (& compiler-load-active-session-state))]
+                  [out-decls : ast.AstDeclList imported-decls]
+                  [out-paths : ast.AstDeclPathList imported-paths]
+                  [out-modules : ast.AstDeclModuleList imported-modules]
+                  [out-seen : sym_i64_env.SymI64Env import-seen]
+                  (for [idx (iterator.range 0 (array-length pending-stdlib))]
+                    (let
+                      [smod : String
+                        (string.copy (& (array-ref pending-stdlib idx)))]
+                      (compiler-load-session-state-tli-note-source-stdlib-needed!
+                        (& compiler-load-active-session-state)
+                        (& smod))
+                      (let
+                        [smod-id : i64 (ci.intern (string.copy (& smod)))]
+                        (unless
+                          (sym_i64_env.sym-i64-contains-id out-seen smod-id)
+                          (let
+                            [rel-path : String
+                              (compiler-load-dotted-module-path-uncached
+                                (& smod))]
+                            (match (compiler-load-resolve-import-result-with-roots
+                              (& resolved)
+                              rel-path
+                              stdlib-roots)
+                              [(Err msg)
+                                (return
+                                  (Err
+                                    (box
+                                      (cdiag.compiler-diagnostic-at-start
+                                        resolved
+                                        msg))))]
+                              [(Ok sres)
+                                (match (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
+                                  (& sres)
+                                  out-seen
+                                  stdlib-roots
+                                  (Some smod-id)
+                                  cfgs
+                                  (string.copy (& smod))
+                                  (& smod))
+                                  [(Err diag) (return (Err diag))]
+                                  [(Ok sdecls spaths smods sseen)
+                                    (set!
+                                      out-decls
+                                      (compiler-load-decl-list-append
+                                        (& sdecls)
+                                        (& out-decls)))
+                                    (set!
+                                      out-paths
+                                      (compiler-load-decl-path-list-append
+                                        (& spaths)
+                                        (& out-paths)))
+                                    (set!
+                                      out-modules
+                                      (compiler-load-decl-module-list-append
+                                        (& smods)
+                                        (& out-modules)))
+                                    (set! out-seen sseen)])]))))))
+                  (match (compiler-load-session-state-surface-summary-find-source
+                    (& compiler-load-active-session-state)
+                    resolved-id)
+                    [(CompilerLoadSomeSurfaceSummary _) unit]
+                    [(CompilerLoadNoSurfaceSummary)
+                      (compiler-load-record-surface-summary!
+                        (&
+                          (compiler-load-surface-summary-from-decls
+                            (& resolved)
+                            resolved-id
+                            (& entry.manifest-dir)
+                            primary-mod-id
+                            primary-mod-id
+                            true
+                            (not
+                              (compiler-load-no-expected-module?
+                                expected-module))
+                            (& out-decls))))])
+                  (ResultCompilerLoadPackageDepImport.Ok
+                    out-decls
+                    out-paths
+                    out-modules
+                    out-seen
+                    primary-mod-id))]))]))))
 
 (define (compiler-load-package-expand-include
   [kind : CompilerLoadIncludeKind]
@@ -14339,7 +13632,9 @@
                         expected-module
                         (& (string.copy importer-source-module)))]
                     [tli-hit : bool
-                      (compiler-load-tli-has-module? (& import-path))]
+                      (and
+                        (not package-externs)
+                        (compiler-load-tli-has-module? (& import-path)))]
                     [preload-candidate : bool
                       (and
                         (not tli-hit)
@@ -14386,6 +13681,7 @@
                           preload-demand
                           stdlib-roots)
                         false)]
+                    [dep-tli-mod-id : i64 -1]
                     (match (cond
                       [preload-skip
                         (ResultCompilerLoadWithPaths.Ok
@@ -14400,14 +13696,20 @@
                           seen
                           preload-pools)]
                       [package-externs
-                        (compiler-load-package-externs-from-import
+                        (match (compiler-load-package-dependency-import!
                           (string.copy resolved)
+                          resolved-id
                           seen
                           stdlib-roots
                           source-expected-module
                           cfgs
                           (string.copy fallback)
-                          (& (string.copy fallback)))]
+                          (& (string.copy fallback))
+                          preload-pools)
+                          [(Ok d p m s mod-id)
+                            (set! dep-tli-mod-id mod-id)
+                            (ResultCompilerLoadWithPaths.Ok d p m s)]
+                          [(Err diag) (ResultCompilerLoadWithPaths.Err diag)])]
                       [else
                         (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
                           (string.copy resolved)
@@ -14438,15 +13740,17 @@
                           [active-state : CompilerLoadSessionState
                             (compiler-load-active-session-state-shared-view)]
                           [validated-module : ast.AstMaybeModuleName
-                            (if tli-hit
-                              expected-module
-                              (compiler-load-after-import-expected-module
-                                (& active-state)
-                                resolved-id
-                                kind
-                                expected-module
-                                alias
-                                (& imported-decls)))]
+                            (cond
+                              [(>= dep-tli-mod-id 0) (Some dep-tli-mod-id)]
+                              [tli-hit expected-module]
+                              [else
+                                (compiler-load-after-import-expected-module
+                                  (& active-state)
+                                  resolved-id
+                                  kind
+                                  expected-module
+                                  alias
+                                  (& imported-decls))])]
                           (when
                             (compiler-load-package-import-identity-taken?
                               resolved-id
@@ -15278,59 +14582,6 @@
           [(Err diag) (Err diag)])]
       [(Err diag) (Err diag)])))
 
-(define (compiler-load-dependency-surfaces-restore-base!
-  [surface-state : (& surface-state CompilerLoadDependencySurfaceState)]) : unit
-  (match (& (array-ref surface-state.base-facts 0))
-    [(None) (surface_facts.surface-typecheck-facts-clear!)]
-    [(Some facts)
-      (if (surface_facts.surface-typecheck-facts-publish!
-        (surface_facts.clone-surface-typecheck-facts facts))
-        unit
-        (surface_facts.surface-typecheck-facts-clear!))]))
-
-(define (compiler-load-dependency-surfaces-finalize!
-  [state : (& state CompilerLoadSessionState)]
-  [loaded : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
-  (let
-    [surface-state : (& state CompilerLoadDependencySurfaceState)
-      (& state.dependency-surfaces)]
-    [surface-count : i64 (array-ref surface-state.surface-decl-count 0)]
-    (match loaded
-      [(Err diag)
-        (compiler-load-dependency-surfaces-restore-base! surface-state)
-        (Err diag)]
-      [(Ok decls paths modules seen)
-        (if (or (not (array-ref surface-state.enabled 0)) (<= surface-count 0))
-          (begin
-            (compiler-load-dependency-surfaces-restore-base! surface-state)
-            (Ok decls paths modules seen))
-          (match (surface_facts.surface-typecheck-facts-builder-finish
-            (surface_facts.clone-surface-typecheck-facts-builder
-              (& (array-ref surface-state.facts-builder 0))))
-            [(Err _)
-              (compiler-load-dependency-surfaces-restore-base! surface-state)
-              (Ok decls paths modules seen)]
-            [(Ok composed)
-              (let
-                [candidate : surface_facts.SurfaceTypecheckFacts
-                  (surface_facts.SurfaceTypecheckFacts
-                    composed.macro-prefix-decl-count
-                    composed.prefix-decl-count
-                    composed.summary-values
-                    composed.summary-functions
-                    composed.summary-externs
-                    composed.clone-decl-keys
-                    composed.clone-root-keys
-                    composed.clone-call-indices)]
-                [published : bool
-                  (surface_facts.surface-typecheck-facts-publish-composite!
-                    candidate)]
-                (if published
-                  unit
-                  (compiler-load-dependency-surfaces-restore-base!
-                    surface-state))
-                (Ok decls paths modules seen))]))])))
-
 (define (compiler-load-package-file-with-runtime-cfg
   [input-path : (& str)]
   [stdlib-roots : (& svec.Vec)]
@@ -15338,23 +14589,13 @@
   [deps : (& CompilerPkgDeps)]
   [emit-entry : bool]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (let
-    [state : CompilerLoadSessionState
-      (compiler-load-active-session-state-shared-view)]
-    [_surface-preflight : bool
-      (compiler-load-dependency-surfaces-prepare!
-        (compiler-load-global-shared-view state)
-        stdlib-roots
-        cfgs)]
-    [loaded : ResultCompilerLoadWithPaths
-      (compiler-load-package-file-with-runtime-cfg-inner
-        input-path
-        stdlib-roots
-        manifest-dir
-        deps
-        emit-entry
-        cfgs)]
-    (compiler-load-dependency-surfaces-finalize! (& state) loaded)))
+  (compiler-load-package-file-with-runtime-cfg-inner
+    input-path
+    stdlib-roots
+    manifest-dir
+    deps
+    emit-entry
+    cfgs))
 
 (define (compiler-load-test-mkdir-direct [path : (& str)]) : bool
   (match (fs.try-mkdir-if-missing path)

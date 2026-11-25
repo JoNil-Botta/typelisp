@@ -25,6 +25,8 @@
 (import tlci_core as tlci)
 (import tlci_loader as tlci_loader_support)
 (import compiler_owned_view as owned_view)
+(import compiler_tli_types as tli)
+(import compiler_tli_hydrate as tli_hydrate)
 (import compiler_load as load)
 
 (define (compiler-load-write-file-text [path : String] [contents : String]) : unit
@@ -2751,30 +2753,13 @@
         (I64)
         (ast.ast-node-push (Literal (ast.ast-lit-int 1))))]
     [decl : ast.AstDecl (ast.ast-decl-comptime-decl-with-meta meta inner)]
-    (match (load.compiler-load-package-transform-decl
-      "demo"
-      ""
-      (& (svec.new))
-      "src/main.tl"
-      "main"
-      (& (Unavailable))
-      (& (csym.compiler-symbols-empty))
-      cbi.compiler-builtin-id-fix-empty
-      decl)
-      [(CompilerLoadSomeDecl transformed)
+    (match (ast.ast-decl-generated-meta decl)
+      [(Some generator item arg-keys _)
         (and
-          (match (ast.ast-decl-generated-meta transformed)
-            [(Some generator item arg-keys _)
-              (and
-                (string.eq generator "gen")
-                (string.eq item "generated-fn")
-                (= (ast.ast-expr-list-len (& arg-keys)) 0))]
-            [_ false])
-          (match transformed
-            [(Extern decl-meta name _ _ _)
-              (string.eq (ci.intern-str name) "generated-fn")]
-            [_ false]))]
-      [(CompilerLoadNoDecl) false])))
+          (string.eq generator "gen")
+          (string.eq item "generated-fn")
+          (= (ast.ast-expr-list-len (& arg-keys)) 0))]
+      [_ false])))
 
 ;; Diamond import dedup: entry imports A and B, both of which
 ;; import C; C must load exactly once. Writes fixture modules under target/ and
@@ -4186,24 +4171,32 @@
 
 (define (compiler-load-package-owner-extern-symbol-ok?) : bool
   (let
-    [decl : ast.AstDecl
-      (load.compiler-load-package-def-fn-extern
-        "dep"
-        "C:/dep/"
-        (& (svec.new))
-        "C:/dep/src/lib.tl"
+    [row : tli.TliFnDecl
+      (tli.TliFnDecl
+        "helper"
+        "dep.src.lib"
+        "_tl_dep_src_lib_helper"
+        0
+        0
         ""
-        (ci.intern "helper")
-        (& (ast.ast-param-list-new))
-        (& (I64))
-        (No)
-        (& (Unavailable)))]
-    (match decl
-      [(Extern decl-meta _ _ metadata _)
-        (string.eq
-          (ast.ast-extern-metadata-symbol (& (deref metadata)))
-          "_tl_dep_src_lib_helper")]
-      [_ false])))
+        false
+        0
+        (__tl_make-array tli.TliExternLinkInput 0)
+        (__tl_make-array tli.TliParam 0)
+        (tli.TliType.I64)
+        (tli.TliFnSummary
+          0
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array tli.TliGlobalWrite 0)
+          0
+          0))]
+    (string.eq
+      (tli_hydrate.tli-hydrate-archive-fn-symbol-with-mode
+        false
+        "dep/src/lib.tl"
+        (& row))
+      "_tl_dep_src_lib_helper")))
 
 ;; A dependency function reaches its consumer as an extern with the TypeLisp
 ;; ABI (#8485), so a TypeLisp-internal convention can tell it from a C extern.
@@ -4211,32 +4204,43 @@
   (let
     [ok : bool true]
     (for [kind (iterator.range 0 2)]
-      (match (load.compiler-load-package-def-fn-extern
-        "dep"
-        "C:/dep/"
-        (& (svec.new))
-        "C:/dep/src/lib.tl"
-        ""
-        (ci.intern "helper")
-        (& (ast.ast-param-list-new))
-        (& (I64))
-        (if (= kind 0)
-          (No)
-          (Export (ci.intern-id-from-renderable (ci.intern "helper_c"))))
-        (& (Unavailable)))
-        [(Extern _ _ _ metadata _)
-          (unless
-            (and
-              (match (& (deref metadata))
-                [(Metadata (TypeLisp) _ _ _ _) true]
-                [_ false])
-              (string.eq
-                (ast.ast-extern-metadata-symbol (& (deref metadata)))
-                (if (= kind 0)
-                  "_tl_dep_src_lib_helper"
-                  "helper_c$typelisp")))
-            (set! ok false))]
-        [_ (set! ok false)]))
+      (let
+        [row : tli.TliFnDecl
+          (tli.TliFnDecl
+            "helper"
+            "dep.src.lib"
+            "_tl_dep_src_lib_helper"
+            0
+            (if (= kind 0)
+              0
+              1)
+            (if (= kind 0)
+              ""
+              "helper_c")
+            false
+            0
+            (__tl_make-array tli.TliExternLinkInput 0)
+            (__tl_make-array tli.TliParam 0)
+            (tli.TliType.I64)
+            (tli.TliFnSummary
+              0
+              0
+              (__tl_make-array i64 0)
+              (__tl_make-array tli.TliGlobalWrite 0)
+              0
+              0))]
+        [sym : String
+          (tli_hydrate.tli-hydrate-archive-fn-symbol-with-mode
+            false
+            "dep/src/lib.tl"
+            (& row))]
+        (unless
+          (string.eq
+            (& sym)
+            (if (= kind 0)
+              "_tl_dep_src_lib_helper"
+              "helper_c$typelisp"))
+          (set! ok false))))
     ok))
 
 (define (compiler-load-package-source-macro-preserved-ok?) : bool
@@ -4245,25 +4249,13 @@
     [body : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 42)))]
     [decl : ast.AstDecl
       (ast.ast-decl-def-macro-id name (ast.ast-macro-param-list-new) (I64) body)]
-    (match (load.compiler-load-package-transform-decl
-      "dep"
-      "C:/dep/"
-      (& (svec.new))
-      "C:/dep/src/lib.tl"
-      "dep.module"
-      (& (Unavailable))
-      (& (csym.compiler-symbols-empty))
-      cbi.compiler-builtin-id-fix-empty
-      decl)
-      [(CompilerLoadSomeDecl transformed)
-        (match transformed
-          [(DefMacro _ got-name params (I64) got-body)
-            (and
-              (= got-name name)
-              (= (ast.ast-macro-param-list-len (& params)) 0)
-              (= got-body body))]
-          [_ false])]
-      [(CompilerLoadNoDecl) false])))
+    (match decl
+      [(DefMacro _ got-name params (I64) got-body)
+        (and
+          (= got-name name)
+          (= (ast.ast-macro-param-list-len (& params)) 0)
+          (= got-body body))]
+      [_ false])))
 
 (define (compiler-load-package-imported-spmd-metadata-ok?) : bool
   (let
@@ -4283,16 +4275,37 @@
         (tlci.tlci-spmd-specializations-push
           (tlci.tlci-spmd-specializations-empty)
           (& specialization)))]
+    [callables-tlci : tlci.TlciSpmdCallables
+      (tlci.tlci-spmd-callables-push
+        (tlci.tlci-spmd-callables-empty)
+        (& callable))]
+    [row : tli.TliFnDecl
+      (tli.TliFnDecl
+        "helper"
+        "spmd_fixture"
+        "_tl_spmd_fixture_helper"
+        0
+        0
+        ""
+        false
+        0
+        (__tl_make-array tli.TliExternLinkInput 0)
+        (__tl_make-array tli.TliParam 0)
+        (tli.TliType.I64)
+        (tli.TliFnSummary
+          0
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array tli.TliGlobalWrite 0)
+          0
+          0))]
     [metadata : ast.AstImportedSpmdMetadata
-      (load.compiler-load-imported-spmd-metadata
-        "spmd_fixture"
-        "spmd_fixture"
-        (ci.intern "helper")
-        (Available
-          "1.0.0"
-          (tlci.tlci-spmd-callables-push
-            (tlci.tlci-spmd-callables-empty)
-            (& callable))))]
+      (tli_hydrate.tli-hydrate-imported-spmd-metadata
+        false
+        (& "spmd_fixture")
+        (& "1.0.0")
+        (& callables-tlci)
+        (& row))]
     (match metadata
       [(No) false]
       [(Package owner version canonical-name callables-box)
@@ -5855,18 +5868,23 @@
             outer-key
             None
             (tlci.tlci-spmd-callables-empty)
-            (Unavailable (Missing "outer missing")))]
+            (make-array u8 32)
+            (load.CompilerLoadDependencyCatalogStatus.Unavailable
+              (Missing "outer missing")))]
         [nested-entry : load.CompilerLoadDependencyCatalogEntry
           (load.CompilerLoadDependencyCatalogEntry
             (load.compiler-load-global-shared-view nested-key)
             None
             (tlci.tlci-spmd-callables-empty)
-            (Unavailable (Missing "nested missing")))]
+            (make-array u8 32)
+            (load.CompilerLoadDependencyCatalogStatus.Unavailable
+              (Missing "nested missing")))]
         [metadata-entry : load.CompilerLoadDependencyCatalogEntry
           (load.CompilerLoadDependencyCatalogEntry
             metadata-key
             (Some metadata-image)
             (tlci.tlci-spmd-callables-empty)
+            (make-array u8 32)
             TrustedMetadataOnly)]
         [outer-slot : i64
           (load.compiler-load-dependency-catalog-record-owned!
@@ -5979,6 +5997,7 @@
               (ci.intern nested-key.package-name)
               (ci.intern nested-key.package-version)
               (ci.intern nested-key.artifact-path)
+              (make-array u8 32)
               (tlci_loader_support.TlciResolvedMacroEntry 0 0))]
           [replacement-key : load.CompilerLoadDependencyCatalogKey
             (load.CompilerLoadDependencyCatalogKey
@@ -5998,7 +6017,9 @@
               replacement-key
               None
               (tlci.tlci-spmd-callables-empty)
-              (Unavailable (Missing "nested replacement missing")))]
+              (make-array u8 32)
+              (load.CompilerLoadDependencyCatalogStatus.Unavailable
+                (Missing "nested replacement missing")))]
           (set!
             (array-ref checks 0)
             (and

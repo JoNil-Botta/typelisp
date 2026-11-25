@@ -2387,6 +2387,41 @@
                 (TliBudgetedModuleResult.Ok record rd.owned-bytes)
                 (TliBudgetedModuleResult.Err (tli-read-error (& rd) start))))))])))
 
+;; Read only the second u32 string-pool id (`source_path`) from record `index`
+;; without decoding types, functions, or values.
+(define (tli-peek-record-source-path-at
+  [directory : (& directory TliDirectory)]
+  [index : i64]) : String
+  (when
+    (or (< index 0) (>= index (array-length directory.entries)))
+    (return ""))
+  (let
+    [entry (& (array-ref directory.entries index))]
+    [start : i64 entry.record-offset]
+    [length : i64 entry.record-len]
+    (when
+      (or
+        (< length 8)
+        (not
+          (cursor.range-present? (array-length directory.bytes) start length)))
+      (return ""))
+    (let
+      [buf : (__tl_dyn-array u8) (__tl_make-array u8 8)]
+      (for [i (iterator.range 0 8)]
+        (set! (array-ref buf i) (array-ref directory.bytes (+ start i))))
+      (let
+        [rd : binary.CompilerIncrementalBinaryReader
+          (binary.CompilerIncrementalBinaryReader
+            (cursor.new buf tli-max-work)
+            0
+            tli-max-owned-bytes
+            tli-max-string-bytes)]
+        [_name : String (tli-read-name! (&mut rd) (& directory.pool))]
+        [source : String (tli-read-name! (&mut rd) (& directory.pool))]
+        (if rd.cursor.ok?
+          source
+          "")))))
+
 (define (tli-decode-module-at
   [directory : (& directory TliDirectory)]
   [index : i64]) : TliModuleResult

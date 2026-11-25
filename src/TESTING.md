@@ -709,18 +709,16 @@ parity.
 The `package-moduleless-dep-*`, `package-repeated-*`,
 `package-moduleless-dependency-type-owner` and
 `package-dependency-alias-in-body-main` cases in
-`tests/cli/public-package.cases` pin dependency module identity. A moduleless
-dependency has its dotted identity, so it neither shares the importer's module
-nor removes the importer's macros; `check` loads it from source and `build`
-from its artifact, and both must agree. The exception is a moduleless dependency
-with macro-generated items, which keeps its artifact identity on `build` (#9750),
-so `check` can reject a program `build` accepts; the `-residual` case pins it.
+`tests/cli/public-package.cases` and the `package-tli-*` cases in
+`tests/cli/public-package-tli.cases` pin dependency module identity. A moduleless
+dependency has its dotted identity (including macro-generated items), so it
+neither shares the importer's module nor removes the importer's macros; both
+`check` and `build` load its prebuilt `.tli` artifact and must agree.
 Repeating an import binds another alias
-to the module the dependency declares. Run these with `main` inside a module
-body where a body has to execute: `typelisp test` does not yet link path
-dependencies. `package-dependency-module-holder-*` pin the one-holder rule for
-module identities; they also build through a bare `typelisp` on `PATH`, because
-the package doctest worker cannot start there and only the emit load decides.
+to the module the dependency declares. `package-dependency-module-holder-*` pin
+the one-holder rule for module identities; they also build through a bare
+`typelisp` on `PATH`, because the package doctest worker cannot start there and
+only the emit load decides.
 
 `package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
 runs separate dependency and consumer objects at opt0/1/2 on both hosts. It

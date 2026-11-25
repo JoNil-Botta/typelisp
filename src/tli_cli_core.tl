@@ -7,6 +7,7 @@
 (import compiler_tli_codec as tli_codec)
 (import compiler_tli_hydrate as hydrate)
 (import compiler_tli_types as tli)
+(import tlci_core as tlci)
 (import sym_i64_env)
 (import stdlib.arena)
 (import stdlib.byte_buf)
@@ -421,6 +422,308 @@
               ;; lint-allow: raw-arena-op -- moved from the audited compiler_driver_core module.
               (arena.tl_arena_destroy tli-arena))
             (ResultTliCatalogOpen.Err owned-message))]))))
+
+(define (tli-package-archive-path
+  [manifest-dir : (& str)]
+  [package-name : (& str)]
+  [target : target_cfg.CompilerTargetCfg]) : String
+  (let
+    [profile : String
+      (compiler_load.compiler-load-package-artifact-profile-name)]
+    [file : String
+      (match target
+        [(Linux) (str_cat.str-cat "lib" (string.copy package-name) ".a")]
+        [(Windows) (str_cat.str-cat (string.copy package-name) ".lib")])]
+    [tdir : String (fs.path-join manifest-dir "target")]
+    [pdir : String (fs.path-join (& tdir) (& profile))]
+    (fs.path-join (& pdir) (& file))))
+
+(defenum ResultTliSpmdCallables
+  (Ok tlci.TlciSpmdCallables)
+  (Err String))
+
+(define (tli-load-package-spmd-callables
+  [tlci-path : (& str)]
+  [package-name : (& str)]
+  [package-version : (& str)]
+  [target-arena : i64]) : ResultTliSpmdCallables
+  (match (tli-inspect-read-file tlci-path)
+    [(Err error)
+      (ResultTliSpmdCallables.Err
+        (str_cat.str-cat
+          "package tli: missing companion tlci '"
+          (string.copy tlci-path)
+          "': "
+          error
+          "\n"))]
+    [(Ok bytes)
+      (match (tlci.tlci-parse-image (& bytes))
+        [(Err message)
+          (ResultTliSpmdCallables.Err
+            (str_cat.str-cat
+              "package tli: invalid companion tlci '"
+              (string.copy tlci-path)
+              "': "
+              message
+              "\n"))]
+        [(Ok image)
+          (if (or
+            (not (string.eq (& image.metadata.package-name) package-name))
+            (not (string.eq (& image.metadata.package-version) package-version)))
+            (ResultTliSpmdCallables.Err
+              (str_cat.str-cat
+                "package tli: companion tlci identity mismatch for '"
+                (string.copy tlci-path)
+                "'\n"))
+            (ResultTliSpmdCallables.Ok
+              (in-arena
+                (unsafe
+                  ;; lint-allow: raw-arena-op -- copy companion metadata into bundle arena.
+                  (arena.Arena target-arena))
+                (compiler_load.compiler-load-copy-spmd-callables
+                  (& image.metadata.spmd-callables)))))])]))
+
+(define (tli-open-package-bundle-for-session!
+  [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [manifest-dir : (& str)]
+  [package-name : (& str)]
+  [package-version : (& str)]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfgs : sym_i64_env.SymI64Env]
+  [require-archive : bool]) : ResultTliCatalogOpen
+  (let
+    [canonical-root : String
+      (compiler_load.compiler-load-canonical-path manifest-dir)]
+    (when
+      (compiler_load.compiler-load-session-state-tli-has-package-root?
+        load-state
+        (& canonical-root))
+      (return ResultTliCatalogOpen.Ok))
+    (let
+      [tli-path : String
+        (compiler_load.compiler-load-package-tli-path
+          (string.copy manifest-dir)
+          (string.copy package-name))]
+      [archive-path : String
+        (tli-package-archive-path manifest-dir package-name target)]
+      [triple : String (tli-sysroot-target-triple target)]
+      (when
+        (and
+          require-archive
+          (not
+            (match (fs.try-file-kind (& archive-path))
+              [(OkFsFileKind kind) (fs.file-kind-regular? kind)]
+              [_ false])))
+        (return
+          (ResultTliCatalogOpen.Err
+            (str_cat.str-cat
+              "package tli: missing prebuilt library archive: "
+              archive-path
+              "\n"))))
+      (let
+        [enclosing : i64 (arena.tl_arena_current)]
+        [bundle-arena : i64 (arena.tl_arena_make)]
+        (unsafe
+          ;; lint-allow: raw-arena-op -- per-bundle arena destroyed deterministically at job end.
+          (arena.tl_arena_set bundle-arena))
+        (let
+          [result : ResultTliCatalogOpen
+            (match (tli-inspect-read-file (& tli-path))
+              [(Err error)
+                (ResultTliCatalogOpen.Err
+                  (str_cat.str-cat
+                    "package tli: cannot read '"
+                    (string.copy (& tli-path))
+                    "': "
+                    error
+                    "\n"))]
+              [(Ok bytes)
+                (let
+                  [build : String (identity.compiler-build-producer-identity)]
+                  [cfg-digest : (Array u8 32)
+                    (hydrate.tli-hydrate-cfg-digest cfgs)]
+                  (match (hydrate.tli-catalog-open-directory
+                    (& bytes)
+                    (& build)
+                    (& triple))
+                    [(Err failure)
+                      (ResultTliCatalogOpen.Err
+                        (str_cat.str-cat
+                          "package tli: "
+                          (string.copy (& tli-path))
+                          ": "
+                          (string.copy (& failure.message))
+                          " at byte "
+                          (string.int->string failure.offset)
+                          "\n"))]
+                    [(Ok directory)
+                      (if (!=
+                        (bit-and directory.flags tli.tli-is-stdlib-bundle)
+                        0)
+                        (ResultTliCatalogOpen.Err
+                          (str_cat.str-cat
+                            "package tli: "
+                            (string.copy (& tli-path))
+                            ": unexpected stdlib bundle flag\n"))
+                        (let
+                          [has-companion : bool
+                            (!=
+                              (bit-and
+                                directory.flags
+                                tli.tli-has-tlci-companion)
+                              0)]
+                          [spmd-res : ResultTliSpmdCallables
+                            (if has-companion
+                              (let
+                                [tlci-path : String
+                                  (compiler_load.compiler-load-package-tlci-path
+                                    (string.copy manifest-dir)
+                                    (string.copy package-name))]
+                                (tli-load-package-spmd-callables
+                                  (& tlci-path)
+                                  package-name
+                                  package-version
+                                  bundle-arena))
+                              (ResultTliSpmdCallables.Ok
+                                (tlci.tlci-spmd-callables-empty)))]
+                          (match spmd-res
+                            [(Err msg) (ResultTliCatalogOpen.Err msg)]
+                            [(Ok spmd-callables)
+                              (match (compiler_load.compiler-load-session-state-tli-attach-bundle!
+                                load-state
+                                bundle-arena
+                                false
+                                (string.copy package-name)
+                                (string.copy package-version)
+                                (string.copy (& canonical-root))
+                                (string.copy (& archive-path))
+                                spmd-callables
+                                directory
+                                (& cfg-digest))
+                                [(Ok _) ResultTliCatalogOpen.Ok]
+                                [(Err msg)
+                                  (ResultTliCatalogOpen.Err
+                                    (str_cat.str-cat
+                                      "package tli: "
+                                      (string.copy (& tli-path))
+                                      ": "
+                                      msg
+                                      "\n"))])])))]))])]
+          (unsafe
+            ;; lint-allow: raw-arena-op -- restore caller arena.
+            (arena.tl_arena_set enclosing))
+          (match result
+            [(Ok) ResultTliCatalogOpen.Ok]
+            [(Err msg)
+              (let
+                [owned-msg : String (string.copy (& msg))]
+                (unsafe
+                  ;; lint-allow: raw-arena-op -- destroy failed bundle arena.
+                  (arena.tl_arena_destroy bundle-arena))
+                (ResultTliCatalogOpen.Err owned-msg))]))))))
+
+(define (tli-svec-contains? [items : (& svec.Vec)] [target : (& str)]) : bool
+  (for [i (iterator.range 0 (svec.len items))]
+    (when (string.eq (& (array-ref items.slots i)) target) (return true)))
+  false)
+
+(define (tli-open-transitive-deps-walk!
+  [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfgs : sym_i64_env.SymI64Env]
+  [require-archive : bool]
+  [visited : (&mut svec.Vec)]) : ResultTliCatalogOpen
+  (let
+    [count : i64 (compiler_load.compiler-pkg-dep-list-count (& deps.ordered))]
+    (for [i (iterator.range 0 count)]
+      (let
+        [dep : compiler_load.CompilerPkgDep
+          (compiler_load.compiler-pkg-dep-list-at (& deps.ordered) i)]
+        [dep-dir : String
+          (compiler_load.compiler-load-normalize-path
+            (if (compiler_load.compiler-load-absolute-path? (& dep.path))
+              (string.copy (& dep.path))
+              (compiler_load.compiler-load-join-root-path
+                (string.copy manifest-dir)
+                (string.copy (& dep.path)))))]
+        [canonical : String
+          (compiler_load.compiler-load-canonical-path (& dep-dir))]
+        (unless
+          (tli-svec-contains? visited (& canonical))
+          (svec.push-ref! visited (string.copy (& canonical)))
+          (let
+            [mpath : String
+              (compiler_load.compiler-load-join-root-path
+                (string.copy (& dep-dir))
+                "typelisp.pkg")]
+            (match (compiler_load.compiler-load-session-try-read-input-text
+              (& mpath))
+              [(ErrIoString error)
+                (return
+                  (ResultTliCatalogOpen.Err
+                    (str_cat.str-cat
+                      "package tli: cannot read manifest '"
+                      mpath
+                      "': "
+                      (io.error-message error)
+                      "\n")))]
+              [(OkIoString text)
+                (match (compiler_load.compiler-load-parse-manifest-diagnostic-infer-kind
+                  (string.copy (& mpath))
+                  (& text))
+                  [(Err _)
+                    (return
+                      (ResultTliCatalogOpen.Err
+                        (str_cat.str-cat
+                          "package tli: invalid manifest '"
+                          mpath
+                          "'\n")))]
+                  [(Ok manifest)
+                    (match (tli-open-transitive-deps-walk!
+                      load-state
+                      (& dep-dir)
+                      (& manifest.deps)
+                      target
+                      cfgs
+                      require-archive
+                      visited)
+                      [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
+                      [(Ok)
+                        (match (tli-open-package-bundle-for-session!
+                          load-state
+                          (& dep-dir)
+                          (& manifest.name)
+                          (& manifest.version)
+                          target
+                          cfgs
+                          require-archive)
+                          [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
+                          [(Ok) unit])])])])))))
+    ResultTliCatalogOpen.Ok))
+
+(define (tli-open-transitive-package-deps-for-session!
+  [load-state : (& compiler_load.CompilerLoadSessionState)]
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]
+  [target : target_cfg.CompilerTargetCfg]
+  [cfgs : sym_i64_env.SymI64Env]
+  [require-archive : bool]) : ResultTliCatalogOpen
+  (when
+    (compiler_load.compiler-load-session-state-dependency-tlci-force-source?
+      load-state)
+    (return ResultTliCatalogOpen.Ok))
+  (let
+    [visited : svec.Vec (svec.new)]
+    (tli-open-transitive-deps-walk!
+      load-state
+      manifest-dir
+      deps
+      target
+      cfgs
+      require-archive
+      (&mut visited))))
 
 (define (tli-sysroot-target-dir [root : (& str)] [target : (& str)]) : String
   (let

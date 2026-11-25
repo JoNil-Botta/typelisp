@@ -436,6 +436,30 @@
               status
               (clean-merge-status
                 status
+                (clean-remove-package-file
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  name
+                  dry-run
+                  (build_cli_core.build-package-tli-path-profile
+                    (owned_view.compiler-owned-shared-view manifest-dir)
+                    (owned_view.compiler-owned-shared-view name)
+                    (build_cli_core.BuildProfile.Dev)))))
+            (set!
+              status
+              (clean-merge-status
+                status
+                (clean-remove-package-file
+                  (owned_view.compiler-owned-shared-view manifest-dir)
+                  name
+                  dry-run
+                  (build_cli_core.build-package-tli-path-profile
+                    (owned_view.compiler-owned-shared-view manifest-dir)
+                    (owned_view.compiler-owned-shared-view name)
+                    (build_cli_core.BuildProfile.Release)))))
+            (set!
+              status
+              (clean-merge-status
+                status
                 (clean-remove-package-dir
                   (owned_view.compiler-owned-shared-view manifest-dir)
                   name

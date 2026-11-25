@@ -483,7 +483,7 @@ for host in linux windows; do
             cmp "$work/advisory-only.ids" "$work/$host.full" || fail 'advisory-only match omitted an unknown required consumer'
         done
     done
-    for path in scripts/ci-verify.sh scripts/lib-ci-gates.sh scripts/ci-gates.d/bootstrap-compiler.tsv .github/workflows/ci.yml tests/public-tools/example.sh tests/fixtures/ci-affected/history.tsv; do
+    for path in scripts/ci-verify.sh scripts/lib-ci-gates.sh scripts/lib-ci-local.sh scripts/ci-gates.d/bootstrap-compiler.tsv .github/workflows/ci.yml tests/public-tools/example.sh tests/fixtures/ci-affected/history.tsv; do
         printf '%s\n' "$path" > "$work/paths"
         "$selector" --host "$host" --paths "$work/paths" > "$work/harness.ids"
         cmp "$work/harness.ids" "$work/$host.full" || fail "harness path did not select full table: $path"
@@ -689,6 +689,27 @@ printf 'docs/guide.md\n' > "$work/scope/docs-only"
 env -u GITHUB_ACTIONS TYPELISP_CI_LOCAL_SCOPE_PATHS="$work/scope/docs-only" "$ROOT/scripts/check-shared-view-count.sh" > "$work/shared-view.out" 2>&1 ||
     fail 'the scoped shared-view check failed'
 grep -F 'touches no src/ or stdlib/ source' "$work/shared-view.out" > /dev/null || fail 'the shared-view check ignored the local scope'
+# A scoped lint run over a non-src .tl file must succeed even when zero src/ files match.
+lint_repo="$work/lint-scope-repo"
+mkdir -p "$lint_repo/scripts" "$lint_repo/tests/integration"
+cp "$ROOT/scripts/check-tl-lint.sh" "$ROOT/scripts/lib-ci-local.sh" "$ROOT/scripts/lib-ci-timing.sh" \
+    "$ROOT/scripts/lib-gate.sh" "$ROOT/scripts/lib-bounded-pool.sh" "$lint_repo/scripts/"
+printf '(define (main) : i64 0)\n' > "$lint_repo/tests/integration/unique_scoped_lint.tl"
+git -C "$lint_repo" init -q
+git -C "$lint_repo" add .
+git -C "$lint_repo" -c user.name=Test -c user.email=test@example.invalid commit -qm lint-fixture
+cat > "$work/scope/fake-typelisp" <<'FAKE'
+#!/usr/bin/env sh
+printf 'lint: 0 finding(s)\n'
+exit 0
+FAKE
+chmod +x "$work/scope/fake-typelisp"
+printf 'tests/integration/unique_scoped_lint.tl\n' > "$work/scope/unique-tl"
+env -u GITHUB_ACTIONS TYPELISP_BIN="$work/scope/fake-typelisp" TYPELISP_CI_LOCAL_SCOPE_PATHS="$work/scope/unique-tl" \
+    "$lint_repo/scripts/check-tl-lint.sh" > "$work/lint-scoped.out" 2>&1 ||
+    fail 'the scoped tl-lint check failed on a non-src .tl file'
+grep -F '[tl-lint] local changed-file scope: 1 of 1 file(s)' "$work/lint-scoped.out" > /dev/null ||
+    fail 'the scoped tl-lint check did not report its local scope'
 # Hosted CI fails closed on any local-only variable, before any gate starts.
 for hosted in "$ROOT/scripts/ci-verify.sh --gates shared-view-count-ratchet" "$ROOT/scripts/check-shared-view-count.sh"; do
     for variable in TYPELISP_CI_LOCAL_CACHE TYPELISP_CI_LOCAL_SCOPE_PATHS; do

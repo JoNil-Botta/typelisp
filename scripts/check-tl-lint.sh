@@ -55,11 +55,21 @@ NAME_CASE_PROBE="$WORKDIR/name-case-probe.tl"
 NAME_CASE_PROBE_STDOUT="$WORKDIR/name-case-probe.stdout"
 NAME_CASE_PROBE_STDERR="$WORKDIR/name-case-probe.stderr"
 
-# Explicit compiler table failures must identify their operation. Scan tokens
-# rather than lines so comments, strings and a split call cannot fool the guard.
-# Extern declarations remain legal for test fixtures importing the old symbol.
-ABORT_GUARD="$WORKDIR/located-abort.awk"
-cat > "$ABORT_GUARD" <<'EOF'
+# A local scripts/ci-affected.sh --run whose change leaves src/, stdlib/ and
+# scripts/ alone cannot introduce a compiler-abort violation in src/ and lints
+# only the files it touches (scripts/lib-ci-local.sh).
+. "$ROOT/scripts/lib-ci-local.sh"
+TL_LINT_SCOPED=0
+if ci_local_scope_active; then
+    TL_LINT_SCOPED=1
+fi
+
+if [ "$TL_LINT_SCOPED" -eq 0 ]; then
+    # Explicit compiler table failures must identify their operation. Scan tokens
+    # rather than lines so comments, strings and a split call cannot fool the guard.
+    # Extern declarations remain legal for test fixtures importing the old symbol.
+    ABORT_GUARD="$WORKDIR/located-abort.awk"
+    cat > "$ABORT_GUARD" <<'EOF'
 function token(value) {
     if (value ~ /(^|\.)tl_oob_abort$/ &&
         !(previous == "(" && before_previous == "extern")) {
@@ -100,33 +110,34 @@ FNR == 1 {
 }
 END { exit failed }
 EOF
-ABORT_SOURCES="$WORKDIR/located-abort-sources.txt"
-git ls-files --cached --others --exclude-standard 'src/*.tl' \
-    | grep -v '^src/tests/' | grep -v '_tests\.tl$' \
-    | sort -u > "$ABORT_SOURCES"
-[ -s "$ABORT_SOURCES" ] || fail "compiler abort guard selected no sources"
-if ! xargs awk -f "$ABORT_GUARD" < "$ABORT_SOURCES"; then
-    fail "Use compiler_abort with a table/caller message for compiler invariant failures."
-fi
-ABORT_PROBE="$WORKDIR/located-abort-probe.tl"
-cat > "$ABORT_PROBE" <<'EOF'
+    ABORT_SOURCES="$WORKDIR/located-abort-sources.txt"
+    git ls-files --cached --others --exclude-standard 'src/*.tl' \
+        | grep -v '^src/tests/' | grep -v '_tests\.tl$' \
+        | sort -u > "$ABORT_SOURCES"
+    [ -s "$ABORT_SOURCES" ] || fail "compiler abort guard selected no sources"
+    if ! xargs awk -f "$ABORT_GUARD" < "$ABORT_SOURCES"; then
+        fail "Use compiler_abort with a table/caller message for compiler invariant failures."
+    fi
+    ABORT_PROBE="$WORKDIR/located-abort-probe.tl"
+    cat > "$ABORT_PROBE" <<'EOF'
 ;; A comment mentioning (tl_oob_abort) is not a call.
 (extern (tl_oob_abort) : never)
 (define (message) : String "(tl_oob_abort)")
 EOF
-awk -f "$ABORT_GUARD" "$ABORT_PROBE" \
-    || fail "compiler abort guard rejected a comment, string or declaration"
-cat >> "$ABORT_PROBE" <<'EOF'
+    awk -f "$ABORT_GUARD" "$ABORT_PROBE" \
+        || fail "compiler abort guard rejected a comment, string or declaration"
+    cat >> "$ABORT_PROBE" <<'EOF'
 (define (bad) : never (ci.tl_oob_abort
 ))
 EOF
-if awk -f "$ABORT_GUARD" "$ABORT_PROBE" \
-    > "$WORKDIR/located-abort-probe.stdout"; then
-    fail "compiler abort guard missed the split-call rejection probe"
+    if awk -f "$ABORT_GUARD" "$ABORT_PROBE" \
+        > "$WORKDIR/located-abort-probe.stdout"; then
+        fail "compiler abort guard missed the split-call rejection probe"
+    fi
+    grep -F ': compiler abort lacks table/caller identity' \
+        "$WORKDIR/located-abort-probe.stdout" >/dev/null \
+        || fail "compiler abort guard rejection probe returned the wrong diagnostic"
 fi
-grep -F ': compiler abort lacks table/caller identity' \
-    "$WORKDIR/located-abort-probe.stdout" >/dev/null \
-    || fail "compiler abort guard rejection probe returned the wrong diagnostic"
 
 # Lint every git-tracked TypeLisp source that is expected to parse as a source
 # unit. The excluded paths are fixture harness inputs rather than direct source
@@ -138,10 +149,7 @@ git ls-files '*.tl' \
     | grep -v '^tests/safety/' \
     | sort > "$FILES"
 
-# A local scripts/ci-affected.sh --run whose change leaves src/, stdlib/ and
-# scripts/ alone lints only the files it touches (scripts/lib-ci-local.sh).
-. "$ROOT/scripts/lib-ci-local.sh"
-if ci_local_scope_active; then
+if [ "$TL_LINT_SCOPED" -eq 1 ]; then
     ci_local_scope_filter "$FILES" "$FILTERED_FILES"
     ci_local_scope_report tl-lint "$FILTERED_FILES" "$FILES"
     mv "$FILTERED_FILES" "$FILES"
@@ -231,7 +239,7 @@ if ! [ "$LINT_BATCH_SIZE" -gt 0 ] 2>/dev/null; then
     exit 2
 fi
 src_concat_count=$(awk '/^src\// { count++ } END { print count + 0 }' "$FILES")
-if [ "$src_concat_count" -eq 0 ]; then
+if [ "$src_concat_count" -eq 0 ] && [ "$TL_LINT_SCOPED" -eq 0 ]; then
     echo "src deprecated-concat lint selected no tracked TypeLisp files" >&2
     exit 1
 fi
@@ -395,6 +403,10 @@ if [ "$lint_status" -ne 0 ]; then
 fi
 
 echo "TypeLisp lint check passed for $count file(s); 0 finding(s)."
+
+if [ "$TL_LINT_SCOPED" -eq 1 ] && [ "$src_concat_count" -eq 0 ]; then
+    exit 0
+fi
 
 # The source pass above includes the concat rule. Keep its independent negative
 # control so a dropped opt-in flag cannot make a clean corpus falsely pass.

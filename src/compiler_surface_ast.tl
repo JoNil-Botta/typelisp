@@ -668,7 +668,7 @@
     [context : (&mut context codec.SurfaceAstWriteContext)]
     [metadata : (& ast.AstImportedSpmdMetadata)]) : unit
     (match metadata
-      [(No) (codec.surface-ast-write-i64! out 0)]
+      [(or (No) (Inline _ _ _)) (codec.surface-ast-write-i64! out 0)]
       [(Package _ _ name callables)
         (codec.surface-ast-write-i64! out 1)
         (codec.surface-ast-write-name! out context (ci.intern-id-value name))

@@ -8,6 +8,8 @@
     (module generated.local_type_vector_user)
     (defstruct T
       (value i64))
+    (define (eq-t [left : (& left T)] [right : (& right T)]) : bool
+      (= left.value right.value))
     (import (vector.vector T) as vec)
     (define (make [value : i64]) : T
       (T value))

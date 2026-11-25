@@ -1016,7 +1016,7 @@
               [suffix : i64 0]
               (unless
                 (= (string.string-length fragment) 0)
-                (while (svec.contains? (& seen) (string.copy (& alias)))
+                (while (svec.contains? (& seen) (& alias))
                   (set! suffix (+ suffix 1))
                   (set!
                     alias

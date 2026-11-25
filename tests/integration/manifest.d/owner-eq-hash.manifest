@@ -1,0 +1,5 @@
+# Native integration cases: owner-side eq.gen/hash.gen hooks, the Eq/Hash law, and opaque keys (#7034, #7049, #8103, #8183).
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+stdlib_owner_eq_hash|all|-|tests/integration/stdlib_owner_eq_hash.tl|42|-|-|stdlib/eq.tl stdlib/hash.tl stdlib/clone.tl stdlib/hashmap.tl stdlib/set.tl|-
+owner_eq_hash_opaque|all|-|tests/integration/owner_eq_hash_opaque.tl|42|-|-|owner_eq_hash_token.tl stdlib/eq.tl stdlib/hash.tl stdlib/clone.tl stdlib/hashmap.tl stdlib/set.tl|-

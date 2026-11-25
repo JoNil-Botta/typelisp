@@ -235,6 +235,10 @@
     (key i64)
     (order i64)))
 
+(cfg test (import stdlib.eq))
+
+(cfg test (stdlib.eq.gen SortTestItem))
+
 (cfg test (import stdlib.test))
 (cfg test (import (stdlib.vector.vector i64) as i64v))
 (cfg test (import (stdlib.sort.vec i64) as i64sort))

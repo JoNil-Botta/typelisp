@@ -1199,6 +1199,13 @@
             [addr : i64
               (unsafe
                 (cast (ptr->int (__tl_array-data cell)) : i64))]
+            ;; On-demand O2 / SPMD compact-IR hydration reads every attached
+            ;; bundle through the box's multi-catalog.
+            (set!
+              (array-ref cell 0).facts.catalog-ptr
+              (+
+                addr
+                (comptime (offset-of (type CompilerLoadTliCatalogBox) multi))))
             (unsafe
               (arena.tl_arena_set enclosing)
               (let
@@ -1366,6 +1373,23 @@
               (-
                 (cast (ptr->int (ptr-addr-of holder.facts)) : i64)
                 (cast (ptr->int (ptr-addr-of holder)) : i64)))
+            0))))))
+
+(define (compiler-load-session-state-tli-catalog-ptr
+  [state : (& CompilerLoadSessionState)]) : i64
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      0
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (if (> holder.facts.hydrated-module-count 0)
+            (+
+              addr
+              (comptime (offset-of (type CompilerLoadTliCatalogBox) multi)))
             0))))))
 
 (define (compiler-load-tli-addr-has-module?

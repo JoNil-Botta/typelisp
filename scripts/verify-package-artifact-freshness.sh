@@ -483,6 +483,10 @@ if [ "$HOST_OS" = linux ]; then
     [ "$identity_calls" -gt "$after_calls" ] || fail "tool identity change did not invoke native tools"
 fi
 
+# A comptime-only (macro body) edit leaves the native archive alone but still
+# rewrites fresh_dep.tli: its module records stamp the edited source's
+# source_sha256 and the rebuilt companion's tlci_sha256, so the snapshot covers
+# both interface files.
 snapshot "$WORK/comptime-tlci.before" "$DEP_TLCI" "$DEP_TLI"
 sed 's/`(+ ,value 1)/`(+ ,value 2)/' "$WORK/pkg/vendor/dep/src/lib.tl" > "$WORK/dep.next"
 mv "$WORK/dep.next" "$WORK/pkg/vendor/dep/src/lib.tl"

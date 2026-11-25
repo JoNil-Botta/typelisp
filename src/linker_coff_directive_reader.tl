@@ -81,7 +81,7 @@
 
 (stdlib.clone.gen-clone CoffDirectiveRecord)
 
-(import (vector.vector CoffDirectiveRecord) as record_vec)
+(import (vector.vector CoffDirectiveRecord core) as record_vec)
 
 ;: Stable failure classes for consumers; the message adds the object, section,
 ;: byte range and the offending spelling.

@@ -1,10 +1,13 @@
 ;; module_macro_generated_body_imports_param_vector_module.tl - generated module
 ;; bodies can import stdlib.vector locally and then instantiate `(vector.vector T)`
 ;; using the enclosing module macro's type parameter.
+(import stdlib.eq)
 (import stdlib.test)
 
 (defstruct Pair
   (value i64))
+
+(eq.gen Pair)
 
 (defmacro (vector-user [T : type]) : Module
   (let

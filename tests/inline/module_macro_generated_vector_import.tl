@@ -1,10 +1,13 @@
 ;; module_macro_generated_vector_import.tl - generated module bodies can import
 ;; generated vector modules through an inner module-macro import.
+(import stdlib.eq)
 (import stdlib.test)
 (import stdlib.vector)
 
 (defstruct Pair
   (value i64))
+
+(eq.gen Pair)
 
 (defmacro (vector-user [T : type]) : Module
   (let

@@ -1,11 +1,14 @@
 ;; Scalar `for` selects the iterator protocol from source ownership, evaluates
 ;; every source once, and stops at the shortest source when clauses are zipped.
+(import stdlib.eq)
 (import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.vector)
 
 (defstruct ForCounter
   (value i64))
+
+(eq.gen ForCounter)
 
 (import (vector.vector ForCounter) as counters)
 

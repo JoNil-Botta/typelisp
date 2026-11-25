@@ -5251,10 +5251,13 @@
 
 ;; The dynamic-index register pool mirror of scavenge-exclude-regs2, extended
 ;; with the ALU destination home.
+;; The dynamic-index register pool mirror of scavenge-exclude-regs2, extended
+;; with the ALU destination and non-loaded operand homes.
 (define (compiler-backend-gep-load-alu-index-exclude
   [base-reg : String]
   [offset-home : String]
-  [dst-home : String]) : (__tl_dyn-array String)
+  [dst-home : String]
+  [x-home : String]) : (__tl_dyn-array String)
   (__tl_make-array
     "%rax"
     "%rdx"
@@ -5263,7 +5266,8 @@
     (if (string.eq offset-home "")
       base-reg
       offset-home)
-    dst-home))
+    dst-home
+    x-home))
 
 (define (compiler-backend-emit-gep-load-alu
   [type-segment-bases : i64]
@@ -5286,6 +5290,15 @@
         backend-state
         assignments
         alu-dst)]
+    ;; #9976: `x` is read into dst-home AFTER the address is staged, so every
+    ;; scavenge also excludes x's home -- an emergency-borrowed register is
+    ;; preserved across the bracketed text but not during it (the
+    ;; compiler-backend-scavenge-emergency-cand-index soundness rule).
+    [x-home : String
+      (be_operand.compiler-backend-value-scalar-register
+        backend-state
+        assignments
+        x)]
     (match displacement
       [(Some disp)
         (let
@@ -5301,9 +5314,10 @@
             (if (string.eq base-home "")
               (be_operand.compiler-backend-scavenge-reg
                 alu-dst
-                (be_operand.compiler-backend-one-exclude
-                  (be_state.compiler-backend-global-shared-view dst-home))
-                1
+                (be_operand.compiler-backend-two-exclude
+                  (be_state.compiler-backend-global-shared-view dst-home)
+                  x-home)
+                2
                 "%r10"
                 backend-state)
               base-home)]
@@ -5351,10 +5365,11 @@
               base-home
               (be_operand.compiler-backend-scavenge-reg
                 alu-dst
-                (be_operand.compiler-backend-two-exclude
+                (be_operand.compiler-backend-three-exclude
                   (be_state.compiler-backend-global-shared-view offset-home)
-                  (be_state.compiler-backend-global-shared-view dst-home))
-                2
+                  (be_state.compiler-backend-global-shared-view dst-home)
+                  (string.copy (& x-home)))
+                3
                 "%r10"
                 backend-state))]
           [use-offset-home? : bool
@@ -5370,8 +5385,9 @@
                 (compiler-backend-gep-load-alu-index-exclude
                   (be_state.compiler-backend-global-shared-view base-reg)
                   offset-home
-                  (be_state.compiler-backend-global-shared-view dst-home))
-                6
+                  (be_state.compiler-backend-global-shared-view dst-home)
+                  x-home)
+                7
                 "%r8"
                 backend-state))]
           [addr : String
@@ -6842,37 +6858,33 @@
             ctx.current-label
             ctx.program-index
             ctx.vars))]
-      (Ok
-        (be_calls.compiler-backend-emit-branch-edges
+      [edges : be_calls.CompilerBackendBranchEdges
+        (be_calls.compiler-backend-branch-edges-plan
           ctx.backend-state
-          (be_state.compiler-backend-global-shared-view ctx.function)
           ctx.current-label
           true-label
           false-label
           true-copies
           false-copies
+          branch-fallthrough)]
+      (Ok
+        (be_calls.compiler-backend-emit-branch-edges
+          ctx.backend-state
+          (be_state.compiler-backend-global-shared-view ctx.function)
+          true-label
+          false-label
+          edges.true-target
+          edges.false-target
+          edges.true-copies
+          edges.false-copies
           branch-fallthrough
           (str_cat.str-cat
             cmp-asm
             (be_scalar.compiler-backend-emit-compare-branch-jumps
               ctx.function
-              (be_calls.compiler-backend-branch-edge-target
-                (be_calls.compiler-backend-branch-edge-label
-                  ctx.current-label
-                  "true")
-                true-label
-                true-copies)
-              (be_calls.compiler-backend-branch-edge-target
-                (be_calls.compiler-backend-branch-edge-label
-                  ctx.current-label
-                  "false")
-                false-label
-                false-copies)
-              (be_calls.compiler-backend-branch-edge-fallthrough
-                ctx.current-label
-                true-copies
-                false-copies
-                branch-fallthrough)
+              edges.true-target
+              edges.false-target
+              edges.fallthrough
               true-jcc
               false-jcc
               ctx.backend-state)))))))
@@ -14687,6 +14699,14 @@
         [instr-count : i64
           (match (& block)
             [(Block _ instrs) instrs.len])]
+        [dead-total-trap? : bool
+          (match (& block)
+            [(Block label instrs)
+              (be_calls.compiler-backend-dead-total-switch-trap-block?
+                (& blocks)
+                index
+                label
+                (& instrs))])]
         [function-state : be_state.CompilerBackendFunctionState
           (be_state.compiler-backend-state-function-state
             program-index.backend-state)]
@@ -14696,36 +14716,38 @@
             (be_state.compiler-backend-function-state-emit-instr-post-base
               function-state)
             instr-count))
-        (let
-          [_
-            (try
-              (compiler-backend-emit-block
-                type-segment-bases
-                (be_state.compiler-backend-global-shared-view function)
-                source-function
-                (be_state.compiler-backend-global-shared-view all-blocks)
-                block
-                (& predcount)
-                (compiler-backend-next-block-label-seq blocks (+ index 1))
-                assignments
-                vars
-                types
-                (be_state.compiler-backend-global-shared-view global-types)
-                (be_state.compiler-backend-global-shared-view ret-ty)
-                plan
-                (be_state.compiler-backend-global-shared-view functions)
-                (be_state.compiler-backend-global-shared-view externs)
-                program-index
-                (be_state.compiler-backend-global-shared-view spans)
-                (be_state.compiler-backend-global-shared-view span-index)
-                (be_state.compiler-backend-global-shared-view func-diag)
-                (be_state.compiler-backend-global-shared-view use-counts)
-                out))]
-          (be_scalar.compiler-backend-emergency-wrap-appended
-            out
-            mark
-            program-index.backend-state)
-          unit))))
+        (unless
+          dead-total-trap?
+          (let
+            [_
+              (try
+                (compiler-backend-emit-block
+                  type-segment-bases
+                  (be_state.compiler-backend-global-shared-view function)
+                  source-function
+                  (be_state.compiler-backend-global-shared-view all-blocks)
+                  block
+                  (& predcount)
+                  (compiler-backend-next-block-label-seq blocks (+ index 1))
+                  assignments
+                  vars
+                  types
+                  (be_state.compiler-backend-global-shared-view global-types)
+                  (be_state.compiler-backend-global-shared-view ret-ty)
+                  plan
+                  (be_state.compiler-backend-global-shared-view functions)
+                  (be_state.compiler-backend-global-shared-view externs)
+                  program-index
+                  (be_state.compiler-backend-global-shared-view spans)
+                  (be_state.compiler-backend-global-shared-view span-index)
+                  (be_state.compiler-backend-global-shared-view func-diag)
+                  (be_state.compiler-backend-global-shared-view use-counts)
+                  out))]
+            (be_scalar.compiler-backend-emergency-wrap-appended
+              out
+              mark
+              program-index.backend-state)
+            unit)))))
   (Ok ""))
 
 (define (compiler-backend-emit-blocks-into
@@ -26110,23 +26132,45 @@ tl_shared_object_init:
                   backend-state
                   (&mut records))]
               ;; Win64 renders into scratch: the unwind lowering writes the
-              ;; group's only home copy.
+              ;; group's only home copy. Loop alignment reads the final order,
+              ;; so it runs on the render; on Linux it writes the home copy.
+              [align? : bool
+                (be_state.compiler-backend-state-loop-align-enabled?
+                  backend-state)]
               [kept : String
-                (if (be_state.compiler-backend-state-emission-target-policy
-                  backend-state).seh-unwind
-                  (in-arena
-                    (arena.Arena (arena.raw-handle scratch-arena))
-                    (be_peephole.compiler-backend-win64-lower-unwind
-                      stream
-                      (be_peephole.compiler-backend-peephole-records-render
-                        records
-                        merge?
-                        merge?)
-                      (arena.Arena (arena.raw-handle home-arena))))
-                  (be_peephole.compiler-backend-peephole-records-render
-                    records
-                    merge?
-                    merge?))]
+                (cond
+                  [(be_state.compiler-backend-state-emission-target-policy
+                      backend-state).seh-unwind
+                    (in-arena
+                      (arena.Arena (arena.raw-handle scratch-arena))
+                      (be_peephole.compiler-backend-win64-lower-unwind
+                        stream
+                        (if align?
+                          (be_peephole.compiler-backend-loop-align-text
+                            (be_peephole.compiler-backend-peephole-records-render
+                              records
+                              merge?
+                              merge?)
+                            (arena.Arena (arena.raw-handle scratch-arena)))
+                          (be_peephole.compiler-backend-peephole-records-render
+                            records
+                            merge?
+                            merge?))
+                        (arena.Arena (arena.raw-handle home-arena))))]
+                  [align?
+                    (in-arena
+                      (arena.Arena (arena.raw-handle scratch-arena))
+                      (be_peephole.compiler-backend-loop-align-text
+                        (be_peephole.compiler-backend-peephole-records-render
+                          records
+                          merge?
+                          merge?)
+                        (arena.Arena (arena.raw-handle home-arena))))]
+                  [else
+                    (be_peephole.compiler-backend-peephole-records-render
+                      records
+                      merge?
+                      merge?)])]
               (be_state.CompilerBackendPeepholeSweepChunkState
                 (text_buf.append state.out kept)
                 (text_buf.empty)

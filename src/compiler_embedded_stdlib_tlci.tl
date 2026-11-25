@@ -202,8 +202,12 @@
 (define compiler-embedded-stdlib-tlci-last-image : i64
   -1)
 
+;; A cached group holds an expanded prefix of its group: the first request
+;; expands only up to the frame it needs, and a later request past that prefix
+;; expands the whole group, so a group is expanded at most twice.
 (defstruct CompilerEmbeddedStdlibTlciCachedGroup
   (ready bool)
+  (complete bool)
   (bytes (__tl_dyn-array u8)))
 
 (define compiler-embedded-stdlib-tlci-group-cache-owner : i64
@@ -292,7 +296,8 @@
 ;; ultimate owner is active, before a caller's scratch arena can claim it.
 (define (compiler-embedded-stdlib-tlci-group-cache-ensure!
   [catalog : (& catalog frames.CompilerEmbeddedStdlibTlciFrames)]
-  [group : i64]) : unit
+  [group : i64]
+  [needed : i64]) : unit
   (when
     (= compiler-embedded-stdlib-tlci-group-cache-owner 0)
     (set!
@@ -306,26 +311,43 @@
       (set!
         compiler-embedded-stdlib-tlci-group-cache
         (__tl_make-array CompilerEmbeddedStdlibTlciCachedGroup catalog.groups))))
-  (unless
-    (array-ref compiler-embedded-stdlib-tlci-group-cache group).ready
-    (in-arena
-      (unsafe
-        (arena.Arena compiler-embedded-stdlib-tlci-group-cache-owner))
-      (let
-        [bytes : (__tl_dyn-array u8)
-          (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
-            (& payload.embedded-stdlib-tlci-bytes)
-            catalog
-            group
-            0
-            (& (array-ref compiler-embedded-stdlib-tlci-model 0)))
-            [(Ok bytes) bytes]
-            [(Err _) (__tl_make-array u8 0)])]
-        (set!
-          (array-ref compiler-embedded-stdlib-tlci-group-cache group)
-          (CompilerEmbeddedStdlibTlciCachedGroup
-            true
-            (owned_view.compiler-owned-shared-view bytes)))))))
+  (let
+    [ready? : bool
+      (array-ref compiler-embedded-stdlib-tlci-group-cache group).ready]
+    [covered? : bool
+      (and
+        ready?
+        (or
+          (array-ref compiler-embedded-stdlib-tlci-group-cache group).complete
+          (<=
+            needed
+            (array-length
+              (array-ref compiler-embedded-stdlib-tlci-group-cache group).bytes))))]
+    [raw-limit : i64
+      (if (or ready? (<= needed 0))
+        0
+        needed)]
+    (unless
+      covered?
+      (in-arena
+        (unsafe
+          (arena.Arena compiler-embedded-stdlib-tlci-group-cache-owner))
+        (let
+          [bytes : (__tl_dyn-array u8)
+            (match (frames.compiler-embedded-stdlib-tlci-frames-decode-group-prefix
+              (& payload.embedded-stdlib-tlci-bytes)
+              catalog
+              group
+              raw-limit
+              (& (array-ref compiler-embedded-stdlib-tlci-model 0)))
+              [(Ok bytes) bytes]
+              [(Err _) (__tl_make-array u8 0)])]
+          (set!
+            (array-ref compiler-embedded-stdlib-tlci-group-cache group)
+            (CompilerEmbeddedStdlibTlciCachedGroup
+              true
+              (= raw-limit 0)
+              (owned_view.compiler-owned-shared-view bytes))))))))
 
 (define (compiler-embedded-stdlib-tlci-slice-frame
   [catalog : (& catalog frames.CompilerEmbeddedStdlibTlciFrames)]
@@ -335,7 +357,10 @@
   [cache-native? : bool]) : (__tl_dyn-array u8)
   (if cache-native?
     (begin
-      (compiler-embedded-stdlib-tlci-group-cache-ensure! catalog group)
+      (compiler-embedded-stdlib-tlci-group-cache-ensure!
+        catalog
+        group
+        (+ offset raw))
       (if (>
         (+ offset raw)
         (array-length
@@ -398,6 +423,25 @@
             (!= (tlci.tlci-read-u64 (& frame) 48) expected))
           (return (__tl_make-array u8 0)))
         frame))))
+
+;; The recorded SHA-256 of frame `index`'s expanded image; the frame index
+;; carries it, so nothing is expanded or hashed. An unavailable frame has no
+;; identity: `compiler-embedded-stdlib-tlci-frame-present?` is false for it.
+(define (compiler-embedded-stdlib-tlci-frame-present? [index : i64]) : bool
+  (and
+    (>= index 0)
+    (compiler-embedded-stdlib-tlci-frames-ensure!)
+    (< index (array-ref compiler-embedded-stdlib-tlci-frames 0).count)))
+
+(define (compiler-embedded-stdlib-tlci-frame-sha256 [index : i64]) : (Array
+    u8
+    32)
+  (if (compiler-embedded-stdlib-tlci-frame-present? index)
+    (frames.compiler-embedded-stdlib-tlci-frames-frame-sha256
+      (& payload.embedded-stdlib-tlci-bytes)
+      (& (array-ref compiler-embedded-stdlib-tlci-frames 0))
+      index)
+    (make-array u8 32)))
 
 (define (compiler-embedded-stdlib-tlci-copy) : (__tl_dyn-array u8)
   (if (or
@@ -4328,8 +4372,9 @@
       0
       true)))
 
-;; Function reflection used by the `for` protocol validator. Count is returned
-;; as data; return-type replaces the function value on the session stack.
+;; Function reflection used by the `for` protocol and owner-hook validators.
+;; Count is returned as data; param-type and return-type replace the function
+;; value on the session stack.
 (define (compiler-comptime-host-callback-function-param-count
   [session : i64]
   [_arg-a : i64]
@@ -4338,6 +4383,20 @@
   (compiler-comptime-host-data-callback
     session
     (compiler-comptime-host-type-query-data "function-param-count" 0)))
+
+(define (compiler-comptime-host-callback-function-param-type
+  [session : i64]
+  [arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (compiler-comptime-host-type-query!
+      "function-param-type"
+      (compiler-comptime-host-structural-session)
+      arg-a
+      0
+      false)))
 
 (define (compiler-comptime-host-callback-function-return-type
   [session : i64]

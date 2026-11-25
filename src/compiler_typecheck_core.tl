@@ -37,7 +37,6 @@
 (import token)
 (cfg compile-profile (import stdlib.profile))
 (import compiler_tli_hydrate as tli_hydrate)
-(cfg embedded-stdlib-tlci (import compiler_tli_codec as tli_codec))
 (cfg
   embedded-stdlib-tlci
   (import compiler_embedded_stdlib_tlci as embedded_tlci))
@@ -70830,6 +70829,7 @@
     [_ (Err "")]))
 
 (define (tc-spmd-inline-helper-from-decl
+  [ctx : TcContext]
   [expr-bases : i64]
   [name-id : i64]
   [module-id : i64]
@@ -70840,15 +70840,32 @@
         [body : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases body-box)]
         (Ok (Some name-id module-id params ret body)))]
-    [(Extern _ _ (Function) metadata ty)
+    [(Extern _ fn-name (Function) metadata ty)
       (match (ast.ast-extern-metadata-imported-spmd
         (ast.ast-extern-metadata-box-shared-view metadata))
-        [(No) (Ok (No))]
-        [(Package _ _ _ callables) (Ok (Imported ty callables))])]
+        [(No)
+          (let
+            [canonical-id : i64
+              (if (csym.compiler-symbol-root-module-id? module-id)
+                fn-name
+                (tc-module-name-id-by-id module-id fn-name))]
+            (match (tc-tli-hydrated-spmd-inline ctx canonical-id)
+              [(Inline params ret body-id)
+                (let
+                  [body : ast.AstExpr
+                    (ast.ast-expr-segment-bases-get expr-bases body-id)]
+                  (Ok (Some name-id module-id params ret body)))]
+              [_ (Ok (No))]))]
+        [(Package _ _ _ callables) (Ok (Imported ty callables))]
+        [(Inline params ret body-id)
+          (let
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-id)]
+            (Ok (Some name-id module-id params ret body)))])]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
-        (tc-spmd-inline-helper-from-decl expr-bases name-id module-id inner))]
+        (tc-spmd-inline-helper-from-decl ctx expr-bases name-id module-id inner))]
     [_ (Ok (No))]))
 
 (define (tc-spmd-inline-helper-lookup
@@ -70891,6 +70908,7 @@
                       (tc-context-symbols (& ctx))
                       declaration-id))]
                 (tc-spmd-inline-helper-from-decl
+                  ctx
                   expr-bases
                   lookup-id
                   module-id
@@ -71075,16 +71093,49 @@
     (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
     result))
 
+(define (tc-spmd-call-target-expr
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [func-id : i64]) : ResultTcSpmdExprInfo
+  (tc-semantic-spmd
+    ctx
+    env
+    (match (match (tc-expr
+      ctx
+      env
+      (ast.ast-expr-segment-bases-get expr-bases func-id))
+      [(Ok ty) (ResultTcType.Ok ty)]
+      [(Err message)
+        (if (tc-direct-call-target-error? message)
+          (tc-call-target-direct-name
+            ctx
+            env
+            (ast.ast-expr-segment-bases-get expr-bases func-id)
+            message)
+          (ResultTcType.Err message))])
+      [(Ok ty)
+        (tc-spmd-expr-typed
+          ctx
+          expr-bases
+          env
+          spmd-env
+          (ast.ast-expr-segment-bases-get expr-bases func-id)
+          ty)]
+      [(Err message) (ResultTcSpmdExprInfo.Err message)])))
+
 (define (tc-spmd-call-uniform-only
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
-  [func : ast.AstExpr]
+  [func-box : i64]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (let
-    [func-info (try (tc-spmd-expr ctx expr-bases env spmd-env func))]
+    [func-info
+      (try (tc-spmd-call-target-expr ctx expr-bases env spmd-env func-box))]
     (match func-info
       [(TcSpmdExprInfo _ _ func-env)
         (let
@@ -71200,11 +71251,11 @@
   [expr-ty : ast.AstType]
   [fn-ty : ast.AstType]
   [callables : (& callables ast.AstImportedSpmdCallableList)]
-  [func : ast.AstExpr]
+  [func-box : i64]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (let
     [func-info : TcSpmdExprInfo
-      (try (tc-spmd-expr ctx expr-bases env spmd-env func))]
+      (try (tc-spmd-call-target-expr ctx expr-bases env spmd-env func-box))]
     (match func-info
       [(TcSpmdExprInfo _ _ func-env)
         (let
@@ -71383,12 +71434,12 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
-  [func : ast.AstExpr]
+  [func-box : i64]
   [args : ast.AstExprList]
   [symbol : String]) : ResultTcSpmdExprInfo
   (let
     [func-info : TcSpmdExprInfo
-      (try (tc-spmd-expr ctx expr-bases env spmd-env func))]
+      (try (tc-spmd-call-target-expr ctx expr-bases env spmd-env func-box))]
     (match func-info
       [(TcSpmdExprInfo _ _ func-env)
         (let
@@ -71409,19 +71460,28 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (let
     [symbol (try (tc-spmd-atomic-call-symbol ctx env spmd-env func))]
     (if (string.eq symbol "")
-      (tc-spmd-inline-call ctx expr-bases env spmd-env expr-ty func args)
+      (tc-spmd-inline-call
+        ctx
+        expr-bases
+        env
+        spmd-env
+        expr-ty
+        func-box
+        func
+        args)
       (tc-spmd-atomic-call-with-symbol
         ctx
         expr-bases
         env
         spmd-env
         expr-ty
-        func
+        func-box
         args
         symbol))))
 
@@ -71431,6 +71491,7 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (let
@@ -71499,7 +71560,7 @@
             expr-ty
             fn-ty
             (& callable-items)
-            func
+            func-box
             args))]
       [(No)
         (tc-spmd-call-uniform-only
@@ -71508,7 +71569,7 @@
           env
           spmd-env
           expr-ty
-          func
+          func-box
           args)])))
 
 (define (tc-spmd-inline-call
@@ -71517,6 +71578,7 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr-ty : ast.AstType]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : ResultTcSpmdExprInfo
   (if (tc-type-env-scoped-runtime-active? env)
@@ -71530,11 +71592,20 @@
           env
           spmd-env
           expr-ty
+          func-box
           func
           args)]
       (tc-type-env-scoped-runtime-restore! saved)
       result)
-    (tc-spmd-inline-call-inner ctx expr-bases env spmd-env expr-ty func args)))
+    (tc-spmd-inline-call-inner
+      ctx
+      expr-bases
+      env
+      spmd-env
+      expr-ty
+      func-box
+      func
+      args)))
 
 (define (tc-spmd-masked-if-inline-helper-body
   [ctx : TcContext]
@@ -71631,6 +71702,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
+  [func-box : i64]
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [expr : ast.AstExpr]) : ResultTcUnit
@@ -71649,7 +71721,7 @@
               (match (tc-expr ctx env expr)
                 [(Ok ty) ty]
                 [(Err _) (Unit)])
-              func
+              func-box
               args
               symbol))]
         Ok))))
@@ -72716,7 +72788,15 @@
               "varying calls inside masked branches")]
           [(>= ps-kind 0) Ok]
           [else
-            (tc-spmd-masked-if-call ctx expr-bases env spmd-env func args expr)]))]
+            (tc-spmd-masked-if-call
+              ctx
+              expr-bases
+              env
+              spmd-env
+              func-box
+              func
+              args
+              expr)]))]
     [(Syscall _)
       (tc-spmd-masked-if-unsupported "varying calls inside masked branches")]
     [(While cond-box body-box)
@@ -74459,7 +74539,15 @@
                   (tc-spmd-finish expr-ty Uniform args-env))])]
           [(>= ps-kind 0) (tc-spmd-finish expr-ty Uniform spmd-env)]
           [else
-            (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)]))]
+            (tc-spmd-atomic-call
+              ctx
+              expr-bases
+              env
+              spmd-env
+              expr-ty
+              func-box
+              func
+              args)]))]
     [(If cond-box then-branch-box else-branch-box)
       (let
         [cond : ast.AstExpr
@@ -96640,6 +96728,16 @@
         name-id
         (tc-module-name-id-by-id mod-id name-id)))))
 
+(define (tc-tli-hydrated-spmd-inline [ctx : TcContext] [canonical-id : i64]) : ast.AstImportedSpmdMetadata
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (or (= facts-ptr 0) (< canonical-id 0))
+      (ast.AstImportedSpmdMetadata.No)
+      (tli_hydrate.tli-hydrated-facts-resolve-spmd-inline-from-ptr!
+        facts-ptr
+        canonical-id
+        (tc-context-pools ctx)))))
+
 (define (tc-tli-hydrated-seed-global-effects!
   [owner : TcContext]
   [collector : (&mut collector TcGlobalEffectCollector)]
@@ -116181,45 +116279,9 @@
 
 (cfg
   embedded-stdlib-tlci
-  (define tc-tli-native-catalog-digest-ready : (Array bool 512)
-    (make-array bool 512)))
-(cfg
-  embedded-stdlib-tlci
-  (define tc-tli-native-catalog-digest-vals : (Array (Array u8 32) 512)
-    (make-array (Array u8 32) 512)))
-
-(cfg
-  embedded-stdlib-tlci
   (define (tc-tli-native-catalog-digest [generation : i64]) : (Array u8 32)
-    (let
-      [frame : i64
-        (embedded_tlci.compiler-embedded-stdlib-tlci-session-index generation)]
-      (if (and
-        (>= frame 0)
-        (< frame 512)
-        (array-ref tc-tli-native-catalog-digest-ready frame))
-        (array-ref tc-tli-native-catalog-digest-vals frame)
-        (let
-          [digest : (Array u8 32)
-            (with-arena
-              digest-scratch
-              (let
-                [bytes : (__tl_dyn-array u8)
-                  (unsafe
-                    (embedded_tlci.compiler-embedded-stdlib-tlci-decode-frame
-                      frame
-                      true))]
-                (if (= (array-length (& bytes)) 0)
-                  (make-array u8 32)
-                  (tli_codec.tli-module-digest
-                    (& bytes)
-                    0
-                    (array-length (& bytes))))))]
-          (when
-            (and (>= frame 0) (< frame 512))
-            (set! (array-ref tc-tli-native-catalog-digest-vals frame) digest)
-            (set! (array-ref tc-tli-native-catalog-digest-ready frame) true))
-          digest)))))
+    (embedded_tlci.compiler-embedded-stdlib-tlci-frame-sha256
+      (embedded_tlci.compiler-embedded-stdlib-tlci-session-index generation))))
 
 (cfg
   embedded-stdlib-tlci

@@ -32,7 +32,11 @@
 ;:
 ;: `String` and `i64` keys share one open-addressing template. String keys
 ;: additionally get byte hashing, borrowed `(& str)` lookup/removal entry points
-;: and map-owned key copies; any other key type yields an empty module.
+;: and set-owned key copies. Any other key type hashes and compares through the
+;: `(hash.hash T)` and `(eq.eq T)` adapters, so a nominal key uses its owner's
+;: `hash-<kebab-name>` and `eq-<kebab-name>` hooks and its fields are never
+;: reflected here. Such keys also get borrowed `(& T)` `contains-borrowed?` and
+;: `remove-borrowed!` entry points and set-owned `clone.deep` key copies.
 (defmacro (set [T : type]) : Module
   (let
     [type-key-name : String (type-key T)]
@@ -52,50 +56,73 @@
       (match type-key-name
         ["String" 1]
         ["i64" 2]
-        [_ 0])]
-    (if (= key-kind 0)
-      `(begin
-        (module ,module-name))
-      (let
-        [string-key? : bool (= key-kind 1)]
-        [key-type : comptime.Expr
-          (if string-key?
-            `String
-            `i64)]
-        [key-param-type : comptime.Expr
-          (if string-key?
-            `(& key str)
-            `i64)]
-        [key-arg : comptime.Expr
-          (if string-key?
-            `(& key)
-            `key)]
-        [owned-key : comptime.Expr
-          (if string-key?
-            `(stdlib.string.copy (& key))
-            `key)]
-        [key-eq : comptime.Expr
-          (if string-key?
-            `(key-eq-borrowed? existing key)
-            `(= existing key))]
-        [probe-from-name : comptime.Expr
-          (if string-key?
-            `probe-borrowed-from
-            `probe-from)]
-        [probe-name : comptime.Expr
-          (if string-key?
-            `probe-borrowed
-            `probe)]
-        [contains-name : comptime.Expr
-          (if string-key?
-            `contains-borrowed?
-            `contains?)]
-        [remove-name : comptime.Expr
-          (if string-key?
-            `remove-borrowed-ref!
-            `remove-ref!)]
-        [hash-key-def : comptime.Expr
-          (if string-key?
+        ;; A unit value has no reference form, so unit keys are hashed and
+        ;; compared by value.
+        [_
+          (if (string-eq (type-kind T) "unit")
+            4
+            3)])]
+    (if (if (= key-kind 3)
+      (type-cleanup-owning? T)
+      false)
+      (comptime.comptime-error
+        (comptime.string-append
+          "set: unsupported cleanup-owning key "
+          type-key-name))
+      unit)
+    (let
+      [string-key? : bool (= key-kind 1)]
+      [generated-key? : bool (= key-kind 3)]
+      [borrowed-key? : bool
+        (if string-key?
+          true
+          generated-key?)]
+      [key-type : comptime.Expr
+        (match key-kind
+          [1 `String]
+          [2 `i64]
+          [_ T])]
+      [key-param-type : comptime.Expr
+        (match key-kind
+          [1 `(& key str)]
+          [2 `i64]
+          [4 T]
+          [_ `(& key ,T)])]
+      [key-arg : comptime.Expr
+        (if borrowed-key?
+          `(& key)
+          `key)]
+      [owned-key : comptime.Expr
+        (match key-kind
+          [1 `(stdlib.string.copy (& key))]
+          [2 `key]
+          [4 `key]
+          [_ `(stdlib.clone.deep key)])]
+      [key-eq : comptime.Expr
+        (match key-kind
+          [1 `(key-eq-borrowed? existing key)]
+          [2 `(= existing key)]
+          [4 `(key_eq.eq existing key)]
+          [_ `(key_eq.eq (& existing) key)])]
+      [probe-from-name : comptime.Expr
+        (if borrowed-key?
+          `probe-borrowed-from
+          `probe-from)]
+      [probe-name : comptime.Expr
+        (if borrowed-key?
+          `probe-borrowed
+          `probe)]
+      [contains-name : comptime.Expr
+        (if borrowed-key?
+          `contains-borrowed?
+          `contains?)]
+      [remove-name : comptime.Expr
+        (if borrowed-key?
+          `remove-borrowed-ref!
+          `remove-ref!)]
+      [hash-key-def : comptime.Expr
+        (match key-kind
+          [1
             `(define (hash-key [key : (& key str)]) : i64
               (let
                 [n : i64 (key-length key)]
@@ -108,136 +135,178 @@
                       (+ (+ (* hash 131) (cast (key-ref key i) : i64)) 1)
                       2147483647))
                   (set! i (+ i 1)))
-                hash))
+                hash))]
+          [2
             `(define (hash-key [key : i64]) : i64
-              (hash-normalize key)))]
-        [string-imports : comptime.ExprList
-          (if string-key?
+              (hash-normalize key))]
+          [4
+            `(define (hash-key [key : ,T]) : i64
+              (key_hash.hash key))]
+          [_
+            `(define (hash-key [key : (& key ,T)]) : i64
+              (key_hash.hash key))])]
+      [unit-type : comptime.Expr (comptime.type-expr T)]
+      [string-imports : comptime.ExprList
+        (match key-kind
+          [1
             (comptime.expr-list-cons
               `(import stdlib.string)
-              (comptime.expr-list-empty))
-            (comptime.expr-list-empty))]
-        [string-key-helpers : comptime.ExprList
-          (if string-key?
+              (comptime.expr-list-empty))]
+          [2 (comptime.expr-list-empty)]
+          ;; A bare `unit` is not a type argument; pass it as a type literal.
+          [4
             (comptime.expr-list-cons
-              `(define (key-length [key : (& key str)]) : i64
-                (__tl_string_length key))
+              `(import stdlib.eq)
               (comptime.expr-list-cons
-                `(define (key-ref [key : (& key str)] [index : i64]) : char
-                  (__tl_string_ref key index))
-                (comptime.expr-list-empty)))
-            (comptime.expr-list-empty))]
-        [string-key-eq : comptime.ExprList
-          (if string-key?
+                `(import stdlib.hash)
+                (comptime.expr-list-cons
+                  `(import (eq.eq ,unit-type) as key_eq)
+                  (comptime.expr-list-cons
+                    `(import (hash.hash ,unit-type) as key_hash)
+                    (comptime.expr-list-empty)))))]
+          [_
             (comptime.expr-list-cons
-              `(define (key-eq-borrowed?
-                [left : String]
-                [right : (& right str)]) : bool
-                (let
-                  [left-len : i64 (key-length (& left))]
-                  [right-len : i64 (key-length right)]
-                  (if (not (= left-len right-len))
-                    false
-                    (let
-                      [i : i64 0]
-                      [same : bool true]
-                      (while (if same
-                        (< i left-len)
-                        false)
-                        (if (= (key-ref (& left) i) (key-ref right i))
-                          (set! i (+ i 1))
-                          (set! same false)))
-                      same))))
-              (comptime.expr-list-empty))
-            (comptime.expr-list-empty))]
-        [owned-contains : comptime.ExprList
-          (if string-key?
+              `(import stdlib.clone)
+              (comptime.expr-list-cons
+                `(import stdlib.eq)
+                (comptime.expr-list-cons
+                  `(import stdlib.hash)
+                  (comptime.expr-list-cons
+                    `(import (eq.eq ,T) as key_eq)
+                    (comptime.expr-list-cons
+                      `(import (hash.hash ,T) as key_hash)
+                      (comptime.expr-list-empty))))))])]
+      [string-key-helpers : comptime.ExprList
+        (if string-key?
+          (comptime.expr-list-cons
+            `(define (key-length [key : (& key str)]) : i64
+              (__tl_string_length key))
             (comptime.expr-list-cons
-              `(define (contains? [set : (& set Set)] [key : String]) : bool
-                (contains-borrowed? set (& key)))
-              (comptime.expr-list-empty))
-            (comptime.expr-list-empty))]
-        [owned-remove : comptime.ExprList
-          (if string-key?
-            (comptime.expr-list-cons
-              `(define (remove-ref! [set : (&mut set Set)] [key : String]) : unit
-                (remove-borrowed-ref! set (& key)))
-              (comptime.expr-list-empty))
-            (comptime.expr-list-empty))]
-        [borrowed-remove-macro : comptime.ExprList
-          (if string-key?
-            (comptime.expr-list-cons
-              `(defmacro (remove-borrowed! [place : Expr] [key : Expr]) : unit
-                (expr-mut-call1
-                  (expr-var ,remove-borrowed-helper-name)
-                  place
-                  key))
-              (comptime.expr-list-empty))
-            (comptime.expr-list-empty))]
-        `(begin
-          (module ,module-name)
-          ,@string-imports
-          (defenum Slot
-            (Empty)
-            (Tombstone)
-            (Occupied ,key-type i64))
-          (defenum Probe
-            (Found i64)
-            (Absent i64)
-            (Full))
-          (defstruct Set
-            (slots (__tl_dyn-array Slot))
-            (len i64)
-            (deleted i64))
-          (defenum Entry
-            (None)
-            (Some ,key-type))
-          ,@string-key-helpers
-          (define (hash-normalize [value : i64]) : i64
-            (let
-              [m : i64 2147483647]
-              [raw : i64 (% value m)]
-              (if (< raw 0)
-                (+ raw m)
-                raw)))
-          ,hash-key-def
-          ,@string-key-eq
-          (define (round-capacity [capacity : i64]) : i64
-            (let
-              [rounded : i64 1]
-              (while (< rounded capacity)
-                (set! rounded (* rounded 2)))
-              rounded))
-          (define (bucket-index [hash : i64] [capacity : i64]) : i64
-            (bit-and (hash-normalize hash) (- capacity 1)))
-          (define (next-index [index : i64] [capacity : i64]) : i64
-            (let
-              [next : i64 (+ index 1)]
-              (if (>= next capacity)
-                0
-                next)))
-          (define (insert-slot [first-tombstone : i64] [empty-index : i64]) : i64
-            (if (>= first-tombstone 0)
-              first-tombstone
-              empty-index))
-          ;; A slot read in place (callers keep `index` below the capacity): the
-          ;; set keeps owning its key, which a by-value match would move out.
-          (define (slot-at [set : (& set Set)] [index : i64]) : Slot
-            (unsafe
-              (ptr-read (ptr-offset (__tl_array-data set.slots) index))))
-          (define (,probe-from-name
-            [set : (& set Set)]
-            [capacity : i64]
-            [key : ,key-param-type]
-            [hash : i64]
-            [index : i64]
-            [seen : i64]
-            [first-tombstone : i64]) : Probe
-            (if (>= seen capacity)
-              (Probe.Full)
-              (match (slot-at set index)
-                [Slot.Empty (Probe.Absent (insert-slot first-tombstone index))]
-                [Slot.Tombstone
+              `(define (key-ref [key : (& key str)] [index : i64]) : char
+                (__tl_string_ref key index))
+              (comptime.expr-list-empty)))
+          (comptime.expr-list-empty))]
+      [string-key-eq : comptime.ExprList
+        (if string-key?
+          (comptime.expr-list-cons
+            `(define (key-eq-borrowed? [left : String] [right : (& right str)]) : bool
+              (let
+                [left-len : i64 (key-length (& left))]
+                [right-len : i64 (key-length right)]
+                (if (not (= left-len right-len))
+                  false
+                  (let
+                    [i : i64 0]
+                    [same : bool true]
+                    (while (if same
+                      (< i left-len)
+                      false)
+                      (if (= (key-ref (& left) i) (key-ref right i))
+                        (set! i (+ i 1))
+                        (set! same false)))
+                    same))))
+            (comptime.expr-list-empty))
+          (comptime.expr-list-empty))]
+      [owned-contains : comptime.ExprList
+        (if borrowed-key?
+          (comptime.expr-list-cons
+            `(define (contains? [set : (& set Set)] [key : ,key-type]) : bool
+              (contains-borrowed? set (& key)))
+            (comptime.expr-list-empty))
+          (comptime.expr-list-empty))]
+      [owned-remove : comptime.ExprList
+        (if borrowed-key?
+          (comptime.expr-list-cons
+            `(define (remove-ref! [set : (&mut set Set)] [key : ,key-type]) : unit
+              (remove-borrowed-ref! set (& key)))
+            (comptime.expr-list-empty))
+          (comptime.expr-list-empty))]
+      [borrowed-remove-macro : comptime.ExprList
+        (if borrowed-key?
+          (comptime.expr-list-cons
+            `(defmacro (remove-borrowed! [place : Expr] [key : Expr]) : unit
+              (expr-mut-call1 (expr-var ,remove-borrowed-helper-name) place key))
+            (comptime.expr-list-empty))
+          (comptime.expr-list-empty))]
+      `(begin
+        (module ,module-name)
+        ,@string-imports
+        (defenum Slot
+          (Empty)
+          (Tombstone)
+          (Occupied ,key-type i64))
+        (defenum Probe
+          (Found i64)
+          (Absent i64)
+          (Full))
+        (defstruct Set
+          (slots (__tl_dyn-array Slot))
+          (len i64)
+          (deleted i64))
+        (defenum Entry
+          (None)
+          (Some ,key-type))
+        ,@string-key-helpers
+        (define (hash-normalize [value : i64]) : i64
+          (let
+            [m : i64 2147483647]
+            [raw : i64 (% value m)]
+            (if (< raw 0)
+              (+ raw m)
+              raw)))
+        ,hash-key-def
+        ,@string-key-eq
+        (define (round-capacity [capacity : i64]) : i64
+          (let
+            [rounded : i64 1]
+            (while (< rounded capacity)
+              (set! rounded (* rounded 2)))
+            rounded))
+        (define (bucket-index [hash : i64] [capacity : i64]) : i64
+          (bit-and (hash-normalize hash) (- capacity 1)))
+        (define (next-index [index : i64] [capacity : i64]) : i64
+          (let
+            [next : i64 (+ index 1)]
+            (if (>= next capacity)
+              0
+              next)))
+        (define (insert-slot [first-tombstone : i64] [empty-index : i64]) : i64
+          (if (>= first-tombstone 0)
+            first-tombstone
+            empty-index))
+        ;; A slot read in place (callers keep `index` below the capacity): the
+        ;; set keeps owning its key, which a by-value match would move out.
+        (define (slot-at [set : (& set Set)] [index : i64]) : Slot
+          (unsafe
+            (ptr-read (ptr-offset (__tl_array-data set.slots) index))))
+        (define (,probe-from-name
+          [set : (& set Set)]
+          [capacity : i64]
+          [key : ,key-param-type]
+          [hash : i64]
+          [index : i64]
+          [seen : i64]
+          [first-tombstone : i64]) : Probe
+          (if (>= seen capacity)
+            (Probe.Full)
+            (match (slot-at set index)
+              [Slot.Empty (Probe.Absent (insert-slot first-tombstone index))]
+              [Slot.Tombstone
+                (,probe-from-name
+                  set
+                  capacity
+                  key
+                  hash
+                  (next-index index capacity)
+                  (+ seen 1)
+                  (if (>= first-tombstone 0)
+                    first-tombstone
+                    index))]
+              [(Slot.Occupied existing existing-hash)
+                (if (if (= existing-hash hash)
+                  ,key-eq
+                  false)
+                  (Probe.Found index)
                   (,probe-from-name
                     set
                     capacity
@@ -245,161 +314,148 @@
                     hash
                     (next-index index capacity)
                     (+ seen 1)
-                    (if (>= first-tombstone 0)
-                      first-tombstone
-                      index))]
-                [(Slot.Occupied existing existing-hash)
-                  (if (if (= existing-hash hash)
-                    ,key-eq
-                    false)
-                    (Probe.Found index)
-                    (,probe-from-name
-                      set
-                      capacity
-                      key
-                      hash
-                      (next-index index capacity)
-                      (+ seen 1)
-                      first-tombstone))])))
-          (define (,probe-name
-            [set : (& set Set)]
-            [capacity : i64]
-            [key : ,key-param-type]
-            [hash : i64]) : Probe
-            (,probe-from-name
-              set
-              capacity
-              key
-              hash
-              (bucket-index hash capacity)
-              0
-              -1))
-          (define (with-capacity [capacity : i64]) : Set
-            (let
-              [cap : i64
-                (round-capacity
-                  (if (< capacity 1)
-                    1
-                    capacity))]
-              (Set (__tl_make-array Slot cap) 0 0)))
-          (define (new) : Set
-            (with-capacity 8))
-          (define (len [set : (& set Set)]) : i64
-            set.len)
-          (define (capacity [set : (& set Set)]) : i64
-            (array-length set.slots))
-          ;; A read: callers pass it alongside a shared borrow of the slots.
-          (define (capacity-mut [set : (& set Set)]) : i64
-            (array-length set.slots))
-          (define (needs-grow? [set : (&mut set Set)]) : bool
-            (> (* (+ set.len 1) 4) (* (capacity-mut set) 3)))
-          (define (grow [set : (&mut set Set)]) : unit
-            (let
-              [old-capacity : i64 (array-length set.slots)]
-              [new-capacity : i64
-                (if (< old-capacity 1)
+                    first-tombstone))])))
+        (define (,probe-name
+          [set : (& set Set)]
+          [capacity : i64]
+          [key : ,key-param-type]
+          [hash : i64]) : Probe
+          (,probe-from-name
+            set
+            capacity
+            key
+            hash
+            (bucket-index hash capacity)
+            0
+            -1))
+        (define (with-capacity [capacity : i64]) : Set
+          (let
+            [cap : i64
+              (round-capacity
+                (if (< capacity 1)
                   1
-                  (* old-capacity 2))]
-              [fresh : (__tl_dyn-array Slot)
-                (__tl_make-array Slot new-capacity)]
-              [scan : i64 0]
-              (while (< scan old-capacity)
-                (match (slot-at set scan)
-                  [(Slot.Occupied key hash)
-                    (let
-                      [index : i64 (bucket-index hash new-capacity)]
-                      [seen : i64 0]
-                      [placed : bool false]
-                      (while (if placed
-                        false
-                        (< seen new-capacity))
-                        (match (unsafe
-                          (ptr-read (ptr-offset (__tl_array-data fresh) index)))
-                          [Slot.Empty
-                            (set!
-                              (array-ref fresh index)
-                              (Slot.Occupied ,owned-key hash))
-                            (set! placed true)]
-                          [_
-                            (set! index (next-index index new-capacity))
-                            (set! seen (+ seen 1))])))]
-                  [_ unit])
-                (set! scan (+ scan 1)))
-              (set! set.slots fresh)
-              (set! set.deleted 0)))
-          (define (,contains-name [set : (& set Set)] [key : ,key-param-type]) : bool
-            (match (,probe-name set (capacity set) key (hash-key key))
-              [(Probe.Found _) true]
-              [_ false]))
-          ,@owned-contains
-          (define (insert-ref! [set : (&mut set Set)] [key : ,key-type]) : unit
-            (if (needs-grow? set)
-              (grow set)
-              unit)
-            (let
-              [hash : i64 (hash-key ,key-arg)]
-              (match (,probe-name set (capacity-mut set) ,key-arg hash)
-                [(Probe.Found _) unit]
-                [(Probe.Absent index)
+                  capacity))]
+            (Set (__tl_make-array Slot cap) 0 0)))
+        (define (new) : Set
+          (with-capacity 8))
+        (define (len [set : (& set Set)]) : i64
+          set.len)
+        (define (capacity [set : (& set Set)]) : i64
+          (array-length set.slots))
+        ;; A read: callers pass it alongside a shared borrow of the slots.
+        (define (capacity-mut [set : (& set Set)]) : i64
+          (array-length set.slots))
+        (define (needs-grow? [set : (&mut set Set)]) : bool
+          (> (* (+ set.len 1) 4) (* (capacity-mut set) 3)))
+        (define (grow [set : (&mut set Set)]) : unit
+          (let
+            [old-capacity : i64 (array-length set.slots)]
+            [new-capacity : i64
+              (if (< old-capacity 1)
+                1
+                (* old-capacity 2))]
+            [fresh : (__tl_dyn-array Slot) (__tl_make-array Slot new-capacity)]
+            [scan : i64 0]
+            (while (< scan old-capacity)
+              (match (slot-at set scan)
+                [(Slot.Occupied key hash)
                   (let
-                    [was-tombstone : bool
-                      (match (slot-at set index)
-                        [Slot.Tombstone true]
-                        [_ false])]
-                    (set! (array-ref set.slots index) (Slot.Occupied key hash))
-                    (set! set.len (+ set.len 1))
-                    (if was-tombstone
-                      (set! set.deleted (- set.deleted 1))
-                      unit))]
-                [Probe.Full
-                  (grow set)
-                  (insert-ref! set key)])))
-          (define (,remove-name [set : (&mut set Set)] [key : ,key-param-type]) : unit
-            (match (,probe-name set (capacity-mut set) key (hash-key key))
-              [(Probe.Found index)
-                (set! (array-ref set.slots index) (Slot.Tombstone))
-                (set! set.len (- set.len 1))
-                (set! set.deleted (+ set.deleted 1))]
-              [_ unit]))
-          ,@owned-remove
-          (define (next-occupied [set : (& set Set)] [from : i64]) : i64
-            (let
-              [index : i64
-                (if (< from 0)
-                  0
-                  from)]
-              [cap : i64 (capacity set)]
-              [found : bool false]
-              (while (if found
-                false
-                (< index cap))
-                (match (slot-at set index)
-                  [(Slot.Occupied _ _) (set! found true)]
-                  [_ (set! index (+ index 1))]))
-              index))
-          (define (entry-at [set : (& set Set)] [index : i64]) : Entry
-            (if (if (>= index 0)
-              (< index (capacity set))
-              false)
+                    [index : i64 (bucket-index hash new-capacity)]
+                    [seen : i64 0]
+                    [placed : bool false]
+                    (while (if placed
+                      false
+                      (< seen new-capacity))
+                      (match (unsafe
+                        (ptr-read (ptr-offset (__tl_array-data fresh) index)))
+                        [Slot.Empty
+                          (set!
+                            (array-ref fresh index)
+                            (Slot.Occupied ,owned-key hash))
+                          (set! placed true)]
+                        [_
+                          (set! index (next-index index new-capacity))
+                          (set! seen (+ seen 1))])))]
+                [_ unit])
+              (set! scan (+ scan 1)))
+            (set! set.slots fresh)
+            (set! set.deleted 0)))
+        (define (,contains-name [set : (& set Set)] [key : ,key-param-type]) : bool
+          (match (,probe-name set (capacity set) key (hash-key key))
+            [(Probe.Found _) true]
+            [_ false]))
+        ,@owned-contains
+        (define (insert-ref! [set : (&mut set Set)] [key : ,key-type]) : unit
+          (if (needs-grow? set)
+            (grow set)
+            unit)
+          (let
+            [hash : i64 (hash-key ,key-arg)]
+            (match (,probe-name set (capacity-mut set) ,key-arg hash)
+              [(Probe.Found _) unit]
+              [(Probe.Absent index)
+                (let
+                  [was-tombstone : bool
+                    (match (slot-at set index)
+                      [Slot.Tombstone true]
+                      [_ false])]
+                  (set! (array-ref set.slots index) (Slot.Occupied key hash))
+                  (set! set.len (+ set.len 1))
+                  (if was-tombstone
+                    (set! set.deleted (- set.deleted 1))
+                    unit))]
+              [Probe.Full
+                (grow set)
+                (insert-ref! set key)])))
+        (define (,remove-name [set : (&mut set Set)] [key : ,key-param-type]) : unit
+          (match (,probe-name set (capacity-mut set) key (hash-key key))
+            [(Probe.Found index)
+              (set! (array-ref set.slots index) (Slot.Tombstone))
+              (set! set.len (- set.len 1))
+              (set! set.deleted (+ set.deleted 1))]
+            [_ unit]))
+        ,@owned-remove
+        (define (next-occupied [set : (& set Set)] [from : i64]) : i64
+          (let
+            [index : i64
+              (if (< from 0)
+                0
+                from)]
+            [cap : i64 (capacity set)]
+            [found : bool false]
+            (while (if found
+              false
+              (< index cap))
               (match (slot-at set index)
-                [(Slot.Occupied key _) (Entry.Some ,owned-key)]
-                [_ (Entry.None)])
-              (Entry.None)))
-          (define (entry-key-or [entry : Entry] [fallback : ,key-type]) : ,key-type
-            (match entry
-              [(Entry.Some key) key]
-              [Entry.None fallback]))
-          ;; Public set updates take a caller place. The `*-ref!` helpers are
-          ;; retained only for code that already owns an explicit mutable ref.
-          ;; Direct CTFE helper aliases avoid another generated-module comptime
-          ;; import; the generated module body is materialized by its own imports.
-          (defmacro (insert! [place : Expr] [key : Expr]) : unit
-            (expr-mut-call1 (expr-var ,insert-helper-name) place key))
-          (defmacro (remove! [place : Expr] [key : Expr]) : unit
-            (expr-mut-call1 (expr-var ,remove-helper-name) place key))
-          ,@borrowed-remove-macro)))))
+                [(Slot.Occupied _ _) (set! found true)]
+                [_ (set! index (+ index 1))]))
+            index))
+        (define (entry-at [set : (& set Set)] [index : i64]) : Entry
+          (if (if (>= index 0)
+            (< index (capacity set))
+            false)
+            (match (slot-at set index)
+              [(Slot.Occupied key _) (Entry.Some ,owned-key)]
+              [_ (Entry.None)])
+            (Entry.None)))
+        (define (entry-key-or [entry : Entry] [fallback : ,key-type]) : ,key-type
+          (match entry
+            [(Entry.Some key) key]
+            [Entry.None fallback]))
+        ;; Public set updates take a caller place. The `*-ref!` helpers are
+        ;; retained only for code that already owns an explicit mutable ref.
+        ;; Direct CTFE helper aliases avoid another generated-module comptime
+        ;; import; the generated module body is materialized by its own imports.
+        (defmacro (insert! [place : Expr] [key : Expr]) : unit
+          (expr-mut-call1 (expr-var ,insert-helper-name) place key))
+        (defmacro (remove! [place : Expr] [key : Expr]) : unit
+          (expr-mut-call1 (expr-var ,remove-helper-name) place key))
+        ,@borrowed-remove-macro))))
 
 ;; Inline test coverage.
+(cfg test (import stdlib.clone))
+(cfg test (import stdlib.eq))
+(cfg test (import stdlib.hash))
 (cfg test (import stdlib.test))
 (cfg test (import (set String) as strset))
 (cfg test (import (set i64) as i64set))
@@ -567,3 +623,62 @@
           (i64set.len (& s))
           "duplicate set macro requests share the generated type")
         unit))))
+
+;: Nominal key fixture with generated owner equality and hash hooks.
+(cfg
+  test
+  (defstruct SetTestKey
+    (id i64)
+    (label String)))
+
+(cfg test (stdlib.clone.gen-clone SetTestKey))
+
+(cfg test (stdlib.eq.gen SetTestKey))
+
+(cfg test (stdlib.hash.gen SetTestKey))
+
+(cfg test (import (set SetTestKey) as keyset))
+
+(cfg
+  test
+  (test
+    set-nominal-key-owner-hooks
+    (let
+      [s : keyset.Set (keyset.with-capacity 2)]
+      [one-again : SetTestKey (SetTestKey 1 "one")]
+      [two : SetTestKey (SetTestKey 2 "two")]
+      [three : SetTestKey (SetTestKey 3 "three")]
+      [id-sum : i64 0]
+      (keyset.insert! s (SetTestKey 1 "one"))
+      (keyset.insert! s (SetTestKey 2 "two"))
+      (keyset.insert! s (SetTestKey 1 "one"))
+      (test.assert-i64-eq
+        (keyset.len (& s))
+        2
+        "equal nominal insert is idempotent")
+      (test.assert-true
+        (keyset.contains-borrowed? (& s) (& one-again))
+        "distinct equal key is found through the owner hooks")
+      (test.assert-false
+        (keyset.contains-borrowed? (& s) (& three))
+        "absent key is not found")
+      (keyset.insert! s (SetTestKey 3 "three"))
+      (test.assert-i64-eq (keyset.len (& s)) 3 "nominal set grows")
+      (test.assert-true
+        (keyset.contains? (& s) (SetTestKey 3 "three"))
+        "owned lookup after growth")
+      (keyset.remove-borrowed! s (& two))
+      (test.assert-false
+        (keyset.contains-borrowed? (& s) (& two))
+        "borrowed remove tombstones the key")
+      (test.assert-true
+        (keyset.contains-borrowed? (& s) (& three))
+        "remove keeps the other keys")
+      (let
+        [index : i64 (keyset.next-occupied (& s) 0)]
+        (while (< index (keyset.capacity (& s)))
+          (match (keyset.entry-at (& s) index)
+            [(keyset.Entry.Some key) (+= id-sum key.id)]
+            [keyset.Entry.None unit])
+          (set! index (keyset.next-occupied (& s) (+ index 1)))))
+      (test.assert-i64-eq id-sum 4 "bucket iteration sees the live keys"))))

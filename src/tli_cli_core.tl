@@ -245,33 +245,6 @@
               (tli-sysroot-dir-overrides-stdlib? (& root))
               (tli-sysroot-dir-overrides-stdlib? (& sub)))))])))
 
-;; SPMD `foreach` may inline stdlib helper bodies (`math.f64-clamp`, `min`,
-;; ...), which stdlib.tli omits until it carries compact IR. An entry program
-;; that spells a `foreach` form therefore keeps the source stdlib.
-;; The bytes of `(foreach`.
-(define tli-foreach-form : (Array u8 8)
-  (array 40 102 111 114 101 97 99 104))
-
-(define (tli-sysroot-entry-uses-foreach? [entry-path : (& str)]) : bool
-  (match (tli-inspect-read-file entry-path)
-    [(Err _) false]
-    [(Ok bytes)
-      (let
-        [last : i64 (- (array-length bytes) 8)]
-        [start : i64 0]
-        (while (<= start last)
-          (let
-            [index : i64 0]
-            (while (and
-              (< index 8)
-              (=
-                (array-ref bytes (+ start index))
-                (array-ref tli-foreach-form index)))
-              (+= index 1))
-            (when (= index 8) (return true)))
-          (+= start 1))
-        false)]))
-
 (defenum TliSysrootOpenCatalog
   (Active hydrate.TliCatalog String String)
   (Inactive)
@@ -283,21 +256,18 @@
 ;; sysroot).
 (define (tli-sysroot-open-catalog
   [options : (& TliSysrootOptions)]
-  [entry-path : (& str)]
+  [_entry-path : (& str)]
   [target : target_cfg.CompilerTargetCfg]
   [stdlib-roots : (& svec.Vec)]
   [cfgs : sym_i64_env.SymI64Env]
-  [opt-level : i64]
+  [_opt-level : i64]
   [require-archive : bool]) : TliSysrootOpenCatalog
   (cfg (not embedded-stdlib-tlci) (return Inactive))
-  ;; Keep -O2 on source stdlib until HAS_COMPACT_IR is populated in Stage 3.
-  (when (= opt-level 2) (return Inactive))
   (when options.disabled (return Inactive))
   ;; Settle every sysroot-independent fallback before discovery: discovery
   ;; reads the executable path, so its cost depends on where the compiler is
   ;; installed, and a job that keeps the source stdlib must not pay it.
   (when (tli-sysroot-stdlib-roots-override? stdlib-roots) (return Inactive))
-  (when (tli-sysroot-entry-uses-foreach? entry-path) (return Inactive))
   (match (tli-sysroot-discover options target)
     [(Disabled) Inactive]
     [(Missing) Inactive]

@@ -468,7 +468,8 @@
 ;; `close-cands` are COLD-1's: the record index of every noreturn abort call
 ;; and of every line that closes a function (`.size`, `.cfi_endproc`,
 ;; `.seh_endproc`, `.globl`, the debug and backtrace end labels), in emission
-;; order.
+;; order. `edge-cands` are COLD-EDGE's: the record index of every
+;; `_branch_cold_true:` / `_branch_cold_false:` edge-block label.
 (defstruct CompilerBackendPeepholeLineVec
   (lines (__tl_dyn-array CompilerBackendPeepholeLineRecord))
   (live (__tl_dyn-array i64))
@@ -479,6 +480,8 @@
   (abort-cand-len i64)
   (close-cands (__tl_dyn-array i64))
   (close-cand-len i64)
+  (edge-cands (__tl_dyn-array i64))
+  (edge-cand-len i64)
   (probe-cands (__tl_dyn-array i64))
   (probe-cand-len i64)
   ;; Record indices of simple stack LEAs, in emission order.
@@ -1164,6 +1167,9 @@
   ;; process-global opt-level switch.
   (scalar-registers-enabled bool)
   (tail-merging-enabled bool)
+  ;; Hot-loop alignment (`compiler-backend-loop-align-text`): set with the
+  ;; high-quality path and read together with `optimize-for-size`.
+  (loop-align-enabled bool)
   (optimize-for-size bool)
   (user-symbol-cache-keys (__tl_dyn-array i64))
   (user-symbol-cache-values (__tl_dyn-array String))
@@ -1285,6 +1291,7 @@
         (compiler-backend-global-shared-view intern-state)
         owner-arena
         0
+        false
         false
         false
         false
@@ -1867,7 +1874,20 @@
   (let
     [high-quality? : bool (opt_level.opt-level-full? opt-level)]
     (compiler-backend-state-set-scalar-registers-enabled! state high-quality?)
-    (compiler-backend-state-set-tail-merging-enabled! state high-quality?)))
+    (compiler-backend-state-set-tail-merging-enabled! state high-quality?)
+    (unsafe
+      (set!
+        (deref (compiler-backend-state-ptr state)).loop-align-enabled
+        high-quality?))))
+
+;; Loop tops are aligned on the full speed path only: `-Os` and opt-level < 2
+;; emit no padding at all.
+(define (compiler-backend-state-loop-align-enabled?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (and
+      (deref (compiler-backend-state-view state)).loop-align-enabled
+      (not (deref (compiler-backend-state-view state)).optimize-for-size))))
 
 (define (compiler-backend-state-optimize-for-size?
   [state : CompilerBackendState]) : bool

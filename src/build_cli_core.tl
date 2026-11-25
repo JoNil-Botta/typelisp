@@ -6368,7 +6368,7 @@
     [checked-paths : ast.AstDeclPathList]
     [job : tc_core.TcJobState]
     [let-facts : tc_core.TcCheckedLetBindingFactState]
-    [bundle : (& tli.TliBundle)]
+    [bundle : (&mut tli.TliBundle)]
     [mods-dir : (& str)]
     [target : be_state.CompilerBackendTarget]
     [mode : be_state.CompilerBackendMode]
@@ -6417,6 +6417,9 @@
               [part-result : tli_extract.ResultTliPartitionedEmit
                 (tli_extract.tli-emit-partitioned-modules!
                   bundle
+                  ""
+                  ""
+                  ""
                   whole-program
                   whole-spans
                   lower-owner
@@ -6797,7 +6800,7 @@
                       checked-paths
                       job
                       let-facts
-                      (& bundle)
+                      (&mut bundle)
                       (& mods-dir)
                       target
                       mode

@@ -1,8 +1,9 @@
 # Freestanding stdlib math stays allocation- and libm-free and assembles for
 # both targets. One case per gate (stage2-math-{exp,log,pow,trig}-codegen-verifier).
+# Inspect emitted stdlib math bodies and tables at every opt level, not archive calls.
 
 target linux-x86_64 windows-x86_64
-args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src --no-prebuilt-stdlib
 assemble
 
 file exp_codegen.tl

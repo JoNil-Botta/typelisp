@@ -11,7 +11,6 @@
 (import compiler_load as load)
 (import compiler_lower as lower)
 (import compiler_target_cfg_core as target_cfg)
-(import compiler_tli_codec as codec)
 (import compiler_tli_extract as extract)
 (import compiler_tli_types as tli)
 (import compiler_typecheck_api as api)
@@ -198,39 +197,11 @@
                 bundle-flags
                 (string.copy producer-identity)
                 (string.copy (& target-triple)))]
-            (unless
-              (extract.tli-extract-pin-imports! (&mut bundle))
-              (io.panic "TLI import cycle cannot pin module record digests"))
             (tc.tc-global-call-effects-finish! job)
-            (let
-              [encoded-arr : (__tl_dyn-array u8)
-                (codec.tli-encode-bundle (& bundle))]
-              [encoded : byte_buf.ByteBuf
-                (byte_buf.from-array
-                  (let
-                    [copy-bytes : (__tl_dyn-array u8)
-                      (__tl_make-array u8 (array-length encoded-arr))]
-                    (for [i (iterator.range 0 (array-length encoded-arr))]
-                      (set! (array-ref copy-bytes i) (array-ref encoded-arr i)))
-                    copy-bytes))]
-              (match (codec.tli-decode-directory-for
-                (& encoded-arr)
-                producer-identity
-                (& target-triple))
-                [(Err fail) (io.panic fail.message)]
-                [(Ok dir)
-                  (when
-                    (!=
-                      (array-length dir.entries)
-                      (array-length bundle.modules))
-                    (io.panic "TLI directory count mismatch"))])
-              (match (io.try-write-file tli-out (byte_buf.as-bytes (& encoded)))
-                [(OkIoUnit) unit]
-                [(ErrIoUnit _)
-                  (io.panic
-                    (str_cat.str-cat
-                      "cannot write stdlib.tli: "
-                      (string.copy tli-out)))]))
+            ;; Lower the EXACT same checked program once with opt-in module
+            ;; ownership and per-module startup wrappers, then attach v3
+            ;; compact_ir + packed optimizer summaries to `stdlib.tli` before
+            ;; emitting partitioned per-module `.s` files.
             (let
               [pools : ast.AstNodePoolContext (tc.tc-context-pools ctx)]
               [checked-program : ast.AstProgram (tc.tc-context-program ctx)]
@@ -267,7 +238,10 @@
                   [(Ok whole-program whole-spans lower-owner)
                     (tc.tc-checked-let-binding-facts-finish! let-facts)
                     (match (extract.tli-emit-partitioned-modules!
-                      (& bundle)
+                      (&mut bundle)
+                      tli-out
+                      producer-identity
+                      (& target-triple)
                       whole-program
                       whole-spans
                       lower-owner

@@ -1361,6 +1361,8 @@
     (module generated.local_type_vector_user)
     (defstruct T
       (value i64))
+    (define (eq-t [left : (& left T)] [right : (& right T)]) : bool
+      (= left.value right.value))
     (import (stdlib.vector.vector T) as vec)
     (define (make [value : i64]) : T
       (T value))
@@ -1381,7 +1383,9 @@
   `(begin
     (module generated.qualified_type_vector_provider)
     (defstruct T
-      (value i64))))
+      (value i64))
+    (define (eq-t [left : (& left T)] [right : (& right T)]) : bool
+      (= left.value right.value))))
 (defmacro (vector-user) : Module
   `(begin
     (module generated.qualified_type_vector_user)
@@ -1406,6 +1410,8 @@
         "(import stdlib.vector)
 (defstruct Pair
   (value i64))
+(define (eq-pair [left : (& left Pair)] [right : (& right Pair)]) : bool
+  (= left.value right.value))
 (defmacro (vector-user [T : type]) : Module
   `(begin
     (module generated.param_type_vector_user)
@@ -1429,7 +1435,7 @@
     (module generated.local_import_param_vector_user)
     (import stdlib.vector)
 (import (vector.vector String) as svec)
-    (import (vector.vector ,T) as vec)
+    (import (vector.vector ,T core) as vec)
     (define (score [value : ,T]) : i64
       (let
         [items : vec.Vec (vec.new)]
@@ -1610,6 +1616,8 @@
       (module generated.strategy_vector_hook)
       (defstruct T
         (value i64))
+      (define (eq-t [left : (& left T)] [right : (& right T)]) : bool
+        (= left.value right.value))
       (import (,vector-macro T) as vec)
       (define (make [value : i64]) : T
         (T value))

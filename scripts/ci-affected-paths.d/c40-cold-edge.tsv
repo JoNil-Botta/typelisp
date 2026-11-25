@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/c40_cold_edge.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Out-of-line cold loop-exit edge blocks are pinned through opt2 assembly-shape cases.

@@ -6,8 +6,11 @@
 ;#
 ;# String keys use borrowed lookup/contains/remove entry points and the stable
 ;# `hash.string-key`/`hash.key-string-eq?` rules. i64 keys use a multiplicative
-;# bucket hash and scalar equality. Other cloneable structural keys use the
-;# generated `(hash K)` and `(eq K)` modules.
+;# bucket hash and scalar equality. Other cloneable keys use the `(hash.hash K)`
+;# and `(eq.eq K)` adapters through shared borrows; a nominal key (or one that
+;# holds a nominal) needs its owner's `(eq.gen K)`/`(hash.gen K)` hooks or
+;# hand-written `eq-<kebab-name>`/`hash-<kebab-name>` hooks, and its fields are
+;# never reflected here.
 ;#
 ;# Slots are interleaved tagged structs whose state is
 ;# `Empty | Tombstone | Occupied`. The stored hash makes a probe step cheap for
@@ -88,7 +91,12 @@
       (match (type-key K)
         ["String" "string"]
         ["i64" "i64"]
-        [_ "generated"])]
+        ;; A unit value has no reference form, so unit keys are hashed and
+        ;; compared by value.
+        [_
+          (if (string.eq (type-kind K) "unit")
+            "unit"
+            "generated")])]
     [value-kind : String
       (match (type-kind V)
         ["i64" "i64"]
@@ -123,13 +131,23 @@
           (comptime.string-append "." module-key-v)))]
     [module-name : comptime.Expr (comptime.expr-var module-name-text)]
     [key-module-imports : comptime.ExprList
-      (if (string.eq key-kind "generated")
-        (comptime.expr-list-cons
-          `(import (hash.hash ,K) as key_hash)
+      (match key-kind
+        ["generated"
           (comptime.expr-list-cons
-            `(import (eq.eq ,K) as key_eq)
-            (comptime.expr-list-empty)))
-        (comptime.expr-list-empty))]
+            `(import (hash.hash ,K) as key_hash)
+            (comptime.expr-list-cons
+              `(import (eq.eq ,K) as key_eq)
+              (comptime.expr-list-empty)))]
+        ;; A bare `unit` is not a type argument; pass it as a type literal.
+        ["unit"
+          (let
+            [unit-type : comptime.Expr (comptime.type-expr K)]
+            (comptime.expr-list-cons
+              `(import (hash.hash ,unit-type) as key_hash)
+              (comptime.expr-list-cons
+                `(import (eq.eq ,unit-type) as key_eq)
+                (comptime.expr-list-empty))))]
+        [_ (comptime.expr-list-empty)])]
     [insert-helper-name : comptime.Expr
       (comptime.expr-string
         (comptime.string-append module-name-text ".insert-ref!"))]
@@ -153,9 +171,18 @@
         `(& key str)
         K)]
     [key-eq-left-type : comptime.Expr
-      (if (string.eq key-kind "string")
-        `(& left str)
-        K)]
+      (match key-kind
+        ["string" `(& left str)]
+        ["generated" `(& left ,K)]
+        [_ K])]
+    [key-eq-right-type : comptime.Expr
+      (if (string.eq key-kind "generated")
+        `(& right ,K)
+        query-key-type)]
+    [hash-key-param-type : comptime.Expr
+      (if (string.eq key-kind "generated")
+        `(& key ,K)
+        query-key-type)]
     [owned-query-key : comptime.Expr
       (match key-kind
         ["string" `(& key)]
@@ -170,6 +197,16 @@
       (if (string.eq key-kind "generated")
         `(stdlib.clone.deep key)
         `key)]
+    ;; Generated keys are hashed and compared through shared borrows, so
+    ;; hashing a key and confirming a probed slot clone nothing.
+    [owned-hash-arg : comptime.Expr
+      (if (string.eq key-kind "generated")
+        `(& key)
+        owned-query-key)]
+    [reusable-hash-arg : comptime.Expr
+      (if (string.eq key-kind "generated")
+        `(& key)
+        reusable-query-key)]
     [borrowed-value-type : comptime.Expr
       (if (string.eq value-kind "string")
         (comptime.expr-var "str")
@@ -178,6 +215,7 @@
       (match key-kind
         ["string" `(string_mod.copy (& (__tl-project-field-name slot "key")))]
         ["i64" `(__tl-project-field-name slot "key")]
+        ["unit" `(__tl-project-field-name slot "key")]
         [_ `(stdlib.clone.deep (__tl-project-field-name slot "key"))])]
     [insert-key-copy : comptime.Expr
       (if (string.eq key-kind "generated")
@@ -201,7 +239,7 @@
         [_ `(key_eq.eq left right)])]
     [probe-key-eq-body : comptime.Expr
       (if (string.eq key-kind "generated")
-        `(key-eq? ,copy-slot-key (stdlib.clone.deep key))
+        `(key-eq? (& (__tl-project-field-name slot "key")) (& key))
         `(key-eq? (__tl-project-field-name slot "key") key))]
     ;; Keep the generated i64 -> i64 hot path as lean as the former concrete
     ;; family. Its raw reads are bounded by the positive power-of-two capacity;
@@ -450,7 +488,7 @@
             (grow! map)
             unit)
           (let
-            [hash : i64 (hash-key ,owned-query-key)]
+            [hash : i64 (hash-key ,owned-hash-arg)]
             (match (probe (& map.slots) (capacity map) ,owned-query-key hash)
               [(GeneratedHashmapProbe.Found index) ,update-slot-body]
               [(GeneratedHashmapProbe.Absent index)
@@ -606,7 +644,7 @@
             (& map.slots)
             (capacity map)
             ,reusable-query-key
-            (hash-key ,reusable-query-key))
+            (hash-key ,reusable-hash-arg))
             [(GeneratedHashmapProbe.Found index) index]
             [_ -1])))]
     ;; Scalar lookup walks the probe itself rather than routing through
@@ -873,9 +911,11 @@
         (defenum Entry
           (EntryNone)
           (EntrySome ,K ,V))
-        (define (hash-key [key : ,query-key-type]) : i64
+        (define (hash-key [key : ,hash-key-param-type]) : i64
           ,hash-key-body)
-        (define (key-eq? [left : ,key-eq-left-type] [right : ,query-key-type]) : bool
+        (define (key-eq?
+          [left : ,key-eq-left-type]
+          [right : ,key-eq-right-type]) : bool
           ,key-eq-body)
         ,publish-occupied-decl
         (define (set-occupied-value!
@@ -1080,7 +1120,7 @@
           [map : (&mut map Map)]
           [key : ,query-key-type]) : (MutEntry map)
           (let
-            [hash : i64 (hash-key ,reusable-query-key)]
+            [hash : i64 (hash-key ,reusable-hash-arg)]
             [slots : (&mut map (__tl_dyn-array GeneratedHashmapSlot))
               (&mut map.slots)]
             [result : GeneratedHashmapProbe
@@ -1181,6 +1221,18 @@
 (cfg test (stdlib.clone.gen-clone HashTag))
 
 (cfg test (stdlib.clone.gen-clone HashNestedKey))
+
+(cfg test (stdlib.eq.gen HashPoint))
+
+(cfg test (stdlib.hash.gen HashPoint))
+
+(cfg test (stdlib.eq.gen HashTag))
+
+(cfg test (stdlib.hash.gen HashTag))
+
+(cfg test (stdlib.eq.gen HashNestedKey))
+
+(cfg test (stdlib.hash.gen HashNestedKey))
 
 (cfg test (import stdlib.test))
 (cfg test (import (hashmap String i64) as hashmap_string_i64))

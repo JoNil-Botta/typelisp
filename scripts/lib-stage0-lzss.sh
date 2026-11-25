@@ -39,7 +39,7 @@ scan_stage0_payloads() {
     _scan_mode=${2:-both}
     case "$_scan_mode" in
         lzss) _scan_pattern='__typelisp_embedded_stdlib_tlss_v3__' ;;
-        tlch) _scan_pattern='__typelisp_embedded_stdlib_tlci_v3__' ;;
+        tlch) _scan_pattern='__typelisp_embedded_stdlib_tlci_v4__' ;;
         both) _scan_pattern='__typelisp_embedded_stdlib_tl' ;;
         *)
             echo "unknown stage0 payload scan mode: $_scan_mode" >&2
@@ -186,12 +186,12 @@ BEGIN {
     }
 
     if (do_tlch) {
-        split("95 95 116 121 112 101 108 105 115 112 95 101 109 98 101 100 100 101 100 95 115 116 100 108 105 98 95 116 108 99 105 95 118 51 95 95", tlch_prefix)
+        split("95 95 116 121 112 101 108 105 115 112 95 101 109 98 101 100 100 101 100 95 115 116 100 108 105 98 95 116 108 99 105 95 118 52 95 95", tlch_prefix)
         # 36-byte marker + six u64 header fields + the stored model.
         tlch_model_start = 84
         tlch_model_bytes = 4413
         tlch_group_bytes = 32
-        tlch_record_bytes = 48
+        tlch_record_bytes = 80
         tlch_mode = "scan"
         tlch_matched = 0
     }

@@ -10,6 +10,7 @@
 ;; instantiates the vector (an imported nominal takes a different path), and the
 ;; element must actually require a helper (an all-scalar struct never reaches the
 ;; failing dispatch). Refs #5719.
+(import stdlib.eq)
 (import stdlib.clone)
 (import stdlib.vector)
 (import stdlib.string)
@@ -19,6 +20,8 @@
   (label String))
 
 (clone.gen-clone VecItem)
+
+(eq.gen VecItem)
 
 (import (vector.vector VecItem) as vec_item_vec)
 

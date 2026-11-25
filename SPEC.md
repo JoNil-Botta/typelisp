@@ -1377,15 +1377,20 @@ identity keys stable and must not rely on compiler-private generator names or
 marker payloads. Hashmap support is stdlib-owned: declaration-emitting module
 macros provide the public `(hashmap K V)` surface. `String` key maps support
 borrowed lookup/contains/remove wrappers; `i64` key maps use scalar keys
-directly. Aggregate-key support, where provided by a stdlib family, derives
-deterministic hash/equality from declaration-order struct fields, enum variant
-tag plus declaration-order payloads, tuple elements, or fixed-array elements.
-Supported leaves are unit, `bool`, `char`, fixed-width integers, and `String`;
-structs, enums, tuples, and fixed arrays may nest those finite structural
-members recursively when the complete key is cloneable. Unsupported key shapes
-must be rejected by the shared stdlib hash/equality policy instead of using
-source-level traits, implicit `Hash`/`Eq` bounds, runtime type IDs, or address
-hashing. Generated hashmap-style families may also
+directly. Other keys, in `(hashmap K V)` and `(set T)` alike, hash and compare
+through the `(hash.hash K)` and `(eq.eq K)` adapters on shared borrows, so a
+probe never clones a key to compare it. A nominal key, or a nominal member of
+a tuple or fixed-array key, uses its canonical owner's `hash-<kebab-name>` and
+`eq-<kebab-name>` hooks (section 7.6, `eq.gen`/`hash.gen` or hand-written) and
+is never reflected by the collection; tuples and fixed arrays combine their
+elements in order. Supported structural leaves are unit, `bool`, `char`,
+fixed-width integers, and `String`, and the complete key must be cloneable. A
+key type a collection would have to hold by value outside its module family,
+such as an `(:opaque)` type, is rejected (E0221); a sealed handle (section
+3.5.5) to one keys a collection through its owner's hooks. Unsupported key
+shapes must be rejected by the shared stdlib hash/equality policy instead of
+using source-level traits, implicit `Hash`/`Eq` bounds, runtime type IDs, or
+address hashing. Generated hashmap-style families may also
 expose borrowed-value lookup helpers such as `*-get-value-borrowed`. These
 helpers are independent from borrowed-key lookup: the key path controls
 whether lookup can inspect a borrowed key without copying it, while
@@ -4089,15 +4094,19 @@ stdlib source table through it. The embedded stdlib therefore carries no
 inline tests; those compile only under `--cfg test` from the repository
 sources (#8713). It carries no prose comment text either (#8659). The stdlib comptime image is
 embedded with `include-bin` instead, as a compiler-owned catalog envelope
-(`__typelisp_embedded_stdlib_tlci_v3__`): a header with the total raw length,
+(`__typelisp_embedded_stdlib_tlci_v4__`): a header with the total raw length,
 index end, frame count, index hash, stream length and group count; one stored
 model in the same code-lengths form as the fixed model; a group table of 32-byte
-records; an index of 48-byte frame records with names; and one token stream that
+records; an index of 80-byte frame records with names, each ending with the
+SHA-256 of its expanded frame so a `.tli` macro handle's image identity is read
+without expanding the frame; and one token stream that
 expands to every frame's `.tlci` bytes back to back. Frame zero is its own group
 and the rest come sixteen at a time, so a reader expands only the group holding
 the frame it needs: a plain compile expands the surface frame alone, and a group
 is one window, so a match may reach into the frames before it but never across
-groups. The decoded group belongs to the compile that asked for it and is
+groups. A reader first expands only the prefix of the group that ends at the
+frame it needs, and the whole group once a later frame lies past that prefix.
+The decoded group belongs to the compile that asked for it and is
 released with it; `inspect embedded:stdlib.tlci` expands every group and
 re-aggregates the frames into the canonical `.tlci` image.
 
@@ -9941,6 +9950,41 @@ and not a general manual memory management feature.
   read.
   Pass a place or an rvalue such as a call result; for a conditional or block
   (`if`, `let`, or `match`), call `clone.deep` in each result position.
+- Equality and hashing of a nominal type are owner hooks too (#7034, #7049).
+  `(eq.gen Point)` emits the ordinary function
+  `eq-point : (& Point) (& Point) -> bool` and `(hash.gen Point)` emits
+  `hash-point : (& Point) -> i64`, with the same lowercase/kebab naming as
+  `clone-point`. Each expands only in the type's exact canonical owner module:
+  a non-owner, including a dotted descendant that may inspect an `(:opaque)`
+  representation, is rejected with a diagnostic naming the type, its owner and
+  the current module, so an opaque type gets generated equality and hashing
+  only where its fields are visible (#8103, #8183). Generated equality compares
+  fields in declaration order (variant tag, then payloads, for an enum) and
+  short-circuits at the first difference; generated hashing combines the same
+  members with the scalar encodings of `stdlib.hash`. Both read their operands
+  through shared borrows and never move, copy, or unsafely read them.
+  `hash.gen` requires the owner's `eq-<kebab-name>` hook to exist first.
+  Repeating an identical generator call is idempotent; a same-name value
+  already in the owner module is a collision. An owner may instead write
+  either hook by hand for a semantic key policy; it must keep the law that
+  equal values hash equally, which the compiler cannot prove for
+  hand-written code. Nominal dependencies need their hooks before a dependent
+  generator expands.
+- `(eq.eq T)` and `(hash.hash T)` are the adapter modules collections use. Their
+  `eq`, `eq?`, and `hash` take shared borrows of `T` values (`(& str)` for
+  `String`; a `unit` operand, which has no reference form, is passed by value).
+  For a nominal `T`, or a nominal member of a tuple or fixed array, the adapter
+  calls the canonical owner hook found through module-value reflection and
+  never reflects the fields, so it works for an `(:opaque)` type outside its
+  module family. A missing hook is rejected with the expected generator call
+  and exact manual signature; a hook of the wrong arity or result kind is
+  rejected with the expected signature, and a parameter of the wrong type fails
+  ordinary typechecking at the hook call. Scalars, `String`, tuples, and fixed
+  arrays compare and hash structurally; floats compare with `=` but have no
+  hash, and references, boxes, raw pointers, functions, and dynamic arrays are
+  unsupported members with path-qualified diagnostics. A full-mode
+  `(vector T)` uses `(eq.eq T)` for its borrowed `(contains? (& v) (& x))` and
+  emits `eq-vec`, the owner equality hook of its generated `Vec`.
 - Compiler-special `(clone value)` has been removed (#7073, #8232). `clone` is
   an ordinary identifier with no compiler-special form, alias, or compatibility
   diagnostic; calling `clone` without a binding in scope fails as an ordinary

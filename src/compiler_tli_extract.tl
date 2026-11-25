@@ -3,6 +3,7 @@
 (import compiler_tli_types as tli)
 (import compiler_tli_codec as codec)
 (import compiler_tli_hydrate as hydrate)
+(import compiler_tli_compact_ir as compact_ir)
 (import compiler_ast_types as ast)
 (import compiler_backend as backend)
 (import compiler_backend_operands as be_operand)
@@ -45,6 +46,7 @@
 (import (vector.vector tli.TliMacroHandle core) as macros)
 (import (vector.vector tli.TliDispatchDecl core) as dispatches)
 (import (vector.vector tli.TliGlobalWrite core) as writes)
+(import (vector.vector tli.TliCompactBodyEntry core) as compact_bodies)
 (import (vector.vector i64) as indices)
 (cfg embedded-stdlib-tlci (import compiler_embedded_stdlib_tlci as tlci))
 
@@ -269,6 +271,10 @@
     [empty-sources : (__tl_dyn-array TliSource) (__tl_make-array TliSource 0)]
     [empty-roots : str_map.Map (str_map.with-capacity 4)]
     (tli-extract-type-in ctx (& empty-sources) (& empty-roots) ty)))
+
+;; Stdlib-only SPMD bodies name no package-local type root.
+(define (tli-extract-child [ctx : tc.TcContext] [id : i64]) : tli.TliType
+  (tli-extract-type ctx (tc.tc-context-type-get ctx id)))
 
 (define (tli-extract-cleanup-symbol
   [ctx : tc.TcContext]
@@ -803,8 +809,12 @@
       mask
       (tli-extract-finish-vector i64 extra)
       (tli-extract-copy-writes (& (array-ref facts.globals index)))
+      -1
+      (cast 0 : u8)
       0
-      0)))
+      0
+      0
+      (make-array u8 32))))
 
 ;; The declaration index of each defdispatch variant, or -1 when unresolved.
 (define (tli-extract-dispatch-variant-indices
@@ -885,8 +895,12 @@
       mask
       (tli-extract-finish-vector i64 extra)
       (tli-extract-copy-writes (& writes-out))
+      -1
+      (cast 0 : u8)
       0
-      0)))
+      0
+      0
+      (make-array u8 32))))
 
 (define (tli-extract-params
   [ctx : tc.TcContext]
@@ -1024,20 +1038,13 @@
 (cfg
   embedded-stdlib-tlci
   (define (tli-extract-native-catalog-digest [generation : i64]) : (Array u8 32)
-    (with-arena
-      digest-scratch
-      (let
-        [frame : i64
-          (tlci.compiler-embedded-stdlib-tlci-session-index generation)]
-        [bytes : (__tl_dyn-array u8)
-          (unsafe
-            ;; The decoder caches in its own arena. Only the temporary
-            ;; uncompressed frame bytes stay in digest-scratch.
-            (tlci.compiler-embedded-stdlib-tlci-decode-frame frame true))]
-        (when
-          (= (array-length (& bytes)) 0)
-          (io.panic "TLI native macro catalog is unavailable"))
-        (codec.tli-module-digest (& bytes) 0 (array-length (& bytes)))))))
+    (let
+      [frame : i64
+        (tlci.compiler-embedded-stdlib-tlci-session-index generation)]
+      (unless
+        (tlci.compiler-embedded-stdlib-tlci-frame-present? frame)
+        (io.panic "TLI native macro catalog is unavailable"))
+      (tlci.compiler-embedded-stdlib-tlci-frame-sha256 frame))))
 
 (define (tli-extract-companion-macro-index
   [companion : (& TliPackageCompanionBinding)]
@@ -1248,8 +1255,335 @@
         [(No) true]
         [_ false]))))
 
+(define (tli-extract-spmd-type-ok? [ty : (& tli.TliType)]) : bool
+  (match ty
+    [(or (tli.TliType.I64) (tli.TliType.I32) (tli.TliType.I16) (tli.TliType.I8)
+         (tli.TliType.U64) (tli.TliType.U32) (tli.TliType.U16) (tli.TliType.U8)
+         (tli.TliType.F64) (tli.TliType.F32) (tli.TliType.Bool)
+         (tli.TliType.Char) (tli.TliType.Unit))
+      true]
+    [_ false]))
+
+(define (tli-extract-spmd-sig-ok?
+  [params : (& (__tl_dyn-array tli.TliParam))]
+  [ret : (& tli.TliType)]) : bool
+  (unless (tli-extract-spmd-type-ok? ret) (return false))
+  (for [i (iterator.range 0 (array-length params))]
+    (unless
+      (tli-extract-spmd-type-ok? (& (array-ref params i).ty))
+      (return false)))
+  true)
+
+(defenum TliSpmdExprExtractResult
+  (Ok tli.TliSpmdExpr)
+  (No))
+
+(define (tli-extract-binop-tag [op : ast.AstBinOp]) : i64
+  (match op
+    [(Add) 0]
+    [(Sub) 1]
+    [(Mul) 2]
+    [(Div) 3]
+    [(Mod) 4]
+    [(Eq) 5]
+    [(Ne) 6]
+    [(Lt) 7]
+    [(Le) 8]
+    [(Gt) 9]
+    [(Ge) 10]
+    [(And) 11]
+    [(Or) 12]
+    [(BitAnd) 13]
+    [(BitOr) 14]
+    [(BitXor) 15]
+    [(Shl) 16]
+    [(Shr) 17]))
+
+(define (tli-extract-unop-tag [op : ast.AstUnOp]) : i64
+  (match op
+    [(Neg) 0]
+    [(Not) 1]
+    [(BitNot) 2]))
+
+(define (tli-extract-spmd-expr-node
+  [ctx : tc.TcContext]
+  [module-id : i64]
+  [locals : sym_i64_env.SymI64Env]
+  [expr-id : i64]
+  [budget : (&mut i64)]
+  [depth : i64]) : TliSpmdExprExtractResult
+  (when (or (<= (deref budget) 0) (> depth 48)) (return (No)))
+  (set! (deref budget) (- (deref budget) 1))
+  (match (tc.tc-context-expr-get ctx expr-id)
+    [(Spanned inner-id _)
+      (set! (deref budget) (+ (deref budget) 1))
+      (tli-extract-spmd-expr-node ctx module-id locals inner-id budget depth)]
+    [(Literal lit)
+      (Ok
+        (tli.TliSpmdExpr.Literal
+          (match lit
+            [(Int n text) (tli.TliSpmdLiteral.Int n (string.copy (& text)))]
+            [(Float text) (tli.TliSpmdLiteral.Float (string.copy (& text)))]
+            [(Bool b) (tli.TliSpmdLiteral.Bool b)]
+            [(Char c) (tli.TliSpmdLiteral.Char (cast c : i64))]
+            [(String sid) (tli.TliSpmdLiteral.String (tli-extract-name sid))]
+            [(Unit) (tli.TliSpmdLiteral.Unit)])))]
+    [(Var name-id)
+      (let
+        [raw : String (tli-extract-name name-id)]
+        [resolved : String
+          (if (or
+            (sym_i64_env.sym-i64-contains-id (& locals) name-id)
+            (symbols.compiler-symbol-root-module-id? module-id))
+            raw
+            (let
+              [qual-id : i64
+                (symbols.compiler-symbol-module-key-id-by-id module-id name-id)]
+              [handle : i64
+                (symbols.compiler-symbols-lookup-value-id-or
+                  (tc.tc-context-symbols (& ctx))
+                  qual-id
+                  (symbols.compiler-symbols-missing-handle))]
+              (if (symbols.compiler-symbols-handle-found? handle)
+                (tli-extract-name qual-id)
+                raw)))]
+        (Ok (tli.TliSpmdExpr.Var resolved)))]
+    [(Unary op inner-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        inner-id
+        budget
+        (+ depth 1))
+        [(Ok inner)
+          (Ok (tli.TliSpmdExpr.Unary (tli-extract-unop-tag op) (box inner)))]
+        [(No) (No)])]
+    [(Binary op lhs-id rhs-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        lhs-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok lhs)
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            rhs-id
+            budget
+            (+ depth 1))
+            [(No) (No)]
+            [(Ok rhs)
+              (Ok
+                (tli.TliSpmdExpr.Binary
+                  (tli-extract-binop-tag op)
+                  (box lhs)
+                  (box rhs)))])])]
+    [(Call callee-id args)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        callee-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok callee)
+          (let
+            [out : (__tl_dyn-array tli.TliSpmdExpr)
+              (__tl_make-array tli.TliSpmdExpr args.len)]
+            (for [i (iterator.range 0 args.len)]
+              (match (tli-extract-spmd-expr-node
+                ctx
+                module-id
+                locals
+                (ast.ast-expr-list-get (& args) i 0)
+                budget
+                (+ depth 1))
+                [(No) (return (No))]
+                [(Ok item) (set! (array-ref out i) item)]))
+            (Ok (tli.TliSpmdExpr.Call (box callee) out)))])]
+    [(If cond-id then-id else-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        cond-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok c)
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            then-id
+            budget
+            (+ depth 1))
+            [(No) (No)]
+            [(Ok t)
+              (match (tli-extract-spmd-expr-node
+                ctx
+                module-id
+                locals
+                else-id
+                budget
+                (+ depth 1))
+                [(No) (No)]
+                [(Ok e) (Ok (tli.TliSpmdExpr.If (box c) (box t) (box e)))])])])]
+    [(Let let-box)
+      (match (& (__tl-box-place let-box))
+        [(Let bindings body-id)
+          (let
+            [bcount : i64 (ast.ast-let-binding-list-len bindings)]
+            [out-bindings : (__tl_dyn-array tli.TliSpmdLetBinding)
+              (__tl_make-array tli.TliSpmdLetBinding bcount)]
+            [cur-locals : sym_i64_env.SymI64Env locals]
+            (for [i (iterator.range 0 bcount)]
+              (match (ast.ast-let-binding-list-get
+                bindings
+                i
+                (ast.ast-let-binding-fallback))
+                [(Binding bname maybe-ty init-id)
+                  (match (tli-extract-spmd-expr-node
+                    ctx
+                    module-id
+                    cur-locals
+                    init-id
+                    budget
+                    (+ depth 1))
+                    [(No) (return (No))]
+                    [(Ok init-e)
+                      (let
+                        [has-ty : bool
+                          (match (& maybe-ty)
+                            [(Some _) true]
+                            [(No) false])]
+                        [bty : tli.TliType
+                          (match maybe-ty
+                            [(Some ty) (tli-extract-type ctx ty)]
+                            [(No) (tli.TliType.Unit)])]
+                        (set!
+                          (array-ref out-bindings i)
+                          (tli.TliSpmdLetBinding
+                            (tli-extract-name bname)
+                            has-ty
+                            bty
+                            (box init-e)))
+                        (set!
+                          cur-locals
+                          (sym_i64_env.sym-i64-bind-id cur-locals bname 1)))])]))
+            (match (tli-extract-spmd-expr-node
+              ctx
+              module-id
+              cur-locals
+              body-id
+              budget
+              (+ depth 1))
+              [(No) (No)]
+              [(Ok body-e) (Ok (tli.TliSpmdExpr.Let out-bindings (box body-e)))]))])]
+    [(Begin items)
+      (let
+        [out : (__tl_dyn-array tli.TliSpmdExpr)
+          (__tl_make-array tli.TliSpmdExpr items.len)]
+        (for [i (iterator.range 0 items.len)]
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            (ast.ast-expr-list-get (& items) i 0)
+            budget
+            (+ depth 1))
+            [(No) (return (No))]
+            [(Ok item) (set! (array-ref out i) item)]))
+        (Ok (tli.TliSpmdExpr.Begin out)))]
+    [(Ann inner-id ty-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        inner-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok inner)
+          (Ok (tli.TliSpmdExpr.Ann (box inner) (tli-extract-child ctx ty-id)))])]
+    [(Cast inner-id ty-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        inner-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok inner)
+          (Ok (tli.TliSpmdExpr.Cast (box inner) (tli-extract-child ctx ty-id)))])]
+    [(ArrayRef base-id idx-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        base-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok base)
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            idx-id
+            budget
+            (+ depth 1))
+            [(No) (No)]
+            [(Ok idx) (Ok (tli.TliSpmdExpr.ArrayRef (box base) (box idx)))])])]
+    [(StructGet base-id field-id)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        base-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok base)
+          (Ok
+            (tli.TliSpmdExpr.StructGet (box base) (tli-extract-name field-id)))])]
+    [(Tuple items)
+      (let
+        [out : (__tl_dyn-array tli.TliSpmdExpr)
+          (__tl_make-array tli.TliSpmdExpr items.len)]
+        (for [i (iterator.range 0 items.len)]
+          (match (tli-extract-spmd-expr-node
+            ctx
+            module-id
+            locals
+            (ast.ast-expr-list-get (& items) i 0)
+            budget
+            (+ depth 1))
+            [(No) (return (No))]
+            [(Ok item) (set! (array-ref out i) item)]))
+        (Ok (tli.TliSpmdExpr.Tuple out)))]
+    [(TupleRef base-id idx)
+      (match (tli-extract-spmd-expr-node
+        ctx
+        module-id
+        locals
+        base-id
+        budget
+        (+ depth 1))
+        [(No) (No)]
+        [(Ok base) (Ok (tli.TliSpmdExpr.TupleRef (box base) idx))])]
+    [_ (No)]))
+
 (define (tli-extract-local-fn!
   [out : (&mut TliExtractModule)]
+  [bodies-out : (&mut compact_bodies.Vec)]
   [ctx : tc.TcContext]
   [sources : (& sources (__tl_dyn-array TliSource))]
   [root-type-slots : (& root-type-slots str_map.Map)]
@@ -1261,6 +1595,7 @@
   [name : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]
+  [body-box : i64]
   [meta : (& ast.AstFnMetadata)]
   [facts : (& facts TliExtractEffects)]
   [original : (& ast.AstDecl)]
@@ -1299,6 +1634,52 @@
       (match meta
         [(Export symbol) (string.copy (intern.intern-id-str symbol))]
         [_ ""])]
+    [tli-params : (__tl_dyn-array tli.TliParam)
+      (tli-extract-params ctx sources root-type-slots (& signature.params))]
+    [tli-ret : tli.TliType
+      (tli-extract-type-in ctx sources root-type-slots result)]
+    ;; Only the stdlib bundle carries compact bodies; package bundles keep
+    ;; `tli-has-compact-ir` clear so loads skip the compact-IR decode.
+    (when
+      (and
+        is-stdlib
+        (not unsafe-decl)
+        (= (bit-and summary.effect-flags 2) 0)
+        (!= (bit-and summary.effect-flags 4) 0)
+        (= (bit-and summary.effect-flags 8) 0)
+        (tli-extract-spmd-sig-ok? (& tli-params) (& tli-ret)))
+      (let
+        [locals : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
+        [budget : i64 48]
+        (for [pi (iterator.range 0 signature.params.len)]
+          (match (ast.ast-param-list-get
+            (& signature.params)
+            pi
+            (ast.ast-param-fallback))
+            [(Param pname _ _)
+              (set! locals (sym_i64_env.sym-i64-bind-id locals pname 1))]))
+        (match (tli-extract-spmd-expr-node
+          ctx
+          (tc.tc-context-module-id ctx)
+          locals
+          body-box
+          (&mut budget)
+          1)
+          [(Ok spmd-expr)
+            (set!
+              summary.effect-flags
+              (bit-or summary.effect-flags tli.tli-fn-spmd-inlineable))
+            (compact_bodies.push-ref!
+              bodies-out
+              (tli.TliCompactBodyEntry
+                (string.copy (& module-name))
+                (string.copy (& spelling))
+                (string.copy (& fn-symbol))
+                (tli.TliCompactBody
+                  tli.tli-compact-body-has-spmd-expr
+                  (tli.tli-compact-ir-body-empty)
+                  spmd-expr)))]
+          [(No) unit])))
     (functions.push-ref!
       (&mut out.functions)
       (tli.TliFnDecl
@@ -1311,8 +1692,8 @@
         false
         0
         (__tl_make-array tli.TliExternLinkInput 0)
-        (tli-extract-params ctx sources root-type-slots (& signature.params))
-        (tli-extract-type-in ctx sources root-type-slots result)
+        tli-params
+        tli-ret
         summary))))
 
 (define (tli-extract-extern!
@@ -1398,6 +1779,7 @@
 
 (define (tli-extract-decl!
   [out : (&mut TliExtractModule)]
+  [bodies-out : (&mut compact_bodies.Vec)]
   [ctx : tc.TcContext]
   [env : tc.TcTypeEnv]
   [sources : (& sources (__tl_dyn-array TliSource))]
@@ -1443,9 +1825,10 @@
           (+
             (tli-extract-flag comptime-only 1)
             (tli-extract-flag unsafe-decl 2)))]
-      [(DefFn _ name params ret _ meta)
+      [(DefFn _ name params ret body-box meta)
         (tli-extract-local-fn!
           out
+          bodies-out
           ctx
           sources
           root-type-slots
@@ -1457,6 +1840,7 @@
           name
           params
           ret
+          body-box
           (& meta)
           facts
           decl
@@ -1856,11 +2240,15 @@
 (define (tli-extract-pin-imports! [bundle : (&mut bundle tli.TliBundle)]) : bool
   (let
     [count : i64 (array-length bundle.modules)]
+    [pool (codec.tli-collect-pool bundle)]
+    [encoded-ir : codec.TliEncodedCompactIr
+      (codec.tli-encode-compact-ir-section (& pool) bundle)]
     [ctx : codec.TliWriteContext
       (codec.TliWriteContext
         false
-        (codec.tli-collect-pool bundle)
-        (buf.byte-buf-builder-new))]
+        pool
+        (buf.byte-buf-builder-new)
+        encoded-ir.metas)]
     [states : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [digests : (__tl_dyn-array sha.Sha256Digest)
       (__tl_make-array sha.Sha256Digest count)]
@@ -2018,6 +2406,7 @@
     [modules : (__tl_dyn-array tli.TliModuleRecord)
       (__tl_make-array tli.TliModuleRecord count)]
     [root-type-slots : str_map.Map (str_map.with-capacity 16)]
+    [extracted-bodies : compact_bodies.Vec (compact_bodies.new)]
     [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [names : lower.LowerNameCache
       (lower.lower-name-cache-from-env
@@ -2103,6 +2492,7 @@
             [(Ok decl)
               (tli-extract-decl!
                 (&mut (array-ref records slot))
+                (&mut extracted-bodies)
                 (tc.tc-context-with-nominal-owner-index-module ctx index)
                 env
                 sources
@@ -2149,7 +2539,20 @@
           (set!
             (array-ref sorted out-idx)
             (tuple-ref (__tl_array-take! modules avail best) 1))))
-      (tli.TliBundle bundle-flags build target sorted))))
+      (let
+        [bodies-arr : (__tl_dyn-array tli.TliCompactBodyEntry)
+          (tli-extract-finish-vector tli.TliCompactBodyEntry extracted-bodies)]
+        [final-flags : i64
+          (if (> (array-length bodies-arr) 0)
+            (bit-or bundle-flags tli.tli-has-compact-ir)
+            bundle-flags)]
+        (tli.TliBundle
+          final-flags
+          build
+          target
+          sorted
+          (__tl_make-array tli.TliCompactGlobal 0)
+          bodies-arr)))))
 
 (define (tli-extract-checked
   [ctx : tc.TcContext]
@@ -2622,8 +3025,40 @@
           (backend.compiler-backend-state-release-final-arenas! state)
           written))]))
 
+(define (tli-partition-cross-module-tiny-helper?
+  [blocks : (& ir.CompilerIrBlockList)]) : bool
+  (match blocks
+    [(ir.CompilerIrBlockList.Array block-seq)
+      (if (> block-seq.len 4)
+        false
+        (let
+          [total : i64 0]
+          [ok : bool true]
+          (for [bi (iterator.range 0 block-seq.len)]
+            (when
+              ok
+              (match (& (array-ref block-seq.slots bi))
+                [(ir.CompilerIrBlock.Block _ instrs)
+                  (set! total (+ total instrs.len))
+                  (if (> total 16)
+                    (set! ok false)
+                    (for [ii (iterator.range 0 instrs.len)]
+                      (match (& (array-ref instrs.slots ii))
+                        [(or (ir.CompilerIrInstr.Call _ _ _ _)
+                             (ir.CompilerIrInstr.CallIndirect _ _ _ _)
+                             (ir.CompilerIrInstr.CallIndirectC _ _ _ _)
+                             (ir.CompilerIrInstr.TailCall _ _ _)
+                             (ir.CompilerIrInstr.TailCallIndirect _ _ _))
+                          (set! ok false)]
+                        [_ unit])))])))
+          ok))]
+    [_ false]))
+
 (define (tli-emit-partitioned-modules!
-  [bundle : (& tli.TliBundle)]
+  [bundle : (&mut tli.TliBundle)]
+  [tli-out : (& str)]
+  [producer-identity : (& str)]
+  [target-triple : (& str)]
   [whole-program : ir.CompilerIrProgram]
   [whole-spans : ir.CompilerSourceSpans]
   [lower-state : lower.CompilerLowerState]
@@ -2695,7 +3130,7 @@
             (__tl_make-array bool module-count)]
           (for [i (iterator.range 0 ex-count)]
             (match (& (array-ref whole-externs.slots i))
-              [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided _)
+              [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided _ _)
                 (when
                   provided
                   (i64_map.insert-ref!
@@ -2790,6 +3225,10 @@
               (__tl_make-array ir.CompilerIrExtern fn-count)]
             [gl-cross-externs : (__tl_dyn-array ir.CompilerIrExtern)
               (__tl_make-array ir.CompilerIrExtern gl-count)]
+            [fn-link-syms : (__tl_dyn-array String)
+              (__tl_make-array String fn-count)]
+            [gl-link-syms : (__tl_dyn-array String)
+              (__tl_make-array String gl-count)]
             [base-reps : ir.CompilerIrRepresentationIndex
               (lower.lower-representation-index-from-layouts
                 type-segment-bases
@@ -2827,6 +3266,7 @@
                               prov-sym
                               _
                               _
+                              _
                               _)
                             (let
                               [raw : String
@@ -2847,7 +3287,10 @@
                             (be_state.compiler-backend-user-symbol-uncached
                               (string.copy (& fn-name-str))))))]
                     [link-sym-id : i64
-                      (tli-partition-intern-symbol! (&mut interns) link-sym-str)]
+                      (tli-partition-intern-symbol!
+                        (&mut interns)
+                        (string.copy (& link-sym-str)))]
+                    (set! (array-ref fn-link-syms i) link-sym-str)
                     (set!
                       (array-ref fn-cross-externs i)
                       (ir.CompilerIrExtern.Extern
@@ -2859,7 +3302,8 @@
                         link-sym-id
                         (ast.ast-extern-link-input-list-new)
                         false
-                        (ir.CompilerIrReturnStorage.None))))]))
+                        (ir.CompilerIrReturnStorage.None)
+                        false)))]))
             (for [i (iterator.range 0 gl-count)]
               (when
                 (not (array-ref gl-private i))
@@ -2874,7 +3318,8 @@
                       [link-sym-id : i64
                         (tli-partition-intern-symbol!
                           (&mut interns)
-                          link-sym-str)]
+                          (string.copy (& link-sym-str)))]
+                      (set! (array-ref gl-link-syms i) link-sym-str)
                       (set!
                         (array-ref gl-cross-externs i)
                         (ir.CompilerIrExtern.Extern
@@ -2888,7 +3333,53 @@
                           link-sym-id
                           (ast.ast-extern-link-input-list-new)
                           false
-                          (ir.CompilerIrReturnStorage.None))))])))
+                          (ir.CompilerIrReturnStorage.None)
+                          false)))])))
+            ;; The stdlib sysroot attaches v3 compact_ir + packed optimizer
+            ;; summaries, pins module digests, verifies, and writes its `.tli`
+            ;; here. Package builders write their own `.tli` (no `compact_ir`).
+            (when
+              (> (string.string-length tli-out) 0)
+              (compact_ir.tli-attach-compact-ir!
+                bundle
+                pools
+                (& interns)
+                (& whole-globals)
+                (& whole-functions)
+                (& whole-externs)
+                (& fn-skip)
+                (& fn-link-syms)
+                (& gl-link-syms)
+                (& gl-private))
+              (unless
+                (tli-extract-pin-imports! bundle)
+                (return
+                  (Err "TLI import cycle cannot pin module record digests")))
+              (let
+                [encoded : (__tl_dyn-array u8) (codec.tli-encode-bundle bundle)]
+                (match (codec.tli-decode-directory-for
+                  (& encoded)
+                  producer-identity
+                  target-triple)
+                  [(Err fail) (return (Err fail.message))]
+                  [(Ok dir)
+                    (when
+                      (!=
+                        (array-length dir.entries)
+                        (array-length bundle.modules))
+                      (return (Err "TLI directory count mismatch")))])
+                (let
+                  [encoded-buf : byte_buf.ByteBuf (byte_buf.from-array encoded)]
+                  (match (io.try-write-file
+                    tli-out
+                    (byte_buf.as-bytes (& encoded-buf)))
+                    [(OkIoUnit) unit]
+                    [(ErrIoUnit _)
+                      (return
+                        (Err
+                          (str_cat.str-cat
+                            "cannot write stdlib.tli: "
+                            (string.copy tli-out))))]))))
             ;; Emit each non-empty module independently.
             (for [m (iterator.range 0 module-count)]
               (let
@@ -2923,13 +3414,60 @@
                         (intern.intern-compat-state-capture-active))]
                     [init-globals : ir.CompilerIrGlobalSeq
                       (ir.compiler-ir-global-builder-snapshot-seq (& g-builder))]
-                    [mod-functions : ir.CompilerIrFunctionSeq
+                    [init-functions : ir.CompilerIrFunctionSeq
                       (ir.compiler-ir-function-builder-snapshot (& f-builder))]
-                    [refs : TliPartitionModuleRefs
+                    [init-refs : TliPartitionModuleRefs
                       (tli-partition-collect-module-refs
                         pools
                         (& init-globals)
-                        (& mod-functions))]
+                        (& init-functions))]
+                    [cross-avail : i64_map.Map (i64_map.with-capacity 64)]
+                    ;; At O2, attach small call-free cross-module `compact_ir`
+                    ;; helpers (`<= 16` instrs, `<= 4` blocks) with
+                    ;; `body-available = true` so `libstdlib.a` modules inline
+                    ;; trivial accessors (e.g. `string.string-length` inside
+                    ;; `formatter-write-raw-at!`) without bloating cold paths
+                    ;; or altering cross-module call boundaries.
+                    [_cross-hydrate : unit
+                      (when
+                        (and is-stdlib? (>= opt-level 2))
+                        (for [i (iterator.range 0 fn-count)]
+                          (when
+                            (and
+                              (!= (array-ref fn-owners i) m)
+                              (not (array-ref fn-skip i)))
+                            (match (& (array-ref whole-functions.slots i))
+                              [(ir.CompilerIrFunction.Function
+                                  fn-name
+                                  _
+                                  _
+                                  _
+                                  fn-blocks
+                                  _)
+                                (when
+                                  (and
+                                    (tli-partition-module-refs-contains?
+                                      (& init-refs)
+                                      fn-name)
+                                    (opt.opt-inline-compact-ir-eligible?
+                                      (& (array-ref whole-functions.slots i)))
+                                    (tli-partition-cross-module-tiny-helper?
+                                      (& fn-blocks)))
+                                  (i64_map.insert-ref! (&mut cross-avail) i 1)
+                                  (ir.compiler-ir-function-builder-push!
+                                    (&mut f-builder)
+                                    (ir.compiler-ir-clone-function
+                                      pools
+                                      (& (array-ref whole-functions.slots i)))))]))))]
+                    [mod-functions : ir.CompilerIrFunctionSeq
+                      (ir.compiler-ir-function-builder-snapshot (& f-builder))]
+                    [refs : TliPartitionModuleRefs
+                      (if (= cross-avail.len 0)
+                        init-refs
+                        (tli-partition-collect-module-refs
+                          pools
+                          (& init-globals)
+                          (& mod-functions)))]
                     [e-builder : ir.CompilerIrExternBuilder
                       (ir.compiler-ir-extern-builder-with-capacity 64)]
                     [added-externs : i64_map.Map (i64_map.with-capacity 128)]
@@ -2987,6 +3525,7 @@
                             link-id
                             _
                             provided
+                            _
                             _)
                           (when
                             (and
@@ -3030,11 +3569,40 @@
                                   (not
                                     (i64_map.contains? (& added-externs) fid)))
                                 (i64_map.insert-ref! (&mut added-externs) fid 1)
-                                (ir.compiler-ir-extern-builder-push!
-                                  (&mut e-builder)
-                                  (ir.compiler-ir-clone-extern
-                                    pools
-                                    (& (array-ref fn-cross-externs i))))))])))
+                                (let
+                                  [cloned-ext : ir.CompilerIrExtern
+                                    (ir.compiler-ir-clone-extern
+                                      pools
+                                      (& (array-ref fn-cross-externs i)))]
+                                  (if (i64_map.contains? (& cross-avail) i)
+                                    (match cloned-ext
+                                      [(ir.CompilerIrExtern.Extern
+                                          en
+                                          es
+                                          enm
+                                          ety
+                                          eabi
+                                          elink
+                                          elinks
+                                          eprov
+                                          estor
+                                          _)
+                                        (ir.compiler-ir-extern-builder-push!
+                                          (&mut e-builder)
+                                          (ir.CompilerIrExtern.Extern
+                                            en
+                                            es
+                                            enm
+                                            ety
+                                            eabi
+                                            elink
+                                            elinks
+                                            eprov
+                                            estor
+                                            true))])
+                                    (ir.compiler-ir-extern-builder-push!
+                                      (&mut e-builder)
+                                      cloned-ext)))))])))
                     ;; 4. Other modules' non-private globals referenced by this module.
                     (for [i (iterator.range 0 gl-count)]
                       (when
@@ -3126,7 +3694,9 @@
                           true
                           mod-reps
                           (opt.OptInputRetirement.Retain)
-                          (__tl_make-array i64 0)))
+                          (__tl_make-array i64 0)
+                          (opt.opt-external-summaries-empty)
+                          true))
                         [(opt.CompilerOptimizedProgram.Program
                             opt-program
                             opt-spans)

@@ -4223,7 +4223,8 @@
           name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         bases
@@ -12412,6 +12413,72 @@ high:
         out
         "    jae .Lf1_a.cold\n.Lf1_a:\n    ret\n.Lf1_a.cold:\n    call tl_oob_abort\n    .size g, . - g\n"))))
 
+;; COLD-EDGE: a jump over a cold edge block is inverted and the block moves to
+;; the end of its function under its own label, so the in-loop side falls
+;; through. `g`'s cold block makes a call, `h`'s jump does not land right
+;; after it, and `k`'s edge block is not cold: all three stay where they are.
+(define (compiler-backend-cold-edge-source) : String
+  (str_cat.str-cat
+    ".text\n.globl f\n    .type f,@function\nf:\n.Lf0_loop:\n"
+    "    cmpb (%rdx,%rax,1), %sil\n    je .Lf0_merge\n"
+    ".Lf0_loop_branch_cold_false:\n    xorl %eax, %eax\n    jmp .Lf0_exit\n"
+    ".Lf0_merge:\n    addq $1, %rax\n    cmpq %r9, %rax\n    jl .Lf0_loop\n"
+    "    movl $1, %eax\n.Lf0_exit:\n    ret\n    .size f, . - f\n"
+    ".globl g\n    .type g,@function\ng:\n.Lf1_loop:\n"
+    "    testq %rdi, %rdi\n    je .Lf1_merge\n"
+    ".Lf1_loop_branch_cold_true:\n    call h\n    jmp .Lf1_exit\n"
+    ".Lf1_merge:\n    jl .Lf1_loop\n.Lf1_exit:\n    ret\n    .size g, . - g\n"
+    ".globl h\n    .type h,@function\nh:\n.Lf2_loop:\n"
+    "    testq %rdi, %rdi\n    je .Lf2_exit\n"
+    ".Lf2_loop_branch_cold_true:\n    movq %rsi, %rax\n    jmp .Lf2_exit\n"
+    ".Lf2_merge:\n    jl .Lf2_loop\n.Lf2_exit:\n    ret\n    .size h, . - h\n"
+    ".globl k\n    .type k,@function\nk:\n.Lf3_loop:\n"
+    "    testq %rdi, %rdi\n    je .Lf3_merge\n"
+    ".Lf3_loop_branch_true:\n    movq %rsi, %rax\n    jmp .Lf3_exit\n"
+    ".Lf3_merge:\n    jl .Lf3_loop\n.Lf3_exit:\n    ret\n    .size k, . - k\n"))
+
+(define (compiler-backend-cold-edge-ok?) : bool
+  (let
+    [out : String
+      (text_buf.render
+        (compiler-backend-peephole-text-buf-once
+          (text_buf.append (text_buf.empty) (compiler-backend-cold-edge-source))))]
+    (and
+      (asm-has?
+        out
+        "    cmpb (%rdx,%rax,1), %sil\n    jne .Lf0_loop_branch_cold_false\n.Lf0_merge:\n")
+      (asm-has?
+        out
+        "    ret\n.Lf0_loop_branch_cold_false:\n    xorl %eax, %eax\n    jmp .Lf0_exit\n    .size f, . - f\n")
+      (asm-has?
+        out
+        "    je .Lf1_merge\n.Lf1_loop_branch_cold_true:\n    call h\n")
+      (asm-has?
+        out
+        "    je .Lf2_exit\n.Lf2_loop_branch_cold_true:\n    movq %rsi, %rax\n")
+      (asm-has?
+        out
+        "    je .Lf3_merge\n.Lf3_loop_branch_true:\n    movq %rsi, %rax\n"))))
+
+;; Hot-loop alignment: a moved cold edge block's jump back to its exit target
+;; is not a back edge, so `.Lf0_out` gets no padding. The same jump from an
+;; ordinary edge block still makes `.Lf1_out` a loop top.
+(define (compiler-backend-cold-edge-align-ok?) : bool
+  (let
+    [text : String
+      (str_cat.str-cat
+        "f:\n    jmp .Lf0_out\n.Lf0_out:\n    movl $1, %eax\n    jmp .Lf0_end\n"
+        ".Lf0_end:\n    ret\n.Lf0_loop_branch_cold_false:\n    xorl %eax, %eax\n"
+        "    jmp .Lf0_out\n"
+        "g:\n    jmp .Lf1_out\n.Lf1_out:\n    movl $1, %eax\n    jmp .Lf1_end\n"
+        ".Lf1_end:\n    ret\n.Lf1_loop_branch_false:\n    xorl %eax, %eax\n"
+        "    jmp .Lf1_out\n")]
+    [aligned : String
+      (be_peephole.compiler-backend-loop-align-text text (arena.current))]
+    (and
+      (asm-lacks? aligned "    .p2align 4,,10\n.Lf0_out:\n")
+      (asm-has? aligned "    .p2align 4,,10\n.Lf1_out:\n"))))
+
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
 ;; the recorded FPO sweep metadata before the streaming run.
@@ -14467,6 +14534,8 @@ f:
     (compiler-backend-chunked-peephole-equivalent?)
     (compiler-backend-cold-split-ok?)
     (compiler-backend-cold-share-ok?)
+    (compiler-backend-cold-edge-ok?)
+    (compiler-backend-cold-edge-align-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)
@@ -24635,7 +24704,8 @@ entry:
           link-id
           (ast.ast-extern-link-input-list-new)
           true
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
@@ -24692,7 +24762,8 @@ entry:
           debug-id
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     (match (compiler-backend-runtime-plan-for functions externs)
       [(Ok plan)
         (let
@@ -26136,6 +26207,26 @@ entry:
      %38 = mov %9 : i64"))
 
 (define (compiler-backend-gep-load-multi-emergency-asm) : be_state.ResultCompilerBackend
+  (compiler-backend-emergency-ctx-asm
+    "gep_load_multi_emergency"
+    (compiler-backend-gep-load-multi-emergency-instrs)
+    (ir.compiler-ir-blocks)
+    (compiler-backend-gep-load-multi-emergency-assignments)
+    40
+    14))
+
+;; Emit `instrs` under a real scavenge context built from the liveness of an
+;; entry block holding them followed by `tail` (successors that only keep
+;; values live), with every instruction starting at `post-base` and the
+;; emergency frame region at -512(%rbp), so a site whose pool is fully occupied
+;; takes the emergency save/park path exactly as a whole function would.
+(define (compiler-backend-emergency-ctx-asm
+  [name : String]
+  [instrs : ir.CompilerIrInstrSeq]
+  [tail : ir.CompilerIrBlockList]
+  [assignments : regalloc.CompilerRegAssignmentTable]
+  [vars : i64]
+  [post-base : i64]) : be_state.ResultCompilerBackend
   (let
     [backend-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
@@ -26144,27 +26235,24 @@ entry:
     [prev-emergency-slot-offset : i64
       (scratch-emergency-slot-offset
         (be_state.compiler-backend-state-function-state backend-state))]
-    [assignments : regalloc.CompilerRegAssignmentTable
-      (compiler-backend-gep-load-multi-emergency-assignments)]
-    [instrs : ir.CompilerIrInstrSeq
-      (compiler-backend-gep-load-multi-emergency-instrs)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-blocks
+      (ir.compiler-ir-blocks-with-tail
+        tail
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
-          "gep_load_multi_emergency"
+          name
           (ir.compiler-ir-param-seq-empty)
           (I64)
-          40
+          vars
           blocks
           assignments
           backend-state)
-        (set-state-emit-instr-post-base! backend-state 14)
-        (set-state-emit-current-count! backend-state 14)
+        (set-state-emit-instr-post-base! backend-state post-base)
+        (set-state-emit-current-count! backend-state post-base)
         (set-scratch-emergency-slot-offset!
           (be_state.compiler-backend-state-function-state backend-state)
           -512))]
@@ -26172,7 +26260,7 @@ entry:
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
         assignments
-        40
+        vars
         (be_state.CompilerBackendTarget.Linux)
         backend-state)]
     [_restore : unit
@@ -26221,6 +26309,124 @@ entry:
         (asm-lacks? asm "    movq %r9, -512(%rbp)\n")
         (asm-lacks? asm "    movq %rcx, -576(%rbp)\n"))]
     [(Err _) false]))
+
+;; #9976: a GAP8 gep-load ALU fold whose base is spilled and whose every pool
+;; register is occupied borrows an emergency scratch for the base. The
+;; non-loaded operand %1 (in %r9) is read into the ALU home %r12 AFTER the
+;; base is staged, so the borrowed scratch must never be %1's home: the old
+;; exclude set held only the index and destination homes, picked %r9, and
+;; emitted `movq -8(%rbp), %r9 ; movq %r9, %r12 ; addq (%r9,%rax,8), %r12` --
+;; the base pointer, not %1, was summed.
+(define (compiler-backend-gep-load-alu-emergency-asm [dynamic-index? : bool]) : be_state.ResultCompilerBackend
+  (compiler-backend-emergency-ctx-asm
+    "gep_load_alu_emergency"
+    (irt.instrs
+      (str_cat.str-cat
+        "%1 = mov 1 : i64
+         %2 = mov 2 : i64
+         %3 = mov 3 : i64
+         %4 = mov 4 : i64
+         %5 = mov 5 : i64
+         %6 = mov 6 : i64
+         %7 = mov 7 : i64
+         %8 = mov 8 : i64
+         %9 = mov 9 : i64
+         "
+        (if dynamic-index?
+          "%20 = gep %0, %9 : i64"
+          "%20 = gep %0, 3 : i64")
+        "
+         %21 = load %20 : i64
+         %22 = add %1, %21 : i64
+         %30 = mov %2 : i64
+         %31 = mov %3 : i64
+         %32 = mov %4 : i64
+         %33 = mov %5 : i64
+         %34 = mov %6 : i64
+         %35 = mov %7 : i64
+         %36 = mov %8 : i64
+         %37 = mov %9 : i64
+         %38 = mov %22 : i64"))
+    (ir.compiler-ir-blocks)
+    (reg-homes
+      "%1=%r9 %2=%rcx %3=%rdx %4=%r10 %5=%r11 %6=%r8 %7=%rsi %8=%rdi %9=%rax %22=%r12")
+    40
+    14))
+
+(define (compiler-backend-gep-load-alu-emergency-preserved-ok?
+  [dynamic-index? : bool]) : bool
+  (asm-ok?
+    (compiler-backend-gep-load-alu-emergency-asm dynamic-index?)
+    (has
+      "    movq %r9, %r12\n"
+      (if dynamic-index?
+        ",%rax,8), %r12\n"
+        "    addq 24(%"))
+    (lacks
+      "    movq -8(%rbp), %r9\n"
+      "    addq (%r9,%rax,8), %r12\n"
+      "    addq 24(%r9), %r12\n")))
+
+(test
+  backend-gep-load-alu-emergency-scratch-preserves-operand
+  (test.assert-true
+    (and
+      (compiler-backend-gep-load-alu-emergency-preserved-ok? true)
+      (compiler-backend-gep-load-alu-emergency-preserved-ok? false))
+    "a GAP8 fold's emergency base scratch clobbered the non-loaded operand"))
+
+;; #9976 sibling: the GAP9 const-offset gep-load compare+branch stages a
+;; spilled base and then compares it against the register-homed rhs %1 (in
+;; %r9) in place, so the base scratch must not be %1's home either -- the old
+;; empty exclude set let the full-occupancy emergency pick borrow %r9 and the
+;; compare read the base pointer as its rhs.
+(define (compiler-backend-gep-load-cmp-branch-emergency-asm) : be_state.ResultCompilerBackend
+  (compiler-backend-emergency-ctx-asm
+    "gep_load_cmp_branch_emergency"
+    (irt.instrs
+      "%1 = mov 1 : i64
+       %2 = mov 2 : i64
+       %3 = mov 3 : i64
+       %4 = mov 4 : i64
+       %5 = mov 5 : i64
+       %6 = mov 6 : i64
+       %7 = mov 7 : i64
+       %8 = mov 8 : i64
+       %9 = mov 9 : i64
+       %20 = gep %0, 3 : i64
+       %21 = load %20 : i64
+       %22 = lt %21, %1 : i64
+       branch %22, lo, hi")
+    (irt.blocks
+      "lo:
+         %30 = mov %1 : i64
+         %31 = mov %2 : i64
+         %32 = mov %3 : i64
+         %33 = mov %4 : i64
+         %34 = mov %5 : i64
+         %35 = mov %6 : i64
+         %36 = mov %7 : i64
+         %37 = mov %8 : i64
+         %38 = mov %9 : i64
+         return
+       hi:
+         return")
+    (reg-homes
+      "%1=%r9 %2=%rcx %3=%rdx %4=%r10 %5=%r11 %6=%r8 %7=%rsi %8=%rdi %9=%rax")
+    40
+    14))
+
+(define (compiler-backend-gep-load-cmp-branch-emergency-preserved-ok?) : bool
+  (asm-ok?
+    (compiler-backend-gep-load-cmp-branch-emergency-asm)
+    (has "    cmpq %r9, 24(%")
+    (lacks "    movq -8(%rbp), %r9\n" "    cmpq %r9, 24(%r9)\n")))
+
+(test
+  backend-gep-load-cmp-branch-emergency-scratch-preserves-operand
+  (test.assert-true
+    (compiler-backend-gep-load-cmp-branch-emergency-preserved-ok?)
+    "a GAP9 compare's emergency base scratch clobbered the register rhs"))
 
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
   (let
@@ -34200,7 +34406,8 @@ entry:
     symbol-id
     (ast.ast-extern-link-input-list-new)
     false
-    (ir.CompilerIrReturnStorage.None)))
+    (ir.CompilerIrReturnStorage.None)
+    false))
 
 (define (compiler-backend-non-direct-tail-call-emit
   [target : be_state.CompilerBackendTarget]
@@ -35814,7 +36021,8 @@ entry:
       provided-link-id
       (ast.ast-extern-link-input-list-new)
       true
-      (ir.CompilerIrReturnStorage.None))
+      (ir.CompilerIrReturnStorage.None)
+      false)
     (Extern
       referenced-id
       referenced-id
@@ -35826,7 +36034,8 @@ entry:
       referenced-link-id
       (ast.ast-extern-link-input-list-new)
       false
-      (ir.CompilerIrReturnStorage.None))))
+      (ir.CompilerIrReturnStorage.None)
+      false)))
 
 ;; A backend job owns one exact intern capability and one cache arena.  Keep a
 ;; compact one-word smoke here so the state boundary itself is exercised before
@@ -36476,7 +36685,8 @@ entry:
             extern-link-id
             (ast.ast-extern-link-input-list-new)
             false
-            (ir.CompilerIrReturnStorage.None))
+            (ir.CompilerIrReturnStorage.None)
+            false)
           (Extern
             same-name-id
             same-name-id
@@ -36488,7 +36698,8 @@ entry:
             same-name-link-id
             (ast.ast-extern-link-input-list-new)
             false
-            (ir.CompilerIrReturnStorage.None))))]
+            (ir.CompilerIrReturnStorage.None)
+            false)))]
     (and
       (= source-count-before (ci.intern-pool-len))
       (be_state.backend-and8
@@ -41521,7 +41732,8 @@ b_keep:
                     beta)
                   (ast.ast-extern-link-input-list-new)
                   false
-                  (ir.CompilerIrReturnStorage.None))))
+                  (ir.CompilerIrReturnStorage.None)
+                  false)))
             profile)]
         [expected : String
           (if (= mode 2)
@@ -43255,7 +43467,8 @@ b_keep:
           link-symbol-id
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))
+          (ir.CompilerIrReturnStorage.None)
+          false))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-unused-foreign-link-extern-ok?) : bool
@@ -43303,7 +43516,8 @@ b_keep:
           link-symbol-id
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))
+          (ir.CompilerIrReturnStorage.None)
+          false))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
@@ -45545,7 +45759,8 @@ user_fn:
           c-name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [_pointer : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -45558,7 +45773,8 @@ user_fn:
           pointer-name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [_value : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -45573,7 +45789,8 @@ user_fn:
           name
           (ast.ast-extern-link-input-list-new)
           false
-          (ir.CompilerIrReturnStorage.None)))]
+          (ir.CompilerIrReturnStorage.None)
+          false))]
     [globals : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 1)]
     [_address : unit
@@ -45745,7 +45962,8 @@ user_fn:
           link
           (ast.ast-extern-link-input-list-new)
           (>= kind 5)
-          (ir.CompilerIrReturnStorage.None)))
+          (ir.CompilerIrReturnStorage.None)
+          false))
       (let
         [index : be_state.CompilerBackendProgramIndex
           (compiler-backend-program-index-build
@@ -46234,7 +46452,8 @@ user_fn:
       id
       (ast.ast-extern-link-input-list-new)
       false
-      (ir.CompilerIrReturnStorage.None))))
+      (ir.CompilerIrReturnStorage.None)
+      false)))
 
 (define (compiler-backend-convention-site-builtin-call
   [symbol : String]
@@ -46837,7 +47056,8 @@ user_fn:
               (compiler-backend-test-symbol "bridge_c")
               (ast.ast-extern-link-input-list-new)
               true
-              (ir.CompilerIrReturnStorage.None))]
+              (ir.CompilerIrReturnStorage.None)
+              false)]
           (Program
             (ir.compiler-ir-global-seq-empty)
             (ir.compiler-ir-function-seq-prepend
@@ -48384,7 +48604,8 @@ user_fn:
         (compiler-backend-test-symbol "ext_tail_c")
         (ast.ast-extern-link-input-list-new)
         false
-        (ir.CompilerIrReturnStorage.None))]
+        (ir.CompilerIrReturnStorage.None)
+        false)]
     [prog : ir.CompilerIrProgram
       (Program
         (ir.compiler-ir-global-seq-empty)

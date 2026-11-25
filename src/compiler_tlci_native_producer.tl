@@ -3129,6 +3129,19 @@
                   ops-count)]
               [(and
                   (or
+                    (string.eq head "comptime.function-param-type")
+                    (string.eq head "function-param-type"))
+                  (= argc 2))
+                (embedded-native-computed-indexed-type-query-ops
+                  context
+                  params
+                  (compiler_ast_types.ast-expr-list-get (& args) 0 0)
+                  (compiler_ast_types.ast-expr-list-get (& args) 1 0)
+                  (tlci_core.tlci-host-callback-name function-param-type)
+                  ops
+                  ops-count)]
+              [(and
+                  (or
                     (string.eq head "comptime.tuple-element-type")
                     (string.eq head "tuple-element-type"))
                   (= argc 2))

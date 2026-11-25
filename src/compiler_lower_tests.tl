@@ -6754,6 +6754,8 @@
     (module generated.lower_vector_user)
     (defstruct T
       (value i64))
+    (define (eq-t [left : (& left T)] [right : (& right T)]) : bool
+      (= left.value right.value))
     (import (vector.vector T) as vec)
     (define (make [value : i64]) : T
       (T value))
@@ -7032,7 +7034,17 @@
               (and
                 (= externs.len 1)
                 (match (ir.compiler-ir-extern-seq-ref externs 0)
-                  [(Extern name-id name-id name _ abi symbol-id link-inputs _ _)
+                  [(Extern
+                      name-id
+                      name-id
+                      name
+                      _
+                      abi
+                      symbol-id
+                      link-inputs
+                      _
+                      _
+                      _)
                     (and
                       (string.eq (ci.intern-str name-id) "ffi-add")
                       (string.eq name "ffi-add")

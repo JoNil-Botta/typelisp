@@ -3656,7 +3656,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     parts
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ ty abi link-symbol-id _ provided _)
+      [(Extern name-id source-name-id _ ty abi link-symbol-id _ provided _ _)
         (let
           [link-symbol : String
             (be_operand.compiler-backend-link-symbol-id

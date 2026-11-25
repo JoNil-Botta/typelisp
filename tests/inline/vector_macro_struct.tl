@@ -1,4 +1,5 @@
 ;; vector_macro_struct.tl - runnable aggregate coverage for stdlib `(vector.vector T)`.
+(import stdlib.eq)
 (import stdlib.test)
 (import stdlib.vector)
 
@@ -6,9 +7,13 @@
   (left i64)
   (right i64))
 
+(eq.gen Pair)
+
 (defstruct Segment
   (start Pair)
   (finish Pair))
+
+(eq.gen Segment)
 
 (import (vector.vector Pair) as pvec)
 (import (vector.vector Segment) as svec)
@@ -82,15 +87,15 @@
     (pvec.push! pairs (Pair 3 5))
     (pvec.push! pairs (Pair 8 13))
     (test.assert-true
-      (pvec.contains? (& pairs) (Pair 8 13))
+      (pvec.contains? (& pairs) (& (Pair 8 13)))
       "contains? finds a struct element")
     (test.assert-false
-      (pvec.contains? (& pairs) (Pair 8 12))
+      (pvec.contains? (& pairs) (& (Pair 8 12)))
       "contains? rejects a differing struct element")
     (svec.push! segments (Segment (Pair 1 2) (Pair 3 4)))
     (test.assert-true
-      (svec.contains? (& segments) (Segment (Pair 1 2) (Pair 3 4)))
+      (svec.contains? (& segments) (& (Segment (Pair 1 2) (Pair 3 4))))
       "contains? finds a nested aggregate element")
     (test.assert-false
-      (svec.contains? (& segments) (Segment (Pair 1 2) (Pair 3 5)))
+      (svec.contains? (& segments) (& (Segment (Pair 1 2) (Pair 3 5))))
       "contains? detects a nested aggregate mismatch")))

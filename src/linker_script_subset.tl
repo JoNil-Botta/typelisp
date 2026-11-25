@@ -67,7 +67,7 @@
 
 (stdlib.clone.gen-clone LinkerScriptInput)
 
-(import (vector.vector LinkerScriptInput) as input_vec)
+(import (vector.vector LinkerScriptInput core) as input_vec)
 
 ;: OUTPUT_FORMAT names one BFD target, or three: the default, big-endian and
 ;: little-endian targets.
@@ -89,7 +89,7 @@
 
 (stdlib.clone.gen-clone LinkerScriptItem)
 
-(import (vector.vector LinkerScriptItem) as item_vec)
+(import (vector.vector LinkerScriptItem core) as item_vec)
 
 ;: A read script: its commands in order, and every INPUT and GROUP file in
 ;: order, which the commands index.
@@ -169,7 +169,7 @@
 
 (stdlib.clone.gen-clone Token)
 
-(import (vector.vector Token) as token_vec)
+(import (vector.vector Token core) as token_vec)
 
 (defenum ResultTokens
   (Ok token_vec.Vec)

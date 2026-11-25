@@ -749,7 +749,11 @@
   ;; callable record having that name. Keep identity as owned strings rather
   ;; than adding otherwise-unused names to the package surface identity table.
   ;; An empty list marks a package-owned extern for which no record exists.
-  (Package String String ci.InternId (Box AstImportedSpmdCallableList)))
+  (Package String String ci.InternId (Box AstImportedSpmdCallableList))
+  ;; Hydrated from a `.tli` v3 `HAS_SPMD_EXPR` compact body so `foreach`
+  ;; typecheck and lowering can inline pure stdlib/package scalar helpers
+  ;; without loading their source modules.
+  (Inline AstParamList AstType i64))
 
 ;; Export and callable metadata are mutually exclusive. Keep the common `No`
 ;; and export cases inline at the old `AstFnExport` footprint, while boxing the
@@ -7421,7 +7425,9 @@
         (string.copy owner)
         (string.copy version)
         name
-        (box (ast-imported-spmd-callable-list-clone (& (deref callables)))))]))
+        (box (ast-imported-spmd-callable-list-clone (& (deref callables)))))]
+    [(Inline params ret body-id)
+      (Inline (clone-ast-param-list params) (clone-ast-type ret) body-id)]))
 
 (define (ast-fn-metadata-clone [metadata : (& AstFnMetadata)]) : AstFnMetadata
   (match metadata
@@ -12250,6 +12256,23 @@
     (ast-compaction-remap-extern-link-input-list-into inputs 0 (&mut out))
     out))
 
+(define (ast-compaction-remap-imported-spmd-metadata
+  [remap : (& remap AstProgramCompactionRemap)]
+  [metadata : (& AstImportedSpmdMetadata)]) : AstImportedSpmdMetadata
+  (match metadata
+    [(No) No]
+    [(Package owner version name callables)
+      (Package
+        (ast-compaction-copy-string (string.copy owner))
+        (ast-compaction-copy-string (string.copy version))
+        name
+        (box (ast-imported-spmd-callable-list-clone (& (deref callables)))))]
+    [(Inline params ret body-id)
+      (Inline
+        (ast-compaction-remap-param-list remap (clone-ast-param-list params))
+        (ast-compaction-remap-type remap (clone-ast-type ret))
+        (ast-compaction-remap-expr-id remap body-id))]))
+
 (define (ast-compaction-remap-extern-metadata
   [remap : (& remap AstProgramCompactionRemap)]
   [metadata : (& AstExternMetadata)]) : AstExternMetadata
@@ -12260,7 +12283,7 @@
         symbol
         (ast-compaction-remap-extern-link-input-list (& links))
         flags
-        (ast-imported-spmd-metadata-clone (& imported-spmd)))]))
+        (ast-compaction-remap-imported-spmd-metadata remap (& imported-spmd)))]))
 
 (define (ast-compaction-remap-variant-payload-cleanup
   [cleanup : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup

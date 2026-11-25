@@ -4195,8 +4195,12 @@
           0
           (__tl_make-array i64 0)
           (__tl_make-array tli.TliGlobalWrite 0)
+          -1
+          (cast 0 : u8)
           0
-          0))]
+          0
+          0
+          (make-array u8 32)))]
     (string.eq
       (tli_hydrate.tli-hydrate-archive-fn-symbol-with-mode
         false
@@ -4233,8 +4237,12 @@
               0
               (__tl_make-array i64 0)
               (__tl_make-array tli.TliGlobalWrite 0)
+              -1
+              (cast 0 : u8)
               0
-              0))]
+              0
+              0
+              (make-array u8 32)))]
         [sym : String
           (tli_hydrate.tli-hydrate-archive-fn-symbol-with-mode
             false
@@ -4303,8 +4311,12 @@
           0
           (__tl_make-array i64 0)
           (__tl_make-array tli.TliGlobalWrite 0)
+          -1
+          (cast 0 : u8)
           0
-          0))]
+          0
+          0
+          (make-array u8 32)))]
     [metadata : ast.AstImportedSpmdMetadata
       (tli_hydrate.tli-hydrate-imported-spmd-metadata
         false
@@ -4314,6 +4326,7 @@
         (& row))]
     (match metadata
       [(No) false]
+      [(Inline _ _ _) false]
       [(Package owner version canonical-name callables-box)
         (let
           [callables : ast.AstImportedSpmdCallableList (deref callables-box)]

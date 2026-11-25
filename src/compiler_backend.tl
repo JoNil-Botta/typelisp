@@ -19538,7 +19538,9 @@
 
 ;; Terminator classes the layout needs to tell apart: 0 = none (the block falls
 ;; through to its list successor and cannot be moved), 1 = Jump, 2 = two-arm
-;; branch, 3 = switch, 4 = leaves the function.
+;; branch, 3 = switch, 4 = leaves the function, 5 = a Jump that is the block's
+;; only instruction -- a block that can emit nothing, so whatever precedes it
+;; may in effect fall through past it to its target.
 (define (compiler-backend-placement-term-kind
   [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]) : i64
   (let
@@ -19546,7 +19548,10 @@
     (if (= n 0)
       0
       (match (array-ref instrs.slots (- n 1))
-        [(Jump _) 1]
+        [(Jump _)
+          (if (= n 1)
+            5
+            1)]
         [(or (Branch _ _ _) (TotalEnumBranch _ _ _)) 2]
         [(or (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _)) 3]
         [(or (Return _) (TailCall _ _ _) (TailCallIndirect _ _ _)) 4]
@@ -19969,7 +19974,7 @@
 ;; destination this pass cannot name.
 (define (compiler-backend-placement-mark-variant!
   [st : CompilerBackendPlacement]
-  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]
   [total : i64]
   [generation : i64]) : bool
   (let
@@ -20180,14 +20185,14 @@
 (define (compiler-backend-placement-counting-loop?
   [st : CompilerBackendPlacement]
   [nest : compiler_regalloc.CompilerRegLoopNest]
-  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]
   [header : i64]
   [total : i64]
   [generation : i64]) : bool
   (if (not
     (compiler-backend-placement-mark-variant!
       (be_state.compiler-backend-global-shared-view st)
-      (be_state.compiler-backend-global-shared-view seq)
+      seq
       total
       generation))
     false
@@ -20271,6 +20276,539 @@
         unit))
     found))
 
+;; EXIT SINKING and RETURN-ARM SINKING, the full-speed half of the layout.
+;;
+;; The front end lowers `(if (>= i n) false (recur ...))` exit arm first, so a
+;; loop's early `return` and `break` blocks land INSIDE its run, and the
+;; in-loop continuation becomes the taken side of every exit test -- two taken
+;; branches per iteration where one is enough:
+;;
+;;     H:  cmp i,n / jl B             H:  cmp i,n / jge X1
+;;     X1: ret                        B:  ... / je X2
+;;     B:  ... / jne L        ->      L:  add i,1 / jmp H
+;;     X2: ret                        X1: ret
+;;     L:  add i,1 / jmp H            X2: ret
+;;
+;; LLVM's `buildLoopChains` never admits a block outside the loop to the loop's
+;; chain. Here the blocks that leave every loop move out of its run: right
+;; behind it when the run's bottom block does not fall into what follows it,
+;; else to the sink point (`compiler-backend-placement-sink-point`). A GROUP --
+;; a maximal run of non-members between two members of one loop -- moves only
+;; when
+;;   * every block in it is outside every loop (`inner` = -1) and has no
+;;     successor in this loop, so it is a pure exit and never a way back in;
+;;   * none of it is pinned: the entry block, and the prefix the early-exit
+;;     shrink-wrap renders by list index, stay where they are;
+;;   * the member before it falls through past the whole group, or not into
+;;     it at all, or into its first block as one arm of a two-arm branch whose
+;;     other arm is the member after it. That branch then falls into its
+;;     in-loop arm; the group's own exits were already explicit jumps (a group
+;;     block has no successor in the loop, and the member after it is one); so
+;;     no path executes one more instruction than before;
+;;   * it is not a one-block arm ending in a jump whose exit test an
+;;     unconditional jump enters: #block-layout's tail duplication already
+;;     copies such a test and arm into the jumping block, which under a latch
+;;     rotates the loop for free.
+;; Rotation still sees only runs the front end laid out contiguously: a run
+;; that sinking made contiguous is a search loop with early exits, which
+;; usually leaves on its first trip and would pay rotation's entry jump.
+;;
+;; Outside loops the same shape is `test x / jge L / ret / L:` -- a guard's
+;; return arm laid out as the fall-through. A RETURN block whose only
+;; predecessor is the block before it -- a two-arm branch outside every loop
+;; whose other arm is the block after it -- moves to the end when Ball and
+;; Larus's heuristics predict it not taken: the opcode heuristic when it speaks,
+;; else the return heuristic, which speaks only when the other arm does not
+;; leave the function too. Each arm keeps exactly one jump, so only which one is
+;; taken changes.
+;; This runs only where the returns do not share an epilogue, so every return
+;; block is self-contained.
+;;
+;; Moved blocks keep their relative order; nothing else moves. Size-optimized
+;; and non-full builds skip both, because a jump to a moved block may need a
+;; longer encoding.
+;;
+;; Both need every block to end in a terminator, so that every edge is named
+;; and any permutation of the list is a layout of the same CFG.
+(define (compiler-backend-placement-terminated?
+  [term-kind : (& term-kind (__tl_dyn-array i64))]
+  [n : i64]) : bool
+  (let
+    [i : i64 0]
+    [ok : bool true]
+    (while (< i n)
+      (when (= (array-ref term-kind i) 0) (set! ok false) (set! i n))
+      (+= i 1))
+    ok))
+
+;; Does block `b` name `target` as a successor?
+(define (compiler-backend-placement-succ?
+  [st : (& st CompilerBackendPlacement)]
+  [b : i64]
+  [target : i64]) : bool
+  (let
+    [stop : i64 (array-ref st.succ-off (+ b 1))]
+    [found : bool false]
+    (for [edge (iterator.range (array-ref st.succ-off b) stop)]
+      (when (= (array-ref st.succ-buf edge) target) (set! found true)))
+    found))
+
+;; A fall-through from `a` into `into` may be traded for one into `next` only
+;; when `a` is a two-arm branch between exactly those two blocks.
+(define (compiler-backend-placement-arms?
+  [st : (& st CompilerBackendPlacement)]
+  [a : i64]
+  [into : i64]
+  [next : i64]) : bool
+  (let
+    [off : i64 (array-ref st.succ-off a)]
+    (and
+      (= (array-ref st.term-kind a) 2)
+      (= (- (array-ref st.succ-off (+ a 1)) off) 2)
+      (or
+        (and
+          (= (array-ref st.succ-buf off) into)
+          (= (array-ref st.succ-buf (+ off 1)) next))
+        (and
+          (= (array-ref st.succ-buf off) next)
+          (= (array-ref st.succ-buf (+ off 1)) into))))))
+
+;; The first position in [k, limit) that block `x` names as a successor with
+;; only jump-only blocks before it -- where `x`, emitted right before position
+;; k, may fall through to -- or -1.
+(define (compiler-backend-placement-falls-into
+  [st : (& st CompilerBackendPlacement)]
+  [x : i64]
+  [k : i64]
+  [limit : i64]) : i64
+  (let
+    [j : i64 k]
+    [out : i64 -1]
+    (while (< j limit)
+      (let
+        [b : i64 (array-ref st.order j)]
+        (cond
+          [(compiler-backend-placement-succ? st x b)
+            (set! out j)
+            (set! j limit)]
+          [(= (array-ref st.term-kind b) 5) (+= j 1)]
+          [else (set! j limit)])))
+    out))
+
+;; The first (`low?`) or last position of the run of loop `h`, whose `total`
+;; members other than the header the last `header-members!` walk left in the
+;; nest's member buffer.
+(define (compiler-backend-placement-run-bound
+  [st : (& st CompilerBackendPlacement)]
+  [nest : (& nest compiler_regalloc.CompilerRegLoopNest)]
+  [h : i64]
+  [total : i64]
+  [low? : bool]) : i64
+  (let
+    [out : i64 (array-ref st.pos h)]
+    (for [m (iterator.range 0 total)]
+      (let
+        [q : i64 (array-ref st.pos (array-ref nest.members m))]
+        (when
+          (if low?
+            (< q out)
+            (> q out))
+          (set! out q))))
+    out))
+
+;; Where moved blocks go: the very end, or -- when `keep-tail?` says the
+;; function restores callee-saved registers, so its returns may share one
+;; epilogue emitted after the last block -- before the function's trailing
+;; fall-through chain. What precedes that epilogue, and every fall-through on
+;; the way there, must stay as it was: the block before it may be the one that
+;; falls into it, and #block-layout decides which arm it out-lines from the
+;; region a `jmp` to it leaves behind.
+;;
+;; That chain may end inside a loop's run -- a loop whose bottom block falls
+;; into the return, or a later loop the tail chain starts in -- and blocks
+;; moved there would split that run. The point then steps up out of every run
+;; that contains it: `st.scratch` counts, per position k, the runs [lo, hi]
+;; with lo < k <= hi, which are the runs a block placed before position k
+;; would land inside. Its walks stamp the generations above `generation-base`.
+(define (compiler-backend-placement-sink-point
+  [st : (&mut st CompilerBackendPlacement)]
+  [nest : (& nest compiler_regalloc.CompilerRegLoopNest)]
+  [sorted : (& sorted (__tl_dyn-array i64))]
+  [header-count : i64]
+  [generation-base : i64]
+  [keep-tail? : bool]) : i64
+  (if keep-tail?
+    (let
+      [k : i64 (- st.count 1)]
+      [inside : i64 0]
+      (while (and
+        (> k 1)
+        (>=
+          (compiler-backend-placement-falls-into
+            st
+            (array-ref st.order (- k 1))
+            k
+            st.count)
+          0))
+        (-= k 1))
+      (for [i (iterator.range 0 st.count)]
+        (set! (array-ref st.scratch i) 0))
+      (for [i (iterator.range 0 header-count)]
+        (let
+          [h : i64 (array-ref sorted i)]
+          [total : i64
+            (compiler_regalloc.compiler-reg-loop-nest-header-members!
+              nest
+              h
+              (+ generation-base i 1))]
+          [lo : i64 (compiler-backend-placement-run-bound st nest h total true)]
+          [hi : i64
+            (compiler-backend-placement-run-bound st nest h total false)]
+          (when
+            (< lo hi)
+            (+= (array-ref st.scratch (+ lo 1)) 1)
+            (when (< (+ hi 1) st.count) (-= (array-ref st.scratch (+ hi 1)) 1)))))
+      (for [i (iterator.range 0 st.count)]
+        (+= inside (array-ref st.scratch i))
+        (set! (array-ref st.scratch i) inside))
+      (while (and (> k 1) (> (array-ref st.scratch k) 0))
+        (-= k 1))
+      k)
+    st.count))
+
+;; Move the `count` blocks at positions [from, from + count) to just before
+;; position `dest`, keeping their order and everyone else's. `dest` itself
+;; stays the position of the block it named.
+(define (compiler-backend-placement-move-before!
+  [st : (&mut st CompilerBackendPlacement)]
+  [from : i64]
+  [count : i64]
+  [dest : i64]) : unit
+  (let
+    [base : i64 (- dest count)]
+    (for [k (iterator.range 0 count)]
+      (set! (array-ref st.scratch k) (array-ref st.order (+ from k))))
+    (for [k (iterator.range (+ from count) dest)]
+      (let
+        [b : i64 (array-ref st.order k)]
+        (set! (array-ref st.order (- k count)) b)
+        (set! (array-ref st.pos b) (- k count))))
+    (for [k (iterator.range 0 count)]
+      (let
+        [b : i64 (array-ref st.scratch k)]
+        (set! (array-ref st.order (+ base k)) b)
+        (set! (array-ref st.pos b) (+ base k))))))
+
+;; Does block `b` have a successor in the loop stamped `generation`?
+(define (compiler-backend-placement-enters?
+  [st : (& st CompilerBackendPlacement)]
+  [nest : (& nest compiler_regalloc.CompilerRegLoopNest)]
+  [b : i64]
+  [generation : i64]) : bool
+  (let
+    [stop : i64 (array-ref st.succ-off (+ b 1))]
+    [found : bool false]
+    (for [edge (iterator.range (array-ref st.succ-off b) stop)]
+      (when
+        (compiler_regalloc.compiler-reg-loop-nest-member?
+          nest
+          (array-ref st.succ-buf edge)
+          generation)
+        (set! found true)))
+    found))
+
+;; Does some block reach `target` by an unconditional jump? A jump names one
+;; successor, so any jumping predecessor of `target` jumps to it.
+(define (compiler-backend-placement-jumped-to?
+  [st : (& st CompilerBackendPlacement)]
+  [nest : (& nest compiler_regalloc.CompilerRegLoopNest)]
+  [target : i64]) : bool
+  (let
+    [stop : i64 (array-ref nest.pred-offsets (+ target 1))]
+    [found : bool false]
+    (for [edge (iterator.range (array-ref nest.pred-offsets target) stop)]
+      (let
+        [kind : i64 (array-ref st.term-kind (array-ref nest.pred-sources edge))]
+        (when (or (= kind 1) (= kind 5)) (set! found true))))
+    found))
+
+;; The group at positions [start, stop) of loop `generation`: see the rules
+;; above.
+(define (compiler-backend-placement-sinkable-group?
+  [st : (& st CompilerBackendPlacement)]
+  [nest : (& nest compiler_regalloc.CompilerRegLoopNest)]
+  [start : i64]
+  [stop : i64]
+  [pinned : i64]
+  [dest : i64]
+  [keep-tail? : bool]
+  [generation : i64]) : bool
+  (let
+    [before : i64 (array-ref st.order (- start 1))]
+    [first : i64 (array-ref st.order start)]
+    [first-kind : i64 (array-ref st.term-kind first)]
+    ;; A one-block exit arm that ends in a jump -- a Jump, or a return
+    ;; through the shared epilogue -- stays when an unconditional jump enters
+    ;; its exit test: #block-layout's tail duplication copies test and arm
+    ;; into that jump's block (under a latch, a rotation at no entry cost),
+    ;; and a test whose arm has gone no longer ends in a jump to copy.
+    [copied? : bool
+      (and
+        (= stop (+ start 1))
+        (or (= first-kind 1) (= first-kind 5) (and keep-tail? (= first-kind 4)))
+        (compiler-backend-placement-jumped-to? st nest before))]
+    [ok : bool (and (>= start pinned) (<= stop dest) (not copied?))]
+    [p : i64 start]
+    (while (and ok (< p stop))
+      (let
+        [b : i64 (array-ref st.order p)]
+        (when
+          (or
+            (>= (array-ref st.inner b) 0)
+            (compiler-backend-placement-enters? st nest b generation))
+          (set! ok false)))
+      (+= p 1))
+    ;; Where the member before the group falls through to: past the whole
+    ;; group (only jump-only blocks in the way) costs nothing once they are
+    ;; gone; into its first block is the exit test this pass exists for; any
+    ;; deeper landing is declined.
+    (let
+      [lands : i64
+        (compiler-backend-placement-falls-into st before start (+ stop 1))]
+      (and
+        ok
+        (or
+          (< lands 0)
+          (= lands stop)
+          (and
+            (= lands start)
+            (compiler-backend-placement-arms?
+              st
+              before
+              first
+              (array-ref st.order stop))))))))
+
+;; Exit sinking, innermost loops first, so an outer loop sees its inner loops'
+;; exits already gone.
+(define (compiler-backend-placement-sink-exits!
+  [st : (&mut st CompilerBackendPlacement)]
+  [nest : (& nest compiler_regalloc.CompilerRegLoopNest)]
+  [sorted : (& sorted (__tl_dyn-array i64))]
+  [header-count : i64]
+  [generation-base : i64]
+  [pinned : i64]
+  [keep-tail? : bool]) : unit
+  (let
+    [generation : i64 (+ generation-base header-count)]
+    [dest : i64 0]
+    (for [i (iterator.range 0 (array-length st.order))]
+      (set! (array-ref st.pos (array-ref st.order i)) i))
+    (set!
+      dest
+      (compiler-backend-placement-sink-point
+        st
+        nest
+        sorted
+        header-count
+        generation-base
+        keep-tail?))
+    (for [i (iterator.range 0 header-count)]
+      (let
+        [h : i64 (array-ref sorted i)]
+        (+= generation 1)
+        (let
+          [total : i64
+            (compiler_regalloc.compiler-reg-loop-nest-header-members!
+              nest
+              h
+              generation)]
+          [lo : i64 (compiler-backend-placement-run-bound st nest h total true)]
+          [hi : i64
+            (compiler-backend-placement-run-bound st nest h total false)]
+          ;; Only a run that ends before the sink point has anywhere to sink
+          ;; to: one at or past it is the tail the sink point keeps intact.
+          (when
+            (< hi dest)
+            (let
+              [p : i64 (+ lo 1)]
+              ;; Exits land right after the loop's run, as LLVM lays them out,
+              ;; when the run's bottom block does not fall into what follows
+              ;; it; otherwise at the function's sink point. `placed` keeps
+              ;; several groups in their order behind the run.
+              [after? : bool
+                (<
+                  (compiler-backend-placement-falls-into
+                    st
+                    (array-ref st.order hi)
+                    (+ hi 1)
+                    st.count)
+                  0)]
+              [placed : i64 0]
+              (while (< p hi)
+                (if (compiler_regalloc.compiler-reg-loop-nest-member?
+                  nest
+                  (array-ref st.order p)
+                  generation)
+                  (+= p 1)
+                  (let
+                    [stop : i64 p]
+                    (while (not
+                      (compiler_regalloc.compiler-reg-loop-nest-member?
+                        nest
+                        (array-ref st.order stop)
+                        generation))
+                      (+= stop 1))
+                    (if (compiler-backend-placement-sinkable-group?
+                      st
+                      nest
+                      p
+                      stop
+                      pinned
+                      dest
+                      keep-tail?
+                      generation)
+                      (begin
+                        (compiler-backend-placement-move-before!
+                          st
+                          p
+                          (- stop p)
+                          (if after?
+                            (+ hi 1 placed)
+                            dest))
+                        (-= hi (- stop p))
+                        (+= placed (- stop p)))
+                      (set! p stop))))))))))))
+
+;; Ball and Larus's opcode heuristic for the branch that ends `instrs`: 1 when
+;; it predicts the TRUE arm, -1 the FALSE arm, 0 when it says nothing. An
+;; equality with a constant fails; a sign test against zero is negative-false.
+(define (compiler-backend-placement-opcode-predict
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]) : i64
+  (match (compiler-backend-placement-branch-cond instrs)
+    [(Var v)
+      (let
+        [i : i64 (- instrs.len 2)]
+        [out : i64 0]
+        (while (>= i 0)
+          (match (owned_view.compiler-owned-element-view instrs.slots i)
+            [(BinOp dst op lhs rhs _)
+              (when
+                (= dst v)
+                (let
+                  [rhs-const? : bool
+                    (match rhs
+                      [(or (I64 _) (Bool _) (Char _)) true]
+                      [_ false])]
+                  [rhs-zero? : bool
+                    (match rhs
+                      [(I64 k) (= k 0)]
+                      [_ false])]
+                  [lhs-zero? : bool
+                    (match lhs
+                      [(I64 k) (= k 0)]
+                      [_ false])]
+                  (set!
+                    out
+                    (match op
+                      [(Eq)
+                        (if rhs-const?
+                          -1
+                          0)]
+                      [(Ne)
+                        (if rhs-const?
+                          1
+                          0)]
+                      [(or (Lt) (Le))
+                        (cond [rhs-zero? -1] [lhs-zero? 1] [else 0])]
+                      [(or (Gt) (Ge))
+                        (cond [rhs-zero? 1] [lhs-zero? -1] [else 0])]
+                      [_ 0])))
+                (set! i 0))]
+            ;; Any other definition of the condition is not a compare the
+            ;; heuristic can read, and an older BinOp is not what it tests.
+            [_
+              (when
+                (=
+                  (compiler_ir_types.compiler-ir-instr-dst
+                    (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i))
+                  v)
+                (set! i 0))])
+          (-= i 1))
+        out)]
+    [_ 0]))
+
+;; Could return-arm sinking move anything in the identity order? Its candidate
+;; is a return block after the pinned prefix, between a two-arm branch before it
+;; and some block after it. A loop-free function with no such pair is declined
+;; before any state is allocated for it.
+(define (compiler-backend-placement-guard-return?
+  [term-kind : (& term-kind (__tl_dyn-array i64))]
+  [n : i64]
+  [pinned : i64]) : bool
+  (let
+    [r : i64
+      (if (< pinned 1)
+        1
+        pinned)]
+    [found : bool false]
+    (while (< (+ r 1) n)
+      (when
+        (and (= (array-ref term-kind r) 4) (= (array-ref term-kind (- r 1)) 2))
+        (set! found true)
+        (set! r n))
+      (+= r 1))
+    found))
+
+;; Return-arm sinking over the final order. `preds` counts each block's
+;; incoming edges. Only for a function whose returns do not share an epilogue
+;; (see `compiler-backend-placement-sink-point`): there every return block is
+;; self-contained, so moving one to the end moves nothing else's code.
+(define (compiler-backend-placement-sink-returns!
+  [st : (&mut st CompilerBackendPlacement)]
+  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]
+  [preds : (&mut preds (__tl_dyn-array i64))]
+  [pinned : i64]) : unit
+  (let
+    [n : i64 st.count]
+    [dest : i64 n]
+    [limit : i64 n]
+    [r : i64 pinned]
+    (for [edge (iterator.range 0 (array-ref st.succ-off n))]
+      (+= (array-ref preds (array-ref st.succ-buf edge)) 1))
+    (when (< r 1) (set! r 1))
+    (while (< (+ r 1) limit)
+      (let
+        [b : i64 (array-ref st.order r)]
+        [p : i64 (array-ref st.order (- r 1))]
+        [next : i64 (array-ref st.order (+ r 1))]
+        (if (and
+          (= (array-ref st.term-kind b) 4)
+          (= (array-ref preds b) 1)
+          (< (array-ref st.inner p) 0)
+          (compiler-backend-placement-arms? st p b next)
+          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+            [(Block _ instrs)
+              (match (owned_view.compiler-owned-element-view
+                instrs.slots
+                (- instrs.len 1))
+                [(Return _) true]
+                [_ false])])
+          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq p)
+            [(Block _ instrs)
+              (let
+                [predict : i64
+                  (compiler-backend-placement-opcode-predict instrs)]
+                [on-true? : bool
+                  (= (array-ref st.succ-buf (array-ref st.succ-off p)) b)]
+                (cond
+                  [(= predict 0) (not (= (array-ref st.term-kind next) 4))]
+                  [on-true? (= predict -1)]
+                  [else (= predict 1)]))]))
+          (begin
+            (compiler-backend-placement-move-before! st r 1 dest)
+            (-= limit 1))
+          (+= r 1))))))
+
 ;; `rotateLoop`. Innermost loops first, so an outer rotation moves whole inner
 ;; runs. Each loop's run is rotated left past its exiting block, which lands
 ;; that block at the bottom and makes the old bottom -- the latch -- adjacent to
@@ -20278,7 +20816,7 @@
 (define (compiler-backend-placement-rotate!
   [st : CompilerBackendPlacement]
   [nest : compiler_regalloc.CompilerRegLoopNest]
-  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]
   [sorted : (__tl_dyn-array i64)]
   [header-count : i64]
   [generation-base : i64]) : unit
@@ -20299,6 +20837,10 @@
               generation)]
           [lo : i64 (array-ref st.pos h)]
           [hi : i64 (array-ref st.pos h)]
+          ;; The run as the front end laid it out: before this pass the order
+          ;; is the identity, so a block's index is its original position.
+          [first : i64 h]
+          [last : i64 h]
           [exiting : i64 (- 0 1)]
           [span : i64 0]
           [shift : i64 0]
@@ -20309,6 +20851,12 @@
             (let
               [q : i64 (array-ref st.pos (array-ref nest.members m))]
               (set! (array-ref st.members (+ m 1)) (array-ref nest.members m))
+              (when
+                (< (array-ref nest.members m) first)
+                (set! first (array-ref nest.members m)))
+              (when
+                (> (array-ref nest.members m) last)
+                (set! last (array-ref nest.members m)))
               (if (< q lo)
                 (set! lo q)
                 unit)
@@ -20317,16 +20865,21 @@
                 unit)))
           ;; Rotate only a run that is contiguous, that is entered at its
           ;; header, that is not the entry block's, and whose trip count
-          ;; the counting-loop shape vouches for.
+          ;; the counting-loop shape vouches for. A run that only exit
+          ;; sinking made contiguous is a search loop with early exits:
+          ;; when it also counts (a bounded hash probe) the admission
+          ;; cannot tell it from a counting loop, and its usual single
+          ;; trip would pay the entry jump, so it keeps its top test.
           (when
             (and
               (= (- (+ hi 1) lo) (+ total 1))
+              (= (- (+ last 1) first) (+ total 1))
               (> lo 0)
               (= (array-ref st.order lo) h)
               (compiler-backend-placement-counting-loop?
                 (be_state.compiler-backend-global-shared-view st)
                 (be_state.compiler-backend-global-shared-view nest)
-                (be_state.compiler-backend-global-shared-view seq)
+                seq
                 h
                 (+ total 1)
                 generation))
@@ -20524,7 +21077,7 @@
       (- 0 1))
     ;; The three per-variable tables are deliberately NOT filled: the only
     ;; generations that read them come from the rotation walk, which starts
-    ;; above `2 * (header-count + 1)` and so can never be the 0 a fresh array
+    ;; above `4 * (header-count + 1)` and so can never be the 0 a fresh array
     ;; holds. On the compiler's own large functions that fill would be three
     ;; passes over every variable, per function.
     (for [i (iterator.range 0 n)]
@@ -20536,8 +21089,11 @@
   [st : CompilerBackendPlacement]
   [nest : compiler_regalloc.CompilerRegLoopNest]
   [header-count : i64]
-  [seq : compiler_ir_types.CompilerIrBlockSeq]
-  [rotate? : bool]) : unit
+  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]
+  [rotate? : bool]
+  [sink? : bool]
+  [pinned : i64]
+  [keep-tail? : bool]) : unit
   (let
     [sorted : (__tl_dyn-array i64) (__tl_make-array i64 (+ header-count 1))]
     [size : (__tl_dyn-array i64) (__tl_make-array i64 st.count)]
@@ -20547,6 +21103,19 @@
       (&mut sorted)
       size
       header-count)
+    ;; Each walk stamps the nest with its own generations: loop-info! [1, 2h],
+    ;; exit sinking (2h, 4h] -- its sink point's spans, then its own walk --
+    ;; rotation above 4h.
+    (when
+      sink?
+      (compiler-backend-placement-sink-exits!
+        (&mut st)
+        (& nest)
+        (& sorted)
+        header-count
+        (* 2 (+ header-count 1))
+        pinned
+        keep-tail?))
     (when
       rotate?
       (compiler-backend-placement-rotate!
@@ -20555,14 +21124,17 @@
         seq
         sorted
         header-count
-        (* 2 (+ header-count 1))))))
+        (* 4 (+ header-count 1))))))
 
 ;; The state this pass builds for one block sequence, or `No` when the sequence
 ;; contains no loops. Shared by the production entry and by the unit
 ;; tests, which read the chosen order out of `st.order` rather than out of
 ;; emitted text.
 (define (compiler-backend-placement-plan-for-seq
-  [seq : compiler_ir_types.CompilerIrBlockSeq]) : CompilerBackendMaybePlacement
+  [seq : compiler_ir_types.CompilerIrBlockSeq]
+  [sink? : bool]
+  [pinned : i64]
+  [keep-tail? : bool]) : CompilerBackendMaybePlacement
   (let
     [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
     [succ-bound : i64 (compiler-backend-placement-succ-bound seq)]
@@ -20583,10 +21155,41 @@
                 (compiler_regalloc.compiler-reg-bits-map-capacity n))
               0)
             seq)]
+        [sinking? : bool
+          (and
+            sink?
+            (= compiler-backend-placement-mode 1)
+            (>= n 3)
+            (compiler-backend-placement-terminated? (& term-kind) n))]
         ;; No backward edge means no cycle, and most functions are that: stop
         ;; here rather than build a loop nest whose answer is already known.
+        ;; Only return-arm sinking has anything to do in such a function, and
+        ;; it needs no variable table.
         (if (= shape 0)
-          (No)
+          (if (and
+            sinking?
+            (not keep-tail?)
+            (compiler-backend-placement-guard-return? (& term-kind) n pinned))
+            (let
+              [st : CompilerBackendPlacement
+                (compiler-backend-placement-state
+                  n
+                  term-kind
+                  succ-off
+                  succ-buf
+                  (CompilerBackendPlacementVars
+                    (backend_label_i64_map.with-capacity
+                      (compiler_regalloc.compiler-reg-bits-map-capacity 0))
+                    0))]
+              (compiler-backend-placement-sink-returns!
+                (&mut st)
+                (& seq)
+                (&mut (__tl_make-array i64 n))
+                pinned)
+              (if (compiler-backend-placement-identity? st.order n)
+                (No)
+                (Some st)))
+            (No))
           (let
             [nest : compiler_regalloc.CompilerRegLoopNest
               (compiler_regalloc.compiler-reg-loop-nest-build-seq seq)]
@@ -20606,11 +21209,21 @@
                   (be_state.compiler-backend-global-shared-view st)
                   nest
                   header-count
-                  seq
+                  (& seq)
                   (and
                     (= compiler-backend-placement-mode 1)
                     (>= n 3)
-                    (= shape 1)))
+                    (= shape 1))
+                  sinking?
+                  pinned
+                  keep-tail?)
+                (when
+                  (and sinking? (not keep-tail?))
+                  (compiler-backend-placement-sink-returns!
+                    (&mut st)
+                    (& seq)
+                    (&mut (__tl_make-array i64 n))
+                    pinned))
                 (Some st)))))))))
 
 ;; The nest and the placement order use original block indices. Compact the
@@ -20643,14 +21256,20 @@
 ;; no blocks and rewrites no table.
 (define (compiler-backend-placement-blocks
   [function-state : be_state.CompilerBackendFunctionState]
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [sink? : bool]
+  [pinned : i64]
+  [keep-tail? : bool]) : compiler_ir_types.CompilerIrBlockList
   (let
     [dense : compiler_ir_types.CompilerIrBlockList
       (be_state.compiler-backend-global-shared-view blocks)]
     (match dense
       [(Array seq)
         (match (compiler-backend-placement-plan-for-seq
-          (be_state.compiler-backend-global-shared-view seq))
+          (be_state.compiler-backend-global-shared-view seq)
+          sink?
+          pinned
+          keep-tail?)
           [(No)
             ;; Frame-layout retries reuse this function's scratch owner.
             (be_state.compiler-backend-function-scratch-set-i64!
@@ -22964,8 +23583,22 @@
         ;; emission walk itself -- is derived from THIS list, so choosing the
         ;; order here and nowhere later is what keeps them all agreeing with the
         ;; text that comes out.
+        ;; Exit and return-arm sinking are full-speed only (not -O1, not -Os),
+        ;; and never move the prefix the early-exit shrink-wrap renders by
+        ;; index. Scalar registers are on exactly at the full levels.
         [emit-blocks-list : compiler_ir_types.CompilerIrBlockList
-          (compiler-backend-placement-blocks function-state colored-blocks)]
+          (compiler-backend-placement-blocks
+            function-state
+            colored-blocks
+            (and
+              scalar-registers-enabled
+              (not
+                (be_state.compiler-backend-state-optimize-for-size?
+                  backend-state)))
+            (compiler_regalloc.compiler-reg-early-exit-prefix-count-current)
+            (be_operand.compiler-backend-plan-uses-callee-regs?
+              assignments
+              backend-state))]
         [symbol : String
           (be_operand.compiler-backend-function-symbol-index program-index name)]
         [inline-memory-name : String

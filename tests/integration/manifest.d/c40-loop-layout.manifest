@@ -1,0 +1,4 @@
+# Native integration cases: #block-placement exit and return-arm sinking.
+# Format: name|hosts|opt|source|exit|stdout|args|deps|extra[|suite-members]
+
+c40_loop_layout|all|0,1,2|tests/integration/c40_loop_layout.tl|42|-|-|stdlib/iterator.tl|-

@@ -37737,7 +37737,8 @@ entry:
 ;; "Sunk" is spelled as a structural property of that body rather than as a line
 ;; match: an entry-placed prologue is the first thing after the function symbol,
 ;; so the body starts with `pushq`/`subq`; a shrink-wrapped one starts with the
-;; entry BLOCK label and the prologue appears later, after at least one `ret`.
+;; entry BLOCK label, the prologue appears later, and some `ret` returns
+;; without it.
 (define (compiler-backend-swb-find [body : (& body str)] [needle : String]) : i64
   (backend.compiler-backend-string-find-from body needle 0))
 
@@ -37768,8 +37769,49 @@ entry:
             (set! i (+ at 1))))))
     seen))
 
-;; The prologue sank: the body opens with a block label (not the prologue) and
-;; at least one `ret` is reached before the first prologue instruction.
+;; A `ret` no epilogue precedes -- neither a callee-saved `popq`, the frame's
+;; own `%rsp` adjust, nor a framed `leave` -- returns from a path that never
+;; built the frame.
+(define (compiler-backend-swb-count-bare-ret [body : (& body str)]) : i64
+  (let
+    [i : i64 0]
+    [seen : i64 0]
+    [done : bool false]
+    (while (not done)
+      (let
+        [at : i64
+          (backend.compiler-backend-string-find-from body "    ret\n" i)]
+        (if (< at 0)
+          (set! done true)
+          (begin
+            (unless
+              (or
+                (and
+                  (>= at 7)
+                  (be_operand.compiler-backend-string-prefix-at?
+                    body
+                    ", %rsp\n"
+                    (- at 7)))
+                (and
+                  (>= at 14)
+                  (be_operand.compiler-backend-string-prefix-at?
+                    body
+                    "    popq %"
+                    (- at 14)))
+                (and
+                  (>= at 10)
+                  (be_operand.compiler-backend-string-prefix-at?
+                    body
+                    "    leave\n"
+                    (- at 10))))
+              (+= seen 1))
+            (set! i (+ at 1))))))
+    seen))
+
+;; The prologue sank: the body opens with a block label (not the prologue), the
+;; prologue follows, and at least one `ret` returns without it. Where that bare
+;; exit is laid out is the block layout's business: a cold one sinks below the
+;; body, so its `ret` need not come before the prologue in the text.
 (define (compiler-backend-swb-sunk? [body : (& body str)]) : bool
   (let
     [prologue : i64 (compiler-backend-swb-prologue-index body)]
@@ -37777,7 +37819,7 @@ entry:
       (not (string.eq body ""))
       (be_operand.compiler-backend-string-prefix-at? body ".L" 0)
       (>= prologue 0)
-      (> (compiler-backend-swb-count-ret-before body prologue) 0))))
+      (> (compiler-backend-swb-count-bare-ret body) 0))))
 
 (define (compiler-backend-swb-entry-placed? [body : (& body str)]) : bool
   (and
@@ -41216,6 +41258,255 @@ b_keep:
       (= (array-ref order 1) 1)
       (= (array-ref order 2) 2))))
 
+;; EXIT SINKING. A search loop whose two exits -- the bound test's `done` and
+;; the hit's `found` -- the front end laid out inside its run:
+;;
+;;   entry / header / done / body / found / latch
+;;
+;; Both exits return, so both leave every loop and have no successor in this
+;; one; each sits between the two arms of the branch that leaves through it.
+;; They move right behind the loop, keeping their order, and each exit test
+;; then falls into its in-loop arm. `counting?` picks the latch step as in the
+;; `while` fixtures: the search loop keeps its top test, the counting one also
+;; rotates once its run is contiguous.
+(define (compiler-backend-placement-search-exit-blocks [counting? : bool]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (compiler-backend-placement-test-entry-block)
+    (irt.block
+      "header:
+         %1 = phi [%0, entry], [%3, latch] : i64
+         %2 = ge %1, %9 : i64
+         branch %2, done, body")
+    (irt.block "done:
+         return 0")
+    (irt.block
+      "body:
+         %4 = load %1 : i64
+         %5 = eq %4, 1 : i64
+         branch %5, found, latch")
+    (irt.block "found:
+         return 1")
+    (compiler-backend-placement-test-latch-block counting?)))
+
+;; entry / header / body / latch / done / found: one taken branch per trip,
+;; the latch's jump.
+(define (compiler-backend-placement-exit-sinking-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-search-exit-blocks false))
+    (__tl_make-array 0 1 3 5 2 4)))
+
+;; The counting version sinks the same way but is NOT rotated: its run is
+;; contiguous only because exit sinking made it so, and a search loop that
+;; also counts -- a bounded hash probe -- usually exits on its first trip, which
+;; rotation would charge an entry jump. Same order as the search version.
+(define (compiler-backend-placement-exit-sinking-keeps-top-test-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-search-exit-blocks true))
+    (__tl_make-array 0 1 3 5 2 4)))
+
+;; A second way INTO the loop laid out inside its run -- `side` jumps to the
+;; header from outside -- is not an exit, and moving it would cost its own path
+;; a jump: the order is untouched.
+(define (compiler-backend-placement-entry-path-stays-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (ir.compiler-ir-blocks
+        (irt.block
+          "entry:
+             %0 = mov 0 : i64
+             %8 = lt %0, %9 : i64
+             branch %8, header, side")
+        (irt.block
+          "header:
+             %1 = phi [%0, entry], [%0, side], [%3, latch] : i64
+             %2 = lt %1, %9 : i64
+             branch %2, body, exit")
+        (irt.block "side:
+             jump header")
+        (compiler-backend-placement-test-body-block true)
+        (compiler-backend-placement-test-latch-block false)
+        (compiler-backend-placement-test-exit-block)))
+    (__tl_make-array 0 1 2 3 4 5)))
+
+;; The layout of `blocks` for a function whose returns share an epilogue
+;; (`keep-tail?`), or a zero-length array when it declines.
+(define (compiler-backend-placement-keep-tail-order
+  [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array i64)
+  (match blocks
+    [(Array seq)
+      (match (backend.compiler-backend-placement-plan-for-seq seq true 0 true)
+        [(Some st) st.order]
+        [(No) (__tl_make-array i64 0)])]))
+
+;; With a shared epilogue, the sink point sits before the trailing
+;; fall-through chain, and that chain can start inside a loop's run. Here the
+;; loop's bottom block `tail` falls into the return `exit`, so the chain is
+;; tail / exit and the point is `tail` itself: `found` has nowhere outside the
+;; run to go and the order stays as it is (the loop keeps its top test).
+(define (compiler-backend-placement-tail-loop-keeps-exit-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-keep-tail-order
+      (irt.blocks
+        "entry:
+           %0 = mov 0 : i64
+           jump header
+         header:
+           %1 = phi [%0, entry], [%3, step], [%8, tail] : i64
+           %2 = ge %1, %9 : i64
+           branch %2, tail, body
+         body:
+           %4 = load %1 : i64
+           %5 = eq %4, 1 : i64
+           branch %5, found, step
+         found:
+           return 1
+         step:
+           %3 = add %1, 1 : i64
+           jump header
+         tail:
+           %8 = load %1 : i64
+           %6 = lt %8, %9 : i64
+           branch %6, header, exit
+         exit:
+           return %8"))
+    (__tl_make-array 0 1 2 3 4 5 6)))
+
+;; The chain may also start inside a LATER loop: `second`'s bottom block falls
+;; into `exit`, which puts the sink point between `skip` and `again`. The first
+;; loop's exit `found` must not land there; it moves out of its own run to the
+;; nearest point outside every run, before `second`.
+(define (compiler-backend-placement-tail-loop-skips-run-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-keep-tail-order
+      (irt.blocks
+        "entry:
+           %0 = mov 0 : i64
+           jump first
+         first:
+           %1 = phi [%0, entry], [%3, latch] : i64
+           %2 = ge %1, %9 : i64
+           branch %2, second, body
+         body:
+           %4 = load %1 : i64
+           %5 = eq %4, 1 : i64
+           branch %5, found, latch
+         found:
+           return 1
+         latch:
+           %3 = add %1, 1 : i64
+           %6 = lt %3, %9 : i64
+           branch %6, first, second
+         second:
+           %10 = phi [%1, first], [%3, latch], [%13, skip], [%18, again] : i64
+           %12 = ge %10, %9 : i64
+           branch %12, again, skip
+         skip:
+           %13 = add %10, 1 : i64
+           jump second
+         again:
+           %18 = load %10 : i64
+           %16 = lt %18, %9 : i64
+           branch %16, second, exit
+         exit:
+           return %18"))
+    (__tl_make-array 0 1 2 4 3 5 6 7 8)))
+
+;; RETURN-ARM SINKING. entry / early / rest, where `early` is a guard's return
+;; arm and `rest` the guard's other arm. `test` is the guard's compare.
+(define (compiler-backend-placement-guard-blocks [test : String]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (irt.block
+      (str_cat.str-cat
+        "entry:
+           %1 = "
+        test
+        " : i64
+           branch %1, early, rest"))
+    (irt.block "early:
+         return 0")
+    (irt.block "rest:
+         %2 = add %0, 1 : i64
+         return %2")))
+
+;; `x < 0` is predicted false, so the return arm is cold and moves to the end:
+;; entry / rest / early.
+(define (compiler-backend-placement-return-arm-sinks-ok?) : bool
+  (compiler-backend-placement-test-order-eq?
+    (compiler-backend-placement-order-for-blocks
+      (compiler-backend-placement-guard-blocks "lt %0, 0"))
+    (__tl_make-array 0 2 1)))
+
+;; `x != 0` is predicted TRUE, which is the return arm: the opcode heuristic
+;; keeps it as the fall-through and the function keeps its order (no plan).
+(define (compiler-backend-placement-return-arm-veto-ok?) : bool
+  (=
+    (array-length
+      (compiler-backend-placement-order-for-blocks
+        (compiler-backend-placement-guard-blocks "ne %0, 0")))
+    0))
+
+;; With the opcode heuristic silent -- two variables compared -- only the return
+;; heuristic speaks, and only when exactly one arm leaves the function. Both of
+;; the guard's arms return, so nothing moves; once `rest` continues to a block
+;; of its own, `early` is the one return arm and sinks: entry / rest / tail /
+;; early.
+(define (compiler-backend-placement-return-heuristic-ok?) : bool
+  (and
+    (=
+      (array-length
+        (compiler-backend-placement-order-for-blocks
+          (compiler-backend-placement-guard-blocks "lt %0, %3")))
+      0)
+    (compiler-backend-placement-test-order-eq?
+      (compiler-backend-placement-order-for-blocks
+        (ir.compiler-ir-blocks
+          (irt.block
+            "entry:
+               %1 = lt %0, %3 : i64
+               branch %1, early, rest")
+          (irt.block "early:
+               return 0")
+          (irt.block
+            "rest:
+               %2 = add %0, 1 : i64
+               jump tail")
+          (irt.block "tail:
+               return %2")))
+      (__tl_make-array 0 2 3 1))))
+
+;; Size-optimized and non-full builds pass `sink?` false, and a block in the
+;; pinned prefix -- the early-exit shrink-wrap's, rendered by index -- never
+;; moves. Nor does a return arm in a function whose returns share an epilogue
+;; (`keep-tail?`, a function that restores callee-saved registers). All three
+;; leave the same guard alone.
+(define (compiler-backend-placement-return-arm-gates-ok?) : bool
+  (and
+    (match (compiler-backend-placement-guard-blocks "lt %0, 0")
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          false
+          0
+          false)
+          [(Some _) false]
+          [(No) true])])
+    (match (compiler-backend-placement-guard-blocks "lt %0, 0")
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          2
+          false)
+          [(Some _) false]
+          [(No) true])])
+    (match (compiler-backend-placement-guard-blocks "lt %0, 0")
+      [(Array seq)
+        (match (backend.compiler-backend-placement-plan-for-seq seq true 0 true)
+          [(Some _) false]
+          [(No) true])])))
+
 ;; The Windows end of the pass, built at the IR level so no source-level
 ;; transform (the unroller renames this exact loop) can move the shape out from
 ;; under the check. One counting loop over a parameter bound, emitted for the
@@ -41339,6 +41630,15 @@ b_keep:
     (compiler-backend-placement-open-block-declines-ok?)
     (compiler-backend-placement-viable-top-declines-ok?)
     (compiler-backend-placement-entry-stays-first-ok?)
+    (compiler-backend-placement-exit-sinking-ok?)
+    (compiler-backend-placement-exit-sinking-keeps-top-test-ok?)
+    (compiler-backend-placement-entry-path-stays-ok?)
+    (compiler-backend-placement-tail-loop-keeps-exit-ok?)
+    (compiler-backend-placement-tail-loop-skips-run-ok?)
+    (compiler-backend-placement-return-arm-sinks-ok?)
+    (compiler-backend-placement-return-arm-veto-ok?)
+    (compiler-backend-placement-return-heuristic-ok?)
+    (compiler-backend-placement-return-arm-gates-ok?)
     (compiler-backend-placement-windows-seh-shape-ok?)))
 
 ;; ---------------------------------------------------------------------------
@@ -42611,7 +42911,11 @@ b_keep:
     (__tl_make-array i64 0)
     (match blocks
       [(Array seq)
-        (match (backend.compiler-backend-placement-plan-for-seq seq)
+        (match (backend.compiler-backend-placement-plan-for-seq
+          seq
+          true
+          0
+          false)
           [(Some st) st.order]
           [(No) (__tl_make-array i64 0)])])))
 

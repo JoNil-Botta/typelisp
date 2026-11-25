@@ -6140,6 +6140,61 @@
               (build_run_core.source-tool-args-append obj-paths obj-p)))))
       (build_run_core.source-tool-archive-many target obj-paths archive-path))))
 
+(define (build-package-target-is-host?
+  [target : be_state.CompilerBackendTarget]) : bool
+  (match target
+    [(Linux) (cfg windows false true)]
+    [(Windows) (cfg windows true false)]))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-lib-commit-interface-only!
+    [stage : BuildPackageStagePaths]
+    [tli-path : (& str)]
+    [tlci-path : (& str)]
+    [tlci-text : String]
+    [has-tlci : bool]
+    [tlci-dirty : bool]) : i64
+    (when
+      tlci-dirty
+      (match (build-package-write-tlci (& stage.tlci) tlci-text)
+        [(Ok) unit]
+        [(Err message)
+          (build-package-clean-stage stage)
+          (io.print-error message)
+          (return 1)]))
+    (let
+      [plan : BuildPackageCommitPlan
+        (build-package-commit-plan-add
+          (build-package-commit-plan-new)
+          (string.copy tli-path)
+          (string.copy (& stage.tli)))]
+      (when
+        tlci-dirty
+        (set!
+          plan
+          (build-package-commit-plan-add
+            plan
+            (string.copy tlci-path)
+            (string.copy (& stage.tlci)))))
+      (compiler_driver_core.compiler-driver-reset-file-state!)
+      (match (build-package-commit-plan-run plan)
+        [(Err message rollback)
+          (build-package-clean-stage-after-rollback
+            (& stage)
+            (owned_view.compiler-owned-shared-view rollback))
+          (io.print-error
+            (build-package-commit-error-message message rollback stage.dir))
+          1]
+        [(Ok)
+          (unless
+            has-tlci
+            (let
+              [_ : io.ResultIoUnit (fs.try-remove-file-if-exists tlci-path)]
+              unit))
+          (build-package-clean-stage stage)
+          0]))))
+
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (build-package-emit-lib-tli!
@@ -6471,6 +6526,18 @@
                                               "build: failed to write package tli: "
                                               (io.error-message err)))
                                           (return 1)]))
+                                    (when
+                                      request.interface-only
+                                      (build-package-lib-clean-mods-dir!
+                                        (& mods-dir))
+                                      (return
+                                        (build-package-lib-commit-interface-only!
+                                          stage
+                                          (& request.tli-path)
+                                          (& request.tlci-path)
+                                          tlci-text
+                                          has-tlci
+                                          tlci-dirty)))
                                     (let
                                       [combined-asm : text_buf.TextBuf
                                         (text_buf.empty)]
@@ -6732,7 +6799,8 @@
     (compile-cfgs cfg_core.CompilerCfgSnapshot)
     (announce bool)
     (lock-policy BuildPackageLockPolicy)
-    (cfg-names cli_svec.Vec)))
+    (cfg-names cli_svec.Vec)
+    (interface-only bool)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -6976,7 +7044,7 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (build-package-emit-one
+  (define (build-package-emit-one-mode
     [manifest-path : String]
     [manifest : load.CompilerPkgManifest]
     [target : be_state.CompilerBackendTarget]
@@ -6989,7 +7057,8 @@
     [dep-link-inputs : build_run_core.SourceToolLinkInputs]
     [catalog-deps : load.CompilerPkgDepList]
     [producer-identity : String]
-    [announce : bool]) : i64
+    [announce : bool]
+    [interface-only : bool]) : i64
     (let
       ;; Windows package DAG nodes are serial same-process compiles; keep only
       ;; persistent cache floors between dependency and root emits.
@@ -7066,7 +7135,7 @@
               compile-context.root-compiler
               cfg-names)]
           [lib-input-transcript : String
-            (if (build-package-kind-lib? kind)
+            (if (and (build-package-kind-lib? kind) (not interface-only))
               (match (package_source_core.package-source-discover-for
                 "build"
                 (string.copy (& manifest-path))
@@ -7120,6 +7189,7 @@
           (when
             (and
               (build-package-kind-lib? kind)
+              (not interface-only)
               (not verify-lib-deps?)
               (build-package-lib-fresh?
                 (string.copy (& lib-input-transcript))
@@ -7174,7 +7244,62 @@
                   (cfg_core.compiler-cfg-snapshot-from-env compile-cfgs)
                   announce
                   lock-policy
-                  (cli_svec.clone-vec cfg-names))))))))))
+                  (cli_svec.clone-vec cfg-names)
+                  interface-only)))))))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (build-package-emit-one
+    [manifest-path : String]
+    [manifest : load.CompilerPkgManifest]
+    [target : be_state.CompilerBackendTarget]
+    [opt-level : i64]
+    [profile : BuildProfile]
+    [mode : be_state.CompilerBackendMode]
+    [lock-policy : BuildPackageLockPolicy]
+    [stdlib-roots : cli_svec.Vec]
+    [cfg-names : (& cfg-names cli_svec.Vec)]
+    [dep-link-inputs : build_run_core.SourceToolLinkInputs]
+    [catalog-deps : load.CompilerPkgDepList]
+    [producer-identity : String]
+    [announce : bool]) : i64
+    (build-package-emit-one-mode
+      manifest-path
+      manifest
+      target
+      opt-level
+      profile
+      mode
+      lock-policy
+      stdlib-roots
+      cfg-names
+      dep-link-inputs
+      catalog-deps
+      producer-identity
+      announce
+      false)))
+
+(cfg
+  (not
+    (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci))
+  (define (build-package-emit-one-mode
+    [_manifest-path : String]
+    [_manifest : load.CompilerPkgManifest]
+    [_target : be_state.CompilerBackendTarget]
+    [_opt-level : i64]
+    [_profile : BuildProfile]
+    [_mode : be_state.CompilerBackendMode]
+    [_lock-policy : BuildPackageLockPolicy]
+    [_stdlib-roots : cli_svec.Vec]
+    [cfg-names : (& cfg-names cli_svec.Vec)]
+    [_dep-link-inputs : build_run_core.SourceToolLinkInputs]
+    [_catalog-deps : load.CompilerPkgDepList]
+    [_producer-identity : String]
+    [_announce : bool]
+    [_interface-only : bool]) : i64
+    (io.print-error
+      "build: package emission requires checked frontend surface support")
+    1))
 
 (cfg
   (not
@@ -7977,7 +8102,7 @@
     (build_string_i64_map.with-capacity 32)
     (build_string_i64_map.with-capacity 32)))
 
-(define (build-package-emit-graph-nodes-serial
+(define (build-package-emit-graph-nodes-serial-mode
   [nodes : BuildPackageGraphNodeVec]
   [target : be_state.CompilerBackendTarget]
   [opt-level : i64]
@@ -7987,7 +8112,8 @@
   [stdlib-roots : cli_svec.Vec]
   [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
-  [announce : bool]) : i64
+  [announce : bool]
+  [interface-only : bool]) : i64
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
@@ -8007,7 +8133,7 @@
               (io.print-error message)
               1]
             [(Ok _)
-              (build-package-emit-one
+              (build-package-emit-one-mode
                 manifest-path
                 (owned_view.compiler-owned-shared-view manifest)
                 target
@@ -8020,7 +8146,8 @@
                 (build_run_core.source-tool-link-inputs-empty)
                 (load.compiler-pkg-deps-list manifest.deps)
                 (owned_view.compiler-owned-shared-view producer-identity)
-                announce)])]
+                announce
+                interface-only)])]
         (if (= node-status 0)
           (+= index 1)
           (begin
@@ -8032,6 +8159,30 @@
                 (string.int->string node-status)))
             (set! status node-status)))))
     status))
+
+(define (build-package-emit-graph-nodes-serial
+  [nodes : BuildPackageGraphNodeVec]
+  [target : be_state.CompilerBackendTarget]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [mode : be_state.CompilerBackendMode]
+  [lock-policy : BuildPackageLockPolicy]
+  [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
+  [producer-identity : String]
+  [announce : bool]) : i64
+  (build-package-emit-graph-nodes-serial-mode
+    nodes
+    target
+    opt-level
+    profile
+    mode
+    lock-policy
+    stdlib-roots
+    cfg-names
+    producer-identity
+    announce
+    false))
 
 (define (build-package-emit-graph-nodes
   [nodes : BuildPackageGraphNodeVec]
@@ -8563,17 +8714,30 @@
                         (io.print-error message)
                         1]
                       [(Ok graph)
-                        (build-package-emit-graph-nodes
-                          graph.order
-                          target
-                          opt-level
-                          profile
-                          backend-mode
-                          lock-policy
-                          stdlib-roots
-                          cfg-names
-                          producer-identity
-                          false)])]))])])]))
+                        (if (build-package-target-is-host? target)
+                          (build-package-emit-graph-nodes
+                            graph.order
+                            target
+                            opt-level
+                            profile
+                            backend-mode
+                            lock-policy
+                            stdlib-roots
+                            cfg-names
+                            producer-identity
+                            false)
+                          (build-package-emit-graph-nodes-serial-mode
+                            graph.order
+                            target
+                            opt-level
+                            profile
+                            backend-mode
+                            lock-policy
+                            stdlib-roots
+                            cfg-names
+                            producer-identity
+                            false
+                            true))])]))])])]))
 
 (define (build-package-deps-only-run-from
   [idx : i64]

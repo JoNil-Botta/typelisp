@@ -15,6 +15,10 @@
   (x i64)
   (y i64))
 
+(eq.gen Pt)
+
+(hash.gen Pt)
+
 (import (hash.hash i64) as hash_i64)
 (import (hash.hash String) as hash_str)
 (import (hash.hash Pt) as hash_pt)
@@ -22,13 +26,13 @@
 
 (define (main) : i64
   (if (and
-    (eq_pt.eq (Pt 3 4) (Pt 3 4))
-    (not (eq_pt.eq (Pt 3 4) (Pt 3 5)))
-    (= (hash_pt.hash (Pt 3 4)) (hash_pt.hash (Pt 3 4)))
-    (!= (hash_pt.hash (Pt 3 4)) (hash_pt.hash (Pt 3 5)))
-    (= (hash_i64.hash 7) (hash_i64.hash 7))
-    (!= (hash_i64.hash 7) (hash_i64.hash 8))
-    (= (hash_str.hash "abc") (hash_str.hash "abc"))
-    (!= (hash_str.hash "abc") (hash_str.hash "abd")))
+    (eq_pt.eq (& (Pt 3 4)) (& (Pt 3 4)))
+    (not (eq_pt.eq (& (Pt 3 4)) (& (Pt 3 5))))
+    (= (hash_pt.hash (& (Pt 3 4))) (hash_pt.hash (& (Pt 3 4))))
+    (!= (hash_pt.hash (& (Pt 3 4))) (hash_pt.hash (& (Pt 3 5))))
+    (= (hash_i64.hash (& 7)) (hash_i64.hash (& 7)))
+    (!= (hash_i64.hash (& 7)) (hash_i64.hash (& 8)))
+    (= (hash_str.hash (& "abc")) (hash_str.hash (& "abc")))
+    (!= (hash_str.hash (& "abc")) (hash_str.hash (& "abd"))))
     42
     1))

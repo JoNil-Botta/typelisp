@@ -22,6 +22,8 @@
 ;;     `token.Token.End`) and accessors are usable through the module alias.
 ;;   - Because this module declares no `main` (and `calc.tl` no longer declares
 ;;     its own token model), there is exactly one entry point and one token API.
+(import stdlib.eq)
+
 ;; The token kinds the calculator surface needs: integer literals, the four
 ;; binary operators, parentheses, and an end-of-stream sentinel.
 (defenum Token
@@ -33,6 +35,8 @@
   (LParen)
   (RParen)
   (End))
+
+(eq.gen Token)
 
 ;; Numeric tag for a token kind: the parser's cursor classifies the token under
 ;; it by tag. Exercises `match` over every Token variant - and proves an

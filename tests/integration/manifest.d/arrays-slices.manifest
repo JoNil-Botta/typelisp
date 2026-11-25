@@ -33,7 +33,7 @@ make_array_init|all|-|tests/integration/make_array_init.tl|42|-|-|stdlib/string.
 make_array_zero|all|-|tests/integration/make_array_zero.tl|0|-|-|-|-
 fixed_array|all|-|tests/integration/fixed_array.tl|42|-|-|-|-
 dyn_array_covariance|all|0,1,2|tests/integration/dyn_array_covariance.tl|42|-|-|stdlib/string.tl|-
-vector_alias_field|all|0,1,2|tests/integration/vector_alias_field.tl|42|-|-|vector_alias_field_provider.tl stdlib/vector.tl stdlib/option.tl stdlib/eq.tl|-
+vector_alias_field|all|0,1,2|tests/integration/vector_alias_field.tl|42|-|-|vector_alias_field_provider.tl stdlib/vector.tl stdlib/option.tl stdlib/eq.tl stdlib/clone.tl|-
 fixed_array_match_pattern|all|-|tests/integration/fixed_array_match_pattern.tl|42|-|-|stdlib/string.tl|-
 slice_match_pattern|all|0,1,2|tests/integration/slice_match_pattern.tl|42|-|-|stdlib/string.tl stdlib/vector.tl|-
 array_push_aggregate|all|-|tests/integration/array_push_aggregate.tl|42|-|-|-|-

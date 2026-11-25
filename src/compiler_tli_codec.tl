@@ -142,6 +142,18 @@
   (symbol i64)
   (index i64))
 
+;; The owner equality hook the full-mode `keys` vector (shared with
+;; `stdlib.sort.vec`) requires. It compares every field, unlike the tie test
+;; `tli-key-eq?`.
+(define (eq-tli-order-key
+  [left : (& left TliOrderKey)]
+  [right : (& right TliOrderKey)]) : bool
+  (and
+    (= left.name right.name)
+    (= left.kind right.kind)
+    (= left.symbol right.symbol)
+    (= left.index right.index)))
+
 (import (stdlib.vector.vector TliOrderKey) as keys)
 (import (stdlib.sort.vec TliOrderKey) as key_sort)
 

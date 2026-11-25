@@ -1,3 +1,4 @@
+(import stdlib.eq)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector i64) as i64vec)
@@ -6,15 +7,21 @@
 (defstruct VectorApiCounter
   (value i64))
 
+(eq.gen VectorApiCounter)
+
 (import (vector.vector VectorApiCounter) as countervec)
 
 (defstruct VectorApiPoint
   (x i64)
   (y i64))
 
+(eq.gen VectorApiPoint)
+
 (defstruct VectorApiBall
   (center VectorApiPoint)
   (radius i64))
+
+(eq.gen VectorApiBall)
 
 (import (vector.vector VectorApiBall) as ballvec)
 
@@ -136,7 +143,7 @@
           (if (and
             (= (i64vec.len (& numbers)) 2)
             (= (i64vec.get (& numbers) 0 0) 32)
-            (i64vec.contains? (& numbers) 11)
+            (i64vec.contains? (& numbers) (& 11))
             (string.eq word "beta")
             (string.eq (strvec.get (& words) 0 "") "alpha")
             word-first-alpha

@@ -234,6 +234,26 @@
 
 (import stdlib.vector)
 (import stdlib.sort)
+
+;; The owner equality hook the full-mode vector shared with `stdlib.sort.vec`
+;; requires.
+(define (eq-compiler-incremental-encoded-record
+  [left : (& left CompilerIncrementalEncodedRecord)]
+  [right : (& right CompilerIncrementalEncodedRecord)]) : bool
+  (and
+    (= left.tag right.tag)
+    (string.eq (& left.bytes) (& right.bytes))
+    (= left.ordered? right.ordered?)
+    (string.eq (& left.sequence) (& right.sequence))
+    (= left.ordinal right.ordinal)))
+
+(define (eq-compiler-incremental-config-field
+  [left : (& left CompilerIncrementalConfigField)]
+  [right : (& right CompilerIncrementalConfigField)]) : bool
+  (and
+    (string.eq (& left.name) (& right.name))
+    (string.eq (& left.value) (& right.value))))
+
 (import (stdlib.vector.vector CompilerIncrementalEncodedRecord) as incremental_record_vec)
 (import (stdlib.sort.vec CompilerIncrementalEncodedRecord) as incremental_record_sort)
 (import (stdlib.vector.vector CompilerIncrementalConfigField) as incremental_config_vec)

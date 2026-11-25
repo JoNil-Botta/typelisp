@@ -502,6 +502,8 @@
 (define (compiler-lower-smoke-c43-vector-push-only-source) : String
   "(import stdlib.vector)
 (defstruct C43Point (x i64) (y i64))
+(define (eq-c43-point [left : (& left C43Point)] [right : (& right C43Point)]) : bool
+  (if (= left.x right.x) (= left.y right.y) false))
 (import (vector.vector C43Point) as pvec)
 (define (main) : i64
   (let
@@ -513,6 +515,8 @@
 (define (compiler-lower-smoke-c43-vector-push-map-source) : String
   "(import stdlib.vector)
 (defstruct C43Point (x i64) (y i64))
+(define (eq-c43-point [left : (& left C43Point)] [right : (& right C43Point)]) : bool
+  (if (= left.x right.x) (= left.y right.y) false))
 (import (vector.vector C43Point) as pvec)
 (define (c43-bump [p : C43Point]) : C43Point
   (C43Point (+ p.x 1) p.y))
@@ -532,6 +536,8 @@
 (define (compiler-lower-smoke-c43-unreachable-error-source) : String
   "(import stdlib.vector)
 (defstruct C43Point (x i64) (y i64))
+(define (eq-c43-point [left : (& left C43Point)] [right : (& right C43Point)]) : bool
+  (if (= left.x right.x) (= left.y right.y) false))
 (import (vector.vector C43Point) as pvec)
 (define (main) : i64
   (let

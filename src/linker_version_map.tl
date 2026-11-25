@@ -5,7 +5,7 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as cat)
 (import stdlib.vector)
-(import (vector.vector script.Token) as token_vec)
+(import (vector.vector script.Token core) as token_vec)
 
 (defstruct VersionMapLimits
   ;; max-bytes also caps the source label copied into a diagnostic.

@@ -8,7 +8,9 @@
   `(begin
     (module generated.qualified_type_vector_provider)
     (defstruct T
-      (value i64))))
+      (value i64))
+    (define (eq-t [left : (& left T)] [right : (& right T)]) : bool
+      (= left.value right.value))))
 
 (defmacro (vector-user) : Module
   `(begin

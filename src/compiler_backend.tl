@@ -5251,10 +5251,13 @@
 
 ;; The dynamic-index register pool mirror of scavenge-exclude-regs2, extended
 ;; with the ALU destination home.
+;; The dynamic-index register pool mirror of scavenge-exclude-regs2, extended
+;; with the ALU destination and non-loaded operand homes.
 (define (compiler-backend-gep-load-alu-index-exclude
   [base-reg : String]
   [offset-home : String]
-  [dst-home : String]) : (__tl_dyn-array String)
+  [dst-home : String]
+  [x-home : String]) : (__tl_dyn-array String)
   (__tl_make-array
     "%rax"
     "%rdx"
@@ -5263,7 +5266,8 @@
     (if (string.eq offset-home "")
       base-reg
       offset-home)
-    dst-home))
+    dst-home
+    x-home))
 
 (define (compiler-backend-emit-gep-load-alu
   [type-segment-bases : i64]
@@ -5286,6 +5290,15 @@
         backend-state
         assignments
         alu-dst)]
+    ;; #9976: `x` is read into dst-home AFTER the address is staged, so every
+    ;; scavenge also excludes x's home -- an emergency-borrowed register is
+    ;; preserved across the bracketed text but not during it (the
+    ;; compiler-backend-scavenge-emergency-cand-index soundness rule).
+    [x-home : String
+      (be_operand.compiler-backend-value-scalar-register
+        backend-state
+        assignments
+        x)]
     (match displacement
       [(Some disp)
         (let
@@ -5301,9 +5314,10 @@
             (if (string.eq base-home "")
               (be_operand.compiler-backend-scavenge-reg
                 alu-dst
-                (be_operand.compiler-backend-one-exclude
-                  (be_state.compiler-backend-global-shared-view dst-home))
-                1
+                (be_operand.compiler-backend-two-exclude
+                  (be_state.compiler-backend-global-shared-view dst-home)
+                  x-home)
+                2
                 "%r10"
                 backend-state)
               base-home)]
@@ -5351,10 +5365,11 @@
               base-home
               (be_operand.compiler-backend-scavenge-reg
                 alu-dst
-                (be_operand.compiler-backend-two-exclude
+                (be_operand.compiler-backend-three-exclude
                   (be_state.compiler-backend-global-shared-view offset-home)
-                  (be_state.compiler-backend-global-shared-view dst-home))
-                2
+                  (be_state.compiler-backend-global-shared-view dst-home)
+                  (string.copy (& x-home)))
+                3
                 "%r10"
                 backend-state))]
           [use-offset-home? : bool
@@ -5370,8 +5385,9 @@
                 (compiler-backend-gep-load-alu-index-exclude
                   (be_state.compiler-backend-global-shared-view base-reg)
                   offset-home
-                  (be_state.compiler-backend-global-shared-view dst-home))
-                6
+                  (be_state.compiler-backend-global-shared-view dst-home)
+                  x-home)
+                7
                 "%r8"
                 backend-state))]
           [addr : String

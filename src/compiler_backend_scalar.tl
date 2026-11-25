@@ -14913,6 +14913,10 @@
             ;; immediately dereferenced by the compare (dead after), so a single
             ;; scavenged base suffices. In the MaybeImmediate.No arm scav-rhs must
             ;; exclude this base (both live across the cmp) -- see below.
+            ;; #9976: a register-homed rhs is read in place AFTER the base is
+            ;; staged, so the base scavenge excludes rhs-home explicitly: under
+            ;; full occupancy the emergency pick borrows any NON-EXCLUDED
+            ;; register, and occupancy alone does not keep it off rhs-home.
             ;; M-C2: a register-homed base needs neither the scavenge nor the
             ;; staging copy -- the compare only READS the addressing base, so the
             ;; home register is used directly (the load below self-elides).
@@ -14934,13 +14938,19 @@
                     assignments
                     base))
                 "")]
+            [rhs-home : String
+              (be_operand.compiler-backend-value-scalar-register
+                backend-state
+                assignments
+                rhs)]
             [scav-base : String
               (if (not (string.eq rip ""))
                 ""
                 (if (string.eq base-home "")
                   (be_operand.compiler-backend-scavenge-reg-here
-                    (be_facts.compiler-backend-addr-scavenge-exclude)
-                    0
+                    (be_operand.compiler-backend-one-exclude
+                      (string.copy (& rhs-home)))
+                    1
                     "%r10"
                     backend-state)
                   base-home))]
@@ -14982,25 +14992,48 @@
                 ;; GAP6a: a register-homed rhs is the compare's register
                 ;; operand directly -- no `movq %rhs-home, %scratch` staging.
                 ;; The compare only READS rhs, and base-asm loads base into
-                ;; scav-base FIRST; rhs is live across that load, so the base
-                ;; scavenge already avoids rhs-home (exactly the invariant the
-                ;; staged path below relies on: scav-base != rhs-home, or the
-                ;; staged rhs load would read a clobbered home). A SPILLED rhs
-                ;; must still stage into a scratch -- `cmp mem, mem` is illegal
-                ;; (addr is already the memory operand).
-                (let
-                  [rhs-home : String
-                    (be_operand.compiler-backend-value-scalar-register
-                      backend-state
-                      assignments
-                      rhs)]
-                  (if (not (string.eq rhs-home ""))
+                ;; scav-base FIRST; the base scavenge excludes rhs-home (see
+                ;; above), so scav-base != rhs-home. A SPILLED rhs must still
+                ;; stage into a scratch -- `cmp mem, mem` is illegal (addr is
+                ;; already the memory operand).
+                (if (not (string.eq rhs-home ""))
+                  (Ok
+                    (str_cat.str-cat
+                      base-asm
+                      (compiler-backend-emit-compare-memory-address-flags
+                        op
+                        rhs-home
+                        addr)
+                      (compiler-backend-emit-compare-branch-jumps
+                        function
+                        true-label
+                        false-label
+                        fallthrough
+                        true-jcc
+                        false-jcc
+                        backend-state)))
+                  (let
+                    [scav-rhs : String
+                      (be_operand.compiler-backend-scavenge-reg-here
+                        (compiler-backend-scavenge-exclude-with scav-base)
+                        6
+                        "%r8"
+                        backend-state)]
+                    [rhs-asm
+                      (try
+                        (be_operand.compiler-backend-emit-load-value
+                          assignments
+                          rhs
+                          (be_state.compiler-backend-global-shared-view
+                            scav-rhs)
+                          backend-state))]
                     (Ok
                       (str_cat.str-cat
                         base-asm
+                        rhs-asm
                         (compiler-backend-emit-compare-memory-address-flags
                           op
-                          rhs-home
+                          scav-rhs
                           addr)
                         (compiler-backend-emit-compare-branch-jumps
                           function
@@ -15009,38 +15042,7 @@
                           fallthrough
                           true-jcc
                           false-jcc
-                          backend-state)))
-                    (let
-                      [scav-rhs : String
-                        (be_operand.compiler-backend-scavenge-reg-here
-                          (compiler-backend-scavenge-exclude-with scav-base)
-                          6
-                          "%r8"
-                          backend-state)]
-                      [rhs-asm
-                        (try
-                          (be_operand.compiler-backend-emit-load-value
-                            assignments
-                            rhs
-                            (be_state.compiler-backend-global-shared-view
-                              scav-rhs)
-                            backend-state))]
-                      (Ok
-                        (str_cat.str-cat
-                          base-asm
-                          rhs-asm
-                          (compiler-backend-emit-compare-memory-address-flags
-                            op
-                            scav-rhs
-                            addr)
-                          (compiler-backend-emit-compare-branch-jumps
-                            function
-                            true-label
-                            false-label
-                            fallthrough
-                            true-jcc
-                            false-jcc
-                            backend-state))))))]))]
+                          backend-state)))))]))]
         [(None)
           (Err
             (box

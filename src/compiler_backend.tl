@@ -23656,6 +23656,20 @@
           ;; segment rows give the occupancy table the allocator's own notion of
           ;; where a register actually carries a live value, instead of a hull
           ;; that saturates every register in a merged body.
+          ;;
+          ;; The liveness is EDGE-PRECISE, the analysis the allocator assigns
+          ;; registers under (LP-1 in compiler_regalloc). A phi input is an
+          ;; edge use: it is live to the end of its own predecessor, where the
+          ;; edge copies are emitted, and no further. The baseline analysis
+          ;; counts it as a use AT THE PHI, so a loop-carried input -- defined
+          ;; in the latch, read by the header phi -- becomes upward-exposed on
+          ;; the loop-entry path and live from function entry through every
+          ;; block laid out before the loop. Its register then reads occupied
+          ;; where the allocator has already given it to other values, and
+          ;; scratch picks there take the emergency save/restore for nothing.
+          ;; The one consumer that leaned on the baseline extent, the phi
+          ;; staged-copy proof's target-entry query, gets the phi input homes
+          ;; through its edge home mask instead.
           (compiler_regalloc.compiler-reg-with-analysis-scratch
             emit-vars
             (be_state.compiler-backend-global-shared-view emit-blocks-list)
@@ -23676,7 +23690,7 @@
                   (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
                     (& scavenge-func)
                     (&
-                      (compiler_liveness.compiler-live-analyze-function
+                      (compiler_liveness.compiler-live-analyze-function-edge-precise
                         (& scavenge-func)))
                     false)))
               (compiler_regalloc.CompilerRegIntervalSelection.Selection

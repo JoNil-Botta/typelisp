@@ -5192,7 +5192,11 @@
 ;;       the edge and the use is ahead), so the query answers the same as the
 ;;       point-local one.
 ;;   (3) `reg` is not the home of ANY raw Phi destination on this edge, so no
-;;       drained copy or filtered same-home Phi has placed its final value there.
+;;       drained copy or filtered same-home Phi has placed its final value there,
+;;       nor of any Phi input variable of the target's phis. Scavenge occupancy
+;;       runs on edge-precise liveness, where a phi input is live only to the
+;;       end of its own predecessor; the target-entry query no longer sees it,
+;;       so the mask carries the inputs that query used to.
 ;; With all three the value in `reg` at this point is dead, so the bracket saves
 ;; and restores a dead value. Dropping it leaves `movq SRC,%rX` / `movq %rX,DST`:
 ;; two instructions and two memory ops in a load->store chain, strictly fewer
@@ -5367,35 +5371,38 @@
           (be_scalar.compiler-backend-cycle-temp-slot-with-backend-state
             backend-state
             0)]
-        (if restore?
-          (str_cat.str-cat
-            "    "
-            mnemonic
-            " "
-            slot
-            ", "
-            scratch
-            "\n    "
-            mnemonic
-            " "
-            scratch
-            ", "
-            operand
-            "\n")
-          (str_cat.str-cat
-            "    "
-            mnemonic
-            " "
-            operand
-            ", "
-            scratch
-            "\n    "
-            mnemonic
-            " "
-            scratch
-            ", "
-            slot
-            "\n"))))))
+        ;; Bracket an emergency borrow here, as the GP slot move does.
+        (be_scalar.compiler-backend-emergency-wrap
+          (if restore?
+            (str_cat.str-cat
+              "    "
+              mnemonic
+              " "
+              slot
+              ", "
+              scratch
+              "\n    "
+              mnemonic
+              " "
+              scratch
+              ", "
+              operand
+              "\n")
+            (str_cat.str-cat
+              "    "
+              mnemonic
+              " "
+              operand
+              ", "
+              scratch
+              "\n    "
+              mnemonic
+              " "
+              scratch
+              ", "
+              slot
+              "\n"))
+          backend-state)))))
 
 (define (compiler-backend-emit-phi-group-word-move
   [type-segment-bases : i64]
@@ -5621,32 +5628,10 @@
         [_ 0])]
     [(No) 0]))
 
-;; OR the pooled-register-home bit of every copy's dst into a mask. A spilled dst
-;; contributes 0; every register-homed dst, including ABI-special %rax/%rsi/%rdi,
-;; contributes its ordinary scavenge bit and cannot be picked as the temp.
-(define (compiler-backend-phi-copy-list-dst-home-mask
-  [backend-state : be_state.CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [copies : be_state.CompilerBackendPhiCopySeq]) : i64
-  (let
-    [mask : i64 0]
-    (for [i (iterator.range 0 copies.len)]
-      (match (owned_view.compiler-owned-element-view copies.slots i)
-        [(Copy dst _ _)
-          (set!
-            mask
-            (bit-or
-              mask
-              (be_operand.compiler-backend-scavenge-reg-bit
-                (be_scalar.compiler-backend-var-register-home
-                  backend-state
-                  assignments
-                  dst))))]))
-    mask))
-
 ;; Compute the destination-home mask from every leading raw Phi, including
 ;; same-home phis that leading-phi-copies-seq-from filters out before
-;; marshalling. The instruction sequence is shared by list and dense blocks and
+;; marshalling, together with the home of every Phi input variable on any edge
+;; (obligation (3) of compiler-backend-phi-staged-copy-proven?). The instruction sequence is shared by list and dense blocks and
 ;; by ordinary and fused Mov+Jump edges.
 (define (compiler-backend-phi-leading-dst-home-mask-seq-from
   [backend-state : be_state.CompilerBackendState]
@@ -5659,7 +5644,7 @@
     [n : i64 (compiler_ir_types.compiler-ir-instr-seq-count instrs)]
     (while (< i n)
       (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs i)
-        [(Phi dst _ _)
+        [(Phi dst inputs _)
           (set!
             mask
             (bit-or
@@ -5668,6 +5653,18 @@
                 backend-state
                 assignments
                 dst)))
+          (for [k (iterator.range 0 inputs.len)]
+            (match (compiler_ir_types.compiler-ir-phi-input-seq-ref inputs k).value
+              [(Var source)
+                (set!
+                  mask
+                  (bit-or
+                    mask
+                    (compiler-backend-phi-dst-home-mask-for-var
+                      backend-state
+                      assignments
+                      source)))]
+              [_ unit]))
           (+= i 1)]
         [_ (set! i n)]))
     mask))
@@ -5702,15 +5699,18 @@
 
 ;; Scavenge a GP register usable as the cycle-break Temp staging slot, or "" if
 ;; none. candidate-ok? certifies the register is free in the occupancy mask at the
-;; phi-copy emit point (homes no live-through value) and is callee-save-sound; the
-;; dst-home mask additionally rules out any register a copy would overwrite. This
-;; is the same occupancy query the float phi-temp scratch already uses here, so
-;; the emit position is a valid scavenge point.
+;; phi-copy emit point (homes no live-through value) and is callee-save-sound.
+;; The Temp must also avoid every register the marshalling still needs or has
+;; already filled: the dst homes of the REMAINING copies, and those of drained
+;; copies and filtered same-home Phis, whose final values the occupancy mask (a
+;; model of the allocation, not of these transient edge values) never shows.
+;; candidate-ok? refuses all of them through the edge's phi-edge mask
+;; (compiler-backend-scavenge-phi-edge-mask), which carries BOTH halves of a
+;; register-pair destination. This is the same occupancy query the float
+;; phi-temp scratch already uses here, so the emit position is a valid
+;; scavenge point.
 (define (compiler-backend-phi-temp-pick-reg
-  [backend-state : be_state.CompilerBackendState]
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [copies : be_state.CompilerBackendPhiCopySeq]
-  [all : be_state.CompilerBackendPhiCopySeq]) : String
+  [backend-state : be_state.CompilerBackendState]) : String
   (let
     [function-state : be_state.CompilerBackendFunctionState
       (be_state.compiler-backend-state-function-state backend-state)]
@@ -5720,24 +5720,6 @@
       (be_operand.compiler-backend-scavenge-occupied-mask-at-point
         function-state
         point)]
-    ;; The cycle-break Temp must avoid every register the phi marshalling still
-    ;; needs: the dst homes of the REMAINING copies, AND every dst home of the
-    ;; ORIGINAL copy list. An already-emitted (drained) copy has placed a final
-    ;; phi value into its dst register (live to the merge block entry), but that
-    ;; dst is no longer in `copies`, so excluding only `copies` could pick it as
-    ;; the Temp and clobber a placed phi value -- the same hazard as in the
-    ;; arg-move cycle break. The occupancy mask reflects the allocation, not
-    ;; these transient marshalling values.
-    [exclude-mask : i64
-      (bit-or
-        (compiler-backend-phi-copy-list-dst-home-mask
-          backend-state
-          assignments
-          copies)
-        (compiler-backend-phi-copy-list-dst-home-mask
-          backend-state
-          assignments
-          all))]
     [cands : (__tl_dyn-array i64)
       (be_state.compiler-backend-i64-array-shared-view
         (& be_operand.compiler-backend-scavenge-candidate-pool))]
@@ -5745,7 +5727,7 @@
       (compiler-backend-phi-temp-pick-reg-iter
         function-state
         occupied-mask
-        exclude-mask
+        0
         (be_state.compiler-backend-function-scratch-i64
           function-state
           be_state.compiler-backend-scratch-i64-scavenge-plan-reg-mask)
@@ -6160,6 +6142,35 @@
           program-index
           backend-state)])))
 
+;; A register-group phi copy through the ordinary group-copy path. Its word
+;; scratch picks refuse the edge's placed values (the phi-edge mask), but one
+;; may still be an EMERGENCY borrow of an occupied register; bracket that borrow
+;; around this copy alone. The wrap of the enclosing jump or branch does not
+;; run where an edge copy runs, and restoring the borrowed register's pre-edge
+;; value there would ignore everything the edge drained after this copy.
+(define (compiler-backend-emit-phi-group-copy
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [value : compiler_ir_types.CompilerIrValue]
+  [vars : i64]
+  [ty : compiler_ast_types.AstType]
+  [program-index : be_state.CompilerBackendProgramIndex]
+  [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
+  (Ok
+    (be_scalar.compiler-backend-emergency-wrap
+      (try
+        (be_scalar.compiler-backend-emit-group-copy
+          type-segment-bases
+          assignments
+          (& (Var dst))
+          value
+          vars
+          ty
+          program-index
+          backend-state))
+      backend-state)))
+
 (define (compiler-backend-emit-phi-source-to-var
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -6218,20 +6229,20 @@
                 backend-state)
                 [(Some asm) (Ok asm)]
                 [(No)
-                  (be_scalar.compiler-backend-emit-group-copy
+                  (compiler-backend-emit-phi-group-copy
                     type-segment-bases
                     assignments
-                    (& (Var dst))
+                    dst
                     value
                     vars
                     ty
                     program-index
                     backend-state)])]
             [_
-              (be_scalar.compiler-backend-emit-group-copy
+              (compiler-backend-emit-phi-group-copy
                 type-segment-bases
                 assignments
-                (& (Var dst))
+                dst
                 value
                 vars
                 ty
@@ -6280,29 +6291,35 @@
   [backend-state : be_state.CompilerBackendState]) : be_state.ResultCompilerBackend
   ;; #phi-staged-copy: install the ORIGINAL raw-Phi destination-home mask once
   ;; at the single entry to marshalling recursion. It includes same-home Phis
-  ;; filtered from `copies`; the recursion re-enters -with-all, never here.
+  ;; filtered from `copies`; the recursion re-enters -rest, never here. Every
+  ;; scavenge made while it is installed refuses its registers
+  ;; (compiler-backend-scavenge-phi-edge-mask), so it is cleared back to the
+  ;; -1 "no list installed" default as soon as the edge is marshalled.
   (compiler-backend-function-state-set-current-phi-dst-home-mask!
     backend-state
     dst-home-mask)
-  (compiler-backend-emit-phi-copy-list-with-all
-    type-segment-bases
-    assignments
-    (be_state.compiler-backend-global-shared-view copies)
-    copies
-    program-index
-    vars
-    outer-active
-    backend-state))
+  (let
+    [asm : be_state.ResultCompilerBackend
+      (compiler-backend-emit-phi-copy-list-rest
+        type-segment-bases
+        assignments
+        copies
+        program-index
+        vars
+        outer-active
+        backend-state)]
+    (compiler-backend-function-state-set-current-phi-dst-home-mask!
+      backend-state
+      -1)
+    asm))
 
-;; `all` is the ORIGINAL (top-level) phi-copy list, carried unchanged through the
-;; recursion so the cycle-break Temp pick can exclude every dst register of the
-;; whole marshalling -- including those of already-emitted (drained) copies, which
-;; still hold placed phi values that must survive to the merge block entry.
-(define (compiler-backend-emit-phi-copy-list-with-all
+;; Marshal the copies still pending on the edge. Already-emitted (drained)
+;; copies keep their placed values safe through the edge's phi-edge mask, which
+;; compiler-backend-emit-phi-copy-list installed for the whole recursion.
+(define (compiler-backend-emit-phi-copy-list-rest
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [copies : be_state.CompilerBackendPhiCopySeq]
-  [all : be_state.CompilerBackendPhiCopySeq]
   [program-index : be_state.CompilerBackendProgramIndex]
   [vars : i64]
   [outer-active : bool]
@@ -6331,11 +6348,10 @@
                       backend-state))]
                 [tail
                   (try
-                    (compiler-backend-emit-phi-copy-list-with-all
+                    (compiler-backend-emit-phi-copy-list-rest
                       type-segment-bases
                       assignments
                       (compiler-backend-phi-copy-list-remove-dst copies dst)
-                      all
                       program-index
                       vars
                       outer-active
@@ -6364,11 +6380,7 @@
                       assignments
                       (be_state.compiler-backend-global-shared-view copies)
                       program-index))
-                    (compiler-backend-phi-temp-pick-reg
-                      backend-state
-                      assignments
-                      (be_state.compiler-backend-global-shared-view copies)
-                      (be_state.compiler-backend-global-shared-view all))
+                    (compiler-backend-phi-temp-pick-reg backend-state)
                     "")]
                 [save
                   (try
@@ -6399,7 +6411,7 @@
                       backend-state))]
                 [tail
                   (try
-                    (compiler-backend-emit-phi-copy-list-with-all
+                    (compiler-backend-emit-phi-copy-list-rest
                       type-segment-bases
                       assignments
                       (compiler-backend-phi-copy-list-replace-source-home
@@ -6409,7 +6421,6 @@
                         dst
                         (compiler_abi.compiler-abi-register-id-from-spelling
                           reg))
-                      all
                       program-index
                       vars
                       true

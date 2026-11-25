@@ -9383,7 +9383,21 @@
           count-ty
           lhs
           rhs-reg
-          backend-state)])))
+          backend-state)]
+      ;; The optimizer forms `rotr` only with an in-range immediate count, so
+      ;; a register count needs no guard.
+      [(Rotr)
+        (str_cat.str-cat
+          (if (string.eq rhs-reg "%rcx")
+            ""
+            (str_cat.str-cat "    movq " rhs-reg ", %rcx\n"))
+          "    ror"
+          (be_operand.compiler-backend-int-instruction-suffix
+            type-segment-bases
+            ty)
+          " %cl, "
+          lhs
+          "\n")])))
 
 (define (compiler-backend-binop-test-zero-asm
   [type-segment-bases : i64]
@@ -9596,6 +9610,15 @@
         count-ty
         imm
         dst-reg)]
+    [(Rotr)
+      (compiler-backend-binop-immediate-shift-reg-asm
+        type-segment-bases
+        "ror"
+        ty
+        ;; The immediate is in `(0, width)` by construction.
+        (I64)
+        imm
+        dst-reg)]
     [(BitAnd)
       (Some
         (if (string.eq imm "$255")
@@ -9742,6 +9765,7 @@
           (if (be_facts.compiler-backend-type-signed? type-segment-bases ty)
             "sar"
             "shr")]
+        [(Rotr) "ror"]
         [_ ""])]
     [lhs-asm
       (try
@@ -9778,6 +9802,7 @@
       (if (be_facts.compiler-backend-type-signed? type-segment-bases ty)
         "sar"
         "shr")]
+    [(Rotr) "ror"]
     [_ ""]))
 
 (define (compiler-backend-emit-binop-spill-direct-shift
@@ -10013,6 +10038,15 @@
           "shr")
         ty
         count-ty
+        imm
+        staging-reg)]
+    [(Rotr)
+      (compiler-backend-binop-immediate-shift-asm
+        type-segment-bases
+        "ror"
+        ty
+        ;; The immediate is in `(0, width)` by construction.
+        (I64)
         imm
         staging-reg)]
     [_ (No)]))
@@ -10640,7 +10674,7 @@
 (define (compiler-backend-binop-shift-op?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
-    [(or (Shl _) (Shr _)) true]
+    [(or (Shl _) (Shr _) (Rotr)) true]
     [_ false]))
 
 (define (compiler-backend-binop-valid-immediate-shift?
@@ -19824,7 +19858,7 @@
     [extra : String
       (match op
         [(or (Div) (Mod) (SafeDiv) (SafeMod) (Mul)) "%rdx"]
-        [(or (Shl _) (Shr _)) "%rcx"]
+        [(or (Shl _) (Shr _) (Rotr)) "%rcx"]
         [_ ""])]
     (__tl_make-array rax-extra extra "" "" "")))
 

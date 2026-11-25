@@ -292,7 +292,8 @@
   (BitOr)
   (BitXor)
   (Shl TliType)
-  (Shr TliType))
+  (Shr TliType)
+  (Rotr))
 
 (defenum TliCompactUnOp
   (Neg)

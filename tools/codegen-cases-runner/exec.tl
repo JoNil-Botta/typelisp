@@ -1992,12 +1992,18 @@
                                       (string.string-length (& src))
                                       (+ slash 1)))))
                               (string.copy (& dst)))]
-                          (if rec
-                            (if (util.copy-recursive-ok? (& src) (& final-dst))
-                              0
-                              1)
-                            (if (util.copy-file-ok? (& src) (& final-dst))
-                              0
+                          [copied : util.CopyResult
+                            (if rec
+                              (util.copy-recursive-result (& src) (& final-dst))
+                              (util.copy-file-result (& src) (& final-dst)))]
+                          (if copied.ok
+                            0
+                            (begin
+                              (log-err!
+                                st
+                                (str_cat.str-cat
+                                  "  cp: "
+                                  (string.copy (& copied.error))))
                               1)))))))]
               [(string.eq (& head) "mv")
                 (if (!= nt 3)

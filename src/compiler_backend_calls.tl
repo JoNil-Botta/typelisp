@@ -9241,7 +9241,6 @@
     (cond
       [(and
           (> fast-alloc-size 0)
-          (or (not library-object?) size-optimized? (= fast-alloc-size 16))
           ;; An extern alias with a pointer result uses the same register ABI.
           ;; Its resolved symbol and the runtime plan below must still prove
           ;; that this is our allocator, including its shared-arena slow path.
@@ -10706,7 +10705,7 @@
             backend-state))))))
 
 (define (compiler-backend-total-switch-trap-instrs?
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
   [label : i64]) : bool
   (and
     (= (compiler_ir_types.compiler-ir-instr-seq-count instrs) 2)
@@ -10716,6 +10715,80 @@
     (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs 1)
       [(Jump target) (= target label)]
       [_ false])))
+
+(define (compiler-backend-switch-cases-contain-label?
+  [cases : (& cases compiler_ir_types.CompilerIrSwitchCaseSeq)]
+  [label : i64]) : bool
+  (let
+    [count : i64 (be_facts.compiler-backend-switch-case-count cases)]
+    (for [i (iterator.range 0 count)]
+      (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases i)
+        [(Case _ target) (when (= target label) (return true))]))
+    false))
+
+;; A late TotalEnumSwitch trap block (`call tl_oob_abort; jmp self`) is never
+;; referenced in emitted code once every switch targeting it omits the default
+;; range check (`compiler-backend-total-switch?`). Skipping it avoids emitting
+;; dead unreachable stubs and spurious `tl_oob_abort` references in standalone
+;; library objects.
+(define (compiler-backend-dead-total-switch-trap-block?
+  [blocks : (& blocks compiler_ir_types.CompilerIrBlockSeq)]
+  [block-index : i64]
+  [label : i64]
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]) : bool
+  (when
+    (or
+      (= block-index 0)
+      (not (compiler-backend-total-switch-trap-instrs? instrs label)))
+    (return false))
+  (let
+    [count : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+    [saw-total-switch : bool false]
+    (for [p (iterator.range 0 count)]
+      (when
+        (!= p block-index)
+        (match (compiler_ir_types.compiler-ir-block-seq-borrow blocks p)
+          [(Block _ pinstrs)
+            (let
+              [plen : i64
+                (compiler_ir_types.compiler-ir-instr-seq-count pinstrs)]
+              (if (= plen 0)
+                (when (= (+ p 1) block-index) (return false))
+                (match (compiler_ir_types.compiler-ir-instr-seq-borrow
+                  pinstrs
+                  (- plen 1))
+                  [(Jump target) (when (= target label) (return false))]
+                  [(or (Branch _ t f) (TotalEnumBranch _ t f))
+                    (when (or (= t label) (= f label)) (return false))]
+                  [(Switch _ _ cases default-label)
+                    (when
+                      (or
+                        (= default-label label)
+                        (compiler-backend-switch-cases-contain-label?
+                          cases
+                          label))
+                      (return false))]
+                  [(TotalEnumSwitch _ base cases default-label trap-label)
+                    (when
+                      (compiler-backend-switch-cases-contain-label? cases label)
+                      (return false))
+                    (when
+                      (= default-label label)
+                      (if (and
+                        (= base 0)
+                        (>
+                          (be_facts.compiler-backend-switch-case-count cases)
+                          0)
+                        (be_facts.compiler-backend-switch-cases-contiguous-from?
+                          cases
+                          0)
+                        (= trap-label label))
+                        (set! saw-total-switch true)
+                        (return false)))]
+                  [(or (Return _) (TailCall _ _ _) (TailCallIndirect _ _ _))
+                    unit]
+                  [_ (when (= (+ p 1) block-index) (return false))])))])))
+    saw-total-switch))
 
 (define (compiler-backend-total-switch-trap-block-from?
   [all-blocks : compiler_ir_types.CompilerIrBlockList]
@@ -10732,7 +10805,7 @@
           [(Block block-label instrs)
             (if (= block-label label)
               (if (= label trap-label)
-                (compiler-backend-total-switch-trap-instrs? instrs label)
+                (compiler-backend-total-switch-trap-instrs? (& instrs) label)
                 ;; Loop canonicalization may retarget the default through a
                 ;; jump-only preheader. The separately carried trap label is
                 ;; the authority; display text is never consulted.

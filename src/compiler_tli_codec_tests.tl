@@ -1207,3 +1207,31 @@
         [bad-bytes : (__tl_dyn-array u8) (codec.tli-encode-bundle (& deep-bad))]
         [_decoded : tli.TliBundle (tli-test-round-trip (& ok-bytes))]
         (tli-test-invalid-bundle! (& bad-bytes) (tli.TliDecodeError.Limit))))))
+
+(test
+  tli-compact-ir-rotr-round-trip
+  (let
+    [bundle : tli.TliBundle (tli-test-compact-bundle)]
+    (set!
+      (array-ref
+        (array-ref (array-ref bundle.compact-bodies 0).body.ir-body.blocks 0).instrs
+        0)
+      (tli.TliCompactInstr.BinOp
+        2
+        (tli.TliCompactBinOp.Rotr)
+        (tli.TliCompactValue.Var 0)
+        (tli.TliCompactValue.I64 7)
+        (tli.TliType.U32)))
+    (let
+      [bytes : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
+      [decoded : tli.TliBundle (tli-test-round-trip (& bytes))]
+      (match (&
+        (array-ref
+          (array-ref (array-ref decoded.compact-bodies 0).body.ir-body.blocks 0).instrs
+          0))
+        [(tli.TliCompactInstr.BinOp _ op _ _ _)
+          (match op
+            [(tli.TliCompactBinOp.Rotr) unit]
+            [_ (test.assert-true false "expected Rotr binop after round trip")])]
+        [_
+          (test.assert-true false "expected BinOp instruction after round trip")]))))

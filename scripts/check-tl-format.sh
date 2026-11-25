@@ -191,7 +191,20 @@ git ls-files '*.tl' | grep -v '^tests/format_golden/' | sort > "$ALL_FILES"
 # changes, the published stage0 formatter can disagree with the checked-in
 # source formatting even though the current formatter is stable. Build the
 # current formatter once and validate the whole tracked TypeLisp corpus with it.
-cp "$ALL_FILES" "$METADATA_FILES"
+#
+# A local scripts/ci-affected.sh --run whose change leaves src/, stdlib/ and
+# scripts/ alone checks only the files it touches (scripts/lib-ci-local.sh).
+. "$ROOT/scripts/lib-ci-local.sh"
+if ci_local_scope_active; then
+    ci_local_scope_filter "$ALL_FILES" "$METADATA_FILES"
+    ci_local_scope_report tl-format "$METADATA_FILES" "$ALL_FILES"
+    if [ ! -s "$METADATA_FILES" ]; then
+        echo "TypeLisp format check passed: the local change touches no TypeLisp source."
+        exit 0
+    fi
+else
+    cp "$ALL_FILES" "$METADATA_FILES"
+fi
 : > "$CHECK_FILES"
 
 if [ ! -s "$CHECK_FILES" ] && [ ! -s "$METADATA_FILES" ]; then

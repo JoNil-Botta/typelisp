@@ -462,18 +462,30 @@
               (i64_vec.push-ref! (&mut st.ref-gls) gidx))
             (string.copy (& (array-ref tables.gl-link-syms gidx)))))]
       [(LookupMissing)
-        (match (i64_map.get (& tables.ex-id-to-idx) sid)
-          [(LookupFound eidx)
-            (unless
-              (i64_map.contains? (& st.ref-exs-seen) eidx)
-              (i64_map.insert-ref! (&mut st.ref-exs-seen) eidx 1)
-              (i64_vec.push-ref! (&mut st.ref-exs) eidx))
-            (match (ir.compiler-ir-extern-seq-borrow whole-externs eidx)
-              [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _)
-                (if (ast.ast-extern-abi-c? abi)
-                  (ir.compiler-ir-symbol-text sym-id)
-                  (string.copy (intern.intern-compat-state-str interns link-id)))])]
-          [(LookupMissing) (ir.compiler-ir-symbol-text sym-id)])])))
+        (match (i64_map.get (& tables.fn-id-to-idx) sid)
+          [(LookupFound fidx)
+            (when (array-ref tables.fn-skip fidx) (set! st.ok? false))
+            (when
+              (and
+                (!= fidx st.self-fn-idx)
+                (not (i64_map.contains? (& st.ref-fns-seen) fidx)))
+              (i64_map.insert-ref! (&mut st.ref-fns-seen) fidx 1)
+              (i64_vec.push-ref! (&mut st.ref-fns) fidx))
+            (string.copy (& (array-ref tables.fn-link-syms fidx)))]
+          [(LookupMissing)
+            (match (i64_map.get (& tables.ex-id-to-idx) sid)
+              [(LookupFound eidx)
+                (unless
+                  (i64_map.contains? (& st.ref-exs-seen) eidx)
+                  (i64_map.insert-ref! (&mut st.ref-exs-seen) eidx 1)
+                  (i64_vec.push-ref! (&mut st.ref-exs) eidx))
+                (match (ir.compiler-ir-extern-seq-borrow whole-externs eidx)
+                  [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _)
+                    (if (ast.ast-extern-abi-c? abi)
+                      (ir.compiler-ir-symbol-text sym-id)
+                      (string.copy
+                        (intern.intern-compat-state-str interns link-id)))])]
+              [(LookupMissing) (ir.compiler-ir-symbol-text sym-id)])])])))
 
 (define (tli-ir-enc-value!
   [tables : (& TliIrEncodeTables)]
@@ -594,7 +606,8 @@
     [(ir.CompilerIrBinOp.Shl ty)
       (tli.TliCompactBinOp.Shl (tli-compact-type-from-ast pools interns ty))]
     [(ir.CompilerIrBinOp.Shr ty)
-      (tli.TliCompactBinOp.Shr (tli-compact-type-from-ast pools interns ty))]))
+      (tli.TliCompactBinOp.Shr (tli-compact-type-from-ast pools interns ty))]
+    [(ir.CompilerIrBinOp.Rotr) (tli.TliCompactBinOp.Rotr)]))
 
 (define (tli-ir-enc-unop [op : (& ir.CompilerIrUnOp)]) : tli.TliCompactUnOp
   (match op
@@ -1616,7 +1629,8 @@
     [(tli.TliCompactBinOp.BitOr) (tli.TliCompactBinOp.BitOr)]
     [(tli.TliCompactBinOp.BitXor) (tli.TliCompactBinOp.BitXor)]
     [(tli.TliCompactBinOp.Shl ty) (tli.TliCompactBinOp.Shl (tli-clone-type ty))]
-    [(tli.TliCompactBinOp.Shr ty) (tli.TliCompactBinOp.Shr (tli-clone-type ty))]))
+    [(tli.TliCompactBinOp.Shr ty) (tli.TliCompactBinOp.Shr (tli-clone-type ty))]
+    [(tli.TliCompactBinOp.Rotr) (tli.TliCompactBinOp.Rotr)]))
 
 (define (tli-clone-compact-unop [op : (& tli.TliCompactUnOp)]) : tli.TliCompactUnOp
   (match op
@@ -2054,7 +2068,8 @@
     [(tli.TliCompactBinOp.Shl ty)
       (ir.CompilerIrBinOp.Shl (tli-compact-type-to-ast pools ty))]
     [(tli.TliCompactBinOp.Shr ty)
-      (ir.CompilerIrBinOp.Shr (tli-compact-type-to-ast pools ty))]))
+      (ir.CompilerIrBinOp.Shr (tli-compact-type-to-ast pools ty))]
+    [(tli.TliCompactBinOp.Rotr) (ir.CompilerIrBinOp.Rotr)]))
 
 (define (tli-compact-dec-unop [op : (& tli.TliCompactUnOp)]) : ir.CompilerIrUnOp
   (match op

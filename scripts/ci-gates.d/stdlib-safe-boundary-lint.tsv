@@ -1,0 +1,2 @@
+id	priority	hosts	label	needs	compiler	memory	locks	command	linux_lane	windows_lane	input_classes	input_reason
+stdlib-safe-boundary-lint	965	all	stdlib safe-boundary lint	-	-	256	-	scripts/check-stdlib-raw-ptr-lint.sh --self-test && scripts/check-stdlib-raw-ptr-lint.sh	linux-2	windows-2	stdlib	Reads the tracked stdlib sources directly.

@@ -4902,6 +4902,8 @@
                                   result-pools
                                   program
                                   opt-level))]
+                            (compiler-driver-state-capture-active-interns!
+                              (&mut state))
                             (compiler-driver-finish-tli-hydrated-session! state)
                             (compiler-driver-state-retain-lowered-types!
                               state
@@ -4915,6 +4917,8 @@
                                 result-pools
                                 program
                                 opt-level)]
+                            (compiler-driver-state-capture-active-interns!
+                              (&mut state))
                             (compiler-driver-finish-tli-hydrated-session! state)
                             (compiler-driver-lowered-from-pools-and-profile-state-and-backend-state
                               hydrated-program

@@ -89842,3 +89842,81 @@ inl.entry.0.cont:
         (not (string.contains (& fold-ir) "select"))
         (not (string.contains (& fold-ir) "200")))
       "cvp_range folds a scalar select with a range-constant mask")))
+
+(define (opt-rotate-dce-test-render
+  [params : String]
+  [frame : i64]
+  [src : String]) : String
+  (let
+    [blocks : ir.CompilerIrBlockList (irt.blocks src)]
+    [cleaned : ir.CompilerIrBlockList
+      (opt.opt-dce-block-list-array-fixpoint frame (& blocks) 8)]
+    [func : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "rotate_dce")
+        (irt.params params)
+        (U32)
+        frame
+        cleaned
+        Ordinary)]
+    (ir.compiler-ir-function-render
+      (cis.InternStructuralSessionHandle 0)
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& func))))
+
+(test
+  dce-rotate-fusion-redef-and-store-guards
+  ;; 1. Control: complementary single-use shifts of an unmodified source fuse
+  ;;    into `rotr`.
+  (let
+    [fused-ir : String
+      (opt-rotate-dce-test-render
+        "x=%0:u32"
+        4
+        "entry:
+           %1 = shr %0, 7 : u32
+           %2 = shl %0, 25 : u32
+           %3 = bit_or %1, %2 : u32
+           return %3")]
+    (test.assert-true
+      (and
+        (string.contains (& fused-ir) "rotr ")
+        (not (string.contains (& fused-ir) "bit_or ")))
+      "clean complementary shifts fuse into rotr"))
+  ;; 2. Non-SSA redefinition of a shift result between the shift and `bit_or`
+  ;;    must stop the backward lookup instead of matching the shadowed shift.
+  (let
+    [redef-ir : String
+      (opt-rotate-dce-test-render
+        "x=%0:u32, y=%1:u32, z=%2:u32"
+        6
+        "entry:
+           %3 = shr %0, 7 : u32
+           %4 = shl %0, 25 : u32
+           %3 = add %1, %2 : u32
+           %5 = bit_or %3, %4 : u32
+           return %5")]
+    (test.assert-true
+      (and
+        (not (string.contains (& redef-ir) "rotr "))
+        (string.contains (& redef-ir) "bit_or "))
+      "redefining a rotate half blocks fusion into rotr"))
+  ;; 3. An intervening memory write can mutate an address-taken source and
+  ;;    must block rotate fusion.
+  (let
+    [store-ir : String
+      (opt-rotate-dce-test-render
+        "x=%0:u32"
+        6
+        "entry:
+           %1 = addr_of %0
+           %2 = shr %0, 7 : u32
+           store_ptr %1, 0 : u32
+           %3 = shl %0, 25 : u32
+           %4 = bit_or %2, %3 : u32
+           return %4")]
+    (test.assert-true
+      (and
+        (not (string.contains (& store-ir) "rotr "))
+        (string.contains (& store-ir) "bit_or "))
+      "intervening store_ptr blocks rotate fusion")))

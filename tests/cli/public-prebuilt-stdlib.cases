@@ -25,13 +25,22 @@ step prebuilt-compile
 run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} -o "{{dir}}/prebuilt.s"
 stderr empty
 in file {{dir}}/prebuilt.s
-contains _tl___tl_mod_init_stdlib
+contains .extern _tl_stdlib_io_stdlib_io_
 not-contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains _tl___tl_mod_init_stdlib
+step prebuilt-compile-opt2
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 2 -o "{{dir}}/prebuilt-o2.s"
+stderr empty
+in file {{dir}}/prebuilt-o2.s
+contains .extern _tl_stdlib_io_stdlib_io_
+not-contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains _tl___tl_mod_init_stdlib
 step source-compile
 run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --no-prebuilt-stdlib -o "{{dir}}/source.s"
 stderr empty
 in file {{dir}}/source.s
 contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains .extern _tl_stdlib_io_stdlib_io_
 not-contains _tl___tl_mod_init_stdlib
 step prebuilt-run
 run run "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl"

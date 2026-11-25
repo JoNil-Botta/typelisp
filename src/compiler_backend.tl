@@ -14687,6 +14687,14 @@
         [instr-count : i64
           (match (& block)
             [(Block _ instrs) instrs.len])]
+        [dead-total-trap? : bool
+          (match (& block)
+            [(Block label instrs)
+              (be_calls.compiler-backend-dead-total-switch-trap-block?
+                (& blocks)
+                index
+                label
+                (& instrs))])]
         [function-state : be_state.CompilerBackendFunctionState
           (be_state.compiler-backend-state-function-state
             program-index.backend-state)]
@@ -14696,36 +14704,38 @@
             (be_state.compiler-backend-function-state-emit-instr-post-base
               function-state)
             instr-count))
-        (let
-          [_
-            (try
-              (compiler-backend-emit-block
-                type-segment-bases
-                (be_state.compiler-backend-global-shared-view function)
-                source-function
-                (be_state.compiler-backend-global-shared-view all-blocks)
-                block
-                (& predcount)
-                (compiler-backend-next-block-label-seq blocks (+ index 1))
-                assignments
-                vars
-                types
-                (be_state.compiler-backend-global-shared-view global-types)
-                (be_state.compiler-backend-global-shared-view ret-ty)
-                plan
-                (be_state.compiler-backend-global-shared-view functions)
-                (be_state.compiler-backend-global-shared-view externs)
-                program-index
-                (be_state.compiler-backend-global-shared-view spans)
-                (be_state.compiler-backend-global-shared-view span-index)
-                (be_state.compiler-backend-global-shared-view func-diag)
-                (be_state.compiler-backend-global-shared-view use-counts)
-                out))]
-          (be_scalar.compiler-backend-emergency-wrap-appended
-            out
-            mark
-            program-index.backend-state)
-          unit))))
+        (unless
+          dead-total-trap?
+          (let
+            [_
+              (try
+                (compiler-backend-emit-block
+                  type-segment-bases
+                  (be_state.compiler-backend-global-shared-view function)
+                  source-function
+                  (be_state.compiler-backend-global-shared-view all-blocks)
+                  block
+                  (& predcount)
+                  (compiler-backend-next-block-label-seq blocks (+ index 1))
+                  assignments
+                  vars
+                  types
+                  (be_state.compiler-backend-global-shared-view global-types)
+                  (be_state.compiler-backend-global-shared-view ret-ty)
+                  plan
+                  (be_state.compiler-backend-global-shared-view functions)
+                  (be_state.compiler-backend-global-shared-view externs)
+                  program-index
+                  (be_state.compiler-backend-global-shared-view spans)
+                  (be_state.compiler-backend-global-shared-view span-index)
+                  (be_state.compiler-backend-global-shared-view func-diag)
+                  (be_state.compiler-backend-global-shared-view use-counts)
+                  out))]
+            (be_scalar.compiler-backend-emergency-wrap-appended
+              out
+              mark
+              program-index.backend-state)
+            unit)))))
   (Ok ""))
 
 (define (compiler-backend-emit-blocks-into

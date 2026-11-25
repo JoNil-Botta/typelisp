@@ -961,7 +961,8 @@
       (tli-write-type! ctx ty)]
     [(tli.TliCompactBinOp.Shr ty)
       (tli-write-u8! ctx 21)
-      (tli-write-type! ctx ty)]))
+      (tli-write-type! ctx ty)]
+    [(tli.TliCompactBinOp.Rotr) (tli-write-u8! ctx 22)]))
 
 (define (tli-write-compact-unop!
   [ctx : (&mut ctx TliWriteContext)]
@@ -3324,7 +3325,7 @@
 (define (tli-read-compact-binop!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]) : tli.TliCompactBinOp
-  (match (tli-read-tag! rd 21)
+  (match (tli-read-tag! rd 22)
     [0 (tli.TliCompactBinOp.Add)]
     [1 (tli.TliCompactBinOp.Sub)]
     [2 (tli.TliCompactBinOp.Mul)]
@@ -3347,6 +3348,7 @@
     [19 (tli.TliCompactBinOp.BitXor)]
     [20 (tli.TliCompactBinOp.Shl (tli-read-type! rd pool false 1))]
     [21 (tli.TliCompactBinOp.Shr (tli-read-type! rd pool false 1))]
+    [22 (tli.TliCompactBinOp.Rotr)]
     [_ (tli.TliCompactBinOp.Add)]))
 
 (define (tli-read-compact-unop!

@@ -3365,6 +3365,151 @@
     (opt-used-array-dec (&mut mirror) retired)
     (opt-collect-instr-uses-array mirror next)))
 
+;; Bit width of a scalar type `rotr` admits: unsigned 32- and 64-bit, where
+;; `shr` is logical and the backend has a `ror` of that width. Otherwise 0.
+(define (opt-rotate-width [ty : (& ty ast.AstType)]) : i64
+  (match ty
+    [(U32) 32]
+    [(U64) 64]
+    [_ 0]))
+
+;; One shift half of a rotate: the shifted source var, the equivalent right
+;; rotate count, and whether the half is the `shr`.
+(defenum OptRotateHalf
+  (No)
+  (Half i64 i64 bool))
+
+;; How far back from a `bit_or` its two shift operands are searched. Lowering
+;; emits them right before it; the window keeps the probe O(1).
+(define (opt-rotate-def-window) : i64
+  8)
+
+;; True when no instruction strictly between `from` and `to` redefines
+;; `source` or performs a write/call that could mutate an address-taken
+;; `source`, so reading it at `to` sees the value the shift at `from` read.
+(define (opt-rotate-source-stable?
+  [slots : (& (__tl_dyn-array ir.CompilerIrInstr))]
+  [from : i64]
+  [to : i64]
+  [source : i64]) : bool
+  (let
+    [at : i64 (+ from 1)]
+    [stable : bool true]
+    (while (and stable (< at to))
+      (match (opt-instr-effect
+        (& opt-summary-addr-taken-none)
+        (& (array-ref slots at)))
+        [(or (Pure) (MemoryRead)) unit]
+        [_ (set! stable false)])
+      (when
+        stable
+        (match (opt-instr-def-var (& (array-ref slots at)))
+          [(option_i64.Some def) (when (= def source) (set! stable false))]
+          [_ unit]))
+      (+= at 1))
+    stable))
+
+;; The rotate half `var` is defined as within the window before `index`: a
+;; `shr x k` or `shl x (width - k)` at `width` bits with `0 < k < width`, whose
+;; source still holds the same value at `index`.
+(define (opt-rotate-half
+  [slots : (& (__tl_dyn-array ir.CompilerIrInstr))]
+  [index : i64]
+  [var : i64]
+  [width : i64]) : OptRotateHalf
+  (let
+    [at : i64 (- index 1)]
+    [stop : i64 (- index (opt-rotate-def-window))]
+    [found : OptRotateHalf (No)]
+    (while (and (>= at 0) (>= at stop))
+      (match (opt-instr-def-var (& (array-ref slots at)))
+        [(option_i64.Some def)
+          (when
+            (= def var)
+            (match (& (array-ref slots at))
+              [(BinOp _ op (Var source) (I64 count) ty)
+                (when
+                  (and
+                    (= (opt-rotate-width ty) width)
+                    (> count 0)
+                    (< count width)
+                    (opt-rotate-source-stable? slots at index source))
+                  (match op
+                    [(Shr _) (set! found (Half source count true))]
+                    [(Shl _) (set! found (Half source (- width count) false))]
+                    [_ unit]))]
+              [_ unit])
+            (set! at 0))]
+        [_ unit])
+      (-= at 1))
+    found))
+
+;; Retire the two shift uses a fused rotate replaces and count its one use of
+;; `source`. Zero length is the no-mirror sentinel.
+(define (opt-rotate-recount!
+  [counts : (&mut (__tl_dyn-array i64))]
+  [left : i64]
+  [right : i64]
+  [source : i64]) : unit
+  (when
+    (and (>= source 0) (< source (array-length counts)))
+    (opt-used-array-dec counts left)
+    (opt-used-array-dec counts right)
+    (set! (array-ref counts source) (+ (array-ref counts source) 1))))
+
+;; Rewrite `dst = bit_or a b` into `dst = rotr x k` when `a` and `b` are
+;; single-use `shr x k` / `shl x (width - k)` halves of one unsigned source
+;; (either operand order). The backward sweep then finds both shifts dead.
+(define (opt-rotate-fuse!
+  [items : (&mut (__tl_dyn-array i64))]
+  [mirror : (&mut (__tl_dyn-array i64))]
+  [slots : (&mut (__tl_dyn-array ir.CompilerIrInstr))]
+  [index : i64]
+  [dst : i64]
+  [op : (& ir.CompilerIrBinOp)]
+  [lhs : (& ir.CompilerIrValue)]
+  [rhs : (& ir.CompilerIrValue)]
+  [ty : (& ast.AstType)]) : unit
+  (let
+    [width : i64 (opt-rotate-width ty)]
+    (when
+      (and (> width 0) (opt-used-array-contains items dst))
+      (match op
+        [(BitOr)
+          (match lhs
+            [(Var left)
+              (match rhs
+                [(Var right)
+                  (when
+                    (and
+                      (not (= left right))
+                      (= (array-ref items left) 1)
+                      (= (array-ref items right) 1))
+                    (match (opt-rotate-half slots index left width)
+                      [(Half source count left-shr?)
+                        (match (opt-rotate-half slots index right width)
+                          [(Half other other-count right-shr?)
+                            (when
+                              (and
+                                (= source other)
+                                (= count other-count)
+                                (not (= left-shr? right-shr?)))
+                              (opt-rotate-recount! items left right source)
+                              (opt-rotate-recount! mirror left right source)
+                              (set!
+                                (array-ref slots index)
+                                (BinOp
+                                  dst
+                                  (Rotr)
+                                  (Var source)
+                                  (I64 count)
+                                  (ast.clone-ast-type ty))))]
+                          [(No) unit])]
+                      [(No) unit]))]
+                [_ unit])]
+            [_ unit])]
+        [_ unit]))))
+
 ;; A pure temporary-producing instruction is dead when its result var is unused
 ;; in the array-backed use set the pipeline DCE runs on. Calls (side-effecting)
 ;; and control-flow instructions are never dead here.
@@ -3405,6 +3550,20 @@
       ;; This DCE walk already owns the function-wide use counts and visits
       ;; every instruction once. Rewrite an adjacent, single-use mask here
       ;; so compare admission adds no second instruction scan or dispatch.
+      ;; The same walk fuses a shift pair into a rotate.
+      (match (& op)
+        [(BitOr)
+          (opt-rotate-fuse!
+            (&mut items)
+            (&mut mirror)
+            (&mut slots)
+            index
+            dst
+            (& op)
+            (& lhs)
+            (& rhs)
+            (& ty))]
+        [_ unit])
       (if (and (> index 0) (opt-used-array-contains items dst))
         (match lhs
           [(Var and-var)
@@ -5879,7 +6038,8 @@
     [(Shl rhs-ty) (+ 100 (* 2 (opt-shift-count-type-tag rhs-ty)))]
     [(Shr rhs-ty) (+ 101 (* 2 (opt-shift-count-type-tag rhs-ty)))]
     [(BitTestEq) 20]
-    [(BitTestNe) 21]))
+    [(BitTestNe) 21]
+    [(Rotr) 22]))
 
 ;; Primitive count-type tags keep CSE/GVN from merging shifts whose trap
 ;; diagnostics differ by signedness or width.  Shift RHS types are guaranteed

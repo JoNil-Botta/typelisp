@@ -221,6 +221,46 @@ build_invariance_plan_chunk "$CHUNK_ROOT/opt-identity/cases.0000.txt" \
 build_invariance_plan_chunk "$CHUNK_ROOT/opt-identity/cases.0001.txt" \
     "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
 
+# Compiler sources and test programs never share a chunk, while each side
+# still batches up to the ceiling and keeps every logical row.
+{
+    record program-a tests/integration/a.tl "$WORKDIR/left" 2
+    record program-b examples/b.tl "$WORKDIR/left" 2
+    record source-a src/tests/sample_smoke.tl "$WORKDIR/left" 2
+    record source-b src/sample_module.tl "$WORKDIR/left" 2
+    record program-c tests/integration/c.tl "$WORKDIR/left" 2
+} > "$CHUNK_ROOT/class-cases.txt"
+mkdir -p "$CHUNK_ROOT/class/opt2"
+build_invariance_write_chunks "$CHUNK_ROOT/class-cases.txt" "$CHUNK_ROOT/class/opt2/chunks" 64
+test "$(find "$CHUNK_ROOT/class/opt2/chunks" -name 'cases.*.txt' | wc -l)" -eq 3
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/class/opt2/chunks/cases.0000.txt" | paste -sd, -)" = program-a,program-b
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/class/opt2/chunks/cases.0001.txt" | paste -sd, -)" = source-a,source-b
+test "$(cut -d '|' -f 1 "$CHUNK_ROOT/class/opt2/chunks/cases.0002.txt" | paste -sd, -)" = program-c
+cp "$CHUNK_ROOT/class-cases.txt" "$CHUNK_ROOT/class/cases.txt"
+awk -F '|' '{ print $1 "|" $2 "|" $5 }' "$CHUNK_ROOT/class-cases.txt" > "$CORPUS"
+build_invariance_require_coverage "$CORPUS" "$CHUNK_ROOT/class"
+
+# Pool classes: hard cap and queue rank of one producer's chunk.
+chunk_class() {
+    : > "$WORKDIR/class-chunk"
+    while [ "$#" -gt 1 ]; do
+        record "$1" "$2" "$WORKDIR/left" 2 >> "$WORKDIR/class-chunk"
+        shift 2
+    done
+    build_invariance_chunk_class "$WORKDIR/class-chunk" "$1"
+}
+test "$(chunk_class smoke src/tests/compiler_codegen_smoke_suite.tl opt1-built)" = '8192 2'
+test "$(chunk_class smoke src/tests/compiler_codegen_smoke_suite.tl opt2-built)" = '4096 2'
+test "$(chunk_class selfhost_main_opt2 src/main.tl opt1-built)" = '6144 1'
+test "$(chunk_class selfhost_main_opt2 src/main.tl opt2-built)" = '6144 1'
+test "$(chunk_class selfhost_main_opt1 src/main.tl opt2-built)" = '4096 4'
+test "$(chunk_class other src/tests/compiler_other_smoke.tl opt1-built)" = '4096 3'
+test "$(chunk_class program tests/integration/a.tl source src/tests/sample_smoke.tl opt2-built)" = '4096 3'
+test "$(chunk_class program tests/integration/a.tl example examples/b.tl opt1-built)" = '2048 5'
+# A mixed or aliased chunk never borrows a whole-compiler class.
+test "$(chunk_class smoke src/tests/compiler_codegen_smoke_suite.tl program tests/integration/a.tl opt1-built)" = '4096 3'
+test "$(chunk_class selfhost_main_opt2 src/main.tl selfhost_main_opt2_alias src/main.tl opt1-built)" = '4096 3'
+
 # Worker pool: jobs start in queue order, only inside the memory budget, exactly
 # once; a drained pool passes only with one successful result per queued job.
 POOL="$WORKDIR/pool"

@@ -1,0 +1,2 @@
+path	required	advisory	reason
+scripts/check-stdlib-raw-ptr-lint.sh	stdlib-safe-boundary-lint	-	Stdlib safe-boundary lint scanner and self-test.

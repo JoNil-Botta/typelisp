@@ -80,7 +80,12 @@
   ;; instruction's type field remains the lhs/result type; this payload is
   ;; metadata used by lowering, optimization, and backend guard emission.
   (Shl ast.AstType)
-  (Shr ast.AstType))
+  (Shr ast.AstType)
+  ;; IR-only rotate right by an immediate count in `(0, width)`. The optimizer
+  ;; forms it from `bit_or (shr x k) (shl x (width - k))` over an unsigned
+  ;; 32/64-bit `x` once both shifts are single-use, so the backend emits one
+  ;; `ror` instead of two shifts and an `or`. The count is an `i64` constant.
+  (Rotr))
 
 ;; Return the RHS operand type carried by a shift.  All non-shift operations
 ;; use the instruction operand type for both operands.
@@ -6865,7 +6870,8 @@
     [(BitOr) (BitOr)]
     [(BitXor) (BitXor)]
     [(Shl rhs-ty) (Shl (ast.clone-ast-type rhs-ty))]
-    [(Shr rhs-ty) (Shr (ast.clone-ast-type rhs-ty))]))
+    [(Shr rhs-ty) (Shr (ast.clone-ast-type rhs-ty))]
+    [(Rotr) (Rotr)]))
 
 (define (clone-compiler-ir-maybe-value [value : (& CompilerIrMaybeValue)]) : CompilerIrMaybeValue
   (match value
@@ -9190,7 +9196,7 @@
     ;; SafeDiv and SafeMod are emitted only once the divisor is proven neither
     ;; zero nor MIN / -1.
     [(or (Add) (Sub) (Mul) (SafeDiv) (SafeMod) (Eq) (Ne) (Lt) (Le) (Gt) (Ge)
-         (BitTestEq) (BitTestNe) (And) (Or) (BitAnd) (BitOr) (BitXor))
+         (BitTestEq) (BitTestNe) (And) (Or) (BitAnd) (BitOr) (BitXor) (Rotr))
       None]
     [(or (Div) (Mod) (Shl _) (Shr _)) Operands]))
 
@@ -10922,7 +10928,8 @@
     [(BitOr) "bitor"]
     [(BitXor) "bitxor"]
     [(Shl _) "shl"]
-    [(Shr _) "shr"]))
+    [(Shr _) "shr"]
+    [(Rotr) "rotr"]))
 
 (defstruct CompilerIrRepresentationVarTypes
   (present (__tl_dyn-array i64))

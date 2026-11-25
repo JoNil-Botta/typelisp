@@ -67,3 +67,38 @@ step source-runtime-abort
 run check "{{root}}/tests/safety/prebuilt_stdlib_comptime_runtime_abort_reject.tl" --no-prebuilt-stdlib
 exit nonzero
 stderr contains unsupported compile-time call test.assert-true
+
+# A --stdlib-root whose files match the embedded stdlib (inline tests aside)
+# keeps the prebuilt stdlib; a root that modifies one falls back to source.
+case prebuilt-stdlib-root-override
+step pristine-root
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 1 --stdlib-root "{{root}}/stdlib" -o "{{dir}}/pristine.s"
+stderr empty
+in file {{dir}}/pristine.s
+contains _tl___tl_mod_init_stdlib
+not-contains _tl_stdlib_io_stdlib_io_platform_write:
+sh mkdir -p "{{dir}}/modified-root" && cp "{{root}}/stdlib/io.tl" "{{dir}}/modified-root/io.tl" && printf '\n(define (prebuilt-root-probe) : i64 1)\n' >> "{{dir}}/modified-root/io.tl"
+step modified-root
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 1 --stdlib-root "{{dir}}/modified-root" -o "{{dir}}/modified.s"
+stderr empty
+in file {{dir}}/modified.s
+contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains _tl___tl_mod_init_stdlib
+sh mkdir -p "{{dir}}/modified-nested-root/net" && cp "{{root}}/stdlib/net/ip.tl" "{{dir}}/modified-nested-root/net/ip.tl" && printf '\n(define (prebuilt-nested-root-probe) : i64 1)\n' >> "{{dir}}/modified-nested-root/net/ip.tl"
+step modified-nested-root
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 1 --stdlib-root "{{dir}}/modified-nested-root" -o "{{dir}}/modified-nested.s"
+stderr empty
+in file {{dir}}/modified-nested.s
+contains _tl_stdlib_io_stdlib_io_platform_write:
+not-contains _tl___tl_mod_init_stdlib
+
+# An explicit sysroot without the archive is a clean error at every level.
+case prebuilt-stdlib-missing-sysroot
+step opt-level-0
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 0 --sysroot "{{dir}}/missing-sysroot" -o "{{dir}}/missing0.s"
+exit 1
+stderr contains sysroot: missing prebuilt stdlib archive:
+step opt-level-1
+run compile "{{root}}/tests/integration/prebuilt_stdlib_hello_io.tl" --target {{host-target}} --opt-level 1 --sysroot "{{dir}}/missing-sysroot" -o "{{dir}}/missing1.s"
+exit 1
+stderr contains sysroot: missing prebuilt stdlib archive:

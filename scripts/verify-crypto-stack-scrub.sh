@@ -34,8 +34,11 @@ tab=$(printf '\t')
 for opt in 1 2; do
     "$COMPILER" test --batch "$work/inline-files.txt" \
         --stdlib-root "$ROOT/stdlib" --opt-level "$opt"
+    # Stack-residue probes inspect and rewrite emitted stdlib crypto bodies at
+    # opt 1 and 2 rather than linking against libstdlib.a.
     "$COMPILER" compile tests/fixtures/crypto-aes/stack-residue.tl \
-        --stdlib-root "$ROOT/stdlib" --target "$NL_BOOTSTRAP_TARGET" \
+        --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
+        --target "$NL_BOOTSTRAP_TARGET" \
         --opt-level "$opt" -o "$work/opt$opt.s"
     while IFS="$tab" read -r name phase expected; do
         case "$name" in ''|\#*) continue ;; esac

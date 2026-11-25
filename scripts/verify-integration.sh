@@ -226,6 +226,9 @@ if [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
 else
     COMPILER=${TYPELISP_BIN:-typelisp}
 fi
+# Resolve the host stdlib archive once; the per-case
+# `$(linux_stdlib_archive_for_asm ...)` subshells inherit the cached answer.
+[ "$HOST_OS" != linux ] || stdlib_archive_resolve_triple x86_64-unknown-linux-gnu "${COMPILER:-}"
 
 # A signal-shaped crash from a manifest binary is a real compiler/runtime bug,
 # not a flake — run each build/emit exactly once and let the crash fail CI (see
@@ -837,10 +840,16 @@ if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_WITHOUT_COMPILER" -eq 0 ]; then
     printf 'tlwinq3\000' > "$WINDOWS_QUEUE"
     : > "$WINDOWS_QUEUED_CASES"
     : > "$WINDOWS_COFF_FALLBACK_REASONS"
-    # The two queue helpers, lld-link, and their common work root are the only
-    # manifest path conversions. Per-case inputs/outputs are constructed from
-    # validated case names below.
+    # The two queue helpers, lld-link, their common work root, and the sysroot
+    # stdlib archive are the only manifest path conversions. Per-case
+    # inputs/outputs are constructed from validated case names below.
     WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=4
+    stdlib_archive_resolve_triple x86_64-pc-windows-msvc "${COMPILER:-}"
+    WINDOWS_STDLIB_ARCHIVE_WIN=""
+    if [ -n "$STDLIB_ARCHIVE_PATH" ]; then
+        WINDOWS_STDLIB_ARCHIVE_WIN=$(cygpath -aw "$STDLIB_ARCHIVE_PATH")
+        WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=5
+    fi
     WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=1
 fi
 
@@ -866,7 +875,8 @@ integration_windows_register_plan() {
         _plan_reason \
         _plan_object \
         _plan_assembly \
-        _plan_forced || [ -n "$_plan_source" ]; do
+        _plan_forced \
+        _plan_archive || [ -n "$_plan_source" ]; do
         [ -n "$_plan_source" ] || continue
         _plan_case_path=${_plan_source%/*}
         _plan_case=${_plan_case_path##*/}
@@ -919,8 +929,8 @@ integration_windows_register_plan() {
                 ;;
         esac
 
-        printf '%s|%s|%s\n' \
-            "$_plan_kind" "$_plan_selected_abs" "$_plan_reason" \
+        printf '%s|%s|%s|%s\n' \
+            "$_plan_kind" "$_plan_selected_abs" "$_plan_reason" "$_plan_archive" \
             > "$_plan_marker" || return 1
         WINDOWS_MANIFEST_PLAN_ROWS=$((WINDOWS_MANIFEST_PLAN_ROWS + 1))
     done < "$_windows_plan_normalized" || return 1
@@ -1476,6 +1486,7 @@ windows_queue_manifest_link() {
     _link_stderr_spec=$9
     shift 9
     _link_runtime_args=$1
+    _link_archive=$2
 
     ci_timing_set_now_ms
     _link_prepare_started=$CI_TIMING_NOW_MS
@@ -1487,9 +1498,12 @@ windows_queue_manifest_link() {
         set -- "$@" "$_link_native_obj"
     done
     IFS=$_link_saved_ifs
-    _link_stdlib_archive=$(windows_stdlib_archive_for_asm "$asm" "${COMPILER:-}")
-    if [ -n "$_link_stdlib_archive" ]; then
-        set -- "$@" -OPT:REF "$(cygpath -aw "$_link_stdlib_archive")"
+    if [ "$_link_archive" = stdlib-archive ]; then
+        if [ -z "$WINDOWS_STDLIB_ARCHIVE_WIN" ]; then
+            echo "FAIL: $_link_name needs the prebuilt stdlib archive, but no lib/x86_64-pc-windows-msvc/libstdlib.a was found for $COMPILER" >&2
+            exit 1
+        fi
+        set -- "$@" -OPT:REF "$WINDOWS_STDLIB_ARCHIVE_WIN"
     fi
     set -- "$@" \
         "-OUT:$_link_bin_win" \
@@ -4571,7 +4585,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             if ! IFS='|' read -r \
                 windows_artifact_kind \
                 windows_artifact_path \
-                windows_artifact_reason < "$windows_artifact"; then
+                windows_artifact_reason \
+                windows_link_archive < "$windows_artifact"; then
                 echo "FAIL: $name has an unreadable Windows COFF artifact marker" >&2
                 exit 1
             fi
@@ -4651,6 +4666,15 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
                 continue
             fi
         fi
+        if [ ! -s "$windows_artifact" ]; then
+            # A standalone compile has no plan row; its assembly names the
+            # archive-runtime symbols it needs.
+            windows_link_archive=none
+            if [ -n "$WINDOWS_STDLIB_ARCHIVE_WIN" ] &&
+                [ -n "$(windows_stdlib_archive_for_asm "$asm" "${COMPILER:-}")" ]; then
+                windows_link_archive=stdlib-archive
+            fi
+        fi
         if ! native_objs=$(compile_windows_c_deps "$deps" "$case_dir" "$build_stdout" "$build_stderr" "$case_dir_win"); then
             echo "FAIL: $name C dependency compile failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
@@ -4668,7 +4692,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             "$want" \
             "$stdout_spec" \
             "$expected_stderr_spec" \
-            "$runtime_args"
+            "$runtime_args" \
+            "$windows_link_archive"
         continue
     else
         set +e

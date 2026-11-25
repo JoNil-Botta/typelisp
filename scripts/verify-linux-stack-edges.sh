@@ -10,7 +10,7 @@ compile_edge() {
     bounded "$edge-compile" 512 "$COMPILER" compile "$source" \
         --stdlib-root stdlib --stdlib-root src --opt-level 2 "$@" -o "$WORK/$edge.s"
     as "$WORK/$edge.s" -o "$WORK/$edge.o"
-    ld -e _tl_start "$WORK/$edge.o" -o "$WORK/$edge"
+    link_linux_bin "$WORK/$edge.s" "$WORK/$edge.o" "$WORK/$edge"
 }
 cat > "$WORK/worker-failure.gdb" <<'STACK_EOF'
 set pagination off

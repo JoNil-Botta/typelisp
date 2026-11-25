@@ -10,7 +10,8 @@
 # then main must carry every inlined loop, bound and store on its own, so two
 # checks can never pass on the same loop.
 
-args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+# Inspect emitted stdlib SHA bodies at every opt level, not archive calls.
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src --no-prebuilt-stdlib
 
 file sha1.tl
 (import stdlib.byte_buf)

@@ -67,7 +67,8 @@ file input.tl
 (extern add7 (:symbol "ffi_add7_ptr") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 (+ base (add7 5)))
 end-file
-exec "$NATIVE_LINK_COMPILER" compile "{{dir}}/input.tl" --stdlib-root "{{root}}/stdlib" -o "{{dir}}/input.s"
+# Links directly with bare ld without libstdlib.a, so use source stdlib.
+exec "$NATIVE_LINK_COMPILER" compile "{{dir}}/input.tl" --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/input.s"
 stdout is Wrote {{dir}}/input.s
 stderr empty
 in file {{dir}}/input.s
@@ -368,20 +369,22 @@ stderr empty
 # Builds with TYPELISP_LINUX_DIRECT_OBJECT=1 and the failing `as` first on PATH:
 # supported programs link without an assembler; unsupported source semantics
 # and ordinary-call ABIs reach the assembler, and link without the shim.
+# Prebuilt-stdlib programs intentionally fall back to assembly (they call into
+# the sysroot archive), so direct-object builds pass --no-prebuilt-stdlib.
 
 case direct-object
 file main.tl
 (define (main) : i64 42)
 end-file
 sh chmod +x "{{work}}/no-assembler-bin/as"
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/main.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/main"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/main.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/main"
 stderr empty
 stdout contains Built {{dir}}/main
 test -x "{{dir}}/main"
 exec "{{dir}}/main"
 exit 42
 step string-records
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/integration/string_record_extent.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/string-record-extent"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/integration/string_record_extent.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/string-record-extent"
 stderr empty
 stdout contains Built {{dir}}/string-record-extent
 test -x "{{dir}}/string-record-extent"
@@ -392,7 +395,7 @@ case direct-object-extern-data
 opt 0 1 2
 sh cc -c -ffreestanding -fno-pie "{{root}}/benchmarks/extern_data_memory/baseline.c" -o "{{dir}}/foreign.o"
 sh chmod +x "{{work}}/no-assembler-bin/as"
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/integration/extern_data_places_direct.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --link-arg "{{dir}}/foreign.o" -o "{{dir}}/main"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/integration/extern_data_places_direct.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib --link-arg "{{dir}}/foreign.o" -o "{{dir}}/main"
 stderr empty
 stdout contains Built {{dir}}/main
 exec "{{dir}}/main"
@@ -575,47 +578,47 @@ case direct-object-region-float-fail-closed
 opt 0 1 2
 sh chmod +x "{{work}}/no-assembler-bin/as"
 step region-float-eq-leaves-direct-route
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-eq-probe"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float-eq-probe"
 exit nonzero
 stderr contains unexpected assembler fallback
 step region-float-eq-assembly
-exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-eq"
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float-eq"
 stderr empty
 exec "{{dir}}/region-float-eq"
 exit 42
 step region-float-gt-leaves-direct-route
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-gt.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-gt-probe"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-gt.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float-gt-probe"
 exit nonzero
 stderr contains unexpected assembler fallback
 step region-float-gt-assembly
-exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-gt.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-gt"
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-gt.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float-gt"
 stderr empty
 exec "{{dir}}/region-float-gt"
 exit 42
 step region-float-add-leaves-direct-route
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-add.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-add-probe"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-add.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float-add-probe"
 exit nonzero
 stderr contains unexpected assembler fallback
 step region-float-add-assembly
-exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-add.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-add"
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-add.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float-add"
 stderr empty
 exec "{{dir}}/region-float-add"
 exit 42
 step region-float-mul-leaves-direct-route
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-mul.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-mul-probe"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-mul.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float-mul-probe"
 exit nonzero
 stderr contains unexpected assembler fallback
 step region-float-mul-assembly
-exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-mul.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float-mul"
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float-mul.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float-mul"
 stderr empty
 exec "{{dir}}/region-float-mul"
 exit 42
 step region-float32-eq-leaves-direct-route
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float32-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float32-eq-probe"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float32-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float32-eq-probe"
 exit nonzero
 stderr contains unexpected assembler fallback
 step region-float32-eq-assembly
-exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float32-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/region-float32-eq"
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/fixtures/direct-object-compare/region-float32-eq.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/region-float32-eq"
 stderr empty
 exec "{{dir}}/region-float32-eq"
 exit 42
@@ -669,20 +672,20 @@ file ordinary-call-abi.tl
 end-file
 sh chmod +x "{{work}}/no-assembler-bin/as"
 step semantic-probe
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{work}}/semantic-fallback.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/semantic-fallback"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{work}}/semantic-fallback.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/semantic-fallback"
 exit nonzero
 stderr contains unexpected assembler fallback
 step semantic
-exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{work}}/semantic-fallback.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/semantic-fallback"
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{work}}/semantic-fallback.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/semantic-fallback"
 stderr empty
 exec "{{dir}}/semantic-fallback"
 exit 42
 step abi-probe
-exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/ordinary-call-abi.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/ordinary-call-abi"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/ordinary-call-abi.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/ordinary-call-abi"
 exit nonzero
 stderr contains unexpected assembler fallback
 step abi
-exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/ordinary-call-abi.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" -o "{{dir}}/ordinary-call-abi"
+exec env TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{dir}}/ordinary-call-abi.tl" --target linux-x86_64 --backend-mode scalar --stdlib-root "{{root}}/stdlib" --no-prebuilt-stdlib -o "{{dir}}/ordinary-call-abi"
 stderr empty
 exec "{{dir}}/ordinary-call-abi"
 exit 42

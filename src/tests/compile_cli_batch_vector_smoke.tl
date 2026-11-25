@@ -83,10 +83,12 @@
     (cli_svec.push-ref! (&mut results) "coff-object")
     (cli_svec.push-ref! (&mut results) "auto.obj")
     (cli_svec.push-ref! (&mut results) "none")
+    (cli_svec.push-ref! (&mut results) "none")
     (cli_svec.push-ref! (&mut results) "forced.tl")
     (cli_svec.push-ref! (&mut results) "assembly")
     (cli_svec.push-ref! (&mut results) "forced.s")
     (cli_svec.push-ref! (&mut results) "forced-assembly")
+    (cli_svec.push-ref! (&mut results) "stdlib-archive")
     (and
       (= status 0)
       (= (cli_svec.len (& entries)) 8)
@@ -106,7 +108,7 @@
         "force-assembly")
       (string.eq
         (compile_cli_core.compile-cli-windows-batch-result-plan (& results))
-        "auto.tl|coff-object|auto.obj|none\nforced.tl|assembly|forced.s|forced-assembly\n"))))
+        "auto.tl|coff-object|auto.obj|none|none\nforced.tl|assembly|forced.s|forced-assembly|stdlib-archive\n"))))
 
 (test
   compile-cli-batch-entry-generated-vector-growth-order

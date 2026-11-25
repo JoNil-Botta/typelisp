@@ -15,8 +15,10 @@ set -eu
 # setup prints a lane job's configuration as KEY=VALUE lines: the gates it
 # owns (for scripts/ci-verify.sh --gates), whether it needs the Linux
 # instruction-count tools or runs the self_compile check, and its
-# build-invariance worker count: three only when no other gate can run beside
-# build-invariance in that lane, otherwise the script default.
+# build-invariance worker count: four only when no other gate can run beside
+# build-invariance in that lane (it reserves the lane's whole ci-verify memory
+# budget, or every other planned gate is its need or needs it), otherwise the
+# script default.
 #
 # aggregate is a host's required check. LANES_RESULT is the lane jobs' needs
 # result, DOWNLOADS holds the downloaded lane envelopes, JOBS and ARTIFACTS are
@@ -39,6 +41,9 @@ AFFECTED_PATHS_DIR=$ROOT/scripts/ci-affected-paths.d
 LANES_PER_HOST=2
 BUILD_INVARIANCE=stage2-opt1-opt2-build-invariance
 SELF_COMPILE=linux-self-compile-measurement
+# The --memory-mib of every lane job's scripts/ci-verify.sh in
+# .github/workflows/ci.yml: a gate whose memory column reserves it runs alone.
+LANE_MEMORY_MIB=14336
 TAB=$(printf '\t')
 
 lane_fail() {
@@ -272,17 +277,21 @@ lane_setup() {
     done
     _ls_self_compile=0
     case ",$_ls_planned," in *",$SELF_COMPILE,"*) _ls_self_compile=1 ;; esac
-    # Isolated: every other planned gate is a need of build-invariance or
-    # needs it, so none can run beside its pool.
+    # Exclusive: build-invariance reserves the lane's whole ci-verify budget,
+    # so no gate starts beside its pool. Isolated: every other planned gate is
+    # a need of build-invariance or needs it, so none can run beside its pool.
     _ls_workers=
     case ",$_ls_planned," in
         *",$BUILD_INVARIANCE,"*)
-            _ls_workers=3
-            _ls_ancestors=,$(lane_closure "$_ls_host" "$BUILD_INVARIANCE" | paste -sd, -),
-            for _ls_gate in $(printf '%s\n' "$_ls_planned" | tr ',' ' '); do
-                case "$_ls_ancestors" in *",$_ls_gate,"*) continue ;; esac
-                lane_closure "$_ls_host" "$_ls_gate" | grep -qxF "$BUILD_INVARIANCE" || _ls_workers=
-            done
+            _ls_workers=4
+            _ls_memory=$(awk -F '\t' -v id="$BUILD_INVARIANCE" '$1 == id { print $7 }' "$LANE_WORK/gates-full.tsv")
+            if [ "$_ls_memory" -lt "$LANE_MEMORY_MIB" ]; then
+                _ls_ancestors=,$(lane_closure "$_ls_host" "$BUILD_INVARIANCE" | paste -sd, -),
+                for _ls_gate in $(printf '%s\n' "$_ls_planned" | tr ',' ' '); do
+                    case "$_ls_ancestors" in *",$_ls_gate,"*) continue ;; esac
+                    lane_closure "$_ls_host" "$_ls_gate" | grep -qxF "$BUILD_INVARIANCE" || _ls_workers=
+                done
+            fi
             ;;
     esac
     printf 'lane=%s\ngates=%s\ninstruction_tools=%s\nself_compile=%s\nbuild_invariance_workers=%s\n' \

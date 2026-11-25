@@ -985,8 +985,10 @@ file worker/src/lib.tl
     [y : i64 (* x 2)]
     (+ y x)))
 end-file
+# A folded `main` returns its i64 constant through a zero-extending 32-bit
+# move on both hosts.
 if-host windows
-sh CCV_o2a='    movq $45, %rax' CCV_o2b='    leaq (%rcx,%rdx), %rax' CCV_o0='    imulq 24(%rsp), %r8'
+sh CCV_o2a='    movl $45, %eax' CCV_o2b='    leaq (%rcx,%rdx), %rax' CCV_o0='    imulq 24(%rsp), %r8'
 else
 sh CCV_o2a='    movl $45, %eax' CCV_o2b='    leaq (%rdi,%rsi), %rax' CCV_o0='    imulq -24(%rsp), %r8'
 end-if

@@ -118,8 +118,9 @@ not-contains _tl_public_tool_pkg_vendor_math
 # An O2 build hydrates the prebuilt stdlib and links its runtime from the
 # sysroot archive instead of compiling it into the root.
 not-contains _tl_stdlib_runtime_stdlib_runtime_os_write:
+# The sysroot archive is `libstdlib.a` on every target.
 in file {{dir}}/target/release/public_tool_pkg{{exe}}.runtime-inputs
-contains {{lib-prefix}}stdlib{{lib-suffix}}
+contains libstdlib.a
 step package-clean-dry-run
 run clean --dry-run --manifest-path "{{dir}}/typelisp.pkg"
 stderr empty

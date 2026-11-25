@@ -1,0 +1,2 @@
+path	required	advisory	reason
+tests/integration/divisor_register_operand.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Register-homed idiv divisor operand is pinned through asm-shape.d/c40-loop-split.cases.

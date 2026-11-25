@@ -26136,6 +26136,26 @@ entry:
      %38 = mov %9 : i64"))
 
 (define (compiler-backend-gep-load-multi-emergency-asm) : be_state.ResultCompilerBackend
+  (compiler-backend-emergency-ctx-asm
+    "gep_load_multi_emergency"
+    (compiler-backend-gep-load-multi-emergency-instrs)
+    (ir.compiler-ir-blocks)
+    (compiler-backend-gep-load-multi-emergency-assignments)
+    40
+    14))
+
+;; Emit `instrs` under a real scavenge context built from the liveness of an
+;; entry block holding them followed by `tail` (successors that only keep
+;; values live), with every instruction starting at `post-base` and the
+;; emergency frame region at -512(%rbp), so a site whose pool is fully occupied
+;; takes the emergency save/park path exactly as a whole function would.
+(define (compiler-backend-emergency-ctx-asm
+  [name : String]
+  [instrs : ir.CompilerIrInstrSeq]
+  [tail : ir.CompilerIrBlockList]
+  [assignments : regalloc.CompilerRegAssignmentTable]
+  [vars : i64]
+  [post-base : i64]) : be_state.ResultCompilerBackend
   (let
     [backend-state : be_state.CompilerBackendState
       (be_state.compiler-backend-state-new
@@ -26144,27 +26164,24 @@ entry:
     [prev-emergency-slot-offset : i64
       (scratch-emergency-slot-offset
         (be_state.compiler-backend-state-function-state backend-state))]
-    [assignments : regalloc.CompilerRegAssignmentTable
-      (compiler-backend-gep-load-multi-emergency-assignments)]
-    [instrs : ir.CompilerIrInstrSeq
-      (compiler-backend-gep-load-multi-emergency-instrs)]
     [blocks : ir.CompilerIrBlockList
-      (ir.compiler-ir-blocks
+      (ir.compiler-ir-blocks-with-tail
+        tail
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (owned_view.compiler-owned-shared-view instrs)))]
     [_ctx : unit
       (begin
         (compiler-backend-test-scavenge-install-ctx!
-          "gep_load_multi_emergency"
+          name
           (ir.compiler-ir-param-seq-empty)
           (I64)
-          40
+          vars
           blocks
           assignments
           backend-state)
-        (set-state-emit-instr-post-base! backend-state 14)
-        (set-state-emit-current-count! backend-state 14)
+        (set-state-emit-instr-post-base! backend-state post-base)
+        (set-state-emit-current-count! backend-state post-base)
         (set-scratch-emergency-slot-offset!
           (be_state.compiler-backend-state-function-state backend-state)
           -512))]
@@ -26172,7 +26189,7 @@ entry:
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
         assignments
-        40
+        vars
         (be_state.CompilerBackendTarget.Linux)
         backend-state)]
     [_restore : unit
@@ -26221,6 +26238,124 @@ entry:
         (asm-lacks? asm "    movq %r9, -512(%rbp)\n")
         (asm-lacks? asm "    movq %rcx, -576(%rbp)\n"))]
     [(Err _) false]))
+
+;; #9976: a GAP8 gep-load ALU fold whose base is spilled and whose every pool
+;; register is occupied borrows an emergency scratch for the base. The
+;; non-loaded operand %1 (in %r9) is read into the ALU home %r12 AFTER the
+;; base is staged, so the borrowed scratch must never be %1's home: the old
+;; exclude set held only the index and destination homes, picked %r9, and
+;; emitted `movq -8(%rbp), %r9 ; movq %r9, %r12 ; addq (%r9,%rax,8), %r12` --
+;; the base pointer, not %1, was summed.
+(define (compiler-backend-gep-load-alu-emergency-asm [dynamic-index? : bool]) : be_state.ResultCompilerBackend
+  (compiler-backend-emergency-ctx-asm
+    "gep_load_alu_emergency"
+    (irt.instrs
+      (str_cat.str-cat
+        "%1 = mov 1 : i64
+         %2 = mov 2 : i64
+         %3 = mov 3 : i64
+         %4 = mov 4 : i64
+         %5 = mov 5 : i64
+         %6 = mov 6 : i64
+         %7 = mov 7 : i64
+         %8 = mov 8 : i64
+         %9 = mov 9 : i64
+         "
+        (if dynamic-index?
+          "%20 = gep %0, %9 : i64"
+          "%20 = gep %0, 3 : i64")
+        "
+         %21 = load %20 : i64
+         %22 = add %1, %21 : i64
+         %30 = mov %2 : i64
+         %31 = mov %3 : i64
+         %32 = mov %4 : i64
+         %33 = mov %5 : i64
+         %34 = mov %6 : i64
+         %35 = mov %7 : i64
+         %36 = mov %8 : i64
+         %37 = mov %9 : i64
+         %38 = mov %22 : i64"))
+    (ir.compiler-ir-blocks)
+    (reg-homes
+      "%1=%r9 %2=%rcx %3=%rdx %4=%r10 %5=%r11 %6=%r8 %7=%rsi %8=%rdi %9=%rax %22=%r12")
+    40
+    14))
+
+(define (compiler-backend-gep-load-alu-emergency-preserved-ok?
+  [dynamic-index? : bool]) : bool
+  (asm-ok?
+    (compiler-backend-gep-load-alu-emergency-asm dynamic-index?)
+    (has
+      "    movq %r9, %r12\n"
+      (if dynamic-index?
+        ",%rax,8), %r12\n"
+        "    addq 24(%"))
+    (lacks
+      "    movq -8(%rbp), %r9\n"
+      "    addq (%r9,%rax,8), %r12\n"
+      "    addq 24(%r9), %r12\n")))
+
+(test
+  backend-gep-load-alu-emergency-scratch-preserves-operand
+  (test.assert-true
+    (and
+      (compiler-backend-gep-load-alu-emergency-preserved-ok? true)
+      (compiler-backend-gep-load-alu-emergency-preserved-ok? false))
+    "a GAP8 fold's emergency base scratch clobbered the non-loaded operand"))
+
+;; #9976 sibling: the GAP9 const-offset gep-load compare+branch stages a
+;; spilled base and then compares it against the register-homed rhs %1 (in
+;; %r9) in place, so the base scratch must not be %1's home either -- the old
+;; empty exclude set let the full-occupancy emergency pick borrow %r9 and the
+;; compare read the base pointer as its rhs.
+(define (compiler-backend-gep-load-cmp-branch-emergency-asm) : be_state.ResultCompilerBackend
+  (compiler-backend-emergency-ctx-asm
+    "gep_load_cmp_branch_emergency"
+    (irt.instrs
+      "%1 = mov 1 : i64
+       %2 = mov 2 : i64
+       %3 = mov 3 : i64
+       %4 = mov 4 : i64
+       %5 = mov 5 : i64
+       %6 = mov 6 : i64
+       %7 = mov 7 : i64
+       %8 = mov 8 : i64
+       %9 = mov 9 : i64
+       %20 = gep %0, 3 : i64
+       %21 = load %20 : i64
+       %22 = lt %21, %1 : i64
+       branch %22, lo, hi")
+    (irt.blocks
+      "lo:
+         %30 = mov %1 : i64
+         %31 = mov %2 : i64
+         %32 = mov %3 : i64
+         %33 = mov %4 : i64
+         %34 = mov %5 : i64
+         %35 = mov %6 : i64
+         %36 = mov %7 : i64
+         %37 = mov %8 : i64
+         %38 = mov %9 : i64
+         return
+       hi:
+         return")
+    (reg-homes
+      "%1=%r9 %2=%rcx %3=%rdx %4=%r10 %5=%r11 %6=%r8 %7=%rsi %8=%rdi %9=%rax")
+    40
+    14))
+
+(define (compiler-backend-gep-load-cmp-branch-emergency-preserved-ok?) : bool
+  (asm-ok?
+    (compiler-backend-gep-load-cmp-branch-emergency-asm)
+    (has "    cmpq %r9, 24(%")
+    (lacks "    movq -8(%rbp), %r9\n" "    cmpq %r9, 24(%r9)\n")))
+
+(test
+  backend-gep-load-cmp-branch-emergency-scratch-preserves-operand
+  (test.assert-true
+    (compiler-backend-gep-load-cmp-branch-emergency-preserved-ok?)
+    "a GAP9 compare's emergency base scratch clobbered the register rhs"))
 
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
   (let

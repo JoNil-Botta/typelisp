@@ -224,7 +224,7 @@ if [ ! -x "$BUILDER_BIN" ]; then
     if [ ! -x "$BUILDER_BIN" ]; then
         TOOL_TEMP=$(mktemp -d "$TOOL_CACHE/.build.XXXXXX")
         echo "[build-stdlib-sysroot] compiling builder tool ($NL_BOOTSTRAP_TARGET)"
-        "$COMPILER" compile "$TOOL_SOURCE" \
+        TYPELISP_SYSROOT=none "$COMPILER" compile "$TOOL_SOURCE" \
             -o "$TOOL_TEMP/builder.s" \
             --target "$NL_BOOTSTRAP_TARGET" \
             $(native_target_cfg_args) \
@@ -271,7 +271,9 @@ bounded_pool_run_job() {
     _asm_file=$1
     _obj_file="${_asm_file%.s}.$TARGET_OBJ_EXT"
     if [ "$TARGET" = linux-x86_64 ]; then
-        as "$ASM_DIR/$_asm_file" -o "$OBJ_DIR/$_obj_file"
+        # Module assembly carries no .note.GNU-stack; mark every object
+        # non-executable-stack so linking libstdlib.a stays warning-free.
+        as --noexecstack "$ASM_DIR/$_asm_file" -o "$OBJ_DIR/$_obj_file"
     else
         "$TARGET_CLANG" --target=x86_64-pc-windows-msvc -c "$ASM_DIR/$_asm_file" -o "$OBJ_DIR/$_obj_file"
     fi

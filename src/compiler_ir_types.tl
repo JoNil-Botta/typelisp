@@ -4567,6 +4567,45 @@
     [(ast.AstType.CFunc inner _) (ast.ast-type-segment-bases-get bases inner)]
     [_ signature]))
 
+(define (compiler-ir-return-storage-internal-extern-matches?
+  [bases : i64]
+  [signature : (& ast.AstType)]
+  [decl : (& CompilerIrReturnStorageAbi)]) : bool
+  (match signature
+    [(ast.AstType.Func phys-params phys-ret-id)
+      (let
+        [param-count : i64 (ast.ast-type-list-len (& (deref phys-params)))]
+        (if (or
+          (!= param-count (ast.ast-type-list-len (& decl.physical-params)))
+          (not
+            (ast.ast-type-eq-with-seg-bases?
+              bases
+              (ast.ast-type-segment-bases-get bases phys-ret-id)
+              (ast.clone-ast-type (& decl.physical-result)))))
+          false
+          (let
+            [i : i64 0]
+            (while (< i param-count)
+              (unless
+                (ast.ast-type-eq-with-seg-bases?
+                  bases
+                  (ast.ast-type-segment-bases-get
+                    bases
+                    (ast.ast-type-list-get
+                      (& (deref phys-params))
+                      i
+                      (ast.ast-type-id-fallback)))
+                  (ast.ast-type-segment-bases-get
+                    bases
+                    (ast.ast-type-list-get
+                      (& decl.physical-params)
+                      i
+                      (ast.ast-type-id-fallback))))
+                (return false))
+              (set! i (+ i 1)))
+            true)))]
+    [_ false]))
+
 (define (compiler-ir-return-storage-index-claims
   [bases : i64]
   [type-count : i64]
@@ -4666,19 +4705,30 @@
                       (cond
                         [(> (string.string-length problem) 0)
                           (set! index.problem problem)]
-                        [(or
-                            (not (ast.ast-extern-abi-c? (& abi)))
-                            (not (compiler-ir-return-storage-c? decl))
-                            (not
-                              (ast.ast-type-eq-with-seg-bases?
-                                bases
-                                (compiler-ir-return-storage-foreign-signature
+                        [(ast.ast-extern-abi-c? (& abi))
+                          (when
+                            (or
+                              (not (compiler-ir-return-storage-c? decl))
+                              (not
+                                (ast.ast-type-eq-with-seg-bases?
                                   bases
-                                  (compiler-ir-global-shared-view signature))
-                                decl.source-signature)))
+                                  (compiler-ir-return-storage-foreign-signature
+                                    bases
+                                    (compiler-ir-global-shared-view signature))
+                                  decl.source-signature)))
+                            (set!
+                              index.problem
+                              "return-storage differs from foreign declaration"))]
+                        [(or
+                            (compiler-ir-return-storage-c? decl)
+                            (not
+                              (compiler-ir-return-storage-internal-extern-matches?
+                                bases
+                                (& signature)
+                                (& decl))))
                           (set!
                             index.problem
-                            "return-storage differs from foreign declaration")]
+                            "return-storage differs from internal extern declaration")]
                         [else unit]))])
                 (compiler-ir-return-storage-index-add!
                   bases

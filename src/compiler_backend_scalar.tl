@@ -3407,12 +3407,14 @@
   (let
     [text : String
       (be_state.compiler-backend-symbol-text-state backend-state name)]
-    (and
-      (string.eq (be_operand.compiler-backend-symbol-leaf text) "panic")
-      (or
-        (be_operand.compiler-backend-string-contains? text "stdlib/io.tl::")
-        (be_operand.compiler-backend-string-contains? text "stdlib\\io.tl::")
-        (be_operand.compiler-backend-string-contains? text "stdlib.io/")))))
+    (or
+      (string.eq text "_tl_stdlib_io_stdlib_io_panic")
+      (and
+        (string.eq (be_operand.compiler-backend-symbol-leaf text) "panic")
+        (or
+          (be_operand.compiler-backend-string-contains? text "stdlib/io.tl::")
+          (be_operand.compiler-backend-string-contains? text "stdlib\\io.tl::")
+          (be_operand.compiler-backend-string-contains? text "stdlib.io/"))))))
 
 (define (compiler-backend-runtime-abort-site-instr?
   [backend-state : be_state.CompilerBackendState]

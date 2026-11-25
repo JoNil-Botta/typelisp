@@ -1734,15 +1734,35 @@
             program-index
             (+ index 1)))])))
 
+(define (compiler-backend-startup-init-calls
+  [backend-state : be_state.CompilerBackendState]) : String
+  (let
+    [symbols : (__tl_dyn-array String)
+      (be_state.compiler-backend-state-startup-init-symbols backend-state)]
+    [count : i64 (array-length symbols)]
+    (if (= count 0)
+      ""
+      (let
+        [buf : text_buf.TextBuf (text_buf.empty)]
+        (for [i (iterator.range 0 count)]
+          (let
+            [sym : String (string.copy (& (array-ref symbols i)))]
+            (set!
+              buf
+              (text_buf.append buf (str_cat.str-cat "    call " sym "\n")))))
+        (text_buf.render buf)))))
+
 (define (compiler-backend-global-initializers
   [type-segment-bases : i64]
   [globals : compiler_ir_types.CompilerIrGlobalSeq]
   [program-index : be_state.CompilerBackendProgramIndex]) : String
-  (compiler-backend-global-initializers-from
-    type-segment-bases
-    globals
-    program-index
-    0))
+  (str_cat.str-cat
+    (compiler-backend-startup-init-calls program-index.backend-state)
+    (compiler-backend-global-initializers-from
+      type-segment-bases
+      globals
+      program-index
+      0)))
 
 (define (compiler-backend-runtime-prelude-helper-function?
   [name : String]
@@ -2309,6 +2329,22 @@
         functions
         externs)]))
 
+(define (compiler-backend-emit-startup-init-externs-into
+  [backend-state : be_state.CompilerBackendState]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (let
+    [symbols : (__tl_dyn-array String)
+      (be_state.compiler-backend-state-startup-init-symbols backend-state)]
+    [count : i64 (array-length symbols)]
+    [out : text_buf.TextBuf buf]
+    (for [i (iterator.range 0 count)]
+      (set!
+        out
+        (text_buf.append
+          (text_buf.append out ".extern ")
+          (str_cat.str-cat (string.copy (& (array-ref symbols i))) "\n" ""))))
+    out))
+
 (define (compiler-backend-emit-externs-into
   [backend-state : be_state.CompilerBackendState]
   [externs : compiler_ir_types.CompilerIrExternSeq]
@@ -2316,14 +2352,16 @@
   [runtime-index : be_state.CompilerBackendRuntimeIndex]
   [referenced-functions : be_state.BackendSymbolSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (compiler-backend-emit-extern-seq-into
+  (compiler-backend-emit-startup-init-externs-into
     backend-state
-    externs
-    plan
-    runtime-index
-    referenced-functions
-    buf
-    0))
+    (compiler-backend-emit-extern-seq-into
+      backend-state
+      externs
+      plan
+      runtime-index
+      referenced-functions
+      buf
+      0)))
 
 (define (compiler-backend-emit-extern-seq-into
   [backend-state : be_state.CompilerBackendState]

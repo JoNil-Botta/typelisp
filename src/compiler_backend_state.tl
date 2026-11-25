@@ -1249,7 +1249,8 @@
   ;; objects or link options. Assembly and library requests leave this false.
   (closed-executable bool)
   (archive-runtime bool)
-  (library-object bool))
+  (library-object bool)
+  (startup-init-symbols (__tl_dyn-array String)))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1328,7 +1329,8 @@
         0
         false
         false
-        false))
+        false
+        (__tl_make-array String 0)))
     (CompilerBackendState
       (cast
         (unsafe
@@ -1390,6 +1392,19 @@
   [enabled : bool]) : unit
   (unsafe
     (set! (deref (compiler-backend-state-ptr state)).library-object enabled)))
+
+(define (compiler-backend-state-startup-init-symbols
+  [state : CompilerBackendState]) : (__tl_dyn-array String)
+  (unsafe
+    (deref (compiler-backend-state-view state)).startup-init-symbols))
+
+(define (compiler-backend-state-set-startup-init-symbols!
+  [state : CompilerBackendState]
+  [symbols : (__tl_dyn-array String)]) : unit
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).startup-init-symbols
+      symbols)))
 
 (define (compiler-backend-state-private-global?
   [state : CompilerBackendState]

@@ -595,6 +595,45 @@
         "_start"
         "_tl_start"))))
 
+;; A prebuilt-stdlib compile leaves the runtime helpers and stdlib code to the
+;; sysroot's libstdlib.a. Return that archive when the assembly needs it, as
+;; scripts/lib-linux-entry.sh `stdlib_archive_for_asm_triple` does for shells.
+(define (linux-stdlib-archive
+  [cfg : (& cfg RunnerConfig)]
+  [asm-text : (& asm-text str)]) : String
+  (let
+    [sysroot : String
+      (match (env.get "TYPELISP_SYSROOT")
+        [(env.EnvSomeString value) value]
+        [(env.EnvNoString) ""])]
+    [rel : String "lib/x86_64-unknown-linux-gnu/libstdlib.a"]
+    [from-sysroot : String (fs.path-join (& sysroot) (& rel))]
+    [from-compiler : String
+      (fs.path-join (& (util.path-dirname (& cfg.compiler))) (& rel))]
+    [archive : String
+      (cond
+        [(string.eq (& sysroot) "none") ""]
+        [(and
+            (> (string.string-length (& sysroot)) 0)
+            (util.is-regular-file? (& from-sysroot)))
+          from-sysroot]
+        [(util.is-regular-file? (& from-compiler)) from-compiler]
+        [else ""])]
+    (if (or
+      (= (string.string-length (& archive)) 0)
+      (string.contains asm-text "\ntl_oom_abort:\n"))
+      ""
+      (if (or
+        (string.contains asm-text "tl_oom_abort")
+        (string.contains asm-text "tl_region_abort")
+        (string.contains asm-text "tl_oob_abort")
+        (string.contains asm-text "tl_c_fn_null_abort")
+        (string.contains asm-text "tl_panic_at")
+        (string.contains asm-text "_tl_stdlib_")
+        (string.contains asm-text "_tl___tl_mod_init_stdlib_"))
+        archive
+        ""))))
+
 (define (do-assemble!
   [cfg : (& cfg RunnerConfig)]
   [st : (&mut st VariantState)]) : bool
@@ -855,11 +894,20 @@
               false
               (let
                 [entry : String (linux-entry-symbol (& st.asm-text))]
+                [archive : String (linux-stdlib-archive cfg (& st.asm-text))]
                 [ld-argv : svec.Vec (svec.new)]
                 (svec.push-ref! (&mut ld-argv) obj)
                 (svec.push-ref! (&mut ld-argv) "-o")
                 (svec.push-ref! (&mut ld-argv) (string.copy (& bin)))
                 (svec.push-ref! (&mut ld-argv) "-static")
+                (when
+                  (> (string.string-length (& archive)) 0)
+                  (svec.push-ref! (&mut ld-argv) "-z")
+                  (svec.push-ref! (&mut ld-argv) "noexecstack")
+                  (svec.push-ref! (&mut ld-argv) "--gc-sections")
+                  (svec.push-ref! (&mut ld-argv) "--start-group")
+                  (svec.push-ref! (&mut ld-argv) archive)
+                  (svec.push-ref! (&mut ld-argv) "--end-group"))
                 (svec.push-ref! (&mut ld-argv) "-e")
                 (svec.push-ref! (&mut ld-argv) entry)
                 (run-action-cmd! st "link" "ld" (& ld-argv))
@@ -1994,7 +2042,7 @@
                     [bin : String (svec.get (& sp.tokens) 2 "")]
                     [obj : String (str_cat.str-cat (string.copy (& bin)) ".o")]
                     [as-a : svec.Vec (svec.new)]
-                    (svec.push-ref! (&mut as-a) asm)
+                    (svec.push-ref! (&mut as-a) (string.copy (& asm)))
                     (svec.push-ref! (&mut as-a) "-o")
                     (svec.push-ref! (&mut as-a) (string.copy (& obj)))
                     (let
@@ -2010,11 +2058,25 @@
                       (if (!= r1.exit-code 0)
                         1
                         (let
+                          [asm-read : util.ReadFileResult
+                            (util.read-file-result (& asm))]
+                          [archive : String
+                            (if asm-read.ok
+                              (linux-stdlib-archive cfg (& asm-read.text))
+                              "")]
                           [ld-a : svec.Vec (svec.new)]
                           (svec.push-ref! (&mut ld-a) obj)
                           (svec.push-ref! (&mut ld-a) "-o")
                           (svec.push-ref! (&mut ld-a) bin)
                           (svec.push-ref! (&mut ld-a) "-static")
+                          (when
+                            (> (string.string-length (& archive)) 0)
+                            (svec.push-ref! (&mut ld-a) "-z")
+                            (svec.push-ref! (&mut ld-a) "noexecstack")
+                            (svec.push-ref! (&mut ld-a) "--gc-sections")
+                            (svec.push-ref! (&mut ld-a) "--start-group")
+                            (svec.push-ref! (&mut ld-a) archive)
+                            (svec.push-ref! (&mut ld-a) "--end-group"))
                           (svec.push-ref! (&mut ld-a) "-e")
                           (svec.push-ref! (&mut ld-a) "_tl_start")
                           (let

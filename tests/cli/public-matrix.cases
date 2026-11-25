@@ -92,7 +92,10 @@ file main.tl
     (io.print-format "{}" (cast 3 : i64))
     42))
 end-file
-run compile "{{dir}}/main.tl" --target {{each}} -o "{{dir}}/main.s"
+# The stdlib os_write body checked below is emitted only with the source
+# stdlib; a host with a prebuilt Windows sysroot (the Windows CI lanes) would
+# otherwise leave it to libstdlib.a.
+run compile "{{dir}}/main.tl" --target {{each}} --no-prebuilt-stdlib -o "{{dir}}/main.s"
 stderr empty
 in file {{dir}}/main.s
 contains-any     .globl main || .globl main

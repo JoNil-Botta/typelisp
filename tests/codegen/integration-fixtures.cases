@@ -197,8 +197,10 @@ stderr contains shift count out of range: count=64 width=32
 stderr contains stack backtrace:
 
 # Each driver emits its fixture's assembly through the backend directly.
+# Drivers compile the source stdlib so their plain `ld` links need no
+# prebuilt libstdlib.a.
 case backend-runtime
-run compile src/tests/compiler_backend_runtime_fixture.tl --stdlib-root src -o "{{dir}}/driver.s"
+run compile src/tests/compiler_backend_runtime_fixture.tl --stdlib-root src --no-prebuilt-stdlib -o "{{dir}}/driver.s"
 sh as "{{dir}}/driver.s" -o "{{dir}}/driver.o" && ld -static -e _tl_start "{{dir}}/driver.o" -o "{{dir}}/driver"
 exec "{{dir}}/driver" "{{dir}}/runtime_helpers.s"
 in file {{dir}}/runtime_helpers.s
@@ -270,7 +272,7 @@ stderr empty
 # The outgoing stack-argument reservation is folded into the function frame
 # (subq $N, %rsp released by a matching addq; N depends on codegen).
 case backend-stack-args
-run compile src/tests/compiler_backend_stack_args_fixture.tl --stdlib-root src -o "{{dir}}/driver.s"
+run compile src/tests/compiler_backend_stack_args_fixture.tl --stdlib-root src --no-prebuilt-stdlib -o "{{dir}}/driver.s"
 sh as "{{dir}}/driver.s" -o "{{dir}}/driver.o" && ld -static -e _tl_start "{{dir}}/driver.o" -o "{{dir}}/driver"
 exec "{{dir}}/driver" "{{dir}}/stack_args.s" linux-x86_64
 in file {{dir}}/stack_args.s
@@ -290,7 +292,7 @@ stdout empty
 stderr empty
 
 case backend-raw-pointer
-run compile src/tests/compiler_backend_raw_pointer_fixture.tl --stdlib-root src -o "{{dir}}/driver.s"
+run compile src/tests/compiler_backend_raw_pointer_fixture.tl --stdlib-root src --no-prebuilt-stdlib -o "{{dir}}/driver.s"
 sh as "{{dir}}/driver.s" -o "{{dir}}/driver.o" && ld -static -e _tl_start "{{dir}}/driver.o" -o "{{dir}}/driver"
 exec "{{dir}}/driver" "{{dir}}/raw_pointer.s" linux-x86_64
 in file {{dir}}/raw_pointer.s
@@ -311,7 +313,8 @@ stderr empty
 
 # The unfused opt0 reference and the opt2 folded path agree at run time. The
 # cross-mode differential gate reuses both binaries from the integration
-# work directory.
+# work directory. Both compile the source stdlib so the opt level covers the
+# whole program and the plain `ld` link needs no prebuilt libstdlib.a.
 case backend-cmp-mem-fold-parity
 opt 0 2
 file expected.stdout
@@ -319,7 +322,7 @@ cmp-mem fold smoke: bytes=4547
 cmp-mem fold smoke: compares=35338 words=388 indirect=280 acc=1579
 end-file
 sh CCV_fold="{{root}}/target/integration-verify/linux/backend-cmp-mem-fold-parity-opt{{opt}}" && mkdir -p "$CCV_fold" && CCV_fold="$CCV_fold/backend-cmp-mem-fold-parity-opt{{opt}}"
-run compile "{{root}}/src/tests/compiler_backend_cmp_mem_fold_smoke.tl" --stdlib-root "{{root}}/src" --opt-level {{opt}} -o "{{fold}}.s"
+run compile "{{root}}/src/tests/compiler_backend_cmp_mem_fold_smoke.tl" --stdlib-root "{{root}}/src" --opt-level {{opt}} --no-prebuilt-stdlib -o "{{fold}}.s"
 sh as "{{fold}}.s" -o "{{fold}}.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{fold}}.s") || exit $?; ld -static -e "$CCV_entry" "{{fold}}.o" -o "{{fold}}"; }
 exec "{{fold}}"
 stderr empty

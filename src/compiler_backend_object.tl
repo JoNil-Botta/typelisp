@@ -4693,6 +4693,15 @@
         [(be_state.compiler-backend-state-shared-object-code-model?
             backend-state)
           (Unsupported (SharedObjectCodeModel))]
+        [(or
+            (be_state.compiler-backend-state-archive-runtime? backend-state)
+            (>
+              (array-length
+                (be_state.compiler-backend-state-startup-init-symbols
+                  backend-state))
+              0))
+          (Unsupported
+            (be_state.compiler-backend-object-unsupported-semantics-category))]
         [(not
             (and
               (compiler-backend-object-globals-semantically-supported?

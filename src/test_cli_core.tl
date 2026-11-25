@@ -31,6 +31,7 @@
 (import compiler_check_core)
 (import compiler_diagnostic as cdiag)
 (import compiler_driver_core as driver)
+(import tli_cli_core as tli_cli)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_cfg_core as cfg_core)
@@ -465,18 +466,22 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "test"
-        "--stdlib-root <dir> --cfg <name> --target <target> --debug|-g|--backtrace --opt-level <0|1|2|s> -Os
-         --check --list --filter <substring> --exact <name> --include-ignored
-         --include-slow --shuffle --seed <u64> --backend-mode <mode>
-         --manifest-path <file> --batch <file> --combined --prefix-cache-stats"
+        (str_cat.str-cat
+          "--stdlib-root <dir> --cfg <name> --target <target> --debug|-g|--backtrace --opt-level <0|1|2|s> -Os
+           --check --list --filter <substring> --exact <name> --include-ignored
+           --include-slow --shuffle --seed <u64> --backend-mode <mode>
+           --manifest-path <file> --batch <file> --combined --prefix-cache-stats "
+          (tli_cli.tli-sysroot-cli-options))
         start
         count)]
+    [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [source : String ""]
     [has-source : bool false]
     [manifest-path : String ""]
     [has-manifest : bool false]
     [test-mode : TestMode Run]
     [batch-list : TestMaybeString (No)]
+    (tli_cli.tli-reset-active-sysroot-options!)
     (set! tltest-prefix-cache-stats false)
     (set! tltest-combined false)
     (set! tltest-list-only false)
@@ -492,6 +497,7 @@
     (tltest-user-cfg-reset!)
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--check")
           (if tltest-list-only
@@ -584,7 +590,10 @@
           (set! source (string.copy (& args.arg)))
           (set! has-source true)]))
     (set! tltest-user-cfg-slots options.cfgs)
-    (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
+    (unless
+      args.failed
+      (ir.compiler-debug-info-set-enabled! options.debug)
+      (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
     (if args.failed
       (Err args.error)
       (tltest-config-finish

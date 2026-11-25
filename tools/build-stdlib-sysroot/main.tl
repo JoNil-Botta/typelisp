@@ -421,16 +421,16 @@
     [sources : (__tl_dyn-array extract.TliSource)
       (__tl_make-array extract.TliSource source-count)]
     [roots : strings.Vec (strings.new)]
+    [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+    [decl-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
+    [seen : sym_env.SymI64Env (sym_env.sym-i64-empty)]
+    [_reset-load : unit (api.compiler-typecheck-reset-load-session!)]
     [cfgs : sym_env.SymI64Env
       (if windows?
         (target_cfg.compiler-target-enable-windows-cfgs
           (cfg_core.compiler-cfg-empty))
         (target_cfg.compiler-target-enable-linux-cfgs
           (cfg_core.compiler-cfg-empty)))]
-    [decls : ast.AstDeclList (ast.ast-decl-list-new)]
-    [decl-paths : ast.AstDeclPathList (ast.ast-decl-path-list-new)]
-    [seen : sym_env.SymI64Env (sym_env.sym-i64-empty)]
-    (api.compiler-typecheck-reset-load-session!)
     (for [index (iterator.range 0 source-count)]
       (let
         [suffix (& (array-ref paths index))]
@@ -610,7 +610,7 @@
 (define (emit-partitioned-sysroot!
   [bundle : (& tli.TliBundle)]
   [whole-program : ir.CompilerIrProgram]
-  [_whole-spans : ir.CompilerSourceSpans]
+  [whole-spans : ir.CompilerSourceSpans]
   [lower-state : lower.CompilerLowerState]
   [pools : ast.AstNodePoolContext]
   [job : tc.TcJobState]
@@ -1058,6 +1058,9 @@
                           (ir.compiler-ir-clone-representation-index
                             pools
                             (& base-reps)))]
+                      (be_state.compiler-backend-state-set-opt-level!
+                        be-state-mod
+                        opt-level)
                       (be_state.compiler-backend-state-set-representations-for-pools!
                         be-state-mod
                         (& pools)
@@ -1066,7 +1069,7 @@
                           (& mod-reps)))
                       (match (opt.optimize-program
                         mod-program
-                        (ir.compiler-source-spans-empty)
+                        (ir.compiler-source-spans-escape (& whole-spans))
                         (opt.OptimizeRequest
                           pools
                           (intern.intern-compat-state-capture-active)

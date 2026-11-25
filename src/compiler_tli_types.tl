@@ -142,6 +142,8 @@
   32)
 (define tli-fn-stores-ambient-arena-arg : i64
   256)
+(define tli-macro-uses-expr-type : i64
+  16)
 
 (defstruct TliFnSummary
   (effect-flags i64)
@@ -236,3 +238,80 @@
 ;; Shared spelling for the interface producer and the archive producer.
 (define (tli-module-init-symbol [module-name : (& str)]) : String
   (str_cat.str-cat "__tl_mod_init_" (string.copy module-name)))
+
+;; Canonical wire tags for AstMacroTypeKindList entries (matching the bit
+;; positions in `tc-macro-abstract-kind-bit` so `.tli` files never serialize
+;; process-local intern string IDs).
+(define (tli-macro-type-kind-tag [kind : (& str)]) : u8
+  (cast
+    (cond
+      [(string.eq kind "i64") 0]
+      [(string.eq kind "i32") 1]
+      [(string.eq kind "i16") 2]
+      [(string.eq kind "i8") 3]
+      [(string.eq kind "u64") 4]
+      [(string.eq kind "u32") 5]
+      [(string.eq kind "u16") 6]
+      [(string.eq kind "u8") 7]
+      [(string.eq kind "f64") 8]
+      [(string.eq kind "f32") 9]
+      [(string.eq kind "bool") 10]
+      [(string.eq kind "char") 11]
+      [(string.eq kind "string") 12]
+      [(string.eq kind "unit") 13]
+      [(string.eq kind "never") 14]
+      [(string.eq kind "array") 15]
+      [(string.eq kind "dyn-array") 16]
+      [(string.eq kind "function") 17]
+      [(string.eq kind "tuple") 18]
+      [(string.eq kind "struct") 19]
+      [(string.eq kind "enum") 20]
+      [(string.eq kind "str") 21]
+      [(string.eq kind "ptr") 22]
+      [(string.eq kind "mut-ptr") 23]
+      [(string.eq kind "ref") 24]
+      [(string.eq kind "mut-ref") 25]
+      [(string.eq kind "region") 26]
+      [(string.eq kind "type-var") 27]
+      [(string.eq kind "box") 28]
+      [(string.eq kind "c-function") 30]
+      [(string.eq kind "invalidate") 31]
+      [else 29])
+    : u8))
+
+(define (tli-macro-type-kind-name [tag : u8]) : String
+  (let
+    [v : i64 (cast tag : i64)]
+    (cond
+      [(= v 0) "i64"]
+      [(= v 1) "i32"]
+      [(= v 2) "i16"]
+      [(= v 3) "i8"]
+      [(= v 4) "u64"]
+      [(= v 5) "u32"]
+      [(= v 6) "u16"]
+      [(= v 7) "u8"]
+      [(= v 8) "f64"]
+      [(= v 9) "f32"]
+      [(= v 10) "bool"]
+      [(= v 11) "char"]
+      [(= v 12) "string"]
+      [(= v 13) "unit"]
+      [(= v 14) "never"]
+      [(= v 15) "array"]
+      [(= v 16) "dyn-array"]
+      [(= v 17) "function"]
+      [(= v 18) "tuple"]
+      [(= v 19) "struct"]
+      [(= v 20) "enum"]
+      [(= v 21) "str"]
+      [(= v 22) "ptr"]
+      [(= v 23) "mut-ptr"]
+      [(= v 24) "ref"]
+      [(= v 25) "mut-ref"]
+      [(= v 26) "region"]
+      [(= v 27) "type-var"]
+      [(= v 28) "box"]
+      [(= v 30) "c-function"]
+      [(= v 31) "invalidate"]
+      [else "unknown"])))

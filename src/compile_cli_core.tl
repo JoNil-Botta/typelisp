@@ -46,6 +46,7 @@
 (import compiler_lower as lower)
 (import compiler_optimize as opt)
 (import compiler_driver_core)
+(import tli_cli_core as tli_cli)
 (cfg
   embedded-stdlib-tlci
   (import compiler_embedded_stdlib_tlci as embedded_tlci))
@@ -93,6 +94,8 @@
   false)
 (define compile-cli-trace-passes-requested : bool
   false)
+(define compile-cli-sysroot-options : tli_cli.TliSysrootOptions
+  (tli_cli.tli-sysroot-options))
 
 (defenum CompileCliConfig
   (Config
@@ -170,7 +173,9 @@
 (define (compile-cli-common-option!
   [options : (&mut options cli_option.CliCompileOptions)]
   [args : (&mut args cli_option.CliArgs)]) : bool
-  (if (cli_option.cli-compile-option! options args)
+  (if (or
+    (cli_option.cli-compile-option! options args)
+    (tli_cli.tli-sysroot-option! (&mut compile-cli-sysroot-options) args))
     true
     (cond
       [(string.eq args.name "--profile-allocations")
@@ -214,10 +219,12 @@
         [args : cli_option.CliArgs
           (cli_option.cli-args
             "compile"
-            "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
-             --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
-             -o <file> --pic --no-entry --emit-ir --dump-ir --verify-ir
-             --trace-passes"
+            (str_cat.str-cat
+              "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
+               --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
+               -o <file> --pic --no-entry --emit-ir --dump-ir --verify-ir
+               --trace-passes "
+              (tli_cli.tli-sysroot-cli-options))
             (+ input-idx 1)
             count)]
         [options : cli_option.CliCompileOptions
@@ -315,9 +322,11 @@
       [args : cli_option.CliArgs
         (cli_option.cli-args
           "compile"
-          "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
-           --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
-           -o --emit-ir --pic --no-entry --verify-ir --prefix-cache-stats --windows-coff-plan"
+          (str_cat.str-cat
+            "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
+             --debug|-g|--backtrace --backend-mode <mode> --profile-allocations
+             -o --emit-ir --pic --no-entry --verify-ir --prefix-cache-stats --windows-coff-plan "
+            (tli_cli.tli-sysroot-cli-options))
           (+ batch-path-idx 1)
           count)]
       [options : cli_option.CliCompileOptions
@@ -1850,10 +1859,16 @@
         (set! compile-cli-dump-ir-pass "")
         (set! compile-cli-verify-ir-requested false)
         (set! compile-cli-trace-passes-requested false)
+        (set! compile-cli-sysroot-options (tli_cli.tli-sysroot-options))
+        (tli_cli.tli-reset-active-sysroot-options!)
         (ir.compiler-debug-info-set-enabled! false)
         (ir.compiler-debug-type-graph-verify-set! false)
         (ir.compiler-debug-path-remap-clear!)
-        (compile-cli-dispatch count))]
+        (let
+          [parsed : CompileCliAction (compile-cli-dispatch count)]
+          (tli_cli.tli-set-active-sysroot-options!
+            (& compile-cli-sysroot-options))
+          parsed))]
     [profile? : bool compile-cli-allocation-profile-requested]
     (if profile?
       (begin

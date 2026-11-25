@@ -992,10 +992,50 @@
 
 ;; The incremental identity format excludes NUL. In TLI it is valid UTF-8,
 ;; so run the shared scalar validator on each non-NUL segment.
+(define tli-ascii-word-mask : u64
+  0x8080808080808080)
+
+;; ASCII ranges, including NUL, are valid TLI text. Check them a word at a time
+;; (the last word may overlap). `base` must be readable for `start + length`.
+(define (tli-ascii-range? [base : (Ptr u8)] [start : i64] [length : i64]) : bool
+  (let
+    [end : i64 (+ start length)]
+    [index : i64 start]
+    (if (< length 8)
+      (while (< index end)
+        (when
+          (>=
+            (unsafe
+              (ptr-read (ptr-offset base index)))
+            (cast 0x80 : u8))
+          (return false))
+        (+= index 1))
+      (while (< index end)
+        (when (> (+ index 8) end) (set! index (- end 8)))
+        (when
+          (!=
+            (bit-and
+              (unsafe
+                (ptr-read (ptr-cast (ptr-offset base index) : (Ptr u64))))
+              tli-ascii-word-mask)
+            (cast 0 : u64))
+          (return false))
+        (+= index 8)))
+    true))
+
 (define (tli-utf8-valid?
   [bytes : (& bytes (__tl_dyn-array u8))]
   [start : i64]
   [length : i64]) : bool
+  (when
+    (and
+      (cursor.range-present? (array-length bytes) start length)
+      (tli-ascii-range?
+        (unsafe
+          (ptr-cast (__tl_array-data (deref bytes)) : (Ptr u8)))
+        start
+        length))
+    (return true))
   (let
     [end : i64 (+ start length)]
     [segment : i64 start]
@@ -1065,20 +1105,63 @@
         out)
       (__tl_make-array u8 0))))
 
+;; A decoded string pool. An eager pool holds every string. A lazy pool leaves
+;; `strings` empty and records where each entry's text lies in the file bytes
+;; that the enclosing `TliDirectory` owns (`base`); `tli-read-name!` validates,
+;; charges and copies an entry only when a record uses it.
+(defstruct TliPool
+  (strings (__tl_dyn-array String))
+  (starts (__tl_dyn-array i64))
+  (lengths (__tl_dyn-array i64))
+  (base (Ptr u8)))
+
+(define (tli-read-lazy-name!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]
+  [id : i64]) : String
+  (let
+    [start : i64 (array-ref pool.starts id)]
+    [length : i64 (array-ref pool.lengths id)]
+    [valid? : bool
+      (or
+        (tli-ascii-range? pool.base start length)
+        (let
+          [text : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+          (for [index (iterator.range 0 length)]
+            (set!
+              (array-ref text index)
+              (unsafe
+                (ptr-read (ptr-offset pool.base (+ start index))))))
+          (tli-utf8-valid? (& text) 0 length)))]
+    (cond
+      [(not valid?)
+        (tli-fail! rd tli-error-utf8 "TLI text is not valid UTF-8")
+        ""]
+      [(not (tli-reserve! rd (+ 16 length))) ""]
+      [else
+        (unsafe
+          (string-from-bytes (ptr-offset pool.base start) length))])))
+
 (define (tli-read-name!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : String
+  [pool : (& pool TliPool)]) : String
   (let
     [id : i64 (cursor.read-u32! (&mut rd.cursor))]
+    [lazy? : bool (> (array-length pool.starts) 0)]
     (cond
       [(not rd.cursor.ok?) ""]
-      [(>= id (array-length pool))
+      [(>=
+        id
+        (if lazy?
+          (array-length pool.starts)
+          (array-length pool.strings)))
         (tli-fail! rd tli-error-string-id "TLI string id is out of range")
         ""]
       [(= id 0) ""]
+      [lazy? (tli-read-lazy-name! rd pool id)]
       [else
         (let
-          [text (& (array-ref pool id))]
+          [text (& (array-ref pool.strings id))]
           (if (tli-reserve! rd (+ 16 (string.string-length text)))
             (string.copy text)
             ""))])))
@@ -1109,7 +1192,7 @@
 
 (define (tli-read-names!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array String)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array String)
   (let
     [count : i64 (tli-read-count! rd 4 (comptime (size-of (type String))))]
     [names : (__tl_dyn-array String) (__tl_make-array String count)]
@@ -1143,7 +1226,7 @@
 
 (define (tli-read-types!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]
   [depth : i64]) : (__tl_dyn-array tli.TliType)
   (let
@@ -1157,14 +1240,14 @@
 
 (define (tli-read-type-box!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]
   [depth : i64]) : (Box tli.TliType)
   (box (tli-read-type! rd pool comptime? depth)))
 
 (define (tli-read-type!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]
   [depth : i64]) : tli.TliType
   (when
@@ -1256,7 +1339,7 @@
 
 (define (tli-read-cleanup!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [field? : bool]) : tli.TliCleanup
   (match (tli-read-tag!
     rd
@@ -1269,7 +1352,7 @@
 
 (define (tli-read-field!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]) : tli.TliField
   (tli.TliField
     (tli-read-name! rd pool)
@@ -1280,7 +1363,7 @@
 
 (define (tli-read-fields!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]) : (__tl_dyn-array tli.TliField)
   (let
     [count : i64
@@ -1294,7 +1377,7 @@
 
 (define (tli-read-payload!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]) : tli.TliPayload
   (tli.TliPayload
     (tli-read-type! rd pool comptime? 1)
@@ -1302,7 +1385,7 @@
 
 (define (tli-read-payloads!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]) : (__tl_dyn-array tli.TliPayload)
   (let
     [count : i64
@@ -1317,7 +1400,7 @@
 
 (define (tli-read-variant!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]) : tli.TliVariant
   (tli.TliVariant
     (tli-read-name! rd pool)
@@ -1325,7 +1408,7 @@
 
 (define (tli-read-variants!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]) : (__tl_dyn-array tli.TliVariant)
   (let
     [count : i64
@@ -1340,7 +1423,7 @@
 
 (define (tli-read-type-decl!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : tli.TliTypeDecl
+  [pool : (& pool TliPool)]) : tli.TliTypeDecl
   (let
     [kind : i64 (tli-read-tag! rd 1)]
     [name : String (tli-read-name! rd pool)]
@@ -1363,7 +1446,7 @@
 
 (define (tli-read-type-decls!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array tli.TliTypeDecl)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliTypeDecl)
   (let
     [count : i64
       (tli-read-count! rd 47 (comptime (size-of (type tli.TliTypeDecl))))]
@@ -1390,7 +1473,7 @@
 
 (define (tli-read-import!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : tli.TliImport
+  [pool : (& pool TliPool)]) : tli.TliImport
   (let
     [name : String (tli-read-name! rd pool)]
     [kind : i64 (tli-read-tag! rd 4)]
@@ -1403,7 +1486,7 @@
 
 (define (tli-read-imports!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array tli.TliImport)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliImport)
   (let
     [count : i64
       (tli-read-count! rd 45 (comptime (size-of (type tli.TliImport))))]
@@ -1430,13 +1513,12 @@
 
 (define (tli-read-extern-link-input!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : tli.TliExternLinkInput
+  [pool : (& pool TliPool)]) : tli.TliExternLinkInput
   (tli.TliExternLinkInput (tli-read-tag! rd 2) (tli-read-name! rd pool)))
 
 (define (tli-read-extern-link-inputs!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array
-    tli.TliExternLinkInput)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliExternLinkInput)
   (let
     [count : i64
       (tli-read-count! rd 5 (comptime (size-of (type tli.TliExternLinkInput))))]
@@ -1450,7 +1532,7 @@
 
 (define (tli-read-param!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]) : tli.TliParam
   (tli.TliParam
     (tli-read-name! rd pool)
@@ -1459,7 +1541,7 @@
 
 (define (tli-read-params!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [comptime? : bool]) : (__tl_dyn-array tli.TliParam)
   (let
     [count : i64
@@ -1473,15 +1555,14 @@
 
 (define (tli-read-global-write!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : tli.TliGlobalWrite
+  [pool : (& pool TliPool)]) : tli.TliGlobalWrite
   (tli.TliGlobalWrite
     (tli-read-name! rd pool)
     (cast (cursor.read-u8! (&mut rd.cursor)) : u8)))
 
 (define (tli-read-global-writes!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array
-    tli.TliGlobalWrite)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliGlobalWrite)
   (let
     [count : i64
       (tli-read-count! rd 5 (comptime (size-of (type tli.TliGlobalWrite))))]
@@ -1522,7 +1603,7 @@
 
 (define (tli-read-summary-tail!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [effect-flags : i64]) : tli.TliFnSummary
   (let
     [mask : i64 (cursor.read-u64! (&mut rd.cursor))]
@@ -1538,7 +1619,7 @@
 
 (define (tli-read-fn-decl!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : tli.TliFnDecl
+  [pool : (& pool TliPool)]) : tli.TliFnDecl
   (let
     [name : String (tli-read-name! rd pool)]
     [module-name : String (tli-read-name! rd pool)]
@@ -1576,7 +1657,7 @@
 
 (define (tli-read-fn-decls!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array tli.TliFnDecl)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliFnDecl)
   (let
     [count : i64
       (tli-read-count! rd 68 (comptime (size-of (type tli.TliFnDecl))))]
@@ -1614,7 +1695,7 @@
 
 (define (tli-read-value-decl!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : tli.TliValueDecl
+  [pool : (& pool TliPool)]) : tli.TliValueDecl
   (let
     [name : String (tli-read-name! rd pool)]
     [module-name : String (tli-read-name! rd pool)]
@@ -1641,7 +1722,7 @@
 
 (define (tli-read-value-decls!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array tli.TliValueDecl)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliValueDecl)
   (let
     [count : i64
       (tli-read-count! rd 23 (comptime (size-of (type tli.TliValueDecl))))]
@@ -1668,7 +1749,7 @@
 
 (define (tli-read-macro-param!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : tli.TliMacroParam
+  [pool : (& pool TliPool)]) : tli.TliMacroParam
   (tli.TliMacroParam
     (tli-read-name! rd pool)
     (tli-read-type! rd pool true 1)
@@ -1677,8 +1758,7 @@
 
 (define (tli-read-macro-params!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array
-    tli.TliMacroParam)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliMacroParam)
   (let
     [count : i64
       (tli-read-count! rd 10 (comptime (size-of (type tli.TliMacroParam))))]
@@ -1692,12 +1772,12 @@
 
 (define (tli-read-macro-handle!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : tli.TliMacroHandle
+  [pool : (& pool TliPool)]) : tli.TliMacroHandle
   (let
     [name : String (tli-read-name! rd pool)]
     [module-name : String (tli-read-name! rd pool)]
     [identity : String (tli-read-name! rd pool)]
-    [flags : i64 (tli-read-flags! rd 15)]
+    [flags : i64 (tli-read-flags! rd 31)]
     [result-kind : i64 (tli-read-tag! rd 2)]
     [params : (__tl_dyn-array tli.TliMacroParam)
       (tli-read-macro-params! rd pool)]
@@ -1724,8 +1804,7 @@
 
 (define (tli-read-macro-handles!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array
-    tli.TliMacroHandle)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliMacroHandle)
   (let
     [count : i64
       (tli-read-count! rd 61 (comptime (size-of (type tli.TliMacroHandle))))]
@@ -1752,7 +1831,7 @@
 
 (define (tli-read-dispatch!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : tli.TliDispatchDecl
+  [pool : (& pool TliPool)]) : tli.TliDispatchDecl
   (tli.TliDispatchDecl
     (tli-read-name! rd pool)
     (tli-read-name! rd pool)
@@ -1761,8 +1840,7 @@
 
 (define (tli-read-dispatches!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]) : (__tl_dyn-array
-    tli.TliDispatchDecl)
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliDispatchDecl)
   (let
     [count : i64
       (tli-read-count! rd 16 (comptime (size-of (type tli.TliDispatchDecl))))]
@@ -1858,7 +1936,7 @@
   (target-triple String)
   (content-sha256 (Array u8 32))
   (entries (__tl_dyn-array tli.TliDirectoryEntry))
-  (pool (__tl_dyn-array String))
+  (pool TliPool)
   (bytes (__tl_dyn-array u8))
   (owned-bytes i64))
 
@@ -1896,8 +1974,51 @@
     (and rd.cursor.ok? (not (cursor.at-end? (& rd.cursor))))
     (tli-fail! rd tli-error-trailing "TLI section has trailing bytes")))
 
-(define (tli-read-pool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : (__tl_dyn-array
-    String)
+(define (tli-read-pool-lazy!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
+  (let
+    [count : i64 (tli-read-count! rd 4 (* 2 (comptime (size-of (type i64)))))]
+    [starts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [lengths : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    (when
+      (= count 0)
+      (tli-fail!
+        rd
+        tli-error-tag
+        "TLI string pool must start with an empty string"))
+    (while (and rd.cursor.ok? (< index count))
+      (let
+        [length : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [start : i64 rd.cursor.offset]
+        (cond
+          [(not rd.cursor.ok?) unit]
+          [(> length tli-max-string-bytes)
+            (tli-fail! rd tli-error-limit "TLI string length limit exceeded")]
+          [(and (= index 0) (!= length 0))
+            (tli-fail!
+              rd
+              tli-error-tag
+              "TLI string pool must start with an empty string")]
+          [(not (cursor.range-present? rd.cursor.end start length))
+            (tli-fail!
+              rd
+              cursor.error-truncated
+              "TLI string lies outside its pool section")]
+          [else
+            (cursor.skip! (&mut rd.cursor) length)
+            (set! (array-ref starts index) start)
+            (set! (array-ref lengths index) length)]))
+      (+= index 1))
+    (tli-check-end! rd)
+    (TliPool
+      (__tl_make-array String 0)
+      starts
+      lengths
+      (unsafe
+        (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8))))))
+
+(define (tli-read-pool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : TliPool
   (let
     [count : i64 (tli-read-count! rd 4 (comptime (size-of (type String))))]
     [pool : (__tl_dyn-array String) (__tl_make-array String count)]
@@ -1926,11 +2047,16 @@
         (set! (array-ref pool index) text))
       (+= index 1))
     (tli-check-end! rd)
-    pool))
+    (TliPool
+      pool
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 0)
+      (unsafe
+        (ptr-cast (__tl_array-data rd.cursor.bytes) : (Ptr u8))))))
 
 (define (tli-read-entries!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [count : i64]
   [records-start : i64]) : (__tl_dyn-array tli.TliDirectoryEntry)
   (let
@@ -1980,9 +2106,11 @@
         "TLI file has bytes after its last module"))
     entries))
 
-;; Open only the envelope, verifying its content hash and all packed ranges.
-;; The snapshot cannot be changed through the original input array.
-(define (tli-decode-directory [bytes : (& bytes (__tl_dyn-array u8))]) : TliDirectoryResult
+;; Open only the envelope, verifying its content hash (when requested) and all
+;; packed ranges. The snapshot cannot be changed through the original input array.
+(define (tli-decode-directory-inner
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [verify-content-digest? : bool]) : TliDirectoryResult
   (let
     [length : i64 (array-length bytes)]
     (when
@@ -2075,19 +2203,25 @@
           (when
             (not rd.cursor.ok?)
             (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
-          (let
-            [computed : (Array u8 32) (tli-content-digest (& rd.cursor.bytes))]
-            (when
-              (not (tli-digest-eq? (& digest) (& computed)))
-              (tli-fail!
-                (&mut rd)
-                tli-error-digest
-                "TLI content SHA-256 mismatch")
-              (return (TliDirectoryResult.Err (tli-read-error (& rd) 0)))))
+          (when
+            verify-content-digest?
+            (let
+              [computed : (Array u8 32)
+                (tli-content-digest (& rd.cursor.bytes))]
+              (when
+                (not (tli-digest-eq? (& digest) (& computed)))
+                (tli-fail!
+                  (&mut rd)
+                  tli-error-digest
+                  "TLI content SHA-256 mismatch")
+                (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))))
           (set! rd.cursor.offset pool-start)
           (set! rd.cursor.end (+ pool-start pool-size))
           (let
-            [pool : (__tl_dyn-array String) (tli-read-pool! (&mut rd))]
+            [pool : TliPool
+              (if verify-content-digest?
+                (tli-read-pool! (&mut rd))
+                (tli-read-pool-lazy! (&mut rd)))]
             (when
               (not rd.cursor.ok?)
               (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
@@ -2116,11 +2250,15 @@
                       rd.owned-bytes))
                   (TliDirectoryResult.Err (tli-read-error (& rd) 0)))))))))))
 
-(define (tli-decode-directory-for
+(define (tli-decode-directory [bytes : (& bytes (__tl_dyn-array u8))]) : TliDirectoryResult
+  (tli-decode-directory-inner bytes true))
+
+(define (tli-decode-directory-for-inner
   [bytes : (& bytes (__tl_dyn-array u8))]
   [expected-build : (& expected-build str)]
-  [expected-target : (& expected-target str)]) : TliDirectoryResult
-  (match (tli-decode-directory bytes)
+  [expected-target : (& expected-target str)]
+  [verify-content-digest? : bool]) : TliDirectoryResult
+  (match (tli-decode-directory-inner bytes verify-content-digest?)
     [(TliDirectoryResult.Err error) (TliDirectoryResult.Err error)]
     [(TliDirectoryResult.Ok directory)
       (cond
@@ -2138,9 +2276,25 @@
               "TLI target mismatch"))]
         [else (TliDirectoryResult.Ok directory)])]))
 
+(define (tli-decode-directory-for
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [expected-build : (& expected-build str)]
+  [expected-target : (& expected-target str)]) : TliDirectoryResult
+  (tli-decode-directory-for-inner bytes expected-build expected-target true))
+
+;; Lazy open for compiler-job hydration: skips hashing unhydrated module bytes
+;; and decoding unused pool strings up front. Every string a record uses is
+;; validated as UTF-8 and charged when it is read, and every hydrated module
+;; verifies its exact per-module SHA-256 and import interface SHA-256.
+(define (tli-decode-directory-for-lazy
+  [bytes : (& bytes (__tl_dyn-array u8))]
+  [expected-build : (& expected-build str)]
+  [expected-target : (& expected-target str)]) : TliDirectoryResult
+  (tli-decode-directory-for-inner bytes expected-build expected-target false))
+
 (define (tli-read-record!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
-  [pool : (& pool (__tl_dyn-array String))]
+  [pool : (& pool TliPool)]
   [entry : (& entry tli.TliDirectoryEntry)]) : tli.TliModuleRecord
   (let
     [name : String (tli-read-name! rd pool)]

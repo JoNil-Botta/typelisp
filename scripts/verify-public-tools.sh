@@ -80,6 +80,7 @@ cli_transcripts_files() {
                 tests/cli/public-fmt-doc.cases \
                 tests/cli/public-lint.cases \
                 tests/cli/public-help.cases \
+                tests/cli/public-prebuilt-stdlib.cases \
                 tests/cli/public-lsp.cases \
                 tests/cli/public-expand.cases \
                 tests/cli/public-test-name.cases

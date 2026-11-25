@@ -14,6 +14,7 @@
 (import compiler_check_core)
 (import compiler_typecheck_core as tc)
 (import compiler_driver_core)
+(import tli_cli_core as tli_cli)
 (import doc_test)
 (import compiler_load)
 (import compiler_ast_types as ast)
@@ -47,7 +48,9 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "selfhost-check"
-        "--stdlib-root <dir> --cfg <name> --target <target> --backend-mode <mode> --opt-level <0|1|2|s> -Os --debug|-g|--backtrace --manifest-path <file> --batch <file>"
+        (str_cat.str-cat
+          "--stdlib-root <dir> --cfg <name> --target <target> --backend-mode <mode> --opt-level <0|1|2|s> -Os --debug|-g|--backtrace --manifest-path <file> --batch <file> "
+          (tli_cli.tli-sysroot-cli-options))
         start
         count)]
     [input-path : String ""]
@@ -56,10 +59,13 @@
     [has-manifest : bool false]
     [batch-path : String ""]
     [has-batch : bool false]
+    [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
     [options : cli_option.CliCompileOptions
       (cli_option.cli-compile-options (Linux) 1)]
+    (tli_cli.tli-reset-active-sysroot-options!)
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
         [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--manifest-path")
           (if has-manifest
@@ -88,6 +94,7 @@
         [else
           (set! input-path (string.copy (& args.arg)))
           (set! has-input true)]))
+    (unless args.failed (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
     (cond
       [args.failed (Err args.error)]
       [(and has-batch has-input)

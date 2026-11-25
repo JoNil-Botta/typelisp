@@ -180,7 +180,10 @@ d) `functions` (`TliFnDecl`): `s:name`, `s:module`, `s:link_symbol`, `u8 abi`
    `u64 extern_flags`, `list<(u8 kind, s:name)> extern_link_inputs`,
    `list<(s:name, t:type, u8 is_mut)> params`, `t:return_type`, then
    `TliFnSummary`: `u32 effect_flags` (bit0 `UNSAFE`, bit1 `COMPTIME`,
-   bit2 `PURE`, bit3 `NEVER_RETURNS`, bit4 `STORES_AMBIENT_ARENA_GLOBAL`,
+   bit2 `PURE` for a checked comptime declaration or a runtime function that
+   returns, writes no global, makes no indirect call and reaches no unsafe,
+   extern or comptime-purity-rejected declaration; hydrated references in
+   macro and comptime bodies require it, bit3 `NEVER_RETURNS`, bit4 `STORES_AMBIENT_ARENA_GLOBAL`,
    bit5 `HAS_INDIRECT_EFFECTS`, bit6 `HAS_INLINE_IR`, bit7 `MUST_USE`,
    bit8 `STORES_AMBIENT_ARENA_ARG` for writes of ambient-arena values through
    an argument),
@@ -204,7 +207,7 @@ e) `values` (`TliValueDecl`): `s:name`, `s:module`, `s:link_symbol`,
    `Search`, and 2 `Arg`, as for functions.
 f) `macros` (`TliMacroHandle`): `s:name`, `s:module`, `s:macro_identity`,
    `u32 flags` (bit0 `HAS_NATIVE_TLCI`, bit1 `IS_SHELL_TLCI`, bit2
-   `COMPTIME_ONLY`, bit3 `EMITS_DECLS`), `u8 result_kind` (0 expression,
+   `COMPTIME_ONLY`, bit3 `EMITS_DECLS`, bit4 `USES_EXPR_TYPE`), `u8 result_kind` (0 expression,
    1 `Decls`, 2 `Module`), `list<macro_param> params`,
    `i64 tlci_entry_index` (`-1` when absent), `tlci_catalog_sha256[32]`.
    `macro_param` matches `AstMacroParam.Param` verbatim:
@@ -278,6 +281,13 @@ bundle's envelope before source compilation. Inspect validates the selected
 bundle's compiler build and target and prints
 the directory with no record decoding. Hydration validates the configuration
 fingerprint and module and import digests as each closure is loaded.
+
+A compile job keeps the source stdlib, with no prebuilt interface, at
+`--opt-level 2`, when a stdlib root overrides the embedded stdlib, and when the
+entry program spells a `(foreach` form: SPMD `foreach` inlines stdlib helper
+bodies such as `math.f64-clamp`, which `stdlib.tli` omits. The `foreach`
+condition retires once the compact IR section carries vectorizable helper
+bodies.
 
 ## Staged delivery and retirement conditions
 

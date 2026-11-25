@@ -12,6 +12,7 @@
 (import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
 (import compiler_driver_core as driver)
+(import tli_cli_core as tli_cli)
 (import compiler_ir_types as ir)
 (import compiler_load as load)
 (import compiler_optimize as opt)
@@ -111,20 +112,25 @@
       [args : cli_option.CliArgs
         (cli_option.cli-args
           "run"
-          "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
-           --debug|-g|--backtrace --backend-mode <mode> --link-lib <name>
-           --link-search <dir> --link-arg <arg>"
+          (str_cat.str-cat
+            "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2|s> -Os
+             --debug|-g|--backtrace --backend-mode <mode> --link-lib <name>
+             --link-search <dir> --link-arg <arg> "
+            (tli_cli.tli-sysroot-cli-options))
           (+ idx 1)
           count)]
       [runtime-args : process.ProcessStringList (process.args-empty)]
       [link-inputs : build_run_core.SourceToolLinkInputs
         (build_run_core.source-tool-link-inputs-empty)]
+      [sysroot : tli_cli.TliSysrootOptions (tli_cli.tli-sysroot-options)]
       [options : cli_option.CliCompileOptions
         (cli_option.cli-compile-options
           (target_cfg.compiler-target-cfg-host)
           (opt.compiler-optimize-default-level))]
+      (tli_cli.tli-reset-active-sysroot-options!)
       (while (cli_option.cli-args-next! (&mut args))
         (cond
+          [(tli_cli.tli-sysroot-option! (&mut sysroot) (&mut args)) unit]
           [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
           [(string.eq args.name "--link-lib")
             (set!
@@ -156,7 +162,10 @@
                 count
                 runtime-args))
             (cli_option.cli-args-stop! (&mut args))]))
-      (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
+      (unless
+        args.failed
+        (ir.compiler-debug-info-set-enabled! options.debug)
+        (tli_cli.tli-set-active-sysroot-options! (& sysroot)))
       (if args.failed
         (Err args.error)
         (Ok

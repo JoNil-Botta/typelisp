@@ -23,6 +23,7 @@
 (import compiler_surface_hydrate as surface_hydrate)
 (import compiler_surface_ast as surface_ast)
 (import compiler_surface_identity as surface_identity)
+(import compiler_tli_hydrate as tli_hydrate)
 (import sym_i64_env)
 (import stdlib.env)
 (import stdlib.fs)
@@ -939,6 +940,19 @@
   (ledger source_overlay.CompilerSourceLedger)
   (owner-arena i64))
 
+;; Job-scoped prebuilt stdlib TLI catalog and hydrated semantic sidecar.
+;; Allocated inside its own `arena` so `compiler-load-session-state-tli-release!`
+;; can destroy every catalog byte deterministically at job end or reset.
+(defstruct CompilerLoadTliCatalogBox
+  (arena i64)
+  (sysroot-dir String)
+  (archive-path String)
+  (catalog tli_hydrate.TliCatalog)
+  (facts tli_hydrate.TliHydratedFacts))
+
+(define (compiler-load-tli-ptr-cell) : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+
 ;; Loader cache and traversal data is owned by an explicit session state. The
 ;; no-argument compatibility helpers below are serial/test-only adapters over
 ;; the active state pointer. State-owned driver reset paths use the explicit
@@ -993,7 +1007,8 @@
   (shared-address u64)
   (dotted-path-cache-owner-arena (__tl_dyn-array i64))
   (embedded-provenance-owner-arena (__tl_dyn-array i64))
-  (source-provider (__tl_dyn-array CompilerLoadSourceProvider)))
+  (source-provider (__tl_dyn-array CompilerLoadSourceProvider))
+  (tli-catalog-ptr (__tl_dyn-array i64)))
 
 ;; Per-source traversal data stays explicit without widening the hot recursive
 ;; declaration-loader call for each independently owned field.
@@ -1118,7 +1133,8 @@
         0
         (compiler-load-session-state-i64-cell 0)
         (compiler-load-session-state-i64-cell 0)
-        (compiler-load-source-provider-cell))]
+        (compiler-load-source-provider-cell)
+        (compiler-load-tli-ptr-cell))]
     [cell : (__tl_dyn-array CompilerLoadSessionState) (__tl_make-array initial)]
     [address : u64
       (unsafe
@@ -1156,6 +1172,319 @@
 
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
   (compiler-load-session-state-new-with-standalone-reset-safety false))
+
+(define (compiler-load-session-state-tli-active?
+  [state : (& CompilerLoadSessionState)]) : bool
+  (!= (array-ref state.tli-catalog-ptr 0) 0))
+
+(define (compiler-load-session-state-tli-arena
+  [state : (& CompilerLoadSessionState)]) : i64
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      0
+      (unsafe
+        (deref (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))).arena))))
+
+(define (compiler-load-session-state-tli-release!
+  [state : (& CompilerLoadSessionState)]) : unit
+  (let
+    [old-arena : i64 (compiler-load-session-state-tli-arena state)]
+    (unsafe
+      (ptr-write!
+        (ptr-cast (__tl_array-data state.tli-catalog-ptr) : (MutPtr i64))
+        0))
+    (when
+      (> old-arena 0)
+      (unsafe
+        (arena.tl_arena_destroy old-arena)))))
+
+(define (compiler-load-session-state-tli-attach!
+  [state : (& CompilerLoadSessionState)]
+  [tli-arena : i64]
+  [sysroot-dir : String]
+  [archive-path : String]
+  [catalog : tli_hydrate.TliCatalog]) : unit
+  (compiler-load-session-state-tli-release! state)
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    (unsafe
+      (arena.tl_arena_set tli-arena))
+    (let
+      [count : i64 (array-length catalog.directory.entries)]
+      [facts : tli_hydrate.TliHydratedFacts
+        (tli_hydrate.tli-hydrated-facts-new count)]
+      [cell : (__tl_dyn-array CompilerLoadTliCatalogBox)
+        (__tl_make-array CompilerLoadTliCatalogBox 1)]
+      (set!
+        (array-ref cell 0)
+        (CompilerLoadTliCatalogBox
+          tli-arena
+          (string.copy (& sysroot-dir))
+          (string.copy (& archive-path))
+          catalog
+          facts))
+      (let
+        [addr : i64
+          (unsafe
+            (cast (ptr->int (__tl_array-data cell)) : i64))]
+        (unsafe
+          (arena.tl_arena_set enclosing)
+          (ptr-write!
+            (ptr-cast (__tl_array-data state.tli-catalog-ptr) : (MutPtr i64))
+            addr))))))
+
+(define (compiler-load-session-state-tli-hydrated-any?
+  [state : (& CompilerLoadSessionState)]) : bool
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      false
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (> holder.facts.hydrated-module-count 0))))))
+
+(define (compiler-load-session-state-tli-archive-path
+  [state : (& CompilerLoadSessionState)]) : String
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      ""
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (if (> holder.facts.hydrated-module-count 0)
+            (string.copy (& holder.archive-path))
+            ""))))))
+
+(define (compiler-load-session-state-tli-startup-symbols
+  [state : (& CompilerLoadSessionState)]) : (__tl_dyn-array String)
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      (__tl_make-array String 0)
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (if (> holder.facts.hydrated-module-count 0)
+            (tli_hydrate.tli-catalog-startup-archive-symbols (& holder.catalog))
+            (__tl_make-array String 0)))))))
+
+(define (compiler-load-session-state-tli-facts-ptr
+  [state : (& CompilerLoadSessionState)]) : i64
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      0
+      (unsafe
+        (let
+          [holder : CompilerLoadTliCatalogBox
+            (ptr-read
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+          (if (> holder.facts.hydrated-module-count 0)
+            (+
+              addr
+              (comptime (offset-of (type CompilerLoadTliCatalogBox) facts)))
+            0))))))
+
+(define (compiler-load-tli-addr-has-module?
+  [addr : i64]
+  [module-name : (& str)]) : bool
+  (if (= addr 0)
+    false
+    (unsafe
+      (let
+        [holder : CompilerLoadTliCatalogBox
+          (ptr-read
+            (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox)))]
+        (>=
+          (tli_hydrate.tli-catalog-find
+            (& holder.catalog.directory)
+            module-name)
+          0)))))
+
+(define (compiler-load-tli-addr-module-path
+  [addr : i64]
+  [module-name : (& str)]) : String
+  (if (compiler-load-tli-addr-has-module? addr module-name)
+    (if (compiler-load-string-prefix-at? module-name "stdlib." 0)
+      (compiler-load-dotted-module-path-uncached module-name)
+      (str_cat.str-cat "tli:" (string.copy module-name)))
+    ""))
+
+(define (compiler-load-tli-addr-contains-path? [addr : i64] [path : (& str)]) : bool
+  (cond
+    [(= addr 0) false]
+    [(compiler-load-string-prefix-at? path "tli:" 0)
+      (let
+        [mod-name : String
+          (string.substring path 4 (- (string.string-length path) 4))]
+        (compiler-load-tli-addr-has-module? addr (& mod-name)))]
+    [(compiler-load-stdlib-import? path)
+      (let
+        [mod-name : String (compiler-load-canonical-module-id-from-path path)]
+        (compiler-load-tli-addr-has-module? addr (& mod-name)))]
+    [else false]))
+
+(define (compiler-load-session-state-tli-has-module?
+  [state : (& CompilerLoadSessionState)]
+  [module-name : (& str)]) : bool
+  (compiler-load-tli-addr-has-module?
+    (array-ref state.tli-catalog-ptr 0)
+    module-name))
+
+(define (compiler-load-session-state-tli-module-path
+  [state : (& CompilerLoadSessionState)]
+  [module-name : (& str)]) : String
+  (compiler-load-tli-addr-module-path
+    (array-ref state.tli-catalog-ptr 0)
+    module-name))
+
+(define (compiler-load-session-state-tli-contains-path?
+  [state : (& CompilerLoadSessionState)]
+  [path : (& str)]) : bool
+  (compiler-load-tli-addr-contains-path?
+    (array-ref state.tli-catalog-ptr 0)
+    path))
+
+(define (compiler-load-session-state-tli-hydrate-module!
+  [state : (& CompilerLoadSessionState)]
+  [module-name : (& str)]
+  [seen : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (let
+    [addr : i64 (array-ref state.tli-catalog-ptr 0)]
+    (if (= addr 0)
+      (Err
+        (box
+          (cdiag.compiler-diagnostic-at-start
+            ""
+            "compiler-load: TLI catalog is inactive")))
+      (let
+        [enclosing : i64 (arena.tl_arena_current)]
+        [tli-arena : i64
+          (unsafe
+            (deref
+              (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))).arena)]
+        [prev-pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        ;; Ensure builtin intern IDs (such as `cbi.compiler-builtin-id-fix-empty`)
+        ;; match the active intern table before hydrating preludes without parsing.
+        (cbi.compiler-builtin-initialize-for-parse!)
+        (ast.ast-node-pool-context-install! pools)
+        (let
+          [projected : tli_hydrate.TliProjectClosureResult
+            (unsafe
+              (let
+                [p-ro : (Ptr CompilerLoadTliCatalogBox)
+                  (int->ptr (cast addr : u64) : (Ptr CompilerLoadTliCatalogBox))]
+                [p-rw : (MutPtr CompilerLoadTliCatalogBox)
+                  (int->ptr
+                    (cast addr : u64)
+                    : (MutPtr CompilerLoadTliCatalogBox))]
+                [holder : CompilerLoadTliCatalogBox (ptr-read p-ro)]
+                (match holder
+                  [(CompilerLoadTliCatalogBox
+                      arena-v
+                      sysroot-v
+                      archive-v
+                      catalog-v
+                      facts-v)
+                    (let
+                      [out : tli_hydrate.TliProjectClosureResult
+                        (tli_hydrate.tli-hydrate-project-closure!
+                          (&mut catalog-v)
+                          (&mut facts-v)
+                          module-name
+                          seen
+                          pools
+                          tli-arena)]
+                      (ptr-write!
+                        p-rw
+                        (CompilerLoadTliCatalogBox
+                          arena-v
+                          sysroot-v
+                          archive-v
+                          catalog-v
+                          facts-v))
+                      out)])))]
+          (ast.ast-node-pool-context-capture-active! pools)
+          (when
+            (!=
+              (ast.ast-node-pool-context-expr-segment-bases (& prev-pools))
+              (ast.ast-node-pool-context-expr-segment-bases (& pools)))
+            (ast.ast-node-pool-context-install! prev-pools))
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (match projected
+            [(Ok decls paths modules next-seen)
+              (Ok decls paths modules next-seen)]
+            [(Err failure)
+              (Err
+                (box
+                  (cdiag.compiler-diagnostic-at-start
+                    (string.copy module-name)
+                    (str_cat.str-cat
+                      "compiler-load: TLI hydration failed: "
+                      (string.copy (& failure.message))))))]))))))
+
+(define (compiler-load-tli-active?) : bool
+  (compiler-load-session-state-tli-active?
+    (& compiler-load-active-session-state)))
+
+(define (compiler-load-tli-release!) : unit
+  (compiler-load-session-state-tli-release!
+    (& compiler-load-active-session-state)))
+
+(define (compiler-load-tli-attach!
+  [tli-arena : i64]
+  [sysroot-dir : String]
+  [archive-path : String]
+  [catalog : tli_hydrate.TliCatalog]) : unit
+  (compiler-load-session-state-tli-attach!
+    (& compiler-load-active-session-state)
+    tli-arena
+    sysroot-dir
+    archive-path
+    catalog))
+
+(define (compiler-load-tli-hydrated-any?) : bool
+  (compiler-load-session-state-tli-hydrated-any?
+    (& compiler-load-active-session-state)))
+
+(define (compiler-load-tli-archive-path) : String
+  (compiler-load-session-state-tli-archive-path
+    (& compiler-load-active-session-state)))
+
+(define (compiler-load-tli-startup-symbols) : (__tl_dyn-array String)
+  (compiler-load-session-state-tli-startup-symbols
+    (& compiler-load-active-session-state)))
+
+(define (compiler-load-tli-facts-ptr) : i64
+  (compiler-load-session-state-tli-facts-ptr
+    (& compiler-load-active-session-state)))
+
+(define (compiler-load-tli-has-module? [module-name : (& str)]) : bool
+  (compiler-load-session-state-tli-has-module?
+    (& compiler-load-active-session-state)
+    module-name))
+
+(define (compiler-load-tli-module-path [module-name : (& str)]) : String
+  (compiler-load-session-state-tli-module-path
+    (& compiler-load-active-session-state)
+    module-name))
+
+(define (compiler-load-tli-contains-path? [path : (& str)]) : bool
+  (compiler-load-session-state-tli-contains-path?
+    (& compiler-load-active-session-state)
+    path))
 
 (define (compiler-load-standalone-session-state-new) : CompilerLoadSessionState
   (compiler-load-session-state-new-with-standalone-reset-safety true))
@@ -4179,10 +4508,18 @@
         (-= index 1)))
     found))
 
-(define (compiler-load-resolved-source-exists? [path : String]) : bool
+(define (compiler-load-resolved-source-exists-for-tli?
+  [tli-addr : i64]
+  [path : String]) : bool
   (or
+    (compiler-load-tli-addr-contains-path? tli-addr (& path))
     (io.file-exists? (owned_view.compiler-owned-shared-view path))
     (compiler-load-embedded-stdlib-contains-path? (& path))))
+
+(define (compiler-load-resolved-source-exists? [path : String]) : bool
+  (compiler-load-resolved-source-exists-for-tli?
+    (array-ref compiler-load-active-session-state.tli-catalog-ptr 0)
+    path))
 
 (define (compiler-load-import-module-id [module-name : (& module-name str)]) : i64
   (compiler-load-parse-context-name-id module-name))
@@ -4459,13 +4796,29 @@
 (defstruct CompilerLoadImportResolver
   (importer-path String)
   (stdlib-roots svec.Vec)
-  (mode CompilerLoadImportResolverMode))
+  (mode CompilerLoadImportResolverMode)
+  (tli-catalog-addr i64))
+
+(define (compiler-load-ordinary-import-resolver-with-tli
+  [importer-path : String]
+  [import-root : String]
+  [stdlib-roots : svec.Vec]
+  [tli-addr : i64]) : CompilerLoadImportResolver
+  (CompilerLoadImportResolver
+    importer-path
+    stdlib-roots
+    (Ordinary import-root)
+    tli-addr))
 
 (define (compiler-load-ordinary-import-resolver
   [importer-path : String]
   [import-root : String]
   [stdlib-roots : svec.Vec]) : CompilerLoadImportResolver
-  (CompilerLoadImportResolver importer-path stdlib-roots (Ordinary import-root)))
+  (compiler-load-ordinary-import-resolver-with-tli
+    importer-path
+    import-root
+    stdlib-roots
+    (array-ref compiler-load-active-session-state.tli-catalog-ptr 0)))
 
 (define (compiler-load-package-import-resolver
   [importer-path : String]
@@ -4475,7 +4828,8 @@
   (CompilerLoadImportResolver
     importer-path
     stdlib-roots
-    (Package manifest-dir deps)))
+    (Package manifest-dir deps)
+    (array-ref compiler-load-active-session-state.tli-catalog-ptr 0)))
 
 ;; Resolve exactly one candidate module while keeping ordinary-root and
 ;; package/dependency path policy in explicit typed arms. Import grammar and
@@ -4484,22 +4838,29 @@
   [resolver : (& CompilerLoadImportResolver)]
   [module-name : String]
   [expected-module : ast.AstMaybeModuleName]) : ResultPkgResolve
-  (match (owned_view.compiler-owned-reference-shared-view (& resolver.mode))
-    [(Ordinary import-root)
-      (compiler-load-resolve-dotted-import-spec-with-roots
-        (& resolver.importer-path)
-        import-root
-        module-name
-        expected-module
-        (& resolver.stdlib-roots))]
-    [(Package manifest-dir deps)
-      (compiler-load-resolve-package-module-import
-        module-name
-        expected-module
-        (& resolver.importer-path)
-        manifest-dir
-        (& deps)
-        (& resolver.stdlib-roots))]))
+  (if (compiler-load-tli-addr-has-module?
+    resolver.tli-catalog-addr
+    (& module-name))
+    (Ok
+      (compiler-load-tli-addr-module-path
+        resolver.tli-catalog-addr
+        (& module-name)))
+    (match (owned_view.compiler-owned-reference-shared-view (& resolver.mode))
+      [(Ordinary import-root)
+        (compiler-load-resolve-dotted-import-spec-with-roots
+          (& resolver.importer-path)
+          import-root
+          module-name
+          expected-module
+          (& resolver.stdlib-roots))]
+      [(Package manifest-dir deps)
+        (compiler-load-resolve-package-module-import
+          module-name
+          expected-module
+          (& resolver.importer-path)
+          manifest-dir
+          (& deps)
+          (& resolver.stdlib-roots))])))
 
 (define (compiler-load-search-import-prefix
   [resolver : (& CompilerLoadImportResolver)]
@@ -4515,7 +4876,8 @@
       (owned_view.compiler-owned-shared-view candidate)
       (Some candidate-id))
       [(Ok resolved)
-        (if (compiler-load-resolved-source-exists?
+        (if (compiler-load-resolved-source-exists-for-tli?
+          resolver.tli-catalog-addr
           (owned_view.compiler-owned-shared-view resolved))
           (if (= remaining-segments 1)
             (compiler-load-resolved-import
@@ -4585,7 +4947,8 @@
             expected-module)]
         (match original
           [(Ok resolved)
-            (if (compiler-load-resolved-source-exists?
+            (if (compiler-load-resolved-source-exists-for-tli?
+              resolver.tli-catalog-addr
               (owned_view.compiler-owned-shared-view resolved))
               (compiler-load-resolved-import resolved Module import-path alias)
               (let
@@ -4692,7 +5055,8 @@
       import-path
       expected-module)))
 
-(define (compiler-load-resolve-import-spec-with-roots-classified
+(define (compiler-load-resolve-import-spec-with-tli-and-roots-classified
+  [tli-addr : i64]
   [importer-path : String]
   [import-root : String]
   [kind : ast.AstImportKind]
@@ -4702,14 +5066,33 @@
   [stdlib-roots : (& svec.Vec)]) : ResultCompilerLoadResolvedImport
   (compiler-load-resolve-import-spec-classified
     (&
-      (compiler-load-ordinary-import-resolver
+      (compiler-load-ordinary-import-resolver-with-tli
         importer-path
         import-root
-        (owned_view.compiler-owned-reference-shared-view stdlib-roots)))
+        (owned_view.compiler-owned-reference-shared-view stdlib-roots)
+        tli-addr))
     kind
     import-path
     expected-module
     alias))
+
+(define (compiler-load-resolve-import-spec-with-roots-classified
+  [importer-path : String]
+  [import-root : String]
+  [kind : ast.AstImportKind]
+  [import-path : String]
+  [expected-module : ast.AstMaybeModuleName]
+  [alias : ast.AstMaybeImportAlias]
+  [stdlib-roots : (& svec.Vec)]) : ResultCompilerLoadResolvedImport
+  (compiler-load-resolve-import-spec-with-tli-and-roots-classified
+    (array-ref compiler-load-active-session-state.tli-catalog-ptr 0)
+    importer-path
+    import-root
+    kind
+    import-path
+    expected-module
+    alias
+    stdlib-roots))
 
 (define (compiler-load-resolve-package-import-spec-classified
   [importer-path : String]
@@ -5347,6 +5730,18 @@
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : (& svec.Vec)]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  (when
+    (compiler-load-tli-active?)
+    (let
+      [mod-name : String (compiler-load-canonical-module-id-from-path path)]
+      (when
+        (compiler-load-tli-has-module? (& mod-name))
+        (return
+          (compiler-load-session-state-tli-hydrate-module!
+            (& compiler-load-active-session-state)
+            (& mod-name)
+            seen
+            (ast.ast-node-pool-context-capture-active))))))
   (let
     [suffix : String (compiler-load-stdlib-suffix (string.copy path))]
     (match (compiler-load-resolve-stdlib-root
@@ -5407,6 +5802,20 @@
   [stdlib-roots : (& svec.Vec)]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (when
+    (compiler-load-session-state-tli-active? (& load-state))
+    (let
+      [mod-name : String (compiler-load-canonical-module-id-from-path path)]
+      (when
+        (compiler-load-session-state-tli-has-module?
+          (& load-state)
+          (& mod-name))
+        (return
+          (compiler-load-session-state-tli-hydrate-module!
+            (& load-state)
+            (& mod-name)
+            seen
+            pools)))))
   (let
     [suffix : String (compiler-load-stdlib-suffix (string.copy path))]
     (match (compiler-load-resolve-stdlib-root
@@ -10444,7 +10853,8 @@
                       rest-modules)
                     rest-seen)]
                 [(Err diag) (Err diag)])
-              (match (compiler-load-resolve-import-spec-with-roots-classified
+              (match (compiler-load-resolve-import-spec-with-tli-and-roots-classified
+                (array-ref traversal.load-state.tli-catalog-ptr 0)
                 (owned_view.compiler-owned-shared-view importer-path)
                 (owned_view.compiler-owned-shared-view import-root)
                 kind
@@ -10461,9 +10871,14 @@
                       import.expected-module]
                     [alias : ast.AstMaybeImportAlias import.alias]
                     [resolved-id : i64 (compiler-load-source-path-id resolved)]
+                    [tli-hit : bool
+                      (compiler-load-session-state-tli-has-module?
+                        (& traversal.load-state)
+                        (& import-path))]
                     ;; Skipping an already loaded module saves nothing.
                     [preload-candidate : bool
                       (and
+                        (not tli-hit)
                         (not
                           (compiler-load-expected-module-seen?
                             seen
@@ -10519,21 +10934,27 @@
                         (ast.ast-decl-path-list-new)
                         (ast.ast-decl-module-list-new)
                         seen)
-                      (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
-                        (owned_view.compiler-owned-shared-view
-                          traversal.load-state)
-                        (& (string.copy resolved))
-                        resolved-id
-                        seen
-                        stdlib-roots
-                        kind
-                        (string.copy import-path)
-                        expected-module
-                        (& (string.copy import-root))
-                        cfgs
-                        pools
-                        (string.copy importer-source-module)
-                        importer-source-module-id))
+                      (if tli-hit
+                        (compiler-load-session-state-tli-hydrate-module!
+                          (& traversal.load-state)
+                          (& import-path)
+                          seen
+                          pools)
+                        (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-state-and-pools
+                          (owned_view.compiler-owned-shared-view
+                            traversal.load-state)
+                          (& (string.copy resolved))
+                          resolved-id
+                          seen
+                          stdlib-roots
+                          kind
+                          (string.copy import-path)
+                          expected-module
+                          (& (string.copy import-root))
+                          cfgs
+                          pools
+                          (string.copy importer-source-module)
+                          importer-source-module-id)))
                       [(Ok
                           imported-decls
                           imported-paths
@@ -10546,13 +10967,15 @@
                               seen
                               import-seen)]
                           [validated-module : ast.AstMaybeModuleName
-                            (compiler-load-after-import-expected-module
-                              (& traversal.load-state)
-                              resolved-id
-                              kind
+                            (if tli-hit
                               expected-module
-                              alias
-                              (& imported-decls))]
+                              (compiler-load-after-import-expected-module
+                                (& traversal.load-state)
+                                resolved-id
+                                kind
+                                expected-module
+                                alias
+                                (& imported-decls)))]
                           (when
                             (not
                               (or
@@ -13915,8 +14338,11 @@
                         (& (string.copy resolved))
                         expected-module
                         (& (string.copy importer-source-module)))]
+                    [tli-hit : bool
+                      (compiler-load-tli-has-module? (& import-path))]
                     [preload-candidate : bool
                       (and
+                        (not tli-hit)
                         (not package-externs)
                         (compiler-load-lazy-import-preload-candidate?
                           (& (string.copy importer-path))
@@ -13960,13 +14386,20 @@
                           preload-demand
                           stdlib-roots)
                         false)]
-                    (match (if preload-skip
-                      (ResultCompilerLoadWithPaths.Ok
-                        (ast.ast-decl-list-new)
-                        (ast.ast-decl-path-list-new)
-                        (ast.ast-decl-module-list-new)
-                        seen)
-                      (if package-externs
+                    (match (cond
+                      [preload-skip
+                        (ResultCompilerLoadWithPaths.Ok
+                          (ast.ast-decl-list-new)
+                          (ast.ast-decl-path-list-new)
+                          (ast.ast-decl-module-list-new)
+                          seen)]
+                      [tli-hit
+                        (compiler-load-session-state-tli-hydrate-module!
+                          (& compiler-load-active-session-state)
+                          (& import-path)
+                          seen
+                          preload-pools)]
+                      [package-externs
                         (compiler-load-package-externs-from-import
                           (string.copy resolved)
                           seen
@@ -13974,7 +14407,8 @@
                           source-expected-module
                           cfgs
                           (string.copy fallback)
-                          (& (string.copy fallback)))
+                          (& (string.copy fallback)))]
+                      [else
                         (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
                           (string.copy resolved)
                           resolved-id
@@ -13989,7 +14423,7 @@
                           (string.copy source-fallback)
                           (if (string.eq source-fallback importer-source-module)
                             importer-source-module-id
-                            -1))))
+                            -1))])
                       [(Ok
                           imported-decls
                           imported-paths
@@ -14004,13 +14438,15 @@
                           [active-state : CompilerLoadSessionState
                             (compiler-load-active-session-state-shared-view)]
                           [validated-module : ast.AstMaybeModuleName
-                            (compiler-load-after-import-expected-module
-                              (& active-state)
-                              resolved-id
-                              kind
+                            (if tli-hit
                               expected-module
-                              alias
-                              (& imported-decls))]
+                              (compiler-load-after-import-expected-module
+                                (& active-state)
+                                resolved-id
+                                kind
+                                expected-module
+                                alias
+                                (& imported-decls)))]
                           (when
                             (compiler-load-package-import-identity-taken?
                               resolved-id
@@ -14692,6 +15128,19 @@
   [manifest-dir : (& str)]
   [deps : (& CompilerPkgDeps)]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  ;; A prebuilt stdlib module hydrates the same way for packages and single
+  ;; files; loading its source as well would declare it twice.
+  (when
+    (and
+      (compiler-load-tli-active?)
+      (compiler-load-tli-has-module?
+        (& (compiler-load-canonical-module-id-from-path path))))
+    (return
+      (compiler-load-stdlib-prelude-file-with-roots-cfg
+        path
+        seen
+        stdlib-roots
+        cfgs)))
   (let
     [suffix : String (compiler-load-stdlib-suffix path)]
     (match (compiler-load-resolve-stdlib-root

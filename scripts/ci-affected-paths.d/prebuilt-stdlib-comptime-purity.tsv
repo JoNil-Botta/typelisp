@@ -1,0 +1,3 @@
+path	required	advisory	reason
+tests/safety/prebuilt_stdlib_comptime_runtime_abort_reject.tl	stage2-public-tool-affected-map,stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora	@corpus	Primary source of the prebuilt-vs-source comptime rejection public CLI transcript for runtime-abort stdlib calls.
+tests/safety/prebuilt_stdlib_comptime_unsafe_wrapper_reject.tl	stage2-public-tool-affected-map,stage2-public-tool-cli-transcripts-1,stage2-public-tool-cli-transcripts-2,stage2-public-tool-cli-transcripts-3,stage2-public-tool-corpora	@corpus	Primary source of the prebuilt-vs-source comptime rejection public CLI transcript for unsafe-wrapper stdlib calls.

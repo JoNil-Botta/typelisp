@@ -17,6 +17,7 @@
 (import compiler_typecheck_api)
 (import compiler_typecheck_core as tc)
 (import compiler_target_cfg_core as target_cfg)
+(import tli_cli_core as tli_cli)
 (import sym_i64_env)
 
 ;; The observed consumer runs before checker pools retire. Fact producers
@@ -404,6 +405,11 @@
               cfgs)
             (tc.tc-serial-job-state))))]))
 
+(define (compiler-check-target-from-cfgs [cfgs : sym_i64_env.SymI64Env]) : target_cfg.CompilerTargetCfg
+  (if (cfg_core.compiler-cfg-enabled? cfgs (ci.intern "windows"))
+    (target_cfg.CompilerTargetCfg.Windows)
+    (target_cfg.CompilerTargetCfg.Linux)))
+
 (define (compiler-check-package-source-with-roots-and-cfg
   [path : String]
   [source : String]
@@ -415,31 +421,49 @@
     (compiler-check-reset-pools!)
     (tc.tc-job-state-reset-advisories! (tc.tc-serial-job-state))
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler_load.compiler-load-package-core-macro-prelude-with-roots-cfg
-      (sym_i64_env.sym-i64-empty)
+    (match (tli_cli.tli-open-catalog-for-session!
+      (& (compiler_load.compiler-load-serial-test-session-state))
+      (& path)
+      (compiler-check-target-from-cfgs cfgs)
       (& stdlib-roots)
-      (& manifest-dir)
-      (& deps)
-      cfgs)
-      [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
-        (compiler-check-package-source-with-prelude-recovery
-          path
-          source
-          prelude-decls
-          (ast.ast-decl-path-list-with-modules
-            prelude-paths
-            (& prelude-modules))
-          prelude-seen
-          stdlib-roots
-          manifest-dir
-          deps
-          cfgs)]
-      [(Err diag)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (Err
-            (cdiag.compiler-diagnostic-list-box-single diag)
-            (compiler-check-serial-advisories)))])))
+      cfgs
+      1
+      false)
+      [(Err tli-msg)
+        (Err
+          (cdiag.compiler-diagnostic-list-box-single
+            (box (cdiag.compiler-diagnostic-at-start path tli-msg)))
+          (compiler-check-serial-advisories))]
+      [(Ok)
+        (let
+          [result : ResultCompilerCheck
+            (match (compiler_load.compiler-load-package-core-macro-prelude-with-roots-cfg
+              (sym_i64_env.sym-i64-empty)
+              (& stdlib-roots)
+              (& manifest-dir)
+              (& deps)
+              cfgs)
+              [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
+                (compiler-check-package-source-with-prelude-recovery
+                  path
+                  source
+                  prelude-decls
+                  (ast.ast-decl-path-list-with-modules
+                    prelude-paths
+                    (& prelude-modules))
+                  prelude-seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)]
+              [(Err diag)
+                (begin
+                  (cfg compile-profile (compiler-check-profile-finish "load"))
+                  (Err
+                    (cdiag.compiler-diagnostic-list-box-single diag)
+                    (compiler-check-serial-advisories)))])]
+          (compiler_load.compiler-load-tli-release!)
+          result)])))
 
 (define (compiler-check-package-begin! [job-state : tc.TcJobState]) : unit
   (begin
@@ -473,18 +497,36 @@
   [cfgs : sym_i64_env.SymI64Env]
   [job-state : tc.TcJobState]) : ResultCompilerCheckWithPaths
   (compiler-check-package-begin! job-state)
-  (compiler-check-package-loaded
-    (owned_view.compiler-owned-shared-view path)
-    (compiler_load.compiler-load-package-file-with-runtime-cfg
-      (& path)
-      (& stdlib-roots)
-      (& manifest-dir)
-      (& deps)
-      emit-entry
-      cfgs)
-    stdlib-roots
+  (match (tli_cli.tli-open-catalog-for-session!
+    (& (compiler_load.compiler-load-serial-test-session-state))
+    (& path)
+    (compiler-check-target-from-cfgs cfgs)
+    (& stdlib-roots)
     cfgs
-    job-state))
+    1
+    false)
+    [(Err tli-msg)
+      (Err
+        (cdiag.compiler-diagnostic-list-box-single
+          (box (cdiag.compiler-diagnostic-at-start path tli-msg)))
+        (compiler-check-advisories-for-job job-state))]
+    [(Ok)
+      (let
+        [result : ResultCompilerCheckWithPaths
+          (compiler-check-package-loaded
+            (owned_view.compiler-owned-shared-view path)
+            (compiler_load.compiler-load-package-file-with-runtime-cfg
+              (& path)
+              (& stdlib-roots)
+              (& manifest-dir)
+              (& deps)
+              emit-entry
+              cfgs)
+            stdlib-roots
+            cfgs
+            job-state)]
+        (compiler_load.compiler-load-tli-release!)
+        result)]))
 
 (define (compiler-check-source [path : String] [source : String]) : ResultCompilerCheck
   (compiler-check-source-with-roots-and-cfg
@@ -550,32 +592,50 @@
     (compiler-check-reset-pools!)
     (tc.tc-job-state-reset-advisories! job-state)
     (cfg compile-profile (compiler-check-profile-start))
-    (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
-      (sym_i64_env.sym-i64-empty)
+    (match (tli_cli.tli-open-catalog-for-session!
+      (& (compiler_load.compiler-load-serial-test-session-state))
+      (& path)
+      (compiler-check-target-from-cfgs cfgs)
       (& stdlib-roots)
-      cfgs)
-      [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
-        (compiler-check-source-with-prelude-recovery
-          path
-          source
-          prelude-decls
-          (ast.ast-decl-path-list-with-modules
-            prelude-paths
-            (& prelude-modules))
-          prelude-seen
-          (owned_view.compiler-owned-shared-view stdlib-roots)
-          cfgs
-          (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
-            "typecheck-prefix-check"
-            stdlib-roots
-            cfgs)
-          job-state)]
-      [(Err diag)
-        (begin
-          (cfg compile-profile (compiler-check-profile-finish "load"))
-          (Err
-            (cdiag.compiler-diagnostic-list-box-single diag)
-            (compiler-check-advisories-for-job job-state)))])))
+      cfgs
+      1
+      false)
+      [(Err tli-msg)
+        (Err
+          (cdiag.compiler-diagnostic-list-box-single
+            (box (cdiag.compiler-diagnostic-at-start path tli-msg)))
+          (compiler-check-advisories-for-job job-state))]
+      [(Ok)
+        (let
+          [result : ResultCompilerCheck
+            (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg
+              (sym_i64_env.sym-i64-empty)
+              (& stdlib-roots)
+              cfgs)
+              [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
+                (compiler-check-source-with-prelude-recovery
+                  path
+                  source
+                  prelude-decls
+                  (ast.ast-decl-path-list-with-modules
+                    prelude-paths
+                    (& prelude-modules))
+                  prelude-seen
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  cfgs
+                  (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
+                    "typecheck-prefix-check"
+                    stdlib-roots
+                    cfgs)
+                  job-state)]
+              [(Err diag)
+                (begin
+                  (cfg compile-profile (compiler-check-profile-finish "load"))
+                  (Err
+                    (cdiag.compiler-diagnostic-list-box-single diag)
+                    (compiler-check-advisories-for-job job-state)))])]
+          (compiler_load.compiler-load-tli-release!)
+          result)])))
 
 (define (compiler-check-source-with-roots-and-cfg
   [path : String]

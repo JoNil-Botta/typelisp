@@ -530,9 +530,11 @@ gate_optimization_opt2_correctness() {
 # paths reach the counts, including a C benchmark's input path), so they share
 # the `instruction-count` lock.
 gate_instruction_counts() {
+    _ir_jobs=${TYPELISP_IR_CHECK_JOBS:-2}
     TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh \
         --suite instruction-main \
         --cached-base-only \
+        --jobs "$_ir_jobs" \
         --output target/instruction-count-check
 }
 
@@ -549,10 +551,12 @@ gate_self_compile_check() {
 }
 
 gate_heavy_instruction_counts() {
+    _ir_jobs=${TYPELISP_IR_CHECK_JOBS:-2}
     TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh \
         --suite instruction-heavy \
         --cached-base-only \
         --runs 1 \
+        --jobs "$_ir_jobs" \
         --output target/instruction-count-heavy
 }
 

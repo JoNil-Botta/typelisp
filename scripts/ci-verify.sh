@@ -758,7 +758,13 @@ case ",$CI_VERIFY_PLAN_IDS" in
             fi
             CI_LOCAL_CACHE_ENTRY="$TYPELISP_CI_LOCAL_CACHE/$(ci_local_cache_key "$ROOT" "$SEED_TYPELISP_BIN")" || exit 1
             if ci_local_cache_valid "$CI_LOCAL_CACHE_ENTRY"; then
-                echo "[ci-verify] local bootstrap cache hit: $CI_LOCAL_CACHE_ENTRY"
+                if ci_local_cache_needs_provenance "$CI_VERIFY_PLAN_IDS" &&
+                    ! ci_local_cache_matches_provenance "$CI_LOCAL_CACHE_ENTRY" "$ROOT"; then
+                    echo "[ci-verify] local bootstrap cache bypassed: planned provenance gate disagrees with cached HEAD/HEAD^{tree}: $CI_LOCAL_CACHE_ENTRY"
+                    CI_LOCAL_CACHE_ENTRY=
+                else
+                    echo "[ci-verify] local bootstrap cache hit: $CI_LOCAL_CACHE_ENTRY"
+                fi
             else
                 echo "[ci-verify] local bootstrap cache miss; the bootstrap will record: $CI_LOCAL_CACHE_ENTRY"
             fi

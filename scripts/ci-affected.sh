@@ -458,16 +458,22 @@ else
             echo '[ci-affected] GITHUB_ACTIONS=true: no local bootstrap cache or changed-file scope' >&2
         fi
         unset TYPELISP_CI_LOCAL_CACHE TYPELISP_CI_LOCAL_SCOPE_PATHS
+        csv=$(printf '%s\n' "$selected" | paste -sd ',' -)
         if [ "$cache" = 1 ]; then
             TYPELISP_CI_LOCAL_CACHE="$ROOT/target/ci-affected-cache"
             export TYPELISP_CI_LOCAL_CACHE
-            # A valid entry built from the local seed needs no stage0 fetch.
+            # A valid entry built from the local seed needs no stage0 fetch,
+            # unless a planned provenance gate requires current HEAD/HEAD^{tree}.
             seed=$(. "$ROOT/scripts/lib-stage0.sh" && stage0_compiler_path "$ROOT")
-            if [ -z "${TYPELISP_BIN:-}" ] && [ -x "$seed" ] &&
-                ci_local_cache_valid "$TYPELISP_CI_LOCAL_CACHE/$(ci_local_cache_key "$ROOT" "$seed")"; then
-                TYPELISP_BIN=$seed
-                export TYPELISP_BIN
-                echo "[ci-affected] local bootstrap cache hit for $seed; skipping the stage0 fetch" >&2
+            if [ -z "${TYPELISP_BIN:-}" ] && [ -x "$seed" ]; then
+                cache_entry="$TYPELISP_CI_LOCAL_CACHE/$(ci_local_cache_key "$ROOT" "$seed")"
+                if ci_local_cache_valid "$cache_entry" &&
+                    { ! ci_local_cache_needs_provenance "$csv" ||
+                        ci_local_cache_matches_provenance "$cache_entry" "$ROOT"; }; then
+                    TYPELISP_BIN=$seed
+                    export TYPELISP_BIN
+                    echo "[ci-affected] local bootstrap cache hit for $seed; skipping the stage0 fetch" >&2
+                fi
             fi
         fi
         if [ "$scope" = 1 ]; then
@@ -482,7 +488,6 @@ else
             exec "$ROOT/scripts/ci-verify.sh" "$@"
         fi
         echo '[ci-affected] running a partial local preflight; full hosted CI remains required' >&2
-        csv=$(printf '%s\n' "$selected" | paste -sd ',' -)
         exec "$ROOT/scripts/ci-verify.sh" --gates "$csv" "$@"
     fi
 fi

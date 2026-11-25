@@ -506,7 +506,8 @@ done
 repo="$work/repo"
 mkdir -p "$repo/scripts" "$repo/tests/safety/manifest.d"
 printf '/target/\n' > "$repo/.gitignore"
-cp "$selector" "$ROOT/scripts/lib-ci-gates.sh" "$ROOT/scripts/lib-ci-local.sh" "$ROOT/scripts/lib-stage0.sh" "$repo/scripts/"
+cp "$selector" "$ROOT/scripts/lib-ci-gates.sh" "$ROOT/scripts/lib-ci-local.sh" "$ROOT/scripts/lib-stage0.sh" \
+    "$ROOT/scripts/lib-linux-entry.sh" "$ROOT/scripts/lib-gate.sh" "$repo/scripts/"
 cp -R "$ROOT/scripts/ci-gates.d" "$ROOT/scripts/ci-affected-paths.d" "$repo/scripts/"
 cat > "$repo/scripts/ci-verify.sh" <<'STUB'
 #!/usr/bin/env sh
@@ -602,10 +603,11 @@ expect_call_line 6 scope=unset 'hosted runs have no local scope'
 # A valid entry for the local seed skips the stage0 fetch; any input change,
 # a different seed or a damaged entry is a miss.
 cache_fixture() {
-    mkdir -p "$1/src" "$1/stdlib" "$1/target/stage0" "$1/target/build-stage0" \
+    mkdir -p "$1/src" "$1/stdlib" "$1/tools/build-stdlib-sysroot" "$1/target/stage0" "$1/target/build-stage0" \
         "$1/target/embedded-stdlib-tlci/tools" "$1/target/bootstrap-fixpoint/lib/triple"
     printf '(define (main) : i64 0)\n' > "$1/src/main.tl"
     printf '(define (helper) : i64 1)\n' > "$1/stdlib/core.tl"
+    printf '(define (main) : i64 0)\n' > "$1/tools/build-stdlib-sysroot/main.tl"
     printf '#!/bin/sh\n' > "$1/target/stage0/typelisp"
     chmod +x "$1/target/stage0/typelisp"
     for stage in stage1 stage2 stage3; do printf '#!/bin/sh\necho %s\n' "$stage" > "$1/target/bootstrap-fixpoint/$stage"; done
@@ -644,19 +646,118 @@ ci_local_cache_restore "$cache_entry" "$repo" "$repo/target/bootstrap-fixpoint" 
 cmp "$repo/target/bootstrap-fixpoint/lib/triple/stdlib.tli" "$cache_entry/bootstrap-fixpoint/lib/triple/stdlib.tli" || fail 'restore lost the sysroot'
 [ "$(cat "$repo/target/build-stage0/git-hash.txt")" = commit ] || fail 'restore lost the build identity'
 [ -f "$repo/target/embedded-stdlib-tlci/stdlib.tlci" ] || fail 'restore lost the embedded image'
-for change in src/main.tl stdlib/core.tl target/stage0/typelisp scripts/lib-ci-local.sh; do
+for change in src/main.tl stdlib/core.tl target/stage0/typelisp scripts/lib-ci-local.sh \
+    scripts/lib-linux-entry.sh scripts/lib-gate.sh tools/build-stdlib-sysroot/main.tl; do
     cp "$repo/$change" "$work/held-change"
     printf '\n' >> "$repo/$change"
     [ "$(ci_local_cache_key "$repo" "$repo/target/stage0/typelisp")" != "$cache_key" ] || fail "changing $change kept the cache key"
     cp "$work/held-change" "$repo/$change"
 done
+# Provenance-checking gates bypass the stage0-fetch skip when cached
+# HEAD/HEAD^{tree} disagrees, while keeping it when provenance matches.
+local_run "$fixture_selector" --base "$base" --tier advisory --run --jobs 1 > /dev/null 2>&1
+expect_call_line 7 bin=unset 'stale provenance with a provenance gate did not bypass stage0-fetch skip'
+git -C "$repo" rev-parse HEAD | tr -d '\r\n' > "$repo/target/build-stage0/git-hash.txt"
+git -C "$repo" rev-parse 'HEAD^{tree}' | tr -d '\r\n' > "$repo/target/build-stage0/tree-hash.txt"
+ci_local_cache_store "$cache_entry" "$repo" "$repo/target/bootstrap-fixpoint" "$repo/target/bootstrap-fixpoint/stage3" > /dev/null
+local_run "$fixture_selector" --base "$base" --tier advisory --run --jobs 1 > /dev/null 2>&1
+expect_call_line 7 "bin=$repo/target/stage0/typelisp" 'matching provenance with a provenance gate missed stage0-fetch skip'
 printf 'damaged\n' >> "$cache_entry/bootstrap-fixpoint/stage3"
 ci_local_cache_valid "$cache_entry" && fail 'a damaged cache entry was valid'
 local_run "$fixture_selector" --base "$base" --run --jobs 1 > /dev/null 2>&1
 expect_call_line 7 bin=unset 'a damaged entry is a miss'
 ci_local_cache_restore "$cache_entry" "$repo" "$work/restore" "$work/stage1.path" "$work/stage2.path" > /dev/null 2>&1 &&
     fail 'a damaged cache entry restored'
-rm -rf "$repo/src" "$repo/stdlib" "$repo/target"
+rm -rf "$repo/src" "$repo/stdlib" "$repo/tools" "$repo/target"
+
+# Provenance-checking gates in ci-verify.sh bypass the local cache whenever
+# cached build-stage0/{git-hash.txt,tree-hash.txt} disagrees with current
+# HEAD/HEAD^{tree}, while ordinary doc/test runs still hit across commits.
+vrepo="$work/verify-cache-repo"
+mkdir -p "$vrepo/scripts/ci-gates.d" "$vrepo/docs"
+printf '/target/\n' > "$vrepo/.gitignore"
+cp "$ROOT/scripts/ci-verify.sh" "$ROOT/scripts/lib-ci-gates.sh" "$ROOT/scripts/lib-ci-local.sh" \
+    "$ROOT/scripts/lib-linux-entry.sh" "$ROOT/scripts/lib-ci-timing.sh" "$ROOT/scripts/lib-benchmark.sh" \
+    "$ROOT/scripts/lib-bounded-pool.sh" "$ROOT/scripts/lib-gate.sh" "$vrepo/scripts/"
+printf 'tool\thosts\tgates\tcheck\tinstall\n' > "$vrepo/scripts/ci-host-tools.tsv"
+cat > "$vrepo/scripts/check-bootstrap-fixpoint.sh" <<'VBOOT'
+#!/usr/bin/env sh
+printf 'rebuilt\n' > "$VERIFY_CACHE_TEST_MARKER"
+exit 77
+VBOOT
+cat > "$vrepo/scripts/stub-gate.sh" <<'VGATE'
+#!/usr/bin/env sh
+exit 0
+VGATE
+chmod +x "$vrepo/scripts/check-bootstrap-fixpoint.sh" "$vrepo/scripts/stub-gate.sh"
+printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\nbootstrap-compiler\t100\tall\tbootstrap compiler\t-\t-\t256\t-\tgate_bootstrap_compiler\tlinux-1\twindows-1\tcompiler,stdlib,corpus\tfixture\n' > "$vrepo/scripts/ci-gates.d/bootstrap-compiler.tsv"
+for vgate in ordinary-gate linux-self-compile-measurement embedded-stdlib-tlci-bounded-resource-report tlci-native-route-sustained-stress; do
+    printf 'id\tpriority\thosts\tlabel\tneeds\tcompiler\tmemory\tlocks\tcommand\tlinux_lane\twindows_lane\tinput_classes\tinput_reason\n%s\t50\tall\t%s\tbootstrap-compiler\tstage2\t256\t-\tscripts/stub-gate.sh\tlinux-1\twindows-1\tcompiler,stdlib,corpus\tfixture\n' "$vgate" "$vgate" > "$vrepo/scripts/ci-gates.d/$vgate.tsv"
+done
+cache_fixture "$vrepo"
+# Make stub stage3 exit non-zero on the safety probe after cache restore so
+# cache hits terminate immediately after logging the restore without needing as/ld.
+printf '#!/bin/sh\nexit 1\n' > "$vrepo/target/bootstrap-fixpoint/stage3"
+chmod +x "$vrepo/target/bootstrap-fixpoint/stage3"
+printf 'v1\n' > "$vrepo/docs/note.md"
+git -C "$vrepo" init -q
+git -C "$vrepo" add .
+git -C "$vrepo" -c user.name=Test -c user.email=test@example.invalid commit -qm v1
+v_head1=$(git -C "$vrepo" rev-parse HEAD)
+v_tree1=$(git -C "$vrepo" rev-parse 'HEAD^{tree}')
+v_key=$(ci_local_cache_key "$vrepo" "$vrepo/target/stage0/typelisp")
+v_entry="$vrepo/target/ci-affected-cache/$v_key"
+printf '%s' "$v_head1" > "$vrepo/target/build-stage0/git-hash.txt"
+printf '%s' "$v_tree1" > "$vrepo/target/build-stage0/tree-hash.txt"
+ci_local_cache_store "$v_entry" "$vrepo" "$vrepo/target/bootstrap-fixpoint" "$vrepo/target/bootstrap-fixpoint/stage3" > /dev/null
+run_verify_cache() {
+    rm -f "$work/v.marker"
+    v_status=0
+    env -u GITHUB_ACTIONS TYPELISP_CI_LOCAL_CACHE="$vrepo/target/ci-affected-cache" \
+        TYPELISP_BIN="$vrepo/target/stage0/typelisp" VERIFY_CACHE_TEST_MARKER="$work/v.marker" \
+        "$vrepo/scripts/ci-verify.sh" --gates "$1" > "$work/v.out" 2>&1 || v_status=$?
+}
+# Same commit + tree: even a provenance gate hits the local cache.
+run_verify_cache linux-self-compile-measurement
+grep -F '[ci-verify] local bootstrap cache hit:' "$work/v.out" > /dev/null || fail 'same-commit provenance gate missed local cache'
+grep -F '[ci-verify] local cache hit: reused the proven bootstrap' "$work/v.out" > /dev/null || fail 'same-commit provenance gate did not restore local cache'
+[ ! -e "$work/v.marker" ] || fail 'same-commit provenance gate invoked bootstrap rebuild'
+# Advance commit and tree with a doc-only change (bootstrap cache key unchanged).
+printf 'v2\n' > "$vrepo/docs/note.md"
+git -C "$vrepo" add docs/note.md
+git -C "$vrepo" -c user.name=Test -c user.email=test@example.invalid commit -qm v2
+v_head2=$(git -C "$vrepo" rev-parse HEAD)
+v_tree2=$(git -C "$vrepo" rev-parse 'HEAD^{tree}')
+[ "$v_head1" != "$v_head2" ] && [ "$v_tree1" != "$v_tree2" ] || fail 'doc commit did not advance HEAD and tree'
+[ "$(ci_local_cache_key "$vrepo" "$vrepo/target/stage0/typelisp")" = "$v_key" ] || fail 'doc commit unexpectedly changed bootstrap cache key'
+# Ordinary non-provenance gate still gets a cross-commit cache hit.
+run_verify_cache ordinary-gate
+grep -F '[ci-verify] local bootstrap cache hit:' "$work/v.out" > /dev/null || fail 'ordinary cross-commit gate lost its local cache hit'
+grep -F '[ci-verify] local cache hit: reused the proven bootstrap' "$work/v.out" > /dev/null || fail 'ordinary cross-commit gate did not restore local cache'
+[ ! -e "$work/v.marker" ] || fail 'ordinary cross-commit gate invoked bootstrap rebuild'
+# Every provenance-checking gate bypasses the stale cache and rebuilds.
+for prov_gate in linux-self-compile-measurement embedded-stdlib-tlci-bounded-resource-report tlci-native-route-sustained-stress; do
+    run_verify_cache "$prov_gate"
+    [ "$v_status" = 77 ] || fail "provenance gate $prov_gate did not run bootstrap rebuild (exit $v_status)"
+    grep -F '[ci-verify] local bootstrap cache bypassed:' "$work/v.out" > /dev/null || fail "provenance gate $prov_gate did not report cache bypass"
+    ! grep -F '[ci-verify] local cache hit: reused the proven bootstrap' "$work/v.out" > /dev/null || fail "provenance gate $prov_gate restored a stale cache entry"
+    [ -f "$work/v.marker" ] || fail "provenance gate $prov_gate did not invoke check-bootstrap-fixpoint.sh"
+done
+# HEAD-only mismatch (empty commit, identical HEAD^{tree}) also bypasses.
+git -C "$vrepo" -c user.name=Test -c user.email=test@example.invalid commit --allow-empty -qm v3-same-tree
+v_head3=$(git -C "$vrepo" rev-parse HEAD)
+[ "$(git -C "$vrepo" rev-parse 'HEAD^{tree}')" = "$v_tree2" ] || fail 'empty commit changed HEAD^{tree}'
+printf '%s' "$v_head2" > "$vrepo/target/build-stage0/git-hash.txt"
+printf '%s' "$v_tree2" > "$vrepo/target/build-stage0/tree-hash.txt"
+ci_local_cache_store "$v_entry" "$vrepo" "$vrepo/target/bootstrap-fixpoint" "$vrepo/target/bootstrap-fixpoint/stage3" > /dev/null
+run_verify_cache linux-self-compile-measurement
+[ "$v_status" = 77 ] && [ -f "$work/v.marker" ] || fail 'HEAD-only mismatch did not bypass local cache'
+# HEAD^{tree}-only mismatch (matching HEAD, stale tree) also bypasses.
+printf '%s' "$v_head3" > "$vrepo/target/build-stage0/git-hash.txt"
+printf '%s' "$v_tree1" > "$vrepo/target/build-stage0/tree-hash.txt"
+ci_local_cache_store "$v_entry" "$vrepo" "$vrepo/target/bootstrap-fixpoint" "$vrepo/target/bootstrap-fixpoint/stage3" > /dev/null
+run_verify_cache embedded-stdlib-tlci-bounded-resource-report
+[ "$v_status" = 77 ] && [ -f "$work/v.marker" ] || fail 'tree-only mismatch did not bypass local cache'
 
 # Changed-file scoping: only a change outside src/, stdlib/ and scripts/ is
 # scoped, to the changed candidates and the files that name a changed module.

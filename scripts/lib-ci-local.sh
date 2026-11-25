@@ -67,10 +67,11 @@ ci_local_scope_report() {
 # The scripts the bootstrap runs; the source trees are hashed whole.
 CI_LOCAL_CACHE_SCRIPTS="scripts/ci-verify.sh scripts/check-bootstrap-fixpoint.sh
 scripts/build-stdlib-sysroot.sh scripts/build-embedded-stdlib-tlci.sh
-scripts/lib-native-link.sh scripts/lib-bootstrap-fixpoint-control.sh
-scripts/lib-build-provenance.sh scripts/lib-ci-compiler-artifact.sh
-scripts/lib-bounded-pool.sh scripts/lib-ci-timing.sh scripts/lib-ci-local.sh"
-CI_LOCAL_CACHE_TREES="src stdlib tests/fixtures tools/embedded-stdlib-tlci"
+scripts/lib-native-link.sh scripts/lib-linux-entry.sh scripts/lib-gate.sh
+scripts/lib-bootstrap-fixpoint-control.sh scripts/lib-build-provenance.sh
+scripts/lib-ci-compiler-artifact.sh scripts/lib-bounded-pool.sh
+scripts/lib-ci-timing.sh scripts/lib-ci-local.sh"
+CI_LOCAL_CACHE_TREES="src stdlib tests/fixtures tools/embedded-stdlib-tlci tools/build-stdlib-sysroot"
 CI_LOCAL_CACHE_KEEP=3
 
 # ci_local_cache_key ROOT SEED
@@ -98,6 +99,33 @@ ci_local_cache_key() {
 ci_local_cache_valid() {
     [ -n "$1" ] && [ -f "$1/compiler.ok" ] && [ -s "$1/SHA256SUMS" ] && [ -s "$1/converged" ] || return 1
     (cd "$1" && sha256sum -c --quiet --strict SHA256SUMS) > /dev/null 2>&1
+}
+
+# ci_local_cache_needs_provenance PLAN_IDS
+#   True when the comma-separated gate list PLAN_IDS includes a gate that
+#   asserts the compiler's stamped HEAD (--version) or HEAD^{tree}
+#   (--producer-identity) against the current checkout.
+ci_local_cache_needs_provenance() {
+    case ",$1," in
+        *,linux-self-compile-measurement,* | \
+        *,embedded-stdlib-tlci-bounded-resource-report,* | \
+        *,tlci-native-route-sustained-stress,*)
+            return 0
+            ;;
+    esac
+    return 1
+}
+
+# ci_local_cache_matches_provenance ENTRY ROOT
+#   True when ENTRY's recorded build-stage0/{git-hash.txt,tree-hash.txt} match
+#   ROOT's current HEAD and HEAD^{tree}.
+ci_local_cache_matches_provenance() {
+    [ -n "$1" ] && [ -f "$1/build-stage0/git-hash.txt" ] && [ -f "$1/build-stage0/tree-hash.txt" ] || return 1
+    _clcmp_head=$(git -C "$2" rev-parse --verify HEAD 2>/dev/null) || return 1
+    _clcmp_tree=$(git -C "$2" rev-parse --verify 'HEAD^{tree}' 2>/dev/null) || return 1
+    [ -n "$_clcmp_head" ] && [ -n "$_clcmp_tree" ] || return 1
+    [ "$(cat "$1/build-stage0/git-hash.txt")" = "$_clcmp_head" ] &&
+        [ "$(cat "$1/build-stage0/tree-hash.txt")" = "$_clcmp_tree" ]
 }
 
 # ci_local_cache_store ENTRY ROOT WORKDIR CONVERGED_BIN

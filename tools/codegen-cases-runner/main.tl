@@ -761,7 +761,9 @@
                 "case sh-rm-r-missing-fails\ndo none\nsh rm -r \"{{dir}}/no-such-dir\"\n\n"
                 "case sh-rm-rf-missing-ok\ndo none\nsh rm -rf \"{{dir}}/no-such-dir\"\n\n"
                 "case sh-cp-exec-and-p\ndo none\nfile runme.sh\n#!/bin/sh\nexit 0\nend-file\nsh chmod +x \"{{dir}}/runme.sh\"\nsh cp \"{{dir}}/runme.sh\" \"{{dir}}/runme_copy.sh\"\nsh cp -p \"{{dir}}/runme.sh\" \"{{dir}}/runme_copy_p.sh\"\ntest -x \"{{dir}}/runme_copy.sh\"\ntest -x \"{{dir}}/runme_copy_p.sh\"\n\n"
-                "case sh-mv-into-dir\ndo none\nfile item.txt\nhello\nend-file\nsh mkdir \"{{dir}}/dest\"\nsh mv \"{{dir}}/item.txt\" \"{{dir}}/dest\"\ntest -f \"{{dir}}/dest/item.txt\"\ntest ! -e \"{{dir}}/item.txt\"\n")]
+                "case sh-mv-into-dir\ndo none\nfile item.txt\nhello\nend-file\nsh mkdir \"{{dir}}/dest\"\nsh mv \"{{dir}}/item.txt\" \"{{dir}}/dest\"\ntest -f \"{{dir}}/dest/item.txt\"\ntest ! -e \"{{dir}}/item.txt\"\n\n"
+                "case sh-cp-r-missing-reports\ndo none\nsh cp -R \"{{dir}}/no-such-src\" \"{{dir}}/copy-dst\"\n\n"
+                "case sh-cp-r-write-reports\ndo none\nfile tree/sub/a.txt\nhello\nend-file\nfile out/tree/sub/a.txt/blocker\nx\nend-file\nsh cp -R \"{{dir}}/tree\" \"{{dir}}/out\"\n")]
             (util.write-file! (& r-path) (& r-text))
             (let
               [pf : parser.ParsedFile
@@ -986,7 +988,61 @@
                         (& pf)
                         (& work-dir)
                         "sh-mv-into-dir").failures
-                      0))))))
+                      0)))
+                (let
+                  [missing : exec.VariantResult
+                    (self-test-run-case
+                      (& cfg)
+                      (& pf)
+                      (& work-dir)
+                      "sh-cp-r-missing-reports")]
+                  [blocked : exec.VariantResult
+                    (self-test-run-case
+                      (& cfg)
+                      (& pf)
+                      (& work-dir)
+                      "sh-cp-r-write-reports")]
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-i64
+                        "sh cp -R missing source fails"
+                        missing.failures
+                        1)))
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-bool
+                        "sh cp -R missing source reports path"
+                        (and
+                          (string.contains
+                            (& missing.stderr-log)
+                            "  cp: cannot stat: io: not found: ")
+                          (string.contains (& missing.stderr-log) "no-such-src"))
+                        true)))
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-i64
+                        "sh cp -R blocked destination fails"
+                        blocked.failures
+                        1)))
+                  (set!
+                    fails
+                    (+
+                      fails
+                      (assert-eq-bool
+                        "sh cp -R blocked destination reports nested path"
+                        (and
+                          (string.contains
+                            (& blocked.stderr-log)
+                            "  cp: cannot write: io: ")
+                          (string.contains (& blocked.stderr-log) "sub")
+                          (string.contains (& blocked.stderr-log) "a.txt"))
+                        true)))))))
           ;; Finding 4c: wave decode & join error fail-closed checks.
           (set!
             fails

@@ -215,6 +215,33 @@
 
 (cfg windows (extern (fs-win-get-last-error) : i32 (:symbol "GetLastError")))
 
+;: Windows kernel32 blocking `Sleep` binding for transient-failure retries.
+(cfg
+  windows
+  (extern (fs-win-sleep [milliseconds : u32]) : unit (:symbol "Sleep")))
+
+;: Attempts a Windows path operation makes before it reports a transient
+;: failure.
+(cfg
+  windows
+  (define fs-windows-transient-retry-attempts : i64
+    5))
+
+;: Return true for Win32 errors that antivirus, the indexer or a pending delete
+;: can cause for a short time: access denied (5), sharing violation (32), lock
+;: violation (33) and directory not empty (145).
+(cfg
+  windows
+  (define (fs-windows-transient-error-code? [code : i64]) : bool
+    (or (= code 5) (= code 32) (= code 33) (= code 145))))
+
+;: Pause before retrying after failed attempt `attempt` (1-based): 10, 20, 30
+;: then 40 milliseconds.
+(cfg
+  windows
+  (define (fs-windows-transient-retry-pause [attempt : i64]) : unit
+    (fs-win-sleep (cast (* attempt 10) : u32))))
+
 (cfg
   windows
   (unsafe
@@ -257,19 +284,34 @@
           (cast -1 : i32))
         (cast 0 : i32)))))
 
-;: Windows `_unlink` replacement via DeleteFileA.
+;: Windows `_unlink` replacement via DeleteFileA, retrying transient failures.
 (cfg
   windows
   (unsafe
     (define (fs-windows-unlink [path : (Ptr u8)]) : i32
-      (if (=
-        (unsafe
-          (fs-win-delete-file path))
-        (cast 0 : i32))
-        (begin
-          (io.set-error-code 2)
-          (cast -1 : i32))
-        (cast 0 : i32)))))
+      (let
+        [attempt : i64 1]
+        [done : bool false]
+        [result : i32 (cast -1 : i32)]
+        (while (not done)
+          (if (=
+            (unsafe
+              (fs-win-delete-file path))
+            (cast 0 : i32))
+            (if (and
+              (fs-windows-transient-error-code?
+                (cast (fs-win-get-last-error) : i64))
+              (< attempt fs-windows-transient-retry-attempts))
+              (begin
+                (fs-windows-transient-retry-pause attempt)
+                (set! attempt (+ attempt 1)))
+              (begin
+                (io.set-error-code 2)
+                (set! done true)))
+            (begin
+              (set! result (cast 0 : i32))
+              (set! done true))))
+        result))))
 
 ;: Windows `_rmdir` replacement via RemoveDirectoryA.
 (cfg
@@ -572,19 +614,35 @@
               (cast 0 : u32)))]
         (fs-windows-nt-create-result-from-status status handle)))))
 
-;: Windows `rename` replacement via MoveFileExA with MOVEFILE_REPLACE_EXISTING.
+;: Windows `rename` replacement via MoveFileExA with MOVEFILE_REPLACE_EXISTING,
+;: retrying transient failures.
 (cfg
   windows
   (unsafe
     (define (fs-windows-rename [source : (Ptr u8)] [destination : (Ptr u8)]) : i32
-      (if (=
-        (unsafe
-          (fs-win-move-file-ex source destination (cast 1 : i32)))
-        (cast 0 : i32))
-        (begin
-          (io.set-error-code 2)
-          (cast -1 : i32))
-        (cast 0 : i32)))))
+      (let
+        [attempt : i64 1]
+        [done : bool false]
+        [result : i32 (cast -1 : i32)]
+        (while (not done)
+          (if (=
+            (unsafe
+              (fs-win-move-file-ex source destination (cast 1 : i32)))
+            (cast 0 : i32))
+            (if (and
+              (fs-windows-transient-error-code?
+                (cast (fs-win-get-last-error) : i64))
+              (< attempt fs-windows-transient-retry-attempts))
+              (begin
+                (fs-windows-transient-retry-pause attempt)
+                (set! attempt (+ attempt 1)))
+              (begin
+                (io.set-error-code 2)
+                (set! done true)))
+            (begin
+              (set! result (cast 0 : i32))
+              (set! done true))))
+        result))))
 
 ;: Windows atomic replacement through MoveFileExA. WRITE_THROUGH requests that
 ;: the move complete before returning; directory-entry durability is still not

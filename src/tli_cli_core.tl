@@ -158,7 +158,9 @@
   (> (string.string-length (& options.explicit-root)) 0))
 
 ;; Check whether a single directory overrides any embedded stdlib source file
-;; with non-byte-identical contents.
+;; with contents that differ from it once inline tests are blanked, the same
+;; equivalence the loader uses to keep a disk stdlib module on its embedded
+;; identity.
 (define (tli-sysroot-dir-overrides-stdlib? [dir : (& str)]) : bool
   (match (fs.try-read-dir dir)
     [(ErrIoStringVector _) false]
@@ -181,7 +183,9 @@
                         (let
                           [actual-text : String (byte_buf.to-string actual)]
                           (unless
-                            (string.eq (& actual-text) (& expected))
+                            (embedded.compiler-embedded-stdlib-source-matches-blanked?
+                              (& actual-text)
+                              (& expected))
                             (return true)))]
                       [(ErrIoBytes _) (return true)]))]
                 [(CompilerEmbeddedStdlibNoSource) unit]))))

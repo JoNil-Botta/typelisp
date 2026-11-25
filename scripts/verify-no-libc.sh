@@ -96,7 +96,7 @@ inspect_winsock_capability() {
         sed 's/^/  /' "$WORKDIR/winsock-compile.out" >&2
         return 1
     }
-    printf '%s|assembly|%s|unsupported-object-semantics\n' \
+    printf '%s|assembly|%s|unsupported-object-semantics|none\n' \
         "$_source_row" "$_asm_row" >"$WORKDIR/winsock-batch.expected"
     if ! cmp "$WORKDIR/winsock-batch.expected" "$WORKDIR/winsock-batch.plan" \
         >/dev/null || [ -e "$_direct" ]; then

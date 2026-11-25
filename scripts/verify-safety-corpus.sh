@@ -82,6 +82,16 @@ if [ "$HOST_OS" = windows ]; then
     TARGET_CFG_ARGS="--cfg windows --cfg target-windows --cfg os-windows"
 fi
 
+# Resolve the target's sysroot stdlib archive once, with its Windows path; the
+# run jobs fork from this shell and inherit the cached answer.
+STDLIB_ARCHIVE_TRIPLE=x86_64-unknown-linux-gnu
+[ "$HOST_OS" != windows ] || STDLIB_ARCHIVE_TRIPLE=x86_64-pc-windows-msvc
+stdlib_archive_resolve_triple "$STDLIB_ARCHIVE_TRIPLE" "${COMPILER:-}"
+WINDOWS_STDLIB_ARCHIVE_WIN=""
+if [ "$HOST_OS" = windows ] && [ -n "$STDLIB_ARCHIVE_PATH" ]; then
+    WINDOWS_STDLIB_ARCHIVE_WIN=$(cygpath -aw "$STDLIB_ARCHIVE_PATH")
+fi
+
 case "$WORKDIR" in
     /*) WORKDIR_ABS=$WORKDIR ;;
     *) WORKDIR_ABS=$ROOT/$WORKDIR ;;
@@ -398,9 +408,12 @@ assemble_link_windows() {
         show_stream_if_nonempty stderr "$_err"
         fail "$_label assemble failed"
     fi
-    _win_stdlib=$(windows_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
+    _win_stdlib=""
+    if [ -n "$WINDOWS_STDLIB_ARCHIVE_WIN" ]; then
+        _win_stdlib=$(windows_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
+    fi
     if [ -n "$_win_stdlib" ]; then
-        if ! lld-link -NOLOGO "$(cygpath -aw "$_obj")" "$(cygpath -aw "$_win_stdlib")" -OPT:REF \
+        if ! lld-link -NOLOGO "$(cygpath -aw "$_obj")" "$WINDOWS_STDLIB_ARCHIVE_WIN" -OPT:REF \
             "-OUT:$(cygpath -aw "$_bin")" \
             -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib ntdll.lib \
             < /dev/null >> "$_out" 2>> "$_err"; then

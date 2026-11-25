@@ -175,7 +175,13 @@ compile_linux_binary() {
         fail "$_source did not assemble"
     fi
     _entry=$(linux_entry_symbol_for_asm "$_asm") || exit $?
-    if ! ld "$_obj" -o "$_bin" -static -e "$_entry" \
+    _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
+    _stdlib_link_args=""
+    if [ -n "$_stdlib_archive" ]; then
+        _stdlib_link_args="-z noexecstack --gc-sections --start-group $_stdlib_archive --end-group"
+    fi
+    # shellcheck disable=SC2086
+    if ! ld "$_obj" -o "$_bin" -static $_stdlib_link_args -e "$_entry" \
         >>"$_out" 2>>"$_err"; then
         echo "$_label link failed:" >&2
         sed 's/^/  /' "$_err" >&2 || true

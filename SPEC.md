@@ -10449,7 +10449,7 @@ Windows runtime contract; otherwise it writes assembly. `force-assembly`
 bypasses the object attempt and preserves the legacy assembly bytes.
 
 After every row succeeds, the compiler writes deterministic
-`source|kind|path|reason` result rows in input order. `kind` is `coff-object` or
+`source|kind|path|reason|archive` result rows in input order. `kind` is `coff-object` or
 `assembly`; an object uses reason `none`, a forced row uses
 `forced-assembly`, and automatic fallback uses one of
 `unsupported-object-semantics`, `unsupported-coff-image`,
@@ -10466,6 +10466,8 @@ runtime binding table declares it with the object route. That table also
 supplies the import libraries Windows source builds link. A relocation against
 any other external symbol falls back with `unsupported-external-relocation`.
 The table never names a compiler-owned runtime symbol (`tl_` or `_tl_`).
+`archive` is `stdlib-archive` when the row was lowered against the prebuilt
+stdlib, so its link must add the sysroot `libstdlib.a`, and `none` otherwise.
 Compile, type, backend, object-serialization, and file-write errors fail the
 batch and do not produce the result plan. Each source is loaded, checked,
 lowered, and optimized once; an automatic assembly fallback renders from that

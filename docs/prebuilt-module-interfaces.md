@@ -282,7 +282,7 @@ bound (`<= 64`), so no hostile file can exhaust the stack.
 
 ### Compact IR section (optional, v3)
 
-When `HAS_COMPACT_IR` (header flag bit 0) is set, `compact_ir_offset` sits
+When `HAS_COMPACT_IR` (header flag bit 1) is set, `compact_ir_offset` sits
 immediately after the last module record and `compact_ir_offset +
 compact_ir_len == total_len`. When `HAS_COMPACT_IR` is clear, both fields are
 `0` and no function summary may set `HAS_INLINE_IR` or `SPMD_INLINEABLE`.

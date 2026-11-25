@@ -1267,3 +1267,85 @@
             [_ (test.assert-true false "expected Rotr binop after round trip")])]
         [_
           (test.assert-true false "expected BinOp instruction after round trip")]))))
+
+;; The compact IR section is decoded fail-closed: a body slice may not reach back
+;; into the globals and body count, the body count and the body slices must
+;; tile the section exactly, an extern-ref ABI stops at 2 and a `Char` is a
+;; Unicode scalar value.
+(test
+  tli-compact-ir-section-bounds-fail-closed
+  (let
+    [bundle : tli.TliBundle (tli-test-compact-bundle)]
+    [bytes : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
+    [ir-offset : i64 (le.read-u64 (& bytes) 56)]
+    [bodies-start : i64 0]
+    (match (codec.tli-decode-directory-for-lazy
+      (& bytes)
+      "test-build"
+      "linux-x86_64")
+      [(codec.TliDirectoryResult.Err error)
+        (test.assert-true false error.message)]
+      [(codec.TliDirectoryResult.Ok directory)
+        (set! bodies-start directory.compact-bodies-start)
+        (test.assert-i64-eq
+          directory.compact-body-count
+          3
+          "three compact bodies")
+        (match (codec.tli-decode-module-at (& directory) 0)
+          [(codec.TliModuleResult.Err error)
+            (test.assert-true false error.message)]
+          [(codec.TliModuleResult.Ok mod)
+            (let
+              [fn0 (& (array-ref mod.functions 0))]
+              (match (codec.tli-decode-compact-body-at
+                (& directory)
+                (- bodies-start 4)
+                fn0.summary.inline-ir-len
+                (& fn0.summary.inline-ir-sha256))
+                [(codec.TliCompactBodyResult.Err error)
+                  (tli-test-error!
+                    (& error)
+                    (tli.TliDecodeError.OffsetOutOfRange))]
+                [_
+                  (test.assert-true
+                    false
+                    "accepted a body slice over the compact body count")]))])])
+    ;; One more body than the summaries name, then none at all.
+    (let
+      [count-pos : i64 (- (+ ir-offset bodies-start) 4)]
+      (le.set-u32! (&mut bytes) count-pos 4)
+      (tli-test-refresh-content! (&mut bytes))
+      (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.OffsetOutOfRange))
+      (le.set-u32! (&mut bytes) count-pos 0)
+      (tli-test-refresh-content! (&mut bytes))
+      (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.OffsetOutOfRange))
+      (le.set-u32! (&mut bytes) count-pos 3)
+      (tli-test-refresh-content! (&mut bytes))
+      (let
+        [_decoded : tli.TliBundle (tli-test-round-trip (& bytes))]
+        unit)))
+  (let
+    [bad-abi : tli.TliBundle (tli-test-compact-bundle)]
+    (set!
+      (array-ref
+        (array-ref bad-abi.compact-bodies 0).body.ir-body.extern-refs
+        0).abi
+      3)
+    (tli-test-invalid-bundle!
+      (& (codec.tli-encode-bundle (& bad-abi)))
+      (tli.TliDecodeError.UnknownTag)))
+  (let
+    [surrogate : tli.TliBundle (tli-test-compact-bundle)]
+    [too-big : tli.TliBundle (tli-test-compact-bundle)]
+    (set!
+      (array-ref surrogate.compact-globals 0).init
+      (tli.TliCompactValue.Char 55296))
+    (set!
+      (array-ref too-big.compact-bodies 2).body.spmd-expr
+      (tli.TliSpmdExpr.Literal (tli.TliSpmdLiteral.Char 1114112)))
+    (tli-test-invalid-bundle!
+      (& (codec.tli-encode-bundle (& surrogate)))
+      (tli.TliDecodeError.UnknownTag))
+    (tli-test-invalid-bundle!
+      (& (codec.tli-encode-bundle (& too-big)))
+      (tli.TliDecodeError.UnknownTag))))

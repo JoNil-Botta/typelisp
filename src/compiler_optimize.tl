@@ -124669,6 +124669,8 @@
   (opt_i64_i64_map.with-capacity 1))
 (define opt-external-no-local-writes-map : opt_i64_i64_map.Map
   (opt_i64_i64_map.with-capacity 1))
+(define opt-external-no-storage-writes-map : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
 (define opt-external-has-global-writes-map : opt_i64_i64_map.Map
   (opt_i64_i64_map.with-capacity 1))
 (define opt-external-call-memory-keys : (__tl_dyn-array i64)
@@ -124707,6 +124709,7 @@
         [ra-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
         [ef-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
         [nlw-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
+        [nsw-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
         [hgw-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity cap)]
         [cm-k : (__tl_dyn-array i64)
           (__tl_make-array i64 (+ count externs.len))]
@@ -124752,9 +124755,25 @@
                     (array-ref (array-ref src.entries i).global-write-ids wi)))
                 (set! writes-local? true)))
             (opt_i64_i64_map.insert-ref! (&mut ef-map) id ef)
+            ;; A callee writes none of this program's global cells only when
+            ;; it makes no indirect call, names none of them in `global-writes`
+            ;; and has a known `call-memory` with no global or unknown write
+            ;; (an opaque C extern keeps `call-memory = -1`). It writes no
+            ;; storage owned by them only when it writes no memory at all.
             (when
-              (and (= (bit-and ef 32) 0) (not writes-local?))
-              (opt_i64_i64_map.insert-ref! (&mut nlw-map) id 1))
+              (and
+                (= (bit-and ef 32) 0)
+                (not writes-local?)
+                (>= cm 0)
+                (=
+                  (bit-and
+                    cm
+                    (bit-or
+                      (opt-call-memory-global-bit)
+                      (opt-call-memory-unknown-bit)))
+                  0))
+              (opt_i64_i64_map.insert-ref! (&mut nlw-map) id 1)
+              (when (= cm 0) (opt_i64_i64_map.insert-ref! (&mut nsw-map) id 1)))
             (when
               (>= cm 0)
               (opt_i64_i64_map.insert-ref! (&mut cm-map) id cm)
@@ -124830,6 +124849,7 @@
           (set! opt-external-return-alias-map ra-map)
           (set! opt-external-effect-flags-map ef-map)
           (set! opt-external-no-local-writes-map nlw-map)
+          (set! opt-external-no-storage-writes-map nsw-map)
           (set! opt-external-has-global-writes-map hgw-map)
           (set! opt-external-call-memory-keys cm-k-trim)
           (set! opt-external-call-memory-vals cm-v-trim)
@@ -124918,9 +124938,10 @@
       [_ builtin])))
 
 ;; The private globals a call to a callee outside the program's functions may
-;; write, decided by the identity it reaches.
-(define (opt-external-call-write-mask [name : i64]) : i64
-  (opt-global-mod-ref-external-mask (opt-effect-callee name)))
+;; write, decided by the identity it reaches. `storage?` asks about the storage
+;; those globals own (obj-mod-ref) rather than their cells (mod-ref).
+(define (opt-external-call-write-mask [name : i64] [storage? : bool]) : i64
+  (opt-global-mod-ref-external-mask (opt-effect-callee name) storage?))
 
 (define (opt-program-index-empty) : OptProgramIndex
   (let
@@ -125070,6 +125091,7 @@
   [index : (& index OptProgramIndex)]
   [rows : (&mut rows (__tl_dyn-array i64))]
   [extra : i64]
+  [storage? : bool]
   [capacity : i64]) : opt_i64_i64_map.Map
   (let
     [slot : i64 0]
@@ -125084,7 +125106,8 @@
         (match (opt_i64_i64_map.entry-at (& opt-effect-links) at)
           [(EntrySome name link)
             (let
-              [mask (bit-or (opt-global-mod-ref-external-mask link) extra)]
+              [mask
+                (bit-or (opt-global-mod-ref-external-mask link storage?) extra)]
               (unless
                 (= mask 0)
                 (opt_i64_i64_map.insert-ref! (&mut out) name mask)))]
@@ -128504,14 +128527,18 @@
 ;; Any other external callee may invoke a TypeLisp callback that writes private
 ;; cells or storage without receiving a global address itself. `name` is an
 ;; effect identity (opt-effect-callee).
-(define (opt-global-mod-ref-external-mask [name : i64]) : i64
+(define (opt-global-mod-ref-external-mask [name : i64] [storage? : bool]) : i64
   (cond
     [(opt-runtime-call-excludes-reentry? name) 0]
     [(and
         opt-external-summaries-active?
-        (opt_i64_i64_map.contains?
-          (& opt-external-no-local-writes-map)
-          (ir.compiler-ir-symbol-id name)))
+        (if storage?
+          (opt_i64_i64_map.contains?
+            (& opt-external-no-storage-writes-map)
+            (ir.compiler-ir-symbol-id name))
+          (opt_i64_i64_map.contains?
+            (& opt-external-no-local-writes-map)
+            (ir.compiler-ir-symbol-id name))))
       0]
     [else (opt-global-mod-ref-effect-mask (opt-direct-call-effect name))]))
 
@@ -128525,7 +128552,9 @@
       (& mod-ref.writes)
       (ir.compiler-ir-symbol-id name))
       [(LookupFound mask) mask]
-      [(LookupMissing) (opt-external-call-write-mask name)])))
+      ;; Every declared extern whose storage row is nonzero has one, and a zero
+      ;; storage row implies a zero cell row, so the cell rule answers here.
+      [(LookupMissing) (opt-external-call-write-mask name false)])))
 
 ;; A no-reentry external fallback excludes implicit writes to private globals;
 ;; it does not describe writes through an explicit global argument. Only an
@@ -128580,7 +128609,7 @@
       [(or (Call _ name _ _) (TailCall name _ _))
         (if (opt-program-function? program name)
           0
-          (opt-external-call-write-mask name))]
+          (opt-external-call-write-mask name false))]
       ;; The one call form the effect table classifies `ControlFlow` rather
       ;; than `Unknown`; its target is a function of this program, so name it
       ;; here.
@@ -128608,7 +128637,7 @@
               opt-global-mod-ref-instr-mask
               program
               index))]))
-    (opt-program-closed-rows-map program (&mut rows) 0 capacity)))
+    (opt-program-closed-rows-map program (&mut rows) 0 false capacity)))
 
 ;; P18-2: the stored globals of one POOL -- the scalars, or the non-scalars.
 (define (opt-global-mod-ref-store-count-pool
@@ -129324,7 +129353,7 @@
     [(or (Call _ name _ _) (TailCall name _ _))
       (if (opt-program-function? program name)
         0
-        (opt-external-call-write-mask name))]
+        (opt-external-call-write-mask name true))]
     [(TailCallIndirect _ _ _) (opt-global-mod-ref-any)]
     [_
       (opt-global-mod-ref-effect-mask
@@ -129673,6 +129702,7 @@
               program
               (&mut rows)
               (array-ref escaped 0)
+              true
               capacity)]
           (OptGlobalModRef true index writes))])))
 

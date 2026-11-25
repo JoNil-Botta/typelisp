@@ -22,6 +22,11 @@
 (import stdlib.iterator)
 (import stdlib.profile)
 (import stdlib.test)
+(import compiler_builtin_ids as cbi)
+(import compiler_ir_types as ir)
+(import compiler_tli_compact_ir as compact)
+(import stdlib.hashmap)
+(import (hashmap.hashmap i64 i64) as i64_map)
 
 (define (tli-hydrate-fixture-module [name : String] [init : String] [cfg : i64]) : tli.TliModuleRecord
   (let
@@ -1000,3 +1005,96 @@
                           [(codec.TliCompactBodyResult.Ok _)
                             (io.panic
                               "lazy decode accepted tampered inline_ir_sha256")])]))]))])))))
+
+;; `() : i64` whose body returns a call to `callee`.
+(define (tli-compact-test-call-fn [name : i64] [callee : i64]) : ir.CompilerIrFunction
+  (ir.CompilerIrFunction.Function
+    name
+    (ir.compiler-ir-param-seq-empty)
+    (ast.AstType.I64)
+    1
+    (ir.compiler-ir-blocks
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-seq2
+          (ir.CompilerIrInstr.Call
+            0
+            callee
+            (ir.CompilerIrCallArgs.Nil)
+            (ast.AstType.I64))
+          (ir.CompilerIrInstr.Return
+            (ir.CompilerIrMaybeValue.Some (ir.CompilerIrValue.Var 0))))))
+    (ir.CompilerIrFunctionAbi.Ordinary)))
+
+;; A body calling itself would encode its own archive symbol with no extern-ref,
+;; and hydration names the body by its source symbol, so the self-call would be
+;; mangled twice; such a body ships no compact IR. Its caller still does.
+(test
+  tli-compact-ir-rejects-self-recursive-body
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [self-sym : i64 (ir.compiler-ir-test-symbol "c36_compact_self")]
+    [caller-sym : i64 (ir.compiler-ir-test-symbol "c36_compact_caller")]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (& (tli-compact-test-call-fn self-sym self-sym))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (tli-compact-test-call-fn caller-sym self-sym))
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [globals : ir.CompilerIrGlobalSeq (ir.compiler-ir-global-seq-empty)]
+    [externs : ir.CompilerIrExternSeq (ir.compiler-ir-extern-seq-empty)]
+    [fn-ids : i64_map.Map (i64_map.with-capacity 4)]
+    [fn-skip : (__tl_dyn-array bool) (__tl_make-array bool 2)]
+    [fn-links : (__tl_dyn-array String) (__tl_make-array String 2)]
+    (i64_map.insert-ref! (&mut fn-ids) (ir.compiler-ir-symbol-id self-sym) 0)
+    (i64_map.insert-ref! (&mut fn-ids) (ir.compiler-ir-symbol-id caller-sym) 1)
+    (set! (array-ref fn-skip 0) false)
+    (set! (array-ref fn-skip 1) false)
+    (set! (array-ref fn-links 0) "_tl_c36_compact_self")
+    (set! (array-ref fn-links 1) "_tl_c36_compact_caller")
+    (let
+      [tables : compact.TliIrEncodeTables
+        (compact.TliIrEncodeTables
+          fn-ids
+          (i64_map.with-capacity 1)
+          (i64_map.with-capacity 1)
+          fn-skip
+          (__tl_make-array bool 0)
+          (__tl_make-array bool 0)
+          fn-links
+          (__tl_make-array String 0))]
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      [interns : intern.InternCompatState
+        (intern.intern-compat-state-capture-active)]
+      (match (compact.tli-encode-compact-ir-function
+        pools
+        (& tables)
+        (& interns)
+        (& globals)
+        (& functions)
+        (& externs)
+        0)
+        [(compact.TliEncodeCompactIrBodyResult.No) unit]
+        [(compact.TliEncodeCompactIrBodyResult.Ok _)
+          (test.assert-true false "encoded a self-recursive compact body")])
+      (match (compact.tli-encode-compact-ir-function
+        pools
+        (& tables)
+        (& interns)
+        (& globals)
+        (& functions)
+        (& externs)
+        1)
+        [(compact.TliEncodeCompactIrBodyResult.No)
+          (test.assert-true false "rejected the caller of a recursive body")]
+        [(compact.TliEncodeCompactIrBodyResult.Ok body)
+          (test.assert-i64-eq
+            (array-length body.extern-refs)
+            1
+            "the caller names its callee by extern-ref")
+          (test.assert-string-eq
+            (& (array-ref body.extern-refs 0).link-symbol)
+            "_tl_c36_compact_self"
+            "the extern-ref carries the callee's archive symbol")]))))

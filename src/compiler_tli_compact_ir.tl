@@ -414,7 +414,11 @@
     [sid : i64 (ir.compiler-ir-symbol-id sym-id)]
     (match (i64_map.get (& tables.fn-id-to-idx) sid)
       [(LookupFound fidx)
-        (when (array-ref tables.fn-skip fidx) (set! st.ok? false))
+        ;; A self-reference would encode this body's own link symbol with no
+        ;; extern-ref, which hydration cannot rename; reject recursive bodies.
+        (when
+          (or (array-ref tables.fn-skip fidx) (= fidx st.self-fn-idx))
+          (set! st.ok? false))
         (when
           (and
             (!= fidx st.self-fn-idx)
@@ -464,7 +468,9 @@
       [(LookupMissing)
         (match (i64_map.get (& tables.fn-id-to-idx) sid)
           [(LookupFound fidx)
-            (when (array-ref tables.fn-skip fidx) (set! st.ok? false))
+            (when
+              (or (array-ref tables.fn-skip fidx) (= fidx st.self-fn-idx))
+              (set! st.ok? false))
             (when
               (and
                 (!= fidx st.self-fn-idx)
@@ -1228,7 +1234,7 @@
                             0
                             (ir.compiler-ir-instr-seq-count iseq))]
                           (tli-compact-scan-ir-all-syms-instr!
-                            (ir.compiler-ir-instr-seq-borrow iseq ii)
+                            (ir.compiler-ir-instr-seq-ref iseq ii)
                             (&mut frefs)
                             (&mut edge-targets)))]))])
               unit)]))
@@ -1246,11 +1252,31 @@
                   (ir.compiler-ir-symbol-id gl-name)
                   1)]
               [_ unit])]))
-      ;; Propagate backwards until fixed point.
+      ;; Propagate backwards until fixed point. A global whose initializer names
+      ;; a function or global (a stored callback or address) reaches whatever
+      ;; that symbol reaches, so it joins the graph as one more edge.
       (let
         [changed? : bool true]
         (while changed?
           (set! changed? false)
+          (for [gi (iterator.range 0 gl-count)]
+            (match (ir.compiler-ir-global-seq-borrow whole-globals gi)
+              [(ir.CompilerIrGlobal.Global gl-name _ gl-init)
+                (let
+                  [gsid : i64 (ir.compiler-ir-symbol-id gl-name)]
+                  (unless
+                    (i64_map.contains? (& needs-init-syms) gsid)
+                    (match gl-init
+                      [(or (ir.CompilerIrValue.Function sym)
+                           (ir.CompilerIrValue.Global sym)
+                           (ir.CompilerIrValue.GlobalAddr sym))
+                        (when
+                          (i64_map.contains?
+                            (& needs-init-syms)
+                            (ir.compiler-ir-symbol-id sym))
+                          (i64_map.insert-ref! (&mut needs-init-syms) gsid 1)
+                          (set! changed? true))]
+                      [_ unit])))]))
           (for [i (iterator.range 0 fn-count)]
             (unless
               (array-ref fn-needs-init i)
@@ -2343,158 +2369,6 @@
     (tli-compact-type-to-ast pools (& g.ty))
     (tli-compact-dec-value (& g.init))))
 
-;; --- Consumer: TliSpmdExpr -> AstExpr pool ID ---
-(define (tli-compact-spmd-unary-to-ast [tag : i64]) : ast.AstUnOp
-  (match tag
-    [0 (ast.AstUnOp.Neg)]
-    [1 (ast.AstUnOp.Not)]
-    [_ (ast.AstUnOp.BitNot)]))
-
-(define (tli-compact-spmd-binary-to-ast [tag : i64]) : ast.AstBinOp
-  (match tag
-    [0 (ast.AstBinOp.Add)]
-    [1 (ast.AstBinOp.Sub)]
-    [2 (ast.AstBinOp.Mul)]
-    [3 (ast.AstBinOp.Div)]
-    [4 (ast.AstBinOp.Mod)]
-    [5 (ast.AstBinOp.Eq)]
-    [6 (ast.AstBinOp.Ne)]
-    [7 (ast.AstBinOp.Lt)]
-    [8 (ast.AstBinOp.Le)]
-    [9 (ast.AstBinOp.Gt)]
-    [10 (ast.AstBinOp.Ge)]
-    [11 (ast.AstBinOp.And)]
-    [12 (ast.AstBinOp.Or)]
-    [13 (ast.AstBinOp.BitAnd)]
-    [14 (ast.AstBinOp.BitOr)]
-    [15 (ast.AstBinOp.BitXor)]
-    [16 (ast.AstBinOp.Shl)]
-    [_ (ast.AstBinOp.Shr)]))
-
-(define (tli-compact-hydrate-spmd-expr-list
-  [pools : ast.AstNodePoolContext]
-  [items : (& (__tl_dyn-array tli.TliSpmdExpr))]) : ast.AstExprList
-  (let
-    [n : i64 (array-length (deref items))]
-    [out : ast.AstExprList (ast.ast-expr-list-with-capacity n)]
-    (for [i (iterator.range 0 n)]
-      (ast.ast-expr-list-push
-        (&mut out)
-        (tli-compact-hydrate-spmd-expr pools (& (array-ref (deref items) i)))))
-    out))
-
-(define (tli-compact-hydrate-spmd-expr
-  [pools : ast.AstNodePoolContext]
-  [expr : (& tli.TliSpmdExpr)]) : i64
-  (let
-    [node : ast.AstExpr
-      (match expr
-        [(tli.TliSpmdExpr.Literal lit)
-          (ast.AstExpr.Literal
-            (match lit
-              [(tli.TliSpmdLiteral.Int n s)
-                (ast.AstLiteral.Int n (string.copy s))]
-              [(tli.TliSpmdLiteral.Float s)
-                (ast.AstLiteral.Float (string.copy s))]
-              [(tli.TliSpmdLiteral.Bool b) (ast.AstLiteral.Bool b)]
-              [(tli.TliSpmdLiteral.Char c)
-                (ast.AstLiteral.Char (cast c : char))]
-              [(tli.TliSpmdLiteral.String s)
-                (ast.AstLiteral.String (intern.intern (string.copy s)))]
-              [(tli.TliSpmdLiteral.Unit) (ast.AstLiteral.Unit)]))]
-        [(tli.TliSpmdExpr.Var s)
-          (ast.AstExpr.Var (intern.intern (string.copy s)))]
-        [(tli.TliSpmdExpr.Unary op inner)
-          (ast.AstExpr.Unary
-            (tli-compact-spmd-unary-to-ast op)
-            (tli-compact-hydrate-spmd-expr pools (& (deref inner))))]
-        [(tli.TliSpmdExpr.Binary op l r)
-          (ast.AstExpr.Binary
-            (tli-compact-spmd-binary-to-ast op)
-            (tli-compact-hydrate-spmd-expr pools (& (deref l)))
-            (tli-compact-hydrate-spmd-expr pools (& (deref r))))]
-        [(tli.TliSpmdExpr.Call callee args)
-          (ast.AstExpr.Call
-            (tli-compact-hydrate-spmd-expr pools (& (deref callee)))
-            (tli-compact-hydrate-spmd-expr-list pools args))]
-        [(tli.TliSpmdExpr.If c t e)
-          (ast.AstExpr.If
-            (tli-compact-hydrate-spmd-expr pools (& (deref c)))
-            (tli-compact-hydrate-spmd-expr pools (& (deref t)))
-            (tli-compact-hydrate-spmd-expr pools (& (deref e))))]
-        [(tli.TliSpmdExpr.Let bindings body)
-          (let
-            [n : i64 (array-length bindings)]
-            [blist : ast.AstLetBindingList
-              (ast.ast-let-binding-list-with-capacity n)]
-            (for [i (iterator.range 0 n)]
-              (let
-                [bname : i64
-                  (intern.intern (string.copy (& (array-ref bindings i).name)))]
-                [mty : ast.AstMaybeType
-                  (if (array-ref bindings i).has-type
-                    (ast.AstMaybeType.Some
-                      (tli-compact-type-to-ast
-                        pools
-                        (& (array-ref bindings i).ty)))
-                    (ast.AstMaybeType.No))]
-                [init-id : i64
-                  (tli-compact-hydrate-spmd-expr
-                    pools
-                    (& (deref (array-ref bindings i).init)))]
-                (ast.ast-let-binding-list-push
-                  (&mut blist)
-                  (ast.AstLetBinding.Binding bname mty init-id))))
-            (ast.AstExpr.Let
-              (box
-                (ast.AstLet.Let
-                  blist
-                  (tli-compact-hydrate-spmd-expr pools (& (deref body)))))))]
-        [(tli.TliSpmdExpr.Begin items)
-          (ast.AstExpr.Begin (tli-compact-hydrate-spmd-expr-list pools items))]
-        [(tli.TliSpmdExpr.Ann e ty)
-          (ast.AstExpr.Ann
-            (tli-compact-hydrate-spmd-expr pools (& (deref e)))
-            (tli-compact-type-id-to-ast pools ty))]
-        [(tli.TliSpmdExpr.Cast e ty)
-          (ast.AstExpr.Cast
-            (tli-compact-hydrate-spmd-expr pools (& (deref e)))
-            (tli-compact-type-id-to-ast pools ty))]
-        [(tli.TliSpmdExpr.ArrayRef a idx)
-          (ast.AstExpr.ArrayRef
-            (tli-compact-hydrate-spmd-expr pools (& (deref a)))
-            (tli-compact-hydrate-spmd-expr pools (& (deref idx))))]
-        [(tli.TliSpmdExpr.ArraySet a idx v)
-          (ast.AstExpr.ArraySet
-            (tli-compact-hydrate-spmd-expr pools (& (deref a)))
-            (tli-compact-hydrate-spmd-expr pools (& (deref idx)))
-            (tli-compact-hydrate-spmd-expr pools (& (deref v))))]
-        [(tli.TliSpmdExpr.StructGet e f)
-          (ast.AstExpr.StructGet
-            (tli-compact-hydrate-spmd-expr pools (& (deref e)))
-            (intern.intern (string.copy f)))]
-        [(tli.TliSpmdExpr.StructSet e f v)
-          (ast.AstExpr.StructSet
-            (tli-compact-hydrate-spmd-expr pools (& (deref e)))
-            (intern.intern (string.copy f))
-            (tli-compact-hydrate-spmd-expr pools (& (deref v))))]
-        [(tli.TliSpmdExpr.Tuple items)
-          (ast.AstExpr.Tuple (tli-compact-hydrate-spmd-expr-list pools items))]
-        [(tli.TliSpmdExpr.TupleRef e idx)
-          (ast.AstExpr.TupleRef
-            (tli-compact-hydrate-spmd-expr pools (& (deref e)))
-            idx)]
-        [(tli.TliSpmdExpr.Set p v)
-          (ast.AstExpr.Set
-            (tli-compact-hydrate-spmd-expr pools (& (deref p)))
-            (tli-compact-hydrate-spmd-expr pools (& (deref v))))]
-        [(tli.TliSpmdExpr.Borrow is-mut life e)
-          (ast.AstExpr.Borrow
-            is-mut
-            (intern.intern (string.copy life))
-            (tli-compact-hydrate-spmd-expr pools (& (deref e))))])]
-    (ast.ast-node-pool-context-expr-push pools node)))
-
 ;; --- Consumer: O1/O2 compact_ir hydration into CompilerIrProgram ---
 (defstruct TliStartupInitDep
   (sym-id i64)
@@ -2531,87 +2405,39 @@
       (str_map.insert-ref! gl-syms (ir.compiler-ir-symbol-text sym) 1)]
     [_ unit]))
 
-(define (tli-compact-scan-ir-call-args!
-  [args : (& ir.CompilerIrCallArgs)]
+(define (tli-compact-scan-ir-use!
   [fn-syms : (&mut i64_vec.Vec)]
   [fn-seen : (&mut i64_map.Map)]
-  [gl-syms : (&mut str_map.Map)]) : unit
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) unit]
-    [(ir.CompilerIrCallArgs.One v)
-      (tli-compact-scan-ir-value! v fn-syms fn-seen gl-syms)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (tli-compact-scan-ir-value! a fn-syms fn-seen gl-syms)
-      (tli-compact-scan-ir-value! b fn-syms fn-seen gl-syms)]
-    [(or (ir.CompilerIrCallArgs.Array vals) (ir.CompilerIrCallArgs.Sret vals _))
-      (for [i (iterator.range 0 (array-length vals))]
-        (tli-compact-scan-ir-value!
-          (& (array-ref vals i))
-          fn-syms
-          fn-seen
-          gl-syms))]))
+  [gl-syms : (&mut str_map.Map)]
+  [_role : ir.CompilerIrOperandRole]
+  [v : ir.CompilerIrValue]) : unit
+  (tli-compact-scan-ir-value! (& v) fn-syms fn-seen gl-syms))
 
 (define (tli-compact-scan-ir-instr!
-  [ins : (& ir.CompilerIrInstr)]
+  [ins : ir.CompilerIrInstr]
   [fn-syms : (&mut i64_vec.Vec)]
   [fn-seen : (&mut i64_map.Map)]
   [gl-syms : (&mut str_map.Map)]) : unit
-  (match ins
-    [(or (ir.CompilerIrInstr.Mov _ v _) (ir.CompilerIrInstr.Load _ v _)
-         (ir.CompilerIrInstr.Cast _ v _ _) (ir.CompilerIrInstr.Bitcast _ v _ _)
-         (ir.CompilerIrInstr.UnOp _ _ v _) (ir.CompilerIrInstr.Splat _ v _ _)
-         (ir.CompilerIrInstr.Branch v _ _)
-         (ir.CompilerIrInstr.TotalEnumBranch v _ _)
-         (ir.CompilerIrInstr.Word _ v _ _) (ir.CompilerIrInstr.Switch v _ _ _)
-         (ir.CompilerIrInstr.TotalEnumSwitch v _ _ _ _))
-      (tli-compact-scan-ir-value! v fn-syms fn-seen gl-syms)]
-    [(or (ir.CompilerIrInstr.Gep _ a b _) (ir.CompilerIrInstr.StoreOwned a b _)
-         (ir.CompilerIrInstr.StorePtr a b _)
-         (ir.CompilerIrInstr.CopyBytes a b _)
-         (ir.CompilerIrInstr.BoundsCheck a b _)
-         (ir.CompilerIrInstr.BinOp _ _ a b _)
-         (ir.CompilerIrInstr.MaskBinOp _ _ a b _)
-         (ir.CompilerIrInstr.VectorLoad _ a b _ _))
-      (tli-compact-scan-ir-value! a fn-syms fn-seen gl-syms)
-      (tli-compact-scan-ir-value! b fn-syms fn-seen gl-syms)]
-    [(ir.CompilerIrInstr.Store g v _)
-      (str_map.insert-ref! gl-syms (ir.compiler-ir-symbol-text g) 1)
-      (tli-compact-scan-ir-value! v fn-syms fn-seen gl-syms)]
-    [(or (ir.CompilerIrInstr.Call _ callee args _)
-         (ir.CompilerIrInstr.TailCall callee args _))
+  (match (& ins)
+    [(ir.CompilerIrInstr.Store g _ _)
+      (str_map.insert-ref! gl-syms (ir.compiler-ir-symbol-text g) 1)]
+    [_
       (let
-        [sid : i64 (ir.compiler-ir-symbol-id callee)]
-        (unless
-          (i64_map.contains? fn-seen sid)
-          (i64_map.insert-ref! fn-seen sid 1)
-          (i64_vec.push-ref! fn-syms sid)))
-      (tli-compact-scan-ir-call-args! args fn-syms fn-seen gl-syms)]
-    [(or (ir.CompilerIrInstr.CallIndirect _ callee args _)
-         (ir.CompilerIrInstr.CallIndirectC _ callee args _)
-         (ir.CompilerIrInstr.TailCallIndirect callee args _))
-      (tli-compact-scan-ir-value! callee fn-syms fn-seen gl-syms)
-      (tli-compact-scan-ir-call-args! args fn-syms fn-seen gl-syms)]
-    [(ir.CompilerIrInstr.Return maybe-v)
-      (match maybe-v
-        [(ir.CompilerIrMaybeValue.Some v)
-          (tli-compact-scan-ir-value! v fn-syms fn-seen gl-syms)]
-        [(ir.CompilerIrMaybeValue.No) unit])]
-    [(ir.CompilerIrInstr.Phi _ inputs _)
-      (for [i (iterator.range 0 (ir.compiler-ir-phi-input-seq-count inputs))]
-        (let
-          [inp : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref inputs i)]
-          (tli-compact-scan-ir-value! (& inp.value) fn-syms fn-seen gl-syms)))]
-    [(ir.CompilerIrInstr.Pack _ vals _)
-      (for [i (iterator.range 0 (ir.compiler-ir-value-seq-count vals))]
-        (tli-compact-scan-ir-value!
-          (ir.compiler-ir-value-seq-borrow vals i)
-          fn-syms
-          fn-seen
-          gl-syms))]
-    [(ir.CompilerIrInstr.Syscall _ args)
-      (tli-compact-scan-ir-call-args! args fn-syms fn-seen gl-syms)]
-    [_ unit]))
+        [named : i64 (tli-compact-ir-instr-named-symbol (& ins))]
+        (when
+          (>= named 0)
+          (let
+            [sid : i64 (ir.compiler-ir-symbol-id named)]
+            (unless
+              (i64_map.contains? fn-seen sid)
+              (i64_map.insert-ref! fn-seen sid 1)
+              (i64_vec.push-ref! fn-syms sid)))))])
+  (ir.compiler-ir-instr-visit-uses
+    ins
+    tli-compact-scan-ir-use!
+    fn-syms
+    fn-seen
+    gl-syms))
 
 (define (tli-compact-scan-wire-value!
   [v : (& tli.TliCompactValue)]
@@ -2704,76 +2530,45 @@
         out)]
     [_ unit]))
 
-(define (tli-compact-scan-ir-all-syms-args!
-  [args : (& ir.CompilerIrCallArgs)]
+(define (tli-compact-scan-ir-all-syms-use!
   [syms : (&mut i64_map.Map)]
-  [out : (&mut i64_vec.Vec)]) : unit
-  (match args
-    [(ir.CompilerIrCallArgs.Nil) unit]
-    [(ir.CompilerIrCallArgs.One v)
-      (tli-compact-scan-ir-all-syms-value! v syms out)]
-    [(ir.CompilerIrCallArgs.Two a b)
-      (tli-compact-scan-ir-all-syms-value! a syms out)
-      (tli-compact-scan-ir-all-syms-value! b syms out)]
-    [(or (ir.CompilerIrCallArgs.Array vals) (ir.CompilerIrCallArgs.Sret vals _))
-      (for [i (iterator.range 0 (array-length vals))]
-        (tli-compact-scan-ir-all-syms-value! (& (array-ref vals i)) syms out))]))
+  [out : (&mut i64_vec.Vec)]
+  [_role : ir.CompilerIrOperandRole]
+  [v : ir.CompilerIrValue]) : unit
+  (tli-compact-scan-ir-all-syms-value! (& v) syms out))
 
+;; The symbol an instruction names outside its value operands (a direct callee
+;; or a stored global), or -1.
+(define (tli-compact-ir-instr-named-symbol [ins : (& ir.CompilerIrInstr)]) : i64
+  (match ins
+    [(or (ir.CompilerIrInstr.Call _ callee _ _)
+         (ir.CompilerIrInstr.TailCall callee _ _)
+         (ir.CompilerIrInstr.Store callee _ _))
+      callee]
+    [(ir.CompilerIrInstr.CallCAbiStoreResult payload-box)
+      (deref payload-box).name]
+    [(ir.CompilerIrInstr.SpmdCall payload-box) (deref payload-box).callee]
+    [_ -1]))
+
+;; Every function/global symbol `ins` references, through the IR's canonical
+;; use walk so no instruction kind is missed.
 (define (tli-compact-scan-ir-all-syms-instr!
-  [ins : (& ir.CompilerIrInstr)]
+  [ins : ir.CompilerIrInstr]
   [syms : (&mut i64_map.Map)]
   [out : (&mut i64_vec.Vec)]) : unit
-  (match ins
-    [(or (ir.CompilerIrInstr.Mov _ v _) (ir.CompilerIrInstr.Load _ v _)
-         (ir.CompilerIrInstr.Cast _ v _ _) (ir.CompilerIrInstr.Bitcast _ v _ _)
-         (ir.CompilerIrInstr.UnOp _ _ v _) (ir.CompilerIrInstr.Splat _ v _ _)
-         (ir.CompilerIrInstr.Branch v _ _)
-         (ir.CompilerIrInstr.TotalEnumBranch v _ _)
-         (ir.CompilerIrInstr.Word _ v _ _) (ir.CompilerIrInstr.Switch v _ _ _)
-         (ir.CompilerIrInstr.TotalEnumSwitch v _ _ _ _))
-      (tli-compact-scan-ir-all-syms-value! v syms out)]
-    [(or (ir.CompilerIrInstr.Gep _ a b _) (ir.CompilerIrInstr.StoreOwned a b _)
-         (ir.CompilerIrInstr.StorePtr a b _)
-         (ir.CompilerIrInstr.CopyBytes a b _)
-         (ir.CompilerIrInstr.BoundsCheck a b _)
-         (ir.CompilerIrInstr.BinOp _ _ a b _)
-         (ir.CompilerIrInstr.MaskBinOp _ _ a b _)
-         (ir.CompilerIrInstr.VectorLoad _ a b _ _))
-      (tli-compact-scan-ir-all-syms-value! a syms out)
-      (tli-compact-scan-ir-all-syms-value! b syms out)]
-    [(ir.CompilerIrInstr.Store g v _)
-      (tli-compact-scan-ir-all-syms-add! (ir.compiler-ir-symbol-id g) syms out)
-      (tli-compact-scan-ir-all-syms-value! v syms out)]
-    [(or (ir.CompilerIrInstr.Call _ callee args _)
-         (ir.CompilerIrInstr.TailCall callee args _))
+  (let
+    [named : i64 (tli-compact-ir-instr-named-symbol (& ins))]
+    (when
+      (>= named 0)
       (tli-compact-scan-ir-all-syms-add!
-        (ir.compiler-ir-symbol-id callee)
+        (ir.compiler-ir-symbol-id named)
         syms
-        out)
-      (tli-compact-scan-ir-all-syms-args! args syms out)]
-    [(or (ir.CompilerIrInstr.CallIndirect _ callee args _)
-         (ir.CompilerIrInstr.CallIndirectC _ callee args _)
-         (ir.CompilerIrInstr.TailCallIndirect callee args _))
-      (tli-compact-scan-ir-all-syms-value! callee syms out)
-      (tli-compact-scan-ir-all-syms-args! args syms out)]
-    [(ir.CompilerIrInstr.Return maybe-v)
-      (match maybe-v
-        [(ir.CompilerIrMaybeValue.Some v)
-          (tli-compact-scan-ir-all-syms-value! v syms out)]
-        [(ir.CompilerIrMaybeValue.No) unit])]
-    [(ir.CompilerIrInstr.Phi _ inputs _)
-      (for [i (iterator.range 0 (ir.compiler-ir-phi-input-seq-count inputs))]
-        (let
-          [inp : ir.CompilerIrPhiInput
-            (ir.compiler-ir-phi-input-seq-ref inputs i)]
-          (tli-compact-scan-ir-all-syms-value! (& inp.value) syms out)))]
-    [(ir.CompilerIrInstr.Pack _ vals _)
-      (for [i (iterator.range 0 (ir.compiler-ir-value-seq-count vals))]
-        (tli-compact-scan-ir-all-syms-value!
-          (ir.compiler-ir-value-seq-borrow vals i)
-          syms
-          out))]
-    [_ unit]))
+        out))
+    (ir.compiler-ir-instr-visit-uses
+      ins
+      tli-compact-scan-ir-all-syms-use!
+      syms
+      out)))
 
 (define (tli-compact-scan-program-syms
   [functions : (& ir.CompilerIrFunctionSeq)]
@@ -2792,7 +2587,7 @@
                     (for [ii
                       (iterator.range 0 (ir.compiler-ir-instr-seq-count iseq))]
                       (tli-compact-scan-ir-all-syms-instr!
-                        (ir.compiler-ir-instr-seq-borrow iseq ii)
+                        (ir.compiler-ir-instr-seq-ref iseq ii)
                         (&mut syms)
                         (&mut unused)))]))])]))
     (for [gi (iterator.range 0 globals.len)]
@@ -3060,6 +2855,21 @@
                                                   (array-ref
                                                     body.ir-body.extern-refs
                                                     ri).link-symbol))]
+                                            ;; A TypeLisp reference outside every
+                                            ;; catalogued module cannot be
+                                            ;; followed: keep the import closure.
+                                            (when
+                                              (and
+                                                (=
+                                                  (array-ref
+                                                    body.ir-body.extern-refs
+                                                    ri).abi
+                                                  0)
+                                                (not
+                                                  (str_map.contains?
+                                                    (& sym-to-mod)
+                                                    (string.copy (& next-s)))))
+                                              (set! expanded? false))
                                             (unless
                                               (str_map.contains?
                                                 (& seen)
@@ -3258,7 +3068,7 @@
                                   0
                                   (ir.compiler-ir-instr-seq-count iseq))]
                                 (tli-compact-scan-ir-instr!
-                                  (ir.compiler-ir-instr-seq-borrow iseq ii)
+                                  (ir.compiler-ir-instr-seq-ref iseq ii)
                                   (&mut init-fn-syms)
                                   (&mut init-fn-seen)
                                   (&mut ref-globals)))]))])]))

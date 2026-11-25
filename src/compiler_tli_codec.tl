@@ -1947,6 +1947,18 @@
         0)
       tag)))
 
+;; A `Char` is a Unicode scalar value: at most U+10FFFF and not a surrogate.
+(define (tli-read-char! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : i64
+  (let
+    [c : i64 (cursor.read-u32! (&mut rd.cursor))]
+    (when
+      (or (> c 1114111) (and (>= c 55296) (<= c 57343)))
+      (tli-fail!
+        rd
+        tli-error-tag
+        "TLI char literal is not a Unicode scalar value"))
+    c))
+
 (define (tli-read-bool! [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]) : bool
   (= (tli-read-tag! rd 1) 1))
 
@@ -2370,7 +2382,7 @@
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]
   [effect-flags : i64]
-  [compact-ir-len : i64]) : tli.TliFnSummary
+  [directory : (& directory TliDirectory)]) : tli.TliFnSummary
   (let
     [mask : i64 (cursor.read-u64! (&mut rd.cursor))]
     [extra : (__tl_dyn-array i64) (tli-read-arena-extras! rd)]
@@ -2399,15 +2411,11 @@
       (tli-fail! rd tli-error-tag "TLI return-alias index is negative"))
     (if has-body?
       (when
-        (or
-          (< compact-ir-len 12)
-          (< offset 12)
-          (<= length 0)
-          (not (cursor.range-present? compact-ir-len offset length)))
+        (not (tli-compact-body-range-present? directory offset length))
         (tli-fail!
           rd
           tli-error-offset
-          "TLI inline IR slice lies outside compact IR section"))
+          "TLI inline IR slice lies outside the compact body region"))
       (when
         (or (!= offset 0) (!= length 0) (not (tli-zero-digest? (& body-sha))))
         (tli-fail!
@@ -2429,7 +2437,7 @@
 (define (tli-read-fn-decl!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]
-  [compact-ir-len : i64]) : tli.TliFnDecl
+  [directory : (& directory TliDirectory)]) : tli.TliFnDecl
   (let
     [name : String (tli-read-name! rd pool)]
     [module-name : String (tli-read-name! rd pool)]
@@ -2462,12 +2470,12 @@
       extern-inputs
       params
       ret
-      (tli-read-summary-tail! rd pool effect-flags compact-ir-len))))
+      (tli-read-summary-tail! rd pool effect-flags directory))))
 
 (define (tli-read-fn-decls!
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]
-  [compact-ir-len : i64]) : (__tl_dyn-array tli.TliFnDecl)
+  [directory : (& directory TliDirectory)]) : (__tl_dyn-array tli.TliFnDecl)
   (let
     [count : i64
       (tli-read-count! rd 117 (comptime (size-of (type tli.TliFnDecl))))]
@@ -2475,7 +2483,7 @@
       (__tl_make-array tli.TliFnDecl count)]
     [index : i64 0]
     (while (and rd.cursor.ok? (< index count))
-      (set! (array-ref items index) (tli-read-fn-decl! rd pool compact-ir-len))
+      (set! (array-ref items index) (tli-read-fn-decl! rd pool directory))
       (when
         (> index 0)
         (let
@@ -2747,6 +2755,10 @@
   (content-sha256 (Array u8 32))
   (compact-ir-offset i64)
   (compact-ir-len i64)
+  ;; Section-relative start of the first compact body: just past the compact
+  ;; globals and the body count, which the directory decode reads in place.
+  (compact-bodies-start i64)
+  (compact-body-count i64)
   (entries (__tl_dyn-array tli.TliDirectoryEntry))
   (pool TliPool)
   (bytes (__tl_dyn-array u8))
@@ -3103,6 +3115,13 @@
                 (if has-compact?
                   ir-start
                   length)]
+              [prefix : TliCompactPrefix
+                (tli-read-compact-prefix!
+                  (&mut rd)
+                  (& pool)
+                  has-compact?
+                  ir-start
+                  ir-size)]
               (set! rd.cursor.offset dir-start)
               (set! rd.cursor.end record-start)
               (let
@@ -3123,11 +3142,47 @@
                       digest
                       ir-start
                       ir-size
+                      prefix.bodies-start
+                      prefix.body-count
                       entries
                       pool
                       rd.cursor.bytes
                       rd.owned-bytes))
                   (TliDirectoryResult.Err (tli-read-error (& rd) 0)))))))))))
+
+(defstruct TliCompactPrefix
+  (bodies-start i64)
+  (body-count i64))
+
+;; Reads the compact globals and body count in place from the whole-file
+;; cursor, fixing where the body region starts. With no bodies the prefix is
+;; the whole section.
+(define (tli-read-compact-prefix!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]
+  [has-compact? : bool]
+  [ir-start : i64]
+  [ir-size : i64]) : TliCompactPrefix
+  (if (not has-compact?)
+    (TliCompactPrefix 0 0)
+    (begin
+      (set! rd.cursor.offset ir-start)
+      (set! rd.cursor.end (+ ir-start ir-size))
+      (tli-read-compact-globals! rd pool)
+      (let
+        [body-count : i64 (cursor.read-u32! (&mut rd.cursor))]
+        [bodies-start : i64 (- rd.cursor.offset ir-start)]
+        (when
+          (and
+            rd.cursor.ok?
+            (if (= body-count 0)
+              (!= bodies-start ir-size)
+              (>= bodies-start ir-size)))
+          (tli-fail!
+            rd
+            tli-error-offset
+            "TLI compact body count disagrees with the compact IR section length"))
+        (TliCompactPrefix bodies-start body-count)))))
 
 (define (tli-decode-directory [bytes : (& bytes (__tl_dyn-array u8))]) : TliDirectoryResult
   (tli-decode-directory-inner bytes true))
@@ -3176,7 +3231,7 @@
   [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
   [pool : (& pool TliPool)]
   [entry : (& entry tli.TliDirectoryEntry)]
-  [compact-ir-len : i64]) : tli.TliModuleRecord
+  [directory : (& directory TliDirectory)]) : tli.TliModuleRecord
   (let
     [name : String (tli-read-name! rd pool)]
     [source : String (tli-read-name! rd pool)]
@@ -3198,7 +3253,7 @@
       (tli-read-imports! rd pool)
       (tli-read-names! rd pool)
       (tli-read-type-decls! rd pool)
-      (tli-read-fn-decls! rd pool compact-ir-len)
+      (tli-read-fn-decls! rd pool directory)
       (tli-read-value-decls! rd pool)
       (tli-read-macro-handles! rd pool)
       (tli-read-dispatches! rd pool))))
@@ -3262,11 +3317,7 @@
                   tli-max-owned-bytes
                   tli-max-string-bytes)]
               [record : tli.TliModuleRecord
-                (tli-read-record!
-                  (&mut rd)
-                  (& directory.pool)
-                  entry
-                  directory.compact-ir-len)]
+                (tli-read-record! (&mut rd) (& directory.pool) entry directory)]
               (tli-check-end! (&mut rd))
               (if rd.cursor.ok?
                 (TliBudgetedModuleResult.Ok record rd.owned-bytes)
@@ -3290,7 +3341,7 @@
       [4 (tli.TliCompactValue.I64 (cursor.read-u64! (&mut rd.cursor)))]
       [5 (tli.TliCompactValue.F64Bits (cursor.read-u64! (&mut rd.cursor)))]
       [6 (tli.TliCompactValue.Bool (tli-read-bool! rd))]
-      [7 (tli.TliCompactValue.Char (cursor.read-u32! (&mut rd.cursor)))]
+      [7 (tli.TliCompactValue.Char (tli-read-char! rd))]
       [8 (tli.TliCompactValue.String (tli-read-name! rd pool))]
       [9 (tli.TliCompactValue.Bytes (tli-read-blob! rd))]
       [10 (tli.TliCompactValue.Unit)]
@@ -3626,7 +3677,7 @@
     (while (and rd.cursor.ok? (< i count))
       (let
         [sym : String (tli-read-name! rd pool)]
-        [abi : i64 (tli-read-tag! rd 3)]
+        [abi : i64 (tli-read-tag! rd 2)]
         [link : String (tli-read-name! rd pool)]
         [ty : tli.TliType (tli-read-type! rd pool false 1)]
         [rs : tli.TliCompactReturnStorage
@@ -3730,7 +3781,7 @@
         (tli.TliSpmdLiteral.Int n text))]
     [1 (tli.TliSpmdLiteral.Float (tli-read-name! rd pool))]
     [2 (tli.TliSpmdLiteral.Bool (tli-read-bool! rd))]
-    [3 (tli.TliSpmdLiteral.Char (cursor.read-u32! (&mut rd.cursor)))]
+    [3 (tli.TliSpmdLiteral.Char (tli-read-char! rd))]
     [4 (tli.TliSpmdLiteral.String (tli-read-name! rd pool))]
     [5 (tli.TliSpmdLiteral.Unit)]
     [_ (tli.TliSpmdLiteral.Unit)]))
@@ -3928,6 +3979,41 @@
         "TLI compact global initializer must be literal"))
     (tli.TliCompactGlobal sym ty flags init)))
 
+;; The compact IR section prefix: `section_flags`, the sorted compact globals
+;; and the body count. Leaves the cursor at the first body.
+(define (tli-read-compact-globals!
+  [rd : (&mut rd binary.CompilerIncrementalBinaryReader)]
+  [pool : (& pool TliPool)]) : (__tl_dyn-array tli.TliCompactGlobal)
+  (let
+    [_sec-flags : i64 (tli-read-flags! rd 0)]
+    [gcount : i64
+      (tli-read-count! rd 7 (comptime (size-of (type tli.TliCompactGlobal))))]
+    [items : (__tl_dyn-array tli.TliCompactGlobal)
+      (__tl_make-array tli.TliCompactGlobal gcount)]
+    [i : i64 0]
+    (while (and rd.cursor.ok? (< i gcount))
+      (set! (array-ref items i) (tli-read-compact-global! rd pool))
+      (when
+        (> i 0)
+        (let
+          [prev (& (array-ref items (- i 1)))]
+          [cur (& (array-ref items i))]
+          (tli-check-order! rd (& prev.symbol) 0 "" (& cur.symbol) 0 "")))
+      (+= i 1))
+    items))
+
+;; A body slice must lie in the body region, past the globals and body count.
+(define (tli-compact-body-range-present?
+  [directory : (& directory TliDirectory)]
+  [rel-offset : i64]
+  [length : i64]) : bool
+  (and
+    (!= (bit-and directory.flags tli.tli-has-compact-ir) 0)
+    (>= rel-offset directory.compact-bodies-start)
+    (> length 0)
+    (cursor.range-present? directory.compact-ir-len rel-offset length)))
+
+;; Copies only the globals prefix of the section, never the body region.
 (define (tli-decode-compact-globals [directory : (& directory TliDirectory)]) : TliCompactGlobalsResult
   (when
     (= (bit-and directory.flags tli.tli-has-compact-ir) 0)
@@ -3935,18 +4021,15 @@
       (TliCompactGlobalsResult.Ok (__tl_make-array tli.TliCompactGlobal 0))))
   (let
     [start : i64 directory.compact-ir-offset]
-    [length : i64 directory.compact-ir-len]
+    [length : i64 directory.compact-bodies-start]
     (when
-      (or
-        (< length 12)
-        (not
-          (cursor.range-present? (array-length directory.bytes) start length)))
+      (> length (- tli-max-owned-bytes directory.owned-bytes))
       (return
         (TliCompactGlobalsResult.Err
           (tli.TliDecodeFailure
-            (tli.TliDecodeError.OffsetOutOfRange)
+            (tli.TliDecodeError.Limit)
             start
-            "TLI compact IR section is out of range"))))
+            "TLI owned-byte limit exceeded"))))
     (let
       [sec-bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
       (for [i (iterator.range 0 length)]
@@ -3955,37 +4038,13 @@
         [rd : binary.CompilerIncrementalBinaryReader
           (binary.CompilerIncrementalBinaryReader
             (cursor.new sec-bytes tli-max-work)
-            directory.owned-bytes
+            (+ directory.owned-bytes length)
             tli-max-owned-bytes
             tli-max-string-bytes)]
-        [_sec-flags : i64 (tli-read-flags! (&mut rd) 0)]
-        [gcount : i64
-          (tli-read-count!
-            (&mut rd)
-            7
-            (comptime (size-of (type tli.TliCompactGlobal))))]
         [items : (__tl_dyn-array tli.TliCompactGlobal)
-          (__tl_make-array tli.TliCompactGlobal gcount)]
-        [i : i64 0]
-        (while (and rd.cursor.ok? (< i gcount))
-          (set!
-            (array-ref items i)
-            (tli-read-compact-global! (&mut rd) (& directory.pool)))
-          (when
-            (> i 0)
-            (let
-              [prev (& (array-ref items (- i 1)))]
-              [cur (& (array-ref items i))]
-              (tli-check-order!
-                (&mut rd)
-                (& prev.symbol)
-                0
-                ""
-                (& cur.symbol)
-                0
-                "")))
-          (+= i 1))
+          (tli-read-compact-globals! (&mut rd) (& directory.pool))]
         (cursor.read-u32! (&mut rd.cursor))
+        (tli-check-end! (&mut rd))
         (if rd.cursor.ok?
           (TliCompactGlobalsResult.Ok items)
           (TliCompactGlobalsResult.Err (tli-read-error (& rd) start)))))))
@@ -3996,11 +4055,7 @@
   [length : i64]
   [expected-sha : (& (Array u8 32))]) : TliCompactBodyHeaderResult
   (when
-    (or
-      (= (bit-and directory.flags tli.tli-has-compact-ir) 0)
-      (< rel-offset 12)
-      (<= length 0)
-      (not (cursor.range-present? directory.compact-ir-len rel-offset length)))
+    (not (tli-compact-body-range-present? directory rel-offset length))
     (return
       (TliCompactBodyHeaderResult.Err
         (tli.TliDecodeFailure
@@ -4058,11 +4113,7 @@
   [length : i64]
   [expected-sha : (& (Array u8 32))]) : TliCompactBodyResult
   (when
-    (or
-      (= (bit-and directory.flags tli.tli-has-compact-ir) 0)
-      (< rel-offset 12)
-      (<= length 0)
-      (not (cursor.range-present? directory.compact-ir-len rel-offset length)))
+    (not (tli-compact-body-range-present? directory rel-offset length))
     (return
       (TliCompactBodyResult.Err
         (tli.TliDecodeFailure
@@ -4081,6 +4132,14 @@
             (tli.TliDecodeError.DigestMismatch)
             abs-start
             "TLI compact body SHA-256 mismatch"))))
+    (when
+      (> length (- tli-max-owned-bytes directory.owned-bytes))
+      (return
+        (TliCompactBodyResult.Err
+          (tli.TliDecodeFailure
+            (tli.TliDecodeError.Limit)
+            abs-start
+            "TLI owned-byte limit exceeded"))))
     (let
       [body-bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
       (for [i (iterator.range 0 length)]
@@ -4174,6 +4233,16 @@
             [cbodies : (__tl_dyn-array tli.TliCompactBodyEntry)
               (__tl_make-array tli.TliCompactBodyEntry body-total)]
             [bpos : i64 0]
+            ;; Body slices as (name = offset, index = length) order keys.
+            [spans : keys.Vec (keys.with-capacity body-total)]
+            (when
+              (!= body-total directory.compact-body-count)
+              (return
+                (TliBundleResult.Err
+                  (tli.TliDecodeFailure
+                    (tli.TliDecodeError.OffsetOutOfRange)
+                    directory.compact-ir-offset
+                    "TLI compact body count disagrees with function summaries"))))
             (for [mi (iterator.range 0 count)]
               (let
                 [mod (& (array-ref modules mi))]
@@ -4187,6 +4256,13 @@
                       (!= (bit-and ef tli.tli-fn-spmd-inlineable) 0)]
                     (when
                       (or want-ir? want-spmd?)
+                      (keys.push-ref!
+                        (&mut spans)
+                        (TliOrderKey
+                          f.summary.inline-ir-offset
+                          0
+                          0
+                          f.summary.inline-ir-len))
                       (match (tli-decode-compact-body-at
                         (& directory)
                         f.summary.inline-ir-offset
@@ -4226,6 +4302,31 @@
                                 (string.copy (& f.link-symbol))
                                 body))
                             (+= bpos 1))]))))))
+            ;; The bodies tile the body region exactly: no gap, overlap or tail.
+            (key_sort.sort! (&mut spans) tli-key-less?)
+            (let
+              [slots (keys.slots (& spans))]
+              [next : i64 directory.compact-bodies-start]
+              (for [k (iterator.range 0 body-total)]
+                (let
+                  [span : TliOrderKey (array-ref slots k)]
+                  (when
+                    (!= span.name next)
+                    (return
+                      (TliBundleResult.Err
+                        (tli.TliDecodeFailure
+                          (tli.TliDecodeError.Overlap)
+                          (+ directory.compact-ir-offset span.name)
+                          "TLI compact bodies do not tile the body region"))))
+                  (set! next (+ span.name span.index))))
+              (when
+                (!= next directory.compact-ir-len)
+                (return
+                  (TliBundleResult.Err
+                    (tli.TliDecodeFailure
+                      (tli.TliDecodeError.TrailingBytes)
+                      (+ directory.compact-ir-offset next)
+                      "TLI compact IR section has bytes past its last body")))))
             (TliBundleResult.Ok
               (tli.TliBundle
                 directory.flags

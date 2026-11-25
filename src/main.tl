@@ -122,7 +122,7 @@ Run `typelisp <command> --help` for command-specific usage.
 (define (cli-build-help-text) : String
   "Usage:
     typelisp build <file.tl> [-o <exe>] [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...]
-    typelisp build [--deps-only] [--manifest-path <typelisp.pkg>] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...]
+    typelisp build [--manifest-path <typelisp.pkg>] [--deps-only] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2|s>|-Os] [--stdlib-root <dir>...] [--cfg <name>...]
 
 Summary:
     Build a source file or package artifact.

@@ -126,25 +126,6 @@
       bound-4
       module-id)))
 
-(define (compiler-load-decl-list-has-extern-symbol?
-  [decls : ast.AstDeclList]
-  [want : String]) : bool
-  (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
-    (for [index (iterator.range 0 count)]
-      (let
-        [decl : ast.AstDecl
-          (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-        (match decl
-          [(Extern _ _ _ metadata _)
-            (when
-              (string.eq
-                (ast.ast-extern-metadata-symbol (& (deref metadata)))
-                (string.copy want))
-              (return true))]
-          [_ unit])))
-    false))
-
 (define (compiler-load-surface-summary-requires-eager?
   [summary : (& summary load.CompilerLoadSurfaceSummary)]) : bool
   (or
@@ -449,6 +430,32 @@
     (& manifest-dir)
     (& deps)
     (parser.compiler-cfg-empty)))
+
+(define (compiler-load-package-file-with-paths-and-roots-force-source
+  [path : String]
+  [seen : sym_i64_env.SymI64Env]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : load.CompilerPkgDeps]) : load.ResultCompilerLoadWithPaths
+  (let
+    [prev : bool
+      (load.compiler-load-session-state-dependency-tlci-force-source?
+        (& (load.compiler-load-serial-test-session-state)))]
+    (load.compiler-load-session-state-set-dependency-tlci-force-source!
+      (load.compiler-load-serial-test-session-state)
+      true)
+    (let
+      [result : load.ResultCompilerLoadWithPaths
+        (compiler-load-package-file-with-paths-and-roots
+          path
+          seen
+          stdlib-roots
+          manifest-dir
+          deps)]
+      (load.compiler-load-session-state-set-dependency-tlci-force-source!
+        (load.compiler-load-serial-test-session-state)
+        prev)
+      result)))
 
 (define (compiler-load-decl-list-count [decls : (& decls ast.AstDeclList)]) : i64
   (ast.ast-decl-list-len decls))
@@ -2674,7 +2681,7 @@
       "(module pkg.moduleless.entry)
 (import math.src.add)
 (define (main) : i64 0)")
-    (match (compiler-load-package-file-with-paths-and-roots
+    (match (compiler-load-package-file-with-paths-and-roots-force-source
       entry
       (sym_i64_env.sym-i64-empty)
       (svec.new)
@@ -2682,9 +2689,9 @@
       deps)
       [(Ok decls _ _ seen)
         (and
-          (compiler-load-decl-list-has-extern-symbol?
-            decls
-            "_tl_math_src_add_add")
+          (load.compiler-load-decl-list-has-module-id?
+            (& decls)
+            (load.compiler-load-parse-context-name-id "math.src.add"))
           (compiler-load-test-seen-contains? seen "math.src.add")
           (not (compiler-load-test-seen-contains? seen dep)))]
       [(Err _) false])))
@@ -2726,7 +2733,7 @@
       "(module pkg.dotted.explicit.entry)
 (import math.src.add as math_add)
 (define (main) : i64 (math_add.add 1))")
-    (match (compiler-load-package-file-with-paths-and-roots
+    (match (compiler-load-package-file-with-paths-and-roots-force-source
       entry
       (sym_i64_env.sym-i64-empty)
       (svec.new)
@@ -4284,7 +4291,7 @@
         "spmd_fixture"
         "_tl_spmd_fixture_helper"
         0
-        0
+        2
         ""
         false
         0

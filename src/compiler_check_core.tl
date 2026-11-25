@@ -421,10 +421,15 @@
   (let
     [load-state : compiler_load.CompilerLoadSessionState
       (compiler_load.compiler-load-serial-test-session-state)]
-    (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
-      (owned_view.compiler-owned-shared-view load-state)
-      (string.copy manifest-dir)
-      (compiler_load.clone-compiler-pkg-deps deps))
+    [overlay-active : bool
+      (compiler_load.compiler-load-session-state-source-provider-active?
+        (& load-state))]
+    (unless
+      overlay-active
+      (compiler_dependency_tlci.compiler-dependency-tlci-prepare-deps!
+        (owned_view.compiler-owned-shared-view load-state)
+        (string.copy manifest-dir)
+        (compiler_load.clone-compiler-pkg-deps deps)))
     (match (tli_cli.tli-open-catalog-for-session!
       (& load-state)
       entry-path
@@ -435,20 +440,32 @@
       false)
       [(Err tli-msg) (Err tli-msg)]
       [(Ok)
-        (if (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)
-          (tli_cli.ResultTliCatalogOpen.Ok)
-          (tli_cli.tli-open-transitive-package-deps-for-session!
-            (& load-state)
-            manifest-dir
-            deps
-            target
-            cfgs
-            false))])))
+        (if overlay-active
+          (begin
+            (compiler_load.compiler-load-session-state-set-dependency-tlci-force-source!
+              load-state
+              true)
+            (tli_cli.tli-check-overlay-package-dep-tlci! manifest-dir deps))
+          (if (compiler_dependency_tlci.compiler-dependency-tlci-force-source?)
+            (tli_cli.ResultTliCatalogOpen.Ok)
+            (tli_cli.tli-open-transitive-package-deps-for-session!
+              (& load-state)
+              manifest-dir
+              deps
+              target
+              cfgs
+              false)))])))
 
 (define (compiler-check-package-finish-tli-and-deps!) : unit
   (let
     [load-state : compiler_load.CompilerLoadSessionState
       (compiler_load.compiler-load-serial-test-session-state)]
+    (when
+      (compiler_load.compiler-load-session-state-source-provider-active?
+        (& load-state))
+      (compiler_load.compiler-load-session-state-set-dependency-tlci-force-source!
+        (compiler_load.compiler-load-serial-test-session-state)
+        false))
     (cfg
       dependency-tlci-verification
       (compiler_dependency_tlci.compiler-dependency-tlci-verification-record!

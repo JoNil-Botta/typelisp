@@ -761,6 +761,86 @@
       require-archive
       (&mut visited))))
 
+(define (tli-check-overlay-dep-tlci-walk!
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]
+  [visited : (&mut svec.Vec)]) : ResultTliCatalogOpen
+  (let
+    [count : i64 (compiler_load.compiler-pkg-dep-list-count (& deps.ordered))]
+    (for [i (iterator.range 0 count)]
+      (let
+        [dep : compiler_load.CompilerPkgDep
+          (compiler_load.compiler-pkg-dep-list-at (& deps.ordered) i)]
+        [dep-dir : String
+          (compiler_load.compiler-load-normalize-path
+            (if (compiler_load.compiler-load-absolute-path? (& dep.path))
+              (string.copy (& dep.path))
+              (compiler_load.compiler-load-join-root-path
+                (string.copy manifest-dir)
+                (string.copy (& dep.path)))))]
+        [canonical : String
+          (compiler_load.compiler-load-canonical-path (& dep-dir))]
+        (unless
+          (tli-svec-contains? visited (& canonical))
+          (svec.push-ref! visited (string.copy (& canonical)))
+          (let
+            [mpath : String
+              (compiler_load.compiler-load-join-root-path
+                (string.copy (& dep-dir))
+                "typelisp.pkg")]
+            (match (compiler_load.compiler-load-session-try-read-input-text
+              (& mpath))
+              [(ErrIoString _) unit]
+              [(OkIoString text)
+                (match (compiler_load.compiler-load-parse-manifest-diagnostic-infer-kind
+                  (string.copy (& mpath))
+                  (& text))
+                  [(Err _) unit]
+                  [(Ok manifest)
+                    (match (tli-check-overlay-dep-tlci-walk!
+                      (& dep-dir)
+                      (& manifest.deps)
+                      visited)
+                      [(Err msg) (return (ResultTliCatalogOpen.Err msg))]
+                      [(Ok)
+                        (let
+                          [tlci-path : String
+                            (compiler_load.compiler-load-package-tlci-path
+                              (string.copy (& dep-dir))
+                              (string.copy (& manifest.name)))]
+                          (when
+                            (io.file-exists? (string.copy (& tlci-path)))
+                            (match (compiler_load.compiler-load-session-try-read-input-text
+                              (& tlci-path))
+                              [(ErrIoString error)
+                                (return
+                                  (ResultTliCatalogOpen.Err
+                                    (str_cat.str-cat
+                                      "compiler-load: cannot read dependency tlci '"
+                                      tlci-path
+                                      "': "
+                                      (io.error-message error))))]
+                              [(OkIoString contents)
+                                (match (tlci.tlci-parse-image
+                                  (& (tlci.tlci-string->bytes (& contents))))
+                                  [(Err message)
+                                    (return
+                                      (ResultTliCatalogOpen.Err
+                                        (str_cat.str-cat
+                                          "compiler-load: invalid dependency tlci '"
+                                          tlci-path
+                                          "': "
+                                          message)))]
+                                  [(Ok _) unit])])))])])])))))
+    ResultTliCatalogOpen.Ok))
+
+(define (tli-check-overlay-package-dep-tlci!
+  [manifest-dir : (& str)]
+  [deps : (& compiler_load.CompilerPkgDeps)]) : ResultTliCatalogOpen
+  (let
+    [visited : svec.Vec (svec.new)]
+    (tli-check-overlay-dep-tlci-walk! manifest-dir deps (&mut visited))))
+
 (define (tli-sysroot-target-dir [root : (& str)] [target : (& str)]) : String
   (let
     [lib : String (fs.path-join root "lib")]

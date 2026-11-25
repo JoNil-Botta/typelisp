@@ -262,22 +262,23 @@
                                       (fs.WindowsNtCreateFailed))]
                                   [root-close-ok : bool
                                     (fixture-close root-handle)]
-                                  (if (not
-                                    (and
-                                      (fs.windows-nt-create-reparse-point?
-                                        reparse-result)
-                                      root-close-ok))
-                                    11
-                                    (if (not
-                                      (fixture-read-open-shares-delete?
-                                        (& shared)))
-                                      13
-                                      (if (fixture-cleanup
+                                  (cond
+                                    [(not
+                                        (and
+                                          (fs.windows-nt-create-reparse-point?
+                                            reparse-result)
+                                          root-close-ok))
+                                      11]
+                                    [(not
+                                        (fixture-read-open-shares-delete?
+                                          (& shared)))
+                                      13]
+                                    [(fixture-cleanup
                                         created
                                         sentinel
                                         junction
                                         root
                                         outside
                                         base)
-                                        42
-                                        12))))))))))))))))])))
+                                      42]
+                                    [else 12]))))))))))))))])))

@@ -178,6 +178,7 @@ _pid_build=$!
             --opt-level 1 \
             --stdlib-root stdlib \
             --stdlib-root src \
+            --no-prebuilt-stdlib \
             >"$REF_STDOUT" 2>"$REF_STDERR" &
         _aux_child=$!
         wait "$_aux_child" || ref_status=$?
@@ -253,6 +254,7 @@ _pid_opt2=$!
     --opt-level 1 \
     --stdlib-root stdlib \
     --stdlib-root src \
+    --no-prebuilt-stdlib \
     >"$CROSS_STDOUT" 2>"$CROSS_STDERR" &
 _pid_opt1=$!
 ACTIVE_BG_PIDS="$_pid_opt2 $_pid_opt1"

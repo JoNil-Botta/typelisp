@@ -417,7 +417,7 @@ cica_flags() {
           [$cfg[]|"--cfg",.] + ["--stdlib-root","{root}/src","--opt-level","2","--no-prebuilt-stdlib"])
       else
         (($producer.ext//"")==$ext) and ($a[3]|test("^\\{root\\}/target/build-invariance/batches/opt2-built/opt1/chunks/entries[.][0-9]+[.]txt$")) and
-        $a==([$a[0],"compile","--batch",$a[3],"--target","linux-x86_64"] + [$cfg[]|"--cfg",.] + ["--backend-mode","scalar","--opt-level","1","--stdlib-root","stdlib","--stdlib-root","src"])
+        $a==([$a[0],"compile","--batch",$a[3],"--target","linux-x86_64"] + [$cfg[]|"--cfg",.] + ["--backend-mode","scalar","--opt-level","1","--stdlib-root","stdlib","--stdlib-root","src","--no-prebuilt-stdlib"])
       end' "$2" >/dev/null || cica_fail 'invocation flags substituted'
 }
 cica_key_json() (

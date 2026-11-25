@@ -254,12 +254,15 @@ if command -v cygpath >/dev/null 2>&1; then
 fi
 
 echo "[windows-native-link] build --direct direct-object without assembler"
+# Prebuilt-stdlib programs intentionally fall back to assembly (they call into
+# the sysroot archive), so the direct-object contract is checked with
+# --no-prebuilt-stdlib.
 set +e
 TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
     TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler_fallback__.exe \
     "$COMPILER" build \
     --direct "$SRC" --target windows-x86_64 -o "$NOASM_BIN" \
-    --stdlib-root "$ROOT/stdlib" \
+    --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/build-direct-object.stdout" 2> "$WORKDIR/build-direct-object.stderr"
 noasm_build_status=$?
 set -e
@@ -297,7 +300,7 @@ set +e
 TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
     TYPELISP_WINDOWS_CLANG=__typelisp_expected_assembler_fallback__.exe \
     "$COMPILER" build --direct "$FALLBACK_SOURCE" --target windows-x86_64 \
-    -o "$FALLBACK_SOURCE_BIN" --stdlib-root "$ROOT/stdlib" \
+    -o "$FALLBACK_SOURCE_BIN" --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/build-source-fallback-probe.stdout" \
     2> "$WORKDIR/build-source-fallback-probe.stderr"
 fallback_source_probe_status=$?
@@ -310,7 +313,7 @@ assert_contains "$WORKDIR/build-source-fallback-probe.stderr" \
 
 if ! TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
     "$COMPILER" build --direct "$FALLBACK_SOURCE" --target windows-x86_64 \
-    -o "$FALLBACK_SOURCE_BIN" --stdlib-root "$ROOT/stdlib" \
+    -o "$FALLBACK_SOURCE_BIN" --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/build-source-fallback.stdout" \
     2> "$WORKDIR/build-source-fallback.stderr"; then
     sed 's/^/  /' "$WORKDIR/build-source-fallback.stdout" >&2 || true
@@ -353,6 +356,7 @@ set +e
 TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_package_assembler_fallback__.exe \
     "$COMPILER" build --manifest-path "$PACKAGE_DIR/typelisp.pkg" \
     --target windows-x86_64 --opt-level 0 --stdlib-root "$ROOT/stdlib" \
+    --no-prebuilt-stdlib \
     > "$WORKDIR/build-package-direct-object.stdout" \
     2> "$WORKDIR/build-package-direct-object.stderr"
 package_build_status=$?
@@ -413,7 +417,7 @@ echo "[windows-native-link] package unsupported semantics use assembler fallback
 set +e
 TYPELISP_WINDOWS_CLANG=__typelisp_expected_package_assembler_fallback__.exe \
     "$COMPILER" build --manifest-path "$FALLBACK_PACKAGE_DIR/typelisp.pkg" \
-    --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    --target windows-x86_64 --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/build-package-fallback-probe.stdout" \
     2> "$WORKDIR/build-package-fallback-probe.stderr"
 fallback_probe_status=$?
@@ -424,7 +428,7 @@ fi
 assert_contains "$WORKDIR/build-package-fallback-probe.stderr" \
     "__typelisp_expected_package_assembler_fallback__.exe"
 if ! "$COMPILER" build --manifest-path "$FALLBACK_PACKAGE_DIR/typelisp.pkg" \
-    --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    --target windows-x86_64 --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/build-package-fallback.stdout" \
     2> "$WORKDIR/build-package-fallback.stderr"; then
     sed 's/^/  /' "$WORKDIR/build-package-fallback.stdout" >&2 || true
@@ -451,6 +455,7 @@ TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
     TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler_fallback__.exe \
     "$COMPILER" run \
     --direct "$SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    --no-prebuilt-stdlib \
     > "$WORKDIR/run-direct-object.stdout" 2> "$WORKDIR/run-direct-object.stderr"
 noasm_run_status=$?
 set -e
@@ -471,7 +476,8 @@ echo "[windows-native-link] test unsupported semantics use assembler fallback"
 set +e
 TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
     TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler_fallback__.exe \
-    "$COMPILER" test "$TEST_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    "$COMPILER" test "$TEST_SRC" --target windows-x86_64 \
+    --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/test-fallback-probe.stdout" 2> "$WORKDIR/test-fallback-probe.stderr"
 test_fallback_probe_status=$?
 set -e
@@ -482,7 +488,8 @@ assert_empty "$WORKDIR/test-fallback-probe.stdout"
 assert_contains "$WORKDIR/test-fallback-probe.stderr" "failed to run assembler"
 
 if ! TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
-    "$COMPILER" test "$TEST_SRC" --target windows-x86_64 --stdlib-root "$ROOT/stdlib" \
+    "$COMPILER" test "$TEST_SRC" --target windows-x86_64 \
+    --stdlib-root "$ROOT/stdlib" --no-prebuilt-stdlib \
     > "$WORKDIR/test-fallback.stdout" 2> "$WORKDIR/test-fallback.stderr"; then
     sed 's/^/  /' "$WORKDIR/test-fallback.stdout" >&2 || true
     sed 's/^/  /' "$WORKDIR/test-fallback.stderr" >&2 || true

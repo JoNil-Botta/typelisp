@@ -50,7 +50,8 @@ end-file
 
 case aes-production-shape
 source {{work}}/aes_audit.tl
-args --stdlib-root {{root}}/stdlib
+# Inspect emitted stdlib AES/GCM bodies at every opt level, not archive calls.
+args --stdlib-root {{root}}/stdlib --no-prebuilt-stdlib
 target linux-x86_64 windows-x86_64
 opt 1 2
 assemble
@@ -117,7 +118,8 @@ not-match (S[Bb][Oo][Xx].*[Tt]able|[Tt]-[Tt]able)
 # structural constant-time, wipe and verify-before-decrypt contract.
 case gcm-production-shape
 source tests/fixtures/crypto-gcm/audit.tl
-args --stdlib-root {{root}}/stdlib
+# Inspect emitted stdlib AES/GCM bodies at every opt level, not archive calls.
+args --stdlib-root {{root}}/stdlib --no-prebuilt-stdlib
 target linux-x86_64 windows-x86_64
 opt 1 2
 assemble

@@ -1486,6 +1486,9 @@
       (set! compiler-driver-last-hydrated-archive-paths-state archives)
       (set! compiler-driver-last-hydrated-startup-symbols-state startup))
     (begin
+      ;; A batch reuses one backend state, so a source-stdlib entry must not
+      ;; inherit the archive runtime of a prebuilt-stdlib entry before it.
+      (be_state.compiler-backend-state-set-archive-runtime! backend-state false)
       (be_state.compiler-backend-state-set-startup-init-symbols!
         backend-state
         (__tl_make-array String 0))
@@ -4652,29 +4655,46 @@
       (owned_view.compiler-owned-shared-view state.parser-state)]
     [parse-cfgs : sym_i64_env.SymI64Env
       (compiler_parse_core.compiler-parse-state-cfgs (& parser-state) cfgs)]
-    (match (compiler-driver-open-tli-catalog-for-session!
-      (& state.load-session)
-      (& input-path)
-      (compiler-driver-target-cfg-from-backend target)
-      (& stdlib-roots)
-      cfgs
-      opt-level
-      true)
+    ;; The sysroot archive is compiled for the executable code model (non-PIC),
+    ;; so shared-object compiles stay on source stdlib.
+    (match (if (be_state.compiler-backend-state-shared-object-code-model?
+      (compiler-driver-state-backend (& state)))
+      (begin
+        (compiler-driver-clear-last-hydrated-archive-path!)
+        (compiler_load.compiler-load-session-state-tli-release!
+          (& state.load-session))
+        tli_cli.ResultTliCatalogOpen.Ok)
+      (compiler-driver-open-tli-catalog-for-session!
+        (& state.load-session)
+        (& input-path)
+        (compiler-driver-target-cfg-from-backend target)
+        (& stdlib-roots)
+        cfgs
+        opt-level
+        true))
       [(Err tli-msg)
-        (when
-          route-source-allocations?
-          (let
-            [return-arena : i64 compiler-driver-pending-frontend-return-arena]
+        (let
+          [return-arena : i64 compiler-driver-pending-frontend-return-arena]
+          (when
+            route-source-allocations?
             (set! compiler-driver-pending-frontend-return-arena 0)
             (unsafe
-              (arena.tl_arena_set return-arena)
-              (arena.tl_arena_destroy frontend-arena))))
-        (Err
-          (box
-            (compiler_diagnostic.compiler-diagnostic-at-start
-              input-path
-              tli-msg))
-          (compiler-driver-state-advisories state))]
+              (arena.tl_arena_set return-arena)))
+          ;; The message was built in the frontend arena: copy it into the
+          ;; caller's arena before that arena is destroyed.
+          (let
+            [failed : ResultCompilerDriverLowered
+              (Err
+                (box
+                  (compiler_diagnostic.compiler-diagnostic-at-start
+                    input-path
+                    (string.copy (& tli-msg))))
+                (compiler-driver-state-advisories state))]
+            (when
+              route-source-allocations?
+              (unsafe
+                (arena.tl_arena_destroy frontend-arena)))
+            failed))]
       [(Ok)
         (match (compiler-driver-load-file-with-runtime-with-state-pools-and-surface
           (owned_view.compiler-owned-shared-view state.load-session)

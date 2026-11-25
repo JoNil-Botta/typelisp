@@ -827,9 +827,12 @@ ROWS
     printf '%s|%s\n%s|%s\n' \
         "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$NORMAL_BATCH_ARITH")" \
         "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$NORMAL_BATCH_FUNCTIONS")" > "$NORMAL_BATCH_LIST"
+    # $PROFILE_BIN lives in $WORKDIR without a sibling sysroot while $COMPILER may
+    # carry one; disable prebuilt stdlib here so the assembly parity check below
+    # compares identical compilation paths.
     run_logged "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR" "normal batch fixture failed" \
         "$COMPILER" compile --batch "$NORMAL_BATCH_LIST" --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) --stdlib-root stdlib
+        $(native_target_cfg_args) --stdlib-root stdlib --no-prebuilt-stdlib
     profile_rows "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR" <<'ROWS'
 lacks compile-batch-profile
 ROWS

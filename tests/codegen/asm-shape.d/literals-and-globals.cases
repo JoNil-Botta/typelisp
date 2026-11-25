@@ -64,8 +64,11 @@ contains _tl_static_scalar_array_globals_twin:
 contains _tl_static_scalar_array_globals_wide:
 
 # Export body names must not turn the raw runtime atomic intrinsics into calls.
+# The runtime atomic wrappers are emitted into the program assembly only with
+# source stdlib; prebuilt stdlib leaves them in libstdlib.a.
 case runtime-atomic-export-intrinsics
 source tests/integration/runtime_atomic_raw_pointer.tl
+args --no-prebuilt-stdlib
 target linux-x86_64 windows-x86_64
 opt 0 1 2
 in asm

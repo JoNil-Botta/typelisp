@@ -318,7 +318,7 @@ Summary:
 Options:
     -o <file>                      Output assembly or IR file
     --batch <file>                 Read input|output pairs and compile them in one process
-    --windows-coff-plan <file>     Read input|object|assembly[|force-assembly] rows and write source|kind|path|reason results
+    --windows-coff-plan <file>     Read input|object|assembly[|force-assembly] rows and write source|kind|path|reason|archive results
     --prefix-cache-stats           Print typecheck prefix-cache stats for a batch
     --emit-ir                      Emit intermediate representation
     --dump-ir [after-<pass>]       Emit textual IR, optionally after a pass

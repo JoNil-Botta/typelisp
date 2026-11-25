@@ -224,7 +224,7 @@ build_lane() {
             cica_corpus > "$base/inventory/corpus.txt"
             parent=$dir/draft/roles/bootstrap-converged/manifest.json
             cica_jq -nS --arg c "$commit" --arg t "$tree" --argjson cfg "$cfg" --arg p "$(cica_sha "$dir/draft/roles/bootstrap-converged/payload/compiler")" '
-              {argv:(["{root}/target/bootstrap-fixpoint/stage3","compile","--batch","{root}/target/build-invariance/batches/opt2-built/opt1/chunks/entries.0000.txt","--target","linux-x86_64"]+[$cfg[]|"--cfg",.]+["--backend-mode","scalar","--opt-level","1","--stdlib-root","stdlib","--stdlib-root","src"]),producer_version:("typelisp "+$c+" built unknown"),producer_sha256:$p,producer_identity:$t}' > "$work/record.json"
+              {argv:(["{root}/target/bootstrap-fixpoint/stage3","compile","--batch","{root}/target/build-invariance/batches/opt2-built/opt1/chunks/entries.0000.txt","--target","linux-x86_64"]+[$cfg[]|"--cfg",.]+["--backend-mode","scalar","--opt-level","1","--stdlib-root","stdlib","--stdlib-root","src","--no-prebuilt-stdlib"]),producer_version:("typelisp "+$c+" built unknown"),producer_sha256:$p,producer_identity:$t}' > "$work/record.json"
             cica_jq -nS --slurpfile b "$parent" --slurpfile r "$work/record.json" --arg h "$(cica_sha "$base/payload/reference.s")" '
               {compared_output_sha256:$h,input_producer_sha256:$r[0].producer_sha256,seed:$b[0].proof.seed,parent_provenance_key:$b[0].provenance_key,batch_manifest:"src/main.tl|{root}/target/build-invariance/compare/opt2-built/selfhost_main_opt1.s\n"}' > "$work/proof.json"
         fi

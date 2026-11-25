@@ -134,8 +134,13 @@ if [ "$HOST_OS" = linux ]; then
         exit 1
     fi
     ENTRY=$(linux_entry_symbol_for_asm "$ASM") || exit $?
-    if ! ld "$OBJ" -o "$BIN" -static -e "$ENTRY" \
-        >> "$RUN_OUT" 2>> "$RUN_ERR"; then
+    STDLIB_ARCHIVE=$(linux_stdlib_archive_for_asm "$ASM" "${COMPILER:-}")
+    set -- "$OBJ" -o "$BIN" -static
+    if [ -n "$STDLIB_ARCHIVE" ]; then
+        set -- "$@" -z noexecstack --gc-sections --start-group "$STDLIB_ARCHIVE" --end-group
+    fi
+    set -- "$@" -e "$ENTRY"
+    if ! ld "$@" >> "$RUN_OUT" 2>> "$RUN_ERR"; then
         echo "spmd-runtime-dispatch: link failed" >&2
         sed 's/^/  /' "$RUN_ERR" >&2
         exit 1

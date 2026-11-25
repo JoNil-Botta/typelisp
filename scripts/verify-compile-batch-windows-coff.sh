@@ -67,12 +67,15 @@ printf '%s|%s|%s|force-assembly\n' \
 printf '%s|%s|%s\n' \
     "$FALLBACK_SOURCE" "$FALLBACK_OBJECT" "$FALLBACK_ASSEMBLY" >> "$BATCH_LIST"
 
+# Prebuilt-stdlib programs always fall back to assembly (they call into the
+# sysroot archive), so the object contract is checked on the source stdlib.
 echo "[compile-batch-windows-coff] object, fallback, and forced assembly"
 if ! TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_batch_assembler__.exe \
     "$COMPILER" compile --batch "$BATCH_LIST" \
     --windows-coff-plan "$RESULT_PLAN" \
     --target windows-x86_64 \
     --stdlib-root stdlib \
+    --no-prebuilt-stdlib \
     > "$WORKDIR/batch.stdout" 2> "$WORKDIR/batch.stderr"; then
     sed 's/^/  /' "$WORKDIR/batch.stdout" >&2 || true
     sed 's/^/  /' "$WORKDIR/batch.stderr" >&2 || true
@@ -81,11 +84,11 @@ fi
 assert_empty "$WORKDIR/batch.stderr"
 
 EXPECTED_PLAN="$WORKDIR/expected.plan"
-printf '%s|coff-object|%s|none\n' \
+printf '%s|coff-object|%s|none|none\n' \
     "$DIRECT_SOURCE" "$DIRECT_OBJECT" > "$EXPECTED_PLAN"
-printf '%s|assembly|%s|forced-assembly\n' \
+printf '%s|assembly|%s|forced-assembly|none\n' \
     "$FALLBACK_SOURCE" "$FORCED_ASSEMBLY" >> "$EXPECTED_PLAN"
-printf '%s|assembly|%s|unsupported-object-semantics\n' \
+printf '%s|assembly|%s|unsupported-object-semantics|none\n' \
     "$FALLBACK_SOURCE" "$FALLBACK_ASSEMBLY" >> "$EXPECTED_PLAN"
 cmp "$EXPECTED_PLAN" "$RESULT_PLAN" ||
     fail "Windows COFF batch result plan was not deterministic"
@@ -103,6 +106,7 @@ printf '%s|%s\n' "$FALLBACK_SOURCE" "$LEGACY_ASSEMBLY" > "$LEGACY_LIST"
 if ! "$COMPILER" compile --batch "$LEGACY_LIST" \
     --target windows-x86_64 \
     --stdlib-root stdlib \
+    --no-prebuilt-stdlib \
     > "$WORKDIR/legacy.stdout" 2> "$WORKDIR/legacy.stderr"; then
     sed 's/^/  /' "$WORKDIR/legacy.stdout" >&2 || true
     sed 's/^/  /' "$WORKDIR/legacy.stderr" >&2 || true
@@ -209,6 +213,7 @@ if ! TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_batch_assembler__.exe \
     --cfg windows \
     --stdlib-root stdlib \
     --stdlib-root src \
+    --no-prebuilt-stdlib \
     > "$WORKDIR/differential.stdout" 2> "$WORKDIR/differential.stderr"; then
     sed 's/^/  /' "$WORKDIR/differential.stdout" >&2 || true
     sed 's/^/  /' "$WORKDIR/differential.stderr" >&2 || true
@@ -221,9 +226,9 @@ DIFFERENTIAL_EXPECTED="$WORKDIR/differential.expected.plan"
 write_differential_expected() {
     _name=$1
     _source=$2
-    printf '%s|coff-object|%s/%s.direct.obj|none\n' \
+    printf '%s|coff-object|%s/%s.direct.obj|none|none\n' \
         "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
-    printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
+    printf '%s|assembly|%s/%s.forced.s|forced-assembly|none\n' \
         "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
 }
 write_differential_expected ordinary tests/integration/hello.tl
@@ -234,18 +239,18 @@ write_differential_expected nt_create_file "$NT_CREATE_FILE_SOURCE"
 write_fallback_differential_expected() {
     _name=$1
     _source=$2
-    printf '%s|assembly|%s/%s.direct.s|unsupported-object-semantics\n' \
+    printf '%s|assembly|%s/%s.direct.s|unsupported-object-semantics|none\n' \
         "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
-    printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
+    printf '%s|assembly|%s/%s.forced.s|forced-assembly|none\n' \
         "$_source" "$WORKDIR" "$_name" >> "$DIFFERENTIAL_EXPECTED"
 }
-printf '%s|assembly|%s/%s.direct.s|unsupported-external-relocation\n' \
+printf '%s|assembly|%s/%s.direct.s|unsupported-external-relocation|none\n' \
     "$NT_OPEN_FILE_SOURCE" "$WORKDIR" nt_open_file >> "$DIFFERENTIAL_EXPECTED"
-printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
+printf '%s|assembly|%s/%s.forced.s|forced-assembly|none\n' \
     "$NT_OPEN_FILE_SOURCE" "$WORKDIR" nt_open_file >> "$DIFFERENTIAL_EXPECTED"
-printf '%s|assembly|%s/%s.direct.s|unsupported-object-abi:windows-x86_64:call\n' \
+printf '%s|assembly|%s/%s.direct.s|unsupported-object-abi:windows-x86_64:call|none\n' \
     "$FLOAT_POSITION_SOURCE" "$WORKDIR" float_position >> "$DIFFERENTIAL_EXPECTED"
-printf '%s|assembly|%s/%s.forced.s|forced-assembly\n' \
+printf '%s|assembly|%s/%s.forced.s|forced-assembly|none\n' \
     "$FLOAT_POSITION_SOURCE" "$WORKDIR" float_position >> "$DIFFERENTIAL_EXPECTED"
 write_fallback_differential_expected runtime_trap tests/safety/division_by_zero_trap.tl
 write_fallback_differential_expected wide_immediate tests/integration/integer_literal_boundary_matrix.tl

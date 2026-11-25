@@ -1,6 +1,8 @@
 # Validate a `compile --batch --windows-coff-plan` result against its input.
 # On success, emit one normalized row per artifact:
-# source|kind|selected-path|reason|object-path|assembly-path|forced
+# source|kind|selected-path|reason|object-path|assembly-path|forced|archive
+# where `archive` is `stdlib-archive` when the artifact links the sysroot
+# libstdlib.a and `none` otherwise.
 
 BEGIN {
     FS = "|"
@@ -42,8 +44,11 @@ FILENAME == plan_file {
     if (plan_count > input_count) {
         fail("Windows COFF plan has more rows than its batch input")
     }
-    if (NF != 4) {
-        fail("Windows COFF plan line " FNR " must have 4 fields")
+    if (NF != 5) {
+        fail("Windows COFF plan line " FNR " must have 5 fields")
+    }
+    if ($5 != "stdlib-archive" && $5 != "none") {
+        fail("Windows COFF plan line " FNR " has an invalid archive requirement: " $5)
     }
     if ($1 != source[plan_count]) {
         fail("Windows COFF plan line " FNR " source mismatch: expected " source[plan_count] ", got " $1)
@@ -76,7 +81,7 @@ FILENAME == plan_file {
         fail("Windows COFF plan line " FNR " has an invalid artifact kind: " $2)
     }
 
-    print $1, $2, $3, $4, object_path[plan_count], assembly_path[plan_count], (forced[plan_count] ? 1 : 0)
+    print $1, $2, $3, $4, object_path[plan_count], assembly_path[plan_count], (forced[plan_count] ? 1 : 0), $5
     next
 }
 

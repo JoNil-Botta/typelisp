@@ -468,7 +468,8 @@
 ;; `close-cands` are COLD-1's: the record index of every noreturn abort call
 ;; and of every line that closes a function (`.size`, `.cfi_endproc`,
 ;; `.seh_endproc`, `.globl`, the debug and backtrace end labels), in emission
-;; order.
+;; order. `edge-cands` are COLD-EDGE's: the record index of every
+;; `_branch_cold_true:` / `_branch_cold_false:` edge-block label.
 (defstruct CompilerBackendPeepholeLineVec
   (lines (__tl_dyn-array CompilerBackendPeepholeLineRecord))
   (live (__tl_dyn-array i64))
@@ -479,6 +480,8 @@
   (abort-cand-len i64)
   (close-cands (__tl_dyn-array i64))
   (close-cand-len i64)
+  (edge-cands (__tl_dyn-array i64))
+  (edge-cand-len i64)
   (probe-cands (__tl_dyn-array i64))
   (probe-cand-len i64)
   ;; Record indices of simple stack LEAs, in emission order.

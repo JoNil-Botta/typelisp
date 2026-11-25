@@ -1,0 +1,29 @@
+# Cold loop-exit edge blocks (gate stage2-regalloc-backend-asm-shape-gates): at
+# -O2 a phi-copy edge block that leaves every loop, on a branch whose other
+# side stays in the loop and is the fall-through, is named
+# `<block>_branch_cold_<side>` and moved past the function's last block, so the
+# in-loop side falls through. -Os/-O0/-O1 keep it inline and unnamed.
+# See tests/integration/c40_cold_edge.tl.
+
+args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
+
+# The mismatch exit of both loop copies jumps out of line; the equal case falls
+# into the increment.
+case cold-edge-loop-exit
+source tests/integration/c40_cold_edge.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_c40_cold_edge_same_prefix_question
+count = 2 ^[[:space:]]+jne [.]L[^ ]*_branch_cold_false$
+after ^[[:space:]]+jne [.]L[^ ]*__bce_fast_branch_cold_false$
+next-line ^[.]L[^ ]*_if_merge[.][0-9]+__bce_fast:$
+after ^[.]L[^ ]*__bce_fast_branch_cold_false:$
+next-line ^[[:space:]]+xorl %eax, %eax$
+
+# Size and the lower levels name no cold edge.
+case cold-edge-off-below-o2
+source tests/integration/c40_cold_edge.tl
+target linux-x86_64 windows-x86_64
+opt s 0 1
+in fn _tl_c40_cold_edge_same_prefix_question
+not-contains _branch_cold_

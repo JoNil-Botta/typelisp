@@ -6928,15 +6928,94 @@
     edge-label))
 
 (define (compiler-backend-branch-edge-fallthrough
-  [current-label : i64]
+  [true-edge : i64]
+  [false-edge : i64]
   [true-copies : (& true-copies str)]
   [false-copies : (& false-copies str)]
   [fallthrough : be_state.CompilerBackendMaybeLabel]) : be_state.CompilerBackendMaybeLabel
   (if (not (string.eq true-copies ""))
-    (Some (compiler-backend-branch-edge-label current-label "true"))
+    (Some true-edge)
     (if (not (string.eq false-copies ""))
-      (Some (compiler-backend-branch-edge-label current-label "false"))
+      (Some false-edge)
       fallthrough)))
+
+;; COLD-EDGE: the side of a two-way branch whose edge block is cold -- 1 the
+;; true side, 2 the false side, 0 neither. Inline, a branch whose only edge
+;; block S sits between it and the other successor O jumps OVER that block on
+;; every trip that goes to O:
+;;
+;;       jcc O                              jncc S
+;;     S:                                 O:
+;;       <phi copies>                       ...
+;;       jmp T                              (function end)
+;;     O:                                 S:
+;;       ...                                <phi copies>
+;;                                          jmp T
+;;
+;; Out of line, the trip to O falls through and the trip to S pays the taken
+;; jump instead; every path keeps its instruction count. That is a win exactly
+;; when O is the hotter side, and the loop nest says so statically: the branch
+;; and O are inside a loop while T is in no loop at all. A block outside every
+;; loop runs at most once per call, so the edge into it is taken at most once,
+;; while the branch runs once per iteration. A loop's back edge is never
+;; picked, since its header is a loop block.
+;;
+;; The emitter only NAMES such a block `<block>_branch_cold_<side>`; it is
+;; still emitted inline, so every later peephole sees the usual text. COLD-1
+;; (`compiler-backend-cold-plan`) moves it at render time and inverts the jump,
+;; and refuses whenever the text no longer has the shape above. Full-speed
+;; builds only: -O1 and -Os never name a cold edge and stay byte-identical.
+(define (compiler-backend-branch-cold-edge-side
+  [backend-state : be_state.CompilerBackendState]
+  [current-label : i64]
+  [true-label : i64]
+  [false-label : i64]
+  [true-copies : (& true-copies str)]
+  [false-copies : (& false-copies str)]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]) : i64
+  (let
+    [true-cold? : bool (string.eq false-copies "")]
+    [cold-label : i64
+      (if true-cold?
+        true-label
+        false-label)]
+    [hot-label : i64
+      (if true-cold?
+        false-label
+        true-label)]
+    [function-state : be_state.CompilerBackendFunctionState
+      (be_state.compiler-backend-state-function-state backend-state)]
+    (if (and
+      (be_state.compiler-backend-state-scalar-registers-enabled? backend-state)
+      (not (be_state.compiler-backend-state-optimize-for-size? backend-state))
+      (if true-cold?
+        (not (string.eq true-copies ""))
+        (string.eq true-copies ""))
+      (be_scalar.compiler-backend-jump-target-is-fallthrough?
+        (be_scalar.compiler-backend-jump-resolve-target
+          backend-state
+          hot-label
+          fallthrough)
+        fallthrough)
+      (not
+        (be_scalar.compiler-backend-jump-target-is-fallthrough?
+          (be_scalar.compiler-backend-jump-resolve-target
+            backend-state
+            cold-label
+            fallthrough)
+          fallthrough))
+      (be_state.compiler-backend-function-loop-block?
+        function-state
+        current-label)
+      (be_state.compiler-backend-function-loop-block? function-state hot-label)
+      (not
+        (be_state.compiler-backend-function-loop-block?
+          function-state
+          cold-label)))
+      (if true-cold?
+        1
+        2)
+      0)))
 
 ;; `edge-next` is what physically follows this edge block: the other edge block
 ;; when one is still to come, else the next IR block. It lets an edge block
@@ -6972,35 +7051,32 @@
 (define (compiler-backend-emit-branch-edges
   [backend-state : be_state.CompilerBackendState]
   [function : String]
-  [current-label : i64]
   [true-label : i64]
   [false-label : i64]
+  [true-edge : i64]
+  [false-edge : i64]
   [true-copies : (& true-copies str)]
   [false-copies : (& false-copies str)]
   [fallthrough : be_state.CompilerBackendMaybeLabel]
   [branch-asm : String]) : String
-  (let
-    [true-edge : i64 (compiler-backend-branch-edge-label current-label "true")]
-    [false-edge : i64
-      (compiler-backend-branch-edge-label current-label "false")]
-    (str_cat.str-cat
-      branch-asm
-      (compiler-backend-emit-branch-edge-block
-        backend-state
-        (be_state.compiler-backend-global-shared-view function)
-        true-edge
-        true-label
-        true-copies
-        (if (string.eq false-copies "")
-          fallthrough
-          (Some false-edge)))
-      (compiler-backend-emit-branch-edge-block
-        backend-state
-        function
-        false-edge
-        false-label
-        false-copies
-        fallthrough))))
+  (str_cat.str-cat
+    branch-asm
+    (compiler-backend-emit-branch-edge-block
+      backend-state
+      (be_state.compiler-backend-global-shared-view function)
+      true-edge
+      true-label
+      true-copies
+      (if (string.eq false-copies "")
+        fallthrough
+        (Some false-edge)))
+    (compiler-backend-emit-branch-edge-block
+      backend-state
+      function
+      false-edge
+      false-label
+      false-copies
+      fallthrough)))
 
 ;; A branch's own flag-setting step, or none at all. An empty `true-jcc` is the
 ;; ordinary branch: load/test the condition and jump on ZF. A non-empty one is a
@@ -7082,26 +7158,66 @@
           current-label
           program-index
           vars))]
-    [true-edge : i64 (compiler-backend-branch-edge-label current-label "true")]
+    (Ok
+      (compiler-backend-branch-edges-plan
+        program-index.backend-state
+        current-label
+        true-label
+        false-label
+        true-copies
+        false-copies
+        fallthrough))))
+
+;; The labels a two-way branch with these edge copies jumps to, and what it
+;; falls into: a side with copies goes through its edge block, named cold when
+;; `compiler-backend-branch-cold-edge-side` says so.
+(define (compiler-backend-branch-edges-plan
+  [backend-state : be_state.CompilerBackendState]
+  [current-label : i64]
+  [true-label : i64]
+  [false-label : i64]
+  [true-copies : String]
+  [false-copies : String]
+  [fallthrough : be_state.CompilerBackendMaybeLabel]) : CompilerBackendBranchEdges
+  (let
+    [cold-side : i64
+      (compiler-backend-branch-cold-edge-side
+        backend-state
+        current-label
+        true-label
+        false-label
+        true-copies
+        false-copies
+        fallthrough)]
+    [true-edge : i64
+      (compiler-backend-branch-edge-label
+        current-label
+        (if (= cold-side 1)
+          "cold_true"
+          "true"))]
     [false-edge : i64
-      (compiler-backend-branch-edge-label current-label "false")]
+      (compiler-backend-branch-edge-label
+        current-label
+        (if (= cold-side 2)
+          "cold_false"
+          "false"))]
     [true-target : i64
       (compiler-backend-branch-edge-target true-edge true-label true-copies)]
     [false-target : i64
       (compiler-backend-branch-edge-target false-edge false-label false-copies)]
     [edge-fallthrough : be_state.CompilerBackendMaybeLabel
       (compiler-backend-branch-edge-fallthrough
-        current-label
+        true-edge
+        false-edge
         true-copies
         false-copies
         fallthrough)]
-    (Ok
-      (CompilerBackendBranchEdges
-        true-copies
-        false-copies
-        true-target
-        false-target
-        edge-fallthrough))))
+    (CompilerBackendBranchEdges
+      true-copies
+      false-copies
+      true-target
+      false-target
+      edge-fallthrough)))
 
 (define (compiler-backend-emit-branch-with-phi-copies
   [type-segment-bases : i64]
@@ -7162,9 +7278,10 @@
         (compiler-backend-emit-branch-edges
           program-index.backend-state
           function
-          current-label
           true-label
           false-label
+          edges.true-target
+          edges.false-target
           edges.true-copies
           edges.false-copies
           fallthrough
@@ -7234,9 +7351,10 @@
         (compiler-backend-emit-branch-edges
           program-index.backend-state
           function
-          current-label
           true-label
           false-label
+          edges.true-target
+          edges.false-target
           edges.true-copies
           edges.false-copies
           fallthrough
@@ -7306,9 +7424,10 @@
         (compiler-backend-emit-branch-edges
           program-index.backend-state
           function
-          current-label
           true-label
           false-label
+          edges.true-target
+          edges.false-target
           edges.true-copies
           edges.false-copies
           fallthrough
@@ -7384,9 +7503,10 @@
         (compiler-backend-emit-branch-edges
           program-index.backend-state
           function
-          current-label
           true-label
           false-label
+          edges.true-target
+          edges.false-target
           edges.true-copies
           edges.false-copies
           fallthrough

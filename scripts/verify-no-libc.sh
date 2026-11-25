@@ -88,9 +88,13 @@ inspect_winsock_capability() {
     _asm_row=target/no-libc-verify/winsock-capability.s
     printf '%s|%s|%s\n' "$_source_row" "$_direct_row" "$_asm_row" \
         >"$WORKDIR/winsock-batch.list"
+    # The object audit below covers the stdlib Winsock loader, so compile it
+    # from source instead of leaving it in the prebuilt libstdlib.a; the PE
+    # builds after it still link the prebuilt archive.
     "$COMPILER" compile --batch "$WORKDIR/winsock-batch.list" \
         --windows-coff-plan "$WORKDIR/winsock-batch.plan" \
         --target windows-x86_64 --opt-level 2 --stdlib-root "$ROOT/stdlib" \
+        --no-prebuilt-stdlib \
         >"$WORKDIR/winsock-compile.out" 2>&1 || {
         echo "FAIL: compiling the Winsock capability fixture failed:" >&2
         sed 's/^/  /' "$WORKDIR/winsock-compile.out" >&2

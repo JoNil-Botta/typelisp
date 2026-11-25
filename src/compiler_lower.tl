@@ -9413,7 +9413,18 @@
         (Ok (Some handle params ret body)))]
     [(Extern _ _ (Function) metadata ty)
       (match (ast.ast-extern-metadata-imported-spmd (deref metadata))
-        [(No) (Ok (No))]
+        [(No)
+          (let
+            [canonical-id : i64
+              (tc_core.tc-tli-hydrated-decl-canonical-id
+                ctx
+                (csym.compiler-symbol-handle-index handle))]
+            (match (tc_core.tc-tli-hydrated-spmd-inline ctx canonical-id)
+              [(Inline params ret body-id)
+                (let
+                  [body : ast.AstExpr (lower-context-expr-get ctx body-id)]
+                  (Ok (Some handle params ret body)))]
+              [_ (Ok (No))]))]
         [(Package owner version canonical-name callables)
           (Ok (Imported owner version canonical-name ty callables))]
         [(Inline params ret body-id)

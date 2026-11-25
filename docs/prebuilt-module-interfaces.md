@@ -105,10 +105,12 @@ absolute from byte `0`.
 | `[112..144]` | `index_sha256: [u8; 32]` | SHA-256 over `[0..80] || [144..module_dir_offset + module_dir_len]` |
 
 The build and target ids gate layout and ABI: a mismatch fails closed.
-Every open verifies `index_sha256`, so the header, string pool and module
-directory a lazy open reads are tamper-evident before any record decodes; a
-record is then checked against its `module_sha256` when it first decodes. A
-full open (`inspect`, round trips) also verifies `content_sha256`.
+A full open (`inspect`, round trips) verifies both `index_sha256` and
+`content_sha256`. A lazy compile open skips `index_sha256` and `content_sha256`
+to avoid hashing the string pool and directory on every compile; it validates
+header fields, section bounds, every read string-pool entry's UTF-8, every
+decoded module record's `module_sha256`, and every decoded compact body's
+`inline_ir_sha256`.
 
 ### String pool
 
@@ -298,8 +300,8 @@ The section layout is:
    SHA-256 verified before decode):
    - `u8 kind` bitmask: bit 0 `HAS_IR`, bit 1 `HAS_SPMD_EXPR` (valid values
      `1`, `2`, `3`; must agree with `HAS_INLINE_IR` and `SPMD_INLINEABLE`).
-   - When `HAS_IR` is set: `u8 ir_flags` (bit 0 `CALL_FREE`), `u16 instr_count`
-     (enabling O(1) header peeks at `--opt-level 1`), `list<(s:name, t:type,
+   - When `HAS_IR` is set: `u8 ir_flags` (bit 0 `CALL_FREE`), `u32 instr_count`
+     (enabling O(1) header peeks), `list<(s:name, t:type,
      u32 var_id)> params`, `t:ret_type`, `u32 next_var`, optional
      `TliCompactReturnStorage`, `list<TliCompactBlock>` (the 27 inliner-admitted
      IR instructions over dense block labels and archive link symbols), and
@@ -308,18 +310,20 @@ The section layout is:
      assumptions.
    - When `HAS_SPMD_EXPR` is set: a checked scalar `TliSpmdExpr` tree (nesting
      depth `<= 64`, module-local unqualified references pre-qualified) hydrated
-     into `AstImportedSpmdMetadata.Inline` for `foreach` typecheck and lowering.
+     on demand into `AstImportedSpmdMetadata.Inline` during `foreach` typecheck
+     and lowering at all optimization levels.
 
 Consumers hydrate `compact_ir` lazily into available-externally IR definitions
 (`body_available = true` on `CompilerIrExtern`) right before retiring the TLI
-arena: `--opt-level 0` decodes nothing; `--opt-level 1` peeks headers and
-decodes call-free bodies with `<= 12` instructions; `--opt-level 2` decodes the
-transitive closure of called `HAS_IR` bodies, injects referenced `NEVER_WRITTEN`
-`compact_globals`, and seeds optimizer external summaries from packed
-`TliFnSummary` facts (`call_memory`, `call_clean`, `return_alias`,
-`global_writes`, `PURE`, `NEVER_RETURNS`). `opt-strip-available-externally!`
-drops all available-externally bodies and extern-declared globals before
-backend emission so out-of-line calls link against `libstdlib.a`.
+arena: `--opt-level 0` and `--opt-level 1` skip hydrating `HAS_IR` bodies (while
+`HAS_SPMD_EXPR` still hydrates on demand during `foreach` at all opt levels);
+`--opt-level 2` decodes the transitive closure of called `HAS_IR` bodies,
+injects referenced `NEVER_WRITTEN` `compact_globals`, and seeds optimizer
+external summaries from packed `TliFnSummary` facts (`call_memory`,
+`call_clean`, `return_alias`, `global_writes`, `PURE`, `NEVER_RETURNS`).
+`opt-strip-available-externally!` drops all available-externally bodies and
+extern-declared globals before backend emission so out-of-line calls link
+against `libstdlib.a`.
 
 ## Sysroot discovery
 

@@ -945,7 +945,14 @@
   (inline-ir-offset i64)
   (inline-ir-len i64)
   (inline-ir-sha256 (Array u8 32))
-  (is-extern bool))
+  (is-extern bool)
+  (record-index i64)
+  (fn-index i64))
+
+(defstruct TliHydratedSpmdInline
+  (params ast.AstParamList)
+  (ret ast.AstType)
+  (body-id i64))
 
 (defstruct TliHydratedMacroEntry
   (identity-id i64)
@@ -962,17 +969,21 @@
   (field-offsets (__tl_dyn-array i64)))
 
 (import (vector.vector TliHydratedFnSummaryRow core) as fn_summary_vec)
+(import (vector.vector TliHydratedSpmdInline core) as spmd_inline_vec)
 (import (vector.vector TliHydratedMacroEntry core) as macro_vec)
 (import (vector.vector TliHydratedTypeLayout core) as layout_vec)
 
 (defstruct TliHydratedFacts
   (owner-arena i64)
+  (catalog-ptr i64)
   (emitted (__tl_dyn-array bool))
   (hydrated-module-count i64)
   (hydrated-modules tli_i64_map.Map)
   (fn-summary-slots tli_i64_map.Map)
   (fn-summary-by-link-slots tli_i64_map.Map)
   (fn-summaries fn_summary_vec.Vec)
+  (spmd-inline-slots tli_i64_map.Map)
+  (spmd-inline-entries spmd_inline_vec.Vec)
   (macro-slots tli_i64_map.Map)
   (macros macro_vec.Vec)
   (type-layout-slots tli_i64_map.Map)
@@ -981,12 +992,15 @@
 (define (tli-hydrated-facts-new [module-count : i64]) : TliHydratedFacts
   (TliHydratedFacts
     (arena.tl_arena_current)
+    0
     (__tl_make-array bool module-count)
     0
     (tli_i64_map.with-capacity 32)
     (tli_i64_map.with-capacity 256)
     (tli_i64_map.with-capacity 256)
     (fn_summary_vec.new)
+    (tli_i64_map.with-capacity 8)
+    (spmd_inline_vec.new)
     (tli_i64_map.with-capacity 64)
     (macro_vec.new)
     (tli_i64_map.with-capacity 128)
@@ -1492,9 +1506,139 @@
             (tli-hydrate-spmd-expr pools (& (deref e))))])]
     (ast.ast-node-pool-context-expr-push pools node)))
 
+;; Hydrate a `HAS_SPMD_EXPR` compact body on demand when `foreach` resolves a
+;; hydrated stdlib helper, caching the decoded params/ret/body-id in `facts`.
+(define (tli-hydrated-facts-resolve-spmd-inline!
+  [facts : (&mut TliHydratedFacts)]
+  [canonical-id : i64]
+  [pools : ast.AstNodePoolContext]) : ast.AstImportedSpmdMetadata
+  (let
+    [slot : i64 (tli-hydrated-facts-fn-summary-slot facts canonical-id)]
+    (when (< slot 0) (return (ast.AstImportedSpmdMetadata.No)))
+    (let
+      [eflags : i64 (array-ref facts.fn-summaries.slots slot).effect-flags]
+      [ir-off : i64 (array-ref facts.fn-summaries.slots slot).inline-ir-offset]
+      [ir-len : i64 (array-ref facts.fn-summaries.slots slot).inline-ir-len]
+      [ir-sha : (Array u8 32)
+        (array-ref facts.fn-summaries.slots slot).inline-ir-sha256]
+      [rec-idx : i64 (array-ref facts.fn-summaries.slots slot).record-index]
+      [fn-idx : i64 (array-ref facts.fn-summaries.slots slot).fn-index]
+      (when
+        (or
+          (= (bit-and eflags tli.tli-fn-spmd-inlineable) 0)
+          (<= ir-len 0)
+          (= facts.catalog-ptr 0)
+          (< rec-idx 0)
+          (< fn-idx 0))
+        (return (ast.AstImportedSpmdMetadata.No)))
+      (let
+        [cached : i64
+          (tli_i64_map.get-value-or (& facts.spmd-inline-slots) canonical-id -1)]
+        (when
+          (>= cached 0)
+          (return
+            (ast.AstImportedSpmdMetadata.Inline
+              (ast.clone-ast-param-list
+                (& (array-ref facts.spmd-inline-entries.slots cached).params))
+              (ast.clone-ast-type
+                (& (array-ref facts.spmd-inline-entries.slots cached).ret))
+              (array-ref facts.spmd-inline-entries.slots cached).body-id))))
+      (let
+        [caller-arena : i64 (arena.tl_arena_current)]
+        [pool-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
+        [expr-arena : i64
+          (if (> pool-arena 0)
+            pool-arena
+            caller-arena)]
+        [new-slot : i64
+          (in-arena
+            (unsafe
+              (arena.Arena facts.owner-arena))
+            (let
+              [catalog : TliCatalog
+                (unsafe
+                  (ptr-read
+                    (int->ptr (cast facts.catalog-ptr : u64) : (Ptr TliCatalog))))]
+              (match (codec.tli-decode-compact-body-at
+                (& catalog.directory)
+                ir-off
+                ir-len
+                (& ir-sha))
+                [(codec.TliCompactBodyResult.Ok body)
+                  (if (!=
+                    (bit-and body.kind tli.tli-compact-body-has-spmd-expr)
+                    0)
+                    (let
+                      [fn-row
+                        (&
+                          (array-ref
+                            (array-ref catalog.records rec-idx).functions
+                            fn-idx))]
+                      [pcount : i64 (array-length fn-row.params)]
+                      [ast-params : ast.AstParamList
+                        (ast.ast-param-list-with-capacity pcount)]
+                      (for [pi (iterator.range 0 pcount)]
+                        (ast.ast-param-list-push
+                          (&mut ast-params)
+                          (ast.AstParam.Param
+                            (tli-hydrate-name
+                              (& (array-ref fn-row.params pi).name))
+                            (tli-hydrate-type
+                              (& (array-ref fn-row.params pi).ty))
+                            (array-ref fn-row.params pi).is-mut)))
+                      (let
+                        [ret-ty : ast.AstType
+                          (tli-hydrate-type (& fn-row.return-type))]
+                        [body-id : i64
+                          (in-arena
+                            (unsafe
+                              (arena.Arena expr-arena))
+                            (tli-hydrate-spmd-expr pools (& body.spmd-expr)))]
+                        [inserted : i64
+                          (spmd_inline_vec.len (& facts.spmd-inline-entries))]
+                        (spmd_inline_vec.push-ref!
+                          (&mut facts.spmd-inline-entries)
+                          (TliHydratedSpmdInline ast-params ret-ty body-id))
+                        (tli_i64_map.insert-ref!
+                          (&mut facts.spmd-inline-slots)
+                          canonical-id
+                          inserted)
+                        inserted))
+                    -1)]
+                [(codec.TliCompactBodyResult.Err _) -1])))]
+        (if (< new-slot 0)
+          (ast.AstImportedSpmdMetadata.No)
+          (ast.AstImportedSpmdMetadata.Inline
+            (ast.clone-ast-param-list
+              (& (array-ref facts.spmd-inline-entries.slots new-slot).params))
+            (ast.clone-ast-type
+              (& (array-ref facts.spmd-inline-entries.slots new-slot).ret))
+            (array-ref facts.spmd-inline-entries.slots new-slot).body-id))))))
+
+(define (tli-hydrated-facts-resolve-spmd-inline-from-ptr!
+  [facts-ptr : i64]
+  [canonical-id : i64]
+  [pools : ast.AstNodePoolContext]) : ast.AstImportedSpmdMetadata
+  (if (= facts-ptr 0)
+    (ast.AstImportedSpmdMetadata.No)
+    (unsafe
+      (let
+        [fp : (MutPtr TliHydratedFacts)
+          (int->ptr (cast facts-ptr : u64) : (MutPtr TliHydratedFacts))]
+        [facts : TliHydratedFacts
+          (ptr-read (ptr-cast fp : (Ptr TliHydratedFacts)))]
+        [before : i64 (spmd_inline_vec.len (& facts.spmd-inline-entries))]
+        [result : ast.AstImportedSpmdMetadata
+          (tli-hydrated-facts-resolve-spmd-inline!
+            (&mut facts)
+            canonical-id
+            pools)]
+        (when
+          (!= (spmd_inline_vec.len (& facts.spmd-inline-entries)) before)
+          (ptr-write! fp facts))
+        result))))
+
 (define (tli-hydrate-project-fn!
-  [directory : (& codec.TliDirectory)]
-  [pools : ast.AstNodePoolContext]
   [facts : (&mut TliHydratedFacts)]
   [decls : (&mut ast.AstDeclList)]
   [paths : (&mut ast.AstDeclPathList)]
@@ -1502,7 +1646,9 @@
   [row : (& tli.TliFnDecl)]
   [source-path : (& str)]
   [mod-id : i64]
-  [prov-id : i64]) : unit
+  [prov-id : i64]
+  [record-index : i64]
+  [fn-index : i64]) : unit
   (let
     [fn-info : TliHydratedFunction (tli-hydrate-function row)]
     [eflags : i64 row.summary.effect-flags]
@@ -1522,42 +1668,13 @@
         (ast.ast-extern-metadata-flags
           false
           (string.eq (& archive-sym) (& row.name))))]
-    [imported-spmd : ast.AstImportedSpmdMetadata
-      (if (and
-        (!= (bit-and eflags tli.tli-fn-spmd-inlineable) 0)
-        (> row.summary.inline-ir-len 0))
-        (match (codec.tli-decode-compact-body-at
-          directory
-          row.summary.inline-ir-offset
-          row.summary.inline-ir-len
-          (& row.summary.inline-ir-sha256))
-          [(codec.TliCompactBodyResult.Ok body)
-            (if (!= (bit-and body.kind tli.tli-compact-body-has-spmd-expr) 0)
-              (let
-                [pcount : i64 (array-length row.params)]
-                [ast-params : ast.AstParamList
-                  (ast.ast-param-list-with-capacity pcount)]
-                (for [pi (iterator.range 0 pcount)]
-                  (ast.ast-param-list-push
-                    (&mut ast-params)
-                    (ast.AstParam.Param
-                      (tli-hydrate-name (& (array-ref row.params pi).name))
-                      (tli-hydrate-type (& (array-ref row.params pi).ty))
-                      (array-ref row.params pi).is-mut)))
-                (ast.AstImportedSpmdMetadata.Inline
-                  ast-params
-                  (tli-hydrate-type (& row.return-type))
-                  (tli-hydrate-spmd-expr pools (& body.spmd-expr))))
-              (ast.AstImportedSpmdMetadata.No))]
-          [(codec.TliCompactBodyResult.Err _) (ast.AstImportedSpmdMetadata.No)])
-        (ast.AstImportedSpmdMetadata.No))]
     [ext-meta : ast.AstExternMetadata
       (ast.AstExternMetadata.Metadata
         fn-info.abi
         (intern.intern-id-from-renderable archive-sym-id)
         (tli-hydrate-link-inputs (& row.extern-link-inputs))
         ext-flags
-        imported-spmd)]
+        (ast.AstImportedSpmdMetadata.No))]
     [decl : ast.AstDecl
       (tli-hydrate-wrap-unsafe
         unsafe-decl
@@ -1605,7 +1722,9 @@
             row.summary.inline-ir-offset
             row.summary.inline-ir-len
             row.summary.inline-ir-sha256
-            row.is-extern))
+            row.is-extern
+            record-index
+            fn-index))
         (tli_i64_map.insert-ref!
           (&mut facts.fn-summary-slots)
           canonical-id
@@ -1819,7 +1938,6 @@
         prov-id))))
 
 (define (tli-hydrate-project-record!
-  [directory : (& codec.TliDirectory)]
   [facts : (&mut TliHydratedFacts)]
   [pools : ast.AstNodePoolContext]
   [dummy-body-id : i64]
@@ -1865,8 +1983,6 @@
         prov-id))
     (for [i (iterator.range 0 (array-length record.functions))]
       (tli-hydrate-project-fn!
-        directory
-        pools
         facts
         decls
         paths
@@ -1874,7 +1990,9 @@
         (& (array-ref record.functions i))
         (& source-path)
         mod-id
-        prov-id))
+        prov-id
+        slot-index
+        i))
     (for [i (iterator.range 0 (array-length record.values))]
       (tli-hydrate-project-value!
         pools
@@ -1954,7 +2072,6 @@
                         pools
                         (ast.AstExpr.Literal (ast.AstLiteral.Unit)))))
                   (tli-hydrate-project-record!
-                    (& catalog.directory)
                     facts
                     pools
                     dummy-body-id

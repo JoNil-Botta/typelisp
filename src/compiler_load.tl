@@ -1228,6 +1228,11 @@
         [addr : i64
           (unsafe
             (cast (ptr->int (__tl_array-data cell)) : i64))]
+        (set!
+          (array-ref cell 0).facts.catalog-ptr
+          (+
+            addr
+            (comptime (offset-of (type CompilerLoadTliCatalogBox) catalog))))
         (unsafe
           (arena.tl_arena_set enclosing)
           (ptr-write!

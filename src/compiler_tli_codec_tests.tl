@@ -571,10 +571,10 @@
     (tli-test-invalid-bundle! (& bytes) (tli.TliDecodeError.OffsetOutOfRange))))
 
 (test
-  tli-lazy-open-checks-index-digest
+  tli-full-open-checks-index-digest-and-lazy-checks-module-digest
   (let
     [bytes : (__tl_dyn-array u8) (tli-test-encode-plain (tli.TliType.I64))]
-    [text : i64 (tli-test-pool-text (& bytes))]
+    [start : i64 (tli-test-record (& bytes))]
     (match (codec.tli-decode-directory-for-lazy
       (& bytes)
       "build"
@@ -582,12 +582,44 @@
       [(codec.TliDirectoryResult.Err error)
         (test.assert-true false error.message)]
       [(codec.TliDirectoryResult.Ok _) unit])
-    ;; A lazy open hashes no record, but the pool and directory it reads are
-    ;; covered by `index_sha256` even when `content_sha256` is left stale.
-    (set! (array-ref bytes text) (cast 0x7a : u8))
-    (tli-test-invalid-directory!
-      (codec.tli-decode-directory-for-lazy (& bytes) "build" "linux-x86_64")
-      (tli.TliDecodeError.DigestMismatch))))
+    ;; Corrupt `index_sha256` and recompute only `content_sha256`: full open
+    ;; still rejects the stale `index_sha256` before accepting the bundle.
+    (let
+      [saved : u8 (array-ref bytes tli.tli-index-digest-offset)]
+      (set!
+        (array-ref bytes tli.tli-index-digest-offset)
+        (cast (bit-xor (cast saved : i64) 1) : u8))
+      (let
+        [content : (Array u8 32) (codec.tli-content-digest (& bytes))]
+        (codec.tli-copy-digest!
+          (&mut bytes)
+          tli.tli-content-digest-offset
+          (& content)))
+      (tli-test-invalid-directory!
+        (codec.tli-decode-directory-for (& bytes) "build" "linux-x86_64")
+        (tli.TliDecodeError.DigestMismatch))
+      (set! (array-ref bytes tli.tli-index-digest-offset) saved)
+      (tli-test-refresh-content! (&mut bytes)))
+    ;; Lazy open skips `index_sha256` and `content_sha256`, but still rejects
+    ;; tampered module record bytes via `module_sha256` when decoding a record.
+    (let
+      [saved-rec : u8 (array-ref bytes start)]
+      (set!
+        (array-ref bytes start)
+        (cast (bit-xor (cast saved-rec : i64) 1) : u8))
+      (match (codec.tli-decode-directory-for-lazy
+        (& bytes)
+        "build"
+        "linux-x86_64")
+        [(codec.TliDirectoryResult.Err error)
+          (test.assert-true false error.message)]
+        [(codec.TliDirectoryResult.Ok directory)
+          (match (codec.tli-decode-module-at (& directory) 0)
+            [(codec.TliModuleResult.Err error)
+              (tli-test-error! (& error) (tli.TliDecodeError.DigestMismatch))]
+            [(codec.TliModuleResult.Ok _)
+              (test.assert-true false "lazy decode accepted bad module_sha256")])])
+      (set! (array-ref bytes start) saved-rec))))
 
 (test
   tli-bad-record

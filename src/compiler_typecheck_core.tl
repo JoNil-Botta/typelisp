@@ -70814,6 +70814,7 @@
     [_ (Err "")]))
 
 (define (tc-spmd-inline-helper-from-decl
+  [ctx : TcContext]
   [expr-bases : i64]
   [name-id : i64]
   [module-id : i64]
@@ -70824,10 +70825,22 @@
         [body : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases body-box)]
         (Ok (Some name-id module-id params ret body)))]
-    [(Extern _ _ (Function) metadata ty)
+    [(Extern _ fn-name (Function) metadata ty)
       (match (ast.ast-extern-metadata-imported-spmd
         (ast.ast-extern-metadata-box-shared-view metadata))
-        [(No) (Ok (No))]
+        [(No)
+          (let
+            [canonical-id : i64
+              (if (csym.compiler-symbol-root-module-id? module-id)
+                fn-name
+                (tc-module-name-id-by-id module-id fn-name))]
+            (match (tc-tli-hydrated-spmd-inline ctx canonical-id)
+              [(Inline params ret body-id)
+                (let
+                  [body : ast.AstExpr
+                    (ast.ast-expr-segment-bases-get expr-bases body-id)]
+                  (Ok (Some name-id module-id params ret body)))]
+              [_ (Ok (No))]))]
         [(Package _ _ _ callables) (Ok (Imported ty callables))]
         [(Inline params ret body-id)
           (let
@@ -70837,7 +70850,7 @@
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
-        (tc-spmd-inline-helper-from-decl expr-bases name-id module-id inner))]
+        (tc-spmd-inline-helper-from-decl ctx expr-bases name-id module-id inner))]
     [_ (Ok (No))]))
 
 (define (tc-spmd-inline-helper-lookup
@@ -70880,6 +70893,7 @@
                       (tc-context-symbols (& ctx))
                       declaration-id))]
                 (tc-spmd-inline-helper-from-decl
+                  ctx
                   expr-bases
                   lookup-id
                   module-id
@@ -96628,6 +96642,16 @@
       (if (= mod-id cbi.compiler-builtin-id-fix-empty)
         name-id
         (tc-module-name-id-by-id mod-id name-id)))))
+
+(define (tc-tli-hydrated-spmd-inline [ctx : TcContext] [canonical-id : i64]) : ast.AstImportedSpmdMetadata
+  (let
+    [facts-ptr : i64 (tc-job-state-tli-facts-ptr (tc-context-job-state ctx))]
+    (if (or (= facts-ptr 0) (< canonical-id 0))
+      (ast.AstImportedSpmdMetadata.No)
+      (tli_hydrate.tli-hydrated-facts-resolve-spmd-inline-from-ptr!
+        facts-ptr
+        canonical-id
+        (tc-context-pools ctx)))))
 
 (define (tc-tli-hydrated-seed-global-effects!
   [owner : TcContext]

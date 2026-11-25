@@ -49,20 +49,18 @@ WORKDIR=${TYPELISP_COMPILE_MANIFEST_WORKDIR:-target/selfhost-compile-manifest}
 EXPECTATION_MODE=${TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE:-stage0}
 # The batch driver scopes each entry's compile in its own arena region
 # (compile-cli-run-batch-entries), so a chunk's peak memory is the heaviest
-# single compile, not the sum of all entries. Windows CI runners have tighter
-# commit headroom (freestanding runtime: a failed memory commit surfaces as an
-# access violation, exit 139), and two heavy entries in one Windows batch can
-# trip the freestanding allocator after the first compile has emitted assembly,
-# so the Windows default is one manifest entry per process unless explicitly
-# overridden. Linux keeps the 16-entry stress size: allocation-owner snapshots
-# and absolute batch live baselines make cross-entry retention diagnosable and
-# enforce that repeated entries return to a bounded steady state.
+# single compile, not the sum of all entries. src/main.tl is always isolated
+# into its own singleton chunk so it never shares a batch process with other
+# entries, and library rows are distributed round-robin across chunks so heavy
+# adjacent compiler modules (backend/regalloc/cli-driver) spread evenly across
+# workers instead of forming a single straggler chunk. Using 8-entry chunks on
+# both hosts keeps per-chunk memory safely inside the 4096 MiB cap on Windows
+# while cutting Windows Job Object process-launch overhead and giving the
+# 3-worker pool balanced chunks on Linux.
 if [ -n "${TYPELISP_COMPILE_MANIFEST_BATCH_SIZE:-}" ]; then
     BATCH_CHUNK_SIZE=$TYPELISP_COMPILE_MANIFEST_BATCH_SIZE
-elif [ "$HOST_OS" = windows ]; then
-    BATCH_CHUNK_SIZE=1
 else
-    BATCH_CHUNK_SIZE=16
+    BATCH_CHUNK_SIZE=8
 fi
 
 case "$EXPECTATION_MODE" in
@@ -150,8 +148,13 @@ run_with_heartbeat_capture() {
     "$@" > "$heartbeat_stdout" 2> "$heartbeat_stderr" &
     heartbeat_cmd_pid=$!
     (
+        _hb_sleep_pid=
+        trap '[ -z "$_hb_sleep_pid" ] || kill "$_hb_sleep_pid" 2>/dev/null || true; exit 0' TERM INT
         while kill -0 "$heartbeat_cmd_pid" 2>/dev/null; do
-            sleep "${TYPELISP_COMPILE_MANIFEST_HEARTBEAT_SECONDS:-30}"
+            sleep "${TYPELISP_COMPILE_MANIFEST_HEARTBEAT_SECONDS:-30}" &
+            _hb_sleep_pid=$!
+            wait "$_hb_sleep_pid" 2>/dev/null || true
+            _hb_sleep_pid=
             if kill -0 "$heartbeat_cmd_pid" 2>/dev/null; then
                 echo "[selfhost-compile] ${heartbeat_label} still running"
             fi
@@ -480,34 +483,70 @@ prepare_compile_batch() {
 }
 
 # Split BATCH_INPUT, then BATCH_LIBRARY_INPUT, into BATCH_CHUNK_SIZE-entry
-# chunk files numbered contiguously from 0. Each library chunk also gets a
-# `.no-entry` marker, which manifest_compile_chunk turns into --no-entry.
+# chunk files numbered contiguously from 0. Any executable row compiling
+# src/main.tl is isolated into its own singleton chunk first so the heaviest
+# compiler build never shares a batch process with other entries. Library rows
+# are distributed round-robin across chunks (and get a `.no-entry` marker,
+# which manifest_compile_chunk turns into --no-entry) so adjacent heavy
+# compiler modules spread evenly across workers instead of forming a straggler.
 split_compile_batch() {
-    split_compile_batch_rows "$BATCH_INPUT" 0 ""
+    _split_next=0
+    if [ -s "$BATCH_INPUT" ]; then
+        _split_isolated="$BATCH_CHUNK_DIR/.isolated-main.txt"
+        _split_regular="$BATCH_CHUNK_DIR/.regular-exec.txt"
+        awk -F '|' -v iso="$_split_isolated" -v reg="$_split_regular" '
+            $1 ~ /(^|[\/\\])src[\/\\]main\.tl$/ { print $0 > iso; next }
+            { print $0 > reg }
+        ' "$BATCH_INPUT"
+        if [ -s "$_split_isolated" ]; then
+            split_compile_batch_rows "$_split_isolated" "$_split_next" "" 1 contiguous
+            _split_next=$(find "$BATCH_CHUNK_DIR" -type f -name 'compile-batch.*.txt' | wc -l | tr -d ' ')
+        fi
+        if [ -s "$_split_regular" ]; then
+            split_compile_batch_rows "$_split_regular" "$_split_next" "" "$BATCH_CHUNK_SIZE" contiguous
+            _split_next=$(find "$BATCH_CHUNK_DIR" -type f -name 'compile-batch.*.txt' | wc -l | tr -d ' ')
+        fi
+        rm -f "$_split_isolated" "$_split_regular"
+    fi
     if [ -s "$BATCH_LIBRARY_INPUT" ]; then
         split_compile_batch_rows "$BATCH_LIBRARY_INPUT" \
-            "$(find "$BATCH_CHUNK_DIR" -type f -name 'compile-batch.*.txt' | wc -l | tr -d ' ')" \
-            no-entry
+            "$_split_next" \
+            no-entry "$BATCH_CHUNK_SIZE" round-robin
     fi
 }
 
-# ROWS FIRST-CHUNK MARKER: split ROWS into chunks numbered from FIRST-CHUNK,
-# creating `<chunk>.MARKER` beside each chunk when MARKER is not empty.
+# ROWS FIRST-CHUNK MARKER CHUNK-SIZE MODE: split ROWS into chunks numbered from
+# FIRST-CHUNK, creating `<chunk>.MARKER` beside each chunk when MARKER is not
+# empty. MODE is `contiguous` or `round-robin`.
 split_compile_batch_rows() {
-    awk -v outdir="$BATCH_CHUNK_DIR" -v size="$BATCH_CHUNK_SIZE" -v first="$2" -v marker="$3" '
+    _split_rows_file=$1
+    _split_first=$2
+    _split_marker=$3
+    _split_size=$4
+    _split_mode=${5:-contiguous}
+    _split_total=$(wc -l < "$_split_rows_file" | tr -d ' ')
+    [ "$_split_total" -gt 0 ] || return 0
+    _split_chunks=$(((_split_total + _split_size - 1) / _split_size))
+    awk -v outdir="$BATCH_CHUNK_DIR" -v size="$_split_size" -v first="$_split_first" \
+        -v marker="$_split_marker" -v mode="$_split_mode" -v nchunks="$_split_chunks" '
         {
-            chunk = first + int((NR - 1) / size)
+            if (mode == "round-robin") {
+                offset = (NR - 1) % nchunks
+            } else {
+                offset = int((NR - 1) / size)
+            }
+            chunk = first + offset
             path = sprintf("%s/compile-batch.%04d.txt", outdir, chunk)
-            if (marker != "" && (NR - 1) % size == 0) {
-                printf "" > (path "." marker)
-                close(path "." marker)
+            if (!opened[chunk]++) {
+                if (marker != "") {
+                    printf "" > (path "." marker)
+                    close(path "." marker)
+                }
             }
             print $0 >> path
-            if (NR % size == 0) {
-                close(path)
-            }
+            close(path)
         }
-    ' "$1"
+    ' "$_split_rows_file"
 }
 
 # Compile one chunk inside a pool worker. It touches no shared state: it leaves
@@ -815,6 +854,10 @@ manifest_pool_self_test_run() {
     for _st_source in "$@"; do
         case "$_st_source" in
             lib:*) printf '%s|%s\n' "$WORKDIR/${_st_source#lib:}.tl" "$WORKDIR/${_st_source#lib:}.s" >> "$BATCH_LIBRARY_INPUT" ;;
+            */*)
+                mkdir -p "$(dirname -- "$WORKDIR/$_st_source.s")"
+                printf '%s|%s\n' "$WORKDIR/$_st_source.tl" "$WORKDIR/$_st_source.s" >> "$BATCH_INPUT"
+                ;;
             *) printf '%s|%s\n' "$WORKDIR/$_st_source.tl" "$WORKDIR/$_st_source.s" >> "$BATCH_INPUT" ;;
         esac
     done
@@ -926,6 +969,23 @@ FAKE
     done
     [ "$(wc -l < "$MANIFEST_POOL_SELF_TEST_ROOT/library/timing.tsv" | tr -d ' ')" -eq 3 ] ||
         manifest_pool_self_test_fail "library: expected 3 chunks (two executable, one library)"
+
+    # src/main.tl is isolated into its own singleton chunk first, and library
+    # rows stripe round-robin across their chunks.
+    MANIFEST_POOL_WORKERS=2
+    manifest_pool_self_test_run isolate-main 2 a src/main b lib:l1 lib:l2 lib:l3 lib:l4
+    manifest_pool_self_test_expect isolate-main pass
+    [ "$(wc -l < "$MANIFEST_POOL_SELF_TEST_ROOT/isolate-main/compile-batch-chunks/compile-batch.0000.txt" | tr -d ' ')" -eq 1 ] ||
+        manifest_pool_self_test_fail "isolate-main: src/main.tl chunk was not a singleton"
+    grep -F 'src/main.tl|' "$MANIFEST_POOL_SELF_TEST_ROOT/isolate-main/compile-batch-chunks/compile-batch.0000.txt" >/dev/null ||
+        manifest_pool_self_test_fail "isolate-main: chunk 0 does not hold src/main.tl"
+    [ "$(wc -l < "$MANIFEST_POOL_SELF_TEST_ROOT/isolate-main/compile-batch-chunks/compile-batch.0001.txt" | tr -d ' ')" -eq 2 ] ||
+        manifest_pool_self_test_fail "isolate-main: remaining exec rows did not pack together"
+    grep -F 'l1.tl|' "$MANIFEST_POOL_SELF_TEST_ROOT/isolate-main/compile-batch-chunks/compile-batch.0002.txt" >/dev/null &&
+        grep -F 'l3.tl|' "$MANIFEST_POOL_SELF_TEST_ROOT/isolate-main/compile-batch-chunks/compile-batch.0002.txt" >/dev/null &&
+        grep -F 'l2.tl|' "$MANIFEST_POOL_SELF_TEST_ROOT/isolate-main/compile-batch-chunks/compile-batch.0003.txt" >/dev/null &&
+        grep -F 'l4.tl|' "$MANIFEST_POOL_SELF_TEST_ROOT/isolate-main/compile-batch-chunks/compile-batch.0003.txt" >/dev/null ||
+        manifest_pool_self_test_fail "isolate-main: library rows were not striped round-robin"
 
     # One worker is the serial route.
     MANIFEST_POOL_WORKERS=1
@@ -1040,6 +1100,8 @@ main_policy=
 case_dir=
 case_count=0
 case_requires_stage0_mode=
+EXPECTATION_CASES_FILE="$WORKDIR/expectation-cases.tsv"
+: > "$EXPECTATION_CASES_FILE"
 
 while IFS='|' read -r kind a b c d e; do
     case "$kind" in
@@ -1094,7 +1156,7 @@ while IFS='|' read -r kind a b c d e; do
             ;;
         end)
             [ -n "$case_id" ] || fail "end appears before a case"
-            expectation_case_check
+            printf '%s\t%s\n' "$case_id" "$main_policy" >> "$EXPECTATION_CASES_FILE"
             case_id=
             ;;
         *)
@@ -1106,5 +1168,72 @@ done < "$MANIFEST_INPUT"
 if [ -n "$case_id" ]; then
     fail "manifest ended before case $case_id had an end directive"
 fi
+
+# Evaluate each case's independent expectation check across up to
+# MANIFEST_POOL_WORKERS workers, then report any failure in manifest order.
+_exp_pids=
+cleanup_exp_pids() {
+    for _exp_pid in $_exp_pids; do
+        kill "$_exp_pid" 2>/dev/null || true
+    done
+    for _exp_pid in $_exp_pids; do
+        wait "$_exp_pid" 2>/dev/null || true
+    done
+    _exp_pids=
+}
+trap 'cleanup_exp_pids' EXIT
+trap 'trap "" HUP INT TERM; cleanup_exp_pids; exit 1' HUP INT TERM
+
+_exp_worker=0
+while [ "$_exp_worker" -lt "$MANIFEST_POOL_WORKERS" ]; do
+    (
+        _exp_pids=
+        _exp_child_pid=
+        cleanup_exp_worker() {
+            if [ -n "$_exp_child_pid" ]; then
+                kill "$_exp_child_pid" 2>/dev/null || true
+                wait "$_exp_child_pid" 2>/dev/null || true
+                _exp_child_pid=
+            fi
+        }
+        trap 'cleanup_exp_worker' EXIT
+        trap 'trap "" HUP INT TERM; cleanup_exp_worker; exit 1' HUP INT TERM
+
+        _exp_idx=0
+        while IFS="$EXPECTATION_TAB" read -r case_id main_policy; do
+            if [ $((_exp_idx % MANIFEST_POOL_WORKERS)) -eq "$_exp_worker" ]; then
+                case_dir="$WORKDIR/$case_id"
+                case_expectations="$case_dir/expectations.tsv"
+                case_expectation_keys="$case_dir/expectation-keys.txt"
+                _exp_rc=0
+                ( expectation_case_check ) >"$case_dir/check.out" 2>"$case_dir/check.err" &
+                _exp_child_pid=$!
+                wait "$_exp_child_pid" || _exp_rc=$?
+                _exp_child_pid=
+                printf '%s\n' "$_exp_rc" > "$case_dir/check.status"
+            fi
+            _exp_idx=$((_exp_idx + 1))
+        done < "$EXPECTATION_CASES_FILE"
+    ) &
+    _exp_pids="$_exp_pids $!"
+    _exp_worker=$((_exp_worker + 1))
+done
+_exp_wait_rc=0
+for _exp_pid in $_exp_pids; do
+    wait "$_exp_pid" || _exp_wait_rc=1
+done
+_exp_pids=
+while IFS="$EXPECTATION_TAB" read -r case_id main_policy; do
+    case_dir="$WORKDIR/$case_id"
+    if [ ! -s "$case_dir/check.status" ]; then
+        fail "$case_id expectation worker left no status"
+    fi
+    _exp_rc=$(cat "$case_dir/check.status")
+    if [ "$_exp_rc" -ne 0 ]; then
+        cat "$case_dir/check.err" >&2 || true
+        exit 1
+    fi
+done < "$EXPECTATION_CASES_FILE"
+[ "$_exp_wait_rc" -eq 0 ] || fail "expectation worker failed"
 
 echo "selfhost compile manifest passed: $case_count case(s) ($EXPECTATION_MODE mode)"

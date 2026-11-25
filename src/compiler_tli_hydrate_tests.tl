@@ -446,6 +446,62 @@
         (fs.try-remove-dir-if-exists (& root))
         unit)]))
 
+(test
+  tli-sysroot-dir-override-probe
+  (tli-test-mkdir "target")
+  (tli-test-mkdir "target/exp")
+  (match (fs.try-create-temp-dir-in "target/exp" "tli-override")
+    [(ErrIoString error) (io.panic (io.error-message error))]
+    [(OkIoString root)
+      (let
+        [missing-dir : String (fs.path-join (& root) "absent")]
+        [top-file : String (fs.path-join (& root) "arena.tl")]
+        [nested-dir : String (fs.path-join (& root) "compress")]
+        [nested-file : String (fs.path-join (& nested-dir) "adler32.tl")]
+        (when
+          (sysroot.tli-sysroot-dir-overrides-stdlib? (& missing-dir))
+          (io.panic "absent directory reported stdlib override"))
+        (when
+          (sysroot.tli-sysroot-dir-overrides-module?
+            (& root)
+            "arena.tl"
+            "(define x : i64 1)\n")
+          (io.panic "missing file reported stdlib override"))
+        (match (io.try-write-file
+          (& top-file)
+          (byte_buf.str-as-bytes "(define x : i64 1)\n"))
+          [(OkIoUnit) unit]
+          [(ErrIoUnit error) (io.panic (io.error-message error))])
+        (when
+          (sysroot.tli-sysroot-dir-overrides-module?
+            (& root)
+            "arena.tl"
+            "(define x : i64 1)\n")
+          (io.panic "exact-matching file reported stdlib override"))
+        (unless
+          (sysroot.tli-sysroot-dir-overrides-module?
+            (& root)
+            "arena.tl"
+            "(define x : i64 2)\n")
+          (io.panic "modified top-level file missed stdlib override"))
+        (tli-test-mkdir (& nested-dir))
+        (match (io.try-write-file
+          (& nested-file)
+          (byte_buf.str-as-bytes "(define y : i64 9)\n"))
+          [(OkIoUnit) unit]
+          [(ErrIoUnit error) (io.panic (io.error-message error))])
+        (unless
+          (sysroot.tli-sysroot-dir-overrides-module?
+            (& root)
+            "compress/adler32.tl"
+            "(define y : i64 0)\n")
+          (io.panic "modified nested file missed stdlib override"))
+        (fs.try-remove-file-if-exists (& nested-file))
+        (fs.try-remove-dir-if-exists (& nested-dir))
+        (fs.try-remove-file-if-exists (& top-file))
+        (fs.try-remove-dir-if-exists (& root))
+        unit)]))
+
 (define (tli-test-extract-io) : tli.TliBundle
   (api.compiler-typecheck-reset-load-session!)
   (let
@@ -681,10 +737,10 @@
           (when (string.eq (& found) text) (return start)))))
     (io.panic "pool text not found")))
 
-;; Opening rejects a damaged string pool before any hydration: both opens
-;; through `index_sha256` (the eager one also through its content SHA-256),
-;; and, once the digests are re-stamped, through the UTF-8 check on each pool
-;; string they read.
+;; Full open verifies `index_sha256` and `content_sha256` before pool decoding;
+;; lazy compile open skips both up-front index/content hashes and rejects
+;; invalid UTF-8 pool strings on read, tampered module records via
+;; `module_sha256`, and tampered compact bodies via `inline_ir_sha256`.
 (define (tli-test-expect-open-failure
   [wire : (& wire (__tl_dyn-array u8))]
   [cfg-digest : (& (Array u8 32))]
@@ -710,29 +766,13 @@
     [cfg-digest : (Array u8 32)
       (array-ref bundle.modules 0).cfg-fingerprint-sha256]
     [wire : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
-    ;; The directory names every module, so both opens read this entry.
-    [text : i64 (tli-test-pool-text-offset (& wire) "stdlib.io")]
-    (set! (array-ref wire text) (cast 0xff : u8))
-    (with-arena
-      tli-job
-      (tli-test-expect-open-failure
-        (& wire)
-        (& cfg-digest)
-        false
-        false
-        "modified string pool bytes fail the content SHA-256")
-      (tli-test-expect-open-failure
-        (& wire)
-        (& cfg-digest)
-        true
-        false
-        "modified string pool bytes fail the lazy index SHA-256"))
+    ;; 1. Tampering `index_sha256` (even with `content_sha256` re-stamped) is
+    ;; rejected by full open (`tli-catalog-open` / `inspect`).
     (let
-      [index : (Array u8 32)
-        (codec.tli-index-digest
-          (& wire)
-          (+ (byte_le.read-u64 (& wire) 40) (byte_le.read-u64 (& wire) 48)))]
-      (codec.tli-copy-digest! (&mut wire) tli.tli-index-digest-offset (& index))
+      [saved-idx : u8 (array-ref wire tli.tli-index-digest-offset)]
+      (set!
+        (array-ref wire tli.tli-index-digest-offset)
+        (cast (bit-xor (cast saved-idx : i64) 1) : u8))
       (codec.tli-copy-digest!
         (&mut wire)
         tli.tli-content-digest-offset
@@ -742,14 +782,210 @@
         (tli-test-expect-open-failure
           (& wire)
           (& cfg-digest)
-          true
-          true
-          "lazy open rejects invalid UTF-8 pool text"))
+          false
+          false
+          "tampered index_sha256 fails full open even when content_sha256 matches"))
+      (set! (array-ref wire tli.tli-index-digest-offset) saved-idx)
+      (codec.tli-copy-digest!
+        (&mut wire)
+        tli.tli-content-digest-offset
+        (& (codec.tli-content-digest (& wire)))))
+    ;; 2. Tampering a module record's bytes is rejected on lazy hydration via
+    ;; `module_sha256`.
+    (let
+      [rec-start : i64
+        (byte_le.read-u64 (& wire) (+ (byte_le.read-u64 (& wire) 40) 8))]
+      [saved-rec : u8 (array-ref wire rec-start)]
+      (set!
+        (array-ref wire rec-start)
+        (cast (bit-xor (cast saved-rec : i64) 1) : u8))
+      (with-arena
+        tli-job
+        (match (hydrate.tli-catalog-open-lazy
+          (& wire)
+          "build"
+          "target"
+          (& cfg-digest))
+          [(Err failure) (io.panic failure.message)]
+          [(Ok catalog-val)
+            (let
+              [catalog : hydrate.TliCatalog catalog-val]
+              [mod-name : String
+                (string.copy (& (array-ref catalog.directory.entries 0).name))]
+              (match (hydrate.tli-catalog-hydrate! (&mut catalog) (& mod-name))
+                [(Err failure)
+                  (test.assert-true
+                    (match failure.kind
+                      [(DigestMismatch) true]
+                      [_ false])
+                    "tampered module record fails lazy module_sha256")]
+                [(Ok _)
+                  (io.panic "lazy hydrate accepted tampered module_sha256")]))]))
+      (set! (array-ref wire rec-start) saved-rec))
+    ;; 3. Invalid UTF-8 in a directory-referenced pool string fails full open
+    ;; via digest (then UTF-8 once re-stamped) and fails lazy open directly via
+    ;; UTF-8 validation.
+    (let
+      [text : i64 (tli-test-pool-text-offset (& wire) "stdlib.io")]
+      (set! (array-ref wire text) (cast 0xff : u8))
       (with-arena
         tli-job
         (tli-test-expect-open-failure
           (& wire)
           (& cfg-digest)
           false
+          false
+          "modified string pool bytes fail full open digest")
+        (tli-test-expect-open-failure
+          (& wire)
+          (& cfg-digest)
           true
-          "re-hashed invalid UTF-8 pool text is rejected")))))
+          true
+          "lazy open rejects invalid UTF-8 pool text directly"))
+      (let
+        [index : (Array u8 32)
+          (codec.tli-index-digest
+            (& wire)
+            (+ (byte_le.read-u64 (& wire) 40) (byte_le.read-u64 (& wire) 48)))]
+        (codec.tli-copy-digest!
+          (&mut wire)
+          tli.tli-index-digest-offset
+          (& index))
+        (codec.tli-copy-digest!
+          (&mut wire)
+          tli.tli-content-digest-offset
+          (& (codec.tli-content-digest (& wire))))
+        (with-arena
+          tli-job
+          (tli-test-expect-open-failure
+            (& wire)
+            (& cfg-digest)
+            true
+            true
+            "lazy open rejects re-hashed invalid UTF-8 pool text"))
+        (with-arena
+          tli-job
+          (tli-test-expect-open-failure
+            (& wire)
+            (& cfg-digest)
+            false
+            true
+            "re-hashed invalid UTF-8 pool text is rejected"))))))
+
+(test
+  tli-lazy-open-rejects-tampered-inline-ir-sha256
+  (let
+    [zero : (Array u8 32) (make-array u8 32)]
+    [cfg-digest : (Array u8 32) (make-array u8 32)]
+    [fns : (__tl_dyn-array tli.TliFnDecl) (__tl_make-array tli.TliFnDecl 1)]
+    [mods : (__tl_dyn-array tli.TliModuleRecord)
+      (__tl_make-array tli.TliModuleRecord 1)]
+    [bodies : (__tl_dyn-array tli.TliCompactBodyEntry)
+      (__tl_make-array tli.TliCompactBodyEntry 1)]
+    (set!
+      (array-ref fns 0)
+      (tli.TliFnDecl
+        "spmd-id"
+        "test.compact"
+        "test.compact/spmd-id"
+        0
+        0
+        ""
+        false
+        0
+        (__tl_make-array tli.TliExternLinkInput 0)
+        (__tl_make-array tli.TliParam 0)
+        (tli.TliType.Unit)
+        (tli.TliFnSummary
+          tli.tli-fn-spmd-inlineable
+          0
+          (__tl_make-array i64 0)
+          (__tl_make-array tli.TliGlobalWrite 0)
+          -1
+          (cast 0 : u8)
+          0
+          0
+          0
+          zero)))
+    (set!
+      (array-ref mods 0)
+      (tli.TliModuleRecord
+        "test.compact"
+        "test/compact.tl"
+        zero
+        cfg-digest
+        0
+        (__tl_make-array tli.TliImport 0)
+        (__tl_make-array String 0)
+        (__tl_make-array tli.TliTypeDecl 0)
+        fns
+        (__tl_make-array tli.TliValueDecl 0)
+        (__tl_make-array tli.TliMacroHandle 0)
+        (__tl_make-array tli.TliDispatchDecl 0)))
+    (set!
+      (array-ref bodies 0)
+      (tli.TliCompactBodyEntry
+        "test.compact"
+        "spmd-id"
+        "test.compact/spmd-id"
+        (tli.TliCompactBody
+          tli.tli-compact-body-has-spmd-expr
+          (tli.tli-compact-ir-body-empty)
+          (tli.TliSpmdExpr.Literal (tli.TliSpmdLiteral.Unit)))))
+    (let
+      [bundle : tli.TliBundle
+        (tli.TliBundle
+          tli.tli-has-compact-ir
+          "build"
+          "target"
+          mods
+          (__tl_make-array tli.TliCompactGlobal 0)
+          bodies)]
+      [wire : (__tl_dyn-array u8) (codec.tli-encode-bundle (& bundle))]
+      [ir-start : i64 (byte_le.read-u64 (& wire) 56)]
+      (with-arena
+        tli-job
+        (match (hydrate.tli-catalog-open-lazy
+          (& wire)
+          "build"
+          "target"
+          (& cfg-digest))
+          [(Err failure) (io.panic failure.message)]
+          [(Ok catalog-val)
+            (let
+              [catalog : hydrate.TliCatalog catalog-val]
+              (match (hydrate.tli-catalog-hydrate!
+                (&mut catalog)
+                "test.compact")
+                [(Err failure) (io.panic failure.message)]
+                [(Ok _)
+                  (let
+                    [fn0
+                      (& (array-ref (array-ref catalog.records 0).functions 0))]
+                    [body-pos : i64 (+ ir-start fn0.summary.inline-ir-offset)]
+                    (set!
+                      (array-ref wire body-pos)
+                      (cast
+                        (bit-xor (cast (array-ref wire body-pos) : i64) 1)
+                        : u8))
+                    (match (hydrate.tli-catalog-open-lazy
+                      (& wire)
+                      "build"
+                      "target"
+                      (& cfg-digest))
+                      [(Err failure) (io.panic failure.message)]
+                      [(Ok bad-catalog)
+                        (match (codec.tli-decode-compact-body-at
+                          (& bad-catalog.directory)
+                          fn0.summary.inline-ir-offset
+                          fn0.summary.inline-ir-len
+                          (& fn0.summary.inline-ir-sha256))
+                          [(codec.TliCompactBodyResult.Err failure)
+                            (test.assert-true
+                              (match failure.kind
+                                [(DigestMismatch) true]
+                                [_ false])
+                              "tampered compact body fails lazy inline_ir_sha256")]
+                          [(codec.TliCompactBodyResult.Ok _)
+                            (io.panic
+                              "lazy decode accepted tampered inline_ir_sha256")])]))]))])))))

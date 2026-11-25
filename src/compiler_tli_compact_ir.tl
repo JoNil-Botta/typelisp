@@ -2678,7 +2678,8 @@
 ;; Lazily hydrate called `.tli` v3 `compact_ir` bodies, referenced `compact_globals`,
 ;; and packed `OptExternalSummaries` into `program` before `tli-arena` retires.
 ;; - O0: no-op.
-;; - O1: call-free bodies with `<= 12` instructions (peeked via header only).
+;; - O1: startup-init pruning plan only (no `HAS_IR` compact IR body hydration;
+;;       `HAS_SPMD_EXPR` hydrates on demand during `foreach` at all opt levels).
 ;; - O2: full transitive closure of `HAS_IR` callees + `compact_globals` +
 ;;       packed `OptExternalSummaries` for remaining out-of-line externs.
 (define (tli-compact-scan-ir-all-syms-add!
@@ -3170,156 +3171,204 @@
     (match program
       [(ir.CompilerIrProgram.Program globals functions externs authority)
         (let
-          [has-compact? : bool
-            (!= (bit-and catalog.directory.flags tli.tli-has-compact-ir) 0)]
           [o2? : bool (>= opt-level 2)]
-          [defined-fns : i64_map.Map
-            (i64_map.with-capacity (* (+ functions.len 1) 2))]
-          [defined-gls : i64_map.Map
-            (i64_map.with-capacity (* (+ globals.len 1) 2))]
-          [extern-by-name : i64_map.Map
-            (i64_map.with-capacity (* (+ externs.len 1) 2))]
-          [extern-link-by-name : i64_map.Map
-            (i64_map.with-capacity (* (+ externs.len 1) 2))]
-          [init-fn-syms : i64_vec.Vec (i64_vec.new)]
-          [init-fn-seen : i64_map.Map (i64_map.with-capacity 128)]
-          [ref-globals : str_map.Map (str_map.with-capacity 64)]
-          (for [i (iterator.range 0 functions.len)]
-            (match (ir.compiler-ir-function-seq-borrow (& functions) i)
-              [(ir.CompilerIrFunction.Function fname _ _ _ blocks _)
-                (i64_map.insert-ref!
-                  (&mut defined-fns)
-                  (ir.compiler-ir-symbol-id fname)
-                  1)
-                (match blocks
-                  [(ir.CompilerIrBlockList.Array bseq)
-                    (for [bi
-                      (iterator.range 0 (ir.compiler-ir-block-seq-count bseq))]
-                      (match (ir.compiler-ir-block-seq-borrow bseq bi)
-                        [(ir.CompilerIrBlock.Block _ iseq)
-                          (for [ii
-                            (iterator.range
-                              0
-                              (ir.compiler-ir-instr-seq-count iseq))]
-                            (tli-compact-scan-ir-instr!
-                              (ir.compiler-ir-instr-seq-borrow iseq ii)
-                              (&mut init-fn-syms)
-                              (&mut init-fn-seen)
-                              (&mut ref-globals)))]))])]))
-          (for [i (iterator.range 0 globals.len)]
-            (match (ir.compiler-ir-global-seq-borrow (& globals) i)
-              [(ir.CompilerIrGlobal.Global gname _ ginit)
-                (i64_map.insert-ref!
-                  (&mut defined-gls)
-                  (ir.compiler-ir-symbol-id gname)
-                  1)
-                (tli-compact-scan-ir-value!
-                  ginit
-                  (&mut init-fn-syms)
-                  (&mut init-fn-seen)
-                  (&mut ref-globals))]))
-          (for [i (iterator.range 0 externs.len)]
-            (match (ir.compiler-ir-extern-seq-borrow (& externs) i)
-              [(ir.CompilerIrExtern.Extern ename _ _ _ _ elink _ provided _ _)
-                (unless
-                  provided
-                  (let
-                    [nid : i64 (ir.compiler-ir-symbol-id ename)]
-                    (i64_map.insert-ref! (&mut extern-by-name) nid i)
-                    (i64_map.insert-ref! (&mut extern-link-by-name) nid elink)))]))
-          ;; Seed worklist from direct calls/refs to hydrated externs.
-          (let
-            [wl-names : i64_vec.Vec (i64_vec.new)]
-            [wl-slots : i64_vec.Vec (i64_vec.new)]
-            [wl-seen : i64_map.Map (i64_map.with-capacity 128)]
-            [avail-names : i64_map.Map (i64_map.with-capacity 128)]
-            [fn-builder : ir.CompilerIrFunctionBuilder
-              (ir.compiler-ir-function-builder-with-capacity
-                (+ functions.len 32))]
-            [gl-builder : ir.CompilerIrGlobalBuilder
-              (ir.compiler-ir-global-builder-with-capacity (+ globals.len 16))]
-            [ex-builder : ir.CompilerIrExternBuilder
-              (ir.compiler-ir-extern-builder-with-capacity (+ externs.len 32))]
-            [added-fns : i64 0]
-            [added-gls : i64 0]
-            [added-exs : i64 0]
-            [body-ref-globals : str_map.Map (str_map.with-capacity 32)]
-            (for [i (iterator.range 0 functions.len)]
-              (ir.compiler-ir-function-builder-push!
-                (&mut fn-builder)
-                (ir.compiler-ir-function-seq-ref (& functions) i)))
-            (for [i (iterator.range 0 globals.len)]
-              (ir.compiler-ir-global-builder-push!
-                (&mut gl-builder)
-                (ir.compiler-ir-global-seq-ref (& globals) i)))
-            (when
-              has-compact?
-              (for [i (iterator.range 0 (i64_vec.len (& init-fn-syms)))]
-                (let
-                  [sid : i64 (i64_vec.get (& init-fn-syms) i 0)]
-                  (when
-                    (and
-                      (not (i64_map.contains? (& defined-fns) sid))
-                      (not (i64_map.contains? (& wl-seen) sid)))
-                    (let
-                      [link-id : i64
-                        (i64_map.get-value-or (& extern-link-by-name) sid -1)]
-                      (when
-                        (>= link-id 0)
-                        (let
-                          [slot : i64
-                            (hydrate.tli-hydrated-facts-fn-summary-slot-by-link
-                              facts
-                              link-id)]
-                          (when
-                            (>= slot 0)
-                            (i64_map.insert-ref! (&mut wl-seen) sid 1)
-                            (i64_vec.push-ref! (&mut wl-names) sid)
-                            (i64_vec.push-ref! (&mut wl-slots) slot))))))))
+          (if (not o2?)
+            ;; At O1, skip hydrating `HAS_IR` compact IR bodies and optimizer
+            ;; external summaries; only build the startup-init pruning plan.
+            (let
+              [defined-gls : i64_map.Map
+                (i64_map.with-capacity (* (+ globals.len 1) 2))]
+              [extern-link-by-name : i64_map.Map
+                (i64_map.with-capacity (* (+ externs.len 1) 2))]
+              (for [i (iterator.range 0 globals.len)]
+                (match (ir.compiler-ir-global-seq-borrow (& globals) i)
+                  [(ir.CompilerIrGlobal.Global gname _ _)
+                    (i64_map.insert-ref!
+                      (&mut defined-gls)
+                      (ir.compiler-ir-symbol-id gname)
+                      1)]))
+              (for [i (iterator.range 0 externs.len)]
+                (match (ir.compiler-ir-extern-seq-borrow (& externs) i)
+                  [(ir.CompilerIrExtern.Extern
+                      ename
+                      _
+                      _
+                      _
+                      _
+                      elink
+                      _
+                      provided
+                      _
+                      _)
+                    (unless
+                      provided
+                      (i64_map.insert-ref!
+                        (&mut extern-link-by-name)
+                        (ir.compiler-ir-symbol-id ename)
+                        elink))]))
               (let
-                [cursor : i64 0]
-                (while (< cursor (i64_vec.len (& wl-names)))
-                  (let
-                    [target-name : i64 (i64_vec.get (& wl-names) cursor 0)]
-                    [slot : i64 (i64_vec.get (& wl-slots) cursor 0)]
-                    [eflags : i64
-                      (array-ref facts.fn-summaries.slots slot).effect-flags]
-                    [ir-off : i64
-                      (array-ref facts.fn-summaries.slots slot).inline-ir-offset]
-                    [ir-len : i64
-                      (array-ref facts.fn-summaries.slots slot).inline-ir-len]
-                    [ir-sha : (Array u8 32)
-                      (array-ref facts.fn-summaries.slots slot).inline-ir-sha256]
-                    (+= cursor 1)
-                    (when
-                      (and
-                        (!= (bit-and eflags tli.tli-fn-has-inline-ir) 0)
-                        (> ir-len 0))
+                [startup-plan : TliStartupInitPlan
+                  (tli-build-startup-init-plan
+                    catalog
+                    facts
+                    (& functions)
+                    (& globals)
+                    (& externs)
+                    (& extern-link-by-name)
+                    (& defined-gls))]
+                (TliHydratedCompactProgram
+                  (ir.CompilerIrProgram.Program
+                    globals
+                    functions
+                    externs
+                    authority)
+                  (opt.opt-external-summaries-empty)
+                  startup-plan)))
+            (let
+              [has-compact? : bool
+                (!= (bit-and catalog.directory.flags tli.tli-has-compact-ir) 0)]
+              [defined-fns : i64_map.Map
+                (i64_map.with-capacity (* (+ functions.len 1) 2))]
+              [defined-gls : i64_map.Map
+                (i64_map.with-capacity (* (+ globals.len 1) 2))]
+              [extern-by-name : i64_map.Map
+                (i64_map.with-capacity (* (+ externs.len 1) 2))]
+              [extern-link-by-name : i64_map.Map
+                (i64_map.with-capacity (* (+ externs.len 1) 2))]
+              [init-fn-syms : i64_vec.Vec (i64_vec.new)]
+              [init-fn-seen : i64_map.Map (i64_map.with-capacity 128)]
+              [ref-globals : str_map.Map (str_map.with-capacity 64)]
+              (for [i (iterator.range 0 functions.len)]
+                (match (ir.compiler-ir-function-seq-borrow (& functions) i)
+                  [(ir.CompilerIrFunction.Function fname _ _ _ blocks _)
+                    (i64_map.insert-ref!
+                      (&mut defined-fns)
+                      (ir.compiler-ir-symbol-id fname)
+                      1)
+                    (match blocks
+                      [(ir.CompilerIrBlockList.Array bseq)
+                        (for [bi
+                          (iterator.range
+                            0
+                            (ir.compiler-ir-block-seq-count bseq))]
+                          (match (ir.compiler-ir-block-seq-borrow bseq bi)
+                            [(ir.CompilerIrBlock.Block _ iseq)
+                              (for [ii
+                                (iterator.range
+                                  0
+                                  (ir.compiler-ir-instr-seq-count iseq))]
+                                (tli-compact-scan-ir-instr!
+                                  (ir.compiler-ir-instr-seq-borrow iseq ii)
+                                  (&mut init-fn-syms)
+                                  (&mut init-fn-seen)
+                                  (&mut ref-globals)))]))])]))
+              (for [i (iterator.range 0 globals.len)]
+                (match (ir.compiler-ir-global-seq-borrow (& globals) i)
+                  [(ir.CompilerIrGlobal.Global gname _ ginit)
+                    (i64_map.insert-ref!
+                      (&mut defined-gls)
+                      (ir.compiler-ir-symbol-id gname)
+                      1)
+                    (tli-compact-scan-ir-value!
+                      ginit
+                      (&mut init-fn-syms)
+                      (&mut init-fn-seen)
+                      (&mut ref-globals))]))
+              (for [i (iterator.range 0 externs.len)]
+                (match (ir.compiler-ir-extern-seq-borrow (& externs) i)
+                  [(ir.CompilerIrExtern.Extern
+                      ename
+                      _
+                      _
+                      _
+                      _
+                      elink
+                      _
+                      provided
+                      _
+                      _)
+                    (unless
+                      provided
                       (let
-                        [want-decode? : bool
-                          (if o2?
-                            true
-                            (match (codec.tli-peek-compact-body-header
-                              (& catalog.directory)
-                              ir-off
-                              ir-len
-                              (& ir-sha))
-                              [(codec.TliCompactBodyHeaderResult.Ok hdr)
-                                (and
-                                  (!=
-                                    (bit-and
-                                      hdr.kind
-                                      tli.tli-compact-body-has-ir)
-                                    0)
-                                  (!=
-                                    (bit-and
-                                      hdr.ir-flags
-                                      tli.tli-compact-ir-call-free)
-                                    0)
-                                  (<= hdr.instr-count 12))]
-                              [(codec.TliCompactBodyHeaderResult.Err _) false]))]
+                        [nid : i64 (ir.compiler-ir-symbol-id ename)]
+                        (i64_map.insert-ref! (&mut extern-by-name) nid i)
+                        (i64_map.insert-ref!
+                          (&mut extern-link-by-name)
+                          nid
+                          elink)))]))
+              ;; Seed worklist from direct calls/refs to hydrated externs.
+              (let
+                [wl-names : i64_vec.Vec (i64_vec.new)]
+                [wl-slots : i64_vec.Vec (i64_vec.new)]
+                [wl-seen : i64_map.Map (i64_map.with-capacity 128)]
+                [avail-names : i64_map.Map (i64_map.with-capacity 128)]
+                [fn-builder : ir.CompilerIrFunctionBuilder
+                  (ir.compiler-ir-function-builder-with-capacity
+                    (+ functions.len 32))]
+                [gl-builder : ir.CompilerIrGlobalBuilder
+                  (ir.compiler-ir-global-builder-with-capacity
+                    (+ globals.len 16))]
+                [ex-builder : ir.CompilerIrExternBuilder
+                  (ir.compiler-ir-extern-builder-with-capacity
+                    (+ externs.len 32))]
+                [added-fns : i64 0]
+                [added-gls : i64 0]
+                [added-exs : i64 0]
+                [body-ref-globals : str_map.Map (str_map.with-capacity 32)]
+                (for [i (iterator.range 0 functions.len)]
+                  (ir.compiler-ir-function-builder-push!
+                    (&mut fn-builder)
+                    (ir.compiler-ir-function-seq-ref (& functions) i)))
+                (for [i (iterator.range 0 globals.len)]
+                  (ir.compiler-ir-global-builder-push!
+                    (&mut gl-builder)
+                    (ir.compiler-ir-global-seq-ref (& globals) i)))
+                (when
+                  has-compact?
+                  (for [i (iterator.range 0 (i64_vec.len (& init-fn-syms)))]
+                    (let
+                      [sid : i64 (i64_vec.get (& init-fn-syms) i 0)]
+                      (when
+                        (and
+                          (not (i64_map.contains? (& defined-fns) sid))
+                          (not (i64_map.contains? (& wl-seen) sid)))
+                        (let
+                          [link-id : i64
+                            (i64_map.get-value-or
+                              (& extern-link-by-name)
+                              sid
+                              -1)]
+                          (when
+                            (>= link-id 0)
+                            (let
+                              [slot : i64
+                                (hydrate.tli-hydrated-facts-fn-summary-slot-by-link
+                                  facts
+                                  link-id)]
+                              (when
+                                (>= slot 0)
+                                (i64_map.insert-ref! (&mut wl-seen) sid 1)
+                                (i64_vec.push-ref! (&mut wl-names) sid)
+                                (i64_vec.push-ref! (&mut wl-slots) slot))))))))
+                  (let
+                    [cursor : i64 0]
+                    (while (< cursor (i64_vec.len (& wl-names)))
+                      (let
+                        [target-name : i64 (i64_vec.get (& wl-names) cursor 0)]
+                        [slot : i64 (i64_vec.get (& wl-slots) cursor 0)]
+                        [eflags : i64
+                          (array-ref facts.fn-summaries.slots slot).effect-flags]
+                        [ir-off : i64
+                          (array-ref facts.fn-summaries.slots slot).inline-ir-offset]
+                        [ir-len : i64
+                          (array-ref facts.fn-summaries.slots slot).inline-ir-len]
+                        [ir-sha : (Array u8 32)
+                          (array-ref facts.fn-summaries.slots slot).inline-ir-sha256]
+                        (+= cursor 1)
                         (when
-                          want-decode?
+                          (and
+                            (!= (bit-and eflags tli.tli-fn-has-inline-ir) 0)
+                            (> ir-len 0))
                           (match (codec.tli-decode-compact-body-at
                             (& catalog.directory)
                             ir-off
@@ -3396,7 +3445,6 @@
                                         (+= added-exs 1)))
                                     (when
                                       (and
-                                        o2?
                                         (not
                                           (i64_map.contains?
                                             (& defined-fns)
@@ -3421,284 +3469,291 @@
                                             ref-sym)
                                           (i64_vec.push-ref!
                                             (&mut wl-slots)
-                                            cslot)))))))])))))))
-              ;; Inject referenced never-written literal `compact_globals`.
-              (when
-                (or
-                  (> (str_map.len (& body-ref-globals)) 0)
-                  (and o2? (> (str_map.len (& ref-globals)) 0)))
-                (match (codec.tli-decode-compact-globals (& catalog.directory))
-                  [(codec.TliCompactGlobalsResult.Err _) unit]
-                  [(codec.TliCompactGlobalsResult.Ok cglobals)
-                    (for [gi (iterator.range 0 (array-length cglobals))]
-                      (let
-                        [flags : i64 (array-ref cglobals gi).flags]
-                        [sym-copy : String
-                          (string.copy (& (array-ref cglobals gi).symbol))]
-                        [needed? : bool
-                          (or
-                            (str_map.contains?
-                              (& body-ref-globals)
-                              (string.copy (& sym-copy)))
-                            (and
-                              o2?
-                              (str_map.contains? (& ref-globals) sym-copy)))]
-                        (when
-                          (and
-                            needed?
-                            (!=
-                              (bit-and
-                                flags
-                                tli.tli-compact-global-never-written)
-                              0))
+                                            cslot)))))))])))))
+                  ;; Inject referenced never-written literal `compact_globals`.
+                  (when
+                    (or
+                      (> (str_map.len (& body-ref-globals)) 0)
+                      (and o2? (> (str_map.len (& ref-globals)) 0)))
+                    (match (codec.tli-decode-compact-globals
+                      (& catalog.directory))
+                      [(codec.TliCompactGlobalsResult.Err _) unit]
+                      [(codec.TliCompactGlobalsResult.Ok cglobals)
+                        (for [gi (iterator.range 0 (array-length cglobals))]
                           (let
-                            [gid : i64
-                              (tli-compact-dec-symbol
-                                (& (array-ref cglobals gi).symbol))]
-                            (unless
-                              (i64_map.contains? (& defined-gls) gid)
-                              (ir.compiler-ir-global-builder-push!
-                                (&mut gl-builder)
-                                (tli-compact-global-to-ir
-                                  pools
-                                  (& (array-ref cglobals gi))))
-                              (+= added-gls 1)
-                              (i64_map.insert-ref! (&mut defined-gls) gid 1)
-                              (when
-                                (i64_map.contains? (& extern-by-name) gid)
-                                (i64_map.insert-ref! (&mut avail-names) gid 1)))))))])))
-            ;; Assemble final extern sequence with `body-available` updated.
-            (let
-              [final-ex-builder : ir.CompilerIrExternBuilder
-                (ir.compiler-ir-extern-builder-with-capacity
-                  (+ externs.len added-exs))]
-              [added-ex-seq : ir.CompilerIrExternSeq
-                (ir.compiler-ir-extern-builder-snapshot-seq (& ex-builder))]
-              (for [i (iterator.range 0 externs.len)]
-                (match (ir.compiler-ir-extern-seq-ref (& externs) i)
-                  [(ir.CompilerIrExtern.Extern
-                      nid
-                      snid
-                      nm
-                      ty
-                      abi
-                      lid
-                      links
-                      prov
-                      storage
-                      ba)
-                    (let
-                      [avail? : bool
-                        (or
-                          ba
-                          (and
-                            (not prov)
-                            (i64_map.contains?
-                              (& avail-names)
-                              (ir.compiler-ir-symbol-id nid))))]
-                      (ir.compiler-ir-extern-builder-push!
-                        (&mut final-ex-builder)
-                        (ir.CompilerIrExtern.Extern
-                          nid
-                          snid
-                          nm
-                          ty
-                          abi
-                          lid
-                          links
-                          prov
-                          storage
-                          avail?)))]))
-              (for [i (iterator.range 0 added-ex-seq.len)]
-                (match (ir.compiler-ir-extern-seq-ref (& added-ex-seq) i)
-                  [(ir.CompilerIrExtern.Extern
-                      nid
-                      snid
-                      nm
-                      ty
-                      abi
-                      lid
-                      links
-                      prov
-                      storage
-                      _)
-                    (let
-                      [avail? : bool
-                        (i64_map.contains?
-                          (& avail-names)
-                          (ir.compiler-ir-symbol-id nid))]
-                      (ir.compiler-ir-extern-builder-push!
-                        (&mut final-ex-builder)
-                        (ir.CompilerIrExtern.Extern
-                          nid
-                          snid
-                          nm
-                          ty
-                          abi
-                          lid
-                          links
-                          prov
-                          storage
-                          avail?)))]))
-              (let
-                [final-globals : ir.CompilerIrGlobalSeq
-                  (ir.compiler-ir-global-builder-snapshot-seq (& gl-builder))]
-                [final-functions : ir.CompilerIrFunctionSeq
-                  (ir.compiler-ir-function-builder-to-seq fn-builder)]
-                [final-externs : ir.CompilerIrExternSeq
-                  (ir.compiler-ir-extern-builder-snapshot-seq
-                    (& final-ex-builder))]
-                ;; Refresh ReturnStorageAuthority if we added bodies or externs.
-                [final-authority : ir.CompilerIrReturnStorageAuthority
-                  (if (and (= added-fns 0) (= added-exs 0))
-                    authority
-                    (match authority
-                      [(ir.CompilerIrReturnStorageAuthority.Captured boxed)
-                        (let
-                          [target : i64 (deref boxed).target]
-                          [interns : intern.InternCompatState
-                            (intern.intern-compat-state-capture-active)]
-                          [bases : i64
-                            (ast.ast-node-pool-context-type-segment-bases
-                              (& pools))]
-                          [type-count : i64
-                            (match (ast.ast-node-pool-context-type-stamp pools)
-                              [(ast.AstMaybeTypePoolStamp.Some stamp)
-                                stamp.count]
-                              [(ast.AstMaybeTypePoolStamp.No) 0])]
-                          [claims : ir.CompilerIrReturnStorageIndex
-                            (ir.compiler-ir-return-storage-index-claims
-                              bases
-                              type-count
-                              (& final-functions)
-                              (& final-externs))]
-                          (ir.compiler-ir-return-storage-authority-capture
-                            pools
-                            (& interns)
-                            target
-                            (& claims)))]
-                      [_ authority]))]
-                ;; Build OptExternalSummaries at O2 for remaining out-of-line externs.
-                [ext-summaries : opt.OptExternalSummaries
-                  (if (not o2?)
-                    (opt.opt-external-summaries-empty)
-                    (let
-                      [sum-vec : ext_sum_vec.Vec (ext_sum_vec.new)]
-                      [seen-links : i64_map.Map (i64_map.with-capacity 64)]
-                      (for [ei (iterator.range 0 final-externs.len)]
-                        (match (ir.compiler-ir-extern-seq-borrow
-                          (& final-externs)
-                          ei)
-                          [(ir.CompilerIrExtern.Extern
-                              nid
-                              _
-                              _
-                              _
-                              _
-                              elink
-                              _
-                              prov
-                              _
-                              _)
+                            [flags : i64 (array-ref cglobals gi).flags]
+                            [sym-copy : String
+                              (string.copy (& (array-ref cglobals gi).symbol))]
+                            [needed? : bool
+                              (or
+                                (str_map.contains?
+                                  (& body-ref-globals)
+                                  (string.copy (& sym-copy)))
+                                (and
+                                  o2?
+                                  (str_map.contains? (& ref-globals) sym-copy)))]
                             (when
                               (and
-                                (not prov)
-                                (not (i64_map.contains? (& seen-links) elink)))
+                                needed?
+                                (!=
+                                  (bit-and
+                                    flags
+                                    tli.tli-compact-global-never-written)
+                                  0))
                               (let
-                                [lookup-link : i64
-                                  (i64_map.get-value-or
-                                    (& extern-link-by-name)
-                                    (ir.compiler-ir-symbol-id nid)
-                                    elink)]
-                                [slot : i64
-                                  (hydrate.tli-hydrated-facts-fn-summary-slot-by-link
-                                    facts
-                                    lookup-link)]
+                                [gid : i64
+                                  (tli-compact-dec-symbol
+                                    (& (array-ref cglobals gi).symbol))]
+                                (unless
+                                  (i64_map.contains? (& defined-gls) gid)
+                                  (ir.compiler-ir-global-builder-push!
+                                    (&mut gl-builder)
+                                    (tli-compact-global-to-ir
+                                      pools
+                                      (& (array-ref cglobals gi))))
+                                  (+= added-gls 1)
+                                  (i64_map.insert-ref! (&mut defined-gls) gid 1)
+                                  (when
+                                    (i64_map.contains? (& extern-by-name) gid)
+                                    (i64_map.insert-ref!
+                                      (&mut avail-names)
+                                      gid
+                                      1)))))))])))
+                ;; Assemble final extern sequence with `body-available` updated.
+                (let
+                  [final-ex-builder : ir.CompilerIrExternBuilder
+                    (ir.compiler-ir-extern-builder-with-capacity
+                      (+ externs.len added-exs))]
+                  [added-ex-seq : ir.CompilerIrExternSeq
+                    (ir.compiler-ir-extern-builder-snapshot-seq (& ex-builder))]
+                  (for [i (iterator.range 0 externs.len)]
+                    (match (ir.compiler-ir-extern-seq-ref (& externs) i)
+                      [(ir.CompilerIrExtern.Extern
+                          nid
+                          snid
+                          nm
+                          ty
+                          abi
+                          lid
+                          links
+                          prov
+                          storage
+                          ba)
+                        (let
+                          [avail? : bool
+                            (or
+                              ba
+                              (and
+                                (not prov)
+                                (i64_map.contains?
+                                  (& avail-names)
+                                  (ir.compiler-ir-symbol-id nid))))]
+                          (ir.compiler-ir-extern-builder-push!
+                            (&mut final-ex-builder)
+                            (ir.CompilerIrExtern.Extern
+                              nid
+                              snid
+                              nm
+                              ty
+                              abi
+                              lid
+                              links
+                              prov
+                              storage
+                              avail?)))]))
+                  (for [i (iterator.range 0 added-ex-seq.len)]
+                    (match (ir.compiler-ir-extern-seq-ref (& added-ex-seq) i)
+                      [(ir.CompilerIrExtern.Extern
+                          nid
+                          snid
+                          nm
+                          ty
+                          abi
+                          lid
+                          links
+                          prov
+                          storage
+                          _)
+                        (let
+                          [avail? : bool
+                            (i64_map.contains?
+                              (& avail-names)
+                              (ir.compiler-ir-symbol-id nid))]
+                          (ir.compiler-ir-extern-builder-push!
+                            (&mut final-ex-builder)
+                            (ir.CompilerIrExtern.Extern
+                              nid
+                              snid
+                              nm
+                              ty
+                              abi
+                              lid
+                              links
+                              prov
+                              storage
+                              avail?)))]))
+                  (let
+                    [final-globals : ir.CompilerIrGlobalSeq
+                      (ir.compiler-ir-global-builder-snapshot-seq
+                        (& gl-builder))]
+                    [final-functions : ir.CompilerIrFunctionSeq
+                      (ir.compiler-ir-function-builder-to-seq fn-builder)]
+                    [final-externs : ir.CompilerIrExternSeq
+                      (ir.compiler-ir-extern-builder-snapshot-seq
+                        (& final-ex-builder))]
+                    ;; Refresh ReturnStorageAuthority if we added bodies or externs.
+                    [final-authority : ir.CompilerIrReturnStorageAuthority
+                      (if (and (= added-fns 0) (= added-exs 0))
+                        authority
+                        (match authority
+                          [(ir.CompilerIrReturnStorageAuthority.Captured boxed)
+                            (let
+                              [target : i64 (deref boxed).target]
+                              [interns : intern.InternCompatState
+                                (intern.intern-compat-state-capture-active)]
+                              [bases : i64
+                                (ast.ast-node-pool-context-type-segment-bases
+                                  (& pools))]
+                              [type-count : i64
+                                (match (ast.ast-node-pool-context-type-stamp
+                                  pools)
+                                  [(ast.AstMaybeTypePoolStamp.Some stamp)
+                                    stamp.count]
+                                  [(ast.AstMaybeTypePoolStamp.No) 0])]
+                              [claims : ir.CompilerIrReturnStorageIndex
+                                (ir.compiler-ir-return-storage-index-claims
+                                  bases
+                                  type-count
+                                  (& final-functions)
+                                  (& final-externs))]
+                              (ir.compiler-ir-return-storage-authority-capture
+                                pools
+                                (& interns)
+                                target
+                                (& claims)))]
+                          [_ authority]))]
+                    ;; Build OptExternalSummaries at O2 for remaining out-of-line externs.
+                    [ext-summaries : opt.OptExternalSummaries
+                      (if (not o2?)
+                        (opt.opt-external-summaries-empty)
+                        (let
+                          [sum-vec : ext_sum_vec.Vec (ext_sum_vec.new)]
+                          [seen-links : i64_map.Map (i64_map.with-capacity 64)]
+                          (for [ei (iterator.range 0 final-externs.len)]
+                            (match (ir.compiler-ir-extern-seq-borrow
+                              (& final-externs)
+                              ei)
+                              [(ir.CompilerIrExtern.Extern
+                                  nid
+                                  _
+                                  _
+                                  _
+                                  _
+                                  elink
+                                  _
+                                  prov
+                                  _
+                                  _)
                                 (when
-                                  (>= slot 0)
-                                  (i64_map.insert-ref!
-                                    (&mut seen-links)
-                                    elink
-                                    1)
+                                  (and
+                                    (not prov)
+                                    (not
+                                      (i64_map.contains? (& seen-links) elink)))
                                   (let
-                                    [gw-len : i64
-                                      (array-length
-                                        (array-ref
-                                          facts.fn-summaries.slots
-                                          slot).global-writes)]
-                                    [gw-ids : (__tl_dyn-array i64)
-                                      (__tl_make-array i64 gw-len)]
-                                    (for [wi (iterator.range 0 gw-len)]
-                                      (set!
-                                        (array-ref gw-ids wi)
-                                        (array-ref
-                                          (array-ref
-                                            facts.fn-summaries.slots
-                                            slot).global-writes
-                                          wi).symbol-id))
-                                    (ext_sum_vec.push-ref!
-                                      (&mut sum-vec)
-                                      (opt.OptExternalFnSummary
+                                    [lookup-link : i64
+                                      (i64_map.get-value-or
+                                        (& extern-link-by-name)
+                                        (ir.compiler-ir-symbol-id nid)
+                                        elink)]
+                                    [slot : i64
+                                      (hydrate.tli-hydrated-facts-fn-summary-slot-by-link
+                                        facts
+                                        lookup-link)]
+                                    (when
+                                      (>= slot 0)
+                                      (i64_map.insert-ref!
+                                        (&mut seen-links)
                                         elink
-                                        (array-ref
-                                          facts.fn-summaries.slots
-                                          slot).effect-flags
-                                        (array-ref
-                                          facts.fn-summaries.slots
-                                          slot).call-memory
-                                        (cast
-                                          (array-ref
-                                            facts.fn-summaries.slots
-                                            slot).call-clean
-                                          : i64)
-                                        (array-ref
-                                          facts.fn-summaries.slots
-                                          slot).return-alias
-                                        gw-ids))))))]))
-                      (let
-                        [scount : i64 (ext_sum_vec.len (& sum-vec))]
-                        [out : (__tl_dyn-array opt.OptExternalFnSummary)
-                          (__tl_make-array opt.OptExternalFnSummary scount)]
-                        (for [si (iterator.range 0 scount)]
+                                        1)
+                                      (let
+                                        [gw-len : i64
+                                          (array-length
+                                            (array-ref
+                                              facts.fn-summaries.slots
+                                              slot).global-writes)]
+                                        [gw-ids : (__tl_dyn-array i64)
+                                          (__tl_make-array i64 gw-len)]
+                                        (for [wi (iterator.range 0 gw-len)]
+                                          (set!
+                                            (array-ref gw-ids wi)
+                                            (array-ref
+                                              (array-ref
+                                                facts.fn-summaries.slots
+                                                slot).global-writes
+                                              wi).symbol-id))
+                                        (ext_sum_vec.push-ref!
+                                          (&mut sum-vec)
+                                          (opt.OptExternalFnSummary
+                                            elink
+                                            (array-ref
+                                              facts.fn-summaries.slots
+                                              slot).effect-flags
+                                            (array-ref
+                                              facts.fn-summaries.slots
+                                              slot).call-memory
+                                            (cast
+                                              (array-ref
+                                                facts.fn-summaries.slots
+                                                slot).call-clean
+                                              : i64)
+                                            (array-ref
+                                              facts.fn-summaries.slots
+                                              slot).return-alias
+                                            gw-ids))))))]))
                           (let
-                            [gn : i64
-                              (array-length
-                                (array-ref sum-vec.slots si).global-write-ids)]
-                            [gcopy : (__tl_dyn-array i64)
-                              (__tl_make-array i64 gn)]
-                            (for [gi (iterator.range 0 gn)]
-                              (set!
-                                (array-ref gcopy gi)
-                                (array-ref
-                                  (array-ref sum-vec.slots si).global-write-ids
-                                  gi)))
-                            (set!
-                              (array-ref out si)
-                              (opt.OptExternalFnSummary
-                                (array-ref sum-vec.slots si).link-id
-                                (array-ref sum-vec.slots si).effect-flags
-                                (array-ref sum-vec.slots si).call-memory
-                                (array-ref sum-vec.slots si).call-clean
-                                (array-ref sum-vec.slots si).return-alias
-                                gcopy))))
-                        (opt.OptExternalSummaries out))))]
-                [startup-plan : TliStartupInitPlan
-                  (tli-build-startup-init-plan
-                    catalog
-                    facts
-                    (& final-functions)
-                    (& final-globals)
-                    (& final-externs)
-                    (& extern-link-by-name)
-                    (& defined-gls))]
-                (TliHydratedCompactProgram
-                  (ir.CompilerIrProgram.Program
-                    final-globals
-                    final-functions
-                    final-externs
-                    final-authority)
-                  ext-summaries
-                  startup-plan)))))])))
+                            [scount : i64 (ext_sum_vec.len (& sum-vec))]
+                            [out : (__tl_dyn-array opt.OptExternalFnSummary)
+                              (__tl_make-array opt.OptExternalFnSummary scount)]
+                            (for [si (iterator.range 0 scount)]
+                              (let
+                                [gn : i64
+                                  (array-length
+                                    (array-ref sum-vec.slots si).global-write-ids)]
+                                [gcopy : (__tl_dyn-array i64)
+                                  (__tl_make-array i64 gn)]
+                                (for [gi (iterator.range 0 gn)]
+                                  (set!
+                                    (array-ref gcopy gi)
+                                    (array-ref
+                                      (array-ref sum-vec.slots si).global-write-ids
+                                      gi)))
+                                (set!
+                                  (array-ref out si)
+                                  (opt.OptExternalFnSummary
+                                    (array-ref sum-vec.slots si).link-id
+                                    (array-ref sum-vec.slots si).effect-flags
+                                    (array-ref sum-vec.slots si).call-memory
+                                    (array-ref sum-vec.slots si).call-clean
+                                    (array-ref sum-vec.slots si).return-alias
+                                    gcopy))))
+                            (opt.OptExternalSummaries out))))]
+                    [startup-plan : TliStartupInitPlan
+                      (tli-build-startup-init-plan
+                        catalog
+                        facts
+                        (& final-functions)
+                        (& final-globals)
+                        (& final-externs)
+                        (& extern-link-by-name)
+                        (& defined-gls))]
+                    (TliHydratedCompactProgram
+                      (ir.CompilerIrProgram.Program
+                        final-globals
+                        final-functions
+                        final-externs
+                        final-authority)
+                      ext-summaries
+                      startup-plan)))))))])))
 
 (define (tli-hydrate-compact-ir-from-ptrs!
   [catalog-ptr : i64]

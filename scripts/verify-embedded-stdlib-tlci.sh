@@ -179,17 +179,6 @@ case "$(uname -s)" in
     *) HOST_TARGET=linux ;;
 esac
 
-set +e
-"$COMPILER" run tools/compiler-surface-ast-smoke.tl \
-    --stdlib-root stdlib --stdlib-root src \
-    --cfg compiler-surface-selftest --cfg compiler-surface-producer
-surface_status=$?
-set -e
-if [ "$surface_status" -ne 42 ]; then
-    echo "compiler surface selftest exited $surface_status, expected 42" >&2
-    exit 1
-fi
-
 WORKDIR=target/embedded-stdlib-tlci-verify
 EMBEDDED_IMAGE=target/embedded-stdlib-tlci/stdlib.tlci
 IMAGE_A=$WORKDIR/stdlib-a.tlci
@@ -211,21 +200,18 @@ MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
 MANIFEST=target/embedded-stdlib-tlci/modules.txt
 mkdir -p "$WORKDIR"
 
-# Compile outside the short execution deadline so slow compiler hosts retain
-# the same diagnostic-walk bound. The old computed-splice walk never returns.
-DIAGNOSTIC_DRIVER=$WORKDIR/native-diagnostics
-[ "$HOST_TARGET" != windows ] || DIAGNOSTIC_DRIVER=$DIAGNOSTIC_DRIVER.exe
-"$COMPILER" build tools/embedded-stdlib-tlci/native_diagnostics.tl \
-    --stdlib-root stdlib --stdlib-root src -o "$DIAGNOSTIC_DRIVER"
-diagnostic_status=0
-env -u BASH_ENV scripts/run-memory-bounded.sh \
-    --limit-mib 1024 --timeout-seconds 10 \
-    --report "$WORKDIR/native-diagnostics.report" -- \
-    env -u BASH_ENV "$DIAGNOSTIC_DRIVER" || diagnostic_status=$?
-if [ "$diagnostic_status" -ne 42 ]; then
-    echo "native producer diagnostic regression exited $diagnostic_status, expected 42" >&2
-    exit 1
-fi
+ACTIVE_BG_PIDS=
+cleanup_bg_pids() {
+    for _bg_pid in $ACTIVE_BG_PIDS; do
+        kill "$_bg_pid" 2>/dev/null || true
+    done
+    for _bg_pid in $ACTIVE_BG_PIDS; do
+        wait "$_bg_pid" 2>/dev/null || true
+    done
+    ACTIVE_BG_PIDS=
+}
+trap 'cleanup_bg_pids' EXIT
+trap 'trap "" HUP INT TERM; cleanup_bg_pids; exit 1' HUP INT TERM
 
 if [ "$HOST_TARGET" = windows ]; then
     OTHER_HOST_TARGET=linux
@@ -248,8 +234,105 @@ grep -F "does not match build host '$HOST_TARGET'" \
     echo "opposite-host wrapper rejection diagnostic mismatch" >&2
     exit 1
 }
-if "$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
+
+# Phase 1: warm the cached native producer tools concurrently with one auxiliary
+# worker running the independent surface AST smoke and diagnostic-walk bounded
+# test, keeping peak memory well inside the gate's 6144 MiB budget.
+rm -f "$WORKDIR"/*.status "$WORKDIR"/native-diagnostics.run.* "$WORKDIR"/native-diagnostics.build.*
+DIAGNOSTIC_DRIVER=$WORKDIR/native-diagnostics
+[ "$HOST_TARGET" != windows ] || DIAGNOSTIC_DRIVER=$DIAGNOSTIC_DRIVER.exe
+
+scripts/build-embedded-stdlib-tlci.sh --ensure-tools "$COMPILER" "$HOST_TARGET" \
+    >"$WORKDIR/tools.env" 2>"$WORKDIR/tools.stderr" &
+_pid_tools=$!
+
+(
+    _aux_child=
+    cleanup_aux_child() {
+        if [ -n "$_aux_child" ]; then
+            kill "$_aux_child" 2>/dev/null || true
+            wait "$_aux_child" 2>/dev/null || true
+            _aux_child=
+        fi
+    }
+    trap 'cleanup_aux_child' EXIT
+    trap 'trap "" HUP INT TERM; cleanup_aux_child; exit 1' HUP INT TERM
+
+    _surface_rc=0
+    "$COMPILER" run tools/compiler-surface-ast-smoke.tl \
+        --stdlib-root stdlib --stdlib-root src \
+        --cfg compiler-surface-selftest --cfg compiler-surface-producer \
+        >"$WORKDIR/surface-smoke.stdout" 2>"$WORKDIR/surface-smoke.stderr" &
+    _aux_child=$!
+    wait "$_aux_child" || _surface_rc=$?
+    _aux_child=
+    printf '%s\n' "$_surface_rc" > "$WORKDIR/surface-smoke.status"
+    [ "$_surface_rc" -eq 42 ] || exit 1
+
+    # Compile outside the short execution deadline so slow compiler hosts retain
+    # the same diagnostic-walk bound. The old computed-splice walk never returns.
+    _diag_build_rc=0
+    "$COMPILER" build tools/embedded-stdlib-tlci/native_diagnostics.tl \
+        --stdlib-root stdlib --stdlib-root src -o "$DIAGNOSTIC_DRIVER" \
+        >"$WORKDIR/native-diagnostics.build.stdout" 2>"$WORKDIR/native-diagnostics.build.stderr" &
+    _aux_child=$!
+    wait "$_aux_child" || _diag_build_rc=$?
+    _aux_child=
+    [ "$_diag_build_rc" -eq 0 ] || exit 1
+
+    diagnostic_status=0
+    env -u BASH_ENV scripts/run-memory-bounded.sh \
+        --limit-mib 1024 --timeout-seconds 10 \
+        --report "$WORKDIR/native-diagnostics.report" -- \
+        env -u BASH_ENV "$DIAGNOSTIC_DRIVER" \
+        >"$WORKDIR/native-diagnostics.run.stdout" 2>"$WORKDIR/native-diagnostics.run.stderr" &
+    _aux_child=$!
+    wait "$_aux_child" || diagnostic_status=$?
+    _aux_child=
+    printf '%s\n' "$diagnostic_status" > "$WORKDIR/native-diagnostics.status"
+    [ "$diagnostic_status" -eq 42 ] || exit 1
+) &
+_pid_aux=$!
+ACTIVE_BG_PIDS="$_pid_tools $_pid_aux"
+
+_rc_tools=0
+_rc_aux=0
+wait "$_pid_tools" || _rc_tools=$?
+wait "$_pid_aux" || _rc_aux=$?
+ACTIVE_BG_PIDS=
+
+[ ! -f "$WORKDIR/tools.stderr" ] || cat "$WORKDIR/tools.stderr" >&2 || true
+if [ "$_rc_tools" -ne 0 ]; then
+    echo "embedded stdlib tlci cached tool build failed (status $_rc_tools)" >&2
+    exit 1
+fi
+SURFACE_TOOL=$(sed -n 's/^SURFACE_TOOL=//p' "$WORKDIR/tools.env")
+IMAGE_TOOL=$(sed -n 's/^IMAGE_TOOL=//p' "$WORKDIR/tools.env")
+if [ ! -x "$SURFACE_TOOL" ] || [ ! -x "$IMAGE_TOOL" ]; then
+    echo "embedded stdlib tlci cached tools are missing: surface=$SURFACE_TOOL image=$IMAGE_TOOL" >&2
+    exit 1
+fi
+
+[ ! -f "$WORKDIR/surface-smoke.stdout" ] || cat "$WORKDIR/surface-smoke.stdout" || true
+[ ! -f "$WORKDIR/surface-smoke.stderr" ] || cat "$WORKDIR/surface-smoke.stderr" >&2 || true
+surface_status=$(cat "$WORKDIR/surface-smoke.status" 2>/dev/null || printf '1')
+if [ "$surface_status" -ne 42 ]; then
+    echo "compiler surface selftest exited $surface_status, expected 42" >&2
+    exit 1
+fi
+
+[ ! -f "$WORKDIR/native-diagnostics.build.stdout" ] || cat "$WORKDIR/native-diagnostics.build.stdout" || true
+[ ! -f "$WORKDIR/native-diagnostics.build.stderr" ] || cat "$WORKDIR/native-diagnostics.build.stderr" >&2 || true
+[ ! -f "$WORKDIR/native-diagnostics.run.stdout" ] || cat "$WORKDIR/native-diagnostics.run.stdout" || true
+[ ! -f "$WORKDIR/native-diagnostics.run.stderr" ] || cat "$WORKDIR/native-diagnostics.run.stderr" >&2 || true
+diagnostic_status=$(cat "$WORKDIR/native-diagnostics.status" 2>/dev/null || printf '1')
+if [ "$_rc_aux" -ne 0 ] || [ "$diagnostic_status" -ne 42 ]; then
+    echo "native producer diagnostic regression exited $diagnostic_status, expected 42" >&2
+    exit 1
+fi
+
+# Direct opposite-host producer rejection using the cached native build tool.
+if "$IMAGE_TOOL" \
     "$WORKDIR/missing-manifest" "$WORKDIR/missing-root" \
     "$WORKDIR/wrong-host-direct.tlci" "$OTHER_HOST_TARGET" \
     "0000000000000000000000000000000000000000" \
@@ -273,15 +356,35 @@ grep -F "requested host target \`$OTHER_HOST_TARGET\` does not match build host 
 COVERAGE_FLOOR=tools/embedded-stdlib-tlci/coverage-floor.txt
 COVERAGE_LOG=$WORKDIR/coverage.txt
 
+# Phase 2: build the determinism pair concurrently into isolated workdirs and
+# output paths, reusing the cached native tools warmed above.
+rm -rf "$WORKDIR/build-b"
 scripts/build-embedded-stdlib-tlci.sh \
-    "$COMPILER" "$EMBEDDED_IMAGE" "$HOST_TARGET" > "$COVERAGE_LOG"
+    "$COMPILER" "$EMBEDDED_IMAGE" "$HOST_TARGET" \
+    >"$COVERAGE_LOG" 2>"$WORKDIR/build-a.stderr" &
+_pid_build_a=$!
+TYPELISP_EMBEDDED_STDLIB_WORKDIR="$ROOT/$WORKDIR/build-b" \
+    scripts/build-embedded-stdlib-tlci.sh \
+    "$COMPILER" "$IMAGE_B" "$HOST_TARGET" \
+    >"$WORKDIR/build-b.stdout" 2>"$WORKDIR/build-b.stderr" &
+_pid_build_b=$!
+ACTIVE_BG_PIDS="$_pid_build_a $_pid_build_b"
+
+_rc_build_a=0
+_rc_build_b=0
+wait "$_pid_build_a" || _rc_build_a=$?
+wait "$_pid_build_b" || _rc_build_b=$?
+ACTIVE_BG_PIDS=
+
+cat "$WORKDIR/build-a.stderr" >&2 || true
+cat "$WORKDIR/build-b.stderr" >&2 || true
+if [ "$_rc_build_a" -ne 0 ] || [ "$_rc_build_b" -ne 0 ]; then
+    echo "embedded stdlib tlci determinism build failed: a=$_rc_build_a b=$_rc_build_b" >&2
+    exit 1
+fi
 cat "$COVERAGE_LOG"
 cp "$EMBEDDED_IMAGE" "$IMAGE_A"
 cp "$EMBEDDED_IMAGE.tlch" "$ENVELOPE_A"
-scripts/build-embedded-stdlib-tlci.sh \
-    "$COMPILER" "$EMBEDDED_IMAGE" "$HOST_TARGET"
-cp "$EMBEDDED_IMAGE" "$IMAGE_B"
-cp "$EMBEDDED_IMAGE.tlch" "$ENVELOPE_B"
 
 if ! cmp -s "$IMAGE_A" "$IMAGE_B"; then
     echo "embedded stdlib tlci build is not deterministic" >&2
@@ -294,9 +397,6 @@ fi
 # The frontend surface names prelude sources root-relatively (`stdlib/...`), so
 # the image must not depend on, or show users, this checkout's location (#9667).
 verify_no_checkout_root "$IMAGE_A" "$ROOT"
-"$COMPILER" run tools/embedded-stdlib-tlci/verify-envelope.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
-    "$IMAGE_A" "$ENVELOPE_A"
 
 # Ratchet the native-coverage numbers. The native entry count overstates
 # coverage on its own: a native entry can still hand single match arms back to
@@ -348,11 +448,91 @@ else
         awk 'NR == 1 && $1 == "typelisp" { print $2 }')
 fi
 SURFACE=target/embedded-stdlib-tlci/prelude-surface-$HOST_TARGET.rodata
-"$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
+
+# Prepare the mutated stdlib tree once so --full-blockers, --identity-manifest,
+# and source-mutation image builds can all run concurrently via cached native tools.
+rm -rf "$MUTATED_ROOT"
+mkdir -p "$MUTATED_ROOT"
+while IFS= read -r suffix; do
+    destination="$MUTATED_ROOT/$suffix"
+    mkdir -p "$(dirname -- "$destination")"
+    cp "stdlib/$suffix" "$destination"
+done < "$MANIFEST"
+printf '\n;; embedded stdlib tlci source binding probe\n' \
+    >> "$MUTATED_ROOT/core_macros.tl"
+BUILD_HASH=$(build_provenance_hash "$0")
+MUTATED_SOURCE_HASH=$(
+    while IFS= read -r module_path; do
+        source_path="$MUTATED_ROOT/$module_path"
+        source_size=$(wc -c < "$source_path" | tr -d ' ')
+        printf '%s\000%s\000' "$module_path" "$source_size"
+        cat "$source_path"
+    done < "$MANIFEST" | git hash-object --stdin
+)
+
+"$IMAGE_TOOL" \
     "$MANIFEST" stdlib "$FULL_BLOCKER_IMAGE" "$HOST_TARGET" \
     "$PRODUCER_IDENTITY" "$SURFACE" --full-blockers \
-    > "$FULL_BLOCKER_STDOUT" 2> "$FULL_BLOCKER_STDERR"
+    > "$FULL_BLOCKER_STDOUT" 2> "$FULL_BLOCKER_STDERR" &
+_pid_blockers=$!
+
+"$IMAGE_TOOL" \
+    "$MANIFEST" stdlib "$IDENTITY_IMAGE" "$HOST_TARGET" \
+    "$PRODUCER_IDENTITY" "$SURFACE" --identity-manifest \
+    > "$IDENTITY_STDOUT" 2> "$IDENTITY_ACTUAL" &
+_pid_identity=$!
+
+(
+    _mut_child=
+    cleanup_mut_child() {
+        if [ -n "$_mut_child" ]; then
+            kill "$_mut_child" 2>/dev/null || true
+            wait "$_mut_child" 2>/dev/null || true
+            _mut_child=
+        fi
+    }
+    trap 'cleanup_mut_child' EXIT
+    trap 'trap "" HUP INT TERM; cleanup_mut_child; exit 1' HUP INT TERM
+
+    _mut_rc=0
+    "$SURFACE_TOOL" \
+        "$MUTATED_ROOT" "$MUTATED_SURFACE" "$HOST_TARGET" \
+        "$BUILD_HASH" "$MUTATED_SOURCE_HASH" &
+    _mut_child=$!
+    wait "$_mut_child" || _mut_rc=$?
+    _mut_child=
+    [ "$_mut_rc" -eq 0 ] || exit "$_mut_rc"
+    exec "$IMAGE_TOOL" \
+        "$MANIFEST" "$MUTATED_ROOT" "$MUTATED_IMAGE" \
+        "$HOST_TARGET" "$BUILD_HASH" "$MUTATED_SURFACE"
+) > "$WORKDIR/mutated.stdout" 2> "$WORKDIR/mutated.stderr" &
+_pid_mutated=$!
+ACTIVE_BG_PIDS="$_pid_blockers $_pid_identity $_pid_mutated"
+
+_rc_blockers=0
+_rc_identity=0
+_rc_mutated=0
+wait "$_pid_blockers" || _rc_blockers=$?
+wait "$_pid_identity" || _rc_identity=$?
+wait "$_pid_mutated" || _rc_mutated=$?
+ACTIVE_BG_PIDS=
+
+if [ "$_rc_blockers" -ne 0 ]; then
+    cat "$FULL_BLOCKER_STDERR" >&2 || true
+    echo "full-blocker diagnostics build failed (status $_rc_blockers)" >&2
+    exit 1
+fi
+if [ "$_rc_identity" -ne 0 ]; then
+    cat "$IDENTITY_ACTUAL" >&2 || true
+    echo "identity-manifest diagnostics build failed (status $_rc_identity)" >&2
+    exit 1
+fi
+if [ "$_rc_mutated" -ne 0 ]; then
+    cat "$WORKDIR/mutated.stdout" >&2 || true
+    cat "$WORKDIR/mutated.stderr" >&2 || true
+    echo "mutated embedded stdlib tlci build failed (status $_rc_mutated)" >&2
+    exit 1
+fi
 
 if ! cmp -s "$IMAGE_A" "$FULL_BLOCKER_IMAGE"; then
     echo "full-blocker diagnostics changed the embedded stdlib tlci image" >&2
@@ -371,11 +551,6 @@ fi
 # exact parsed producer inputs, then require the reviewed fixture manifest to
 # match it byte-for-byte. This makes catalog additions/removals and declaration
 # changes fail before the route corpus can become stale or vacuous.
-"$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
-    "$MANIFEST" stdlib "$IDENTITY_IMAGE" "$HOST_TARGET" \
-    "$PRODUCER_IDENTITY" "$SURFACE" --identity-manifest \
-    > "$IDENTITY_STDOUT" 2> "$IDENTITY_ACTUAL"
 if ! cmp -s "$IMAGE_A" "$IDENTITY_IMAGE"; then
     echo "identity-manifest diagnostics changed the embedded stdlib tlci image" >&2
     exit 1
@@ -549,52 +724,67 @@ if [ "$NATIVE_ENTRIES" -gt "$NATIVE_ENTRIES_MIN" ] ||
         "interpreted-arms-max $INTERPRETED_ARMS" >&2
 fi
 
-set +e
-"$COMPILER" run tools/embedded-stdlib-tlci/verify.tl \
-    --stdlib-root stdlib --stdlib-root src \
-    --cfg embedded-stdlib-tlci
-status=$?
-set -e
-if [ "$status" -ne 42 ]; then
-    echo "embedded stdlib tlci loader verifier exited $status, expected 42" >&2
-    exit 1
-fi
-
 "$COMPILER" inspect "$IMAGE_A" > "$WORKDIR/inspect.txt"
 grep -q '^package-name: stdlib$' "$WORKDIR/inspect.txt"
 grep -Eq '^  code: .* bytes=[1-9][0-9]*$' "$WORKDIR/inspect.txt"
 
 # A source-only change must alter the image even while the macro identity set
 # and generated registration shells remain unchanged.
-rm -rf "$MUTATED_ROOT"
-mkdir -p "$MUTATED_ROOT"
-while IFS= read -r suffix; do
-    destination="$MUTATED_ROOT/$suffix"
-    mkdir -p "$(dirname -- "$destination")"
-    cp "stdlib/$suffix" "$destination"
-done < "$MANIFEST"
-printf '\n;; embedded stdlib tlci source binding probe\n' \
-    >> "$MUTATED_ROOT/core_macros.tl"
-BUILD_HASH=$(build_provenance_hash "$0")
-MUTATED_SOURCE_HASH=$(
-    while IFS= read -r module_path; do
-        source_path="$MUTATED_ROOT/$module_path"
-        source_size=$(wc -c < "$source_path" | tr -d ' ')
-        printf '%s\000%s\000' "$module_path" "$source_size"
-        cat "$source_path"
-    done < "$MANIFEST" | git hash-object --stdin
-)
-"$COMPILER" run tools/embedded-stdlib-tlci/build-surface.tl \
-    --stdlib-root stdlib --stdlib-root src \
-    --cfg compiler-surface-producer -- \
-    "$MUTATED_ROOT" "$MUTATED_SURFACE" "$HOST_TARGET" \
-    "$BUILD_HASH" "$MUTATED_SOURCE_HASH"
-"$COMPILER" run tools/embedded-stdlib-tlci/build.tl \
-    --stdlib-root stdlib --stdlib-root src -- \
-    "$MANIFEST" "$MUTATED_ROOT" "$MUTATED_IMAGE" \
-    "$HOST_TARGET" "$BUILD_HASH" "$MUTATED_SURFACE"
 if cmp -s "$IMAGE_A" "$MUTATED_IMAGE"; then
     echo "embedded stdlib source mutation did not change the tlci image" >&2
+    exit 1
+fi
+
+# Phase 3b: run envelope verification, loader verification, and the single
+# native stress driver build concurrently.
+rm -f "$WORKDIR"/*.status
+STRESS_DRIVER=$WORKDIR/stress-driver
+[ "$HOST_TARGET" != windows ] || STRESS_DRIVER=$STRESS_DRIVER.exe
+
+"$COMPILER" run tools/embedded-stdlib-tlci/verify-envelope.tl \
+    --stdlib-root stdlib --stdlib-root src -- \
+    "$IMAGE_A" "$ENVELOPE_A" \
+    >"$WORKDIR/verify-envelope.stdout" 2>"$WORKDIR/verify-envelope.stderr" &
+_pid_envelope=$!
+
+"$COMPILER" run tools/embedded-stdlib-tlci/verify.tl \
+    --stdlib-root stdlib --stdlib-root src \
+    --cfg embedded-stdlib-tlci \
+    >"$WORKDIR/verify-loader.stdout" 2>"$WORKDIR/verify-loader.stderr" &
+_pid_loader=$!
+
+"$COMPILER" build tools/embedded-stdlib-tlci/stress.tl \
+    --stdlib-root stdlib --stdlib-root src -o "$STRESS_DRIVER" \
+    >"$WORKDIR/stress-build.stdout" 2>"$WORKDIR/stress-build.stderr" &
+_pid_stress_build=$!
+ACTIVE_BG_PIDS="$_pid_envelope $_pid_loader $_pid_stress_build"
+
+_rc_envelope=0
+_rc_loader=0
+_rc_stress_build=0
+wait "$_pid_envelope" || _rc_envelope=$?
+wait "$_pid_loader" || _rc_loader=$?
+wait "$_pid_stress_build" || _rc_stress_build=$?
+ACTIVE_BG_PIDS=
+
+cat "$WORKDIR/verify-envelope.stdout" || true
+cat "$WORKDIR/verify-envelope.stderr" >&2 || true
+if [ "$_rc_envelope" -ne 0 ]; then
+    echo "embedded stdlib tlci envelope verifier failed (status $_rc_envelope)" >&2
+    exit 1
+fi
+
+cat "$WORKDIR/verify-loader.stdout" || true
+cat "$WORKDIR/verify-loader.stderr" >&2 || true
+if [ "$_rc_loader" -ne 42 ]; then
+    echo "embedded stdlib tlci loader verifier exited $_rc_loader, expected 42" >&2
+    exit 1
+fi
+
+cat "$WORKDIR/stress-build.stdout" || true
+cat "$WORKDIR/stress-build.stderr" >&2 || true
+if [ "$_rc_stress_build" -ne 0 ] || [ ! -x "$STRESS_DRIVER" ]; then
+    echo "embedded stdlib tlci stress driver build failed (status $_rc_stress_build)" >&2
     exit 1
 fi
 
@@ -609,20 +799,36 @@ fi
 # audits the count, operand, cookie and stack state after every fresh session.
 # Tier 3 runs that same entry but captures pools and pushes a fresh operand each
 # iteration, adding pool/operand cycling. All three run above that call count
-# and on both hosts.
+# and on both hosts, concurrently against the compiled driver.
 STRESS_ITERATIONS=${TYPELISP_TLCI_STRESS_ITERATIONS:-25000}
 for STRESS_TIER in 1 2 3; do
     STRESS_PROGRESS="$WORKDIR/stress-tier$STRESS_TIER.txt"
-    echo "[embedded-stdlib-tlci] stress tier $STRESS_TIER"         "($STRESS_ITERATIONS iterations)"
-    set +e
-    "$COMPILER" run tools/embedded-stdlib-tlci/stress.tl         --stdlib-root stdlib --stdlib-root src --         "$STRESS_TIER" "$STRESS_ITERATIONS" "$STRESS_PROGRESS"
-    stress_status=$?
-    set -e
-    if [ "$stress_status" -ne 42 ]; then
-        echo "embedded stdlib tlci stress tier $STRESS_TIER exited"             "$stress_status, expected 42" >&2
+    echo "[embedded-stdlib-tlci] stress tier $STRESS_TIER ($STRESS_ITERATIONS iterations)"
+    "$STRESS_DRIVER" "$STRESS_TIER" "$STRESS_ITERATIONS" "$STRESS_PROGRESS" \
+        >"$WORKDIR/stress-tier$STRESS_TIER.stdout" \
+        2>"$WORKDIR/stress-tier$STRESS_TIER.stderr" &
+    eval "_pid_stress_$STRESS_TIER=\$!"
+    ACTIVE_BG_PIDS="$ACTIVE_BG_PIDS $!"
+done
+
+for STRESS_TIER in 1 2 3; do
+    eval "_tier_pid=\$_pid_stress_$STRESS_TIER"
+    _tier_rc=0
+    wait "$_tier_pid" || _tier_rc=$?
+    eval "_rc_stress_$STRESS_TIER=\$_tier_rc"
+done
+ACTIVE_BG_PIDS=
+
+for STRESS_TIER in 1 2 3; do
+    STRESS_PROGRESS="$WORKDIR/stress-tier$STRESS_TIER.txt"
+    cat "$WORKDIR/stress-tier$STRESS_TIER.stdout" || true
+    cat "$WORKDIR/stress-tier$STRESS_TIER.stderr" >&2 || true
+    eval "_tier_rc=\$_rc_stress_$STRESS_TIER"
+    if [ "$_tier_rc" -ne 42 ]; then
+        echo "embedded stdlib tlci stress tier $STRESS_TIER exited $_tier_rc, expected 42" >&2
         echo "last durable progress record:" >&2
         cat "$STRESS_PROGRESS" >&2 || true
-        echo "reproduce with: $COMPILER run tools/embedded-stdlib-tlci/stress.tl"             "--stdlib-root stdlib --stdlib-root src --"             "$STRESS_TIER $STRESS_ITERATIONS $STRESS_PROGRESS" >&2
+        echo "reproduce with: $COMPILER run tools/embedded-stdlib-tlci/stress.tl --stdlib-root stdlib --stdlib-root src -- $STRESS_TIER $STRESS_ITERATIONS $STRESS_PROGRESS" >&2
         exit 1
     fi
 done

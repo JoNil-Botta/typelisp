@@ -366,9 +366,16 @@
         [(CompilerEmbeddedStdlibSomeSource actual) (string.eq expected actual)]
         [(CompilerEmbeddedStdlibNoSource) false]))))
 
-(define (embedded-stdlib-verify-lines [manifest : String] [start : i64]) : bool
+(define (embedded-stdlib-verify-lines
+  [manifest : String]
+  [start : i64]
+  [index : i64]) : bool
   (if (>= start (string.string-length manifest))
-    true
+    (if (= index (embedded.compiler-embedded-stdlib-suffix-count))
+      true
+      (begin
+        (io.print-error "embedded stdlib suffix count mismatch\n")
+        false))
     (let
       [end : i64 (embedded-stdlib-verify-line-end (& manifest) start)]
       [line : String
@@ -378,23 +385,26 @@
         (if (< end (string.string-length manifest))
           (+ end 1)
           end)]
-      (if (and
-        (or
-          (= (string.string-length line) 0)
-          (embedded-stdlib-verify-one (& line)))
-        (embedded-stdlib-verify-lines manifest next))
-        true
-        (begin
-          (when
-            (> (string.string-length line) 0)
-            (io.print-error
-              (str_cat.str-cat "embedded stdlib exact-source mismatch: " line)))
-          false)))))
+      (if (= (string.string-length line) 0)
+        (embedded-stdlib-verify-lines manifest next index)
+        (let
+          [table-suffix : String
+            (embedded.compiler-embedded-stdlib-suffix-at index)]
+          (if (and
+            (string.eq (& line) (& table-suffix))
+            (embedded-stdlib-verify-one (& line))
+            (embedded-stdlib-verify-lines manifest next (+ index 1)))
+            true
+            (begin
+              (io.print-error
+                (str_cat.str-cat "embedded stdlib exact-source mismatch: " line))
+              false)))))))
 
 (define (main) : i64
   (if (= (io.arg-count) 2)
     (if (embedded-stdlib-verify-lines
       (byte_buf.to-string (io.read-file (io.arg 1)))
+      0
       0)
       42
       1)

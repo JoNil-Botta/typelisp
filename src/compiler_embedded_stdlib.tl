@@ -52,6 +52,12 @@
     [(CompilerEmbeddedStdlibPayloadNone) false]
     [(CompilerEmbeddedStdlibPayloadSome _) true]))
 
+(define (compiler-embedded-stdlib-suffix-count) : i64
+  (payload.compiler-embedded-stdlib-payload-suffix-count))
+
+(define (compiler-embedded-stdlib-suffix-at [index : i64]) : String
+  (payload.compiler-embedded-stdlib-payload-suffix-at index))
+
 ;; Whether `c` ends an atom: whitespace or one of `()[]";`. Most source bytes
 ;; are letters, past `;`, so they take the two-compare branch.
 (define (compiler-embedded-stdlib-delimiter? [c : char]) : bool

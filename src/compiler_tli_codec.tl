@@ -3061,14 +3061,18 @@
           (when
             (not rd.cursor.ok?)
             (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
-          (unless
-            (tli-digest-eq?
-              (& index-digest)
-              (& (tli-index-digest (& rd.cursor.bytes) (+ dir-start dir-size))))
-            (tli-fail! (&mut rd) tli-error-digest "TLI index SHA-256 mismatch")
-            (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
           (when
             verify-content-digest?
+            (unless
+              (tli-digest-eq?
+                (& index-digest)
+                (&
+                  (tli-index-digest (& rd.cursor.bytes) (+ dir-start dir-size))))
+              (tli-fail!
+                (&mut rd)
+                tli-error-digest
+                "TLI index SHA-256 mismatch")
+              (return (TliDirectoryResult.Err (tli-read-error (& rd) 0))))
             (let
               [computed : (Array u8 32)
                 (tli-content-digest (& rd.cursor.bytes))]
@@ -3157,10 +3161,11 @@
   [expected-target : (& expected-target str)]) : TliDirectoryResult
   (tli-decode-directory-for-inner bytes expected-build expected-target true))
 
-;; Lazy open for compiler-job hydration: skips hashing unhydrated module bytes
-;; and decoding unused pool strings up front. Every string a record uses is
-;; validated as UTF-8 and charged when it is read, and every hydrated module
-;; verifies its exact per-module SHA-256 and import interface SHA-256.
+;; Lazy open for compiler-job hydration: skips up-front index and content
+;; SHA-256 hashing and decoding unused pool strings. Header fields, section
+;; bounds, every accessed pool string's UTF-8, every decoded module record's
+;; `module_sha256` and import digests, and every decoded compact body's
+;; `inline_ir_sha256` are verified fail-closed.
 (define (tli-decode-directory-for-lazy
   [bytes : (& bytes (__tl_dyn-array u8))]
   [expected-build : (& expected-build str)]

@@ -23018,19 +23018,22 @@
                           dup.text)))))))))))))
 
 ;; --- hidden-result reuse ----------------------------------------------------
-;; A hidden-result call returns the slot pointer it was passed: the callee
-;; returns its leading `__sret` argument as `u64` (a C callee returns it in the
-;; same register by its ABI). After the call, its result and the slot pointer
-;; name one address. Lowering reads the result through the slot pointer, which
-;; slot forwarding and scalarization key on; left that way at emission, the
-;; slot pointer stays live across the call and takes a callee-saved register,
-;; while the result already sits in the return register. So, before the
-;; register plan, every later read of a slot pointer that exactly one call
-;; fills reads that call's result instead, and the slot pointer ends at the
-;; call. The slot pointer must have one definition, earlier in the call's own
-;; block, and the result no other: that block then dominates every other use,
-;; and every path to such a use runs the call after the definition. Phi inputs
-;; keep the slot pointer.
+;; A hidden-result call returns the slot pointer it was passed: an internal
+;; leading return-storage callee returns its hidden argument as `u64` on every
+;; path (a C callee returns it in the same register by its ABI). After the
+;; call, its result and the slot pointer name one address. Lowering reads the
+;; result through the slot pointer, which slot forwarding and scalarization key
+;; on; left that way at emission, the slot pointer stays live across the call
+;; and takes a callee-saved register, while the result already sits in the
+;; return register. So, before the register plan, later reads of a slot
+;; pointer that exactly one call fills read that call's result instead, and
+;; the slot pointer ends at the call. A call fills its marked Sret argument, or
+;; the hidden argument of a direct callee the program index declares internal
+;; leading. The slot pointer must have one definition, earlier in the call's
+;; own block, and the result no other: that block then dominates every other
+;; use, and every path to such a use runs the call after the definition. Only
+;; reads after the call in walk order are renamed; phi inputs keep the slot
+;; pointer.
 ;;
 ;; A site is `block * compiler-backend-sret-reuse-block-stride + index`; the
 ;; per-var tables hold `site + 1` for one definition (or fill), 0 for none and
@@ -23038,20 +23041,54 @@
 (define compiler-backend-sret-reuse-block-stride : i64
   4294967296)
 
-;; The slot var a direct or internal indirect hidden-result call fills, or -1.
+(define (compiler-backend-sret-reuse-value-var
+  [value : (& value compiler_ir_types.CompilerIrValue)]) : i64
+  (match value
+    [(Var id) id]
+    [_ -1]))
+
+;; The var at `index` of `args`, or -1.
+(define (compiler-backend-sret-reuse-arg-var
+  [args : (& args compiler_ir_types.CompilerIrCallArgs)]
+  [index : i64]) : i64
+  (match args
+    [(One value)
+      (if (= index 0)
+        (compiler-backend-sret-reuse-value-var value)
+        -1)]
+    [(Two first second)
+      (cond
+        [(= index 0) (compiler-backend-sret-reuse-value-var first)]
+        [(= index 1) (compiler-backend-sret-reuse-value-var second)]
+        [else -1])]
+    [(or (Array values) (Sret values _))
+      (if (and (>= index 0) (< index (array-length values)))
+        (compiler-backend-sret-reuse-value-var (& (array-ref values index)))
+        -1)]
+    [_ -1]))
+
+;; The slot var a hidden-result call fills, or -1.
 (define (compiler-backend-sret-reuse-call-slot
+  [program-index : be_state.CompilerBackendProgramIndex]
   [instr : (& instr compiler_ir_types.CompilerIrInstr)]) : i64
   (match instr
-    [(or (Call dst _ args _) (CallIndirect dst _ args _))
+    [(Call dst callee args _)
+      (cond
+        [(< dst 0) -1]
+        [else
+          (match args
+            [(Sret _ index) (compiler-backend-sret-reuse-arg-var args index)]
+            [_
+              (compiler-backend-sret-reuse-arg-var
+                args
+                (be_operand.compiler-backend-index-function-leading-sret
+                  program-index
+                  callee))])])]
+    [(CallIndirect dst _ args _)
       (if (< dst 0)
         -1
         (match args
-          [(Sret values index)
-            (if (and (>= index 0) (< index (array-length values)))
-              (match (& (array-ref values index))
-                [(Var id) id]
-                [_ -1])
-              -1)]
+          [(Sret _ index) (compiler-backend-sret-reuse-arg-var args index)]
           [_ -1]))]
     [_ -1]))
 
@@ -23067,17 +23104,19 @@
         (+ site 1)
         -1))))
 
-;; The renamed var of `value`, or -1.
-(define (compiler-backend-sret-reuse-renamed
-  [map : (& map (__tl_dyn-array i64))]
-  [value : (& value compiler_ir_types.CompilerIrValue)]) : i64
-  (match value
-    [(Var v)
-      (if (and (>= v 0) (< v (array-length map)))
-        (- (array-ref map v) 1)
-        -1)]
-    [_ -1]))
+;; `old`'s first `len` entries in an array with room for one more.
+(define (compiler-backend-sret-reuse-grown
+  [old : (__tl_dyn-array i64)]
+  [len : i64]) : (__tl_dyn-array i64)
+  (if (< len (array-length old))
+    old
+    (let
+      [grown : (__tl_dyn-array i64) (__tl_make-array i64 (+ (* len 2) 8))]
+      (for [k (iterator.range 0 len)]
+        (set! (array-ref grown k) (array-ref old k)))
+      grown)))
 
+;; Whether `value` reads a var whose table entry is positive.
 (define (compiler-backend-sret-reuse-hit
   [map : (& map (__tl_dyn-array i64))]
   [_role : compiler_ir_types.CompilerIrOperandRole]
@@ -23092,95 +23131,39 @@
   [map : (& map (__tl_dyn-array i64))]
   [_role : compiler_ir_types.CompilerIrOperandRole]
   [value : compiler_ir_types.CompilerIrValue]) : compiler_ir_types.CompilerIrValue
-  (let
-    [renamed : i64 (compiler-backend-sret-reuse-renamed map (& value))]
-    (if (< renamed 0)
-      value
-      (Var renamed))))
+  (match value
+    [(Var v)
+      (if (and (>= v 0) (< v (array-length map)) (> (array-ref map v) 0))
+        (Var (- (array-ref map v) 1))
+        value)]
+    [_ value]))
 
-;; The admitted calls, in walk order: the slot each fills, its result and its
-;; site.
-(defstruct CompilerBackendSretReuseCalls
+;; One function's hidden-result calls in walk order (the slot each fills, its
+;; result and its site; the first `count` are admitted), and the sites after
+;; a fill that read a filled slot, in walk order.
+(defstruct CompilerBackendSretReuseScan
   (slot (__tl_dyn-array i64))
   (dst (__tl_dyn-array i64))
   (site (__tl_dyn-array i64))
-  (count i64))
+  (count i64)
+  (uses (__tl_dyn-array i64))
+  (use-count i64))
 
-;; One block's instructions with the renames applied, or an empty array when
-;; none applies. On entry `map` holds every admitted rename except the ones
-;; this block's calls `[first, end)` turn on, each after its call.
-(define (compiler-backend-sret-reuse-block
-  [map : (&mut map (__tl_dyn-array i64))]
-  [calls : (& calls CompilerBackendSretReuseCalls)]
-  [first : i64]
-  [end : i64]
-  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]) : (__tl_dyn-array
-    compiler_ir_types.CompilerIrInstr)
-  (let
-    [n : i64 instrs.len]
-    [next : i64 first]
-    [out : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
-      (__tl_make-array compiler_ir_types.CompilerIrInstr 0)]
-    (for [j (iterator.range 0 n)]
-      (if (and
-        (< next end)
-        (=
-          (%
-            (array-ref calls.site next)
-            compiler-backend-sret-reuse-block-stride)
-          j))
-        (begin
-          (set!
-            (array-ref map (array-ref calls.slot next))
-            (+ (array-ref calls.dst next) 1))
-          (+= next 1))
-        (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs j)
-          [(Phi _ _ _) unit]
-          [_
-            (when
-              (compiler_ir_types.compiler-ir-instr-fold-uses
-                (compiler_ir_types.compiler-ir-instr-seq-ref instrs j)
-                false
-                compiler-backend-sret-reuse-hit
-                (& map))
-              (when
-                (= (array-length out) 0)
-                (set! out (__tl_make-array compiler_ir_types.CompilerIrInstr n))
-                (for [k (iterator.range 0 n)]
-                  (set!
-                    (array-ref out k)
-                    (compiler_ir_types.compiler-ir-instr-seq-ref instrs k))))
-              (set!
-                (array-ref out j)
-                (compiler_ir_types.compiler-ir-instr-map-uses
-                  (compiler_ir_types.compiler-ir-instr-seq-ref instrs j)
-                  compiler-backend-sret-reuse-use
-                  (& map))))])))
-    out))
-
-;; How many instructions `seq` holds: a bound on its calls.
-(define (compiler-backend-sret-reuse-instr-count
-  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]) : i64
-  (let
-    [count : i64 0]
-    (for [b
-      (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count seq))]
-      (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
-        [(Block _ instrs) (+= count instrs.len)]))
-    count))
-
-;; The admitted calls of a function, in walk order.
-(define (compiler-backend-sret-reuse-admit
+;; One walk: definitions, fills and the reads after a fill; then the calls
+;; that admit their slot.
+(define (compiler-backend-sret-reuse-scan
+  [program-index : be_state.CompilerBackendProgramIndex]
   [vars : i64]
-  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]) : CompilerBackendSretReuseCalls
+  [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]) : CompilerBackendSretReuseScan
   (let
-    [count : i64 (compiler-backend-sret-reuse-instr-count seq)]
     [defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [fills : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    [slot : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [dst : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [site : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [slot : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [dst : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [site : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 0)]
     [seen : i64 0]
+    [use-count : i64 0]
     [admitted : i64 0]
     (for [b
       (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count seq))]
@@ -23195,18 +23178,29 @@
               [filled : i64
                 (match instr
                   [(or (Call _ _ _ _) (CallIndirect _ _ _ _))
-                    (compiler-backend-sret-reuse-call-slot instr)]
+                    (compiler-backend-sret-reuse-call-slot program-index instr)]
                   [_ -1])]
               (when
-                (and (>= def 0) (< def vars))
-                (set!
-                  (array-ref defs def)
-                  (if (= (array-ref defs def) 0)
-                    (+ at 1)
-                    -1)))
+                (and
+                  (> seen 0)
+                  (match instr
+                    [(Phi _ _ _) false]
+                    [_ true])
+                  (compiler_ir_types.compiler-ir-instr-fold-uses
+                    (compiler_ir_types.compiler-ir-instr-seq-ref instrs j)
+                    false
+                    compiler-backend-sret-reuse-hit
+                    (& fills)))
+                (set! uses (compiler-backend-sret-reuse-grown uses use-count))
+                (set! (array-ref uses use-count) at)
+                (+= use-count 1))
+              (compiler-backend-sret-reuse-note! (&mut defs) def at)
               (when
-                (and (>= filled 0) (< filled vars) (< seen count))
+                (and (>= filled 0) (< filled vars))
                 (compiler-backend-sret-reuse-note! (&mut fills) filled at)
+                (set! slot (compiler-backend-sret-reuse-grown slot seen))
+                (set! dst (compiler-backend-sret-reuse-grown dst seen))
+                (set! site (compiler-backend-sret-reuse-grown site seen))
                 (set! (array-ref slot seen) filled)
                 (set! (array-ref dst seen) def)
                 (set! (array-ref site seen) at)
@@ -23231,90 +23225,116 @@
           (set! (array-ref dst admitted) r)
           (set! (array-ref site admitted) at)
           (+= admitted 1))))
-    (CompilerBackendSretReuseCalls slot dst site admitted)))
+    (CompilerBackendSretReuseScan slot dst site admitted uses use-count)))
 
 ;; Entry: the blocks with every admitted slot pointer read renamed, or the
-;; input list when no call admits one.
+;; input list when no read is.
 (define (compiler-backend-sret-reuse-blocks
+  [program-index : be_state.CompilerBackendProgramIndex]
   [vars : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
   (match (& blocks)
     [(Array seq)
       (let
-        [found : bool false]
-        [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
-        [b : i64 0]
-        (while (and (not found) (< b block-count))
-          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
-            [(Block _ instrs)
-              (let
-                [j : i64 0]
-                (while (and (not found) (< j instrs.len))
-                  (match (compiler_ir_types.compiler-ir-instr-seq-borrow
-                    instrs
-                    j)
-                    [(or (Call _ _ (Sret _ _) _)
-                         (CallIndirect _ _ (Sret _ _) _))
-                      (set! found true)]
-                    [_ unit])
-                  (+= j 1)))])
-          (+= b 1))
-        (if (or (not found) (<= vars 0))
+        [scan : CompilerBackendSretReuseScan
+          (if (<= vars 0)
+            (CompilerBackendSretReuseScan
+              (__tl_make-array i64 0)
+              (__tl_make-array i64 0)
+              (__tl_make-array i64 0)
+              0
+              (__tl_make-array i64 0)
+              0)
+            (compiler-backend-sret-reuse-scan program-index vars seq))]
+        (if (or (= scan.count 0) (= scan.use-count 0))
           blocks
           (let
-            [calls : CompilerBackendSretReuseCalls
-              (compiler-backend-sret-reuse-admit vars seq)]
-            (if (= calls.count 0)
-              blocks
+            [block-count : i64
+              (compiler_ir_types.compiler-ir-block-seq-count seq)]
+            [map : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+            [rebuilt : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
+              (__tl_make-array compiler_ir_types.CompilerIrBlock 0)]
+            [next : i64 0]
+            [u : i64 0]
+            (while (< u scan.use-count)
               (let
-                [map : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-                [rebuilt : (__tl_dyn-array compiler_ir_types.CompilerIrBlock)
-                  (__tl_make-array
-                    compiler_ir_types.CompilerIrBlock
-                    block-count)]
-                [first : i64 0]
-                (for [k (iterator.range 0 calls.count)]
-                  (set!
-                    (array-ref map (array-ref calls.slot k))
-                    (+ (array-ref calls.dst k) 1)))
-                (for [b (iterator.range 0 block-count)]
-                  (let
-                    [end : i64 first]
+                [b : i64
+                  (/
+                    (array-ref scan.uses u)
+                    compiler-backend-sret-reuse-block-stride)]
+                [out : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
+                  (__tl_make-array compiler_ir_types.CompilerIrInstr 0)]
+                (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+                  [(Block label instrs)
                     (while (and
-                      (< end calls.count)
+                      (< u scan.use-count)
                       (=
                         (/
-                          (array-ref calls.site end)
+                          (array-ref scan.uses u)
                           compiler-backend-sret-reuse-block-stride)
                         b))
-                      (set! (array-ref map (array-ref calls.slot end)) 0)
-                      (+= end 1))
-                    (match (compiler_ir_types.compiler-ir-block-seq-borrow
-                      seq
-                      b)
-                      [(Block label instrs)
-                        (let
-                          [out : (__tl_dyn-array
-                            compiler_ir_types.CompilerIrInstr)
-                            (compiler-backend-sret-reuse-block
-                              (&mut map)
-                              (& calls)
-                              first
-                              end
-                              instrs)]
-                          [len : i64 (array-length out)]
+                      (let
+                        [at : i64 (array-ref scan.uses u)]
+                        [j : i64
+                          (- at (* b compiler-backend-sret-reuse-block-stride))]
+                        (while (and
+                          (< next scan.count)
+                          (< (array-ref scan.site next) at))
                           (set!
-                            (array-ref rebuilt b)
-                            (if (= len 0)
-                              (compiler_ir_types.compiler-ir-block-seq-ref
-                                seq
-                                b)
-                              (Block
-                                label
-                                (compiler_ir_types.CompilerIrInstrSeq out len)))))])
-                    (set! first end)))
-                (Array
-                  (compiler_ir_types.CompilerIrBlockSeq rebuilt block-count)))))))]))
+                            (array-ref map (array-ref scan.slot next))
+                            (+ (array-ref scan.dst next) 1))
+                          (+= next 1))
+                        (when
+                          (compiler_ir_types.compiler-ir-instr-fold-uses
+                            (compiler_ir_types.compiler-ir-instr-seq-ref
+                              instrs
+                              j)
+                            false
+                            compiler-backend-sret-reuse-hit
+                            (& map))
+                          (when
+                            (= (array-length out) 0)
+                            (set!
+                              out
+                              (__tl_make-array
+                                compiler_ir_types.CompilerIrInstr
+                                instrs.len))
+                            (for [k (iterator.range 0 instrs.len)]
+                              (set!
+                                (array-ref out k)
+                                (compiler_ir_types.compiler-ir-instr-seq-ref
+                                  instrs
+                                  k))))
+                          (set!
+                            (array-ref out j)
+                            (compiler_ir_types.compiler-ir-instr-map-uses
+                              (compiler_ir_types.compiler-ir-instr-seq-ref
+                                instrs
+                                j)
+                              compiler-backend-sret-reuse-use
+                              (& map))))
+                        (+= u 1)))
+                    (when
+                      (> (array-length out) 0)
+                      (when
+                        (= (array-length rebuilt) 0)
+                        (set!
+                          rebuilt
+                          (__tl_make-array
+                            compiler_ir_types.CompilerIrBlock
+                            block-count))
+                        (for [k (iterator.range 0 block-count)]
+                          (set!
+                            (array-ref rebuilt k)
+                            (compiler_ir_types.compiler-ir-block-seq-ref seq k))))
+                      (set!
+                        (array-ref rebuilt b)
+                        (Block
+                          label
+                          (compiler_ir_types.CompilerIrInstrSeq out instrs.len))))])))
+            (if (= (array-length rebuilt) 0)
+              blocks
+              (Array (compiler_ir_types.CompilerIrBlockSeq rebuilt block-count))))))]))
 
 (define (compiler-backend-emit-function
   [type-segment-bases : i64]
@@ -23377,7 +23397,7 @@
             function-state
             type-segment-bases
             vars
-            (compiler-backend-sret-reuse-blocks vars raw-blocks))]
+            (compiler-backend-sret-reuse-blocks program-index vars raw-blocks))]
         ;; Pre-regalloc SIMD algebraic select-add/sub factoring: hoist shared
         ;; `x` out of `select(m, x +- a, x +- b)` so regalloc allocates the
         ;; factored loop (and hoisted negated splats) cleanly.

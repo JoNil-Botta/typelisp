@@ -663,7 +663,13 @@ set +e
 malformed_status=$?
 set -e
 [ "$malformed_status" -ne 0 ] || fail "consumer accepted a corrupt dependency .tli"
-grep -F "package tli: $RIGHT_DEV_TLI:" "$WORKDIR/malformed.err" >/dev/null ||
+# The compiler reports native paths: on Windows that is the mixed `D:/...`
+# form, not the MSYS `/d/...` spelling this shell uses for `$RIGHT_DEV_TLI`.
+RIGHT_DEV_TLI_DIAG=$RIGHT_DEV_TLI
+if [ "$NL_HOST_OS" = windows ]; then
+    RIGHT_DEV_TLI_DIAG=$(cygpath -m "$RIGHT_DEV_TLI")
+fi
+grep -F "package tli: $RIGHT_DEV_TLI_DIAG:" "$WORKDIR/malformed.err" >/dev/null ||
     fail "corrupt dependency .tli rejection did not name the interface: $(cat "$WORKDIR/malformed.err")"
 [ "$(cat "$RIGHT_DEV_TLI")" = CORRUPT ] || fail "corrupt dependency .tli was overwritten"
 cp "$WORKDIR/surface_right.dev.tli.bak" "$RIGHT_DEV_TLI"

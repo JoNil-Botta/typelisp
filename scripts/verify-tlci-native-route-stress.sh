@@ -130,7 +130,18 @@ generate_success_source() {
     cat > "$output" <<'FIXTURE'
 (import stdlib.hash)
 (import stdlib.text_buf)
+(import stdlib.vector)
 (import (hash.hash i64) as stress_hash_i64)
+(import (vector.vector i64 core) as stress_vec_i64)
+
+;; A macro of a generated stdlib module has no catalog entry, so this
+;; `push!` keeps the production source-interpretation route covered.
+(define (stress-generated-macro-probe) : i64
+  (let
+    [values : stress_vec_i64.Vec (stress_vec_i64.new)]
+    (begin
+      (stress_vec_i64.push! values 7)
+      (stress_vec_i64.len (& values)))))
 
 (define (main) : i64
   (let
@@ -157,8 +168,8 @@ FIXTURE
     cat >> "$output" <<'FIXTURE'
       (if (and
         (= (__tl_array-length items) 1)
-        (= (stress_hash_i64.hash (array-ref items 0))
-          (stress_hash_i64.hash 7)))
+        (= (stress_hash_i64.hash (& (array-ref items 0)))
+          (stress_hash_i64.hash (& 7))))
         42
         1))))
 FIXTURE

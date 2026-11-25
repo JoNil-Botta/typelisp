@@ -128241,18 +128241,15 @@
   [value : ir.CompilerIrValue]) : OptGlobalCellScan
   (opt-global-cell-scan-value scan value))
 
-;; Pack words carry no global operands (the same invariant opt-reach-uses
-;; relies on), so they are not scanned.
+;; Every operand counts, register-group `Pack` words included: copy
+;; propagation can forward a global read straight into a packed word.
 (define (opt-global-cell-scan-uses
   [scan : OptGlobalCellScan]
   [instr : (& ir.CompilerIrInstr)]) : OptGlobalCellScan
-  (match instr
-    [(Pack _ _ _) scan]
-    [_
-      (ir.compiler-ir-instr-fold-uses
-        (owned_view.compiler-owned-reference-shared-view instr)
-        scan
-        opt-global-cell-scan-use)]))
+  (ir.compiler-ir-instr-fold-uses
+    (owned_view.compiler-owned-reference-shared-view instr)
+    scan
+    opt-global-cell-scan-use))
 
 ;; Per-function fact scan: global-ref operand uses (refs), direct set! targets
 ;; (stores), and the RETURNING call-family instructions that remain -- named
@@ -129869,6 +129866,7 @@
   ;; goes: a token expression may only read operands whose value was fixed
   ;; before its region began.
   (rdef (__tl_dyn-array i64))
+  ;; How many operands read each var across the whole function.
   (uses (__tl_dyn-array i64))
   (used-before-def? (__tl_dyn-array bool))
   (raw? (__tl_dyn-array bool))
@@ -129897,7 +129895,7 @@
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
       (__tl_make-array i64 size)
-      (__tl_make-array i64 raw-size)
+      (__tl_make-array i64 size)
       (__tl_make-array bool raw-size)
       (__tl_make-array bool raw-size)
       (__tl_make-array i64 size))))
@@ -130067,18 +130065,16 @@
   [tables : OptLenEqDefs]
   [scratch : (&mut scratch (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
-  (when
-    (> (array-length tables.uses) 0)
-    (opt-collect-instr-uses-array
-      (compiler-opt-global-shared-view tables.uses)
-      (& instr)))
+  (opt-collect-instr-uses-array
+    (compiler-opt-global-shared-view tables.uses)
+    (& instr))
   (match (opt-instr-def-var (& instr))
     [(Some dst)
       (when
         (and (>= dst 0) (< dst (array-length tables.defs)))
         (when
           (and
-            (< dst (array-length tables.uses))
+            (< dst (array-length tables.used-before-def?))
             (> (array-ref tables.uses dst) 0))
           (set! (array-ref tables.used-before-def? dst) true))
         (set!
@@ -130121,6 +130117,27 @@
         [_ unit])]
     [(TailCall _ args _) (opt-len-eq-defs-record-args! (& tables) (& args))]
     [_ unit]))
+
+;; A hidden result slot keeps what its filling call returned only while
+;; nothing else reaches it: the address has exactly two uses -- that fill and
+;; the one read asking -- and is either a parameter (never reassigned) or the
+;; single `addr_of` of a stack slot whose address is taken nowhere else. Any
+;; other call, store, copy or alias of the slot could rewrite the object
+;; between the fill and the read.
+(define (opt-len-eq-sret-sole? [tables : (& tables OptLenEqDefs)] [var : i64]) : bool
+  (and
+    (= (array-ref tables.uses var) 2)
+    (match (opt-len-eq-def tables var)
+      [(Some instr _)
+        (match instr
+          [(AddrOf _ storage _)
+            (and
+              (>= storage 0)
+              (< storage (array-length tables.uses))
+              (= (opt-len-eq-def-count tables storage) 1)
+              (= (array-ref tables.uses storage) 1))]
+          [_ false])]
+      [(No) (= (opt-len-eq-def-count tables var) 0)])))
 
 ;; One call fills a hidden result slot; a second one makes it ambiguous.
 (define (opt-len-eq-sret-mark [seen : i64] [dst : i64]) : i64
@@ -130407,7 +130424,8 @@
         (> (array-ref tables.sret var) 0)
         (= (array-ref tables.n0 var) 0)
         (= (array-ref tables.n1 var) 0)
-        (= (array-ref tables.ncopy var) 0))
+        (= (array-ref tables.ncopy var) 0)
+        (opt-len-eq-sret-sole? tables var))
       ;; A hidden result slot holds what its one filling call returned.
       (opt-len-eq-vec-length
         tables

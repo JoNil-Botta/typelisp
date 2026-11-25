@@ -49162,3 +49162,54 @@ user_fn:
     (object_target.compiler-backend-object-bytes-from-hex
       "010603000602027001600000")
     "__tl$c_entry 8-byte alignment frame produces valid Win64 SEH unwind bytes"))
+
+;; Hidden-result reuse renames a slot pointer's later reads to its call's
+;; result only for a slot defined once, earlier in the call's block. A
+;; parameter reassigned in a block that does not dominate its later reads has
+;; a second, entry definition: renaming `return %0` in `done` would read the
+;; call result on the path that skipped `fill`.
+(define (compiler-backend-sret-reuse-test-text [body : String]) : String
+  (match (irt.func body)
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks _)
+      (irt.blocks-text
+        (backend.compiler-backend-sret-reuse-blocks
+          (compiler-backend-program-index-build
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (ir.compiler-ir-function-seq-empty)
+            (ir.compiler-ir-extern-seq-empty))
+          (& params)
+          vars
+          blocks))]))
+
+(test
+  sret-reuse-refuses-reassigned-parameter
+  (let
+    [fresh : String
+      (compiler-backend-sret-reuse-test-text
+        "function @proof() -> u64 vars 3 {
+         entry:
+         %0 = alloc i64
+         %1 = addr_of %0 storage 3
+         %2 = call make([sret arg 0] %1) : u64
+         return %1
+         }")]
+    [param : String
+      (compiler-backend-sret-reuse-test-text
+        "function @proof(p=%0:u64, c=%1:bool) -> u64 vars 4 {
+         entry:
+         branch %1, fill, done
+         fill:
+         %0 = mov 7 : u64
+         %2 = call make([sret arg 0] %0) : u64
+         jump done
+         done:
+         return %0
+         }")]
+    (test.assert-true
+      (string.contains (& fresh) "return %2")
+      (str_cat.str-cat "a fresh slot's later read is the call result: " fresh))
+    (test.assert-true
+      (and
+        (string.contains (& param) "return %0")
+        (not (string.contains (& param) "return %2")))
+      (str_cat.str-cat "a reassigned parameter keeps its own reads: " param))))

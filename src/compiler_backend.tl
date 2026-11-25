@@ -23031,9 +23031,10 @@
 ;; the hidden argument of a direct callee the program index declares internal
 ;; leading. The slot pointer must have one definition, earlier in the call's
 ;; own block, and the result no other: that block then dominates every other
-;; use, and every path to such a use runs the call after the definition. Only
-;; reads after the call in walk order are renamed; phi inputs keep the slot
-;; pointer.
+;; use, and every path to such a use runs the call after the definition. A
+;; parameter is defined on entry, so one reassignment is a second definition.
+;; Only reads after the call in walk order are renamed; phi inputs keep the
+;; slot pointer.
 ;;
 ;; A site is `block * compiler-backend-sret-reuse-block-stride + index`; the
 ;; per-var tables hold `site + 1` for one definition (or fill), 0 for none and
@@ -23126,10 +23127,23 @@
   (count i64)
   (fills (__tl_dyn-array i64)))
 
+;; Whether `var` is one of `params`.
+(define (compiler-backend-sret-reuse-param?
+  [params : (& params compiler_ir_types.CompilerIrParamSeq)]
+  [var : i64]) : bool
+  (let
+    [found : bool false]
+    (for [k (iterator.range 0 params.len)]
+      (match (compiler_ir_types.compiler-ir-param-seq-borrow params k)
+        [(Param _ _ id) (when (= id var) (set! found true))]))
+    found))
+
 ;; One walk records definitions and fills; then the calls that admit their
-;; slot.
+;; slot. A parameter's entry value reaches every block, so no instruction is
+;; its one definition and it is never admitted.
 (define (compiler-backend-sret-reuse-admit
   [program-index : be_state.CompilerBackendProgramIndex]
+  [params : (& params compiler_ir_types.CompilerIrParamSeq)]
   [vars : i64]
   [seq : (& seq compiler_ir_types.CompilerIrBlockSeq)]) : CompilerBackendSretReuseCalls
   (let
@@ -23198,7 +23212,8 @@
           (=
             (/ def compiler-backend-sret-reuse-block-stride)
             (/ at compiler-backend-sret-reuse-block-stride))
-          (< def at))
+          (< def at)
+          (not (compiler-backend-sret-reuse-param? params s)))
           (begin
             (set! (array-ref slot admitted) s)
             (set! (array-ref dst admitted) r)
@@ -23235,6 +23250,7 @@
 ;; renamed, or the input list when none is.
 (define (compiler-backend-sret-reuse-blocks
   [program-index : be_state.CompilerBackendProgramIndex]
+  [params : (& params compiler_ir_types.CompilerIrParamSeq)]
   [vars : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : compiler_ir_types.CompilerIrBlockList
   (match (& blocks)
@@ -23243,7 +23259,7 @@
         blocks
         (let
           [calls : CompilerBackendSretReuseCalls
-            (compiler-backend-sret-reuse-admit program-index vars seq)]
+            (compiler-backend-sret-reuse-admit program-index params vars seq)]
           (if (= calls.count 0)
             blocks
             (let
@@ -23394,7 +23410,11 @@
             function-state
             type-segment-bases
             vars
-            (compiler-backend-sret-reuse-blocks program-index vars raw-blocks))]
+            (compiler-backend-sret-reuse-blocks
+              program-index
+              (& params)
+              vars
+              raw-blocks))]
         ;; Pre-regalloc SIMD algebraic select-add/sub factoring: hoist shared
         ;; `x` out of `select(m, x +- a, x +- b)` so regalloc allocates the
         ;; factored loop (and hoisted negated splats) cleanly.

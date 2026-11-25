@@ -67126,6 +67126,117 @@ done:
       1
       "index 8 is out of bounds at length 8")))
 
+;; Two boxed cells reset from hidden result slots filled by the same
+;; constructor at one length. `between` runs after the second cell's slot is
+;; filled and before it is copied into its box: the slot only keeps the
+;; constructor's length when nothing else reaches it.
+(define (opt-le-sret-test-families [between : String]) : (Tuple i64 i64)
+  (match (irt.program
+    (str_cat.str-cat
+      "global @sret-a : i64 = runtime-init@sret-init-a
+       global @sret-b : i64 = runtime-init@sret-init-b
+       function @sret-make(out=%0:u64, n=%1:i64) -> u64 vars 7 {
+       entry:
+         %2 = call tl_alloc(16) : u64
+         %3 = gep %2, 0 : u8
+         store_ptr %3, 0 : u64
+         %4 = gep %2, 8 : u8
+         store_ptr %4, %1 : i64
+         %5 = gep %0, 0 : u8
+         store_ptr %5, %2 : u64
+         %6 = gep %0, 8 : u8
+         store_ptr %6, %1 : i64
+         return %0
+       }
+       function @sret-init-a() -> i64 vars 4 {
+       entry:
+         %0 = alloc i64
+         %1 = addr_of %0 storage 2
+         %2 = call sret-make([sret arg 0] %1, 1) : u64
+         %3 = call tl_alloc(16) : i64
+         copy_bytes %3, %1, 16
+         return %3
+       }
+       function @sret-init-b() -> i64 vars 4 {
+       entry:
+         %0 = alloc i64
+         %1 = addr_of %0 storage 2
+         %2 = call sret-make([sret arg 0] %1, 1) : u64
+         %3 = call tl_alloc(16) : i64
+         copy_bytes %3, %1, 16
+         return %3
+       }
+       function @sret-shrink(v=%0:u64) -> unit vars 2 {
+       entry:
+         %1 = gep %0, 8 : u8
+         store_ptr %1, 1 : i64
+         return
+       }
+       function @sret-reset(n=%0:i64) -> unit vars 12 {
+       entry:
+         %1 = alloc i64
+         %2 = addr_of %1 storage 2
+         %3 = call sret-make([sret arg 0] %2, %0) : u64
+       "
+      between
+      "
+         %5 = alloc i64
+         %6 = addr_of %5 storage 2
+         %7 = call sret-make([sret arg 0] %6, %0) : u64
+         %8 = call tl_alloc(16) : i64
+         copy_bytes %8, %6, 16
+         store @sret-a, %8 : i64
+         %9 = call tl_alloc(16) : i64
+         copy_bytes %9, %2, 16
+         store @sret-b, %9 : i64
+         return
+       }
+       "))
+    [(Program globals functions _ _)
+      (let
+        [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
+        [functions (opt-le-raw-test-functions (& functions))]
+        [facts (opt.opt-program-facts-build functions)]
+        [call-memory
+          (opt.opt-call-memory-build type-segment-bases (& functions) 8)]
+        [cells
+          (opt.opt-global-cell-summary-build-with-call-memory
+            type-segment-bases
+            (& globals)
+            functions
+            facts
+            call-memory)]
+        (tuple
+          (opt-le-family cells (opt-test-symbol "sret-a"))
+          (opt-le-family cells (opt-test-symbol "sret-b"))))]))
+
+(test
+  len-eq-sret-slot-sole-reader
+  (match (opt-le-sret-test-families "")
+    [(tuple a b)
+      (test.assert-true
+        (and (> a 0) (= a b))
+        "two slots filled by one constructor at one length share a family")])
+  ;; The slot handed to a writing call directly, through a second `addr_of` of
+  ;; the same storage, and through a copied address.
+  (let
+    [mutators : (Array String 3)
+      (array
+        "%4 = call sret-shrink(%2) : unit"
+        "%10 = addr_of %1 storage 2
+         %4 = call sret-shrink(%10) : unit"
+        "%10 = mov %2 : u64
+         %4 = call sret-shrink(%10) : unit")]
+    (for [i (iterator.range 0 (array-length mutators))]
+      (match (opt-le-sret-test-families
+        (string.copy (& (array-ref mutators i))))
+        [(tuple a b)
+          (test.assert-true
+            (or (= b 0) (not (= a b)))
+            (str_cat.str-cat
+              "a slot another call or alias reaches keeps no constructor length "
+              (string.int->string i)))]))))
+
 ;; `v.len` read out of one cell, the array length of another: the shape
 ;; `(when (< var (i64vec.len (& v))) (gvn-ref w var))` leaves.
 (define (opt-le-field-blocks [len-cell : i64] [array-cell : i64]) : ir.CompilerIrBlockList

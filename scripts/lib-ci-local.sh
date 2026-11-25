@@ -1,18 +1,20 @@
 # lib-ci-local.sh — local-only acceleration for scripts/ci-affected.sh --run.
 #
-# ci-affected.sh --run sets two internal variables, and only outside hosted CI:
-#   TYPELISP_CI_LOCAL_CACHE        root of the content-addressed bootstrap cache
-#   TYPELISP_CI_LOCAL_SCOPE_PATHS  the run's changed-path inventory
+# ci-affected.sh --run sets three internal variables, and only outside hosted CI:
+#   TYPELISP_CI_LOCAL_CACHE                    root of the content-addressed bootstrap cache
+#   TYPELISP_CI_LOCAL_SCOPE_PATHS              the run's changed-path inventory
+#   TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES   space-separated changed paths for verify-integration.sh
 # Hosted CI (GITHUB_ACTIONS=true) and a direct scripts/ci-verify.sh never set
 # them, so there every gate bootstraps from scratch and checks its full corpus.
-# A script that sees either one under GITHUB_ACTIONS=true fails closed.
+# A script that sees any of them under GITHUB_ACTIONS=true fails closed.
 #
 # Source it (not exec). POSIX sh only — no `local`, arrays, or bashisms.
 
 ci_local_require_not_hosted() {
     if [ "${GITHUB_ACTIONS:-}" = true ] &&
-        { [ -n "${TYPELISP_CI_LOCAL_CACHE:-}" ] || [ -n "${TYPELISP_CI_LOCAL_SCOPE_PATHS:-}" ]; }; then
-        echo "[ci-local] TYPELISP_CI_LOCAL_CACHE/TYPELISP_CI_LOCAL_SCOPE_PATHS are local-only; hosted CI runs every gate from scratch over its full corpus" >&2
+        { [ -n "${TYPELISP_CI_LOCAL_CACHE:-}" ] || [ -n "${TYPELISP_CI_LOCAL_SCOPE_PATHS:-}" ] ||
+            [ -n "${TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES:-}" ]; }; then
+        echo "[ci-local] TYPELISP_CI_LOCAL_CACHE/TYPELISP_CI_LOCAL_SCOPE_PATHS/TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES are local-only; hosted CI runs every gate from scratch over its full corpus" >&2
         exit 2
     fi
 }
@@ -29,6 +31,21 @@ ci_local_scope_active() {
     _cls_paths=${TYPELISP_CI_LOCAL_SCOPE_PATHS:-}
     [ -n "$_cls_paths" ] && [ -f "$_cls_paths" ] && [ -r "$_cls_paths" ] && [ -s "$_cls_paths" ] || return 1
     ! grep -E '^("|src/|stdlib/|scripts/)' "$_cls_paths" > /dev/null
+}
+
+# ci_local_scope_paths
+#   Print the space-separated changed paths when local changed-file scoping is
+#   active and every path is safe for space/comma-delimited integration corpus
+#   filtering (no manifest fragment or generator edits, no whitespace/commas).
+#   Returns non-zero otherwise so callers keep the full integration corpus.
+ci_local_scope_paths() {
+    ci_local_scope_active || return 1
+    ! grep -E '(^tests/integration/manifest\.d/|^tests/integration/.*\.awk$|[[:space:],])' \
+        "$TYPELISP_CI_LOCAL_SCOPE_PATHS" > /dev/null || return 1
+    _clsp_list=$(awk 'NF { out = (out == "" ? $0 : out " " $0) } END { print out }' \
+        "$TYPELISP_CI_LOCAL_SCOPE_PATHS")
+    [ -n "$_clsp_list" ] || return 1
+    printf '%s\n' "$_clsp_list"
 }
 
 # ci_local_scope_filter CANDIDATES OUT

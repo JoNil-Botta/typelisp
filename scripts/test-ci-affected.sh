@@ -516,7 +516,8 @@ if [ "${1:-}" = --list-gates ]; then exec "$CI_AFFECTED_TEST_VERIFY" "$@"; fi
 printf '%s\n' "${TYPELISP_INLINE_TEST_WORKERS-unset}" "${TYPELISP_BUILD_INVARIANCE_WORKERS-unset}" \
     "${TYPELISP_INTEGRATION_WORKERS-unset}" "${TYPELISP_COMPILE_MANIFEST_WORKERS-unset}" \
     "cache=${TYPELISP_CI_LOCAL_CACHE-unset}" "scope=${TYPELISP_CI_LOCAL_SCOPE_PATHS-unset}" \
-    "bin=${TYPELISP_BIN-unset}" "$@" > "$CI_AFFECTED_TEST_CALL"
+    "bin=${TYPELISP_BIN-unset}" "integration_changed=${TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES-unset}" \
+    "$@" > "$CI_AFFECTED_TEST_CALL"
 printf 'run\n' >> "$CI_AFFECTED_TEST_EXECUTIONS"
 exit "${CI_AFFECTED_TEST_EXIT:-0}"
 STUB
@@ -548,11 +549,13 @@ cmp "$work/staged.ids" "$work/committed.ids" || fail 'committed edit missed'
 
 case "$(uname -s)" in Linux*) native_host=linux ;; *) native_host=windows ;; esac
 # The stub records the four pool worker counts, the local cache root, the scope
-# inventory and the seed (lines 1-7), then ci-verify's arguments. Local runs
-# drop the hosted and seed environment so their expectations hold anywhere.
+# inventory, the seed and the integration changed-files filter (lines 1-8), then
+# ci-verify's arguments. Local runs drop the hosted and seed environment so
+# their expectations hold anywhere.
 local_run() {
     env -u GITHUB_ACTIONS -u TYPELISP_BIN -u TYPELISP_STAGE0_DIR -u TYPELISP_INLINE_TEST_WORKERS \
-        -u TYPELISP_BUILD_INVARIANCE_WORKERS -u TYPELISP_INTEGRATION_WORKERS -u TYPELISP_COMPILE_MANIFEST_WORKERS "$@"
+        -u TYPELISP_BUILD_INVARIANCE_WORKERS -u TYPELISP_INTEGRATION_WORKERS -u TYPELISP_COMPILE_MANIFEST_WORKERS \
+        -u TYPELISP_CI_LOCAL_CACHE -u TYPELISP_CI_LOCAL_SCOPE_PATHS -u TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES "$@"
 }
 cpus=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)
 # expect_workers JOBS: unset worker counts keep script defaults with at least
@@ -575,11 +578,12 @@ scope_file=$(sed -n '6s/^scope=//p' "$work/run.call")
 git -C "$repo" -c core.quotePath=true diff --no-relative --name-only --no-renames "$base" -- > "$work/scope.expected"
 cmp "$scope_file" "$work/scope.expected" || fail 'scope inventory differs from the changed paths'
 expect_call_line 7 bin=unset 'no seed without a cache hit'
-expect_call_line 8 --gates 'subset flag'
+expect_call_line 8 'integration_changed=tests/safety/manifest.d/sample.manifest' 'local integration changed files'
+expect_call_line 9 --gates 'subset flag'
 tr '\n' ',' < "$work/committed.ids" | sed 's/,$//' > "$work/run.expected-csv"
-sed -n '9p' "$work/run.call" | tr -d '\n' > "$work/run.actual-csv"
+sed -n '10p' "$work/run.call" | tr -d '\n' > "$work/run.actual-csv"
 cmp "$work/run.actual-csv" "$work/run.expected-csv" || fail 'executed selection differs from printed selection'
-[ "$(wc -l < "$work/run.call")" -eq 9 ] || fail '--jobs 1 passed a parallel flag'
+[ "$(wc -l < "$work/run.call")" -eq 10 ] || fail '--jobs 1 passed a parallel flag'
 cmp "$work/run.ids" "$work/committed.ids" || fail '--run changed the printed selection'
 
 # Parallel runs pass --jobs and the memory budget; explicit workers are kept.
@@ -587,18 +591,45 @@ local_run env TYPELISP_INTEGRATION_WORKERS=3 "$fixture_selector" --base "$base" 
     > "$work/parallel.ids" 2> "$work/parallel.log"
 cmp "$work/parallel.ids" "$work/committed.ids" || fail '--jobs changed the printed selection'
 expect_call_line 3 3 'explicit integration workers'
-expect_call_line 10 --jobs 'parallel flag'
-expect_call_line 11 2 'parallel job count'
-expect_call_line 12 --memory-mib 'memory flag'
-expect_call_line 13 16384 'memory budget'
+expect_call_line 11 --jobs 'parallel flag'
+expect_call_line 12 2 'parallel job count'
+expect_call_line 13 --memory-mib 'memory flag'
+expect_call_line 14 16384 'memory budget'
 local_run "$fixture_selector" --base "$base" --run --jobs 2 --memory-mib 16384 > /dev/null 2>&1
 expect_workers 2
 local_run "$fixture_selector" --base "$base" --run --jobs 1 --no-cache --no-scope > /dev/null 2>&1
 expect_call_line 5 cache=unset '--no-cache'
 expect_call_line 6 scope=unset '--no-scope'
+expect_call_line 8 integration_changed=unset '--no-scope clears integration changed files'
 local_run env GITHUB_ACTIONS=true "$fixture_selector" --base "$base" --run --jobs 1 > /dev/null 2>&1
 expect_call_line 5 cache=unset 'hosted runs have no local cache'
 expect_call_line 6 scope=unset 'hosted runs have no local scope'
+expect_call_line 8 integration_changed=unset 'hosted runs have no integration changed files'
+
+# Integration changed-file scoping: exported on tests/integration/*.tl-only
+# local --run, and unset on --no-scope, src/ edits, manifest.d/ edits, and
+# GITHUB_ACTIONS=true (even when pre-set in the caller environment).
+int_base=$(git -C "$repo" rev-parse HEAD)
+mkdir -p "$repo/tests/integration/manifest.d" "$repo/src"
+printf '(define (main) : i64 0)\n' > "$repo/tests/integration/scoped_one.tl"
+local_run "$fixture_selector" --base "$int_base" --run --jobs 1 > "$work/int-one.ids" 2> "$work/int-one.log"
+has_gate "$work/int-one.ids" stage2-native-integration-corpus
+expect_call_line 8 'integration_changed=tests/integration/scoped_one.tl' 'tests/integration/*.tl-only exports integration changed files'
+printf '(define (main) : i64 1)\n' > "$repo/tests/integration/scoped_two.tl"
+local_run "$fixture_selector" --base "$int_base" --run --jobs 1 > /dev/null 2>&1
+expect_call_line 8 'integration_changed=tests/integration/scoped_one.tl tests/integration/scoped_two.tl' 'multiple tests/integration/*.tl files join with spaces'
+local_run env TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES=stale.tl "$fixture_selector" --base "$int_base" --run --jobs 1 --no-scope > /dev/null 2>&1
+expect_call_line 8 integration_changed=unset '--no-scope unsets integration changed files on tests/integration/*.tl'
+local_run env GITHUB_ACTIONS=true TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES=stale.tl "$fixture_selector" --base "$int_base" --run --jobs 1 > /dev/null 2>&1
+expect_call_line 8 integration_changed=unset 'GITHUB_ACTIONS=true unsets integration changed files on tests/integration/*.tl'
+printf 'case|all|-|tests/integration/scoped_one.tl|0|-|-|-|-\n' > "$repo/tests/integration/manifest.d/scoped.manifest"
+local_run env TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES=stale.tl "$fixture_selector" --base "$int_base" --run --jobs 1 > /dev/null 2>&1
+expect_call_line 8 integration_changed=unset 'manifest.d edit unsets integration changed files'
+rm -f "$repo/tests/integration/manifest.d/scoped.manifest"
+printf '(define (compiler) : i64 0)\n' > "$repo/src/scoped_edit.tl"
+local_run env TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES=stale.tl "$fixture_selector" --base "$int_base" --run --jobs 1 > /dev/null 2>&1
+expect_call_line 8 integration_changed=unset 'src/ edit unsets integration changed files'
+rm -rf "$repo/tests/integration" "$repo/src"
 
 # A valid entry for the local seed skips the stage0 fetch; any input change,
 # a different seed or a damaged entry is a miss.
@@ -715,7 +746,7 @@ run_verify_cache() {
     v_status=0
     env -u GITHUB_ACTIONS -u TYPELISP_CI_COMPILER_ENVELOPES -u TYPELISP_CI_COMPILER_ENVELOPE_DIR \
         -u TYPELISP_BOOTSTRAP_WORKDIR -u TYPELISP_CI_TIMING -u TYPELISP_CI_TIMING_FILE \
-        -u TYPELISP_CI_TIMING_GATE -u TYPELISP_CI_LOCAL_SCOPE_PATHS \
+        -u TYPELISP_CI_TIMING_GATE -u TYPELISP_CI_LOCAL_SCOPE_PATHS -u TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES \
         TYPELISP_CI_LOCAL_CACHE="$vrepo/target/ci-affected-cache" \
         TYPELISP_BIN="$vrepo/target/stage0/typelisp" VERIFY_CACHE_TEST_MARKER="$work/v.marker" \
         "$vrepo/scripts/ci-verify.sh" --gates "$1" > "$work/v.out" 2>&1 || v_status=$?
@@ -773,17 +804,24 @@ printf 'tests/helper.tl\ndocs/guide.md\n' > "$work/scope/changed"
 (
     cd "$work/scope"
     TYPELISP_CI_LOCAL_SCOPE_PATHS="$work/scope/changed"
-    unset GITHUB_ACTIONS
+    unset GITHUB_ACTIONS TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES
     ci_local_scope_active || fail 'a corpus-only change was not scoped'
+    [ "$(ci_local_scope_paths)" = 'tests/helper.tl docs/guide.md' ] || fail 'ci_local_scope_paths formatted unexpected paths'
     ci_local_scope_filter candidates selected
     printf 'tests/helper.tl\ntests/user.tl\n' > expected
     cmp selected expected || fail 'scope filter missed a changed file or its importer'
     for unscoped in src/compiler.tl stdlib/core.tl scripts/check-tl-lint.sh '"quoted\npath"'; do
         printf 'docs/guide.md\n%s\n' "$unscoped" > changed
         ! ci_local_scope_active || fail "a change to $unscoped was scoped"
+        ! ci_local_scope_paths >/dev/null || fail "ci_local_scope_paths accepted $unscoped"
+    done
+    for unsafe_int in tests/integration/manifest.d/a.manifest tests/integration/gen.awk 'tests/integration/with space.tl' 'tests/integration/with,comma.tl'; do
+        printf '%s\n' "$unsafe_int" > changed
+        ! ci_local_scope_paths >/dev/null || fail "ci_local_scope_paths accepted $unsafe_int"
     done
     : > changed
     ! ci_local_scope_active || fail 'an empty inventory was scoped'
+    ! ci_local_scope_paths >/dev/null || fail 'ci_local_scope_paths accepted an empty inventory'
     TYPELISP_CI_LOCAL_SCOPE_PATHS="$work/scope/missing"
     ! ci_local_scope_active || fail 'an unreadable inventory was scoped'
     TYPELISP_CI_LOCAL_SCOPE_PATHS=
@@ -816,7 +854,7 @@ grep -F '[tl-lint] local changed-file scope: 1 of 1 file(s)' "$work/lint-scoped.
     fail 'the scoped tl-lint check did not report its local scope'
 # Hosted CI fails closed on any local-only variable, before any gate starts.
 for hosted in "$ROOT/scripts/ci-verify.sh --gates shared-view-count-ratchet" "$ROOT/scripts/check-shared-view-count.sh"; do
-    for variable in TYPELISP_CI_LOCAL_CACHE TYPELISP_CI_LOCAL_SCOPE_PATHS; do
+    for variable in TYPELISP_CI_LOCAL_CACHE TYPELISP_CI_LOCAL_SCOPE_PATHS TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES; do
         status=0
         # shellcheck disable=SC2086
         env GITHUB_ACTIONS=true "$variable=$work/scope/docs-only" $hosted > "$work/hosted.out" 2> "$work/hosted.err" || status=$?
@@ -872,9 +910,9 @@ has_gate "$work/deleted.ids" stage2-safety-corpus
 printf 'unknown\n' > "$repo/untracked file.txt"
 "$fixture_selector" --base "$base" --run --jobs 1 > "$work/untracked.ids" 2> "$work/untracked.log"
 cmp "$work/untracked.ids" "$work/$native_host.full" || fail 'untracked path did not select full table'
-[ "$(wc -l < "$work/run.call")" -eq 7 ] || fail 'full run added a subset flag'
+[ "$(wc -l < "$work/run.call")" -eq 8 ] || fail 'full run added a subset flag'
 "$fixture_selector" --base "$base" --run --jobs 2 --memory-mib 16384 > /dev/null 2>&1
-sed '1,7d' "$work/run.call" > "$work/full-parallel.args"
+sed '1,8d' "$work/run.call" > "$work/full-parallel.args"
 printf '%s\n' --jobs 2 --memory-mib 16384 > "$work/full-parallel.expected"
 cmp "$work/full-parallel.args" "$work/full-parallel.expected" || fail 'a parallel full run added a subset flag'
 mv "$repo/untracked file.txt" "$work/untracked-file.txt"

@@ -33,9 +33,11 @@ target/ci-affected-cache/ keyed on src/, stdlib/, the bootstrap scripts and the
 target/stage0 seed: a valid entry skips the stage0 fetch, the stage bootstrap,
 the sysroot build and an already passed embedded-provenance parity (--no-cache
 rebuilds). It also scopes the formatter, lint, doc-test and shared-view checks
-to the changed files, and the safety corpus to the changed tests/safety/*.tl
-cases when only those changed; a change under src/, stdlib/ or scripts/ keeps
-every full corpus (--no-scope always does). The printed selection is unchanged.
+to the changed files, the safety corpus to the changed tests/safety/*.tl
+cases when only those changed, and the integration corpus to matching changed
+files via TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES; a change under src/,
+stdlib/ or scripts/ keeps every full corpus (--no-scope always does). The
+printed selection is unchanged.
 The required tier is what owners run; the superset is advisory. Ordinary
 compiler changes do not require the full local table. Full hosted CI is unchanged.
 --paths replays a newline-delimited path inventory for auditing; it cannot run.
@@ -457,7 +459,7 @@ else
             scope=0
             echo '[ci-affected] GITHUB_ACTIONS=true: no local bootstrap cache or changed-file scope' >&2
         fi
-        unset TYPELISP_CI_LOCAL_CACHE TYPELISP_CI_LOCAL_SCOPE_PATHS
+        unset TYPELISP_CI_LOCAL_CACHE TYPELISP_CI_LOCAL_SCOPE_PATHS TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES
         csv=$(printf '%s\n' "$selected" | paste -sd ',' -)
         if [ "$cache" = 1 ]; then
             TYPELISP_CI_LOCAL_CACHE="$ROOT/target/ci-affected-cache"
@@ -479,6 +481,10 @@ else
         if [ "$scope" = 1 ]; then
             TYPELISP_CI_LOCAL_SCOPE_PATHS=$paths
             export TYPELISP_CI_LOCAL_SCOPE_PATHS
+            if integration_changed=$(ci_local_scope_paths); then
+                TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES=$integration_changed
+                export TYPELISP_INTEGRATION_LOCAL_CHANGED_FILES
+            fi
         fi
 
         # A full selection uses the original full invocation, with no subset flag.

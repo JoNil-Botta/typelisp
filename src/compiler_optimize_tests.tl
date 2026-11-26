@@ -19746,7 +19746,7 @@
       (opt.opt-inline-checked-min-site-depth))
     (string.eq
       (opt.opt-inline-checked-clause-text
-        (opt.opt-inline-checked-clause-site-depth))
+        opt.opt-inline-checked-clause-site-depth)
       "site-depth")
     ;; ARM: the sibling arm returns a literal, so the two arms run the caller
     ;; out between them

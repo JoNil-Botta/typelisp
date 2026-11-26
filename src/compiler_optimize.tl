@@ -2663,11 +2663,11 @@
         [_ (No)])]
     [_ (No)]))
 
-(define (opt-fold-instr
-  [type-segment-bases : i64]
-  [env : OptConstEnv]
-  [instr : ir.CompilerIrInstr]
-  [rmw? : bool]) : OptInstrResult
+;; The arms a constant fold and a strength reduction share: a literal Mov, the
+;; address that ends a constant's life, a mask-op fold, the stores (which end
+;; the environment's chain), a Pack/Word (a literal), and the default that
+;; unbinds the instruction's definition.
+(define (opt-fold-shared-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
     [(Mov dst value ty)
       (match (opt-resolve-known env (& value) ty)
@@ -2681,6 +2681,26 @@
             (Mov dst folded ty))]
         [(NoConst) (Result (opt-const-unbind env dst) instr)])]
     [(AddrOf dst src _storage-words) (opt-invalidate-addr-of env dst src instr)]
+    [(MaskBinOp dst op lhs rhs lanes)
+      (Result
+        (opt-const-unbind env dst)
+        (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
+    [(or (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _))
+      (Result Nil instr)]
+    [(or (Pack _ _ _) (Word _ _ _ _)) (Result env instr)]
+    [_
+      (Result
+        (match (opt-instr-def-var (& instr))
+          [(Some dst) (opt-const-unbind env dst)]
+          [(None) env])
+        instr)]))
+
+(define (opt-fold-instr
+  [type-segment-bases : i64]
+  [env : OptConstEnv]
+  [instr : ir.CompilerIrInstr]
+  [rmw? : bool]) : OptInstrResult
+  (match (compiler-opt-global-shared-view instr)
     [(Cast dst src from-ty to-ty)
       (match (opt-fold-cast
         (& (opt-resolve-known env (& src) from-ty))
@@ -2752,34 +2772,10 @@
               (compiler-opt-global-shared-view ty))
             (Mov dst folded ty))]
         [(No) (Result (opt-const-unbind env dst) instr)])]
-    [(MaskBinOp dst op lhs rhs lanes)
-      (Result
-        (opt-const-unbind env dst)
-        (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
-    [(or (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _))
-      (Result Nil instr)]
-    [(or (Pack _ _ _) (Word _ _ _ _)) (Result env instr)]
-    [_
-      (Result
-        (match (opt-instr-def-var (& instr))
-          [(Some dst) (opt-const-unbind env dst)]
-          [(None) env])
-        instr)]))
+    [_ (opt-fold-shared-instr env instr)]))
 
 (define (opt-strength-instr [env : OptConstEnv] [instr : ir.CompilerIrInstr]) : OptInstrResult
   (match (compiler-opt-global-shared-view instr)
-    [(Mov dst value ty)
-      (match (opt-resolve-known env (& value) ty)
-        [(SomeConst folded _)
-          (Result
-            (opt-const-bind
-              env
-              dst
-              (compiler-opt-global-shared-view folded)
-              (compiler-opt-global-shared-view ty))
-            (Mov dst folded ty))]
-        [(NoConst) (Result (opt-const-unbind env dst) instr)])]
-    [(AddrOf dst src _storage-words) (opt-invalidate-addr-of env dst src instr)]
     [(BinOp dst op l r ty)
       (match (opt-strength-binop
         (& op)
@@ -2799,20 +2795,7 @@
               (Mov dst replacement ty))
             (Result (opt-const-unbind env dst) (Mov dst replacement ty)))]
         [(No) (Result (opt-const-unbind env dst) instr)])]
-    [(MaskBinOp dst op lhs rhs lanes)
-      (Result
-        (opt-const-unbind env dst)
-        (MaskBinOp dst (opt-fold-mask-binop-op op lhs rhs) lhs rhs lanes))]
-    [(or (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _))
-      (Result Nil instr)]
-    [(or (Pack _ _ _) (Word _ _ _ _))
-      (Result (owned_view.compiler-owned-reference-shared-view env) instr)]
-    [_
-      (Result
-        (match (opt-instr-def-var (& instr))
-          [(Some dst) (opt-const-unbind env dst)]
-          [(None) (owned_view.compiler-owned-reference-shared-view env)])
-        instr)]))
+    [_ (opt-fold-shared-instr env instr)]))
 
 ;; --- dead-code elimination ---------------------------------------------------
 ;;
@@ -11155,36 +11138,43 @@
           (opt-verify-call-args-uses defs doms proof args block-id pos)))]
     [_ (opt-verify-uses uses defs doms block-id pos instr)]))
 
-(define (opt-verify-instr-seq-uses-from
+;; Every use in one block's instruction sequence. `contextual?` names the
+;; caller that reports a rejection with the block and instruction it came from;
+;; the final-IR check reads the message alone.
+(define (opt-verify-instr-seq-uses
   [type-segment-bases : i64]
   [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [block-id : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [pos : i64]) : ResultCompilerOptimizeVerify
+  [contextual? : bool]) : ResultCompilerOptimizeVerify
   (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 index]
-    [p : i64 pos]
     [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
-    (while (< i count)
-      (let
-        [_
-          (try
-            (opt-verify-instr-uses
-              (&mut uses)
-              type-segment-bases
-              defs
-              doms
-              proof
-              block-id
-              p
-              (ir.compiler-ir-instr-seq-borrow instrs i)))]
-        unit)
-      (+= i 1)
-      (+= p 1))
+    (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+      (match (opt-verify-instr-uses
+        (&mut uses)
+        type-segment-bases
+        defs
+        doms
+        proof
+        block-id
+        (+ index 1)
+        (ir.compiler-ir-instr-seq-borrow instrs index))
+        [(Ok) unit]
+        [(Err message)
+          (return
+            (Err
+              (if contextual?
+                (str_cat.str-cat
+                  "block "
+                  (ir.compiler-ir-label-text
+                    (opt-cfg-index-label doms.index block-id))
+                  " instruction "
+                  (string.int->string index)
+                  ": "
+                  message)
+                message)))]))
     (Ok)))
 
 (define (opt-phi-input-labels [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : OptLabelSet
@@ -11361,7 +11351,8 @@
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [block-id : i64]) : ResultCompilerOptimizeVerify
+  [block-id : i64]
+  [contextual? : bool]) : ResultCompilerOptimizeVerify
   (match blocks
     [(slice) (Ok)]
     [(slice block & rest)
@@ -11370,87 +11361,22 @@
           (let
             [_
               (try
-                (opt-verify-instr-seq-uses-from
+                (opt-verify-instr-seq-uses
                   type-segment-bases
                   defs
                   doms
                   proof
                   block-id
                   (& instrs)
-                  0
-                  1))]
+                  contextual?))]
             (opt-verify-block-uses
               type-segment-bases
               defs
               doms
               proof
               rest
-              (+ block-id 1)))])]))
-
-(define (opt-verify-instr-seq-uses-contextual
-  [type-segment-bases : i64]
-  [defs : (& defs OptVerifyDefs)]
-  [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof (OptSretStorageProof body))]
-  [block-id : i64]
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [pos : i64]) : ResultCompilerOptimizeVerify
-  (let
-    [uses : ir.CompilerIrUseList (ir.compiler-ir-use-list-new)]
-    (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
-      (match (opt-verify-instr-uses
-        (&mut uses)
-        type-segment-bases
-        defs
-        doms
-        proof
-        block-id
-        pos
-        (ir.compiler-ir-instr-seq-borrow instrs index))
-        [(Ok) (set! pos (+ pos 1))]
-        [(Err message)
-          (return
-            (Err
-              (str_cat.str-cat
-                "block "
-                (ir.compiler-ir-label-text
-                  (opt-cfg-index-label doms.index block-id))
-                " instruction "
-                (string.int->string index)
-                ": "
-                message)))])))
-  (Ok))
-
-(define (opt-verify-block-uses-contextual
-  [type-segment-bases : i64]
-  [defs : (& defs OptVerifyDefs)]
-  [doms : (& doms OptDomInfo)]
-  [proof : (&mut proof (OptSretStorageProof body))]
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [block-id : i64]) : ResultCompilerOptimizeVerify
-  (match blocks
-    [(slice) (Ok)]
-    [(slice block & rest)
-      (match block
-        [(Block _ instrs)
-          (let
-            [_
-              (try
-                (opt-verify-instr-seq-uses-contextual
-                  type-segment-bases
-                  defs
-                  doms
-                  proof
-                  block-id
-                  (& instrs)
-                  1))]
-            (opt-verify-block-uses-contextual
-              type-segment-bases
-              defs
-              doms
-              proof
-              rest
-              (+ block-id 1)))])]))
+              (+ block-id 1)
+              contextual?))])]))
 
 (define (opt-verify-function-body-with-context
   [func : (& func ir.CompilerIrFunction)]
@@ -11475,7 +11401,8 @@
               doms
               (&mut proof)
               (ir.compiler-ir-block-list-view blocks)
-              0))])]))
+              0
+              false))])]))
 
 ;; The caller derived the index (and with it the single-definition proof) for
 ;; exactly this function; final IR that fails that proof is not checked here at
@@ -11498,13 +11425,14 @@
             blocks
             (__tl_make-array bool 0)
             (__tl_make-array i64 0))]
-        (opt-verify-block-uses-contextual
+        (opt-verify-block-uses
           type-segment-bases
           defs
           doms
           (&mut proof)
           (ir.compiler-ir-block-list-view blocks)
-          0))]))
+          0
+          true))]))
 
 (define (opt-verify-scan-post-terminator [blocks : (& ir.CompilerIrBlockList)]) : i64
   (match blocks
@@ -53681,6 +53609,26 @@
                   fuel))]
             [_ false])])]))
 
+;; The operand's copies resolved, then the non-negativity query made of it: the
+;; quotient, shift and mask rules below all ask exactly this of an operand.
+(define (opt-bounds-dom-nonneg-resolved?
+  [env : (& env OptBoundsDomEnv)]
+  [cmp-facts : (& cmp-facts OptDomCmpFacts)]
+  [phis : (& phis OptNonnegPhis)]
+  [at-id : i64]
+  [value : (& ir.CompilerIrValue)]
+  [fuel : i64]) : bool
+  (opt-bounds-dom-nonneg-at?
+    env
+    cmp-facts
+    phis
+    at-id
+    (&
+      (opt-bounds-dom-resolve
+        env.copies
+        (owned_view.compiler-owned-reference-shared-view value)))
+    fuel))
+
 (define (opt-bounds-dom-nonneg-binop?
   [env : (& env OptBoundsDomEnv)]
   [cmp-facts : (& cmp-facts OptDomCmpFacts)]
@@ -53750,16 +53698,7 @@
         [(I64 divisor)
           (and
             (> divisor 0)
-            (opt-bounds-dom-nonneg-at?
-              env
-              cmp-facts
-              phis
-              at-id
-              (&
-                (opt-bounds-dom-resolve
-                  env.copies
-                  (owned_view.compiler-owned-reference-shared-view lhs)))
-              fuel))]
+            (opt-bounds-dom-nonneg-resolved? env cmp-facts phis at-id lhs fuel))]
         [_ false])]
     ;; `x >> k` for a literal k in [0, width): the arithmetic shift right of a
     ;; non-negative value is floor(x / 2^k), still in [0, x]. A count outside
@@ -53772,16 +53711,7 @@
           (and
             (>= count 0)
             (< count 64)
-            (opt-bounds-dom-nonneg-at?
-              env
-              cmp-facts
-              phis
-              at-id
-              (&
-                (opt-bounds-dom-resolve
-                  env.copies
-                  (owned_view.compiler-owned-reference-shared-view lhs)))
-              fuel))]
+            (opt-bounds-dom-nonneg-resolved? env cmp-facts phis at-id lhs fuel))]
         [_ false])]
     ;; `x & m`: one clear sign bit clears the result's, so EITHER operand
     ;; proving non-negative is enough and nothing is asked of the other.
@@ -53789,26 +53719,8 @@
         [(BitAnd) true]
         [_ false])
       (or
-        (opt-bounds-dom-nonneg-at?
-          env
-          cmp-facts
-          phis
-          at-id
-          (&
-            (opt-bounds-dom-resolve
-              env.copies
-              (owned_view.compiler-owned-reference-shared-view lhs)))
-          fuel)
-        (opt-bounds-dom-nonneg-at?
-          env
-          cmp-facts
-          phis
-          at-id
-          (&
-            (opt-bounds-dom-resolve
-              env.copies
-              (owned_view.compiler-owned-reference-shared-view rhs)))
-          fuel))]
+        (opt-bounds-dom-nonneg-resolved? env cmp-facts phis at-id lhs fuel)
+        (opt-bounds-dom-nonneg-resolved? env cmp-facts phis at-id rhs fuel))]
     [else false]))
 
 ;; One phi input, discharged at the block whose edge carries it: that is where
@@ -112365,31 +112277,51 @@
 ;; block count, so a body that needs a second nesting level or a second working
 ;; set is refused on structure rather than on a count that happens to land
 ;; right.
-(define (opt-inline-bounds-loop-max-body) : i64
-  32)
+;; Shared scalar facts for a multiblock inline candidate across admission tiers.
+(defstruct OptInlineAdmitCtx
+  (func-name i64)
+  (callee-name i64)
+  (absorb-class i64)
+  (refs i64)
+  (hot-refs i64)
+  (np i64)
+  (callee-instrs i64)
+  (added-blocks i64)
+  (caller-blocks i64)
+  (added-so-far i64)
+  (merged-vars i64)
+  (site-pos i64)
+  (has-bounds? bool)
+  (tail-site? bool))
 
-(define (opt-inline-bounds-loop-max-blocks) : i64
-  6)
+(define (opt-inline-within-size-cap?
+  [blocks : (& ir.CompilerIrBlockList)]
+  [callee-instrs : i64]
+  [max-body : i64]
+  [max-blocks : i64]) : bool
+  (and
+    (<= callee-instrs max-body)
+    (<= (ir.compiler-ir-block-list-count blocks) max-blocks)))
 
-;; INL-11X's band, in the cost model's units (opt-inline-multiblock-cost-instrs).
-;; 72 and 12 sit just above the converted clobber-word leaf
-;; (`rg-call-word-in-range?`) as the inliner sees it, and well below the
-;; converted bodies that are not leaves of this shape (`rg-first-free`,
-;; `rg-heap-sift-down!`).
-(define (opt-inline-converted-leaf-max-body) : i64
-  72)
+(define (opt-inline-gate-budget-ok?
+  [caller-blocks : i64]
+  [total-added : i64]
+  [gate-blocks : i64]
+  [added-blocks : i64]
+  [fuel : i64]) : bool
+  (and
+    (not
+      (opt-inline-cost-crosses-heavy-gate?
+        caller-blocks
+        total-added
+        added-blocks))
+    (<= (+ gate-blocks added-blocks) fuel)))
 
-(define (opt-inline-converted-leaf-max-blocks) : i64
-  12)
-
+;; Loop-bearing bounds callee band: 32 instrs / 6 blocks.
 (define (opt-inline-bounds-loop-small?
   [blocks : (& ir.CompilerIrBlockList)]
   [callee-instrs : i64]) : bool
-  (and
-    (<= callee-instrs (opt-inline-bounds-loop-max-body))
-    (<=
-      (ir.compiler-ir-block-list-count blocks)
-      (opt-inline-bounds-loop-max-blocks))))
+  (opt-inline-within-size-cap? blocks callee-instrs 32 6))
 
 ;; Facts about the caller currently being rewritten. They are installed per
 ;; caller, but the two that cost real work -- the natural-loop label set and
@@ -112564,6 +112496,9 @@
     (not opt-inline-caller-single-site?)
     opt-inline-caller-has-bounds?))
 
+(define (opt-inline-bounds-cascade-ok? [has-bounds? : bool]) : bool
+  (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?)))
+
 ;; Ordered so the two free tests run first: the lazy caller facts are only
 ;; forced for a candidate that is already claimed by this site and already
 ;; small. `claimed?` is the reference-class verdict -- absorption for a
@@ -112657,8 +112592,7 @@
         (opt-inline-blocks-call-free? blocks))
       (and
         opt-inline-library-mode?
-        (<= callee-instrs 32)
-        (<= (ir.compiler-ir-block-list-count blocks) 12)
+        (opt-inline-within-size-cap? blocks callee-instrs 32 12)
         (not (opt-blocks-any? blocks opt-inline-instr-non-trap-call?))))))
 
 ;; --- absorbing a leaf into a RECURSIVE caller -------------------------------
@@ -112704,25 +112638,14 @@
 ;; this shape: absorbing `qs-partition` shrinks `qs-sort`'s callee-saved set
 ;; and frame, because the absorbed leaf holds no live range across a call and
 ;; the retired argument setup frees a register.
-(define (opt-inline-recursive-site-max-body) : i64
-  128)
-
-(define (opt-inline-recursive-site-max-blocks) : i64
-  8)
-
-;; Ordered cheapest-first: the reference class is an integer already in hand,
-;; the size clauses are counts, and only then are the caller's lazy facts
-;; forced -- the self-call scan last of all.
+;; Recursive-site absorption band: 128 instrs / 8 blocks, ordered cheapest-first.
 (define (opt-inline-recursive-site-absorb-ok?
   [absorb-class : i64]
   [callee-instrs : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : bool
   (and
     (= absorb-class 1)
-    (<= callee-instrs (opt-inline-recursive-site-max-body))
-    (<=
-      (ir.compiler-ir-block-list-count blocks)
-      (opt-inline-recursive-site-max-blocks))
+    (opt-inline-within-size-cap? blocks callee-instrs 128 8)
     (opt-inline-blocks-call-free? blocks)
     (opt-inline-bounds-loop-cascade-safe?)
     (opt-inline-caller-recursive?)))
@@ -112899,9 +112822,6 @@
 ;; surplus arguments to the stack at the call and reload them in the callee --
 ;; traffic that exists only because the boundary exists, that no body-size
 ;; budget can see, and that absorption retires completely.
-(define (opt-inline-single-site-min-params) : i64
-  8)
-
 ;; Below the arity floor the boundary has no marshalling to retire. At a
 ;; STRAIGHT-LINE site the narrow class stays out of this band entirely; at an
 ;; IN-LOOP site it enters at the loop tier's size class and no wider
@@ -112930,12 +112850,6 @@
 ;; this file; 128 blocks is four times the largest shape any other band copies.
 ;; Both sit far below the heavy gate's 1024 blocks, which is the limit that
 ;; actually governs the merged caller.
-(define (opt-inline-single-site-max-body) : i64
-  1024)
-
-(define (opt-inline-single-site-max-blocks) : i64
-  128)
-
 ;; Clause 2: the one place the site question is asked about ARITY rather than
 ;; about the frame tax. A wide boundary is admitted at any site; a narrow one
 ;; only inside a natural loop of the caller, only at the loop tier's size, and
@@ -112958,7 +112872,7 @@
   [callee-instrs : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : bool
   (or
-    (>= param-count (opt-inline-single-site-min-params))
+    (>= param-count 8)
     (and
       (opt-inline-bounds-loop-small? blocks callee-instrs)
       (opt-inline-bounds-loop-site-in-loop?)
@@ -112981,7 +112895,7 @@
   (or
     (opt-inline-bounds-loop-site-in-loop?)
     (and
-      (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))
+      (opt-inline-bounds-cascade-ok? has-bounds?)
       (opt-inline-blocks-call-free? blocks))))
 
 ;; --- sole-call absorption ---------------------------------------------------
@@ -113098,9 +113012,6 @@
 ;; DFS per counted branch over the CFG index, both built in the inliner's
 ;; scratch arena and rewound; the whole thing is asked only of a class-1 site
 ;; the loop-label test has already placed inside a loop.
-(define (opt-inline-sole-call-max-loop-depth) : i64
-  2)
-
 ;; Does `target` have a path from `from` that avoids `skip`? The marks array is
 ;; the caller's; it is cleared by the walk that owns it.
 (define (opt-inline-reach-avoiding?
@@ -113286,7 +113197,7 @@
 (define (opt-inline-sole-call-loop-site-shallow?) : bool
   (let
     [depth : i64 (opt-inline-sole-call-loop-site-depth)]
-    (and (>= depth 0) (<= depth (opt-inline-sole-call-max-loop-depth)))))
+    (and (>= depth 0) (<= depth 2))))
 
 (define (opt-inline-sole-call-loop-site-shallow-reclaiming?) : bool
   (let
@@ -113324,22 +113235,9 @@
 ;; The staged-argument clause is the fail-closed refusal documented under this
 ;; function; the clauses shared with the band below live in
 ;; opt-inline-single-site-absorb-ok?.
-(define (opt-inline-size-sole-call-max-merged-blocks) : i64
-  128)
-
-(define (opt-inline-size-sole-call-max-merged-vars) : i64
-  192)
-
 ;; Safe argument staging for `-Os` sole-site absorption: keep param-mutating
 ;; bodies and call-carrying sret bodies fail-closed (see the reproducer below),
 ;; while permitting global-only staging and call-free sret bodies.
-(define (opt-inline-size-sole-call-staging-ok?
-  [staging : (& staging OptInlineArgStaging)]
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
-  (and
-    (not staging.all?)
-    (or (not staging.values?) (opt-inline-blocks-call-free? blocks))))
-
 ;; Size-mode sole-site absorption: moving the only call site retires the
 ;; standalone function body. Acyclic shallow callees keep their existing
 ;; heavy-gate budget (bounded in vars to avoid disp32 frame blowup); cyclic or
@@ -113355,32 +113253,16 @@
   [merged-vars : i64]) : bool
   (and
     (= absorb-class 1)
-    (opt-inline-size-sole-call-staging-ok? staging blocks)
+    (not staging.all?)
+    (or (not staging.values?) (opt-inline-blocks-call-free? blocks))
     (let
       [merged-blocks : i64 (+ caller-blocks (+ added-so-far added-blocks))]
       (or
-        (and
-          (<= merged-blocks (opt-inline-size-sole-call-max-merged-blocks))
-          (<= merged-vars (opt-inline-size-sole-call-max-merged-vars)))
+        (and (<= merged-blocks 128) (<= merged-vars 192))
         (and
           (<= merged-blocks (opt-inline-heavy-gate-block-limit))
           (<= merged-vars 224)
           (opt-inline-sole-call-pressure-ok? blocks))))))
-
-(define (opt-inline-sole-call-max-merged-vars) : i64
-  1024)
-
-(define (opt-inline-sole-call-cyclic-max-body) : i64
-  128)
-
-(define (opt-inline-sole-call-cyclic-max-blocks) : i64
-  24)
-
-(define (opt-inline-sole-call-cyclic-max-merged-blocks) : i64
-  512)
-
-(define (opt-inline-sole-call-cyclic-max-merged-vars) : i64
-  384)
 
 ;; Non-loop cyclic sole-site absorption for `-O2`: when the caller itself has
 ;; no loops, is not a single-site callee (avoiding cascade loss of the caller's
@@ -113391,54 +113273,34 @@
 ;;   - the caller is cold (synthetic entry count <= 1, never reached from a loop).
 (define (opt-inline-sole-call-cyclic-absorb-ok?
   [index : (& OptFunctionIndex)]
-  [func-name : i64]
-  [absorb-class : i64]
+  [ctx : (& OptInlineAdmitCtx)]
   [staging : (& staging OptInlineArgStaging)]
-  [has-bounds? : bool]
-  [callee-instrs : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [added-blocks : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
-  [merged-vars : i64]) : bool
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (and
-    (= absorb-class 1)
+    (= ctx.absorb-class 1)
     (not staging.all?)
     (not staging.values?)
     (not opt-inline-caller-single-site?)
     (not opt-inline-caller-cyclic-absorbed?)
     (= opt-inline-caller-hot-loop-blocks 0)
-    (<= callee-instrs (opt-inline-sole-call-cyclic-max-body))
-    (<=
-      (ir.compiler-ir-block-list-count blocks)
-      (opt-inline-sole-call-cyclic-max-blocks))
-    (<= merged-vars (opt-inline-sole-call-cyclic-max-merged-vars))
+    (opt-inline-within-size-cap? blocks ctx.callee-instrs 128 24)
+    (<= ctx.merged-vars 384)
     (<=
       (+
-        caller-blocks
-        (+ (+ added-so-far opt-inline-caller-absorb-blocks) added-blocks))
-      (opt-inline-sole-call-cyclic-max-merged-blocks))
+        ctx.caller-blocks
+        (+
+          (+ ctx.added-so-far opt-inline-caller-absorb-blocks)
+          ctx.added-blocks))
+      512)
     (or
       (= opt-inline-current-block-label opt-inline-caller-entry-label)
       (and
         (opt-inline-synth-ready?)
-        (<= (opt-inline-synth-for-name index func-name) 1)))
+        (<= (opt-inline-synth-for-name index ctx.func-name) 1)))
     (opt-inline-blocks-call-free? blocks)
     (not (opt-inline-bounds-loop-site-in-loop?))
     (opt-inline-caller-loop-free?)
-    (or (not has-bounds?) (opt-inline-bounds-loop-cascade-safe?))))
-
-(define (opt-inline-sole-call-absorb-ok?
-  [absorb-class : i64]
-  [staging : (& staging OptInlineArgStaging)]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
-  [merged-vars : i64]) : bool
-  (and
-    (= absorb-class 1)
-    (not staging.all?)
-    (not staging.values?)
-    (<= merged-vars (opt-inline-sole-call-max-merged-vars))
-    (opt-inline-sole-call-pressure-ok? blocks)))
+    (opt-inline-bounds-cascade-ok? ctx.has-bounds?)))
 
 ;; --- why the staged-argument clause above is FAIL-CLOSED, not a cost rule ---
 ;;
@@ -113474,62 +113336,41 @@
 ;; one-line change plus the reproducer above.
 (define (opt-inline-single-site-absorb-ok?
   [index : (& OptFunctionIndex)]
-  [func-name : i64]
-  [absorb-class : i64]
+  [ctx : (& OptInlineAdmitCtx)]
   [staging : (& staging OptInlineArgStaging)]
-  [has-bounds? : bool]
-  [param-count : i64]
-  [callee-instrs : i64]
-  [blocks : (& ir.CompilerIrBlockList)]
-  [added-blocks : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
-  [merged-vars : i64]) : bool
+  [blocks : (& ir.CompilerIrBlockList)]) : bool
   (and
-    (= absorb-class 1)
-    ;; The heavy gate is asked about TOTAL caller growth, this band's own moved
-    ;; blocks included; they are kept out of `added-so-far` itself by
-    ;; opt-inline-caller-absorb-blocks. Both tiers below keep it.
+    (= ctx.absorb-class 1)
     (not
       (opt-inline-cost-crosses-heavy-gate?
-        caller-blocks
-        (+ added-so-far opt-inline-caller-absorb-blocks)
-        added-blocks))
+        ctx.caller-blocks
+        (+ ctx.added-so-far opt-inline-caller-absorb-blocks)
+        ctx.added-blocks))
     (or
-      (opt-inline-sole-call-absorb-ok? absorb-class staging blocks merged-vars)
-      (opt-inline-sole-call-cyclic-absorb-ok?
-        index
-        func-name
-        absorb-class
-        staging
-        has-bounds?
-        callee-instrs
-        blocks
-        added-blocks
-        caller-blocks
-        added-so-far
-        merged-vars)
       (and
-        (opt-inline-single-site-arity-ok? param-count callee-instrs blocks)
-        (<= callee-instrs (opt-inline-single-site-max-body))
-        (<=
-          (ir.compiler-ir-block-list-count blocks)
-          (opt-inline-single-site-max-blocks))
-        (opt-inline-single-site-frame-tax-ok? has-bounds? blocks)))))
+        (not staging.all?)
+        (not staging.values?)
+        (<= ctx.merged-vars 1024)
+        (opt-inline-sole-call-pressure-ok? blocks))
+      (opt-inline-sole-call-cyclic-absorb-ok? index ctx staging blocks)
+      (and
+        (opt-inline-single-site-arity-ok? ctx.np ctx.callee-instrs blocks)
+        (opt-inline-within-size-cap? blocks ctx.callee-instrs 1024 128)
+        (opt-inline-single-site-frame-tax-ok? ctx.has-bounds? blocks)))))
 
 (define (opt-inline-multiblock-bounds-loop-ok?
-  [has-bounds? : bool]
+  [ctx : (& OptInlineAdmitCtx)]
   [absorbable? : bool]
-  [absorb-class : i64]
-  [callee-instrs : i64]
-  [callee-name : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : bool
   (or
-    (not has-bounds?)
-    (opt-inline-bounds-loop-absorb-ok? absorbable? callee-instrs blocks)
-    (opt-inline-recursive-site-absorb-ok? absorb-class callee-instrs blocks)
+    (not ctx.has-bounds?)
+    (opt-inline-bounds-loop-absorb-ok? absorbable? ctx.callee-instrs blocks)
+    (opt-inline-recursive-site-absorb-ok?
+      ctx.absorb-class
+      ctx.callee-instrs
+      blocks)
     (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
-    (opt-inline-vm-run-bounds-loop-exception? callee-name)))
+    (opt-inline-vm-run-bounds-loop-exception? ctx.callee-name)))
 
 ;; --- shared acyclic accessors -----------------------------------------------
 ;;
@@ -113558,24 +113399,6 @@
 ;; heavy gate and the per-caller block fuel, the same pair
 ;; opt-inline-bounds-leaf-cost-inline? keeps -- and those budgets are what hold
 ;; a callee with a hundred references to a bounded number of admitted sites.
-(define (opt-inline-shared-accessor-max-body) : i64
-  28)
-
-(define (opt-inline-shared-accessor-max-blocks) : i64
-  10)
-
-;; What separates the accessors that win from the ones that lose is how often
-;; they run, and nothing here can see that. The reference count is the available
-;; proxy. The floor takes a byte predicate referenced five times (`ls-digit?`);
-;; an accessor with fewer, hotter sites enters through the dominant tier's
-;; loop-weighted entrance below.
-;;
-;; This is the opposite end of the same census the rest of this file uses:
-;; absorption wants a callee referenced once, duplication twice, and this path
-;; wants one referenced many times.
-(define (opt-inline-shared-accessor-min-refcount) : i64
-  5)
-
 ;; Two of the clauses below are per-SITE questions asked of a callee whose
 ;; whole admission argument is per-CALLEE, and at the top of the reference
 ;; distribution they refuse the sites this gate exists to take.
@@ -113599,9 +113422,6 @@
 ;; reference count is the same proxy the floor above uses. Above the dominant
 ;; floor the callee's own dynamic weight is the whole argument and neither
 ;; per-site question changes the verdict; below it, both stand.
-(define (opt-inline-shared-accessor-dominant-min-refcount) : i64
-  64)
-
 ;; The floor above is a floor on DYNAMIC weight, and the raw reference count is
 ;; only the available proxy for it. An accessor of the identical shape -- one
 ;; guarded load, three blocks -- reached from only a few sites (`gvn-byte-at`,
@@ -113664,17 +113484,10 @@
 ;; So being wrong about the estimate costs little. The clauses that remain are
 ;; the ones that bound what a WRONG estimate can drag in -- body size, block
 ;; count, and genuine sharing -- and those are counted facts, not estimates.
-(define (opt-inline-shared-accessor-dominant-min-refs) : i64
-  2)
-
 ;; The tier verdict, asked identically by the gate and by the caller's fuel
 ;; accounting so a site admitted here always spends the fuel this tier owns.
 (define (opt-inline-shared-accessor-dominant? [refs : i64] [hot-refs : i64]) : bool
-  (or
-    (>= refs (opt-inline-shared-accessor-dominant-min-refcount))
-    (and
-      (>= refs (opt-inline-shared-accessor-dominant-min-refs))
-      (>= hot-refs (opt-inline-shared-accessor-dominant-min-refcount)))))
+  (or (>= refs 64) (and (>= refs 2) (>= hot-refs 64))))
 
 ;; The dominant tier also gets its own per-caller block fuel, for the same
 ;; reason the hot-loop-leaf gate has one and with the same accounting: a copy
@@ -113690,9 +113503,6 @@
 ;;
 ;; 160 blocks is sixteen copies of the widest admitted accessor, which covers
 ;; such a caller's full window. It is spent only above the dominant floor.
-(define (opt-inline-shared-accessor-block-fuel) : i64
-  160)
-
 ;; Ordered by cost: the reference count and the two size caps are integer tests
 ;; on values the site already has, the budgets are arithmetic, and only then do
 ;; the three scans run -- call-free over the callee, the memoized caller facts,
@@ -113700,46 +113510,32 @@
 ;; dominant-reference test is free, so it runs before each caller fact and each
 ;; budget it can change the answer to.
 (define (opt-inline-shared-accessor-ok?
-  [refs : i64]
-  [hot-refs : i64]
-  [callee-instrs : i64]
-  [blocks : (& ir.CompilerIrBlockList)]
-  [added-blocks : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]) : bool
-  (and
-    ;; Either tier's own entry test. The legacy tier keeps its raw-reference
-    ;; floor exactly; the dominant tier also opens on weighted references, so a
-    ;; callee below the raw floor can still reach it -- and nothing that used to
-    ;; be admitted is refused, because the weighted count is never smaller.
-    (or
-      (>= refs (opt-inline-shared-accessor-min-refcount))
-      (opt-inline-shared-accessor-dominant? refs hot-refs))
-    (<= callee-instrs (opt-inline-shared-accessor-max-body))
-    (<=
-      (ir.compiler-ir-block-list-count blocks)
-      (opt-inline-shared-accessor-max-blocks))
-    (if (opt-inline-shared-accessor-dominant? refs hot-refs)
-      (and
-        (not
-          (opt-inline-cost-crosses-heavy-gate?
-            caller-blocks
-            (+ added-so-far opt-inline-caller-accessor-blocks)
-            added-blocks))
-        (<=
-          (+ opt-inline-caller-accessor-blocks added-blocks)
-          (opt-inline-shared-accessor-block-fuel)))
-      (and
-        (not
-          (opt-inline-cost-crosses-heavy-gate?
-            caller-blocks
-            added-so-far
-            added-blocks))
-        (<= (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))
-        (opt-inline-bounds-loop-site-in-loop?)
-        (opt-inline-bounds-loop-cascade-safe?)))
-    (opt-inline-blocks-call-free? blocks)
-    (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
+  [ctx : (& OptInlineAdmitCtx)]
+  [blocks : (& ir.CompilerIrBlockList)]) : bool
+  (let
+    [dominant? : bool
+      (opt-inline-shared-accessor-dominant? ctx.refs ctx.hot-refs)]
+    (and
+      (or (>= ctx.refs 5) dominant?)
+      (opt-inline-within-size-cap? blocks ctx.callee-instrs 28 10)
+      (if dominant?
+        (opt-inline-gate-budget-ok?
+          ctx.caller-blocks
+          (+ ctx.added-so-far opt-inline-caller-accessor-blocks)
+          opt-inline-caller-accessor-blocks
+          ctx.added-blocks
+          160)
+        (and
+          (opt-inline-gate-budget-ok?
+            ctx.caller-blocks
+            ctx.added-so-far
+            ctx.added-so-far
+            ctx.added-blocks
+            (opt-inline-cost-block-fuel))
+          (opt-inline-bounds-loop-site-in-loop?)
+          (opt-inline-bounds-loop-cascade-safe?)))
+      (opt-inline-blocks-call-free? blocks)
+      (opt-inline-tiny-predicate-acyclic-reclaiming? blocks))))
 
 ;; --- branch-chain classifiers ----------------------------------------------
 ;;
@@ -113779,37 +113575,6 @@
 ;;      growth, and the copy spends this gate's OWN per-caller block fuel, not
 ;;      the shared accumulator the caller's banked single-reference absorptions
 ;;      draw on. An import must never evict a banked inline.
-(define (opt-inline-branch-chain-max-block-instrs) : i64
-  3)
-
-;; The chain band, in instructions: wide enough for a thirteen-arm byte
-;; classifier like `ls-symbol-char?`. The per-block cap is what keeps a
-;; 128-instruction body from being anything other than a decision chain.
-(define (opt-inline-branch-chain-max-body) : i64
-  128)
-
-(define (opt-inline-branch-chain-max-blocks) : i64
-  64)
-
-;; Two copies of the largest admitted chain, which is what `ls-tokenize` needs:
-;; it holds one `ls-space?` site (10 blocks) and one `ls-symbol-char?` site
-;; (58), and rationing it to the first would leave the larger call standing.
-(define (opt-inline-branch-chain-block-fuel) : i64
-  128)
-
-(define (opt-inline-block-seq-branch-chain-from?
-  [seq : (& seq ir.CompilerIrBlockSeq)]
-  [count : i64]) : bool
-  (for [index (iterator.range 0 count)]
-    (match (ir.compiler-ir-block-seq-borrow seq index)
-      [(Block _ instrs)
-        (unless
-          (<=
-            (opt-inline-cost-instrs (& instrs))
-            (opt-inline-branch-chain-max-block-instrs))
-          (return false))]))
-  true)
-
 ;; No block in the body does more than compare-and-branch work. This is the
 ;; structural fact the cost model's block weight is a proxy for: a body whose
 ;; blocks are all this small adds no second working set to the caller no matter
@@ -113818,9 +113583,11 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (match blocks
     [(Array seq)
-      (opt-inline-block-seq-branch-chain-from?
-        seq
-        (ir.compiler-ir-block-seq-count seq))]))
+      (for [index (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-borrow seq index)
+          [(Block _ instrs)
+            (unless (<= (opt-inline-cost-instrs (& instrs)) 3) (return false))]))
+      true]))
 
 ;; Ordered by cost: the census class and the bounds flag are values the site
 ;; already has, the two bands and the two budgets are arithmetic, and only then
@@ -113828,30 +113595,18 @@
 ;; memoized caller facts, and last the acyclic check, which builds a CFG index
 ;; per candidate.
 (define (opt-inline-branch-chain-ok?
-  [absorb-class : i64]
-  [has-bounds? : bool]
-  [callee-instrs : i64]
-  [blocks : (& ir.CompilerIrBlockList)]
-  [added-blocks : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]) : bool
+  [ctx : (& OptInlineAdmitCtx)]
+  [blocks : (& ir.CompilerIrBlockList)]) : bool
   (and
-    (>= absorb-class 1)
-    (not has-bounds?)
-    (<= callee-instrs (opt-inline-branch-chain-max-body))
-    (<=
-      (ir.compiler-ir-block-list-count blocks)
-      (opt-inline-branch-chain-max-blocks))
-    ;; The heavy gate is asked about TOTAL caller growth, shared and
-    ;; gate-specific alike; the block fuel is this gate's own accumulator.
-    (not
-      (opt-inline-cost-crosses-heavy-gate?
-        caller-blocks
-        (+ added-so-far opt-inline-caller-chain-blocks)
-        added-blocks))
-    (<=
-      (+ opt-inline-caller-chain-blocks added-blocks)
-      (opt-inline-branch-chain-block-fuel))
+    (>= ctx.absorb-class 1)
+    (not ctx.has-bounds?)
+    (opt-inline-within-size-cap? blocks ctx.callee-instrs 128 64)
+    (opt-inline-gate-budget-ok?
+      ctx.caller-blocks
+      (+ ctx.added-so-far opt-inline-caller-chain-blocks)
+      opt-inline-caller-chain-blocks
+      ctx.added-blocks
+      128)
     (opt-inline-blocks-call-free? blocks)
     (opt-inline-blocks-branch-chain? blocks)
     (opt-inline-bounds-loop-site-in-loop?)
@@ -113924,12 +113679,6 @@
 ;; sites keeps its own body and stays reachable from the rest: the census is
 ;; built before the pass and only read during it, so no absorption bookkeeping
 ;; is needed and none is claimed.
-(define (opt-inline-hot-loop-leaf-max-body) : i64
-  120)
-
-(define (opt-inline-hot-loop-leaf-max-blocks) : i64
-  32)
-
 ;; Largest caller that may take a big-tier import at an in-loop site. In a
 ;; caller this small the loops the import joins are the whole caller; in a
 ;; larger one (`pl-run-chunk`'s per-line loop taking `pl-line-end`) the import
@@ -113939,9 +113688,6 @@
 ;; The allocator's call-hole live-range splitting does not change this: the
 ;; import REMOVES the call, so there is no call hole left to split, and the
 ;; caller's loop-carried values are live across straight-line code instead.
-(define (opt-inline-hot-loop-leaf-max-caller-blocks) : i64
-  16)
-
 ;; The per-caller import budget, spent from the gate's own accumulator
 ;; (opt-inline-caller-hot-loop-blocks), not from the shared block fuel: see
 ;; that variable's comment for the eviction it exists to prevent.
@@ -113949,9 +113695,6 @@
 ;; sites of the same leaf takes the first and keeps the second's call. A budget
 ;; for a second probe copy loses: the second copy's allocation churn exceeds a
 ;; cold site's boundary saving.
-(define (opt-inline-hot-loop-leaf-block-fuel) : i64
-  32)
-
 ;; The caller has no loop of its own -- which is the clause the loop-free tier of
 ;; clause 5 above rests its whole argument on: "the imported loop becomes the
 ;; caller's ONLY one", so the caller's own values are never live across it more
@@ -113984,43 +113727,27 @@
 (define (opt-inline-hot-loop-leaf-ok?
   [index : (& index OptFunctionIndex)]
   [census : (& census OptInlineCensus)]
-  [callee-name : i64]
-  [refs : i64]
-  [callee-instrs : i64]
-  [blocks : (& ir.CompilerIrBlockList)]
-  [added-blocks : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]) : bool
+  [ctx : (& OptInlineAdmitCtx)]
+  [blocks : (& ir.CompilerIrBlockList)]) : bool
   (and
-    (>= refs 1)
-    (not (opt-inline-census-address-taken? index census callee-name))
-    ;; The heavy gate is asked about TOTAL caller growth, shared and
-    ;; gate-specific alike; the block fuel is the gate's own accumulator.
-    (not
-      (opt-inline-cost-crosses-heavy-gate?
-        caller-blocks
-        (+ added-so-far opt-inline-caller-hot-loop-blocks)
-        added-blocks))
-    (<=
-      (+ opt-inline-caller-hot-loop-blocks added-blocks)
-      (opt-inline-hot-loop-leaf-block-fuel))
+    (>= ctx.refs 1)
+    (not (opt-inline-census-address-taken? index census ctx.callee-name))
+    (opt-inline-gate-budget-ok?
+      ctx.caller-blocks
+      (+ ctx.added-so-far opt-inline-caller-hot-loop-blocks)
+      opt-inline-caller-hot-loop-blocks
+      ctx.added-blocks
+      32)
     (opt-inline-blocks-call-free? blocks)
-    ;; The three site tiers of clause 5, cheapest first: the legacy-band
-    ;; integer test runs before either lazy caller fact is forced.
     (or
       (and
-        (opt-inline-bounds-loop-small? blocks callee-instrs)
+        (opt-inline-bounds-loop-small? blocks ctx.callee-instrs)
         (opt-inline-bounds-loop-site-in-loop?))
       (and
-        (<= callee-instrs (opt-inline-hot-loop-leaf-max-body))
-        (<=
-          (ir.compiler-ir-block-list-count blocks)
-          (opt-inline-hot-loop-leaf-max-blocks))
+        (opt-inline-within-size-cap? blocks ctx.callee-instrs 120 32)
         (or
           (opt-inline-caller-loop-free?)
-          (and
-            (<= caller-blocks (opt-inline-hot-loop-leaf-max-caller-blocks))
-            (opt-inline-bounds-loop-site-in-loop?)))))
+          (and (<= ctx.caller-blocks 16) (opt-inline-bounds-loop-site-in-loop?)))))
     (opt-inline-bounds-loop-cascade-safe?)
     (not (opt-inline-tiny-predicate-acyclic-reclaiming? blocks))))
 
@@ -114366,12 +114093,9 @@
   [instrs : (& ir.CompilerIrInstrSeq)]
   [generation : i64]) : bool
   (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
-    [count : i64 instrs.len]
     [found : bool false]
-    (for [i (iterator.range 0 count)]
-      (match (owned_view.compiler-owned-element-view slots i)
+    (for [i (iterator.range 0 instrs.len)]
+      (match (ir.compiler-ir-instr-seq-borrow instrs i)
         [(Jump label)
           (set!
             found
@@ -114401,11 +114125,9 @@
 (define (opt-inline-checked-instrs-leave-function?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
   (let
-    [slots (& instrs.slots)]
-    [count : i64 instrs.len]
     [out : bool false]
-    (for [i (iterator.range 0 count)]
-      (match (owned_view.compiler-owned-element-view slots i)
+    (for [i (iterator.range 0 instrs.len)]
+      (match (ir.compiler-ir-instr-seq-borrow instrs i)
         [(or (Return _) (TailCall _ _ _) (TailCallIndirect _ _ _))
           (set! out true)]
         [_ unit]))
@@ -114434,9 +114156,9 @@
                 (and
                   (opt-inline-checked-reach-marked? label generation)
                   (not (= label skip-label)))
-                (if (opt-inline-checked-instrs-leave-function? instrs)
-                  (set! opt-inline-checked-reach-exit-seen? true)
-                  unit)
+                (when
+                  (opt-inline-checked-instrs-leave-function? instrs)
+                  (set! opt-inline-checked-reach-exit-seen? true))
                 (set!
                   any?
                   (or
@@ -114445,10 +114167,7 @@
         any?)]))
 
 ;; POST. `label` post-dominates the caller's entry when no path from the entry
-;; reaches a return or a tail call without passing through it: the block is
-;; deleted from the CFG and the entry's reachable set is asked whether it still
-;; leaves the function. A walk that has not settled inside the round bound, or
-;; a block the deleted CFG cannot reach at all, answers no.
+;; reaches a return or a tail call without passing through it.
 (define (opt-inline-checked-post-dominates-entry?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [entry-label : i64]
@@ -114467,44 +114186,14 @@
       (not opt-inline-checked-reach-exit-seen?)
       (opt-inline-checked-reach-marked? label generation))))
 
-;; The terminator classes the arm reading is stated in.
-(define (opt-inline-checked-term-none) : i64
-  0)
-
-(define (opt-inline-checked-term-literal-return) : i64
-  1)
-
-(define (opt-inline-checked-term-return) : i64
-  2)
-
-(define (opt-inline-checked-term-tail-call) : i64
-  3)
-
-(define (opt-inline-checked-term-jump) : i64
-  4)
-
-(define (opt-inline-checked-term-branch) : i64
-  5)
-
-;; SW-SPINE: a `switch` or a total enum switch -- the canonical dispatch, and
-;; what the `cond` lowering emits for a chain of literal compares on one value.
-;; Its targets are not published beside the class: a case list is not a pair of
-;; labels, so the dispatch walk re-reads the instruction for them.
-(define (opt-inline-checked-term-switch) : i64
-  6)
-
-;; The labels a classified terminator names, published beside its class because
-;; that is the only thing an i64 answer cannot carry.
+;; Terminator classes for arm/spine readings:
+;;   0=none, 1=literal-return, 2=return, 3=tail-call, 4=jump, 5=branch, 6=switch
 (define opt-inline-checked-term-jump-target : i64
   (- 0 1))
 (define opt-inline-checked-term-branch-yes : i64
   (- 0 1))
 (define opt-inline-checked-term-branch-no : i64
   (- 0 1))
-
-;; ...and the class of the SIBLING arm's terminator, published by the arm
-;; reading for the caller clause below, which allows one more call when the
-;; sibling's own terminator is the call.
 (define opt-inline-checked-arm-sibling-term : i64
   0)
 
@@ -114513,79 +114202,63 @@
     [(or (I64 _) (F64 _) (Bool _) (Char _) (Unit)) true]
     [_ false]))
 
-(define (opt-inline-checked-term-class-of-instr
-  [instr : (& ir.CompilerIrInstr)]) : i64
-  (match instr
-    [(Return maybe)
-      (match maybe
-        [(No) (opt-inline-checked-term-literal-return)]
-        [(Some value)
-          (if (opt-inline-checked-value-literal? (& value))
-            (opt-inline-checked-term-literal-return)
-            (opt-inline-checked-term-return))])]
-    [(TailCall _ _ _) (opt-inline-checked-term-tail-call)]
-    [(Jump target)
-      (set! opt-inline-checked-term-jump-target target)
-      (opt-inline-checked-term-jump)]
-    [(or (Branch _ true-label false-label)
-         (TotalEnumBranch _ true-label false-label))
-      (set! opt-inline-checked-term-branch-yes true-label)
-      (set! opt-inline-checked-term-branch-no false-label)
-      (opt-inline-checked-term-branch)]
-    [(or (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
-      (opt-inline-checked-term-switch)]
-    [_ (opt-inline-checked-term-none)]))
-
 (define (opt-inline-checked-term-class-of
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     (if (< count 1)
-      (opt-inline-checked-term-none)
-      (opt-inline-checked-term-class-of-instr
-        (ir.compiler-ir-instr-seq-borrow instrs (- count 1))))))
+      0
+      (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
+        [(Return maybe)
+          (match maybe
+            [(No) 1]
+            [(Some value)
+              (if (opt-inline-checked-value-literal? (& value))
+                1
+                2)])]
+        [(TailCall _ _ _) 3]
+        [(Jump target)
+          (set! opt-inline-checked-term-jump-target target)
+          4]
+        [(or (Branch _ true-label false-label)
+             (TotalEnumBranch _ true-label false-label))
+          (set! opt-inline-checked-term-branch-yes true-label)
+          (set! opt-inline-checked-term-branch-no false-label)
+          5]
+        [(or (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _)) 6]
+        [_ 0]))))
 
-(define (opt-inline-checked-term-class-at
+(define (opt-inline-checked-find-block-idx
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : i64]) : i64
   (match blocks
     [(Array seq)
-      (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [i : i64 0]
-        [out : i64 (opt-inline-checked-term-none)]
-        [found? : bool false]
-        (while (and (not found?) (< i count))
-          (match (ir.compiler-ir-block-seq-borrow seq i)
-            [(Block block-label instrs)
-              (when
-                (= block-label label)
-                (set! out (opt-inline-checked-term-class-of instrs))
-                (set! found? true))])
-          (+= i 1))
-        out)]))
+      (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-borrow seq i)
+          [(Block block-label _) (when (= block-label label) (return i))]))
+      (- 0 1)]))
 
-(define (opt-inline-checked-entry-label
-  [blocks : (& blocks ir.CompilerIrBlockList)]) : i64
-  (match blocks
-    [(Array seq)
-      (if (< (ir.compiler-ir-block-seq-count seq) 1)
-        (- 0 1)
-        (match (ir.compiler-ir-block-seq-borrow seq 0)
-          [(Block label _) label]))]))
+(define (opt-inline-checked-term-class-at
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : i64]) : i64
+  (let
+    [idx : i64 (opt-inline-checked-find-block-idx blocks label)]
+    (if (< idx 0)
+      0
+      (match blocks
+        [(Array seq)
+          (match (ir.compiler-ir-block-seq-borrow seq idx)
+            [(Block _ instrs) (opt-inline-checked-term-class-of instrs)])]))))
 
 ;; ARM. The site's block is one of the two successors of the entry block's
-;; branch, and the SIBLING successor leaves the function within one block: it
-;; returns anything, tail-calls away, or jumps to a block that returns a
-;; literal. The sibling's own terminator class is published for the caller
-;; clause below.
+;; branch, and the SIBLING successor leaves the function within one block.
 (define (opt-inline-checked-arm-site?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [entry-label : i64]
   [label : i64]) : bool
   (let
     [entry-term : i64 (opt-inline-checked-term-class-at blocks entry-label)]
-    (if (not (= entry-term (opt-inline-checked-term-branch)))
+    (if (not (= entry-term 5))
       false
       (let
         [yes : i64 opt-inline-checked-term-branch-yes]
@@ -114603,27 +114276,25 @@
               (opt-inline-checked-term-class-at blocks sibling)]
             (set! opt-inline-checked-arm-sibling-term sibling-term)
             (cond
-              [(= sibling-term (opt-inline-checked-term-literal-return)) true]
-              [(= sibling-term (opt-inline-checked-term-return)) true]
-              [(= sibling-term (opt-inline-checked-term-tail-call)) true]
-              [(= sibling-term (opt-inline-checked-term-jump))
+              [(or (= sibling-term 1) (= sibling-term 2) (= sibling-term 3))
+                true]
+              [(= sibling-term 4)
                 (=
                   (opt-inline-checked-term-class-at
                     blocks
                     opt-inline-checked-term-jump-target)
-                  (opt-inline-checked-term-literal-return))]
+                  1)]
               [else false])))))))
 
 ;; How many calls the CALLER carries, in the sense opt-inline-instr-call? reads.
 (define (opt-inline-checked-instrs-call-count
   [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
   (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out : i64 0]
-    (for [i (iterator.range 0 count)]
-      (if (opt-inline-instr-call? (ir.compiler-ir-instr-seq-borrow instrs i))
-        (+= out 1)
-        unit))
+    (for [i (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+      (when
+        (opt-inline-instr-call? (ir.compiler-ir-instr-seq-borrow instrs i))
+        (+= out 1)))
     out))
 
 (define (opt-inline-checked-caller-call-count
@@ -114632,9 +114303,8 @@
   (match blocks
     [(Array seq)
       (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : i64 acc]
-        (for [i (iterator.range 0 count)]
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block _ instrs)
               (+= out (opt-inline-checked-instrs-call-count instrs))]))
@@ -114698,118 +114368,42 @@
     (= (opt-inline-checked-instrs-call-count instrs) 0)
     (let
       [class : i64 (opt-inline-checked-term-class-of instrs)]
-      (or
-        (= class (opt-inline-checked-term-branch))
-        (= class (opt-inline-checked-term-switch))
-        (= class (opt-inline-checked-term-jump))))))
+      (or (= class 5) (= class 6) (= class 4)))))
 
-;; ...and of one label, for the seed.
 (define (opt-inline-checked-spine-block-at?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : i64]) : bool
-  (match blocks
-    [(Array seq)
-      (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [i : i64 0]
-        [out : bool false]
-        [found? : bool false]
-        (while (and (not found?) (< i count))
-          (match (ir.compiler-ir-block-seq-borrow seq i)
-            [(Block block-label instrs)
-              (when
-                (= block-label label)
-                (set! out (opt-inline-checked-spine-instrs? instrs))
-                (set! found? true))])
-          (+= i 1))
-        out)]))
-
-;; SW-SPINE: every case target of a switch, marked as a branch's successors
-;; are. Answers whether any mark was new.
-(define (opt-inline-checked-dispatch-switch-cases!
-  [cases : (& ir.CompilerIrSwitchCaseSeq)]
-  [generation : i64]) : bool
   (let
-    [count : i64 (ir.compiler-ir-switch-case-seq-count cases)]
-    [any? : bool false]
-    (for [index (iterator.range 0 count)]
-      (match (ir.compiler-ir-switch-case-seq-borrow cases index)
-        [(Case _ label)
-          (set!
-            any?
-            (or (opt-inline-checked-reach-mark! label generation) any?))]))
-    any?))
-
-;; ...and the whole successor set of a switch-terminated spine block: the
-;; default and every case.
-(define (opt-inline-checked-dispatch-switch-succs!
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [generation : i64]) : bool
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (if (< count 1)
+    [idx : i64 (opt-inline-checked-find-block-idx blocks label)]
+    (if (< idx 0)
       false
-      (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
-        [(or (Switch _ _ cases default-label)
-             (TotalEnumSwitch _ _ cases default-label _))
-          (let
-            [a : bool (opt-inline-checked-reach-mark! default-label generation)]
-            [b : bool
-              (opt-inline-checked-dispatch-switch-cases! (& cases) generation)]
-            (or a b))]
-        [_ false]))))
-
-;; Mark the successors of one spine block: a branch's two published labels, a
-;; jump's one, or a switch's default and cases (SW-SPINE).
-(define (opt-inline-checked-dispatch-succs!
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [generation : i64]) : bool
-  (let
-    [class : i64 (opt-inline-checked-term-class-of instrs)]
-    (cond
-      [(= class (opt-inline-checked-term-switch))
-        (opt-inline-checked-dispatch-switch-succs! instrs generation)]
-      [(= class (opt-inline-checked-term-jump))
-        (opt-inline-checked-reach-mark!
-          opt-inline-checked-term-jump-target
-          generation)]
-      [else
-        (let
-          [yes : i64 opt-inline-checked-term-branch-yes]
-          [no : i64 opt-inline-checked-term-branch-no]
-          [a : bool (opt-inline-checked-reach-mark! yes generation)]
-          [b : bool (opt-inline-checked-reach-mark! no generation)]
-          (or a b))])))
+      (match blocks
+        [(Array seq)
+          (match (ir.compiler-ir-block-seq-borrow seq idx)
+            [(Block _ instrs) (opt-inline-checked-spine-instrs? instrs)])]))))
 
 ;; One relaxation round of "reachable from the entry through spine blocks".
-;; A marked block is expanded only when it is a spine block, so an ARM is
-;; marked and never walked through: the closure stops at the first block that
-;; does work.
 (define (opt-inline-checked-dispatch-round!
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [generation : i64]) : bool
   (match blocks
     [(Array seq)
       (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [any? : bool false]
-        (for [i (iterator.range 0 count)]
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block label instrs)
-              (if (and
-                (opt-inline-checked-reach-marked? label generation)
-                (opt-inline-checked-spine-instrs? instrs))
+              (when
+                (and
+                  (opt-inline-checked-reach-marked? label generation)
+                  (opt-inline-checked-spine-instrs? instrs))
                 (set!
                   any?
                   (or
-                    (opt-inline-checked-dispatch-succs! (& instrs) generation)
-                    any?))
-                unit)]))
+                    (opt-inline-checked-reach-succs! (& instrs) generation)
+                    any?)))]))
         any?)]))
 
-;; How many ARMS the dispatch the last question walked has: marked blocks that
-;; are not spine blocks. Published for the census only -- see why an arm-count
-;; clause does not ship at opt-inline-checked-dispatch-callee-ok?.
 (define opt-inline-checked-dispatch-arms : i64
   0)
 
@@ -114819,21 +114413,19 @@
   (match blocks
     [(Array seq)
       (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : i64 0]
-        (for [i (iterator.range 0 count)]
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block label instrs)
-              (if (and
-                (opt-inline-checked-reach-marked? label generation)
-                (not (opt-inline-checked-spine-instrs? instrs)))
-                (+= out 1)
-                unit)]))
+              (when
+                (and
+                  (opt-inline-checked-reach-marked? label generation)
+                  (not (opt-inline-checked-spine-instrs? instrs)))
+                (+= out 1))]))
         out)]))
 
 ;; DISPATCH. The entry block opens a spine, and `label` is one of the arms that
-;; spine reaches. A walk that has not settled inside the round bound answers no,
-;; exactly as the post-dominance walk does.
+;; spine reaches.
 (define (opt-inline-checked-dispatch-arm-site?
   [blocks : (& ir.CompilerIrBlockList)]
   [entry-label : i64]
@@ -114854,13 +114446,11 @@
         (not (opt-inline-checked-reach-marked? label generation)))
         false
         (begin
-          ;; Read for the census and for nothing else, so a compile without
-          ;; the flag does not pay the pass.
-          (if compiler-opt-debug-trace-passes
+          (when
+            compiler-opt-debug-trace-passes
             (set!
               opt-inline-checked-dispatch-arms
-              (opt-inline-checked-dispatch-count-arms! blocks generation))
-            unit)
+              (opt-inline-checked-dispatch-count-arms! blocks generation)))
           true)))))
 
 ;; THE DISPATCH ARM'S OWN CLAUSE, and it is on the CALLEE. An acyclic,
@@ -114922,9 +114512,7 @@
     [allowed : i64
       (if (and
         (= pos (opt-inline-checked-pos-arm))
-        (=
-          opt-inline-checked-arm-sibling-term
-          (opt-inline-checked-term-tail-call)))
+        (= opt-inline-checked-arm-sibling-term 3))
         2
         1)]
     (<= calls allowed)))
@@ -114975,37 +114563,19 @@
   [blocks : (& ir.CompilerIrBlockList)]
   [pos : i64]) : bool
   (or
-    (and
-      (= pos (opt-inline-checked-pos-post))
-      ;; Asked first: the caller facts the site's own depth already forced
-      ;; answer it with a label-set count, where the count below walks every
-      ;; block. `opt-inline-caller-loop-free?` also refuses a self-recursive
-      ;; caller, whose tail call `opt-tailrec-function` turns into a loop one
-      ;; pass later.
-      (opt-inline-caller-loop-free?))
-    ;; A DISPATCH arm carries no caller clause of its own: what makes the two-arm
-    ;; reading sound -- "the caller holds no call this site does not account
-    ;; for" -- is unavailable by construction, since every arm of a dispatch
-    ;; holds one. Its clause is on the CALLEE instead, and it is asked one level
-    ;; up where the callee's blocks are in scope; see
-    ;; opt-inline-checked-dispatch-callee-ok?.
+    (and (= pos (opt-inline-checked-pos-post)) (opt-inline-caller-loop-free?))
     (= pos (opt-inline-checked-pos-dispatch))
     (opt-inline-checked-wrapper-shaped? blocks pos)))
 
-;; INL-20b. The block a site's block hangs off: the ONE predecessor edge of
-;; `label`, when it is the arm of a two-way branch, or -1 when `label` has any
-;; other predecessor (a jump, a switch case, a second branch) or none. Every
-;; terminator kind counts toward the edge total, so a merge block never reads
-;; as an arm.
+;; INL-20b. The sole two-way branch predecessor of `label`, or -1.
 (define (opt-inline-checked-branch-pred-edges!
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [label : i64]) : i64
   (let
-    [slots (& instrs.slots)]
     [count : i64 instrs.len]
     (if (<= count 0)
       0
-      (match (owned_view.compiler-owned-element-view slots (- count 1))
+      (match (ir.compiler-ir-instr-seq-borrow instrs (- count 1))
         [(Jump target)
           (if (= target label)
             1
@@ -115021,52 +114591,40 @@
               0))]
         [(or (Switch _ _ cases default-label)
              (TotalEnumSwitch _ _ cases default-label _))
-          (+
-            (if (= default-label label)
-              1
-              0)
-            (opt-inline-checked-switch-case-edges (& cases) label))]
+          (let
+            [edges : i64
+              (if (= default-label label)
+                1
+                0)]
+            (for [i (iterator.range 0 cases.len)]
+              (match (ir.compiler-ir-switch-case-seq-borrow (& cases) i)
+                [(Case _ target) (when (= target label) (+= edges 1))]))
+            edges)]
         [_ 0]))))
-
-(define (opt-inline-checked-switch-case-edges
-  [cases : (& ir.CompilerIrSwitchCaseSeq)]
-  [label : i64]) : i64
-  (let
-    [edges : i64 0]
-    (for [i (iterator.range 0 cases.len)]
-      (match (ir.compiler-ir-switch-case-seq-borrow cases i)
-        [(Case _ target)
-          (if (= target label)
-            (+= edges 1)
-            unit)]))
-    edges))
 
 (define (opt-inline-checked-branch-pred-of
   [blocks : (& ir.CompilerIrBlockList)]
   [label : i64]) : i64
-  (let
-    [seq : ir.CompilerIrBlockSeq
-      (ir.compiler-ir-block-list-seq
-        (owned_view.compiler-owned-reference-shared-view blocks))]
-    [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [edges : i64 0]
-    [branch : i64 (- 0 1)]
-    (for [i (iterator.range 0 count)]
-      (match (ir.compiler-ir-block-seq-borrow seq i)
-        [(Block block-label instrs)
-          (let
-            [here : i64 (opt-inline-checked-branch-pred-edges! instrs label)]
-            (+= edges here)
-            (if (and
-              (= here 1)
-              (=
-                (opt-inline-checked-term-class-of instrs)
-                (opt-inline-checked-term-branch)))
-              (set! branch block-label)
-              unit))]))
-    (if (= edges 1)
-      branch
-      (- 0 1))))
+  (match blocks
+    [(Array seq)
+      (let
+        [edges : i64 0]
+        [branch : i64 (- 0 1)]
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq i)
+            [(Block block-label instrs)
+              (let
+                [here : i64
+                  (opt-inline-checked-branch-pred-edges! instrs label)]
+                (+= edges here)
+                (when
+                  (and
+                    (= here 1)
+                    (= (opt-inline-checked-term-class-of instrs) 5))
+                  (set! branch block-label)))]))
+        (if (= edges 1)
+          branch
+          (- 0 1)))]))
 
 ;; INL-20b. ARM, read off the branch the site's block hangs from rather than
 ;; off the entry alone. The entry reading (opt-inline-checked-arm-site?) asked
@@ -115092,36 +114650,28 @@
       (opt-inline-checked-post-dominates-entry? blocks entry-label branch)
       (opt-inline-checked-arm-site? blocks branch label))))
 
-;; The two new readings, tried post first. Answers `none` for a caller too wide
-;; to walk, for a caller whose entry block cannot be found, and for the entry
-;; block itself -- which never reaches here, because position zero is answered
-;; without a walk.
 (define (opt-inline-checked-widened-class
   [blocks : (& ir.CompilerIrBlockList)]
   [label : i64]) : i64
   (let
     [caller-blocks : i64 (ir.compiler-ir-block-list-count blocks)]
-    [entry-label : i64 (opt-inline-checked-entry-label blocks)]
+    [entry-label : i64 (opt-cfg-entry-label blocks)]
     (cond
-      [(> caller-blocks (opt-inline-checked-pos-max-blocks))
+      [(or
+          (> caller-blocks (opt-inline-checked-pos-max-blocks))
+          (< entry-label 0)
+          (= entry-label label))
         (opt-inline-checked-pos-none)]
-      [(< entry-label 0) (opt-inline-checked-pos-none)]
-      [(= entry-label label) (opt-inline-checked-pos-none)]
       [(opt-inline-checked-post-dominates-entry? blocks entry-label label)
         (opt-inline-checked-pos-post)]
-      [(opt-inline-checked-arm-site? blocks entry-label label)
-        (opt-inline-checked-pos-arm)]
-      ;; INL-20b: the same reading off a branch below the entry that
-      ;; post-dominates it.
-      [(opt-inline-checked-post-arm-site? blocks entry-label label)
+      [(or
+          (opt-inline-checked-arm-site? blocks entry-label label)
+          (opt-inline-checked-post-arm-site? blocks entry-label label))
         (opt-inline-checked-pos-arm)]
       [(opt-inline-checked-dispatch-arm-site? blocks entry-label label)
         (opt-inline-checked-pos-dispatch)]
       [else (opt-inline-checked-pos-none)])))
 
-;; The class of one site's block: `entry` for the caller's entry block, then the
-;; two widened readings gated by the caller clause
-;; (opt-inline-checked-depth0-caller-ok?), then `none`.
 (define (opt-inline-checked-position-class
   [blocks : (& ir.CompilerIrBlockList)]
   [position : i64]
@@ -115132,19 +114682,15 @@
       (opt-inline-checked-pos-entry))
     (let
       [pos : i64 (opt-inline-checked-widened-class blocks label)]
-      [_publish : unit
-        (begin
-          (set! opt-inline-checked-trace-rawpos pos)
-          (if (= pos (opt-inline-checked-pos-dispatch))
-            (set!
-              opt-inline-checked-trace-arms
-              opt-inline-checked-dispatch-arms)
-            unit))]
-      (if (= pos (opt-inline-checked-pos-none))
-        (opt-inline-checked-pos-none)
-        (if (opt-inline-checked-depth0-caller-ok? blocks pos)
-          pos
-          (opt-inline-checked-pos-none))))))
+      (set! opt-inline-checked-trace-rawpos pos)
+      (when
+        (= pos (opt-inline-checked-pos-dispatch))
+        (set! opt-inline-checked-trace-arms opt-inline-checked-dispatch-arms))
+      (if (and
+        (not (= pos (opt-inline-checked-pos-none)))
+        (opt-inline-checked-depth0-caller-ok? blocks pos))
+        pos
+        (opt-inline-checked-pos-none)))))
 
 ;; VERDICTS per program, not accepts. This is the tier's compile-time bound and
 ;; it has to count the work, which a cap on accepts does not: a rejected
@@ -115326,102 +114872,44 @@
 ;;
 ;; The string is built inside the flag's guard, so a compile without
 ;; `--trace-passes` pays one boolean test per candidate.
-(define (opt-inline-checked-clause-admitted) : i64
-  0)
-
-(define (opt-inline-checked-clause-scanned) : i64
-  1)
-
-(define (opt-inline-checked-clause-readmitted) : i64
-  2)
-
-(define (opt-inline-checked-clause-disarmed) : i64
-  3)
-
-(define (opt-inline-checked-clause-caller-taken) : i64
-  4)
-
-(define (opt-inline-checked-clause-program-budget) : i64
-  5)
-
-(define (opt-inline-checked-clause-caller-verdicts) : i64
-  6)
-
-(define (opt-inline-checked-clause-not-target) : i64
-  7)
-
-(define (opt-inline-checked-clause-callee-lock) : i64
-  8)
-
-(define (opt-inline-checked-clause-unreferenced) : i64
-  9)
-
-(define (opt-inline-checked-clause-callee-size) : i64
-  10)
-
-(define (opt-inline-checked-clause-callee-blocks) : i64
-  11)
-
-(define (opt-inline-checked-clause-address-taken) : i64
-  12)
-
-(define (opt-inline-checked-clause-heavy-gate) : i64
-  13)
-
-(define (opt-inline-checked-clause-block-ceiling) : i64
-  14)
-
-(define (opt-inline-checked-clause-frequency) : i64
-  15)
-
-(define (opt-inline-checked-clause-site-depth) : i64
+;; Checked-tier clause codes:
+;;   0=admitted, 1=scanned, 2=readmitted, 3=disarmed, 4=caller-taken,
+;;   5=program-budget, 6=caller-verdicts, 7=not-target, 8=callee-lock,
+;;   9=unreferenced, 10=callee-size, 11=callee-blocks, 12=address-taken,
+;;   13=heavy-gate, 14=block-ceiling, 15=frequency, 16=site-depth,
+;;   17=relaxed-budget, 18=converted-caller, 19=tail-only.
+(define opt-inline-checked-clause-site-depth : i64
   16)
 
-;; INL-17c: a loop-carrying callee at a site of a caller whose loop is its own
-;; rewritten self tail call.
-(define (opt-inline-checked-clause-converted-caller) : i64
-  18)
-
-(define (opt-inline-checked-clause-tail-only) : i64
-  19)
-
-;; Ranked as a RELAXED candidate -- one only a relaxed clause admits -- with the
-;; relaxations' reserve already spent. Reported by the ranking, like the lock,
-;; because a row refused there never reaches the admission test.
-(define (opt-inline-checked-clause-relaxed-budget) : i64
-  17)
-
 (define (opt-inline-checked-clause-admits? [clause : i64]) : bool
-  (or
-    (= clause (opt-inline-checked-clause-admitted))
-    (= clause (opt-inline-checked-clause-readmitted))))
+  (or (= clause 0) (= clause 2)))
 
 (define (opt-inline-checked-clause-traced? [clause : i64]) : bool
-  (>= clause (opt-inline-checked-clause-admitted)))
+  (>= clause 0))
 
 (define (opt-inline-checked-clause-text [clause : i64]) : String
-  (cond
-    [(= clause (opt-inline-checked-clause-admitted)) "admitted"]
-    [(= clause (opt-inline-checked-clause-scanned)) "scanned"]
-    [(= clause (opt-inline-checked-clause-readmitted)) "readmitted"]
-    [(= clause (opt-inline-checked-clause-disarmed)) "disarmed"]
-    [(= clause (opt-inline-checked-clause-caller-taken)) "caller-taken"]
-    [(= clause (opt-inline-checked-clause-program-budget)) "program-budget"]
-    [(= clause (opt-inline-checked-clause-caller-verdicts)) "caller-verdicts"]
-    [(= clause (opt-inline-checked-clause-not-target)) "not-target"]
-    [(= clause (opt-inline-checked-clause-callee-lock)) "callee-lock"]
-    [(= clause (opt-inline-checked-clause-unreferenced)) "unreferenced"]
-    [(= clause (opt-inline-checked-clause-callee-size)) "callee-size"]
-    [(= clause (opt-inline-checked-clause-callee-blocks)) "callee-blocks"]
-    [(= clause (opt-inline-checked-clause-address-taken)) "address-taken"]
-    [(= clause (opt-inline-checked-clause-heavy-gate)) "heavy-gate"]
-    [(= clause (opt-inline-checked-clause-block-ceiling)) "block-ceiling"]
-    [(= clause (opt-inline-checked-clause-frequency)) "frequency"]
-    [(= clause (opt-inline-checked-clause-relaxed-budget)) "relaxed-budget"]
-    [(= clause (opt-inline-checked-clause-site-depth)) "site-depth"]
-    [(= clause (opt-inline-checked-clause-converted-caller)) "converted-caller"]
-    [(= clause (opt-inline-checked-clause-tail-only)) "tail-only"]
-    [else "unknown"]))
+  (match clause
+    [0 "admitted"]
+    [1 "scanned"]
+    [2 "readmitted"]
+    [3 "disarmed"]
+    [4 "caller-taken"]
+    [5 "program-budget"]
+    [6 "caller-verdicts"]
+    [7 "not-target"]
+    [8 "callee-lock"]
+    [9 "unreferenced"]
+    [10 "callee-size"]
+    [11 "callee-blocks"]
+    [12 "address-taken"]
+    [13 "heavy-gate"]
+    [14 "block-ceiling"]
+    [15 "frequency"]
+    [16 "site-depth"]
+    [17 "relaxed-budget"]
+    [18 "converted-caller"]
+    [19 "tail-only"]
+    [_ "unknown"]))
 
 (define opt-inline-checked-active? : bool
   false)
@@ -115682,50 +115170,34 @@
   (set! (array-ref opt-inline-checked-literal-scan 1) literal)
   (set! (array-ref opt-inline-checked-literal-scan 2) value))
 
-(define (opt-inline-checked-literal-scan-instrs!
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [var : i64]) : unit
-  (unless
-    (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (when
-      (= (opt-bce-mb-instr-seq-dst-or instrs index (- 0 1)) var)
-      (set!
-        (array-ref opt-inline-checked-literal-scan 0)
-        (+ (array-ref opt-inline-checked-literal-scan 0) 1))
-      (match (ir.compiler-ir-instr-seq-borrow instrs index)
-        [(Mov _ value _)
-          (match value
-            [(I64 k)
-              (set! (array-ref opt-inline-checked-literal-scan 1) 1)
-              (set! (array-ref opt-inline-checked-literal-scan 2) k)]
-            [(String text)
-              (set! (array-ref opt-inline-checked-literal-scan 1) 2)
-              (set!
-                (array-ref opt-inline-checked-literal-scan-string 0)
-                (string.copy (& text)))]
-            [_ unit])]
-        [_ unit]))
-    (opt-inline-checked-literal-scan-instrs! instrs (+ index 1) var)))
-
 (define (opt-inline-checked-literal-scan-blocks!
   [blocks : (& ir.CompilerIrBlockList)]
   [var : i64]) : unit
   (match blocks
     [(Array seq)
-      ;; This scan borrows the ordered blocks and only updates its literal
-      ;; counters. Keep every definition, including ones after a duplicate;
-      ;; neither linked copies nor an early exit are needed.
-      (let
-        [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (for [index (iterator.range 0 count)]
-          (match (ir.compiler-ir-block-seq-borrow seq index)
-            [(Block _ instrs)
-              (opt-inline-checked-literal-scan-instrs! (& instrs) 0 var)])))]))
+      (for [index (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-borrow seq index)
+          [(Block _ instrs)
+            (for [i (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+              (when
+                (= (opt-bce-mb-instr-seq-dst-or (& instrs) i (- 0 1)) var)
+                (set!
+                  (array-ref opt-inline-checked-literal-scan 0)
+                  (+ (array-ref opt-inline-checked-literal-scan 0) 1))
+                (match (ir.compiler-ir-instr-seq-borrow instrs i)
+                  [(Mov _ value _)
+                    (match value
+                      [(I64 k)
+                        (set! (array-ref opt-inline-checked-literal-scan 1) 1)
+                        (set! (array-ref opt-inline-checked-literal-scan 2) k)]
+                      [(String text)
+                        (set! (array-ref opt-inline-checked-literal-scan 1) 2)
+                        (set!
+                          (array-ref opt-inline-checked-literal-scan-string 0)
+                          (string.copy (& text)))]
+                      [_ unit])]
+                  [_ unit])))]))]))
 
-;; The literal a site argument carries: an `I64` in the argument itself, or a
-;; var the caller defines exactly once, by a `Mov` of an `I64` -- the temp the
-;; frontend materializes a literal argument into.
 (define (opt-inline-checked-literal-set! [slot : i64] [k : i64]) : i64
   (set! (array-ref opt-inline-checked-current-literals (* 2 slot)) 1)
   (set! (array-ref opt-inline-checked-current-literals (+ (* 2 slot) 1)) k)
@@ -115739,9 +115211,9 @@
 (define (opt-inline-checked-literal-note!
   [slot : i64]
   [value : (& ir.CompilerIrValue)]) : i64
-  (if (< slot (opt-inline-checked-literal-max))
-    (set! (array-ref opt-inline-checked-current-literals (* 2 slot)) 0)
-    unit)
+  (when
+    (< slot (opt-inline-checked-literal-max))
+    (set! (array-ref opt-inline-checked-current-literals (* 2 slot)) 0))
   (if (>= slot (opt-inline-checked-literal-max))
     0
     (match value
@@ -115749,9 +115221,7 @@
       [(String text)
         (opt-inline-checked-literal-string-set! slot (string.copy text))]
       [(Var var)
-        (set! (array-ref opt-inline-checked-literal-scan 0) 0)
-        (set! (array-ref opt-inline-checked-literal-scan 1) 0)
-        (set! (array-ref opt-inline-checked-literal-scan 2) 0)
+        (opt-inline-checked-literal-scan-set! 0 0 0)
         (opt-inline-checked-literal-scan-blocks!
           (& (opt-inline-caller-facts-blocks-shared-view))
           var)
@@ -115769,22 +115239,9 @@
           [else 0])]
       [_ 0])))
 
-(define (opt-inline-checked-literal-note-array!
-  [values : (& (__tl_dyn-array ir.CompilerIrValue))]
-  [acc : i64]) : i64
-  (for [index (iterator.range 0 (array-length values))]
-    (set!
-      acc
-      (+
-        acc
-        (opt-inline-checked-literal-note! index (& (array-ref values index))))))
-  acc)
-
 (define (opt-inline-checked-clear-literals-from! [index : i64]) : unit
-  (unless
-    (>= index 64)
-    (set! (array-ref opt-inline-checked-current-literals index) 0)
-    (opt-inline-checked-clear-literals-from! (+ index 1))))
+  (for [i (iterator.range index 64)]
+    (set! (array-ref opt-inline-checked-current-literals i) 0)))
 
 (define (opt-inline-checked-record-literals!
   [args : (& args ir.CompilerIrCallArgs)]) : unit
@@ -115799,29 +115256,25 @@
           (opt-inline-checked-literal-note! 0 (& a))
           (opt-inline-checked-literal-note! 1 (& b)))]
       [(or (Array values) (Sret values _))
-        (opt-inline-checked-literal-note-array! (& values) 0)])))
+        (let
+          [acc : i64 0]
+          (for [i (iterator.range 0 (array-length (& values)))]
+            (+=
+              acc
+              (opt-inline-checked-literal-note! i (& (array-ref values i)))))
+          acc)])))
 
-(define (opt-inline-checked-copy-literals-from! [index : i64]) : unit
-  (unless
-    (>= index 64)
-    (set!
-      (array-ref opt-inline-checked-target-literals index)
-      (array-ref opt-inline-checked-current-literals index))
-    (when
-      (and
-        (= (% index 2) 0)
-        (= (array-ref opt-inline-checked-current-literals index) 2))
-      (set!
-        (array-ref opt-inline-checked-target-literal-strings (/ index 2))
-        (string.copy
-          (& (array-ref opt-inline-checked-current-literal-strings (/ index 2))))))
-    (opt-inline-checked-copy-literals-from! (+ index 1))))
-
-;; The admitted site's literals become the target's: the verdict prices the
-;; specialization off the target copy, so a scan that visits other sites before
-;; the round's rewrite does not disturb it.
 (define (opt-inline-checked-adopt-literals!) : unit
-  (opt-inline-checked-copy-literals-from! 0)
+  (for [i (iterator.range 0 64)]
+    (let
+      [v : i64 (array-ref opt-inline-checked-current-literals i)]
+      (set! (array-ref opt-inline-checked-target-literals i) v)
+      (when
+        (and (= (% i 2) 0) (= v 2))
+        (set!
+          (array-ref opt-inline-checked-target-literal-strings (/ i 2))
+          (string.copy
+            (& (array-ref opt-inline-checked-current-literal-strings (/ i 2))))))))
   (set!
     opt-inline-checked-target-literal-count
     opt-inline-checked-current-literal-count))
@@ -115835,57 +115288,42 @@
     (<= (opt-inline-return-count-blocks blocks) 0)
     (opt-inline-blocks-have-tail-call? blocks)))
 
-(define (opt-inline-checked-specializing-max-blocks) : i64
-  256)
-
 (define (opt-inline-checked-max-blocks-for [specializing? : bool]) : i64
   (if specializing?
-    (opt-inline-checked-specializing-max-blocks)
+    256
     (opt-inline-checked-max-blocks)))
 
 (define (opt-inline-checked-literal-movs
   [params : (& ir.CompilerIrParamSeq)]
-  [index : i64]
-  [np : i64]
-  [acc : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
-  (if (or (>= index np) (>= index (opt-inline-checked-literal-max)))
-    acc
-    (opt-inline-checked-literal-movs
-      params
-      (+ index 1)
-      np
-      (match (array-ref opt-inline-checked-target-literals (* 2 index))
-        [1
+  [np : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [limit : i64 (opt-inline-cost-min np (opt-inline-checked-literal-max))]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity limit)]
+    (for [index (iterator.range 0 limit)]
+      (let
+        [kind : i64 (array-ref opt-inline-checked-target-literals (* 2 index))]
+        (when
+          (or (= kind 1) (= kind 2))
           (match (ir.compiler-ir-param-seq-borrow params index)
             [(Param _ ty var)
-              (opt-inline-append
-                (& acc)
-                (&
-                  (ir.compiler-ir-instr-seq1
-                    (Mov
-                      var
-                      (I64
-                        (array-ref
-                          opt-inline-checked-target-literals
-                          (+ (* 2 index) 1)))
-                      (ast.ty-node-persist ty)))))])]
-        [2
-          (match (ir.compiler-ir-param-seq-borrow params index)
-            [(Param _ ty var)
-              (opt-inline-append
-                (& acc)
-                (&
-                  (ir.compiler-ir-instr-seq1
-                    (Mov
-                      var
-                      (String
-                        (string.copy
-                          (&
-                            (array-ref
-                              opt-inline-checked-target-literal-strings
-                              index))))
-                      (ast.ty-node-persist ty)))))])]
-        [_ acc]))))
+              (ir.compiler-ir-instr-builder-push!
+                (&mut builder)
+                (Mov
+                  var
+                  (if (= kind 1)
+                    (I64
+                      (array-ref
+                        opt-inline-checked-target-literals
+                        (+ (* 2 index) 1)))
+                    (String
+                      (string.copy
+                        (&
+                          (array-ref
+                            opt-inline-checked-target-literal-strings
+                            index)))))
+                  (ast.ty-node-persist ty)))]))))
+    (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (define (opt-inline-checked-prefix-entry!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
@@ -115908,13 +115346,10 @@
   (match (owned_view.compiler-owned-reference-shared-view callee)
     [(Function name params ret vars blocks function-abi)
       (let
-        [np : i64 (opt-inline-param-count params)]
         [prefix : ir.CompilerIrInstrSeq
           (opt-inline-checked-literal-movs
             (& params)
-            0
-            np
-            (ir.compiler-ir-instr-seq-empty))]
+            (opt-inline-param-count params))]
         (if (= (ir.compiler-ir-instr-seq-count prefix) 0)
           (No)
           (Some
@@ -116049,16 +115484,17 @@
 ;;
 ;; Each candidate's verdict, if it reaches one, prints its own
 ;; `inline-checked-verdict|` line below.
+(define (opt-inline-trace-enabled?) : bool
+  (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?)))
+
 (define (opt-inline-checked-trace-clause!
   [callee-name : i64]
   [callee-instrs : i64]
   [np : i64]
   [tail-site? : bool]
   [clause : i64]) : unit
-  (if (and
-    compiler-opt-debug-trace-passes
-    (not compiler-opt-debug-suppressed?)
-    (opt-inline-checked-clause-traced? clause))
+  (when
+    (and (opt-inline-trace-enabled?) (opt-inline-checked-clause-traced? clause))
     (io.print-error
       (str_cat.str-cat
         "inline-checked|"
@@ -116095,8 +115531,7 @@
         (string.int->string opt-inline-checked-generation)
         "|"
         (opt-inline-checked-clause-text clause)
-        "\n"))
-    unit))
+        "\n"))))
 
 ;; ...and one line per VERDICT: the priced numbers on both sides, the boundary a
 ;; free inline would retire, the modelled saving, and which way the two-sided
@@ -116120,57 +115555,57 @@
   [keep? : bool]
   [margin-clear? : bool]
   [spec-gain : i64]) : unit
-  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
-    (io.print-error
-      (str_cat.str-cat
-        "inline-checked-verdict|"
-        (ir.compiler-ir-symbol-text callee-name)
-        "|caller="
-        (ir.compiler-ir-symbol-text opt-inline-caller-name)
-        "|block="
-        (ir.compiler-ir-label-text opt-inline-checked-target-block)
-        "|depth="
-        (string.int->string site-depth)
-        "|weight="
-        (string.int->string site-weight)
-        "|np="
-        (string.int->string np)
-        "|banked="
-        (string.int->string banked-cost)
-        "|callee="
-        (string.int->string callee-cost)
-        "|after="
-        (string.int->string after)
-        "|boundary="
-        (string.int->string boundary)
-        "|saving="
-        (string.int->string (- (+ banked-cost (+ boundary callee-cost)) after))
-        "|window="
-        (opt-inline-checked-window-text
-          (- (+ banked-cost (+ boundary callee-cost)) after)
-          boundary)
-        "|"
-        (if keep?
-          "keep"
-          "revert")
-        "|margin="
-        (if margin-clear?
-          "clear"
-          "slim")
-        "|class="
-        (if opt-inline-checked-target-relaxed?
-          "relaxed"
-          "core")
-        "|site="
-        (if opt-inline-checked-target-tail?
-          "tail"
-          "call")
-        "|gen="
-        (string.int->string opt-inline-checked-generation)
-        "|spec="
-        (string.int->string spec-gain)
-        "\n"))
-    unit))
+  (when
+    (opt-inline-trace-enabled?)
+    (let
+      [saving : i64 (- (+ banked-cost (+ boundary callee-cost)) after)]
+      (io.print-error
+        (str_cat.str-cat
+          "inline-checked-verdict|"
+          (ir.compiler-ir-symbol-text callee-name)
+          "|caller="
+          (ir.compiler-ir-symbol-text opt-inline-caller-name)
+          "|block="
+          (ir.compiler-ir-label-text opt-inline-checked-target-block)
+          "|depth="
+          (string.int->string site-depth)
+          "|weight="
+          (string.int->string site-weight)
+          "|np="
+          (string.int->string np)
+          "|banked="
+          (string.int->string banked-cost)
+          "|callee="
+          (string.int->string callee-cost)
+          "|after="
+          (string.int->string after)
+          "|boundary="
+          (string.int->string boundary)
+          "|saving="
+          (string.int->string saving)
+          "|window="
+          (opt-inline-checked-window-text saving boundary)
+          "|"
+          (if keep?
+            "keep"
+            "revert")
+          "|margin="
+          (if margin-clear?
+            "clear"
+            "slim")
+          "|class="
+          (if opt-inline-checked-target-relaxed?
+            "relaxed"
+            "core")
+          "|site="
+          (if opt-inline-checked-target-tail?
+            "tail"
+            "call")
+          "|gen="
+          (string.int->string opt-inline-checked-generation)
+          "|spec="
+          (string.int->string spec-gain)
+          "\n")))))
 
 ;; Per-program state reset, run by the level-2 inline driver before the SCC
 ;; walk. It resets the budget and the per-caller flags but does NOT arm the
@@ -116355,44 +115790,24 @@
   opt-inline-checked-accepted-count)
 
 ;; --- the per-site key tables ------------------------------------------------
-;; A row matches a SITE only when it belongs to the generation being walked:
-;; an earlier generation's inline is already inside the body this generation
-;; started from, so re-admitting its key would splice the same body twice.
-(define (opt-inline-checked-accepted-row-eq?
-  [base : i64]
-  [callee-name : i64]
-  [block-label : i64]
-  [site-pos : i64]) : bool
-  (and
-    (= (array-ref opt-inline-checked-accepted base) callee-name)
-    (= (array-ref opt-inline-checked-accepted (+ base 1)) block-label)
-    (= (array-ref opt-inline-checked-accepted (+ base 2)) site-pos)
-    (=
-      (array-ref opt-inline-checked-accepted (+ base 3))
-      opt-inline-checked-generation)))
-
-(define (opt-inline-checked-accepted-from?
-  [callee-name : i64]
-  [block-label : i64]
-  [site-pos : i64]) : bool
-  (for [row (iterator.range 0 opt-inline-checked-accepted-count)]
-    (when
-      (opt-inline-checked-accepted-row-eq?
-        (* row (opt-inline-checked-accepted-stride))
-        callee-name
-        block-label
-        site-pos)
-      (return true)))
-  false)
-
-;; Is this site one the caller already priced and kept?
+;; Is this site one the caller already priced and kept in the current generation?
 (define (opt-inline-checked-accepted?
   [callee-name : i64]
   [block-label : i64]
   [site-pos : i64]) : bool
-  (and
-    (> opt-inline-checked-accepted-count 0)
-    (opt-inline-checked-accepted-from? callee-name block-label site-pos)))
+  (for [row (iterator.range 0 opt-inline-checked-accepted-count)]
+    (let
+      [base : i64 (* row (opt-inline-checked-accepted-stride))]
+      (when
+        (and
+          (= (array-ref opt-inline-checked-accepted base) callee-name)
+          (= (array-ref opt-inline-checked-accepted (+ base 1)) block-label)
+          (= (array-ref opt-inline-checked-accepted (+ base 2)) site-pos)
+          (=
+            (array-ref opt-inline-checked-accepted (+ base 3))
+            opt-inline-checked-generation))
+        (return true))))
+  false)
 
 ;; Is this site the ONE new site the current target walk may admit?
 (define (opt-inline-checked-target-match?
@@ -116418,8 +115833,8 @@
   [richness : i64]
   [depth-relaxed? : bool]
   [tail-site? : bool]) : unit
-  (if (>= opt-inline-checked-scan-count (opt-inline-checked-scan-cap))
-    unit
+  (when
+    (< opt-inline-checked-scan-count (opt-inline-checked-scan-cap))
     (let
       [base : i64
         (* opt-inline-checked-scan-count (opt-inline-checked-scan-stride))]
@@ -116488,53 +115903,32 @@
 ;; A body admitted by this relaxation is a RELAXED candidate on the same terms
 ;; as a below-the-floor site: ranked last, and charged to the relaxations' own
 ;; reserve (opt-inline-checked-relaxed-program-budget).
-(define (opt-inline-checked-accepted-callee-from? [callee-name : i64]) : bool
-  (for [row (iterator.range 0 opt-inline-checked-accepted-count)]
-    (when
-      (=
-        (array-ref
-          opt-inline-checked-accepted
-          (* row (opt-inline-checked-accepted-stride)))
-        callee-name)
-      (return true))
-    unit)
-  false)
-
-;; Has this callee already appeared in a row BEFORE `row`?
+;; Has `callee-name` appeared in the first `limit` accepted rows?
 (define (opt-inline-checked-accepted-callee-earlier?
   [callee-name : i64]
-  [row : i64]) : bool
-  (for [scan (iterator.range 0 row)]
+  [limit : i64]) : bool
+  (for [scan (iterator.range 0 limit)]
     (when
       (=
         (array-ref
           opt-inline-checked-accepted
           (* scan (opt-inline-checked-accepted-stride)))
         callee-name)
-      (return true))
-    unit)
+      (return true)))
   false)
 
-;; Distinct callees the caller has already kept: the rows whose callee is not a
-;; repeat of an earlier row's. Bounded by the accepted table, which holds
-;; opt-inline-checked-max-caller-verdicts rows.
-(define (opt-inline-checked-accepted-callees-from [acc : i64]) : i64
-  (for [row (iterator.range 0 opt-inline-checked-accepted-count)]
-    (set!
-      acc
-      (+
-        acc
-        (if (opt-inline-checked-accepted-callee-earlier?
+(define (opt-inline-checked-accepted-callee-count) : i64
+  (let
+    [acc : i64 0]
+    (for [row (iterator.range 0 opt-inline-checked-accepted-count)]
+      (unless
+        (opt-inline-checked-accepted-callee-earlier?
           (array-ref
             opt-inline-checked-accepted
             (* row (opt-inline-checked-accepted-stride)))
           row)
-          0
-          1))))
-  acc)
-
-(define (opt-inline-checked-accepted-callee-count) : i64
-  (opt-inline-checked-accepted-callees-from 0))
+        (+= acc 1)))
+    acc))
 
 ;; How many DISTINCT callee bodies one caller may keep: N, and the lock is a
 ;; BOUND on bodies rather than a rule about which body. What decides which of
@@ -116563,17 +115957,13 @@
 (define (opt-inline-checked-max-callees) : i64
   8)
 
-;; Is this callee the caller's FIRST body -- nothing accepted yet, or a body
-;; this caller already keeps? That is the lock read with nothing relaxed for it,
-;; and it is what a CORE row has to satisfy.
 (define (opt-inline-checked-callee-first? [callee-name : i64]) : bool
   (or
     (= opt-inline-checked-accepted-count 0)
-    (opt-inline-checked-accepted-callee-from? callee-name)))
+    (opt-inline-checked-accepted-callee-earlier?
+      callee-name
+      opt-inline-checked-accepted-count)))
 
-;; Is the armed target a body this caller has not kept before? Only such a
-;; site can be reaching the verdict through the relaxed lock, and it is the
-;; question the verdict asks before it holds a site to the clear margin.
 (define (opt-inline-checked-second-body?) : bool
   (not (opt-inline-checked-callee-first? opt-inline-checked-target-callee)))
 
@@ -116605,9 +115995,6 @@
     (opt-inline-checked-callee-allowed?
       (array-ref opt-inline-checked-scan base))))
 
-;; The richest row of one class still unarmed, or -1. Ties go to the earlier
-;; row, so the ordering is the scan's walk order refined by richness and never
-;; depends on anything but the caller's own text.
 (define (opt-inline-checked-scan-best-from
   [relaxed? : bool]
   [best : i64]
@@ -116616,63 +116003,47 @@
     (let
       [base : i64 (* row (opt-inline-checked-scan-stride))]
       [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
-      (if (and
-        (> richness best-richness)
-        (if relaxed?
-          (opt-inline-checked-row-relaxed? base)
-          (opt-inline-checked-row-core? base)))
-        (begin
-          (set! best row)
-          (set! best-richness richness))
-        unit)))
+      (when
+        (and
+          (> richness best-richness)
+          (if relaxed?
+            (opt-inline-checked-row-relaxed? base)
+            (opt-inline-checked-row-core? base)))
+        (set! best row)
+        (set! best-richness richness))))
   best)
 
-;; The lock decides in the RANKING, not in the admission test: a locked-out
-;; candidate is never armed, so its site never reaches the test that would name
-;; the clause. These report it where it happens -- one line per scan row still
-;; unarmed when the caller has run out of targets, which is exactly the set the
-;; lock excluded.
-(define (opt-inline-checked-trace-locked-from!) : unit
-  (for [row (iterator.range 0 opt-inline-checked-scan-count)]
-    (let
-      [base : i64 (* row (opt-inline-checked-scan-stride))]
-      [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
-      [callee-name : i64 (array-ref opt-inline-checked-scan base)]
-      ;; Two things can leave a row on the table once the caller has run out of
-      ;; targets: the lock refused the callee outright, or the row is a RELAXED
-      ;; one and the relaxations' reserve is spent. The second is the refusal
-      ;; that keeps a relaxation from taking a core candidate's verdict, so it
-      ;; is named rather than left silent.
-      [clause : i64
-        (if (not (opt-inline-checked-callee-allowed? callee-name))
-          (opt-inline-checked-clause-callee-lock)
-          (if (opt-inline-checked-row-relaxed? base)
-            (opt-inline-checked-clause-relaxed-budget)
-            (- 0 1)))]
-      (if (and (>= richness 0) (>= clause 0))
-        (io.print-error
-          (str_cat.str-cat
-            "inline-checked|"
-            (ir.compiler-ir-symbol-text callee-name)
-            "|caller="
-            (ir.compiler-ir-symbol-text opt-inline-caller-name)
-            "|block="
-            (ir.compiler-ir-label-text
-              (array-ref opt-inline-checked-scan (+ base 1)))
-            "|richness="
-            (string.int->string richness)
-            "|mode=rank|"
-            (opt-inline-checked-clause-text clause)
-            "\n"))
-        unit)
-      unit)))
-
 (define (opt-inline-checked-trace-locked!) : unit
-  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
-    (opt-inline-checked-trace-locked-from!)
-    unit))
+  (when
+    (opt-inline-trace-enabled?)
+    (for [row (iterator.range 0 opt-inline-checked-scan-count)]
+      (let
+        [base : i64 (* row (opt-inline-checked-scan-stride))]
+        [richness : i64 (array-ref opt-inline-checked-scan (+ base 3))]
+        [callee-name : i64 (array-ref opt-inline-checked-scan base)]
+        [clause : i64
+          (if (not (opt-inline-checked-callee-allowed? callee-name))
+            8
+            (if (opt-inline-checked-row-relaxed? base)
+              17
+              (- 0 1)))]
+        (when
+          (and (>= richness 0) (>= clause 0))
+          (io.print-error
+            (str_cat.str-cat
+              "inline-checked|"
+              (ir.compiler-ir-symbol-text callee-name)
+              "|caller="
+              (ir.compiler-ir-symbol-text opt-inline-caller-name)
+              "|block="
+              (ir.compiler-ir-label-text
+                (array-ref opt-inline-checked-scan (+ base 1)))
+              "|richness="
+              (string.int->string richness)
+              "|mode=rank|"
+              (opt-inline-checked-clause-text clause)
+              "\n")))))))
 
-;; Can this caller still afford a verdict of each class?
 (define (opt-inline-checked-core-affordable?) : bool
   (and
     (<
@@ -116687,10 +116058,6 @@
       (opt-inline-checked-max-caller-relaxed-verdicts))
     (> opt-inline-checked-relaxed-budget 0)))
 
-;; What the ADMISSION test asks, which is the weaker question: a walk still
-;; holding either budget has to record what it passes over, because a row's
-;; class is not settled until the ranking. The arming step above spends the
-;; right one.
 (define (opt-inline-checked-program-budget-spent?) : bool
   (and
     (<= opt-inline-checked-budget 0)
@@ -116705,25 +116072,33 @@
       opt-inline-checked-caller-relaxed-verdicts
       (opt-inline-checked-max-caller-relaxed-verdicts))))
 
-(define (opt-inline-checked-arm-row! [row : i64] [relaxed? : bool]) : bool
-  (let
-    [base : i64 (* row (opt-inline-checked-scan-stride))]
-    (set!
-      opt-inline-checked-target-callee
-      (array-ref opt-inline-checked-scan base))
-    (set!
-      opt-inline-checked-target-block
-      (array-ref opt-inline-checked-scan (+ base 1)))
-    (set!
-      opt-inline-checked-target-pos
-      (array-ref opt-inline-checked-scan (+ base 2)))
-    (set! (array-ref opt-inline-checked-scan (+ base 3)) (- 0 1))
-    (set!
-      opt-inline-checked-target-tail?
-      (= (array-ref opt-inline-checked-scan (+ base 5)) 1))
-    (set! opt-inline-checked-target-relaxed? relaxed?)
-    (set! opt-inline-checked-scanning? false)
-    true))
+(define (opt-inline-checked-try-arm-class!
+  [relaxed? : bool]
+  [affordable? : bool]) : bool
+  (if (not affordable?)
+    false
+    (let
+      [row : i64 (opt-inline-checked-scan-best-from relaxed? (- 0 1) 0)]
+      (if (< row 0)
+        false
+        (let
+          [base : i64 (* row (opt-inline-checked-scan-stride))]
+          (set!
+            opt-inline-checked-target-callee
+            (array-ref opt-inline-checked-scan base))
+          (set!
+            opt-inline-checked-target-block
+            (array-ref opt-inline-checked-scan (+ base 1)))
+          (set!
+            opt-inline-checked-target-pos
+            (array-ref opt-inline-checked-scan (+ base 2)))
+          (set! (array-ref opt-inline-checked-scan (+ base 3)) (- 0 1))
+          (set!
+            opt-inline-checked-target-tail?
+            (= (array-ref opt-inline-checked-scan (+ base 5)) 1))
+          (set! opt-inline-checked-target-relaxed? relaxed?)
+          (set! opt-inline-checked-scanning? false)
+          true)))))
 
 ;; Arm the next round's target: the richest CORE candidate the caller has left,
 ;; and only when it has none the richest RELAXED one. The two classes are ranked
@@ -116734,31 +116109,24 @@
 ;; at the verdict, so a target the current state can no longer place is never
 ;; retried.
 (define (opt-inline-checked-arm-next-target!) : bool
-  (let
-    [core-row : i64
-      (if (opt-inline-checked-core-affordable?)
-        (opt-inline-checked-scan-best-from false (- 0 1) 0)
-        (- 0 1))]
-    (if (>= core-row 0)
-      (opt-inline-checked-arm-row! core-row false)
-      (let
-        [relaxed-row : i64
-          (if (opt-inline-checked-relaxed-affordable?)
-            (opt-inline-checked-scan-best-from true (- 0 1) 0)
-            (- 0 1))]
-        (if (>= relaxed-row 0)
-          (opt-inline-checked-arm-row! relaxed-row true)
-          (begin
-            (opt-inline-checked-trace-locked!)
-            false))))))
+  (cond
+    [(opt-inline-checked-try-arm-class!
+        false
+        (opt-inline-checked-core-affordable?))
+      true]
+    [(opt-inline-checked-try-arm-class!
+        true
+        (opt-inline-checked-relaxed-affordable?))
+      true]
+    [else
+      (opt-inline-checked-trace-locked!)
+      false]))
 
-;; Move the armed target into the accepted table: from here on every walk of
-;; this caller rebuilds the site.
 (define (opt-inline-checked-accept-target!) : unit
-  (if (>=
-    opt-inline-checked-accepted-count
-    (opt-inline-checked-max-caller-accepts))
-    unit
+  (when
+    (<
+      opt-inline-checked-accepted-count
+      (opt-inline-checked-max-caller-accepts))
     (let
       [base : i64
         (*
@@ -116776,13 +116144,9 @@
       (set!
         (array-ref opt-inline-checked-accepted (+ base 3))
         opt-inline-checked-generation)
-      ;; ...and the growth it banked, which is what a later generation's
-      ;; block ceiling reads once this row stops naming a live site.
       (+= opt-inline-checked-accepted-blocks opt-inline-checked-target-blocks)
       (+= opt-inline-checked-accepted-count 1))))
 
-;; The verdict is charged to the budget its target's class draws on, which is
-;; what makes the reserve a reserve.
 (define (opt-inline-checked-spend-verdict!) : unit
   (if opt-inline-checked-target-relaxed?
     (begin
@@ -116792,41 +116156,21 @@
       (-= opt-inline-checked-budget 1)
       (+= opt-inline-checked-caller-verdicts 1))))
 
-;; The loop depth of the caller block the walk is standing in, as a census
-;; weight. Built from the caller's current blocks with the census's own
-;; back-edge depth estimate; the label-to-position scan is linear and only a
-;; candidate that has already cleared every integer clause pays for it.
-(define (opt-inline-checked-block-weight-from
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [label : i64]
-  [position : i64]) : i64
-  (match blocks
-    [(slice) 0]
-    [(slice block & rest)
-      (match block
-        [(Block block-label _)
-          (if (= block-label label)
-            (begin
-              (set! opt-inline-checked-site-position position)
-              (opt-inline-census-depth-at position))
-            (opt-inline-checked-block-weight-from rest label (+ position 1)))])]))
-
 (define (opt-inline-checked-site-depth-now) : i64
   (let
     [blocks : ir.CompilerIrBlockList
       (opt-inline-caller-facts-blocks-shared-view)]
-    (set! opt-inline-checked-site-position (- 0 1))
     (opt-inline-census-depths-build! (& blocks))
-    (opt-inline-checked-block-weight-from
-      (ir.compiler-ir-block-list-view blocks)
-      opt-inline-current-block-label
-      0)))
+    (let
+      [pos : i64
+        (opt-inline-checked-find-block-idx
+          (& blocks)
+          opt-inline-current-block-label)]
+      (set! opt-inline-checked-site-position pos)
+      (if (< pos 0)
+        0
+        (opt-inline-census-depth-at pos)))))
 
-;; The caller's own count, in the currency the site frequency is priced in: the
-;; call graph's synthetic count where the propagation ran, and the census's
-;; one-level hot reference count where it did not -- a unit fixture that drives
-;; one caller's walk by hand never builds the counts, and should keep asserting
-;; what it asserted.
 (define (opt-inline-checked-caller-count
   [index : (& index OptFunctionIndex)]
   [census : (& census OptInlineCensus)]) : i64
@@ -116917,16 +116261,8 @@
 (define (opt-inline-checked-clause
   [index : (& index OptFunctionIndex)]
   [census : (& census OptInlineCensus)]
-  [callee-name : i64]
-  [refs : i64]
-  [callee-instrs : i64]
-  [np : i64]
-  [blocks : (& ir.CompilerIrBlockList)]
-  [added-blocks : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
-  [site-pos : i64]
-  [tail-site? : bool]) : i64
+  [ctx : (& OptInlineAdmitCtx)]
+  [blocks : (& ir.CompilerIrBlockList)]) : i64
   (set! opt-inline-checked-trace-depth (- 0 1))
   (set! opt-inline-checked-trace-frequency (- 0 1))
   (set! opt-inline-checked-trace-pos (opt-inline-checked-pos-none))
@@ -116934,86 +116270,58 @@
   (set! opt-inline-checked-trace-arms (- 0 1))
   (set! opt-inline-checked-trace-hot (- 0 1))
   (cond
-    [(not opt-inline-checked-active?) (opt-inline-checked-clause-disarmed)]
+    [(not opt-inline-checked-active?) 3]
     [(opt-inline-checked-accepted?
-      callee-name
+      ctx.callee-name
       opt-inline-current-block-label
-      site-pos)
+      ctx.site-pos)
       (set! opt-inline-checked-new-site? false)
-      (opt-inline-checked-clause-readmitted)]
-    [opt-inline-caller-checked-taken? (opt-inline-checked-clause-caller-taken)]
-    [(opt-inline-checked-program-budget-spent?)
-      (opt-inline-checked-clause-program-budget)]
-    [(opt-inline-checked-caller-verdicts-spent?)
-      (opt-inline-checked-clause-caller-verdicts)]
+      2]
+    [opt-inline-caller-checked-taken? 4]
+    [(opt-inline-checked-program-budget-spent?) 5]
+    [(opt-inline-checked-caller-verdicts-spent?) 6]
     [(not
         (or
           opt-inline-checked-scanning?
           (opt-inline-checked-target-match?
-            callee-name
+            ctx.callee-name
             opt-inline-current-block-label
-            site-pos)))
-      (opt-inline-checked-clause-not-target)]
-    [(not (opt-inline-checked-callee-allowed? callee-name))
-      (opt-inline-checked-clause-callee-lock)]
-    [(< refs 1) (opt-inline-checked-clause-unreferenced)]
-    [(> callee-instrs (opt-inline-checked-max-body))
-      (opt-inline-checked-clause-callee-size)]
+            ctx.site-pos)))
+      7]
+    [(not (opt-inline-checked-callee-allowed? ctx.callee-name)) 8]
+    [(< ctx.refs 1) 9]
+    [(> ctx.callee-instrs (opt-inline-checked-max-body)) 10]
     [(>
         (ir.compiler-ir-block-list-count blocks)
         (opt-inline-checked-max-blocks))
-      (opt-inline-checked-clause-callee-blocks)]
-    [(opt-inline-census-address-taken? index census callee-name)
-      (opt-inline-checked-clause-address-taken)]
-    ;; INL-18: a body whose every exit is a tail call retires nothing of its
-    ;; own when spliced -- each tail call becomes a call plus a continuation
-    ;; -- so its worth is what the site's literal arguments fold. Without one
-    ;; there is nothing to price.
+      11]
+    [(opt-inline-census-address-taken? index census ctx.callee-name) 12]
     [(and
         (opt-inline-checked-tail-only-body? blocks)
         (<= opt-inline-checked-current-literal-count 0))
-      (opt-inline-checked-clause-tail-only)]
-    ;; INL-17c. A loop-carrying leaf into a caller whose loop is built from
-    ;; its own self tail call. INL-11 runs the tailrec rewrite first, so the
-    ;; loop is in view and the window prices the merge -- but prices it at
-    ;; its edge, and such a merge is a loss when kept. The converted
-    ;; caller's loop is its WHOLE body, so a loop imported into it nests
-    ;; under every value the body carries; refuse the class here.
+      19]
     [(and
         (opt-inline-tailrec-converted-slot? index opt-inline-caller-name)
         (not (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)))
-      (opt-inline-checked-clause-converted-caller)]
-    ;; The heavy gate is asked about TOTAL caller growth, this tier's blocks
-    ;; included; the block ceiling below is also this tier's own fuel, so a
-    ;; checked import never spends the fuel the caller's banked absorptions
-    ;; draw on.
+      18]
     [(opt-inline-cost-crosses-heavy-gate?
-        caller-blocks
-        (+ added-so-far opt-inline-caller-checked-blocks)
-        added-blocks)
-      (opt-inline-checked-clause-heavy-gate)]
-    ;; The ceiling is this tier's total growth in ONE caller, so it counts
-    ;; every generation's blocks: the current walk's rebuilt ones and the
-    ;; ones earlier generations banked into the body this walk started from.
+        ctx.caller-blocks
+        (+ ctx.added-so-far opt-inline-caller-checked-blocks)
+        ctx.added-blocks)
+      13]
     [(>
         (+
           opt-inline-checked-prior-blocks
-          (+ opt-inline-caller-checked-blocks added-blocks))
+          (+ opt-inline-caller-checked-blocks ctx.added-blocks))
         (opt-inline-checked-max-blocks-for
           (> opt-inline-checked-current-literal-count 0)))
-      (opt-inline-checked-clause-block-ceiling)]
+      14]
     [else
       (let
         [site-depth : i64 (opt-inline-checked-site-depth-now)]
         [site-weight : i64 (opt-inline-census-depth-weight site-depth)]
         [frequency : i64
           (opt-inline-checked-site-frequency index census site-weight)]
-        ;; Which reading of "runs once per invocation" this site's block
-        ;; clears, computed only where the depth relaxation could turn on it:
-        ;; a site above depth zero, or one whose composite frequency has not
-        ;; reached the relaxed floor's rung, is refused by the clause below on
-        ;; the numbers it already has, so it pays one integer test and no walk
-        ;; of the caller.
         [position-class : i64
           (if (and
             (= site-depth 0)
@@ -117024,8 +116332,6 @@
                   (& (opt-inline-caller-facts-blocks-shared-view))
                   opt-inline-checked-site-position
                   opt-inline-current-block-label)]
-              ;; A dispatch arm is the one reading whose clause is on the
-              ;; CALLEE, and this is where the callee's blocks are in scope.
               (if (and
                 (= class (opt-inline-checked-pos-dispatch))
                 (not (opt-inline-checked-dispatch-callee-ok? blocks)))
@@ -117034,118 +116340,75 @@
             (if (= opt-inline-checked-site-position 0)
               (opt-inline-checked-pos-entry)
               (opt-inline-checked-pos-none)))]
-        [_publish : unit
-          (begin
-            (set! opt-inline-checked-trace-depth site-depth)
-            (set! opt-inline-checked-trace-frequency frequency)
-            (set! opt-inline-checked-trace-pos position-class)
-            ;; The count the propagation replaced is read for the trace and
-            ;; for nothing else, so a compile without the flag does not pay
-            ;; its map probe.
-            (if compiler-opt-debug-trace-passes
-              (set!
-                opt-inline-checked-trace-hot
-                (opt-inline-census-hot-refcount
-                  index
-                  census
-                  opt-inline-caller-name))
-              unit))]
+        (set! opt-inline-checked-trace-depth site-depth)
+        (set! opt-inline-checked-trace-frequency frequency)
+        (set! opt-inline-checked-trace-pos position-class)
+        (when
+          compiler-opt-debug-trace-passes
+          (set!
+            opt-inline-checked-trace-hot
+            (opt-inline-census-hot-refcount index census opt-inline-caller-name)))
         (cond
-          [(< frequency (opt-inline-checked-min-frequency))
-            (opt-inline-checked-clause-frequency)]
+          [(< frequency (opt-inline-checked-min-frequency)) 15]
           [(<
             site-depth
             (opt-inline-checked-effective-min-site-depth
               frequency
               (opt-inline-checked-entry-equivalent? position-class)
               (opt-inline-blocks-call-free? blocks)))
-            ;; SW-SPINE: a refusal the WALK decided -- no reading reached
-            ;; the block -- is remembered for
-            ;; opt-inline-checked-shape-changed-sites?. A block a reading
-            ;; did reach and the caller clause then refused is not: that
-            ;; clause was calibrated against the snapshot, and the rescan
-            ;; re-reads the walk, not the clause.
-            (if (and
-              (= site-depth 0)
-              (>= frequency (opt-inline-checked-depth-relaxed-frequency))
-              (= opt-inline-checked-trace-rawpos (opt-inline-checked-pos-none)))
-              (set! opt-inline-checked-position-refused? true)
-              unit)
-            (opt-inline-checked-clause-site-depth)]
-          ;; RICHNESS: what a free inline of this site would be worth -- how
-          ;; often the site runs times what its boundary costs. It is the
-          ;; `boundary` term of the verdict itself, scaled by the caller's own
-          ;; hot reference count, which is the only ranking that puts the
-          ;; biggest claim in front of the smallest state.
+            (when
+              (and
+                (= site-depth 0)
+                (>= frequency (opt-inline-checked-depth-relaxed-frequency))
+                (=
+                  opt-inline-checked-trace-rawpos
+                  (opt-inline-checked-pos-none)))
+              (set! opt-inline-checked-position-refused? true))
+            16]
           [opt-inline-checked-scanning?
-            ;; A site that only cleared the floor because the floor stood
-            ;; down for it is recorded as RELAXED, so the ranking can put it
-            ;; behind the candidates that needed no relaxation.
             (opt-inline-checked-scan-record!
-              callee-name
+              ctx.callee-name
               opt-inline-current-block-label
-              site-pos
-              (opt-inline-checked-richness frequency np callee-instrs)
+              ctx.site-pos
+              (opt-inline-checked-richness frequency ctx.np ctx.callee-instrs)
               (< site-depth (opt-inline-checked-min-site-depth))
-              tail-site?)
-            (opt-inline-checked-clause-scanned)]
+              ctx.tail-site?)
+            1]
           [else
             (set! opt-inline-checked-site-depth site-depth)
             (set! opt-inline-checked-site-weight site-weight)
-            (set! opt-inline-checked-callee-params np)
+            (set! opt-inline-checked-callee-params ctx.np)
             (opt-inline-checked-adopt-literals!)
             (set!
               opt-inline-checked-target-over-ceiling?
               (>
                 (+
                   opt-inline-checked-prior-blocks
-                  (+ opt-inline-caller-checked-blocks added-blocks))
+                  (+ opt-inline-caller-checked-blocks ctx.added-blocks))
                 (opt-inline-checked-max-blocks)))
-            (set! opt-inline-checked-target-blocks added-blocks)
+            (set! opt-inline-checked-target-blocks ctx.added-blocks)
             (set! opt-inline-checked-target-frequency frequency)
             (set!
               opt-inline-checked-callee-slot
-              (match (opt-function-index-slot index callee-name)
+              (match (opt-function-index-slot index ctx.callee-name)
                 [(Some slot) slot]
                 [(None) (- 0 1)]))
             (set! opt-inline-checked-new-site? true)
-            (opt-inline-checked-clause-admitted)]))]))
+            0]))]))
 
 (define (opt-inline-checked-ok?
   [index : (& index OptFunctionIndex)]
   [census : (& census OptInlineCensus)]
-  [callee-name : i64]
-  [refs : i64]
-  [callee-instrs : i64]
-  [np : i64]
-  [blocks : (& ir.CompilerIrBlockList)]
-  [added-blocks : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
-  [site-pos : i64]
-  [tail-site? : bool]) : bool
+  [ctx : (& OptInlineAdmitCtx)]
+  [blocks : (& ir.CompilerIrBlockList)]) : bool
   (let
-    [clause : i64
-      (opt-inline-checked-clause
-        index
-        census
-        callee-name
-        refs
-        callee-instrs
-        np
-        blocks
-        added-blocks
-        caller-blocks
-        added-so-far
-        site-pos
-        tail-site?)]
-    [_trace : unit
-      (opt-inline-checked-trace-clause!
-        callee-name
-        callee-instrs
-        np
-        tail-site?
-        clause)]
+    [clause : i64 (opt-inline-checked-clause index census ctx blocks)]
+    (opt-inline-checked-trace-clause!
+      ctx.callee-name
+      ctx.callee-instrs
+      ctx.np
+      ctx.tail-site?
+      clause)
     (opt-inline-checked-clause-admits? clause)))
 
 ;; --- pricing one function's plan --------------------------------------------
@@ -117265,43 +116528,26 @@
         (arena.tl_arena_set outer))
       (+= opt-inline-price-memo-count 1))))
 
-(define (opt-inline-checked-weighted-instrs-from
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [offset : i64]
-  [position : i64]
-  [acc : i64]) : i64
-  (match blocks
-    [(slice) acc]
-    [(slice block & rest)
-      (match block
-        [(Block _ instrs)
-          (opt-inline-checked-weighted-instrs-from
-            rest
-            offset
-            (+ position 1)
-            (+
-              acc
-              ;; INL-14: a versioned loop's slow copy is cold and its guard
-              ;; runs once per entry, see opt-inline-census-block-weight.
-              (*
-                (opt-inline-census-block-weight position offset)
-                (ir.compiler-ir-instr-seq-count instrs))))])]))
-
-;; `offset` is the loop depth the body would sit at in its caller. Zero prices a
-;; body where it stands; the site's depth prices a callee's body where the
-;; inline would put it, which is the only reading under which the two sides of
-;; the comparison stay in the same currency once the weight ladder saturates.
 (define (opt-inline-checked-weighted-instrs-at
   [func : (& func ir.CompilerIrFunction)]
   [offset : i64]) : i64
   (match func
     [(Function _ _ _ _ blocks _)
       (opt-inline-census-depths-build! (& blocks))
-      (opt-inline-checked-weighted-instrs-from
-        (ir.compiler-ir-block-list-view blocks)
-        offset
-        0
-        0)]))
+      (match blocks
+        [(Array seq)
+          (let
+            [acc : i64 0]
+            (for [position
+              (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+              (match (ir.compiler-ir-block-seq-borrow seq position)
+                [(Block _ instrs)
+                  (+=
+                    acc
+                    (*
+                      (opt-inline-census-block-weight position offset)
+                      (ir.compiler-ir-instr-seq-count instrs)))]))
+            acc)])]))
 
 ;; Callee-saved integer registers the plan homes a value in, read straight off
 ;; the assignment table against the ABI's own callee-saved list, so no backend
@@ -117327,47 +116573,39 @@
   [func : (& ir.CompilerIrFunction)]
   [offset : i64]) : i64
   (let
-    ;; Standalone pricing has no frame-omission decision. Do not inherit the
-    ;; preceding emitted function's extra register across a compile boundary.
     [saved-rbp-pool : bool reg.compiler-reg-rbp-pool-enabled]
     [_standalone-pool : unit (reg.compiler-reg-set-rbp-pool-enabled! false)]
     [_suppress-image-maps : unit (reg.compiler-reg-suppress-program-maps! true)]
-    ;; RG-1: and the allocator's home tracer, for the same reason the pass
-    ;; tracer is silenced around a measured plan.
     [_suppress-reg-trace : unit (reg.compiler-reg-trace-set-suppressed! true)]
-    ;; FREQ-1: the plan this tier prices is ranked by the depth ladder alone,
-    ;; the currency its window was calibrated in
-    ;; (compiler-reg-block-weights-frequency?).
     [_ladder-weights : unit
       (reg.compiler-reg-block-weights-set-frequency! false)]
     [plan : reg.CompilerRegPlan (reg.compiler-reg-plan-function-scalar func)]
     [cost : i64
-      (match (owned_view.compiler-owned-reference-shared-view func)
+      (match func
         [(Function _ params _ vars blocks _)
-          (let
-            [seq : ir.CompilerIrBlockSeq
-              (ir.compiler-ir-block-list-seq
-                (compiler-opt-global-shared-view blocks))]
-            [weights : (__tl_dyn-array i64)
-              (opt-inline-checked-census-weights (& blocks) offset)]
-            [types : reg.CompilerRegVarTypes
-              (reg.compiler-reg-plan-types (& plan))]
-            (+
-              (reg.compiler-reg-call-hole-plan-cost
-                type-segment-bases
-                (Linux)
-                (& params)
-                (& (reg.compiler-reg-var-types-representations types))
-                (& seq)
-                (& weights)
-                vars
-                (& plan))
-              (reg.compiler-reg-scratch-borrow-cost
-                (Linux)
-                (& plan)
-                vars
-                (& seq)
-                (& weights))))])]
+          (match blocks
+            [(Array seq)
+              (let
+                [weights : (__tl_dyn-array i64)
+                  (opt-inline-checked-census-weights (& blocks) offset)]
+                [types : reg.CompilerRegVarTypes
+                  (reg.compiler-reg-plan-types (& plan))]
+                (+
+                  (reg.compiler-reg-call-hole-plan-cost
+                    type-segment-bases
+                    (Linux)
+                    (& params)
+                    (& (reg.compiler-reg-var-types-representations types))
+                    (& seq)
+                    (& weights)
+                    vars
+                    (& plan))
+                  (reg.compiler-reg-scratch-borrow-cost
+                    (Linux)
+                    (& plan)
+                    vars
+                    (& seq)
+                    (& weights))))])])]
     [_restore-image-maps : unit (reg.compiler-reg-suppress-program-maps! false)]
     [_restore-reg-trace : unit (reg.compiler-reg-trace-set-suppressed! false)]
     [_restore-weights : unit
@@ -117560,51 +116798,33 @@
       (+= position 1))
     found))
 
-(define (opt-inline-checked-sret-bytes-seq
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [sret : i64]
-  [acc : i64]) : i64
-  (let
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
-    [count : i64 instrs.len]
-    [bytes : i64 acc]
-    (for [i (iterator.range 0 count)]
-      (match (owned_view.compiler-owned-element-view slots i)
-        [(Gep _ (Var base) (I64 k) _)
-          (if (and (= base sret) (> (+ k 8) bytes))
-            (set! bytes (+ k 8))
-            unit)]
-        [(StorePtr (Var dst) _ _)
-          (if (and (= dst sret) (> 8 bytes))
-            (set! bytes 8)
-            unit)]
-        [(CopyBytes (Var dst) _ n)
-          (if (and (= dst sret) (> n bytes))
-            (set! bytes n)
-            unit)]
-        [_ unit]))
-    bytes))
-
 (define (opt-inline-checked-sret-bytes
   [callee : (& callee ir.CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view callee)
+  (match callee
     [(Function _ params _ _ blocks _)
       (let
         [sret : i64 (opt-inline-checked-sret-var (& params))]
         (if (< sret 0)
           0
-          (let
-            [seq : ir.CompilerIrBlockSeq (ir.compiler-ir-block-list-seq blocks)]
-            [count : i64 (ir.compiler-ir-block-seq-count seq)]
-            [bytes : i64 0]
-            (for [i (iterator.range 0 count)]
-              (match (ir.compiler-ir-block-seq-borrow seq i)
-                [(Block _ instrs)
-                  (set!
-                    bytes
-                    (opt-inline-checked-sret-bytes-seq (& instrs) sret bytes))]))
-            bytes)))]))
+          (match blocks
+            [(Array seq)
+              (let
+                [bytes : i64 0]
+                (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+                  (match (ir.compiler-ir-block-seq-borrow seq i)
+                    [(Block _ instrs)
+                      (for [j (iterator.range 0 instrs.len)]
+                        (match (ir.compiler-ir-instr-seq-borrow instrs j)
+                          [(Gep _ (Var base) (I64 k) _)
+                            (when
+                              (and (= base sret) (> (+ k 8) bytes))
+                              (set! bytes (+ k 8)))]
+                          [(StorePtr (Var dst) _ _)
+                            (when (and (= dst sret) (> 8 bytes)) (set! bytes 8))]
+                          [(CopyBytes (Var dst) _ n)
+                            (when (and (= dst sret) (> n bytes)) (set! bytes n))]
+                          [_ unit]))]))
+                bytes)])))]))
 
 ;; INL-22. What a free inline of an sret callee retires besides the call: the
 ;; caller's copy of the result out of the callee's sret temp -- one load and
@@ -117833,12 +117053,26 @@
   [added-so-far : i64]) : bool
   (and
     (<= callee-instrs (opt-inline-bounds-leaf-max-body))
-    (not
-      (opt-inline-cost-crosses-heavy-gate?
-        caller-blocks
-        added-so-far
-        added-blocks))
-    (<= (+ added-so-far added-blocks) (opt-inline-cost-block-fuel))))
+    (opt-inline-gate-budget-ok?
+      caller-blocks
+      added-so-far
+      added-so-far
+      added-blocks
+      (opt-inline-cost-block-fuel))))
+
+;; Copy scalar context threaded across single-block and multiblock span-site
+;; inlining walkers. Zero heap allocation, zero shared-view.
+(defstruct OptInlineSpanSiteCtx
+  (func-name i64)
+  (caller-blocks i64)
+  (caller-scc i64)
+  (block-label i64)
+  (head-label i64)
+  (seq-start i64)
+  (count i64)
+  (pos i64)
+  (vars i64)
+  (added-so-far i64))
 
 ;; The admission decision shared by the two single-block SITE classes.
 ;;
@@ -117944,149 +117178,120 @@
   [cname : i64]
   [cargs : ir.CompilerIrCallArgs]
   [cret : ast.AstType]
-  [vars : i64]
-  [added-so-far : i64]
+  [ctx : (& OptInlineSpanSiteCtx)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanState
   (State
     (ir.compiler-ir-instr-seq1
       (if tail?
         (TailCall cname cargs cret)
         (Call dst cname cargs cret)))
-    vars
-    added-so-far
+    ctx.vars
+    ctx.added-so-far
     out-spans))
 
-;; Rewrite one admitted single-block site, whichever of the two site classes it
-;; is: `tail?` selects the expansion walk whose exit lands as the caller's
-;; terminator, and `dst` names the destination only the call arm has.
 (define (opt-inline-try-single-block-with-spans
   [tail? : bool]
   [dst : i64]
   [cname : i64]
   [cargs : ir.CompilerIrCallArgs]
   [cret : ast.AstType]
-  [callee-name : i64]
-  [cparams : (& ir.CompilerIrParamSeq)]
-  [callee-ret : (& ast.AstType)]
-  [cvars : i64]
-  [cblocks : (& ir.CompilerIrBlockList)]
+  [callee : (& ir.CompilerIrFunction)]
   [np : i64]
   [staging : (& OptInlineArgStaging)]
+  [ctx : (& OptInlineSpanSiteCtx)]
   [index : (& OptFunctionIndex)]
   [census : (& OptInlineCensus)]
-  [func-name : i64]
-  [block-label : i64]
-  [site-pos : i64]
-  [vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]
   [instr : (& ir.CompilerIrInstr)]) : OptInlineSpanState
-  (if (opt-inline-single-block-site-admitted?
-    index
-    census
-    func-name
-    callee-name
-    (& cargs)
-    np
-    staging.count
-    cblocks
-    callee-ret
-    caller-blocks
-    added-so-far)
-    (begin
-      (+= opt-inline-caller-site-count 1)
-      (match (if tail?
-        (opt-inline-expand-tail-instrs-with-spans
-          (& (opt-inline-single-block-instrs cblocks))
-          (& cret)
-          (& cargs)
-          cparams
-          staging
-          np
-          vars
-          (opt-inline-site-prefix func-name block-label site-pos callee-name)
-          source-spans
-          out-spans
-          func-name
-          instr
-          cname)
-        (opt-inline-expand-instrs-with-spans
-          (& (opt-inline-single-block-instrs cblocks))
-          dst
-          (& cret)
-          (& cargs)
-          cparams
-          staging
-          np
-          vars
-          (opt-inline-site-prefix func-name block-label site-pos callee-name)
-          source-spans
-          out-spans
-          func-name
-          instr
-          cname))
-        [(State expanded clone-base _ next-spans)
-          (State
-            expanded
-            (+ clone-base (opt-inline-frame-growth cvars np))
-            added-so-far
-            next-spans)]))
-    (opt-inline-refused-site
-      tail?
-      dst
-      cname
-      cargs
-      cret
-      vars
-      added-so-far
-      out-spans)))
+  (match callee
+    [(Function callee-name cparams callee-ret cvars cblocks _)
+      (if (opt-inline-single-block-site-admitted?
+        index
+        census
+        ctx.func-name
+        callee-name
+        (& cargs)
+        np
+        staging.count
+        (& cblocks)
+        (& callee-ret)
+        ctx.caller-blocks
+        ctx.added-so-far)
+        (let
+          [prefix : String
+            (opt-inline-site-prefix
+              ctx.func-name
+              ctx.block-label
+              ctx.pos
+              callee-name)]
+          [body-instrs : ir.CompilerIrInstrSeq
+            (opt-inline-single-block-instrs (& cblocks))]
+          (+= opt-inline-caller-site-count 1)
+          (match (if tail?
+            (opt-inline-expand-tail-instrs-with-spans
+              (& body-instrs)
+              (& cret)
+              (& cargs)
+              (& cparams)
+              staging
+              np
+              ctx.vars
+              prefix
+              source-spans
+              out-spans
+              ctx.func-name
+              instr
+              cname)
+            (opt-inline-expand-instrs-with-spans
+              (& body-instrs)
+              dst
+              (& cret)
+              (& cargs)
+              (& cparams)
+              staging
+              np
+              ctx.vars
+              prefix
+              source-spans
+              out-spans
+              ctx.func-name
+              instr
+              cname))
+            [(State expanded clone-base _ next-spans)
+              (State
+                expanded
+                (+ clone-base (opt-inline-frame-growth cvars np))
+                ctx.added-so-far
+                next-spans)]))
+        (opt-inline-refused-site tail? dst cname cargs cret ctx out-spans))]))
 
-;; One site's admission walk, whichever of the two site instructions stands
-;; there: look the callee up, size its boundary, and offer the site to the
-;; single-block expansion. Only the expansion and the refused site's shape
-;; depend on the class, so both arms share everything above them.
 (define (opt-inline-try-call-site-with-spans
   [tail? : bool]
   [dst : i64]
   [cname : i64]
   [cargs : ir.CompilerIrCallArgs]
   [cret : ast.AstType]
+  [ctx : (& OptInlineSpanSiteCtx)]
   [index : (& OptFunctionIndex)]
   [census : (& OptInlineCensus)]
-  [func-name : i64]
-  [block-label : i64]
-  [site-pos : i64]
-  [vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
   [scc-result : (& OptSccResult)]
-  [caller-scc : i64]
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]
   [instr : (& ir.CompilerIrInstr)]) : OptInlineSpanState
   (match (opt-inline-lookup-inlinable
     index
     cname
-    func-name
+    ctx.func-name
     scc-result
-    caller-scc)
+    ctx.caller-scc)
     [(Some callee)
-      (match callee
-        [(Function callee-name cparams callee-ret cvars cblocks _)
+      (match (& callee)
+        [(Function _ cparams _ _ cblocks _)
           (let
             [np : i64 (opt-inline-param-count cparams)]
             (if (not (opt-inline-arity-ok? cargs np))
-              (opt-inline-refused-site
-                tail?
-                dst
-                cname
-                cargs
-                cret
-                vars
-                added-so-far
-                out-spans)
+              (opt-inline-refused-site tail? dst cname cargs cret ctx out-spans)
               (if (opt-inline-call-args-has-global? (& cargs))
                 (let
                   [staging
@@ -118097,21 +117302,12 @@
                     cname
                     cargs
                     cret
-                    callee-name
-                    (& cparams)
-                    (& callee-ret)
-                    cvars
-                    (& cblocks)
+                    (& callee)
                     np
                     (& staging)
+                    ctx
                     index
                     census
-                    func-name
-                    block-label
-                    site-pos
-                    vars
-                    caller-blocks
-                    added-so-far
                     source-spans
                     out-spans
                     instr))
@@ -118121,47 +117317,23 @@
                   cname
                   cargs
                   cret
-                  callee-name
-                  (& cparams)
-                  (& callee-ret)
-                  cvars
-                  (& cblocks)
+                  (& callee)
                   np
                   (& opt-inline-arg-staging-none)
+                  ctx
                   index
                   census
-                  func-name
-                  block-label
-                  site-pos
-                  vars
-                  caller-blocks
-                  added-so-far
                   source-spans
                   out-spans
                   instr))))])]
-    [(No)
-      (opt-inline-refused-site
-        tail?
-        dst
-        cname
-        cargs
-        cret
-        vars
-        added-so-far
-        out-spans)]))
+    [(No) (opt-inline-refused-site tail? dst cname cargs cret ctx out-spans)]))
 
 (define (opt-inline-try-with-spans
   [instr : (& ir.CompilerIrInstr)]
+  [ctx : (& OptInlineSpanSiteCtx)]
   [index : (& OptFunctionIndex)]
   [census : (& OptInlineCensus)]
-  [func-name : i64]
-  [block-label : i64]
-  [site-pos : i64]
-  [vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
   [scc-result : (& OptSccResult)]
-  [caller-scc : i64]
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineSpanState
   (match (owned_view.compiler-owned-reference-shared-view instr)
@@ -118172,16 +117344,10 @@
         cname
         cargs
         cret
+        ctx
         index
         census
-        func-name
-        block-label
-        site-pos
-        vars
-        caller-blocks
-        added-so-far
         scc-result
-        caller-scc
         source-spans
         out-spans
         instr)]
@@ -118192,16 +117358,10 @@
         cname
         cargs
         cret
+        ctx
         index
         census
-        func-name
-        block-label
-        site-pos
-        vars
-        caller-blocks
-        added-so-far
         scc-result
-        caller-scc
         source-spans
         out-spans
         instr)]
@@ -118209,48 +117369,45 @@
       (State
         (ir.compiler-ir-instr-seq1
           (owned_view.compiler-owned-reference-shared-view instr))
-        vars
-        added-so-far
+        ctx.vars
+        ctx.added-so-far
         out-spans)]))
 
 (define (opt-inline-walk-instr-seq-with-spans-from
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [pos : i64]
   [end : i64]
+  [ctx : (& OptInlineSpanSiteCtx)]
   [index : (& OptFunctionIndex)]
   [census : (& OptInlineCensus)]
-  [func-name : i64]
-  [block-label : i64]
-  [site-pos : i64]
-  [vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
   [scc-result : (& OptSccResult)]
-  [caller-scc : i64]
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : (& out-spans ir.CompilerSourceSpans)]) : OptInlineSpanState
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (- end pos))]
     [cursor : i64 pos]
-    [next-site : i64 site-pos]
-    [next-vars : i64 vars]
-    [next-added : i64 added-so-far]
+    [site-ctx : OptInlineSpanSiteCtx
+      (OptInlineSpanSiteCtx
+        ctx.func-name
+        ctx.caller-blocks
+        ctx.caller-scc
+        ctx.block-label
+        ctx.head-label
+        ctx.seq-start
+        ctx.count
+        pos
+        ctx.vars
+        ctx.added-so-far)]
     [next-spans : ir.CompilerSourceSpans
       (owned_view.compiler-owned-reference-shared-view out-spans)]
     (while (< cursor end)
       (match (opt-inline-try-with-spans
         (ir.compiler-ir-instr-seq-borrow instrs cursor)
+        (& site-ctx)
         index
         census
-        func-name
-        block-label
-        next-site
-        next-vars
-        caller-blocks
-        next-added
         scc-result
-        caller-scc
         source-spans
         (compiler-opt-global-shared-view next-spans))
         [(State expanded vars2 added2 spans2)
@@ -118259,15 +117416,15 @@
             expanded
             0
             (ir.compiler-ir-instr-seq-count expanded))
-          (set! next-vars vars2)
-          (set! next-added added2)
+          (set! site-ctx.vars vars2)
+          (set! site-ctx.added-so-far added2)
           (set! next-spans spans2)])
       (+= cursor 1)
-      (+= next-site 1))
+      (+= site-ctx.pos 1))
     (State
       (ir.compiler-ir-instr-builder-to-seq builder)
-      next-vars
-      next-added
+      site-ctx.vars
+      site-ctx.added-so-far
       next-spans)))
 
 ;; --- INL-6: what a band may not do to a caller the TIER just merged ---------
@@ -118408,7 +117565,8 @@
   [chain-import? : bool]
   [absorb-import? : bool]
   [accessor-import? : bool]) : unit
-  (if (and compiler-opt-debug-trace-passes (not compiler-opt-debug-suppressed?))
+  (when
+    (opt-inline-trace-enabled?)
     (io.print-error
       (str_cat.str-cat
         "inline-band|"
@@ -118443,13 +117601,8 @@
           accessor-import?)
         "|gen="
         (string.int->string opt-inline-checked-generation)
-        "\n"))
-    unit))
+        "\n"))))
 
-;; Admission is separate from rewrite emission. Keep policy evaluation here in
-;; its original order: the checked tier can spend budget even when it rejects a
-;; candidate. The plan carries only scalar facts and leaves prefix rewriting,
-;; import accounting, cloning and span ownership at the call site.
 (defstruct OptInlineSitePlan
   (np i64)
   (added-blocks i64)
@@ -118478,31 +117631,23 @@
       (return true)))
   false)
 
-;; Price growth across the callee's references. The estimate includes the
-;; cloned instructions and branches and credits the retired call boundary.
-;; A single-reference absorption can retire the standalone body. Preserve the
-;; existing small-fanout decisions too, where the census can credit absorption.
 (define (opt-inline-band-copy-size-ok?
   [index : (& OptFunctionIndex)]
   [census : (& OptInlineCensus)]
-  [refs : i64]
-  [np : i64]
-  [callee-instrs : i64]
-  [added-blocks : i64]) : bool
+  [ctx : (& OptInlineAdmitCtx)]) : bool
   (if (or
-    (<= refs (opt-inline-dup-max-refcount))
+    (<= ctx.refs (opt-inline-dup-max-refcount))
     (not opt-inline-caller-facts-ready?)
     (not (opt-inline-synth-ready?)))
     true
     (let
       [growth : i64
-        (- (+ (* 4 callee-instrs) (* 2 (- added-blocks 1))) (+ 6 (* 3 np)))]
+        (-
+          (+ (* 4 ctx.callee-instrs) (* 2 (- ctx.added-blocks 1)))
+          (+ 6 (* 3 ctx.np)))]
       (if (<= growth 0)
         true
         (let
-          ;; Prebuilt library APIs are invoked from external user loops, so
-          ;; predictive-band fanout checks use the hot ceiling without
-          ;; inflating cold checked-tier error paths.
           [frequency : i64
             (if opt-inline-library-mode?
               2048
@@ -118514,28 +117659,22 @@
               8
               1)]
           (or
-            (<= refs (/ (* frequency-budget loop-credit) growth))
-            ;; Hot wrappers can have low synthetic counts. Literal descriptors
-            ;; can also fold away whole arms after cloning. Give these sites
-            ;; more room while still bounding their total duplication.
+            (<= ctx.refs (/ (* frequency-budget loop-credit) growth))
             (and
-              (<= refs (/ (* 24576 loop-credit) growth))
+              (<= ctx.refs (/ (* 24576 loop-credit) growth))
               (or
-                (<= callee-instrs 32)
+                (<= ctx.callee-instrs 32)
                 (and
                   (> (opt-inline-checked-literal-count-now) 0)
-                  (opt-inline-site-has-string-literal? np))))))))))
+                  (opt-inline-site-has-string-literal? ctx.np))))))))))
 
 (define (opt-inline-multiblock-site-plan
   [callee : (& ir.CompilerIrFunction)]
   [cargs : (& cargs ir.CompilerIrCallArgs)]
   [tail-site? : bool]
-  [census : (& census OptInlineCensus)]
-  [func-name : i64]
-  [caller-vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
+  [site-ctx : (& OptInlineSpanSiteCtx)]
   [site-pos : i64]
+  [census : (& census OptInlineCensus)]
   [index : (& index OptFunctionIndex)]) : OptInlineMaybeSitePlan
   (match callee
     [(Function callee-name cparams _ cvars cblocks _)
@@ -118547,24 +117686,14 @@
               (opt-inline-census-absorb-class
                 index
                 census
-                func-name
+                site-ctx.func-name
                 callee-name)]
-            ;; The blocks the site adds to the caller: the callee's own,
-            ;; plus the continuation block the split opens. A tail-call site
-            ;; opens none -- the spliced body ends in the caller's exits --
-            ;; so it adds exactly the callee's blocks, and every band, the
-            ;; ceilings and the heavy gate are handed that count.
             [added-blocks : i64
               (+
                 (ir.compiler-ir-block-list-count cblocks)
                 (if tail-site?
                   0
                   1))]
-            ;; Result slots for converted tail calls: one per cloned block,
-            ;; reserved above the clone's rebased frame only when needed.
-            ;; At a tail-call SITE nothing is converted -- a `TailCall h`
-            ;; exit is forwarded as one -- so no slot is reserved and the
-            ;; clone's frame does not grow for it.
             [tail-slots : i64
               (if (and
                 (not tail-site?)
@@ -118581,7 +117710,7 @@
             [stage-args? : bool (> staging.count 0)]
             [merged-vars : i64
               (+
-                caller-vars
+                site-ctx.vars
                 (+
                   (if stage-args?
                     cvars
@@ -118596,8 +117725,8 @@
                   absorb-class
                   (& staging)
                   cblocks
-                  caller-blocks
-                  added-so-far
+                  site-ctx.caller-blocks
+                  site-ctx.added-so-far
                   added-blocks
                   merged-vars)
                   (return
@@ -118619,70 +117748,44 @@
                         false)))
                   (return (NoSitePlan))))]
             [const-args : i64 (opt-inline-args-const-count cargs)]
-            ;; The site-level verdict: this site claims the callee's body,
-            ;; either because it is the only one (class 1, absorption) or
-            ;; because the duplicating clauses admit a copy (class 2).
             [absorbable-here? : bool
               (or
                 (= absorb-class 1)
                 (opt-inline-dup-absorb-ok? absorb-class callee-instrs cblocks))]
-            ;; Splitting a loop phi predecessor can lengthen live ranges.
-            ;; Keep ordinary cost-model admission available here, but do
-            ;; not let the unconditional single-reference absorb bonus
-            ;; bypass its budget. #5193 owns the next bounded wrapper class.
             [tiny-predicate? : bool
               (and
                 (not stage-args?)
                 (opt-inline-tiny-predicate-callee? index callee census))]
-            ;; Bounds-carrying loops stay acyclic-only except for the exact
-            ;; vm-run leaf shape selected by the shared gate (#5325).
             [has-bounds? : bool (opt-inline-blocks-have-bounds-check? cblocks)]
             [refs : i64 (opt-inline-census-refcount index census callee-name)]
             [hot-refs : i64
               (opt-inline-census-hot-refcount index census callee-name)]
-            ;; A shared acyclic accessor is admitted on its own terms.
-            [shared-accessor? : bool
-              (opt-inline-shared-accessor-ok?
+            [admit : OptInlineAdmitCtx
+              (OptInlineAdmitCtx
+                site-ctx.func-name
+                callee-name
+                absorb-class
                 refs
                 hot-refs
+                np
                 callee-instrs
-                (& cblocks)
                 added-blocks
-                caller-blocks
-                added-so-far)]
-            ;; A call-free cyclic leaf is admitted on its own terms too: it
-            ;; keeps its own body wherever this gate does not take it, so no
-            ;; absorb credit is claimed -- which is what lets the gate span
-            ;; every reference class, single-reference sites included,
-            ;; without owing the census an absorption it did not perform.
+                site-ctx.caller-blocks
+                site-ctx.added-so-far
+                merged-vars
+                site-pos
+                has-bounds?
+                tail-site?)]
+            [shared-accessor? : bool
+              (opt-inline-shared-accessor-ok? (& admit) (& cblocks))]
             [hot-loop-leaf? : bool
-              (opt-inline-hot-loop-leaf-ok?
-                index
-                census
-                callee-name
-                refs
-                callee-instrs
-                (& cblocks)
-                added-blocks
-                caller-blocks
-                added-so-far)]
-            ;; A callee with exactly one static reference absorbs at any
-            ;; size: the body moves rather than being copied, so no growth
-            ;; budget applies to it.
+              (opt-inline-hot-loop-leaf-ok? index census (& admit) (& cblocks))]
             [single-site-absorb? : bool
               (opt-inline-single-site-absorb-ok?
                 index
-                func-name
-                absorb-class
+                (& admit)
                 (& staging)
-                has-bounds?
-                np
-                callee-instrs
-                (& cblocks)
-                added-blocks
-                caller-blocks
-                added-so-far
-                merged-vars)]
+                (& cblocks))]
             [bounds-ok? : bool
               (or
                 (opt-inline-bounds-inline-ok?
@@ -118695,11 +117798,8 @@
             [bounds-loop-ok? : bool
               (or
                 (opt-inline-multiblock-bounds-loop-ok?
-                  has-bounds?
+                  (& admit)
                   absorbable-here?
-                  absorb-class
-                  callee-instrs
-                  callee-name
                   (& cblocks))
                 hot-loop-leaf?
                 single-site-absorb?)]
@@ -118712,74 +117812,34 @@
                   (and
                     absorbable-here?
                     (not opt-inline-current-phi-predecessor?))
-                  caller-blocks
-                  added-so-far)
+                  site-ctx.caller-blocks
+                  site-ctx.added-so-far)
                 (and
                   tiny-predicate?
                   (opt-inline-tiny-predicate-cost-inline?
                     callee-instrs
                     added-blocks
                     const-args
-                    caller-blocks
-                    added-so-far)))]
+                    site-ctx.caller-blocks
+                    site-ctx.added-so-far)))]
             [legacy-cost-ok? : bool (or budget-cost-ok? shared-accessor?)]
-            ;; True only when the dominant-reference accessor tier is what
-            ;; admits this site: its blocks spend that tier's own fuel.
             [accessor-import? : bool
               (and
                 (not tail-site?)
                 shared-accessor?
                 (opt-inline-shared-accessor-dominant? refs hot-refs)
                 (not budget-cost-ok?))]
-            ;; A bounds-free acyclic branch chain is admitted on its own
-            ;; terms: the census still claims it, but the cost model's
-            ;; block weight is not what should price it.
             [branch-chain? : bool
-              (opt-inline-branch-chain-ok?
-                absorb-class
-                has-bounds?
-                callee-instrs
-                (& cblocks)
-                added-blocks
-                caller-blocks
-                added-so-far)]
-            ;; The predictive verdict: every band above, unchanged -- and asked
-            ;; only about a CALL site. The tail-call site class is the measured
-            ;; tier's alone: the bands never saw it and their models were
-            ;; calibrated without it. Letting the single-reference absorb band
-            ;; claim the tail-position arms of a dispatch `cond` is a loss. So
-            ;; a tail site reaches the verdict or it
-            ;; reaches nothing, and no band's fuel is charged for it either
-            ;; (the import flags below).
-            ;; INL-23: a one-block body past the single-block tier's cap is the
-            ;; measured tier's alone. The single-block tier IS the band tier
-            ;; for one-block bodies, and its cap is the statement that a
-            ;; straight-line body is admitted on shape only up to twelve
-            ;; instructions; the bands here were calibrated on bodies with
-            ;; branches, and letting them read a one-block body past that cap
-            ;; would retire the cap for every absorbable or cost-band body. The
-            ;; verdict prices such a body and holds it to the small-body bound.
+              (opt-inline-branch-chain-ok? (& admit) (& cblocks))]
             [converted-callee? : bool
               (opt-inline-tailrec-converted-slot? index callee-name)]
-            ;; INL-11X: a converted callee that is a call-free leaf with
-            ;; exactly one reference, within the leaf band, at an in-loop
-            ;; site of a caller with nothing to lose, absorbs: the body
-            ;; moves, the boundary it retires is paid per iteration, and the
-            ;; caller stops holding its live ranges across a call.
             [converted-leaf-ok? : bool
               (and
                 converted-callee?
-                ;; ...into a CONVERTED caller's loop. The cascade clause guards
-                ;; the caller's own inline; a converted caller has none to
-                ;; lose (INL-11), and a converted leaf stays out of every
-                ;; other caller exactly as before.
-                (opt-inline-tailrec-converted-slot? index func-name)
+                (opt-inline-tailrec-converted-slot? index site-ctx.func-name)
                 (= absorb-class 1)
                 (opt-inline-blocks-call-free? cblocks)
-                (<= callee-instrs (opt-inline-converted-leaf-max-body))
-                (<=
-                  (ir.compiler-ir-block-list-count cblocks)
-                  (opt-inline-converted-leaf-max-blocks))
+                (opt-inline-within-size-cap? (& cblocks) callee-instrs 72 12)
                 (opt-inline-bounds-loop-site-in-loop?))]
             [one-block-callee? : bool
               (<= (ir.compiler-ir-block-list-count cblocks) 1)]
@@ -118790,38 +117850,18 @@
                 (not (opt-inline-checked-tail-only-body? cblocks))
                 bounds-ok?
                 (or bounds-loop-ok? converted-leaf-ok?)
-                ;; INL-6: not a loop into a loop of a caller this tier merged.
-                ;; See opt-inline-checked-rescan-loop-import? for the row.
                 (not (opt-inline-checked-rescan-loop-import? cblocks))
                 (or
                   legacy-cost-ok?
                   hot-loop-leaf?
                   branch-chain?
                   single-site-absorb?))]
-            ;; The measured tier is asked only about sites no band takes: a
-            ;; site both admit belongs to the band, which is cheaper (no
-            ;; re-optimize, no re-plan) and already carries its own
-            ;; measured argument.
-            ;; INL-11: a converted self-tail-recursive callee keeps its frame
-            ;; (see opt-inline-tailrec-converted).
             [_literals : unit (opt-inline-checked-record-literals! cargs)]
             [checked? : bool
               (and
                 (not band-admits?)
                 (not converted-callee?)
-                (opt-inline-checked-ok?
-                  index
-                  census
-                  callee-name
-                  refs
-                  callee-instrs
-                  np
-                  (& cblocks)
-                  added-blocks
-                  caller-blocks
-                  added-so-far
-                  site-pos
-                  tail-site?))]
+                (opt-inline-checked-ok? index census (& admit) (& cblocks)))]
             [inline? : bool
               (and
                 (or (not converted-callee?) converted-leaf-ok?)
@@ -118829,29 +117869,15 @@
                   checked?
                   (and
                     band-admits?
-                    (opt-inline-band-copy-size-ok?
-                      index
-                      census
-                      refs
-                      np
-                      callee-instrs
-                      added-blocks))))]
-            ;; True only when the hot-loop-leaf gate is what admits this
-            ;; site: its blocks spend the gate's own fuel, not the shared
-            ;; accumulator the caller's banked absorptions draw on.
+                    (opt-inline-band-copy-size-ok? index census (& admit)))))]
             [hot-import? : bool
               (and (not tail-site?) hot-loop-leaf? (not legacy-cost-ok?))]
-            ;; Same accounting for a chain import, against its own fuel.
             [chain-import? : bool
               (and
                 (not tail-site?)
                 branch-chain?
                 (not legacy-cost-ok?)
                 (not hot-loop-leaf?))]
-            ;; True only when the single-reference absorb band is what
-            ;; admits this site: its blocks are moved, not copied, so they
-            ;; spend that band's own accumulator rather than the shared
-            ;; growth budget the cost model draws on.
             [absorb-import? : bool
               (and
                 (not tail-site?)
@@ -119275,60 +118301,6 @@
                   (& rest-inputs))
                 spans3)])])]))
 
-;; Rewrite the instruction range [seq-start, end) through the single-block
-;; expansion path and emit it as one block labelled `head-label`, with `lead`
-;; spliced in front of the expansion.
-;;
-;; `block-label` stays the *original* block's label: it is what names inline
-;; sites (opt-inline-site-prefix) and what the loop-membership fact reads, so a
-;; continuation range carved out of that block keeps both. `head-label` is the
-;; label the range is emitted under, which is the continuation label once a
-;; multiblock rewrite has already split the block ahead of this range, and
-;; `lead` carries that rewrite's result instruction into the block it opens.
-;; `site-pos` and `pos` advance in lockstep everywhere in this walk, so the
-;; range's first site position is `seq-start`.
-(define (opt-inline-rewrite-single-block-seq-with-spans
-  [block-label : i64]
-  [head-label : i64]
-  [seq-start : i64]
-  [lead : (& ir.CompilerIrInstrSeq)]
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [index : (& OptFunctionIndex)]
-  [census : (& OptInlineCensus)]
-  [func-name : i64]
-  [vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
-  [scc-result : (& OptSccResult)]
-  [caller-scc : i64]
-  [source-spans : (& ir.CompilerSourceSpans)]
-  [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
-  (match (opt-inline-walk-instr-seq-with-spans-from
-    instrs
-    seq-start
-    (ir.compiler-ir-instr-seq-count instrs)
-    index
-    census
-    func-name
-    block-label
-    seq-start
-    vars
-    caller-blocks
-    added-so-far
-    scc-result
-    caller-scc
-    source-spans
-    out-spans)
-    [(State new-instrs vars2 added2 spans2)
-      (SomeSpanBlockRewrite
-        (ir.compiler-ir-blocks
-          (ir.CompilerIrBlock.Block
-            head-label
-            (opt-inline-append lead (& new-instrs))))
-        vars2
-        added2
-        spans2)]))
-
 ;; Build the rewrite for ONE multiblock site, at either of the two site classes
 ;; the walk can stand at. Once shared admission accepts the site, `dst` and
 ;; `tail-site?` determine where the spliced body's exits go:
@@ -119347,14 +118319,10 @@
 ;; Both classes use the shared plan, retaining their existing admission and
 ;; budget rules while this function constructs their different exit shapes.
 (define (opt-inline-multiblock-build-span-site-rewrite-seq
-  [block-label : i64]
-  [head-label : i64]
-  [seq-start : i64]
+  [ctx : (& OptInlineSpanSiteCtx)]
+  [call-pos : i64]
   [lead : (& ir.CompilerIrInstrSeq)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [call-pos : i64]
-  [count : i64]
-  [site-pos : i64]
   [call-instr : (& ir.CompilerIrInstr)]
   [dst : i64]
   [cargs : (& ir.CompilerIrCallArgs)]
@@ -119362,12 +118330,7 @@
   [tail-site? : bool]
   [callee : (& ir.CompilerIrFunction)]
   [census : (& OptInlineCensus)]
-  [func-name : i64]
-  [vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
   [scc-result : (& OptSccResult)]
-  [caller-scc : i64]
   [index : (& OptFunctionIndex)]
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : (& out-spans ir.CompilerSourceSpans)]) : OptInlineMaybeSpanBlockRewrite
@@ -119377,29 +118340,20 @@
         callee
         cargs
         tail-site?
+        ctx
+        call-pos
         census
-        func-name
-        vars
-        caller-blocks
-        added-so-far
-        site-pos
         index)
         [(NoSitePlan) (NoSpanBlockRewrite)]
         [(SitePlan plan)
           (match (opt-inline-walk-instr-seq-with-spans-from
             instrs
-            seq-start
+            ctx.seq-start
             call-pos
+            ctx
             index
             census
-            func-name
-            block-label
-            seq-start
-            vars
-            caller-blocks
-            added-so-far
             scc-result
-            caller-scc
             source-spans
             out-spans)
             [(State prefix-instrs prefix-vars prefix-added spans2)
@@ -119407,9 +118361,9 @@
                 [_site-note : unit (opt-inline-site-note! (& plan) callee-name)]
                 [prefix : String
                   (opt-inline-site-prefix
-                    func-name
-                    block-label
-                    site-pos
+                    ctx.func-name
+                    ctx.block-label
+                    call-pos
                     callee-name)]
                 [entry-label : i64
                   (opt-inline-prefix-label
@@ -119440,9 +118394,6 @@
                   (if (> plan.staging.count 0)
                     (+ prefix-vars plan.np)
                     prefix-vars)]
-                ;; The first slot past the clone's rebased frame: the
-                ;; callee's highest var rebases to `tail-base - 1`, and
-                ;; `vars2` above reserved `tail-slots` ids from here.
                 [tail-base : i64
                   (opt-inline-rebase-var cvars plan.np clone-base)]
                 [prefix-instrs2 : ir.CompilerIrInstrSeq
@@ -119476,7 +118427,7 @@
                       clone-base
                       source-spans
                       spans2
-                      func-name
+                      ctx.func-name
                       call-instr
                       callee-name))
                   (opt-inline-clone-multiblock-blocks-with-spans
@@ -119491,64 +118442,44 @@
                     clone-base
                     source-spans
                     spans2
-                    func-name
+                    ctx.func-name
                     call-instr
                     callee-name))
                   [(Clone cloned-blocks return-inputs spans3)
                     (if tail-site?
-                      ;; The tail-call site's whole rewrite: the head
-                      ;; block jumps into the clone and the clone ends
-                      ;; in the caller's own exits. No continuation
-                      ;; block, so `return-inputs` is empty and there is
-                      ;; no result to bind; no suffix, because a direct
-                      ;; tail call is the block's terminator and the
-                      ;; dispatcher offers this class no other position;
-                      ;; and no predecessor rename, because a block that
-                      ;; ended in a tail call reaches no successor phi.
-                      ;; The clone recorded its own exits' spans, so
-                      ;; nothing is added here.
                       (SomeSpanBlockRewrite
                         (ir.compiler-ir-blocks-with-tail
                           cloned-blocks
-                          (ir.CompilerIrBlock.Block head-label prefix-instrs2))
+                          (ir.CompilerIrBlock.Block
+                            ctx.head-label
+                            prefix-instrs2))
                         vars2
                         added2
                         spans3)
                       (let
                         [result-instr : ir.CompilerIrInstr
                           (opt-inline-cont-result-instr dst return-inputs cret)]
-                        ;; The suffix opens the continuation block, so it
-                        ;; is rewritten by this same scan rather than by
-                        ;; the single-block walk: a second admitted
-                        ;; multiblock candidate in the same block gets its
-                        ;; own split instead of being evicted by whichever
-                        ;; candidate came first. The scan bottoms out in
-                        ;; opt-inline-rewrite-single-block-seq-with-spans.
-                        ;; Every gate still runs per candidate, and `added2`
-                        ;; hands the suffix the fuel this site already spent.
-                        ;; `result-instr` rides down as the continuation
-                        ;; block's lead instruction, and its span is
-                        ;; recorded on the way back out so the span stream
-                        ;; keeps the order it had when the suffix was a
-                        ;; plain single-block walk.
+                        [cont-ctx : OptInlineSpanSiteCtx
+                          (OptInlineSpanSiteCtx
+                            ctx.func-name
+                            ctx.caller-blocks
+                            ctx.caller-scc
+                            ctx.block-label
+                            cont-label
+                            (+ call-pos 1)
+                            ctx.count
+                            (+ call-pos 1)
+                            vars2
+                            added2)]
                         (match (opt-inline-try-multiblock-span-rewrite-seq-from
                           instrs
-                          (+ call-pos 1)
-                          count
-                          block-label
-                          cont-label
-                          (+ call-pos 1)
                           (&
                             (ir.compiler-ir-instr-seq1
                               (compiler-opt-global-shared-view result-instr)))
+                          (& cont-ctx)
                           index
                           census
-                          func-name
-                          vars2
-                          caller-blocks
-                          added2
                           scc-result
-                          caller-scc
                           source-spans
                           spans3)
                           [(SomeSpanBlockRewrite
@@ -119561,40 +118492,28 @@
                                 (opt-inline-call-span-to-instr
                                   source-spans
                                   spans4
-                                  (ir.compiler-ir-symbol-typed-id func-name)
+                                  (ir.compiler-ir-symbol-typed-id ctx.func-name)
                                   call-instr
                                   (& result-instr))]
-                              ;; Recorded after the suffix so a nested
-                              ;; split's rename lands behind this one:
-                              ;; opt-inline-repair-phi-predecessors
-                              ;; applies the newest rename first, and the
-                              ;; chain has to run outer-to-inner
-                              ;; (block -> cont -> cont') to leave a
-                              ;; successor phi naming the block that
-                              ;; actually reaches it.
-                              [_record-pred-rename : unit
-                                (if opt-inline-current-phi-predecessor?
-                                  (set!
-                                    (array-ref opt-inline-pred-renames 0)
-                                    (opt-inline-pred-renames-cons
-                                      head-label
-                                      cont-label
-                                      (opt-inline-pred-renames-shared-view)))
-                                  unit)]
+                              (when
+                                opt-inline-current-phi-predecessor?
+                                (set!
+                                  (array-ref opt-inline-pred-renames 0)
+                                  (opt-inline-pred-renames-cons
+                                    ctx.head-label
+                                    cont-label
+                                    (opt-inline-pred-renames-shared-view))))
                               (SomeSpanBlockRewrite
                                 (ir.compiler-ir-blocks-with-tail
                                   (opt-blocks-append
                                     (& cloned-blocks)
                                     (& cont-blocks))
                                   (ir.CompilerIrBlock.Block
-                                    head-label
+                                    ctx.head-label
                                     prefix-instrs2))
                                 vars3
                                 added3
                                 spans5))]
-                          ;; Unreachable: the scan always ends in a
-                          ;; single-block rewrite. Refusing the site is the
-                          ;; safe reading if that ever changes.
                           [(NoSpanBlockRewrite) (NoSpanBlockRewrite)])))]))])])]))
 
 ;; The two site classes, as instructions. A direct `TailCall` is a site here for
@@ -119617,12 +118536,9 @@
 ;; at the next position.
 (define (opt-inline-try-multiblock-span-site-at
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [pos : i64]
-  [count : i64]
-  [block-label : i64]
-  [head-label : i64]
-  [seq-start : i64]
   [lead : (& ir.CompilerIrInstrSeq)]
+  [ctx : (& OptInlineSpanSiteCtx)]
+  [pos : i64]
   [instr : (& ir.CompilerIrInstr)]
   [cname : i64]
   [cargs : (& ir.CompilerIrCallArgs)]
@@ -119631,30 +118547,21 @@
   [dst : i64]
   [index : (& OptFunctionIndex)]
   [census : (& OptInlineCensus)]
-  [func-name : i64]
-  [vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
   [scc-result : (& OptSccResult)]
-  [caller-scc : i64]
   [source-spans : (& ir.CompilerSourceSpans)]
-  [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
+  [out-spans : (& out-spans ir.CompilerSourceSpans)]) : OptInlineMaybeSpanBlockRewrite
   (match (opt-inline-lookup-multiblock-inlinable
     index
     cname
-    func-name
+    ctx.func-name
     scc-result
-    caller-scc)
+    ctx.caller-scc)
     [(Some callee)
-      (match (opt-inline-multiblock-build-span-site-rewrite-seq
-        block-label
-        head-label
-        seq-start
+      (opt-inline-multiblock-build-span-site-rewrite-seq
+        ctx
+        pos
         lead
         instrs
-        pos
-        count
-        pos
         instr
         dst
         cargs
@@ -119662,188 +118569,100 @@
         tail?
         (& callee)
         census
-        func-name
-        vars
-        caller-blocks
-        added-so-far
         scc-result
-        caller-scc
         index
         source-spans
-        out-spans)
-        [(SomeSpanBlockRewrite blocks2 vars2 added2 spans2)
-          (SomeSpanBlockRewrite blocks2 vars2 added2 spans2)]
-        [(NoSpanBlockRewrite)
-          (opt-inline-try-multiblock-span-rewrite-seq-from
-            instrs
-            (+ pos 1)
-            count
-            block-label
-            head-label
-            seq-start
-            lead
-            index
-            census
-            func-name
-            vars
-            caller-blocks
-            added-so-far
-            scc-result
-            caller-scc
-            source-spans
-            out-spans)])]
-    [(No)
-      (opt-inline-try-multiblock-span-rewrite-seq-from
-        instrs
-        (+ pos 1)
-        count
-        block-label
-        head-label
-        seq-start
-        lead
-        index
-        census
-        func-name
-        vars
-        caller-blocks
-        added-so-far
-        scc-result
-        caller-scc
-        source-spans
-        out-spans)]))
+        out-spans)]
+    [(No) (NoSpanBlockRewrite)]))
 
-;; Scan [pos, count) for a multiblock-admitted call and rewrite the range
-;; [seq-start, count) around the first one found, emitting the range's opening
-;; block under `head-label` with `lead` in front of it. The rewrite recurses on
-;; the suffix, so every admitted candidate in a block gets its own split rather
-;; than the first one claiming the block: the "never evict a banked inline"
-;; invariant the gate comments assert is structural here, not first-come.
+;; Scan [ctx.pos, ctx.count) for a multiblock-admitted call and rewrite the
+;; range [ctx.seq-start, ctx.count) around the first one found, falling back to
+;; the single-block expansion walk when no multiblock site admits.
 (define (opt-inline-try-multiblock-span-rewrite-seq-from
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [pos : i64]
-  [count : i64]
-  [block-label : i64]
-  [head-label : i64]
-  [seq-start : i64]
   [lead : (& ir.CompilerIrInstrSeq)]
+  [ctx : (& OptInlineSpanSiteCtx)]
   [index : (& OptFunctionIndex)]
   [census : (& OptInlineCensus)]
-  [func-name : i64]
-  [vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
   [scc-result : (& OptSccResult)]
-  [caller-scc : i64]
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
-  (if (>= pos count)
-    (opt-inline-rewrite-single-block-seq-with-spans
-      block-label
-      head-label
-      seq-start
-      lead
-      instrs
-      index
-      census
-      func-name
-      vars
-      caller-blocks
-      added-so-far
-      scc-result
-      caller-scc
-      source-spans
-      out-spans)
-    (let
-      [instr (ir.compiler-ir-instr-seq-borrow instrs pos)]
-      (match (compiler-opt-global-shared-view instr)
-        [(Call dst cname cargs cret)
-          (opt-inline-try-multiblock-span-site-at
-            instrs
-            pos
-            count
-            block-label
-            head-label
-            seq-start
-            lead
-            (& instr)
-            cname
-            (& cargs)
-            (& cret)
-            false
-            dst
-            index
-            census
-            func-name
-            vars
-            caller-blocks
-            added-so-far
-            scc-result
-            caller-scc
-            source-spans
-            out-spans)]
-        ;; A direct tail call is a site of exactly the same standing:
-        ;; `return f(args)` pays the callee's whole boundary at a position
-        ;; where the splice is simpler than a call site's. The builder decides
-        ;; whether the position admits it; everything from the lookup down is
-        ;; shared with the call arm.
-        [(TailCall cname cargs cret)
-          (if (= pos (- count 1))
-            (opt-inline-try-multiblock-span-site-at
+  (let
+    [pos : i64 ctx.pos]
+    (while (< pos ctx.count)
+      (let
+        [instr (ir.compiler-ir-instr-seq-borrow instrs pos)]
+        (match (compiler-opt-global-shared-view instr)
+          [(Call dst cname cargs cret)
+            (match (opt-inline-try-multiblock-span-site-at
               instrs
-              pos
-              count
-              block-label
-              head-label
-              seq-start
               lead
+              ctx
+              pos
               (& instr)
               cname
               (& cargs)
               (& cret)
-              true
-              (- 0 1)
+              false
+              dst
               index
               census
-              func-name
-              vars
-              caller-blocks
-              added-so-far
               scc-result
-              caller-scc
               source-spans
-              out-spans)
-            (NoSpanBlockRewrite))]
-        [_
-          (opt-inline-try-multiblock-span-rewrite-seq-from
-            instrs
-            (+ pos 1)
-            count
-            block-label
-            head-label
-            seq-start
-            lead
-            index
-            census
-            func-name
-            vars
-            caller-blocks
-            added-so-far
-            scc-result
-            caller-scc
-            source-spans
-            out-spans)]))))
+              (& out-spans))
+              [(SomeSpanBlockRewrite blocks2 vars2 added2 spans2)
+                (return (SomeSpanBlockRewrite blocks2 vars2 added2 spans2))]
+              [(NoSpanBlockRewrite) (+= pos 1)])]
+          [(TailCall cname cargs cret)
+            (if (= pos (- ctx.count 1))
+              (match (opt-inline-try-multiblock-span-site-at
+                instrs
+                lead
+                ctx
+                pos
+                (& instr)
+                cname
+                (& cargs)
+                (& cret)
+                true
+                (- 0 1)
+                index
+                census
+                scc-result
+                source-spans
+                (& out-spans))
+                [(SomeSpanBlockRewrite blocks2 vars2 added2 spans2)
+                  (return (SomeSpanBlockRewrite blocks2 vars2 added2 spans2))]
+                [(NoSpanBlockRewrite) (+= pos 1)])
+              (return (NoSpanBlockRewrite)))]
+          [_ (+= pos 1)])))
+    (match (opt-inline-walk-instr-seq-with-spans-from
+      instrs
+      ctx.seq-start
+      (ir.compiler-ir-instr-seq-count instrs)
+      ctx
+      index
+      census
+      scc-result
+      source-spans
+      (& out-spans))
+      [(State new-instrs vars2 added2 spans2)
+        (SomeSpanBlockRewrite
+          (ir.compiler-ir-blocks
+            (ir.CompilerIrBlock.Block
+              ctx.head-label
+              (opt-inline-append lead (& new-instrs))))
+          vars2
+          added2
+          spans2)])))
 
 (define (opt-inline-rewrite-block-with-spans
   [block : (& ir.CompilerIrBlock)]
   [phi-predecessors : OptLabelSet]
+  [ctx : (& OptInlineSpanSiteCtx)]
   [index : (& OptFunctionIndex)]
   [census : (& OptInlineCensus)]
-  [func-name : i64]
-  [vars : i64]
-  [caller-blocks : i64]
-  [added-so-far : i64]
   [scc-result : (& OptSccResult)]
-  [caller-scc : i64]
   [source-spans : (& ir.CompilerSourceSpans)]
   [out-spans : ir.CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (match block
@@ -119852,34 +118671,36 @@
         (SomeSpanBlockRewrite
           (ir.compiler-ir-blocks
             (owned_view.compiler-owned-reference-shared-view block))
-          vars
-          added-so-far
+          ctx.vars
+          ctx.added-so-far
           out-spans)
-        (begin
+        (let
+          [seq-count : i64 (ir.compiler-ir-instr-seq-count seq)]
+          [block-ctx : OptInlineSpanSiteCtx
+            (OptInlineSpanSiteCtx
+              ctx.func-name
+              ctx.caller-blocks
+              ctx.caller-scc
+              label
+              label
+              0
+              seq-count
+              0
+              ctx.vars
+              ctx.added-so-far)]
           (set!
             opt-inline-current-phi-predecessor?
             (opt-label-contains phi-predecessors label))
           (set! opt-inline-current-block-label label)
-          (let
-            [seq-count : i64 (ir.compiler-ir-instr-seq-count seq)]
-            (opt-inline-try-multiblock-span-rewrite-seq-from
-              seq
-              0
-              seq-count
-              label
-              label
-              0
-              (& (opt-inline-empty-instr-seq))
-              index
-              census
-              func-name
-              vars
-              caller-blocks
-              added-so-far
-              scc-result
-              caller-scc
-              source-spans
-              out-spans))))]))
+          (opt-inline-try-multiblock-span-rewrite-seq-from
+            seq
+            (& (opt-inline-empty-instr-seq))
+            (& block-ctx)
+            index
+            census
+            scc-result
+            source-spans
+            out-spans)))]))
 
 (define (opt-inline-blocks-with-spans
   [blocks : (& ir.CompilerIrBlockList)]
@@ -119902,27 +118723,33 @@
     [out : ir.CompilerIrBlockBuilder
       (ir.compiler-ir-block-builder-with-capacity count)]
     [at : i64 0]
-    [vars-now : i64 vars]
-    [added-now : i64 added-so-far]
+    [ctx : OptInlineSpanSiteCtx
+      (OptInlineSpanSiteCtx
+        func-name
+        caller-blocks
+        caller-scc
+        0
+        0
+        0
+        0
+        0
+        vars
+        added-so-far)]
     [spans-now : ir.CompilerSourceSpans out-spans]
     (while (< at count)
       (match (opt-inline-rewrite-block-with-spans
         (ir.compiler-ir-block-seq-borrow seq at)
         phi-predecessors
+        (& ctx)
         index
         census
-        func-name
-        vars-now
-        caller-blocks
-        added-now
         scc-result
-        caller-scc
         source-spans
         (compiler-opt-global-shared-view spans-now))
         [(SomeSpanBlockRewrite rewritten vars2 added2 spans2)
           (ir.compiler-ir-block-builder-append-list! (&mut out) rewritten)
-          (set! vars-now vars2)
-          (set! added-now added2)
+          (set! ctx.vars vars2)
+          (set! ctx.added-so-far added2)
           (set! spans-now spans2)
           (+= at 1)]
         ;; The walk ends at a block left as it was, which keeps it.
@@ -119933,8 +118760,8 @@
           (set! at count)]))
     (Blocks
       (ir.compiler-ir-block-builder-to-list out)
-      vars-now
-      added-now
+      ctx.vars
+      ctx.added-so-far
       spans-now)))
 
 (define (opt-inline-bounds-labels-unique-instrs-from
@@ -125827,12 +124654,36 @@
             count))]))
   count)
 
-;; P18-2: bits for one pool. Distinct bits run from `next` up to
+;; Which globals of a packed row take a bit of their own: the non-scalars alone
+;; (IAG-2's own-storage index), or the globals of ONE P18 pool that the program
+;; directly stores.
+(defenum OptGlobalBitPool
+  (Nonscalar)
+  (StoredScalar)
+  (StoredNonscalar))
+
+(define (opt-global-bit-pool-takes?
+  [pool : OptGlobalBitPool]
+  [stores : (& stores opt_i64_i64_map.Map)]
+  [id : i64]
+  [ty : (& ty ast.AstType)]) : bool
+  (match pool
+    [(Nonscalar) (not (opt-global-obj-scalar-type? ty))]
+    [(StoredScalar)
+      (and
+        (opt-global-obj-scalar-type? ty)
+        (opt_i64_i64_map.contains? stores id))]
+    [(StoredNonscalar)
+      (and
+        (not (opt-global-obj-scalar-type? ty))
+        (opt_i64_i64_map.contains? stores id))]))
+
+;; P18-2 / ALIAS-2: bits for one row. Distinct bits run from `next` up to
 ;; `last-distinct`; past that every global of the pool shares `overflow-bit`.
-(define (opt-global-mod-ref-index-fill-pool
+(define (opt-global-bit-index-fill
   [globals : (& ir.CompilerIrGlobalSeq)]
   [stores : (& stores opt_i64_i64_map.Map)]
-  [scalar? : bool]
+  [pool : OptGlobalBitPool]
   [last-distinct : i64]
   [overflow-bit : i64]
   [out : opt_i64_i64_map.Map]
@@ -125843,15 +124694,15 @@
     (match (ir.compiler-ir-global-seq-borrow globals at)
       [(Global name ty _)
         (if (not
-          (and
-            (= scalar? (opt-global-obj-scalar-type? (& ty)))
-            (opt_i64_i64_map.contains?
-              (& stores)
-              (ir.compiler-ir-symbol-id name))))
-          (opt-global-mod-ref-index-fill-pool
+          (opt-global-bit-pool-takes?
+            pool
+            stores
+            (ir.compiler-ir-symbol-id name)
+            (& ty)))
+          (opt-global-bit-index-fill
             globals
             stores
-            scalar?
+            pool
             last-distinct
             overflow-bit
             out
@@ -125870,10 +124721,10 @@
                   (&mut assigned)
                   (ir.compiler-ir-symbol-id name)
                   bit)
-                (opt-global-mod-ref-index-fill-pool
+                (opt-global-bit-index-fill
                   globals
                   stores
-                  scalar?
+                  pool
                   last-distinct
                   overflow-bit
                   assigned
@@ -125903,43 +124754,39 @@
     [arrays : i64 (opt-global-mod-ref-store-count-pool globals stores false 0)]
     [scalars : i64 (opt-global-mod-ref-store-count-pool globals stores true 0)]
     [fits? : bool (<= (+ arrays scalars) limit)]
-    ;; arrays: distinct bits up to `array-last`, then `array-overflow`
-    [array-last : i64
+    ;; Both pools run their distinct bits up to the same `last-distinct`; only
+    ;; the bit past it differs.
+    [last-distinct : i64
       (cond
         [fits? (- limit 1)]
         [(<= arrays (- limit 1)) (- limit 2)]
         [else (- limit 3)])]
+    ;; arrays: distinct bits up to `last-distinct`, then `array-overflow`
     [array-overflow : i64
       (if (<= arrays (- limit 1))
         (- 0 1)
         (- limit 2))]
-    ;; scalars: distinct bits from where the arrays stopped up to
-    ;; `scalar-last`, then the top bit
-    [scalar-last : i64
-      (cond
-        [fits? (- limit 1)]
-        [(<= arrays (- limit 1)) (- limit 2)]
-        [else (- limit 3)])]
+    ;; scalars: distinct bits from where the arrays stopped, then the top bit
     [scalar-overflow : i64
       (if fits?
         (- 0 1)
         (- limit 1))]
-    (match (opt-global-mod-ref-index-fill-pool
+    (match (opt-global-bit-index-fill
       globals
       stores
-      false
-      array-last
+      (StoredNonscalar)
+      last-distinct
       array-overflow
       (opt_i64_i64_map.with-capacity capacity)
       0
       0)
       [(No) (No)]
       [(Some out next)
-        (opt-global-mod-ref-index-fill-pool
+        (opt-global-bit-index-fill
           globals
           stores
-          true
-          scalar-last
+          (StoredScalar)
+          last-distinct
           scalar-overflow
           out
           0
@@ -126780,40 +125627,6 @@
     (- (opt-global-mod-ref-limit) 1)
     (- 0 1)))
 
-(define (opt-global-obj-index-fill
-  [globals : (& ir.CompilerIrGlobalSeq)]
-  [overflow-bit : i64]
-  [out : opt_i64_i64_map.Map]
-  [at : i64]
-  [next : i64]) : OptGlobalModRefIndex
-  (if (>= at globals.len)
-    (Some out next)
-    (match (ir.compiler-ir-global-seq-borrow globals at)
-      [(Global name ty _)
-        (if (opt-global-obj-scalar-type? (& ty))
-          (opt-global-obj-index-fill globals overflow-bit out (+ at 1) next)
-          (let
-            [bit : i64
-              (if (< next (opt-global-mod-ref-limit))
-                next
-                overflow-bit)]
-            (if (< bit 0)
-              (No)
-              (let
-                [assigned : opt_i64_i64_map.Map out]
-                (opt_i64_i64_map.insert-ref!
-                  (&mut assigned)
-                  (ir.compiler-ir-symbol-id name)
-                  bit)
-                (opt-global-obj-index-fill
-                  globals
-                  overflow-bit
-                  assigned
-                  (+ at 1)
-                  (if (< next (opt-global-mod-ref-limit))
-                    (+ next 1)
-                    next))))))])))
-
 ;; Build the table, or decline. The preconditions are the ones the header
 ;; states: no global cell ADDRESS exists in the program (`GlobalAddr`, the one
 ;; value form this analysis does not model, is then absent), the program is
@@ -126836,8 +125649,12 @@
     (> (opt-function-seq-count functions) (opt-summary-function-limit))
     (= (ir.compiler-ir-global-seq-count globals) 0))
     (opt-global-mod-ref-none)
-    (match (opt-global-obj-index-fill
+    ;; The non-scalar pool reads no store filter, so it fills with none.
+    (match (opt-global-bit-index-fill
       globals
+      (& (opt_i64_i64_map.with-capacity 1))
+      (Nonscalar)
+      (- (opt-global-mod-ref-limit) 1)
       (opt-global-obj-overflow-bit globals)
       (opt_i64_i64_map.with-capacity capacity)
       0
@@ -144394,20 +143211,27 @@
   (branch-count i64)
   (writes (__tl_dyn-array bool))
   (write-count i64)
-  (on bool))
+  (on bool)
+  ;; The scratch every query in this family reads: the def table and the block
+  ;; that defines each var, each block's condition var and taken successor, the
+  ;; leaf scratch, the reachability scratch and its stack, and the block count.
+  ;; A by-value view shares the storage, so a callee writes the caller's arrays.
+  (defs (__tl_dyn-array OptBoolBranchDef))
+  (cond-var (__tl_dyn-array i64))
+  (taken (__tl_dyn-array i64))
+  (def-blocks (__tl_dyn-array i64))
+  (leaves (__tl_dyn-array i64))
+  (fwd (__tl_dyn-array bool))
+  (bwd (__tl_dyn-array bool))
+  (stack (__tl_dyn-array i64))
+  (block-count i64))
 
 ;; Is the condition at `cond-var` still about the same values at `to`? Same
 ;; region rule as (2): no leaf redefined on a path from `from` to `to` that
 ;; avoids `blocked`.
 (define (opt-guard-imply-cond-live?
   [index : (& index OptCfgIndex)]
-  [block-count : i64]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [cond-var : i64]
   [blocked : i64]
   [from : i64]
@@ -144415,8 +143239,8 @@
   (let
     [leaf-count : i64
       (opt-guard-dedup-collect-leaves
-        defs
-        leaves
+        scan.defs
+        (&mut scan.leaves)
         0
         (& (Var cond-var))
         (opt-guard-dedup-eq-fuel))]
@@ -144424,12 +143248,12 @@
       (>= leaf-count 0)
       (opt-guard-dedup-fact-live?
         index
-        block-count
-        fwd
-        bwd
-        stack
-        def-blocks
-        leaves
+        scan.block-count
+        (&mut scan.fwd)
+        (&mut scan.bwd)
+        (&mut scan.stack)
+        scan.def-blocks
+        scan.leaves
         leaf-count
         blocked
         from
@@ -144440,25 +143264,20 @@
 ;; two reads.
 (define (opt-guard-imply-var-live?
   [index : (& index OptCfgIndex)]
-  [block-count : i64]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [var : i64]
   [blocked : i64]
   [from : i64]
   [to : i64]) : bool
-  (set! (array-ref leaves 0) var)
+  (set! (array-ref scan.leaves 0) var)
   (opt-guard-dedup-fact-live?
     index
-    block-count
-    fwd
-    bwd
-    stack
-    def-blocks
-    leaves
+    scan.block-count
+    (&mut scan.fwd)
+    (&mut scan.bwd)
+    (&mut scan.stack)
+    scan.def-blocks
+    scan.leaves
     1
     blocked
     from
@@ -144470,22 +143289,18 @@
 ;; refuses unless both whole-program rows prove it writes nothing.
 (define (opt-guard-imply-region-clean?
   [index : (& index OptCfgIndex)]
-  [block-count : i64]
-  [scan : (& scan OptGuardImplyScan)]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [from : i64]
   [to : i64]) : bool
   (or
     (= scan.write-count 0)
     (opt-guard-dedup-region-clean?
       index
-      block-count
+      scan.block-count
       scan.writes
-      fwd
-      bwd
-      stack
+      (&mut scan.fwd)
+      (&mut scan.bwd)
+      (&mut scan.stack)
       from
       to)))
 
@@ -144495,21 +143310,15 @@
 (define (opt-guard-imply-alias-ok?
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [block-count : i64]
-  [scan : (& scan OptGuardImplyScan)]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [fact-term : (& fact-term OptGuardImplyTerm)]
   [query-term : (& query-term OptGuardImplyTerm)]) : bool
   (if (not (opt-guard-imply-alias? fact-term query-term))
     true
     (let
-      [a : i64 (opt-guard-imply-term-block fact-term def-blocks)]
-      [b : i64 (opt-guard-imply-term-block query-term def-blocks)]
-      (if (or (< a 0) (< b 0) (>= a block-count) (>= b block-count))
+      [a : i64 (opt-guard-imply-term-block fact-term scan.def-blocks)]
+      [b : i64 (opt-guard-imply-term-block query-term scan.def-blocks)]
+      (if (or (< a 0) (< b 0) (>= a scan.block-count) (>= b scan.block-count))
         false
         (let
           ;; `a = b` is admitted through the same region test, not around it:
@@ -144527,84 +143336,16 @@
               a)]
           (and
             (>= first 0)
-            (opt-guard-imply-region-clean?
-              index
-              block-count
-              scan
-              fwd
-              bwd
-              stack
-              first
-              second)
+            (opt-guard-imply-region-clean? index (&mut scan) first second)
             (or
               (not (= fact-term.kind (opt-guard-imply-kind-desc)))
               (opt-guard-imply-var-live?
                 index
-                block-count
-                def-blocks
-                leaves
-                fwd
-                bwd
-                stack
+                (&mut scan)
                 fact-term.a
                 (- 0 1)
                 first
                 second))))))))
-
-;; Does a dominating fast edge state `0 <= base` (or `0 < base`) for this term's
-;; key? The wrap argument for a moved offset is the only consumer.
-(define (opt-guard-imply-nonneg?
-  [index : (& index OptCfgIndex)]
-  [doms : (& doms OptDomInfo)]
-  [scan : (& scan OptGuardImplyScan)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
-  [term : (& term OptGuardImplyTerm)]
-  [id : i64]) : bool
-  (let
-    [found : bool false]
-    [slot : i64 0]
-    (while (and (not found) (< slot scan.branch-count))
-      (let
-        [other : i64 (array-ref scan.branch-ids slot)]
-        [fact : OptGuardImplyCond (array-ref scan.conds other)]
-        (if (and
-          (not (= other id))
-          fact.ok
-          (not fact.unsigned)
-          (= fact.lhs.kind (opt-guard-imply-kind-lit))
-          (= fact.lhs.offset 0)
-          (= fact.rhs.offset 0)
-          (opt-guard-imply-key-eq? fact.rhs term)
-          (not (opt-guard-imply-alias? fact.rhs term))
-          (<= (opt-guard-imply-bound fact) 0)
-          (>= (array-ref taken other) 0)
-          (= (opt-guard-dedup-pred-count index (array-ref taken other)) 1)
-          (opt-dom-info-dominates-id? doms (array-ref taken other) id)
-          (opt-guard-imply-cond-live?
-            index
-            block-count
-            defs
-            def-blocks
-            leaves
-            fwd
-            bwd
-            stack
-            (array-ref cond-var other)
-            other
-            (array-ref taken other)
-            id))
-          (set! found true)
-          unit)
-        (+= slot 1)))
-    found))
 
 ;; Fill the canonical conjunct of every block and list the two-way branch blocks
 ;; in index order. Returns how many there are; the scan walks that list, so a
@@ -144639,16 +143380,7 @@
 (define (opt-guard-imply-decide
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [scan : (& scan OptGuardImplyScan)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
+  [scan : (&mut scan OptGuardImplyScan)]
   [id : i64]) : i64
   (if (not scan.on)
     0
@@ -144658,37 +143390,33 @@
         0
         (let
           [left-nonneg : bool
-            (opt-guard-imply-nonneg?
-              index
-              doms
-              scan
-              defs
-              cond-var
-              taken
-              def-blocks
-              leaves
-              fwd
-              bwd
-              stack
-              block-count
-              query.lhs
-              id)]
+            (>
+              (opt-guard-imply-scan
+                index
+                doms
+                (&mut scan)
+                true
+                query.lhs
+                false
+                false
+                false
+                false
+                id)
+              0)]
           [right-nonneg : bool
-            (opt-guard-imply-nonneg?
-              index
-              doms
-              scan
-              defs
-              cond-var
-              taken
-              def-blocks
-              leaves
-              fwd
-              bwd
-              stack
-              block-count
-              query.rhs
-              id)]
+            (>
+              (opt-guard-imply-scan
+                index
+                doms
+                (&mut scan)
+                true
+                query.rhs
+                false
+                false
+                false
+                false
+                id)
+              0)]
           [left-exact : bool
             (opt-guard-imply-term-exact? query.lhs query.unsigned left-nonneg)]
           [right-exact : bool
@@ -144706,48 +143434,36 @@
             (opt-guard-imply-alias-ok?
               index
               doms
-              block-count
-              scan
-              def-blocks
-              leaves
-              fwd
-              bwd
-              stack
+              (&mut scan)
               query.lhs
               query.rhs))
             1
-            (opt-guard-imply-scan-facts
+            (opt-guard-imply-scan
               index
               doms
-              scan
-              defs
-              cond-var
-              taken
-              def-blocks
-              leaves
-              fwd
-              bwd
-              stack
-              block-count
+              (&mut scan)
+              false
+              query.lhs
               left-nonneg
               right-nonneg
               left-exact
               right-exact
               id)))))))
 
-(define (opt-guard-imply-scan-facts
+;; The fact scan both queries run: walk the function's two-way branch blocks in
+;; index order and stop at the first fact that settles the query. `nonneg?`
+;; asks the narrower question -- does a dominating fast edge state `0 <= base`
+;; (or `0 < base`) for `term`'s key? -- and only that consumer passes a term.
+;; Otherwise the query is the conjunct at `id` and the caller's four derived
+;; flags decide whether a weakened fact still covers it. The verdict is the
+;; tracer's reason code: 1 for a fact that decides the non-negativity question
+;; outright, 2 for an exact fact and 3 for a weakened one.
+(define (opt-guard-imply-scan
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [scan : (& scan OptGuardImplyScan)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
+  [scan : (&mut scan OptGuardImplyScan)]
+  [nonneg? : bool]
+  [term : (& term OptGuardImplyTerm)]
   [left-nonneg : bool]
   [right-nonneg : bool]
   [left-exact : bool]
@@ -144768,25 +143484,41 @@
         (if (and
           (not (= other id))
           fact.ok
-          (or
-            (and fact.unsigned query.unsigned)
-            (and (not fact.unsigned) (not query.unsigned)))
-          (opt-guard-imply-key-eq? fact.lhs query.lhs)
-          (opt-guard-imply-key-eq? fact.rhs query.rhs)
-          (<= (opt-guard-imply-bound fact) (opt-guard-imply-bound query))
-          (or
-            same-offsets
+          (if nonneg?
             (and
-              (not query.unsigned)
-              left-exact
-              right-exact
-              (opt-guard-imply-term-exact? fact.lhs query.unsigned left-nonneg)
-              (opt-guard-imply-term-exact? fact.rhs query.unsigned right-nonneg)))
-          (>= (array-ref taken other) 0)
+              (not fact.unsigned)
+              (= fact.lhs.kind (opt-guard-imply-kind-lit))
+              (= fact.lhs.offset 0)
+              (= fact.rhs.offset 0)
+              (opt-guard-imply-key-eq? fact.rhs term)
+              (not (opt-guard-imply-alias? fact.rhs term))
+              (<= (opt-guard-imply-bound fact) 0))
+            (and
+              (or
+                (and fact.unsigned query.unsigned)
+                (and (not fact.unsigned) (not query.unsigned)))
+              (opt-guard-imply-key-eq? fact.lhs query.lhs)
+              (opt-guard-imply-key-eq? fact.rhs query.rhs)
+              (<= (opt-guard-imply-bound fact) (opt-guard-imply-bound query))
+              (or
+                same-offsets
+                (and
+                  (not query.unsigned)
+                  left-exact
+                  right-exact
+                  (opt-guard-imply-term-exact?
+                    fact.lhs
+                    query.unsigned
+                    left-nonneg)
+                  (opt-guard-imply-term-exact?
+                    fact.rhs
+                    query.unsigned
+                    right-nonneg)))))
+          (>= (array-ref scan.taken other) 0)
           ;; The taken successor must be entered by this edge ALONE, or
           ;; reaching it proves nothing about the condition.
-          (= (opt-guard-dedup-pred-count index (array-ref taken other)) 1)
-          (opt-dom-info-dominates-id? doms (array-ref taken other) id)
+          (= (opt-guard-dedup-pred-count index (array-ref scan.taken other)) 1)
+          (opt-dom-info-dominates-id? doms (array-ref scan.taken other) id)
           ;; Only the FACT's leaves are tested for staleness. (2) tests
           ;; the query's because there the two conditions are one tree and
           ;; one leaf set; here they are not, and the query's leaves are
@@ -144796,46 +143528,33 @@
           ;; shared memory key.
           (opt-guard-imply-cond-live?
             index
-            block-count
-            defs
-            def-blocks
-            leaves
-            fwd
-            bwd
-            stack
-            (array-ref cond-var other)
+            (&mut scan)
+            (array-ref scan.cond-var other)
             other
-            (array-ref taken other)
+            (array-ref scan.taken other)
             id)
-          (opt-guard-imply-alias-ok?
-            index
-            doms
-            block-count
-            scan
-            def-blocks
-            leaves
-            fwd
-            bwd
-            stack
-            fact.lhs
-            query.lhs)
-          (opt-guard-imply-alias-ok?
-            index
-            doms
-            block-count
-            scan
-            def-blocks
-            leaves
-            fwd
-            bwd
-            stack
-            fact.rhs
-            query.rhs))
+          (if nonneg?
+            true
+            (and
+              (opt-guard-imply-alias-ok?
+                index
+                doms
+                (&mut scan)
+                fact.lhs
+                query.lhs)
+              (opt-guard-imply-alias-ok?
+                index
+                doms
+                (&mut scan)
+                fact.rhs
+                query.rhs))))
           (set!
             verdict
-            (if same-offsets
-              2
-              3))
+            (if nonneg?
+              1
+              (if same-offsets
+                2
+                3)))
           unit)
         (+= slot 1)))
     verdict))
@@ -145039,59 +143758,52 @@
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
+  [scan : (&mut scan OptGuardImplyScan)]
   [bchain : (& bchain (__tl_dyn-array i64))]
   [heads : (& heads opt_i64_i64_map.Map)]
   [bhash : (& bhash (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
   [id : i64]) : bool
   (let
     [cursor : i64
       (- (opt_i64_i64_map.get-value-or (& heads) (array-ref bhash id) 0) 1)]
     [found : bool false]
-    [remaining : i64 (opt-whole-function-lookup-count block-count block-count)]
+    [remaining : i64
+      (opt-whole-function-lookup-count scan.block-count scan.block-count)]
     (while (and (not found) (>= cursor 0) (> remaining 0))
       (if (and
         (not (= cursor id))
-        (>= (array-ref cond-var cursor) 0)
+        (>= (array-ref scan.cond-var cursor) 0)
         ;; The taken successor must be entered by this edge ALONE, or
         ;; reaching it proves nothing about the condition.
-        (= (opt-guard-dedup-pred-count index (array-ref taken cursor)) 1)
-        (opt-dom-info-dominates-id? doms (array-ref taken cursor) id)
+        (= (opt-guard-dedup-pred-count index (array-ref scan.taken cursor)) 1)
+        (opt-dom-info-dominates-id? doms (array-ref scan.taken cursor) id)
         (opt-guard-dedup-value-eq?
           type-segment-bases
-          defs
-          (& (Var (array-ref cond-var cursor)))
-          (& (Var (array-ref cond-var id)))
+          scan.defs
+          (& (Var (array-ref scan.cond-var cursor)))
+          (& (Var (array-ref scan.cond-var id)))
           (opt-guard-dedup-eq-fuel))
         (let
           [leaf-count : i64
             (opt-guard-dedup-collect-leaves
-              defs
-              leaves
+              scan.defs
+              (&mut scan.leaves)
               0
-              (& (Var (array-ref cond-var id)))
+              (& (Var (array-ref scan.cond-var id)))
               (opt-guard-dedup-eq-fuel))]
           (and
             (>= leaf-count 0)
             (opt-guard-dedup-fact-live?
               index
-              block-count
-              fwd
-              bwd
-              stack
-              def-blocks
-              leaves
+              scan.block-count
+              (&mut scan.fwd)
+              (&mut scan.bwd)
+              (&mut scan.stack)
+              scan.def-blocks
+              scan.leaves
               leaf-count
               cursor
-              (array-ref taken cursor)
+              (array-ref scan.taken cursor)
               id))))
         (set! found true)
         unit)
@@ -145104,28 +143816,19 @@
   [type-segment-bases : i64]
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
-  [defs : (& defs (__tl_dyn-array OptBoolBranchDef))]
-  [def-blocks : (& def-blocks (__tl_dyn-array i64))]
-  [leaves : (&mut leaves (__tl_dyn-array i64))]
-  [fwd : (&mut fwd (__tl_dyn-array bool))]
-  [bwd : (&mut bwd (__tl_dyn-array bool))]
-  [stack : (&mut stack (__tl_dyn-array i64))]
-  [block-count : i64]
-  [cond-var : (& cond-var (__tl_dyn-array i64))]
-  [taken : (& taken (__tl_dyn-array i64))]
   [other : (& other (__tl_dyn-array i64))]
   [bhash : (& bhash (__tl_dyn-array i64))]
   [bchain : (& bchain (__tl_dyn-array i64))]
   [heads : (& heads opt_i64_i64_map.Map)]
   [fold : (&mut fold (__tl_dyn-array bool))]
   [name : i64]
-  [scan : (& scan OptGuardImplyScan)]) : i64
+  [scan : (&mut scan OptGuardImplyScan)]) : i64
   (let
     [total : i64 0]
-    (for [id (iterator.range 0 block-count)]
+    (for [id (iterator.range 0 scan.block-count)]
       (if (and
-        (>= (array-ref cond-var id) 0)
-        (opt-guard-dedup-chain-head? index cond-var taken other id))
+        (>= (array-ref scan.cond-var id) 0)
+        (opt-guard-dedup-chain-head? index scan.cond-var scan.taken other id))
         (let
           [cursor : i64 id]
           [links : i64 0]
@@ -145140,34 +143843,13 @@
                   type-segment-bases
                   index
                   doms
-                  defs
-                  def-blocks
-                  cond-var
-                  taken
+                  (&mut scan)
                   bchain
                   heads
                   bhash
-                  leaves
-                  fwd
-                  bwd
-                  stack
-                  block-count
                   cursor)
                   4
-                  (opt-guard-imply-decide
-                    index
-                    doms
-                    scan
-                    defs
-                    cond-var
-                    taken
-                    def-blocks
-                    leaves
-                    fwd
-                    bwd
-                    stack
-                    block-count
-                    cursor))]
+                  (opt-guard-imply-decide index doms (&mut scan) cursor))]
               (opt-guard-imply-trace-member!
                 name
                 (opt-cfg-index-label index cursor)
@@ -145179,7 +143861,12 @@
               (+= links 1)
               (set!
                 cursor
-                (opt-guard-dedup-chain-next index cond-var taken other cursor))))
+                (opt-guard-dedup-chain-next
+                  index
+                  scan.cond-var
+                  scan.taken
+                  other
+                  cursor))))
           (opt-guard-imply-trace-chain!
             name
             (opt-cfg-index-label index id)
@@ -145195,8 +143882,8 @@
                   apply-cursor
                   (opt-guard-dedup-chain-next
                     index
-                    cond-var
-                    taken
+                    scan.cond-var
+                    scan.taken
                     other
                     apply-cursor))))
             unit))
@@ -145682,27 +144369,27 @@
                           imply-branches
                           imply-writes
                           imply-write-count
-                          (<= imply-branches (opt-guard-imply-branch-cap)))]
+                          (<= imply-branches (opt-guard-imply-branch-cap))
+                          defs
+                          cond-var
+                          taken
+                          def-blocks
+                          leaves
+                          fact-fwd
+                          fact-bwd
+                          fact-stack
+                          block-count)]
                       (opt-guard-dedup-mark-chains!
                         type-segment-bases
                         index
                         context.doms
-                        defs
-                        def-blocks
-                        (&mut leaves)
-                        (&mut fact-fwd)
-                        (&mut fact-bwd)
-                        (&mut fact-stack)
-                        block-count
-                        cond-var
-                        taken
                         other
                         bhash
                         bchain
                         heads
                         (&mut fold)
                         (ir.compiler-ir-symbol-id name)
-                        scan))))]
+                        (&mut scan)))))]
               ;; The hoist is kept ONLY when it completed into a CSE. A moved
               ;; pair whose re-derivation the memory test refused is pure cost
               ;; -- the bypass edge now runs a load the arm used to run -- so

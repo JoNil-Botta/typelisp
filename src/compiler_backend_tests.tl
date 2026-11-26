@@ -1614,7 +1614,11 @@
           (ir.compiler-ir-global-builder-with-capacity 1)]
         (ir.compiler-ir-global-builder-push!
           (&mut builder)
-          (ir.CompilerIrGlobal.Global 1 (I64) (RuntimeGlobal 2)))
+          (ir.CompilerIrGlobal.Global
+            1
+            (I64)
+            (RuntimeGlobal 2)
+            (ir.CompilerIrGlobalStorage.Word)))
         (ir.compiler-ir-global-builder-to-seq builder))]
     [runtime-global-program : ir.CompilerIrProgram
       (Program
@@ -4224,7 +4228,8 @@
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)
-          false))]
+          false
+          (ir.CompilerIrGlobalStorage.Word)))]
     [index : be_state.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         bases
@@ -5073,8 +5078,8 @@
     (and
       (be_state.backend-and4
         ;; A register-group global (e.g. `pair`) reserves 16 inline bytes; an
-        ;; IAG-1 inline aggregate global (e.g. `nested`) reserves its own byte
-        ;; size; an 8-byte handle/scalar global reserves 8. Accept any of them.
+        ;; inline aggregate global (e.g. `nested`) reserves its own byte size;
+        ;; an 8-byte handle/scalar global reserves 8. Accept any of them.
         (or
           (let
             [needle (str_cat.str-cat "    .comm " symbol ", 8, 8\n")]
@@ -5088,9 +5093,9 @@
         (let
           [needle (str_cat.str-cat "    call " init-symbol "\n")]
           (asm-has? asm needle))
-        ;; The startup sequence installs the initializer result: a pointer
-        ;; store for a boxed cell, or the IAG-1 byte copy for an inline
-        ;; aggregate cell.
+        ;; The startup sequence installs the initializer result: a word store
+        ;; for a word cell, or the inline cell passed as the hidden result
+        ;; pointer for an inline aggregate.
         (or
           (let
             [needle (str_cat.str-cat "    movq %rax, " symbol "(%rip)\n")]
@@ -5098,9 +5103,11 @@
           (let
             [needle
               (str_cat.str-cat
-                "    movups (%rax), %xmm0\n    movups %xmm0, "
+                "    leaq "
                 symbol
-                "(%rip)\n")]
+                "(%rip), %rdi\n    call "
+                init-symbol
+                "\n")]
             (asm-has? asm needle)))
         (let
           [needle (str_cat.str-cat init-symbol ":\n" "")]
@@ -5112,9 +5119,13 @@
         (let
           [needle (str_cat.str-cat "    movq " symbol "(%rip), %r10\n")]
           (asm-has? asm needle))
-        ;; A register-group global is read via its address.
+        ;; A register-group or inline aggregate global is read via its
+        ;; address, or one field at a constant offset from it.
         (let
-          [needle (str_cat.str-cat "    leaq " symbol "(%rip), %r10\n")]
+          [needle (str_cat.str-cat "    leaq " symbol "(%rip), %r" "")]
+          (asm-has? asm needle))
+        (let
+          [needle (str_cat.str-cat "    movq " symbol "+" "")]
           (asm-has? asm needle))))))
 
 (define (compiler-backend-aggregate-global-init-shape-ok?) : bool
@@ -5370,7 +5381,11 @@
   [value : ir.CompilerIrValue]) : unit
   (ir.compiler-ir-global-builder-push!
     builder
-    (ir.CompilerIrGlobal.Global (ci.intern name) ty value)))
+    (ir.CompilerIrGlobal.Global
+      (ci.intern name)
+      ty
+      value
+      (ir.CompilerIrGlobalStorage.Word))))
 
 (define (compiler-backend-test-global-seq-single
   [name : String]
@@ -24890,7 +24905,8 @@ entry:
           (ast.ast-extern-link-input-list-new)
           true
           (ir.CompilerIrReturnStorage.None)
-          false))]
+          false
+          (ir.CompilerIrGlobalStorage.Word)))]
     (match (compiler-backend-runtime-plan-for
       (ir.compiler-ir-function-seq-empty)
       externs)
@@ -24948,7 +24964,8 @@ entry:
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)
-          false))]
+          false
+          (ir.CompilerIrGlobalStorage.Word)))]
     (match (compiler-backend-runtime-plan-for functions externs)
       [(Ok plan)
         (let
@@ -34627,7 +34644,8 @@ entry:
     (ast.ast-extern-link-input-list-new)
     false
     (ir.CompilerIrReturnStorage.None)
-    false))
+    false
+    (ir.CompilerIrGlobalStorage.Word)))
 
 (define (compiler-backend-non-direct-tail-call-emit
   [target : be_state.CompilerBackendTarget]
@@ -36242,7 +36260,8 @@ entry:
       (ast.ast-extern-link-input-list-new)
       true
       (ir.CompilerIrReturnStorage.None)
-      false)
+      false
+      (ir.CompilerIrGlobalStorage.Word))
     (Extern
       referenced-id
       referenced-id
@@ -36255,7 +36274,8 @@ entry:
       (ast.ast-extern-link-input-list-new)
       false
       (ir.CompilerIrReturnStorage.None)
-      false)))
+      false
+      (ir.CompilerIrGlobalStorage.Word))))
 
 ;; A backend job owns one exact intern capability and one cache arena.  Keep a
 ;; compact one-word smoke here so the state boundary itself is exercised before
@@ -36906,7 +36926,8 @@ entry:
             (ast.ast-extern-link-input-list-new)
             false
             (ir.CompilerIrReturnStorage.None)
-            false)
+            false
+            (ir.CompilerIrGlobalStorage.Word))
           (Extern
             same-name-id
             same-name-id
@@ -36919,7 +36940,8 @@ entry:
             (ast.ast-extern-link-input-list-new)
             false
             (ir.CompilerIrReturnStorage.None)
-            false)))]
+            false
+            (ir.CompilerIrGlobalStorage.Word))))]
     (and
       (= source-count-before (ci.intern-pool-len))
       (be_state.backend-and8
@@ -41972,11 +41994,10 @@ b_keep:
     (compiler-backend-placement-windows-seh-shape-ok?)))
 
 ;; ---------------------------------------------------------------------------
-;; IAG-1: inline storage for runtime-initialised aggregate globals.
+;; Inline storage for runtime-initialised aggregate globals (#7905).
 ;; ---------------------------------------------------------------------------
-;; `install!` / `install3!` are the only cell writers and nothing that READS
-;; either global can reach them, so the safety rule keeps both inline: `cell` is
-;; a 16-byte memory aggregate and `triple` a 24-byte one.
+;; Every memory-class aggregate global is its own inline cell: `cell` is a
+;; 16-byte memory aggregate and `triple` a 24-byte one.
 (define (compiler-backend-inline-aggregate-global-source) : String
   "(defstruct Cell (slots (__tl_dyn-array i64)) (len i64))
 (defstruct Triple (a i64) (b i64) (c i64))
@@ -42038,14 +42059,18 @@ b_keep:
           ;; ... and the cell is never read as a pointer any more.
           (asm-lacks? asm "    movq _tl_cell(%rip), %")
           (asm-lacks? asm "    movq _tl_triple(%rip), %")
-          ;; (iii) the startup initializer copies the aggregate into the cell.
+          ;; (iii) the startup initializer writes the cell through its
+          ;; leading sret pointer; nothing is copied after the call.
           (asm-has?
             asm
-            "    call _tl___global_init_cell\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_cell(%rip)\n"))
+            "    leaq _tl_cell(%rip), %rdi\n    call _tl___global_init_cell\n"))
         (be_state.backend-and4
-          (asm-has?
-            asm
-            "    call _tl___global_init_triple\n    movups (%rax), %xmm0\n    movups %xmm0, _tl_triple(%rip)\n    movq 16(%rax), %r10\n    movq %r10, _tl_triple+16(%rip)\n")
+          (and
+            (asm-has?
+              asm
+              "    leaq _tl_triple(%rip), %rdi\n    call _tl___global_init_triple\n")
+            (asm-lacks? asm "    movups %xmm0, _tl_cell(%rip)\n")
+            (asm-lacks? asm "    movq %r10, _tl_triple+16(%rip)\n"))
           ;; (iii) and `(set! g v)` copies the complete right-hand value once
           ;; into the same home: the home address, then 16 and 24 bytes.
           (and
@@ -42070,8 +42095,12 @@ b_keep:
         (asm-has? asm "    leaq _tl_cell(%rip), %rcx\n")
         (asm-has? asm "    movq _tl_cell+8(%rip), %r8\n")
         (asm-has? asm "    movq _tl_triple+16(%rip), %r8\n")
-        (asm-has? asm "    movups %xmm0, _tl_cell(%rip)\n")
-        (asm-has? asm "    movq %r10, _tl_triple+16(%rip)\n")
+        (asm-has?
+          asm
+          "    leaq _tl_cell(%rip), %rcx\n    call _tl___global_init_cell\n")
+        (asm-has?
+          asm
+          "    leaq _tl_triple(%rip), %rcx\n    call _tl___global_init_triple\n")
         (asm-lacks? asm "    movq _tl_cell(%rip), %"))]
     [(Err _) false]))
 
@@ -42090,7 +42119,9 @@ b_keep:
       (and
         (be_state.backend-and4
           (asm-has? asm "    .comm _tl_cell, 16, 8\n")
-          (asm-has? asm "    movups %xmm0, _tl_cell(%rip)\n")
+          (asm-has?
+            asm
+            "    leaq _tl_cell(%rip), %rdi\n    call _tl___global_init_cell\n")
           (asm-lacks? asm "    movq %rax, _tl_cell(%rip)\n")
           (asm-lacks? asm "    .comm _tl_cell, 8, 8\n"))
         (be_state.backend-and4
@@ -42363,7 +42394,8 @@ b_keep:
                   (ast.ast-extern-link-input-list-new)
                   false
                   (ir.CompilerIrReturnStorage.None)
-                  false)))
+                  false
+                  (ir.CompilerIrGlobalStorage.Word))))
             profile)]
         [expected : String
           (if (= mode 2)
@@ -43009,8 +43041,7 @@ b_keep:
     false))
 
 (define (compiler-backend-program-collections-new) : be_state.CompilerBackendProgramCollections
-  (be_state.compiler-backend-program-collections-new-with-iag
-    (be_data.compiler-backend-iag-census-disabled)))
+  (be_state.compiler-backend-program-collections-new))
 
 (define (compiler-backend-source-span-index-build
   [spans : ir.CompilerSourceSpans]) : be_state.CompilerBackendSourceSpanIndex
@@ -44101,7 +44132,8 @@ b_keep:
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)
-          false))
+          false
+          (ir.CompilerIrGlobalStorage.Word)))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-unused-foreign-link-extern-ok?) : bool
@@ -44123,7 +44155,8 @@ b_keep:
       (ir.CompilerIrGlobal.Global
         (compiler-backend-test-symbol "fixture.tl::foreign-value")
         (I64)
-        (Function source-name-id)))
+        (Function source-name-id)
+        (ir.CompilerIrGlobalStorage.Word)))
     (Program
       (ir.compiler-ir-global-builder-to-seq globals)
       (ir.compiler-ir-function-seq-prepend
@@ -44150,7 +44183,8 @@ b_keep:
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)
-          false))
+          false
+          (ir.CompilerIrGlobalStorage.Word)))
       (ir.CompilerIrReturnStorageAuthority.None))))
 
 (define (compiler-backend-source-referenced-foreign-link-extern-ok?) : bool
@@ -46071,10 +46105,7 @@ b_keep:
   [program : ir.CompilerIrProgram]) : be_state.CompilerBackendProgramCollections
   (match program
     [(Program globals functions _ _authority)
-      (be_data.compiler-backend-collect-program-collections-with-iag
-        globals
-        functions
-        (be_data.compiler-backend-iag-census-disabled))]))
+      (be_data.compiler-backend-collect-program-collections globals functions)]))
 
 (define (compiler-backend-runtime-plan-for
   [functions : ir.CompilerIrFunctionSeq]
@@ -46395,7 +46426,8 @@ user_fn:
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)
-          false))]
+          false
+          (ir.CompilerIrGlobalStorage.Word)))]
     [_pointer : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -46409,7 +46441,8 @@ user_fn:
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)
-          false))]
+          false
+          (ir.CompilerIrGlobalStorage.Word)))]
     [_value : unit
       (ir.compiler-ir-extern-builder-push!
         (&mut externs)
@@ -46425,7 +46458,8 @@ user_fn:
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)
-          false))]
+          false
+          (ir.CompilerIrGlobalStorage.Word)))]
     [globals : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 1)]
     [_address : unit
@@ -46436,7 +46470,8 @@ user_fn:
           (Global
             (compiler-backend-test-symbol "package_layout_address")
             (U64)
-            (GlobalAddr name))))]
+            (GlobalAddr name)
+            (ir.CompilerIrGlobalStorage.Word))))]
     [program : ir.CompilerIrProgram
       (Program
         (ir.compiler-ir-global-builder-snapshot-seq (& globals))
@@ -46598,7 +46633,8 @@ user_fn:
           (ast.ast-extern-link-input-list-new)
           (>= kind 5)
           (ir.CompilerIrReturnStorage.None)
-          false))
+          false
+          (ir.CompilerIrGlobalStorage.Word)))
       (let
         [index : be_state.CompilerBackendProgramIndex
           (compiler-backend-program-index-build
@@ -47088,7 +47124,8 @@ user_fn:
       (ast.ast-extern-link-input-list-new)
       false
       (ir.CompilerIrReturnStorage.None)
-      false)))
+      false
+      (ir.CompilerIrGlobalStorage.Word))))
 
 (define (compiler-backend-convention-site-builtin-call
   [symbol : String]
@@ -47802,7 +47839,8 @@ user_fn:
               (ast.ast-extern-link-input-list-new)
               true
               (ir.CompilerIrReturnStorage.None)
-              false)]
+              false
+              (ir.CompilerIrGlobalStorage.Word))]
           (Program
             (ir.compiler-ir-global-seq-empty)
             (ir.compiler-ir-function-seq-prepend
@@ -48925,10 +48963,10 @@ user_fn:
       "Windows excludes narrow <8-byte incoming stack params with valid SEH")))
 
 (test
-  library-object-disables-iag-and-compact-symbols
+  library-object-inline-globals-and-compact-symbols
   ;; In library-object mode (`emit-entry = false`), the backend must:
-  ;; (1) disable IAG-1 inline aggregate globals so 16..64B runtime globals stay
-  ;;     8-byte box pointers compatible with external consumers, and
+  ;; (1) keep memory-class runtime globals inline like any program (#7905):
+  ;;     consumers read them by address through their TLI storage, and
   ;; (2) disable compact `_tl_f<slot>` function symbol renaming so exported
   ;;     symbols match `stdlib.tli` and cannot collide across archive members.
   (let
@@ -48955,14 +48993,13 @@ user_fn:
           [(Ok asm)
             (test.assert-true
               (and
-                ;; IAG-1 disabled: global accessed via box pointer, never inline.
-                (asm-has? asm "    movq _tl_cell(%rip), %")
-                (asm-has? asm "    movq _tl_triple(%rip), %")
-                (asm-lacks? asm "    movq _tl_cell+8(%rip),")
-                (asm-lacks? asm "    movq _tl_triple+16(%rip),")
-                (asm-lacks? asm "    leaq _tl_cell(%rip),")
-                (asm-lacks? asm "    movups %xmm0, _tl_cell(%rip)"))
-              "library object disables IAG-1 inline aggregate globals")
+                ;; The cell is the aggregate: reserved whole, never read as a
+                ;; box pointer.
+                (asm-has? asm "_tl_cell:\n    .zero 16\n")
+                (asm-has? asm "_tl_triple:\n    .zero 24\n")
+                (asm-lacks? asm "    movq _tl_cell(%rip), %")
+                (asm-lacks? asm "    movq _tl_triple(%rip), %"))
+              "library object keeps memory-class globals inline")
             (test.assert-true
               (and
                 ;; Compact _tl_f<slot> renaming disabled for library objects.
@@ -49350,7 +49387,8 @@ user_fn:
         (ast.ast-extern-link-input-list-new)
         false
         (ir.CompilerIrReturnStorage.None)
-        false)]
+        false
+        (ir.CompilerIrGlobalStorage.Word))]
     [prog : ir.CompilerIrProgram
       (Program
         (ir.compiler-ir-global-seq-empty)
@@ -49443,3 +49481,57 @@ user_fn:
         (string.contains (& param) "return %0")
         (not (string.contains (& param) "return %2")))
       (str_cat.str-cat "a reassigned parameter keeps its own reads: " param))))
+
+(define (compiler-backend-object-bss-label-zero-bytes
+  [image : (& cobj.CompilerObjectImage)]
+  [label : (& str)]) : i64
+  (match (cobj.compiler-object-section-list-find image.sections (Bss))
+    [(Section _ records _)
+      (let
+        [count : i64 (cobj.compiler-object-data-record-list-count (& records))]
+        [found : i64 -1]
+        (for [i (iterator.range 0 (- count 1))]
+          (match (cobj.compiler-object-data-record-list-ref (& records) i)
+            [(Label name)
+              (when
+                (string.eq (& name) label)
+                (match (cobj.compiler-object-data-record-list-ref
+                  (& records)
+                  (+ i 1))
+                  [(Zero bytes) (set! found bytes)]
+                  [_ unit]))]
+            [_ unit]))
+        found)]))
+
+(test
+  object-mode-bss-register-group-size-is-16
+  (let
+    [source : String
+      "(defstruct Pair (x i64) (y i64))
+(define (mk-pair [v : i64]) : Pair (Pair v (+ v 1)))
+(define gpair : Pair (mk-pair 20))
+(define (main) : i64 (+ gpair.x gpair.y))"]
+    (match (backend.compiler-backend-emit-source-object-image-for-target
+      (string.copy (& source))
+      (be_state.CompilerBackendTarget.Linux))
+      [(Ok image)
+        (test.assert-i64-eq
+          (compiler-backend-object-bss-label-zero-bytes (& image) "_tl_gpair")
+          16
+          "ELF object mode reserves 16 bytes in .bss for a register-group global")]
+      [(Err _)
+        (test.assert-true
+          false
+          "ELF object image emission for register-group global succeeded")])
+    (match (backend.compiler-backend-emit-source-object-image-for-target
+      source
+      (be_state.CompilerBackendTarget.Windows))
+      [(Ok image)
+        (test.assert-i64-eq
+          (compiler-backend-object-bss-label-zero-bytes (& image) "_tl_gpair")
+          16
+          "COFF object mode reserves 16 bytes in .bss for a register-group global")]
+      [(Err _)
+        (test.assert-true
+          false
+          "COFF object image emission for register-group global succeeded")])))

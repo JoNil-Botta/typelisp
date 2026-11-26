@@ -417,3 +417,44 @@ end-file
 step effects-run
 run run --manifest-path "{{dir}}/app/typelisp.pkg" --target {{host-target}} --opt-level 2
 exit 15
+
+# #7905: Cross-object TLI consumer of a library's runtime-initialized inline
+# aggregate global: covers both direct reads (`ast-extern-metadata-flag-runtime-cell`)
+# and compact-IR hydrated body reads (`Global` -> `GlobalAddr` rewrite).
+case package-tli-inline-aggregate-global
+file lib/typelisp.pkg
+(package (name "agglib") (version "0.1.0") (kind "lib") (entry "src/lib.tl"))
+end-file
+file lib/src/lib.tl
+(defstruct Box4 (a i64) (b i64) (c i64) (d i64))
+(define (make-box [base : i64]) : Box4
+  (Box4 base (+ base 1) (+ base 2) (+ base 3)))
+(define shared-box : Box4 (make-box 7))
+(define (sum-box) : i64
+  (+ shared-box.a (+ shared-box.b (+ shared-box.c shared-box.d))))
+end-file
+file app/typelisp.pkg
+(package (name "aggapp") (version "0.1.0") (kind "bin") (entry "src/main.tl")
+  (dependencies (agglib "../lib")))
+end-file
+file app/src/main.tl
+(import agglib.src.lib as l)
+(define (read-direct [b : (& l.Box4)]) : i64
+  (+ b.a b.d))
+(define (main) : i64
+  (let
+    [copy : l.Box4 l.shared-box]
+    [direct : i64 (+ copy.b (read-direct (& l.shared-box)))]
+    [hydrated : i64 (l.sum-box)]
+    ;; direct = 8 + (7 + 10) = 25; hydrated = 7 + 8 + 9 + 10 = 34; 34 + 25 - 17 = 42.
+    (- (+ hydrated direct) 17)))
+end-file
+step inline-global-run-o0
+run run --manifest-path "{{dir}}/app/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 42
+step inline-global-run-o2
+run run --manifest-path "{{dir}}/app/typelisp.pkg" --target {{host-target}} --opt-level 2
+exit 42
+step inline-global-inspect
+run inspect "{{dir}}/lib/target/release/agglib.tli"
+stdout contains agglib.src.lib: flags=

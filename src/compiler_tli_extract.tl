@@ -2846,7 +2846,7 @@
     [refs : i64_map.Map (i64_map.with-capacity 256)]
     (for [gi (iterator.range 0 globals.len)]
       (match (& (array-ref globals.slots gi))
-        [(ir.CompilerIrGlobal.Global _ _ value)
+        [(ir.CompilerIrGlobal.Global _ _ value _)
           (tli-partition-collect-value-refs! (&mut refs) (& value))]))
     (for [fi (iterator.range 0 functions.len)]
       (match (& (array-ref functions.slots fi))
@@ -3130,7 +3130,7 @@
             (__tl_make-array bool module-count)]
           (for [i (iterator.range 0 ex-count)]
             (match (& (array-ref whole-externs.slots i))
-              [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided _ _)
+              [(ir.CompilerIrExtern.Extern name-id _ _ _ _ _ _ provided _ _ _)
                 (when
                   provided
                   (i64_map.insert-ref!
@@ -3181,7 +3181,7 @@
                         (set! (array-ref found-inits slot) true)))))]))
           (for [i (iterator.range 0 gl-count)]
             (match (& (array-ref whole-globals.slots i))
-              [(ir.CompilerIrGlobal.Global gl-name _ _)
+              [(ir.CompilerIrGlobal.Global gl-name _ _ _)
                 (let
                   [owner-id : i64
                     (lower.compiler-lower-state-global-owner-module-id
@@ -3267,6 +3267,7 @@
                               _
                               _
                               _
+                              _
                               _)
                             (let
                               [raw : String
@@ -3303,12 +3304,13 @@
                         (ast.ast-extern-link-input-list-new)
                         false
                         (ir.CompilerIrReturnStorage.None)
-                        false)))]))
+                        false
+                        (ir.CompilerIrGlobalStorage.Word))))]))
             (for [i (iterator.range 0 gl-count)]
               (when
                 (not (array-ref gl-private i))
                 (match (& (array-ref whole-globals.slots i))
-                  [(ir.CompilerIrGlobal.Global gl-name gl-ty _)
+                  [(ir.CompilerIrGlobal.Global gl-name gl-ty _ gl-storage)
                     (let
                       [gl-name-str : String
                         (ir.compiler-ir-symbol-text gl-name)]
@@ -3334,7 +3336,10 @@
                           (ast.ast-extern-link-input-list-new)
                           false
                           (ir.CompilerIrReturnStorage.None)
-                          false)))])))
+                          false
+                          ;; Another module reads this cell; an inline one is
+                          ;; read by address.
+                          (ir.compiler-ir-global-storage-clone (& gl-storage)))))])))
             ;; The stdlib sysroot attaches v3 compact_ir + packed optimizer
             ;; summaries, pins module digests, verifies, and writes its `.tli`
             ;; here. Package builders write their own `.tli` (no `compact_ir`).
@@ -3478,7 +3483,7 @@
                           (!= (array-ref gl-owners i) m)
                           (array-ref gl-private i))
                         (match (& (array-ref whole-globals.slots i))
-                          [(ir.CompilerIrGlobal.Global gl-name _ _)
+                          [(ir.CompilerIrGlobal.Global gl-name _ _ _)
                             (when
                               (tli-partition-module-refs-contains?
                                 (& refs)
@@ -3525,6 +3530,7 @@
                             link-id
                             _
                             provided
+                            _
                             _
                             _)
                           (when
@@ -3586,7 +3592,8 @@
                                           elinks
                                           eprov
                                           estor
-                                          _)
+                                          _
+                                          ecell)
                                         (ir.compiler-ir-extern-builder-push!
                                           (&mut e-builder)
                                           (ir.CompilerIrExtern.Extern
@@ -3599,7 +3606,8 @@
                                             elinks
                                             eprov
                                             estor
-                                            true))])
+                                            true
+                                            ecell))])
                                     (ir.compiler-ir-extern-builder-push!
                                       (&mut e-builder)
                                       cloned-ext)))))])))
@@ -3610,7 +3618,7 @@
                           (!= (array-ref gl-owners i) m)
                           (not (array-ref gl-private i)))
                         (match (& (array-ref whole-globals.slots i))
-                          [(ir.CompilerIrGlobal.Global gl-name _ _)
+                          [(ir.CompilerIrGlobal.Global gl-name _ _ _)
                             (let
                               [gid : i64 (ir.compiler-ir-symbol-id gl-name)]
                               (when

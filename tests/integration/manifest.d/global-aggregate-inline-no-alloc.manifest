@@ -1,0 +1,1 @@
+global_aggregate_inline_no_alloc|all|-,0,1,2|tests/integration/global_aggregate_inline_no_alloc.tl|42|-|-|stdlib/iterator.tl stdlib/profile.tl|-

@@ -238,15 +238,40 @@
       compiler-object-coff-relocation-overflow-threshold
       semantic-count)))
 
+;; Encode a power-of-two byte alignment as COFF IMAGE_SCN_ALIGN_*BYTES:
+;; `(log2(align) + 1) << 20`, clamped to the COFF maximum of 8192 bytes.
+(define (compiler-object-coff-align-flag [align : i64]) : i64
+  (let
+    [clamped : i64 (cond [(< align 1) 1] [(> align 8192) 8192] [else align])]
+    [shift : i64 0]
+    (while (and (< (shl 1 shift) clamped) (< shift 13))
+      (+= shift 1))
+    (shl (+ shift 1) 20)))
+
+(define (compiler-object-coff-section-flags-for
+  [image : (& image cobj.CompilerObjectImage)]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
+  (match kind
+    [(Bss)
+      (bit-or
+        compiler-object-coff-section-cnt-uninitialized-data
+        (bit-or
+          (compiler-object-coff-align-flag
+            (layout.compiler-object-layout-section-align image (Bss)))
+          (bit-or
+            compiler-object-coff-section-mem-read
+            compiler-object-coff-section-mem-write)))]
+    [_ (compiler-object-coff-section-flags kind)]))
+
 (define (compiler-object-coff-section-header-flags
   [image : (& image cobj.CompilerObjectImage)]
   [kind : cobj.CompilerObjectSectionKind]) : i64
-  (if (compiler-object-coff-relocation-count-overflows?
-    (layout.compiler-object-layout-section-relocation-count image kind))
-    (bit-or
-      (compiler-object-coff-section-flags kind)
-      compiler-object-coff-section-lnk-nreloc-ovfl)
-    (compiler-object-coff-section-flags kind)))
+  (let
+    [base : i64 (compiler-object-coff-section-flags-for image kind)]
+    (if (compiler-object-coff-relocation-count-overflows?
+      (layout.compiler-object-layout-section-relocation-count image kind))
+      (bit-or base compiler-object-coff-section-lnk-nreloc-ovfl)
+      base)))
 
 (define (compiler-object-coff-raw-size-before
   [image : (& image cobj.CompilerObjectImage)]
@@ -1636,6 +1661,78 @@
 
 (cfg
   test
+  (define (compiler-object-coff-bss-align-case-ok?
+    [align : i64]
+    [expected-align-flag : i64]) : bool
+    (let
+      [bss0 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-with-capacity 3)]
+      [bss1 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push bss0 (Align align))]
+      [bss2 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          bss1
+          (Label "_tl_aligned_cell"))]
+      [bss3 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push bss2 (Zero align))]
+      [sections0 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-with-capacity 4)]
+      [sections1 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections0
+          (Section
+            (Text)
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
+      [sections2 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections1
+          (Section
+            (Data)
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
+      [sections3 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections2
+          (Section
+            (Rodata)
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
+      [sections4 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections3
+          (Section
+            (Bss)
+            (cobj.compiler-object-data-record-builder-finish bss3)
+            (cobj.compiler-object-instr-list-empty)))]
+      [symbols0 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-with-capacity 1)]
+      [symbols1 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols0
+          (Symbol "_tl_aligned_cell" (Export) (Data) (Some (Bss))))]
+      [image : cobj.CompilerObjectImage
+        (cobj.CompilerObjectImage
+          (cobj.compiler-object-section-builder-finish sections4)
+          (cobj.compiler-object-symbol-builder-finish symbols1)
+          (cobj.compiler-object-relocation-builder-finish
+            (cobj.compiler-object-relocation-builder-with-capacity 1)))]
+      (match (compiler-object-coff-render (& image))
+        [(Ok obj)
+          (let
+            [bss-hdr : i64
+              (+
+                compiler-object-coff-file-header-size
+                (*
+                  (layout.compiler-object-layout-section-index (Bss))
+                  compiler-object-coff-section-header-size))]
+            [flags : i64
+              (layout.compiler-object-layout-u32-at (& obj) (+ bss-hdr 36))]
+            (= (bit-and flags 0x00f00000) expected-align-flag))]
+        [(Err _) false]))))
+
+(cfg
+  test
   (test
     compiler-object-coff-smoke
     (begin
@@ -1654,4 +1751,9 @@
         "coff relocation overflow is section-local and layout-complete")
       (test.assert-true
         (compiler-object-coff-relocation-layout-rejection-ok?)
-        "coff relocation layout rejects malformed or oversized counts"))))
+        "coff relocation layout rejects malformed or oversized counts")
+      (test.assert-true
+        (and
+          (compiler-object-coff-bss-align-case-ok? 16 0x00500000)
+          (compiler-object-coff-bss-align-case-ok? 32 0x00600000))
+        "coff propagates >8B .bss record alignment into section flags"))))

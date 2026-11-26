@@ -2111,7 +2111,13 @@ function. `opt-def-counts-*` counts entry parameters and all destinations throug
 the verifier's canonical instruction classifier.
 
 The SSA verifier traces marked sret operands to inline aggregate `Alloc`
-storage through address-preserving aliases. Every phi/select input must prove
+storage, or to a global's address, through address-preserving aliases. An
+`Inline size align` global must be a `RuntimeGlobal` whose initializer declares
+exactly that return storage (`opt-verify-inline-global-storage`); only startup
+code and module init wrappers pass a global's cell as an sret operand. The
+initializer's hidden parameter is `$__sret_cell`, not `$__sret`: the cell is
+reachable through `Global g`, so the optimizer never treats it as an exclusive
+caller-provided object. Every phi/select input must prove
 storage, and an address-taken pointer variable cannot supply that proof. The
 definition index reads the current body even when a pass reuses CFG topology.
 Memoized provenance stays in the verification call's scratch lifetime. This

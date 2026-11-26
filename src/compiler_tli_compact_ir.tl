@@ -374,6 +374,9 @@
   (fn-skip (__tl_dyn-array bool))
   (gl-private (__tl_dyn-array bool))
   (gl-literal (__tl_dyn-array bool))
+  ;; The global's cell is its inline aggregate, so a body's read of it is the
+  ;; symbol's address.
+  (gl-inline (__tl_dyn-array bool))
   (fn-link-syms (__tl_dyn-array String))
   (gl-link-syms (__tl_dyn-array String)))
 
@@ -432,7 +435,7 @@
               (i64_map.insert-ref! (&mut st.ref-exs-seen) eidx 1)
               (i64_vec.push-ref! (&mut st.ref-exs) eidx))
             (match (ir.compiler-ir-extern-seq-borrow whole-externs eidx)
-              [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _)
+              [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _ _)
                 (match abi
                   [(ast.AstExternAbi.CVarargsTyped _) (set! st.ok? false)]
                   [_ unit])
@@ -484,12 +487,30 @@
                   (i64_map.insert-ref! (&mut st.ref-exs-seen) eidx 1)
                   (i64_vec.push-ref! (&mut st.ref-exs) eidx))
                 (match (ir.compiler-ir-extern-seq-borrow whole-externs eidx)
-                  [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _)
+                  [(ir.CompilerIrExtern.Extern _ _ _ _ abi link-id _ _ _ _ _)
                     (if (ast.ast-extern-abi-c? abi)
                       (ir.compiler-ir-symbol-text sym-id)
                       (string.copy
                         (intern.intern-compat-state-str interns link-id)))])]
               [(LookupMissing) (ir.compiler-ir-symbol-text sym-id)])])])))
+
+;; A consumer sees this library's cells through word-storage externs, so a
+;; read of an inline cell travels as its address (the same value it has here).
+(define (tli-ir-enc-inline-cell?
+  [tables : (& TliIrEncodeTables)]
+  [whole-externs : (& ir.CompilerIrExternSeq)]
+  [sym-id : i64]) : bool
+  (let
+    [sid : i64 (ir.compiler-ir-symbol-id sym-id)]
+    (match (i64_map.get (& tables.gl-id-to-idx) sid)
+      [(LookupFound gidx) (array-ref tables.gl-inline gidx)]
+      [(LookupMissing)
+        (match (i64_map.get (& tables.ex-id-to-idx) sid)
+          [(LookupFound eidx)
+            (match (ir.compiler-ir-extern-seq-borrow whole-externs eidx)
+              [(ir.CompilerIrExtern.Extern _ _ _ _ _ _ _ _ _ _ storage)
+                (> (ir.compiler-ir-global-storage-inline-size (& storage)) 0)])]
+          [(LookupMissing) false])])))
 
 (define (tli-ir-enc-value!
   [tables : (& TliIrEncodeTables)]
@@ -500,8 +521,11 @@
   (match value
     [(ir.CompilerIrValue.Var v) (tli.TliCompactValue.Var v)]
     [(ir.CompilerIrValue.Global g)
-      (tli.TliCompactValue.Global
-        (tli-ir-enc-global-symbol! tables interns st whole-externs g))]
+      (if (tli-ir-enc-inline-cell? tables whole-externs g)
+        (tli.TliCompactValue.GlobalAddr
+          (tli-ir-enc-global-symbol! tables interns st whole-externs g))
+        (tli.TliCompactValue.Global
+          (tli-ir-enc-global-symbol! tables interns st whole-externs g)))]
     [(ir.CompilerIrValue.GlobalAddr g)
       (tli.TliCompactValue.GlobalAddr
         (tli-ir-enc-global-symbol! tables interns st whole-externs g))]
@@ -985,7 +1009,7 @@
                       (match (ir.compiler-ir-global-seq-borrow
                         whole-globals
                         gidx)
-                        [(ir.CompilerIrGlobal.Global _ gty _)
+                        [(ir.CompilerIrGlobal.Global _ gty _ _)
                           (let
                             [lsym : String
                               (string.copy
@@ -1014,6 +1038,7 @@
                             _
                             _
                             estorage
+                            _
                             _)
                           (let
                             [abi-tag : i64
@@ -1097,6 +1122,7 @@
     [fn-links-copy : (__tl_dyn-array String) (__tl_make-array String fn-count)]
     [gl-priv-copy : (__tl_dyn-array bool) (__tl_make-array bool gl-count)]
     [gl-lit-copy : (__tl_dyn-array bool) (__tl_make-array bool gl-count)]
+    [gl-inline-copy : (__tl_dyn-array bool) (__tl_make-array bool gl-count)]
     [gl-links-copy : (__tl_dyn-array String) (__tl_make-array String gl-count)]
     [out-globals : global_vec.Vec (global_vec.new)]
     (for [i (iterator.range 0 fn-count)]
@@ -1122,7 +1148,7 @@
               i))]))
     (for [i (iterator.range 0 ex-count)]
       (match (ir.compiler-ir-extern-seq-borrow whole-externs i)
-        [(ir.CompilerIrExtern.Extern ename _ _ _ _ _ _ provided _ _)
+        [(ir.CompilerIrExtern.Extern ename _ _ _ _ _ _ provided _ _ _)
           (unless
             provided
             (i64_map.insert-ref!
@@ -1135,11 +1161,14 @@
         (array-ref gl-links-copy i)
         (string.copy (& (array-ref (deref gl-link-syms) i))))
       (match (ir.compiler-ir-global-seq-borrow whole-globals i)
-        [(ir.CompilerIrGlobal.Global gl-name gl-ty gl-init)
+        [(ir.CompilerIrGlobal.Global gl-name gl-ty gl-init gl-storage)
           (let
             [gid : i64 (ir.compiler-ir-symbol-id gl-name)]
             [written? : bool
               (i64_map.contains? (& lib-summaries.written-globals) gid)]
+            (set!
+              (array-ref gl-inline-copy i)
+              (> (ir.compiler-ir-global-storage-inline-size (& gl-storage)) 0))
             (i64_map.insert-ref! (&mut gl-id-to-idx) gid i)
             (when
               (not written?)
@@ -1197,6 +1226,7 @@
           fn-skip-copy
           gl-priv-copy
           gl-lit-copy
+          gl-inline-copy
           fn-links-copy
           gl-links-copy)]
       [existing-count : i64 (array-length bundle.compact-bodies)]
@@ -1242,7 +1272,7 @@
       ;; reach any runtime-initialized global never observes module startup inits.
       (for [gi (iterator.range 0 gl-count)]
         (match (ir.compiler-ir-global-seq-borrow whole-globals gi)
-          [(ir.CompilerIrGlobal.Global gl-name _ gl-init)
+          [(ir.CompilerIrGlobal.Global gl-name _ gl-init _)
             (match gl-init
               [(ir.CompilerIrValue.RuntimeGlobal _)
                 (i64_map.insert-ref!
@@ -1259,7 +1289,7 @@
           (set! changed? false)
           (for [gi (iterator.range 0 gl-count)]
             (match (ir.compiler-ir-global-seq-borrow whole-globals gi)
-              [(ir.CompilerIrGlobal.Global gl-name _ gl-init)
+              [(ir.CompilerIrGlobal.Global gl-name _ gl-init _)
                 (let
                   [gsid : i64 (ir.compiler-ir-symbol-id gl-name)]
                   (unless
@@ -2357,15 +2387,19 @@
       (ast.ast-extern-link-input-list-new)
       false
       (tli-compact-return-storage-to-ir pools (& ref.return-storage))
-      false)))
+      false
+      (ir.CompilerIrGlobalStorage.Word))))
 
 (define (tli-compact-global-to-ir
   [pools : ast.AstNodePoolContext]
   [g : (& tli.TliCompactGlobal)]) : ir.CompilerIrGlobal
+  ;; Only never-written literal globals travel as compact globals, and a
+  ;; literal cell is one word.
   (ir.CompilerIrGlobal.Global
     (tli-compact-dec-symbol (& g.symbol))
     (tli-compact-type-to-ast pools (& g.ty))
-    (tli-compact-dec-value (& g.init))))
+    (tli-compact-dec-value (& g.init))
+    (ir.CompilerIrGlobalStorage.Word)))
 
 ;; --- Consumer: O1/O2 compact_ir hydration into CompilerIrProgram ---
 (defstruct TliStartupInitDep
@@ -2595,7 +2629,7 @@
                         (&mut unused)))]))])]))
     (for [gi (iterator.range 0 globals.len)]
       (match (ir.compiler-ir-global-seq-borrow globals gi)
-        [(ir.CompilerIrGlobal.Global _ _ ginit)
+        [(ir.CompilerIrGlobal.Global _ _ ginit _)
           (tli-compact-scan-ir-all-syms-value! ginit (&mut syms) (&mut unused))]))
     syms))
 
@@ -2778,7 +2812,7 @@
         ;; body-available, since un-inlined bodies revert to externs).
         (for [ei (iterator.range 0 externs.len)]
           (match (ir.compiler-ir-extern-seq-borrow externs ei)
-            [(ir.CompilerIrExtern.Extern ename _ _ _ _ elink _ prov _ _)
+            [(ir.CompilerIrExtern.Extern ename _ _ _ _ elink _ prov _ _ _)
               (unless
                 prov
                 (let
@@ -3110,7 +3144,7 @@
                 (i64_map.with-capacity (* (+ externs.len 1) 2))]
               (for [i (iterator.range 0 globals.len)]
                 (match (ir.compiler-ir-global-seq-borrow (& globals) i)
-                  [(ir.CompilerIrGlobal.Global gname _ _)
+                  [(ir.CompilerIrGlobal.Global gname _ _ _)
                     (i64_map.insert-ref!
                       (&mut defined-gls)
                       (ir.compiler-ir-symbol-id gname)
@@ -3126,6 +3160,7 @@
                       elink
                       _
                       provided
+                      _
                       _
                       _)
                     (unless
@@ -3191,7 +3226,7 @@
                                   (&mut ref-globals)))]))])]))
               (for [i (iterator.range 0 globals.len)]
                 (match (ir.compiler-ir-global-seq-borrow (& globals) i)
-                  [(ir.CompilerIrGlobal.Global gname _ ginit)
+                  [(ir.CompilerIrGlobal.Global gname _ ginit _)
                     (i64_map.insert-ref!
                       (&mut defined-gls)
                       (ir.compiler-ir-symbol-id gname)
@@ -3212,6 +3247,7 @@
                       elink
                       _
                       provided
+                      _
                       _
                       _)
                     (unless
@@ -3485,7 +3521,8 @@
                           links
                           prov
                           storage
-                          ba)
+                          ba
+                          cell)
                         (let
                           [avail? : bool
                             (or
@@ -3507,7 +3544,8 @@
                               links
                               prov
                               storage
-                              avail?)))]))
+                              avail?
+                              cell)))]))
                   (for [i (iterator.range 0 added-ex-seq.len)]
                     (match (ir.compiler-ir-extern-seq-ref (& added-ex-seq) i)
                       [(ir.CompilerIrExtern.Extern
@@ -3520,7 +3558,8 @@
                           links
                           prov
                           storage
-                          _)
+                          _
+                          cell)
                         (let
                           [avail? : bool
                             (i64_map.contains?
@@ -3538,7 +3577,8 @@
                               links
                               prov
                               storage
-                              avail?)))]))
+                              avail?
+                              cell)))]))
                   (let
                     [final-globals : ir.CompilerIrGlobalSeq
                       (ir.compiler-ir-global-builder-snapshot-seq
@@ -3599,6 +3639,7 @@
                                   elink
                                   _
                                   prov
+                                  _
                                   _
                                   _)
                                 (when

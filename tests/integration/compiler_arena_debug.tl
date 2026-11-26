@@ -76,10 +76,16 @@
     [_clear : unit
       (unsafe
         (arena.tl_arena_set 0))]
-    [_allocation : i64 (tl_alloc 8)]
+    [first : i64 (tl_alloc 8)]
+    [mark : i64 (arena.tl_region_mark)]
+    [second : i64 (tl_alloc 8)]
+    (unsafe
+      (arena.tl_region_reset mark))
     (unsafe
       (arena.tl_region_reset 0))
-    42))
+    (if (= (- second first) 8)
+      42
+      1)))
 
 (define (compiler-arena-debug-fixture-destroy) : i64
   (let

@@ -369,6 +369,14 @@ results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
 i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
 with smaller memory-storage layouts and zero/positive field values as controls.
 
+`global_aggregate_inline_no_alloc.tl` covers inline aggregate globals (#7905)
+at opt0/1/2 on both hosts: 24/64/72/416/3/0-byte struct, enum, tuple and array
+globals, `profile.alloc-total` unchanged across their initializers, whole and
+field `set!`, a 10k-iteration update loop, and an initializer that reads an
+earlier inline global. The backend inline-aggregate shape tests pin the Linux
+(`%rdi`) and Win64 (`%rcx`) `leaq g(%rip)` + `call __global_init_g` startup
+sequence with no post-call copy.
+
 `return-storage-identity-moves` checks that full-width U64 self copies preserve
 the incoming hidden result address. Real overwrites, narrowing moves, undefined
 pointers, local aliases and local ranges retain their definition checks.

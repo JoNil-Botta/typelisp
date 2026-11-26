@@ -15,7 +15,54 @@
 (defenum StorageRange
   (Unknown)
   (Unproven)
-  (Range i64 i64))
+  (Range i64 i64)
+  (GlobalCell i64 i64))
+
+;; Map of program-level inline global cells (`symbol-id -> slot`) so return-
+;; storage verification can reject `GlobalAddr` sret operands that name a word
+;; global, an unknown symbol, or an inline cell smaller/less-aligned than the
+;; callee's ABI.
+(defstruct GlobalCells
+  (present? bool)
+  (index names.Map)
+  (sizes (__tl_dyn-array i64))
+  (aligns (__tl_dyn-array i64)))
+
+(define (global-cells-none) : GlobalCells
+  (GlobalCells
+    false
+    (names.with-capacity 1)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)))
+
+(define (global-cells-build [globals : (& globals ir.CompilerIrGlobalSeq)]) : GlobalCells
+  (let
+    [count : i64 0]
+    [i : i64 0]
+    [index : names.Map (names.with-capacity (+ (* globals.len 2) 1))]
+    [sizes : (__tl_dyn-array i64) (__tl_make-array i64 globals.len)]
+    [aligns : (__tl_dyn-array i64) (__tl_make-array i64 globals.len)]
+    (while (< i globals.len)
+      (match (ir.compiler-ir-global-seq-borrow globals i)
+        [(ir.CompilerIrGlobal.Global
+          name
+          _
+          _
+          (ir.CompilerIrGlobalStorage.Inline size align))
+          (names.insert-ref! (&mut index) (ir.compiler-ir-symbol-id name) count)
+          (set! (array-ref sizes count) size)
+          (set! (array-ref aligns count) align)
+          (set! count (+ count 1))]
+        [_ unit])
+      (set! i (+ i 1)))
+    (GlobalCells true index sizes aligns)))
+
+(define (global-cell-inline?
+  [globals : (& globals GlobalCells)]
+  [symbol-id : i64]) : bool
+  (if (not globals.present?)
+    true
+    (names.contains? (& globals.index) symbol-id)))
 
 (defstruct StorageFacts
   (bases i64)
@@ -327,14 +374,29 @@
             (StorageRange.Range root bytes)
             (StorageRange.Unproven))]
         [(StorageRange.Unproven) (StorageRange.Unproven)]
+        [(StorageRange.GlobalCell _ _) (StorageRange.Unknown)]
+        [(StorageRange.Unknown) (StorageRange.Unknown)])]
+    [(StorageRange.GlobalCell bytes align)
+      (match right
+        [(StorageRange.GlobalCell other-bytes other-align)
+          (StorageRange.GlobalCell
+            (if (< bytes other-bytes)
+              bytes
+              other-bytes)
+            (if (< align other-align)
+              align
+              other-align))]
+        [(StorageRange.Unproven) (StorageRange.Unproven)]
+        [(StorageRange.Range _ _) (StorageRange.Unknown)]
         [(StorageRange.Unknown) (StorageRange.Unknown)])]))
 
 ;; The budget is shared across branches, not reset at each recursive edge.
 ;; Exhaustion supplies no proof. Phi/Select keep a range only when every arm
 ;; has the same one (`range-join`), and GEP admits only zero offsets; interior
 ;; pointers cannot borrow root capacity.
-(define (range
+(define (range-with-globals
   [facts : (& facts StorageFacts)]
+  [globals : (& globals GlobalCells)]
   [value : ir.CompilerIrValue]
   [budget : (&mut budget i64)]) : StorageRange
   (if (<= (deref budget) 0)
@@ -356,18 +418,18 @@
                       [(ir.CompilerIrInstr.AddrOf dst source _storage-words)
                         (addressed-range facts dst source)]
                       [(ir.CompilerIrInstr.Mov _ source _)
-                        (range facts source budget)]
+                        (range-with-globals facts globals source budget)]
                       [(ir.CompilerIrInstr.Cast _ source from to)
                         (if (ir.compiler-ir-storage-address-cast?
                           (& from)
                           (& to))
-                          (range facts source budget)
+                          (range-with-globals facts globals source budget)
                           (StorageRange.Unknown))]
                       [(ir.CompilerIrInstr.Gep _ base offset _)
                         (if (match offset
                           [(ir.CompilerIrValue.I64 n) (= n 0)]
                           [_ false])
-                          (range facts base budget)
+                          (range-with-globals facts globals base budget)
                           (StorageRange.Unknown))]
                       [(ir.CompilerIrInstr.Phi _ inputs _)
                         (if (<= inputs.len 0)
@@ -376,7 +438,11 @@
                             [first : ir.CompilerIrPhiInput
                               (ir.compiler-ir-phi-input-seq-ref inputs 0)]
                             [found : StorageRange
-                              (range facts first.value budget)]
+                              (range-with-globals
+                                facts
+                                globals
+                                first.value
+                                budget)]
                             [i : i64 1]
                             (while (and (< i inputs.len) (> (deref budget) 0))
                               (let
@@ -386,7 +452,11 @@
                                   found
                                   (range-join
                                     found
-                                    (range facts input.value budget)))
+                                    (range-with-globals
+                                      facts
+                                      globals
+                                      input.value
+                                      budget)))
                                 (set! i (+ i 1))))
                             (if (= i inputs.len)
                               found
@@ -400,10 +470,30 @@
                               boxed
                               on-false)]
                           (range-join
-                            (range facts left budget)
-                            (range facts right budget)))]
+                            (range-with-globals facts globals left budget)
+                            (range-with-globals facts globals right budget)))]
                       [_ (StorageRange.Unknown)])]))))]
+        ;; When program globals are in scope, a `GlobalAddr` proves storage
+        ;; only if it names an `Inline` global cell whose size and alignment
+        ;; can be checked against the callee ABI.
+        [(ir.CompilerIrValue.GlobalAddr sym)
+          (if (not globals.present?)
+            (StorageRange.Unproven)
+            (match (names.get (& globals.index) (ir.compiler-ir-symbol-id sym))
+              [(names.LookupFound slot)
+                (StorageRange.GlobalCell
+                  (array-ref globals.sizes slot)
+                  (array-ref globals.aligns slot))]
+              [(names.LookupMissing) (StorageRange.Unknown)]))]
         [_ (StorageRange.Unknown)]))))
+
+(define (range
+  [facts : (& facts StorageFacts)]
+  [value : ir.CompilerIrValue]
+  [budget : (&mut budget i64)]) : StorageRange
+  (let
+    [empty : GlobalCells (global-cells-none)]
+    (range-with-globals facts (& empty) value budget)))
 
 (define (call-shape
   [bases : i64]
@@ -733,17 +823,19 @@
           (ir.CompilerIrMaybeValue.No))]
       [_ (ir.CompilerIrMaybeValue.No)])))
 
-(define (instruction-proof
+(define (instruction-proof-with-globals
   [bases : i64]
   [catalog : (& catalog ir.CompilerIrReturnStorageIndex)]
   [facts : (& facts StorageFacts)]
+  [globals : (& globals GlobalCells)]
   [instr : (& instr ir.CompilerIrInstr)]) : ReturnStorageProof
   (match (marked-pointer instr)
     [(ir.CompilerIrMaybeValue.No) (ReturnStorageProof.Unavailable)]
     [(ir.CompilerIrMaybeValue.Some pointer)
       (let
         [budget : i64 256]
-        [storage : StorageRange (range facts pointer (&mut budget))]
+        [storage : StorageRange
+          (range-with-globals facts globals pointer (&mut budget))]
         (match storage
           [(StorageRange.Unproven) (ReturnStorageProof.Unavailable)]
           [(StorageRange.Unknown)
@@ -751,6 +843,21 @@
               (ReturnStorageProof.Unavailable)
               (ReturnStorageProof.Invalid
                 "sret argument is not a proven inline output range"))]
+          [(StorageRange.GlobalCell bytes align)
+            (match (instruction-contract bases catalog facts instr)
+              [(ReturnStorageProof.Known boxed)
+                (cond
+                  [(< bytes (deref boxed).bytes)
+                    (ReturnStorageProof.Invalid
+                      "sret inline global cell is smaller than callee ABI")]
+                  [(< align (deref boxed).alignment)
+                    (ReturnStorageProof.Invalid
+                      "sret inline global cell alignment is smaller than callee ABI")]
+                  [else (ReturnStorageProof.Known boxed)])]
+              [(ReturnStorageProof.Invalid message)
+                (ReturnStorageProof.Invalid message)]
+              [(ReturnStorageProof.Unavailable)
+                (ReturnStorageProof.Unavailable)])]
           [(StorageRange.Range root bytes)
             (match (instruction-contract bases catalog facts instr)
               [(ReturnStorageProof.Known boxed)
@@ -770,3 +877,12 @@
                 (ReturnStorageProof.Invalid message)]
               [(ReturnStorageProof.Unavailable)
                 (ReturnStorageProof.Unavailable)])]))]))
+
+(define (instruction-proof
+  [bases : i64]
+  [catalog : (& catalog ir.CompilerIrReturnStorageIndex)]
+  [facts : (& facts StorageFacts)]
+  [instr : (& instr ir.CompilerIrInstr)]) : ReturnStorageProof
+  (let
+    [empty : GlobalCells (global-cells-none)]
+    (instruction-proof-with-globals bases catalog facts (& empty) instr)))

@@ -62,10 +62,12 @@
   (Closed))
 
 ;; Sealed: a field holds a dynamic array. Growing or shrinking it writes the
-;; handle's storage, so it takes the same admission as a field write.
+;; handle's storage, so it takes the same admission as a field write; taking an
+;; element also writes a liveness bitmap the field may hold.
 (defstruct Vecs
   (storage (MutPtr Storage))
-  (items (__tl_dyn-array i64)))
+  (items (__tl_dyn-array i64))
+  (live (__tl_dyn-array bool)))
 
 ;; Not sealed on its own: the dynamic array is one field deeper.
 (defstruct VecMeta
@@ -77,7 +79,10 @@
   (meta VecMeta))
 
 (define (null-vecs) : Vecs
-  (Vecs (ptr-null : (MutPtr Storage)) (__tl_make-array i64 1)))
+  (Vecs
+    (ptr-null : (MutPtr Storage))
+    (__tl_make-array i64 1)
+    (__tl_make-array bool 1)))
 
 (define (null-vec-owner) : VecOwner
   (VecOwner (ptr-null : (MutPtr Storage)) (VecMeta (__tl_make-array i64 3))))

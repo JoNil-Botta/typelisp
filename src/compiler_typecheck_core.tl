@@ -72790,8 +72790,6 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [_admission : unit
-          (try (tc-place-mutation-admission ctx env (& array)))]
         [_ (try (tc-spmd-masked-if-expr ctx expr-bases env spmd-env array))]
         (let
           [_ (try (tc-spmd-masked-if-index ctx expr-bases env spmd-env index))]
@@ -74725,8 +74723,6 @@
           (ast.ast-expr-segment-bases-get expr-bases index-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [_admission : unit
-          (try (tc-place-mutation-admission ctx env (& array)))]
         [array-info : TcSpmdExprInfo
           (try (tc-spmd-expr ctx expr-bases env spmd-env array))]
         (match array-info
@@ -74908,8 +74904,6 @@
           (ast.ast-expr-segment-bases-get expr-bases array-box)]
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
-        [_admission : unit
-          (try (tc-place-mutation-admission ctx env (& array)))]
         [array-info : TcSpmdExprInfo
           (try (tc-spmd-expr ctx expr-bases env spmd-env array))]
         (match array-info
@@ -89296,8 +89290,13 @@
   [index-box : i64]) : ResultTcType
   (let
     [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
+    [live : ast.AstExpr (tc-context-expr-get ctx live-box)]
     [array-ty (try (tc-expr-id ctx env array-box))]
     [_admission : unit (try (tc-place-mutation-admission ctx env (& array)))]
+    ;; Clearing the liveness bit writes the bitmap, so a sealed handle's
+    ;; dynamic-array field is admitted as a source, never as the bitmap.
+    [_live-admission : unit
+      (try (tc-place-mutation-admission ctx env (& live)))]
     [receiver (try (tc-array-set-receiver ctx array-ty))]
     (match receiver
       [(TcArrayReceiver container-ty elem-ty)
@@ -110505,6 +110504,17 @@
       (ast.ast-ty-box
         (&
           (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)))]
+    ;; A quoted `(CFunc ...)` keeps only its signature, so the nominal names and
+    ;; lifetimes inside that signature are the ones this traversal owns.
+    [(CFunc signature mode)
+      (CFunc
+        (ast.ast-node-pool-context-type-push
+          env.pools
+          (macro-hygiene-type
+            (macro-hygiene-type-get env signature)
+            env
+            macro-name))
+        mode)]
     [(Ptr elem)
       (ast.ast-ty-ptr
         (&

@@ -6087,6 +6087,18 @@
         (& load.compiler-load-active-session-state))]
     [unrooted : i64
       (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
+    [tli-stdlib-path : String
+      (tli_hydrate.tli-hydrate-provenance-path true "stdlib/vector.tl")]
+    [unhydrated-tli-stdlib : i64
+      (load.compiler-load-provider-id-for-path (& tli-stdlib-path))]
+    [_note-tli-stdlib : unit
+      (load.compiler-load-session-state-note-tli-stdlib-provenance-id!
+        (& load.compiler-load-active-session-state)
+        (ci.intern (string.copy (& tli-stdlib-path))))]
+    [hydrated-tli-stdlib : i64
+      (load.compiler-load-provider-id-for-path (& tli-stdlib-path))]
+    [disk-after-tli-stdlib : i64
+      (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
     [_rooted : unit
       (load.compiler-load-session-state-note-configured-stdlib-roots!
         (& load.compiler-load-active-session-state)
@@ -6097,6 +6109,9 @@
         (& load.compiler-load-active-session-state))]
     (and
       (not (= unrooted (load.compiler-load-provider-stdlib)))
+      (= unhydrated-tli-stdlib (load.compiler-load-provider-unknown))
+      (= hydrated-tli-stdlib (load.compiler-load-provider-stdlib))
+      (not (= disk-after-tli-stdlib (load.compiler-load-provider-stdlib)))
       (= rooted (load.compiler-load-provider-stdlib))
       (=
         (load.compiler-load-provider-id-for-path "<generated test harness>")

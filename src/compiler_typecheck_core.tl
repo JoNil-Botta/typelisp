@@ -118041,6 +118041,10 @@
           (string.copy (& (array-ref (deref names) index))))))
     cfgs))
 
+(define (tc-provenance-display-path [provenance-id : i64]) : String
+  (tli_hydrate.tli-hydrate-strip-stdlib-provenance-prefix
+    (& (ci.intern-str provenance-id))))
+
 (defenum MacroTliFallbackBody
   ;; Not a hydrated macro: evaluate the declaration's own body.
   (Own)
@@ -118099,7 +118103,8 @@
         (return (Unavailable unavailable)))
       (let
         [path : String
-          (string.copy (& (array-ref source-names.pool-slots provenance-id)))]
+          (tli_hydrate.tli-hydrate-strip-stdlib-provenance-prefix
+            (& (array-ref source-names.pool-slots provenance-id)))]
         (match (cload.compiler-load-session-try-read-input-text (& path))
           [(ErrIoString _) (Unavailable unavailable)]
           [(OkIoString text)

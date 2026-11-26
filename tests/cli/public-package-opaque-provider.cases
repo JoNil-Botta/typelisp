@@ -148,6 +148,11 @@ run check stdlib/crypto_hmac_sha256/extra.tl
 exit 1
 stderr contains error[E0221]
 stderr contains opaque type stdlib.crypto_hmac_sha256/HmacSha256Storage outside its module family
+step stdlib-subdir-entry-check-source
+run check --no-prebuilt-stdlib stdlib/crypto_hmac_sha256/extra.tl
+exit 1
+stderr contains error[E0221]
+stderr contains opaque type stdlib.crypto_hmac_sha256/HmacSha256Storage outside its module family
 step stdlib-subdir-package-check
 run check --manifest-path typelisp.pkg
 exit 1

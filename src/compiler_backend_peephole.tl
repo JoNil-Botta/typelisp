@@ -20491,6 +20491,7 @@
                     (compiler-backend-outline-is? data first de ".bss"))
                   (set! code false)]
                 [(or
+                    (compiler-backend-outline-is? data first de ".word")
                     (compiler-backend-outline-is? data first de ".long")
                     (compiler-backend-outline-is? data first de ".quad")
                     (compiler-backend-outline-is? data first de ".rva")

@@ -5132,7 +5132,7 @@
           (asm-has?
             asm
             "    js .L_tl_main_stack_abort\n"
-            ".ascii \"typelisp runtime: main-stack reservation failed\\n\"\n"
+            ".ascii \"tl: main-stack reservation failed\\n\"\n"
             ".L_tl_main_stack_abort:\n    movq $1, %rax\n")
           (not
             (let
@@ -18560,6 +18560,91 @@ f:
             "    .long .Lf0_zero - .Lf0_entry_switch_table\n")))]
     [(Err _) false]))
 
+(define (compiler-backend-total-switch-compact-os-asm-ok?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [program : ir.CompilerIrProgram
+      (compiler-backend-total-switch-test-program)]
+    [state-nonpic : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [state-pic : be_state.CompilerBackendState
+      (be_state.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    (be_state.compiler-backend-state-set-optimize-for-size! state-nonpic true)
+    (be_state.compiler-backend-state-set-optimize-for-size! state-pic true)
+    (let
+      [nonpic-ok : bool
+        (match (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state-nonpic
+          (ast.ast-node-pool-context-capture-active)
+          program
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok asm)
+            (let
+              [body : String (compiler-backend-asm-function-body asm "main")]
+              (and
+                (asm-has?
+                  body
+                  "    movswq .Lf0_entry_switch_table(,%r"
+                  ",2), %r")
+                (asm-has?
+                  body
+                  ".Lf0_entry_switch_base:\n    leaq .Lf0_entry_switch_base(%rip), "
+                  "    addq "
+                  "    jmp *%r")
+                (=
+                  (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                  6)
+                (asm-has?
+                  asm
+                  "    .section .rodata\n    .balign 2\n.Lf0_entry_switch_table:\n"
+                  "    .word .Lf0_zero - .Lf0_entry_switch_base\n"
+                  "    .word .Lf0_five - .Lf0_entry_switch_base\n")))]
+          [(Err _) false])]
+      [pic-ok : bool
+        (match (backend.compiler-backend-emit-program-pic-target-with-mode-with-type-segment-bases-and-crt-and-profile-state-backend-state
+          state-pic
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (compiler-backend-total-switch-test-program)
+          (be_state.CompilerBackendTarget.Linux)
+          (Scalar)
+          (ir.compiler-source-spans-empty)
+          true
+          false
+          (profile_state.compiler-profile-state-new))
+          [(Ok output)
+            (let
+              [asm : String output.asm]
+              [body : String (compiler-backend-asm-function-body asm "main")]
+              (and
+                (asm-has?
+                  body
+                  "    leaq .Lf0_entry_switch_table(%rip), "
+                  "    movswq ("
+                  ".Lf0_entry_switch_base:\n    leaq .Lf0_entry_switch_base(%rip), "
+                  "    addq ")
+                (=
+                  (backend.compiler-backend-string-count asm "    .word .Lf0_")
+                  6)
+                (asm-has?
+                  asm
+                  "    .section .rodata\n    .balign 2\n.Lf0_entry_switch_table:\n"
+                  "    .word .Lf0_zero - .Lf0_entry_switch_base\n")))]
+          [(Err _) false])]
+      (and nonpic-ok pic-ok))))
+
+(test
+  backend-total-switch-compact-os
+  (test.assert-true
+    (compiler-backend-total-switch-compact-os-asm-ok?)
+    "-Os emits 2-byte intra-function relative switch tables for small functions"))
+
 (define (compiler-backend-total-switch-object-image-ok?) : bool
   (match (be_object.compiler-backend-emit-program-object-image-linux
     (compiler-backend-total-switch-test-program)
@@ -25157,7 +25242,8 @@ entry:
       target
       features
       false
-      false)))
+      false
+      true)))
 
 (define (compiler-backend-runtime-global-inventory-target-ok?
   [target : be_state.CompilerBackendTarget]) : bool
@@ -44148,7 +44234,8 @@ b_keep:
     ;; needs no `.tdata` initial value.
     (has
       ".section .tbss,\"awT\",@nobits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .zero 8\n"
-      ".L_tl_null_arena:\n    .quad 0, 0, 0, 0, 0, 0, 17, 0\n"
+      "    .section .bss\n    .balign 8\n    .globl __tl_null_arena\n__tl_null_arena:\n.L_tl_null_arena:\n    .zero 64\n"
+      "_tl_start:\n    movb $17, .L_tl_null_arena+48(%rip)\n"
       "    leaq .L_tl_null_arena(%rip), %rsi\n    movq %rsi, %fs:tl_current_arena@tpoff\n    ret\n"
       "tl_thread_init:\n"
       "tl_arena_make_atomic:\n"
@@ -46274,6 +46361,7 @@ user_fn:
             backtrace
             63)
           false
+          false
           false))]
     (and
       (asm-has?
@@ -47515,25 +47603,61 @@ user_fn:
 ;; Only a CRT or loader-built TLS block copies `.tdata`; the freestanding
 ;; entry stores the null arena itself, so its arena word is `.tbss`.
 (define (compiler-backend-freestanding-arena-tbss-ok?) : bool
+  (cbi.compiler-builtin-initialize-for-parse!)
   (let
-    [features : runtime_common.CompilerBackendRuntimeFeatures
+    [debug-features : runtime_common.CompilerBackendRuntimeFeatures
+      (runtime_common.CompilerBackendRuntimeFeatures
+        true
+        false
+        false
+        true
+        false
+        false
+        false
+        false
+        31)]
+    [release-features : runtime_common.CompilerBackendRuntimeFeatures
       (be_data.compiler-backend-runtime-features
         (compiler-backend-runtime-helper-full-plan))]
     [freestanding : String
       (be_data.compiler-backend-runtime-data-for-target
         (be_state.CompilerBackendTarget.Linux)
-        features
+        release-features
+        true)]
+    [freestanding-debug : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Linux)
+        debug-features
         true)]
     [hosted : String
       (be_data.compiler-backend-runtime-data-for-target
         (be_state.CompilerBackendTarget.Linux)
-        features
+        release-features
         false)]
+    [win-freestanding : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Windows)
+        release-features
+        true)]
+    [win-debug : String
+      (be_data.compiler-backend-runtime-data-for-target
+        (be_state.CompilerBackendTarget.Windows)
+        debug-features
+        true)]
+    [bss-null : String
+      "    .section .bss\n    .balign 8\n    .globl __tl_null_arena\n__tl_null_arena:\n.L_tl_null_arena:\n    .zero 64\n"]
+    [rodata-null : String
+      "    .section .rodata\n    .balign 8\n    .globl __tl_null_arena\n__tl_null_arena:\n.L_tl_null_arena:\n    .quad 0, 0, 0, 0, 0, 0, 17, 0\n"]
     (and
       (not (string.contains (& freestanding) ".tdata"))
       (string.contains
         (& freestanding)
         "    .section .tbss,\"awT\",@nobits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .zero 8\n")
+      (string.contains (& freestanding) (& bss-null))
+      (string.contains (& win-freestanding) (& bss-null))
+      (string.contains (& freestanding-debug) (& rodata-null))
+      (string.contains (& win-debug) (& rodata-null))
+      (string.contains (& hosted) (& rodata-null))
       (string.contains
         (& hosted)
         "    .section .tdata,\"awT\",@progbits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .quad .L_tl_null_arena\n"))))

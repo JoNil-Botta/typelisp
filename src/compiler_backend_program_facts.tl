@@ -2157,6 +2157,29 @@
         "_switch_case_"
         (compiler-backend-switch-case-tag-text tag)))))
 
+(define compiler-backend-compact-switch-max-instrs : i64
+  1500)
+
+(define (compiler-backend-block-seq-instr-count
+  [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]) : i64
+  (let
+    [count : i64 0]
+    [n : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
+    (for [i (iterator.range 0 n)]
+      (match (compiler_ir_types.compiler-ir-block-seq-ref blocks i)
+        [(Block _ instrs)
+          (+= count (compiler_ir_types.compiler-ir-instr-seq-count instrs))]))
+    count))
+
+(define (compiler-backend-compact-switch-blocks?
+  [backend-state : be_state.CompilerBackendState]
+  [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]) : bool
+  (and
+    (be_state.compiler-backend-state-optimize-for-size? backend-state)
+    (<=
+      (compiler-backend-block-seq-instr-count blocks)
+      compiler-backend-compact-switch-max-instrs)))
+
 (define (compiler-backend-switch-table-label
   [function : String]
   [current-label : i64]) : String
@@ -2169,6 +2192,18 @@
           "_switch_table"
           "")))))
 
+(define (compiler-backend-switch-base-label
+  [function : String]
+  [current-label : i64]) : String
+  (be_operand.compiler-backend-asm-label
+    function
+    (compiler_ir_types.compiler-ir-label
+      (&
+        (str_cat.str-cat
+          (compiler_ir_types.compiler-ir-label-text current-label)
+          "_switch_base"
+          "")))))
+
 (define (compiler-backend-emit-switch-table-cases-into
   [function : String]
   [current-label : i64]
@@ -2176,11 +2211,23 @@
   [targets : be_state.BackendSymbolSeq]
   [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [absolute : bool]
+  [compact : bool]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
     [out : text_buf.TextBuf buf]
-    [table-label : String
-      (compiler-backend-switch-table-label function current-label)]
+    [rel-base : String
+      (if compact
+        (compiler-backend-switch-base-label
+          (string.copy (& function))
+          current-label)
+        (compiler-backend-switch-table-label
+          (string.copy (& function))
+          current-label))]
+    [entry-prefix : String
+      (if compact
+        "    .word "
+        "    .long ")]
+    [use-relative : bool (or compact (not absolute))]
     (for [index (iterator.range 0 cases.len)]
       (match (compiler_ir_types.compiler-ir-switch-case-seq-borrow cases index)
         [(Case tag label)
@@ -2190,9 +2237,9 @@
               (text_buf.append
                 (text_buf.append
                   (text_buf.append
-                    (text_buf.append out "    .long ")
+                    (text_buf.append out (string.copy (& entry-prefix)))
                     (be_operand.compiler-backend-asm-label
-                      (be_state.compiler-backend-global-shared-view function)
+                      (string.copy (& function))
                       (if (and
                         retarget-phi-edges
                         (be_state.compiler-backend-symbol-list-contains-id?
@@ -2202,39 +2249,44 @@
                           current-label
                           tag)
                         label)))
-                  (if absolute
-                    ""
-                    " - "))
-                (if absolute
-                  ""
-                  (string.copy (& table-label))))
+                  (if use-relative
+                    " - "
+                    ""))
+                (if use-relative
+                  (string.copy (& rel-base))
+                  ""))
               "\n"))]))
     out))
 
-;; One switch table: `cases.len` four-byte entries. A non-PIC ELF image takes
-;; the case address itself, which the linker fills through a 32-bit absolute
-;; relocation; every other code model takes the difference between the case
-;; label and the table label, which the assembler resolves to a constant, so
-;; those tables need no relocation at all. The caller emits the section
-;; directive for the whole run of tables.
+;; One switch table: `cases.len` entries. At `-Os` for functions safely within
+;; signed 16-bit range, emit 2-byte signed offsets relative to the intra-function
+;; `.L_*_switch_base` label in `.text` (assembler-resolved constant, 0 relocs).
+;; Otherwise emit 4-byte entries: absolute case addresses for non-PIC ELF, or
+;; case-minus-table differences for every other code model.
 (define (compiler-backend-emit-switch-table
   [function : String]
   [current-label : i64]
   [cases : compiler_ir_types.CompilerIrSwitchCaseSeq]
   [retarget-phi-edges : bool]
   [targets : be_state.BackendSymbolSeq]
-  [absolute : bool]) : String
+  [absolute : bool]
+  [compact : bool]) : String
   (text_buf.render
     (compiler-backend-emit-switch-table-cases-into
-      (be_state.compiler-backend-global-shared-view function)
+      (string.copy (& function))
       current-label
       retarget-phi-edges
       targets
       cases
       absolute
+      compact
       (text_buf.append
         (text_buf.append
-          (text_buf.append (text_buf.empty) "    .balign 4\n")
+          (text_buf.append
+            (text_buf.empty)
+            (if compact
+              "    .balign 2\n"
+              "    .balign 4\n"))
           (compiler-backend-switch-table-label function current-label))
         ":\n"))))
 
@@ -2243,16 +2295,18 @@
   [current-label : i64]
   [targets : be_state.BackendSymbolSeq]
   [absolute : bool]
+  [compact : bool]
   [instrs : (& compiler_ir_types.CompilerIrInstrSeq)]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (>= index (compiler_ir_types.compiler-ir-instr-seq-count instrs))
     buf
     (compiler-backend-emit-switch-tables-instr-seq-into
-      (be_state.compiler-backend-global-shared-view function)
+      (string.copy (& function))
       current-label
       (be_state.compiler-backend-global-shared-view targets)
       absolute
+      compact
       instrs
       (+ index 1)
       (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
@@ -2269,13 +2323,15 @@
                 cases
                 default-label)
               targets
-              absolute))]
+              absolute
+              compact))]
         [_ buf]))))
 
 (define (compiler-backend-emit-switch-tables-seq-into
   [function : String]
   [targets : be_state.BackendSymbolSeq]
   [absolute : bool]
+  [compact : bool]
   [blocks : (& compiler_ir_types.CompilerIrBlockSeq)]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
@@ -2284,9 +2340,10 @@
     (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
       [(Block label instrs)
         (compiler-backend-emit-switch-tables-seq-into
-          (be_state.compiler-backend-global-shared-view function)
+          (string.copy (& function))
           (be_state.compiler-backend-global-shared-view targets)
           absolute
+          compact
           blocks
           (+ index 1)
           (compiler-backend-emit-switch-tables-instr-seq-into
@@ -2294,6 +2351,7 @@
             label
             targets
             absolute
+            compact
             instrs
             0
             buf))])))
@@ -2316,6 +2374,7 @@
       program-index
       absolute
       sectioned?
+      absolute
       0
       (if sectioned?
         buf
@@ -2331,6 +2390,7 @@
   [program-index : be_state.CompilerBackendProgramIndex]
   [absolute : bool]
   [sectioned? : bool]
+  [current-rodata? : bool]
   [index : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (>= index (compiler_ir_types.compiler-ir-function-seq-count functions))
@@ -2344,22 +2404,22 @@
                 program-index.backend-state)
               (compiler-backend-phi-target-labels-for-blocks
                 (be_state.compiler-backend-global-shared-view blocks)))]
-          (compiler-backend-emit-switch-tables-function-seq-into
-            target
-            functions
-            program-index
-            absolute
-            sectioned?
-            (+ index 1)
-            (match (be_state.compiler-backend-global-shared-view blocks)
-              [(Array seq)
-                (let
-                  [scope
-                    (compiler-backend-function-label-scope program-index name)]
-                  [targets
-                    (be_state.compiler-backend-function-state-phi-targets
-                      (be_state.compiler-backend-state-function-state
-                        program-index.backend-state))]
+          (match (be_state.compiler-backend-global-shared-view blocks)
+            [(Array seq)
+              (let
+                [scope
+                  (compiler-backend-function-label-scope program-index name)]
+                [targets
+                  (be_state.compiler-backend-function-state-phi-targets
+                    (be_state.compiler-backend-state-function-state
+                      program-index.backend-state))]
+                [compact? : bool
+                  (compiler-backend-compact-switch-blocks?
+                    program-index.backend-state
+                    (& seq))]
+                [want-rodata? : bool (or absolute compact?)]
+                [next-rodata? : bool current-rodata?]
+                [next-buf : text_buf.TextBuf
                   (if sectioned?
                     (let
                       [tables
@@ -2367,7 +2427,8 @@
                           scope
                           targets
                           absolute
-                          seq
+                          compact?
+                          (& seq)
                           0
                           (text_buf.empty))]
                       (if (text_buf.empty? (& tables))
@@ -2378,26 +2439,60 @@
                               program-index
                               name)]
                           [section
-                            (if absolute
+                            (if (and
+                              want-rodata?
+                              (be_state.compiler-backend-target-elf? target))
                               (be_operand.compiler-backend-elf-symbol-section
                                 ".rodata"
                                 (& symbol)
                                 "\"a\",@progbits")
-                              ;; COFF case-minus-table expressions stay inside
-                              ;; the same COMDAT as the function body.
+                              ;; COFF case-minus-base / table expressions stay
+                              ;; inside the same COMDAT as the function body.
                               (be_operand.compiler-backend-function-section
                                 target
                                 (& symbol)))]
                           (text_buf.append
                             (text_buf.append buf section)
                             (text_buf.render tables)))))
-                    (compiler-backend-emit-switch-tables-seq-into
-                      scope
-                      targets
-                      absolute
-                      seq
-                      0
-                      buf)))])))])))
+                    (if (= want-rodata? current-rodata?)
+                      (compiler-backend-emit-switch-tables-seq-into
+                        scope
+                        targets
+                        absolute
+                        compact?
+                        (& seq)
+                        0
+                        buf)
+                      (let
+                        [tables
+                          (compiler-backend-emit-switch-tables-seq-into
+                            scope
+                            targets
+                            absolute
+                            compact?
+                            (& seq)
+                            0
+                            (text_buf.empty))]
+                        (if (text_buf.empty? (& tables))
+                          buf
+                          (begin
+                            (set! next-rodata? want-rodata?)
+                            (text_buf.append
+                              (text_buf.append
+                                buf
+                                (if want-rodata?
+                                  "    .section .rodata\n"
+                                  "    .text\n"))
+                              (text_buf.render tables)))))))]
+                (compiler-backend-emit-switch-tables-function-seq-into
+                  target
+                  functions
+                  program-index
+                  absolute
+                  sectioned?
+                  next-rodata?
+                  (+ index 1)
+                  next-buf))]))])))
 
 (define (compiler-backend-switch-validate-one
   [targets : be_state.BackendSymbolSeq]

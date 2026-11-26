@@ -11095,41 +11095,89 @@
     program-index
     vars))
 
-;; The case address for INDEX-REG: TABLE-REG holds the rip-relative table base
-;; and TARGET-REG the sign-extended 4-byte difference, or, for a non-PIC ELF
-;; image, TARGET-REG alone receives the entry's 32-bit absolute address.
+;; The case address for INDEX-REG: for `-Os` compact tables, load a signed
+;; 2-byte offset relative to the intra-function `.L_*_switch_base` label and
+;; add the RIP-relative base address; otherwise TABLE-REG holds the rip-relative
+;; table base and TARGET-REG the sign-extended 4-byte difference, or, for a
+;; non-PIC ELF image, TARGET-REG alone receives the 32-bit absolute address.
 (define (compiler-backend-emit-switch-table-lookup
   [function : String]
   [current-label : i64]
   [index-reg : String]
   [table-reg : String]
   [target-reg : String]
-  [absolute : bool]) : String
-  (if absolute
-    (str_cat.str-cat
-      "    movl "
-      (be_facts.compiler-backend-switch-table-label function current-label)
-      "(,"
-      index-reg
-      ",4), "
-      (be_operand.compiler-backend-reg-part target-reg 4)
-      "\n")
-    (str_cat.str-cat
-      "    leaq "
-      (be_facts.compiler-backend-switch-table-label function current-label)
-      "(%rip), "
-      table-reg
-      "\n    movslq ("
-      table-reg
-      ","
-      index-reg
-      ",4), "
-      target-reg
-      "\n    addq "
-      table-reg
-      ", "
-      target-reg
-      "\n")))
+  [absolute : bool]
+  [compact : bool]) : String
+  (cond
+    [compact
+      (let
+        [table-label : String
+          (be_facts.compiler-backend-switch-table-label
+            (string.copy (& function))
+            current-label)]
+        [base-label : String
+          (be_facts.compiler-backend-switch-base-label function current-label)]
+        [load-offset : String
+          (if absolute
+            (str_cat.str-cat
+              "    movswq "
+              table-label
+              "(,"
+              index-reg
+              ",2), "
+              (string.copy (& target-reg))
+              "\n")
+            (str_cat.str-cat
+              "    leaq "
+              table-label
+              "(%rip), "
+              (string.copy (& table-reg))
+              "\n    movswq ("
+              (string.copy (& table-reg))
+              ","
+              index-reg
+              ",2), "
+              (string.copy (& target-reg))
+              "\n"))]
+        [add-base : String
+          (str_cat.str-cat
+            (string.copy (& base-label))
+            ":\n    leaq "
+            base-label
+            "(%rip), "
+            (string.copy (& table-reg))
+            "\n    addq "
+            table-reg
+            ", "
+            target-reg
+            "\n")]
+        (str_cat.str-cat load-offset add-base))]
+    [absolute
+      (str_cat.str-cat
+        "    movl "
+        (be_facts.compiler-backend-switch-table-label function current-label)
+        "(,"
+        index-reg
+        ",4), "
+        (be_operand.compiler-backend-reg-part target-reg 4)
+        "\n")]
+    [else
+      (str_cat.str-cat
+        "    leaq "
+        (be_facts.compiler-backend-switch-table-label function current-label)
+        "(%rip), "
+        table-reg
+        "\n    movslq ("
+        table-reg
+        ","
+        index-reg
+        ",4), "
+        target-reg
+        "\n    addq "
+        table-reg
+        ", "
+        target-reg
+        "\n")]))
 
 ;; Sound emergency-scavenge dispatch (GAP2b-v2). When the register pool is
 ;; saturated at a switch dispatch, one or both of the index / jump-table-base
@@ -11162,6 +11210,7 @@
   [table-reg : String]
   [target-reg : String]
   [absolute : bool]
+  [compact : bool]
   [load-index : String]
   [backend-state : be_state.CompilerBackendState]) : String
   (let
@@ -11262,7 +11311,8 @@
         index-reg
         table-reg
         target-reg
-        absolute)
+        absolute
+        compact)
       (if (or total-switch (not shares-index))
         ""
         (str_cat.str-cat
@@ -11326,14 +11376,19 @@
         index-home)]
     [absolute : bool
       (be_state.compiler-backend-state-absolute-switch-ok? backend-state)]
+    [compact : bool
+      (be_state.compiler-backend-function-scratch-bool?
+        (be_state.compiler-backend-state-function-state backend-state)
+        be_state.compiler-backend-scratch-bool-compact-switch)]
+    [use-absolute : bool (and absolute (not compact))]
     [table-exclude : (__tl_dyn-array String)
       (be_operand.compiler-backend-one-exclude
         (be_state.compiler-backend-global-shared-view index-reg))]
-    ;; A relative entry is an offset from the table base, so that code model
-    ;; always needs a base register. A 32-bit absolute entry is the address
-    ;; itself, so the non-PIC form addresses the table directly.
+    ;; A relative entry is an offset from the table or intra-function base, so
+    ;; that form always needs a base register. A 32-bit absolute entry is the
+    ;; address itself, so the non-PIC form addresses the table directly.
     [table-reg : String
-      (if absolute
+      (if use-absolute
         ""
         (be_operand.compiler-backend-scavenge-reg-here
           table-exclude
@@ -11350,7 +11405,7 @@
         (be_state.compiler-backend-global-shared-view table-reg))]
     [target-exclude-n : i64 2]
     [target-reg : String
-      (if (and (not absolute) need-index-scratch)
+      (if (and (not use-absolute) need-index-scratch)
         (string.copy (& index-reg))
         (be_operand.compiler-backend-scavenge-reg-here
           target-exclude
@@ -11384,6 +11439,7 @@
           table-reg
           target-reg
           absolute
+          compact
           load-index
           backend-state)
         (compiler-backend-emit-switch-dispatch-direct
@@ -11397,6 +11453,7 @@
           table-reg
           target-reg
           absolute
+          compact
           load-index)))))
 
 ;; The plain dispatch: the final target block address is computed into a scratch
@@ -11413,6 +11470,7 @@
   [table-reg : String]
   [target-reg : String]
   [absolute : bool]
+  [compact : bool]
   [load-index : String]) : String
   (str_cat.str-cat
     load-index
@@ -11443,7 +11501,8 @@
       index-reg
       table-reg
       target-reg
-      absolute)
+      absolute
+      compact)
     "    jmp *"
     target-reg
     "\n"))

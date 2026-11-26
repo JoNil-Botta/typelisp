@@ -14,7 +14,8 @@
 (define (compiler-backend-runtime-arena-data
   [arena-debug : bool]
   [backtrace : bool]
-  [freestanding : bool]) : String
+  [freestanding : bool]
+  [null-arena-in-bss : bool]) : String
   (str_cat.str-cat
     (if freestanding
       "    .section .tbss,\"awT\",@nobits\n"
@@ -42,7 +43,7 @@ tl_backtrace_stack_high:
 "
       "")
     "\n"
-    (runtime_common.compiler-backend-runtime-null-arena-data)
+    (runtime_common.compiler-backend-runtime-null-arena-data null-arena-in-bss)
     (runtime_common.compiler-backend-runtime-arena-poison-data arena-debug)))
 
 (define (compiler-backend-current-arena-load [dst : String]) : String
@@ -94,7 +95,8 @@ tl_backtrace_stack_high:
           (runtime_common.compiler-backend-runtime-arena-debug-text?
             features.arena-debug)
           features.backtrace
-          freestanding))]
+          freestanding
+          (and freestanding (not features.arena-debug))))]
     (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
       (sanitize.runtime-sanitize-data data)
       data)))

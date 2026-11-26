@@ -44144,10 +44144,10 @@ b_keep:
   (asm-ok?
     (backend.compiler-backend-emit-source
       (compiler-backend-runtime-helper-source))
+    ;; The freestanding entry stores the null arena itself, so its arena word
+    ;; needs no `.tdata` initial value.
     (has
-      ".section .tdata,\"awT\",@progbits\n"
-      "tl_current_arena:\n    .quad .L_tl_null_arena\n"
-      ".section .tbss,\"awT\",@nobits\n"
+      ".section .tbss,\"awT\",@nobits\n    .balign 8\n    .globl tl_current_arena\ntl_current_arena:\n    .zero 8\n"
       ".L_tl_null_arena:\n    .quad 0, 0, 0, 0, 0, 0, 17, 0\n"
       "    leaq .L_tl_null_arena(%rip), %rsi\n    movq %rsi, %fs:tl_current_arena@tpoff\n    ret\n"
       "tl_thread_init:\n"
@@ -44167,6 +44167,7 @@ b_keep:
       "    leaq 64(%rax), %rcx\n"
       "    movq %r9, %fs:tl_current_arena@tpoff\n")
     (lacks
+      ".section .tdata"
       "    movq %rax, %fs:tl_current_arena@tpoff\n"
       ".L_tl_alloc_size_ready:\n")))
 

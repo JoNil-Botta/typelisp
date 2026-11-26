@@ -4242,12 +4242,22 @@
             ", "
             dst-reg
             "\n")
-          (str_cat.str-cat
-            "    movzbl "
-            (be_operand.compiler-backend-reg-part src-reg size)
-            ", "
-            (be_operand.compiler-backend-reg-part dst-reg 4)
-            "\n"))]
+          ;; Every Bool producer (comparisons, UnOp Not, BinOp, Load, Call/C-ABI
+          ;; return normalization, MaskReduce, Phi, Mov, Select, constants) keeps
+          ;; bits 8..63 clear, so a self-register zero-extend is a no-op. Keep
+          ;; u8/i8/char untouched and keep cross-register Bool moves as movzbl.
+          (if (and
+            (string.eq src-reg dst-reg)
+            (match ty
+              [(Bool) true]
+              [_ false]))
+            ""
+            (str_cat.str-cat
+              "    movzbl "
+              (be_operand.compiler-backend-reg-part src-reg size)
+              ", "
+              (be_operand.compiler-backend-reg-part dst-reg 4)
+              "\n")))]
       [else ""])))
 
 (define (compiler-backend-emit-store-reg-to-memory

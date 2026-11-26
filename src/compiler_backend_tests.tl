@@ -12509,6 +12509,122 @@ high:
       (asm-lacks? aligned "    .p2align 4,,10\n.Lf0_out:\n")
       (asm-has? aligned "    .p2align 4,,10\n.Lf1_out:\n"))))
 
+;; COLD-EDGE Shape 2: both guard edges carry copies, so the true edge ends in
+;; `jmp O` right before `<guard>_branch_cold_false:` followed by `O:`. Moving
+;; the cold false edge out of line turns `jmp O` into a fallthrough and drops
+;; it, and loop alignment does not misclassify the moved edge's `jmp` as a loop
+;; back-edge.
+(define (compiler-backend-cold-edge-shape2-ok?) : bool
+  (let
+    [src : String
+      (str_cat.str-cat
+        ".text\n.globl f\n    .type f,@function\nf:\n"
+        ".Lf0_while_body.1__unroll_guard:\n"
+        "    testq %rdx, %rdx\n"
+        "    jle .Lf0_while_body.1__unroll_guard_branch_cold_false\n"
+        ".Lf0_while_body.1__unroll_guard_branch_true:\n"
+        "    xorl %eax, %eax\n"
+        "    jmp .Lf0_while_body.1__unroll_body\n"
+        ".Lf0_while_body.1__unroll_guard_branch_cold_false:\n"
+        "    xorl %eax, %eax\n"
+        "    jmp .Lf0_while_body.1\n"
+        ".Lf0_while_body.1__unroll_body:\n"
+        "    addq $4, %rax\n"
+        "    ret\n"
+        ".Lf0_while_body.1:\n"
+        "    addq $1, %rax\n"
+        "    ret\n"
+        "    .size f, . - f\n")]
+    [out : String
+      (text_buf.render
+        (compiler-backend-peephole-text-buf-once
+          (text_buf.append (text_buf.empty) src)))]
+    [aligned : String
+      (be_peephole.compiler-backend-loop-align-text
+        (string.copy (& out))
+        (arena.current))]
+    (and
+      (asm-has?
+        out
+        ".Lf0_while_body.1__unroll_guard_branch_true:\n    xorl %eax, %eax\n.Lf0_while_body.1__unroll_body:\n")
+      (asm-lacks? out "    jmp .Lf0_while_body.1__unroll_body\n")
+      (asm-has?
+        out
+        ".Lf0_while_body.1__unroll_guard_branch_cold_false:\n    xorl %eax, %eax\n    jmp .Lf0_while_body.1\n    .size f, . - f\n")
+      (asm-lacks? aligned "    .p2align 4,,10\n.Lf0_while_body.1:\n"))))
+
+;; Redundant `movzb{l,q}` elimination after `xorl %r32, %r32` and
+;; `movl $K, %r32` (0 <= K <= 255) on the same register; out-of-range
+;; immediates, negative immediates, cross-register xorl, and mismatched
+;; registers stay intact.
+(define (compiler-backend-peephole-redundant-zext-imm-ok?) : bool
+  (let
+    [src : String
+      (str_cat.str-cat
+        "f:\n"
+        "    xorl %eax, %eax\n    movzbl %al, %eax\n"
+        "    movl $1, %r8d\n    movzbq %r8b, %r8\n"
+        "    movl $255, %edx\n    movzbl %dl, %edx\n"
+        "    movl $256, %ecx\n    movzbl %cl, %ecx\n"
+        "    movl $-1, %esi\n    movzbl %sil, %esi\n"
+        "    xorl %eax, %edi\n    movzbl %dil, %edi\n"
+        "    movl $1, %eax\n    movzbl %r9b, %r9d\n"
+        "    ret\n")]
+    [out : String
+      (text_buf.render
+        (compiler-backend-peephole-text-buf-once
+          (text_buf.append (text_buf.empty) src)))]
+    (be_state.backend-and4
+      (asm-lacks?
+        out
+        "    movzbl %al, %eax\n"
+        "    movzbq %r8b, %r8\n"
+        "    movzbl %dl, %edx\n")
+      (asm-has?
+        out
+        "    movl $256, %ecx\n    movzbl %cl, %ecx\n"
+        "    movl $-1, %esi\n    movzbl %sil, %esi\n")
+      (asm-has?
+        out
+        "    xorl %eax, %edi\n    movzbl %dil, %edi\n"
+        "    movl $1, %eax\n    movzbl %r9b, %r9d\n")
+      true)))
+
+;; Self-register Bool reload elides `movzbl`; cross-register Bool and u8/i8
+;; keep their widening moves.
+(define (compiler-backend-load-register-bool-self-elide-ok?) : bool
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    (be_state.backend-and4
+      (string.eq
+        (be_scalar.compiler-backend-emit-load-register-to-reg
+          bases
+          "%rax"
+          (& (Bool))
+          "%rax")
+        "")
+      (string.eq
+        (be_scalar.compiler-backend-emit-load-register-to-reg
+          bases
+          "%rdi"
+          (& (Bool))
+          "%rax")
+        "    movzbl %dil, %eax\n")
+      (string.eq
+        (be_scalar.compiler-backend-emit-load-register-to-reg
+          bases
+          "%rax"
+          (& (U8))
+          "%rax")
+        "    movzbl %al, %eax\n")
+      (string.eq
+        (be_scalar.compiler-backend-emit-load-register-to-reg
+          bases
+          "%rax"
+          (& (I8))
+          "%rax")
+        "    movsbq %al, %rax\n"))))
+
 ;; Compare the final streaming path against the former raw-buffer -> whole
 ;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
 ;; the recorded FPO sweep metadata before the streaming run.
@@ -14566,6 +14682,9 @@ f:
     (compiler-backend-cold-share-ok?)
     (compiler-backend-cold-edge-ok?)
     (compiler-backend-cold-edge-align-ok?)
+    (compiler-backend-cold-edge-shape2-ok?)
+    (compiler-backend-peephole-redundant-zext-imm-ok?)
+    (compiler-backend-load-register-bool-self-elide-ok?)
     (compiler-backend-peephole-flags-branch-ok?)
     (compiler-backend-streamed-final-output-equivalent?)
     (compiler-backend-streamed-final-batch-equivalent?)

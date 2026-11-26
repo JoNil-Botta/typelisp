@@ -5,17 +5,18 @@
 
 args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
 
-# The unrolled body and the remainder loop both start after a `jmp`: the
-# first directive heads the unrolled body.
+# The fallback loop starts after a `jmp` (the unrolled body falls through from
+# its guard's true edge once COLD-EDGE moves the false edge out of line), so
+# only the fallback loop gets `.p2align 4,,10`.
 case loop-align-rotated-top
 source tests/integration/range_loop_shapes.tl
 target linux-x86_64 windows-x86_64
 opt 2
 in fn _tl_range_loop_shapes_fields_sum
-count-fixed = 2 .p2align 4,,10
+count-fixed = 1 .p2align 4,,10
 count = 2 ^[[:space:]]+jmp [.]L[^ ]*__unroll_guard2$
 after ^[[:space:]]+[.]p2align 4,,10$
-next-line ^[.]L[^ ]*__unroll_body:$
+next-line ^[.]L[^ ]*_while_body[.]4:$
 
 # The preheader falls into the loop top: padding there would execute.
 case loop-align-fallthrough-top

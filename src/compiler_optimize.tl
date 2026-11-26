@@ -8030,25 +8030,24 @@
   [rw : (&mut rw ir.CompilerIrInstrRewrite)]
   [rewrite : (& OptOperandRewrite)]
   [instr : (& ir.CompilerIrInstr)]) : ir.CompilerIrInstr
-  (begin
-    (ir.compiler-ir-instr-rewrite-begin! rw instr)
-    (for [index (iterator.range 0 rw.uses.len)]
-      (let
-        [use : ir.CompilerIrUse (ir.compiler-ir-instr-rewrite-use-at rw index)]
-        (ir.compiler-ir-instr-rewrite-use!
-          rw
-          index
-          (opt-operand-rewrite-use
-            rewrite
-            use.role
-            (ir.compiler-ir-use-value (& use))))))
-    (match rewrite
-      [(SsaRename _ next-var)
-        (when (>= next-var 0) (ir.compiler-ir-instr-rewrite-def! rw next-var))]
-      [_ unit])
-    (ir.compiler-ir-instr-rewrite-finish
-      rw
-      (owned_view.compiler-owned-reference-shared-view instr))))
+  (ir.compiler-ir-instr-rewrite-begin! rw instr)
+  (for [index (iterator.range 0 rw.uses.len)]
+    (let
+      [use : ir.CompilerIrUse (ir.compiler-ir-instr-rewrite-use-at rw index)]
+      (ir.compiler-ir-instr-rewrite-use!
+        rw
+        index
+        (opt-operand-rewrite-use
+          rewrite
+          use.role
+          (ir.compiler-ir-use-value (& use))))))
+  (match rewrite
+    [(SsaRename _ next-var)
+      (when (>= next-var 0) (ir.compiler-ir-instr-rewrite-def! rw next-var))]
+    [_ unit])
+  (ir.compiler-ir-instr-rewrite-finish
+    rw
+    (owned_view.compiler-owned-reference-shared-view instr)))
 
 ;; Rewrite the value-use operands of an instruction through the copy env.
 ;; Vector and mask values are private aggregates: only var-to-var identities
@@ -8075,30 +8074,27 @@
       [_
         ;; An empty env substitutes nothing.
         (when (= env.len 0) (return instr))
-        (begin
-          (ir.compiler-ir-instr-rewrite-begin! rw (& instr))
-          (for [index (iterator.range 0 rw.uses.len)]
-            (let
-              [use : ir.CompilerIrUse
-                (ir.compiler-ir-instr-rewrite-use-at rw index)]
-              [value : ir.CompilerIrValue (ir.compiler-ir-use-value (& use))]
-              (cond
-                [(opt-vector-role? use.role)
-                  (ir.compiler-ir-instr-rewrite-use!
-                    rw
-                    index
-                    (opt-copy-resolve-mask env value))]
-                [(not vector-only?)
-                  (ir.compiler-ir-instr-rewrite-use!
-                    rw
-                    index
-                    (opt-copy-resolve
-                      (owned_view.compiler-owned-reference-shared-view env)
-                      value))]
-                [else unit])))
-          (opt-copy-subst-word
-            env
-            (ir.compiler-ir-instr-rewrite-finish rw instr)))])))
+        (ir.compiler-ir-instr-rewrite-begin! rw (& instr))
+        (for [index (iterator.range 0 rw.uses.len)]
+          (let
+            [use : ir.CompilerIrUse
+              (ir.compiler-ir-instr-rewrite-use-at rw index)]
+            [value : ir.CompilerIrValue (ir.compiler-ir-use-value (& use))]
+            (cond
+              [(opt-vector-role? use.role)
+                (ir.compiler-ir-instr-rewrite-use!
+                  rw
+                  index
+                  (opt-copy-resolve-mask env value))]
+              [(not vector-only?)
+                (ir.compiler-ir-instr-rewrite-use!
+                  rw
+                  index
+                  (opt-copy-resolve
+                    (owned_view.compiler-owned-reference-shared-view env)
+                    value))]
+              [else unit])))
+        (opt-copy-subst-word env (ir.compiler-ir-instr-rewrite-finish rw instr))])))
 
 ;; Register-group words: a Word of a group whose packed words the env knows
 ;; becomes a Mov of that word.
@@ -65694,29 +65690,28 @@
   [remap : (& (__tl_dyn-array ir.CompilerIrValue))]
   [labels : (& OptCloneLabels)]
   [instr : (& ir.CompilerIrInstr)]) : ir.CompilerIrInstr
-  (begin
-    (ir.compiler-ir-instr-rewrite-begin! rw instr)
-    (for [index (iterator.range 0 rw.uses.len)]
-      (let
-        [use : ir.CompilerIrUse (ir.compiler-ir-instr-rewrite-use-at rw index)]
-        (ir.compiler-ir-instr-rewrite-use!
-          rw
-          index
-          (opt-unroll-subst-value remap (ir.compiler-ir-use-value (& use))))))
-    (ir.compiler-ir-instr-rewrite-labels! rw instr)
-    (for [index (iterator.range 0 rw.labels.len)]
-      (ir.compiler-ir-instr-rewrite-label!
+  (ir.compiler-ir-instr-rewrite-begin! rw instr)
+  (for [index (iterator.range 0 rw.uses.len)]
+    (let
+      [use : ir.CompilerIrUse (ir.compiler-ir-instr-rewrite-use-at rw index)]
+      (ir.compiler-ir-instr-rewrite-use!
         rw
         index
-        (opt-region-clone-label
-          remap
-          labels
-          (ir.compiler-ir-id-list-get (& rw.labels) index -1))))
-    ;; A clone owns its containers: rebuild even when nothing was renamed.
-    (set! rw.changed? true)
-    (ir.compiler-ir-instr-rewrite-finish
+        (opt-unroll-subst-value remap (ir.compiler-ir-use-value (& use))))))
+  (ir.compiler-ir-instr-rewrite-labels! rw instr)
+  (for [index (iterator.range 0 rw.labels.len)]
+    (ir.compiler-ir-instr-rewrite-label!
       rw
-      (owned_view.compiler-owned-reference-shared-view instr))))
+      index
+      (opt-region-clone-label
+        remap
+        labels
+        (ir.compiler-ir-id-list-get (& rw.labels) index -1))))
+  ;; A clone owns its containers: rebuild even when nothing was renamed.
+  (set! rw.changed? true)
+  (ir.compiler-ir-instr-rewrite-finish
+    rw
+    (owned_view.compiler-owned-reference-shared-view instr)))
 
 ;; The same clone with its def renamed to the fresh id a pre-pass put in REMAP.
 (define (opt-region-clone-instr-remapped

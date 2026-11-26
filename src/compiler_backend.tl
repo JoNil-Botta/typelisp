@@ -26642,7 +26642,11 @@ tl_shared_object_init:
                 (be_state.compiler-backend-global-shared-view span-index)))
             (str_cat.str-cat
               (be_scalar.compiler-backend-backtrace-map-prefix target)
-              (be_scalar.compiler-backend-abort-table-prefix target)))]
+              (be_scalar.compiler-backend-abort-table-prefix
+                target
+                (be_state.compiler-backend-state-library-object?
+                  program-index.backend-state)
+                target-policy.shared-object)))]
         [function-input : text_buf.TextBuf
           (if (be_facts.compiler-backend-assembly-stream-active?
             (be_state.compiler-backend-state-stream-state
@@ -26730,6 +26734,7 @@ tl_shared_object_init:
                     (str_cat.str-cat
                       (be_scalar.compiler-backend-abort-table-trailer
                         target
+                        target-policy.shared-object
                         (be_state.compiler-backend-state-abort-site-counter
                           program-index.backend-state))
                       (be_scalar.compiler-backend-backtrace-map-trailer target)

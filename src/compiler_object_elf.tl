@@ -771,6 +771,7 @@
       0
       (match kind
         [(Text) 16]
+        [(Bss) (layout.compiler-object-layout-section-align image kind)]
         [_ 8])
       0)))
 
@@ -1106,7 +1107,9 @@
           (- end base)
           0
           0
-          8
+          (match kind
+            [(Bss) (layout.compiler-object-layout-section-align image kind)]
+            [_ 8])
           0)
         (compiler-object-elf-push-shstrtab-name!
           (&mut names)
@@ -1866,6 +1869,111 @@
 
 (cfg
   test
+  (define (compiler-object-elf-bss-align-image [align : i64]) : cobj.CompilerObjectImage
+    (let
+      [bss0 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-with-capacity 3)]
+      [bss1 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push bss0 (Align align))]
+      [bss2 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          bss1
+          (Label "_tl_aligned_cell"))]
+      [bss3 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push bss2 (Zero align))]
+      [sections0 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-with-capacity 4)]
+      [sections1 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections0
+          (Section
+            (Text)
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
+      [sections2 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections1
+          (Section
+            (Data)
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
+      [sections3 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections2
+          (Section
+            (Rodata)
+            (cobj.compiler-object-data-record-list-empty)
+            (cobj.compiler-object-instr-list-empty)))]
+      [sections4 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections3
+          (Section
+            (Bss)
+            (cobj.compiler-object-data-record-builder-finish bss3)
+            (cobj.compiler-object-instr-list-empty)))]
+      [symbols0 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-with-capacity 1)]
+      [symbols1 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols0
+          (Symbol "_tl_aligned_cell" (Export) (Data) (Some (Bss))))]
+      (cobj.CompilerObjectImage
+        (cobj.compiler-object-section-builder-finish sections4)
+        (cobj.compiler-object-symbol-builder-finish symbols1)
+        (cobj.compiler-object-relocation-builder-finish
+          (cobj.compiler-object-relocation-builder-with-capacity 1))))))
+
+(cfg
+  test
+  (define (compiler-object-elf-bss-align-case-ok? [align : i64]) : bool
+    (let
+      [image : cobj.CompilerObjectImage
+        (compiler-object-elf-bss-align-image align)]
+      [flat-ok? : bool
+        (match (compiler-object-elf-render (& image))
+          [(Ok obj)
+            (let
+              [shoff : i64 (layout.compiler-object-layout-u32-at (& obj) 40)]
+              [bss-hdr : i64
+                (+
+                  shoff
+                  (*
+                    compiler-object-elf-section-bss-index
+                    compiler-object-elf-section-header-size))]
+              (=
+                (layout.compiler-object-layout-u32-at (& obj) (+ bss-hdr 48))
+                align))]
+          [(Err _) false])]
+      [archive-ok? : bool
+        (match (compiler-object-elf-render-archive (& image))
+          [(Ok obj)
+            (let
+              [shoff : i64 (layout.compiler-object-layout-u32-at (& obj) 40)]
+              [shnum : i64 (layout.compiler-object-layout-u16-at (& obj) 60)]
+              [found-nobits? : bool false]
+              [all-match? : bool true]
+              (for [i (iterator.range 0 shnum)]
+                (let
+                  [hdr : i64
+                    (+ shoff (* i compiler-object-elf-section-header-size))]
+                  [shtype : i64
+                    (layout.compiler-object-layout-u32-at (& obj) (+ hdr 4))]
+                  (when
+                    (= shtype compiler-object-elf-sht-nobits)
+                    (set! found-nobits? true)
+                    (unless
+                      (=
+                        (layout.compiler-object-layout-u32-at
+                          (& obj)
+                          (+ hdr 48))
+                        align)
+                      (set! all-match? false)))))
+              (and found-nobits? all-match?))]
+          [(Err _) false])]
+      (and flat-ok? archive-ok?))))
+
+(cfg
+  test
   (test
     compiler-object-elf-smoke
     (begin
@@ -1878,4 +1986,9 @@
         "elf text object smoke")
       (test.assert-true
         (compiler-object-elf-rva32-rejected-ok?)
-        "elf rejects PE-only SymbolRva32 data records"))))
+        "elf rejects PE-only SymbolRva32 data records")
+      (test.assert-true
+        (and
+          (compiler-object-elf-bss-align-case-ok? 16)
+          (compiler-object-elf-bss-align-case-ok? 32))
+        "elf propagates >8B .bss record alignment into sh_addralign"))))

@@ -118,6 +118,28 @@
   [records : (& cobj.CompilerObjectDataRecordList)]) : i64
   (compiler-object-layout-data-records-size-from records 0))
 
+(define (compiler-object-layout-data-records-max-align
+  [records : (& cobj.CompilerObjectDataRecordList)]
+  [min-align : i64]) : i64
+  (let
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
+    [best : i64 min-align]
+    (for [index (iterator.range 0 count)]
+      (match (cobj.compiler-object-data-record-list-ref records index)
+        [(Align align) (when (> align best) (set! best align))]
+        [_ unit]))
+    best))
+
+(define (compiler-object-layout-section-align
+  [image : (& image cobj.CompilerObjectImage)]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
+  (match kind
+    [(Text) 16]
+    [_
+      (match (cobj.compiler-object-section-list-find image.sections kind)
+        [(Section _ data _)
+          (compiler-object-layout-data-records-max-align (& data) 8)])]))
+
 (define (compiler-object-layout-instr-size
   [instr : (& cobj.CompilerObjectX64Instr)]) : i64
   (match instr

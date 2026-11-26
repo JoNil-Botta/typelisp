@@ -42,7 +42,8 @@
           (ast.ast-extern-link-input-list-new)
           false
           (ir.CompilerIrReturnStorage.None)
-          false))]
+          false
+          (ir.CompilerIrGlobalStorage.Word)))]
     [index (be_data.compiler-backend-runtime-index-empty)]
     [refs (be_state.BackendSymbolSeq (__tl_make-array i64 1) 0)]
     ;; An unused extern declaration is deliberately insufficient. Keep the

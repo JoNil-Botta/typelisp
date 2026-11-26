@@ -631,8 +631,8 @@
           (test.assert-true
             (compiler-backend-runtime-test-contains?
               (& linux-full-functions)
-              "call .L_tl_arena_debug_register_root")
-            "debug Linux arena creation registers roots")
+              "pushq %rcx\n    movq %rax, %rdi\n    call .L_tl_arena_debug_register_root\n    popq %rcx")
+            "debug Linux arena root registration preserves %rcx around the table scan")
           (test.assert-true
             (compiler-backend-runtime-test-contains?
               (& windows-full-functions)

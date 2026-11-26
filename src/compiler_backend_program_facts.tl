@@ -405,7 +405,7 @@
   (if (>= index globals.len)
     ids
     (match (compiler_ir_types.compiler-ir-global-seq-ref globals index)
-      [(Global name ty _)
+      [(Global name ty _ _)
         (let
           [next-ids : backend_i64_i64_map.Map ids]
           (set! (array-ref values index) ty)
@@ -725,6 +725,7 @@
           _
           _
           _
+          _
           _)
         (let
           [call-info : i64
@@ -806,7 +807,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     link-references
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern _ _ _ _ _ link-symbol _ provided _ _)
+      [(Extern _ _ _ _ _ link-symbol _ provided _ _ _)
         (let
           [next-link-references : backend_i64_i64_map.Map link-references]
           (set! (array-ref link-symbols out-index) link-symbol)
@@ -842,7 +843,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     reference-ids
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern extern-name-id source-name-id _ _ _ _ _ _ _ _)
+      [(Extern extern-name-id source-name-id _ _ _ _ _ _ _ _ _)
         (compiler-backend-program-index-extern-reference-name-seq-into
           externs
           (compiler-backend-program-index-bind-extern-ids
@@ -1010,23 +1011,12 @@
     state
     (compiler-backend-collect-function-seq-shared
       (compiler-backend-collect-function-shared
-        (compiler-backend-collect-state-enter-function! state index)
+        state
         (be_state.compiler-backend-global-array-element-shared-view
           seq.slots
           index))
       seq
       (+ index 1))))
-
-;; IAG-1: the function slot the shared walk is inside. `index` is the position
-;; in the SAME sequence the program index was built from, so it is that
-;; function's program-index slot.
-(define (compiler-backend-collect-state-enter-function!
-  [state : be_state.CompilerBackendCollectState]
-  [slot : i64]) : be_state.CompilerBackendCollectState
-  (match state
-    [(Collections collections)
-      (compiler-backend-iag-enter-function! collections.iag slot)
-      (Collections collections)]))
 
 (define (compiler-backend-collect-functions-shared
   [state : be_state.CompilerBackendCollectState]
@@ -1508,7 +1498,7 @@
   (if (>= index globals.len)
     (Ok seen)
     (match (compiler_ir_types.compiler-ir-global-seq-borrow globals index)
-      [(Global name _ _)
+      [(Global name _ _ _)
         (let
           [symbol : String
             (be_state.compiler-backend-state-user-symbol-id backend-state name)]
@@ -1679,7 +1669,7 @@
   (for [seq-index
     (iterator.range 0 (compiler_ir_types.compiler-ir-extern-seq-count externs))]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id _ _ ty abi link-symbol-id _ provided _ _)
+      [(Extern name-id _ _ ty abi link-symbol-id _ provided _ _ _)
         (if (compiler-backend-emits-extern-symbol?
           backend-state
           name-id
@@ -1854,7 +1844,7 @@
   [emit-entry : bool]) : be_state.ResultCompilerBackendSymbolValidation
   (for [position (iterator.range 0 externs.len)]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs position)
-      [(Extern id source name ty abi link _ _ _ _)
+      [(Extern id source name ty abi link _ _ _ _ _)
         (match abi
           [(TypeLisp)
             (when
@@ -2834,10 +2824,6 @@
         collections
         name)]
     [(Global name)
-      ;; IAG-1: this operand is a READ of the cell by the function being
-      ;; walked. Same argument as W3(c) below: record it here rather than
-      ;; paying a second traversal for the same answer.
-      (compiler-backend-iag-note-mention! collections.iag name)
       (be_state.compiler-backend-program-collections-add-reference
         collections
         name)]
@@ -2847,7 +2833,6 @@
       ;; rather than paying a second traversal for the same answer.
       (compiler_regalloc.compiler-reg-add-nonfrozen-global!
         (compiler_ir_types.compiler-ir-symbol-id name))
-      (compiler-backend-iag-note-mention! collections.iag name)
       (be_state.compiler-backend-program-collections-add-reference
         collections
         name)]
@@ -2977,16 +2962,9 @@
                 with-src))]
           [_ with-src]))]
     [(or (Call _ name args _) (TailCall name args _))
-      ;; IAG-1: one direct call-graph edge.
-      (compiler-backend-iag-note-callee!
-        (be_state.compiler-backend-global-shared-view collections.iag)
-        name)
       (compiler-backend-collect-call-args-collections collections args)]
     [(or (CallIndirect _ func args _) (CallIndirectC _ func args _)
          (TailCallIndirect func args _))
-      ;; IAG-1: a call through a value; this function's callee set is not
-      ;; enumerable, so it can reach any rebind.
-      (compiler-backend-iag-note-indirect! collections.iag)
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections collections func)
         args)]
@@ -2996,15 +2974,10 @@
           (be_state.compiler-backend-box-field-shared-view payload-box base)]
         [args
           (be_state.compiler-backend-box-field-shared-view payload-box args)]
-        [name (deref payload-box).name]
-        (compiler-backend-iag-note-callee!
-          (be_state.compiler-backend-global-shared-view collections.iag)
-          name)
         (compiler-backend-collect-call-args-collections
           (compiler-backend-collect-value-collections collections base)
           args))]
     [(CallIndirectCAbiStoreResult (box (fields base [func callee] args)))
-      (compiler-backend-iag-note-indirect! collections.iag)
       (compiler-backend-collect-call-args-collections
         (compiler-backend-collect-value-collections
           (compiler-backend-collect-value-collections collections base)
@@ -3018,19 +2991,13 @@
             active-mask)]
         [args
           (be_state.compiler-backend-box-field-shared-view payload-box args)]
-        [callee (deref payload-box).callee]
-        (compiler-backend-iag-note-callee!
-          (be_state.compiler-backend-global-shared-view collections.iag)
-          callee)
         (compiler-backend-collect-spmd-call-args-collections
           (compiler-backend-collect-value-collections collections active-mask)
           args))]
     [(Store name value _)
       ;; W3(c): the lowering of `(set! g ...)`, the one direct cell writer.
-      ;; IAG-1 keys its R(g) on the same instruction.
       (compiler_regalloc.compiler-reg-add-nonfrozen-global!
         (compiler_ir_types.compiler-ir-symbol-id name))
-      (compiler-backend-iag-note-write! collections.iag name)
       (compiler-backend-collect-value-collections collections value)]
     [(Return maybe)
       (compiler-backend-collect-maybe-value-collections collections maybe)]
@@ -3164,206 +3131,6 @@
             slots
             index))))
     out))
-
-(define (compiler-backend-iag-bit-word [bit : i64]) : i64
-  (shr bit 6))
-
-(define (compiler-backend-iag-bit-mask [bit : i64]) : i64
-  (shl 1 (bit-and bit 63)))
-
-(define (compiler-backend-iag-bit-set!
-  [words : (__tl_dyn-array i64)]
-  [base : i64]
-  [bit : i64]) : unit
-  (let
-    [slot : i64 (+ base (compiler-backend-iag-bit-word bit))]
-    (set!
-      (array-ref words slot)
-      (bit-or (array-ref words slot) (compiler-backend-iag-bit-mask bit)))))
-
-;; ---------------------------------------------------------------------------
-;; Census recording.
-;;
-;; These are the hooks the shared whole-program collections walk
-;; (`compiler-backend-collect-instr-collections` /
-;; `-value-collections`) calls as it already visits every operand of every
-;; instruction of every function -- the same walk that seeds the W3(c)
-;; nonfrozen-global answer. IAG-1 therefore adds no traversal of its own: it
-;; adds one predictable compare per operand and a map probe only on the
-;; `Global`/`GlobalAddr`/`Store`/call shapes it actually records.
-;;
-;; `state` carries the only two threaded scalars -- [0] the function slot being
-;; walked (-1 while the walk is in global initializers) and [1] the edge
-;; cursor -- in a shared two-cell array, so the census travels by value.
-;; ---------------------------------------------------------------------------
-(define compiler-backend-iag-state-function : i64
-  0)
-(define compiler-backend-iag-state-cursor : i64
-  1)
-
-(define (compiler-backend-iag-active?
-  [census : be_state.CompilerBackendIagCensus]) : bool
-  (> census.count 0))
-
-;; A borrowed view of the held census: no copy, so the hooks stay a compare.
-(defmacro (compiler-backend-iag-census-of [cell : Expr]) : Expr
-  `(be_state.compiler-backend-global-array-element-shared-view
-    (__tl-project-field-name ,cell "slots")
-    0))
-
-(define (compiler-backend-iag-cell-active?
-  [cell : (& cell be_state.CompilerBackendIagCensusCell)]) : bool
-  (compiler-backend-iag-active? (compiler-backend-iag-census-of cell)))
-
-;; The walk enters a function body; -1 restores the "outside any function"
-;; state the global-initializer part of the walk runs in.
-(define (compiler-backend-iag-enter-function!
-  [cell : (& cell be_state.CompilerBackendIagCensusCell)]
-  [slot : i64]) : unit
-  (if (compiler-backend-iag-cell-active? cell)
-    (let
-      [census : be_state.CompilerBackendIagCensus
-        (compiler-backend-iag-census-of cell)]
-      (set! (array-ref census.state compiler-backend-iag-state-function) slot))
-    unit))
-
-(define (compiler-backend-iag-current-function
-  [census : (& census be_state.CompilerBackendIagCensus)]) : i64
-  (array-ref census.state compiler-backend-iag-state-function))
-
-(define (compiler-backend-iag-candidate-slot
-  [census : (& census be_state.CompilerBackendIagCensus)]
-  [name : i64]) : i64
-  (backend_i64_i64_map.get-value-or
-    (& census.slots)
-    (compiler_ir_types.compiler-ir-symbol-id name)
-    -1))
-
-;; `Global g` / `GlobalAddr g` appeared as an operand of the function being
-;; walked: that function READS the cell.
-(define (compiler-backend-iag-note-mention!
-  [cell : (& cell be_state.CompilerBackendIagCensusCell)]
-  [name : i64]) : unit
-  (if (not (compiler-backend-iag-cell-active? cell))
-    unit
-    (let
-      [census : be_state.CompilerBackendIagCensus
-        (compiler-backend-iag-census-of cell)]
-      [func : i64 (compiler-backend-iag-current-function census)]
-      (if (< func 0)
-        unit
-        (let
-          [candidate : i64 (compiler-backend-iag-candidate-slot census name)]
-          (if (< candidate 0)
-            unit
-            (compiler-backend-iag-bit-set!
-              census.mentions
-              (* func census.words)
-              candidate)))))))
-
-;; `CompilerIrInstr.Store g _ _`: the one direct cell writer.
-(define (compiler-backend-iag-note-write!
-  [cell : (& cell be_state.CompilerBackendIagCensusCell)]
-  [name : i64]) : unit
-  (if (not (compiler-backend-iag-cell-active? cell))
-    unit
-    (let
-      [census : be_state.CompilerBackendIagCensus
-        (compiler-backend-iag-census-of cell)]
-      [func : i64 (compiler-backend-iag-current-function census)]
-      (if (< func 0)
-        unit
-        (let
-          [candidate : i64 (compiler-backend-iag-candidate-slot census name)]
-          (unless
-            (< candidate 0)
-            (compiler-backend-iag-bit-set!
-              census.writes
-              (* func census.words)
-              candidate)
-            (compiler-backend-iag-bit-set! census.written 0 candidate)))))))
-
-;; Double the edge arrays in place in the cell. Amortized O(1) per edge, and
-;; the peak allocation follows the real call count rather than the
-;; instruction count.
-(define (compiler-backend-iag-grow-edges!
-  [cell : be_state.CompilerBackendIagCensusCell]
-  [census : be_state.CompilerBackendIagCensus]) : be_state.CompilerBackendIagCensus
-  (let
-    [capacity : i64 (* census.edge-capacity 2)]
-    [src : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-    [dst : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-    [grown : be_state.CompilerBackendIagCensus
-      (be_state.CompilerBackendIagCensus
-        census.count
-        census.words
-        census.ids
-        census.sizes
-        census.reasons
-        census.slots
-        census.function-count
-        census.mentions
-        census.writes
-        census.reach
-        census.callee-reach
-        census.indirect
-        census.written
-        capacity
-        (be_state.compiler-backend-global-shared-view src)
-        (be_state.compiler-backend-global-shared-view dst)
-        census.state
-        census.functions)]
-    (for [index (iterator.range 0 census.edge-capacity)]
-      (set! (array-ref src index) (array-ref census.edge-src index))
-      (set! (array-ref dst index) (array-ref census.edge-dst index)))
-    (set! (array-ref cell.slots 0) grown)
-    (compiler-backend-iag-census-of cell)))
-
-;; A direct call: one call-graph edge.
-(define (compiler-backend-iag-note-callee!
-  [cell : be_state.CompilerBackendIagCensusCell]
-  [name : i64]) : unit
-  (if (not (compiler-backend-iag-cell-active? cell))
-    unit
-    (let
-      [probe : be_state.CompilerBackendIagCensus
-        (compiler-backend-iag-census-of cell)]
-      [func : i64 (compiler-backend-iag-current-function probe)]
-      (if (< func 0)
-        unit
-        (let
-          [slot : i64
-            (backend_i64_i64_map.get-value-or
-              (& probe.functions)
-              (compiler_ir_types.compiler-ir-symbol-id name)
-              -1)]
-          (if (< slot 0)
-            unit
-            (let
-              [cursor : i64
-                (array-ref probe.state compiler-backend-iag-state-cursor)]
-              [census : be_state.CompilerBackendIagCensus
-                (if (< cursor probe.edge-capacity)
-                  probe
-                  (compiler-backend-iag-grow-edges! cell probe))]
-              (set! (array-ref census.edge-src cursor) func)
-              (set! (array-ref census.edge-dst cursor) slot)
-              (set!
-                (array-ref census.state compiler-backend-iag-state-cursor)
-                (+ cursor 1)))))))))
-
-;; A call through a value: this function's callee set is not enumerable.
-(define (compiler-backend-iag-note-indirect!
-  [cell : (& cell be_state.CompilerBackendIagCensusCell)]) : unit
-  (if (not (compiler-backend-iag-cell-active? cell))
-    unit
-    (let
-      [census : be_state.CompilerBackendIagCensus
-        (compiler-backend-iag-census-of cell)]
-      [func : i64 (compiler-backend-iag-current-function census)]
-      (if (< func 0)
-        unit
-        (set! (array-ref census.indirect func) true)))))
 
 (define (compiler-backend-function-seq-defines?
   [functions : compiler_ir_types.CompilerIrFunctionSeq]

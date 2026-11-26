@@ -219,7 +219,7 @@
         "reviewed ordered control/frame event count")
       (test.assert-i64-eq
         event-bytes
-        27820
+        27860
         "reviewed event-transcript byte count")
       (test.assert-i64-eq
         pinned-payloads

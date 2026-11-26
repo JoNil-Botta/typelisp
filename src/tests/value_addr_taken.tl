@@ -324,8 +324,7 @@
           (opt.opt-cfg-context-build
             (opt.opt-bool-branch-clone-blocks (& blocks)))
           24
-          8
-          false)]
+          8)]
       (match out
         [(Result _ _ changed)
           (test.assert-true
@@ -743,8 +742,7 @@
       blocks
       context
       24
-      8
-      false)
+      8)
       [(Result staged staged-context changed)
         (test.assert-true changed "the fixture synthesizes a preheader")
         (let

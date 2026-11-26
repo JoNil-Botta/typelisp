@@ -314,7 +314,7 @@ run_spmd_mode() {
         _entry=$(linux_entry_symbol_for_asm "$_asm") || exit $?
         _stdlib_archive=$(linux_stdlib_archive_for_asm "$_asm" "${COMPILER:-}")
         if [ -n "$_stdlib_archive" ]; then
-            set -- -z noexecstack --gc-sections --start-group "$_stdlib_archive" --end-group
+            set -- -z noexecstack --gc-sections -z start-stop-gc --start-group "$_stdlib_archive" --end-group
         else
             set --
         fi

@@ -12693,8 +12693,8 @@
     [(Some value)
       (match value
         [(Type ty) (Ok ty fuel)]
-        [_ (Ok (Var name) fuel)])]
-    [(None) (Ok (Var name) fuel)]))
+        [_ (Ok (Var (ctfe-quote-name-id env name)) fuel)])]
+    [(None) (Ok (Var (ctfe-quote-name-id env name)) fuel)]))
 
 (define (ctfe-quote-type-list
   [types : (& ast.AstTypeList)]
@@ -12848,7 +12848,13 @@
     [(VarArgs name lifetimes)
       (if (= name cbi.compiler-builtin-id-fix-unquote)
         (ctfe-quote-type-unquote (& (deref lifetimes)) env origin fuel)
-        (Ok ty fuel))]
+        (Ok (VarArgs (ctfe-quote-name-id env name) lifetimes) fuel))]
+    [(StructArgs name lifetimes)
+      (Ok (StructArgs (ctfe-quote-name-id env name) lifetimes) fuel)]
+    [(EnumArgs name lifetimes)
+      (Ok (EnumArgs (ctfe-quote-name-id env name) lifetimes) fuel)]
+    [(Struct name) (Ok (Struct (ctfe-quote-name-id env name)) fuel)]
+    [(Enum name) (Ok (Enum (ctfe-quote-name-id env name)) fuel)]
     [(Var name) (ctfe-quote-type-var name env fuel)]
     [_ (Ok ty fuel)]))
 

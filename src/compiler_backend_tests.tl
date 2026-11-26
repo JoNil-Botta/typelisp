@@ -31985,7 +31985,7 @@ entry:
           (asm-has? asm "    cqto\n")
           (asm-has? asm "    idivq %r8\n")
           (asm-has? asm "    movq %rdx, %rax\n")
-          (asm-has? asm ", 1, 46, tl_div_abort_at\n"))
+          (asm-has? asm ", 4142, tl_div_abort_at\n"))
         (asm-lacks? asm "    call tl_div_abort\n" ".globl tl_div_abort\n")
         (not
           (let

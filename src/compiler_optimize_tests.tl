@@ -40538,7 +40538,7 @@ exit:
     [(No) -1]
     [(Some block)
       (match block
-        [(Block _ instrs) (opt.opt-bce-mb-guard-compare-count instrs 0)])]))
+        [(Block _ instrs) (opt.opt-bce-guard-conjunct-count (& instrs))])]))
 
 (define (compiler-optimize-bce-mask-self-test) : i64
   (cond

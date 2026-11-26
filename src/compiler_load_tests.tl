@@ -6104,6 +6104,18 @@
         (& load.compiler-load-active-session-state)
         (& (compiler-load-string-vec-one "stdlib")))]
     [rooted : i64 (load.compiler-load-provider-id-for-path "stdlib/vector.tl")]
+    [windows-case-ok : bool
+      (cfg
+        windows
+        (begin
+          (load.compiler-load-session-state-note-stdlib-root!
+            (& load.compiler-load-active-session-state)
+            "c:/fake-win-stdlib")
+          (=
+            (load.compiler-load-provider-id-for-path
+              "C:\\Fake-Win-Stdlib\\tests\\opaque_probe.tl")
+            (load.compiler-load-provider-stdlib)))
+        true)]
     [_reset : unit
       (load.compiler-load-session-state-embedded-provenance-reset!
         (& load.compiler-load-active-session-state))]
@@ -6113,6 +6125,7 @@
       (= hydrated-tli-stdlib (load.compiler-load-provider-stdlib))
       (not (= disk-after-tli-stdlib (load.compiler-load-provider-stdlib)))
       (= rooted (load.compiler-load-provider-stdlib))
+      windows-case-ok
       (=
         (load.compiler-load-provider-id-for-path "<generated test harness>")
         (load.compiler-load-provider-unknown))

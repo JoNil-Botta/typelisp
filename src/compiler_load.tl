@@ -16356,11 +16356,11 @@
           (ptr-addr-of
             compiler-load-active-session-state.embedded-stdlib-provenance.roots)))]
     (any? [index (iterator.range 0 (array-length (& (array-ref cell 0))))]
-      (compiler-load-path-under-root?
-        source
+      (source_overlay.compiler-source-path-under?
         (&
           (compiler-load-canonical-path
-            (& (array-ref (array-ref cell 0) index))))))))
+            (& (array-ref (array-ref cell 0) index))))
+        source))))
 
 ;: Whether PATH names a module the embedded stdlib serves (#8733): spelled
 ;: `stdlib/<suffix>` for an embedded suffix, and either read from the image (or
@@ -16483,8 +16483,10 @@
           [(CompilerLoadSomePath manifest)
             (if (fs.path-absolute? (& manifest))
               (ci.intern
-                (compiler-load-canonical-path
-                  (& (compiler-load-dirname (& manifest)))))
+                (source_overlay.compiler-source-path-fold
+                  (&
+                    (compiler-load-canonical-path
+                      (& (compiler-load-dirname (& manifest)))))))
               (compiler-load-provider-no-package))]
           [(CompilerLoadNoPath) (compiler-load-provider-no-package)]))]))
 

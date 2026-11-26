@@ -86,7 +86,7 @@ file same/src/main.tl
   (test.assert-i64-eq (handle-size) 8 "handle size"))
 end-file
 step spoof-check
-run check --manifest-path "{{dir}}/spoof/typelisp.pkg"
+run check --target {{host-target}} --manifest-path "{{dir}}/spoof/typelisp.pkg"
 exit 1
 stderr contains error[E0221]
 stderr contains opaque type opaque_owner/Handle outside its module family
@@ -103,7 +103,7 @@ run test --manifest-path "{{dir}}/spoof/typelisp.pkg" --target {{host-target}}
 exit 1
 stderr contains error[E0221]
 step spoof-reflect-check
-run check --manifest-path "{{dir}}/reflect/typelisp.pkg"
+run check --target {{host-target}} --manifest-path "{{dir}}/reflect/typelisp.pkg"
 exit 1
 stderr contains error[E0221]
 stderr contains size-of cannot reach the representation of the opaque type opaque_owner/Handle
@@ -116,7 +116,7 @@ sh b='{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}' && printf 'Con
 run lsp < "{{dir}}/lsp.in"
 stdout contains "code":"E0221"
 step same-check
-run check --manifest-path "{{dir}}/same/typelisp.pkg"
+run check --target {{host-target}} --manifest-path "{{dir}}/same/typelisp.pkg"
 stderr empty
 step same-run
 run run --manifest-path "{{dir}}/same/typelisp.pkg" --target {{host-target}}
@@ -144,17 +144,17 @@ file evil/stdlib/crypto_hmac_sha256/extra.tl
 end-file
 cwd {{dir}}/evil
 step stdlib-subdir-entry-check
-run check stdlib/crypto_hmac_sha256/extra.tl
+run check --target {{host-target}} stdlib/crypto_hmac_sha256/extra.tl
 exit 1
 stderr contains error[E0221]
 stderr contains opaque type stdlib.crypto_hmac_sha256/HmacSha256Storage outside its module family
 step stdlib-subdir-entry-check-source
-run check --no-prebuilt-stdlib stdlib/crypto_hmac_sha256/extra.tl
+run check --target {{host-target}} --no-prebuilt-stdlib stdlib/crypto_hmac_sha256/extra.tl
 exit 1
 stderr contains error[E0221]
 stderr contains opaque type stdlib.crypto_hmac_sha256/HmacSha256Storage outside its module family
 step stdlib-subdir-package-check
-run check --manifest-path typelisp.pkg
+run check --target {{host-target}} --manifest-path typelisp.pkg
 exit 1
 stderr contains error[E0221]
 cwd -
